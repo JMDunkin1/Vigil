@@ -93,6 +93,7 @@ function monitorFromHeartbeat(state, now) {
 }
 
 function stateSealDetail(seal) {
+  if (seal.status === "bookkeeping-mismatch") return seal.detail;
   if (seal.ok) return seal.lastSealedAt ? `sealed at ${seal.lastSealedAt}` : "sealed";
   if (seal.tamperDetectedAt) return `tampering detected at ${seal.tamperDetectedAt}: ${seal.detail}`;
   return `${seal.status || "unknown"}: ${seal.detail || "State seal could not be verified."}`;
