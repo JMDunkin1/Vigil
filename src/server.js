@@ -1694,6 +1694,7 @@ function accountDetail(account) {
 }
 
 function stateSealDetail(stateSeal) {
+  if (stateSeal.status === "bookkeeping-mismatch") return stateSeal.detail;
   if (stateSeal.ok) return stateSeal.lastSealedAt ? `State file is sealed (${stateSeal.lastSealedAt}).` : "State file is sealed.";
   if (stateSeal.tamperDetectedAt) return `Tampering was detected at ${stateSeal.tamperDetectedAt}.`;
   return stateSeal.detail || "State file integrity could not be verified.";

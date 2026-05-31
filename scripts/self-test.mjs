@@ -339,6 +339,57 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 }
 
 {
+  const dir = await mkdtemp(join(tmpdir(), "screen-time-protected-seal-"));
+  try {
+    const keyPath = join(dir, "state-seal.key");
+    const sealPath = join(dir, "state.seal.json");
+    const state = defaultState();
+    const text = `${JSON.stringify(state, null, 2)}\n`;
+    await writeStateTextSeal(text, { keyPath, sealPath, scope: "state" }, now.toISOString());
+
+    const bookkeepingChange = structuredClone(state);
+    bookkeepingChange.events.unshift({ id: "event", type: "note", detail: {}, at: now.toISOString() });
+    bookkeepingChange.integrity.runtime.lastHeartbeatAt = new Date(now.getTime() + 1000).toISOString();
+    const bookkeepingText = `${JSON.stringify(bookkeepingChange, null, 2)}\n`;
+    const bookkeepingVerification = await verifyStateTextSeal(bookkeepingText, { keyPath, sealPath });
+    assert.equal(bookkeepingVerification.ok, true);
+    assert.equal(bookkeepingVerification.status, "bookkeeping-mismatch");
+
+    const bypassChange = structuredClone(state);
+    bypassChange.settings.siteRedirectEnabled = false;
+    const bypassText = `${JSON.stringify(bypassChange, null, 2)}\n`;
+    assert.equal((await verifyStateTextSeal(bypassText, { keyPath, sealPath })).status, "mismatch");
+
+    const runtimeThresholdChange = structuredClone(state);
+    runtimeThresholdChange.settings.runtimeGapLockdownSeconds = 999999;
+    const runtimeThresholdText = `${JSON.stringify(runtimeThresholdChange, null, 2)}\n`;
+    assert.equal((await verifyStateTextSeal(runtimeThresholdText, { keyPath, sealPath })).status, "mismatch");
+
+    const clockThresholdChange = structuredClone(state);
+    clockThresholdChange.settings.clockTamperLockdownSeconds = 999999;
+    const clockThresholdText = `${JSON.stringify(clockThresholdChange, null, 2)}\n`;
+    assert.equal((await verifyStateTextSeal(clockThresholdText, { keyPath, sealPath })).status, "mismatch");
+
+    const mdmQueueState = structuredClone(state);
+    mdmQueueState.deviceControls.ios.mdm.enabled = true;
+    mdmQueueState.deviceControls.ios.mdm.devices = [{ udid: "iphone-udid-1", status: "enrolled" }];
+    mdmQueueState.deviceControls.ios.mdm.commands = [{
+      udid: "iphone-udid-1",
+      requestType: "InstallProfile",
+      status: "queued",
+      policyHash: "policy-hash"
+    }];
+    mdmQueueState.deviceControls.ios.mdm.lastPolicyHash = "policy-hash";
+    const mdmQueueText = `${JSON.stringify(mdmQueueState, null, 2)}\n`;
+    await writeStateTextSeal(mdmQueueText, { keyPath, sealPath, scope: "state" }, now.toISOString());
+    mdmQueueState.deviceControls.ios.mdm.commands = [];
+    assert.equal((await verifyStateTextSeal(`${JSON.stringify(mdmQueueState, null, 2)}\n`, { keyPath, sealPath })).status, "mismatch");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+{
   const state = defaultState();
   markStateSealed(state, now.toISOString());
   applySealVerificationToState(state, {

@@ -3,6 +3,44 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { dirname } from "node:path";
 
 const ALGORITHM = "hmac-sha256";
+const STATE_SCOPE = "state";
+const STATE_PROTECTION_VERSION = 1;
+const BOOKKEEPING_MISMATCH_STATUS = "bookkeeping-mismatch";
+const PROTECTED_SETTINGS = [
+  "pollIntervalMs",
+  "strictByDefault",
+  "emergencyTokensPerWeek",
+  "emergencyDelaySeconds",
+  "intentReasonEnabled",
+  "intentReasonMinLength",
+  "typingChallengeEnabled",
+  "interventionEnabled",
+  "interventionWindowMinutes",
+  "interventionThreshold",
+  "interventionExtraDelaySeconds",
+  "interventionMaxExtraDelaySeconds",
+  "runtimeGapLockdownSeconds",
+  "clockTamperLockdownSeconds",
+  "activeProfileId",
+  "foolproofModeEnabled",
+  "appQuitEscalationSeconds",
+  "siteRedirectEnabled",
+  "contentFilterEnabled",
+  "browserNoiseBlockingEnabled",
+  "appQuitEnabled",
+  "strictBypassProtectionEnabled",
+  "processSweepEnabled",
+  "processSweepIntervalSeconds",
+  "systemSleepLockEnabled",
+  "systemSleepLockIntervalSeconds",
+  "focusShortcutEnabled",
+  "focusShortcutOnName",
+  "focusShortcutOffName",
+  "hostsBlockingEnabled",
+  "protectedEditsEnabled",
+  "protectedEditDelaySeconds",
+  "protectedEditWindowMinutes"
+];
 
 export async function verifyStateTextSeal(text, { keyPath, sealPath }) {
   const [key, seal] = await Promise.all([
@@ -27,8 +65,21 @@ export async function verifyStateTextSeal(text, { keyPath, sealPath }) {
   }
 
   const expected = String(parsed.digest || "");
-  const actual = stateDigest(text, key.trim());
+  const trimmedKey = key.trim();
+  const actual = stateDigest(text, trimmedKey);
   if (!safeEqualHex(expected, actual)) {
+    if (protectedStateDigestMatches(text, parsed, trimmedKey)) {
+      return {
+        ok: true,
+        status: BOOKKEEPING_MISMATCH_STATUS,
+        detail: "State file changed only in unprotected runtime bookkeeping; the seal can be refreshed without entering lockdown.",
+        sealedAt: parsed.sealedAt || null,
+        checkedAt: new Date().toISOString(),
+        hasKey,
+        hasSeal,
+        repairable: true
+      };
+    }
     return sealResult("mismatch", "State file does not match its integrity seal.", { hasKey, hasSeal, sealedAt: parsed.sealedAt || null });
   }
 
@@ -43,13 +94,18 @@ export async function verifyStateTextSeal(text, { keyPath, sealPath }) {
   };
 }
 
-export async function writeStateTextSeal(text, { keyPath, sealPath }, sealedAt = new Date().toISOString()) {
+export async function writeStateTextSeal(text, { keyPath, sealPath, scope } = {}, sealedAt = new Date().toISOString()) {
   const key = await ensureKey(keyPath);
   const seal = {
     algorithm: ALGORITHM,
     digest: stateDigest(text, key),
     sealedAt
   };
+  if (scope === STATE_SCOPE) {
+    seal.scope = STATE_SCOPE;
+    seal.protectedVersion = STATE_PROTECTION_VERSION;
+    seal.protectedDigest = protectedStateDigest(text, key);
+  }
   await mkdir(dirname(sealPath), { recursive: true });
   const tempPath = `${sealPath}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
   await writeFile(tempPath, `${JSON.stringify(seal, null, 2)}\n`, { mode: 0o600 });
@@ -97,7 +153,7 @@ export function stateSealSummary(state, liveVerification = null) {
     ? (seal.tamperDetail || "Manual state-file tampering was detected.")
     : (liveVerification?.detail || seal.lastDetail || "State seal has not been checked yet.");
   return {
-    ok: status === "sealed",
+    ok: status === "sealed" || status === BOOKKEEPING_MISMATCH_STATUS,
     status,
     detail,
     tamperDetectedAt: seal.tamperDetectedAt || null,
@@ -108,6 +164,145 @@ export function stateSealSummary(state, liveVerification = null) {
 
 export function stateDigest(text, key) {
   return createHmac("sha256", key).update(String(text || ""), "utf8").digest("hex");
+}
+
+function protectedStateDigestMatches(text, seal, key) {
+  const expected = String(seal.protectedDigest || "");
+  if (seal.scope !== STATE_SCOPE || seal.protectedVersion !== STATE_PROTECTION_VERSION || !expected) return false;
+  try {
+    return safeEqualHex(expected, protectedStateDigest(text, key));
+  } catch {
+    return false;
+  }
+}
+
+function protectedStateDigest(text, key) {
+  const state = JSON.parse(text);
+  return createHmac("sha256", key).update(stableText(protectedStateSnapshot(state)), "utf8").digest("hex");
+}
+
+function protectedStateSnapshot(state = {}) {
+  return {
+    version: state.version ?? null,
+    settings: pick(state.settings, PROTECTED_SETTINGS),
+    profiles: state.profiles || [],
+    schedules: state.schedules || [],
+    limitRules: state.limitRules || [],
+    limitBlocks: state.limitBlocks || [],
+    appLocks: state.appLocks || [],
+    appLockUnlocks: state.appLockUnlocks || [],
+    appLockRequests: state.appLockRequests || [],
+    appLockLedger: state.appLockLedger || {},
+    extension: protectedExtension(state.extension || {}),
+    keyholder: state.keyholder || {},
+    distanceKey: state.distanceKey || {},
+    deviceControls: protectedDeviceControls(state.deviceControls || {}),
+    maintenance: state.maintenance || {},
+    activeSession: state.activeSession || null,
+    emergency: state.emergency || {},
+    overrides: state.overrides || [],
+    environment: {
+      wifiSsid: state.environment?.wifiSsid || ""
+    },
+    integrity: protectedIntegrity(state.integrity || {})
+  };
+}
+
+function protectedDeviceControls(deviceControls) {
+  const android = deviceControls.android || {};
+  const ios = deviceControls.ios || {};
+  const mdm = ios.mdm || {};
+  return {
+    android: {
+      enabled: android.enabled,
+      packages: android.packages || []
+    },
+    ios: {
+      enabled: ios.enabled,
+      status: ios.status,
+      mode: ios.mode,
+      webMode: ios.webMode,
+      blockApps: ios.blockApps,
+      blockWeb: ios.blockWeb,
+      hardenRemoval: ios.hardenRemoval,
+      restrictInstallAndErase: ios.restrictInstallAndErase,
+      blockedAppBundleIds: ios.blockedAppBundleIds || [],
+      allowedAppBundleIds: ios.allowedAppBundleIds || [],
+      deniedUrls: ios.deniedUrls || [],
+      allowedUrls: ios.allowedUrls || [],
+      removalPassword: ios.removalPassword || null,
+      mdm: {
+        enabled: mdm.enabled,
+        publicBaseUrl: mdm.publicBaseUrl || "",
+        topic: mdm.topic || "",
+        identityCertificateUuid: mdm.identityCertificateUuid || "",
+        identityCertificatePayloadBase64: mdm.identityCertificatePayloadBase64 || "",
+        identityCertificatePassword: mdm.identityCertificatePassword || "",
+        accessRights: mdm.accessRights,
+        signMessage: mdm.signMessage,
+        useDevelopmentApns: mdm.useDevelopmentApns,
+        checkOutWhenRemoved: mdm.checkOutWhenRemoved,
+        enrollmentSecret: mdm.enrollmentSecret || "",
+        devices: mdm.devices || [],
+        commands: mdm.commands || [],
+        lastPolicyHash: mdm.lastPolicyHash || ""
+      }
+    }
+  };
+}
+
+function protectedExtension(extension) {
+  const dynamicRules = extension.dynamicRules || {};
+  return {
+    lastSeenAt: extension.lastSeenAt || null,
+    lastVersion: extension.lastVersion || null,
+    lastHost: extension.lastHost || null,
+    dynamicRules: {
+      count: dynamicRules.count || 0,
+      expectedCount: dynamicRules.expectedCount || 0,
+      signature: dynamicRules.signature || "",
+      expectedSignature: dynamicRules.expectedSignature || "",
+      status: dynamicRules.status || "",
+      ok: Boolean(dynamicRules.ok),
+      fallbackRequired: Boolean(dynamicRules.fallbackRequired)
+    }
+  };
+}
+
+function protectedIntegrity(integrity) {
+  const stateSeal = integrity.stateSeal || {};
+  const runtime = integrity.runtime || {};
+  return {
+    stateSeal: {
+      tamperDetectedAt: stateSeal.tamperDetectedAt || null,
+      tamperDetail: stateSeal.tamperDetail || ""
+    },
+    runtime: {
+      downtimeDetectedAt: runtime.downtimeDetectedAt || null,
+      downtimeDetail: runtime.downtimeDetail || "",
+      hardeningDriftDetectedAt: runtime.hardeningDriftDetectedAt || null,
+      hardeningDriftDetail: runtime.hardeningDriftDetail || "",
+      hardeningDriftIssues: runtime.hardeningDriftIssues || [],
+      clockTamperDetectedAt: runtime.clockTamperDetectedAt || null,
+      clockTamperDetail: runtime.clockTamperDetail || "",
+      clockTamperSeconds: runtime.clockTamperSeconds || 0,
+      clockTamperDirection: runtime.clockTamperDirection || ""
+    }
+  };
+}
+
+function pick(value = {}, keys = []) {
+  return Object.fromEntries(keys.map((key) => [key, value?.[key]]));
+}
+
+function stableText(value) {
+  return JSON.stringify(stableValue(value));
+}
+
+function stableValue(value) {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
 }
 
 async function ensureKey(keyPath) {

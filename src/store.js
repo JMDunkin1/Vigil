@@ -62,7 +62,7 @@ export async function saveState(state) {
   const sealedAt = new Date().toISOString();
   markStateSealed(state, sealedAt);
   const text = await writeJson(STATE_PATH, state);
-  await writeStateTextSeal(text, { keyPath: STATE_SEAL_KEY_PATH, sealPath: STATE_SEAL_PATH }, sealedAt);
+  await writeStateTextSeal(text, { keyPath: STATE_SEAL_KEY_PATH, sealPath: STATE_SEAL_PATH, scope: "state" }, sealedAt);
 }
 
 export async function loadUsage() {

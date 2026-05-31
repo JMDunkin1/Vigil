@@ -50,7 +50,7 @@ The app works best after granting Accessibility permission to the terminal or ap
 - Strict locks redirect supported-browser control pages such as `chrome://extensions`, `chrome://settings`, and `chrome://flags` so the companion cannot be disabled mid-session.
 - Optional Foolproof mode that blocks strict session starts until hardening checks are ready.
 - Mac account hardening check that warns when the app is running from an admin account instead of a standard daily account.
-- Tamper-evident state seal with fail-closed integrity lockdown if the local configuration file is edited outside the app.
+- Tamper-evident state seal with fail-closed integrity lockdown when protected blocker settings, sessions, profiles, limits, unlocks, or device policies are edited outside the app.
 - Opt-in source integrity seal for trusted app code, public UI, scripts, and extension files.
 - Runtime watchdog that enters integrity lockdown after unexplained service downtime during strict locks.
 - Clock tamper watchdog that compares wall-clock time with monotonic runtime and enters integrity lockdown if the system clock jumps during a protected lock.
@@ -94,7 +94,7 @@ npm run hosts:apply
 
 You can also apply the hosts block from the dashboard's Hardening panel. The app will ask macOS for administrator approval and keeps the copyable Terminal command as a fallback.
 
-If the state seal detects local file tampering, or if the runtime/clock watchdog detects unexplained downtime or clock changes during a strict lock, the app enters integrity lockdown using code-defined default distractions and bypass tools. Clear the alarm from the Hardening panel only after opening a protected maintenance window.
+If the state seal detects protected local state tampering, or if the runtime/clock watchdog detects unexplained downtime or clock changes during a strict lock, the app enters integrity lockdown using code-defined default distractions and bypass tools. The state seal ignores repairable bookkeeping-only drift such as runtime heartbeats and event history, then refreshes the seal on the next clean save.
 
 Enable Sleep screen lock in the Hardening panel if sleep-mode locks should lock the entire Mac login session and keep re-locking while the bedtime window is active.
 
@@ -111,6 +111,8 @@ After reviewing local code changes, seal the trusted app source for Foolproof mo
 ```sh
 npm run seal:source
 ```
+
+Source/code edits are handled by the source seal, not the state tamper alarm. A reviewed Codex or developer change should be tested, then sealed with `npm run seal:source`; Foolproof mode treats unsealed source changes as a hardening issue during strict locks, but ordinary source edits do not by themselves mean someone tried to bypass the blocker.
 
 To add the browser companion, load the `extension` folder as an unpacked extension in Chrome, Brave, Edge, or Arc while the local server is running.
 
