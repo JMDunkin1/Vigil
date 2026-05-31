@@ -75,8 +75,6 @@ export const PROCESS_SWEEP_EXEMPT_APPS = [
 
 export const STRICT_BYPASS_APPS = [
   "Activity Monitor",
-  "Terminal",
-  "iTerm2",
   "System Settings",
   "System Preferences",
   "Script Editor",
@@ -187,15 +185,7 @@ export const STRICT_EMBEDDED_BROWSER_APPS = [
 ];
 
 export const DEFAULT_BLOCKED_APPS = [
-  "Discord",
-  "Steam",
-  "Epic Games Launcher",
-  "Battle.net",
-  "Music",
-  "TV",
-  "Podcasts",
-  "News",
-  "Photos"
+  "Discord"
 ];
 
 export const DEFAULT_BLOCKED_SITES = [
@@ -206,9 +196,10 @@ export const DEFAULT_BLOCKED_SITES = [
   "instagram.com",
   "tiktok.com",
   "facebook.com",
-  "netflix.com",
-  "twitch.tv",
-  "threads.net"
+  "threads.net",
+  "snapchat.com",
+  "pinterest.com",
+  "discord.com"
 ];
 
 export const DEFAULT_ALLOWED_APPS = [
@@ -276,10 +267,9 @@ export const DEFAULT_ANDROID_PACKAGES = [
   "com.instagram.android",
   "com.zhiliaoapp.musically",
   "com.facebook.katana",
-  "com.netflix.mediaclient",
-  "tv.twitch.android.app",
   "com.discord",
-  "org.telegram.messenger"
+  "com.snapchat.android",
+  "com.pinterest"
 ];
 
 export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
@@ -292,11 +282,8 @@ export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
   "com.facebook.Messenger",
   "com.burbn.barcelona",
   "com.toyopagroup.picaboo",
-  "com.netflix.Netflix",
-  "tv.twitch",
   "com.hammerandchisel.discord",
-  "com.pinterest",
-  "com.roblox.robloxmobile"
+  "com.pinterest"
 ];
 
 export const DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS = [
@@ -349,7 +336,7 @@ export function defaultState() {
       contentFilterEnabled: true,
       browserNoiseBlockingEnabled: true,
       appQuitEnabled: true,
-      strictBypassProtectionEnabled: true,
+      strictBypassProtectionEnabled: false,
       processSweepEnabled: true,
       processSweepIntervalSeconds: 15,
       systemSleepLockEnabled: false,
@@ -367,7 +354,7 @@ export function defaultState() {
         id: "default",
         name: "Default focus",
         mode: "blocklist",
-        description: "Blocks high-distraction apps and sites while keeping the Mac usable.",
+        description: "Blocks social media apps and sites while keeping everything else usable.",
         blockedApps: DEFAULT_BLOCKED_APPS,
         blockedSites: DEFAULT_BLOCKED_SITES,
         blockedUrlPatterns: [

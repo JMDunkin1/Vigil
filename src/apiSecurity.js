@@ -33,6 +33,12 @@ export function apiRequestGuard({ method = "GET", path = "", headers = {} }) {
   return allow();
 }
 
+export function publicHostGuard({ path = "", headers = {} }) {
+  if (String(path || "").startsWith("/mdm/")) return allow();
+  if (isLocalHostHeader(headerValue(headers, "host"))) return allow();
+  return deny("Public tunnel requests may only reach MDM endpoints.");
+}
+
 export function controlIntentHeaders() {
   return { [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE };
 }
@@ -84,6 +90,18 @@ function isLocalOrigin(value) {
     const url = new URL(value);
     const host = url.hostname.toLowerCase();
     return ["127.0.0.1", "localhost", "::1"].includes(host) && ["http:", "https:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function isLocalHostHeader(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return true;
+  try {
+    const url = new URL(`http://${raw}`);
+    const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return ["127.0.0.1", "localhost", "::1"].includes(host);
   } catch {
     return false;
   }

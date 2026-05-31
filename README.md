@@ -44,7 +44,7 @@ The app works best after granting Accessibility permission to the terminal or ap
 - Custom URL pattern blocking for paths and keywords such as `youtube.com/shorts`, `/reels`, or `casino`.
 - Protected edits: strict active protections block weakening config changes until a maintenance cooldown completes.
 - Local API mutation hardening blocks cross-site localhost POSTs, requires JSON mutations, and adds clickjacking protection headers.
-- Strict-lock bypass guard for common escape tools such as Terminal, Activity Monitor, App Store, installers, app managers, and device/profile utilities.
+- Optional strict-lock bypass guard for common escape tools such as Activity Monitor, App Store, installers, app managers, and device/profile utilities.
 - Strict-lock network bypass guard for VPN, proxy, DNS, packet-inspection, and firewall-configuration apps such as Tailscale, Cloudflare WARP, WireGuard, Proxyman, Charles, Wireshark, Little Snitch, LuLu, and AdGuard.
 - Strict site locks also quit unsupported browsers and embedded-browser apps such as Firefox, Tor Browser, LibreWolf, DuckDuckGo Browser, Chromium, Slack, Teams, Telegram, Discord, and Steam when tab-level blocking cannot inspect them.
 - Strict locks redirect supported-browser control pages such as `chrome://extensions`, `chrome://settings`, and `chrome://flags` so the companion cannot be disabled mid-session.

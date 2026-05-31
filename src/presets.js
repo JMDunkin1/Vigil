@@ -3,7 +3,7 @@ export const DISTRACTION_PRESETS = [
     id: "social",
     label: "Social",
     apps: ["Discord"],
-    sites: ["reddit.com", "x.com", "instagram.com", "tiktok.com", "facebook.com", "threads.net", "snapchat.com", "pinterest.com"]
+    sites: ["youtube.com", "reddit.com", "x.com", "instagram.com", "tiktok.com", "facebook.com", "threads.net", "snapchat.com", "pinterest.com", "discord.com"]
   },
   {
     id: "video",

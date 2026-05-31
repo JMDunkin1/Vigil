@@ -254,14 +254,21 @@ function bindEvents() {
   $("#iosMdmForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await post("/api/devices/ios/mdm/settings", {
+      const payload = {
         enabled: $("#iosMdmEnabled").checked,
         publicBaseUrl: $("#iosMdmPublicBaseUrl").value,
         topic: $("#iosMdmTopic").value,
         identityCertificateUuid: $("#iosMdmIdentityUuid").value,
         signMessage: $("#iosMdmSignMessage").checked,
         useDevelopmentApns: $("#iosMdmDevApns").checked
-      });
+      };
+      const identityPayload = $("#iosMdmIdentityPayload").value.trim();
+      const identityPassword = $("#iosMdmIdentityPassword").value;
+      if (identityPayload) payload.identityCertificatePayloadBase64 = identityPayload;
+      if (identityPassword) payload.identityCertificatePassword = identityPassword;
+      await post("/api/devices/ios/mdm/settings", payload);
+      $("#iosMdmIdentityPayload").value = "";
+      $("#iosMdmIdentityPassword").value = "";
       toast("iPhone MDM setup saved");
     } catch (error) {
       toast(error.message);
@@ -1370,17 +1377,20 @@ function renderDevices(devices) {
   $("#iosMdmPublicBaseUrl").value = mdm.publicBaseUrl || "";
   $("#iosMdmTopic").value = mdm.topic || "";
   $("#iosMdmIdentityUuid").value = mdm.identityCertificateUuid || "";
+  $("#iosMdmIdentityPayload").placeholder = mdm.identityCertificatePayloadSet ? "Saved payload is set" : "Base64 payload";
+  $("#iosMdmIdentityPassword").placeholder = mdm.identityCertificatePasswordSet ? "Saved password is set" : "Leave blank to keep saved password";
   $("#iosMdmSignMessage").checked = Boolean(mdm.signMessage);
   $("#iosMdmDevApns").checked = Boolean(mdm.useDevelopmentApns);
-  $("#iosMdmStatus").textContent = mdm.enabled ? (mdm.ready ? "Ready" : "Setup") : "Off";
+  $("#iosMdmStatus").textContent = mdm.enabled ? (mdm.ready ? "Ready" : (mdm.enrollmentReady ? "Queue" : "Setup")) : "Off";
   $("#iosMdmStatus").className = mdm.enabled ? (mdm.ready ? "pill good" : "pill warn") : "pill neutral";
-  $("#iosMdmTitle").textContent = mdm.ready ? "MDM ready" : (mdm.enabled ? "Setup needed" : "Server setup");
+  $("#iosMdmTitle").textContent = mdm.ready ? "MDM ready" : (mdm.enabled ? (mdm.enrollmentReady ? "Command queue ready" : "Setup needed") : "Server setup");
   $("#iosMdmText").textContent = mdm.note || "Enroll a supervised iPhone so policy changes come from this computer.";
 
   const mdmSummary = $("#iosMdmSummary");
   mdmSummary.replaceChildren();
   [
     ["Public URL", mdm.publicBaseUrl || "not set"],
+    ["Identity", mdm.identityCertificatePayloadSet ? "payload set" : "missing payload"],
     ["Enroll", mdm.enrollmentUrl || mdm.localEnrollmentPath || "not ready"],
     ["Devices", `${mdm.enrolledDeviceCount || 0} enrolled`],
     ["Commands", `${mdm.pendingCommandCount || 0} queued / ${mdm.sentCommandCount || 0} sent`],

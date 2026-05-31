@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { APP_NAME, PORT } from "./defaults.js";
-import { buildIosConfigurationProfile, iosPolicyTargets } from "./iosProfiles.js";
+import { buildIosConfigurationProfile, IOS_PROFILE_IDENTIFIER, iosPolicyTargets } from "./iosProfiles.js";
 import { plistData, toPlist } from "./plist.js";
 
 const MDM_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios.mdm";
@@ -44,33 +44,46 @@ export function normalizeIosMdmSettings(body = {}, existing = {}) {
 }
 
 export function publicIosMdmSettings(mdm = {}) {
-  const { enrollmentSecret, identityCertificatePayloadBase64, identityCertificatePassword, ...rest } = mdm || {};
+  const {
+    enrollmentSecret,
+    identityCertificatePayloadBase64,
+    identityCertificatePassword,
+    devices,
+    commands,
+    ...rest
+  } = mdm || {};
   return {
     ...rest,
     enrollmentSecretSet: Boolean(enrollmentSecret),
     identityCertificatePayloadSet: Boolean(identityCertificatePayloadBase64),
-    identityCertificatePasswordSet: Boolean(identityCertificatePassword)
+    identityCertificatePasswordSet: Boolean(identityCertificatePassword),
+    enrolledDeviceCount: normalizeMdmDevices(devices).filter((device) => device.status !== "checked-out").length,
+    pendingCommandCount: normalizeMdmCommands(commands).filter((command) => command.status === "queued").length
   };
 }
 
 export function iosMdmSummary(state, now = new Date()) {
-  const mdm = currentIosMdmSettings(state);
+  const mdm = ensureMdmState(state);
   const devices = normalizeMdmDevices(mdm.devices);
   const commands = normalizeMdmCommands(mdm.commands);
-  const blockers = iosMdmReadinessBlockers(mdm);
+  const setupBlockers = iosMdmReadinessBlockers(mdm);
+  const pushBlockers = setupBlockers.length ? [] : iosMdmPushBlockers();
+  const blockers = [...setupBlockers, ...pushBlockers];
   const enabled = Boolean(mdm.enabled);
   const enrolled = devices.filter((device) => device.status !== "checked-out");
   const pending = commands.filter((command) => command.status === "queued");
   const sent = commands.filter((command) => command.status === "sent");
   const completed = commands.filter((command) => command.status === "acknowledged");
   const failed = commands.filter((command) => ["error", "command-format-error"].includes(command.status));
+  const enrollmentReady = enabled && setupBlockers.length === 0;
   const ready = enabled && blockers.length === 0;
 
   return {
     enabled,
     ready,
-    status: !enabled ? "off" : (ready ? "ready" : "setup-needed"),
-    note: mdmNote(enabled, ready, blockers),
+    enrollmentReady,
+    status: !enabled ? "off" : (ready ? "ready" : (enrollmentReady ? "queue-only" : "setup-needed")),
+    note: mdmNote(enabled, ready, enrollmentReady, blockers),
     publicBaseUrl: mdm.publicBaseUrl,
     topic: mdm.topic,
     identityCertificateUuid: mdm.identityCertificateUuid,
@@ -108,7 +121,7 @@ export function markIosMdmEnrollmentGenerated(state, at = new Date()) {
 }
 
 export function buildIosMdmEnrollmentProfile(state, now = new Date()) {
-  const mdm = currentIosMdmSettings(state);
+  const mdm = ensureMdmState(state);
   const baseUrl = mdm.publicBaseUrl || `https://replace-with-public-mdm-host.example`;
   const mdmPayload = commonPayload("com.apple.mdm", "Vigil MDM", "mdm", {
     AccessRights: mdm.accessRights || DEFAULT_ACCESS_RIGHTS,
@@ -120,7 +133,7 @@ export function buildIosMdmEnrollmentProfile(state, now = new Date()) {
     UseDevelopmentAPNS: Boolean(mdm.useDevelopmentApns)
   });
 
-  if (mdm.identityCertificateUuid) {
+  if (mdm.identityCertificateUuid && mdm.identityCertificatePayloadBase64) {
     mdmPayload.IdentityCertificateUUID = mdm.identityCertificateUuid;
   }
 
@@ -223,35 +236,33 @@ export function handleIosMdmConnect(state, requestBody, now = new Date()) {
 export function queueIosMdmPolicyRefresh(state, reason = "policy-refresh", now = new Date(), options = {}) {
   const mdm = ensureMdmState(state);
   if (!mdm.enabled) return { queued: 0, reason: "disabled" };
-  const profile = buildIosConfigurationProfile(state, now);
-  const profileBase64 = Buffer.from(profile, "utf8").toString("base64");
   const policyHash = iosPolicyHash(state, now);
-  return queueIosMdmPolicyProfile(state, reason, now, options, profileBase64, policyHash);
+  return queueIosMdmPolicyCommand(state, reason, now, options, policyHash);
 }
 
 export function maybeQueueIosMdmPolicyRefresh(state, reason = "policy-refresh", now = new Date()) {
   const mdm = ensureMdmState(state);
   if (!mdm.enabled) return { queued: 0, reason: "disabled" };
-  const profile = buildIosConfigurationProfile(state, now);
   const policyHash = iosPolicyHash(state, now);
   if (mdm.lastPolicyHash === policyHash) return { queued: 0, unchanged: true, policyHash };
   mdm.lastPolicyHash = policyHash;
-  const profileBase64 = Buffer.from(profile, "utf8").toString("base64");
-  return queueIosMdmPolicyProfile(state, reason, now, {}, profileBase64, policyHash);
+  return queueIosMdmPolicyCommand(state, reason, now, {}, policyHash);
 }
 
-function queueIosMdmPolicyProfile(state, reason, now, options, profileBase64, policyHash) {
+function queueIosMdmPolicyCommand(state, reason, now, options, policyHash) {
   const mdm = ensureMdmState(state);
   const allowedUdids = options.udids ? new Set(options.udids) : null;
+  const commandTemplate = policyCommandTemplate(state, now);
   const devices = normalizeMdmDevices(mdm.devices)
     .filter((device) => device.status !== "checked-out")
     .filter((device) => !allowedUdids || allowedUdids.has(device.udid));
 
   let queued = 0;
   for (const device of devices) {
+    cancelQueuedPolicyCommands(mdm, device.udid, policyHash, now);
     const duplicate = mdm.commands.some((command) => (
       command.udid === device.udid
-      && command.requestType === "InstallProfile"
+      && isPolicyCommand(command)
       && ["queued", "sent"].includes(command.status)
       && command.policyHash === policyHash
     ));
@@ -260,15 +271,14 @@ function queueIosMdmPolicyProfile(state, reason, now, options, profileBase64, po
       id: randomUUID(),
       commandUuid: randomUUID(),
       udid: device.udid,
-      requestType: "InstallProfile",
+      ...commandTemplate,
       reason,
       status: "queued",
       queuedAt: now.toISOString(),
       sentAt: null,
       completedAt: null,
       attempts: 0,
-      policyHash,
-      profileBase64
+      policyHash
     });
     queued += 1;
   }
@@ -277,6 +287,39 @@ function queueIosMdmPolicyProfile(state, reason, now, options, profileBase64, po
   if (queued) mdm.lastCommandQueuedAt = now.toISOString();
   trimCommands(mdm);
   return { queued, deviceCount: devices.length, policyHash };
+}
+
+function policyCommandTemplate(state, now) {
+  if (!state.deviceControls?.ios?.enabled) {
+    return {
+      requestType: "RemoveProfile",
+      profileIdentifier: IOS_PROFILE_IDENTIFIER
+    };
+  }
+
+  const profile = buildIosConfigurationProfile(state, now);
+  return {
+    requestType: "InstallProfile",
+    profileBase64: Buffer.from(profile, "utf8").toString("base64")
+  };
+}
+
+function cancelQueuedPolicyCommands(mdm, udid, policyHash, now) {
+  for (const command of mdm.commands) {
+    if (
+      command.udid === udid
+      && isPolicyCommand(command)
+      && command.status === "queued"
+      && command.policyHash !== policyHash
+    ) {
+      command.status = "cancelled";
+      command.completedAt = now.toISOString();
+    }
+  }
+}
+
+function isPolicyCommand(command) {
+  return ["InstallProfile", "RemoveProfile"].includes(command?.requestType);
 }
 
 export function queueIosMdmInventory(state, udid, reason = "inventory", now = new Date()) {
@@ -373,14 +416,21 @@ function iosMdmReadinessBlockers(mdm) {
     blockers.push("Set the APNs MDM topic from your Apple MDM push certificate.");
   }
   if (!mdm.identityCertificateUuid) {
-    blockers.push("Set the UUID of the device identity certificate or SCEP payload used by the MDM profile.");
+    blockers.push("Set the UUID of the device identity certificate payload used by the MDM profile.");
+  } else if (!mdm.identityCertificatePayloadBase64) {
+    blockers.push("Paste the PKCS#12 identity certificate payload so the MDM profile can include the referenced UUID.");
   }
   return blockers;
 }
 
-function mdmNote(enabled, ready, blockers) {
+function iosMdmPushBlockers() {
+  return ["APNs push delivery is not implemented yet, so queued iPhone commands apply only when the device contacts the server."];
+}
+
+function mdmNote(enabled, ready, enrollmentReady, blockers) {
   if (!enabled) return "MDM server mode is off; static supervised profiles are still available.";
   if (ready) return "MDM enrollment profile and command endpoints are configured.";
+  if (enrollmentReady) return blockers[0] || "Enrollment is configured, but wireless MDM wakeups are not ready.";
   return blockers[0] || "Finish MDM setup before enrolling an iPhone.";
 }
 
@@ -391,6 +441,16 @@ function buildQueuedCommandPayload(command) {
       Command: {
         RequestType: "InstallProfile",
         Payload: plistData(command.profileBase64)
+      }
+    };
+  }
+
+  if (command.requestType === "RemoveProfile") {
+    return {
+      CommandUUID: command.commandUuid,
+      Command: {
+        RequestType: "RemoveProfile",
+        Identifier: command.profileIdentifier || IOS_PROFILE_IDENTIFIER
       }
     };
   }

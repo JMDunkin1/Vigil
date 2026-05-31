@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRICK_MODE_PROFILE_ID, defaultState, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
 import { accountStatusFromGroups, parseGroups } from "../src/account.js";
-import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest } from "../src/apiSecurity.js";
+import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "../src/apiSecurity.js";
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
 import { contentFilterRuleEntries, matchContentFilterUrl } from "../src/contentFilters.js";
 import { parseAdbDevices, parseAndroidPackages, shouldApplyAndroidBlock } from "../src/devices.js";
@@ -17,7 +17,8 @@ import { buildHostsBlock, extractHostsBlock, hostsBlockMatches, parseLaunchAgent
 import { clearIntegrityTamper, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, recordRuntimeHeartbeat } from "../src/integrityLockdown.js";
 import { assertIntentReason, intentReasonSummary } from "../src/intentReason.js";
 import { emergencyDelaySeconds, interventionSummary, recentBlockAttempts } from "../src/intervention.js";
-import { buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmSummary, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
+import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmSummary, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
+import { buildIosConfigurationProfile } from "../src/iosProfiles.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "../src/keyholder.js";
 import { activeLimitPolicy } from "../src/limits.js";
 import { parseProcessList } from "../src/macos.js";
@@ -128,6 +129,10 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   assert.equal(isTrustedExtensionRequest({ origin: "http://127.0.0.1:8787" }), false);
   assert.equal(extensionCorsHeaders({ origin: "chrome-extension://abc" })["Access-Control-Allow-Origin"], "chrome-extension://abc");
   assert.equal(extensionCorsHeaders({ origin: "https://example.com" })["Access-Control-Allow-Origin"], undefined);
+  assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "127.0.0.1:8787" } }).ok, true);
+  assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "localhost:8787" } }).ok, true);
+  assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "screen-time.example.test" } }).ok, false);
+  assert.equal(publicHostGuard({ path: "/mdm/checkin", headers: { host: "screen-time.example.test" } }).ok, true);
 }
 
 {
@@ -160,6 +165,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 {
   const state = defaultState();
   state.settings.foolproofModeEnabled = true;
+  state.settings.strictBypassProtectionEnabled = true;
   const missing = foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now);
   assert.equal(missing.some((item) => item.id === "state-seal"), true);
   assert.equal(missing.some((item) => item.id === "source-seal"), true);
@@ -244,6 +250,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 {
   const state = defaultState();
   state.settings.foolproofModeEnabled = true;
+  state.settings.strictBypassProtectionEnabled = true;
   state.integrity.runtime.lastHeartbeatAt = now.toISOString();
   state.extension.lastSeenAt = now.toISOString();
   state.extension.lastVersion = REQUIRED_EXTENSION_VERSION;
@@ -377,15 +384,16 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   assert.equal(integrityLockdownPolicy(state, now).kind, "integrity");
   assert.equal(activePolicy(state, now).kind, "integrity");
   assert.equal(shouldBlockSite(activePolicy(state, now).profile, "reddit.com"), true);
-  assert.equal(shouldBlockAppForPolicy(state, activePolicy(state, now), "Terminal"), true);
+  assert.equal(shouldBlockAppForPolicy(state, activePolicy(state, now), "App Store"), true);
   assert.equal(protectedEditBlockers(state, { kind: "settings" }, now).some((item) => item.kind === "integrity"), true);
-  assert.equal(sweepBlockedApps(state, {}, ["Terminal"], now).map((item) => item.app).includes("Terminal"), true);
+  assert.equal(sweepBlockedApps(state, {}, ["App Store"], now).map((item) => item.app).includes("App Store"), true);
   assert.equal(clearIntegrityTamper(state, now), true);
   assert.equal(integrityLockdownActive(state), false);
 }
 
 {
   const state = defaultState();
+  state.settings.strictBypassProtectionEnabled = true;
   state.activeSession = {
     id: "offline-strict",
     title: "Offline strict",
@@ -408,6 +416,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 
 {
   const state = defaultState();
+  state.settings.strictBypassProtectionEnabled = false;
   state.activeSession = {
     id: "clock-strict",
     title: "Clock strict",
@@ -557,6 +566,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 {
   const state = defaultState();
   const usage = {};
+  state.settings.strictBypassProtectionEnabled = true;
   state.activeSession = {
     id: "strict",
     title: "Strict focus",
@@ -574,7 +584,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   assert.deepEqual(sweepBlockedApps(state, usage, ["Slack", "Microsoft Teams", "Notion"], now).map((item) => item.app), ["Slack", "Microsoft Teams", "Notion"]);
   assert.equal(shouldBlockAppForPolicy(state, activePolicy(state, now), "Slack Helper (Renderer)"), true);
   assert.deepEqual(sweepBlockedApps(state, usage, ["Discord Helper", "Steam Helper"], now).map((item) => item.app), ["Discord Helper", "Steam Helper"]);
-  assert.deepEqual(sweepBlockedApps(state, usage, ["Terminal", "Activity Monitor"], now).map((item) => item.app), ["Terminal", "Activity Monitor"]);
+  assert.deepEqual(sweepBlockedApps(state, usage, ["Terminal", "Activity Monitor"], now).map((item) => item.app), ["Activity Monitor"]);
   assert.deepEqual(sweepBlockedApps(state, usage, ["App Store", "Installer", "Disk Utility"], now).map((item) => item.app), ["App Store", "Installer", "Disk Utility"]);
   assert.deepEqual(sweepBlockedApps(state, usage, ["Tailscale", "Cloudflare WARP", "Proxyman", "Little Snitch Configuration"], now).map((item) => item.app), ["Tailscale", "Cloudflare WARP", "Proxyman", "Little Snitch Configuration"]);
   assert.equal(shouldBlockAppForPolicy(state, activePolicy(state, now), "WireGuard Helper"), true);
@@ -595,7 +605,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   };
   assert.deepEqual(sweepBlockedApps(state, usage, ["Discord", "Dock"], now).map((item) => item.app), ["Discord"]);
   assert.deepEqual(sweepBlockedApps(state, usage, ["Google Chrome Helper"], now), []);
-  assert.deepEqual(sweepBlockedApps(state, usage, ["Terminal", "Dock"], now).map((item) => item.app), ["Terminal"]);
+  assert.deepEqual(sweepBlockedApps(state, usage, ["Terminal", "Dock"], now), []);
   state.activeSession.profileSnapshot = {
     ...state.profiles[0],
     blockedSites: [],
@@ -607,6 +617,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 
 {
   const state = defaultState();
+  state.settings.strictBypassProtectionEnabled = true;
   state.appLocks = [{
     id: "site-lock",
     name: "Site Lock",
@@ -630,6 +641,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 {
   const state = defaultState();
   const usage = {};
+  state.settings.strictBypassProtectionEnabled = true;
   state.limitBlocks = [{
     id: "site-limit-block",
     ruleId: "site-limit",
@@ -918,6 +930,7 @@ last exit code = 0
 
 {
   const state = defaultState();
+  state.settings.strictBypassProtectionEnabled = true;
   const brick = profileById(state, BRICK_MODE_PROFILE_ID);
   assert.equal(brick.name, "Mac Brick");
   assert.equal(brick.mode, "allowlist");
@@ -940,7 +953,7 @@ last exit code = 0
   assert.equal(policy.session.mode, "brick");
   assert.equal(shouldBlockAppForPolicy(state, policy, "Mail"), false);
   assert.equal(shouldBlockAppForPolicy(state, policy, "Discord"), true);
-  assert.equal(shouldBlockAppForPolicy(state, policy, "Terminal"), true);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Terminal"), false);
   assert.equal(emergencyUnlockAllowedForPolicy(policy), false);
   assert.equal(matchStrictBrowserControlUrl(state, policy, "chrome://extensions/")?.area, "extensions");
   assert.equal(matchStrictBrowserControlUrl(state, policy, "edge://settings/privacy")?.area, "settings");
@@ -965,6 +978,7 @@ last exit code = 0
 
 {
   const state = defaultState();
+  state.settings.strictBypassProtectionEnabled = true;
   state.activeSession = {
     id: "snap",
     title: "Snapshot focus",
@@ -977,6 +991,7 @@ last exit code = 0
     source: "manual",
     profileSnapshot: {
       ...state.profiles[0],
+      blockedApps: [],
       blockedSites: ["reddit.com"],
       allowedSites: []
     }
@@ -984,7 +999,7 @@ last exit code = 0
   state.profiles[0].blockedSites = [];
   const policy = activePolicy(state, now);
   assert.equal(shouldBlockSite(policy.profile, "reddit.com"), true);
-  assert.equal(shouldBlockAppForPolicy(state, policy, "Terminal"), true);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Terminal"), false);
   assert.equal(shouldBlockAppForPolicy(state, policy, "Activity Monitor Helper"), true);
   state.settings.strictBypassProtectionEnabled = false;
   assert.equal(shouldBlockAppForPolicy(state, policy, "Terminal"), false);
@@ -1320,6 +1335,20 @@ offline1 offline
 }
 
 {
+  const state = defaultState();
+  const disabledProfile = buildIosConfigurationProfile(state, now);
+  assert.doesNotMatch(disabledProfile, /blockedAppBundleIDs/);
+  assert.doesNotMatch(disabledProfile, /allowAppInstallation/);
+  assert.doesNotMatch(disabledProfile, /PayloadRemovalDisallowed<\/key>\s*<true/);
+
+  state.deviceControls.ios.enabled = true;
+  const enabledProfile = buildIosConfigurationProfile(state, now);
+  assert.match(enabledProfile, /blockedAppBundleIDs/);
+  assert.match(enabledProfile, /com\.google\.ios\.youtube/);
+  assert.match(enabledProfile, /allowAppInstallation/);
+}
+
+{
   const roundTrip = parsePlist(toPlist({
     MessageType: "TokenUpdate",
     Count: 2,
@@ -1332,18 +1361,24 @@ offline1 offline
   assert.equal(roundTrip.Token.__plistData, Buffer.from("hello").toString("base64"));
 
   const state = defaultState();
+  state.deviceControls.ios.enabled = true;
   state.deviceControls.ios.mdm = {
     ...state.deviceControls.ios.mdm,
     enabled: true,
     publicBaseUrl: "https://mdm.example.test",
     topic: "com.apple.mgmt.Example",
-    identityCertificateUuid: "11111111-2222-3333-4444-555555555555"
+    identityCertificateUuid: "11111111-2222-3333-4444-555555555555",
+    identityCertificatePayloadBase64: Buffer.from("identity").toString("base64")
   };
   const summary = iosMdmSummary(state, now);
-  assert.equal(summary.ready, true);
+  assert.equal(summary.enrollmentReady, true);
+  assert.equal(summary.ready, false);
+  assert.equal(summary.status, "queue-only");
   assert.match(summary.enrollmentUrl, /^https:\/\/mdm\.example\.test\/mdm\/enroll\.mobileconfig\?token=/);
 
   const enrollment = buildIosMdmEnrollmentProfile(state, now);
+  const profileToken = enrollment.match(/token=([^<]+)/)?.[1] || "";
+  assert.equal(authorizeIosMdmRequest(state, new URL(`https://mdm.example.test/mdm/checkin?token=${profileToken}`)), true);
   assert.match(enrollment, /com\.apple\.mdm/);
   assert.match(enrollment, /https:\/\/mdm\.example\.test\/mdm\/connect/);
   assert.match(enrollment, /com\.apple\.mgmt\.Example/);
@@ -1372,6 +1407,13 @@ offline1 offline
 
   const duplicate = queueIosMdmPolicyRefresh(state, "test-refresh", now, { udids: ["iphone-udid-1"] });
   assert.equal(duplicate.queued >= 0, true);
+
+  state.deviceControls.ios.enabled = false;
+  const removePolicy = queueIosMdmPolicyRefresh(state, "disable-ios", now, { udids: ["iphone-udid-1"] });
+  assert.equal(removePolicy.queued, 1);
+  const removeCommand = handleIosMdmConnect(state, { UDID: "iphone-udid-1", Status: "Idle" }, now);
+  assert.equal(removeCommand.body.Command.RequestType, "RemoveProfile");
+  assert.equal(removeCommand.body.Command.Identifier, "tech.caseline.vigil.ios-lock");
 }
 
 {
