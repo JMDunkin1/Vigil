@@ -1,0 +1,20 @@
+.DS_Store
+
+# Dependencies and build/test output
+node_modules/
+coverage/
+dist/
+npm-debug.log*
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Browser/debug artifacts
+.playwright-mcp/
+
+# Local runtime state, seals, keys, and temporary writes
+data/*
+!data/.gitkeep
+*.tmp
