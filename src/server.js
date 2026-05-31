@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { currentMacAccountStatus } from "./account.js";
-import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest } from "./apiSecurity.js";
+import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "./apiSecurity.js";
 import { APP_NAME, PORT } from "./defaults.js";
 import { addEvent, loadState, loadUsage, saveState, saveUsage } from "./store.js";
 import { assertTypingChallenge, attachTypingChallenge, TypingChallengeError } from "./challenge.js";
@@ -45,6 +45,11 @@ const monitor = startMonitor({ state, usage });
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host || `127.0.0.1:${PORT}`}`);
+    const hostGuard = publicHostGuard({ path: url.pathname, headers: request.headers });
+    if (!hostGuard.ok) {
+      sendJson(response, hostGuard.status || 403, { error: hostGuard.error || "Forbidden" });
+      return;
+    }
 
     if (url.pathname.startsWith("/mdm/")) {
       await handleMdm(request, response, url);

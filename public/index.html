@@ -690,7 +690,15 @@
               </label>
               <label>
                 Identity certificate UUID
-                <input id="iosMdmIdentityUuid" name="identityCertificateUuid" type="text" placeholder="UUID from the identity/SCEP payload">
+                <input id="iosMdmIdentityUuid" name="identityCertificateUuid" type="text" placeholder="UUID from the PKCS#12 payload">
+              </label>
+              <label>
+                Identity certificate PKCS#12
+                <textarea id="iosMdmIdentityPayload" name="identityCertificatePayloadBase64" rows="3" placeholder="Base64 payload"></textarea>
+              </label>
+              <label>
+                Identity certificate password
+                <input id="iosMdmIdentityPassword" name="identityCertificatePassword" type="password" placeholder="Leave blank to keep saved password">
               </label>
               <div class="toggle-grid">
                 <label class="checkline"><input id="iosMdmSignMessage" name="signMessage" type="checkbox"> Signed messages</label>
