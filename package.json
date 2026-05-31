@@ -1,0 +1,21 @@
+{
+  "name": "local-screen-time",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A local-first screen time and focus enforcement app for macOS.",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node scripts/self-test.mjs",
+    "hosts:preview": "node scripts/hosts-preview.mjs",
+    "hosts:apply": "sudo node scripts/apply-hosts.mjs",
+    "seal:source": "node scripts/seal-source.mjs",
+    "doctor": "node scripts/doctor.mjs",
+    "install:agent": "node scripts/install-launch-agent.mjs",
+    "uninstall:agent": "node scripts/uninstall-launch-agent.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
