@@ -33,6 +33,7 @@ import { ProtectionError, assertProtectedEditAllowed, confirmMaintenanceWindow, 
 import { distractionPresets } from "./presets.js";
 import { focusReport } from "./reports.js";
 import { assertKeyholderPasscode, KeyholderError, keyholderSummary, updateKeyholderSettings } from "./keyholder.js";
+import { vigilAppInfo, vigilStateHeaders } from "./vigilHealth.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { clampNumber, weekKey } from "./time.js";
 import { syncDeviceUsageSnapshot, usageSummary } from "./usage.js";
@@ -56,7 +57,7 @@ export async function startVigilServer(options = {}) {
   }
 
   activeHost = options.host || DEFAULT_HOST;
-  activePort = Number(options.port || PORT);
+  activePort = Number(options.port ?? PORT);
   startedAt = new Date().toISOString();
   state = await loadState();
   usage = await loadUsage();
@@ -299,7 +300,7 @@ async function handleApi(request, response, url) {
     const foolproof = foolproofSummary(state, { hosts, firewall, agent, account, monitor: monitor.status, stateSeal, sourceSeal });
     await saveState(state);
     sendJson(response, 200, {
-      app: { name: APP_NAME, port: PORT, startedAt },
+      app: vigilAppInfo({ port: activePort, startedAt }),
       state: publicState(state, policy),
       usage: usageSummary(usage, state),
       report: focusReport(usage, state),
@@ -324,7 +325,7 @@ async function handleApi(request, response, url) {
         foolproof,
         audit: hardeningAudit({ hosts, firewall, agent, account, protection, monitor: monitor.status, foolproof, stateSeal, sourceSeal })
       }
-    });
+    }, vigilStateHeaders());
     return;
   }
 

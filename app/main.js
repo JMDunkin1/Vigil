@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, shell } from "electron";
 import { join } from "node:path";
+import { fetchVigilStateHealth } from "../src/vigilHealth.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.VIGIL_PORT || process.env.VIGIL_PORT || 8787);
@@ -78,14 +79,18 @@ async function ensureVigilServer() {
 }
 
 async function serverIsHealthy() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2000);
-    const response = await fetch(`${BASE_URL}/api/state`, { signal: controller.signal });
-    clearTimeout(timeout);
-    return response.ok;
+    const health = await fetchVigilStateHealth(`${BASE_URL}/api/state`, {
+      signal: controller.signal,
+      expectedPort: PORT
+    });
+    return health.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

@@ -188,7 +188,7 @@ export function recordRuntimeHeartbeat(state, now = new Date()) {
   return runtime.lastHeartbeatAt;
 }
 
-export function integrityRuntimeSummary(state, now = new Date()) {
+export function integrityRuntimeSummary(state) {
   const runtime = ensureRuntime(state);
   if (runtime.downtimeDetectedAt) {
     return {

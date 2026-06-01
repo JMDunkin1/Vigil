@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fetchVigilStateHealth } from "../src/vigilHealth.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const serverPath = join(root, "src", "server.js");
@@ -33,14 +34,18 @@ while (true) {
 }
 
 async function serverIsHealthy() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 2000);
-    const response = await fetch(healthUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-    return response.ok;
+    const health = await fetchVigilStateHealth(healthUrl, {
+      signal: controller.signal,
+      expectedPort: 8787
+    });
+    return health.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
