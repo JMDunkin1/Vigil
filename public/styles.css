@@ -377,6 +377,118 @@ button.compact {
   box-shadow: var(--shadow);
 }
 
+.device-target-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 58%, transparent);
+}
+
+.device-target-head,
+.device-chip {
+  display: flex;
+  align-items: center;
+}
+
+.device-target-head {
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.device-target-head strong {
+  color: var(--primary-strong);
+}
+
+.device-switch {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.device-chip {
+  min-height: 58px;
+  justify-content: start;
+  gap: 10px;
+  border-color: var(--line);
+  background: var(--surface-strong);
+  color: var(--ink);
+  text-align: left;
+}
+
+.device-chip.is-selected {
+  border-color: color-mix(in srgb, var(--primary) 62%, var(--line));
+  background: color-mix(in srgb, var(--primary) 13%, var(--surface-strong));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 32%, transparent);
+}
+
+.device-chip.has-session {
+  border-color: color-mix(in srgb, var(--amber) 70%, var(--line));
+}
+
+.device-chip span:not(.device-icon) {
+  display: block;
+  min-width: 0;
+}
+
+.device-chip em {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.device-icon {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-block;
+  border: 2px solid currentColor;
+  color: var(--primary);
+}
+
+.device-icon.computer {
+  width: 24px;
+  height: 16px;
+  border-radius: 4px;
+}
+
+.device-icon.computer::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: -7px;
+  height: 2px;
+  background: currentColor;
+  box-shadow: 0 4px 0 currentColor;
+}
+
+.device-icon.phone {
+  width: 16px;
+  height: 26px;
+  border-radius: 5px;
+}
+
+.device-icon.phone::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  transform: translateX(-50%);
+}
+
 .advanced-line {
   grid-column: 1 / -1;
   border-top: 1px solid var(--line);
@@ -409,6 +521,39 @@ button.compact {
 .hero-actions .primary {
   min-height: 58px;
   font-size: 1.06rem;
+}
+
+.home-presets {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.preset-button {
+  min-height: 64px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  text-align: left;
+}
+
+.preset-button span,
+.preset-button em {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.preset-button span {
+  font-size: 0.96rem;
+}
+
+.preset-button em {
+  opacity: 0.78;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 800;
 }
 
 .brick-quick {
@@ -1343,6 +1488,8 @@ button:focus-visible {
 
   .advanced-grid,
   .hero-actions,
+  .device-switch,
+  .home-presets,
   .home-strip,
   .form-row,
   .form-row.thirds,

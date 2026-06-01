@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BRICK_MODE_PROFILE_ID, defaultState, PANIC_LOCK_PROFILE_ID, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, defaultState, PANIC_LOCK_PROFILE_ID, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { accountStatusFromGroups, parseGroups } from "../src/account.js";
 import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "../src/apiSecurity.js";
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
@@ -24,7 +24,7 @@ import { activeLimitPolicy } from "../src/limits.js";
 import { parseProcessList } from "../src/macos.js";
 import { appQuitEscalationDecision, shouldLockScreenForPolicy, sweepBlockedApps } from "../src/monitor.js";
 import { parsePlist, plistData, toPlist } from "../src/plist.js";
-import { activePolicy, activeSchedule, appMatchesAppTargets, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, panicLockProfile, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
+import { activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, panicLockProfile, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
 import { distractionPresets } from "../src/presets.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, protectedEditBlockers, requestMaintenanceWindow } from "../src/protection.js";
 import { focusReport } from "../src/reports.js";
@@ -758,9 +758,9 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   const block = buildHostsBlock(state);
   const hosts = `127.0.0.1 localhost\n\n${block}\n\n255.255.255.255 broadcasthost\n`;
   assert.equal(hostsBlockMatches(extractHostsBlock(hosts), block), true);
-  assert.match(block, /0\.0\.0\.0 youtu\.be/);
-  assert.match(block, /0\.0\.0\.0 youtube-nocookie\.com/);
-  assert.equal(hostsBlockMatches(extractHostsBlock(hosts).replace("reddit.com", "example.com"), block), false);
+  assert.match(block, /0\.0\.0\.0 pornhub\.com/);
+  assert.doesNotMatch(block, /0\.0\.0\.0 youtube\.com/);
+  assert.equal(hostsBlockMatches(extractHostsBlock(hosts).replace("pornhub.com", "example.com"), block), false);
   const legacyBlock = block
     .replace("# BEGIN VIGIL", LEGACY_HOSTS_BEGIN)
     .replace("# END VIGIL", LEGACY_HOSTS_END);
@@ -833,7 +833,11 @@ last exit code = 0
   assert.match(serverSource, /assertIntentReason/);
   assert.match(serverSource, /focusSoundPreset/);
   const indexSource = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
-  assert.match(indexSource, /id="startBrickMode"/);
+  assert.match(indexSource, /id="startNormalMode"/);
+  assert.match(indexSource, /id="startSoftBlock"/);
+  assert.match(indexSource, /id="startFullBrick"/);
+  assert.match(indexSource, /data-device-target="computer"/);
+  assert.match(indexSource, /data-device-target="phone"/);
   assert.match(indexSource, /id="startPanicLock"/);
   assert.match(indexSource, /id="panicLockDurationMinutes"/);
   assert.match(indexSource, /id="focusShortcutEnabled"/);
@@ -1021,6 +1025,66 @@ last exit code = 0
   assert.equal(appMatchesAppTargets("Cloudflare WARP", ["WARP"]), true);
   assert.equal(appMatchesAppTargets("Little Snitch Network Monitor", ["Little Snitch Configuration"]), true);
   assert.equal(appMatchesAppTargets("Charles Proxy", ["Charles"]), true);
+}
+
+{
+  const state = defaultState();
+  const usage = {};
+  const explicit = evaluateExtensionCheck(state, usage, { url: "https://www.pornhub.com/", event: "navigation" }, now);
+  assert.equal(explicit.blocked, true);
+  assert.equal(explicit.policy.kind, "baseline");
+  const baselineYoutube = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
+  assert.equal(baselineYoutube.blocked, false);
+
+  const softProfile = profileById(state, SOFT_BLOCK_PROFILE_ID);
+  state.activeSessions.phone = {
+    id: "phone-soft",
+    title: "Phone Soft Block",
+    mode: "focus",
+    profileId: SOFT_BLOCK_PROFILE_ID,
+    lockLevel: "light",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: true,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: softProfile
+  };
+  assert.equal(activePolicy(state, now), null);
+  assert.equal(activePolicy(state, now, { device: "phone" }).profile.id, SOFT_BLOCK_PROFILE_ID);
+  assert.equal(shouldApplyAndroidBlock(state, now), false);
+
+  const computerSoft = {
+    ...state.activeSessions.phone,
+    id: "computer-soft",
+    title: "Computer Soft Block",
+    deviceTargets: ["computer"]
+  };
+  state.activeSessions.computer = computerSoft;
+  state.activeSession = computerSoft;
+  const shorts = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/shorts/abc", event: "navigation" }, now);
+  assert.equal(shorts.blocked, true);
+  const watch = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
+  assert.equal(watch.blocked, false);
+  const hosts = buildHostsBlock(state, now);
+  assert.match(hosts, /0\.0\.0\.0 pornhub\.com/);
+  assert.doesNotMatch(hosts, /0\.0\.0\.0 youtube\.com/);
+
+  const bothDevices = {
+    ...computerSoft,
+    id: "both-devices",
+    title: "Both devices",
+    deviceTargets: ["computer", "phone"]
+  };
+  state.activeSessions.computer = bothDevices;
+  state.activeSessions.phone = bothDevices;
+  state.activeSession = bothDevices;
+  assert.equal(activePolicy(state, now).session.id, "both-devices");
+  assert.equal(activePolicy(state, now, { device: "phone" }).session.id, "both-devices");
+  assert.deepEqual(clearSessionsById(state, "both-devices"), ["computer", "phone"]);
+  assert.equal(state.activeSession, null);
+  assert.equal(activePolicy(state, now), null);
+  assert.equal(activePolicy(state, now, { device: "phone" }), null);
 }
 
 {
@@ -1487,9 +1551,25 @@ offline1 offline
 
   state.deviceControls.ios.enabled = true;
   const enabledProfile = buildIosConfigurationProfile(state, now);
-  assert.match(enabledProfile, /blockedAppBundleIDs/);
-  assert.match(enabledProfile, /com\.google\.ios\.youtube/);
+  assert.doesNotMatch(enabledProfile, /blockedAppBundleIDs/);
+  assert.match(enabledProfile, /pornhub\.com/);
   assert.match(enabledProfile, /allowAppInstallation/);
+
+  state.activeSessions.phone = {
+    id: "phone-strict",
+    title: "Phone strict",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    deviceTargets: ["phone"]
+  };
+  const activePhoneProfile = buildIosConfigurationProfile(state, now);
+  assert.match(activePhoneProfile, /blockedAppBundleIDs/);
+  assert.match(activePhoneProfile, /com\.google\.ios\.youtube/);
 }
 
 {

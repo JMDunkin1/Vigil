@@ -3,7 +3,7 @@ import { activeAppLockPolicy } from "./appLocks.js";
 import { contentFilterEnabled, contentFilterRuleEntries, matchContentFilterUrl } from "./contentFilters.js";
 import { integrityLockdownActive } from "./integrityLockdown.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
-import { activePolicy, expandSiteTargets, matchBlockedUrlPattern, normalizeHost, normalizeUrlPattern, shouldBlockSite, shouldBlockUrl } from "./policy.js";
+import { activePolicy, baselinePolicy, expandSiteTargets, matchBlockedUrlPattern, normalizeHost, normalizeUrlPattern, shouldBlockSite, shouldBlockUrl } from "./policy.js";
 import { recordOpen, recordUsage } from "./usage.js";
 
 export const EXTENSION_APP_NAME = "Browser Extension";
@@ -11,6 +11,11 @@ export const EXTENSION_APP_NAME = "Browser Extension";
 export function extensionRuleSnapshot(state, now = new Date()) {
   const entries = new Map();
   const sessionPolicy = activePolicy(state, now);
+  const baseline = baselinePolicy(state, now, { device: "computer" });
+
+  if (baseline?.profile?.mode === "blocklist") {
+    addRuleEntries(entries, baseline.profile.blockedSites, baseline, "baseline");
+  }
 
   if (sessionPolicy?.profile?.mode === "blocklist") {
     addRuleEntries(entries, sessionPolicy.profile.blockedSites, sessionPolicy, "session");
@@ -274,7 +279,10 @@ function isLocalHost(domain) {
 function blockingPolicyFor(state, usage, sample, now) {
   const sessionPolicy = activePolicy(state, now);
   if (sessionPolicy && (shouldBlockUrl(sessionPolicy.profile, sample.url) || shouldBlockSite(sessionPolicy.profile, sample.hostname))) return sessionPolicy;
-  return activeAppLockPolicy(state, sample, now) || activeLimitPolicy(state, usage, sample, now);
+  const active = activeAppLockPolicy(state, sample, now) || activeLimitPolicy(state, usage, sample, now);
+  if (active) return active;
+  const baseline = baselinePolicy(state, now, { device: "computer" });
+  return baseline && (shouldBlockUrl(baseline.profile, sample.url) || shouldBlockSite(baseline.profile, sample.hostname)) ? baseline : null;
 }
 
 function matchContentFilterForActivePolicy(state, url, now) {

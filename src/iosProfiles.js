@@ -5,7 +5,7 @@ import {
   DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS
 } from "./defaults.js";
 import { toPlist } from "./plist.js";
-import { activePolicy, expandSiteTargets, profileById } from "./policy.js";
+import { activePolicy, baselinePolicy, expandSiteTargets, profileById } from "./policy.js";
 
 export const IOS_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
 const MAX_DENY_URLS = 500;
@@ -129,32 +129,36 @@ export function buildIosConfigurationProfile(state, now = new Date()) {
 
 export function iosPolicyTargets(state, now = new Date()) {
   const settings = currentIosSettings(state);
-  const policy = activePolicy(state, now);
+  const policy = activePolicy(state, now, { device: "phone" }) || baselinePolicy(state, now, { device: "phone" });
   const profile = policy?.profile
     || profileById(state, settings.profileId)
     || state.profiles?.[0]
     || null;
 
   const profileName = policy?.session?.title || profile?.name || "Saved iPhone policy";
-  const appBundleIds = settings.mode === "allowlist"
+  const appMode = profile?.mode === "allowlist" ? "allowlist" : settings.mode;
+  const webMode = profile?.mode === "allowlist" ? "allowlist" : settings.webMode;
+  const appBundleIds = profile?.phoneAppBlocking === false
+    ? []
+    : appMode === "allowlist"
     ? settings.allowedAppBundleIds
     : settings.blockedAppBundleIds;
 
-  const profileSites = profile?.mode === "allowlist" || settings.webMode === "allowlist"
+  const profileSites = webMode === "allowlist"
     ? profile?.allowedSites || []
     : profile?.blockedSites || [];
-  const profilePatterns = profile?.mode === "allowlist" || settings.webMode === "allowlist"
+  const profilePatterns = webMode === "allowlist"
     ? []
     : profile?.blockedUrlPatterns || [];
 
-  const deniedUrls = settings.webMode === "allowlist"
+  const deniedUrls = webMode === "allowlist"
     ? []
     : uniqueUrls([
       ...urlsFromSiteTargets(profileSites),
       ...urlsFromPatterns(profilePatterns),
       ...settings.deniedUrls
     ]).slice(0, MAX_DENY_URLS);
-  const allowedUrls = settings.webMode === "allowlist"
+  const allowedUrls = webMode === "allowlist"
     ? uniqueUrls([
       ...urlsFromSiteTargets(profileSites),
       ...settings.allowedUrls
@@ -163,7 +167,8 @@ export function iosPolicyTargets(state, now = new Date()) {
 
   return {
     profileName,
-    appMode: settings.mode,
+    appMode,
+    webMode,
     appBundleIds,
     deniedUrls,
     allowedUrls
@@ -210,6 +215,7 @@ function disabledPolicyTargets(settings) {
   return {
     profileName: "iPhone blocking disabled",
     appMode: settings.mode,
+    webMode: settings.webMode,
     appBundleIds: [],
     deniedUrls: [],
     allowedUrls: []
@@ -220,7 +226,7 @@ function restrictionsPayload(settings, targets) {
   if (!settings.enabled) return null;
   const restrictions = {};
   if (settings.blockApps && targets.appBundleIds.length) {
-    if (settings.mode === "allowlist") restrictions.allowListedAppBundleIDs = targets.appBundleIds;
+    if (targets.appMode === "allowlist") restrictions.allowListedAppBundleIDs = targets.appBundleIds;
     else restrictions.blockedAppBundleIDs = targets.appBundleIds;
   }
 
@@ -248,7 +254,7 @@ function webContentFilterPayload(settings, targets) {
     FilterType: "BuiltIn"
   };
 
-  if (settings.webMode === "allowlist") {
+  if (targets.webMode === "allowlist") {
     content.AllowListBookmarks = targets.allowedUrls.map((url) => ({
       Title: bookmarkTitle(url),
       URL: url
