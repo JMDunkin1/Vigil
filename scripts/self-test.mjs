@@ -30,6 +30,7 @@ import { assertProtectedEditAllowed, confirmMaintenanceWindow, protectedEditBloc
 import { focusReport } from "../src/reports.js";
 import { applySealVerificationToState, markStateSealed, stateDigest, stateSealSummary, verifyStateTextSeal, writeStateTextSeal } from "../src/seal.js";
 import { sourceManifestText, sourceSealStatus, writeSourceSeal } from "../src/sourceSeal.js";
+import { usageSummary } from "../src/usage.js";
 
 const now = new Date("2026-05-28T14:00:00-04:00");
 
@@ -1508,12 +1509,69 @@ last exit code = 0
       apps: { Codex: 5400 },
       sites: {},
       opens: { apps: {}, sites: {} }
+    },
+    "2026-05-20": {
+      totalSeconds: 3600,
+      apps: { Codex: 2400 },
+      sites: { "reddit.com": 1200 },
+      opens: { apps: {}, sites: { "reddit.com": 3 } }
     }
   };
   const report = focusReport(usage, state, new Date("2026-05-28T14:00:00-04:00"));
   assert.equal(report.currentWeek.totals.trackedDays, 2);
   assert.equal(report.topCulprits[0].name, "reddit.com");
-  assert.equal(report.milestones.some((item) => item.id === "one-hour-saved"), true);
+  assert.equal(report.comparison.distractingPercentDelta, -50);
+  assert.equal(report.milestones.some((item) => item.id === "clean-tracked-day" && item.achieved), true);
+}
+
+{
+  const state = defaultState();
+  const emptySummary = usageSummary({}, state, now);
+  assert.equal(emptySummary.protectedSeconds, 0);
+  assert.equal(emptySummary.blockCount, 0);
+  assert.equal(emptySummary.savedSeconds, 0);
+
+  const scheduledState = defaultState();
+  scheduledState.schedules = [{
+    id: "scheduled-dashboard-lock",
+    name: "Scheduled dashboard lock",
+    enabled: true,
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    days: [now.getDay()],
+    start: "13:30",
+    end: "15:00",
+    wifiNetworks: [],
+    deviceTargets: ["computer"]
+  }];
+  const scheduledSummary = usageSummary({}, scheduledState, now);
+  assert.equal(scheduledSummary.protectedSeconds, 30 * 60);
+
+  const startedAt = new Date(now.getTime() - 45 * 60 * 1000).toISOString();
+  const endedAt = new Date(now.getTime() - 15 * 60 * 1000).toISOString();
+  const session = {
+    id: "dashboard-session",
+    title: "Dashboard session",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "light",
+    startedAt,
+    endsAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+    canEndEarly: true,
+    source: "manual"
+  };
+  state.events = [
+    { id: "block-url", type: "blocked_url", at: now.toISOString(), detail: { site: "instagram.com" } },
+    { id: "old-block", type: "blocked_app", at: new Date(now.getTime() - 26 * 60 * 60 * 1000).toISOString(), detail: { app: "Discord" } },
+    { id: "session-ended", type: "session_ended", at: endedAt, detail: session },
+    { id: "block-site", type: "blocked_site", at: new Date(now.getTime() - 5 * 60 * 1000).toISOString(), detail: { site: "reddit.com" } },
+    { id: "session-started", type: "session_started", at: startedAt, detail: session }
+  ];
+  const summary = usageSummary({}, state, now);
+  assert.equal(summary.protectedSeconds, 30 * 60);
+  assert.equal(summary.blockCount, 2);
+  assert.equal(summary.savedSeconds, 0);
 }
 
 {

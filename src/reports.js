@@ -1,8 +1,6 @@
 import { dateKey } from "./time.js";
 import { appMatchesAppTargets, hostMatchesSiteTargets } from "./policy.js";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 export function focusReport(usage, state, now = new Date()) {
   const today = startOfDay(now);
   const weekStart = startOfWeek(today);
@@ -10,11 +8,11 @@ export function focusReport(usage, state, now = new Date()) {
   const previousWeekEnd = addDays(weekStart, -1);
   const baselineSeconds = (state.settings.baselineDailyMinutes || 300) * 60;
   const focusScoreGoal = state.settings.focusScoreGoal || 80;
-  const currentDays = rangeDays(weekStart, 7).map((date) => dayReport(usage, state, date, baselineSeconds));
-  const previousDays = rangeDays(previousWeekStart, 7).map((date) => dayReport(usage, state, date, baselineSeconds));
+  const currentDays = rangeDays(weekStart, 7).map((date) => dayReport(usage, state, date));
+  const previousDays = rangeDays(previousWeekStart, 7).map((date) => dayReport(usage, state, date));
   const current = aggregateWeek(currentDays);
   const previous = aggregateWeek(previousDays);
-  const allDays = rangeDays(addDays(today, -60), 61).map((date) => dayReport(usage, state, date, baselineSeconds));
+  const allDays = rangeDays(addDays(today, -60), 61).map((date) => dayReport(usage, state, date));
   const streak = focusStreak(allDays, focusScoreGoal, today);
   const milestones = buildMilestones({ state, current, streak, allDays, focusScoreGoal });
   const topCulprits = topCombined(currentDays, "sites").concat(topCombined(currentDays, "apps")).slice(0, 6);
@@ -42,24 +40,23 @@ export function focusReport(usage, state, now = new Date()) {
     streak,
     milestones,
     topCulprits,
-    projections: projections(current, baselineSeconds),
+    projections: projections(),
     insights: insights({ current, previous, topCulprits, streak, bestDay, worstDay, focusScoreGoal })
   };
 }
 
-function dayReport(usage, state, date, baselineSeconds) {
+function dayReport(usage, state, date) {
   const key = dateKey(date);
   const day = normalizeDay(usage[key]);
   const distractingSeconds = sumBlockedSeconds(day, state);
   const totalSeconds = day.totalSeconds || 0;
-  const savedSeconds = Math.max(0, baselineSeconds - distractingSeconds);
   const focusScore = totalSeconds ? Math.max(0, Math.round(100 - (distractingSeconds / Math.max(totalSeconds, 1)) * 100)) : 100;
   return {
     key,
     label: date.toLocaleDateString(undefined, { weekday: "short" }),
     totalSeconds: Math.round(totalSeconds),
     distractingSeconds: Math.round(distractingSeconds),
-    savedSeconds: Math.round(savedSeconds),
+    savedSeconds: 0,
     focusScore,
     apps: day.apps,
     sites: day.sites,
@@ -87,9 +84,15 @@ function compareWeeks(current, previous) {
   return {
     savedSecondsDelta: current.savedSeconds - previous.savedSeconds,
     distractingSecondsDelta: current.distractingSeconds - previous.distractingSeconds,
+    distractingPercentDelta: percentDelta(current.distractingSeconds, previous.distractingSeconds),
     focusScoreDelta: current.averageFocusScore - previous.averageFocusScore,
     trackedDaysDelta: current.trackedDays - previous.trackedDays
   };
+}
+
+function percentDelta(current, previous) {
+  if (!previous) return current ? null : 0;
+  return Math.round(((current - previous) / previous) * 100);
 }
 
 function focusStreak(days, goal, today) {
@@ -109,19 +112,18 @@ function focusStreak(days, goal, today) {
 }
 
 function buildMilestones({ state, current, streak, allDays, focusScoreGoal }) {
-  const totalSavedSeconds = sum(allDays, "savedSeconds");
   const enabledRules = [
     ...(state.schedules || []).filter((item) => item.enabled),
     ...(state.limitRules || []).filter((item) => item.enabled),
     ...(state.appLocks || []).filter((item) => item.enabled)
   ].length;
   const events = state.events || [];
+  const hasCleanTrackedDay = allDays.some((day) => day.tracked && day.distractingSeconds === 0);
   return [
     milestone("first-lock", "First lock", events.some((event) => event.type === "session_started")),
     milestone("rules-enabled", "Rules armed", enabledRules >= 1),
-    milestone("one-hour-saved", "1 hour saved", totalSavedSeconds >= 3600),
-    milestone("ten-hours-saved", "10 hours saved", totalSavedSeconds >= 10 * 3600),
-    milestone("full-day-saved", "1 day reclaimed", totalSavedSeconds >= 24 * 3600),
+    milestone("clean-tracked-day", "Clean tracked day", hasCleanTrackedDay),
+    milestone("low-distraction-week", "Low distraction week", current.trackedDays >= 3 && current.averageDailyDistractionSeconds <= 30 * 60),
     milestone("three-day-streak", "3 day streak", streak.days >= 3),
     milestone("seven-day-streak", "7 day streak", streak.days >= 7),
     milestone("strong-week", "Strong week", current.trackedDays >= 5 && current.averageFocusScore >= focusScoreGoal)
@@ -150,17 +152,16 @@ function insights({ current, previous, topCulprits, streak, bestDay, worstDay, f
   return output.slice(0, 5);
 }
 
-function projections(current, baselineSeconds) {
-  const dailySaved = current.trackedDays ? current.savedSeconds / current.trackedDays : baselineSeconds;
+function projections() {
   return {
-    weeklySavedSeconds: Math.round(dailySaved * 7),
-    yearlySavedSeconds: Math.round(dailySaved * 365),
-    yearsReclaimedAtCurrentPace: Math.round((dailySaved * 365 * 10 / (365 * DAY_MS / 1000)) * 10) / 10
+    weeklySavedSeconds: 0,
+    yearlySavedSeconds: 0,
+    yearsReclaimedAtCurrentPace: 0
   };
 }
 
 function bestTrackedDay(days) {
-  return days.filter((day) => day.tracked).sort((a, b) => b.focusScore - a.focusScore || b.savedSeconds - a.savedSeconds)[0] || null;
+  return days.filter((day) => day.tracked).sort((a, b) => b.focusScore - a.focusScore || a.distractingSeconds - b.distractingSeconds)[0] || null;
 }
 
 function worstTrackedDay(days) {
