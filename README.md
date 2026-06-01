@@ -2,6 +2,8 @@
 
 A local-first focus enforcement app for this Mac. It borrows the strongest ideas from modern focus enforcement tools: desktop-controlled blocking, locked sessions, schedules, rehab mode, content filtering, usage reports, streaks, app limits, allow/block modes, emergency unlock limits, and optional tamper resistance.
 
+Vigil is Apple-first. Integrations are expected to work across Apple products: macOS locally, Safari/Chromium browsers on Mac, and supervised iPhone/iPad device-management paths. Android integrations are not part of the supported product direction.
+
 ## Quick Start
 
 ```sh
@@ -34,7 +36,7 @@ The app works best after granting Accessibility permission to the terminal or ap
 
 - Local app views for focus, sleep, rehab, and Mac Brick sessions.
 - Shift/Brick-style Mac Brick profile and one-tap strict commitment lock that allowlists only essential apps and approved work sites.
-- Weekly Focus Report with focus score trends, streaks, saved-time projections, culprit apps/sites, and milestones.
+- Weekly Focus Report with focus score trends, distraction averages, streaks, culprit apps/sites, and milestones.
 - Strict sessions that cannot be ended early without spending an emergency unlock.
 - Commitment locks for deep focus, rehab, or schedules that refuse ordinary emergency unlocks.
 - Opal-style focus cycles with automatic work phases and short unblocked breaks.
@@ -49,12 +51,11 @@ The app works best after granting Accessibility permission to the terminal or ap
 - Random typing challenges on emergency, App Lock, and maintenance confirmations.
 - Configurable intent-reason minimums for emergency unlocks, App Lock unlocks, and protected maintenance windows.
 - Brick-style distance key that can be typed, stored as a removable key file, or printed as a scannable QR key for emergency, App Lock, and maintenance confirmations.
-- Optional Android ADB companion blocking for selected phone packages during locks.
 - Supervised iPhone profile generation for desktop-managed app and web restrictions.
 - Experimental local iPhone MDM server scaffolding with enrollment profiles, check-in/connect endpoints, enrolled-device tracking, and queued InstallProfile policy refreshes.
 - Optional unpacked browser extension companion for faster tab-level blocking and browser time-limit tracking.
 - Browser extension dynamic block rules that redirect active blocked domains, safe URL patterns, and allowlist/Brick Mode misses at request time while acknowledging installed rule counts to Foolproof mode.
-- Content feature filters that block short-form and infinite-scroll surfaces such as YouTube Shorts, Instagram Reels, Reddit Popular, X Explore, and TikTok during active locks.
+- Content feature filters that block short-form and infinite-scroll surfaces such as YouTube Shorts, Instagram Reels, Reddit Popular, X Explore, and TikTok during active locks while keeping regular Instagram pages such as DMs and Stories available.
 - Custom URL pattern blocking for paths and keywords such as `youtube.com/shorts`, `/reels`, or `casino`.
 - Protected edits: strict active protections block weakening config changes until a maintenance cooldown completes.
 - Local API mutation hardening blocks cross-site localhost POSTs, requires JSON mutations, and adds clickjacking protection headers.
@@ -138,7 +139,9 @@ The iPhone controls are modeled after desktop-owned phone blockers such as SHIFT
 - an experimental MDM enrollment profile at `/api/devices/ios/mdm/enrollment.mobileconfig`
 - public MDM endpoints under `/mdm/enroll.mobileconfig`, `/mdm/checkin`, `/mdm/connect`, and `/mdm/policy.mobileconfig`
 
-Real iOS MDM enrollment requires Apple supervision plus a public HTTPS URL, an APNs MDM topic/certificate, and an identity certificate or SCEP payload. The current server handles enrollment/check-in and queues policy-profile installs for enrolled devices; APNs push delivery is still the next piece needed for wireless wakeups after the phone is already enrolled.
+Real iOS MDM enrollment requires Apple supervision plus a public HTTPS URL, an APNs MDM topic and push certificate, and an identity certificate or SCEP payload. The current server handles enrollment/check-in, queues policy-profile installs for enrolled devices, and uses the saved APNs MDM push certificate to wake devices with queued commands. On first enrollment, the device's TokenUpdate queues the current policy and immediately attempts the APNs wake-up; later policy changes follow the same queue-and-push flow.
+
+Apple reality check for Instagram Reels: public iOS APIs can shield whole apps, web domains, and supervised web content, but they do not let Vigil inspect or rewrite the official Instagram app's internal Reels screen. Reels-only filtering on Apple platforms must therefore happen in browser/Safari-extension or controlled-web-app flows unless Apple or Meta exposes a native app-level content control. When Phone Soft Block is active, Vigil leaves the native Instagram app unblocked for notifications, adds Reels URL denials to managed web, and installs a "Vigil Instagram" managed web clip that can be used as the target for an iOS Shortcuts automation that redirects Instagram opens into the filtered web experience.
 
 ## Tests
 
@@ -152,5 +155,5 @@ No normal local app can be perfectly foolproof on an admin-owned Mac. A determin
 
 - optional menu bar companion with hardened runtime
 - signed/notarized releases
-- optional DNS or router integration
-- optional mobile companion through Android ADB or managed-device profiles
+- optional DNS or router integration for Apple networks
+- deeper iPhone/iPad companion flows through Apple Screen Time, Shortcuts, Safari extension, or managed-device profiles

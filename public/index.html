@@ -89,7 +89,7 @@
               </button>
               <button class="device-chip" type="button" data-device-target="phone" aria-pressed="false">
                 <span class="device-icon phone" aria-hidden="true"></span>
-                <span>Phone</span>
+                <span>iPhone</span>
                 <em id="phoneTargetState">Ready</em>
               </button>
             </div>
@@ -569,34 +569,21 @@
     <section id="view-devices" class="view" data-view="devices" hidden>
       <div class="view-head">
         <div>
-          <p class="eyebrow">Devices</p>
-          <h2>Companion Control</h2>
+          <p class="eyebrow">Apple Devices</p>
+          <h2>Apple Companion Control</h2>
         </div>
-        <span id="androidStatus" class="pill neutral">Android</span>
+        <span class="pill good">Apple only</span>
       </div>
 
       <section class="panel">
         <div class="device-grid">
-          <form id="androidForm" class="device-form">
-            <label class="checkline"><input id="androidEnabled" name="enabled" type="checkbox"> Android ADB blocking</label>
-            <label>
-              Android packages
-              <textarea id="androidPackages" name="packages" rows="7"></textarea>
-            </label>
-            <div class="button-row">
-              <button class="primary" type="submit">Save Device Rules</button>
-              <button id="androidBlockNow" class="secondary" type="button">Block Now</button>
-              <button id="androidUnblockNow" class="ghost" type="button">Unblock</button>
-            </div>
-          </form>
           <div>
-            <div id="androidDevices" class="device-list"></div>
             <form id="iosForm" class="device-form ios-form">
               <div class="device-form-head">
                 <div>
                   <p class="eyebrow">iPhone</p>
                   <strong id="iosStatusTitle">Supervised profile</strong>
-                  <span id="iosStatusText">Desktop-managed iPhone blocking needs a supervised device policy.</span>
+                  <span id="iosStatusText">Apple-only iPhone blocking needs a supervised device policy.</span>
                 </div>
                 <span id="iosStatus" class="pill neutral">Ready</span>
               </div>
@@ -674,6 +661,14 @@
               <label>
                 Identity certificate password
                 <input id="iosMdmIdentityPassword" name="identityCertificatePassword" type="password" placeholder="Leave blank to keep saved password">
+              </label>
+              <label>
+                APNs push certificate PKCS#12
+                <textarea id="iosMdmPushPayload" name="pushCertificatePayloadBase64" rows="3" placeholder="Base64 APNs push certificate"></textarea>
+              </label>
+              <label>
+                APNs push certificate password
+                <input id="iosMdmPushPassword" name="pushCertificatePassword" type="password" placeholder="Leave blank to keep saved password">
               </label>
               <div class="toggle-grid">
                 <label class="checkline"><input id="iosMdmSignMessage" name="signMessage" type="checkbox"> Signed messages</label>

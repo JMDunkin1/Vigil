@@ -7,14 +7,14 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { currentMacAccountStatus } from "./account.js";
 import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "./apiSecurity.js";
-import { APP_NAME, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, PORT } from "./defaults.js";
-import { addEvent, loadState, loadUsage, saveState, saveUsage } from "./store.js";
+import { APP_NAME, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, PORT, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
+import { addEvent, loadState, loadUsage, saveState, saveUsage, sanitizeSoftBlockProfile } from "./store.js";
 import { assertTypingChallenge, attachTypingChallenge, TypingChallengeError } from "./challenge.js";
 import { hostsStatus, buildHostsBlock, launchAgentPath, launchAgentStatus, stateSealStatus } from "./hardening.js";
 import { startMonitor } from "./monitor.js";
 import { activePolicy, activeProfile, activeSessionForDevice, clearSessionsById, emergencyUnlockAllowedForPolicy, listFromTextarea, normalizeDeviceTarget, normalizeDeviceTargets, panicLockProfile, profileById, sessionPhase, snapshotProfile } from "./policy.js";
 import { AppLockError, appLockSummary, confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "./appLocks.js";
-import { applyAndroidAction, deviceSummary, listAndroidPackages, normalizeAndroidSettings } from "./devices.js";
+import { deviceSummary } from "./devices.js";
 import { assertDistanceKey, DistanceKeyError, distanceKeySummary, updateDistanceKeySettings } from "./distanceKey.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "./extensionPolicy.js";
 import { focusShortcutDetail, focusShortcutSummary } from "./focusHooks.js";
@@ -22,7 +22,7 @@ import { assertFoolproofReadyForStrict, extensionDynamicRulesReady, extensionRec
 import { clearIntegrityTamper, integrityRuntimeSummary } from "./integrityLockdown.js";
 import { assertIntentReason, IntentReasonError, intentReasonPolicy, intentReasonSummary } from "./intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "./intervention.js";
-import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, queueIosMdmPolicyRefresh } from "./iosMdm.js";
+import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings, publicIosSettings } from "./iosProfiles.js";
 import { activeLimitBlocks, limitSummary, normalizeLimitRule } from "./limits.js";
 import { parsePlist, toPlist } from "./plist.js";
@@ -178,6 +178,30 @@ function scheduleImmediateSessionEnforcement(sessionId) {
   });
 }
 
+function scheduleIosMdmPush(reason, options = {}) {
+  setImmediate(async () => {
+    if (!state) return;
+    let result;
+    try {
+      result = await pushIosMdmQueuedCommands(state, reason, new Date(), options);
+      if (result.pushed || result.failed) {
+        addEvent(state, "ios_mdm_push", { reason, ...result });
+      }
+      await saveState(state);
+    } catch (error) {
+      addEvent(state, "ios_mdm_push_failed", {
+        reason,
+        error: error.message || String(error)
+      });
+      try {
+        await saveState(state);
+      } catch (saveError) {
+        console.error("MDM push failure save failed:", saveError);
+      }
+    }
+  });
+}
+
 async function handleMdm(request, response, url) {
   const method = request.method || "GET";
   const path = url.pathname;
@@ -215,6 +239,9 @@ async function handleMdm(request, response, url) {
     });
     await saveState(state);
     sendEmpty(response, 200, mdmHeaders());
+    if (result.messageType === "TokenUpdate" && result.udid) {
+      scheduleIosMdmPush("checkin", { force: true, udids: [result.udid] });
+    }
     return;
   }
 
@@ -504,17 +531,6 @@ async function handleApi(request, response, url) {
     return;
   }
 
-  if (method === "POST" && path === "/api/devices/android/settings") {
-    const body = await readBody(request);
-    assertProtectedEditAllowed(state, { kind: "settings" });
-    state.deviceControls ||= {};
-    state.deviceControls.android = normalizeAndroidSettings(body, state.deviceControls.android || {});
-    addEvent(state, "android_settings_updated", { enabled: state.deviceControls.android.enabled, packages: state.deviceControls.android.packages.length });
-    await saveState(state);
-    sendJson(response, 200, { ok: true, android: state.deviceControls.android });
-    return;
-  }
-
   if (method === "POST" && path === "/api/devices/ios/settings") {
     const body = await readBody(request);
     assertProtectedEditAllowed(state, { kind: "settings" });
@@ -561,9 +577,11 @@ async function handleApi(request, response, url) {
 
   if (method === "POST" && path === "/api/devices/ios/mdm/queue-policy") {
     const result = queueIosMdmPolicyRefresh(state, "app-refresh");
+    const push = await pushIosMdmQueuedCommands(state, "app-refresh", new Date(), { force: true });
     addEvent(state, "ios_mdm_policy_queued", result);
+    if (push.pushed || push.failed) addEvent(state, "ios_mdm_push", push);
     await saveState(state);
-    sendJson(response, 200, { ok: Boolean(result.queued), result });
+    sendJson(response, 200, { ok: Boolean(result.queued || push.pushed), result, push });
     return;
   }
 
@@ -574,28 +592,6 @@ async function handleApi(request, response, url) {
     addEvent(state, "ios_profile_generated", { bytes: Buffer.byteLength(profile) });
     await saveState(state);
     sendDownload(response, 200, profile, "vigil-iphone-lock.mobileconfig", "application/x-apple-aspen-config");
-    return;
-  }
-
-  if (method === "POST" && path === "/api/devices/android/apply") {
-    const body = await readBody(request);
-    const action = body.action === "unblock" ? "unblock" : "block";
-    if (action === "unblock") assertProtectedEditAllowed(state, { kind: "settings" });
-    const result = await applyAndroidAction(state, action);
-    addEvent(state, "android_apply", { action, ok: result.ok, devices: result.devices?.length || 0 });
-    await saveState(state);
-    sendJson(response, result.ok ? 200 : 409, { ok: result.ok, result });
-    return;
-  }
-
-  if (method === "GET" && path === "/api/devices/android/packages") {
-    const serial = url.searchParams.get("serial");
-    if (!serial) {
-      sendJson(response, 400, { error: "Missing serial" });
-      return;
-    }
-    const result = await listAndroidPackages(serial);
-    sendJson(response, result.ok ? 200 : 409, result);
     return;
   }
 
@@ -1035,12 +1031,13 @@ function upsertProfile(body) {
     phoneAppBlocking: optionalDisabledFlag(body.phoneAppBlocking, existing?.phoneAppBlocking),
     hostsUrlPatternBlocking: optionalDisabledFlag(body.hostsUrlPatternBlocking, existing?.hostsUrlPatternBlocking)
   };
+  const nextProfile = id === SOFT_BLOCK_PROFILE_ID ? sanitizeSoftBlockProfile(profile) : profile;
 
-  if (existing) Object.assign(existing, profile);
-  else state.profiles.push(profile);
+  if (existing) Object.assign(existing, nextProfile);
+  else state.profiles.push(nextProfile);
 
-  state.settings.activeProfileId = profile.id;
-  return profile;
+  state.settings.activeProfileId = nextProfile.id;
+  return nextProfile;
 }
 
 function upsertSchedule(body) {
@@ -1186,6 +1183,7 @@ function recordIosMdmPolicyQueue(reason) {
   const result = queueIosMdmPolicyRefresh(state, reason);
   if (result.queued) {
     addEvent(state, "ios_mdm_policy_queued", { reason, ...result });
+    scheduleIosMdmPush(reason);
   }
   return result;
 }
@@ -1696,7 +1694,7 @@ function hardeningAudit({ hosts, agent, account, protection, monitor, foolproof,
       id: "content-filter",
       label: "Content filter",
       ok: state.settings.contentFilterEnabled !== false,
-      detail: state.settings.contentFilterEnabled !== false ? "Short-form feeds such as Shorts, Reels, Explore, and Popular are blocked during locks." : "Content feature filters are disabled."
+      detail: state.settings.contentFilterEnabled !== false ? "Short-form feeds such as Shorts, Reels, Popular, and For You are blocked during locks." : "Content feature filters are disabled."
     },
     {
       id: "browser-noise",

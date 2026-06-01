@@ -5,11 +5,10 @@ import { matchContentFilterUrl } from "./contentFilters.js";
 import { reconcileFocusShortcut } from "./focusHooks.js";
 import { activePolicy, baselinePolicy, isFullLockoutPolicy, isProcessSweepExemptApp, isStrictBypassAppForPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "./policy.js";
 import { activeAppLockPolicy } from "./appLocks.js";
-import { maybeApplyAndroidPolicy } from "./devices.js";
 import { extensionDynamicRulesReady } from "./foolproof.js";
 import { hostsStatus, launchAgentStatus, stateSealStatus } from "./hardening.js";
 import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, recordRuntimeHeartbeat } from "./integrityLockdown.js";
-import { maybeQueueIosMdmPolicyRefresh } from "./iosMdm.js";
+import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
 import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, listRunningAppNames, lockScreen, notify, redirectActiveBrowserTab, quitApp, urlHostname } from "./macos.js";
 import { sourceSealStatus } from "./sourceSeal.js";
@@ -96,8 +95,8 @@ class Monitor {
 
     await this.sweepBlockedProcesses(now);
     await this.refreshEnvironment(now);
-    await maybeApplyAndroidPolicy(this.state);
     this.syncIosMdmPolicy(now);
+    await this.pushIosMdmPolicy(now);
     recordRuntimeHeartbeat(this.state, new Date(now));
     await saveUsage(this.usage);
     await saveState(this.state);
@@ -128,8 +127,8 @@ class Monitor {
     await this.enforceSystemSleepLock(now, { force: true });
     await this.syncFocusShortcut(now, { force: true });
     await this.sweepBlockedProcesses(now, { force: true });
-    await maybeApplyAndroidPolicy(this.state);
     this.syncIosMdmPolicy(now, "immediate-policy-refresh");
+    await this.pushIosMdmPolicy(now, "immediate-policy-refresh", { force: true });
     recordRuntimeHeartbeat(this.state, new Date(now));
     await saveUsage(this.usage);
     await saveState(this.state);
@@ -199,6 +198,14 @@ class Monitor {
     const result = maybeQueueIosMdmPolicyRefresh(this.state, reason, new Date(now));
     if (result.queued) {
       addEvent(this.state, "ios_mdm_policy_queued", { reason, ...result });
+    }
+    return result;
+  }
+
+  async pushIosMdmPolicy(now, reason = "monitor-policy-push", options = {}) {
+    const result = await pushIosMdmQueuedCommands(this.state, reason, new Date(now), options);
+    if (result.pushed || result.failed) {
+      addEvent(this.state, "ios_mdm_push", { reason, ...result });
     }
     return result;
   }

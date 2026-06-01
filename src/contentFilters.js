@@ -13,8 +13,8 @@ export const CONTENT_FILTER_RULES = [
     id: "instagram-reels",
     label: "Instagram Reels",
     sites: ["instagram.com"],
-    urlFilters: ["||instagram.com/reels", "||instagram.com/explore"],
-    paths: [/^\/reels?(?:\/|$)/i, /^\/explore(?:\/|$)/i]
+    urlFilters: ["||instagram.com/reel", "||instagram.com/reels"],
+    paths: [/^\/reels?(?:\/|$)/i]
   },
   {
     id: "facebook-reels",
