@@ -10,6 +10,20 @@ npm start
 
 Open `http://127.0.0.1:8787`.
 
+To run Sentinel as a Mac app during development:
+
+```sh
+npm run app
+```
+
+To build an unsigned local `.app` bundle:
+
+```sh
+npm run build:mac
+```
+
+The app bundle is written to `dist/mac/mac-arm64/Sentinel.app` on Apple Silicon. The packaged app stores local state in `~/Library/Application Support/Sentinel` instead of the repository `data/` folder.
+
 The app works best after granting Accessibility permission to the terminal or app that runs it:
 
 1. Open System Settings.
@@ -136,6 +150,7 @@ npm test
 
 No normal local app can be perfectly foolproof on an admin-owned Mac. A determined admin can stop processes, edit files, remove permissions, or boot another environment. The app is designed to make the helpful path easy and the impulsive path slower. For stronger guarantees, run daily work from a standard macOS account, keep admin credentials away from the desk, and use the doctor/Foolproof account check. The next milestones are:
 
-- packaged menu bar app with hardened runtime
+- optional menu bar companion with hardened runtime
+- signed/notarized releases
 - optional DNS or router integration
 - optional mobile companion through Android ADB or managed-device profiles

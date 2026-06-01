@@ -6,7 +6,7 @@ import { defaultState } from "./defaults.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-export const DATA_DIR = join(ROOT, "data");
+export const DATA_DIR = process.env.SENTINEL_DATA_DIR || join(ROOT, "data");
 export const STATE_PATH = join(DATA_DIR, "state.json");
 export const STATE_SEAL_PATH = join(DATA_DIR, "state.seal.json");
 export const STATE_SEAL_KEY_PATH = join(DATA_DIR, "state-seal.key");

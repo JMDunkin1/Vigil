@@ -3,8 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "app/main.js",
+  "author": "James Dunkin",
   "description": "A local-first focus enforcement app for macOS.",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/CaseLine-tech/Sentinel.git"
+  },
   "scripts": {
+    "app": "electron .",
+    "build:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir",
+    "dist:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "test": "node scripts/self-test.mjs",
@@ -17,5 +26,33 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "build": {
+    "appId": "tech.caseline.sentinel",
+    "productName": "Sentinel",
+    "directories": {
+      "output": "dist/mac"
+    },
+    "files": [
+      "app/**/*",
+      "src/**/*",
+      "public/**/*",
+      "scripts/**/*",
+      "extension/**/*",
+      "package.json"
+    ],
+    "asar": false,
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.icns",
+      "identity": null,
+      "target": [
+        "dir"
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1"
   }
 }
