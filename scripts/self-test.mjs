@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRICK_MODE_PROFILE_ID, defaultState, PANIC_LOCK_PROFILE_ID, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { accountStatusFromGroups, parseGroups } from "../src/account.js";
-import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "../src/apiSecurity.js";
+import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "../src/apiSecurity.js";
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
 import { contentFilterRuleEntries, matchContentFilterUrl } from "../src/contentFilters.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../src/distanceKey.js";
@@ -32,7 +32,7 @@ import { focusReport } from "../src/reports.js";
 import { applySealVerificationToState, markStateSealed, stateDigest, stateSealSummary, verifyStateTextSeal, writeStateTextSeal } from "../src/seal.js";
 import { sourceManifestText, sourceSealStatus, writeSourceSeal } from "../src/sourceSeal.js";
 import { sanitizeSoftBlockProfile } from "../src/store.js";
-import { usageSummary } from "../src/usage.js";
+import { recordUsage, syncDeviceUsageSnapshot, usageSummary } from "../src/usage.js";
 
 const now = new Date("2026-05-28T14:00:00-04:00");
 
@@ -107,6 +107,11 @@ const now = new Date("2026-05-28T14:00:00-04:00");
       "content-type": "application/json"
     }
   }).ok, false);
+  assert.equal(apiRequestGuard({
+    method: "POST",
+    path: "/api/devices/usage",
+    headers: { origin: "https://phone.example", "content-type": "application/json" }
+  }).ok, true);
   assert.equal(extensionRequestGuard({
     method: "POST",
     headers: {
@@ -136,6 +141,22 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "localhost:8787" } }).ok, true);
   assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "sentinel.example.test" } }).ok, false);
   assert.equal(publicHostGuard({ path: "/mdm/checkin", headers: { host: "sentinel.example.test" } }).ok, true);
+  assert.equal(publicHostGuard({ path: "/api/devices/usage", headers: { host: "sentinel.example.test" } }).ok, true);
+  assert.deepEqual(deviceUsageSyncAuthorization({
+    headers: { host: "127.0.0.1:8787", [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE },
+    url: new URL("http://127.0.0.1:8787/api/devices/usage"),
+    enrollmentSecret: "device-secret"
+  }), { ok: true, kind: "local-intent" });
+  assert.equal(deviceUsageSyncAuthorization({
+    headers: { host: "sentinel.example.test", [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE },
+    url: new URL("https://sentinel.example.test/api/devices/usage"),
+    enrollmentSecret: "device-secret"
+  }).ok, false);
+  assert.deepEqual(deviceUsageSyncAuthorization({
+    headers: { host: "sentinel.example.test", "x-sentinel-device-token": "device-secret" },
+    url: new URL("https://sentinel.example.test/api/devices/usage"),
+    enrollmentSecret: "device-secret"
+  }), { ok: true, kind: "device-token" });
 }
 
 {
@@ -1474,6 +1495,15 @@ last exit code = 0
   assert.equal(policy.profile.blockedSites.includes("reddit.com"), true);
   assert.equal(policy.profile.blockedSites.includes("youtu.be"), true);
   assert.equal(shouldBlockSite(policy.profile, "youtu.be"), true);
+
+  const phoneUsage = {};
+  syncDeviceUsageSnapshot(phoneUsage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 61,
+    sites: { "youtube.com": 61 }
+  }, now);
+  assert.equal(activeLimitPolicy(state, phoneUsage, { app: "Safari", hostname: "reddit.com" }, now).kind, "limit");
 }
 
 {
@@ -1704,6 +1734,79 @@ last exit code = 0
   assert.equal(report.topCulprits[0].name, "reddit.com");
   assert.equal(report.comparison.distractingPercentDelta, -50);
   assert.equal(report.milestones.some((item) => item.id === "clean-tracked-day" && item.achieved), true);
+}
+
+{
+  const state = defaultState();
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: ["Instagram"],
+    blockedSites: ["reddit.com"],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  state.settings.activeProfileId = "default";
+  const usage = {
+    "2026-05-28": {
+      totalSeconds: 600,
+      apps: { Codex: 600 },
+      sites: {},
+      opens: { apps: { Codex: 1 }, sites: {} }
+    }
+  };
+
+  recordUsage(usage, { app: "Safari", hostname: "github.com" }, 120, now);
+  syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 900,
+    apps: { Instagram: 600 },
+    sites: { "reddit.com": 300 },
+    opens: { apps: { Instagram: 2 }, sites: { "reddit.com": 1 } }
+  }, now);
+
+  let summary = usageSummary(usage, state, now);
+  assert.equal(summary.totalSeconds, 1620);
+  assert.equal(summary.distractingSeconds, 900);
+  assert.equal(summary.devices.computer.totalSeconds, 720);
+  assert.equal(summary.devices.phone.totalSeconds, 900);
+  assert.equal(summary.openPressure, 4);
+
+  syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 1200,
+    apps: { Instagram: 600, Messages: 400 },
+    sites: { "reddit.com": 200 },
+    opens: { apps: { Instagram: 3 }, sites: { "reddit.com": 2 } }
+  }, now);
+  summary = usageSummary(usage, state, now);
+  assert.equal(summary.totalSeconds, 1920);
+  assert.equal(summary.distractingSeconds, 800);
+  assert.equal(summary.devices.computer.totalSeconds, 720);
+  assert.equal(summary.devices.phone.totalSeconds, 1200);
+
+  assert.throws(() => syncDeviceUsageSnapshot(usage, {
+    device: "iphone",
+    date: "2026-05-28",
+    totalSeconds: 100,
+    apps: { Instagram: 100 }
+  }, now), /Unsupported usage device/);
+  assert.equal(usageSummary(usage, state, now).devices.computer.totalSeconds, 720);
+  assert.throws(() => syncDeviceUsageSnapshot(usage, {
+    device: "computer",
+    date: "2026-05-28",
+    totalSeconds: 100,
+    apps: { Codex: 100 }
+  }, now, { allowedDevices: ["phone"] }), (error) => error.status === 403 && /not allowed/.test(error.message));
+
+  const report = focusReport(usage, state, now);
+  assert.equal(report.currentWeek.totals.totalSeconds, 1920);
+  assert.equal(report.currentWeek.totals.distractingSeconds, 800);
+  assert.equal(report.topCulprits.some((item) => item.name === "Instagram" && item.seconds === 600), true);
 }
 
 {

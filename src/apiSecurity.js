@@ -7,9 +7,14 @@ const EXTENSION_API_PATHS = new Set([
   "/api/extension/rules/sync"
 ]);
 
+const DEVICE_SYNC_API_PATHS = new Set([
+  "/api/devices/usage"
+]);
+
 export function apiRequestGuard({ method = "GET", path = "", headers = {} }) {
   const normalizedMethod = String(method || "GET").toUpperCase();
   if (EXTENSION_API_PATHS.has(path)) return allow();
+  if (DEVICE_SYNC_API_PATHS.has(path)) return allow();
   if (!isMutationMethod(normalizedMethod)) return allow();
 
   const origin = headerValue(headers, "origin");
@@ -35,8 +40,29 @@ export function apiRequestGuard({ method = "GET", path = "", headers = {} }) {
 
 export function publicHostGuard({ path = "", headers = {} }) {
   if (String(path || "").startsWith("/mdm/")) return allow();
+  if (DEVICE_SYNC_API_PATHS.has(path)) return allow();
   if (isLocalHostHeader(headerValue(headers, "host"))) return allow();
   return deny("Public tunnel requests may only reach MDM endpoints.");
+}
+
+export function deviceUsageSyncAuthorization({ headers = {}, url = null, body = {}, enrollmentSecret = "" } = {}) {
+  if (
+    headerValue(headers, CONTROL_INTENT_HEADER) === CONTROL_INTENT_VALUE
+    && isLocalRequestHost(headers, url)
+  ) {
+    return { ok: true, kind: "local-intent" };
+  }
+
+  const token = String(enrollmentSecret || "");
+  const supplied = String(
+    headerValue(headers, "x-sentinel-device-token")
+    || url?.searchParams?.get("token")
+    || body?.token
+    || ""
+  );
+  if (token && supplied && token === supplied) return { ok: true, kind: "device-token" };
+
+  return deny("Device usage sync requires a local app intent header or the iOS device token.");
 }
 
 export function controlIntentHeaders() {
@@ -105,6 +131,13 @@ function isLocalHostHeader(value) {
   } catch {
     return false;
   }
+}
+
+function isLocalRequestHost(headers, url) {
+  const host = headerValue(headers, "host");
+  if (host) return isLocalHostHeader(host);
+  const hostname = String(url?.hostname || "").replace(/^\[|\]$/g, "").toLowerCase();
+  return ["127.0.0.1", "localhost", "::1"].includes(hostname);
 }
 
 function isTrustedExtensionOrigin(value) {
