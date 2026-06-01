@@ -173,6 +173,7 @@ function migrateState(state) {
       pending: Array.isArray(state.maintenance?.pending) ? state.maintenance.pending : [],
       windows: Array.isArray(state.maintenance?.windows) ? state.maintenance.windows : []
     },
+    panicLock: state.panicLock || null,
     emergency: {
       ...fresh.emergency,
       ...(state.emergency || {}),

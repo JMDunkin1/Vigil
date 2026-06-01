@@ -150,6 +150,21 @@ function bindEvents() {
     await refresh();
   });
 
+  $("#startPanicLock").addEventListener("click", async () => {
+    const status = $("#panicStatus");
+    $("#startPanicLock").disabled = true;
+    status.textContent = "Locking...";
+    try {
+      const response = await post("/api/panic/start", {});
+      status.textContent = `Locked until ${shortDateTime(response.session.endsAt)}`;
+      toast("Panic lock started");
+    } catch (error) {
+      status.textContent = error.message;
+      toast(error.message);
+    }
+    await refresh();
+  });
+
   $("#focusSoundEnabled").addEventListener("change", async (event) => {
     try {
       if (event.target.checked) await primeFocusAudio();
@@ -596,6 +611,16 @@ function bindEvents() {
     await refresh();
   });
 
+  $("#panicLockDurationMinutes").addEventListener("change", async (event) => {
+    try {
+      await post("/api/settings", { panicLockDurationMinutes: event.target.value });
+      toast("Panic duration saved");
+    } catch (error) {
+      toast(error.message);
+    }
+    await refresh();
+  });
+
   $("#intentReasonMinLength").addEventListener("change", async (event) => {
     try {
       await post("/api/settings", { intentReasonMinLength: event.target.value });
@@ -674,8 +699,10 @@ function appendLines(field, values = []) {
 function renderHeader(appState, monitor, activeBlocks = []) {
   const active = appState.activePolicy;
   const session = appState.activeSession;
-  const phase = appState.sessionPhase;
+  const phase = active?.phase || appState.sessionPhase;
   const brickButton = $("#startBrickMode");
+  const panicButton = $("#startPanicLock");
+  const panicStatus = $("#panicStatus");
   const lock = $("#lockStatus");
   let orbState = "idle";
   if (active?.kind === "integrity") {
@@ -713,6 +740,14 @@ function renderHeader(appState, monitor, activeBlocks = []) {
   if (brickButton) {
     brickButton.disabled = Boolean(active || session);
     if (!active && !session && $("#brickStatus").textContent === "Locked") $("#brickStatus").textContent = "Mac Brick";
+  }
+  if (panicButton && panicStatus) {
+    const panicActive = active?.kind === "panic";
+    const duration = Number(appState.settings?.panicLockDurationMinutes || 3);
+    panicButton.disabled = panicActive;
+    panicStatus.textContent = panicActive
+      ? `All screens locked until ${shortDateTime(active.endsAt)}`
+      : `${duration} min full lockout`;
   }
   $("#watcherStatus").textContent = monitor.ok ? "Watcher online" : "Watcher needs permission";
 }
@@ -981,6 +1016,7 @@ function renderHardening(data) {
   $("#appQuitEscalationSeconds").value = settings.appQuitEscalationSeconds || 10;
   $("#processSweepIntervalSeconds").value = settings.processSweepIntervalSeconds || 15;
   $("#systemSleepLockIntervalSeconds").value = settings.systemSleepLockIntervalSeconds || 60;
+  $("#panicLockDurationMinutes").value = settings.panicLockDurationMinutes || 3;
   $("#intentReasonMinLength").value = settings.intentReasonMinLength || 20;
   renderIntentReasonHints(settings);
   renderFocusShortcut(data.state.focusShortcut);
@@ -1553,6 +1589,8 @@ function renderEmergency(appState) {
   if (active && active.session?.emergencyUnlocksAllowed === false) {
     $("#emergencyCopy").textContent = active.kind === "integrity"
       ? "Integrity lockdown uses protected maintenance instead of emergency unlocks."
+      : active.kind === "panic"
+        ? "Panic lockout cannot be ended early."
       : "Commitment lock: emergency unlocks are disabled. Use protected maintenance if this was a mistake.";
     $("#requestEmergency").disabled = true;
     $("#confirmEmergency").disabled = true;
@@ -1586,7 +1624,7 @@ function renderEmergency(appState) {
 function renderCountdowns() {
   const appState = state.data?.state;
   const active = appState?.activePolicy;
-  const phase = appState?.sessionPhase;
+  const phase = active?.phase || appState?.sessionPhase;
   const activeLimitBlocks = (state.data?.limits.activeBlocks || []).filter((block) => new Date(block.until) > new Date());
   if (state.data?.protection) renderMaintenance(state.data.protection);
   if (phase) {

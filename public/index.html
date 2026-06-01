@@ -95,6 +95,10 @@
             <button id="startBrickMode" class="danger" type="button">Brick Mode</button>
             <span id="brickStatus" class="tiny-status">Mac Brick</span>
           </div>
+          <div class="panic-quick">
+            <button id="startPanicLock" class="danger panic-button" type="button">Panic Lock</button>
+            <span id="panicStatus" class="tiny-status">3 min full lockout</span>
+          </div>
           <details class="advanced-line">
             <summary>Timing options</summary>
             <div class="advanced-grid">
@@ -442,6 +446,7 @@
             <label class="numberline">Escalate after <input id="appQuitEscalationSeconds" type="number" min="1" max="3600" step="1"> sec</label>
             <label class="numberline">Sweep every <input id="processSweepIntervalSeconds" type="number" min="3" max="3600" step="1"> sec</label>
             <label class="numberline">Relock sleep every <input id="systemSleepLockIntervalSeconds" type="number" min="15" max="3600" step="1"> sec</label>
+            <label class="numberline">Panic lock <input id="panicLockDurationMinutes" type="number" min="1" max="1440" step="1"> min</label>
             <label class="numberline">Reason min <input id="intentReasonMinLength" type="number" min="1" max="280" step="1"> chars</label>
           </div>
 
