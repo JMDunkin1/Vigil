@@ -111,7 +111,8 @@ export function normalizeAndroidSettings(body, existing) {
 }
 
 export function shouldApplyAndroidBlock(state, now = new Date()) {
-  if (activePolicy(state, now)) return true;
+  const phonePolicy = activePolicy(state, now, { device: "phone" });
+  if (phonePolicy && phonePolicy.profile?.phoneAppBlocking !== false) return true;
   if (activeLimitBlocks(state, now).length) return true;
   return (state.appLocks || []).some((lock) => {
     if (!lock.enabled) return false;

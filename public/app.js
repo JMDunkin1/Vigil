@@ -32,6 +32,8 @@ const days = [
   ["6", "Sat"]
 ];
 const BRICK_MODE_PROFILE_ID = "brick-mode";
+const SOFT_BLOCK_PROFILE_ID = "soft-block";
+const DEVICE_TARGETS = ["computer", "phone"];
 
 boot();
 
@@ -91,10 +93,36 @@ function setView(view) {
   }
 }
 
+function toggleDeviceTarget(button) {
+  const selected = button.classList.contains("is-selected");
+  const selectedCount = selectedDeviceTargets().length;
+  if (selected && selectedCount === 1) return;
+  button.classList.toggle("is-selected", !selected);
+  button.setAttribute("aria-pressed", String(!selected));
+  renderDeviceTargetControls(state.data?.state || {});
+}
+
+function selectedDeviceTargets() {
+  const selected = [...document.querySelectorAll("[data-device-target].is-selected")]
+    .map((button) => button.dataset.deviceTarget)
+    .filter((target) => DEVICE_TARGETS.includes(target));
+  return selected.length ? selected : ["computer"];
+}
+
+function selectedDeviceLabel() {
+  const selected = selectedDeviceTargets();
+  if (selected.length === DEVICE_TARGETS.length) return "Computer + Phone";
+  return selected[0] === "phone" ? "Phone" : "Computer";
+}
+
 function bindEvents() {
   $("#themeToggle").addEventListener("click", () => {
     setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   });
+
+  for (const button of document.querySelectorAll("[data-device-target]")) {
+    button.addEventListener("click", () => toggleDeviceTarget(button));
+  }
 
   document.querySelectorAll("[data-scan-distance-key]").forEach((button) => {
     button.addEventListener("click", () => openDistanceScanner(button.dataset.scanDistanceKey));
@@ -107,6 +135,7 @@ function bindEvents() {
     const body = Object.fromEntries(form.entries());
     body.cycleEnabled = form.has("cycleEnabled");
     body.commitmentLock = form.has("commitmentLock");
+    body.deviceTargets = selectedDeviceTargets();
     await post("/api/session/start", body);
     toast("Lock started");
     await refresh();
@@ -114,41 +143,17 @@ function bindEvents() {
 
   $("#endSession").addEventListener("click", async () => {
     try {
-      await post("/api/session/end", {});
-      toast("Session ended");
+      await post("/api/session/end", { deviceTargets: selectedDeviceTargets() });
+      toast("Selected soft lock ended");
     } catch (error) {
       toast(error.message);
     }
     await refresh();
   });
 
-  $("#startBrickMode").addEventListener("click", async () => {
-    const profile = state.data?.state.profiles.find((item) => item.id === BRICK_MODE_PROFILE_ID);
-    if (!profile) {
-      toast("Mac Brick profile is unavailable");
-      return;
-    }
-
-    const status = $("#brickStatus");
-    $("#startBrickMode").disabled = true;
-    status.textContent = "Starting...";
-    try {
-      await post("/api/session/start", {
-        title: "Brick Mode",
-        mode: "brick",
-        profileId: BRICK_MODE_PROFILE_ID,
-        durationMinutes: $("#brickDuration").value,
-        lockLevel: "deep",
-        commitmentLock: true
-      });
-      status.textContent = "Locked";
-      toast("Brick Mode started");
-    } catch (error) {
-      status.textContent = error.message;
-      toast(error.message);
-    }
-    await refresh();
-  });
+  $("#startNormalMode").addEventListener("click", () => startNormalMode());
+  $("#startSoftBlock").addEventListener("click", () => startPresetSession("soft"));
+  $("#startFullBrick").addEventListener("click", () => startPresetSession("brick"));
 
   $("#startPanicLock").addEventListener("click", async () => {
     const status = $("#panicStatus");
@@ -632,6 +637,63 @@ function bindEvents() {
   });
 }
 
+async function startNormalMode() {
+  const targets = selectedDeviceTargets();
+  const status = $("#brickStatus");
+  status.textContent = "Returning to Normal...";
+  try {
+    const response = await post("/api/session/end", { deviceTargets: targets });
+    status.textContent = response.ended ? "Normal active" : "Normal already active";
+    toast(`${selectedDeviceLabel()} set to Normal`);
+  } catch (error) {
+    status.textContent = error.message;
+    toast(error.message);
+  }
+  await refresh();
+}
+
+async function startPresetSession(kind) {
+  const profileId = kind === "brick" ? BRICK_MODE_PROFILE_ID : SOFT_BLOCK_PROFILE_ID;
+  const profile = state.data?.state.profiles.find((item) => item.id === profileId);
+  if (!profile) {
+    toast(kind === "brick" ? "Full Brick profile is unavailable" : "Soft Block profile is unavailable");
+    return;
+  }
+
+  const button = kind === "brick" ? $("#startFullBrick") : $("#startSoftBlock");
+  const status = $("#brickStatus");
+  button.disabled = true;
+  status.textContent = "Starting...";
+  try {
+    const body = kind === "brick"
+      ? {
+          title: "Full Brick",
+          mode: "brick",
+          profileId: BRICK_MODE_PROFILE_ID,
+          durationMinutes: $("#brickDuration").value,
+          lockLevel: "deep",
+          commitmentLock: true,
+          deviceTargets: selectedDeviceTargets()
+        }
+      : {
+          title: "Soft Block",
+          mode: "focus",
+          profileId: SOFT_BLOCK_PROFILE_ID,
+          durationMinutes: $("#brickDuration").value,
+          lockLevel: "light",
+          commitmentLock: false,
+          deviceTargets: selectedDeviceTargets()
+        };
+    await post("/api/session/start", body);
+    status.textContent = kind === "brick" ? "Full Brick active" : "Soft Block active";
+    toast(`${kind === "brick" ? "Full Brick" : "Soft Block"} started for ${selectedDeviceLabel()}`);
+  } catch (error) {
+    status.textContent = error.message;
+    toast(error.message);
+  }
+  await refresh();
+}
+
 async function refresh() {
   try {
     state.data = await get("/api/state");
@@ -696,11 +758,32 @@ function appendLines(field, values = []) {
   field.value = next.join("\n");
 }
 
+function renderDeviceTargetControls(appState = {}) {
+  const status = $("#deviceTargetStatus");
+  if (status) status.textContent = selectedDeviceLabel();
+
+  for (const target of DEVICE_TARGETS) {
+    const button = document.querySelector(`[data-device-target="${target}"]`);
+    const session = appState.activeSessions?.[target] || null;
+    if (button) {
+      button.classList.toggle("has-session", Boolean(session));
+      button.setAttribute("aria-pressed", String(button.classList.contains("is-selected")));
+    }
+    const label = target === "phone" ? $("#phoneTargetState") : $("#computerTargetState");
+    if (!label) continue;
+    label.textContent = session
+      ? `${session.mode === "brick" ? "Brick" : session.title || "Locked"}`
+      : "Normal";
+  }
+}
+
 function renderHeader(appState, monitor, activeBlocks = []) {
   const active = appState.activePolicy;
   const session = appState.activeSession;
   const phase = active?.phase || appState.sessionPhase;
-  const brickButton = $("#startBrickMode");
+  const softButton = $("#startSoftBlock");
+  const brickButton = $("#startFullBrick");
+  const normalButton = $("#startNormalMode");
   const panicButton = $("#startPanicLock");
   const panicStatus = $("#panicStatus");
   const lock = $("#lockStatus");
@@ -736,10 +819,14 @@ function renderHeader(appState, monitor, activeBlocks = []) {
     $("#sessionTitle").textContent = "Ready";
   }
   renderOrbState(orbState);
+  renderDeviceTargetControls(appState);
 
   if (brickButton) {
-    brickButton.disabled = Boolean(active || session);
-    if (!active && !session && $("#brickStatus").textContent === "Locked") $("#brickStatus").textContent = "Mac Brick";
+    const selectedActive = selectedDeviceTargets().some((target) => Boolean(appState.activeSessions?.[target]));
+    brickButton.disabled = selectedActive;
+    if (softButton) softButton.disabled = selectedActive;
+    if (normalButton) normalButton.disabled = false;
+    if (!selectedActive && ["Full Brick active", "Soft Block active"].includes($("#brickStatus").textContent)) $("#brickStatus").textContent = "Normal baseline";
   }
   if (panicButton && panicStatus) {
     const panicActive = active?.kind === "panic";

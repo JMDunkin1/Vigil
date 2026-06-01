@@ -76,13 +76,45 @@
               <option value="light">Soft</option>
             </select>
           </label>
+          <div class="device-target-panel">
+            <div class="device-target-head">
+              <span>Targets</span>
+              <strong id="deviceTargetStatus">Computer</strong>
+            </div>
+            <div class="device-switch" role="group" aria-label="Lock target devices">
+              <button class="device-chip is-selected" type="button" data-device-target="computer" aria-pressed="true">
+                <span class="device-icon computer" aria-hidden="true"></span>
+                <span>Computer</span>
+                <em id="computerTargetState">Ready</em>
+              </button>
+              <button class="device-chip" type="button" data-device-target="phone" aria-pressed="false">
+                <span class="device-icon phone" aria-hidden="true"></span>
+                <span>Phone</span>
+                <em id="phoneTargetState">Ready</em>
+              </button>
+            </div>
+          </div>
           <div class="hero-actions">
             <button class="primary" type="submit">Start Lock</button>
             <button class="secondary" id="endSession" type="button">End Soft Lock</button>
           </div>
+          <div class="home-presets" aria-label="Default lock presets">
+            <button id="startNormalMode" class="secondary preset-button" type="button">
+              <span>Normal</span>
+              <em>Explicit stays blocked</em>
+            </button>
+            <button id="startSoftBlock" class="primary preset-button" type="button">
+              <span>Soft Block</span>
+              <em>Short-form off</em>
+            </button>
+            <button id="startFullBrick" class="danger preset-button" type="button">
+              <span>Full Brick</span>
+              <em>Essentials only</em>
+            </button>
+          </div>
           <div class="brick-quick">
             <label>
-              Brick
+              Preset duration
               <select id="brickDuration">
                 <option value="25">25 min</option>
                 <option value="50">50 min</option>
@@ -92,7 +124,6 @@
                 <option value="10080">7 days</option>
               </select>
             </label>
-            <button id="startBrickMode" class="danger" type="button">Brick Mode</button>
             <span id="brickStatus" class="tiny-status">Mac Brick</span>
           </div>
           <div class="panic-quick">

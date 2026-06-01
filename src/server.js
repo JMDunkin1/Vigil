@@ -7,12 +7,12 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { currentMacAccountStatus } from "./account.js";
 import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "./apiSecurity.js";
-import { APP_NAME, PANIC_LOCK_PROFILE_ID, PORT } from "./defaults.js";
+import { APP_NAME, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, PORT } from "./defaults.js";
 import { addEvent, loadState, loadUsage, saveState, saveUsage } from "./store.js";
 import { assertTypingChallenge, attachTypingChallenge, TypingChallengeError } from "./challenge.js";
 import { hostsStatus, buildHostsBlock, launchAgentPath, launchAgentStatus, stateSealStatus } from "./hardening.js";
 import { startMonitor } from "./monitor.js";
-import { activePolicy, activeProfile, emergencyUnlockAllowedForPolicy, listFromTextarea, panicLockProfile, profileById, sessionPhase, snapshotProfile } from "./policy.js";
+import { activePolicy, activeProfile, activeSessionForDevice, clearSessionsById, emergencyUnlockAllowedForPolicy, listFromTextarea, normalizeDeviceTarget, normalizeDeviceTargets, panicLockProfile, profileById, sessionPhase, snapshotProfile } from "./policy.js";
 import { AppLockError, appLockSummary, confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "./appLocks.js";
 import { applyAndroidAction, deviceSummary, listAndroidPackages, normalizeAndroidSettings } from "./devices.js";
 import { assertDistanceKey, DistanceKeyError, distanceKeySummary, updateDistanceKeySettings } from "./distanceKey.js";
@@ -158,7 +158,7 @@ function isDirectRun() {
 
 function scheduleImmediateSessionEnforcement(sessionId) {
   setImmediate(async () => {
-    if (state.activeSession?.id !== sessionId && state.panicLock?.id !== sessionId) return;
+    if (!sessionIsActive(sessionId) && state.panicLock?.id !== sessionId) return;
 
     let event;
     try {
@@ -613,8 +613,10 @@ async function handleApi(request, response, url) {
   if (method === "POST" && path === "/api/session/start") {
     const body = await readBody(request);
     activePolicy(state);
-    if (state.activeSession) {
-      sendJson(response, 409, { error: "A session is already active.", active: state.activeSession });
+    const deviceTargets = normalizeSessionDeviceTargets(body);
+    const conflicts = activeSessionConflicts(deviceTargets);
+    if (conflicts.length) {
+      sendJson(response, 409, { error: `A session is already active for ${deviceLabel(conflicts)}.`, active: conflicts.map((target) => state.activeSessions?.[target] || state.activeSession) });
       return;
     }
 
@@ -628,7 +630,7 @@ async function handleApi(request, response, url) {
     await assertStrictLockAllowed(lockLevel, profile, { mode });
     const commitmentLock = lockLevel === "deep" && truthy(body.commitmentLock);
 
-    state.activeSession = {
+    const session = {
       id: randomUUID(),
       title: body.title || sessionTitle(mode),
       mode,
@@ -641,47 +643,42 @@ async function handleApi(request, response, url) {
       emergencyUnlocksAllowed: !commitmentLock,
       source: "manual",
       cycle,
+      deviceTargets,
       profileSnapshot: snapshotProfile(profile)
     };
-    addEvent(state, "session_started", state.activeSession);
-    recordIosMdmPolicyQueue("session-start");
+    startDeviceSession(deviceTargets, session);
+    addEvent(state, "session_started", session);
+    if (deviceTargets.includes("phone")) recordIosMdmPolicyQueue("session-start");
     await saveState(state);
-    scheduleImmediateSessionEnforcement(state.activeSession.id);
-    sendJson(response, 200, { ok: true, session: state.activeSession });
+    scheduleImmediateSessionEnforcement(session.id);
+    sendJson(response, 200, { ok: true, session, activeSessions: state.activeSessions });
     return;
   }
 
   if (method === "POST" && path === "/api/session/end") {
-    if (state.activeSession) {
-      if (!state.activeSession.canEndEarly) {
-        sendJson(response, 423, { error: "This session is locked. Use an emergency unlock if you really need to end it.", active: state.activeSession });
+    const body = await readBody(request);
+    activePolicy(state);
+    const deviceTargets = normalizeSessionDeviceTargets(body, ["computer"]);
+    const ended = [];
+    for (const target of deviceTargets) {
+      const session = activeSessionForDevice(state, target);
+      if (!session) continue;
+      if (!session.canEndEarly) {
+        sendJson(response, 423, { error: `The ${target} session is locked. Use an emergency unlock if you really need to end it.`, active: session });
         return;
       }
 
-      addEvent(state, "session_ended", state.activeSession);
-      state.activeSession = null;
+      clearDeviceSession(target);
+      ended.push({ target, session });
+      addEvent(state, "session_ended", { ...session, endedTarget: target });
+    }
+
+    if (ended.some((item) => item.target === "phone")) {
       recordIosMdmPolicyQueue("session-end");
-      await saveState(state);
-      sendJson(response, 200, { ok: true, ended: true });
-      return;
     }
 
-    const active = activePolicy(state);
-    if (!active) {
-      sendJson(response, 200, { ok: true, ended: false });
-      return;
-    }
-
-    if (!active.session.canEndEarly) {
-      sendJson(response, 423, { error: "This session is locked. Use an emergency unlock if you really need to end it.", active: active.session });
-      return;
-    }
-
-    addEvent(state, "session_ended", active.session);
-    state.activeSession = null;
-    recordIosMdmPolicyQueue("session-end");
     await saveState(state);
-    sendJson(response, 200, { ok: true, ended: true });
+    sendJson(response, 200, { ok: true, ended: Boolean(ended.length), endedTargets: ended.map((item) => item.target), activeSessions: state.activeSessions });
     return;
   }
 
@@ -761,8 +758,8 @@ async function handleApi(request, response, url) {
     spendEmergencyToken();
     pending.status = "used";
 
-    if (pending.activeKind === "manual" && state.activeSession?.id === pending.sessionId) {
-      state.activeSession = null;
+    if (pending.activeKind === "manual") {
+      clearSessionsById(state, pending.sessionId);
     } else if (pending.scheduleId) {
       state.overrides.push({
         id: randomUUID(),
@@ -927,6 +924,7 @@ function publicState(current, policy) {
     keyholder: keyholderSummary(current),
     distanceKey: distanceKeySummary(current),
     panicLock: current.panicLock || null,
+    activeSessions: current.activeSessions || { computer: current.activeSession || null, phone: null },
     activeSession: current.activeSession,
     sessionPhase: sessionPhase(current.activeSession),
     activePolicy: policy ? {
@@ -937,6 +935,7 @@ function publicState(current, policy) {
       endsAt: policy.endsAt,
       phase: policy.phase || null
     } : null,
+    devicePolicies: publicDevicePolicies(current),
     emergency: {
       remaining: emergencyRemaining(),
       usedThisWeek: state.emergency.tokensUsedByWeek[weekKey()] || 0,
@@ -976,6 +975,7 @@ function updateSettings(body) {
     "baselineDailyMinutes",
     "focusScoreGoal",
     "activeProfileId",
+    "baselineProfileId",
     "foolproofModeEnabled",
     "appQuitEscalationSeconds",
     "siteRedirectEnabled",
@@ -1031,7 +1031,9 @@ function upsertProfile(body) {
     blockedSites: normalizeArray(body.blockedSites ?? existing?.blockedSites),
     blockedUrlPatterns: normalizeArray(body.blockedUrlPatterns ?? existing?.blockedUrlPatterns),
     allowedApps: normalizeArray(body.allowedApps ?? existing?.allowedApps),
-    allowedSites: normalizeArray(body.allowedSites ?? existing?.allowedSites)
+    allowedSites: normalizeArray(body.allowedSites ?? existing?.allowedSites),
+    phoneAppBlocking: optionalDisabledFlag(body.phoneAppBlocking, existing?.phoneAppBlocking),
+    hostsUrlPatternBlocking: optionalDisabledFlag(body.hostsUrlPatternBlocking, existing?.hostsUrlPatternBlocking)
   };
 
   if (existing) Object.assign(existing, profile);
@@ -1052,6 +1054,7 @@ function upsertSchedule(body) {
     profileId: body.profileId || existing?.profileId || state.settings.activeProfileId,
     lockLevel: body.lockLevel || existing?.lockLevel || "deep",
     commitmentLock: body.commitmentLock === undefined ? Boolean(existing?.commitmentLock) : truthy(body.commitmentLock),
+    deviceTargets: normalizeDeviceTargets(body.deviceTargets ?? existing?.deviceTargets, DEVICE_TARGETS),
     days: normalizeDays(body.days ?? existing?.days ?? [1, 2, 3, 4, 5]),
     start: normalizeClock(body.start || existing?.start || "09:00"),
     end: normalizeClock(body.end || existing?.end || "17:00"),
@@ -1112,6 +1115,66 @@ function emergencyRemaining() {
 
 function panicLockDurationMinutes() {
   return clampNumber(state.settings?.panicLockDurationMinutes, 1, 1440, 3);
+}
+
+function normalizeSessionDeviceTargets(body, fallback = DEVICE_TARGETS) {
+  if (Array.isArray(body?.deviceTargets) || typeof body?.deviceTargets === "string") {
+    return normalizeDeviceTargets(body.deviceTargets, fallback);
+  }
+
+  const selected = [];
+  if (truthy(body?.targetComputer) || truthy(body?.computer)) selected.push("computer");
+  if (truthy(body?.targetPhone) || truthy(body?.phone)) selected.push("phone");
+  return normalizeDeviceTargets(selected, fallback);
+}
+
+function optionalDisabledFlag(value, existing) {
+  if (value === undefined) return existing === false ? false : undefined;
+  return value === false || value === "false" ? false : undefined;
+}
+
+function activeSessionConflicts(targets) {
+  state.activeSessions ||= { computer: state.activeSession || null, phone: null };
+  return targets.filter((target) => Boolean(activeSessionForDevice(state, target)));
+}
+
+function startDeviceSession(targets, session) {
+  state.activeSessions ||= { computer: null, phone: null };
+  for (const target of targets) {
+    state.activeSessions[target] = session;
+  }
+  state.activeSession = state.activeSessions.computer || null;
+}
+
+function clearDeviceSession(target) {
+  const device = normalizeDeviceTarget(target);
+  state.activeSessions ||= { computer: state.activeSession || null, phone: null };
+  state.activeSessions[device] = null;
+  state.activeSession = state.activeSessions.computer || null;
+}
+
+function sessionIsActive(sessionId) {
+  if (!sessionId) return false;
+  if (state.activeSession?.id === sessionId) return true;
+  return DEVICE_TARGETS.some((target) => state.activeSessions?.[target]?.id === sessionId);
+}
+
+function deviceLabel(targets) {
+  return targets.map((target) => target === "phone" ? "phone" : "computer").join(" and ");
+}
+
+function publicDevicePolicies(current) {
+  return Object.fromEntries(DEVICE_TARGETS.map((target) => {
+    const policy = activePolicy(current, new Date(), { device: target });
+    return [target, policy ? {
+      kind: policy.kind,
+      session: policy.session,
+      profile: policy.profile,
+      schedule: policy.schedule || null,
+      endsAt: policy.endsAt,
+      phase: policy.phase || null
+    } : null];
+  }));
 }
 
 function spendEmergencyToken() {
@@ -1544,6 +1607,7 @@ function isProtectedSettingsMutation(body) {
     "foolproofModeEnabled",
     "strictByDefault",
     "activeProfileId",
+    "baselineProfileId",
     "panicLockDurationMinutes",
     "protectedEditsEnabled",
     "protectedEditDelaySeconds",

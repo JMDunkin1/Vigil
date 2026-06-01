@@ -202,6 +202,38 @@ export const DEFAULT_BLOCKED_SITES = [
   "discord.com"
 ];
 
+export const DEFAULT_EXPLICIT_BLOCKED_SITES = [
+  "pornhub.com",
+  "xvideos.com",
+  "xnxx.com",
+  "xhamster.com",
+  "redtube.com",
+  "youporn.com",
+  "spankbang.com",
+  "onlyfans.com",
+  "fansly.com",
+  "chaturbate.com",
+  "stripchat.com",
+  "cam4.com",
+  "adultfriendfinder.com",
+  "brazzers.com"
+];
+
+export const DEFAULT_SHORT_FORM_URL_PATTERNS = [
+  "youtube.com/shorts",
+  "m.youtube.com/shorts",
+  "instagram.com/reels",
+  "instagram.com/explore",
+  "facebook.com/reel",
+  "facebook.com/watch/reel",
+  "reddit.com/r/all",
+  "reddit.com/r/popular",
+  "x.com/explore",
+  "twitter.com/explore",
+  "snapchat.com/spotlight",
+  "tiktok.com"
+];
+
 export const DEFAULT_ALLOWED_APPS = [
   ...ALWAYS_ALLOWED_APPS,
   "Mail",
@@ -226,6 +258,9 @@ export const DEFAULT_ALLOWED_SITES = [
   "stackoverflow.com"
 ];
 
+export const DEVICE_TARGETS = ["computer", "phone"];
+export const NORMAL_PROFILE_ID = "normal";
+export const SOFT_BLOCK_PROFILE_ID = "soft-block";
 export const BRICK_MODE_PROFILE_ID = "brick-mode";
 export const PANIC_LOCK_PROFILE_ID = "panic-lockout";
 
@@ -332,6 +367,7 @@ export function defaultState() {
       baselineDailyMinutes: 300,
       focusScoreGoal: 80,
       activeProfileId: "default",
+      baselineProfileId: NORMAL_PROFILE_ID,
       foolproofModeEnabled: false,
       appQuitEscalationSeconds: 10,
       siteRedirectEnabled: true,
@@ -359,16 +395,35 @@ export function defaultState() {
         description: "Blocks social media apps and sites while keeping everything else usable.",
         blockedApps: DEFAULT_BLOCKED_APPS,
         blockedSites: DEFAULT_BLOCKED_SITES,
-        blockedUrlPatterns: [
-          "youtube.com/shorts",
-          "instagram.com/reels",
-          "instagram.com/explore",
-          "reddit.com/r/all",
-          "reddit.com/r/popular",
-          "x.com/explore"
-        ],
+        blockedUrlPatterns: DEFAULT_SHORT_FORM_URL_PATTERNS,
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES]
+      },
+      {
+        id: NORMAL_PROFILE_ID,
+        name: "Normal",
+        mode: "blocklist",
+        description: "Baseline mode: no focus lock, but explicit sites stay blocked.",
+        blockedApps: [],
+        blockedSites: DEFAULT_EXPLICIT_BLOCKED_SITES,
+        blockedUrlPatterns: [],
+        allowedApps: [...DEFAULT_ALLOWED_APPS],
+        allowedSites: [...DEFAULT_ALLOWED_SITES],
+        phoneAppBlocking: false,
+        hostsUrlPatternBlocking: false
+      },
+      {
+        id: SOFT_BLOCK_PROFILE_ID,
+        name: "Soft Block",
+        mode: "blocklist",
+        description: "Blocks the normal explicit baseline plus short-form feeds while leaving regular sites usable.",
+        blockedApps: [],
+        blockedSites: DEFAULT_EXPLICIT_BLOCKED_SITES,
+        blockedUrlPatterns: DEFAULT_SHORT_FORM_URL_PATTERNS,
+        allowedApps: [...DEFAULT_ALLOWED_APPS],
+        allowedSites: [...DEFAULT_ALLOWED_SITES],
+        phoneAppBlocking: false,
+        hostsUrlPatternBlocking: false
       },
       {
         id: BRICK_MODE_PROFILE_ID,
@@ -562,6 +617,10 @@ export function defaultState() {
     maintenance: {
       pending: [],
       windows: []
+    },
+    activeSessions: {
+      computer: null,
+      phone: null
     },
     panicLock: null,
     activeSession: null,

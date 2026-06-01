@@ -2,7 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { STATE_PATH, STATE_SEAL_KEY_PATH, STATE_SEAL_PATH } from "./store.js";
-import { activePolicy, activeProfile, expandSiteTargets, normalizeHost, normalizeUrlPattern } from "./policy.js";
+import { activePolicy, baselinePolicy, expandSiteTargets, normalizeHost, normalizeUrlPattern } from "./policy.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { applySealVerificationToState, stateSealSummary, verifyStateTextSeal } from "./seal.js";
 
@@ -233,14 +233,16 @@ function removeCompleteManagedHostsBlocks(currentHosts, begin, endMarker) {
 function hostsProfileForState(state, now) {
   const integrity = integrityLockdownPolicy(state, now);
   if (integrity) return integrity.profile;
-  return activePolicy(state, now)?.profile || activeProfile(state);
+  return activePolicy(state, now)?.profile || baselinePolicy(state, now, { device: "computer" })?.profile;
 }
 
 function hostsSiteTargets(state, profile) {
   const targets = [];
   if (profile?.mode === "blocklist") {
     targets.push(...(profile.blockedSites || []));
-    targets.push(...urlPatternHostTargets(profile.blockedUrlPatterns || []));
+    if (profile.hostsUrlPatternBlocking !== false) {
+      targets.push(...urlPatternHostTargets(profile.blockedUrlPatterns || []));
+    }
   }
 
   for (const lock of (state.appLocks || []).filter((item) => item.enabled)) {

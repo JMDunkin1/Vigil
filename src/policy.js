@@ -1,5 +1,7 @@
 import {
   ALWAYS_ALLOWED_APPS,
+  DEVICE_TARGETS,
+  NORMAL_PROFILE_ID,
   PANIC_LOCK_PROFILE_ID,
   PROCESS_SWEEP_EXEMPT_APPS,
   STRICT_BYPASS_APPS,
@@ -146,6 +148,11 @@ export function activeProfile(state) {
   return state.profiles.find((profile) => profile.id === state.settings.activeProfileId) || state.profiles[0];
 }
 
+export function baselineProfile(state) {
+  const id = state.settings?.baselineProfileId || NORMAL_PROFILE_ID;
+  return state.profiles.find((profile) => profile.id === id) || profileById(state, NORMAL_PROFILE_ID);
+}
+
 export function profileById(state, id) {
   return state.profiles.find((profile) => profile.id === id) || activeProfile(state);
 }
@@ -160,7 +167,9 @@ export function snapshotProfile(profile) {
     blockedSites: [...(profile.blockedSites || [])],
     blockedUrlPatterns: [...(profile.blockedUrlPatterns || [])],
     allowedApps: [...(profile.allowedApps || [])],
-    allowedSites: [...(profile.allowedSites || [])]
+    allowedSites: [...(profile.allowedSites || [])],
+    phoneAppBlocking: profile.phoneAppBlocking === false ? false : undefined,
+    hostsUrlPatternBlocking: profile.hostsUrlPatternBlocking === false ? false : undefined
   };
 }
 
@@ -182,7 +191,32 @@ export function isFullLockoutPolicy(policy) {
   return Boolean(policy?.kind === "panic" || policy?.session?.mode === "panic" || policy?.session?.fullLockout);
 }
 
-export function activePolicy(state, now = new Date()) {
+export function baselinePolicy(state, now = new Date(), options = {}) {
+  const device = normalizeDeviceTarget(options.device);
+  const profile = baselineProfile(state);
+  if (!profile) return null;
+  return {
+    kind: "baseline",
+    session: {
+      id: `baseline:${device}`,
+      title: "Normal",
+      mode: "normal",
+      profileId: profile.id,
+      lockLevel: "light",
+      startedAt: state.createdAt || now.toISOString(),
+      endsAt: "",
+      canEndEarly: true,
+      emergencyUnlocksAllowed: true,
+      source: "baseline",
+      deviceTargets: [device]
+    },
+    profile,
+    endsAt: ""
+  };
+}
+
+export function activePolicy(state, now = new Date(), options = {}) {
+  const device = normalizeDeviceTarget(options.device);
   cleanupExpired(state, now);
 
   const integrity = integrityLockdownPolicy(state, now);
@@ -199,23 +233,20 @@ export function activePolicy(state, now = new Date()) {
     };
   }
 
-  if (state.activeSession && new Date(state.activeSession.endsAt) <= now) {
-    state.activeSession = null;
-  }
-
-  if (state.activeSession) {
-    const phase = sessionPhase(state.activeSession, now);
+  const manualSession = activeSessionForDevice(state, device);
+  if (manualSession) {
+    const phase = sessionPhase(manualSession, now);
     if (phase && !phase.blocking) return null;
     return {
       kind: "manual",
-      session: state.activeSession,
-      profile: state.activeSession.profileSnapshot || profileById(state, state.activeSession.profileId),
-      endsAt: phase?.endsAt || state.activeSession.endsAt,
+      session: manualSession,
+      profile: manualSession.profileSnapshot || profileById(state, manualSession.profileId),
+      endsAt: phase?.endsAt || manualSession.endsAt,
       phase
     };
   }
 
-  const scheduled = activeSchedule(state, now);
+  const scheduled = activeSchedule(state, now, { device });
   if (!scheduled) return null;
 
   return {
@@ -225,6 +256,54 @@ export function activePolicy(state, now = new Date()) {
     schedule: scheduled.schedule,
     endsAt: scheduled.session.endsAt
   };
+}
+
+export function activeSessionForDevice(state, device = "computer") {
+  const target = normalizeDeviceTarget(device);
+  const session = state.activeSessions?.[target]
+    || (target === "computer" ? state.activeSession : null)
+    || (target === "phone" && state.activeSession && !state.activeSession.deviceTargets ? state.activeSession : null)
+    || (!state.activeSessions && state.activeSession ? state.activeSession : null);
+  if (!session) return null;
+  return sessionTargetsDevice(session, target) ? session : null;
+}
+
+export function clearSessionsById(state, sessionId) {
+  const id = String(sessionId || "");
+  if (!id) return [];
+
+  state.activeSessions ||= { computer: state.activeSession || null, phone: null };
+  const cleared = [];
+  for (const target of DEVICE_TARGETS) {
+    if (state.activeSessions[target]?.id === id) {
+      state.activeSessions[target] = null;
+      cleared.push(target);
+    }
+  }
+
+  if (state.activeSession?.id === id) state.activeSession = null;
+  state.activeSession = state.activeSessions.computer || null;
+  return cleared;
+}
+
+export function normalizeDeviceTargets(value, fallback = DEVICE_TARGETS) {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/\s*,\s*|\s+/)
+      : [];
+  const targets = [...new Set(source.map((item) => normalizeDeviceTarget(item, "")).filter(Boolean))];
+  return targets.length ? targets : [...fallback];
+}
+
+export function normalizeDeviceTarget(value, fallback = "computer") {
+  const target = String(value || "").trim().toLowerCase();
+  return DEVICE_TARGETS.includes(target) ? target : fallback;
+}
+
+export function sessionTargetsDevice(session, device = "computer") {
+  const targets = normalizeDeviceTargets(session?.deviceTargets, DEVICE_TARGETS);
+  return targets.includes(normalizeDeviceTarget(device));
 }
 
 export function emergencyUnlockAllowedForPolicy(policy) {
@@ -277,8 +356,10 @@ export function sessionPhase(session, now = new Date()) {
   return null;
 }
 
-export function activeSchedule(state, now = new Date()) {
+export function activeSchedule(state, now = new Date(), options = {}) {
+  const device = normalizeDeviceTarget(options.device);
   for (const schedule of state.schedules.filter((item) => item.enabled)) {
+    if (!sessionTargetsDevice(schedule, device)) continue;
     if (!scheduleEnvironmentMatches(state, schedule)) continue;
     const match = scheduleWindow(schedule, now);
     if (!match) continue;
@@ -296,7 +377,8 @@ export function activeSchedule(state, now = new Date()) {
         canEndEarly: false,
         commitmentLock: Boolean(schedule.commitmentLock),
         emergencyUnlocksAllowed: !schedule.commitmentLock,
-        source: "schedule"
+        source: "schedule",
+        deviceTargets: normalizeDeviceTargets(schedule.deviceTargets, DEVICE_TARGETS)
       }
     };
   }
@@ -576,6 +658,15 @@ function cleanupExpired(state, now) {
   if (state.panicLock && new Date(state.panicLock.endsAt) <= now) {
     state.panicLock = null;
   }
+  state.activeSessions ||= { computer: null, phone: null };
+  for (const target of DEVICE_TARGETS) {
+    const session = state.activeSessions[target];
+    if (session && new Date(session.endsAt) <= now) state.activeSessions[target] = null;
+  }
+  if (state.activeSession && new Date(state.activeSession.endsAt) <= now) {
+    state.activeSession = null;
+  }
+  state.activeSession = state.activeSessions.computer || state.activeSession || null;
   state.overrides = (state.overrides || []).filter((override) => new Date(override.until) > now);
   state.emergency.pending = (state.emergency.pending || []).filter((request) => {
     const expiresAt = new Date(request.expiresAt || 0);

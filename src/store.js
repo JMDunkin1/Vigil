@@ -88,6 +88,7 @@ function migrateState(state) {
   const fresh = defaultState();
   const profiles = Array.isArray(state.profiles) && state.profiles.length ? state.profiles : fresh.profiles;
   const settings = migrateSettings({ ...fresh.settings, ...(state.settings || {}) });
+  const activeSessions = migrateActiveSessions(state, fresh);
   return {
     ...fresh,
     ...state,
@@ -173,6 +174,8 @@ function migrateState(state) {
       pending: Array.isArray(state.maintenance?.pending) ? state.maintenance.pending : [],
       windows: Array.isArray(state.maintenance?.windows) ? state.maintenance.windows : []
     },
+    activeSessions,
+    activeSession: activeSessions.computer || state.activeSession || null,
     panicLock: state.panicLock || null,
     emergency: {
       ...fresh.emergency,
@@ -209,7 +212,9 @@ function cloneProfile(profile) {
     blockedSites: [...(profile.blockedSites || [])],
     blockedUrlPatterns: [...(profile.blockedUrlPatterns || [])],
     allowedApps: [...(profile.allowedApps || [])],
-    allowedSites: [...(profile.allowedSites || [])]
+    allowedSites: [...(profile.allowedSites || [])],
+    phoneAppBlocking: profile.phoneAppBlocking === false ? false : undefined,
+    hostsUrlPatternBlocking: profile.hostsUrlPatternBlocking === false ? false : undefined
   };
 }
 
@@ -228,8 +233,22 @@ function normalizeProfiles(profiles) {
     blockedSites: Array.isArray(profile.blockedSites) ? profile.blockedSites : [],
     blockedUrlPatterns: Array.isArray(profile.blockedUrlPatterns) ? profile.blockedUrlPatterns : [],
     allowedApps: Array.isArray(profile.allowedApps) ? profile.allowedApps : [],
-    allowedSites: Array.isArray(profile.allowedSites) ? profile.allowedSites : []
+    allowedSites: Array.isArray(profile.allowedSites) ? profile.allowedSites : [],
+    phoneAppBlocking: profile.phoneAppBlocking === false ? false : undefined,
+    hostsUrlPatternBlocking: profile.hostsUrlPatternBlocking === false ? false : undefined
   }));
+}
+
+function migrateActiveSessions(state, fresh) {
+  const existing = state.activeSessions && typeof state.activeSessions === "object"
+    ? state.activeSessions
+    : null;
+  const legacy = state.activeSession || null;
+  return {
+    ...fresh.activeSessions,
+    computer: existing?.computer || legacy || null,
+    phone: existing?.phone || (!existing && legacy ? legacy : null)
+  };
 }
 
 function sleep(ms) {

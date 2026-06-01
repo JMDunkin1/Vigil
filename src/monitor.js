@@ -3,7 +3,7 @@ import { addEvent, saveState, saveUsage } from "./store.js";
 import { PORT } from "./defaults.js";
 import { matchContentFilterUrl } from "./contentFilters.js";
 import { reconcileFocusShortcut } from "./focusHooks.js";
-import { activePolicy, isFullLockoutPolicy, isProcessSweepExemptApp, isStrictBypassAppForPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "./policy.js";
+import { activePolicy, baselinePolicy, isFullLockoutPolicy, isProcessSweepExemptApp, isStrictBypassAppForPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "./policy.js";
 import { activeAppLockPolicy } from "./appLocks.js";
 import { maybeApplyAndroidPolicy } from "./devices.js";
 import { extensionDynamicRulesReady } from "./foolproof.js";
@@ -492,7 +492,10 @@ function policyForSample(state, usage, sample, now = new Date()) {
   const limitControlPolicy = sample.url ? strictLimitBrowserControlPolicy(state, now) : null;
   const limitBrowserControl = sample.url && matchStrictBrowserControlUrl(state, limitControlPolicy, sample.url);
   if (limitBrowserControl) return { ...limitControlPolicy, kind: "browser-control", browserControl: limitBrowserControl };
-  return targetBlockedByPolicy(state, sample, sessionPolicy) ? sessionPolicy : appLockPolicy || limitPolicy;
+  if (targetBlockedByPolicy(state, sample, sessionPolicy)) return sessionPolicy;
+  if (appLockPolicy || limitPolicy) return appLockPolicy || limitPolicy;
+  const baseline = baselinePolicy(state, now, { device: "computer" });
+  return targetBlockedByPolicy(state, sample, baseline) ? baseline : null;
 }
 
 function strictAppLockBrowserControlPolicy(state, now) {
