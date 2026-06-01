@@ -222,8 +222,8 @@ export const DEFAULT_EXPLICIT_BLOCKED_SITES = [
 export const DEFAULT_SHORT_FORM_URL_PATTERNS = [
   "youtube.com/shorts",
   "m.youtube.com/shorts",
+  "instagram.com/reel",
   "instagram.com/reels",
-  "instagram.com/explore",
   "facebook.com/reel",
   "facebook.com/watch/reel",
   "reddit.com/r/all",
@@ -294,18 +294,6 @@ export const BRICK_ALLOWED_SITES = [
   "drive.google.com",
   "github.com",
   "stackoverflow.com"
-];
-
-export const DEFAULT_ANDROID_PACKAGES = [
-  "com.google.android.youtube",
-  "com.reddit.frontpage",
-  "com.twitter.android",
-  "com.instagram.android",
-  "com.zhiliaoapp.musically",
-  "com.facebook.katana",
-  "com.discord",
-  "com.snapchat.android",
-  "com.pinterest"
 ];
 
 export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
@@ -571,13 +559,6 @@ export function defaultState() {
       }
     },
     deviceControls: {
-      android: {
-        enabled: false,
-        packages: DEFAULT_ANDROID_PACKAGES,
-        lastAppliedAt: null,
-        lastAction: null,
-        lastResult: null
-      },
       ios: {
         enabled: false,
         status: "supervised-profile-ready",
@@ -600,6 +581,8 @@ export function defaultState() {
           identityCertificateUuid: "",
           identityCertificatePayloadBase64: "",
           identityCertificatePassword: "",
+          pushCertificatePayloadBase64: "",
+          pushCertificatePassword: "",
           accessRights: 8179,
           signMessage: false,
           useDevelopmentApns: false,
@@ -610,6 +593,9 @@ export function defaultState() {
           lastEnrollmentProfileGeneratedAt: null,
           lastCheckInAt: null,
           lastCommandQueuedAt: null,
+          lastPushAt: null,
+          lastPushStatus: "",
+          lastPushError: "",
           lastPolicyHash: ""
         }
       }

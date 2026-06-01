@@ -264,14 +264,9 @@ function protectedStateSnapshot(state = {}) {
 }
 
 function protectedDeviceControls(deviceControls) {
-  const android = deviceControls.android || {};
   const ios = deviceControls.ios || {};
   const mdm = ios.mdm || {};
   return {
-    android: {
-      enabled: android.enabled,
-      packages: android.packages || []
-    },
     ios: {
       enabled: ios.enabled,
       status: ios.status,
@@ -293,6 +288,8 @@ function protectedDeviceControls(deviceControls) {
         identityCertificateUuid: mdm.identityCertificateUuid || "",
         identityCertificatePayloadBase64: mdm.identityCertificatePayloadBase64 || "",
         identityCertificatePassword: mdm.identityCertificatePassword || "",
+        pushCertificatePayloadBase64: mdm.pushCertificatePayloadBase64 || "",
+        pushCertificatePassword: mdm.pushCertificatePassword || "",
         accessRights: mdm.accessRights,
         signMessage: mdm.signMessage,
         useDevelopmentApns: mdm.useDevelopmentApns,

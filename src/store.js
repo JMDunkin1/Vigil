@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultState } from "./defaults.js";
+import { DEFAULT_SHORT_FORM_URL_PATTERNS, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -86,14 +86,15 @@ export function addEvent(state, type, detail = {}) {
 
 function migrateState(state) {
   const fresh = defaultState();
-  const profiles = Array.isArray(state.profiles) && state.profiles.length ? state.profiles : fresh.profiles;
+  const rawProfiles = Array.isArray(state.profiles) && state.profiles.length ? state.profiles : fresh.profiles;
+  const profiles = normalizeProfiles(migrateBuiltinProfiles(mergeBuiltinProfiles(rawProfiles, fresh.profiles)));
   const settings = migrateSettings({ ...fresh.settings, ...(state.settings || {}) });
-  const activeSessions = migrateActiveSessions(state, fresh);
+  const activeSessions = migrateActiveSessions(state, fresh, profiles);
   return {
     ...fresh,
     ...state,
     settings,
-    profiles: normalizeProfiles(mergeBuiltinProfiles(profiles, fresh.profiles)),
+    profiles,
     schedules: normalizeSchedules(Array.isArray(state.schedules) ? state.schedules : fresh.schedules),
     limitRules: Array.isArray(state.limitRules) ? state.limitRules : fresh.limitRules,
     limitBlocks: Array.isArray(state.limitBlocks) ? state.limitBlocks : [],
@@ -136,13 +137,6 @@ function migrateState(state) {
       }
     },
     deviceControls: {
-      android: {
-        ...fresh.deviceControls.android,
-        ...(state.deviceControls?.android || {}),
-        packages: Array.isArray(state.deviceControls?.android?.packages)
-          ? state.deviceControls.android.packages
-          : fresh.deviceControls.android.packages
-      },
       ios: {
         ...fresh.deviceControls.ios,
         ...(state.deviceControls?.ios || {}),
@@ -175,7 +169,7 @@ function migrateState(state) {
       windows: Array.isArray(state.maintenance?.windows) ? state.maintenance.windows : []
     },
     activeSessions,
-    activeSession: activeSessions.computer || state.activeSession || null,
+    activeSession: activeSessions.computer || null,
     panicLock: state.panicLock || null,
     emergency: {
       ...fresh.emergency,
@@ -205,6 +199,29 @@ function mergeBuiltinProfiles(profiles, builtinProfiles) {
   return [...profiles, ...missing.map(cloneProfile)];
 }
 
+function migrateBuiltinProfiles(profiles) {
+  return profiles.map((profile) => {
+    if (profile.id !== SOFT_BLOCK_PROFILE_ID) return profile;
+    return sanitizeSoftBlockProfile(profile);
+  });
+}
+
+export function sanitizeSoftBlockProfile(profile) {
+  const blockedUrlPatterns = uniqueList([
+    ...(profile.blockedUrlPatterns || []).filter((pattern) => !isInstagramExplorePattern(pattern)),
+    ...DEFAULT_SHORT_FORM_URL_PATTERNS.filter(isInstagramReelsPattern)
+  ]);
+  return {
+    ...profile,
+    description: profile.description || "Blocks the normal explicit baseline plus short-form feeds while leaving regular sites usable.",
+    blockedApps: (profile.blockedApps || []).filter((app) => !isInstagramAppTarget(app)),
+    blockedSites: (profile.blockedSites || []).filter((site) => !isInstagramSiteTarget(site)),
+    blockedUrlPatterns,
+    phoneAppBlocking: false,
+    hostsUrlPatternBlocking: false
+  };
+}
+
 function cloneProfile(profile) {
   return {
     ...profile,
@@ -216,6 +233,56 @@ function cloneProfile(profile) {
     phoneAppBlocking: profile.phoneAppBlocking === false ? false : undefined,
     hostsUrlPatternBlocking: profile.hostsUrlPatternBlocking === false ? false : undefined
   };
+}
+
+function uniqueList(values) {
+  return [...new Set((values || []).map((item) => String(item).trim()).filter(Boolean))];
+}
+
+function isInstagramAppTarget(value) {
+  const app = String(value || "")
+    .trim()
+    .replace(/\.app$/i, "")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+  return ["instagram", "instagram helper", "com.burbn.instagram"].includes(app);
+}
+
+function isInstagramSiteTarget(value) {
+  return ["instagram.com", "cdninstagram.com"].includes(normalizeHostTarget(value));
+}
+
+function isInstagramExplorePattern(value) {
+  const pattern = normalizePatternTarget(value);
+  return pattern === "instagram.com/explore" || pattern.startsWith("instagram.com/explore/");
+}
+
+function isInstagramReelsPattern(value) {
+  const pattern = normalizePatternTarget(value);
+  return pattern === "instagram.com/reel"
+    || pattern === "instagram.com/reels"
+    || pattern.startsWith("instagram.com/reel/")
+    || pattern.startsWith("instagram.com/reels/");
+}
+
+function normalizeHostTarget(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]
+    .split(":")[0];
+}
+
+function normalizePatternTarget(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\s+/g, "")
+    .replace(/^\/+$/, "");
 }
 
 function normalizeSchedules(schedules) {
@@ -239,15 +306,26 @@ function normalizeProfiles(profiles) {
   }));
 }
 
-function migrateActiveSessions(state, fresh) {
+function migrateActiveSessions(state, fresh, profiles) {
   const existing = state.activeSessions && typeof state.activeSessions === "object"
     ? state.activeSessions
     : null;
   const legacy = state.activeSession || null;
   return {
     ...fresh.activeSessions,
-    computer: existing?.computer || legacy || null,
-    phone: existing?.phone || (!existing && legacy ? legacy : null)
+    computer: migrateSessionProfileSnapshot(existing?.computer || legacy || null, profiles),
+    phone: migrateSessionProfileSnapshot(existing?.phone || (!existing && legacy ? legacy : null), profiles)
+  };
+}
+
+function migrateSessionProfileSnapshot(session, profiles) {
+  if (!session) return null;
+  const profileId = session.profileSnapshot?.id || session.profileId;
+  if (profileId !== SOFT_BLOCK_PROFILE_ID) return session;
+  const fallback = profiles.find((profile) => profile.id === SOFT_BLOCK_PROFILE_ID) || {};
+  return {
+    ...session,
+    profileSnapshot: sanitizeSoftBlockProfile(session.profileSnapshot || fallback)
   };
 }
 

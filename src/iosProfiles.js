@@ -2,7 +2,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 import {
   APP_NAME,
   DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS,
-  DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS
+  DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
+  SOFT_BLOCK_PROFILE_ID
 } from "./defaults.js";
 import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, profileById } from "./policy.js";
@@ -10,6 +11,13 @@ import { activePolicy, baselinePolicy, expandSiteTargets, profileById } from "./
 export const IOS_PROFILE_IDENTIFIER = "com.local-screen-time.ios-lock";
 const MAX_DENY_URLS = 500;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
+const SOFT_BLOCK_WEB_CLIPS = [
+  {
+    id: "instagram",
+    label: "Sentinel Instagram",
+    url: "https://www.instagram.com/direct/inbox/"
+  }
+];
 
 export function normalizeIosSettings(body = {}, existing = {}) {
   const next = {
@@ -64,6 +72,7 @@ export function iosProfileSummary(state, now = new Date()) {
       appBundleCount: targets.appBundleIds.length,
       deniedUrlCount: targets.deniedUrls.length,
       allowedUrlCount: targets.allowedUrls.length,
+      webClipCount: targets.webClips.length,
       lastGeneratedAt: settings.lastGeneratedAt || null
     }
   };
@@ -103,6 +112,7 @@ export function buildIosConfigurationProfile(state, now = new Date()) {
 
   const webFilter = webContentFilterPayload(settings, targets);
   if (webFilter) payloads.push(webFilter);
+  payloads.push(...webClipPayloads(settings, targets));
 
   if (active && settings.hardenRemoval && settings.removalPassword) {
     payloads.push(commonPayload("com.apple.profileRemovalPassword", "Profile Removal Password", "removal-password", {
@@ -171,7 +181,8 @@ export function iosPolicyTargets(state, now = new Date()) {
     webMode,
     appBundleIds,
     deniedUrls,
-    allowedUrls
+    allowedUrls,
+    webClips: profile?.id === SOFT_BLOCK_PROFILE_ID ? SOFT_BLOCK_WEB_CLIPS : []
   };
 }
 
@@ -218,7 +229,8 @@ function disabledPolicyTargets(settings) {
     webMode: settings.webMode,
     appBundleIds: [],
     deniedUrls: [],
-    allowedUrls: []
+    allowedUrls: [],
+    webClips: []
   };
 }
 
@@ -265,6 +277,17 @@ function webContentFilterPayload(settings, targets) {
 
   if (!content.DenyListURLs?.length && !content.AllowListBookmarks?.length) return null;
   return commonPayload("com.apple.webcontent-filter", "iPhone Web Filter", "web-filter", content);
+}
+
+function webClipPayloads(settings, targets) {
+  if (!settings.enabled) return [];
+  if (!settings.blockWeb) return [];
+  return (targets.webClips || []).map((clip) => commonPayload("com.apple.webClip.managed", clip.label, `webclip.${clip.id}`, {
+    URL: clip.url,
+    Label: clip.label,
+    FullScreen: true,
+    IsRemovable: true
+  }));
 }
 
 function commonPayload(type, name, suffix, values = {}) {

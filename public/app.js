@@ -111,8 +111,8 @@ function selectedDeviceTargets() {
 
 function selectedDeviceLabel() {
   const selected = selectedDeviceTargets();
-  if (selected.length === DEVICE_TARGETS.length) return "Computer + Phone";
-  return selected[0] === "phone" ? "Phone" : "Computer";
+  if (selected.length === DEVICE_TARGETS.length) return "Computer + iPhone";
+  return selected[0] === "phone" ? "iPhone" : "Computer";
 }
 
 function bindEvents() {
@@ -273,28 +273,6 @@ function bindEvents() {
     await refresh();
   });
 
-  $("#androidForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    try {
-      await post("/api/devices/android/settings", {
-        enabled: $("#androidEnabled").checked,
-        packages: lines($("#androidPackages").value)
-      });
-      toast("Android rules saved");
-    } catch (error) {
-      toast(error.message);
-    }
-    await refresh();
-  });
-
-  $("#androidBlockNow").addEventListener("click", async () => {
-    await applyAndroid("block");
-  });
-
-  $("#androidUnblockNow").addEventListener("click", async () => {
-    await applyAndroid("unblock");
-  });
-
   $("#iosForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
@@ -335,11 +313,17 @@ function bindEvents() {
       };
       const identityPayload = $("#iosMdmIdentityPayload").value.trim();
       const identityPassword = $("#iosMdmIdentityPassword").value;
+      const pushPayload = $("#iosMdmPushPayload").value.trim();
+      const pushPassword = $("#iosMdmPushPassword").value;
       if (identityPayload) payload.identityCertificatePayloadBase64 = identityPayload;
       if (identityPassword) payload.identityCertificatePassword = identityPassword;
+      if (pushPayload) payload.pushCertificatePayloadBase64 = pushPayload;
+      if (pushPassword) payload.pushCertificatePassword = pushPassword;
       await post("/api/devices/ios/mdm/settings", payload);
       $("#iosMdmIdentityPayload").value = "";
       $("#iosMdmIdentityPassword").value = "";
+      $("#iosMdmPushPayload").value = "";
+      $("#iosMdmPushPassword").value = "";
       toast("iPhone MDM setup saved");
     } catch (error) {
       toast(error.message);
@@ -1509,28 +1493,6 @@ function renderReport(report) {
 
 function renderDevices(devices) {
   if (!devices) return;
-  const android = devices.android;
-  $("#androidEnabled").checked = Boolean(android.enabled);
-  $("#androidPackages").value = (android.packages || []).join("\n");
-  $("#androidStatus").textContent = android.adbInstalled
-    ? `${android.devices.length} Android`
-    : "ADB missing";
-  $("#androidStatus").className = android.adbInstalled ? "pill good" : "pill warn";
-
-  const root = $("#androidDevices");
-  root.replaceChildren();
-  const rows = [
-    ["ADB", android.adbInstalled ? android.adbPath : "not installed"],
-    ["Mode", android.enabled ? (android.shouldBlockNow ? "blocking when locked" : "ready") : "off"],
-    ["Last", android.lastAction ? `${android.lastAction} ${android.lastResult?.ok ? "ok" : "check"}` : "none"]
-  ];
-  for (const [label, value] of rows) root.append(deviceRow(label, value));
-  if (!android.devices.length) {
-    root.append(deviceRow("Devices", "none"));
-  } else {
-    for (const device of android.devices) root.append(deviceRow(device.serial, device.state));
-  }
-
   const ios = devices.ios || {};
   $("#iosEnabled").checked = Boolean(ios.enabled);
   $("#iosMode").value = ios.mode || "denylist";
@@ -1547,16 +1509,19 @@ function renderDevices(devices) {
   $("#iosStatus").textContent = ios.enabled ? "Enabled" : "Ready";
   $("#iosStatus").className = ios.enabled ? "pill good" : "pill neutral";
   $("#iosStatusTitle").textContent = ios.enabled ? "Supervised policy enabled" : "Supervised profile ready";
-  $("#iosStatusText").textContent = ios.note || "Desktop-managed iPhone blocking needs a supervised device policy.";
+  $("#iosStatusText").textContent = ios.note || "Apple-only iPhone blocking needs a supervised device policy.";
 
   const iosSummary = $("#iosSummary");
   iosSummary.replaceChildren();
   const profile = ios.profile || {};
   [
+    ["Integration", "Apple devices only"],
     ["Setup", ios.supervisedRequired ? "supervised iPhone required" : "standard"],
     ["Apps", ios.blockApps ? `${profile.appBundleCount || 0} bundle IDs` : "off"],
     ["Web", ios.blockWeb ? `${profile.deniedUrlCount || 0} denied / ${profile.allowedUrlCount || 0} allowed` : "off"],
-    ["Removal", ios.removalHardened ? "passcode protected" : "phone removable"],
+    ["Web clips", profile.webClipCount ? `${profile.webClipCount} managed` : "none"],
+    ["Native Reels", "not available through public iOS APIs"],
+    ["Removal", ios.removalHardened ? "passcode protected" : "device removable"],
     ["Profile", profile.generatedFrom || "saved policy"]
   ].forEach(([label, value]) => iosSummary.append(deviceRow(label, value)));
 
@@ -1567,6 +1532,8 @@ function renderDevices(devices) {
   $("#iosMdmIdentityUuid").value = mdm.identityCertificateUuid || "";
   $("#iosMdmIdentityPayload").placeholder = mdm.identityCertificatePayloadSet ? "Saved payload is set" : "Base64 payload";
   $("#iosMdmIdentityPassword").placeholder = mdm.identityCertificatePasswordSet ? "Saved password is set" : "Leave blank to keep saved password";
+  $("#iosMdmPushPayload").placeholder = mdm.pushCertificatePayloadSet ? "Saved APNs push certificate is set" : "Base64 APNs push PKCS#12";
+  $("#iosMdmPushPassword").placeholder = mdm.pushCertificatePasswordSet ? "Saved password is set" : "Leave blank to keep saved password";
   $("#iosMdmSignMessage").checked = Boolean(mdm.signMessage);
   $("#iosMdmDevApns").checked = Boolean(mdm.useDevelopmentApns);
   $("#iosMdmStatus").textContent = mdm.enabled ? (mdm.ready ? "Ready" : (mdm.enrollmentReady ? "Queue" : "Setup")) : "Off";
@@ -1579,9 +1546,12 @@ function renderDevices(devices) {
   [
     ["Public URL", mdm.publicBaseUrl || "not set"],
     ["Identity", mdm.identityCertificatePayloadSet ? "payload set" : "missing payload"],
+    ["APNs Push", mdm.pushCertificatePayloadSet ? "certificate set" : "missing certificate"],
     ["Enroll", mdm.enrollmentUrl || mdm.localEnrollmentPath || "not ready"],
     ["Devices", `${mdm.enrolledDeviceCount || 0} enrolled`],
     ["Commands", `${mdm.pendingCommandCount || 0} queued / ${mdm.sentCommandCount || 0} sent`],
+    ["Last push", mdm.lastPushAt ? `${shortDateTime(mdm.lastPushAt)} ${mdm.lastPushStatus || ""}`.trim() : "never"],
+    ["Push error", mdm.lastPushError || "none"],
     ["Last seen", mdm.lastSeenAt ? shortDateTime(mdm.lastSeenAt) : "never"],
     ["Wireless", mdm.pushSupported ? "APNs ready" : "APNs sender pending"]
   ].forEach(([label, value]) => mdmSummary.append(deviceRow(label, value)));
@@ -1897,16 +1867,6 @@ async function del(path) {
     headers: { "X-Sentinel-Intent": "sentinel-app" }
   });
   return parseResponse(response);
-}
-
-async function applyAndroid(action) {
-  try {
-    const response = await post("/api/devices/android/apply", { action });
-    toast(response.result?.ok ? `Android ${action} sent` : `Android ${action} needs attention`);
-  } catch (error) {
-    toast(error.message);
-  }
-  await refresh();
 }
 
 async function parseResponse(response) {

@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import http2 from "node:http2";
 import { APP_NAME, PORT } from "./defaults.js";
 import { buildIosConfigurationProfile, IOS_PROFILE_IDENTIFIER, iosPolicyTargets } from "./iosProfiles.js";
 import { plistData, toPlist } from "./plist.js";
@@ -7,6 +8,8 @@ const MDM_PROFILE_IDENTIFIER = "com.local-screen-time.ios.mdm";
 const MDM_PAYLOAD_IDENTIFIER = `${MDM_PROFILE_IDENTIFIER}.payload`;
 const DEFAULT_ACCESS_RIGHTS = 8179;
 const MAX_COMMANDS = 500;
+const PUSH_COOLDOWN_MS = 30_000;
+const APNS_TIMEOUT_MS = 5_000;
 const DEVICE_INFO_QUERIES = [
   "DeviceName",
   "OSVersion",
@@ -29,6 +32,8 @@ export function normalizeIosMdmSettings(body = {}, existing = {}) {
     identityCertificateUuid: normalizeUuid(body.identityCertificateUuid ?? existing.identityCertificateUuid ?? ""),
     identityCertificatePayloadBase64: normalizeBase64(body.identityCertificatePayloadBase64 ?? existing.identityCertificatePayloadBase64 ?? ""),
     identityCertificatePassword: String(body.identityCertificatePassword ?? existing.identityCertificatePassword ?? ""),
+    pushCertificatePayloadBase64: normalizeBase64(body.pushCertificatePayloadBase64 ?? existing.pushCertificatePayloadBase64 ?? ""),
+    pushCertificatePassword: String(body.pushCertificatePassword ?? existing.pushCertificatePassword ?? ""),
     accessRights: clampInteger(body.accessRights ?? existing.accessRights, 1, 8191, DEFAULT_ACCESS_RIGHTS),
     signMessage: body.signMessage === undefined ? Boolean(existing.signMessage) : Boolean(body.signMessage),
     useDevelopmentApns: body.useDevelopmentApns === undefined ? Boolean(existing.useDevelopmentApns) : Boolean(body.useDevelopmentApns),
@@ -39,6 +44,9 @@ export function normalizeIosMdmSettings(body = {}, existing = {}) {
     lastEnrollmentProfileGeneratedAt: existing.lastEnrollmentProfileGeneratedAt || null,
     lastCheckInAt: existing.lastCheckInAt || null,
     lastCommandQueuedAt: existing.lastCommandQueuedAt || null,
+    lastPushAt: existing.lastPushAt || null,
+    lastPushStatus: existing.lastPushStatus || "",
+    lastPushError: existing.lastPushError || "",
     lastPolicyHash: String(existing.lastPolicyHash || "")
   };
 }
@@ -48,6 +56,8 @@ export function publicIosMdmSettings(mdm = {}) {
     enrollmentSecret,
     identityCertificatePayloadBase64,
     identityCertificatePassword,
+    pushCertificatePayloadBase64,
+    pushCertificatePassword,
     devices,
     commands,
     ...rest
@@ -57,6 +67,8 @@ export function publicIosMdmSettings(mdm = {}) {
     enrollmentSecretSet: Boolean(enrollmentSecret),
     identityCertificatePayloadSet: Boolean(identityCertificatePayloadBase64),
     identityCertificatePasswordSet: Boolean(identityCertificatePassword),
+    pushCertificatePayloadSet: Boolean(pushCertificatePayloadBase64),
+    pushCertificatePasswordSet: Boolean(pushCertificatePassword),
     enrolledDeviceCount: normalizeMdmDevices(devices).filter((device) => device.status !== "checked-out").length,
     pendingCommandCount: normalizeMdmCommands(commands).filter((command) => command.status === "queued").length
   };
@@ -67,7 +79,7 @@ export function iosMdmSummary(state, now = new Date()) {
   const devices = normalizeMdmDevices(mdm.devices);
   const commands = normalizeMdmCommands(mdm.commands);
   const setupBlockers = iosMdmReadinessBlockers(mdm);
-  const pushBlockers = setupBlockers.length ? [] : iosMdmPushBlockers();
+  const pushBlockers = setupBlockers.length ? [] : iosMdmPushBlockers(mdm);
   const blockers = [...setupBlockers, ...pushBlockers];
   const enabled = Boolean(mdm.enabled);
   const enrolled = devices.filter((device) => device.status !== "checked-out");
@@ -96,8 +108,10 @@ export function iosMdmSummary(state, now = new Date()) {
     policyProfileUrl: fullMdmUrl(mdm, "/mdm/policy.mobileconfig"),
     checkInUrl: fullMdmUrl(mdm, "/mdm/checkin"),
     serverUrl: fullMdmUrl(mdm, "/mdm/connect"),
-    pushSupported: false,
-    pushNote: "Command queue is ready; APNs push delivery is the next server piece for truly wireless wakeups.",
+    pushSupported: setupBlockers.length === 0 && pushBlockers.length === 0,
+    pushNote: setupBlockers.length === 0 && pushBlockers.length === 0
+      ? "APNs wakeups are configured; queued commands can wake enrolled iPhones."
+      : "APNs wakeups need a push certificate before queued commands can wake iPhones.",
     enrolledDeviceCount: enrolled.length,
     pendingCommandCount: pending.length,
     sentCommandCount: sent.length,
@@ -107,6 +121,9 @@ export function iosMdmSummary(state, now = new Date()) {
     lastEnrollmentProfileGeneratedAt: mdm.lastEnrollmentProfileGeneratedAt || null,
     lastCheckInAt: mdm.lastCheckInAt || null,
     lastCommandQueuedAt: mdm.lastCommandQueuedAt || null,
+    lastPushAt: mdm.lastPushAt || null,
+    lastPushStatus: mdm.lastPushStatus || "",
+    lastPushError: mdm.lastPushError || "",
     lastPolicyHash: mdm.lastPolicyHash || "",
     blockers,
     devices: devices.map(publicMdmDevice),
@@ -179,6 +196,7 @@ export function handleIosMdmCheckIn(state, requestBody, now = new Date()) {
     device.pushMagic = String(requestBody.PushMagic || device.pushMagic || "");
     device.topic = String(requestBody.Topic || device.topic || "");
     device.token = dataString(requestBody.Token) || device.token || "";
+    device.tokenHex = dataHex(requestBody.Token) || tokenHexFromStoredToken(device.token) || device.tokenHex || "";
     device.unlockToken = dataString(requestBody.UnlockToken) || device.unlockToken || "";
     queueIosMdmInventory(state, device.udid, "token-update", now);
     queueIosMdmPolicyRefresh(state, "token-update", now, { udids: [device.udid] });
@@ -238,6 +256,76 @@ export function queueIosMdmPolicyRefresh(state, reason = "policy-refresh", now =
   if (!mdm.enabled) return { queued: 0, reason: "disabled" };
   const policyHash = iosPolicyHash(state, now);
   return queueIosMdmPolicyCommand(state, reason, now, options, policyHash);
+}
+
+export async function pushIosMdmQueuedCommands(state, reason = "queued-policy", now = new Date(), options = {}) {
+  const mdm = ensureMdmState(state);
+  if (!mdm.enabled) return { ok: false, pushed: 0, skipped: "disabled" };
+
+  const devices = devicesWithQueuedCommands(mdm, now, options);
+  if (!devices.length) return { ok: true, pushed: 0, skipped: "no-queued-devices" };
+
+  const blockers = [...iosMdmReadinessBlockers(mdm), ...iosMdmPushBlockers(mdm)];
+  if (blockers.length) {
+    const result = { ok: false, pushed: 0, skipped: "not-ready", blockers };
+    markDevicesPushSkipped(mdm, devices, now, result);
+    recordPushSummary(mdm, result, now);
+    return result;
+  }
+
+  const results = [];
+  for (const device of devices) {
+    const result = await sendMdmPush(mdm, device);
+    device.lastPushAt = now.toISOString();
+    device.lastPushStatus = result.ok ? "sent" : "error";
+    device.lastPushError = result.ok ? "" : result.error;
+    for (const command of queuedCommandsForDevice(mdm, device.udid)) {
+      command.lastPushAt = now.toISOString();
+      command.lastPushStatus = device.lastPushStatus;
+      command.lastPushError = device.lastPushError;
+    }
+    results.push({
+      udid: device.udid,
+      ok: result.ok,
+      statusCode: result.statusCode || 0,
+      apnsId: result.apnsId || "",
+      error: result.error || ""
+    });
+  }
+
+  const pushed = results.filter((result) => result.ok).length;
+  const summary = {
+    ok: pushed === results.length,
+    pushed,
+    failed: results.length - pushed,
+    reason,
+    results: results.map((result) => ({
+      ...result,
+      udid: obscure(result.udid)
+    }))
+  };
+  recordPushSummary(mdm, summary, now);
+  return summary;
+}
+
+export function buildIosMdmPushRequest(mdm = {}, device = {}) {
+  const tokenHex = tokenHexFromDevice(device);
+  if (!tokenHex) throw new Error("Missing APNs device token from MDM TokenUpdate.");
+  if (!device.pushMagic) throw new Error("Missing PushMagic from MDM TokenUpdate.");
+  if (!mdm.topic) throw new Error("Missing APNs MDM topic.");
+  return {
+    endpoint: mdm.useDevelopmentApns ? "https://api.development.push.apple.com" : "https://api.push.apple.com",
+    path: `/3/device/${tokenHex}`,
+    headers: {
+      ":method": "POST",
+      ":path": `/3/device/${tokenHex}`,
+      "apns-topic": mdm.topic,
+      "apns-push-type": "mdm",
+      "apns-priority": "10",
+      "content-type": "application/json"
+    },
+    payload: JSON.stringify({ mdm: device.pushMagic })
+  };
 }
 
 export function maybeQueueIosMdmPolicyRefresh(state, reason = "policy-refresh", now = new Date()) {
@@ -423,8 +511,12 @@ function iosMdmReadinessBlockers(mdm) {
   return blockers;
 }
 
-function iosMdmPushBlockers() {
-  return ["APNs push delivery is not implemented yet, so queued iPhone commands apply only when the device contacts the server."];
+function iosMdmPushBlockers(mdm = {}) {
+  const blockers = [];
+  if (!mdm.pushCertificatePayloadBase64) {
+    blockers.push("Paste the APNs MDM push certificate PKCS#12 so queued commands can wake enrolled iPhones.");
+  }
+  return blockers;
 }
 
 function mdmNote(enabled, ready, enrollmentReady, blockers) {
@@ -473,6 +565,115 @@ function nextCommandForDevice(mdm, udid, now) {
     command.attempts = (command.attempts || 0) + 1;
   }
   return command;
+}
+
+function devicesWithQueuedCommands(mdm, now, options = {}) {
+  const allowedUdids = options.udids ? new Set(options.udids) : null;
+  return (mdm.devices || [])
+    .filter((device) => device.status !== "checked-out")
+    .filter((device) => !allowedUdids || allowedUdids.has(device.udid))
+    .filter((device) => queuedCommandsForDevice(mdm, device.udid).length)
+    .filter((device) => {
+      if (options.force) return true;
+      const lastPush = device.lastPushAt ? new Date(device.lastPushAt).getTime() : 0;
+      return !lastPush || now.getTime() - lastPush >= PUSH_COOLDOWN_MS;
+    });
+}
+
+function queuedCommandsForDevice(mdm, udid) {
+  return (mdm.commands || []).filter((command) => (
+    command.udid === udid
+    && command.status === "queued"
+  ));
+}
+
+async function sendMdmPush(mdm, device) {
+  try {
+    const request = buildIosMdmPushRequest(mdm, device);
+    const pfx = Buffer.from(mdm.pushCertificatePayloadBase64, "base64");
+    return sendApnsRequest(request, {
+      pfx,
+      passphrase: mdm.pushCertificatePassword || undefined
+    });
+  } catch (error) {
+    return { ok: false, error: simplifyPushError(error) };
+  }
+}
+
+function sendApnsRequest(pushRequest, tlsOptions) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let client;
+    let request;
+    const chunks = [];
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        request?.close();
+      } catch {
+        // Ignore close errors on already-finished streams.
+      }
+      try {
+        client?.close();
+      } catch {
+        // Ignore close errors on already-finished sessions.
+      }
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      finish({ ok: false, error: "APNs request timed out." });
+    }, APNS_TIMEOUT_MS);
+
+    try {
+      client = http2.connect(pushRequest.endpoint, tlsOptions);
+      client.on("error", (error) => finish({ ok: false, error: simplifyPushError(error) }));
+      request = client.request(pushRequest.headers);
+      request.setEncoding("utf8");
+      request.on("response", (headers) => {
+        request.responseHeaders = headers;
+      });
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("error", (error) => finish({ ok: false, error: simplifyPushError(error) }));
+      request.on("end", () => {
+        const headers = request.responseHeaders || {};
+        const statusCode = Number(headers[":status"] || 0);
+        const body = chunks.join("");
+        const apnsId = String(headers["apns-id"] || "");
+        finish({
+          ok: statusCode >= 200 && statusCode < 300,
+          statusCode,
+          apnsId,
+          body,
+          error: statusCode >= 200 && statusCode < 300 ? "" : apnsError(body, statusCode)
+        });
+      });
+      request.end(pushRequest.payload);
+    } catch (error) {
+      finish({ ok: false, error: simplifyPushError(error) });
+    }
+  });
+}
+
+function recordPushSummary(mdm, summary, now) {
+  mdm.lastPushAt = now.toISOString();
+  mdm.lastPushStatus = summary.ok ? "sent" : (summary.skipped || "error");
+  mdm.lastPushError = summary.ok ? "" : (summary.blockers?.[0] || summary.error || summary.skipped || "");
+}
+
+function markDevicesPushSkipped(mdm, devices, now, summary) {
+  const error = summary.blockers?.[0] || summary.skipped || "";
+  for (const device of devices) {
+    device.lastPushAt = now.toISOString();
+    device.lastPushStatus = summary.skipped || "skipped";
+    device.lastPushError = error;
+    for (const command of queuedCommandsForDevice(mdm, device.udid)) {
+      command.lastPushAt = now.toISOString();
+      command.lastPushStatus = device.lastPushStatus;
+      command.lastPushError = error;
+    }
+  }
 }
 
 function recordMdmCommandResult(mdm, device, requestBody, status, now) {
@@ -669,6 +870,52 @@ function dataString(value) {
   if (!value) return "";
   if (value.__plistData) return value.__plistData;
   return String(value || "");
+}
+
+function dataHex(value) {
+  if (!value) return "";
+  if (value.__plistData) return bufferFromBase64(value.__plistData).toString("hex");
+  const text = String(value || "").trim();
+  if (/^[0-9a-f]+$/i.test(text) && text.length % 2 === 0) return text.toLowerCase();
+  return bufferFromBase64(text).toString("hex");
+}
+
+function tokenHexFromDevice(device = {}) {
+  return normalizeTokenHex(device.tokenHex) || tokenHexFromStoredToken(device.token);
+}
+
+function tokenHexFromStoredToken(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return normalizeTokenHex(text) || bufferFromBase64(text).toString("hex");
+}
+
+function normalizeTokenHex(value) {
+  const text = String(value || "").trim();
+  if (!/^[0-9a-f]+$/i.test(text) || text.length % 2 !== 0) return "";
+  return text.toLowerCase();
+}
+
+function bufferFromBase64(value) {
+  try {
+    return Buffer.from(String(value || "").replace(/\s+/g, ""), "base64");
+  } catch {
+    return Buffer.alloc(0);
+  }
+}
+
+function apnsError(body, statusCode) {
+  try {
+    const parsed = JSON.parse(body || "{}");
+    if (parsed.reason) return `APNs ${statusCode}: ${parsed.reason}`;
+  } catch {
+    // Fall through to generic APNs error.
+  }
+  return `APNs request failed with status ${statusCode || "unknown"}.`;
+}
+
+function simplifyPushError(error) {
+  return error?.message || String(error || "APNs push failed.");
 }
 
 function obscure(value) {

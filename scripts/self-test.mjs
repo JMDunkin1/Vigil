@@ -7,7 +7,6 @@ import { accountStatusFromGroups, parseGroups } from "../src/account.js";
 import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "../src/apiSecurity.js";
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
 import { contentFilterRuleEntries, matchContentFilterUrl } from "../src/contentFilters.js";
-import { parseAdbDevices, parseAndroidPackages, shouldApplyAndroidBlock } from "../src/devices.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../src/distanceKey.js";
 import { doctorRows, formatDoctorRows } from "../src/doctorReport.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../src/extensionPolicy.js";
@@ -17,7 +16,7 @@ import { buildHostsBlock, extractHostsBlock, hostsBlockMatches, LEGACY_HOSTS_BEG
 import { clearIntegrityTamper, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, recordRuntimeHeartbeat } from "../src/integrityLockdown.js";
 import { assertIntentReason, intentReasonSummary } from "../src/intentReason.js";
 import { emergencyDelaySeconds, interventionSummary, recentBlockAttempts } from "../src/intervention.js";
-import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmSummary, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
+import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmSummary, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
 import { buildIosConfigurationProfile } from "../src/iosProfiles.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "../src/keyholder.js";
 import { activeLimitPolicy } from "../src/limits.js";
@@ -30,6 +29,7 @@ import { assertProtectedEditAllowed, confirmMaintenanceWindow, protectedEditBloc
 import { focusReport } from "../src/reports.js";
 import { applySealVerificationToState, markStateSealed, stateDigest, stateSealSummary, verifyStateTextSeal, writeStateTextSeal } from "../src/seal.js";
 import { sourceManifestText, sourceSealStatus, writeSourceSeal } from "../src/sourceSeal.js";
+import { sanitizeSoftBlockProfile } from "../src/store.js";
 import { usageSummary } from "../src/usage.js";
 
 const now = new Date("2026-05-28T14:00:00-04:00");
@@ -833,12 +833,15 @@ last exit code = 0
   assert.match(serverSource, /focusShortcutSummary/);
   assert.match(serverSource, /assertIntentReason/);
   assert.match(serverSource, /focusSoundPreset/);
+  assert.doesNotMatch(serverSource, /\/api\/devices\/android|Android|android_settings/);
   const indexSource = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   assert.match(indexSource, /id="startNormalMode"/);
   assert.match(indexSource, /id="startSoftBlock"/);
   assert.match(indexSource, /id="startFullBrick"/);
   assert.match(indexSource, /data-device-target="computer"/);
   assert.match(indexSource, /data-device-target="phone"/);
+  assert.match(indexSource, /Apple Companion Control/);
+  assert.doesNotMatch(indexSource, /Android|ADB/);
   assert.match(indexSource, /id="startPanicLock"/);
   assert.match(indexSource, /id="panicLockDurationMinutes"/);
   assert.match(indexSource, /id="focusShortcutEnabled"/);
@@ -848,6 +851,7 @@ last exit code = 0
   assert.match(appSource, /BRICK_MODE_PROFILE_ID/);
   assert.match(appSource, /\/api\/panic\/start/);
   assert.match(appSource, /saveFocusShortcuts/);
+  assert.doesNotMatch(appSource, /Android|android|ADB/);
   assert.match(appSource, /renderIntentReasonHints/);
   assert.match(appSource, /createNoiseSource/);
   assert.match(appSource, /distanceKeyQrSvg/);
@@ -1038,6 +1042,18 @@ last exit code = 0
   assert.equal(baselineYoutube.blocked, false);
 
   const softProfile = profileById(state, SOFT_BLOCK_PROFILE_ID);
+  const migratedSoftProfile = sanitizeSoftBlockProfile({
+    ...softProfile,
+    blockedApps: ["Instagram", "Discord"],
+    blockedSites: ["instagram.com", "pornhub.com"],
+    blockedUrlPatterns: ["instagram.com/explore", "instagram.com/reels"]
+  });
+  assert.deepEqual(migratedSoftProfile.blockedApps, ["Discord"]);
+  assert.deepEqual(migratedSoftProfile.blockedSites, ["pornhub.com"]);
+  assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("instagram.com/explore"), false);
+  assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("instagram.com/reel"), true);
+  assert.equal(migratedSoftProfile.phoneAppBlocking, false);
+
   state.activeSessions.phone = {
     id: "phone-soft",
     title: "Phone Soft Block",
@@ -1053,7 +1069,6 @@ last exit code = 0
   };
   assert.equal(activePolicy(state, now), null);
   assert.equal(activePolicy(state, now, { device: "phone" }).profile.id, SOFT_BLOCK_PROFILE_ID);
-  assert.equal(shouldApplyAndroidBlock(state, now), false);
 
   const computerSoft = {
     ...state.activeSessions.phone,
@@ -1067,6 +1082,20 @@ last exit code = 0
   assert.equal(shorts.blocked, true);
   const watch = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
   assert.equal(watch.blocked, false);
+  const instagramHome = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/", event: "navigation" }, now);
+  assert.equal(instagramHome.blocked, false);
+  const instagramDm = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/direct/inbox/", event: "navigation" }, now);
+  assert.equal(instagramDm.blocked, false);
+  const instagramStory = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/stories/example/12345/", event: "navigation" }, now);
+  assert.equal(instagramStory.blocked, false);
+  const instagramReel = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/reel/abc123/", event: "navigation" }, now);
+  assert.equal(instagramReel.blocked, true);
+  assert.equal(instagramReel.reason, "content-filter");
+  assert.equal(instagramReel.contentFilter.id, "instagram-reels");
+  const instagramReelsTab = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/reels/", event: "navigation" }, now);
+  assert.equal(instagramReelsTab.blocked, true);
+  const instagramExplore = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/explore/", event: "navigation" }, now);
+  assert.equal(instagramExplore.blocked, false);
   const hosts = buildHostsBlock(state, now);
   assert.match(hosts, /0\.0\.0\.0 pornhub\.com/);
   assert.doesNotMatch(hosts, /0\.0\.0\.0 youtube\.com/);
@@ -1434,6 +1463,8 @@ last exit code = 0
   const watch = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
   assert.equal(watch.blocked, false);
   assert.equal(matchContentFilterUrl(state, "https://www.instagram.com/reels/xyz").id, "instagram-reels");
+  assert.equal(matchContentFilterUrl(state, "https://www.instagram.com/reel/xyz").id, "instagram-reels");
+  assert.equal(matchContentFilterUrl(state, "https://www.instagram.com/explore/"), null);
   state.settings.contentFilterEnabled = false;
   assert.equal(matchContentFilterUrl(state, "https://www.youtube.com/shorts/abc"), null);
 }
@@ -1575,32 +1606,6 @@ last exit code = 0
 }
 
 {
-  const devices = parseAdbDevices(`List of devices attached
-abc123 device product:test model:Pixel
-offline1 offline
-`);
-  assert.equal(devices.length, 2);
-  assert.equal(devices[0].serial, "abc123");
-
-  const packages = parseAndroidPackages("package:com.reddit.frontpage\npackage:com.google.android.youtube\n");
-  assert.deepEqual(packages, ["com.google.android.youtube", "com.reddit.frontpage"]);
-
-  const state = defaultState();
-  state.activeSession = {
-    id: "strict",
-    title: "Strict focus",
-    mode: "focus",
-    profileId: "default",
-    lockLevel: "deep",
-    startedAt: now.toISOString(),
-    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
-    canEndEarly: false,
-    source: "manual"
-  };
-  assert.equal(shouldApplyAndroidBlock(state, now), true);
-}
-
-{
   const state = defaultState();
   const disabledProfile = buildIosConfigurationProfile(state, now);
   assert.doesNotMatch(disabledProfile, /blockedAppBundleIDs/);
@@ -1628,6 +1633,27 @@ offline1 offline
   const activePhoneProfile = buildIosConfigurationProfile(state, now);
   assert.match(activePhoneProfile, /blockedAppBundleIDs/);
   assert.match(activePhoneProfile, /com\.google\.ios\.youtube/);
+
+  state.activeSessions.phone = {
+    id: "phone-soft-ios",
+    title: "Phone Soft Block",
+    mode: "focus",
+    profileId: SOFT_BLOCK_PROFILE_ID,
+    lockLevel: "light",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: true,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: profileById(state, SOFT_BLOCK_PROFILE_ID)
+  };
+  const softPhoneProfile = buildIosConfigurationProfile(state, now);
+  assert.doesNotMatch(softPhoneProfile, /blockedAppBundleIDs/);
+  assert.match(softPhoneProfile, /com\.apple\.webClip\.managed/);
+  assert.match(softPhoneProfile, /Sentinel Instagram/);
+  assert.match(softPhoneProfile, /instagram\.com\/direct\/inbox/);
+  assert.match(softPhoneProfile, /instagram\.com\/reel/);
+  assert.doesNotMatch(softPhoneProfile, /instagram\.com\/explore/);
 }
 
 {
@@ -1658,6 +1684,11 @@ offline1 offline
   assert.equal(summary.status, "queue-only");
   assert.match(summary.enrollmentUrl, /^https:\/\/mdm\.example\.test\/mdm\/enroll\.mobileconfig\?token=/);
 
+  state.deviceControls.ios.mdm.pushCertificatePayloadBase64 = Buffer.from("push-cert").toString("base64");
+  const pushReadySummary = iosMdmSummary(state, now);
+  assert.equal(pushReadySummary.ready, true);
+  assert.equal(pushReadySummary.pushSupported, true);
+
   const enrollment = buildIosMdmEnrollmentProfile(state, now);
   const profileToken = enrollment.match(/token=([^<]+)/)?.[1] || "";
   assert.equal(authorizeIosMdmRequest(state, new URL(`https://mdm.example.test/mdm/checkin?token=${profileToken}`)), true);
@@ -1675,6 +1706,13 @@ offline1 offline
   assert.equal(checkIn.messageType, "TokenUpdate");
   assert.equal(state.deviceControls.ios.mdm.devices.length, 1);
   assert.equal(state.deviceControls.ios.mdm.commands.some((command) => command.requestType === "InstallProfile"), true);
+  assert.equal(state.deviceControls.ios.mdm.devices[0].tokenHex, Buffer.from("push-token").toString("hex"));
+  const pushRequest = buildIosMdmPushRequest(state.deviceControls.ios.mdm, state.deviceControls.ios.mdm.devices[0]);
+  assert.equal(pushRequest.endpoint, "https://api.push.apple.com");
+  assert.equal(pushRequest.path, `/3/device/${Buffer.from("push-token").toString("hex")}`);
+  assert.equal(pushRequest.headers["apns-topic"], "com.apple.mgmt.Example");
+  assert.equal(pushRequest.headers["apns-push-type"], "mdm");
+  assert.equal(pushRequest.payload, JSON.stringify({ mdm: "push-magic" }));
 
   const command = handleIosMdmConnect(state, { UDID: "iphone-udid-1", Status: "Idle" }, now);
   assert.equal(command.empty, false);
@@ -1762,6 +1800,8 @@ offline1 offline
   };
   const rules = extensionRuleSnapshot(state, now);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/shorts"), true);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), true);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/explore"), false);
   assert.equal(contentFilterRuleEntries(state, activePolicy(state, now)).some((rule) => rule.id === "reddit-popular"), true);
   state.settings.contentFilterEnabled = false;
   const disabledContentRules = extensionRuleSnapshot(state, now).contentRules;
