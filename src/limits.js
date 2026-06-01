@@ -1,5 +1,6 @@
 import { endOfToday, dateKey } from "./time.js";
 import { normalizeUsageDay } from "./usage.js";
+import { parseBoolean } from "./booleans.js";
 import {
   appMatchesAppTargets,
   expandAppTargets,
@@ -62,7 +63,7 @@ export function normalizeLimitRule(body, existing, fallbackId) {
   return {
     id: body.id || existing?.id || fallbackId,
     name: String(body.name || existing?.name || (type === "open" ? "Open limit" : "Time limit")).slice(0, 80),
-    enabled: Boolean(body.enabled),
+    enabled: body.enabled === undefined ? Boolean(existing?.enabled) : parseBoolean(body.enabled, false),
     type,
     lockLevel: body.lockLevel || existing?.lockLevel || "deep",
     days: normalizeDays(body.days ?? existing?.days ?? [0, 1, 2, 3, 4, 5, 6]),

@@ -1,4 +1,5 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { parseBoolean } from "./booleans.js";
 
 const KEY_LENGTH = 32;
 
@@ -22,7 +23,7 @@ export function updateKeyholderSettings(state, body = {}, now = new Date()) {
   const current = state.keyholder || {};
   const passcode = String(body.passcode || "");
   const next = {
-    enabled: Boolean(body.enabled),
+    enabled: body.enabled === undefined ? Boolean(current.enabled) : parseBoolean(body.enabled, false),
     salt: current.salt || null,
     hash: current.hash || null,
     updatedAt: current.updatedAt || null

@@ -1,6 +1,9 @@
-const LOCAL_SERVER = "http://127.0.0.1:8787";
-const CHECK_URL = `${LOCAL_SERVER}/api/extension/check`;
-const RULES_URL = `${LOCAL_SERVER}/api/extension/rules`;
+const DEFAULT_LOCAL_SERVER = "http://127.0.0.1:8787";
+const EXTENSION_TOKEN_HEADER = "x-vigil-extension-token";
+const CONNECTION_DEFAULTS = {
+  vigilLocalServer: DEFAULT_LOCAL_SERVER,
+  vigilExtensionToken: ""
+};
 const manifest = chrome.runtime.getManifest();
 const tabMemory = new Map();
 const recentChecks = new Map();
@@ -47,7 +50,12 @@ const ALLOWLIST_RULE_IDS = Array.from({ length: ALLOWLIST_RULE_LIMIT }, (_, inde
 let noiseRulesEnabled = null;
 let siteRulesSignature = "";
 let lastRuleSyncAt = 0;
+let vigilConnection = {
+  localServer: DEFAULT_LOCAL_SERVER,
+  extensionToken: ""
+};
 
+loadVigilConnection();
 loadNoisePreference();
 syncSiteBlockingFromServer();
 setInterval(syncSiteBlockingFromServer, 15000);
@@ -56,6 +64,10 @@ chrome.runtime.onInstalled.addListener(loadNoisePreference);
 chrome.runtime.onInstalled.addListener(syncSiteBlockingFromServer);
 chrome.runtime.onStartup.addListener(loadNoisePreference);
 chrome.runtime.onStartup.addListener(syncSiteBlockingFromServer);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || (!changes.vigilLocalServer && !changes.vigilExtensionToken)) return;
+  loadVigilConnection().then(syncSiteBlockingFromServer);
+});
 
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
@@ -96,7 +108,7 @@ async function checkUrl(tabId, url, event, seconds = 0, title = "") {
   const previousUrl = tabMemory.get(tabId) || "";
   tabMemory.set(tabId, url);
 
-  const response = await fetch(CHECK_URL, {
+  const response = await fetchVigil("/api/extension/check", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -132,8 +144,8 @@ function isSkippableUrl(value) {
   try {
     const url = new URL(value || "");
     if (!["http:", "https:"].includes(url.protocol)) return true;
-    const localHost = ["127.0.0.1", "localhost", "::1"].includes(url.hostname.toLowerCase());
-    return localHost && String(url.port || "80") === "8787";
+    const localServer = new URL(vigilConnection.localServer);
+    return sameHost(url, localServer) && normalizedPort(url) === normalizedPort(localServer);
   } catch {
     return true;
   }
@@ -200,7 +212,7 @@ async function maybeSyncSiteBlocking() {
 async function syncSiteBlockingFromServer() {
   lastRuleSyncAt = Date.now();
   try {
-    const response = await fetch(`${RULES_URL}?version=${encodeURIComponent(manifest.version)}`);
+    const response = await fetchVigil(`/api/extension/rules?version=${encodeURIComponent(manifest.version)}`);
     if (!response.ok) throw new Error(`rules ${response.status}`);
     const snapshot = await response.json();
     if (typeof snapshot.browserNoiseBlockingEnabled === "boolean") {
@@ -242,7 +254,7 @@ async function syncSiteBlocking(entries, contentEntries = [], allowlistEntries =
 
 async function reportRuleSync(result) {
   try {
-    await fetch(`${RULES_URL}/sync`, {
+    await fetchVigil("/api/extension/rules/sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -370,12 +382,62 @@ function normalizeDomain(value) {
 function safeLocalRedirect(value) {
   try {
     const url = new URL(value || "");
-    const localHost = ["127.0.0.1", "localhost"].includes(url.hostname.toLowerCase());
-    if (!localHost || String(url.port) !== "8787" || url.pathname !== "/blocked") return "";
+    const localServer = new URL(vigilConnection.localServer);
+    if (!sameHost(url, localServer) || normalizedPort(url) !== normalizedPort(localServer) || url.pathname !== "/blocked") return "";
     return url.toString();
   } catch {
     return "";
   }
+}
+
+async function fetchVigil(path, options = {}) {
+  const connection = await loadVigilConnection();
+  const headers = { ...(options.headers || {}) };
+  if (connection.extensionToken) headers[EXTENSION_TOKEN_HEADER] = connection.extensionToken;
+  return fetch(vigilUrl(path, connection.localServer), {
+    ...options,
+    headers
+  });
+}
+
+async function loadVigilConnection() {
+  const values = await storageGet(CONNECTION_DEFAULTS);
+  const localServer = normalizeLocalServer(values.vigilLocalServer);
+  const extensionToken = String(values.vigilExtensionToken || "").trim();
+  vigilConnection = { localServer, extensionToken };
+  if (values.vigilLocalServer !== localServer) {
+    await storageSet({ vigilLocalServer: localServer });
+  }
+  return vigilConnection;
+}
+
+function vigilUrl(path, localServer) {
+  return new URL(path, `${localServer}/`).toString();
+}
+
+function normalizeLocalServer(value) {
+  try {
+    const raw = String(value || DEFAULT_LOCAL_SERVER).trim();
+    const withScheme = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+    const url = new URL(withScheme);
+    if (!["http:", "https:"].includes(url.protocol)) return DEFAULT_LOCAL_SERVER;
+    if (!isLocalHost(url.hostname)) return DEFAULT_LOCAL_SERVER;
+    return url.origin;
+  } catch {
+    return DEFAULT_LOCAL_SERVER;
+  }
+}
+
+function sameHost(left, right) {
+  return isLocalHost(left.hostname) && isLocalHost(right.hostname);
+}
+
+function isLocalHost(hostname) {
+  return ["127.0.0.1", "localhost", "::1"].includes(String(hostname || "").replace(/^\[|\]$/g, "").toLowerCase());
+}
+
+function normalizedPort(url) {
+  return String(url.port || (url.protocol === "https:" ? "443" : "80"));
 }
 
 function safeUrlFilter(value) {

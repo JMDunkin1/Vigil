@@ -5,11 +5,12 @@
   "description": "Connects browser tabs to the local Vigil blocker.",
   "permissions": ["tabs", "webNavigation", "storage", "declarativeNetRequest"],
   "host_permissions": [
-    "http://127.0.0.1:8787/*",
-    "http://localhost:8787/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*",
     "http://*/*",
     "https://*/*"
   ],
+  "options_page": "options.html",
   "background": {
     "service_worker": "background.js"
   },

@@ -2,6 +2,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
+import { parseBoolean, truthy } from "./booleans.js";
 
 const KEY_LENGTH = 32;
 
@@ -28,7 +29,7 @@ export function distanceKeySummary(state) {
 export function updateDistanceKeySettings(state, body = {}, now = new Date()) {
   const current = state.distanceKey || {};
   const next = {
-    enabled: Boolean(body.enabled),
+    enabled: body.enabled === undefined ? Boolean(current.enabled) : parseBoolean(body.enabled, false),
     salt: current.salt || null,
     hash: current.hash || null,
     keyFilePath: current.keyFilePath || "",
@@ -40,7 +41,7 @@ export function updateDistanceKeySettings(state, body = {}, now = new Date()) {
     next.keyFilePath = normalizeKeyFilePath(body.keyFilePath);
   }
 
-  const token = (body.rotate || body.writeKeyFile) ? generateDistanceKeyToken() : String(body.token || "").trim();
+  const token = (truthy(body.rotate) || truthy(body.writeKeyFile)) ? generateDistanceKeyToken() : String(body.token || "").trim();
 
   if (token) {
     const salt = randomBytes(16).toString("hex");
@@ -51,7 +52,7 @@ export function updateDistanceKeySettings(state, body = {}, now = new Date()) {
     next.lastFileVerifiedAt = null;
   }
 
-  if (body.writeKeyFile) {
+  if (truthy(body.writeKeyFile)) {
     if (!next.keyFilePath) throw new DistanceKeyError("Choose a key-file path before writing the distance key file.", 400);
     writeKeyFile(next.keyFilePath, token);
   }
@@ -63,8 +64,8 @@ export function updateDistanceKeySettings(state, body = {}, now = new Date()) {
   state.distanceKey = next;
   return {
     summary: distanceKeySummary(state),
-    token: body.rotate && !body.writeKeyFile ? token : null,
-    keyFilePath: body.writeKeyFile ? next.keyFilePath : null
+    token: truthy(body.rotate) && !truthy(body.writeKeyFile) ? token : null,
+    keyFilePath: truthy(body.writeKeyFile) ? next.keyFilePath : null
   };
 }
 

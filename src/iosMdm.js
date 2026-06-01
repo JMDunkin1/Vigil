@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import http2 from "node:http2";
 import { APP_NAME, PORT } from "./defaults.js";
 import { buildIosConfigurationProfile, IOS_PROFILE_IDENTIFIER, iosPolicyTargets } from "./iosProfiles.js";
+import { parseBoolean } from "./booleans.js";
 import { plistData, toPlist } from "./plist.js";
 
 const MDM_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios.mdm";
@@ -22,7 +23,7 @@ const DEVICE_INFO_QUERIES = [
 ];
 
 export function normalizeIosMdmSettings(body = {}, existing = {}) {
-  const enabled = body.enabled === undefined ? Boolean(existing.enabled) : Boolean(body.enabled);
+  const enabled = body.enabled === undefined ? Boolean(existing.enabled) : parseBoolean(body.enabled, false);
   return {
     ...existing,
     enabled,
@@ -34,9 +35,9 @@ export function normalizeIosMdmSettings(body = {}, existing = {}) {
     pushCertificatePayloadBase64: normalizeBase64(body.pushCertificatePayloadBase64 ?? existing.pushCertificatePayloadBase64 ?? ""),
     pushCertificatePassword: String(body.pushCertificatePassword ?? existing.pushCertificatePassword ?? ""),
     accessRights: clampInteger(body.accessRights ?? existing.accessRights, 1, 8191, DEFAULT_ACCESS_RIGHTS),
-    signMessage: body.signMessage === undefined ? Boolean(existing.signMessage) : Boolean(body.signMessage),
-    useDevelopmentApns: body.useDevelopmentApns === undefined ? Boolean(existing.useDevelopmentApns) : Boolean(body.useDevelopmentApns),
-    checkOutWhenRemoved: body.checkOutWhenRemoved === undefined ? existing.checkOutWhenRemoved !== false : body.checkOutWhenRemoved !== false,
+    signMessage: body.signMessage === undefined ? Boolean(existing.signMessage) : parseBoolean(body.signMessage, false),
+    useDevelopmentApns: body.useDevelopmentApns === undefined ? Boolean(existing.useDevelopmentApns) : parseBoolean(body.useDevelopmentApns, false),
+    checkOutWhenRemoved: body.checkOutWhenRemoved === undefined ? existing.checkOutWhenRemoved !== false : parseBoolean(body.checkOutWhenRemoved, true),
     enrollmentSecret: existing.enrollmentSecret || randomSecret(),
     devices: normalizeMdmDevices(existing.devices),
     commands: normalizeMdmCommands(existing.commands),

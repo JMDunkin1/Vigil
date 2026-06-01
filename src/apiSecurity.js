@@ -1,5 +1,8 @@
+import { timingSafeEqual } from "node:crypto";
+
 export const CONTROL_INTENT_HEADER = "x-vigil-intent";
 export const CONTROL_INTENT_VALUE = "vigil-app";
+export const EXTENSION_TOKEN_HEADER = "x-vigil-extension-token";
 
 const EXTENSION_API_PATHS = new Set([
   "/api/extension/check",
@@ -13,10 +16,22 @@ const DEVICE_SYNC_API_PATHS = new Set([
 
 export function apiRequestGuard({ method = "GET", path = "", headers = {} }) {
   const normalizedMethod = String(method || "GET").toUpperCase();
-  if (EXTENSION_API_PATHS.has(path)) return allow();
+  if (EXTENSION_API_PATHS.has(path)) return extensionApiRequestGuard({ method: normalizedMethod, headers });
   if (DEVICE_SYNC_API_PATHS.has(path)) return allow();
   if (!isMutationMethod(normalizedMethod)) return allow();
 
+  return localMutationGuard({ method: normalizedMethod, headers });
+}
+
+function extensionApiRequestGuard({ method = "GET", headers = {} }) {
+  const extensionGuard = extensionRequestGuard({ method, headers });
+  if (extensionGuard.ok) return extensionGuard;
+
+  if (!isMutationMethod(method)) return extensionGuard;
+  return localMutationGuard({ method, headers });
+}
+
+function localMutationGuard({ method = "GET", headers = {} }) {
   const origin = headerValue(headers, "origin");
   if (origin && !isLocalOrigin(origin)) {
     return deny("Cross-origin mutation blocked.");
@@ -27,7 +42,7 @@ export function apiRequestGuard({ method = "GET", path = "", headers = {} }) {
     return deny("Cross-site mutation blocked.");
   }
 
-  if (normalizedMethod === "POST" && !isJsonContentType(headerValue(headers, "content-type"))) {
+  if (method === "POST" && !isJsonContentType(headerValue(headers, "content-type"))) {
     return deny("Mutation requests must use application/json.");
   }
 
@@ -72,12 +87,22 @@ export function controlIntentHeaders() {
 export function extensionRequestGuard({ method = "GET", headers = {} }) {
   const normalizedMethod = String(method || "GET").toUpperCase();
   const origin = headerValue(headers, "origin");
-  if (origin && !isTrustedExtensionOrigin(origin) && !isLocalOrigin(origin)) {
+
+  if (normalizedMethod === "OPTIONS") {
+    if (!origin || !isExtensionOrigin(origin) || (!isTrustedExtensionOrigin(origin) && !configuredExtensionToken())) {
+      return deny("Untrusted extension origin blocked.");
+    }
+    return allow();
+  }
+
+  const trustedOrigin = origin && isTrustedExtensionOrigin(origin);
+  const trustedToken = extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
+  if (!trustedOrigin && !trustedToken) {
     return deny("Untrusted extension origin blocked.");
   }
 
   const fetchSite = headerValue(headers, "sec-fetch-site").toLowerCase();
-  if (fetchSite === "cross-site" && origin && !isTrustedExtensionOrigin(origin) && !isLocalOrigin(origin)) {
+  if (fetchSite === "cross-site" && origin && !trustedOrigin && !trustedToken) {
     return deny("Cross-site extension request blocked.");
   }
 
@@ -90,17 +115,18 @@ export function extensionRequestGuard({ method = "GET", headers = {} }) {
 
 export function extensionCorsHeaders(headers = {}) {
   const origin = headerValue(headers, "origin");
-  if (!origin || (!isTrustedExtensionOrigin(origin) && !isLocalOrigin(origin))) return {};
+  if (!origin || !isExtensionOrigin(origin) || (!isTrustedExtensionOrigin(origin) && !configuredExtensionToken())) return {};
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Headers": `Content-Type, ${EXTENSION_TOKEN_HEADER}`,
     "Vary": "Origin"
   };
 }
 
 export function isTrustedExtensionRequest(headers = {}) {
-  return isTrustedExtensionOrigin(headerValue(headers, "origin"));
+  return isTrustedExtensionOrigin(headerValue(headers, "origin"))
+    || extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
 }
 
 function isMutationMethod(method) {
@@ -140,12 +166,73 @@ function isLocalRequestHost(headers, url) {
   return ["127.0.0.1", "localhost", "::1"].includes(hostname);
 }
 
-function isTrustedExtensionOrigin(value) {
+function isExtensionOrigin(value) {
   try {
     const url = new URL(value);
     return ["chrome-extension:", "moz-extension:", "safari-web-extension:"].includes(url.protocol);
   } catch {
     return false;
+  }
+}
+
+function isTrustedExtensionOrigin(value) {
+  if (!isExtensionOrigin(value)) return false;
+  return configuredExtensionOrigins().has(normalizedOrigin(value));
+}
+
+function configuredExtensionOrigins() {
+  const origins = [
+    ...csvEnv("VIGIL_EXTENSION_ORIGINS"),
+    ...csvEnv("VIGIL_EXTENSION_ORIGIN"),
+    ...csvEnv("VIGIL_EXTENSION_ORIGINS"),
+    ...csvEnv("VIGIL_EXTENSION_ORIGIN"),
+    ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_IDS")),
+    ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_ID")),
+    ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_IDS")),
+    ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_ID"))
+  ];
+  return new Set(origins.map(normalizedOrigin).filter(Boolean));
+}
+
+function extensionIdOrigins(ids) {
+  return ids.flatMap((id) => {
+    const clean = id.trim();
+    if (!clean) return [];
+    return [
+      `chrome-extension://${clean}`,
+      `moz-extension://${clean}`,
+      `safari-web-extension://${clean}`
+    ];
+  });
+}
+
+function configuredExtensionToken() {
+  return String(process.env.VIGIL_EXTENSION_TOKEN || process.env.VIGIL_EXTENSION_TOKEN || "");
+}
+
+function extensionTokenMatches(value) {
+  const expected = configuredExtensionToken();
+  const supplied = String(value || "");
+  if (!expected || !supplied) return false;
+  const expectedBytes = Buffer.from(expected);
+  const suppliedBytes = Buffer.from(supplied);
+  return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes);
+}
+
+function csvEnv(name) {
+  return String(process.env[name] || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizedOrigin(value) {
+  try {
+    const url = new URL(value);
+    if (isExtensionOrigin(value)) return `${url.protocol}//${url.hostname.toLowerCase()}`;
+    return url.origin;
+  } catch {
+    return "";
   }
 }
 

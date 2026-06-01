@@ -1,5 +1,6 @@
 import { dateKey } from "./time.js";
 import { assertTypingChallenge, attachTypingChallenge } from "./challenge.js";
+import { parseBoolean } from "./booleans.js";
 import { assertIntentReason } from "./intentReason.js";
 import {
   appMatchesAppTargets,
@@ -43,7 +44,7 @@ export function normalizeAppLock(body, existing, fallbackId) {
   return {
     id: body.id || existing?.id || fallbackId,
     name: String(body.name || existing?.name || "App lock").slice(0, 80),
-    enabled: Boolean(body.enabled),
+    enabled: body.enabled === undefined ? Boolean(existing?.enabled) : parseBoolean(body.enabled, false),
     lockLevel: body.lockLevel || existing?.lockLevel || "deep",
     days: normalizeDays(body.days ?? existing?.days ?? [0, 1, 2, 3, 4, 5, 6]),
     apps: normalizeTargets(body.apps ?? existing?.apps),
