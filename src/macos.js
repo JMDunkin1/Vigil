@@ -159,6 +159,26 @@ export async function notify(title, message) {
   }
 }
 
+export async function openUrl(url) {
+  try {
+    await execFileAsync("/usr/bin/open", [String(url || "")], { timeout: 1500 });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: simplifyError(error) };
+  }
+}
+
+export async function openApp(appName) {
+  const app = String(appName || "").trim();
+  if (!app) return { ok: false, error: "Missing app name" };
+  try {
+    await execFileAsync("/usr/bin/open", ["-a", app], { timeout: 1500 });
+    return { ok: true, method: "open -a" };
+  } catch (error) {
+    return { ok: false, method: "open -a", error: simplifyError(error) };
+  }
+}
+
 export async function getCurrentWifiNetwork() {
   try {
     const device = await wifiDevice();

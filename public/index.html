@@ -441,6 +441,119 @@
           <div id="appLockList" class="list limit-list"></div>
         </section>
       </div>
+
+      <div class="workspace two-column">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Intentional Use</p>
+              <h2>Goals & Replacements</h2>
+            </div>
+            <span id="intentionalUseStatus" class="pill neutral">Ready</span>
+          </div>
+          <form id="intentionalGoalForm" class="profile-form">
+            <label class="checkline"><input id="intentionalUseEnabled" type="checkbox"> Pause before watchlisted use</label>
+            <label>
+              Goal
+              <input id="intentionalGoalStatement" name="statement" type="text">
+            </label>
+            <label>
+              Values
+              <textarea id="intentionalGoalValues" name="values" rows="3"></textarea>
+            </label>
+            <label>
+              Replacement actions
+              <textarea id="intentionalGoalReplacements" name="replacements" rows="4"></textarea>
+            </label>
+            <button class="primary" type="submit">Save Goal</button>
+          </form>
+          <form id="accountabilityForm" class="keyholder-panel">
+            <label class="checkline"><input id="accountabilityEnabled" type="checkbox"> Accountability digest</label>
+            <div class="form-row">
+              <label>
+                Partner
+                <input id="accountabilityPartner" type="text" placeholder="Name">
+              </label>
+              <label>
+                Cadence
+                <select id="accountabilityCadence">
+                  <option value="weekly">Weekly</option>
+                  <option value="daily">Daily</option>
+                </select>
+              </label>
+            </div>
+            <button class="secondary" type="submit">Save Digest</button>
+            <button id="copyAccountabilityDigest" class="ghost" type="button">Copy Digest</button>
+            <pre id="accountabilityDigest" class="code-block small-code"></pre>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Pre-Open Pause</p>
+              <h2>Pause Rules</h2>
+            </div>
+            <button id="newIntentionalRule" class="secondary" type="button">New</button>
+          </div>
+          <form id="intentionalRuleForm" class="limit-form">
+            <input name="id" type="hidden">
+            <div class="form-row thirds">
+              <label>
+                Name
+                <input name="name" type="text" value="Short-form pause">
+              </label>
+              <label>
+                Friction
+                <select name="frictionLevel">
+                  <option value="gentle">Gentle</option>
+                  <option value="standard" selected>Standard</option>
+                  <option value="strict">Strict</option>
+                </select>
+              </label>
+              <label class="checkline app-lock-enabled"><input name="enabled" type="checkbox" checked> Enabled</label>
+            </div>
+            <div class="form-row thirds">
+              <label>
+                Delay
+                <input name="delaySeconds" type="number" min="0" max="3600" value="12">
+              </label>
+              <label>
+                Window
+                <input name="sessionMinutes" type="number" min="1" max="240" value="10">
+              </label>
+              <label>
+                Budget
+                <input name="dailyBudgetMinutes" type="number" min="0" max="1440" value="30">
+              </label>
+            </div>
+            <div class="form-row">
+              <label>
+                Start
+                <input name="start" type="time" value="00:00">
+              </label>
+              <label>
+                End
+                <input name="end" type="time" value="23:59">
+              </label>
+            </div>
+            <div class="day-grid" id="intentionalDays"></div>
+            <div class="form-row">
+              <label>
+                Apps
+                <textarea name="apps" rows="4"></textarea>
+              </label>
+              <label>
+                Sites
+                <textarea name="sites" rows="4"></textarea>
+              </label>
+            </div>
+            <div id="intentionalPresetStrip" class="preset-strip" data-form="intentionalRuleForm" data-app-field="apps" data-site-field="sites"></div>
+            <button class="primary" type="submit">Save Pause Rule</button>
+          </form>
+          <div id="intentionalRuleList" class="list limit-list"></div>
+        </section>
+      </div>
     </section>
 
     <section id="view-settings" class="view" data-view="settings" hidden>
@@ -761,6 +874,11 @@
               <span>Avg / Day</span>
               <strong id="yearPace">--</strong>
               <em id="decadePace">--</em>
+            </div>
+            <div class="report-metric">
+              <span>Open Pressure</span>
+              <strong id="openPressure">--</strong>
+              <em id="openPressureMeta">--</em>
             </div>
           </div>
           <div class="week-strip" id="weekStrip"></div>

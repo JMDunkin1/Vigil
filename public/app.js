@@ -42,6 +42,7 @@ function boot() {
   renderScheduleDays();
   renderLimitDays();
   renderAppLockDays();
+  renderIntentionalDays();
   bindViewNavigation();
   bindEvents();
   refresh();
@@ -244,6 +245,7 @@ function bindEvents() {
   $("#newSchedule").addEventListener("click", resetScheduleForm);
   $("#newLimit").addEventListener("click", resetLimitForm);
   $("#newAppLock").addEventListener("click", resetAppLockForm);
+  $("#newIntentionalRule").addEventListener("click", resetIntentionalRuleForm);
 
   $("#limitForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -271,6 +273,59 @@ function bindEvents() {
     toast("App lock saved");
     resetAppLockForm();
     await refresh();
+  });
+
+  $("#intentionalGoalForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await post("/api/settings", { intentionalUseEnabled: $("#intentionalUseEnabled").checked });
+      await post("/api/intentional-use/goal", {
+        statement: $("#intentionalGoalStatement").value,
+        values: lines($("#intentionalGoalValues").value),
+        replacements: lines($("#intentionalGoalReplacements").value)
+      });
+      toast("Intentional goal saved");
+    } catch (error) {
+      toast(error.message);
+    }
+    await refresh();
+  });
+
+  $("#intentionalRuleForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const body = Object.fromEntries(form.entries());
+    body.enabled = form.has("enabled");
+    body.days = [...document.querySelectorAll("#intentionalDays input:checked")].map((input) => Number(input.value));
+    body.apps = lines(body.apps);
+    body.sites = lines(body.sites);
+    try {
+      await post("/api/intentional-use/rule", body);
+      toast("Pause rule saved");
+      resetIntentionalRuleForm();
+    } catch (error) {
+      toast(error.message);
+    }
+    await refresh();
+  });
+
+  $("#accountabilityForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      await post("/api/intentional-use/accountability", {
+        enabled: $("#accountabilityEnabled").checked,
+        partnerName: $("#accountabilityPartner").value,
+        cadence: $("#accountabilityCadence").value
+      });
+      toast("Digest settings saved");
+    } catch (error) {
+      toast(error.message);
+    }
+    await refresh();
+  });
+
+  $("#copyAccountabilityDigest").addEventListener("click", async () => {
+    await copyHardeningText($("#accountabilityDigest").textContent || "", "Digest copied");
   });
 
   $("#iosForm").addEventListener("submit", async (event) => {
@@ -696,6 +751,7 @@ function render() {
   renderMetrics(data.usage, data.report);
   renderWatcher(data.monitor);
   renderIntervention(data.intervention);
+  renderIntentionalUse(data.intentionalUse);
   renderHardening(data);
   renderProfiles(data.state);
   renderSchedules(data.state.schedules);
@@ -1456,6 +1512,70 @@ function configureAppLockUnlockButton(button, rule) {
   });
 }
 
+function renderIntentionalUse(intentionalUse) {
+  if (!intentionalUse) return;
+  const goal = intentionalUse.goal || {};
+  const settings = state.data?.state.settings || {};
+  $("#intentionalUseEnabled").checked = settings.intentionalUseEnabled !== false;
+  $("#intentionalUseStatus").textContent = settings.intentionalUseEnabled === false ? "Off" : `${intentionalUse.today?.pauses || 0} pauses today`;
+  $("#intentionalUseStatus").className = settings.intentionalUseEnabled === false ? "pill neutral" : "pill good";
+  if (document.activeElement !== $("#intentionalGoalStatement")) $("#intentionalGoalStatement").value = goal.statement || "";
+  if (document.activeElement !== $("#intentionalGoalValues")) $("#intentionalGoalValues").value = (goal.values || []).join("\n");
+  if (document.activeElement !== $("#intentionalGoalReplacements")) $("#intentionalGoalReplacements").value = (goal.replacements || []).join("\n");
+
+  const accountability = intentionalUse.accountability || {};
+  $("#accountabilityEnabled").checked = Boolean(accountability.enabled);
+  if (document.activeElement !== $("#accountabilityPartner")) $("#accountabilityPartner").value = accountability.partnerName || "";
+  $("#accountabilityCadence").value = accountability.cadence || "weekly";
+  $("#accountabilityDigest").textContent = accountability.digest?.text || "";
+  renderIntentionalRuleList(intentionalUse.rules || []);
+}
+
+function renderIntentionalRuleList(rules) {
+  const list = $("#intentionalRuleList");
+  list.replaceChildren();
+  if (!rules.length) {
+    list.append(empty("No pause rules saved"));
+    return;
+  }
+
+  for (const rule of rules) {
+    const row = document.createElement("div");
+    row.className = "list-item limit-item";
+    const progress = rule.progress || {};
+    const budget = progress.budget || {};
+    const percent = budget.budgetSeconds ? Math.min(100, budget.percent || 0) : 0;
+    const label = document.createElement("div");
+    label.innerHTML = `
+      <strong></strong>
+      <span></span>
+      <div class="limit-progress"><div></div></div>
+    `;
+    label.querySelector("strong").textContent = rule.name;
+    label.querySelector("span").textContent = `${rule.frictionLevel} | ${rule.delaySeconds}s pause | ${rule.sessionMinutes}m window | ${formatDuration(progress.seconds || 0)} today | ${rule.enabled ? "on" : "off"}`;
+    label.querySelector(".limit-progress div").style.width = `${Math.max(4, percent)}%`;
+
+    const edit = document.createElement("button");
+    edit.className = "secondary";
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => loadIntentionalRule(rule));
+
+    const remove = document.createElement("button");
+    remove.className = "ghost";
+    remove.type = "button";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", async () => {
+      await del(`/api/intentional-use/rule/${encodeURIComponent(rule.id)}`);
+      toast("Pause rule deleted");
+      await refresh();
+    });
+
+    row.append(label, edit, remove);
+    list.append(row);
+  }
+}
+
 function renderBars(selector, entries) {
   const root = $(selector);
   root.replaceChildren();
@@ -1491,6 +1611,8 @@ function renderReport(report) {
   $("#streakGoal").textContent = `${report.streak.goal}+ score goal`;
   $("#yearPace").textContent = formatDuration(report.currentWeek.totals.averageDailyDistractionSeconds);
   $("#decadePace").textContent = daysWithDataText(report.currentWeek.totals.trackedDays);
+  $("#openPressure").textContent = report.currentWeek.totals.averageDailyOpens || 0;
+  $("#openPressureMeta").textContent = "avg opens / day";
   renderWeekStrip(report.currentWeek.days, report.focusScoreGoal);
   renderInsights(report.insights);
   renderMilestones(report.milestones);
@@ -1742,6 +1864,16 @@ function renderAppLockDays() {
   }
 }
 
+function renderIntentionalDays() {
+  const root = $("#intentionalDays");
+  root.replaceChildren();
+  for (const [value, label] of days) {
+    const item = document.createElement("label");
+    item.innerHTML = `<input type="checkbox" value="${value}" checked><span>${label}</span>`;
+    root.append(item);
+  }
+}
+
 function loadSchedule(schedule) {
   const form = $("#scheduleForm");
   form.elements.id.value = schedule.id;
@@ -1784,6 +1916,41 @@ function resetAppLockForm() {
   form.elements.lockLevel.value = "deep";
   form.elements.enabled.checked = false;
   for (const input of document.querySelectorAll("#appLockDays input")) {
+    input.checked = true;
+  }
+}
+
+function loadIntentionalRule(rule) {
+  const form = $("#intentionalRuleForm");
+  form.elements.id.value = rule.id;
+  form.elements.name.value = rule.name;
+  form.elements.frictionLevel.value = rule.frictionLevel || "standard";
+  form.elements.delaySeconds.value = rule.delaySeconds || 12;
+  form.elements.sessionMinutes.value = rule.sessionMinutes || 10;
+  form.elements.dailyBudgetMinutes.value = rule.dailyBudgetMinutes || 30;
+  form.elements.start.value = rule.start || "00:00";
+  form.elements.end.value = rule.end || "23:59";
+  form.elements.apps.value = (rule.apps || []).join("\n");
+  form.elements.sites.value = (rule.sites || []).join("\n");
+  form.elements.enabled.checked = Boolean(rule.enabled);
+  for (const input of document.querySelectorAll("#intentionalDays input")) {
+    input.checked = (rule.days || []).includes(Number(input.value));
+  }
+}
+
+function resetIntentionalRuleForm() {
+  const form = $("#intentionalRuleForm");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.name.value = "Short-form pause";
+  form.elements.frictionLevel.value = "standard";
+  form.elements.delaySeconds.value = "12";
+  form.elements.sessionMinutes.value = "10";
+  form.elements.dailyBudgetMinutes.value = "30";
+  form.elements.start.value = "00:00";
+  form.elements.end.value = "23:59";
+  form.elements.enabled.checked = true;
+  for (const input of document.querySelectorAll("#intentionalDays input")) {
     input.checked = true;
   }
 }

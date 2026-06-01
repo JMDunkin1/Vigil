@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_SHORT_FORM_URL_PATTERNS, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
+import { normalizeIntentionalUse } from "./intentionalUse.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -102,6 +103,7 @@ function migrateState(state) {
     appLockUnlocks: Array.isArray(state.appLockUnlocks) ? state.appLockUnlocks : [],
     appLockRequests: Array.isArray(state.appLockRequests) ? state.appLockRequests : [],
     appLockLedger: state.appLockLedger || {},
+    intentionalUse: normalizeIntentionalUse(state.intentionalUse || {}, fresh.intentionalUse || {}),
     extension: {
       ...fresh.extension,
       ...(state.extension || {}),

@@ -14,9 +14,10 @@ import { focusShortcutDetail, focusShortcutSummary, reconcileFocusShortcut } fro
 import { assertFoolproofReadyForStrict, extensionDynamicRulesReady, extensionVersionReady, foolproofBlockers } from "../src/foolproof.js";
 import { buildFirewallBlock, buildPfConfBlock, extractManagedFirewallBlock, extractManagedPfConfBlock, firewallDomainSignature, firewallStatus, replaceManagedPfConfBlock } from "../src/firewall.js";
 import { buildHostsBlock, extractHostsBlock, hostsBlockMatches, LEGACY_HOSTS_BEGIN, LEGACY_HOSTS_END, parseLaunchAgentPrint, replaceManagedHostsBlock } from "../src/hardening.js";
-import { clearIntegrityTamper, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, recordRuntimeHeartbeat } from "../src/integrityLockdown.js";
+import { clearIntegrityTamper, clearTrustedSourceSealDrift, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, recordRuntimeHeartbeat } from "../src/integrityLockdown.js";
 import { assertIntentReason, intentReasonSummary } from "../src/intentReason.js";
 import { emergencyDelaySeconds, interventionSummary, recentBlockAttempts } from "../src/intervention.js";
+import { accountabilityDigest, confirmIntentionalPause, intentionalUseDecision, intentionalUseSummary, skipIntentionalPause } from "../src/intentionalUse.js";
 import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmSummary, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
 import { buildIosConfigurationProfile } from "../src/iosProfiles.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "../src/keyholder.js";
@@ -162,6 +163,78 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   );
   state.settings.intentReasonEnabled = false;
   assert.equal(assertIntentReason(state, "", "Emergency unlock"), "");
+}
+
+{
+  const state = defaultState();
+  const usage = {};
+  state.settings.activeProfileId = SOFT_BLOCK_PROFILE_ID;
+  const first = evaluateExtensionCheck(state, usage, {
+    url: "https://www.youtube.com/watch?v=abc",
+    previousUrl: "",
+    event: "navigation",
+    extensionVersion: REQUIRED_EXTENSION_VERSION
+  }, now);
+  assert.equal(first.paused, true);
+  assert.equal(first.blocked, false);
+  assert.match(first.redirectUrl, /\/pause\?requestId=/);
+  assert.equal(state.intentionalUse.pauses.length, 1);
+  const pauseId = first.pause.id;
+  state.intentionalUse.pauses[0].eligibleAt = now.toISOString();
+  const continued = confirmIntentionalPause(state, pauseId, {
+    intention: "Watch one specific tutorial",
+    mood: "Focused"
+  }, now);
+  assert.equal(continued.grant.targetType, "site");
+  const allowed = evaluateExtensionCheck(state, usage, {
+    url: "https://youtube.com/watch?v=abc",
+    previousUrl: "",
+    event: "activated",
+    seconds: 45,
+    extensionVersion: REQUIRED_EXTENSION_VERSION
+  }, new Date(now.getTime() + 1000));
+  assert.equal(allowed.paused, false);
+  assert.equal(allowed.blocked, false);
+  assert.equal(intentionalUseSummary(state, usage, new Date(now.getTime() + 1000)).today.continued, 1);
+  assert.equal(intentionalUseSummary(state, usage, new Date(now.getTime() + 1000)).today.seconds, 45);
+
+  const manual = intentionalUseDecision(state, { app: "YouTube", hostname: "", url: "" }, { event: "mac-app" }, now);
+  assert.equal(manual.shouldPause, false);
+
+  const appState = defaultState();
+  appState.intentionalUse.rules = [{
+    id: "app-pause",
+    name: "Game pause",
+    enabled: true,
+    frictionLevel: "gentle",
+    days: [0, 1, 2, 3, 4, 5, 6],
+    start: "00:00",
+    end: "23:59",
+    apps: ["Chess"],
+    sites: [],
+    delaySeconds: 0,
+    sessionMinutes: 5,
+    dailyBudgetMinutes: 0
+  }];
+  const appPause = intentionalUseDecision(appState, { app: "Chess", hostname: "", url: "" }, { event: "mac-app" }, now);
+  assert.equal(appPause.shouldPause, true);
+  assert.equal(appPause.pause.targetType, "app");
+  appState.intentionalUse.pauses[0].eligibleAt = now.toISOString();
+  const appContinued = confirmIntentionalPause(appState, appPause.pause.id, { intention: "One puzzle" }, now);
+  assert.equal(appContinued.grant.app, "Chess");
+  assert.equal(appContinued.returnUrl, "");
+
+  const second = evaluateExtensionCheck(state, usage, {
+    url: "https://www.instagram.com/reels/123",
+    previousUrl: "",
+    event: "navigation",
+    extensionVersion: REQUIRED_EXTENSION_VERSION
+  }, new Date(now.getTime() + 16 * 60 * 1000));
+  assert.equal(second.paused, true);
+  skipIntentionalPause(state, second.pause.id, { replacement: "Open Notes instead" }, new Date(now.getTime() + 16 * 60 * 1000));
+  const digest = accountabilityDigest(state, usage, now);
+  assert.match(digest.text, /Intentional pauses:/);
+  assert.equal(digest.skipped, 1);
 }
 
 {
@@ -389,6 +462,14 @@ const now = new Date("2026-05-28T14:00:00-04:00");
     assert.equal(sentinelBrandingVerification.ok, true);
     assert.equal(sentinelBrandingVerification.status, "trusted-migration");
 
+    const preIntentionalUseState = structuredClone(state);
+    delete preIntentionalUseState.intentionalUse;
+    delete preIntentionalUseState.settings.intentionalUseEnabled;
+    await writeStateTextSeal(`${JSON.stringify(preIntentionalUseState, null, 2)}\n`, { keyPath, sealPath, scope: "state" }, now.toISOString());
+    const intentionalUseMigrationVerification = await verifyStateTextSeal(text, { keyPath, sealPath });
+    assert.equal(intentionalUseMigrationVerification.ok, true);
+    assert.equal(intentionalUseMigrationVerification.status, "trusted-migration");
+
     const mdmQueueState = structuredClone(state);
     mdmQueueState.deviceControls.ios.mdm.enabled = true;
     mdmQueueState.deviceControls.ios.mdm.devices = [{ udid: "iphone-udid-1", status: "enrolled" }];
@@ -565,6 +646,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   assert.equal(drift.issues[0].id, "hosts");
   assert.equal(integrityRuntimeSummary(state).status, "hardening-drift");
   assert.equal(integrityLockdownPolicy(state, now).alarm.type, "hardening-drift");
+  assert.equal(clearTrustedSourceSealDrift(state, now), false);
   assert.equal(clearIntegrityTamper(state, now), true);
   assert.equal(integrityRuntimeSummary(state).ok, true);
 
@@ -584,7 +666,9 @@ const now = new Date("2026-05-28T14:00:00-04:00");
     sourceSeal: { ok: false, status: "mismatch", detail: "Source files do not match the integrity seal." }
   }, now);
   assert.equal(driftSource.issues[0].id, "source-seal");
-  assert.equal(clearIntegrityTamper(state, now), true);
+  assert.equal(clearTrustedSourceSealDrift(state, now), true);
+  assert.equal(integrityRuntimeSummary(state).ok, true);
+  assert.equal(clearTrustedSourceSealDrift(state, now), false);
 
   const driftAgent = detectHardeningDrift(state, {
     hosts: { installed: true, partial: false, stale: false },
@@ -637,8 +721,9 @@ const now = new Date("2026-05-28T14:00:00-04:00");
     end: "15:00",
     wifiNetworks: []
   }];
-  recordRuntimeHeartbeat(state, new Date("2026-05-28T12:00:00-04:00"));
-  const gap = detectRuntimeGap(state, new Date("2026-05-28T16:00:00-04:00"));
+  recordRuntimeHeartbeat(state, new Date(2026, 4, 28, 12, 0, 0));
+  const gap = detectRuntimeGap(state, new Date(2026, 4, 28, 16, 0, 0));
+  assert.ok(gap);
   assert.equal(gap.overlap.kind, "schedule");
 }
 

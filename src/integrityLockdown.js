@@ -75,6 +75,19 @@ export function clearIntegrityTamper(state, now = new Date()) {
   return hadAlarm;
 }
 
+export function clearTrustedSourceSealDrift(state, now = new Date()) {
+  const runtime = state.integrity?.runtime;
+  if (!runtime?.hardeningDriftDetectedAt) return false;
+  const issues = Array.isArray(runtime.hardeningDriftIssues) ? runtime.hardeningDriftIssues : [];
+  if (!issues.length || issues.some((issue) => issue.id !== "source-seal")) return false;
+
+  runtime.hardeningDriftDetectedAt = null;
+  runtime.hardeningDriftDetail = "";
+  runtime.hardeningDriftIssues = [];
+  runtime.lastSourceSealTrustedAt = now.toISOString();
+  return true;
+}
+
 export function detectHardeningDrift(state, checks = {}, now = new Date()) {
   const runtime = ensureRuntime(state);
   if (runtime.hardeningDriftDetectedAt) return null;

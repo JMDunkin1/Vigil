@@ -2,6 +2,7 @@ import { PORT, REQUIRED_EXTENSION_VERSION } from "./defaults.js";
 import { activeAppLockPolicy } from "./appLocks.js";
 import { contentFilterEnabled, contentFilterRuleEntries, matchContentFilterUrl } from "./contentFilters.js";
 import { integrityLockdownActive } from "./integrityLockdown.js";
+import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, matchBlockedUrlPattern, normalizeHost, normalizeUrlPattern, shouldBlockSite, shouldBlockUrl } from "./policy.js";
 import { recordOpen, recordUsage } from "./usage.js";
@@ -126,6 +127,7 @@ export function evaluateExtensionCheck(state, usage, input = {}, now = new Date(
   const seconds = clampSeconds(input.seconds);
   if (seconds > 0) {
     recordUsage(usage, sample, seconds, now);
+    recordIntentionalUseTime(state, sample, seconds, now);
     recorded = true;
   }
 
@@ -150,9 +152,29 @@ export function evaluateExtensionCheck(state, usage, input = {}, now = new Date(
   }
 
   if (!policy || (!urlPattern && !shouldBlockSite(policy.profile, hostname))) {
+    const pause = intentionalUseDecision(state, sample, { event, returnUrl: sample.url }, now);
+    if (pause.shouldPause) {
+      return {
+        ok: true,
+        blocked: false,
+        paused: true,
+        ignored: false,
+        reason: "intentional-use",
+        hostname,
+        event,
+        recorded,
+        redirectUrl: pause.redirectUrl,
+        pause: publicPause(pause.pause),
+        rule: publicPauseRule(pause.rule),
+        contentFilterEnabled: contentFilterEnabled(state),
+        browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state)
+      };
+    }
+
     return {
       ok: true,
       blocked: false,
+      paused: false,
       ignored: false,
       reason: "allowed",
       hostname,
@@ -166,6 +188,7 @@ export function evaluateExtensionCheck(state, usage, input = {}, now = new Date(
   return {
     ok: true,
     blocked: true,
+    paused: false,
     ignored: false,
     reason: urlPattern ? "url-pattern" : policy.kind,
     hostname: urlPattern?.label || hostname,
@@ -176,6 +199,33 @@ export function evaluateExtensionCheck(state, usage, input = {}, now = new Date(
     urlPattern: urlPattern || null,
     contentFilterEnabled: contentFilterEnabled(state),
     browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state)
+  };
+}
+
+function publicPause(pause) {
+  if (!pause) return null;
+  return {
+    id: pause.id,
+    ruleId: pause.ruleId,
+    targetLabel: pause.targetLabel,
+    targetType: pause.targetType,
+    eligibleAt: pause.eligibleAt,
+    expiresAt: pause.expiresAt,
+    delaySeconds: pause.delaySeconds,
+    sessionMinutes: pause.sessionMinutes,
+    budget: pause.budget || null,
+    context: pause.context || null
+  };
+}
+
+function publicPauseRule(rule) {
+  if (!rule) return null;
+  return {
+    id: rule.id,
+    name: rule.name,
+    frictionLevel: rule.frictionLevel,
+    sessionMinutes: rule.sessionMinutes,
+    dailyBudgetMinutes: rule.dailyBudgetMinutes
   };
 }
 

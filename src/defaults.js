@@ -352,6 +352,7 @@ export function defaultState() {
       interventionThreshold: 3,
       interventionExtraDelaySeconds: 45,
       interventionMaxExtraDelaySeconds: 300,
+      intentionalUseEnabled: true,
       baselineDailyMinutes: 300,
       focusScoreGoal: 80,
       activeProfileId: "default",
@@ -485,6 +486,53 @@ export function defaultState() {
     appLockUnlocks: [],
     appLockRequests: [],
     appLockLedger: {},
+    intentionalUse: {
+      goal: {
+        statement: "Use screens on purpose, not by reflex.",
+        values: ["Deep work", "Sleep", "Real relationships"],
+        replacements: [
+          "Write the next tiny task",
+          "Take ten slow breaths",
+          "Stand up and get water",
+          "Open Notes instead"
+        ],
+        updatedAt: null
+      },
+      rules: [
+        {
+          id: "short-form-intent-template",
+          name: "Short-form pause",
+          enabled: true,
+          frictionLevel: "standard",
+          days: [0, 1, 2, 3, 4, 5, 6],
+          start: "00:00",
+          end: "23:59",
+          apps: [],
+          sites: [
+            "youtube.com",
+            "instagram.com",
+            "tiktok.com",
+            "reddit.com",
+            "x.com",
+            "twitter.com"
+          ],
+          delaySeconds: 12,
+          sessionMinutes: 10,
+          dailyBudgetMinutes: 30,
+          budgetWarningPercent: 50,
+          askMood: true
+        }
+      ],
+      pauses: [],
+      grants: [],
+      ledger: {},
+      outcomes: [],
+      accountability: {
+        enabled: false,
+        partnerName: "",
+        cadence: "weekly"
+      }
+    },
     extension: {
       lastSeenAt: null,
       lastVersion: null,
@@ -550,6 +598,7 @@ export function defaultState() {
         hardeningDriftDetectedAt: null,
         hardeningDriftDetail: "",
         hardeningDriftIssues: [],
+        lastSourceSealTrustedAt: null,
         clockTamperDetectedAt: null,
         clockTamperDetail: "",
         clockTamperSeconds: 0,
