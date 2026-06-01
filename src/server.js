@@ -7,12 +7,12 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { currentMacAccountStatus } from "./account.js";
 import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "./apiSecurity.js";
-import { APP_NAME, PORT } from "./defaults.js";
+import { APP_NAME, PANIC_LOCK_PROFILE_ID, PORT } from "./defaults.js";
 import { addEvent, loadState, loadUsage, saveState, saveUsage } from "./store.js";
 import { assertTypingChallenge, attachTypingChallenge, TypingChallengeError } from "./challenge.js";
 import { hostsStatus, buildHostsBlock, launchAgentPath, launchAgentStatus, stateSealStatus } from "./hardening.js";
 import { startMonitor } from "./monitor.js";
-import { activePolicy, activeProfile, emergencyUnlockAllowedForPolicy, listFromTextarea, profileById, sessionPhase, snapshotProfile } from "./policy.js";
+import { activePolicy, activeProfile, emergencyUnlockAllowedForPolicy, listFromTextarea, panicLockProfile, profileById, sessionPhase, snapshotProfile } from "./policy.js";
 import { AppLockError, appLockSummary, confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "./appLocks.js";
 import { applyAndroidAction, deviceSummary, listAndroidPackages, normalizeAndroidSettings } from "./devices.js";
 import { assertDistanceKey, DistanceKeyError, distanceKeySummary, updateDistanceKeySettings } from "./distanceKey.js";
@@ -158,7 +158,7 @@ function isDirectRun() {
 
 function scheduleImmediateSessionEnforcement(sessionId) {
   setImmediate(async () => {
-    if (state.activeSession?.id !== sessionId) return;
+    if (state.activeSession?.id !== sessionId && state.panicLock?.id !== sessionId) return;
 
     let event;
     try {
@@ -402,6 +402,35 @@ async function handleApi(request, response, url) {
     addEvent(state, "settings_updated", { keys: Object.keys(body) });
     await saveState(state);
     sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (method === "POST" && path === "/api/panic/start") {
+    activePolicy(state);
+    const durationMinutes = panicLockDurationMinutes();
+    const started = new Date();
+    const ends = new Date(started.getTime() + durationMinutes * 60 * 1000);
+    const profile = panicLockProfile();
+    state.panicLock = {
+      id: randomUUID(),
+      title: "Panic Lockout",
+      mode: "panic",
+      profileId: PANIC_LOCK_PROFILE_ID,
+      lockLevel: "deep",
+      startedAt: started.toISOString(),
+      endsAt: ends.toISOString(),
+      canEndEarly: false,
+      commitmentLock: true,
+      emergencyUnlocksAllowed: false,
+      source: "panic",
+      fullLockout: true,
+      profileSnapshot: snapshotProfile(profile)
+    };
+    addEvent(state, "panic_lock_started", { ...state.panicLock, durationMinutes });
+    recordIosMdmPolicyQueue("panic-start");
+    await saveState(state);
+    scheduleImmediateSessionEnforcement(state.panicLock.id);
+    sendJson(response, 200, { ok: true, session: state.panicLock });
     return;
   }
 
@@ -897,6 +926,7 @@ function publicState(current, policy) {
     environment: current.environment || {},
     keyholder: keyholderSummary(current),
     distanceKey: distanceKeySummary(current),
+    panicLock: current.panicLock || null,
     activeSession: current.activeSession,
     sessionPhase: sessionPhase(current.activeSession),
     activePolicy: policy ? {
@@ -931,6 +961,7 @@ function updateSettings(body) {
     "strictByDefault",
     "emergencyTokensPerWeek",
     "emergencyDelaySeconds",
+    "panicLockDurationMinutes",
     "intentReasonEnabled",
     "intentReasonMinLength",
     "focusSoundEnabled",
@@ -984,6 +1015,7 @@ function updateSettings(body) {
 function settingsNumberBounds(key) {
   if (key === "focusSoundVolume") return { min: 0, max: 100 };
   if (key === "intentReasonMinLength") return { min: 1, max: 280 };
+  if (key === "panicLockDurationMinutes") return { min: 1, max: 1440 };
   return { min: 1, max: 100000 };
 }
 
@@ -1078,6 +1110,10 @@ function emergencyRemaining() {
   return Math.max(0, state.settings.emergencyTokensPerWeek - used);
 }
 
+function panicLockDurationMinutes() {
+  return clampNumber(state.settings?.panicLockDurationMinutes, 1, 1440, 3);
+}
+
 function spendEmergencyToken() {
   const key = weekKey();
   state.emergency.tokensUsedByWeek[key] = (state.emergency.tokensUsedByWeek[key] || 0) + 1;
@@ -1114,6 +1150,9 @@ function sessionTitle(mode) {
 function commitmentLockError(policy) {
   if (policy?.kind === "integrity") {
     return "Integrity lockdown cannot be ended with an emergency unlock. Open a protected maintenance window after checking the alarm.";
+  }
+  if (policy?.kind === "panic") {
+    return "Panic lockout cannot be ended early.";
   }
   return "This commitment lock does not allow emergency unlocks. Open a protected maintenance window if this was a mistake.";
 }
@@ -1505,6 +1544,7 @@ function isProtectedSettingsMutation(body) {
     "foolproofModeEnabled",
     "strictByDefault",
     "activeProfileId",
+    "panicLockDurationMinutes",
     "protectedEditsEnabled",
     "protectedEditDelaySeconds",
     "protectedEditWindowMinutes"

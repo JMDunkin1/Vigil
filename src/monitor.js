@@ -3,7 +3,7 @@ import { addEvent, saveState, saveUsage } from "./store.js";
 import { PORT } from "./defaults.js";
 import { matchContentFilterUrl } from "./contentFilters.js";
 import { reconcileFocusShortcut } from "./focusHooks.js";
-import { activePolicy, isProcessSweepExemptApp, isStrictBypassAppForPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "./policy.js";
+import { activePolicy, isFullLockoutPolicy, isProcessSweepExemptApp, isStrictBypassAppForPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "./policy.js";
 import { activeAppLockPolicy } from "./appLocks.js";
 import { maybeApplyAndroidPolicy } from "./devices.js";
 import { extensionDynamicRulesReady } from "./foolproof.js";
@@ -155,7 +155,9 @@ class Monitor {
     }
 
     if (!options.force && now < this.nextSystemSleepLockAt) return this.status.lastSystemSleepLock;
-    const interval = Math.max(15, Number(this.state.settings?.systemSleepLockIntervalSeconds || 60));
+    const interval = policy?.session?.mode === "panic"
+      ? 3
+      : Math.max(15, Number(this.state.settings?.systemSleepLockIntervalSeconds || 60));
     this.nextSystemSleepLockAt = now + interval * 1000;
 
     const result = await lockScreen();
@@ -234,7 +236,7 @@ class Monitor {
       return;
     }
 
-    const lockdown = policy.kind === "integrity";
+    const lockdown = policy.kind === "integrity" || isFullLockoutPolicy(policy);
 
     if (front.url && policy.browserControl) {
       await this.blockSite({
@@ -331,7 +333,7 @@ class Monitor {
   }
 
   async sweepBlockedProcesses(now, options = {}) {
-    const lockdown = integrityLockdownActive(this.state);
+    const lockdown = integrityLockdownActive(this.state) || isFullLockoutPolicy(activePolicy(this.state, new Date(now)));
     if (!lockdown && (!this.state.settings.processSweepEnabled || !this.state.settings.appQuitEnabled)) return;
     if (!options.force && now < this.nextProcessSweepAt) return;
     const interval = lockdown ? 3 : Math.max(3, Number(this.state.settings.processSweepIntervalSeconds || 15));
@@ -541,6 +543,7 @@ function shouldSweepBlockApp(state, policy, appName) {
 }
 
 export function shouldLockScreenForPolicy(state, policy) {
+  if (policy?.session?.mode === "panic" && policy?.session?.lockLevel === "deep") return true;
   return Boolean(
     state.settings?.systemSleepLockEnabled &&
     policy?.session?.mode === "sleep" &&

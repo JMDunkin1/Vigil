@@ -426,6 +426,24 @@ button.compact {
   width: min(220px, 100%);
 }
 
+.panic-quick {
+  position: relative;
+  z-index: 1;
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.panic-button {
+  min-width: min(260px, 100%);
+  min-height: 54px;
+  font-size: 1.02rem;
+}
+
 .home-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

@@ -1,5 +1,6 @@
 import {
   ALWAYS_ALLOWED_APPS,
+  PANIC_LOCK_PROFILE_ID,
   PROCESS_SWEEP_EXEMPT_APPS,
   STRICT_BYPASS_APPS,
   STRICT_EMBEDDED_BROWSER_APPS,
@@ -163,11 +164,40 @@ export function snapshotProfile(profile) {
   };
 }
 
+export function panicLockProfile() {
+  return {
+    id: PANIC_LOCK_PROFILE_ID,
+    name: "Panic Lockout",
+    mode: "allowlist",
+    description: "Locks the Mac session and blocks everything except Vigil's local lock screen.",
+    blockedApps: [],
+    blockedSites: [],
+    blockedUrlPatterns: [],
+    allowedApps: ["Vigil", "loginwindow"],
+    allowedSites: ["localhost", "127.0.0.1"]
+  };
+}
+
+export function isFullLockoutPolicy(policy) {
+  return Boolean(policy?.kind === "panic" || policy?.session?.mode === "panic" || policy?.session?.fullLockout);
+}
+
 export function activePolicy(state, now = new Date()) {
   cleanupExpired(state, now);
 
   const integrity = integrityLockdownPolicy(state, now);
   if (integrity) return integrity;
+
+  if (state.panicLock) {
+    const phase = sessionPhase(state.panicLock, now);
+    return {
+      kind: "panic",
+      session: state.panicLock,
+      profile: state.panicLock.profileSnapshot || panicLockProfile(),
+      endsAt: phase?.endsAt || state.panicLock.endsAt,
+      phase
+    };
+  }
 
   if (state.activeSession && new Date(state.activeSession.endsAt) <= now) {
     state.activeSession = null;
@@ -300,11 +330,16 @@ export function scheduleWindow(schedule, now = new Date()) {
 export function shouldBlockApp(profile, appName, options = {}) {
   if (!appName) return false;
   if (!profile) return false;
+  const policyAllowsApp = appMatchesAppTargets(appName, profile.allowedApps || []);
+  if (options.policyAllowedAppsOverrideStrict && policyAllowsApp) return false;
   if (appMatchesAppTargets(appName, options.strictBypassApps || [])) return true;
-  if (appMatchesAppTargets(appName, ALWAYS_ALLOWED_APPS)) return false;
+  const respectAlwaysAllowedApps = options.respectAlwaysAllowedApps !== false;
+  if (respectAlwaysAllowedApps && appMatchesAppTargets(appName, ALWAYS_ALLOWED_APPS)) return false;
 
   const blocked = profile.blockedApps || [];
-  const allowed = [...(profile.allowedApps || []), ...ALWAYS_ALLOWED_APPS];
+  const allowed = respectAlwaysAllowedApps
+    ? [...(profile.allowedApps || []), ...ALWAYS_ALLOWED_APPS]
+    : profile.allowedApps || [];
 
   if (profile.mode === "allowlist") return !appMatchesAppTargets(appName, allowed);
   return appMatchesAppTargets(appName, blocked);
@@ -312,7 +347,12 @@ export function shouldBlockApp(profile, appName, options = {}) {
 
 export function shouldBlockAppForPolicy(state, policy, appName) {
   const strictBypassApps = strictBypassAppsForPolicy(state, policy);
-  return shouldBlockApp(policy?.profile, appName, { strictBypassApps });
+  const fullLockout = isFullLockoutPolicy(policy);
+  return shouldBlockApp(policy?.profile, appName, {
+    strictBypassApps,
+    respectAlwaysAllowedApps: !fullLockout,
+    policyAllowedAppsOverrideStrict: fullLockout
+  });
 }
 
 export function isStrictBypassAppForPolicy(state, policy, appName) {
@@ -471,6 +511,7 @@ function normalize(value) {
 
 function shouldApplyStrictBypassProtection(state, policy) {
   if (policy?.kind === "integrity") return true;
+  if (isFullLockoutPolicy(policy)) return true;
   return Boolean(
     state.settings?.strictBypassProtectionEnabled &&
     policy?.session?.lockLevel === "deep" &&
@@ -532,6 +573,9 @@ function urlPatternCandidates(url) {
 }
 
 function cleanupExpired(state, now) {
+  if (state.panicLock && new Date(state.panicLock.endsAt) <= now) {
+    state.panicLock = null;
+  }
   state.overrides = (state.overrides || []).filter((override) => new Date(override.until) > now);
   state.emergency.pending = (state.emergency.pending || []).filter((request) => {
     const expiresAt = new Date(request.expiresAt || 0);

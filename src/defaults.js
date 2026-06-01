@@ -227,6 +227,7 @@ export const DEFAULT_ALLOWED_SITES = [
 ];
 
 export const BRICK_MODE_PROFILE_ID = "brick-mode";
+export const PANIC_LOCK_PROFILE_ID = "panic-lockout";
 
 export const BRICK_ALLOWED_APPS = [
   ...ALWAYS_ALLOWED_APPS,
@@ -316,6 +317,7 @@ export function defaultState() {
       strictByDefault: true,
       emergencyTokensPerWeek: 3,
       emergencyDelaySeconds: 45,
+      panicLockDurationMinutes: 3,
       intentReasonEnabled: true,
       intentReasonMinLength: 20,
       focusSoundEnabled: false,
@@ -561,6 +563,7 @@ export function defaultState() {
       pending: [],
       windows: []
     },
+    panicLock: null,
     activeSession: null,
     emergency: {
       tokensUsedByWeek: {},

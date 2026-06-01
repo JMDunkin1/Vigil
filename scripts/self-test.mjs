@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BRICK_MODE_PROFILE_ID, defaultState, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, defaultState, PANIC_LOCK_PROFILE_ID, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
 import { accountStatusFromGroups, parseGroups } from "../src/account.js";
 import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "../src/apiSecurity.js";
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
@@ -24,7 +24,7 @@ import { activeLimitPolicy } from "../src/limits.js";
 import { parseProcessList } from "../src/macos.js";
 import { appQuitEscalationDecision, shouldLockScreenForPolicy, sweepBlockedApps } from "../src/monitor.js";
 import { parsePlist, plistData, toPlist } from "../src/plist.js";
-import { activePolicy, activeSchedule, appMatchesAppTargets, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, matchBlockedUrlPattern, matchStrictBrowserControlUrl, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
+import { activePolicy, activeSchedule, appMatchesAppTargets, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, panicLockProfile, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
 import { distractionPresets } from "../src/presets.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, protectedEditBlockers, requestMaintenanceWindow } from "../src/protection.js";
 import { focusReport } from "../src/reports.js";
@@ -823,6 +823,8 @@ last exit code = 0
   assert.match(serverSource, /npm run seal:source/);
   assert.match(serverSource, /extensionLoad/);
   assert.match(serverSource, /Brick Mode/);
+  assert.match(serverSource, /\/api\/panic\/start/);
+  assert.match(serverSource, /panicLockDurationMinutes/);
   assert.match(serverSource, /browser control pages/);
   assert.match(serverSource, /strictPreflightState/);
   assert.match(serverSource, /profileSnapshot: snapshotProfile\(profile\)/);
@@ -832,11 +834,14 @@ last exit code = 0
   assert.match(serverSource, /focusSoundPreset/);
   const indexSource = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   assert.match(indexSource, /id="startBrickMode"/);
+  assert.match(indexSource, /id="startPanicLock"/);
+  assert.match(indexSource, /id="panicLockDurationMinutes"/);
   assert.match(indexSource, /id="focusShortcutEnabled"/);
   assert.match(indexSource, /id="intentReasonEnabled"/);
   assert.match(indexSource, /id="focusSoundEnabled"/);
   const appSource = await readFile(join(process.cwd(), "public", "app.js"), "utf8");
   assert.match(appSource, /BRICK_MODE_PROFILE_ID/);
+  assert.match(appSource, /\/api\/panic\/start/);
   assert.match(appSource, /saveFocusShortcuts/);
   assert.match(appSource, /renderIntentReasonHints/);
   assert.match(appSource, /createNoiseSource/);
@@ -1121,6 +1126,55 @@ last exit code = 0
 
   activePolicy(state, new Date(now.getTime() + 56 * 60 * 1000));
   assert.equal(state.activeSession, null);
+}
+
+{
+  const state = defaultState();
+  assert.equal(state.settings.panicLockDurationMinutes, 3);
+  state.activeSession = {
+    id: "underlying-focus",
+    title: "Underlying focus",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual"
+  };
+  state.panicLock = {
+    id: "panic-now",
+    title: "Panic Lockout",
+    mode: "panic",
+    profileId: PANIC_LOCK_PROFILE_ID,
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 3 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    commitmentLock: true,
+    emergencyUnlocksAllowed: false,
+    source: "panic",
+    fullLockout: true,
+    profileSnapshot: panicLockProfile()
+  };
+  const policy = activePolicy(state, now);
+  assert.equal(policy.kind, "panic");
+  assert.equal(isFullLockoutPolicy(policy), true);
+  assert.equal(policy.profile.id, PANIC_LOCK_PROFILE_ID);
+  assert.equal(policy.profile.mode, "allowlist");
+  assert.equal(emergencyUnlockAllowedForPolicy(policy), false);
+  assert.equal(shouldBlockSite(policy.profile, "reddit.com"), true);
+  assert.equal(shouldBlockSite(policy.profile, "localhost"), false);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Firefox"), true);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Terminal"), true);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Codex"), true);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Vigil"), false);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "loginwindow"), false);
+  assert.equal(shouldLockScreenForPolicy(state, policy), true);
+  const resumed = activePolicy(state, new Date(now.getTime() + 4 * 60 * 1000));
+  assert.equal(state.panicLock, null);
+  assert.equal(resumed.kind, "manual");
+  assert.equal(resumed.session.id, "underlying-focus");
 }
 
 {
