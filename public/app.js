@@ -51,7 +51,7 @@ function boot() {
 }
 
 function initTheme() {
-  let saved = "";
+  let saved;
   try {
     saved = localStorage.getItem("sentinel-theme") || "";
   } catch {
@@ -2285,7 +2285,7 @@ function printDistanceKey() {
   ${svg}
   <code>${escapeHtmlText(token)}</code>
 </main>
-<script>window.print();<\/script></body></html>`);
+<script>window.print();</script></body></html>`);
   page.document.close();
 }
 

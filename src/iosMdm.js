@@ -5,7 +5,6 @@ import { buildIosConfigurationProfile, IOS_PROFILE_IDENTIFIER, iosPolicyTargets 
 import { plistData, toPlist } from "./plist.js";
 
 const MDM_PROFILE_IDENTIFIER = "com.local-screen-time.ios.mdm";
-const MDM_PAYLOAD_IDENTIFIER = `${MDM_PROFILE_IDENTIFIER}.payload`;
 const DEFAULT_ACCESS_RIGHTS = 8179;
 const MAX_COMMANDS = 500;
 const PUSH_COOLDOWN_MS = 30_000;
@@ -137,7 +136,7 @@ export function markIosMdmEnrollmentGenerated(state, at = new Date()) {
   mdm.lastEnrollmentProfileGeneratedAt = at.toISOString();
 }
 
-export function buildIosMdmEnrollmentProfile(state, now = new Date()) {
+export function buildIosMdmEnrollmentProfile(state) {
   const mdm = ensureMdmState(state);
   const baseUrl = mdm.publicBaseUrl || `https://replace-with-public-mdm-host.example`;
   const mdmPayload = commonPayload("com.apple.mdm", "Sentinel MDM", "mdm", {

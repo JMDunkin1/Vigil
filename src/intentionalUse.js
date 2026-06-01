@@ -229,7 +229,7 @@ export function pausePageData(state, requestId, now = new Date()) {
   };
 }
 
-export function accountabilityDigest(state, usage = {}, now = new Date()) {
+export function accountabilityDigest(state, _usage = {}, now = new Date()) {
   ensureIntentionalUse(state);
   const key = weekKey(now);
   const outcomes = (state.intentionalUse.outcomes || []).filter((item) => item.weekKey === key);

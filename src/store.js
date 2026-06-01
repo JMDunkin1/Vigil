@@ -34,7 +34,7 @@ async function writeJson(path, value) {
 
 export async function loadState() {
   await mkdir(DATA_DIR, { recursive: true });
-  let raw = "";
+  let raw;
   try {
     raw = await readFile(STATE_PATH, "utf8");
   } catch (error) {
