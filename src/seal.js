@@ -23,6 +23,7 @@ const PROTECTED_SETTINGS = [
   "interventionThreshold",
   "interventionExtraDelaySeconds",
   "interventionMaxExtraDelaySeconds",
+  "intentionalUseEnabled",
   "runtimeGapLockdownSeconds",
   "clockTamperLockdownSeconds",
   "activeProfileId",
@@ -216,6 +217,12 @@ function trustedProtectedStateMigrationVariants(snapshot) {
       detail: "State file changed only by the trusted Vigil to Vigil branding migration; the seal can be refreshed without entering lockdown."
     });
   }
+  for (const intentionalUseSchema of intentionalUseSchemaVariants(snapshot)) {
+    variants.push({
+      snapshot: intentionalUseSchema,
+      detail: "State file changed only by the trusted Intentional Use protected-state schema migration; the seal can be refreshed without entering lockdown."
+    });
+  }
   return variants;
 }
 
@@ -235,6 +242,19 @@ function legacyBrandingVariant(snapshot) {
   return variant;
 }
 
+function intentionalUseSchemaVariants(snapshot) {
+  if (!snapshot || (!Object.hasOwn(snapshot, "intentionalUse") && !Object.hasOwn(snapshot?.settings || {}, "intentionalUseEnabled"))) return [];
+  const base = structuredClone(snapshot);
+  if (base.settings) delete base.settings.intentionalUseEnabled;
+
+  const absent = structuredClone(base);
+  delete absent.intentionalUse;
+
+  const empty = structuredClone(base);
+  empty.intentionalUse = { accountability: {}, goal: {}, ledger: {}, rules: [] };
+  return [absent, empty];
+}
+
 function protectedStateSnapshot(state = {}) {
   return {
     version: state.version ?? null,
@@ -247,6 +267,7 @@ function protectedStateSnapshot(state = {}) {
     appLockUnlocks: state.appLockUnlocks || [],
     appLockRequests: state.appLockRequests || [],
     appLockLedger: state.appLockLedger || {},
+    intentionalUse: protectedIntentionalUse(state.intentionalUse || {}),
     extension: protectedExtension(state.extension || {}),
     keyholder: state.keyholder || {},
     distanceKey: state.distanceKey || {},
@@ -260,6 +281,15 @@ function protectedStateSnapshot(state = {}) {
       wifiSsid: state.environment?.wifiSsid || ""
     },
     integrity: protectedIntegrity(state.integrity || {})
+  };
+}
+
+function protectedIntentionalUse(intentionalUse) {
+  return {
+    goal: intentionalUse.goal || {},
+    rules: intentionalUse.rules || [],
+    accountability: intentionalUse.accountability || {},
+    ledger: intentionalUse.ledger || {}
   };
 }
 

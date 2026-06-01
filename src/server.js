@@ -23,9 +23,11 @@ import { assertFoolproofReadyForStrict, extensionDynamicRulesReady, extensionRec
 import { clearIntegrityTamper, integrityRuntimeSummary } from "./integrityLockdown.js";
 import { assertIntentReason, IntentReasonError, intentReasonPolicy, intentReasonSummary } from "./intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "./intervention.js";
+import { confirmIntentionalPause, IntentionalUseError, intentionalUseSummary, pausePageData, skipIntentionalPause, updateIntentionalUseAccountability, updateIntentionalUseGoal, upsertIntentionalUseRule } from "./intentionalUse.js";
 import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings, publicIosSettings } from "./iosProfiles.js";
 import { activeLimitBlocks, limitSummary, normalizeLimitRule } from "./limits.js";
+import { openApp } from "./macos.js";
 import { parsePlist, toPlist } from "./plist.js";
 import { ProtectionError, assertProtectedEditAllowed, confirmMaintenanceWindow, protectionSummary, requestMaintenanceWindow } from "./protection.js";
 import { distractionPresets } from "./presets.js";
@@ -114,6 +116,11 @@ async function requestHandler(request, response) {
 
     if (url.pathname === "/blocked") {
       sendHtml(response, blockedPage(url));
+      return;
+    }
+
+    if (url.pathname === "/pause") {
+      sendHtml(response, pausePage(url));
       return;
     }
 
@@ -296,6 +303,7 @@ async function handleApi(request, response, url) {
       state: publicState(state, policy),
       usage: usageSummary(usage, state),
       report: focusReport(usage, state),
+      intentionalUse: intentionalUseSummary(state, usage),
       limits: limitSummary(state, usage),
       appLocks: appLockSummary(state),
       devices,
@@ -348,6 +356,14 @@ async function handleApi(request, response, url) {
       addEvent(state, "extension_blocked_site", {
         site: result.hostname,
         policy: result.policy?.title || result.reason
+      });
+    }
+    if (result.paused && result.event !== "heartbeat") {
+      addEvent(state, "intentional_pause_requested", {
+        site: result.hostname,
+        ruleId: result.rule?.id,
+        ruleName: result.rule?.name,
+        pauseId: result.pause?.id
       });
     }
     await saveUsage(usage);
@@ -597,6 +613,105 @@ async function handleApi(request, response, url) {
     addEvent(state, "ios_profile_generated", { bytes: Buffer.byteLength(profile) });
     await saveState(state);
     sendDownload(response, 200, profile, "vigil-iphone-lock.mobileconfig", "application/x-apple-aspen-config");
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/goal") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const goal = updateIntentionalUseGoal(state, body);
+      addEvent(state, "intentional_goal_saved", { values: goal.values?.length || 0, replacements: goal.replacements?.length || 0 });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, goal });
+    } catch (error) {
+      sendJson(response, error instanceof ProtectionError ? error.status : 500, serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/accountability") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const accountability = updateIntentionalUseAccountability(state, body);
+      addEvent(state, "intentional_accountability_saved", { enabled: accountability.enabled, cadence: accountability.cadence });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, accountability });
+    } catch (error) {
+      sendJson(response, error instanceof ProtectionError ? error.status : 500, serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/rule") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const rule = upsertIntentionalUseRule(state, body);
+      addEvent(state, "intentional_rule_saved", { ruleId: rule.id, name: rule.name, enabled: rule.enabled });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, rule });
+    } catch (error) {
+      sendJson(response, error instanceof ProtectionError ? error.status : 500, serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/rule/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1));
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      state.intentionalUse ||= {};
+      state.intentionalUse.rules = (state.intentionalUse.rules || []).filter((rule) => rule.id !== id);
+      state.intentionalUse.pauses = (state.intentionalUse.pauses || []).filter((pause) => pause.ruleId !== id);
+      state.intentionalUse.grants = (state.intentionalUse.grants || []).filter((grant) => grant.ruleId !== id);
+      addEvent(state, "intentional_rule_deleted", { ruleId: id });
+      await saveState(state);
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendJson(response, error instanceof ProtectionError ? error.status : 500, serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/pause/continue") {
+    try {
+      const body = await readBody(request);
+      const result = confirmIntentionalPause(state, body.requestId, body);
+      const launch = result.pause.targetType === "app" && result.pause.app
+        ? await openApp(result.pause.app)
+        : null;
+      addEvent(state, "intentional_pause_continued", {
+        pauseId: result.pause.id,
+        ruleId: result.pause.ruleId,
+        target: result.pause.targetLabel,
+        until: result.grant.until,
+        launch
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, ...result, launch });
+    } catch (error) {
+      sendJson(response, error instanceof IntentionalUseError ? error.status : 500, serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/pause/skip") {
+    try {
+      const body = await readBody(request);
+      const result = skipIntentionalPause(state, body.requestId, body);
+      addEvent(state, "intentional_pause_skipped", {
+        pauseId: result.pause.id,
+        ruleId: result.pause.ruleId,
+        target: result.pause.targetLabel,
+        replacement: result.pause.replacement
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, ...result });
+    } catch (error) {
+      sendJson(response, error instanceof IntentionalUseError ? error.status : 500, serializeError(error));
+    }
     return;
   }
 
@@ -973,6 +1088,7 @@ function updateSettings(body) {
     "interventionThreshold",
     "interventionExtraDelaySeconds",
     "interventionMaxExtraDelaySeconds",
+    "intentionalUseEnabled",
     "baselineDailyMinutes",
     "focusScoreGoal",
     "activeProfileId",
@@ -1566,6 +1682,199 @@ function blockedPage(url) {
 </html>`;
 }
 
+function pausePage(url) {
+  const requestId = url.searchParams.get("requestId") || "";
+  const data = pausePageData(state, requestId);
+  if (!data) {
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pause expired</title>
+  <style>${pausePageCss()}</style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Vigil</p>
+    <h1>Pause expired.</h1>
+    <p>This intentional-use pause is no longer active. Open Vigil or try the site again if you still mean it.</p>
+    <a class="button" href="http://127.0.0.1:${PORT}">Open Vigil</a>
+  </main>
+</body>
+</html>`;
+  }
+
+  const pause = data.pause;
+  const goal = data.goal || {};
+  const budget = data.budget || {};
+  const context = data.context || {};
+  const replacements = (data.replacements || []).slice(0, 6);
+  const budgetText = budget.budgetSeconds
+    ? `${Math.round((budget.seconds || 0) / 60)} of ${Math.round(budget.budgetSeconds / 60)} min used today`
+    : "No daily budget set";
+  const buttons = replacements
+    .map((item) => `<button class="choice" type="button" data-replacement="${escapeHtml(item)}">${escapeHtml(item)}</button>`)
+    .join("");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Intentional Use</title>
+  <style>${pausePageCss()}</style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Intentional Use</p>
+    <h1>Before ${escapeHtml(pause.targetLabel)}.</h1>
+    <p class="lead">${escapeHtml(goal.statement || "Use screens on purpose, not by reflex.")}</p>
+    <div class="timer">
+      <strong id="countdown">${Math.max(0, data.waitSeconds || 0)}</strong>
+      <span>slow seconds</span>
+    </div>
+    <div class="grid">
+      <section>
+        <h2>Use this for</h2>
+        <input id="intention" type="text" autocomplete="off" placeholder="One clear reason">
+        <select id="mood">
+          <option value="">Current state</option>
+          <option>Focused</option>
+          <option>Bored</option>
+          <option>Tired</option>
+          <option>Anxious</option>
+          <option>Avoiding something</option>
+        </select>
+      </section>
+      <section>
+        <h2>Or switch to</h2>
+        <div class="choices">${buttons || '<button class="choice" type="button" data-replacement="Close this tab">Close this tab</button>'}</div>
+      </section>
+    </div>
+    <div class="meta">
+      <span>${escapeHtml(pause.ruleName)}</span>
+      <span>${escapeHtml(budgetText)}</span>
+      <span>${escapeHtml(context.message || "Normal pause")}</span>
+    </div>
+    <div class="actions">
+      <button id="skip" class="secondary" type="button">Use replacement</button>
+      <button id="continue" class="primary" type="button" disabled>Continue for ${Math.round(pause.sessionMinutes || 10)} min</button>
+    </div>
+    <p id="status" class="status">Breathe first. The continue button will unlock when the timer reaches zero.</p>
+  </main>
+  <script>
+    const pageData = ${safeScriptJson({ requestId: pause.id, returnUrl: pause.returnUrl, waitSeconds: Math.max(0, data.waitSeconds || 0) })};
+    const countdown = document.querySelector("#countdown");
+    const continueButton = document.querySelector("#continue");
+    const skipButton = document.querySelector("#skip");
+    const status = document.querySelector("#status");
+    const intention = document.querySelector("#intention");
+    const mood = document.querySelector("#mood");
+    let selectedReplacement = "";
+    let remaining = pageData.waitSeconds || 0;
+
+    document.querySelectorAll(".choice").forEach((button) => {
+      button.addEventListener("click", () => {
+        selectedReplacement = button.dataset.replacement || button.textContent;
+        document.querySelectorAll(".choice").forEach((item) => item.classList.remove("selected"));
+        button.classList.add("selected");
+        status.textContent = "Replacement selected.";
+      });
+    });
+
+    const timer = setInterval(() => {
+      remaining = Math.max(0, remaining - 1);
+      countdown.textContent = String(remaining);
+      if (remaining <= 0) {
+        clearInterval(timer);
+        continueButton.disabled = false;
+        status.textContent = "Ready. Continue only if this still matches the reason you wrote.";
+      }
+    }, 1000);
+    if (remaining <= 0) continueButton.disabled = false;
+
+    continueButton.addEventListener("click", async () => {
+      continueButton.disabled = true;
+      try {
+        const result = await postJson("/api/intentional-use/pause/continue", {
+          requestId: pageData.requestId,
+          intention: intention.value,
+          mood: mood.value
+        });
+        status.textContent = "Intentional window opened.";
+        if (result.returnUrl) {
+          setTimeout(() => { location.href = result.returnUrl; }, 350);
+        } else if (result.launch?.ok) {
+          status.textContent = "Intentional window opened in " + (result.pause?.app || result.pause?.targetLabel || "the app") + ".";
+        } else {
+          setTimeout(() => { location.href = "http://127.0.0.1:${PORT}"; }, 350);
+        }
+      } catch (error) {
+        status.textContent = error.message;
+        continueButton.disabled = false;
+      }
+    });
+
+    skipButton.addEventListener("click", async () => {
+      skipButton.disabled = true;
+      try {
+        await postJson("/api/intentional-use/pause/skip", {
+          requestId: pageData.requestId,
+          replacement: selectedReplacement || "Closed the loop",
+          mood: mood.value
+        });
+        status.textContent = "Nice. Keep the replacement small and concrete.";
+      } catch (error) {
+        status.textContent = error.message;
+        skipButton.disabled = false;
+      }
+    });
+
+    async function postJson(path, body) {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "${CONTROL_INTENT_HEADER}": "${CONTROL_INTENT_VALUE}" },
+        body: JSON.stringify(body)
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || "Request failed");
+      return json;
+    }
+  </script>
+</body>
+</html>`;
+}
+
+function pausePageCss() {
+  return `
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #15201c; background: #f5f1e8; }
+    main { width: min(760px, calc(100vw - 32px)); padding: 44px 0; }
+    h1 { margin: 0 0 12px; font-size: 3rem; line-height: .98; letter-spacing: 0; }
+    h2 { margin: 0 0 10px; font-size: .95rem; letter-spacing: 0; }
+    p { color: #53605b; line-height: 1.55; }
+    .eyebrow { margin: 0 0 8px; color: #126a6f; font-weight: 900; text-transform: uppercase; letter-spacing: .12em; font-size: .72rem; }
+    .lead { max-width: 620px; margin-bottom: 22px; }
+    .timer { width: 156px; height: 156px; border-radius: 50%; border: 8px solid #126a6f; display: grid; place-items: center; margin: 16px 0 22px; background: #fffcf4; }
+    .timer strong { display: block; font-size: 3rem; line-height: 1; text-align: center; }
+    .timer span { display: block; color: #6a746f; font-weight: 800; font-size: .78rem; text-transform: uppercase; letter-spacing: .1em; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    section { border-top: 1px solid #d9d0bf; padding-top: 14px; }
+    input, select { box-sizing: border-box; width: 100%; min-height: 46px; border: 1px solid #c8c0b2; border-radius: 6px; padding: 0 12px; background: #fffcf4; color: inherit; font: inherit; margin-bottom: 10px; }
+    button, .button { min-height: 44px; border: 0; border-radius: 6px; padding: 0 15px; font: inherit; font-weight: 900; cursor: pointer; text-decoration: none; display: inline-grid; place-items: center; }
+    button:disabled { opacity: .52; cursor: not-allowed; }
+    .primary { color: #fffdf6; background: #126a6f; }
+    .secondary, .choice, .button { color: #17201d; background: #ded7c9; }
+    .choices { display: grid; gap: 8px; }
+    .choice { justify-content: start; text-align: left; }
+    .choice.selected { background: #d6eadc; outline: 2px solid #28734f; }
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .meta span { border: 1px solid #d5ccb9; border-radius: 999px; padding: 7px 10px; color: #53605b; background: #fffcf4; font-size: .88rem; }
+    .status { min-height: 24px; margin-top: 14px; }
+    @media (max-width: 680px) { h1 { font-size: 2.2rem; } .grid { grid-template-columns: 1fr; } .timer { width: 128px; height: 128px; } }
+  `;
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -1607,6 +1916,7 @@ function isProtectedSettingsMutation(body) {
     "interventionThreshold",
     "interventionExtraDelaySeconds",
     "interventionMaxExtraDelaySeconds",
+    "intentionalUseEnabled",
     "foolproofModeEnabled",
     "strictByDefault",
     "activeProfileId",

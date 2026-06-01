@@ -9,9 +9,10 @@ import { extensionDynamicRulesReady } from "./foolproof.js";
 import { firewallStatus } from "./firewall.js";
 import { hostsStatus, launchAgentStatus, stateSealStatus } from "./hardening.js";
 import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, recordRuntimeHeartbeat } from "./integrityLockdown.js";
+import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
-import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, listRunningAppNames, lockScreen, notify, redirectActiveBrowserTab, quitApp, urlHostname } from "./macos.js";
+import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, listRunningAppNames, lockScreen, notify, openUrl, redirectActiveBrowserTab, quitApp, urlHostname } from "./macos.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { recordOpen, recordUsage } from "./usage.js";
 
@@ -75,6 +76,7 @@ class Monitor {
 
     if (this.lastSample) {
       recordUsage(this.usage, this.lastSample, seconds);
+      recordIntentionalUseTime(this.state, this.lastSample, seconds);
     }
 
     this.checkRuntimeGap(now);
@@ -239,6 +241,7 @@ class Monitor {
   async enforce(front) {
     const policy = this.policyForTarget(front);
     if (!policy) {
+      if (await this.pauseIntentionalUse(front)) return;
       this.status.lastEnforcement = null;
       if (front.app) this.appBlockHistory.delete(front.app);
       return;
@@ -279,6 +282,31 @@ class Monitor {
     if ((lockdown || this.state.settings.appQuitEnabled) && shouldBlockAppForPolicy(this.state, policy, front.app)) {
       await this.blockApp(front, policy);
     }
+  }
+
+  async pauseIntentionalUse(front) {
+    const sample = { app: front.app || "", hostname: front.hostname || "", url: front.url || "" };
+    const decision = intentionalUseDecision(this.state, sample, { event: "mac-app", returnUrl: front.url || "" });
+    if (!decision.shouldPause) return false;
+
+    const browser = front.url && appCanReportUrls(front.app);
+    const result = browser
+      ? await redirectActiveBrowserTab(front.app, decision.redirectUrl)
+      : {
+          quit: await quitApp(front.app),
+          open: await openUrl(decision.redirectUrl)
+        };
+    addEvent(this.state, "intentional_pause_interrupted", {
+      app: front.app,
+      site: front.hostname,
+      ruleId: decision.rule?.id,
+      ruleName: decision.rule?.name,
+      pauseId: decision.pause?.id,
+      result
+    });
+    this.status.lastEnforcement = { type: "intentional-pause", target: front.hostname || front.app, result, at: new Date().toISOString() };
+    await notify("Intentional pause", `${front.hostname || front.app} needs a short pause first.`);
+    return true;
   }
 
   policyForTarget(sample) {

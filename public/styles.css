@@ -1036,6 +1036,21 @@ button:focus-visible {
   white-space: pre-wrap;
 }
 
+.small-code {
+  min-height: 120px;
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 78%, transparent);
+  color: var(--muted);
+  white-space: pre-wrap;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .day-grid {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -1201,7 +1216,7 @@ button:focus-visible {
 
 .report-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 10px;
   margin-bottom: 16px;
 }

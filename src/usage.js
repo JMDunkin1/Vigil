@@ -48,6 +48,8 @@ export function usageSummary(usage, state, now = new Date()) {
   const focusScore = totalSeconds ? Math.max(0, Math.round(100 - (distractingSeconds / totalSeconds) * 100)) : 100;
   const protectedSeconds = protectedSecondsToday(state, now);
   const blockCount = blockCountToday(state, now);
+  const appOpenCount = sumValues(today.opens.apps);
+  const siteOpenCount = sumValues(today.opens.sites);
 
   return {
     todayKey,
@@ -55,6 +57,9 @@ export function usageSummary(usage, state, now = new Date()) {
     distractingSeconds,
     protectedSeconds,
     blockCount,
+    appOpenCount,
+    siteOpenCount,
+    openPressure: appOpenCount + siteOpenCount,
     savedSeconds: 0,
     focusScore,
     topApps,
@@ -87,6 +92,10 @@ function topOpenEntries(values) {
     .sort((a, b) => b[1] - a[1])
     .slice(0, 8)
     .map(([name, count]) => ({ name, count }));
+}
+
+function sumValues(values) {
+  return Object.values(values || {}).reduce((total, value) => total + Number(value || 0), 0);
 }
 
 function sumBlockedSeconds(day, state) {

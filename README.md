@@ -128,6 +128,7 @@ npm run seal:source
 ```
 
 Source/code edits are handled by the source seal, not the state tamper alarm. A reviewed Codex or developer change should be tested, then sealed with `npm run seal:source`; Foolproof mode treats unsealed source changes as a hardening issue during strict locks, but ordinary source edits do not by themselves mean someone tried to bypass the blocker.
+When a trusted source edit is the only hardening drift, `npm run seal:source` also clears that source-seal drift after writing the new trusted seal. Other hardening drift, such as hosts, firewall, LaunchAgent, Accessibility, or extension-rule failures, remains locked until fixed and cleared separately.
 
 To add the browser companion, load the `extension` folder as an unpacked extension in Chrome, Brave, Edge, or Arc while the local server is running.
 

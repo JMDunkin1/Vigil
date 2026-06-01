@@ -1,5 +1,6 @@
 import { dateKey } from "./time.js";
 import { appMatchesAppTargets, hostMatchesSiteTargets } from "./policy.js";
+import { intentionalUseSummary } from "./intentionalUse.js";
 
 export function focusReport(usage, state, now = new Date()) {
   const today = startOfDay(now);
@@ -18,6 +19,7 @@ export function focusReport(usage, state, now = new Date()) {
   const topCulprits = topCombined(currentDays, "sites").concat(topCombined(currentDays, "apps")).slice(0, 6);
   const bestDay = bestTrackedDay(currentDays);
   const worstDay = worstTrackedDay(currentDays);
+  const intentionalUse = intentionalUseSummary(state, usage, now);
 
   return {
     generatedAt: now.toISOString(),
@@ -39,9 +41,10 @@ export function focusReport(usage, state, now = new Date()) {
     comparison: compareWeeks(current, previous),
     streak,
     milestones,
+    intentionalUse,
     topCulprits,
     projections: projections(),
-    insights: insights({ current, previous, topCulprits, streak, bestDay, worstDay, focusScoreGoal })
+    insights: insights({ current, previous, topCulprits, streak, bestDay, worstDay, focusScoreGoal, intentionalUse })
   };
 }
 
@@ -57,6 +60,7 @@ function dayReport(usage, state, date) {
     totalSeconds: Math.round(totalSeconds),
     distractingSeconds: Math.round(distractingSeconds),
     savedSeconds: 0,
+    openCount: sumOpenCounts(day.opens),
     focusScore,
     apps: day.apps,
     sites: day.sites,
@@ -74,9 +78,11 @@ function aggregateWeek(days) {
     totalSeconds,
     distractingSeconds,
     savedSeconds,
+    openCount: sum(days, "openCount"),
     trackedDays: trackedDays.length,
     averageFocusScore: trackedDays.length ? Math.round(sum(trackedDays, "focusScore") / trackedDays.length) : 100,
-    averageDailyDistractionSeconds: trackedDays.length ? Math.round(distractingSeconds / trackedDays.length) : 0
+    averageDailyDistractionSeconds: trackedDays.length ? Math.round(distractingSeconds / trackedDays.length) : 0,
+    averageDailyOpens: trackedDays.length ? Math.round(sum(trackedDays, "openCount") / trackedDays.length) : 0
   };
 }
 
@@ -130,7 +136,7 @@ function buildMilestones({ state, current, streak, allDays, focusScoreGoal }) {
   ];
 }
 
-function insights({ current, previous, topCulprits, streak, bestDay, worstDay, focusScoreGoal }) {
+function insights({ current, previous, topCulprits, streak, bestDay, worstDay, focusScoreGoal, intentionalUse }) {
   const output = [];
   if (current.trackedDays === 0) {
     output.push("No full usage day has been tracked yet. Leave the watcher running to build your first report.");
@@ -146,10 +152,22 @@ function insights({ current, previous, topCulprits, streak, bestDay, worstDay, f
     output.push(delta <= 0 ? "Distracting time is down versus last week." : "Distracting time is up versus last week.");
   }
   if (topCulprits[0]) output.push(`${topCulprits[0].name} is the top culprit this week.`);
+  if (current.averageDailyOpens > 0) output.push(`Average open pressure is ${current.averageDailyOpens} app/site opens per tracked day.`);
+  if (intentionalUse?.today?.pauses) {
+    output.push(`Intentional Use paused ${intentionalUse.today.pauses} opens today; ${intentionalUse.today.skipped} became replacements.`);
+  }
   if (streak.days > 0) output.push(`Current focus streak: ${streak.label}.`);
   if (bestDay) output.push(`${bestDay.label} is your strongest tracked day.`);
   if (worstDay && bestDay && worstDay.key !== bestDay.key) output.push(`${worstDay.label} is the day to tighten next.`);
   return output.slice(0, 5);
+}
+
+function sumOpenCounts(opens = {}) {
+  return sumObject(opens.apps) + sumObject(opens.sites);
+}
+
+function sumObject(values = {}) {
+  return Object.values(values || {}).reduce((total, value) => total + Number(value || 0), 0);
 }
 
 function projections() {

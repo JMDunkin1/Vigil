@@ -118,8 +118,8 @@ async function checkUrl(tabId, url, event, seconds = 0, title = "") {
   if (typeof result.browserNoiseBlockingEnabled === "boolean") {
     await syncNoiseBlocking(result.browserNoiseBlockingEnabled);
   }
-  if (result.blocked && result.redirectUrl && url !== result.redirectUrl) {
-    await setBadge(tabId, "LOCK", "#9b2f2f");
+  if ((result.blocked || result.paused) && result.redirectUrl && url !== result.redirectUrl) {
+    await setBadge(tabId, result.paused ? "WAIT" : "LOCK", result.paused ? "#b67618" : "#9b2f2f");
     await updateTab(tabId, { url: result.redirectUrl });
   } else {
     await setBadge(tabId, "", "#126a6f");
