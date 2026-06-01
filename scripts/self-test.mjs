@@ -12,6 +12,7 @@ import { doctorRows, formatDoctorRows } from "../src/doctorReport.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { focusShortcutDetail, focusShortcutSummary, reconcileFocusShortcut } from "../src/focusHooks.js";
 import { assertFoolproofReadyForStrict, extensionDynamicRulesReady, extensionVersionReady, foolproofBlockers } from "../src/foolproof.js";
+import { buildFirewallBlock, buildPfConfBlock, extractManagedFirewallBlock, extractManagedPfConfBlock, firewallDomainSignature, firewallStatus, replaceManagedPfConfBlock } from "../src/firewall.js";
 import { buildHostsBlock, extractHostsBlock, hostsBlockMatches, LEGACY_HOSTS_BEGIN, LEGACY_HOSTS_END, parseLaunchAgentPrint, replaceManagedHostsBlock } from "../src/hardening.js";
 import { clearIntegrityTamper, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, recordRuntimeHeartbeat } from "../src/integrityLockdown.js";
 import { assertIntentReason, intentReasonSummary } from "../src/intentReason.js";
@@ -227,8 +228,10 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   state.extension.lastVersion = "0.1.0";
   assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "browser-extension-version"), true);
   state.extension.lastVersion = REQUIRED_EXTENSION_VERSION;
+  const readyFirewall = { installed: true, partial: false, stale: false, installedEntries: 8 };
   const readyContext = {
     hosts: { installed: true, partial: false, stale: false },
+    firewall: readyFirewall,
     agent: { loaded: true, running: true },
     account: accountStatusFromGroups("focus", "staff everyone"),
     monitor: { ok: true, accessibilityLikelyMissing: false },
@@ -237,6 +240,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   };
   assert.deepEqual(foolproofBlockers(state, readyContext, now), []);
   assert.doesNotThrow(() => assertFoolproofReadyForStrict(state, readyContext, now));
+  assert.equal(foolproofBlockers(state, { ...readyContext, firewall: { installed: false, partial: false, stale: false } }, now).some((item) => item.id === "firewall"), true);
   assert.equal(foolproofBlockers(state, {
     ...readyContext,
     account: accountStatusFromGroups("daily", "staff admin everyone")
@@ -272,6 +276,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
     seal: { ok: true, status: "sealed", detail: "State file matches its integrity seal.", lastSealedAt: now.toISOString() },
     sourceSeal: { ok: true, status: "sealed", detail: "Source files match integrity seal.", sealedAt: now.toISOString(), fileCount: 42 },
     hosts: { installed: true, partial: false, stale: false, installedEntries: 20, expectedEntries: 20 },
+    firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
     agent: { installed: true, loaded: true, running: true, pid: 12345 },
     account: accountStatusFromGroups("focus", "staff everyone")
   }, now);
@@ -289,6 +294,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
     seal: { ok: true, status: "sealed", detail: "State file matches its integrity seal.", lastSealedAt: now.toISOString() },
     sourceSeal: { ok: true, status: "sealed", detail: "Source files match integrity seal.", sealedAt: now.toISOString(), fileCount: 42 },
     hosts: { installed: true, partial: false, stale: false, installedEntries: 20, expectedEntries: 20 },
+    firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
     agent: { installed: true, loaded: true, running: true, pid: 12345 },
     account: accountStatusFromGroups("focus", "staff everyone")
   }, now);
@@ -548,13 +554,14 @@ const now = new Date("2026-05-28T14:00:00-04:00");
     source: "manual"
   };
   const badHosts = { installed: false, partial: false, stale: false };
+  const goodFirewall = { installed: true, partial: false, stale: false };
   const goodRules = { ok: true, status: "synced", detail: "Dynamic browser block rules synced (9 active).", count: 9 };
-  assert.equal(detectHardeningDrift(state, { hosts: badHosts, extensionRules: goodRules }, now), null);
+  assert.equal(detectHardeningDrift(state, { hosts: badHosts, firewall: goodFirewall, extensionRules: goodRules }, now), null);
   assert.equal(integrityLockdownActive(state), false);
 
   state.settings.foolproofModeEnabled = true;
   const goodSourceSeal = { ok: true, status: "sealed", detail: "Source files match integrity seal." };
-  const drift = detectHardeningDrift(state, { hosts: badHosts, extensionRules: goodRules, sourceSeal: goodSourceSeal }, now);
+  const drift = detectHardeningDrift(state, { hosts: badHosts, firewall: goodFirewall, extensionRules: goodRules, sourceSeal: goodSourceSeal }, now);
   assert.equal(drift.issues[0].id, "hosts");
   assert.equal(integrityRuntimeSummary(state).status, "hardening-drift");
   assert.equal(integrityLockdownPolicy(state, now).alarm.type, "hardening-drift");
@@ -562,12 +569,17 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   assert.equal(integrityRuntimeSummary(state).ok, true);
 
   const staleRules = { ok: false, status: "stale", detail: "Browser companion dynamic block rules are stale.", count: 9 };
-  const driftRules = detectHardeningDrift(state, { hosts: { installed: true, partial: false, stale: false }, extensionRules: staleRules, sourceSeal: goodSourceSeal }, now);
+  const driftFirewall = detectHardeningDrift(state, { hosts: { installed: true, partial: false, stale: false }, firewall: { installed: false, partial: false, stale: false }, extensionRules: goodRules, sourceSeal: goodSourceSeal }, now);
+  assert.equal(driftFirewall.issues[0].id, "firewall");
+  assert.equal(clearIntegrityTamper(state, now), true);
+
+  const driftRules = detectHardeningDrift(state, { hosts: { installed: true, partial: false, stale: false }, firewall: goodFirewall, extensionRules: staleRules, sourceSeal: goodSourceSeal }, now);
   assert.equal(driftRules.issues[0].id, "extension-rules");
   assert.equal(clearIntegrityTamper(state, now), true);
 
   const driftSource = detectHardeningDrift(state, {
     hosts: { installed: true, partial: false, stale: false },
+    firewall: goodFirewall,
     extensionRules: goodRules,
     sourceSeal: { ok: false, status: "mismatch", detail: "Source files do not match the integrity seal." }
   }, now);
@@ -576,6 +588,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 
   const driftAgent = detectHardeningDrift(state, {
     hosts: { installed: true, partial: false, stale: false },
+    firewall: goodFirewall,
     extensionRules: goodRules,
     sourceSeal: goodSourceSeal,
     agent: { installed: true, loaded: false, running: false }
@@ -585,6 +598,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 
   const driftAccessibility = detectHardeningDrift(state, {
     hosts: { installed: true, partial: false, stale: false },
+    firewall: goodFirewall,
     extensionRules: goodRules,
     sourceSeal: goodSourceSeal,
     agent: { installed: true, loaded: true, running: true },
@@ -781,6 +795,58 @@ last exit code = 0
   assert.equal(launch.running, true);
   assert.equal(launch.pid, 12345);
   assert.equal(launch.lastExitStatus, 0);
+}
+
+{
+  const domains = ["example.com", "news.example"];
+  const entries = [
+    { domain: "example.com", host: "example.com", address: "93.184.216.34" },
+    { domain: "news.example", host: "www.news.example", address: "203.0.113.7" },
+    { domain: "duplicate.example", host: "duplicate.example", address: "93.184.216.34" }
+  ];
+  const anchor = buildFirewallBlock(domains, entries, [{ host: "www.example.com", error: "ENOTFOUND" }]);
+  assert.equal(extractManagedFirewallBlock(anchor), anchor);
+  assert.match(anchor, /# Domain-Count: 2/);
+  assert.match(anchor, /block return out quick to 93\.184\.216\.34/);
+  assert.match(anchor, /block return out quick to 203\.0\.113\.7/);
+  assert.equal((anchor.match(/block return out quick to 93\.184\.216\.34/g) || []).length, 1);
+  assert.match(anchor, new RegExp(firewallDomainSignature(domains)));
+
+  const pfConfBlock = buildPfConfBlock();
+  const pfConf = replaceManagedPfConfBlock("anchor \"com.apple/*\"\n", pfConfBlock);
+  assert.equal(extractManagedPfConfBlock(pfConf), pfConfBlock);
+  const migratedPfConf = replaceManagedPfConfBlock(`${pfConf}\n${pfConfBlock}\n`, pfConfBlock);
+  assert.equal((migratedPfConf.match(/# BEGIN VIGIL PF/g) || []).length, 1);
+
+  const dir = await mkdtemp(join(tmpdir(), "vigil-firewall-"));
+  const pfConfPath = join(dir, "pf.conf");
+  const anchorPath = join(dir, "com.vigil.block");
+  const state = defaultState();
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: [],
+    blockedSites: ["example.com"],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  await writeFile(pfConfPath, pfConf, "utf8");
+  await writeFile(anchorPath, buildFirewallBlock(["example.com"], [entries[0]]), "utf8");
+  const current = await firewallStatus(state, now, { pfConfPath, anchorPath });
+  assert.equal(current.current, true);
+  assert.equal(current.installedEntries, 1);
+  await writeFile(anchorPath, buildFirewallBlock(["example.com"]), "utf8");
+  const unresolved = await firewallStatus(state, now, { pfConfPath, anchorPath });
+  assert.equal(unresolved.current, false);
+  assert.equal(unresolved.stale, true);
+  assert.equal(unresolved.installedEntries, 0);
+  await writeFile(anchorPath, buildFirewallBlock(["example.com"], [entries[0]]), "utf8");
+  state.profiles[0].blockedSites = ["changed.example"];
+  const stale = await firewallStatus(state, now, { pfConfPath, anchorPath });
+  assert.equal(stale.stale, true);
+  await rm(dir, { recursive: true, force: true });
 }
 
 {

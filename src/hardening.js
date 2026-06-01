@@ -19,11 +19,10 @@ const HOSTS_MARKER_PAIRS = [
 const execFileAsync = promisify(execFile);
 
 export function buildHostsBlock(state, now = new Date()) {
-  const profile = hostsProfileForState(state, now);
-  const domains = expandSiteTargets(hostsSiteTargets(state, profile)).filter((domain) => !isLocalHost(domain));
+  const domains = managedBlockDomains(state, now);
   const lines = [
     HOSTS_BEGIN,
-    "# Managed by Vigil. Edit profile site blocklists or host/path URL patterns, then re-run npm run hosts:apply."
+    "# Managed by Vigil. Edit profile site blocklists or host/path URL patterns, then re-run npm run network:apply."
   ];
 
   if (!domains.length) {
@@ -37,6 +36,11 @@ export function buildHostsBlock(state, now = new Date()) {
 
   lines.push(HOSTS_END);
   return lines.join("\n");
+}
+
+export function managedBlockDomains(state, now = new Date()) {
+  const profile = hostsProfileForState(state, now);
+  return expandSiteTargets(hostsSiteTargets(state, profile)).filter((domain) => !isLocalHost(domain));
 }
 
 export async function hostsStatus(state = null, now = new Date()) {

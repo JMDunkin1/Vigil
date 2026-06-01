@@ -19,6 +19,8 @@
     "test": "node scripts/self-test.mjs",
     "hosts:preview": "node scripts/hosts-preview.mjs",
     "hosts:apply": "sudo node scripts/apply-hosts.mjs",
+    "network:preview": "node scripts/hosts-preview.mjs",
+    "network:apply": "sudo node scripts/apply-hosts.mjs",
     "seal:source": "node scripts/seal-source.mjs",
     "doctor": "node scripts/doctor.mjs",
     "install:agent": "node scripts/install-launch-agent.mjs",

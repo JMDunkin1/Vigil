@@ -500,8 +500,8 @@ function bindEvents() {
     $("#applyHostsBlock").disabled = true;
     try {
       await post(action.path || "/api/hardening/hosts/apply", {});
-      status.textContent = "Hosts block applied";
-      toast("Hosts block applied");
+      status.textContent = "Network block applied";
+      toast("Network block applied");
     } catch (error) {
       status.textContent = error.message;
       toast(error.message);
@@ -530,8 +530,8 @@ function bindEvents() {
   });
 
   $("#copyHostsCommand").addEventListener("click", async () => {
-    const command = state.data?.hardening.actions?.hostsApply?.command || "npm run hosts:apply";
-    await copyHardeningText(command, "Hosts command copied");
+    const command = state.data?.hardening.actions?.hostsApply?.command || "npm run network:apply";
+    await copyHardeningText(command, "Network command copied");
   });
 
   $("#copySourceSealCommand").addEventListener("click", async () => {
@@ -1093,11 +1093,14 @@ function renderHardening(data) {
   renderFocusShortcut(data.state.focusShortcut);
   $("#hostsBlock").textContent = data.hardening.hostsBlock;
   renderHardeningActions(data.hardening);
-  const hosts = data.hardening.hosts;
-  $("#hostsStatus").textContent = hosts.installed
-    ? (hosts.stale ? "Hosts stale" : "Hosts current")
-    : (hosts.partial ? "Hosts partial" : "Hosts preview");
-  $("#hostsStatus").className = hosts.installed && !hosts.stale ? "pill good" : (hosts.partial || hosts.stale ? "pill warn" : "pill neutral");
+  const hosts = data.hardening.hosts || {};
+  const firewall = data.hardening.firewall || {};
+  const networkCurrent = hosts.installed && !hosts.partial && !hosts.stale && firewall.installed && !firewall.partial && !firewall.stale;
+  const networkWarn = hosts.partial || hosts.stale || firewall.partial || firewall.stale || hosts.installed || firewall.installed;
+  $("#hostsStatus").textContent = networkCurrent
+    ? "Network current"
+    : (networkWarn ? "Network stale" : "Network preview");
+  $("#hostsStatus").className = networkCurrent ? "pill good" : (networkWarn ? "pill warn" : "pill neutral");
   renderKeyholder(data.state.keyholder);
   renderDistanceKey(data.state.distanceKey);
   renderMaintenance(data.protection);
@@ -1108,12 +1111,14 @@ function renderHardening(data) {
 function renderHardeningActions(hardening) {
   const agent = hardening.launchAgent || {};
   const hosts = hardening.hosts || {};
+  const firewall = hardening.firewall || {};
+  const networkCurrent = hosts.installed && !hosts.partial && !hosts.stale && firewall.installed && !firewall.partial && !firewall.stale;
   const tamperActive = Boolean(hardening.stateSeal?.tamperDetectedAt || hardening.stateSeal?.status === "tamper-detected");
   $("#installLaunchAgent").textContent = agent.installed ? "Reinstall Login Agent" : "Install Login Agent";
-  $("#applyHostsBlock").textContent = hosts.installed && !hosts.stale ? "Reapply Hosts Block" : "Apply Hosts Block";
+  $("#applyHostsBlock").textContent = networkCurrent ? "Reapply Network Block" : "Apply Network Block";
   $("#clearTamperAlarm").hidden = !tamperActive;
   $("#clearTamperAlarm").disabled = !tamperActive;
-  $("#copyHostsCommand").textContent = hosts.installed && !hosts.stale ? "Copy Hosts Reapply" : "Copy Hosts Command";
+  $("#copyHostsCommand").textContent = networkCurrent ? "Copy Network Reapply" : "Copy Network Command";
 }
 
 function renderFocusShortcut(focusShortcut) {
