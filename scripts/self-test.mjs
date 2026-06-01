@@ -13,7 +13,7 @@ import { doctorRows, formatDoctorRows } from "../src/doctorReport.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { focusShortcutDetail, focusShortcutSummary, reconcileFocusShortcut } from "../src/focusHooks.js";
 import { assertFoolproofReadyForStrict, extensionDynamicRulesReady, extensionVersionReady, foolproofBlockers } from "../src/foolproof.js";
-import { buildHostsBlock, extractHostsBlock, hostsBlockMatches, parseLaunchAgentPrint } from "../src/hardening.js";
+import { buildHostsBlock, extractHostsBlock, hostsBlockMatches, LEGACY_HOSTS_BEGIN, LEGACY_HOSTS_END, parseLaunchAgentPrint, replaceManagedHostsBlock } from "../src/hardening.js";
 import { clearIntegrityTamper, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, recordRuntimeHeartbeat } from "../src/integrityLockdown.js";
 import { assertIntentReason, intentReasonSummary } from "../src/intentReason.js";
 import { emergencyDelaySeconds, interventionSummary, recentBlockAttempts } from "../src/intervention.js";
@@ -131,8 +131,8 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   assert.equal(extensionCorsHeaders({ origin: "https://example.com" })["Access-Control-Allow-Origin"], undefined);
   assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "127.0.0.1:8787" } }).ok, true);
   assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "localhost:8787" } }).ok, true);
-  assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "screen-time.example.test" } }).ok, false);
-  assert.equal(publicHostGuard({ path: "/mdm/checkin", headers: { host: "screen-time.example.test" } }).ok, true);
+  assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "sentinel.example.test" } }).ok, false);
+  assert.equal(publicHostGuard({ path: "/mdm/checkin", headers: { host: "sentinel.example.test" } }).ok, true);
 }
 
 {
@@ -295,7 +295,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 }
 
 {
-  const dir = await mkdtemp(join(tmpdir(), "screen-time-source-seal-"));
+  const dir = await mkdtemp(join(tmpdir(), "sentinel-source-seal-"));
   try {
     await mkdir(join(dir, "src"), { recursive: true });
     await mkdir(join(dir, "scripts"), { recursive: true });
@@ -322,7 +322,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 }
 
 {
-  const dir = await mkdtemp(join(tmpdir(), "screen-time-seal-"));
+  const dir = await mkdtemp(join(tmpdir(), "sentinel-seal-"));
   try {
     const keyPath = join(dir, "state-seal.key");
     const sealPath = join(dir, "state.seal.json");
@@ -339,7 +339,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 }
 
 {
-  const dir = await mkdtemp(join(tmpdir(), "screen-time-protected-seal-"));
+  const dir = await mkdtemp(join(tmpdir(), "sentinel-protected-seal-"));
   try {
     const keyPath = join(dir, "state-seal.key");
     const sealPath = join(dir, "state.seal.json");
@@ -369,6 +369,18 @@ const now = new Date("2026-05-28T14:00:00-04:00");
     clockThresholdChange.settings.clockTamperLockdownSeconds = 999999;
     const clockThresholdText = `${JSON.stringify(clockThresholdChange, null, 2)}\n`;
     assert.equal((await verifyStateTextSeal(clockThresholdText, { keyPath, sealPath })).status, "mismatch");
+
+    const legacyBrandingState = structuredClone(state);
+    legacyBrandingState.settings.focusShortcutOnName = "Local Screen Time Focus On";
+    legacyBrandingState.settings.focusShortcutOffName = "Local Screen Time Focus Off";
+    const legacyBrandingText = `${JSON.stringify(legacyBrandingState, null, 2)}\n`;
+    await writeStateTextSeal(legacyBrandingText, { keyPath, sealPath, scope: "state" }, now.toISOString());
+    const sentinelBrandingState = structuredClone(legacyBrandingState);
+    sentinelBrandingState.settings.focusShortcutOnName = "Sentinel Focus On";
+    sentinelBrandingState.settings.focusShortcutOffName = "Sentinel Focus Off";
+    const sentinelBrandingVerification = await verifyStateTextSeal(`${JSON.stringify(sentinelBrandingState, null, 2)}\n`, { keyPath, sealPath });
+    assert.equal(sentinelBrandingVerification.ok, true);
+    assert.equal(sentinelBrandingVerification.status, "trusted-migration");
 
     const mdmQueueState = structuredClone(state);
     mdmQueueState.deviceControls.ios.mdm.enabled = true;
@@ -582,6 +594,22 @@ const now = new Date("2026-05-28T14:00:00-04:00");
 
 {
   const state = defaultState();
+  state.integrity.stateSeal.tamperDetectedAt = now.toISOString();
+  state.integrity.stateSeal.tamperDetail = "State file does not match its integrity seal.";
+  const policy = activePolicy(state, now);
+  assert.equal(policy.kind, "integrity");
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Codex"), false);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Codex Helper (Renderer)"), false);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Terminal"), false);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Activity Monitor"), true);
+  assert.deepEqual(
+    sweepBlockedApps(state, {}, ["Codex", "Codex Helper (Renderer)", "Terminal", "Activity Monitor", "Discord"], now).map((item) => item.app),
+    ["Activity Monitor", "Discord"]
+  );
+}
+
+{
+  const state = defaultState();
   state.schedules = [{
     id: "offline-work",
     name: "Offline Work",
@@ -733,6 +761,17 @@ const now = new Date("2026-05-28T14:00:00-04:00");
   assert.match(block, /0\.0\.0\.0 youtu\.be/);
   assert.match(block, /0\.0\.0\.0 youtube-nocookie\.com/);
   assert.equal(hostsBlockMatches(extractHostsBlock(hosts).replace("reddit.com", "example.com"), block), false);
+  const legacyBlock = block
+    .replace("# BEGIN SENTINEL", LEGACY_HOSTS_BEGIN)
+    .replace("# END SENTINEL", LEGACY_HOSTS_END);
+  const legacyHosts = `127.0.0.1 localhost\n\n${legacyBlock}\n\n255.255.255.255 broadcasthost\n`;
+  assert.equal(extractHostsBlock(legacyHosts), legacyBlock);
+  const migratedHosts = replaceManagedHostsBlock(legacyHosts, block);
+  assert.equal(migratedHosts.includes(LEGACY_HOSTS_BEGIN), false);
+  assert.equal(hostsBlockMatches(extractHostsBlock(migratedHosts), block), true);
+  const duplicateHosts = replaceManagedHostsBlock(`${legacyHosts}\n${block}\n`, block);
+  assert.equal((duplicateHosts.match(/# BEGIN SENTINEL/g) || []).length, 1);
+  assert.equal(duplicateHosts.includes(LEGACY_HOSTS_BEGIN), false);
 
   const launch = parseLaunchAgentPrint(`service = enabled
 pid = 12345
@@ -931,10 +970,10 @@ last exit code = 0
 }
 
 {
-  const dir = await mkdtemp(join(tmpdir(), "screen-time-distance-key-"));
+  const dir = await mkdtemp(join(tmpdir(), "sentinel-distance-key-"));
   try {
     const state = defaultState();
-    const keyPath = join(dir, "USB", "screen-time.key");
+    const keyPath = join(dir, "USB", "sentinel.key");
     const result = updateDistanceKeySettings(state, {
       enabled: true,
       keyFilePath: keyPath,

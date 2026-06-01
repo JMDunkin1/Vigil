@@ -23,7 +23,7 @@ function sendPulse(reason) {
   lastPulseAt = now;
   try {
     chrome.runtime.sendMessage({
-      type: "SCREEN_TIME_PULSE",
+      type: "SENTINEL_PULSE",
       url: location.href,
       title: document.title,
       reason,
@@ -51,9 +51,9 @@ function cleanupBrowserNoise() {
 }
 
 function injectCleanupStyle() {
-  if (document.getElementById("local-screen-time-cleanup-style")) return;
+  if (document.getElementById("sentinel-cleanup-style")) return;
   const style = document.createElement("style");
-  style.id = "local-screen-time-cleanup-style";
+  style.id = "sentinel-cleanup-style";
   style.textContent = `
     [id*="cookie-banner" i],
     [class*="cookie-banner" i],

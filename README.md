@@ -1,6 +1,6 @@
-# Local Screen Time
+# Sentinel
 
-A local-first screen time app for this Mac. It borrows the strongest ideas from modern screen time tools: desktop-controlled blocking, locked sessions, schedules, rehab mode, content filtering, usage reports, streaks, app limits, allow/block modes, emergency unlock limits, and optional tamper resistance.
+A local-first focus enforcement app for this Mac. It borrows the strongest ideas from modern focus enforcement tools: desktop-controlled blocking, locked sessions, schedules, rehab mode, content filtering, usage reports, streaks, app limits, allow/block modes, emergency unlock limits, and optional tamper resistance.
 
 ## Quick Start
 
@@ -18,7 +18,7 @@ The app works best after granting Accessibility permission to the terminal or ap
 
 ## What Works Now
 
-- Local dashboard for focus, sleep, rehab, and Mac Brick sessions.
+- Local app views for focus, sleep, rehab, and Mac Brick sessions.
 - Shift/Brick-style Mac Brick profile and one-tap strict commitment lock that allowlists only essential apps and approved work sites.
 - Weekly Focus Report with focus score trends, streaks, saved-time projections, culprit apps/sites, and milestones.
 - Strict sessions that cannot be ended early without spending an emergency unlock.
@@ -78,7 +78,7 @@ Run this to install the app as a LaunchAgent:
 npm run install:agent
 ```
 
-You can also install the login agent from the dashboard's Hardening panel. The LaunchAgent uses a runner process that waits when the dashboard is already open and starts the local server if it goes down.
+You can also install the login agent from the Settings view. The LaunchAgent uses a runner process that waits when Sentinel is already open and starts the local server if it goes down.
 
 Run this to preview hosts-file rules. Path-only and keyword URL patterns stay in the browser extension, while host/path patterns such as `youtube.com/shorts` add their hostname to this harder fallback:
 
@@ -92,7 +92,7 @@ Run this to apply them. macOS will ask for your password because `/etc/hosts` is
 npm run hosts:apply
 ```
 
-You can also apply the hosts block from the dashboard's Hardening panel. The app will ask macOS for administrator approval and keeps the copyable Terminal command as a fallback.
+You can also apply the hosts block from the Settings view. The app will ask macOS for administrator approval and keeps the copyable Terminal command as a fallback.
 
 If the state seal detects protected local state tampering, or if the runtime/clock watchdog detects unexplained downtime or clock changes during a strict lock, the app enters integrity lockdown using code-defined default distractions and bypass tools. The state seal ignores repairable bookkeeping-only drift such as runtime heartbeats and event history, then refreshes the seal on the next clean save.
 
@@ -118,7 +118,7 @@ To add the browser companion, load the `extension` folder as an unpacked extensi
 
 ## iPhone / MDM
 
-The iPhone controls are modeled after desktop-owned phone blockers such as SHIFT: the Mac decides the policy, and the phone is only the managed endpoint. For a supervised iPhone, the dashboard can generate:
+The iPhone controls are modeled after desktop-owned phone blockers such as SHIFT: the Mac decides the policy, and the phone is only the managed endpoint. For a supervised iPhone, the Devices view can generate:
 
 - a static restrictions profile at `/api/devices/ios/profile.mobileconfig`
 - an experimental MDM enrollment profile at `/api/devices/ios/mdm/enrollment.mobileconfig`

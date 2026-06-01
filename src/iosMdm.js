@@ -123,7 +123,7 @@ export function markIosMdmEnrollmentGenerated(state, at = new Date()) {
 export function buildIosMdmEnrollmentProfile(state, now = new Date()) {
   const mdm = ensureMdmState(state);
   const baseUrl = mdm.publicBaseUrl || `https://replace-with-public-mdm-host.example`;
-  const mdmPayload = commonPayload("com.apple.mdm", "Local Screen Time MDM", "mdm", {
+  const mdmPayload = commonPayload("com.apple.mdm", "Sentinel MDM", "mdm", {
     AccessRights: mdm.accessRights || DEFAULT_ACCESS_RIGHTS,
     CheckInURL: `${baseUrl}/mdm/checkin?token=${encodeURIComponent(mdm.enrollmentSecret)}`,
     CheckOutWhenRemoved: mdm.checkOutWhenRemoved !== false,
@@ -139,7 +139,7 @@ export function buildIosMdmEnrollmentProfile(state, now = new Date()) {
 
   const payloads = [];
   if (mdm.identityCertificatePayloadBase64 && mdm.identityCertificateUuid) {
-    payloads.push(commonPayload("com.apple.security.pkcs12", "Local Screen Time MDM Identity", "identity", {
+    payloads.push(commonPayload("com.apple.security.pkcs12", "Sentinel MDM Identity", "identity", {
       PayloadUUID: mdm.identityCertificateUuid,
       PayloadContent: plistData(mdm.identityCertificatePayloadBase64),
       Password: mdm.identityCertificatePassword || ""
@@ -149,8 +149,8 @@ export function buildIosMdmEnrollmentProfile(state, now = new Date()) {
 
   return toPlist({
     PayloadContent: payloads,
-    PayloadDescription: "Enrolls this supervised iPhone with the Local Screen Time MDM server for desktop-managed app and web restrictions.",
-    PayloadDisplayName: "Local Screen Time iPhone MDM",
+    PayloadDescription: "Enrolls this supervised iPhone with the Sentinel MDM server for desktop-managed app and web restrictions.",
+    PayloadDisplayName: "Sentinel iPhone MDM",
     PayloadIdentifier: MDM_PROFILE_IDENTIFIER,
     PayloadOrganization: APP_NAME,
     PayloadRemovalDisallowed: true,

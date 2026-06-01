@@ -1,5 +1,5 @@
-export const CONTROL_INTENT_HEADER = "x-screen-time-intent";
-export const CONTROL_INTENT_VALUE = "local-dashboard";
+export const CONTROL_INTENT_HEADER = "x-sentinel-intent";
+export const CONTROL_INTENT_VALUE = "sentinel-app";
 
 const EXTENSION_API_PATHS = new Set([
   "/api/extension/check",
@@ -27,7 +27,7 @@ export function apiRequestGuard({ method = "GET", path = "", headers = {} }) {
   }
 
   if (headerValue(headers, CONTROL_INTENT_HEADER) !== CONTROL_INTENT_VALUE) {
-    return deny("Missing local dashboard intent header.");
+    return deny("Missing local app intent header.");
   }
 
   return allow();

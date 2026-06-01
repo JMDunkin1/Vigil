@@ -21,14 +21,14 @@ while (true) {
   child = spawn(process.execPath, [serverPath], {
     cwd: root,
     stdio: "inherit",
-    env: { ...process.env, LOCAL_SCREEN_TIME_AGENT_CHILD: "1" }
+    env: { ...process.env, LOCAL_SENTINEL_AGENT_CHILD: "1" }
   });
 
   const exitCode = await new Promise((resolve) => {
     child.once("exit", (code, signal) => resolve(signal || code));
   });
   child = null;
-  console.error(`Local Screen Time child exited: ${exitCode}`);
+  console.error(`Sentinel child exited: ${exitCode}`);
   await sleep(2_000);
 }
 

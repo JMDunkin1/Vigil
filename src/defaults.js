@@ -1,5 +1,5 @@
-export const APP_NAME = "Local Screen Time";
-export const PORT = Number(process.env.SCREEN_TIME_PORT || 8787);
+export const APP_NAME = "Sentinel";
+export const PORT = Number(process.env.SENTINEL_PORT || process.env.SCREEN_TIME_PORT || 8787);
 export const REQUIRED_EXTENSION_VERSION = "0.3.0";
 
 export const BROWSERS = new Set([
@@ -342,8 +342,8 @@ export function defaultState() {
       systemSleepLockEnabled: false,
       systemSleepLockIntervalSeconds: 60,
       focusShortcutEnabled: false,
-      focusShortcutOnName: "Local Screen Time Focus On",
-      focusShortcutOffName: "Local Screen Time Focus Off",
+      focusShortcutOnName: "Sentinel Focus On",
+      focusShortcutOffName: "Sentinel Focus Off",
       hostsBlockingEnabled: false,
       protectedEditsEnabled: true,
       protectedEditDelaySeconds: 300,

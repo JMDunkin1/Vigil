@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, join } from "node:path";
@@ -7,12 +7,15 @@ import { fileURLToPath } from "node:url";
 const execFileAsync = promisify(execFile);
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const home = process.env.HOME;
-const label = "com.local-screen-time.agent";
+const label = "com.sentinel.agent";
+const legacyLabel = "com.local-screen-time.agent";
 const plistPath = join(home, "Library", "LaunchAgents", `${label}.plist`);
-const logDir = join(home, "Library", "Logs", "LocalScreenTime");
+const legacyPlistPath = join(home, "Library", "LaunchAgents", `${legacyLabel}.plist`);
+const logDir = join(home, "Library", "Logs", "Sentinel");
 const nodePath = process.execPath;
 const runnerPath = join(root, "scripts", "agent-runner.mjs");
 
+await cleanupLegacyLaunchAgent();
 await mkdir(dirname(plistPath), { recursive: true });
 await mkdir(logDir, { recursive: true });
 await writeFile(plistPath, plist(), "utf8");
@@ -49,6 +52,12 @@ function plist() {
 </dict>
 </plist>
 `;
+}
+
+async function cleanupLegacyLaunchAgent() {
+  await runLaunchctl(["bootout", `gui/${process.getuid()}/${legacyLabel}`], { optional: true });
+  await runLaunchctl(["bootout", `gui/${process.getuid()}`, legacyPlistPath], { optional: true });
+  await rm(legacyPlistPath, { force: true });
 }
 
 async function runLaunchctl(args, options = {}) {

@@ -114,7 +114,7 @@ export function detectRuntimeGap(state, now = new Date()) {
   if (!overlap) return null;
 
   runtime.downtimeDetectedAt = now.toISOString();
-  runtime.downtimeDetail = `Local Screen Time was offline for ${gapSeconds}s during ${overlap.name}.`;
+  runtime.downtimeDetail = `Sentinel was offline for ${gapSeconds}s during ${overlap.name}.`;
   runtime.lastGapSeconds = gapSeconds;
   runtime.lastGapStartedAt = new Date(previous).toISOString();
   runtime.lastGapEndedAt = now.toISOString();
@@ -181,7 +181,7 @@ export function integrityRuntimeSummary(state, now = new Date()) {
     return {
       ok: false,
       status: "downtime-detected",
-      detail: runtime.downtimeDetail || "Local Screen Time was offline during a protected lock.",
+      detail: runtime.downtimeDetail || "Sentinel was offline during a protected lock.",
       lastHeartbeatAt: runtime.lastHeartbeatAt || null,
       downtimeDetectedAt: runtime.downtimeDetectedAt,
       lastGapSeconds: runtime.lastGapSeconds || 0
@@ -249,7 +249,7 @@ function activeIntegrityAlarm(state) {
     return {
       type: "runtime-downtime",
       detectedAt: runtime.downtimeDetectedAt,
-      detail: runtime.downtimeDetail || "Local Screen Time was offline during a protected lock.",
+      detail: runtime.downtimeDetail || "Sentinel was offline during a protected lock.",
       status: "downtime-detected"
     };
   }
@@ -308,6 +308,11 @@ function hardeningIssues(checks) {
       detail: agent.installed
         ? "LaunchAgent is not loaded and running."
         : "LaunchAgent is not installed."
+    });
+  } else if (agent?.legacyInstalled) {
+    issues.push({
+      id: "launch-agent",
+      detail: "Legacy Local Screen Time LaunchAgent is still installed."
     });
   }
 

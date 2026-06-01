@@ -28,7 +28,7 @@ export function doctorRows(state, context = {}, now = new Date()) {
     row("source-seal", "Source seal", Boolean(sourceSeal.ok), sourceSealDetail(sourceSeal)),
     row("runtime-watchdog", "Runtime watchdog", runtime.ok, runtime.detail),
     row("watcher-heartbeat", "Watcher heartbeat", monitor.ok, monitor.detail || "Watcher heartbeat is current."),
-    row("launch-agent", "LaunchAgent", Boolean(agent.loaded && agent.running), launchAgentDetail(agent)),
+    row("launch-agent", "LaunchAgent", Boolean(agent.loaded && agent.running && !agent.legacyInstalled), launchAgentDetail(agent)),
     row("mac-account", "Mac account", Boolean(account.username && !account.isAdmin), accountDetail(account)),
     row("hosts", "Hosts block", Boolean(hosts.installed && !hosts.partial && !hosts.stale), hostsDetail(hosts)),
     row("protected-edits", "Protected edits", settings.protectedEditsEnabled !== false, settings.protectedEditsEnabled !== false ? "Config changes require a maintenance window." : "Config changes can be made immediately."),
@@ -112,6 +112,7 @@ function distanceKeyDetail(distanceKey) {
 }
 
 function launchAgentDetail(agent) {
+  if (agent.legacyInstalled) return `legacy agent still installed (${agent.legacyPath || "old plist"})`;
   if (!agent.installed) return `not installed (${agent.path || "LaunchAgent plist missing"})`;
   if (agent.running) return `running${agent.pid ? ` as PID ${agent.pid}` : ""}`;
   if (agent.loaded) return "loaded but not currently running";
@@ -120,6 +121,8 @@ function launchAgentDetail(agent) {
 
 function hostsDetail(hosts) {
   if (hosts.partial) return "markers are incomplete; run npm run hosts:apply";
+  if (hosts.legacyInstalled) return "legacy hosts block is still installed; run npm run hosts:apply";
+  if (hosts.duplicate) return "multiple managed hosts blocks are installed; run npm run hosts:apply";
   if (!hosts.installed) return "not installed; run npm run hosts:apply";
   if (hosts.stale) return `stale (${hosts.installedEntries}/${hosts.expectedEntries} entries); run npm run hosts:apply`;
   return `current (${hosts.installedEntries} entries)`;

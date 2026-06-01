@@ -78,7 +78,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "SCREEN_TIME_PULSE") return false;
+  if (message?.type !== "SENTINEL_PULSE") return false;
   checkUrl(sender.tab?.id, message.url, message.reason || "heartbeat", message.seconds, message.title)
     .then((result) => sendResponse(result))
     .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));

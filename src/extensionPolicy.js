@@ -92,12 +92,12 @@ export function evaluateExtensionCheck(state, usage, input = {}, now = new Date(
     };
   }
 
-  if (isLocalScreenTimeUrl(parsed.url)) {
+  if (isSentinelUrl(parsed.url)) {
     return {
       ok: true,
       blocked: false,
       ignored: true,
-      reason: "local-dashboard",
+      reason: "sentinel-app",
       recorded: false,
       contentFilterEnabled: contentFilterEnabled(state),
       browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state)
@@ -317,7 +317,7 @@ function parseHttpUrl(value) {
   }
 }
 
-function isLocalScreenTimeUrl(url) {
+function isSentinelUrl(url) {
   const host = url.hostname.toLowerCase();
   return ["127.0.0.1", "localhost", "::1"].includes(host) && String(url.port || "80") === String(PORT);
 }

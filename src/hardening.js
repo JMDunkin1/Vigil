@@ -6,9 +6,16 @@ import { activePolicy, activeProfile, expandSiteTargets, normalizeHost, normaliz
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { applySealVerificationToState, stateSealSummary, verifyStateTextSeal } from "./seal.js";
 
-export const HOSTS_BEGIN = "# BEGIN LOCAL SCREEN TIME";
-export const HOSTS_END = "# END LOCAL SCREEN TIME";
-export const LAUNCH_AGENT_LABEL = "com.local-screen-time.agent";
+export const HOSTS_BEGIN = "# BEGIN SENTINEL";
+export const HOSTS_END = "# END SENTINEL";
+export const LEGACY_HOSTS_BEGIN = "# BEGIN LOCAL SCREEN TIME";
+export const LEGACY_HOSTS_END = "# END LOCAL SCREEN TIME";
+export const LAUNCH_AGENT_LABEL = "com.sentinel.agent";
+export const LEGACY_LAUNCH_AGENT_LABEL = "com.local-screen-time.agent";
+const HOSTS_MARKER_PAIRS = [
+  [HOSTS_BEGIN, HOSTS_END],
+  [LEGACY_HOSTS_BEGIN, LEGACY_HOSTS_END]
+];
 const execFileAsync = promisify(execFile);
 
 export function buildHostsBlock(state, now = new Date()) {
@@ -16,7 +23,7 @@ export function buildHostsBlock(state, now = new Date()) {
   const domains = expandSiteTargets(hostsSiteTargets(state, profile)).filter((domain) => !isLocalHost(domain));
   const lines = [
     HOSTS_BEGIN,
-    "# Managed by Local Screen Time. Edit profile site blocklists or host/path URL patterns, then re-run npm run hosts:apply."
+    "# Managed by Sentinel. Edit profile site blocklists or host/path URL patterns, then re-run npm run hosts:apply."
   ];
 
   if (!domains.length) {
@@ -38,10 +45,14 @@ export async function hostsStatus(state = null, now = new Date()) {
     const currentBlock = extractHostsBlock(hosts);
     const expectedBlock = state ? buildHostsBlock(state, now) : "";
     const installed = Boolean(currentBlock);
-    const stale = Boolean(state && installed && !hostsBlockMatches(currentBlock, expectedBlock));
+    const legacyInstalled = hasCompleteManagedHostsBlock(hosts, LEGACY_HOSTS_BEGIN, LEGACY_HOSTS_END);
+    const duplicate = countCompleteManagedHostsBlocks(hosts) > 1;
+    const stale = Boolean(state && installed && (!hostsBlockMatches(currentBlock, expectedBlock) || legacyInstalled || duplicate));
     return {
       installed,
       partial: hasPartialHostsBlock(hosts),
+      legacyInstalled,
+      duplicate,
       stale,
       current: Boolean(installed && !stale),
       expectedEntries: expectedBlock ? countHostEntries(expectedBlock) : 0,
@@ -57,10 +68,27 @@ export function launchAgentPath() {
   return `${process.env.HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist`;
 }
 
+export function legacyLaunchAgentPath() {
+  return `${process.env.HOME}/Library/LaunchAgents/${LEGACY_LAUNCH_AGENT_LABEL}.plist`;
+}
+
 export async function launchAgentStatus() {
   const path = launchAgentPath();
+  const legacyPath = legacyLaunchAgentPath();
   const installed = await fileExists(path);
-  const base = { installed, path, label: LAUNCH_AGENT_LABEL, loaded: false, running: false, pid: null, lastExitStatus: null };
+  const legacyInstalled = await fileExists(legacyPath);
+  const base = {
+    installed,
+    path,
+    label: LAUNCH_AGENT_LABEL,
+    legacyInstalled,
+    legacyPath,
+    legacyLabel: LEGACY_LAUNCH_AGENT_LABEL,
+    loaded: false,
+    running: false,
+    pid: null,
+    lastExitStatus: null
+  };
   if (!installed) return base;
 
   try {
@@ -131,14 +159,25 @@ export async function loadStateForScript() {
 }
 
 export function extractHostsBlock(hosts) {
-  const start = hosts.indexOf(HOSTS_BEGIN);
-  const end = hosts.indexOf(HOSTS_END);
-  if (start < 0 || end <= start) return "";
-  return hosts.slice(start, end + HOSTS_END.length).trim();
+  for (const [begin, endMarker] of HOSTS_MARKER_PAIRS) {
+    const start = hosts.indexOf(begin);
+    const end = hosts.indexOf(endMarker);
+    if (start >= 0 && end > start) return hosts.slice(start, end + endMarker.length).trim();
+  }
+  return "";
 }
 
 export function hostsBlockMatches(currentBlock, expectedBlock) {
   return normalizeBlock(currentBlock) === normalizeBlock(expectedBlock);
+}
+
+export function replaceManagedHostsBlock(currentHosts, blockText) {
+  let next = String(currentHosts || "");
+  for (const [begin, end] of HOSTS_MARKER_PAIRS) {
+    next = removeCompleteManagedHostsBlocks(next, begin, end);
+  }
+  const prefix = next.trimEnd();
+  return `${prefix}${prefix ? "\n\n" : ""}${blockText}\n`;
 }
 
 export function parseLaunchAgentPrint(output = "") {
@@ -152,9 +191,43 @@ export function parseLaunchAgentPrint(output = "") {
 }
 
 function hasPartialHostsBlock(hosts) {
-  const hasStart = hosts.includes(HOSTS_BEGIN);
-  const hasEnd = hosts.includes(HOSTS_END);
-  return hasStart !== hasEnd;
+  return HOSTS_MARKER_PAIRS.some(([begin, end]) => hosts.includes(begin) !== hosts.includes(end));
+}
+
+function hasCompleteManagedHostsBlock(hosts, begin, endMarker) {
+  const start = hosts.indexOf(begin);
+  const end = hosts.indexOf(endMarker, start + begin.length);
+  return start >= 0 && end > start;
+}
+
+function countCompleteManagedHostsBlocks(hosts) {
+  return HOSTS_MARKER_PAIRS.reduce((count, [begin, end]) => count + countCompleteManagedHostsBlocksForPair(hosts, begin, end), 0);
+}
+
+function countCompleteManagedHostsBlocksForPair(hosts, begin, endMarker) {
+  let count = 0;
+  let offset = 0;
+  while (true) {
+    const start = hosts.indexOf(begin, offset);
+    if (start < 0) return count;
+    const end = hosts.indexOf(endMarker, start + begin.length);
+    if (end <= start) return count;
+    count += 1;
+    offset = end + endMarker.length;
+  }
+}
+
+function removeCompleteManagedHostsBlocks(currentHosts, begin, endMarker) {
+  let next = currentHosts;
+  while (true) {
+    const start = next.indexOf(begin);
+    if (start < 0) return next;
+    const end = next.indexOf(endMarker, start + begin.length);
+    if (end <= start) return next;
+    const before = next.slice(0, start).trimEnd();
+    const after = next.slice(end + endMarker.length).trimStart();
+    next = `${before}${before && after ? "\n\n" : ""}${after}`;
+  }
 }
 
 function hostsProfileForState(state, now) {

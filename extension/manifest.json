@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Local Screen Time Companion",
+  "name": "Sentinel Companion",
   "version": "0.3.0",
-  "description": "Connects browser tabs to the local Local Screen Time blocker.",
+  "description": "Connects browser tabs to the local Sentinel blocker.",
   "permissions": ["tabs", "webNavigation", "storage", "declarativeNetRequest"],
   "host_permissions": [
     "http://127.0.0.1:8787/*",
@@ -21,6 +21,6 @@
     }
   ],
   "action": {
-    "default_title": "Local Screen Time"
+    "default_title": "Sentinel"
   }
 }
