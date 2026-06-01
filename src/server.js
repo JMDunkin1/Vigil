@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { extname, join, normalize } from "node:path";
+import { dirname, extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -36,15 +36,59 @@ import { usageSummary } from "./usage.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PUBLIC_DIR = join(ROOT, "public");
-const startedAt = new Date().toISOString();
+const DEFAULT_HOST = "127.0.0.1";
 const execFileAsync = promisify(execFile);
 
-const state = await loadState();
-const usage = await loadUsage();
-const monitor = startMonitor({ state, usage });
-const server = createServer(async (request, response) => {
+let startedAt = null;
+let state = null;
+let usage = null;
+let monitor = null;
+let server = null;
+let activeHost = DEFAULT_HOST;
+let activePort = PORT;
+
+export async function startVigilServer(options = {}) {
+  if (server?.listening) {
+    return serverHandle();
+  }
+
+  activeHost = options.host || DEFAULT_HOST;
+  activePort = Number(options.port || PORT);
+  startedAt = new Date().toISOString();
+  state = await loadState();
+  usage = await loadUsage();
+  monitor = startMonitor({ state, usage });
+  server = createServer(requestHandler);
+
+  await new Promise((resolveListen, rejectListen) => {
+    function onError(error) {
+      server.off("listening", onListening);
+      rejectListen(error);
+    }
+
+    function onListening() {
+      server.off("error", onError);
+      const address = server.address();
+      if (address && typeof address === "object") activePort = address.port;
+      resolveListen();
+    }
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(activePort, activeHost);
+  });
+
+  console.log(`${APP_NAME} running at http://${activeHost}:${activePort}`);
+  return serverHandle();
+}
+
+export async function stopVigilServer() {
+  await shutdown({ exit: false });
+}
+
+async function requestHandler(request, response) {
   try {
-    const url = new URL(request.url, `http://${request.headers.host || `127.0.0.1:${PORT}`}`);
+    const url = new URL(request.url, `http://${request.headers.host || `${activeHost}:${activePort}`}`);
     const hostGuard = publicHostGuard({ path: url.pathname, headers: request.headers });
     if (!hostGuard.ok) {
       sendJson(response, hostGuard.status || 403, { error: hostGuard.error || "Forbidden" });
@@ -76,19 +120,40 @@ const server = createServer(async (request, response) => {
   } catch (error) {
     sendJson(response, errorStatus(error), serializeError(error));
   }
-});
+}
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`${APP_NAME} running at http://127.0.0.1:${PORT}`);
-});
+function serverHandle() {
+  return {
+    host: activeHost,
+    port: activePort,
+    url: `http://${activeHost}:${activePort}`,
+    server,
+    monitor,
+    stop: stopVigilServer
+  };
+}
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+async function shutdown({ exit = true } = {}) {
+  monitor?.stop();
+  if (state) await saveState(state);
+  if (server?.listening) {
+    await new Promise((resolveClose) => server.close(resolveClose));
+  }
+  server = null;
+  monitor = null;
+  state = null;
+  usage = null;
+  if (exit) process.exit(0);
+}
 
-async function shutdown() {
-  monitor.stop();
-  await saveState(state);
-  server.close(() => process.exit(0));
+if (isDirectRun()) {
+  process.on("SIGINT", () => shutdown());
+  process.on("SIGTERM", () => shutdown());
+  await startVigilServer();
+}
+
+function isDirectRun() {
+  return Boolean(process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]));
 }
 
 function scheduleImmediateSessionEnforcement(sessionId) {
@@ -1615,11 +1680,11 @@ function hardeningActions() {
       label: "Apply Hosts Block",
       method: "POST",
       path: "/api/hardening/hosts/apply",
-      command: `cd ${shellQuote(ROOT)} && npm run hosts:apply`
+      command: localScriptCommand("apply-hosts.mjs", { privileged: true, npmScript: "hosts:apply" })
     },
     sourceSeal: {
       label: "Seal Source",
-      command: `cd ${shellQuote(ROOT)} && npm run seal:source`
+      command: localScriptCommand("seal-source.mjs", { npmScript: "seal:source" })
     },
     tamperClear: {
       label: "Clear Tamper Alarm",
@@ -1628,7 +1693,7 @@ function hardeningActions() {
     },
     extensionLoad: {
       label: "Extension Folder",
-      path: join(ROOT, "extension")
+      path: resourcePath("extension")
     }
   };
 }
@@ -1734,10 +1799,11 @@ function errorStatus(error) {
 }
 
 async function runLocalScript(name) {
-  const scriptPath = join(ROOT, "scripts", name);
+  const scriptPath = resourcePath("scripts", name);
   try {
     const { stdout, stderr } = await execFileAsync(process.execPath, [scriptPath], {
-      cwd: ROOT,
+      cwd: processCwd(),
+      env: localScriptEnv(),
       timeout: 15_000,
       maxBuffer: 1024 * 256
     });
@@ -1749,12 +1815,12 @@ async function runLocalScript(name) {
 }
 
 async function runPrivilegedHostsApply() {
-  const scriptPath = join(ROOT, "scripts", "apply-hosts.mjs");
-  const command = `cd ${shellQuote(ROOT)} && ${shellQuote(process.execPath)} ${shellQuote(scriptPath)}`;
+  const scriptPath = resourcePath("scripts", "apply-hosts.mjs");
+  const command = `cd ${shellQuote(processCwd())} && ${localScriptShellEnvPrefix()}${shellQuote(process.execPath)} ${shellQuote(scriptPath)}`;
   const script = `do shell script ${appleScriptString(command)} with administrator privileges`;
   try {
     const { stdout, stderr } = await execFileAsync("/usr/bin/osascript", ["-e", script], {
-      cwd: ROOT,
+      cwd: processCwd(),
       timeout: 120_000,
       maxBuffer: 1024 * 256
     });
@@ -1780,4 +1846,50 @@ function shellQuote(value) {
 
 function appleScriptString(value) {
   return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function isElectronRuntime() {
+  return Boolean(process.versions.electron);
+}
+
+function localScriptCommand(name, options = {}) {
+  if (!isElectronRuntime()) {
+    const command = options.npmScript ? `npm run ${options.npmScript}` : `${shellQuote(process.execPath)} ${shellQuote(join(ROOT, "scripts", name))}`;
+    return `cd ${shellQuote(ROOT)} && ${command}`;
+  }
+
+  const command = `${localScriptShellEnvPrefix()}${shellQuote(process.execPath)} ${shellQuote(resourcePath("scripts", name))}`;
+  return `${options.privileged ? "sudo " : ""}${command}`;
+}
+
+function localScriptEnv() {
+  return {
+    ...process.env,
+    ...localScriptEnvOverrides()
+  };
+}
+
+function localScriptEnvOverrides() {
+  const overrides = {};
+  if (isElectronRuntime()) overrides.ELECTRON_RUN_AS_NODE = "1";
+  if (process.env.VIGIL_DATA_DIR) overrides.VIGIL_DATA_DIR = process.env.VIGIL_DATA_DIR;
+  if (process.env.VIGIL_PORT) overrides.VIGIL_PORT = process.env.VIGIL_PORT;
+  if (process.env.VIGIL_PORT) overrides.VIGIL_PORT = process.env.VIGIL_PORT;
+  return overrides;
+}
+
+function localScriptShellEnvPrefix() {
+  const entries = Object.entries(localScriptEnvOverrides());
+  return entries.length ? `${entries.map(([key, value]) => `${key}=${shellQuote(value)}`).join(" ")} ` : "";
+}
+
+function processCwd() {
+  return ROOT.includes(".asar") ? dirname(ROOT) : ROOT;
+}
+
+function resourcePath(...parts) {
+  const root = ROOT.includes(".asar")
+    ? ROOT.replace(/\.asar(?=\/|$)/, ".asar.unpacked")
+    : ROOT;
+  return join(root, ...parts);
 }

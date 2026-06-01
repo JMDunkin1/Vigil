@@ -14,6 +14,7 @@ const legacyPlistPath = join(home, "Library", "LaunchAgents", `${legacyLabel}.pl
 const logDir = join(home, "Library", "Logs", "Vigil");
 const nodePath = process.execPath;
 const runnerPath = join(root, "scripts", "agent-runner.mjs");
+const environment = launchAgentEnvironment();
 
 await cleanupLegacyLaunchAgent();
 await mkdir(dirname(plistPath), { recursive: true });
@@ -39,6 +40,7 @@ function plist() {
     <string>${escapeXml(nodePath)}</string>
     <string>${escapeXml(runnerPath)}</string>
   </array>
+${environment}
   <key>WorkingDirectory</key>
   <string>${escapeXml(root)}</string>
   <key>RunAtLoad</key>
@@ -52,6 +54,22 @@ function plist() {
 </dict>
 </plist>
 `;
+}
+
+function launchAgentEnvironment() {
+  const values = {};
+  if (process.versions.electron) values.ELECTRON_RUN_AS_NODE = "1";
+  if (process.env.VIGIL_DATA_DIR) values.VIGIL_DATA_DIR = process.env.VIGIL_DATA_DIR;
+  if (process.env.VIGIL_PORT) values.VIGIL_PORT = process.env.VIGIL_PORT;
+  if (process.env.VIGIL_PORT) values.VIGIL_PORT = process.env.VIGIL_PORT;
+
+  const entries = Object.entries(values);
+  if (!entries.length) return "";
+
+  const body = entries
+    .map(([key, value]) => `    <key>${escapeXml(key)}</key>\n    <string>${escapeXml(value)}</string>`)
+    .join("\n");
+  return `  <key>EnvironmentVariables</key>\n  <dict>\n${body}\n  </dict>\n`;
 }
 
 async function cleanupLegacyLaunchAgent() {
