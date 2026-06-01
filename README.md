@@ -83,7 +83,7 @@ The app works best after granting Accessibility permission to the terminal or ap
 - Recurring schedules, including overnight schedules and optional Wi-Fi gates.
 - Emergency unlock cooldowns and weekly token limits.
 - Optional LaunchAgent installer to keep the service running after login.
-- Optional hosts-file blocker preview/apply script for harder domain fallback blocking, including current blocklist sites, enabled app-lock sites, and safe host/path URL-pattern hosts.
+- Optional network blocker preview/apply script for harder domain fallback blocking: `/etc/hosts` DNS denial plus a Sentinel PF firewall anchor for resolved target IPs.
 
 ## Hardening
 
@@ -95,19 +95,19 @@ npm run install:agent
 
 You can also install the login agent from the Settings view. The LaunchAgent uses a runner process that waits when Sentinel is already open and starts the local server if it goes down.
 
-Run this to preview hosts-file rules. Path-only and keyword URL patterns stay in the browser extension, while host/path patterns such as `youtube.com/shorts` add their hostname to this harder fallback:
+Run this to preview system network rules. Path-only and keyword URL patterns stay in the browser extension, while host/path patterns such as `youtube.com/shorts` add their hostname to the harder fallback:
 
 ```sh
-npm run hosts:preview
+npm run network:preview
 ```
 
-Run this to apply them. macOS will ask for your password because `/etc/hosts` is protected:
+Run this to apply them. macOS will ask for your password because `/etc/hosts`, `/etc/pf.conf`, and `/etc/pf.anchors` are protected:
 
 ```sh
-npm run hosts:apply
+npm run network:apply
 ```
 
-You can also apply the hosts block from the Settings view. The app will ask macOS for administrator approval and keeps the copyable Terminal command as a fallback.
+You can also apply the network block from the Settings view. The app will ask macOS for administrator approval and keeps the copyable Terminal command as a fallback. The PF layer is a SelfControl-style IP fallback: it helps catch cached DNS and direct-IP paths for resolved domains, but URL paths and fast-changing CDN targets still need the browser extension and hosts layer.
 
 If the state seal detects protected local state tampering, or if the runtime/clock watchdog detects unexplained downtime or clock changes during a strict lock, the app enters integrity lockdown using code-defined default distractions and bypass tools. The state seal ignores repairable bookkeeping-only drift such as runtime heartbeats and event history, then refreshes the seal on the next clean save.
 

@@ -10,10 +10,11 @@ export function doctorRows(state, context = {}, now = new Date()) {
   const seal = context.seal || {};
   const sourceSeal = context.sourceSeal || {};
   const hosts = context.hosts || {};
+  const firewall = context.firewall || {};
   const agent = context.agent || {};
   const account = context.account || {};
   const monitor = context.monitor || monitorFromHeartbeat(state, now);
-  const foolproof = foolproofSummary(state, { hosts, agent, account, monitor, stateSeal: seal, sourceSeal }, now);
+  const foolproof = foolproofSummary(state, { hosts, firewall, agent, account, monitor, stateSeal: seal, sourceSeal }, now);
   const runtime = integrityRuntimeSummary(state, now);
   const keyholder = keyholderSummary(state);
   const distanceKey = distanceKeySummary(state);
@@ -31,6 +32,7 @@ export function doctorRows(state, context = {}, now = new Date()) {
     row("launch-agent", "LaunchAgent", Boolean(agent.loaded && agent.running && !agent.legacyInstalled), launchAgentDetail(agent)),
     row("mac-account", "Mac account", Boolean(account.username && !account.isAdmin), accountDetail(account)),
     row("hosts", "Hosts block", Boolean(hosts.installed && !hosts.partial && !hosts.stale), hostsDetail(hosts)),
+    row("firewall", "PF firewall", Boolean(firewall.installed && !firewall.partial && !firewall.stale), firewallDetail(firewall)),
     row("protected-edits", "Protected edits", settings.protectedEditsEnabled !== false, settings.protectedEditsEnabled !== false ? "Config changes require a maintenance window." : "Config changes can be made immediately."),
     row("intent-reason", "Intent reasons", intentReason.enabled && intentReason.minLength >= 12, intentReason.detail),
     row("keyholder", "Keyholder", keyholder.enabled && keyholder.hasPasscode, keyholder.enabled ? "Passcode is required for unlock confirmations." : "Unlock confirmations do not require a passcode."),
@@ -120,12 +122,19 @@ function launchAgentDetail(agent) {
 }
 
 function hostsDetail(hosts) {
-  if (hosts.partial) return "markers are incomplete; run npm run hosts:apply";
-  if (hosts.legacyInstalled) return "legacy hosts block is still installed; run npm run hosts:apply";
-  if (hosts.duplicate) return "multiple managed hosts blocks are installed; run npm run hosts:apply";
-  if (!hosts.installed) return "not installed; run npm run hosts:apply";
-  if (hosts.stale) return `stale (${hosts.installedEntries}/${hosts.expectedEntries} entries); run npm run hosts:apply`;
+  if (hosts.partial) return "markers are incomplete; run npm run network:apply";
+  if (hosts.legacyInstalled) return "legacy hosts block is still installed; run npm run network:apply";
+  if (hosts.duplicate) return "multiple managed hosts blocks are installed; run npm run network:apply";
+  if (!hosts.installed) return "not installed; run npm run network:apply";
+  if (hosts.stale) return `stale (${hosts.installedEntries}/${hosts.expectedEntries} entries); run npm run network:apply`;
   return `current (${hosts.installedEntries} entries)`;
+}
+
+function firewallDetail(firewall) {
+  if (firewall.partial) return "markers are incomplete; run npm run network:apply";
+  if (!firewall.installed) return "not installed; run npm run network:apply";
+  if (firewall.stale) return `stale (${firewall.installedEntries || 0} address rules); run npm run network:apply`;
+  return `current (${firewall.installedEntries || 0} address rules)`;
 }
 
 function foolproofDetail(foolproof) {

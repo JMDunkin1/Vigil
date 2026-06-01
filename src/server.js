@@ -10,7 +10,8 @@ import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extension
 import { APP_NAME, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, PORT, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
 import { addEvent, loadState, loadUsage, saveState, saveUsage, sanitizeSoftBlockProfile } from "./store.js";
 import { assertTypingChallenge, attachTypingChallenge, TypingChallengeError } from "./challenge.js";
-import { hostsStatus, buildHostsBlock, launchAgentPath, launchAgentStatus, stateSealStatus } from "./hardening.js";
+import { hostsStatus, buildHostsBlock, launchAgentPath, launchAgentStatus, managedBlockDomains, stateSealStatus } from "./hardening.js";
+import { buildFirewallBlock, buildPfConfBlock, firewallStatus } from "./firewall.js";
 import { startMonitor } from "./monitor.js";
 import { activePolicy, activeProfile, activeSessionForDevice, clearSessionsById, emergencyUnlockAllowedForPolicy, listFromTextarea, normalizeDeviceTarget, normalizeDeviceTargets, panicLockProfile, profileById, sessionPhase, snapshotProfile } from "./policy.js";
 import { AppLockError, appLockSummary, confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "./appLocks.js";
@@ -281,13 +282,14 @@ async function handleApi(request, response, url) {
   if (method === "GET" && path === "/api/state") {
     const policy = activePolicy(state);
     const hosts = await hostsStatus(state);
+    const firewall = await firewallStatus(state);
     const agent = await launchAgentStatus();
     const account = await currentMacAccountStatus();
     const stateSeal = await stateSealStatus(state);
     const sourceSeal = await sourceSealStatus();
     const protection = protectionSummary(state);
     const devices = await deviceSummary(state);
-    const foolproof = foolproofSummary(state, { hosts, agent, account, monitor: monitor.status, stateSeal, sourceSeal });
+    const foolproof = foolproofSummary(state, { hosts, firewall, agent, account, monitor: monitor.status, stateSeal, sourceSeal });
     await saveState(state);
     sendJson(response, 200, {
       app: { name: APP_NAME, port: PORT, startedAt },
@@ -303,15 +305,16 @@ async function handleApi(request, response, url) {
       presets: distractionPresets(),
       hardening: {
         hosts,
+        firewall,
         launchAgent: agent,
         account,
         stateSeal,
         sourceSeal,
         launchAgentPath: launchAgentPath(),
-        hostsBlock: buildHostsBlock(state),
+        hostsBlock: await buildNetworkPreview(state),
         actions: hardeningActions(),
         foolproof,
-        audit: hardeningAudit({ hosts, agent, account, protection, monitor: monitor.status, foolproof, stateSeal, sourceSeal })
+        audit: hardeningAudit({ hosts, firewall, agent, account, protection, monitor: monitor.status, foolproof, stateSeal, sourceSeal })
       }
     });
     return;
@@ -506,12 +509,14 @@ async function handleApi(request, response, url) {
     try {
       const result = await runPrivilegedHostsApply();
       const hosts = await hostsStatus(state);
-      addEvent(state, "hosts_block_applied", {
-        ok: hosts.installed && !hosts.stale,
-        entries: hosts.installedEntries || 0
+      const firewall = await firewallStatus(state);
+      addEvent(state, "network_block_applied", {
+        ok: hosts.installed && !hosts.stale && firewall.installed && !firewall.stale,
+        hostsEntries: hosts.installedEntries || 0,
+        firewallEntries: firewall.installedEntries || 0
       });
       await saveState(state);
-      sendJson(response, 200, { ok: true, result, hosts });
+      sendJson(response, 200, { ok: true, result, hosts, firewall });
     } catch (error) {
       sendJson(response, 500, serializeError(error));
     }
@@ -1614,7 +1619,7 @@ function isProtectedSettingsMutation(body) {
   return Object.keys(body || {}).some((key) => guarded.has(key));
 }
 
-function hardeningAudit({ hosts, agent, account, protection, monitor, foolproof, stateSeal, sourceSeal }) {
+function hardeningAudit({ hosts, firewall, agent, account, protection, monitor, foolproof, stateSeal, sourceSeal }) {
   const keyholder = keyholderSummary(state);
   const distanceKey = distanceKeySummary(state);
   const focusShortcut = focusShortcutSummary(state);
@@ -1765,8 +1770,14 @@ function hardeningAudit({ hosts, agent, account, protection, monitor, foolproof,
     {
       id: "hosts",
       label: "Hosts block",
-      ok: hosts.installed && !hosts.stale,
+      ok: hosts.installed && !hosts.partial && !hosts.stale,
       detail: hostsDetail(hosts)
+    },
+    {
+      id: "firewall",
+      label: "PF firewall",
+      ok: firewall.installed && !firewall.partial && !firewall.stale,
+      detail: firewallDetail(firewall)
     }
   ];
 }
@@ -1779,10 +1790,10 @@ function hardeningActions() {
       path: "/api/hardening/launch-agent/install"
     },
     hostsApply: {
-      label: "Apply Hosts Block",
+      label: "Apply Network Block",
       method: "POST",
       path: "/api/hardening/hosts/apply",
-      command: localScriptCommand("apply-hosts.mjs", { privileged: true, npmScript: "hosts:apply" })
+      command: localScriptCommand("apply-hosts.mjs", { privileged: true, npmScript: "network:apply" })
     },
     sourceSeal: {
       label: "Seal Source",
@@ -1800,6 +1811,17 @@ function hardeningActions() {
   };
 }
 
+async function buildNetworkPreview(state) {
+  const domains = managedBlockDomains(state);
+  return [
+    buildHostsBlock(state),
+    "",
+    buildPfConfBlock(),
+    "",
+    buildFirewallBlock(domains)
+  ].join("\n");
+}
+
 async function assertStrictLockAllowed(lockLevel, profile, options = {}) {
   if (lockLevel !== "deep" || !state.settings.foolproofModeEnabled) return;
   const now = new Date();
@@ -1809,11 +1831,12 @@ async function assertStrictLockAllowed(lockLevel, profile, options = {}) {
     now
   }) : state;
   const hosts = await hostsStatus(preflightState, now);
+  const firewall = await firewallStatus(preflightState, now);
   const agent = await launchAgentStatus();
   const account = await currentMacAccountStatus();
   const stateSeal = await stateSealStatus(preflightState);
   const sourceSeal = await sourceSealStatus();
-  assertFoolproofReadyForStrict(preflightState, { hosts, agent, account, monitor: monitor.status, stateSeal, sourceSeal }, now);
+  assertFoolproofReadyForStrict(preflightState, { hosts, firewall, agent, account, monitor: monitor.status, stateSeal, sourceSeal }, now);
 }
 
 function strictPreflightState(profile, options = {}) {
@@ -1850,12 +1873,19 @@ function launchAgentDetail(agent) {
 }
 
 function hostsDetail(hosts) {
-  if (hosts.partial) return "Hosts block markers are incomplete; re-apply hosts.";
-  if (hosts.legacyInstalled) return "Legacy Local Screen Time hosts block is still installed; re-apply hosts to migrate it.";
-  if (hosts.duplicate) return "Multiple managed hosts blocks are installed; re-apply hosts to consolidate them.";
+  if (hosts.partial) return "Hosts block markers are incomplete; re-apply the network block.";
+  if (hosts.legacyInstalled) return "Legacy Local Screen Time hosts block is still installed; re-apply the network block to migrate it.";
+  if (hosts.duplicate) return "Multiple managed hosts blocks are installed; re-apply the network block to consolidate them.";
   if (!hosts.installed) return "Hosts-file site block is not installed.";
   if (hosts.stale) return `Hosts block is stale (${hosts.installedEntries}/${hosts.expectedEntries} entries).`;
   return `Hosts-file site block is current (${hosts.installedEntries} entries).`;
+}
+
+function firewallDetail(firewall) {
+  if (firewall.partial) return "PF firewall markers are incomplete; re-apply the network block.";
+  if (!firewall.installed) return "PF firewall anchor is not installed.";
+  if (firewall.stale) return `PF firewall block is stale (${firewall.installedEntries}/${firewall.expectedDomainCount} domain targets).`;
+  return `PF firewall anchor is current (${firewall.installedEntries} address rules).`;
 }
 
 function accountDetail(account) {

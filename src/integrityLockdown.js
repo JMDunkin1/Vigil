@@ -281,6 +281,7 @@ function activeIntegrityAlarm(state) {
 function hardeningIssues(checks) {
   const issues = [];
   const hosts = checks.hosts;
+  const firewall = checks.firewall;
   const extensionRules = checks.extensionRules;
   const sourceSeal = checks.sourceSeal;
   const agent = checks.agent;
@@ -299,6 +300,15 @@ function hardeningIssues(checks) {
       detail: hosts.partial
         ? "Hosts block markers are incomplete."
         : (hosts.stale ? "Hosts block is stale." : "Hosts block is not installed.")
+    });
+  }
+
+  if (firewall && (!firewall.installed || firewall.partial || firewall.stale)) {
+    issues.push({
+      id: "firewall",
+      detail: firewall.partial
+        ? "PF firewall markers are incomplete."
+        : (firewall.stale ? "PF firewall block is stale." : "PF firewall block is not installed.")
     });
   }
 

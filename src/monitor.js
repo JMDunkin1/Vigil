@@ -6,6 +6,7 @@ import { reconcileFocusShortcut } from "./focusHooks.js";
 import { activePolicy, baselinePolicy, isFullLockoutPolicy, isProcessSweepExemptApp, isStrictBypassAppForPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "./policy.js";
 import { activeAppLockPolicy } from "./appLocks.js";
 import { extensionDynamicRulesReady } from "./foolproof.js";
+import { firewallStatus } from "./firewall.js";
 import { hostsStatus, launchAgentStatus, stateSealStatus } from "./hardening.js";
 import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, recordRuntimeHeartbeat } from "./integrityLockdown.js";
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
@@ -380,6 +381,7 @@ class Monitor {
     this.nextHardeningDriftRefreshAt = now + 15 * 1000;
 
     const hosts = await hostsStatus(this.state);
+    const firewall = await firewallStatus(this.state);
     const agent = await launchAgentStatus();
     const extensionRules = extensionDynamicRulesReady(this.state, new Date(now));
     const sourceSeal = await sourceSealStatus();
@@ -387,7 +389,7 @@ class Monitor {
       ok: this.status.ok,
       accessibilityLikelyMissing: this.status.accessibilityLikelyMissing
     };
-    const drift = detectHardeningDrift(this.state, { hosts, agent, monitor, extensionRules, sourceSeal }, new Date(now));
+    const drift = detectHardeningDrift(this.state, { hosts, firewall, agent, monitor, extensionRules, sourceSeal }, new Date(now));
     this.status.hardeningDrift = {
       checkedAt: new Date(now).toISOString(),
       sourceSeal: {
@@ -405,6 +407,11 @@ class Monitor {
         installed: Boolean(hosts.installed),
         partial: Boolean(hosts.partial),
         stale: Boolean(hosts.stale)
+      },
+      firewall: {
+        installed: Boolean(firewall.installed),
+        partial: Boolean(firewall.partial),
+        stale: Boolean(firewall.stale)
       },
       extensionRules: {
         ok: extensionRules.ok,

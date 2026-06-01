@@ -38,6 +38,7 @@ export function foolproofBlockers(state, context = {}, now = new Date()) {
   const keyholder = keyholderSummary(state);
   const distanceKey = distanceKeySummary(state);
   const hosts = context.hosts || {};
+  const firewall = context.firewall || {};
   const agent = context.agent || {};
   const monitor = context.monitor || {};
   const stateSeal = context.stateSeal || stateSealSummary(state);
@@ -74,6 +75,7 @@ export function foolproofBlockers(state, context = {}, now = new Date()) {
   if (!agent.loaded || !agent.running) blockers.push(blocker("launch-agent", "LaunchAgent must be loaded and running."));
   else if (agent.legacyInstalled) blockers.push(blocker("launch-agent", "Legacy Local Screen Time LaunchAgent must be removed."));
   if (!hosts.installed || hosts.partial || hosts.stale) blockers.push(blocker("hosts", "Hosts block must be installed and current."));
+  if (!firewall.installed || firewall.partial || firewall.stale) blockers.push(blocker("firewall", "PF firewall block must be installed and current."));
 
   return blockers;
 }
