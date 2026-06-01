@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { PORT } from "./defaults.js";
+import { truthy } from "./booleans.js";
 import {
   appMatchesAppTargets,
   expandSiteTargets,
@@ -554,8 +555,4 @@ function round(value) {
 
 function formatMinutes(seconds) {
   return `${Math.round((seconds || 0) / 60)}m`;
-}
-
-function truthy(value) {
-  return value === true || value === "true" || value === "on" || value === "1" || value === 1;
 }

@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { currentMacAccountStatus } from "./account.js";
 import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "./apiSecurity.js";
+import { parseBoolean, truthy } from "./booleans.js";
 import { APP_NAME, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, PORT, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
 import { addEvent, loadState, loadUsage, saveState, saveUsage, sanitizeSoftBlockProfile } from "./store.js";
 import { assertTypingChallenge, attachTypingChallenge, TypingChallengeError } from "./challenge.js";
@@ -1144,7 +1145,7 @@ function updateSettings(body) {
   for (const [key, value] of Object.entries(body || {})) {
     if (!allowed.has(key)) continue;
     if (typeof state.settings[key] === "boolean") {
-      state.settings[key] = Boolean(value);
+      state.settings[key] = parseBoolean(value, state.settings[key]);
     } else if (typeof state.settings[key] === "number") {
       const bounds = settingsNumberBounds(key);
       state.settings[key] = clampNumber(value, bounds.min, bounds.max, state.settings[key]);
@@ -1195,7 +1196,7 @@ function upsertSchedule(body) {
   const schedule = {
     id,
     name: String(body.name || existing?.name || "Focus schedule").slice(0, 80),
-    enabled: Boolean(body.enabled),
+    enabled: body.enabled === undefined ? Boolean(existing?.enabled) : parseBoolean(body.enabled, false),
     mode: body.mode || existing?.mode || "focus",
     profileId: body.profileId || existing?.profileId || state.settings.activeProfileId,
     lockLevel: body.lockLevel || existing?.lockLevel || "deep",
@@ -1365,10 +1366,6 @@ function commitmentLockError(policy) {
     return "Panic lockout cannot be ended early.";
   }
   return "This commitment lock does not allow emergency unlocks. Open a protected maintenance window if this was a mistake.";
-}
-
-function truthy(value) {
-  return value === true || value === "true" || value === "on" || value === "1" || value === 1;
 }
 
 function isExtensionApiPath(path) {

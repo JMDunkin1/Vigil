@@ -5,6 +5,7 @@ import {
   DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
   SOFT_BLOCK_PROFILE_ID
 } from "./defaults.js";
+import { parseBoolean } from "./booleans.js";
 import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, profileById } from "./policy.js";
 
@@ -22,14 +23,14 @@ const SOFT_BLOCK_WEB_CLIPS = [
 export function normalizeIosSettings(body = {}, existing = {}) {
   const next = {
     ...existing,
-    enabled: Boolean(body.enabled),
+    enabled: body.enabled === undefined ? Boolean(existing.enabled) : parseBoolean(body.enabled, false),
     status: "supervised-profile-ready",
     mode: normalizeChoice(body.mode, ["denylist", "allowlist"], existing.mode || "denylist"),
     webMode: normalizeChoice(body.webMode, ["denylist", "allowlist"], existing.webMode || "denylist"),
-    blockApps: body.blockApps !== false,
-    blockWeb: body.blockWeb !== false,
-    hardenRemoval: body.hardenRemoval !== false,
-    restrictInstallAndErase: body.restrictInstallAndErase !== false,
+    blockApps: body.blockApps === undefined ? existing.blockApps !== false : parseBoolean(body.blockApps, true),
+    blockWeb: body.blockWeb === undefined ? existing.blockWeb !== false : parseBoolean(body.blockWeb, true),
+    hardenRemoval: body.hardenRemoval === undefined ? existing.hardenRemoval !== false : parseBoolean(body.hardenRemoval, true),
+    restrictInstallAndErase: body.restrictInstallAndErase === undefined ? existing.restrictInstallAndErase !== false : parseBoolean(body.restrictInstallAndErase, true),
     blockedAppBundleIds: normalizeBundleIds(body.blockedAppBundleIds ?? body.blockedApps ?? existing.blockedAppBundleIds ?? DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS),
     allowedAppBundleIds: normalizeBundleIds(body.allowedAppBundleIds ?? body.allowedApps ?? existing.allowedAppBundleIds ?? DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS),
     deniedUrls: normalizeUrlList(body.deniedUrls ?? existing.deniedUrls ?? []),
