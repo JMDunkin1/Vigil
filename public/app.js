@@ -709,7 +709,7 @@ function render() {
   renderPresetButtons(data.presets || []);
   renderHeader(data.state, data.monitor, data.limits.activeBlocks);
   renderFocusSound(data);
-  renderMetrics(data.usage);
+  renderMetrics(data.usage, data.report);
   renderWatcher(data.monitor);
   renderIntervention(data.intervention);
   renderHardening(data);
@@ -1024,11 +1024,11 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
-function renderMetrics(usage) {
+function renderMetrics(usage, report) {
   $("#focusScore").textContent = `${usage.focusScore}`;
-  $("#trackedToday").textContent = formatDuration(usage.totalSeconds);
   $("#distractingToday").textContent = formatDuration(usage.distractingSeconds);
-  $("#savedToday").textContent = formatDuration(usage.savedSeconds);
+  $("#lockedToday").textContent = formatDuration(usage.protectedSeconds);
+  $("#distractionTrend").textContent = signedPercent(report?.comparison?.distractingPercentDelta);
 }
 
 function renderWatcher(monitor) {
@@ -1496,12 +1496,12 @@ function renderReport(report) {
   $("#reportRange").textContent = `${shortDate(report.currentWeek.startsAt)} - ${shortDate(report.currentWeek.endsAt)}`;
   $("#weekFocusScore").textContent = report.currentWeek.totals.averageFocusScore;
   $("#weekScoreDelta").textContent = signedNumber(report.comparison.focusScoreDelta, " pts");
-  $("#weekSaved").textContent = formatDuration(report.currentWeek.totals.savedSeconds);
-  $("#weekSavedDelta").textContent = signedDuration(report.comparison.savedSecondsDelta);
+  $("#weekSaved").textContent = formatDuration(report.currentWeek.totals.distractingSeconds);
+  $("#weekSavedDelta").textContent = signedDuration(report.comparison.distractingSecondsDelta);
   $("#focusStreak").textContent = report.streak.label;
   $("#streakGoal").textContent = `${report.streak.goal}+ score goal`;
-  $("#yearPace").textContent = formatDuration(report.projections.yearlySavedSeconds);
-  $("#decadePace").textContent = `${report.projections.yearsReclaimedAtCurrentPace} yrs / decade`;
+  $("#yearPace").textContent = formatDuration(report.currentWeek.totals.averageDailyDistractionSeconds);
+  $("#decadePace").textContent = daysWithDataText(report.currentWeek.totals.trackedDays);
   renderWeekStrip(report.currentWeek.days, report.focusScoreGoal);
   renderInsights(report.insights);
   renderMilestones(report.milestones);
@@ -1612,7 +1612,7 @@ function renderWeekStrip(days, goal) {
     item.innerHTML = `<span></span><strong></strong><em></em>`;
     item.querySelector("span").textContent = day.label;
     item.querySelector("strong").textContent = day.tracked ? day.focusScore : "--";
-    item.querySelector("em").textContent = day.tracked ? formatDuration(day.savedSeconds) : "no data";
+    item.querySelector("em").textContent = day.tracked ? formatDuration(day.distractingSeconds) : "no data";
     root.append(item);
   }
 }
@@ -1929,6 +1929,11 @@ function daysText(values) {
   return values.map((day) => labels.get(day)).join(", ");
 }
 
+function daysWithDataText(value) {
+  const days = Number(value || 0);
+  return `${days} ${days === 1 ? "day" : "days"} with data`;
+}
+
 function formatDuration(seconds) {
   const safe = Math.max(0, Number(seconds || 0));
   const hours = Math.floor(safe / 3600);
@@ -1961,6 +1966,11 @@ function signedNumber(value, suffix = "") {
   const safe = Number(value || 0);
   if (!safe) return `0${suffix}`;
   return `${safe > 0 ? "+" : ""}${safe}${suffix}`;
+}
+
+function signedPercent(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "No baseline";
+  return signedNumber(Math.round(Number(value)), "%");
 }
 
 function signedDuration(seconds) {
