@@ -1,4 +1,5 @@
 import { endOfToday, dateKey } from "./time.js";
+import { normalizeUsageDay } from "./usage.js";
 import {
   appMatchesAppTargets,
   expandAppTargets,
@@ -138,7 +139,7 @@ function findActiveBlock(state, sample, now) {
 }
 
 function ruleProgress(usage, rule, now) {
-  const day = usage[dateKey(now)] || {};
+  const day = normalizeUsageDay(usage[dateKey(now)] || {});
   const lists = targetListsForRule(rule);
   const apps = day.apps || {};
   const sites = day.sites || {};

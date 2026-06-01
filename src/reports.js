@@ -1,6 +1,7 @@
 import { dateKey } from "./time.js";
 import { appMatchesAppTargets, hostMatchesSiteTargets } from "./policy.js";
 import { intentionalUseSummary } from "./intentionalUse.js";
+import { normalizeUsageDay } from "./usage.js";
 
 export function focusReport(usage, state, now = new Date()) {
   const today = startOfDay(now);
@@ -50,7 +51,7 @@ export function focusReport(usage, state, now = new Date()) {
 
 function dayReport(usage, state, date) {
   const key = dateKey(date);
-  const day = normalizeDay(usage[key]);
+  const day = normalizeUsageDay(usage[key]);
   const distractingSeconds = sumBlockedSeconds(day, state);
   const totalSeconds = day.totalSeconds || 0;
   const focusScore = totalSeconds ? Math.max(0, Math.round(100 - (distractingSeconds / Math.max(totalSeconds, 1)) * 100)) : 100;
@@ -213,18 +214,6 @@ function sumBlockedSeconds(day, state) {
   }
 
   return Math.round(total);
-}
-
-function normalizeDay(day = {}) {
-  return {
-    totalSeconds: day.totalSeconds || 0,
-    apps: day.apps || {},
-    sites: day.sites || {},
-    opens: {
-      apps: day.opens?.apps || {},
-      sites: day.opens?.sites || {}
-    }
-  };
 }
 
 function milestone(id, label, achieved) {

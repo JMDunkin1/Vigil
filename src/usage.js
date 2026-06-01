@@ -1,4 +1,5 @@
 import { dateKey, parseClock } from "./time.js";
+import { DEVICE_TARGETS } from "./defaults.js";
 import { appMatchesAppTargets, hostMatchesSiteTargets, normalizeList } from "./policy.js";
 
 const BLOCK_EVENT_TYPES = new Set([
@@ -10,37 +11,133 @@ const BLOCK_EVENT_TYPES = new Set([
   "extension_blocked_site"
 ]);
 
-export function recordUsage(usage, sample, seconds, now = new Date()) {
-  if (!sample?.app || !seconds || seconds < 0.25) return;
-  const day = ensureDay(usage, dateKey(now));
-  day.apps[sample.app] = round((day.apps[sample.app] || 0) + seconds);
+const USAGE_TOTALS_MODE = "by-device";
 
-  if (sample.hostname) {
-    day.sites[sample.hostname] = round((day.sites[sample.hostname] || 0) + seconds);
+export class UsageSnapshotError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.name = "UsageSnapshotError";
+    this.status = status;
   }
-
-  day.totalSeconds = round((day.totalSeconds || 0) + seconds);
-  day.updatedAt = new Date().toISOString();
 }
 
-export function recordOpen(usage, sample, previousSample, now = new Date()) {
+export function recordUsage(usage, sample, seconds, now = new Date(), options = {}) {
+  if (!sample?.app || !seconds || seconds < 0.25) return;
+  const day = ensureDay(usage, dateKey(now));
+  const device = ensureDeviceDay(day, normalizeUsageDevice(options.device || sample.device));
+  incrementUsage(device, sample, seconds);
+  recomputeDayTotals(day);
+}
+
+export function recordOpen(usage, sample, previousSample, now = new Date(), options = {}) {
   if (!sample?.app) return;
   const day = ensureDay(usage, dateKey(now));
+  const device = ensureDeviceDay(day, normalizeUsageDevice(options.device || sample.device));
+  recordOpenForBucket(device, sample, previousSample);
+  recomputeDayTotals(day);
+}
 
+export function syncDeviceUsageSnapshot(usage, input = {}, now = new Date(), options = {}) {
+  input = input && typeof input === "object" ? input : {};
+  const device = normalizeUsageSyncDevice(input.device ?? input.deviceTarget, options.allowedDevices);
+  const dayKey = usageSnapshotDayKey(input, now);
+  const day = ensureDay(usage, dayKey);
+  ensureDeviceDay(day, device);
+  day.devices[device] = normalizeUsageBucket(input, now);
+  recomputeDayTotals(day);
+
+  const aggregate = normalizeUsageDay(day);
+  return {
+    ok: true,
+    device,
+    dayKey,
+    totalSeconds: aggregate.totalSeconds,
+    distractingSeconds: null,
+    deviceTotalSeconds: aggregate.devices[device]?.totalSeconds || 0,
+    devices: Object.fromEntries(Object.entries(aggregate.devices).map(([key, value]) => [key, {
+      totalSeconds: value.totalSeconds || 0,
+      appCount: Object.keys(value.apps || {}).length,
+      siteCount: Object.keys(value.sites || {}).length,
+      openPressure: sumValues(value.opens?.apps) + sumValues(value.opens?.sites)
+    }]))
+  };
+}
+
+export function normalizeUsageDay(day = {}) {
+  const devices = normalizeDeviceBuckets(day.devices);
+  if ((day.deviceTotalsMode === USAGE_TOTALS_MODE || !hasUsageData(day)) && Object.keys(devices).length) {
+    return {
+      ...aggregateBuckets(Object.values(devices)),
+      devices,
+      updatedAt: day.updatedAt || null
+    };
+  }
+
+  return {
+    totalSeconds: day.totalSeconds || 0,
+    apps: day.apps || {},
+    sites: day.sites || {},
+    opens: {
+      apps: day.opens?.apps || {},
+      sites: day.opens?.sites || {}
+    },
+    devices,
+    updatedAt: day.updatedAt || null
+  };
+}
+
+export function normalizeUsageDevice(value = "computer") {
+  const normalized = String(value || "computer").trim().toLowerCase();
+  return DEVICE_TARGETS.includes(normalized) ? normalized : "computer";
+}
+
+function normalizeUsageSyncDevice(value, allowedDevices = DEVICE_TARGETS) {
+  const device = String(value || "phone").trim().toLowerCase();
+  if (!DEVICE_TARGETS.includes(device)) {
+    throw new UsageSnapshotError(`Unsupported usage device: ${value}.`);
+  }
+
+  const allowed = normalizeAllowedUsageDevices(allowedDevices);
+  if (!allowed.includes(device)) {
+    throw new UsageSnapshotError(`Device usage sync is not allowed for ${device}.`, 403);
+  }
+
+  return device;
+}
+
+function normalizeAllowedUsageDevices(value = DEVICE_TARGETS) {
+  const source = Array.isArray(value) ? value : DEVICE_TARGETS;
+  const devices = [...new Set(source
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter((item) => DEVICE_TARGETS.includes(item)))];
+  return devices.length ? devices : DEVICE_TARGETS;
+}
+
+function incrementUsage(bucket, sample, seconds) {
+  bucket.apps[sample.app] = round((bucket.apps[sample.app] || 0) + seconds);
+
+  if (sample.hostname) {
+    bucket.sites[sample.hostname] = round((bucket.sites[sample.hostname] || 0) + seconds);
+  }
+
+  bucket.totalSeconds = round((bucket.totalSeconds || 0) + seconds);
+  bucket.updatedAt = new Date().toISOString();
+}
+
+function recordOpenForBucket(bucket, sample, previousSample) {
   if (sample.app !== previousSample?.app) {
-    day.opens.apps[sample.app] = (day.opens.apps[sample.app] || 0) + 1;
+    bucket.opens.apps[sample.app] = (bucket.opens.apps[sample.app] || 0) + 1;
   }
-
   if (sample.hostname && sample.hostname !== previousSample?.hostname) {
-    day.opens.sites[sample.hostname] = (day.opens.sites[sample.hostname] || 0) + 1;
+    bucket.opens.sites[sample.hostname] = (bucket.opens.sites[sample.hostname] || 0) + 1;
   }
 
-  day.updatedAt = new Date().toISOString();
+  bucket.updatedAt = new Date().toISOString();
 }
 
 export function usageSummary(usage, state, now = new Date()) {
   const todayKey = dateKey(now);
-  const today = ensureDay(usage, todayKey);
+  const today = normalizeUsageDay(ensureDay(usage, todayKey));
   const topApps = topEntries(today.apps);
   const topSites = topEntries(today.sites);
   const distractingSeconds = sumBlockedSeconds(today, state);
@@ -62,6 +159,7 @@ export function usageSummary(usage, state, now = new Date()) {
     openPressure: appOpenCount + siteOpenCount,
     savedSeconds: 0,
     focusScore,
+    devices: deviceSummaries(today.devices, state),
     topApps,
     topSites,
     topAppOpens: topOpenEntries(today.opens.apps),
@@ -77,7 +175,145 @@ function ensureDay(usage, key) {
   usage[key].opens.apps ||= {};
   usage[key].opens.sites ||= {};
   usage[key].totalSeconds ||= 0;
+  usage[key].devices ||= {};
   return usage[key];
+}
+
+function ensureDeviceDay(day, device) {
+  if (day.deviceTotalsMode !== USAGE_TOTALS_MODE) {
+    const legacy = normalizeUsageDay(day);
+    day.devices = Object.keys(day.devices || {}).length ? normalizeDeviceBuckets(day.devices) : {};
+    if (!Object.keys(day.devices).length && hasUsageData(legacy)) {
+      day.devices.computer = normalizeUsageBucket(legacy);
+    }
+    day.deviceTotalsMode = USAGE_TOTALS_MODE;
+  }
+
+  day.devices ||= {};
+  day.devices[device] = normalizeUsageBucket(day.devices[device] || {});
+  return day.devices[device];
+}
+
+function recomputeDayTotals(day) {
+  const aggregate = aggregateBuckets(Object.values(normalizeDeviceBuckets(day.devices)));
+  day.totalSeconds = aggregate.totalSeconds;
+  day.apps = aggregate.apps;
+  day.sites = aggregate.sites;
+  day.opens = aggregate.opens;
+  day.deviceTotalsMode = USAGE_TOTALS_MODE;
+  day.updatedAt = new Date().toISOString();
+}
+
+function normalizeDeviceBuckets(devices = {}) {
+  return Object.fromEntries(Object.entries(devices || {})
+    .map(([device, bucket]) => [normalizeUsageDevice(device), normalizeUsageBucket(bucket)])
+    .filter(([, bucket]) => hasUsageData(bucket)));
+}
+
+function normalizeUsageBucket(bucket = {}, now = new Date()) {
+  const apps = secondsMap(bucket.apps);
+  const sites = secondsMap(bucket.sites);
+  const opens = {
+    apps: countMap(bucket.opens?.apps ?? bucket.appOpens),
+    sites: countMap(bucket.opens?.sites ?? bucket.siteOpens)
+  };
+  const explicitTotal = finiteSeconds(bucket.totalSeconds ?? bucket.seconds ?? bucket.durationSeconds);
+  const inferredTotal = Math.max(sumValues(apps), sumValues(sites));
+
+  return {
+    totalSeconds: explicitTotal ?? round(inferredTotal),
+    apps,
+    sites,
+    opens,
+    updatedAt: bucket.updatedAt || bucket.recordedAt || now.toISOString()
+  };
+}
+
+function aggregateBuckets(buckets) {
+  const aggregate = { totalSeconds: 0, apps: {}, sites: {}, opens: { apps: {}, sites: {} } };
+
+  for (const bucket of buckets) {
+    aggregate.totalSeconds = round(aggregate.totalSeconds + Number(bucket.totalSeconds || 0));
+    mergeNumberMap(aggregate.apps, bucket.apps);
+    mergeNumberMap(aggregate.sites, bucket.sites);
+    mergeNumberMap(aggregate.opens.apps, bucket.opens?.apps);
+    mergeNumberMap(aggregate.opens.sites, bucket.opens?.sites);
+  }
+
+  return aggregate;
+}
+
+function secondsMap(value) {
+  return numberMap(value, ["name", "app", "site", "host", "hostname"], ["seconds", "totalSeconds", "durationSeconds"]);
+}
+
+function countMap(value) {
+  return numberMap(value, ["name", "app", "site", "host", "hostname"], ["count", "opens"], { integer: true });
+}
+
+function numberMap(value, keyFields, valueFields, options = {}) {
+  const output = {};
+  const entries = Array.isArray(value)
+    ? value.map((item) => [firstField(item, keyFields), firstField(item, valueFields)])
+    : Object.entries(value || {});
+
+  for (const [rawName, rawValue] of entries) {
+    const name = String(rawName || "").trim();
+    const number = Number(rawValue);
+    if (!name || !Number.isFinite(number) || number <= 0) continue;
+    output[name] = options.integer
+      ? Math.round((output[name] || 0) + number)
+      : round((output[name] || 0) + number);
+  }
+
+  return output;
+}
+
+function firstField(item, fields) {
+  if (!item || typeof item !== "object") return "";
+  for (const field of fields) {
+    if (item[field] !== undefined) return item[field];
+  }
+  return "";
+}
+
+function finiteSeconds(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? round(number) : null;
+}
+
+function mergeNumberMap(target, values = {}) {
+  for (const [name, value] of Object.entries(values || {})) {
+    target[name] = round((target[name] || 0) + Number(value || 0));
+  }
+}
+
+function usageSnapshotDayKey(input, now) {
+  const day = String(input.dayKey || input.date || "").trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day;
+  const parsed = new Date(input.recordedAt || input.updatedAt || now);
+  return dateKey(Number.isNaN(parsed.getTime()) ? now : parsed);
+}
+
+function hasUsageData(bucket = {}) {
+  return Boolean(
+    Number(bucket.totalSeconds || 0) > 0 ||
+    Object.keys(bucket.apps || {}).length ||
+    Object.keys(bucket.sites || {}).length ||
+    Object.keys(bucket.opens?.apps || {}).length ||
+    Object.keys(bucket.opens?.sites || {}).length
+  );
+}
+
+function deviceSummaries(devices = {}, state = {}) {
+  return Object.fromEntries(Object.entries(devices || {}).map(([device, bucket]) => [device, {
+    totalSeconds: Math.round(bucket.totalSeconds || 0),
+    distractingSeconds: sumBlockedSeconds(bucket, state),
+    appOpenCount: sumValues(bucket.opens?.apps),
+    siteOpenCount: sumValues(bucket.opens?.sites),
+    topApps: topEntries(bucket.apps),
+    topSites: topEntries(bucket.sites)
+  }]));
 }
 
 function topEntries(values) {

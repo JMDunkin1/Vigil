@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { currentMacAccountStatus } from "./account.js";
-import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "./apiSecurity.js";
+import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "./apiSecurity.js";
 import { APP_NAME, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, PORT, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
 import { addEvent, loadState, loadUsage, saveState, saveUsage, sanitizeSoftBlockProfile } from "./store.js";
 import { assertTypingChallenge, attachTypingChallenge, TypingChallengeError } from "./challenge.js";
@@ -35,7 +35,7 @@ import { focusReport } from "./reports.js";
 import { assertKeyholderPasscode, KeyholderError, keyholderSummary, updateKeyholderSettings } from "./keyholder.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { clampNumber, weekKey } from "./time.js";
-import { usageSummary } from "./usage.js";
+import { syncDeviceUsageSnapshot, usageSummary } from "./usage.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PUBLIC_DIR = join(ROOT, "public");
@@ -613,6 +613,33 @@ async function handleApi(request, response, url) {
     addEvent(state, "ios_profile_generated", { bytes: Buffer.byteLength(profile) });
     await saveState(state);
     sendDownload(response, 200, profile, "vigil-iphone-lock.mobileconfig", "application/x-apple-aspen-config");
+    return;
+  }
+
+  if (method === "POST" && path === "/api/devices/usage") {
+    const body = await readBody(request);
+    const authorization = deviceUsageSyncAuthorization({
+      headers: request.headers,
+      url,
+      body,
+      enrollmentSecret: state.deviceControls?.ios?.mdm?.enrollmentSecret
+    });
+    if (!authorization.ok) {
+      sendJson(response, authorization.status || 403, { error: authorization.error || "Forbidden" });
+      return;
+    }
+
+    const result = syncDeviceUsageSnapshot(usage, body, new Date(), {
+      allowedDevices: authorization.kind === "device-token" ? ["phone"] : DEVICE_TARGETS
+    });
+    addEvent(state, "device_usage_synced", {
+      device: result.device,
+      dayKey: result.dayKey,
+      totalSeconds: result.deviceTotalSeconds
+    });
+    await saveUsage(usage);
+    await saveState(state);
+    sendJson(response, 200, { ok: true, result, usage: usageSummary(usage, state) });
     return;
   }
 
