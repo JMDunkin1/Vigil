@@ -21,7 +21,7 @@ while (true) {
   child = spawn(process.execPath, [serverPath], {
     cwd: root,
     stdio: "inherit",
-    env: { ...process.env, VIGIL_AGENT_CHILD: "1" }
+    env: { ...process.env, LOCAL_VIGIL_AGENT_CHILD: "1" }
   });
 
   const exitCode = await new Promise((resolve) => {

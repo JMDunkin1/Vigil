@@ -87,10 +87,11 @@ export function addEvent(state, type, detail = {}) {
 function migrateState(state) {
   const fresh = defaultState();
   const profiles = Array.isArray(state.profiles) && state.profiles.length ? state.profiles : fresh.profiles;
+  const settings = migrateSettings({ ...fresh.settings, ...(state.settings || {}) });
   return {
     ...fresh,
     ...state,
-    settings: { ...fresh.settings, ...(state.settings || {}) },
+    settings,
     profiles: normalizeProfiles(mergeBuiltinProfiles(profiles, fresh.profiles)),
     schedules: normalizeSchedules(Array.isArray(state.schedules) ? state.schedules : fresh.schedules),
     limitRules: Array.isArray(state.limitRules) ? state.limitRules : fresh.limitRules,
@@ -180,6 +181,18 @@ function migrateState(state) {
     overrides: Array.isArray(state.overrides) ? state.overrides : [],
     events: Array.isArray(state.events) ? state.events : []
   };
+}
+
+function migrateSettings(settings) {
+  const next = { ...settings };
+  const legacyName = ["Local", "Screen", "Time"].join(" ");
+  if (next.focusShortcutOnName === `${legacyName} Focus On`) {
+    next.focusShortcutOnName = "Vigil Focus On";
+  }
+  if (next.focusShortcutOffName === `${legacyName} Focus Off`) {
+    next.focusShortcutOffName = "Vigil Focus Off";
+  }
+  return next;
 }
 
 function mergeBuiltinProfiles(profiles, builtinProfiles) {

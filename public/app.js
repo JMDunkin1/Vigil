@@ -1,5 +1,6 @@
 const state = {
   data: null,
+  activeView: "home",
   selectedProfileId: null,
   selectedScheduleId: null,
   pendingEmergencyId: null,
@@ -35,16 +36,66 @@ const BRICK_MODE_PROFILE_ID = "brick-mode";
 boot();
 
 function boot() {
+  initTheme();
   renderScheduleDays();
   renderLimitDays();
   renderAppLockDays();
+  bindViewNavigation();
   bindEvents();
   refresh();
   setInterval(refresh, 3000);
   state.timer = setInterval(renderCountdowns, 1000);
 }
 
+function initTheme() {
+  let saved = "";
+  try {
+    saved = localStorage.getItem("vigil-theme") || "";
+  } catch {
+    saved = "";
+  }
+  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
+  setTheme(saved || (prefersDark ? "dark" : "light"));
+}
+
+function setTheme(theme) {
+  const next = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  try {
+    localStorage.setItem("vigil-theme", next);
+  } catch {
+  }
+  const button = $("#themeToggle");
+  if (!button) return;
+  button.textContent = next === "dark" ? "Light" : "Dark";
+  button.setAttribute("aria-pressed", String(next === "dark"));
+}
+
+function bindViewNavigation() {
+  for (const button of document.querySelectorAll("[data-view-target]")) {
+    button.addEventListener("click", () => setView(button.dataset.viewTarget));
+  }
+}
+
+function setView(view) {
+  state.activeView = view || "home";
+  for (const panel of document.querySelectorAll("[data-view]")) {
+    const active = panel.dataset.view === state.activeView;
+    panel.hidden = !active;
+    panel.classList.toggle("is-active", active);
+  }
+  for (const button of document.querySelectorAll("[data-view-target]")) {
+    const active = button.dataset.viewTarget === state.activeView;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-selected", String(active));
+  }
+}
+
 function bindEvents() {
+  $("#themeToggle").addEventListener("click", () => {
+    setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+  });
+
   document.querySelectorAll("[data-scan-distance-key]").forEach((button) => {
     button.addEventListener("click", () => openDistanceScanner(button.dataset.scanDistanceKey));
   });
@@ -626,37 +677,51 @@ function renderHeader(appState, monitor, activeBlocks = []) {
   const phase = appState.sessionPhase;
   const brickButton = $("#startBrickMode");
   const lock = $("#lockStatus");
+  let orbState = "idle";
   if (active?.kind === "integrity") {
     lock.textContent = "Integrity lockdown";
     lock.className = "pill bad";
     $("#sessionTitle").textContent = active.session.title;
+    orbState = "integrity";
   } else if (active) {
     lock.textContent = `${phaseText(phase, active.session.mode)} locked`;
     lock.className = "pill bad";
     $("#sessionTitle").textContent = phaseTitle(active.session, phase);
+    orbState = "locked";
   } else if (session && phase?.kind === "break") {
     lock.textContent = "Break";
     lock.className = "pill good";
     $("#sessionTitle").textContent = phaseTitle(session, phase);
+    orbState = "break";
   } else if (session) {
     lock.textContent = "Session";
     lock.className = "pill warn";
     $("#sessionTitle").textContent = session.title || "Session running";
+    orbState = "session";
   } else if (activeBlocks.length) {
     lock.textContent = "Limits active";
     lock.className = "pill bad";
     $("#sessionTitle").textContent = "Limit lock";
+    orbState = "limit";
   } else {
     lock.textContent = "Unlocked";
     lock.className = "pill good";
     $("#sessionTitle").textContent = "Ready";
   }
+  renderOrbState(orbState);
 
   if (brickButton) {
     brickButton.disabled = Boolean(active || session);
     if (!active && !session && $("#brickStatus").textContent === "Locked") $("#brickStatus").textContent = "Mac Brick";
   }
   $("#watcherStatus").textContent = monitor.ok ? "Watcher online" : "Watcher needs permission";
+}
+
+function renderOrbState(orbState) {
+  const orb = $("#vigilOrb");
+  if (!orb) return;
+  orb.className = `vigil-orb ${orbState}`;
+  document.body.dataset.lockState = orbState;
 }
 
 function renderFocusSound(data) {
@@ -1350,7 +1415,7 @@ function renderDevices(devices) {
   $("#iosBlockApps").checked = ios.blockApps !== false;
   $("#iosBlockWeb").checked = ios.blockWeb !== false;
   $("#iosHardenRemoval").checked = ios.removalHardened || ios.hardenRemoval !== false;
-  $("#iosRestrictInstallAndErase").checked = ios.restrictInstallAndErase !== false;
+  $("#iosRestrictInstallErase").checked = ios.restrictInstallAndErase !== false;
   $("#iosBlockedBundles").value = (ios.blockedAppBundleIds || []).join("\n");
   $("#iosAllowedBundles").value = (ios.allowedAppBundleIds || []).join("\n");
   $("#iosDeniedUrls").value = (ios.deniedUrls || []).join("\n");
@@ -1694,7 +1759,7 @@ async function post(path, body) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Screen-Time-Intent": "local-dashboard"
+      "X-Vigil-Intent": "vigil-app"
     },
     body: JSON.stringify(body)
   });
@@ -1704,7 +1769,7 @@ async function post(path, body) {
 async function del(path) {
   const response = await fetch(path, {
     method: "DELETE",
-    headers: { "X-Screen-Time-Intent": "local-dashboard" }
+    headers: { "X-Vigil-Intent": "vigil-app" }
   });
   return parseResponse(response);
 }

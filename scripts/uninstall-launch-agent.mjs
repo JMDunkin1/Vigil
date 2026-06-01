@@ -4,14 +4,20 @@ import { promisify } from "node:util";
 import { join } from "node:path";
 
 const execFileAsync = promisify(execFile);
-const label = "tech.caseline.vigil.agent";
-const plistPath = join(process.env.HOME, "Library", "LaunchAgents", `${label}.plist`);
+const labels = ["com.vigil.agent", "tech.caseline.vigil.agent"];
 
-try {
-  await execFileAsync("/bin/launchctl", ["bootout", `gui/${process.getuid()}`, plistPath], { timeout: 5000 });
-} catch {
-  // Already unloaded.
+for (const label of labels) {
+  const plistPath = join(process.env.HOME, "Library", "LaunchAgents", `${label}.plist`);
+  try {
+    await execFileAsync("/bin/launchctl", ["bootout", `gui/${process.getuid()}/${label}`], { timeout: 5000 });
+  } catch {
+    // Already unloaded.
+  }
+  try {
+    await execFileAsync("/bin/launchctl", ["bootout", `gui/${process.getuid()}`, plistPath], { timeout: 5000 });
+  } catch {
+    // Already unloaded.
+  }
+  await rm(plistPath, { force: true });
+  console.log(`Removed LaunchAgent: ${plistPath}`);
 }
-
-await rm(plistPath, { force: true });
-console.log(`Removed LaunchAgent: ${plistPath}`);

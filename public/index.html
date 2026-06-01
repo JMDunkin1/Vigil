@@ -7,29 +7,43 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <div>
-      <p class="eyebrow">Vigil</p>
-      <h1>Control Panel</h1>
+  <header class="app-chrome">
+    <div class="brand-lockup">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <p class="eyebrow">Vigil</p>
+        <h1>Command</h1>
+      </div>
     </div>
+    <nav class="app-nav" aria-label="Primary">
+      <button class="nav-tab is-active" type="button" data-view-target="home" aria-selected="true">Home</button>
+      <button class="nav-tab" type="button" data-view-target="rules" aria-selected="false">Rules</button>
+      <button class="nav-tab" type="button" data-view-target="settings" aria-selected="false">Settings</button>
+      <button class="nav-tab" type="button" data-view-target="devices" aria-selected="false">Devices</button>
+      <button class="nav-tab" type="button" data-view-target="insights" aria-selected="false">Insights</button>
+    </nav>
     <div class="status-stack">
+      <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false">Dark</button>
       <span id="lockStatus" class="pill neutral">Loading</span>
       <span id="watcherStatus" class="tiny-status">Watcher starting</span>
     </div>
   </header>
 
   <main class="shell">
-    <section class="band overview-band">
-      <div class="focus-tool">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Session</p>
-            <h2 id="sessionTitle">Ready</h2>
-          </div>
+    <section id="view-home" class="view is-active" data-view="home">
+      <div class="home-stage">
+        <div id="vigilOrb" class="vigil-orb idle" aria-hidden="true">
+          <span class="orb-ring"></span>
+          <span class="orb-core"></span>
+          <span class="orb-glint"></span>
+        </div>
+        <div class="home-copy">
+          <p class="eyebrow">Current State</p>
+          <h2 id="sessionTitle">Ready</h2>
           <div id="sessionCountdown" class="countdown">--</div>
         </div>
 
-        <form id="startSessionForm" class="control-grid">
+        <form id="startSessionForm" class="home-controls">
           <label>
             Mode
             <select name="mode">
@@ -62,55 +76,45 @@
               <option value="light">Soft</option>
             </select>
           </label>
-          <label class="checkline"><input name="commitmentLock" type="checkbox"> Commitment</label>
-          <label class="checkline cycle-toggle"><input name="cycleEnabled" type="checkbox"> Cycles</label>
-          <label>
-            Work
-            <input name="cycleWorkMinutes" type="number" min="1" max="240" step="1" value="25">
-          </label>
-          <label>
-            Break
-            <input name="cycleBreakMinutes" type="number" min="1" max="120" step="1" value="5">
-          </label>
-          <label>
-            Rounds
-            <input name="cycleRounds" type="number" min="1" max="24" step="1" value="4">
-          </label>
-          <button class="primary" type="submit">Start Lock</button>
-          <button class="secondary" id="endSession" type="button">End Soft Lock</button>
+          <div class="hero-actions">
+            <button class="primary" type="submit">Start Lock</button>
+            <button class="secondary" id="endSession" type="button">End Soft Lock</button>
+          </div>
+          <div class="brick-quick">
+            <label>
+              Brick
+              <select id="brickDuration">
+                <option value="25">25 min</option>
+                <option value="50">50 min</option>
+                <option value="90" selected>90 min</option>
+                <option value="180">3 hours</option>
+                <option value="480">8 hours</option>
+                <option value="10080">7 days</option>
+              </select>
+            </label>
+            <button id="startBrickMode" class="danger" type="button">Brick Mode</button>
+            <span id="brickStatus" class="tiny-status">Mac Brick</span>
+          </div>
+          <details class="advanced-line">
+            <summary>Timing options</summary>
+            <div class="advanced-grid">
+              <label class="checkline"><input name="commitmentLock" type="checkbox"> Commitment</label>
+              <label class="checkline cycle-toggle"><input name="cycleEnabled" type="checkbox"> Cycles</label>
+              <label>
+                Work
+                <input name="cycleWorkMinutes" type="number" min="1" max="240" step="1" value="25">
+              </label>
+              <label>
+                Break
+                <input name="cycleBreakMinutes" type="number" min="1" max="120" step="1" value="5">
+              </label>
+              <label>
+                Rounds
+                <input name="cycleRounds" type="number" min="1" max="24" step="1" value="4">
+              </label>
+            </div>
+          </details>
         </form>
-        <div class="brick-quick">
-          <label>
-            Brick
-            <select id="brickDuration">
-              <option value="25">25 min</option>
-              <option value="50">50 min</option>
-              <option value="90" selected>90 min</option>
-              <option value="180">3 hours</option>
-              <option value="480">8 hours</option>
-              <option value="10080">7 days</option>
-            </select>
-          </label>
-          <button id="startBrickMode" class="danger" type="button">Brick Mode</button>
-          <span id="brickStatus" class="tiny-status">Mac Brick</span>
-        </div>
-
-        <div class="focus-sound-panel">
-          <label class="checkline"><input id="focusSoundEnabled" type="checkbox"> Focus sound</label>
-          <label>
-            Sound
-            <select id="focusSoundPreset">
-              <option value="brown-noise">Brown noise</option>
-              <option value="rain">Rain</option>
-              <option value="ocean">Ocean</option>
-            </select>
-          </label>
-          <label>
-            Volume
-            <input id="focusSoundVolume" type="range" min="0" max="100" step="1">
-          </label>
-          <span id="focusSoundStatus" class="tiny-status">Off</span>
-        </div>
 
         <div id="emergencyPanel" class="emergency hidden">
           <div>
@@ -130,7 +134,7 @@
         </div>
       </div>
 
-      <div class="metric-grid">
+      <div class="home-strip">
         <div class="metric">
           <span>Focus Score</span>
           <strong id="focusScore">--</strong>
@@ -150,457 +154,392 @@
       </div>
     </section>
 
-    <section class="band split-band">
-      <div class="panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Now</p>
-            <h2>Live Watcher</h2>
-          </div>
-          <span id="activeApp" class="pill neutral">No sample</span>
+    <section id="view-rules" class="view" data-view="rules" hidden>
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Rules</p>
+          <h2>Profiles, Schedules, Limits</h2>
         </div>
-        <div class="watch-grid">
-          <div>
-            <span>App</span>
-            <strong id="watchApp">--</strong>
-          </div>
-          <div>
-            <span>Site</span>
-            <strong id="watchSite">--</strong>
-          </div>
-          <div>
-            <span>Last Block</span>
-            <strong id="lastBlock">--</strong>
-          </div>
-          <div>
-            <span>Wi-Fi</span>
-            <strong id="watchWifi">--</strong>
-          </div>
-          <div>
-            <span>Sweep</span>
-            <strong id="watchSweep">--</strong>
-          </div>
-          <div>
-            <span>Sleep Lock</span>
-            <strong id="watchSystemLock">--</strong>
-          </div>
-        </div>
-        <div id="interventionPanel" class="intervention-panel"></div>
-        <div id="permissionWarning" class="warning hidden"></div>
       </div>
 
-      <div class="panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Hardening</p>
-            <h2>Local Protections</h2>
+      <div class="workspace two-column">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Profile</p>
+              <h2>Block Rules</h2>
+            </div>
+            <select id="profileSelect"></select>
           </div>
-          <span id="hostsStatus" class="pill neutral">Hosts</span>
-        </div>
-        <div class="toggle-row">
-          <label><input id="siteRedirectEnabled" type="checkbox"> Browser redirect</label>
-          <label><input id="contentFilterEnabled" type="checkbox"> Content filter</label>
-          <label><input id="browserNoiseBlockingEnabled" type="checkbox"> Browser cleanup</label>
-          <label><input id="typingChallengeEnabled" type="checkbox"> Typing challenge</label>
-          <label><input id="intentReasonEnabled" type="checkbox"> Reason gate</label>
-          <label><input id="appQuitEnabled" type="checkbox"> App quit</label>
-          <label><input id="strictBypassProtectionEnabled" type="checkbox"> Bypass tools</label>
-          <label><input id="processSweepEnabled" type="checkbox"> Background sweep</label>
-          <label><input id="systemSleepLockEnabled" type="checkbox"> Sleep screen lock</label>
-          <label><input id="focusShortcutEnabled" type="checkbox"> Focus hooks</label>
-          <label><input id="strictByDefault" type="checkbox"> Strict default</label>
-          <label><input id="protectedEditsEnabled" type="checkbox"> Protected edits</label>
-          <label><input id="foolproofModeEnabled" type="checkbox"> Foolproof mode</label>
-          <label class="numberline">Escalate after <input id="appQuitEscalationSeconds" type="number" min="1" max="3600" step="1"> sec</label>
-          <label class="numberline">Sweep every <input id="processSweepIntervalSeconds" type="number" min="3" max="3600" step="1"> sec</label>
-          <label class="numberline">Relock sleep every <input id="systemSleepLockIntervalSeconds" type="number" min="15" max="3600" step="1"> sec</label>
-          <label class="numberline">Reason min <input id="intentReasonMinLength" type="number" min="1" max="280" step="1"> chars</label>
-        </div>
-        <div class="focus-shortcut-panel">
-          <div>
-            <p class="eyebrow">Notification Focus</p>
-            <p id="focusShortcutStatus">Disabled</p>
+          <form id="profileForm" class="profile-form">
+            <input name="id" type="hidden">
+            <div class="form-row">
+              <label>
+                Name
+                <input name="name" type="text">
+              </label>
+              <label>
+                Mode
+                <select name="mode">
+                  <option value="blocklist">Blocklist</option>
+                  <option value="allowlist">Allowlist</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              Blocked apps
+              <textarea name="blockedApps" rows="5"></textarea>
+            </label>
+            <label>
+              Blocked sites
+              <textarea name="blockedSites" rows="5"></textarea>
+            </label>
+            <label>
+              Blocked URL patterns
+              <textarea name="blockedUrlPatterns" rows="4" placeholder="youtube.com/shorts&#10;/reels&#10;casino"></textarea>
+            </label>
+            <div id="profilePresetStrip" class="preset-strip" data-form="profileForm" data-app-field="blockedApps" data-site-field="blockedSites"></div>
+            <label>
+              Allowed apps
+              <textarea name="allowedApps" rows="4"></textarea>
+            </label>
+            <label>
+              Allowed sites
+              <textarea name="allowedSites" rows="4"></textarea>
+            </label>
+            <button class="primary" type="submit">Save Profile</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Schedules</p>
+              <h2>Recurring Locks</h2>
+            </div>
+            <button id="newSchedule" class="secondary" type="button">New</button>
           </div>
-          <input id="focusShortcutOnName" type="text" placeholder="Focus On shortcut">
-          <input id="focusShortcutOffName" type="text" placeholder="Focus Off shortcut">
-          <button id="saveFocusShortcuts" class="secondary" type="button">Save Focus Hooks</button>
-        </div>
-        <div class="maintenance-panel">
-          <div>
-            <p class="eyebrow">Maintenance</p>
-            <p id="maintenanceStatus">Closed</p>
+          <form id="scheduleForm" class="schedule-form">
+            <input name="id" type="hidden">
+            <div class="form-row">
+              <label>
+                Name
+                <input name="name" type="text" value="Focus block">
+              </label>
+              <label>
+                Mode
+                <select name="mode">
+                  <option value="focus">Focus</option>
+                  <option value="brick">Brick</option>
+                  <option value="sleep">Sleep</option>
+                  <option value="rehab">Rehab</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-row">
+              <label>
+                Start
+                <input name="start" type="time" value="09:00">
+              </label>
+              <label>
+                End
+                <input name="end" type="time" value="17:00">
+              </label>
+            </div>
+            <label>
+              Wi-Fi networks
+              <textarea name="wifiNetworks" rows="2"></textarea>
+            </label>
+            <div class="day-grid" id="scheduleDays"></div>
+            <label class="checkline"><input name="enabled" type="checkbox"> Enabled</label>
+            <label class="checkline"><input name="commitmentLock" type="checkbox"> Commitment lock</label>
+            <button class="primary" type="submit">Save Schedule</button>
+          </form>
+          <div id="scheduleList" class="list"></div>
+        </section>
+      </div>
+
+      <div class="workspace two-column">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Limits</p>
+              <h2>Time & Open Rules</h2>
+            </div>
+            <button id="newLimit" class="secondary" type="button">New</button>
           </div>
-          <input id="maintenanceReason" type="text" placeholder="Reason">
-          <input id="maintenancePasscode" type="password" placeholder="Keyholder passcode">
-          <div class="distance-input">
-            <input id="maintenanceDistanceKey" type="password" placeholder="Distance key">
-            <button class="secondary compact" type="button" data-scan-distance-key="#maintenanceDistanceKey">Scan</button>
+          <form id="limitForm" class="limit-form">
+            <input name="id" type="hidden">
+            <div class="form-row thirds">
+              <label>
+                Name
+                <input name="name" type="text" value="Social cap">
+              </label>
+              <label>
+                Type
+                <select name="type">
+                  <option value="time">Time</option>
+                  <option value="open">Open</option>
+                </select>
+              </label>
+              <label>
+                Lock
+                <select name="lockLevel">
+                  <option value="deep">Strict</option>
+                  <option value="light">Soft</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-row thirds">
+              <label>
+                Minutes
+                <input name="limitMinutes" type="number" min="1" max="1440" value="45">
+              </label>
+              <label>
+                Opens
+                <input name="unlocksAllowed" type="number" min="0" max="200" value="5">
+              </label>
+              <label>
+                Block
+                <select name="blockMinutes">
+                  <option value="0">Rest of day</option>
+                  <option value="30">30 min</option>
+                  <option value="60">1 hour</option>
+                  <option value="180">3 hours</option>
+                  <option value="480">8 hours</option>
+                </select>
+              </label>
+            </div>
+            <div class="day-grid" id="limitDays"></div>
+            <div class="form-row">
+              <label>
+                Apps
+                <textarea name="apps" rows="4"></textarea>
+              </label>
+              <label>
+                Sites
+                <textarea name="sites" rows="4"></textarea>
+              </label>
+            </div>
+            <div id="limitPresetStrip" class="preset-strip" data-form="limitForm" data-app-field="apps" data-site-field="sites"></div>
+            <label class="checkline"><input name="enabled" type="checkbox"> Enabled</label>
+            <button class="primary" type="submit">Save Limit</button>
+          </form>
+          <div id="limitList" class="list limit-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">App Lock</p>
+              <h2>Semi-Permanent Locks</h2>
+            </div>
+            <button id="newAppLock" class="secondary" type="button">New</button>
           </div>
-          <code id="maintenanceChallenge" class="typing-challenge hidden"></code>
-          <input id="maintenanceChallengeInput" class="hidden" type="text" placeholder="Typing challenge">
-          <button id="requestMaintenance" class="secondary" type="button">Request</button>
-          <button id="confirmMaintenance" class="danger ghost" type="button" disabled>Confirm</button>
-        </div>
-        <form id="keyholderForm" class="keyholder-panel">
-          <label class="checkline"><input id="keyholderEnabled" name="enabled" type="checkbox"> Keyholder passcode</label>
-          <input id="keyholderPasscode" name="passcode" type="password" placeholder="New passcode">
-          <span id="keyholderStatus" class="tiny-status">Not set</span>
-          <button class="secondary" type="submit">Save Keyholder</button>
-        </form>
-        <form id="distanceKeyForm" class="distance-key-panel">
-          <label class="checkline"><input id="distanceKeyEnabled" name="enabled" type="checkbox"> Distance key</label>
-          <div class="distance-input">
-            <input id="distanceKeyTokenInput" name="token" type="password" placeholder="Enter existing token">
-            <button class="secondary compact" type="button" data-scan-distance-key="#distanceKeyTokenInput">Scan</button>
+          <form id="appLockForm" class="limit-form">
+            <input name="id" type="hidden">
+            <div class="form-row thirds">
+              <label>
+                Name
+                <input name="name" type="text" value="Locked socials">
+              </label>
+              <label>
+                Unlocks
+                <input name="unlocksAllowed" type="number" min="0" max="200" value="2">
+              </label>
+              <label>
+                Window
+                <select name="unlockMinutes">
+                  <option value="5">5 min</option>
+                  <option value="10" selected>10 min</option>
+                  <option value="15">15 min</option>
+                  <option value="30">30 min</option>
+                  <option value="60">1 hour</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-row thirds">
+              <label>
+                Delay
+                <select name="delaySeconds">
+                  <option value="0">None</option>
+                  <option value="30" selected>30 sec</option>
+                  <option value="60">1 min</option>
+                  <option value="300">5 min</option>
+                  <option value="900">15 min</option>
+                </select>
+              </label>
+              <label>
+                Lock
+                <select name="lockLevel">
+                  <option value="deep">Strict</option>
+                  <option value="light">Soft</option>
+                </select>
+              </label>
+              <label class="checkline app-lock-enabled"><input name="enabled" type="checkbox"> Enabled</label>
+            </div>
+            <div class="day-grid" id="appLockDays"></div>
+            <div class="form-row">
+              <label>
+                Apps
+                <textarea name="apps" rows="4"></textarea>
+              </label>
+              <label>
+                Sites
+                <textarea name="sites" rows="4"></textarea>
+              </label>
+            </div>
+            <div id="appLockPresetStrip" class="preset-strip" data-form="appLockForm" data-app-field="apps" data-site-field="sites"></div>
+            <button class="primary" type="submit">Save App Lock</button>
+          </form>
+          <div class="unlock-strip">
+            <input id="appLockReason" type="text" placeholder="Reason">
+            <input id="appLockPasscode" type="password" placeholder="Keyholder passcode">
+            <div class="distance-input">
+              <input id="appLockDistanceKey" type="password" placeholder="Distance key">
+              <button class="secondary compact" type="button" data-scan-distance-key="#appLockDistanceKey">Scan</button>
+            </div>
+            <code id="appLockChallenge" class="typing-challenge hidden"></code>
+            <input id="appLockChallengeInput" class="hidden" type="text" placeholder="Typing challenge">
+            <span class="tiny-status">Unlock confirm</span>
           </div>
-          <input id="distanceKeyFilePath" name="keyFilePath" type="text" placeholder="Key file path">
-          <span id="distanceKeyStatus" class="tiny-status">Not set</span>
-          <button id="saveDistanceKey" class="secondary" type="submit">Save</button>
-          <button id="rotateDistanceKey" class="secondary" type="button">Generate</button>
-          <button id="writeDistanceKeyFile" class="secondary" type="button">Write File</button>
-          <code id="distanceKeyToken" class="distance-token hidden"></code>
-          <div id="distanceKeyQr" class="distance-qr hidden">
-            <div id="distanceKeyQrImage" aria-label="Distance key QR code"></div>
-            <button id="printDistanceKey" class="secondary compact" type="button">Print Key</button>
-          </div>
-        </form>
-        <div class="hardening-actions">
-          <button id="installLaunchAgent" class="secondary" type="button">Install Login Agent</button>
-          <button id="applyHostsBlock" class="secondary" type="button">Apply Hosts Block</button>
-          <button id="clearTamperAlarm" class="secondary" type="button" hidden>Clear Tamper Alarm</button>
-          <button id="copyHostsCommand" class="secondary" type="button">Copy Hosts Command</button>
-          <button id="copySourceSealCommand" class="secondary" type="button">Copy Source Seal</button>
-          <button id="copyExtensionPath" class="secondary" type="button">Copy Extension Path</button>
-          <span id="hardeningActionStatus" class="tiny-status">Ready</span>
-        </div>
-        <div id="hardeningAudit" class="audit-list"></div>
-        <div id="foolproofBlockers" class="blocker-list"></div>
-        <pre id="hostsBlock" class="hosts-preview"></pre>
+          <div id="appLockList" class="list limit-list"></div>
+        </section>
       </div>
     </section>
 
-    <section class="band split-band">
-      <div class="panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Profile</p>
-            <h2>Block Rules</h2>
-          </div>
-          <select id="profileSelect"></select>
+    <section id="view-settings" class="view" data-view="settings" hidden>
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Settings</p>
+          <h2>Protection & Hardening</h2>
         </div>
-        <form id="profileForm" class="profile-form">
-          <input name="id" type="hidden">
-          <div class="form-row">
-            <label>
-              Name
-              <input name="name" type="text">
-            </label>
-            <label>
-              Mode
-              <select name="mode">
-                <option value="blocklist">Blocklist</option>
-                <option value="allowlist">Allowlist</option>
-              </select>
-            </label>
-          </div>
-          <label>
-            Blocked apps
-            <textarea name="blockedApps" rows="5"></textarea>
-          </label>
-          <label>
-            Blocked sites
-            <textarea name="blockedSites" rows="5"></textarea>
-          </label>
-          <label>
-            Blocked URL patterns
-            <textarea name="blockedUrlPatterns" rows="4" placeholder="youtube.com/shorts&#10;/reels&#10;casino"></textarea>
-          </label>
-          <div id="profilePresetStrip" class="preset-strip" data-form="profileForm" data-app-field="blockedApps" data-site-field="blockedSites"></div>
-          <label>
-            Allowed apps
-            <textarea name="allowedApps" rows="4"></textarea>
-          </label>
-          <label>
-            Allowed sites
-            <textarea name="allowedSites" rows="4"></textarea>
-          </label>
-          <button class="primary" type="submit">Save Profile</button>
-        </form>
+        <span id="hostsStatus" class="pill neutral">Hosts</span>
       </div>
 
-      <div class="panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Schedules</p>
-            <h2>Recurring Locks</h2>
+      <div class="workspace">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Hardening</p>
+              <h2>Local Protections</h2>
+            </div>
           </div>
-          <button id="newSchedule" class="secondary" type="button">New</button>
-        </div>
-        <form id="scheduleForm" class="schedule-form">
-          <input name="id" type="hidden">
-          <div class="form-row">
+          <div class="toggle-row">
+            <label><input id="siteRedirectEnabled" type="checkbox"> Browser redirect</label>
+            <label><input id="contentFilterEnabled" type="checkbox"> Content filter</label>
+            <label><input id="browserNoiseBlockingEnabled" type="checkbox"> Browser cleanup</label>
+            <label><input id="typingChallengeEnabled" type="checkbox"> Typing challenge</label>
+            <label><input id="intentReasonEnabled" type="checkbox"> Reason gate</label>
+            <label><input id="appQuitEnabled" type="checkbox"> App quit</label>
+            <label><input id="strictBypassProtectionEnabled" type="checkbox"> Bypass tools</label>
+            <label><input id="processSweepEnabled" type="checkbox"> Background sweep</label>
+            <label><input id="systemSleepLockEnabled" type="checkbox"> Sleep screen lock</label>
+            <label><input id="focusShortcutEnabled" type="checkbox"> Focus hooks</label>
+            <label><input id="strictByDefault" type="checkbox"> Strict default</label>
+            <label><input id="protectedEditsEnabled" type="checkbox"> Protected edits</label>
+            <label><input id="foolproofModeEnabled" type="checkbox"> Foolproof mode</label>
+            <label class="numberline">Escalate after <input id="appQuitEscalationSeconds" type="number" min="1" max="3600" step="1"> sec</label>
+            <label class="numberline">Sweep every <input id="processSweepIntervalSeconds" type="number" min="3" max="3600" step="1"> sec</label>
+            <label class="numberline">Relock sleep every <input id="systemSleepLockIntervalSeconds" type="number" min="15" max="3600" step="1"> sec</label>
+            <label class="numberline">Reason min <input id="intentReasonMinLength" type="number" min="1" max="280" step="1"> chars</label>
+          </div>
+
+          <div class="focus-sound-panel">
+            <label class="checkline"><input id="focusSoundEnabled" type="checkbox"> Focus sound</label>
             <label>
-              Name
-              <input name="name" type="text" value="Focus block">
-            </label>
-            <label>
-              Mode
-              <select name="mode">
-                <option value="focus">Focus</option>
-                <option value="brick">Brick</option>
-                <option value="sleep">Sleep</option>
-                <option value="rehab">Rehab</option>
+              Sound
+              <select id="focusSoundPreset">
+                <option value="brown-noise">Brown noise</option>
+                <option value="rain">Rain</option>
+                <option value="ocean">Ocean</option>
               </select>
             </label>
-          </div>
-          <div class="form-row">
             <label>
-              Start
-              <input name="start" type="time" value="09:00">
+              Volume
+              <input id="focusSoundVolume" type="range" min="0" max="100" step="1">
             </label>
-            <label>
-              End
-              <input name="end" type="time" value="17:00">
-            </label>
+            <span id="focusSoundStatus" class="tiny-status">Off</span>
           </div>
-          <label>
-            Wi-Fi networks
-            <textarea name="wifiNetworks" rows="2"></textarea>
-          </label>
-          <div class="day-grid" id="scheduleDays"></div>
-          <label class="checkline"><input name="enabled" type="checkbox"> Enabled</label>
-          <label class="checkline"><input name="commitmentLock" type="checkbox"> Commitment lock</label>
-          <button class="primary" type="submit">Save Schedule</button>
-        </form>
-        <div id="scheduleList" class="list"></div>
+
+          <div class="focus-shortcut-panel">
+            <div>
+              <p class="eyebrow">Notification Focus</p>
+              <p id="focusShortcutStatus">Disabled</p>
+            </div>
+            <input id="focusShortcutOnName" type="text" placeholder="Focus On shortcut">
+            <input id="focusShortcutOffName" type="text" placeholder="Focus Off shortcut">
+            <button id="saveFocusShortcuts" class="secondary" type="button">Save Focus Hooks</button>
+          </div>
+
+          <div class="maintenance-panel">
+            <div>
+              <p class="eyebrow">Maintenance</p>
+              <p id="maintenanceStatus">Closed</p>
+            </div>
+            <input id="maintenanceReason" type="text" placeholder="Reason">
+            <input id="maintenancePasscode" type="password" placeholder="Keyholder passcode">
+            <div class="distance-input">
+              <input id="maintenanceDistanceKey" type="password" placeholder="Distance key">
+              <button class="secondary compact" type="button" data-scan-distance-key="#maintenanceDistanceKey">Scan</button>
+            </div>
+            <code id="maintenanceChallenge" class="typing-challenge hidden"></code>
+            <input id="maintenanceChallengeInput" class="hidden" type="text" placeholder="Typing challenge">
+            <button id="requestMaintenance" class="secondary" type="button">Request</button>
+            <button id="confirmMaintenance" class="danger ghost" type="button" disabled>Confirm</button>
+          </div>
+
+          <form id="keyholderForm" class="keyholder-panel">
+            <label class="checkline"><input id="keyholderEnabled" name="enabled" type="checkbox"> Keyholder passcode</label>
+            <input id="keyholderPasscode" name="passcode" type="password" placeholder="New passcode">
+            <span id="keyholderStatus" class="tiny-status">Not set</span>
+            <button class="secondary" type="submit">Save Keyholder</button>
+          </form>
+
+          <form id="distanceKeyForm" class="distance-key-panel">
+            <label class="checkline"><input id="distanceKeyEnabled" name="enabled" type="checkbox"> Distance key</label>
+            <div class="distance-input">
+              <input id="distanceKeyTokenInput" name="token" type="password" placeholder="Enter existing token">
+              <button class="secondary compact" type="button" data-scan-distance-key="#distanceKeyTokenInput">Scan</button>
+            </div>
+            <input id="distanceKeyFilePath" name="keyFilePath" type="text" placeholder="Key file path">
+            <span id="distanceKeyStatus" class="tiny-status">Not set</span>
+            <button id="saveDistanceKey" class="secondary" type="submit">Save</button>
+            <button id="rotateDistanceKey" class="secondary" type="button">Generate</button>
+            <button id="writeDistanceKeyFile" class="secondary" type="button">Write File</button>
+            <code id="distanceKeyToken" class="distance-token hidden"></code>
+            <div id="distanceKeyQr" class="distance-qr hidden">
+              <div id="distanceKeyQrImage" aria-label="Distance key QR code"></div>
+              <button id="printDistanceKey" class="secondary compact" type="button">Print Key</button>
+            </div>
+          </form>
+
+          <div class="hardening-actions">
+            <button id="installLaunchAgent" class="secondary" type="button">Install Login Agent</button>
+            <button id="applyHostsBlock" class="secondary" type="button">Apply Hosts Block</button>
+            <button id="clearTamperAlarm" class="secondary" type="button" hidden>Clear Tamper Alarm</button>
+            <button id="copyHostsCommand" class="secondary" type="button">Copy Hosts Command</button>
+            <button id="copySourceSealCommand" class="secondary" type="button">Copy Source Seal</button>
+            <button id="copyExtensionPath" class="secondary" type="button">Copy Extension Path</button>
+            <span id="hardeningActionStatus" class="tiny-status">Ready</span>
+          </div>
+          <div id="hardeningAudit" class="audit-list"></div>
+          <div id="foolproofBlockers" class="blocker-list"></div>
+          <pre id="hostsBlock" class="hosts-preview"></pre>
+        </section>
       </div>
     </section>
 
-    <section class="band">
-      <div class="panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Limits</p>
-            <h2>Time & Open Rules</h2>
-          </div>
-          <button id="newLimit" class="secondary" type="button">New</button>
+    <section id="view-devices" class="view" data-view="devices" hidden>
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Devices</p>
+          <h2>Companion Control</h2>
         </div>
-        <form id="limitForm" class="limit-form">
-          <input name="id" type="hidden">
-          <div class="form-row thirds">
-            <label>
-              Name
-              <input name="name" type="text" value="Social cap">
-            </label>
-            <label>
-              Type
-              <select name="type">
-                <option value="time">Time</option>
-                <option value="open">Open</option>
-              </select>
-            </label>
-            <label>
-              Lock
-              <select name="lockLevel">
-                <option value="deep">Strict</option>
-                <option value="light">Soft</option>
-              </select>
-            </label>
-          </div>
-          <div class="form-row thirds">
-            <label>
-              Minutes
-              <input name="limitMinutes" type="number" min="1" max="1440" value="45">
-            </label>
-            <label>
-              Opens
-              <input name="unlocksAllowed" type="number" min="0" max="200" value="5">
-            </label>
-            <label>
-              Block
-              <select name="blockMinutes">
-                <option value="0">Rest of day</option>
-                <option value="30">30 min</option>
-                <option value="60">1 hour</option>
-                <option value="180">3 hours</option>
-                <option value="480">8 hours</option>
-              </select>
-            </label>
-          </div>
-          <div class="day-grid" id="limitDays"></div>
-          <div class="form-row">
-            <label>
-              Apps
-              <textarea name="apps" rows="4"></textarea>
-            </label>
-            <label>
-              Sites
-              <textarea name="sites" rows="4"></textarea>
-            </label>
-          </div>
-          <div id="limitPresetStrip" class="preset-strip" data-form="limitForm" data-app-field="apps" data-site-field="sites"></div>
-          <label class="checkline"><input name="enabled" type="checkbox"> Enabled</label>
-          <button class="primary" type="submit">Save Limit</button>
-        </form>
-        <div id="limitList" class="list limit-list"></div>
+        <span id="androidStatus" class="pill neutral">Android</span>
       </div>
-    </section>
 
-    <section class="band">
-      <div class="panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">App Lock</p>
-            <h2>Semi-Permanent Locks</h2>
-          </div>
-          <button id="newAppLock" class="secondary" type="button">New</button>
-        </div>
-        <form id="appLockForm" class="limit-form">
-          <input name="id" type="hidden">
-          <div class="form-row thirds">
-            <label>
-              Name
-              <input name="name" type="text" value="Locked socials">
-            </label>
-            <label>
-              Unlocks
-              <input name="unlocksAllowed" type="number" min="0" max="200" value="2">
-            </label>
-            <label>
-              Window
-              <select name="unlockMinutes">
-                <option value="5">5 min</option>
-                <option value="10" selected>10 min</option>
-                <option value="15">15 min</option>
-                <option value="30">30 min</option>
-                <option value="60">1 hour</option>
-              </select>
-            </label>
-          </div>
-          <div class="form-row thirds">
-            <label>
-              Delay
-              <select name="delaySeconds">
-                <option value="0">None</option>
-                <option value="30" selected>30 sec</option>
-                <option value="60">1 min</option>
-                <option value="300">5 min</option>
-                <option value="900">15 min</option>
-              </select>
-            </label>
-            <label>
-              Lock
-              <select name="lockLevel">
-                <option value="deep">Strict</option>
-                <option value="light">Soft</option>
-              </select>
-            </label>
-            <label class="checkline app-lock-enabled"><input name="enabled" type="checkbox"> Enabled</label>
-          </div>
-          <div class="day-grid" id="appLockDays"></div>
-          <div class="form-row">
-            <label>
-              Apps
-              <textarea name="apps" rows="4"></textarea>
-            </label>
-            <label>
-              Sites
-              <textarea name="sites" rows="4"></textarea>
-            </label>
-          </div>
-          <div id="appLockPresetStrip" class="preset-strip" data-form="appLockForm" data-app-field="apps" data-site-field="sites"></div>
-          <button class="primary" type="submit">Save App Lock</button>
-        </form>
-        <div class="unlock-strip">
-          <input id="appLockReason" type="text" placeholder="Reason">
-          <input id="appLockPasscode" type="password" placeholder="Keyholder passcode">
-          <div class="distance-input">
-            <input id="appLockDistanceKey" type="password" placeholder="Distance key">
-            <button class="secondary compact" type="button" data-scan-distance-key="#appLockDistanceKey">Scan</button>
-          </div>
-          <code id="appLockChallenge" class="typing-challenge hidden"></code>
-          <input id="appLockChallengeInput" class="hidden" type="text" placeholder="Typing challenge">
-          <span class="tiny-status">Unlock confirm</span>
-        </div>
-        <div id="appLockList" class="list limit-list"></div>
-      </div>
-    </section>
-
-    <section class="band split-band">
-      <div class="panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Apps</p>
-            <h2>Today</h2>
-          </div>
-        </div>
-        <div id="appBars" class="bar-list"></div>
-      </div>
-      <div class="panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Sites</p>
-            <h2>Today</h2>
-          </div>
-        </div>
-        <div id="siteBars" class="bar-list"></div>
-      </div>
-    </section>
-
-    <section class="band">
-      <div class="panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Report</p>
-            <h2>Weekly Focus Report</h2>
-          </div>
-          <span id="reportRange" class="pill neutral">This week</span>
-        </div>
-        <div class="report-grid">
-          <div class="report-metric">
-            <span>Week Score</span>
-            <strong id="weekFocusScore">--</strong>
-            <em id="weekScoreDelta">--</em>
-          </div>
-          <div class="report-metric">
-            <span>Saved</span>
-            <strong id="weekSaved">--</strong>
-            <em id="weekSavedDelta">--</em>
-          </div>
-          <div class="report-metric">
-            <span>Streak</span>
-            <strong id="focusStreak">--</strong>
-            <em id="streakGoal">--</em>
-          </div>
-          <div class="report-metric">
-            <span>Year Pace</span>
-            <strong id="yearPace">--</strong>
-            <em id="decadePace">--</em>
-          </div>
-        </div>
-        <div class="week-strip" id="weekStrip"></div>
-        <div class="report-split">
-          <div>
-            <p class="eyebrow">Insights</p>
-            <div id="reportInsights" class="insight-list"></div>
-          </div>
-          <div>
-            <p class="eyebrow">Milestones</p>
-            <div id="milestones" class="milestone-list"></div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section class="band">
-      <div class="panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Devices</p>
-            <h2>Companion Control</h2>
-          </div>
-          <span id="androidStatus" class="pill neutral">Android</span>
-        </div>
+      <section class="panel">
         <div class="device-grid">
           <form id="androidForm" class="device-form">
             <label class="checkline"><input id="androidEnabled" name="enabled" type="checkbox"> Android ADB blocking</label>
@@ -713,11 +652,122 @@
             </form>
           </div>
         </div>
-      </div>
+      </section>
     </section>
 
-    <section class="band">
-      <div class="panel events-panel">
+    <section id="view-insights" class="view" data-view="insights" hidden>
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Insights</p>
+          <h2>Watcher, Usage, Report</h2>
+        </div>
+      </div>
+
+      <div class="workspace two-column">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Now</p>
+              <h2>Live Watcher</h2>
+            </div>
+            <span id="activeApp" class="pill neutral">No sample</span>
+          </div>
+          <div class="watch-grid">
+            <div>
+              <span>App</span>
+              <strong id="watchApp">--</strong>
+            </div>
+            <div>
+              <span>Site</span>
+              <strong id="watchSite">--</strong>
+            </div>
+            <div>
+              <span>Last Block</span>
+              <strong id="lastBlock">--</strong>
+            </div>
+            <div>
+              <span>Wi-Fi</span>
+              <strong id="watchWifi">--</strong>
+            </div>
+            <div>
+              <span>Sweep</span>
+              <strong id="watchSweep">--</strong>
+            </div>
+            <div>
+              <span>Sleep Lock</span>
+              <strong id="watchSystemLock">--</strong>
+            </div>
+          </div>
+          <div id="interventionPanel" class="intervention-panel"></div>
+          <div id="permissionWarning" class="warning hidden"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Report</p>
+              <h2>Weekly Focus Report</h2>
+            </div>
+            <span id="reportRange" class="pill neutral">This week</span>
+          </div>
+          <div class="report-grid">
+            <div class="report-metric">
+              <span>Week Score</span>
+              <strong id="weekFocusScore">--</strong>
+              <em id="weekScoreDelta">--</em>
+            </div>
+            <div class="report-metric">
+              <span>Saved</span>
+              <strong id="weekSaved">--</strong>
+              <em id="weekSavedDelta">--</em>
+            </div>
+            <div class="report-metric">
+              <span>Streak</span>
+              <strong id="focusStreak">--</strong>
+              <em id="streakGoal">--</em>
+            </div>
+            <div class="report-metric">
+              <span>Year Pace</span>
+              <strong id="yearPace">--</strong>
+              <em id="decadePace">--</em>
+            </div>
+          </div>
+          <div class="week-strip" id="weekStrip"></div>
+          <div class="report-split">
+            <div>
+              <p class="eyebrow">Insights</p>
+              <div id="reportInsights" class="insight-list"></div>
+            </div>
+            <div>
+              <p class="eyebrow">Milestones</p>
+              <div id="milestones" class="milestone-list"></div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <div class="workspace two-column">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Apps</p>
+              <h2>Today</h2>
+            </div>
+          </div>
+          <div id="appBars" class="bar-list"></div>
+        </section>
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Sites</p>
+              <h2>Today</h2>
+            </div>
+          </div>
+          <div id="siteBars" class="bar-list"></div>
+        </section>
+      </div>
+
+      <section class="panel events-panel">
         <div class="section-head">
           <div>
             <p class="eyebrow">Log</p>
@@ -725,7 +775,7 @@
           </div>
         </div>
         <div id="eventsList" class="events-list"></div>
-      </div>
+      </section>
     </section>
   </main>
 

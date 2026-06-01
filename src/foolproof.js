@@ -72,6 +72,7 @@ export function foolproofBlockers(state, context = {}, now = new Date()) {
   else if (!extensionVersion.ok) blockers.push(blocker("browser-extension-version", extensionVersion.detail));
   if (!dynamicRules.ok) blockers.push(blocker("extension-rules", dynamicRules.detail));
   if (!agent.loaded || !agent.running) blockers.push(blocker("launch-agent", "LaunchAgent must be loaded and running."));
+  else if (agent.legacyInstalled) blockers.push(blocker("launch-agent", "Legacy Vigil LaunchAgent must be removed."));
   if (!hosts.installed || hosts.partial || hosts.stale) blockers.push(blocker("hosts", "Hosts block must be installed and current."));
 
   return blockers;

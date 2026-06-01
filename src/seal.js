@@ -6,6 +6,9 @@ const ALGORITHM = "hmac-sha256";
 const STATE_SCOPE = "state";
 const STATE_PROTECTION_VERSION = 1;
 const BOOKKEEPING_MISMATCH_STATUS = "bookkeeping-mismatch";
+const TRUSTED_MIGRATION_STATUS = "trusted-migration";
+const LEGACY_APP_NAME = "Vigil";
+const CURRENT_APP_NAME = "Vigil";
 const PROTECTED_SETTINGS = [
   "pollIntervalMs",
   "strictByDefault",
@@ -68,11 +71,12 @@ export async function verifyStateTextSeal(text, { keyPath, sealPath }) {
   const trimmedKey = key.trim();
   const actual = stateDigest(text, trimmedKey);
   if (!safeEqualHex(expected, actual)) {
-    if (protectedStateDigestMatches(text, parsed, trimmedKey)) {
+    const repair = repairableProtectedStateDigestMatch(text, parsed, trimmedKey);
+    if (repair) {
       return {
         ok: true,
-        status: BOOKKEEPING_MISMATCH_STATUS,
-        detail: "State file changed only in unprotected runtime bookkeeping; the seal can be refreshed without entering lockdown.",
+        status: repair.status,
+        detail: repair.detail,
         sealedAt: parsed.sealedAt || null,
         checkedAt: new Date().toISOString(),
         hasKey,
@@ -153,7 +157,7 @@ export function stateSealSummary(state, liveVerification = null) {
     ? (seal.tamperDetail || "Manual state-file tampering was detected.")
     : (liveVerification?.detail || seal.lastDetail || "State seal has not been checked yet.");
   return {
-    ok: status === "sealed" || status === BOOKKEEPING_MISMATCH_STATUS,
+    ok: status === "sealed" || status === BOOKKEEPING_MISMATCH_STATUS || status === TRUSTED_MIGRATION_STATUS,
     status,
     detail,
     tamperDetectedAt: seal.tamperDetectedAt || null,
@@ -166,19 +170,68 @@ export function stateDigest(text, key) {
   return createHmac("sha256", key).update(String(text || ""), "utf8").digest("hex");
 }
 
-function protectedStateDigestMatches(text, seal, key) {
+function repairableProtectedStateDigestMatch(text, seal, key) {
   const expected = String(seal.protectedDigest || "");
   if (seal.scope !== STATE_SCOPE || seal.protectedVersion !== STATE_PROTECTION_VERSION || !expected) return false;
   try {
-    return safeEqualHex(expected, protectedStateDigest(text, key));
+    const state = JSON.parse(text);
+    const snapshot = protectedStateSnapshot(state);
+    if (protectedSnapshotDigestMatches(snapshot, expected, key)) {
+      return {
+        status: BOOKKEEPING_MISMATCH_STATUS,
+        detail: "State file changed only in unprotected runtime bookkeeping; the seal can be refreshed without entering lockdown."
+      };
+    }
+
+    for (const variant of trustedProtectedStateMigrationVariants(snapshot)) {
+      if (protectedSnapshotDigestMatches(variant.snapshot, expected, key)) {
+        return {
+          status: TRUSTED_MIGRATION_STATUS,
+          detail: variant.detail
+        };
+      }
+    }
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 
 function protectedStateDigest(text, key) {
   const state = JSON.parse(text);
   return createHmac("sha256", key).update(stableText(protectedStateSnapshot(state)), "utf8").digest("hex");
+}
+
+function protectedSnapshotDigestMatches(snapshot, expected, key) {
+  return safeEqualHex(expected, createHmac("sha256", key).update(stableText(snapshot), "utf8").digest("hex"));
+}
+
+function trustedProtectedStateMigrationVariants(snapshot) {
+  const variants = [];
+  const legacyBranding = legacyBrandingVariant(snapshot);
+  if (legacyBranding) {
+    variants.push({
+      snapshot: legacyBranding,
+      detail: "State file changed only by the trusted Vigil to Vigil branding migration; the seal can be refreshed without entering lockdown."
+    });
+  }
+  return variants;
+}
+
+function legacyBrandingVariant(snapshot) {
+  const settings = snapshot?.settings || {};
+  const onName = `${CURRENT_APP_NAME} Focus On`;
+  const offName = `${CURRENT_APP_NAME} Focus Off`;
+  if (settings.focusShortcutOnName !== onName && settings.focusShortcutOffName !== offName) return null;
+
+  const variant = structuredClone(snapshot);
+  if (variant.settings.focusShortcutOnName === onName) {
+    variant.settings.focusShortcutOnName = `${LEGACY_APP_NAME} Focus On`;
+  }
+  if (variant.settings.focusShortcutOffName === offName) {
+    variant.settings.focusShortcutOffName = `${LEGACY_APP_NAME} Focus Off`;
+  }
+  return variant;
 }
 
 function protectedStateSnapshot(state = {}) {

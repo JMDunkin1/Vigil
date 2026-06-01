@@ -1,5 +1,5 @@
 export const APP_NAME = "Vigil";
-export const PORT = Number(process.env.VIGIL_PORT || 8787);
+export const PORT = Number(process.env.VIGIL_PORT || process.env.VIGIL_PORT || 8787);
 export const REQUIRED_EXTENSION_VERSION = "0.3.0";
 
 export const BROWSERS = new Set([

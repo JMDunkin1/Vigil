@@ -309,6 +309,11 @@ function hardeningIssues(checks) {
         ? "LaunchAgent is not loaded and running."
         : "LaunchAgent is not installed."
     });
+  } else if (agent?.legacyInstalled) {
+    issues.push({
+      id: "launch-agent",
+      detail: "Legacy Vigil LaunchAgent is still installed."
+    });
   }
 
   if (monitor && (!monitor.ok || monitor.accessibilityLikelyMissing)) {

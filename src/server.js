@@ -459,14 +459,14 @@ async function handleApi(request, response, url) {
   if (method === "GET" && path === "/api/devices/ios/mdm/enrollment.mobileconfig") {
     const profile = buildIosMdmEnrollmentProfile(state);
     markIosMdmEnrollmentGenerated(state);
-    addEvent(state, "ios_mdm_enrollment_generated", { bytes: Buffer.byteLength(profile), source: "dashboard" });
+    addEvent(state, "ios_mdm_enrollment_generated", { bytes: Buffer.byteLength(profile), source: "app" });
     await saveState(state);
     sendDownload(response, 200, profile, "vigil-iphone-mdm.mobileconfig", "application/x-apple-aspen-config");
     return;
   }
 
   if (method === "POST" && path === "/api/devices/ios/mdm/queue-policy") {
-    const result = queueIosMdmPolicyRefresh(state, "dashboard-refresh");
+    const result = queueIosMdmPolicyRefresh(state, "app-refresh");
     addEvent(state, "ios_mdm_policy_queued", result);
     await saveState(state);
     sendJson(response, 200, { ok: Boolean(result.queued), result });
@@ -1230,7 +1230,7 @@ function blockedPage(url) {
       </div>
       <div id="breakStatus" class="status">${escapeHtml(initialStatus)}</div>
     </section>
-    <p class="meta">Locked until ${until || "the session ends"}. Dashboard: <a href="http://127.0.0.1:${PORT}">Vigil</a></p>
+    <p class="meta">Locked until ${until || "the session ends"}. Vigil: <a href="http://127.0.0.1:${PORT}">open app</a></p>
   </main>
   <script>
     const pageData = ${safeScriptJson(pageData)};
@@ -1586,7 +1586,7 @@ function hardeningAudit({ hosts, agent, account, protection, monitor, foolproof,
     {
       id: "launch-agent",
       label: "LaunchAgent",
-      ok: agent.loaded && agent.running,
+      ok: agent.loaded && agent.running && !agent.legacyInstalled,
       detail: launchAgentDetail(agent)
     },
     {
@@ -1675,6 +1675,7 @@ function foolproofDetail(foolproof) {
 }
 
 function launchAgentDetail(agent) {
+  if (agent.legacyInstalled) return "Legacy Vigil login agent is still installed; reinstall the login agent to clean it up.";
   if (!agent.installed) return "Login persistence is not installed.";
   if (agent.running) return `Login persistence is running${agent.pid ? ` as PID ${agent.pid}` : ""}.`;
   if (agent.loaded) return "Login persistence is loaded but not currently running.";
@@ -1683,6 +1684,8 @@ function launchAgentDetail(agent) {
 
 function hostsDetail(hosts) {
   if (hosts.partial) return "Hosts block markers are incomplete; re-apply hosts.";
+  if (hosts.legacyInstalled) return "Legacy Vigil hosts block is still installed; re-apply hosts to migrate it.";
+  if (hosts.duplicate) return "Multiple managed hosts blocks are installed; re-apply hosts to consolidate them.";
   if (!hosts.installed) return "Hosts-file site block is not installed.";
   if (hosts.stale) return `Hosts block is stale (${hosts.installedEntries}/${hosts.expectedEntries} entries).`;
   return `Hosts-file site block is current (${hosts.installedEntries} entries).`;
