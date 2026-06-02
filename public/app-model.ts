@@ -20,6 +20,7 @@ export interface Preset {
   label: string;
   apps: string[];
   sites: string[];
+  urlPatterns?: string[];
 }
 
 export interface BarEntry {
@@ -61,6 +62,7 @@ export interface DashboardItem extends UnknownRecord {
   blockedApps?: string[];
   blockedSites?: string[];
   blockedUrlPatterns?: string[];
+  urlPatterns?: string[];
   allowedApps?: string[];
   allowedSites?: string[];
   commitmentLock?: boolean;

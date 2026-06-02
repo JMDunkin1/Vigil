@@ -30,6 +30,19 @@ export function activeAppLockPolicy(state: SentinelState, sample: UsageSample, n
   return null;
 }
 
+export function activeAppLockUnlockForSample(state: SentinelState, sample: UsageSample, now = new Date()): AppLockUnlock | null {
+  cleanupAppLockState(state, now);
+  if (!sample?.app) return null;
+
+  for (const lock of (state.appLocks || []).filter((item) => item.enabled)) {
+    if (!appliesToday(lock, now) || !sampleMatchesLock(state, lock, sample)) continue;
+    const unlock = activeUnlockFor(state, lock.id, now);
+    if (unlock) return unlock;
+  }
+
+  return null;
+}
+
 export function appLockSummary(state: SentinelState, now = new Date()) {
   cleanupAppLockState(state, now);
   return {

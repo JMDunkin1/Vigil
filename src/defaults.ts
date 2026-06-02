@@ -513,12 +513,15 @@ export function defaultState(): SentinelState {
           end: "23:59",
           apps: [],
           sites: [
-            "youtube.com",
             "instagram.com",
             "tiktok.com",
             "reddit.com",
             "x.com",
             "twitter.com"
+          ],
+          urlPatterns: [
+            "youtube.com/shorts",
+            "m.youtube.com/shorts"
           ],
           delaySeconds: 12,
           sessionMinutes: 10,

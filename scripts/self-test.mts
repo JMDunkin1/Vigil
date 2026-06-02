@@ -132,8 +132,17 @@ function hasStatusError(error: unknown): error is { status: number; message: str
   const state = defaultState();
   const usage = {};
   state.settings.activeProfileId = SOFT_BLOCK_PROFILE_ID;
-  const first = evaluateExtensionCheck(state, usage, {
+  const watch = evaluateExtensionCheck(state, usage, {
     url: "https://www.youtube.com/watch?v=abc",
+    previousUrl: "",
+    event: "navigation",
+    extensionVersion: REQUIRED_EXTENSION_VERSION
+  }, now);
+  assert.equal(watch.paused, false);
+  assert.equal(watch.blocked, false);
+
+  const first = evaluateExtensionCheck(state, usage, {
+    url: "https://www.youtube.com/shorts/abc",
     previousUrl: "",
     event: "navigation",
     extensionVersion: REQUIRED_EXTENSION_VERSION
@@ -148,9 +157,9 @@ function hasStatusError(error: unknown): error is { status: number; message: str
     intention: "Watch one specific tutorial",
     mood: "Focused"
   }, now);
-  assert.equal(continued.grant.targetType, "site");
+  assert.equal(continued.grant.targetType, "url");
   const allowed = evaluateExtensionCheck(state, usage, {
-    url: "https://youtube.com/watch?v=abc",
+    url: "https://youtube.com/shorts/abc",
     previousUrl: "",
     event: "activated",
     seconds: 45,
@@ -163,6 +172,36 @@ function hasStatusError(error: unknown): error is { status: number; message: str
 
   const manual = intentionalUseDecision(state, { app: "YouTube", hostname: "", url: "" }, { event: "mac-app" }, now);
   assert.equal(manual.shouldPause, false);
+
+  const unlockedState = defaultState();
+  unlockedState.appLocks = [{
+    id: "youtube-lock",
+    name: "YouTube lock",
+    enabled: true,
+    lockLevel: "deep",
+    days: TEST_DAYS,
+    apps: [],
+    sites: ["youtube.com"],
+    unlocksAllowed: 1,
+    unlockMinutes: 10,
+    delaySeconds: 0
+  }];
+  unlockedState.appLockUnlocks = [{
+    id: "youtube-unlock",
+    lockId: "youtube-lock",
+    lockName: "YouTube lock",
+    createdAt: now.toISOString(),
+    until: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
+    reason: "Watch one intentional video"
+  }];
+  const appLockUnlocked = evaluateExtensionCheck(unlockedState, {}, {
+    url: "https://www.youtube.com/shorts/abc",
+    previousUrl: "",
+    event: "navigation",
+    extensionVersion: REQUIRED_EXTENSION_VERSION
+  }, now);
+  assert.equal(appLockUnlocked.paused, false);
+  assert.equal(appLockUnlocked.blocked, false);
 
   const appState = defaultState();
   appState.intentionalUse.rules = [{
