@@ -16,6 +16,7 @@ export const SOURCE_SEAL_PATH = join(DATA_DIR, "source.seal.json");
 export const USAGE_PATH = join(DATA_DIR, "usage.json");
 
 type RawState = Partial<VigilState> & Record<string, unknown>;
+let stateSaveQueue: Promise<void> = Promise.resolve();
 
 export function resolveDefaultDataDir(runtimeRoot: string): string {
   const parent = dirname(runtimeRoot);
@@ -70,11 +71,16 @@ export async function loadState(): Promise<VigilState> {
   return state;
 }
 
-export async function saveState(state: VigilState): Promise<void> {
+export function saveState(state: VigilState): Promise<void> {
   const sealedAt = new Date().toISOString();
   markStateSealed(state, sealedAt);
-  const text = await writeJson(STATE_PATH, state);
-  await writeStateTextSeal(text, { keyPath: STATE_SEAL_KEY_PATH, sealPath: STATE_SEAL_PATH, scope: "state" }, sealedAt);
+  const snapshot = jsonClone(state);
+  const save = stateSaveQueue.then(
+    () => writeStateAndSeal(snapshot, sealedAt),
+    () => writeStateAndSeal(snapshot, sealedAt)
+  );
+  stateSaveQueue = save.catch(() => {});
+  return save;
 }
 
 export async function loadUsage(): Promise<UsageState> {
@@ -86,11 +92,11 @@ export async function saveUsage(usage: UsageState): Promise<void> {
   await writeJson(USAGE_PATH, usage);
 }
 
-export function addEvent(state: VigilState, type: string, detail: Record<string, unknown> = {}): void {
+export function addEvent(state: VigilState, type: string, detail: object = {}): void {
   state.events.unshift({
     id: randomUUID(),
     type,
-    detail,
+    detail: detail as Record<string, unknown>,
     at: new Date().toISOString()
   });
   state.events = state.events.slice(0, 250);
@@ -250,6 +256,15 @@ function cloneProfile(profile: Profile): Profile {
 
 function uniqueList(values: unknown[] = []): string[] {
   return [...new Set((values || []).map((item) => String(item).trim()).filter(Boolean))];
+}
+
+async function writeStateAndSeal(state: VigilState, sealedAt: string): Promise<void> {
+  const text = await writeJson(STATE_PATH, state);
+  await writeStateTextSeal(text, { keyPath: STATE_SEAL_KEY_PATH, sealPath: STATE_SEAL_PATH, scope: "state" }, sealedAt);
+}
+
+function jsonClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function isInstagramAppTarget(value: unknown): boolean {

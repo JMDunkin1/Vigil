@@ -15,7 +15,7 @@ import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
 import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, listRunningAppNames, lockScreen, notify, openUrl, redirectActiveBrowserTab, quitApp, urlHostname } from "./macos.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { recordOpen, recordUsage } from "./usage.js";
-import type { ActivePolicy, MonitorHandle, VigilState, UnknownRecord, UsageSample, UsageState } from "./types.js";
+import type { ActivePolicy, AppLockRule, LimitBlock, MonitorHandle, VigilState, UnknownRecord, UsageSample, UsageState } from "./types.js";
 
 interface MonitorContext {
   state: VigilState;
@@ -41,8 +41,8 @@ type EnforcedPolicy = ActivePolicy & {
   browserControl?: { area: string; label: string; url: string };
   contentFilter?: UnknownRecord & { id?: string; label: string };
   urlPattern?: { pattern: string; label: string };
-  appLock?: UnknownRecord;
-  limitBlock?: UnknownRecord;
+  appLock?: AppLockRule;
+  limitBlock?: LimitBlock;
 };
 
 interface MonitorStatus extends UnknownRecord {
@@ -71,17 +71,6 @@ interface BlockSiteOptions {
 interface BlockAppOptions {
   source?: string;
   notifyUser?: boolean;
-}
-
-interface LimitBlock extends UnknownRecord {
-  id: string;
-  ruleId: string;
-  ruleName: string;
-  type?: string;
-  lockLevel?: string;
-  createdAt: string;
-  until: string;
-  sites?: unknown[];
 }
 
 export function startMonitor(context: MonitorContext): MonitorHandle {
@@ -629,8 +618,7 @@ function policyForSample(state: VigilState, usage: UsageState, sample: UsageSamp
 }
 
 function strictAppLockBrowserControlPolicy(state: VigilState, now: Date): EnforcedPolicy | null {
-  for (const rawLock of state.appLocks || []) {
-    const lock = rawLock as UnknownRecord & { id?: string; enabled?: boolean; lockLevel?: string; sites?: string[]; days?: number[] };
+  for (const lock of state.appLocks || []) {
     const sites = lock.sites || [];
     if (!lock.enabled || (lock.lockLevel || "deep") !== "deep" || !sites.length) continue;
     const days = new Set(lock.days || []);
@@ -642,7 +630,7 @@ function strictAppLockBrowserControlPolicy(state: VigilState, now: Date): Enforc
 }
 
 function strictLimitBrowserControlPolicy(state: VigilState, now: Date): EnforcedPolicy | null {
-  const block = (activeLimitBlocks(state, now) as LimitBlock[]).find((item) => (item.lockLevel || "deep") === "deep" && (item.sites || []).length);
+  const block = activeLimitBlocks(state, now).find((item) => (item.lockLevel || "deep") === "deep" && (item.sites || []).length);
   if (!block) return null;
   return {
     kind: "limit",

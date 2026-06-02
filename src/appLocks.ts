@@ -9,6 +9,7 @@ import {
   hostMatchesSiteTargets,
   isStrictEmbeddedBrowserApp,
   isStrictUnsupportedBrowser,
+  normalizeLockLevel,
   normalizeHost
 } from "./policy.js";
 import type { ActivePolicy, AppLockRequest, AppLockRule, AppLockUnlock, VigilState, UnknownRecord, UsageSample } from "./types.js";
@@ -49,7 +50,7 @@ export function normalizeAppLock(body: UnknownRecord, existing: Partial<AppLockR
     id: String(body.id || existing?.id || fallbackId),
     name: String(body.name || existing?.name || "App lock").slice(0, 80),
     enabled: body.enabled === undefined ? Boolean(existing?.enabled) : parseBoolean(body.enabled, false),
-    lockLevel: String(body.lockLevel || existing?.lockLevel || "deep"),
+    lockLevel: normalizeLockLevel(body.lockLevel, existing?.lockLevel || "deep"),
     days: normalizeDays(body.days ?? existing?.days ?? [0, 1, 2, 3, 4, 5, 6]),
     apps: normalizeTargets(body.apps ?? existing?.apps),
     sites: normalizeTargets(body.sites ?? existing?.sites).map(normalizeHost).filter(Boolean),

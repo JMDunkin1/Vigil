@@ -944,6 +944,7 @@ last exit code = 0
 {
   const serverSource = await readFile(join(process.cwd(), "src", "server.js"), "utf8");
   const hardeningSummarySource = await readFile(join(process.cwd(), "src", "server", "hardeningSummary.js"), "utf8");
+  const extensionApiSource = await readFile(join(process.cwd(), "src", "server", "extensionApi.js"), "utf8");
   const localScriptsSource = await readFile(join(process.cwd(), "src", "server", "localScripts.js"), "utf8");
   const statePayloadSource = await readFile(join(process.cwd(), "src", "server", "statePayload.js"), "utf8");
   assert.match(serverSource, /\/api\/hardening\/hosts\/apply/);
@@ -956,7 +957,7 @@ last exit code = 0
   assert.match(hardeningSummarySource, /browser control pages/);
   assert.match(statePayloadSource, /strictPreflightState/);
   assert.match(statePayloadSource, /profileSnapshot: snapshotProfile\(profile\)/);
-  assert.match(serverSource, /\/api\/extension\/rules\/sync/);
+  assert.match(extensionApiSource, /\/api\/extension\/rules\/sync/);
   assert.match(statePayloadSource, /focusShortcutSummary/);
   assert.match(serverSource, /assertIntentReason/);
   assert.doesNotMatch(serverSource, /\/api\/devices\/android|Android|android_settings/);
@@ -979,10 +980,12 @@ last exit code = 0
   assert.match(appSource, /saveFocusShortcuts/);
   assert.doesNotMatch(appSource, /Android|android|ADB/);
   assert.match(appSource, /renderIntentReasonHints/);
-  assert.match(appSource, /createDistanceKeyQrSvg/);
   assert.doesNotMatch(appSource, /innerHTML|insertAdjacentHTML|outerHTML|document\.write/);
-  assert.match(appSource, /BarcodeDetector/);
-  assert.match(appSource, /printDistanceKey/);
+  assert.doesNotMatch(appSource, /createDistanceKeyQrSvg|BarcodeDetector/);
+  const distanceKeyUiSource = await readFile(join(process.cwd(), "public", "distance-key-ui.js"), "utf8");
+  assert.match(distanceKeyUiSource, /createDistanceKeyQrSvg/);
+  assert.match(distanceKeyUiSource, /BarcodeDetector/);
+  assert.match(distanceKeyUiSource, /function print/);
   const focusSoundSource = await readFile(join(process.cwd(), "public", "focus-sound.js"), "utf8");
   assert.match(focusSoundSource, /focusSoundPreset/);
   assert.match(focusSoundSource, /createNoiseSource/);
@@ -1199,7 +1202,7 @@ last exit code = 0
     endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
     canEndEarly: true,
     source: "manual",
-    deviceTargets: ["phone"],
+    deviceTargets: ["phone" as const],
     profileSnapshot: softProfile
   };
   assert.equal(activePolicy(state, now), null);
@@ -1209,7 +1212,7 @@ last exit code = 0
     ...state.activeSessions.phone,
     id: "computer-soft",
     title: "Computer Soft Block",
-    deviceTargets: ["computer"]
+    deviceTargets: ["computer" as const]
   };
   state.activeSessions.computer = computerSoft;
   state.activeSession = computerSoft;
@@ -1239,7 +1242,7 @@ last exit code = 0
     ...computerSoft,
     id: "both-devices",
     title: "Both devices",
-    deviceTargets: ["computer", "phone"]
+    deviceTargets: ["computer" as const, "phone" as const]
   };
   state.activeSessions.computer = bothDevices;
   state.activeSessions.phone = bothDevices;
