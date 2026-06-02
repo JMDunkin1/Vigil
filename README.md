@@ -152,6 +152,10 @@ Apple reality check for Instagram Reels: public iOS APIs can shield whole apps, 
 npm test
 ```
 
+## Development
+
+Vigil source is TypeScript. App, server, public UI, and extension code live as `.ts`; Node scripts and tests live as `.mts` so the compiled runtime keeps `.mjs` script entrypoints. `npm run build` writes runnable JavaScript to `dist/runtime`, and the normal npm commands build first before running the server, app, scripts, or tests. `npm run dev` watches the source tree and rebuilds before restarting the compiled server.
+
 ## Reality Check
 
 No normal local app can be perfectly foolproof on an admin-owned Mac. A determined admin can stop processes, edit files, remove permissions, or boot another environment. The app is designed to make the helpful path easy and the impulsive path slower. For stronger guarantees, run daily work from a standard macOS account, keep admin credentials away from the desk, and use the doctor/Foolproof account check. The next milestones are:
