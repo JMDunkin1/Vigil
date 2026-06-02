@@ -151,15 +151,6 @@ async function forceKillApp(appName: string) {
   }
 }
 
-export async function notify(title: string, message: string): Promise<boolean> {
-  try {
-    await runAppleScript(`display notification "${escapeAppleScript(message)}" with title "${escapeAppleScript(title)}"`, 1500);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function openUrl(url: unknown) {
   try {
     await execFileAsync("/usr/bin/open", [String(url || "")], { timeout: 1500 });
