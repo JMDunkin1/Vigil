@@ -1,3 +1,6 @@
+import { dayCheckbox, detailBlock, el, progressBlock, textEl } from "./dom.js";
+import { createDistanceKeyQrSvg } from "./distance-key-qr.js";
+
 const state = {
   data: null,
   activeView: "home",
@@ -1254,10 +1257,11 @@ function renderAudit(items) {
   for (const item of items) {
     const row = document.createElement("div");
     row.className = item.ok ? "audit-item good" : "audit-item warn";
-    row.innerHTML = `<span></span><strong></strong><em></em>`;
-    row.querySelector("span").textContent = item.ok ? "OK" : "Check";
-    row.querySelector("strong").textContent = item.label;
-    row.querySelector("em").textContent = item.detail;
+    row.append(
+      textEl("span", item.ok ? "OK" : "Check"),
+      textEl("strong", item.label),
+      textEl("em", item.detail)
+    );
     root.append(row);
   }
 }
@@ -1276,9 +1280,7 @@ function renderFoolproofBlockers(foolproof) {
   for (const item of foolproof.blockers || []) {
     const row = document.createElement("div");
     row.className = "blocker-item";
-    row.innerHTML = `<strong></strong><span></span>`;
-    row.querySelector("strong").textContent = prettyBlockerId(item.id);
-    row.querySelector("span").textContent = item.detail;
+    row.append(textEl("strong", prettyBlockerId(item.id)), textEl("span", item.detail));
     root.append(row);
   }
 }
@@ -1332,12 +1334,12 @@ function renderSchedules(schedules) {
   for (const schedule of schedules) {
     const row = document.createElement("div");
     row.className = "list-item";
-    const label = document.createElement("div");
-    label.innerHTML = `<strong></strong><span></span>`;
-    label.querySelector("strong").textContent = schedule.name;
     const wifi = schedule.wifiNetworks?.length ? ` | Wi-Fi: ${schedule.wifiNetworks.join(", ")}` : "";
     const commitment = schedule.commitmentLock ? " | commitment" : "";
-    label.querySelector("span").textContent = `${schedule.start} to ${schedule.end} | ${daysText(schedule.days)}${wifi}${commitment} | ${schedule.enabled ? "on" : "off"}`;
+    const label = detailBlock(
+      schedule.name,
+      `${schedule.start} to ${schedule.end} | ${daysText(schedule.days)}${wifi}${commitment} | ${schedule.enabled ? "on" : "off"}`
+    );
 
     const edit = document.createElement("button");
     edit.className = "secondary";
@@ -1373,15 +1375,11 @@ function renderLimits(rules) {
     row.className = "list-item limit-item";
     const used = rule.type === "open" ? rule.progress.opens : rule.progress.seconds;
     const cap = rule.type === "open" ? rule.unlocksAllowed : rule.limitMinutes * 60;
-    const label = document.createElement("div");
-    label.innerHTML = `
-      <strong></strong>
-      <span></span>
-      <div class="limit-progress"><div></div></div>
-    `;
-    label.querySelector("strong").textContent = rule.name;
-    label.querySelector("span").textContent = `${rule.type} | ${progressText(rule, used, cap)} | ${daysText(rule.days)} | ${rule.enabled ? "on" : "off"}${rule.activeBlock ? " | locked" : ""}`;
-    label.querySelector(".limit-progress div").style.width = `${rule.percent}%`;
+    const label = progressBlock(
+      rule.name,
+      `${rule.type} | ${progressText(rule, used, cap)} | ${daysText(rule.days)} | ${rule.enabled ? "on" : "off"}${rule.activeBlock ? " | locked" : ""}`,
+      rule.percent
+    );
 
     const edit = document.createElement("button");
     edit.className = "secondary";
@@ -1418,18 +1416,14 @@ function renderAppLocks(rules) {
     if (!pendingChallenge && rule.pendingRequest?.challenge) pendingChallenge = rule.pendingRequest.challenge;
     const row = document.createElement("div");
     row.className = "list-item limit-item";
-    const label = document.createElement("div");
-    label.innerHTML = `
-      <strong></strong>
-      <span></span>
-      <div class="limit-progress"><div></div></div>
-    `;
     const used = rule.usedToday || 0;
     const allowed = rule.unlocksAllowed || 0;
     const percent = allowed ? Math.min(100, Math.round((used / allowed) * 100)) : 100;
-    label.querySelector("strong").textContent = rule.name;
-    label.querySelector("span").textContent = `${used}/${allowed} unlocks | ${rule.unlockMinutes}m window | ${daysText(rule.days)} | ${rule.enabled ? "on" : "off"}${rule.activeUnlock ? " | unlocked now" : ""}`;
-    label.querySelector(".limit-progress div").style.width = `${percent}%`;
+    const label = progressBlock(
+      rule.name,
+      `${used}/${allowed} unlocks | ${rule.unlockMinutes}m window | ${daysText(rule.days)} | ${rule.enabled ? "on" : "off"}${rule.activeUnlock ? " | unlocked now" : ""}`,
+      percent
+    );
 
     const edit = document.createElement("button");
     edit.className = "secondary";
@@ -1545,15 +1539,11 @@ function renderIntentionalRuleList(rules) {
     const progress = rule.progress || {};
     const budget = progress.budget || {};
     const percent = budget.budgetSeconds ? Math.min(100, budget.percent || 0) : 0;
-    const label = document.createElement("div");
-    label.innerHTML = `
-      <strong></strong>
-      <span></span>
-      <div class="limit-progress"><div></div></div>
-    `;
-    label.querySelector("strong").textContent = rule.name;
-    label.querySelector("span").textContent = `${rule.frictionLevel} | ${rule.delaySeconds}s pause | ${rule.sessionMinutes}m window | ${formatDuration(progress.seconds || 0)} today | ${rule.enabled ? "on" : "off"}`;
-    label.querySelector(".limit-progress div").style.width = `${Math.max(4, percent)}%`;
+    const label = progressBlock(
+      rule.name,
+      `${rule.frictionLevel} | ${rule.delaySeconds}s pause | ${rule.sessionMinutes}m window | ${formatDuration(progress.seconds || 0)} today | ${rule.enabled ? "on" : "off"}`,
+      Math.max(4, percent)
+    );
 
     const edit = document.createElement("button");
     edit.className = "secondary";
@@ -1586,16 +1576,15 @@ function renderBars(selector, entries) {
 
   const max = Math.max(...entries.map((item) => item.seconds), 1);
   for (const item of entries) {
-    const row = document.createElement("div");
-    row.className = "bar-row";
-    row.innerHTML = `
-      <div class="bar-name"></div>
-      <div class="bar-track"><div class="bar-fill"></div></div>
-      <div class="bar-time"></div>
-    `;
-    row.querySelector(".bar-name").textContent = item.name;
-    row.querySelector(".bar-fill").style.width = `${Math.max(4, Math.round((item.seconds / max) * 100))}%`;
-    row.querySelector(".bar-time").textContent = formatDuration(item.seconds);
+    const fill = el("div", { className: "bar-fill" });
+    fill.style.width = `${Math.max(4, Math.round((item.seconds / max) * 100))}%`;
+    const row = el(
+      "div",
+      { className: "bar-row" },
+      textEl("div", item.name, { className: "bar-name" }),
+      el("div", { className: "bar-track" }, fill),
+      textEl("div", formatDuration(item.seconds), { className: "bar-time" })
+    );
     root.append(row);
   }
 }
@@ -1692,11 +1681,8 @@ function renderDevices(devices) {
 }
 
 function deviceRow(label, value) {
-  const row = document.createElement("div");
+  const row = detailBlock(label, value || "--");
   row.className = "device-row";
-  row.innerHTML = `<strong></strong><span></span>`;
-  row.querySelector("strong").textContent = label;
-  row.querySelector("span").textContent = value || "--";
   return row;
 }
 
@@ -1706,10 +1692,11 @@ function renderWeekStrip(days, goal) {
   for (const day of days) {
     const item = document.createElement("div");
     item.className = `week-day ${day.tracked ? "tracked" : ""} ${day.focusScore >= goal && day.tracked ? "hit" : ""}`;
-    item.innerHTML = `<span></span><strong></strong><em></em>`;
-    item.querySelector("span").textContent = day.label;
-    item.querySelector("strong").textContent = day.tracked ? day.focusScore : "--";
-    item.querySelector("em").textContent = day.tracked ? formatDuration(day.distractingSeconds) : "no data";
+    item.append(
+      textEl("span", day.label),
+      textEl("strong", day.tracked ? day.focusScore : "--"),
+      textEl("em", day.tracked ? formatDuration(day.distractingSeconds) : "no data")
+    );
     root.append(item);
   }
 }
@@ -1731,9 +1718,7 @@ function renderMilestones(items) {
   for (const item of items || []) {
     const row = document.createElement("div");
     row.className = item.achieved ? "milestone achieved" : "milestone";
-    row.innerHTML = `<span></span><strong></strong>`;
-    row.querySelector("span").textContent = item.achieved ? "Done" : "Next";
-    row.querySelector("strong").textContent = item.label;
+    row.append(textEl("span", item.achieved ? "Done" : "Next"), textEl("strong", item.label));
     root.append(row);
   }
 }
@@ -1837,10 +1822,7 @@ function renderScheduleDays() {
   const root = $("#scheduleDays");
   root.replaceChildren();
   for (const [value, label] of days) {
-    const item = document.createElement("label");
-    item.innerHTML = `<input type="checkbox" value="${value}"><span>${label}</span>`;
-    if (!["0", "6"].includes(value)) item.querySelector("input").checked = true;
-    root.append(item);
+    root.append(dayCheckbox(value, label, { checked: !["0", "6"].includes(value) }));
   }
 }
 
@@ -1848,9 +1830,7 @@ function renderLimitDays() {
   const root = $("#limitDays");
   root.replaceChildren();
   for (const [value, label] of days) {
-    const item = document.createElement("label");
-    item.innerHTML = `<input type="checkbox" value="${value}" checked><span>${label}</span>`;
-    root.append(item);
+    root.append(dayCheckbox(value, label));
   }
 }
 
@@ -1858,9 +1838,7 @@ function renderAppLockDays() {
   const root = $("#appLockDays");
   root.replaceChildren();
   for (const [value, label] of days) {
-    const item = document.createElement("label");
-    item.innerHTML = `<input type="checkbox" value="${value}" checked><span>${label}</span>`;
-    root.append(item);
+    root.append(dayCheckbox(value, label));
   }
 }
 
@@ -1868,9 +1846,7 @@ function renderIntentionalDays() {
   const root = $("#intentionalDays");
   root.replaceChildren();
   for (const [value, label] of days) {
-    const item = document.createElement("label");
-    item.innerHTML = `<input type="checkbox" value="${value}" checked><span>${label}</span>`;
-    root.append(item);
+    root.append(dayCheckbox(value, label));
   }
 }
 
@@ -2183,7 +2159,7 @@ function showDistanceToken(token) {
     qr.replaceChildren();
     return;
   }
-  qr.innerHTML = distanceKeyQrSvg(token);
+  qr.replaceChildren(createDistanceKeyQrSvg(token));
   panel.classList.remove("hidden");
 }
 
@@ -2263,215 +2239,34 @@ function printDistanceKey() {
     toast("Generate a distance key first");
     return;
   }
-  const svg = distanceKeyQrSvg(token, 10);
   const page = window.open("", "distance-key-print");
   if (!page) {
     toast("Print window was blocked");
     return;
   }
-  page.document.write(`<!doctype html>
-<html><head><title>Distance Key</title>
-<style>
-  body { font-family: system-ui, sans-serif; margin: 32px; color: #16201d; }
-  main { width: min(420px, 100%); }
-  h1 { font-size: 24px; margin: 0 0 12px; }
-  p { color: #53605b; line-height: 1.4; }
-  code { display: block; margin-top: 12px; font-size: 22px; font-weight: 800; letter-spacing: 2px; }
-  svg { width: 260px; height: 260px; margin-top: 18px; border: 1px solid #d9d2c4; }
-</style></head>
-<body><main>
-  <h1>Sentinel Distance Key</h1>
-  <p>Keep this away from the desk. Scan it or type the code when a protected unlock needs the physical key.</p>
-  ${svg}
-  <code>${escapeHtmlText(token)}</code>
-</main>
-<script>window.print();</script></body></html>`);
-  page.document.close();
-}
-
-function distanceKeyQrSvg(token, cell = 6) {
-  const matrix = distanceKeyQrMatrix(normalizeDistanceKeyTokenForQr(token));
-  const quiet = 4;
-  const size = matrix.length + quiet * 2;
-  const rects = [];
-  for (let y = 0; y < matrix.length; y += 1) {
-    for (let x = 0; x < matrix.length; x += 1) {
-      if (!matrix[y][x]) continue;
-      rects.push(`<rect x="${(x + quiet) * cell}" y="${(y + quiet) * cell}" width="${cell}" height="${cell}"/>`);
-    }
-  }
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size * cell} ${size * cell}" role="img" aria-label="Distance key QR code"><rect width="100%" height="100%" fill="#fff"/><g fill="#16201d">${rects.join("")}</g></svg>`;
-}
-
-function distanceKeyQrMatrix(token) {
-  const data = qrDataCodewords(token);
-  const ecc = qrReedSolomon(data, 7);
-  const bits = qrCodewordBits([...data, ...ecc]);
-  const size = 21;
-  const modules = Array.from({ length: size }, () => Array(size).fill(false));
-  const reserved = Array.from({ length: size }, () => Array(size).fill(false));
-  const set = (x, y, value, reserve = true) => {
-    if (x < 0 || y < 0 || x >= size || y >= size) return;
-    modules[y][x] = Boolean(value);
-    if (reserve) reserved[y][x] = true;
-  };
-  const reserve = (x, y) => {
-    if (x >= 0 && y >= 0 && x < size && y < size) reserved[y][x] = true;
-  };
-
-  drawQrFinder(set, 0, 0);
-  drawQrFinder(set, size - 7, 0);
-  drawQrFinder(set, 0, size - 7);
-  for (let i = 8; i < size - 8; i += 1) {
-    set(i, 6, i % 2 === 0);
-    set(6, i, i % 2 === 0);
-  }
-  set(8, 13, true);
-  reserveQrFormatAreas(reserve, size);
-
-  let bitIndex = 0;
-  let upward = true;
-  for (let right = size - 1; right >= 1; right -= 2) {
-    if (right === 6) right -= 1;
-    for (let vert = 0; vert < size; vert += 1) {
-      const y = upward ? size - 1 - vert : vert;
-      for (let dx = 0; dx < 2; dx += 1) {
-        const x = right - dx;
-        if (reserved[y][x]) continue;
-        let bit = bits[bitIndex] || 0;
-        if ((x + y) % 2 === 0) bit ^= 1;
-        modules[y][x] = Boolean(bit);
-        bitIndex += 1;
-      }
-    }
-    upward = !upward;
-  }
-  drawQrFormat(set, size);
-  return modules;
-}
-
-function drawQrFinder(set, x, y) {
-  for (let dy = -1; dy <= 7; dy += 1) {
-    for (let dx = -1; dx <= 7; dx += 1) {
-      const inPattern = dx >= 0 && dx <= 6 && dy >= 0 && dy <= 6;
-      const dark = inPattern && (dx === 0 || dx === 6 || dy === 0 || dy === 6 || (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4));
-      set(x + dx, y + dy, dark);
-    }
-  }
-}
-
-function reserveQrFormatAreas(reserve, size) {
-  for (let i = 0; i <= 8; i += 1) {
-    if (i !== 6) {
-      reserve(8, i);
-      reserve(i, 8);
-    }
-  }
-  for (let i = 0; i < 8; i += 1) reserve(size - 1 - i, 8);
-  for (let i = 8; i < 15; i += 1) reserve(8, size - 15 + i);
-}
-
-function drawQrFormat(set, size) {
-  const bits = 0x77c4;
-  const bit = (index) => ((bits >>> index) & 1) !== 0;
-  for (let i = 0; i <= 5; i += 1) set(8, i, bit(i));
-  set(8, 7, bit(6));
-  set(8, 8, bit(7));
-  set(7, 8, bit(8));
-  for (let i = 9; i < 15; i += 1) set(14 - i, 8, bit(i));
-  for (let i = 0; i < 8; i += 1) set(size - 1 - i, 8, bit(i));
-  for (let i = 8; i < 15; i += 1) set(8, size - 15 + i, bit(i));
-}
-
-function qrDataCodewords(token) {
-  const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:";
-  const bits = [];
-  if (token.length > 25 || [...token].some((char) => !alphabet.includes(char))) {
-    throw new Error("Distance key token cannot be encoded as a compact QR code");
-  }
-  addQrBits(bits, 0b0010, 4);
-  addQrBits(bits, token.length, 9);
-  for (let i = 0; i < token.length; i += 2) {
-    const first = alphabet.indexOf(token[i]);
-    if (i + 1 < token.length) addQrBits(bits, first * 45 + alphabet.indexOf(token[i + 1]), 11);
-    else addQrBits(bits, first, 6);
-  }
-  const capacity = 19 * 8;
-  addQrBits(bits, 0, Math.min(4, capacity - bits.length));
-  while (bits.length % 8) bits.push(0);
-  const data = [];
-  for (let i = 0; i < bits.length; i += 8) {
-    data.push(bits.slice(i, i + 8).reduce((value, next) => (value << 1) | next, 0));
-  }
-  for (let pad = 0xec; data.length < 19; pad = pad === 0xec ? 0x11 : 0xec) data.push(pad);
-  return data;
-}
-
-function addQrBits(bits, value, length) {
-  for (let i = length - 1; i >= 0; i -= 1) bits.push((value >>> i) & 1);
-}
-
-function qrCodewordBits(codewords) {
-  const bits = [];
-  for (const codeword of codewords) addQrBits(bits, codeword, 8);
-  return bits;
-}
-
-function qrReedSolomon(data, degree) {
-  const generator = qrRsGenerator(degree);
-  const result = Array(degree).fill(0);
-  for (const value of data) {
-    const factor = value ^ result.shift();
-    result.push(0);
-    for (let i = 0; i < generator.length; i += 1) {
-      result[i] ^= qrGfMultiply(generator[i], factor);
-    }
-  }
-  return result;
-}
-
-function qrRsGenerator(degree) {
-  let poly = [1];
-  for (let i = 0; i < degree; i += 1) {
-    const root = qrGfPow(2, i);
-    const next = Array(poly.length + 1).fill(0);
-    for (let j = 0; j < poly.length; j += 1) {
-      next[j] ^= qrGfMultiply(poly[j], root);
-      next[j + 1] ^= poly[j];
-    }
-    poly = next;
-  }
-  return poly.slice(1);
-}
-
-function qrGfPow(value, power) {
-  let result = 1;
-  for (let i = 0; i < power; i += 1) result = qrGfMultiply(result, value);
-  return result;
-}
-
-function qrGfMultiply(left, right) {
-  let result = 0;
-  for (let i = 0; i < 8; i += 1) {
-    if ((right & 1) !== 0) result ^= left;
-    const carry = left & 0x80;
-    left = (left << 1) & 0xff;
-    if (carry) left ^= 0x1d;
-    right >>>= 1;
-  }
-  return result;
-}
-
-function normalizeDistanceKeyTokenForQr(token) {
-  return String(token || "").trim().toUpperCase().replace(/\s+/g, "");
-}
-
-function escapeHtmlText(value) {
-  return String(value || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+  const doc = page.document;
+  doc.title = "Distance Key";
+  const style = doc.createElement("style");
+  style.textContent = `
+    body { font-family: system-ui, sans-serif; margin: 32px; color: #16201d; }
+    main { width: min(420px, 100%); }
+    h1 { font-size: 24px; margin: 0 0 12px; }
+    p { color: #53605b; line-height: 1.4; }
+    code { display: block; margin-top: 12px; font-size: 22px; font-weight: 800; letter-spacing: 2px; }
+    svg { width: 260px; height: 260px; margin-top: 18px; border: 1px solid #d9d2c4; }
+  `;
+  const main = doc.createElement("main");
+  const title = doc.createElement("h1");
+  title.textContent = "Sentinel Distance Key";
+  const note = doc.createElement("p");
+  note.textContent = "Keep this away from the desk. Scan it or type the code when a protected unlock needs the physical key.";
+  const code = doc.createElement("code");
+  code.textContent = token;
+  main.append(title, note, createDistanceKeyQrSvg(token, 10, doc), code);
+  doc.head.replaceChildren(style);
+  doc.body.replaceChildren(main);
+  page.focus();
+  page.print();
 }
 
 function toast(message) {

@@ -45,7 +45,11 @@
       "extension/**/*",
       "package.json"
     ],
-    "asar": false,
+    "asar": true,
+    "asarUnpack": [
+      "scripts/**/*",
+      "extension/**/*"
+    ],
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",

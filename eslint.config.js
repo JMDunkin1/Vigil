@@ -35,7 +35,18 @@ export default [
     rules
   },
   {
-    files: ["extension/**/*.js", "public/**/*.js"],
+    files: ["public/**/*.js"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "module",
+      globals: {
+        ...globals.browser
+      }
+    },
+    rules
+  },
+  {
+    files: ["extension/**/*.js"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "script",

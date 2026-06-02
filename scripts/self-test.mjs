@@ -1075,14 +1075,16 @@ last exit code = 0
 
 {
   const serverSource = await readFile(join(process.cwd(), "src", "server.js"), "utf8");
+  const hardeningSummarySource = await readFile(join(process.cwd(), "src", "server", "hardeningSummary.js"), "utf8");
+  const localScriptsSource = await readFile(join(process.cwd(), "src", "server", "localScripts.js"), "utf8");
   assert.match(serverSource, /\/api\/hardening\/hosts\/apply/);
-  assert.match(serverSource, /with administrator privileges/);
-  assert.match(serverSource, /npm run seal:source/);
-  assert.match(serverSource, /extensionLoad/);
+  assert.match(localScriptsSource, /with administrator privileges/);
+  assert.match(hardeningSummarySource, /npm run seal:source/);
+  assert.match(hardeningSummarySource, /extensionLoad/);
   assert.match(serverSource, /Brick Mode/);
   assert.match(serverSource, /\/api\/panic\/start/);
   assert.match(serverSource, /panicLockDurationMinutes/);
-  assert.match(serverSource, /browser control pages/);
+  assert.match(hardeningSummarySource, /browser control pages/);
   assert.match(serverSource, /strictPreflightState/);
   assert.match(serverSource, /profileSnapshot: snapshotProfile\(profile\)/);
   assert.match(serverSource, /\/api\/extension\/rules\/sync/);
@@ -1110,9 +1112,12 @@ last exit code = 0
   assert.doesNotMatch(appSource, /Android|android|ADB/);
   assert.match(appSource, /renderIntentReasonHints/);
   assert.match(appSource, /createNoiseSource/);
-  assert.match(appSource, /distanceKeyQrSvg/);
+  assert.match(appSource, /createDistanceKeyQrSvg/);
+  assert.doesNotMatch(appSource, /innerHTML|insertAdjacentHTML|outerHTML|document\.write/);
   assert.match(appSource, /BarcodeDetector/);
   assert.match(appSource, /printDistanceKey/);
+  const qrSource = await readFile(join(process.cwd(), "public", "distance-key-qr.js"), "utf8");
+  assert.match(qrSource, /distanceKeyQrMatrix/);
   const extensionSource = await readFile(join(process.cwd(), "extension", "background.js"), "utf8");
   assert.match(extensionSource, /ALLOWLIST_RULE_START/);
   assert.match(extensionSource, /excludedRequestDomains/);
