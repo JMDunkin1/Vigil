@@ -1,5 +1,9 @@
+import { get, post, del } from "./api-client.js";
+import { createDeviceTargetController } from "./device-targets.js";
 import { dayCheckbox, detailBlock, el, progressBlock, textEl } from "./dom.js";
 import { createDistanceKeyQrSvg } from "./distance-key-qr.js";
+import { createFocusSoundController } from "./focus-sound.js";
+import { days, daysText, daysWithDataText, enforcementText, eventLabel, formatDuration, lines, phaseText, phaseTitle, progressText, shortDate, shortDateTime, signedDuration, signedNumber, signedPercent, sweepText, systemSleepLockText } from "./format.js";
 
 const state = {
   data: null,
@@ -13,30 +17,16 @@ const state = {
     stream: null,
     frame: null,
     target: null
-  },
-  focusAudio: {
-    context: null,
-    gain: null,
-    nodes: [],
-    preset: "",
-    playing: false,
-    blocked: false
   }
 };
 
 const $ = (selector) => document.querySelector(selector);
-const days = [
-  ["0", "Sun"],
-  ["1", "Mon"],
-  ["2", "Tue"],
-  ["3", "Wed"],
-  ["4", "Thu"],
-  ["5", "Fri"],
-  ["6", "Sat"]
-];
 const BRICK_MODE_PROFILE_ID = "brick-mode";
 const SOFT_BLOCK_PROFILE_ID = "soft-block";
-const DEVICE_TARGETS = ["computer", "phone"];
+const deviceTargets = createDeviceTargetController({
+  onChange: () => renderDeviceTargetControls(state.data?.state || {})
+});
+const focusSound = createFocusSoundController({ $, post, toast });
 
 boot();
 
@@ -97,26 +87,12 @@ function setView(view) {
   }
 }
 
-function toggleDeviceTarget(button) {
-  const selected = button.classList.contains("is-selected");
-  const selectedCount = selectedDeviceTargets().length;
-  if (selected && selectedCount === 1) return;
-  button.classList.toggle("is-selected", !selected);
-  button.setAttribute("aria-pressed", String(!selected));
-  renderDeviceTargetControls(state.data?.state || {});
-}
-
 function selectedDeviceTargets() {
-  const selected = [...document.querySelectorAll("[data-device-target].is-selected")]
-    .map((button) => button.dataset.deviceTarget)
-    .filter((target) => DEVICE_TARGETS.includes(target));
-  return selected.length ? selected : ["computer"];
+  return deviceTargets.selectedTargets();
 }
 
 function selectedDeviceLabel() {
-  const selected = selectedDeviceTargets();
-  if (selected.length === DEVICE_TARGETS.length) return "Computer + iPhone";
-  return selected[0] === "phone" ? "iPhone" : "Computer";
+  return deviceTargets.selectedLabel();
 }
 
 function bindEvents() {
@@ -124,9 +100,7 @@ function bindEvents() {
     setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   });
 
-  for (const button of document.querySelectorAll("[data-device-target]")) {
-    button.addEventListener("click", () => toggleDeviceTarget(button));
-  }
+  deviceTargets.bind();
 
   document.querySelectorAll("[data-scan-distance-key]").forEach((button) => {
     button.addEventListener("click", () => openDistanceScanner(button.dataset.scanDistanceKey));
@@ -176,8 +150,8 @@ function bindEvents() {
 
   $("#focusSoundEnabled").addEventListener("change", async (event) => {
     try {
-      if (event.target.checked) await primeFocusAudio();
-      await saveFocusSoundSettings();
+      if (event.target.checked) await focusSound.prime();
+      await focusSound.saveSettings();
       toast("Focus sound saved");
     } catch (error) {
       toast(error.message);
@@ -187,7 +161,7 @@ function bindEvents() {
 
   $("#focusSoundPreset").addEventListener("change", async () => {
     try {
-      await saveFocusSoundSettings();
+      await focusSound.saveSettings();
       toast("Focus sound saved");
     } catch (error) {
       toast(error.message);
@@ -196,12 +170,12 @@ function bindEvents() {
   });
 
   $("#focusSoundVolume").addEventListener("input", () => {
-    setFocusSoundVolume(Number($("#focusSoundVolume").value || 0));
+    focusSound.setVolume(Number($("#focusSoundVolume").value || 0));
   });
 
   $("#focusSoundVolume").addEventListener("change", async () => {
     try {
-      await saveFocusSoundSettings();
+      await focusSound.saveSettings();
       toast("Focus sound saved");
     } catch (error) {
       toast(error.message);
@@ -750,7 +724,7 @@ function render() {
   const data = state.data;
   renderPresetButtons(data.presets || []);
   renderHeader(data.state, data.monitor, data.limits.activeBlocks);
-  renderFocusSound(data);
+  focusSound.render(data);
   renderMetrics(data.usage, data.report);
   renderWatcher(data.monitor);
   renderIntervention(data.intervention);
@@ -802,22 +776,7 @@ function appendLines(field, values = []) {
 }
 
 function renderDeviceTargetControls(appState = {}) {
-  const status = $("#deviceTargetStatus");
-  if (status) status.textContent = selectedDeviceLabel();
-
-  for (const target of DEVICE_TARGETS) {
-    const button = document.querySelector(`[data-device-target="${target}"]`);
-    const session = appState.activeSessions?.[target] || null;
-    if (button) {
-      button.classList.toggle("has-session", Boolean(session));
-      button.setAttribute("aria-pressed", String(button.classList.contains("is-selected")));
-    }
-    const label = target === "phone" ? $("#phoneTargetState") : $("#computerTargetState");
-    if (!label) continue;
-    label.textContent = session
-      ? `${session.mode === "brick" ? "Brick" : session.title || "Locked"}`
-      : "Normal";
-  }
+  deviceTargets.render(appState);
 }
 
 function renderHeader(appState, monitor, activeBlocks = []) {
@@ -887,184 +846,6 @@ function renderOrbState(orbState) {
   if (!orb) return;
   orb.className = `vigil-orb ${orbState}`;
   document.body.dataset.lockState = orbState;
-}
-
-function renderFocusSound(data) {
-  const settings = data.state.settings || {};
-  const enabled = Boolean(settings.focusSoundEnabled);
-  const preset = focusSoundPreset(settings.focusSoundPreset);
-  const volume = clamp(Number(settings.focusSoundVolume || 35), 0, 100);
-  const active = Boolean(data.state.activePolicy || data.limits.activeBlocks?.length);
-
-  $("#focusSoundEnabled").checked = enabled;
-  if (document.activeElement !== $("#focusSoundPreset")) $("#focusSoundPreset").value = preset;
-  if (document.activeElement !== $("#focusSoundVolume")) $("#focusSoundVolume").value = volume;
-
-  syncFocusSound({ enabled, preset, volume, active }).catch((error) => {
-    state.focusAudio.blocked = true;
-    stopFocusSound();
-    $("#focusSoundStatus").textContent = error.message || "Audio blocked";
-  });
-}
-
-async function saveFocusSoundSettings() {
-  await post("/api/settings", {
-    focusSoundEnabled: $("#focusSoundEnabled").checked,
-    focusSoundPreset: $("#focusSoundPreset").value,
-    focusSoundVolume: $("#focusSoundVolume").value
-  });
-}
-
-async function syncFocusSound({ enabled, preset, volume, active }) {
-  const status = $("#focusSoundStatus");
-  if (!enabled) {
-    stopFocusSound();
-    status.textContent = "Off";
-    return;
-  }
-
-  if (!active) {
-    stopFocusSound();
-    status.textContent = "Ready for lock";
-    return;
-  }
-
-  await primeFocusAudio();
-  if (state.focusAudio.context?.state === "suspended") {
-    status.textContent = "Click toggle to start";
-    return;
-  }
-
-  if (!state.focusAudio.playing || state.focusAudio.preset !== preset) startFocusSound(preset, volume);
-  else setFocusSoundVolume(volume);
-  status.textContent = `Playing ${presetLabel(preset)}`;
-}
-
-async function primeFocusAudio() {
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) throw new Error("Web Audio is unavailable.");
-  state.focusAudio.context ||= new AudioContext();
-  if (state.focusAudio.context.state === "suspended") {
-    await state.focusAudio.context.resume();
-  }
-  return state.focusAudio.context;
-}
-
-function startFocusSound(preset, volume) {
-  stopFocusSound();
-  const context = state.focusAudio.context;
-  if (!context) return;
-
-  const master = context.createGain();
-  master.gain.value = volumeToGain(volume);
-  master.connect(context.destination);
-  const nodes = [master];
-  const noise = createNoiseSource(context, preset === "brown-noise" ? "brown" : "white");
-  nodes.push(noise);
-
-  if (preset === "rain") {
-    const highpass = context.createBiquadFilter();
-    highpass.type = "highpass";
-    highpass.frequency.value = 950;
-    const bandpass = context.createBiquadFilter();
-    bandpass.type = "bandpass";
-    bandpass.frequency.value = 1800;
-    bandpass.Q.value = 0.9;
-    noise.connect(highpass).connect(bandpass).connect(master);
-    nodes.push(highpass, bandpass);
-  } else if (preset === "ocean") {
-    const lowpass = context.createBiquadFilter();
-    lowpass.type = "lowpass";
-    lowpass.frequency.value = 620;
-    const swell = context.createGain();
-    swell.gain.value = 0.7;
-    const lfo = context.createOscillator();
-    lfo.frequency.value = 0.08;
-    const lfoGain = context.createGain();
-    lfoGain.gain.value = 0.28;
-    lfo.connect(lfoGain).connect(swell.gain);
-    noise.connect(lowpass).connect(swell).connect(master);
-    lfo.start();
-    nodes.push(lowpass, swell, lfo, lfoGain);
-  } else {
-    const lowpass = context.createBiquadFilter();
-    lowpass.type = "lowpass";
-    lowpass.frequency.value = 520;
-    noise.connect(lowpass).connect(master);
-    nodes.push(lowpass);
-  }
-
-  noise.start();
-  state.focusAudio = {
-    ...state.focusAudio,
-    gain: master,
-    nodes,
-    preset,
-    playing: true,
-    blocked: false
-  };
-}
-
-function stopFocusSound() {
-  for (const node of state.focusAudio.nodes || []) {
-    try {
-      if (typeof node.stop === "function") node.stop();
-    } catch {}
-    try {
-      if (typeof node.disconnect === "function") node.disconnect();
-    } catch {}
-  }
-  state.focusAudio.gain = null;
-  state.focusAudio.nodes = [];
-  state.focusAudio.playing = false;
-  state.focusAudio.preset = "";
-}
-
-function setFocusSoundVolume(value) {
-  const gain = state.focusAudio.gain;
-  if (!gain) return;
-  gain.gain.setTargetAtTime(volumeToGain(value), state.focusAudio.context.currentTime, 0.04);
-}
-
-function createNoiseSource(context, color) {
-  const length = context.sampleRate * 2;
-  const buffer = context.createBuffer(1, length, context.sampleRate);
-  const data = buffer.getChannelData(0);
-  let last = 0;
-  for (let index = 0; index < length; index += 1) {
-    const white = Math.random() * 2 - 1;
-    if (color === "brown") {
-      last = (last + 0.02 * white) / 1.02;
-      data[index] = last * 3.5;
-    } else {
-      data[index] = white * 0.45;
-    }
-  }
-  const source = context.createBufferSource();
-  source.buffer = buffer;
-  source.loop = true;
-  return source;
-}
-
-function focusSoundPreset(value) {
-  return ["brown-noise", "rain", "ocean"].includes(value) ? value : "brown-noise";
-}
-
-function presetLabel(value) {
-  return {
-    "brown-noise": "brown noise",
-    rain: "rain",
-    ocean: "ocean"
-  }[value] || "sound";
-}
-
-function volumeToGain(value) {
-  return clamp(Number(value || 0), 0, 100) / 100 * 0.28;
-}
-
-function clamp(value, min, max) {
-  if (!Number.isFinite(value)) return min;
-  return Math.max(min, Math.min(max, value));
 }
 
 function renderMetrics(usage, report) {
@@ -1990,147 +1771,6 @@ function fillSelect(select, items, selectedId) {
     select.append(option);
   }
   select.value = items.some((item) => item.id === current) ? current : selectedId;
-}
-
-async function get(path) {
-  const response = await fetch(path);
-  return parseResponse(response);
-}
-
-async function post(path, body) {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Vigil-Intent": "vigil-app"
-    },
-    body: JSON.stringify(body)
-  });
-  return parseResponse(response);
-}
-
-async function del(path) {
-  const response = await fetch(path, {
-    method: "DELETE",
-    headers: { "X-Vigil-Intent": "vigil-app" }
-  });
-  return parseResponse(response);
-}
-
-async function parseResponse(response) {
-  const json = await response.json();
-  if (!response.ok) throw new Error(json.error || "Request failed");
-  return json;
-}
-
-function lines(value) {
-  return String(value || "")
-    .split(/\r?\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function daysText(values) {
-  if (!values?.length) return "no days";
-  if (values.length === 7) return "daily";
-  const labels = new Map(days.map(([value, label]) => [Number(value), label]));
-  return values.map((day) => labels.get(day)).join(", ");
-}
-
-function daysWithDataText(value) {
-  const days = Number(value || 0);
-  return `${days} ${days === 1 ? "day" : "days"} with data`;
-}
-
-function formatDuration(seconds) {
-  const safe = Math.max(0, Number(seconds || 0));
-  const hours = Math.floor(safe / 3600);
-  const minutes = Math.floor((safe % 3600) / 60);
-  if (hours >= 24) {
-    const days = Math.floor(hours / 24);
-    const rest = hours % 24;
-    return rest ? `${days}d ${rest}h` : `${days}d`;
-  }
-  if (hours) return `${hours}h ${minutes}m`;
-  return `${Math.max(0, minutes)}m`;
-}
-
-function progressText(rule, used, cap) {
-  if (rule.type === "open") return `${used}/${cap} opens`;
-  return `${formatDuration(used)}/${formatDuration(cap)}`;
-}
-
-function shortDate(value) {
-  return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function shortDateTime(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "--";
-  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-
-function signedNumber(value, suffix = "") {
-  const safe = Number(value || 0);
-  if (!safe) return `0${suffix}`;
-  return `${safe > 0 ? "+" : ""}${safe}${suffix}`;
-}
-
-function signedPercent(value) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return "No baseline";
-  return signedNumber(Math.round(Number(value)), "%");
-}
-
-function signedDuration(seconds) {
-  const safe = Number(seconds || 0);
-  if (!safe) return "0m";
-  return `${safe > 0 ? "+" : "-"}${formatDuration(Math.abs(safe))}`;
-}
-
-function phaseText(phase, fallback = "focus") {
-  if (!phase) return capitalize(fallback);
-  if (phase.kind === "break") return `Break ${phase.round}/${phase.rounds}`;
-  if (phase.rounds > 1) return `Focus ${phase.round}/${phase.rounds}`;
-  return capitalize(fallback);
-}
-
-function phaseTitle(session, phase) {
-  if (!phase) return session?.title || "Session running";
-  const base = session?.title || "Focus lock";
-  if (phase.rounds <= 1) return base;
-  return `${base} | ${phase.label} ${phase.round}/${phase.rounds}`;
-}
-
-function capitalize(value) {
-  return String(value || "").slice(0, 1).toUpperCase() + String(value || "").slice(1);
-}
-
-function eventLabel(event) {
-  const type = event.type.replaceAll("_", " ");
-  const detail = event.detail || {};
-  if (detail.app) return `${type}: ${detail.app}`;
-  if (detail.site) return `${type}: ${detail.site}`;
-  if (detail.name) return `${type}: ${detail.name}`;
-  return type;
-}
-
-function enforcementText(enforcement) {
-  const method = enforcement.result?.method || enforcement.result?.error || "";
-  const suffix = enforcement.escalated ? " | force kill" : (method ? ` | ${method}` : "");
-  return `${enforcement.target}${suffix}`;
-}
-
-function sweepText(sweep) {
-  if (!sweep) return "--";
-  if (!sweep.ok) return "check";
-  if (sweep.blocked?.length) return `${sweep.blocked.length} blocked`;
-  return `${sweep.checked || 0} checked`;
-}
-
-function systemSleepLockText(lock) {
-  if (!lock) return "off";
-  if (!lock.ok) return "check";
-  return `last ${new Date(lock.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
 function renderTypingChallenge(output, input, challenge) {

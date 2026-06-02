@@ -2,43 +2,37 @@ import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { currentMacAccountStatus } from "./account.js";
 import { apiRequestGuard, deviceUsageSyncAuthorization, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "./apiSecurity.js";
 import { parseBoolean, truthy } from "./booleans.js";
 import { APP_NAME, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, PORT, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
 import { addEvent, loadState, loadUsage, saveState, saveUsage, sanitizeSoftBlockProfile } from "./store.js";
 import { assertTypingChallenge, attachTypingChallenge, TypingChallengeError } from "./challenge.js";
-import { hostsStatus, buildHostsBlock, launchAgentPath, launchAgentStatus, managedBlockDomains, stateSealStatus } from "./hardening.js";
-import { buildFirewallBlock, buildPfConfBlock, firewallStatus } from "./firewall.js";
+import { hostsStatus, launchAgentStatus } from "./hardening.js";
+import { firewallStatus } from "./firewall.js";
 import { startMonitor } from "./monitor.js";
-import { activePolicy, activeProfile, activeSessionForDevice, clearSessionsById, emergencyUnlockAllowedForPolicy, listFromTextarea, normalizeDeviceTarget, normalizeDeviceTargets, panicLockProfile, profileById, sessionPhase, snapshotProfile } from "./policy.js";
-import { AppLockError, appLockSummary, confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "./appLocks.js";
-import { deviceSummary } from "./devices.js";
-import { assertDistanceKey, DistanceKeyError, distanceKeySummary, updateDistanceKeySettings } from "./distanceKey.js";
+import { activePolicy, activeSessionForDevice, clearSessionsById, emergencyUnlockAllowedForPolicy, listFromTextarea, normalizeDeviceTarget, normalizeDeviceTargets, panicLockProfile, profileById, snapshotProfile } from "./policy.js";
+import { AppLockError, confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "./appLocks.js";
+import { assertDistanceKey, DistanceKeyError, updateDistanceKeySettings } from "./distanceKey.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "./extensionPolicy.js";
-import { focusShortcutSummary } from "./focusHooks.js";
-import { assertFoolproofReadyForStrict, FoolproofError, foolproofSummary } from "./foolproof.js";
+import { FoolproofError } from "./foolproof.js";
 import { clearIntegrityTamper } from "./integrityLockdown.js";
 import { assertIntentReason, IntentReasonError } from "./intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "./intervention.js";
-import { confirmIntentionalPause, IntentionalUseError, intentionalUseSummary, skipIntentionalPause, updateIntentionalUseAccountability, updateIntentionalUseGoal, upsertIntentionalUseRule } from "./intentionalUse.js";
+import { confirmIntentionalPause, IntentionalUseError, skipIntentionalPause, updateIntentionalUseAccountability, updateIntentionalUseGoal, upsertIntentionalUseRule } from "./intentionalUse.js";
 import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
-import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings, publicIosSettings } from "./iosProfiles.js";
-import { activeLimitBlocks, limitSummary, normalizeLimitRule } from "./limits.js";
+import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "./iosProfiles.js";
+import { activeLimitBlocks, normalizeLimitRule } from "./limits.js";
 import { openApp } from "./macos.js";
 import { parsePlist } from "./plist.js";
-import { ProtectionError, assertProtectedEditAllowed, confirmMaintenanceWindow, protectionSummary, requestMaintenanceWindow } from "./protection.js";
-import { distractionPresets } from "./presets.js";
-import { focusReport } from "./reports.js";
-import { assertKeyholderPasscode, KeyholderError, keyholderSummary, updateKeyholderSettings } from "./keyholder.js";
-import { vigilAppInfo, vigilStateHeaders } from "./vigilHealth.js";
-import { sourceSealStatus } from "./sourceSeal.js";
+import { ProtectionError, assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "./protection.js";
+import { assertKeyholderPasscode, KeyholderError, updateKeyholderSettings } from "./keyholder.js";
 import { clampNumber, weekKey } from "./time.js";
 import { syncDeviceUsageSnapshot, usageSummary } from "./usage.js";
-import { hardeningActions, hardeningAudit } from "./server/hardeningSummary.js";
 import { readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, sendMdmPlist, serveStatic, mdmHeaders } from "./server/http.js";
 import { createLocalScriptRunner } from "./server/localScripts.js";
 import { blockedPage, commitmentLockError, pausePage } from "./server/pages.js";
+import { isExtensionApiPath, matchApiRoute } from "./server/apiRoutes.js";
+import { buildStatePayload, publicIosState, strictPreflightStatus } from "./server/statePayload.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PUBLIC_DIR = join(ROOT, "public");
@@ -289,45 +283,15 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (!matchApiRoute(method, path)) {
+    sendJson(response, 404, { error: "Not found" });
+    return;
+  }
+
   if (method === "GET" && path === "/api/state") {
-    const policy = activePolicy(state);
-    const hosts = await hostsStatus(state);
-    const firewall = await firewallStatus(state);
-    const agent = await launchAgentStatus();
-    const account = await currentMacAccountStatus();
-    const stateSeal = await stateSealStatus(state);
-    const sourceSeal = await sourceSealStatus();
-    const protection = protectionSummary(state);
-    const devices = await deviceSummary(state);
-    const foolproof = foolproofSummary(state, { hosts, firewall, agent, account, monitor: monitor.status, stateSeal, sourceSeal });
+    const payload = await buildStatePayload({ state, usage, monitor, activePort, startedAt, localScripts });
     await saveState(state);
-    sendJson(response, 200, {
-      app: vigilAppInfo({ port: activePort, startedAt }),
-      state: publicState(state, policy),
-      usage: usageSummary(usage, state),
-      report: focusReport(usage, state),
-      intentionalUse: intentionalUseSummary(state, usage),
-      limits: limitSummary(state, usage),
-      appLocks: appLockSummary(state),
-      devices,
-      protection,
-      intervention: interventionSummary(state),
-      monitor: monitor.status,
-      presets: distractionPresets(),
-      hardening: {
-        hosts,
-        firewall,
-        launchAgent: agent,
-        account,
-        stateSeal,
-        sourceSeal,
-        launchAgentPath: launchAgentPath(),
-        hostsBlock: await buildNetworkPreview(state),
-        actions: hardeningActions(localScripts),
-        foolproof,
-        audit: hardeningAudit({ state, hosts, firewall, agent, account, protection, monitor: monitor.status, foolproof, stateSeal, sourceSeal })
-      }
-    }, vigilStateHeaders());
+    sendJson(response, 200, payload.body, payload.headers);
     return;
   }
 
@@ -1050,56 +1014,6 @@ async function handleApi(request, response, url) {
   sendJson(response, 404, { error: "Not found" });
 }
 
-function publicState(current, policy) {
-  return {
-    settings: current.settings,
-    profiles: current.profiles,
-    schedules: current.schedules,
-    limitRules: current.limitRules || [],
-    limitBlocks: current.limitBlocks || [],
-    appLocks: current.appLocks || [],
-    appLockUnlocks: current.appLockUnlocks || [],
-    appLockRequests: current.appLockRequests || [],
-    extension: current.extension || {},
-    focusShortcut: focusShortcutSummary(current),
-    deviceControls: {
-      ...(current.deviceControls || {}),
-      ios: publicIosState(current.deviceControls?.ios || {})
-    },
-    environment: current.environment || {},
-    keyholder: keyholderSummary(current),
-    distanceKey: distanceKeySummary(current),
-    panicLock: current.panicLock || null,
-    activeSessions: current.activeSessions || { computer: current.activeSession || null, phone: null },
-    activeSession: current.activeSession,
-    sessionPhase: sessionPhase(current.activeSession),
-    activePolicy: policy ? {
-      kind: policy.kind,
-      session: policy.session,
-      profile: policy.profile,
-      schedule: policy.schedule || null,
-      endsAt: policy.endsAt,
-      phase: policy.phase || null
-    } : null,
-    devicePolicies: publicDevicePolicies(current),
-    emergency: {
-      remaining: emergencyRemaining(),
-      usedThisWeek: state.emergency.tokensUsedByWeek[weekKey()] || 0,
-      pending: state.emergency.pending
-    },
-    overrides: current.overrides,
-    events: current.events.slice(0, 50),
-    activeProfile: activeProfile(current)
-  };
-}
-
-function publicIosState(ios = {}) {
-  return {
-    ...publicIosSettings(ios),
-    mdm: publicIosMdmSettings(ios.mdm || {})
-  };
-}
-
 function updateSettings(body) {
   const allowed = new Set([
     "pollIntervalMs",
@@ -1311,20 +1225,6 @@ function deviceLabel(targets) {
   return targets.map((target) => target === "phone" ? "phone" : "computer").join(" and ");
 }
 
-function publicDevicePolicies(current) {
-  return Object.fromEntries(DEVICE_TARGETS.map((target) => {
-    const policy = activePolicy(current, new Date(), { device: target });
-    return [target, policy ? {
-      kind: policy.kind,
-      session: policy.session,
-      profile: policy.profile,
-      schedule: policy.schedule || null,
-      endsAt: policy.endsAt,
-      phase: policy.phase || null
-    } : null];
-  }));
-}
-
 function spendEmergencyToken() {
   const key = weekKey();
   state.emergency.tokensUsedByWeek[key] = (state.emergency.tokensUsedByWeek[key] || 0) + 1;
@@ -1357,10 +1257,6 @@ function sessionTitle(mode) {
   if (mode === "rehab") return "Rehab lock";
   if (mode === "brick") return "Brick Mode";
   return "Focus lock";
-}
-
-function isExtensionApiPath(path) {
-  return ["/api/extension/check", "/api/extension/rules", "/api/extension/rules/sync"].includes(path);
 }
 
 function isProtectedSettingsMutation(body) {
@@ -1399,51 +1295,13 @@ function isProtectedSettingsMutation(body) {
   return Object.keys(body || {}).some((key) => guarded.has(key));
 }
 
-async function buildNetworkPreview(state) {
-  const domains = managedBlockDomains(state);
-  return [
-    buildHostsBlock(state),
-    "",
-    buildPfConfBlock(),
-    "",
-    buildFirewallBlock(domains)
-  ].join("\n");
-}
-
 async function assertStrictLockAllowed(lockLevel, profile, options = {}) {
   if (lockLevel !== "deep" || !state.settings.foolproofModeEnabled) return;
-  const now = new Date();
-  const preflightState = profile ? strictPreflightState(profile, {
+  await strictPreflightStatus(state, profile, {
     mode: options.mode,
     lockLevel,
-    now
-  }) : state;
-  const hosts = await hostsStatus(preflightState, now);
-  const firewall = await firewallStatus(preflightState, now);
-  const agent = await launchAgentStatus();
-  const account = await currentMacAccountStatus();
-  const stateSeal = await stateSealStatus(preflightState);
-  const sourceSeal = await sourceSealStatus();
-  assertFoolproofReadyForStrict(preflightState, { hosts, firewall, agent, account, monitor: monitor.status, stateSeal, sourceSeal }, now);
-}
-
-function strictPreflightState(profile, options = {}) {
-  const now = options.now || new Date();
-  return {
-    ...state,
-    activeSession: {
-      id: "strict-preflight",
-      title: profile.name || "Strict lock preflight",
-      mode: options.mode || "focus",
-      profileId: profile.id,
-      lockLevel: options.lockLevel || "deep",
-      startedAt: now.toISOString(),
-      endsAt: new Date(now.getTime() + 60 * 1000).toISOString(),
-      canEndEarly: false,
-      source: "preflight",
-      profileSnapshot: snapshotProfile(profile)
-    }
-  };
+    monitorStatus: monitor.status
+  });
 }
 
 function serializeError(error) {
