@@ -22,7 +22,7 @@ import { usageSummary } from "../usage.js";
 import { publicIosMdmSettings } from "../iosMdm.js";
 import { publicIosSettings } from "../iosProfiles.js";
 import { hardeningActions, hardeningAudit } from "./hardeningSummary.js";
-import type { ActivePolicy, IosSettings, MonitorHandle, Profile, SentinelState, UnknownRecord, UsageState } from "../types.js";
+import type { ActivePolicy, IosSettings, LockLevel, MonitorHandle, Profile, SentinelState, UnknownRecord, UsageState } from "../types.js";
 
 interface LocalScriptsSummary {
   localScriptCommand: (scriptName: string, options?: UnknownRecord) => unknown;
@@ -41,7 +41,7 @@ interface BuildStatePayloadInput {
 interface StrictPreflightOptions {
   now?: Date;
   mode?: string;
-  lockLevel?: string;
+  lockLevel?: LockLevel;
   monitorStatus?: UnknownRecord;
 }
 

@@ -27,26 +27,26 @@ export class TypingChallengeError extends Error {
 
 interface ChallengeCarrier {
   challenge?: TypingChallenge;
-  [key: string]: unknown;
 }
 
 export function typingChallengeRequired(state: Pick<SentinelState, "settings">): boolean {
   return state.settings?.typingChallengeEnabled !== false;
 }
 
-export function attachTypingChallenge<T extends ChallengeCarrier | null | undefined>(
+export function attachTypingChallenge<T extends object | null | undefined>(
   state: Pick<SentinelState, "settings">,
   pending: T,
   kind = "unlock",
   now = new Date()
 ): T {
   if (!pending) return pending;
+  const carrier = pending as ChallengeCarrier;
   if (!typingChallengeRequired(state)) {
-    delete pending.challenge;
+    delete carrier.challenge;
     return pending;
   }
-  if (pending.challenge?.text) return pending;
-  pending.challenge = {
+  if (carrier.challenge?.text) return pending;
+  carrier.challenge = {
     kind,
     text: generateChallengeText(kind),
     createdAt: now.toISOString()
@@ -56,11 +56,12 @@ export function attachTypingChallenge<T extends ChallengeCarrier | null | undefi
 
 export function assertTypingChallenge(
   state: Pick<SentinelState, "settings">,
-  pending: ChallengeCarrier | null | undefined,
+  pending: object | null | undefined,
   value: unknown
 ): void {
-  if (!typingChallengeRequired(state) && !pending?.challenge?.text) return;
-  const expected = normalizeChallengeText(pending?.challenge?.text);
+  const carrier = pending as ChallengeCarrier | null | undefined;
+  if (!typingChallengeRequired(state) && !carrier?.challenge?.text) return;
+  const expected = normalizeChallengeText(carrier?.challenge?.text);
   if (!expected) throw new TypingChallengeError("Challenge text is missing. Request a new unlock.");
   if (normalizeChallengeText(value) !== expected) throw new TypingChallengeError();
 }

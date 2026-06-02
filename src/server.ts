@@ -3,7 +3,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
-import { apiRequestGuard, deviceUsageSyncAuthorization, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "./apiSecurity.js";
+import { apiRequestGuard, deviceUsageSyncAuthorization, publicHostGuard } from "./apiSecurity.js";
 import { parseBoolean, truthy } from "./booleans.js";
 import { APP_NAME, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, PORT, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { addEvent, loadState, loadUsage, saveState, saveUsage, sanitizeSoftBlockProfile } from "./store.js";
@@ -11,10 +11,9 @@ import { assertTypingChallenge, attachTypingChallenge } from "./challenge.js";
 import { hostsStatus, launchAgentStatus } from "./hardening.js";
 import { firewallStatus } from "./firewall.js";
 import { startMonitor } from "./monitor.js";
-import { activePolicy, activeSessionForDevice, clearSessionsById, emergencyUnlockAllowedForPolicy, listFromTextarea, normalizeDeviceTarget, normalizeDeviceTargets, panicLockProfile, profileById, snapshotProfile } from "./policy.js";
+import { activePolicy, activeSessionForDevice, clearSessionsById, emergencyUnlockAllowedForPolicy, listFromTextarea, normalizeDeviceTarget, normalizeDeviceTargets, normalizeLockLevel, panicLockProfile, profileById, snapshotProfile } from "./policy.js";
 import { confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "./appLocks.js";
 import { assertDistanceKey, updateDistanceKeySettings } from "./distanceKey.js";
-import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "./extensionPolicy.js";
 import { clearIntegrityTamper } from "./integrityLockdown.js";
 import { assertIntentReason } from "./intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "./intervention.js";
@@ -31,13 +30,17 @@ import { syncDeviceUsageSnapshot, usageSummary } from "./usage.js";
 import { readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, sendMdmPlist, serveStatic, mdmHeaders } from "./server/http.js";
 import { createLocalScriptRunner } from "./server/localScripts.js";
 import { blockedPage, commitmentLockError, pausePage } from "./server/pages.js";
-import { isExtensionApiPath, matchApiRoute } from "./server/apiRoutes.js";
+import { matchApiRoute } from "./server/apiRoutes.js";
+import { handleExtensionApiRoute } from "./server/extensionApi.js";
 import { buildStatePayload, publicIosState, strictPreflightStatus } from "./server/statePayload.js";
 import type {
+  AppLockRule,
   DeviceTarget,
-  DeviceTargetInput,
+  LimitRule,
+  LockLevel,
   MonitorHandle,
   Profile,
+  ProfileMode,
   Schedule,
   SentinelState,
   Session,
@@ -79,7 +82,7 @@ interface IosMdmPushResult extends UnknownRecord {
   queued?: boolean;
 }
 
-interface LimitBlockSummary extends UnknownRecord {
+interface LimitBlockSummary {
   id: string;
   until: string;
 }
@@ -317,10 +320,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return;
   }
 
-  if (method === "OPTIONS" && isExtensionApiPath(path)) {
-    const extensionGuard = extensionRequestGuard({ method, headers: request.headers }) as GuardResult;
-    if (!extensionGuard.ok) sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" });
-    else sendEmpty(response, 204, extensionCorsHeaders(request.headers));
+  if (await handleExtensionApiRoute(request, response, url, { state, usage })) {
     return;
   }
 
@@ -333,119 +333,6 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     const payload = await buildStatePayload({ state, usage, monitor: requireMonitor(), activePort, startedAt, localScripts });
     await saveState(state);
     sendJson(response, 200, payload.body, payload.headers);
-    return;
-  }
-
-  if ((method === "POST" || method === "GET") && path === "/api/extension/check") {
-    const extensionGuard = extensionRequestGuard({ method, headers: request.headers }) as GuardResult;
-    if (!extensionGuard.ok) {
-      sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
-      return;
-    }
-    const body = method === "POST"
-      ? await readBody(request)
-      : {
-          url: url.searchParams.get("url"),
-          previousUrl: url.searchParams.get("previousUrl"),
-          event: url.searchParams.get("event"),
-          seconds: url.searchParams.get("seconds")
-        };
-    const result = evaluateExtensionCheck(state, usage, body);
-    if (isTrustedExtensionRequest(request.headers)) {
-      state.extension = {
-        ...(state.extension || {}),
-        lastSeenAt: new Date().toISOString(),
-        lastVersion: String(body.extensionVersion || state.extension?.lastVersion || "").slice(0, 40) || null,
-        lastEvent: result.event || body.event || null,
-        lastHost: result.hostname || state.extension?.lastHost || null
-      };
-    }
-    if (result.blocked && result.event !== "heartbeat") {
-      addEvent(state, "extension_blocked_site", {
-        site: result.hostname,
-        policy: result.policy?.title || result.reason
-      });
-    }
-    if (result.paused && result.event !== "heartbeat") {
-      addEvent(state, "intentional_pause_requested", {
-        site: result.hostname,
-        ruleId: result.rule?.id,
-        ruleName: result.rule?.name,
-        pauseId: result.pause?.id
-      });
-    }
-    await saveUsage(usage);
-    await saveState(state);
-    sendJson(response, 200, result, extensionCorsHeaders(request.headers));
-    return;
-  }
-
-  if (method === "GET" && path === "/api/extension/rules") {
-    const extensionGuard = extensionRequestGuard({ method, headers: request.headers }) as GuardResult;
-    if (!extensionGuard.ok) {
-      sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
-      return;
-    }
-    const snapshot = extensionRuleSnapshot(state);
-    const expectedCount = extensionDynamicRuleCount(snapshot);
-    const expectedSignature = extensionDynamicRuleSignature(snapshot);
-    if (isTrustedExtensionRequest(request.headers)) {
-      state.extension = {
-        ...(state.extension || {}),
-        lastSeenAt: new Date().toISOString(),
-        lastVersion: String(url.searchParams.get("version") || state.extension?.lastVersion || "").slice(0, 40) || null,
-        lastEvent: "rules",
-        lastHost: state.extension?.lastHost || null,
-        dynamicRules: {
-          ...(state.extension?.dynamicRules || {}),
-          expectedCount,
-          expectedSignature,
-          requestedAt: snapshot.generatedAt,
-          fallbackRequired: snapshot.fallbackRequired
-        }
-      };
-      await saveState(state);
-    }
-    sendJson(response, 200, snapshot, extensionCorsHeaders(request.headers));
-    return;
-  }
-
-  if (method === "POST" && path === "/api/extension/rules/sync") {
-    const extensionGuard = extensionRequestGuard({ method, headers: request.headers }) as GuardResult;
-    if (!extensionGuard.ok) {
-      sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
-      return;
-    }
-
-    const body = await readBody(request);
-    const snapshot = extensionRuleSnapshot(state);
-    const expectedCount = extensionDynamicRuleCount(snapshot);
-    const expectedSignature = extensionDynamicRuleSignature(snapshot);
-    const count = clampNumber(body.count, 0, 1000, 0);
-    const signature = String(body.signature || "");
-    const ok = truthy(body.ok) && count === expectedCount && signature === expectedSignature && !snapshot.fallbackRequired;
-    if (isTrustedExtensionRequest(request.headers)) {
-      state.extension = {
-        ...(state.extension || {}),
-        lastSeenAt: new Date().toISOString(),
-        lastVersion: String(body.extensionVersion || state.extension?.lastVersion || "").slice(0, 40) || null,
-        lastEvent: "rules-sync",
-        lastHost: state.extension?.lastHost || null,
-        dynamicRules: {
-          syncedAt: new Date().toISOString(),
-          count,
-          expectedCount,
-          signature,
-          expectedSignature,
-          fallbackRequired: snapshot.fallbackRequired,
-          status: ok ? "synced" : (truthy(body.ok) ? "mismatch" : "failed"),
-          ok,
-          error: String(body.error || "").slice(0, 200)
-        }
-      };
-      await saveState(state);
-    }
-    sendJson(response, 200, { ok, count, expectedCount }, extensionCorsHeaders(request.headers));
     return;
   }
 
@@ -771,7 +658,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     const durationMinutes = cycle ? cycleDurationMinutes(cycle) : clampNumber(body.durationMinutes, 1, 60 * 24 * 45, 25);
     const started = new Date();
     const ends = new Date(started.getTime() + durationMinutes * 60 * 1000);
-    const lockLevel = stringValue(body.lockLevel, state.settings.strictByDefault ? "deep" : "light");
+    const lockLevel = normalizeLockLevel(body.lockLevel, state.settings.strictByDefault ? "deep" : "light");
     const mode = stringValue(body.mode, "focus");
     const profile = profileById(state, stringValue(body.profileId, state.settings.activeProfileId));
     await assertStrictLockAllowed(lockLevel, profile, { mode });
@@ -1096,17 +983,18 @@ function updateSettings(body: RequestBody): void {
 
   for (const [key, value] of Object.entries(body || {})) {
     if (!allowed.has(key)) continue;
-    const current = state.settings[key];
+    const mutableSettings = state.settings as unknown as Record<string, string | number | boolean>;
+    const current = mutableSettings[key];
     if (typeof current === "boolean") {
-      state.settings[key] = parseBoolean(value, current);
+      mutableSettings[key] = parseBoolean(value, current);
     } else if (typeof current === "number") {
       const bounds = settingsNumberBounds(key);
-      state.settings[key] = clampNumber(value, bounds.min, bounds.max, current);
+      mutableSettings[key] = clampNumber(value, bounds.min, bounds.max, current);
     } else if (key === "focusSoundPreset") {
       const preset = String(value);
-      state.settings[key] = ["brown-noise", "rain", "ocean"].includes(preset) ? preset : "brown-noise";
+      mutableSettings[key] = ["brown-noise", "rain", "ocean"].includes(preset) ? preset : "brown-noise";
     } else {
-      state.settings[key] = String(value);
+      mutableSettings[key] = String(value);
     }
   }
 }
@@ -1118,13 +1006,17 @@ function settingsNumberBounds(key: string): { min: number; max: number } {
   return { min: 1, max: 100000 };
 }
 
+function profileModeValue(value: unknown): ProfileMode {
+  return value === "allowlist" ? "allowlist" : "blocklist";
+}
+
 function upsertProfile(body: RequestBody): Profile {
   const id = stringValue(body.id, randomUUID());
   const existing = state.profiles.find((item) => item.id === id);
-  const profile = {
+  const profile: Profile = {
     id,
     name: String(body.name || existing?.name || "Focus profile").slice(0, 80),
-    mode: body.mode === "allowlist" ? "allowlist" : "blocklist",
+    mode: profileModeValue(body.mode),
     description: String(body.description || existing?.description || "").slice(0, 240),
     blockedApps: normalizeArray(body.blockedApps ?? existing?.blockedApps),
     blockedSites: normalizeArray(body.blockedSites ?? existing?.blockedSites),
@@ -1146,13 +1038,13 @@ function upsertProfile(body: RequestBody): Profile {
 function upsertSchedule(body: RequestBody): Schedule {
   const id = stringValue(body.id, randomUUID());
   const existing = state.schedules.find((item) => item.id === id);
-  const schedule = {
+  const schedule: Schedule = {
     id,
     name: String(body.name || existing?.name || "Focus schedule").slice(0, 80),
     enabled: body.enabled === undefined ? Boolean(existing?.enabled) : parseBoolean(body.enabled, false),
     mode: stringValue(body.mode, existing?.mode || "focus"),
     profileId: stringValue(body.profileId, existing?.profileId || state.settings.activeProfileId),
-    lockLevel: stringValue(body.lockLevel, existing?.lockLevel || "deep"),
+    lockLevel: normalizeLockLevel(body.lockLevel, existing?.lockLevel || "deep"),
     commitmentLock: body.commitmentLock === undefined ? Boolean(existing?.commitmentLock) : truthy(body.commitmentLock),
     deviceTargets: normalizeDeviceTargets(body.deviceTargets ?? existing?.deviceTargets, DEVICE_TARGETS),
     days: normalizeDays(body.days ?? existing?.days ?? [1, 2, 3, 4, 5]),
@@ -1167,7 +1059,7 @@ function upsertSchedule(body: RequestBody): Schedule {
   return schedule;
 }
 
-function upsertLimitRule(body: RequestBody): UnknownRecord {
+function upsertLimitRule(body: RequestBody): LimitRule {
   const id = stringValue(body.id, randomUUID());
   const existing = (state.limitRules || []).find((item) => item.id === id);
   const rule = normalizeLimitRule(body, existing, id);
@@ -1179,7 +1071,7 @@ function upsertLimitRule(body: RequestBody): UnknownRecord {
   return rule;
 }
 
-function upsertAppLock(body: RequestBody): UnknownRecord {
+function upsertAppLock(body: RequestBody): AppLockRule {
   const id = stringValue(body.id, randomUUID());
   const existing = (state.appLocks || []).find((item) => item.id === id);
   const lock = normalizeAppLock(body, existing, id);
@@ -1246,7 +1138,7 @@ function startDeviceSession(targets: DeviceTarget[], session: Session): void {
   state.activeSession = state.activeSessions.computer || null;
 }
 
-function clearDeviceSession(target: DeviceTargetInput): void {
+function clearDeviceSession(target: unknown): void {
   const device = normalizeDeviceTarget(target);
   state.activeSessions ||= { computer: state.activeSession || null, phone: null };
   state.activeSessions[device] = null;
@@ -1335,7 +1227,7 @@ function isProtectedSettingsMutation(body: RequestBody): boolean {
   return Object.keys(body || {}).some((key) => guarded.has(key));
 }
 
-async function assertStrictLockAllowed(lockLevel: string, profile: Profile, options: { mode?: string } = {}): Promise<void> {
+async function assertStrictLockAllowed(lockLevel: LockLevel, profile: Profile, options: { mode?: string } = {}): Promise<void> {
   if (lockLevel !== "deep" || !state.settings.foolproofModeEnabled) return;
   await strictPreflightStatus(state, profile, {
     mode: options.mode,

@@ -583,7 +583,7 @@ export function queueIosMdmInventory(state: SentinelState, udid: string, reason 
 
 function currentIosMdmSettings(state: SentinelState): MdmSettings {
   const current = state.deviceControls?.ios?.mdm || {};
-  return normalizeIosMdmSettings(current, current);
+  return normalizeIosMdmSettings(current as unknown as UnknownRecord, current);
 }
 
 function iosPolicyHash(state: SentinelState, now: Date): string {
@@ -607,7 +607,8 @@ function iosPolicyHash(state: SentinelState, now: Date): string {
 }
 
 function ensureMdmState(state: SentinelState): MdmSettings {
-  state.deviceControls.ios.mdm = normalizeIosMdmSettings(state.deviceControls.ios.mdm || {}, state.deviceControls.ios.mdm || {});
+  const current = state.deviceControls.ios.mdm || {};
+  state.deviceControls.ios.mdm = normalizeIosMdmSettings(current as unknown as UnknownRecord, current);
   return state.deviceControls.ios.mdm as unknown as MdmSettings;
 }
 

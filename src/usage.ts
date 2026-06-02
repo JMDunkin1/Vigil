@@ -14,6 +14,13 @@ const BLOCK_EVENT_TYPES = new Set([
 
 const USAGE_TOTALS_MODE = "by-device";
 type SessionRecord = Partial<Session> & { id: string; active?: boolean };
+type RawUsageBucket = Partial<UsageBucket> & {
+  appOpens?: Record<string, unknown>;
+  siteOpens?: Record<string, unknown>;
+  seconds?: unknown;
+  durationSeconds?: unknown;
+  recordedAt?: unknown;
+};
 
 export class UsageSnapshotError extends Error {
   status: number;
@@ -237,7 +244,7 @@ function normalizeDeviceBuckets(devices: Record<string, Partial<UsageBucket>> = 
   return output;
 }
 
-function normalizeUsageBucket(bucket: Partial<UsageBucket> & Record<string, unknown> = {}, now = new Date()): UsageBucket {
+function normalizeUsageBucket(bucket: RawUsageBucket = {}, now = new Date()): UsageBucket {
   const apps = secondsMap(bucket.apps);
   const sites = secondsMap(bucket.sites);
   const opens = {

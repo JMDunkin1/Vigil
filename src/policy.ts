@@ -11,7 +11,7 @@ import {
 } from "./defaults.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { parseClock } from "./time.js";
-import type { ActivePolicy, DeviceTarget, DeviceTargetInput, PolicyPhase, Profile, Schedule, SentinelState, Session } from "./types.js";
+import type { ActivePolicy, DeviceTarget, DeviceTargetInput, LockLevel, PolicyPhase, PolicyPhaseKind, Profile, Schedule, SentinelState, Session } from "./types.js";
 
 const SITE_ALIAS_GROUPS = [
   ["youtube.com", "youtu.be", "youtube-nocookie.com"],
@@ -326,6 +326,11 @@ export function normalizeDeviceTarget(value: unknown, fallback: DeviceTarget): D
 export function normalizeDeviceTarget(value: unknown, fallback: DeviceTarget | "" = "computer"): DeviceTarget | "" {
   const target = String(value || "").trim().toLowerCase();
   return DEVICE_TARGETS.includes(target as DeviceTarget) ? target as DeviceTarget : fallback;
+}
+
+export function normalizeLockLevel(value: unknown, fallback: LockLevel = "deep"): LockLevel {
+  const level = String(value || "").trim().toLowerCase();
+  return level === "light" || level === "deep" ? level : fallback;
 }
 
 export function sessionTargetsDevice(session: Session | Schedule | null | undefined, device: DeviceTargetInput = "computer"): boolean {
@@ -739,7 +744,7 @@ function makeWindow(now: Date, startMinutes: number, endMinutes: number, addEndD
 }
 
 function phase(
-  kind: string,
+  kind: PolicyPhaseKind,
   label: string,
   blocking: boolean,
   round: number,

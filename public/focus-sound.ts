@@ -10,7 +10,11 @@ type PostRequest = (path: string, body: unknown) => Promise<unknown>;
 
 interface FocusSoundData {
   state: {
-    settings?: Record<string, unknown>;
+    settings?: {
+      focusSoundEnabled?: unknown;
+      focusSoundPreset?: unknown;
+      focusSoundVolume?: unknown;
+    };
     activePolicy?: unknown;
   };
   limits: {

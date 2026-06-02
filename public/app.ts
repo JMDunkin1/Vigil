@@ -1,374 +1,10 @@
 import { get, post, del } from "./api-client.js";
+import { createDistanceKeyUi } from "./distance-key-ui.js";
 import { createDeviceTargetController } from "./device-targets.js";
 import { dayCheckbox, detailBlock, el, progressBlock, textEl } from "./dom.js";
-import { createDistanceKeyQrSvg } from "./distance-key-qr.js";
 import { createFocusSoundController } from "./focus-sound.js";
 import { days, daysText, daysWithDataText, enforcementText, eventLabel, formatDuration, lines, phaseText, phaseTitle, progressText, shortDate, shortDateTime, signedDuration, signedNumber, signedPercent, sweepText, systemSleepLockText } from "./format.js";
-import type { ActivePolicy, DeviceTargetInput, PolicyPhase, Profile, Schedule, SentinelState, Session, StateEvent, UnknownRecord, UsageSample } from "../src/types.js";
-
-type ControlElement = HTMLElement & {
-  value: string;
-  checked: boolean;
-  disabled: boolean;
-  hidden: boolean;
-  placeholder: string;
-  elements: NamedFormControls;
-  reset(): void;
-  submit(): void;
-};
-type NamedFormControls = HTMLFormControlsCollection & Record<string, ControlElement>;
-type FormPayload = Record<string, unknown>;
-
-interface Preset {
-  label: string;
-  apps: string[];
-  sites: string[];
-}
-
-interface BarEntry {
-  label?: string;
-  name?: string;
-  seconds?: number;
-  count?: number;
-  value?: number;
-}
-
-interface ProgressSummary extends UnknownRecord {
-  seconds?: number;
-  opens?: number;
-  budget?: UnknownRecord & {
-    budgetSeconds?: number;
-    percent?: number;
-  };
-}
-
-interface ChallengeSummary extends UnknownRecord {
-  text?: string;
-}
-
-interface DashboardItem extends UnknownRecord {
-  id: string;
-  name: string;
-  label?: string;
-  detail?: string;
-  ok?: boolean;
-  enabled?: boolean;
-  type?: string;
-  mode?: string;
-  start?: string;
-  end?: string;
-  days?: number[];
-  apps?: string[];
-  sites?: string[];
-  wifiNetworks?: string[];
-  blockedApps?: string[];
-  blockedSites?: string[];
-  blockedUrlPatterns?: string[];
-  allowedApps?: string[];
-  allowedSites?: string[];
-  commitmentLock?: boolean;
-  unlocksAllowed?: number;
-  unlockMinutes?: number;
-  delaySeconds?: number;
-  lockLevel?: string;
-  limitMinutes?: number;
-  blockMinutes?: number;
-  frictionLevel?: string;
-  sessionMinutes?: number;
-  dailyBudgetMinutes?: number;
-  activeBlock?: unknown;
-  activeUnlock?: unknown;
-  pendingRequest?: DashboardItem & {
-    eligibleAt?: string;
-    challenge?: ChallengeSummary | null;
-  };
-  remainingToday?: number;
-  usedToday?: number;
-  percent?: number;
-  progress?: ProgressSummary;
-  challenge?: ChallengeSummary | null;
-}
-
-interface LimitBlockItem extends UnknownRecord {
-  until: string;
-}
-
-interface WeekDaySummary extends UnknownRecord {
-  label: string;
-  tracked?: boolean;
-  focusScore?: number;
-  distractingSeconds?: number;
-}
-
-interface InterventionSummary extends UnknownRecord {
-  enabled?: boolean;
-  level?: string;
-  message?: string;
-  resetsAt?: string;
-  windowMinutes?: number;
-  topTargets?: Array<{ label: string; count: number }>;
-}
-
-interface ProtectionSummary extends UnknownRecord {
-  enabled?: boolean;
-  activeWindow?: { until: string };
-  pending?: Array<DashboardItem & {
-    eligibleAt: string;
-    challenge?: ChallengeSummary | null;
-  }>;
-}
-
-interface FoolproofSummary extends UnknownRecord {
-  ready?: boolean;
-  enabled?: boolean;
-  blockers?: DashboardItem[];
-}
-
-interface IntentionalUseSummary extends UnknownRecord {
-  goal?: {
-    statement?: string;
-    values?: string[];
-    replacements?: string[];
-  };
-  today?: {
-    pauses?: number;
-  };
-  accountability?: UnknownRecord & {
-    enabled?: boolean;
-    partnerName?: string;
-    cadence?: string;
-    digest?: { text?: string };
-  };
-  rules?: DashboardItem[];
-}
-
-interface HardeningCheck extends UnknownRecord {
-  installed?: boolean;
-  partial?: boolean;
-  stale?: boolean;
-  status?: string;
-  tamperDetectedAt?: string;
-}
-
-interface FocusShortcutSummary extends UnknownRecord {
-  onShortcutName?: string;
-  offShortcutName?: string;
-  lastError?: string;
-  active?: boolean;
-  enabled?: boolean;
-}
-
-interface KeyholderSummary extends UnknownRecord {
-  enabled?: boolean;
-  hasPasscode?: boolean;
-}
-
-interface DistanceKeySummary extends UnknownRecord {
-  enabled?: boolean;
-  keyFilePath?: string;
-  hasKeyFile?: boolean;
-  hasToken?: boolean;
-}
-
-interface IosDeviceSummary extends UnknownRecord {
-  enabled?: boolean;
-  mode?: string;
-  webMode?: string;
-  blockApps?: boolean;
-  blockWeb?: boolean;
-  removalHardened?: boolean;
-  hardenRemoval?: boolean;
-  restrictInstallAndErase?: boolean;
-  blockedAppBundleIds?: string[];
-  allowedAppBundleIds?: string[];
-  deniedUrls?: string[];
-  allowedUrls?: string[];
-  note?: string;
-  supervisedRequired?: boolean;
-  profile?: {
-    appBundleCount?: number;
-    deniedUrlCount?: number;
-    allowedUrlCount?: number;
-    webClipCount?: number;
-    generatedFrom?: string;
-  };
-  mdm?: UnknownRecord & {
-    enabled?: boolean;
-    ready?: boolean;
-    enrollmentReady?: boolean;
-    publicBaseUrl?: string;
-    topic?: string;
-    identityCertificateUuid?: string;
-    identityCertificatePayloadSet?: boolean;
-    identityCertificatePasswordSet?: boolean;
-    pushCertificatePayloadSet?: boolean;
-    pushCertificatePasswordSet?: boolean;
-    signMessage?: boolean;
-    useDevelopmentApns?: boolean;
-    note?: string;
-    enrollmentUrl?: string;
-    localEnrollmentPath?: string;
-    enrolledDeviceCount?: number;
-    pendingCommandCount?: number;
-    sentCommandCount?: number;
-    lastPushAt?: string;
-    lastPushStatus?: string;
-    lastPushError?: string;
-    lastSeenAt?: string;
-    pushSupported?: boolean;
-    blockers?: string[];
-    devices?: Array<{
-      udid?: string;
-      status?: string;
-      productName?: string;
-      osVersion?: string;
-      lastStatus?: string;
-    }>;
-  };
-}
-
-interface UsageSummary extends UnknownRecord {
-  focusScore: number;
-  distractingSeconds: number;
-  protectedSeconds: number;
-  topApps: BarEntry[];
-  topSites: BarEntry[];
-}
-
-interface ReportSummary extends UnknownRecord {
-  currentWeek: {
-    startsAt: string;
-    endsAt: string;
-    days: WeekDaySummary[];
-    totals: {
-      averageFocusScore: number;
-      distractingSeconds: number;
-      averageDailyDistractionSeconds: number;
-      trackedDays: number;
-      averageDailyOpens?: number;
-    };
-  };
-  comparison?: {
-    distractingPercentDelta?: number;
-    focusScoreDelta?: number;
-    distractingSecondsDelta?: number;
-  };
-  streak: {
-    label: string;
-    goal: number;
-  };
-  focusScoreGoal: number;
-  insights: string[];
-  milestones: DashboardItem[];
-}
-
-interface MonitorSummary extends UnknownRecord {
-  ok?: boolean;
-  lastSample?: UsageSample;
-  lastEnforcement?: UnknownRecord | null;
-  lastProcessSweep?: UnknownRecord;
-  lastSystemSleepLock?: UnknownRecord;
-  accessibilityLikelyMissing?: boolean;
-  lastError?: string;
-}
-
-interface DashboardState extends SentinelState {
-  activePolicy?: ActivePolicy | null;
-  activeProfile?: Profile | null;
-  sessionPhase?: PolicyPhase | null;
-  activeSessions: Partial<Record<DeviceTargetInput, Session | null>>;
-  emergency: SentinelState["emergency"] & {
-    remaining?: number;
-    pending: Array<SentinelState["emergency"]["pending"][number] & {
-      challenge?: ChallengeSummary | null;
-      eligibleAt?: string;
-    }>;
-  };
-}
-
-interface DashboardData extends UnknownRecord {
-  state: DashboardState;
-  usage: UsageSummary;
-  report: ReportSummary;
-  monitor: MonitorSummary;
-  intervention: InterventionSummary;
-  intentionalUse: IntentionalUseSummary;
-  limits: {
-    activeBlocks: LimitBlockItem[];
-    rules: DashboardItem[];
-  };
-  appLocks: {
-    rules: DashboardItem[];
-  };
-  devices: UnknownRecord & {
-    ios?: IosDeviceSummary;
-  };
-  presets: Preset[];
-  protection: ProtectionSummary;
-  hardening: UnknownRecord & {
-    hostsBlock?: string;
-    hosts?: HardeningCheck;
-    firewall?: HardeningCheck;
-    launchAgent?: HardeningCheck;
-    stateSeal?: HardeningCheck;
-    actions?: Record<string, { path?: string; command?: string }>;
-    audit?: DashboardItem[];
-    foolproof?: FoolproofSummary;
-  };
-}
-
-interface UiState {
-  data: DashboardData | null;
-  activeView: string;
-  selectedProfileId: string | null;
-  selectedScheduleId: string | null;
-  pendingEmergencyId: string | null;
-  pendingMaintenanceId: string | null;
-  timer: ReturnType<typeof setInterval> | null;
-  distanceScanner: {
-    stream: MediaStream | null;
-    frame: number | null;
-    target: ControlElement | null;
-  };
-}
-
-interface SessionStartResponse {
-  session: {
-    endsAt: string;
-  };
-}
-
-interface SessionEndResponse {
-  ended?: boolean;
-}
-
-interface QueuePolicyResponse {
-  result?: {
-    queued?: number;
-  };
-}
-
-interface PendingResponse {
-  pending?: {
-    id?: string;
-  };
-  activeWindow?: boolean;
-}
-
-interface DistanceKeyResponse {
-  token?: string;
-  keyFilePath?: string;
-}
-
-interface BarcodeDetectorResult {
-  rawValue?: string;
-}
-
-interface BarcodeDetectorConstructor {
-  new(options?: { formats?: string[] }): { detect(source: CanvasImageSource): Promise<BarcodeDetectorResult[]> };
-}
-
-declare const BarcodeDetector: BarcodeDetectorConstructor;
+import type { BarEntry, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeyResponse, DistanceKeySummary, FocusShortcutSummary, FormPayload, FoolproofSummary, IntentionalUseSummary, InterventionSummary, KeyholderSummary, MonitorSummary, NamedFormControls, PendingResponse, Preset, ProgressSummary, ProtectionSummary, QueuePolicyResponse, ReportSummary, Schedule, SessionEndResponse, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary, WeekDaySummary } from "./app-model.js";
 
 const state: UiState = {
   data: null,
@@ -411,6 +47,7 @@ const deviceTargets = createDeviceTargetController({
   onChange: () => renderDeviceTargetControls(state.data?.state || {})
 });
 const focusSound = createFocusSoundController({ $, post });
+const distanceKeyUi = createDistanceKeyUi({ $, toast, errorMessage, scanner: state.distanceScanner });
 
 boot();
 
@@ -474,7 +111,7 @@ function setView(view?: string) {
 }
 
 function selectedDeviceTargets() {
-  return deviceTargets.selectedTargets();
+  return deviceTargets.selectedTargets() as Array<"computer" | "phone">;
 }
 
 function selectedDeviceLabel() {
@@ -489,9 +126,9 @@ function bindEvents() {
   deviceTargets.bind();
 
   $$("[data-scan-distance-key]").forEach((button) => {
-    button.addEventListener("click", () => openDistanceScanner(button.dataset.scanDistanceKey));
+    button.addEventListener("click", () => distanceKeyUi.openScanner(button.dataset.scanDistanceKey));
   });
-  $("#closeDistanceScanner").addEventListener("click", closeDistanceScanner);
+  $("#closeDistanceScanner").addEventListener("click", distanceKeyUi.closeScanner);
 
   $("#startSessionForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
@@ -853,8 +490,8 @@ function bindEvents() {
         keyFilePath: $("#distanceKeyFilePath").value
       });
       $("#distanceKeyTokenInput").value = "";
-      hideDistanceToken();
-      if (result.token) showDistanceToken(result.token);
+      distanceKeyUi.hideToken();
+      if (result.token) distanceKeyUi.showToken(result.token);
       toast("Distance key saved");
     } catch (error) {
       toast(errorMessage(error));
@@ -869,7 +506,7 @@ function bindEvents() {
         keyFilePath: $("#distanceKeyFilePath").value,
         rotate: true
       });
-      showDistanceToken(result.token || "");
+      distanceKeyUi.showToken(result.token || "");
       toast("Distance key generated");
     } catch (error) {
       toast(errorMessage(error));
@@ -884,7 +521,7 @@ function bindEvents() {
         keyFilePath: $("#distanceKeyFilePath").value,
         writeKeyFile: true
       });
-      hideDistanceToken();
+      distanceKeyUi.hideToken();
       toast(result.keyFilePath ? "Distance key file written" : "Distance key saved");
     } catch (error) {
       toast(errorMessage(error));
@@ -892,7 +529,7 @@ function bindEvents() {
     await refresh();
   });
 
-  $("#printDistanceKey").addEventListener("click", printDistanceKey);
+  $("#printDistanceKey").addEventListener("click", distanceKeyUi.print);
 
   $("#installLaunchAgent").addEventListener("click", async () => {
     const status = $("#hardeningActionStatus");
@@ -2180,128 +1817,6 @@ function empty(text: string): HTMLElement {
   node.className = "empty";
   node.textContent = text;
   return node;
-}
-
-function showDistanceToken(token: string): void {
-  const node = $("#distanceKeyToken");
-  node.textContent = token || "";
-  node.classList.toggle("hidden", !token);
-  const panel = $("#distanceKeyQr");
-  const qr = $("#distanceKeyQrImage");
-  if (!token) {
-    panel.classList.add("hidden");
-    qr.replaceChildren();
-    return;
-  }
-  qr.replaceChildren(createDistanceKeyQrSvg(token));
-  panel.classList.remove("hidden");
-}
-
-function hideDistanceToken(): void {
-  showDistanceToken("");
-}
-
-async function openDistanceScanner(targetSelector?: string): Promise<void> {
-  if (!targetSelector) return;
-  const target = $(targetSelector);
-  if (!target) return;
-  if (!("BarcodeDetector" in window)) {
-    toast("QR scanning is not available in this browser");
-    return;
-  }
-
-  closeDistanceScanner();
-  state.distanceScanner.target = target;
-  $("#distanceScanner").classList.remove("hidden");
-  $("#distanceScannerStatus").textContent = "Camera starting";
-
-  try {
-    const video = $("#distanceScannerVideo") as unknown as HTMLVideoElement;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" },
-      audio: false
-    });
-    state.distanceScanner.stream = stream;
-    video.srcObject = stream;
-    await video.play();
-    const detector = new BarcodeDetector({ formats: ["qr_code"] });
-    $("#distanceScannerStatus").textContent = "Point the camera at the printed distance key";
-
-    const tick = async () => {
-      if (!state.distanceScanner.stream) return;
-      try {
-        const codes = await detector.detect(video);
-        const value = normalizeDistanceKeyScan(codes[0]?.rawValue || "");
-        if (value) {
-          target.value = value;
-          closeDistanceScanner();
-          toast("Distance key scanned");
-          return;
-        }
-      } catch {
-        $("#distanceScannerStatus").textContent = "Scanning paused; adjust camera permission or type the key";
-      }
-      state.distanceScanner.frame = requestAnimationFrame(tick);
-    };
-    state.distanceScanner.frame = requestAnimationFrame(tick);
-  } catch (error) {
-    closeDistanceScanner();
-    toast(errorMessage(error) || "Camera unavailable");
-  }
-}
-
-function closeDistanceScanner(): void {
-  if (state.distanceScanner.frame) cancelAnimationFrame(state.distanceScanner.frame);
-  if (state.distanceScanner.stream) {
-    for (const track of state.distanceScanner.stream.getTracks()) track.stop();
-  }
-  state.distanceScanner = { stream: null, frame: null, target: null };
-  const video = $("#distanceScannerVideo") as unknown as HTMLVideoElement;
-  if (video) video.srcObject = null;
-  const scanner = $("#distanceScanner");
-  if (scanner) scanner.classList.add("hidden");
-}
-
-function normalizeDistanceKeyScan(value: unknown): string {
-  const text = String(value || "").trim();
-  const match = text.match(/[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/i);
-  return match ? match[0].toUpperCase() : "";
-}
-
-function printDistanceKey(): void {
-  const token = $("#distanceKeyToken").textContent.trim();
-  if (!token) {
-    toast("Generate a distance key first");
-    return;
-  }
-  const page = window.open("", "distance-key-print");
-  if (!page) {
-    toast("Print window was blocked");
-    return;
-  }
-  const doc = page.document;
-  doc.title = "Distance Key";
-  const style = doc.createElement("style");
-  style.textContent = `
-    body { font-family: system-ui, sans-serif; margin: 32px; color: #16201d; }
-    main { width: min(420px, 100%); }
-    h1 { font-size: 24px; margin: 0 0 12px; }
-    p { color: #53605b; line-height: 1.4; }
-    code { display: block; margin-top: 12px; font-size: 22px; font-weight: 800; letter-spacing: 2px; }
-    svg { width: 260px; height: 260px; margin-top: 18px; border: 1px solid #d9d2c4; }
-  `;
-  const main = doc.createElement("main");
-  const title = doc.createElement("h1");
-  title.textContent = "Sentinel Distance Key";
-  const note = doc.createElement("p");
-  note.textContent = "Keep this away from the desk. Scan it or type the code when a protected unlock needs the physical key.";
-  const code = doc.createElement("code");
-  code.textContent = token;
-  main.append(title, note, createDistanceKeyQrSvg(token, 10, doc), code);
-  doc.head.replaceChildren(style);
-  doc.body.replaceChildren(main);
-  page.focus();
-  page.print();
 }
 
 let toastTimeout: ReturnType<typeof setTimeout> | null = null;

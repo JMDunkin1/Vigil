@@ -7,9 +7,12 @@ export interface JsonObject {
 export type UnknownRecord = Record<string, unknown>;
 
 export type DeviceTarget = "computer" | "phone";
-export type DeviceTargetInput = DeviceTarget | string;
-export type LockLevel = "light" | "deep" | string;
-export type ProfileMode = "blocklist" | "allowlist" | string;
+export type DeviceTargetInput = DeviceTarget;
+export type LockLevel = "light" | "deep";
+export type ProfileMode = "blocklist" | "allowlist";
+export type PolicyPhaseKind = "work" | "break";
+export type ActivePolicyKind = "baseline" | "manual" | "schedule" | "panic" | "integrity" | "app-lock" | "limit" | "browser-control" | "content-filter" | "url-pattern" | "allowlist";
+export type LimitRuleType = "time" | "open";
 
 export interface Profile {
   id: string;
@@ -23,7 +26,6 @@ export interface Profile {
   allowedSites: string[];
   phoneAppBlocking?: boolean;
   hostsUrlPatternBlocking?: boolean;
-  [key: string]: unknown;
 }
 
 export interface SessionCycle {
@@ -48,11 +50,12 @@ export interface Session {
   emergencyUnlocksAllowed?: boolean;
   fullLockout?: boolean;
   source?: string;
-  deviceTargets?: DeviceTargetInput[];
+  deviceTargets?: DeviceTarget[];
   profileSnapshot?: Profile;
   cycle?: SessionCycle;
   active?: boolean;
-  [key: string]: unknown;
+  lockId?: string;
+  ruleId?: string;
 }
 
 export interface Schedule {
@@ -67,12 +70,11 @@ export interface Schedule {
   end: string;
   wifiNetworks: string[];
   commitmentLock?: boolean;
-  deviceTargets?: DeviceTargetInput[];
-  [key: string]: unknown;
+  deviceTargets?: DeviceTarget[];
 }
 
 export interface PolicyPhase {
-  kind: string;
+  kind: PolicyPhaseKind;
   label: string;
   blocking: boolean;
   round: number;
@@ -82,13 +84,18 @@ export interface PolicyPhase {
 }
 
 export interface ActivePolicy {
-  kind: string;
+  kind: ActivePolicyKind;
   session: Session;
   profile: Profile;
   schedule?: Schedule;
   endsAt: string;
   phase?: PolicyPhase | null;
-  [key: string]: unknown;
+  appLock?: AppLockRule;
+  limitBlock?: LimitBlock;
+  browserControl?: { area: string; label: string; url: string };
+  contentFilter?: UnknownRecord & { id?: string; label: string };
+  urlPattern?: { pattern: string; label: string };
+  alarm?: unknown;
 }
 
 export interface AppSettings {
@@ -133,7 +140,6 @@ export interface AppSettings {
   protectedEditWindowMinutes: number;
   runtimeGapLockdownSeconds: number;
   clockTamperLockdownSeconds: number;
-  [key: string]: unknown;
 }
 
 export interface StateEvent {
@@ -152,7 +158,7 @@ export interface LimitRule {
   id: string;
   name: string;
   enabled: boolean;
-  type: string;
+  type: LimitRuleType;
   lockLevel: LockLevel;
   days: number[];
   apps: string[];
@@ -160,21 +166,19 @@ export interface LimitRule {
   limitMinutes: number;
   unlocksAllowed: number;
   blockMinutes: number;
-  [key: string]: unknown;
 }
 
 export interface LimitBlock {
   id: string;
   ruleId: string;
   ruleName: string;
-  type: string;
+  type: LimitRuleType;
   lockLevel: LockLevel;
   apps: string[];
   sites: string[];
   createdAt: string;
   until: string;
   progress?: LimitProgress;
-  [key: string]: unknown;
 }
 
 export interface AppLockRule {
@@ -188,7 +192,6 @@ export interface AppLockRule {
   unlocksAllowed: number;
   unlockMinutes: number;
   delaySeconds: number;
-  [key: string]: unknown;
 }
 
 export interface AppLockUnlock {
@@ -198,7 +201,6 @@ export interface AppLockUnlock {
   createdAt: string;
   until: string;
   reason?: string;
-  [key: string]: unknown;
 }
 
 export interface AppLockRequest {
@@ -210,21 +212,20 @@ export interface AppLockRequest {
   eligibleAt: string;
   expiresAt: string;
   challenge?: TypingChallenge;
-  [key: string]: unknown;
 }
 
 export interface TypingChallenge {
   kind: string;
   text: string;
   createdAt: string;
-  [key: string]: unknown;
 }
 
 export interface OverrideRecord {
+  id?: string;
   scheduleId: string;
   until: string;
   createdAt?: string;
-  [key: string]: unknown;
+  reason?: string;
 }
 
 export interface EmergencyRequest {
@@ -239,7 +240,9 @@ export interface EmergencyRequest {
   scheduleId?: string | null;
   limitBlockIds?: string[];
   until?: string;
-  [key: string]: unknown;
+  delaySeconds?: number;
+  intervention?: UnknownRecord;
+  challenge?: TypingChallenge;
 }
 
 export interface IntentionalUseGoal {
@@ -264,7 +267,6 @@ export interface IntentionalUseRule {
   dailyBudgetMinutes: number;
   budgetWarningPercent?: number;
   askMood?: boolean;
-  [key: string]: unknown;
 }
 
 export interface IntentionalPause {
@@ -284,11 +286,12 @@ export interface IntentionalPause {
   hostname: string;
   returnUrl: string;
   event: string;
+  budget?: UnknownRecord | null;
+  context?: UnknownRecord | null;
   completedAt?: string;
   intention?: string;
   replacement?: string;
   mood?: string;
-  [key: string]: unknown;
 }
 
 export interface IntentionalGrant {
@@ -340,6 +343,16 @@ export interface IntentionalDayLedger {
   rules: Record<string, IntentionalRuleLedger>;
 }
 
+export interface IntentionalAccountabilityState {
+  enabled?: boolean;
+  partnerName?: string;
+  cadence?: string;
+  digest?: {
+    text?: string;
+    generatedAt?: string;
+  };
+}
+
 export interface IntentionalUseState {
   goal: IntentionalUseGoal;
   rules: IntentionalUseRule[];
@@ -347,12 +360,7 @@ export interface IntentionalUseState {
   grants: IntentionalGrant[];
   ledger: Record<string, IntentionalDayLedger>;
   outcomes: IntentionalOutcome[];
-  accountability: {
-    enabled?: boolean;
-    partnerName?: string;
-    cadence?: string;
-    [key: string]: unknown;
-  };
+  accountability: IntentionalAccountabilityState;
 }
 
 export interface StateSealState {
@@ -362,13 +370,11 @@ export interface StateSealState {
   lastDetail?: string;
   tamperDetectedAt?: string | null;
   tamperDetail?: string;
-  [key: string]: unknown;
 }
 
 export interface HardeningIssue {
   id: string;
   detail: string;
-  [key: string]: unknown;
 }
 
 export interface IntegrityRuntimeState {
@@ -388,7 +394,6 @@ export interface IntegrityRuntimeState {
   clockTamperDirection?: string;
   clockTamperPreviousWallAt?: string | null;
   clockTamperCurrentWallAt?: string | null;
-  [key: string]: unknown;
 }
 
 export interface MaintenanceRequest {
@@ -399,7 +404,6 @@ export interface MaintenanceRequest {
   eligibleAt: string;
   expiresAt: string;
   challenge?: TypingChallenge;
-  [key: string]: unknown;
 }
 
 export interface MaintenanceWindow {
@@ -408,7 +412,6 @@ export interface MaintenanceWindow {
   reason: string;
   createdAt: string;
   until: string;
-  [key: string]: unknown;
 }
 
 export interface KeyholderState {
@@ -416,7 +419,6 @@ export interface KeyholderState {
   salt: string | null;
   hash: string | null;
   updatedAt: string | null;
-  [key: string]: unknown;
 }
 
 export interface DistanceKeyState {
@@ -427,7 +429,6 @@ export interface DistanceKeyState {
   updatedAt: string | null;
   lastVerifiedAt: string | null;
   lastFileVerifiedAt: string | null;
-  [key: string]: unknown;
 }
 
 export interface FocusShortcutState {
@@ -439,7 +440,6 @@ export interface FocusShortcutState {
   lastCheckedAt: string | null;
   lastError: string;
   lastPolicy: string;
-  [key: string]: unknown;
 }
 
 export interface IosMdmSettings {
@@ -465,7 +465,6 @@ export interface IosMdmSettings {
   lastPushStatus: string;
   lastPushError: string;
   lastPolicyHash: string;
-  [key: string]: unknown;
 }
 
 export interface IosSettings {
@@ -485,7 +484,29 @@ export interface IosSettings {
   lastGeneratedAt: string | null;
   profileId?: string;
   mdm: IosMdmSettings;
-  [key: string]: unknown;
+}
+
+export interface ExtensionState {
+  lastSeenAt?: string | null;
+  lastVersion?: string | null;
+  lastEvent?: string | null;
+  lastHost?: string | null;
+  dynamicRules: Record<string, unknown>;
+}
+
+export interface EnvironmentState {
+  wifiSsid: string;
+  wifiCheckedAt: string | null;
+  wifiError: string;
+}
+
+export interface IntegrityState {
+  stateSeal: StateSealState;
+  runtime: IntegrityRuntimeState;
+}
+
+export interface DeviceControlsState {
+  ios: IosSettings;
 }
 
 export interface SentinelState {
@@ -501,28 +522,13 @@ export interface SentinelState {
   appLockRequests: AppLockRequest[];
   appLockLedger: Record<string, Record<string, number>>;
   intentionalUse: IntentionalUseState;
-  extension: {
-    dynamicRules: Record<string, unknown>;
-    [key: string]: unknown;
-  };
+  extension: ExtensionState;
   focusShortcut: FocusShortcutState;
-  environment: {
-    wifiSsid: string;
-    wifiCheckedAt: string | null;
-    wifiError: string;
-    [key: string]: unknown;
-  };
+  environment: EnvironmentState;
   keyholder: KeyholderState;
   distanceKey: DistanceKeyState;
-  integrity: {
-    stateSeal: StateSealState;
-    runtime: IntegrityRuntimeState;
-    [key: string]: unknown;
-  };
-  deviceControls: {
-    ios: IosSettings;
-    [key: string]: unknown;
-  };
+  integrity: IntegrityState;
+  deviceControls: DeviceControlsState;
   maintenance: {
     pending: MaintenanceRequest[];
     windows: MaintenanceWindow[];
@@ -536,7 +542,6 @@ export interface SentinelState {
   };
   overrides: OverrideRecord[];
   events: StateEvent[];
-  [key: string]: unknown;
 }
 
 export interface UsageSample {
@@ -544,7 +549,6 @@ export interface UsageSample {
   hostname?: string;
   url?: string;
   device?: string;
-  [key: string]: unknown;
 }
 
 export interface UsageBucket {
@@ -556,7 +560,6 @@ export interface UsageBucket {
     sites: Record<string, number>;
   };
   updatedAt?: string | null;
-  [key: string]: unknown;
 }
 
 export interface UsageDay extends UsageBucket {

@@ -8,6 +8,7 @@ import {
   hostMatchesSiteTargets,
   isStrictEmbeddedBrowserApp,
   isStrictUnsupportedBrowser,
+  normalizeLockLevel,
   normalizeHost
 } from "./policy.js";
 import type { ActivePolicy, LimitBlock, LimitProgress, LimitRule, SentinelState, UsageSample, UsageState } from "./types.js";
@@ -69,7 +70,7 @@ export function normalizeLimitRule(body: Record<string, unknown>, existing: Part
     name: String(body.name || existing?.name || (type === "open" ? "Open limit" : "Time limit")).slice(0, 80),
     enabled: body.enabled === undefined ? Boolean(existing?.enabled) : parseBoolean(body.enabled, false),
     type,
-    lockLevel: String(body.lockLevel || existing?.lockLevel || "deep"),
+    lockLevel: normalizeLockLevel(body.lockLevel, existing?.lockLevel || "deep"),
     days: normalizeDays(body.days ?? existing?.days ?? [0, 1, 2, 3, 4, 5, 6]),
     apps: normalizeTargets(body.apps ?? existing?.apps),
     sites: normalizeTargets(body.sites ?? existing?.sites).map(normalizeHost).filter(Boolean),
