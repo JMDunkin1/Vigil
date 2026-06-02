@@ -36,6 +36,11 @@ import { sanitizeSoftBlockProfile } from "../src/store.js";
 import { recordUsage, syncDeviceUsageSnapshot, usageSummary } from "../src/usage.js";
 
 const now = new Date("2026-05-28T14:00:00-04:00");
+const TEST_DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+function clockTime(date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
 
 {
   assert.deepEqual(parseGroups("staff admin everyone staff"), ["admin", "everyone", "staff"]);
@@ -821,9 +826,9 @@ const now = new Date("2026-05-28T14:00:00-04:00");
     mode: "focus",
     profileId: "default",
     lockLevel: "deep",
-    days: [now.getDay()],
-    start: "13:00",
-    end: "15:00",
+    days: TEST_DAYS,
+    start: "00:00",
+    end: "23:59",
     wifiNetworks: []
   }];
   recordRuntimeHeartbeat(state, new Date(2026, 4, 28, 12, 0, 0));
@@ -907,7 +912,7 @@ const now = new Date("2026-05-28T14:00:00-04:00");
     name: "Site Lock",
     enabled: true,
     lockLevel: "deep",
-    days: [now.getDay()],
+    days: TEST_DAYS,
     apps: [],
     sites: ["reddit.com"],
     unlocksAllowed: 2,
@@ -1144,9 +1149,9 @@ last exit code = 0
     profileId: "default",
     lockLevel: "deep",
     commitmentLock: true,
-    days: [now.getDay()],
-    start: "13:00",
-    end: "15:00",
+    days: TEST_DAYS,
+    start: "00:00",
+    end: "23:59",
     wifiNetworks: ["Office"]
   }];
   state.environment.wifiSsid = "Office";
@@ -1189,7 +1194,7 @@ last exit code = 0
     name: "Keyheld Lock",
     enabled: true,
     lockLevel: "deep",
-    days: [now.getDay()],
+    days: TEST_DAYS,
     apps: [],
     sites: ["reddit.com"],
     unlocksAllowed: 1,
@@ -1567,7 +1572,7 @@ last exit code = 0
     enabled: true,
     type: "time",
     lockLevel: "deep",
-    days: [now.getDay()],
+    days: TEST_DAYS,
     apps: [],
     sites: ["youtube.com", "reddit.com"],
     limitMinutes: 1,
@@ -1606,7 +1611,7 @@ last exit code = 0
     enabled: true,
     type: "open",
     lockLevel: "deep",
-    days: [now.getDay()],
+    days: TEST_DAYS,
     apps: [],
     sites: ["reddit.com"],
     limitMinutes: 30,
@@ -1634,7 +1639,7 @@ last exit code = 0
     enabled: true,
     type: "time",
     lockLevel: "deep",
-    days: [now.getDay()],
+    days: TEST_DAYS,
     apps: ["Steam"],
     sites: [],
     limitMinutes: 1,
@@ -1661,7 +1666,7 @@ last exit code = 0
     name: "Locked Social",
     enabled: true,
     lockLevel: "deep",
-    days: [now.getDay()],
+    days: TEST_DAYS,
     apps: [],
     sites: ["reddit.com"],
     unlocksAllowed: 1,
@@ -1691,7 +1696,7 @@ last exit code = 0
     name: "Locked Social",
     enabled: true,
     lockLevel: "deep",
-    days: [now.getDay()],
+    days: TEST_DAYS,
     apps: [],
     sites: ["reddit.com"],
     unlocksAllowed: 1,
@@ -1909,6 +1914,8 @@ last exit code = 0
   assert.equal(emptySummary.savedSeconds, 0);
 
   const scheduledState = defaultState();
+  const scheduledStart = new Date(now.getTime() - 30 * 60 * 1000);
+  const scheduledEnd = new Date(now.getTime() + 60 * 60 * 1000);
   scheduledState.schedules = [{
     id: "scheduled-dashboard-lock",
     name: "Scheduled dashboard lock",
@@ -1916,9 +1923,9 @@ last exit code = 0
     mode: "focus",
     profileId: "default",
     lockLevel: "deep",
-    days: [now.getDay()],
-    start: "13:30",
-    end: "15:00",
+    days: TEST_DAYS,
+    start: clockTime(scheduledStart),
+    end: clockTime(scheduledEnd),
     wifiNetworks: [],
     deviceTargets: ["computer"]
   }];
@@ -2117,7 +2124,7 @@ last exit code = 0
     enabled: true,
     type: "open",
     lockLevel: "deep",
-    days: [now.getDay()],
+    days: TEST_DAYS,
     apps: [],
     sites: ["reddit.com"],
     limitMinutes: 30,
@@ -2163,7 +2170,7 @@ last exit code = 0
     name: "Extension Lock",
     enabled: true,
     lockLevel: "deep",
-    days: [now.getDay()],
+    days: TEST_DAYS,
     apps: [],
     sites: ["reddit.com"],
     unlocksAllowed: 1,
