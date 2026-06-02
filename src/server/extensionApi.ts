@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest } from "../apiSecurity.js";
+import { apiRequestGuard, extensionCorsHeaders, isTrustedExtensionRequest } from "../apiSecurity.js";
 import { truthy } from "../booleans.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "../extensionPolicy.js";
 import { addEvent, saveState, saveUsage } from "../store.js";
@@ -29,7 +29,7 @@ export async function handleExtensionApiRoute(
   const path = url.pathname;
 
   if (method === "OPTIONS" && isExtensionApiPath(path)) {
-    const extensionGuard = extensionRequestGuard({ method, headers: request.headers }) as GuardResult;
+    const extensionGuard = extensionRouteGuard(method, path, request);
     if (!extensionGuard.ok) sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" });
     else sendEmpty(response, 204, extensionCorsHeaders(request.headers));
     return true;
@@ -60,7 +60,7 @@ async function handleExtensionCheck(
   { state, usage }: ExtensionApiContext
 ): Promise<void> {
   const method = request.method || "GET";
-  const extensionGuard = extensionRequestGuard({ method, headers: request.headers }) as GuardResult;
+  const extensionGuard = extensionRouteGuard(method, url.pathname, request);
   if (!extensionGuard.ok) {
     sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
     return;
@@ -109,7 +109,7 @@ async function handleExtensionRules(
   state: VigilState
 ): Promise<void> {
   const method = request.method || "GET";
-  const extensionGuard = extensionRequestGuard({ method, headers: request.headers }) as GuardResult;
+  const extensionGuard = extensionRouteGuard(method, url.pathname, request);
   if (!extensionGuard.ok) {
     sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
     return;
@@ -143,7 +143,7 @@ async function handleExtensionRulesSync(
   state: VigilState
 ): Promise<void> {
   const method = request.method || "GET";
-  const extensionGuard = extensionRequestGuard({ method, headers: request.headers }) as GuardResult;
+  const extensionGuard = extensionRouteGuard(method, "/api/extension/rules/sync", request);
   if (!extensionGuard.ok) {
     sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
     return;
@@ -178,4 +178,8 @@ async function handleExtensionRulesSync(
     await saveState(state);
   }
   sendJson(response, 200, { ok, count, expectedCount }, extensionCorsHeaders(request.headers));
+}
+
+function extensionRouteGuard(method: string, path: string, request: IncomingMessage): GuardResult {
+  return apiRequestGuard({ method, path, headers: request.headers }) as GuardResult;
 }

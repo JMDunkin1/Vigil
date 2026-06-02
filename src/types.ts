@@ -262,6 +262,7 @@ export interface IntentionalUseRule {
   end: string;
   apps: string[];
   sites: string[];
+  urlPatterns?: string[];
   delaySeconds: number;
   sessionMinutes: number;
   dailyBudgetMinutes: number;

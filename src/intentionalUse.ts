@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { activeAppLockUnlockForSample } from "./appLocks.js";
 import { PORT } from "./defaults.js";
 import { truthy } from "./booleans.js";
 import {
@@ -6,6 +7,7 @@ import {
   expandSiteTargets,
   hostMatchesSiteTargets,
   listFromTextarea,
+  matchBlockedUrlPattern,
   normalizeHost
 } from "./policy.js";
 import { clampNumber, dateKey, parseClock, weekKey } from "./time.js";
@@ -73,8 +75,15 @@ export function normalizeIntentionalUseRule(body: IntentionalBody = {}, existing
     ? bodyFriction as IntentionalUseRule["frictionLevel"]
     : existing.frictionLevel || "standard";
   const defaultDelay = friction === "strict" ? 30 : friction === "gentle" ? 5 : 12;
+  const id = String(body.id || existing.id || fallbackId);
+  let sites = normalizeTargets(body.sites ?? existing.sites).map(normalizeHost).filter(Boolean);
+  let urlPatterns = normalizeTargets(body.urlPatterns ?? existing.urlPatterns);
+  if (id === "short-form-intent-template" && sites.includes("youtube.com") && !urlPatterns.some((pattern) => normalizeHost(pattern) === "youtube.com" && pattern.includes("/shorts"))) {
+    sites = sites.filter((site) => site !== "youtube.com");
+    urlPatterns = [...urlPatterns, "youtube.com/shorts", "m.youtube.com/shorts"];
+  }
   return {
-    id: String(body.id || existing.id || fallbackId),
+    id,
     name: String(body.name || existing.name || "Intentional pause").slice(0, 80),
     enabled: body.enabled === undefined ? Boolean(existing.enabled) : truthy(body.enabled),
     frictionLevel: friction,
@@ -82,7 +91,8 @@ export function normalizeIntentionalUseRule(body: IntentionalBody = {}, existing
     start: normalizeClock(body.start || existing.start || "00:00"),
     end: normalizeClock(body.end || existing.end || "23:59"),
     apps: normalizeTargets(body.apps ?? existing.apps),
-    sites: normalizeTargets(body.sites ?? existing.sites).map(normalizeHost).filter(Boolean),
+    sites,
+    urlPatterns,
     delaySeconds: clampNumber(body.delaySeconds ?? existing.delaySeconds, 0, 3600, defaultDelay),
     sessionMinutes: clampNumber(body.sessionMinutes ?? existing.sessionMinutes, 1, 240, 10),
     dailyBudgetMinutes: clampNumber(body.dailyBudgetMinutes ?? existing.dailyBudgetMinutes, 0, 1440, 30),
@@ -165,6 +175,8 @@ export function intentionalUseDecision(state: VigilState, sample: UsageSample, o
 
   const rule = matchingRule(state, sample, now);
   if (!rule) return { shouldPause: false, reason: "no-rule" };
+  const appLockUnlock = activeAppLockUnlockForSample(state, sample, now);
+  if (appLockUnlock) return { shouldPause: false, reason: "app-lock-unlock", appLockUnlock, rule };
 
   const grant = activeIntentionalUseGrant(state, sample, rule, now);
   if (grant) return { shouldPause: false, reason: "grant", grant, rule };
@@ -183,7 +195,7 @@ export function activeIntentionalUseGrant(state: VigilState, sample: UsageSample
     if (grant.status !== "active" || Date.parse(grant.until || "") <= now.getTime()) return false;
     const grantRule = rules.find((item) => item.id === grant.ruleId);
     if (!grantRule) return false;
-    if (grant.targetType === "site" && sample.hostname) {
+    if ((grant.targetType === "site" || grant.targetType === "url") && sample.hostname) {
       return hostMatchesSiteTargets(sample.hostname, [grant.hostname]);
     }
     if (grant.targetType === "app" && sample.app) {
@@ -362,9 +374,23 @@ function cleanupIntentionalUse(state: VigilState, now: Date): void {
 function matchingRule(state: VigilState, sample: UsageSample, now: Date): IntentionalUseRule | null {
   return (state.intentionalUse.rules || []).find((rule) => {
     if (!rule.enabled || !ruleAppliesNow(rule, now)) return false;
+    if (sample.url && rule.urlPatterns?.length && matchIntentionalUseUrlPattern(rule, sample.url)) return true;
     if (sample.hostname && rule.sites?.length && hostMatchesSiteTargets(sample.hostname, expandSiteTargets(rule.sites))) return true;
     return Boolean(sample.app && rule.apps?.length && appMatchesAppTargets(sample.app, rule.apps));
   }) || null;
+}
+
+function matchIntentionalUseUrlPattern(rule: IntentionalUseRule, url: string) {
+  return matchBlockedUrlPattern({
+    id: `intentional-use:${rule.id}`,
+    name: rule.name,
+    mode: "blocklist",
+    blockedApps: [],
+    blockedSites: [],
+    blockedUrlPatterns: rule.urlPatterns || [],
+    allowedApps: [],
+    allowedSites: []
+  }, url);
 }
 
 function ruleAppliesNow(rule: IntentionalUseRule, now: Date): boolean {
@@ -393,7 +419,11 @@ function createPause(state: VigilState, rule: IntentionalUseRule, sample: UsageS
   const budget = budgetSummary(rule, dayRule);
   const context = contextSummary(state, rule, sample, budget, now);
   const delaySeconds = adaptiveDelay(rule, context);
-  const targetType = sample.hostname && rule.sites?.length && hostMatchesSiteTargets(sample.hostname, expandSiteTargets(rule.sites)) ? "site" : "app";
+  const targetType = sample.url && rule.urlPatterns?.length && matchIntentionalUseUrlPattern(rule, sample.url)
+    ? "url"
+    : sample.hostname && rule.sites?.length && hostMatchesSiteTargets(sample.hostname, expandSiteTargets(rule.sites))
+      ? "site"
+      : "app";
   const pause = {
     id: randomUUID(),
     ruleId: rule.id,

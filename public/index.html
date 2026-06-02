@@ -548,7 +548,13 @@
                 <textarea name="sites" rows="4"></textarea>
               </label>
             </div>
-            <div id="intentionalPresetStrip" class="preset-strip" data-form="intentionalRuleForm" data-app-field="apps" data-site-field="sites"></div>
+            <div class="form-row">
+              <label>
+                URL Patterns
+                <textarea name="urlPatterns" rows="3"></textarea>
+              </label>
+            </div>
+            <div id="intentionalPresetStrip" class="preset-strip" data-form="intentionalRuleForm" data-app-field="apps" data-site-field="sites" data-url-pattern-field="urlPatterns"></div>
             <button class="primary" type="submit">Save Pause Rule</button>
           </form>
           <div id="intentionalRuleList" class="list limit-list"></div>

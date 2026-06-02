@@ -299,6 +299,7 @@ function bindEvents() {
     body.days = [...$$("#intentionalDays input:checked")].map((input) => Number(input.value));
     body.apps = lines(body.apps);
     body.sites = lines(body.sites);
+    body.urlPatterns = lines(body.urlPatterns);
     try {
       await post("/api/intentional-use/rule", body);
       toast("Pause rule saved");
@@ -790,10 +791,26 @@ function applyPreset(strip: ControlElement, preset: Preset): void {
   const form = document.forms.namedItem(formName);
   if (!form) return;
   const elements = form.elements as NamedFormControls;
+  const siteValues = [...(preset.sites || [])];
+  const urlPatternValues = [...(preset.urlPatterns || [])];
+  const urlPatternField = strip.dataset.urlPatternField || "";
+  if (urlPatternField) {
+    for (const site of [...siteValues]) {
+      const patterns = PRESET_SHORT_FORM_PATTERNS[site];
+      if (!patterns) continue;
+      siteValues.splice(siteValues.indexOf(site), 1);
+      urlPatternValues.push(...patterns);
+    }
+  }
   appendLines(elements[strip.dataset.appField || ""], preset.apps);
-  appendLines(elements[strip.dataset.siteField || ""], preset.sites);
+  appendLines(elements[strip.dataset.siteField || ""], siteValues);
+  appendLines(elements[urlPatternField], urlPatternValues);
   toast(`${preset.label} preset added`);
 }
+
+const PRESET_SHORT_FORM_PATTERNS: Record<string, string[]> = {
+  "youtube.com": ["youtube.com/shorts", "m.youtube.com/shorts"]
+};
 
 function appendLines(field: ControlElement | undefined, values: string[] = []): void {
   if (!field) return;
@@ -1352,7 +1369,7 @@ function renderIntentionalRuleList(rules: DashboardItem[]): void {
     const percent = budget.budgetSeconds ? Math.min(100, budget.percent || 0) : 0;
     const label = progressBlock(
       rule.name,
-      `${rule.frictionLevel} | ${rule.delaySeconds}s pause | ${rule.sessionMinutes}m window | ${formatDuration(progress.seconds || 0)} today | ${rule.enabled ? "on" : "off"}`,
+      `${rule.frictionLevel} | ${rule.delaySeconds}s pause | ${rule.sessionMinutes}m window | ${targetCount(rule)} targets | ${formatDuration(progress.seconds || 0)} today | ${rule.enabled ? "on" : "off"}`,
       Math.max(4, percent)
     );
 
@@ -1720,6 +1737,7 @@ function loadIntentionalRule(rule: DashboardItem): void {
   form.elements.end.value = rule.end || "23:59";
   form.elements.apps.value = (rule.apps || []).join("\n");
   form.elements.sites.value = (rule.sites || []).join("\n");
+  form.elements.urlPatterns.value = (rule.urlPatterns || []).join("\n");
   form.elements.enabled.checked = Boolean(rule.enabled);
   for (const input of $$("#intentionalDays input")) {
     input.checked = (rule.days || []).includes(Number(input.value));
@@ -1738,9 +1756,14 @@ function resetIntentionalRuleForm(): void {
   form.elements.start.value = "00:00";
   form.elements.end.value = "23:59";
   form.elements.enabled.checked = true;
+  form.elements.urlPatterns.value = "youtube.com/shorts\nm.youtube.com/shorts";
   for (const input of $$("#intentionalDays input")) {
     input.checked = true;
   }
+}
+
+function targetCount(rule: DashboardItem): number {
+  return (rule.apps || []).length + (rule.sites || []).length + (rule.urlPatterns || []).length;
 }
 
 function loadLimit(rule: DashboardItem): void {
