@@ -12,7 +12,7 @@ import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLoc
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
-import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, listRunningAppNames, lockScreen, notify, openUrl, redirectActiveBrowserTab, quitApp, urlHostname } from "./macos.js";
+import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, urlHostname } from "./macos.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { recordOpen, recordUsage } from "./usage.js";
 import type { ActivePolicy, AppLockRule, LimitBlock, MonitorHandle, VigilState, UnknownRecord, UsageSample, UsageState } from "./types.js";
@@ -70,7 +70,6 @@ interface BlockSiteOptions {
 
 interface BlockAppOptions {
   source?: string;
-  notifyUser?: boolean;
 }
 
 export function startMonitor(context: MonitorContext): MonitorHandle {
@@ -383,7 +382,6 @@ class Monitor implements MonitorHandle {
       result
     });
     this.status.lastEnforcement = { type: "intentional-pause", target: front.hostname || front.app, result, at: new Date().toISOString() };
-    await notify("Intentional pause", `${front.hostname || front.app} needs a short pause first.`);
     return true;
   }
 
@@ -419,7 +417,6 @@ class Monitor implements MonitorHandle {
       result
     });
     this.status.lastEnforcement = { type: options.browserControl ? "browser-control" : options.contentFilter ? "content" : options.urlPattern ? "url" : "site", target: front.hostname, result, at: new Date().toISOString() };
-    await notify(options.browserControl ? "Blocked browser controls" : options.contentFilter ? "Blocked feed" : options.urlPattern ? "Blocked URL" : "Blocked site", `${front.hostname} is blocked until the session ends.`);
   }
 
   async blockApp(front: FrontSample, policy: EnforcedPolicy, options: BlockAppOptions = {}): Promise<void> {
@@ -441,9 +438,6 @@ class Monitor implements MonitorHandle {
       result
     });
     this.status.lastEnforcement = { type: "app", target: front.app, source: options.source || "frontmost", escalated: decision.force, attempts: decision.record.attempts, result, at: new Date().toISOString() };
-    if (options.notifyUser !== false) {
-      await notify(decision.force ? "Force killed blocked app" : "Blocked app", `${front.app} is blocked until the session ends.`);
-    }
   }
 
   async sweepBlockedProcesses(now: number, options: { force?: boolean } = {}): Promise<void> {
@@ -461,7 +455,7 @@ class Monitor implements MonitorHandle {
 
     const blocked = sweepBlockedApps(this.state, this.usage, running.apps);
     for (const { app, policy } of blocked) {
-      await this.blockApp({ app, hostname: "", url: "" }, policy, { source: "process-sweep", notifyUser: false });
+      await this.blockApp({ app, hostname: "", url: "" }, policy, { source: "process-sweep" });
     }
 
     this.status.lastProcessSweep = { ok: true, checked: running.apps.length, blocked: blocked.map((item) => item.app), at: new Date().toISOString() };
