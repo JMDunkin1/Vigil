@@ -24,6 +24,7 @@
     "hosts:apply": "npm run build && sudo node dist/runtime/scripts/apply-hosts.mjs",
     "network:preview": "npm run build && node dist/runtime/scripts/hosts-preview.mjs",
     "network:apply": "npm run build && sudo node dist/runtime/scripts/apply-hosts.mjs",
+    "safari:apply": "npm run build && node dist/runtime/scripts/apply-safari-filter.mjs",
     "seal:source": "npm run build && node dist/runtime/scripts/seal-source.mjs",
     "doctor": "npm run build && node dist/runtime/scripts/doctor.mjs",
     "install:agent": "npm run build && node dist/runtime/scripts/install-launch-agent.mjs",

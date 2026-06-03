@@ -22,7 +22,7 @@ import { buildIosConfigurationProfile } from "../src/iosProfiles.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "../src/keyholder.js";
 import { activeLimitPolicy } from "../src/limits.js";
 import { parseProcessList } from "../src/macos.js";
-import { appQuitEscalationDecision, shouldLockScreenForPolicy, sweepBlockedApps } from "../src/monitor.js";
+import { appQuitEscalationDecision, shouldLockScreenForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "../src/monitor.js";
 import { parsePlist, plistData, toPlist } from "../src/plist.js";
 import { activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, panicLockProfile, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
 import { distractionPresets } from "../src/presets.js";
@@ -30,6 +30,8 @@ import { assertProtectedEditAllowed, confirmMaintenanceWindow, protectedEditBloc
 import { focusReport } from "../src/reports.js";
 import { applySealVerificationToState, markStateSealed, stateDigest, stateSealSummary, verifyStateTextSeal, writeStateTextSeal } from "../src/seal.js";
 import { sourceManifestText, sourceSealStatus, writeSourceSeal } from "../src/sourceSeal.js";
+import { buildSafariFilterProfile, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature } from "../src/safariFilter.js";
+import { browserCompanionRequirement, networkBlockCurrent } from "../src/systemNetworkBlock.js";
 import { resolveDefaultDataDir, sanitizeSoftBlockProfile } from "../src/store.js";
 import { recordUsage, syncDeviceUsageSnapshot, usageSummary } from "../src/usage.js";
 import type { ActivePolicy, Profile, UnknownRecord, UsageBucket, UsageDay, UsageState } from "../src/types.js";
@@ -254,10 +256,10 @@ function hasStatusError(error: unknown): error is { status: number; message: str
   assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "process-sweep"), true);
   state.settings.processSweepEnabled = true;
   state.settings.browserNoiseBlockingEnabled = false;
-  assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "browser-noise"), true);
+  assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "browser-noise"), false);
   state.settings.browserNoiseBlockingEnabled = true;
   state.settings.contentFilterEnabled = false;
-  assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "content-filter"), true);
+  assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "content-filter"), false);
   state.settings.contentFilterEnabled = true;
   state.settings.strictBypassProtectionEnabled = false;
   assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "bypass-protection"), true);
@@ -315,6 +317,7 @@ function hasStatusError(error: unknown): error is { status: number; message: str
   };
   assert.deepEqual(foolproofBlockers(state, readyContext, now), []);
   assert.doesNotThrow(() => assertFoolproofReadyForStrict(state, readyContext, now));
+  assert.equal(networkBlockCurrent(readyContext.hosts, readyContext.firewall), true);
   assert.equal(foolproofBlockers(state, { ...readyContext, firewall: { installed: false, partial: false, stale: false } }, now).some((item) => item.id === "firewall"), true);
   assert.equal(foolproofBlockers(state, {
     ...readyContext,
@@ -325,6 +328,72 @@ function hasStatusError(error: unknown): error is { status: number; message: str
     ...readyContext,
     stateSeal: { ok: false, status: "mismatch", detail: "State file does not match its integrity seal." }
   }, now).some((item) => item.id === "state-seal"), true);
+}
+
+{
+  const state = defaultState();
+  state.settings.foolproofModeEnabled = true;
+  state.settings.strictBypassProtectionEnabled = true;
+  state.settings.siteRedirectEnabled = false;
+  state.settings.browserNoiseBlockingEnabled = false;
+  state.settings.contentFilterEnabled = false;
+  state.extension.lastSeenAt = "";
+  state.extension.lastVersion = "";
+  state.extension.dynamicRules = {};
+  updateKeyholderSettings(state, { enabled: true, passcode: "anchor-passcode" }, now);
+  updateDistanceKeySettings(state, { enabled: true, rotate: true }, now);
+  const readyContext = {
+    hosts: { installed: true, partial: false, stale: false },
+    firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
+    agent: { loaded: true, running: true },
+    account: accountStatusFromGroups("focus", "staff everyone"),
+    monitor: { ok: true, accessibilityLikelyMissing: false },
+    stateSeal: { ok: true, status: "sealed", detail: "State file matches its integrity seal." },
+    sourceSeal: { ok: true, status: "sealed", detail: "Source files match integrity seal.", fileCount: 42 }
+  };
+  assert.equal(browserCompanionRequirement(state, now).required, false);
+  const blockers = foolproofBlockers(state, readyContext, now);
+  assert.equal(blockers.some((item) => item.id === "browser-redirect"), false);
+  assert.equal(blockers.some((item) => item.id === "browser-extension"), false);
+  assert.equal(blockers.some((item) => item.id === "extension-rules"), false);
+  assert.deepEqual(blockers, []);
+
+  const patternState = defaultState();
+  patternState.settings.browserNoiseBlockingEnabled = false;
+  patternState.settings.contentFilterEnabled = false;
+  patternState.profiles.unshift({
+    id: "pattern-only",
+    name: "Pattern only",
+    mode: "blocklist",
+    blockedApps: [],
+    blockedSites: [],
+    blockedUrlPatterns: ["casino", "/reels"],
+    allowedApps: [],
+    allowedSites: []
+  });
+  patternState.settings.baselineProfileId = "pattern-only";
+  assert.equal(browserCompanionRequirement(patternState, now).required, true);
+  assert.equal(shouldRedirectActiveBlockedBrowserTab({
+    redirectEnabled: false,
+    networkBlocked: true,
+    app: "Safari",
+    url: "https://reddit.com"
+  }), true);
+  assert.equal(shouldRedirectActiveBlockedBrowserTab({
+    redirectEnabled: false,
+    networkBlocked: true,
+    app: "Discord",
+    url: ""
+  }), false);
+  assert.equal(shouldRedirectActiveBlockedBrowserTab({
+    redirectEnabled: true,
+    networkBlocked: false,
+    app: "Discord",
+    url: ""
+  }), true);
+
+  state.settings.systemNetworkBlockingEnabled = false;
+  assert.equal(foolproofBlockers(state, readyContext, now).some((item) => item.id === "system-network-block"), true);
 }
 
 {
@@ -1207,6 +1276,34 @@ last exit code = 0
   assert.equal(appMatchesAppTargets("Cloudflare WARP", ["WARP"]), true);
   assert.equal(appMatchesAppTargets("Little Snitch Network Monitor", ["Little Snitch Configuration"]), true);
   assert.equal(appMatchesAppTargets("Charles Proxy", ["Charles"]), true);
+}
+
+{
+  const state = defaultState();
+  const profile = state.profiles[0];
+  state.activeSession = {
+    id: "safari-filter-test",
+    title: "Safari filter test",
+    mode: "focus",
+    profileId: profile.id,
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    profileSnapshot: profile
+  };
+  const urls = safariFilterDenyUrls(state, now);
+  assert.equal(urls.includes("https://youtube.com/shorts"), true);
+  assert.equal(urls.includes("https://www.youtube.com/shorts"), true);
+  assert.equal(urls.includes("https://m.youtube.com/shorts"), true);
+  assert.equal(urls.includes("https://www.youtube.com/watch"), false);
+  assert.equal(safariFilterPathDenyUrls(state, now).some((url) => url.includes("/shorts")), true);
+  assert.match(safariFilterPolicySignature(state, now), /^[a-f0-9]{64}$/);
+  const profileText = buildSafariFilterProfile(state, now);
+  assert.match(profileText, /<key>filterDenyList<\/key>/);
+  assert.match(profileText, /com\.apple\.familycontrols\.contentfilter/);
+  assert.match(profileText, /SentinelPolicySignature:/);
 }
 
 {

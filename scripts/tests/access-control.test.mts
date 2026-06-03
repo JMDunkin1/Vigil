@@ -38,6 +38,7 @@ assert.equal(mdmBooleans.checkOutWhenRemoved, false);
 assert.equal(apiRequestGuard({ method: "GET", path: "/api/state", headers: {} }).ok, true);
 assert.equal(apiRequestGuard({ method: "POST", path: "/api/extension/check", headers: {} }).ok, false);
 assert.equal(apiRequestGuard({ method: "POST", path: "/api/extension/rules/sync", headers: { "content-type": "application/json" } }).ok, false);
+assert.equal(apiRequestGuard({ method: "POST", path: "/api/extension/pause/continue", headers: { "content-type": "application/json" } }).ok, false);
 assert.equal(apiRequestGuard({
   method: "POST",
   path: "/api/settings",
@@ -138,6 +139,14 @@ try {
   assert.equal(apiRequestGuard({
     method: "POST",
     path: "/api/extension/check",
+    headers: {
+      origin: "chrome-extension://abc",
+      "content-type": "application/json"
+    }
+  }).ok, true);
+  assert.equal(apiRequestGuard({
+    method: "POST",
+    path: "/api/extension/pause/skip",
     headers: {
       origin: "chrome-extension://abc",
       "content-type": "application/json"

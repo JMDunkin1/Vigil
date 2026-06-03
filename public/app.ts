@@ -248,6 +248,7 @@ function bindEvents() {
   $("#newLimit").addEventListener("click", resetLimitForm);
   $("#newAppLock").addEventListener("click", resetAppLockForm);
   $("#newIntentionalRule").addEventListener("click", resetIntentionalRuleForm);
+  $("#newBehavior").addEventListener("click", resetBehaviorForm);
 
   $("#limitForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
@@ -321,6 +322,58 @@ function bindEvents() {
         cadence: $("#accountabilityCadence").value
       });
       toast("Digest settings saved");
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
+  $("#journalEntryForm").addEventListener("submit", async (event: Event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const body = formPayload(new FormData(form));
+    body.tags = tagList(body.tags);
+    body.behaviorIds = selectedValues("#journalBehaviorIds");
+    body.ruleIds = selectedValues("#journalRuleIds");
+    body.entryDate = body.entryDate ? new Date(String(body.entryDate)).toISOString() : new Date().toISOString();
+    try {
+      await post("/api/intentional-use/journal", body);
+      toast("Reflection saved");
+      resetJournalForm();
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
+  $("#behaviorForm").addEventListener("submit", async (event: Event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const body = formPayload(new FormData(form));
+    body.active = new FormData(form).has("active");
+    body.ruleIds = selectedValues("#behaviorRuleIds");
+    try {
+      await post("/api/intentional-use/behavior", body);
+      toast("Behavior saved");
+      resetBehaviorForm();
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
+  $("#behaviorCheckInForm").addEventListener("submit", async (event: Event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const body = formPayload(new FormData(form));
+    if (!body.behaviorId) {
+      toast("Save a behavior first");
+      return;
+    }
+    try {
+      await post("/api/intentional-use/behavior/check-in", body);
+      toast("Check-in added");
+      form.reset();
     } catch (error) {
       toast(errorMessage(error));
     }
@@ -569,6 +622,24 @@ function bindEvents() {
     await refresh();
   });
 
+  $("#applySafariFilter").addEventListener("click", async () => {
+    const status = $("#hardeningActionStatus");
+    const action = state.data?.hardening.actions?.safariFilterApply || {};
+    status.textContent = "Opening Safari filter profile...";
+    $("#applySafariFilter").disabled = true;
+    try {
+      await post(action.path || "/api/hardening/safari-filter/apply", {});
+      status.textContent = "Safari filter profile opened";
+      toast("Approve Safari filter in System Settings");
+    } catch (error) {
+      status.textContent = errorMessage(error);
+      toast(errorMessage(error));
+    } finally {
+      $("#applySafariFilter").disabled = false;
+    }
+    await refresh();
+  });
+
   $("#clearTamperAlarm").addEventListener("click", async () => {
     const status = $("#hardeningActionStatus");
     const action = state.data?.hardening.actions?.tamperClear || {};
@@ -616,7 +687,7 @@ function bindEvents() {
     await refresh();
   });
 
-  for (const id of ["siteRedirectEnabled", "contentFilterEnabled", "browserNoiseBlockingEnabled", "typingChallengeEnabled", "intentReasonEnabled", "appQuitEnabled", "strictBypassProtectionEnabled", "processSweepEnabled", "systemSleepLockEnabled", "focusShortcutEnabled", "strictByDefault", "protectedEditsEnabled", "foolproofModeEnabled"]) {
+  for (const id of ["systemNetworkBlockingEnabled", "safariUrlFilterEnabled", "siteRedirectEnabled", "contentFilterEnabled", "browserNoiseBlockingEnabled", "typingChallengeEnabled", "intentReasonEnabled", "appQuitEnabled", "strictBypassProtectionEnabled", "processSweepEnabled", "systemSleepLockEnabled", "focusShortcutEnabled", "strictByDefault", "protectedEditsEnabled", "foolproofModeEnabled"]) {
     $(`#${id}`).addEventListener("change", async (event: Event) => {
       try {
         await post("/api/settings", { [id]: eventTarget(event).checked });
@@ -756,6 +827,7 @@ function render() {
   renderWatcher(data.monitor);
   renderIntervention(data.intervention);
   renderIntentionalUse(data.intentionalUse);
+  renderLifeLog(data.intentionalUse);
   renderHardening(data);
   renderProfiles(data.state);
   renderSchedules(data.state.schedules);
@@ -960,6 +1032,8 @@ function renderIntervention(intervention: InterventionSummary): void {
 
 function renderHardening(data: DashboardData): void {
   const settings = data.state.settings;
+  $("#systemNetworkBlockingEnabled").checked = settings.systemNetworkBlockingEnabled !== false;
+  $("#safariUrlFilterEnabled").checked = settings.safariUrlFilterEnabled !== false;
   $("#siteRedirectEnabled").checked = Boolean(settings.siteRedirectEnabled);
   $("#contentFilterEnabled").checked = settings.contentFilterEnabled !== false;
   $("#browserNoiseBlockingEnabled").checked = settings.browserNoiseBlockingEnabled !== false;
@@ -1001,10 +1075,13 @@ function renderHardeningActions(hardening: DashboardData["hardening"]): void {
   const agent = hardening.launchAgent || {};
   const hosts = hardening.hosts || {};
   const firewall = hardening.firewall || {};
+  const safariFilter = hardening.safariFilter || {};
   const networkCurrent = hosts.installed && !hosts.partial && !hosts.stale && firewall.installed && !firewall.partial && !firewall.stale;
+  const safariCurrent = safariFilter.installed && !safariFilter.stale;
   const tamperActive = Boolean(hardening.stateSeal?.tamperDetectedAt || hardening.stateSeal?.status === "tamper-detected");
   $("#installLaunchAgent").textContent = agent.installed ? "Reinstall Login Agent" : "Install Login Agent";
   $("#applyHostsBlock").textContent = networkCurrent ? "Reapply Network Block" : "Apply Network Block";
+  $("#applySafariFilter").textContent = safariCurrent ? "Reapply Safari Filter" : "Apply Safari Filter";
   $("#clearTamperAlarm").hidden = !tamperActive;
   $("#clearTamperAlarm").disabled = !tamperActive;
   $("#copyHostsCommand").textContent = networkCurrent ? "Copy Network Reapply" : "Copy Network Command";
@@ -1400,6 +1477,148 @@ function renderIntentionalRuleList(rules: DashboardItem[]): void {
   }
 }
 
+function renderLifeLog(intentionalUse: IntentionalUseSummary): void {
+  const lifeLog = intentionalUse?.lifeLog || {};
+  const stats = lifeLog.stats || {};
+  const behaviors = lifeLog.behaviors || [];
+  const activeBehaviors = behaviors.filter((behavior) => behavior.active !== false);
+  const rules = intentionalUse?.rules || [];
+
+  $("#lifeLogStatus").textContent = `${stats.entriesThisWeek || 0} reflections | ${stats.activeBehaviors || 0} behaviors`;
+  $("#lifeLogStatus").className = (stats.entriesThisWeek || stats.behaviorCheckInsThisWeek) ? "pill good" : "pill neutral";
+  $("#journalWeekCount").textContent = String(stats.entriesThisWeek || 0);
+  $("#behaviorWeekCount").textContent = String(stats.behaviorCheckInsThisWeek || 0);
+  $("#reflectionStreak").textContent = `${stats.reflectionStreakDays || 0}d`;
+
+  renderMultiSelect($("#journalBehaviorIds"), activeBehaviors);
+  renderMultiSelect($("#journalRuleIds"), rules);
+  renderMultiSelect($("#behaviorRuleIds"), rules);
+  renderBehaviorCheckInSelect(activeBehaviors);
+  renderBehaviorList(behaviors);
+  renderBehaviorCheckIns(lifeLog.recentCheckIns || []);
+  renderJournalEntries(lifeLog.entries || [], behaviors, rules);
+}
+
+function renderBehaviorList(behaviors: DashboardItem[]): void {
+  const list = $("#behaviorList");
+  list.replaceChildren();
+  if (!behaviors.length) {
+    list.append(empty("No behaviors saved"));
+    return;
+  }
+
+  for (const behavior of behaviors) {
+    const row = document.createElement("div");
+    row.className = behavior.active === false ? "list-item limit-item muted-item" : "list-item limit-item";
+    const percent = Math.max(4, Math.min(100, Number(behavior.percent || 0)));
+    const target = behavior.weeklyTarget ? `${behavior.weeklyValue || 0}/${behavior.weeklyTarget} ${behavior.unit || "count"}` : `${behavior.weeklyCheckIns || 0} check-ins`;
+    const label = progressBlock(
+      behavior.name,
+      `${behavior.direction || "build"} | ${target} this week | ${behavior.active === false ? "archived" : "active"}`,
+      percent
+    );
+
+    const edit = document.createElement("button");
+    edit.className = "secondary";
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => loadBehavior(behavior));
+
+    const archive = document.createElement("button");
+    archive.className = "ghost";
+    archive.type = "button";
+    archive.textContent = behavior.active === false ? "Archived" : "Archive";
+    archive.disabled = behavior.active === false;
+    archive.addEventListener("click", async () => {
+      await del(`/api/intentional-use/behavior/${encodeURIComponent(behavior.id)}`);
+      toast("Behavior archived");
+      await refresh();
+    });
+
+    row.append(label, edit, archive);
+    list.append(row);
+  }
+}
+
+function renderBehaviorCheckIns(checkIns: DashboardItem[]): void {
+  const list = $("#behaviorCheckInList");
+  list.replaceChildren();
+  if (!checkIns.length) {
+    list.append(empty("No check-ins yet"));
+    return;
+  }
+
+  for (const checkIn of checkIns.slice(0, 8)) {
+    const row = document.createElement("div");
+    row.className = "list-item compact-list-item";
+    row.append(
+      detailBlock(
+        checkIn.behaviorName || checkIn.name || "Behavior",
+        `${checkIn.value || 0} | ${checkIn.at ? shortDateTime(checkIn.at) : "--"}${checkIn.note ? ` | ${checkIn.note}` : ""}`
+      )
+    );
+    list.append(row);
+  }
+}
+
+function renderJournalEntries(entries: DashboardItem[], behaviors: DashboardItem[], rules: DashboardItem[]): void {
+  const list = $("#journalEntryList");
+  list.replaceChildren();
+  if (!entries.length) {
+    list.append(empty("No reflections saved"));
+    return;
+  }
+
+  const behaviorNames = new Map(behaviors.map((behavior) => [behavior.id, behavior.name]));
+  const ruleNames = new Map(rules.map((rule) => [rule.id, rule.name]));
+  for (const entry of entries.slice(0, 12)) {
+    const article = document.createElement("article");
+    article.className = "journal-entry";
+    const metaParts = [
+      entry.entryDate ? shortDateTime(entry.entryDate) : "",
+      entry.mood,
+      entry.energy ? `energy ${entry.energy}/10` : ""
+    ].filter(Boolean);
+    const linked = [
+      ...(entry.behaviorIds || []).map((id) => behaviorNames.get(id) || id),
+      ...(entry.ruleIds || []).map((id) => ruleNames.get(id) || id)
+    ].filter(Boolean);
+    const tagLine = [...(entry.tags || []), ...linked].slice(0, 8);
+
+    const head = el(
+      "div",
+      { className: "journal-entry-head" },
+      textEl("strong", entry.title || "Reflection"),
+      textEl("span", metaParts.join(" | ") || "--")
+    );
+    const body = textEl("p", entry.body || "", { className: "journal-entry-body" });
+    const tags = el("div", { className: "tag-row" }, tagLine.map((tag) => textEl("span", tag)));
+    const actions = el("div", { className: "journal-entry-actions" });
+
+    const edit = document.createElement("button");
+    edit.className = "secondary compact";
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => loadJournalEntry(entry));
+
+    const remove = document.createElement("button");
+    remove.className = "ghost compact";
+    remove.type = "button";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", async () => {
+      await del(`/api/intentional-use/journal/${encodeURIComponent(entry.id)}`);
+      toast("Reflection deleted");
+      await refresh();
+    });
+
+    actions.append(edit, remove);
+    article.append(head, body);
+    if (tagLine.length) article.append(tags);
+    article.append(actions);
+    list.append(article);
+  }
+}
+
 function renderBars(selector: string, entries: BarEntry[]): void {
   const root = $(selector);
   root.replaceChildren();
@@ -1441,6 +1660,10 @@ function renderReport(report: ReportSummary): void {
   $("#decadePace").textContent = daysWithDataText(report.currentWeek.totals.trackedDays);
   $("#openPressure").textContent = String(report.currentWeek.totals.averageDailyOpens || 0);
   $("#openPressureMeta").textContent = progression ? `${progression.brainState} brain health` : "avg opens / day";
+  $("#reportJournalEntries").textContent = String(progression?.journalEntries || 0);
+  $("#reportReflectionStreak").textContent = progression ? `${progression.reflectionStreakDays || 0} day streak` : "--";
+  $("#reportBehaviorCheckIns").textContent = String(progression?.behaviorCheckIns || 0);
+  $("#reportNextUnlock").textContent = progression?.nextUnlock || "--";
   renderWeekStrip(report.currentWeek.days, report.focusScoreGoal);
   renderInsights(report.insights);
   renderMilestones(report.milestones);
@@ -1779,6 +2002,57 @@ function resetIntentionalRuleForm(): void {
   }
 }
 
+function loadBehavior(behavior: DashboardItem): void {
+  const form = $("#behaviorForm");
+  form.elements.id.value = behavior.id;
+  form.elements.name.value = behavior.name;
+  form.elements.description.value = behavior.description || "";
+  form.elements.direction.value = behavior.direction || "build";
+  form.elements.unit.value = behavior.unit || "count";
+  form.elements.weeklyTarget.value = String(behavior.weeklyTarget || 0);
+  form.elements.replacement.value = behavior.replacement || "";
+  form.elements.active.checked = behavior.active !== false;
+  setSelectedOptions($("#behaviorRuleIds"), behavior.ruleIds || []);
+  setView("journal");
+}
+
+function resetBehaviorForm(): void {
+  const form = $("#behaviorForm");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.name.value = "Evening phone shutdown";
+  form.elements.description.value = "";
+  form.elements.direction.value = "build";
+  form.elements.unit.value = "count";
+  form.elements.weeklyTarget.value = "5";
+  form.elements.replacement.value = "";
+  form.elements.active.checked = true;
+  setSelectedOptions($("#behaviorRuleIds"), []);
+}
+
+function loadJournalEntry(entry: DashboardItem): void {
+  const form = $("#journalEntryForm");
+  form.elements.id.value = entry.id;
+  form.elements.title.value = entry.title || "";
+  form.elements.mood.value = entry.mood || "";
+  form.elements.body.value = entry.body || "";
+  form.elements.energy.value = entry.energy ? String(entry.energy) : "";
+  form.elements.tags.value = (entry.tags || []).join(", ");
+  form.elements.entryDate.value = toDateTimeLocal(entry.entryDate || entry.createdAt);
+  setSelectedOptions($("#journalBehaviorIds"), entry.behaviorIds || []);
+  setSelectedOptions($("#journalRuleIds"), entry.ruleIds || []);
+  setView("journal");
+}
+
+function resetJournalForm(): void {
+  const form = $("#journalEntryForm");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.entryDate.value = toDateTimeLocal(new Date().toISOString());
+  setSelectedOptions($("#journalBehaviorIds"), []);
+  setSelectedOptions($("#journalRuleIds"), []);
+}
+
 function targetCount(rule: DashboardItem): number {
   return (rule.apps || []).length + (rule.sites || []).length + (rule.urlPatterns || []).length;
 }
@@ -1842,6 +2116,66 @@ function fillSelect(select: ControlElement, items: Array<{ id: string; name: str
     select.append(option);
   }
   select.value = items.some((item) => item.id === current) ? current : (selectedId || "");
+}
+
+function renderMultiSelect(select: ControlElement, items: Array<{ id: string; name?: string; label?: string }>): void {
+  const current = selectedValues(select);
+  select.replaceChildren();
+  for (const item of items) {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.name || item.label || item.id;
+    option.selected = current.includes(item.id);
+    select.append(option);
+  }
+}
+
+function renderBehaviorCheckInSelect(behaviors: Array<{ id: string; name?: string }>): void {
+  const select = $("#behaviorCheckInId");
+  const current = select.value;
+  select.replaceChildren();
+  if (!behaviors.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No behaviors saved";
+    select.append(option);
+    return;
+  }
+  for (const behavior of behaviors) {
+    const option = document.createElement("option");
+    option.value = behavior.id;
+    option.textContent = behavior.name || behavior.id;
+    select.append(option);
+  }
+  select.value = behaviors.some((behavior) => behavior.id === current) ? current : behaviors[0].id;
+}
+
+function selectedValues(target: string | ControlElement): string[] {
+  const select = typeof target === "string" ? $(target) : target;
+  return Array.from((select as unknown as HTMLSelectElement).selectedOptions || [])
+    .map((option) => option.value)
+    .filter(Boolean);
+}
+
+function setSelectedOptions(select: ControlElement, values: string[]): void {
+  const selected = new Set(values || []);
+  for (const option of Array.from((select as unknown as HTMLSelectElement).options || [])) {
+    option.selected = selected.has(option.value);
+  }
+}
+
+function tagList(value: unknown): string[] {
+  return String(value || "")
+    .split(/[\n,]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toDateTimeLocal(value: unknown): string {
+  const date = value ? new Date(String(value)) : new Date();
+  if (Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
+  return local.toISOString().slice(0, 16);
 }
 
 function renderTypingChallenge(output: ControlElement, input: ControlElement, challenge: ChallengeSummary | null): void {

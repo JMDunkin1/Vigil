@@ -4,6 +4,8 @@ import { stateSealSummary } from "./seal.js";
 import { REQUIRED_EXTENSION_VERSION } from "./defaults.js";
 import { extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "./extensionPolicy.js";
 import { intentReasonPolicy } from "./intentReason.js";
+import { safariFilterPathDenyUrls, safariUrlFilterEnabled } from "./safariFilter.js";
+import { browserCompanionRequirement, networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
 import type { SentinelState, UnknownRecord } from "./types.js";
 
 const EXTENSION_FRESH_MS = 5 * 60 * 1000;
@@ -28,6 +30,7 @@ export interface FoolproofBlocker {
 interface FoolproofContext {
   hosts?: SummaryRecord;
   firewall?: SummaryRecord;
+  safariFilter?: SummaryRecord;
   agent?: SummaryRecord;
   monitor?: SummaryRecord;
   stateSeal?: SummaryRecord;
@@ -43,6 +46,9 @@ interface SummaryRecord extends UnknownRecord {
   installed?: boolean;
   partial?: boolean;
   stale?: boolean;
+  current?: boolean;
+  required?: boolean;
+  pathUrlCount?: number;
   loaded?: boolean;
   running?: boolean;
   legacyInstalled?: boolean;
@@ -82,6 +88,7 @@ export function foolproofBlockers(state: SentinelState, context: FoolproofContex
   const distanceKey = distanceKeySummary(state);
   const hosts = context.hosts || {};
   const firewall = context.firewall || {};
+  const safariFilter = context.safariFilter || {};
   const agent = context.agent || {};
   const monitor = context.monitor || {};
   const stateSeal = context.stateSeal || stateSealSummary(state);
@@ -91,6 +98,9 @@ export function foolproofBlockers(state: SentinelState, context: FoolproofContex
   const extensionSeen = extensionRecentlySeen(state, now);
   const extensionVersion = extensionVersionReady(state);
   const reasonPolicy = intentReasonPolicy(state);
+  const networkCurrent = networkBlockCurrent(hosts, firewall);
+  const companionRequirement = browserCompanionRequirement(state, now);
+  const safariFilterRequired = safariUrlFilterEnabled(state) && safariFilterPathDenyUrls(state, now).length > 0;
   const blockers: FoolproofBlocker[] = [];
 
   if (!account.username) blockers.push(blocker("standard-account", "Mac account hardening status must be checked."));
@@ -103,18 +113,20 @@ export function foolproofBlockers(state: SentinelState, context: FoolproofContex
   if (!keyholder.enabled || !keyholder.hasPasscode) blockers.push(blocker("keyholder", "Keyholder passcode must be enabled."));
   if (settings.typingChallengeEnabled === false) blockers.push(blocker("typing-challenge", "Unlock confirmations must require a random typing challenge."));
   if (!distanceKey.enabled || !distanceKey.hasToken) blockers.push(blocker("distance-key", "Distance key must be enabled and placed away from the computer, preferably as a removable key file."));
-  if (!settings.siteRedirectEnabled) blockers.push(blocker("browser-redirect", "Browser redirect must be enabled."));
-  if (settings.contentFilterEnabled === false) blockers.push(blocker("content-filter", "Content feature filters must be enabled."));
-  if (!settings.browserNoiseBlockingEnabled) blockers.push(blocker("browser-noise", "Browser noise blocking must be enabled."));
+  if (!systemNetworkBlockingEnabled(state)) blockers.push(blocker("system-network-block", "System network blocking must be enabled for across-app site enforcement."));
+  if (safariFilterRequired && !safariFilter.current) blockers.push(blocker("safari-url-filter", "Safari URL filter profile must be installed and current for Safari path-specific blocks."));
+  if (!networkCurrent && !settings.siteRedirectEnabled) blockers.push(blocker("browser-redirect", "Browser redirect fallback must stay enabled until the system network block is current."));
   if (!settings.appQuitEnabled) blockers.push(blocker("app-quit", "App quit must be enabled."));
   if (!settings.strictBypassProtectionEnabled) blockers.push(blocker("bypass-protection", "Strict-lock bypass protection must be enabled."));
   if (!settings.processSweepEnabled) blockers.push(blocker("process-sweep", "Background process sweep must be enabled."));
   if (Number(settings.processSweepIntervalSeconds || 0) > 30) blockers.push(blocker("process-sweep-interval", "Background process sweep must run every 30 seconds or less."));
   if (Number(settings.appQuitEscalationSeconds || 0) > 30) blockers.push(blocker("app-escalation", "Forced-kill escalation must be 30 seconds or less."));
   if (!monitor.ok || monitor.accessibilityLikelyMissing) blockers.push(blocker("accessibility", "Foreground app detection must be working."));
-  if (!extensionSeen) blockers.push(blocker("browser-extension", "Browser companion extension must check in recently."));
-  else if (!extensionVersion.ok) blockers.push(blocker("browser-extension-version", extensionVersion.detail));
-  if (!dynamicRules.ok) blockers.push(blocker("extension-rules", dynamicRules.detail));
+  if (companionRequirement.required) {
+    if (!extensionSeen) blockers.push(blocker("browser-extension", `Browser companion extension must check in recently. ${companionRequirement.detail}`));
+    else if (!extensionVersion.ok) blockers.push(blocker("browser-extension-version", extensionVersion.detail));
+    if (!dynamicRules.ok) blockers.push(blocker("extension-rules", dynamicRules.detail));
+  }
   if (!agent.loaded || !agent.running) blockers.push(blocker("launch-agent", "LaunchAgent must be loaded and running."));
   else if (agent.legacyInstalled) blockers.push(blocker("launch-agent", "Legacy Local Screen Time LaunchAgent must be removed."));
   if (!hosts.installed || hosts.partial || hosts.stale) blockers.push(blocker("hosts", "Hosts block must be installed and current."));

@@ -63,6 +63,17 @@ interface ExtensionPulseMessage {
   title?: string;
 }
 
+interface ExtensionPauseActionMessage {
+  type?: string;
+  action?: unknown;
+  requestId?: unknown;
+  intention?: unknown;
+  mood?: unknown;
+  replacement?: unknown;
+}
+
+interface ExtensionMessage extends ExtensionPulseMessage, ExtensionPauseActionMessage {}
+
 interface ExtensionCheckResult {
   ok?: boolean;
   blocked?: boolean;
@@ -148,12 +159,24 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   if (tab?.url) void checkUrl(tabId, tab.url, "activated", 0, tab.title);
 });
 
-chrome.runtime.onMessage.addListener((message: ExtensionPulseMessage, sender, sendResponse: (response?: unknown) => void) => {
-  if (message?.type !== "SENTINEL_PULSE") return false;
-  checkUrl(sender.tab?.id, message.url || "", message.reason || "heartbeat", message.seconds, message.title)
-    .then((result) => sendResponse(result))
-    .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
-  return true;
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse: (response?: unknown) => void) => {
+  if (message?.type === "SENTINEL_PULSE") {
+    checkUrl(sender.tab?.id, message.url || "", message.reason || "heartbeat", message.seconds, message.title)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+  if (message?.type === "SENTINEL_PAUSE_ACTION") {
+    handlePauseAction(message)
+      .then((result) => sendResponse(result))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+  if (message?.type === "SENTINEL_CLOSE_TAB") {
+    void closeSenderTab(sender).then((result) => sendResponse(result));
+    return true;
+  }
+  return false;
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -189,9 +212,13 @@ async function checkUrl(tabId: number | undefined, url: string, event: string, s
   if (typeof result.browserNoiseBlockingEnabled === "boolean") {
     await syncNoiseBlocking(result.browserNoiseBlockingEnabled);
   }
-  if ((result.blocked || result.paused) && result.redirectUrl && url !== result.redirectUrl) {
-    await setBadge(tabId, result.paused ? "WAIT" : "LOCK", result.paused ? "#b67618" : "#9b2f2f");
+  if (result.blocked && result.redirectUrl && url !== result.redirectUrl) {
+    await setBadge(tabId, "LOCK", "#9b2f2f");
     await updateTab(tabId, { url: result.redirectUrl });
+  } else if (result.paused && result.redirectUrl && url !== result.redirectUrl) {
+    await setBadge(tabId, "WAIT", "#b67618");
+    const overlayShown = await showPauseOverlay(tabId, result);
+    if (!overlayShown) await updateTab(tabId, { url: result.redirectUrl });
   } else {
     await setBadge(tabId, "", "#126a6f");
   }
@@ -240,6 +267,67 @@ function setBadge(tabId: number, text: string, color: string): Promise<boolean> 
       chrome.action.setBadgeText({ tabId, text }, () => resolve(!chrome.runtime.lastError));
     });
   });
+}
+
+async function showPauseOverlay(tabId: number, result: ExtensionCheckResult): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const ok = await sendTabMessage(tabId, {
+      type: "SENTINEL_SHOW_PAUSE",
+      result
+    });
+    if (ok) return true;
+    await delay(125);
+  }
+  return false;
+}
+
+function sendTabMessage(tabId: number, message: Record<string, unknown>): Promise<boolean> {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, message, (response: unknown) => {
+      void chrome.runtime.lastError;
+      resolve(isRecord(response) && response.ok === true);
+    });
+  });
+}
+
+async function handlePauseAction(message: ExtensionPauseActionMessage): Promise<Record<string, unknown>> {
+  const action = String(message.action || "") === "skip" ? "skip" : "continue";
+  const body: Record<string, unknown> = {
+    requestId: String(message.requestId || "")
+  };
+  if (action === "skip") {
+    body.replacement = String(message.replacement || "").slice(0, 120);
+    body.mood = String(message.mood || "").slice(0, 80);
+  } else {
+    body.intention = String(message.intention || "").slice(0, 240);
+    body.mood = String(message.mood || "").slice(0, 80);
+  }
+
+  const response = await fetchSentinel(action === "skip" ? "/api/extension/pause/skip" : "/api/extension/pause/continue", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  const json = await response.json() as unknown;
+  if (!response.ok) {
+    return { ok: false, error: responseError(json, response.status) };
+  }
+  return isRecord(json) ? json : { ok: false, error: "Invalid Sentinel response." };
+}
+
+function closeSenderTab(sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
+  const tabId = sender.tab?.id;
+  if (!tabId) return Promise.resolve({ ok: false, error: "No sender tab." });
+  return new Promise((resolve) => {
+    chrome.tabs.remove(tabId, () => {
+      const error = chrome.runtime.lastError?.message;
+      resolve(error ? { ok: false, error } : { ok: true });
+    });
+  });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function loadNoisePreference() {
@@ -523,4 +611,13 @@ function storageSet(value: StorageDefaults): Promise<boolean> {
   return new Promise((resolve) => {
     chrome.storage.local.set(value, () => resolve(!chrome.runtime.lastError));
   });
+}
+
+function responseError(value: unknown, status: number): string {
+  if (isRecord(value) && typeof value.error === "string") return value.error;
+  return `Sentinel request failed (${status}).`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }

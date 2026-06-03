@@ -13,7 +13,9 @@ import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalU
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
 import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, urlHostname } from "./macos.js";
+import { safariFilterStatus } from "./safariFilter.js";
 import { sourceSealStatus } from "./sourceSeal.js";
+import { networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
 import { recordOpen, recordUsage } from "./usage.js";
 import type { ActivePolicy, AppLockRule, LimitBlock, MonitorHandle, SentinelState, UnknownRecord, UsageSample, UsageState } from "./types.js";
 
@@ -54,6 +56,7 @@ interface MonitorStatus extends UnknownRecord {
   runtimeGap: UnknownRecord | null;
   clockTamper: UnknownRecord | null;
   hardeningDrift: UnknownRecord | null;
+  networkBlock: UnknownRecord | null;
   lastProcessSweep: UnknownRecord | null;
   lastImmediateEnforcement: UnknownRecord | null;
   lastSystemSleepLock: UnknownRecord | null;
@@ -92,6 +95,7 @@ class Monitor implements MonitorHandle {
   nextEnvironmentRefreshAt: number;
   nextIntegrityRefreshAt: number;
   nextHardeningDriftRefreshAt: number;
+  nextNetworkBlockRefreshAt: number;
   nextProcessSweepAt: number;
   nextSystemSleepLockAt: number;
   runtimeGapChecked: boolean;
@@ -112,6 +116,7 @@ class Monitor implements MonitorHandle {
       runtimeGap: null,
       clockTamper: null,
       hardeningDrift: null,
+      networkBlock: null,
       lastProcessSweep: null,
       lastImmediateEnforcement: null,
       lastSystemSleepLock: null,
@@ -124,6 +129,7 @@ class Monitor implements MonitorHandle {
     this.nextEnvironmentRefreshAt = 0;
     this.nextIntegrityRefreshAt = 0;
     this.nextHardeningDriftRefreshAt = 0;
+    this.nextNetworkBlockRefreshAt = 0;
     this.nextProcessSweepAt = 0;
     this.nextSystemSleepLockAt = 0;
     this.runtimeGapChecked = false;
@@ -341,23 +347,107 @@ class Monitor implements MonitorHandle {
       return;
     }
 
-    if (front.hostname && (lockdown || this.state.settings.siteRedirectEnabled) && shouldBlockSite(policy.profile, front.hostname)) {
-      await this.blockSite(front, policy);
+    const redirectEnabled = lockdown || this.state.settings.siteRedirectEnabled;
+    const networkSiteEnabled = systemNetworkBlockingEnabled(this.state);
+    if (front.hostname && (redirectEnabled || networkSiteEnabled) && shouldBlockSite(policy.profile, front.hostname)) {
+      const networkBlocked = networkSiteEnabled && await this.blockSiteWithSystemNetwork(front, policy);
+      if (shouldRedirectActiveBlockedBrowserTab({ redirectEnabled, networkBlocked, app: front.app, url: front.url })) {
+        await this.blockSite(front, policy);
+      }
       return;
     }
 
     const urlPattern = front.url ? matchBlockedUrlPattern(policy.profile, front.url) : null;
-    if (urlPattern && (lockdown || this.state.settings.siteRedirectEnabled)) {
-      await this.blockSite({
+    if (urlPattern && (redirectEnabled || networkSiteEnabled)) {
+      const networkEligible = policy.profile.hostsUrlPatternBlocking !== false && hostPathPatternCanUseSystemNetwork(urlPattern.pattern);
+      const networkBlocked = networkSiteEnabled && networkEligible && await this.blockSiteWithSystemNetwork({
         ...front,
         hostname: urlPattern.label
       }, policy, { urlPattern, originalHostname: front.hostname });
+      if (shouldRedirectActiveBlockedBrowserTab({ redirectEnabled, networkBlocked, app: front.app, url: front.url })) {
+        await this.blockSite({
+          ...front,
+          hostname: urlPattern.label
+        }, policy, { urlPattern, originalHostname: front.hostname });
+      }
       return;
     }
 
     if ((lockdown || this.state.settings.appQuitEnabled) && shouldBlockAppForPolicy(this.state, policy, front.app)) {
       await this.blockApp(front, policy);
     }
+  }
+
+  async blockSiteWithSystemNetwork(front: FrontSample, policy: EnforcedPolicy, options: BlockSiteOptions = {}): Promise<boolean> {
+    if (!systemNetworkBlockingEnabled(this.state)) return false;
+    const network = await this.refreshSystemNetworkBlock(Date.now());
+    if (!network.current) return false;
+
+    const type = options.urlPattern ? "url-network" : "site-network";
+    const key = `network:${type}:${options.urlPattern?.pattern || front.hostname}`;
+    if (this.isCoolingDown(key)) return true;
+    this.markCoolingDown(key);
+
+    const result = {
+      ok: true,
+      method: "system-network-block",
+      hosts: network.hosts,
+      firewall: network.firewall
+    };
+    addEvent(this.state, options.urlPattern ? "blocked_url_network" : "blocked_site_network", {
+      site: front.hostname,
+      app: front.app,
+      originalSite: options.originalHostname || front.hostname,
+      urlPattern: options.urlPattern || null,
+      policy: policy.session.title || policy.session.mode,
+      result
+    });
+    this.status.lastEnforcement = { type, target: front.hostname, result, at: new Date().toISOString() };
+    return true;
+  }
+
+  async refreshSystemNetworkBlock(now: number, options: { force?: boolean } = {}): Promise<UnknownRecord & { current?: boolean; hosts?: UnknownRecord; firewall?: UnknownRecord }> {
+    if (!systemNetworkBlockingEnabled(this.state)) {
+      const disabled = {
+        enabled: false,
+        current: false,
+        checkedAt: new Date(now).toISOString()
+      };
+      this.status.networkBlock = disabled;
+      return disabled;
+    }
+
+    if (!options.force && this.status.networkBlock && now < this.nextNetworkBlockRefreshAt) {
+      return this.status.networkBlock as UnknownRecord & { current?: boolean; hosts?: UnknownRecord; firewall?: UnknownRecord };
+    }
+
+    this.nextNetworkBlockRefreshAt = now + 15 * 1000;
+    const checkedAt = new Date(now);
+    const [hosts, firewall] = await Promise.all([
+      hostsStatus(this.state, checkedAt),
+      firewallStatus(this.state, checkedAt)
+    ]);
+    const summary = {
+      enabled: true,
+      current: networkBlockCurrent(hosts, firewall),
+      checkedAt: checkedAt.toISOString(),
+      hosts: {
+        installed: Boolean(hosts.installed),
+        partial: Boolean(hosts.partial),
+        stale: Boolean(hosts.stale),
+        expectedEntries: hosts.expectedEntries || 0,
+        installedEntries: hosts.installedEntries || 0
+      },
+      firewall: {
+        installed: Boolean(firewall.installed),
+        partial: Boolean(firewall.partial),
+        stale: Boolean(firewall.stale),
+        expectedDomainCount: firewall.expectedDomainCount || 0,
+        installedEntries: firewall.installedEntries || 0
+      }
+    };
+    this.status.networkBlock = summary;
+    return summary;
   }
 
   async pauseIntentionalUse(front: FrontSample): Promise<boolean> {
@@ -482,6 +572,7 @@ class Monitor implements MonitorHandle {
 
     const hosts = await hostsStatus(this.state);
     const firewall = await firewallStatus(this.state);
+    const safariFilter = await safariFilterStatus(this.state);
     const agent = await launchAgentStatus();
     const extensionRules = extensionDynamicRulesReady(this.state, new Date(now));
     const sourceSeal = await sourceSealStatus();
@@ -489,7 +580,7 @@ class Monitor implements MonitorHandle {
       ok: this.status.ok,
       accessibilityLikelyMissing: this.status.accessibilityLikelyMissing
     };
-    const drift = detectHardeningDrift(this.state, { hosts, firewall, agent, monitor, extensionRules, sourceSeal }, new Date(now));
+    const drift = detectHardeningDrift(this.state, { hosts, firewall, safariFilter, agent, monitor, extensionRules, sourceSeal }, new Date(now));
     this.status.hardeningDrift = {
       checkedAt: new Date(now).toISOString(),
       sourceSeal: {
@@ -512,6 +603,12 @@ class Monitor implements MonitorHandle {
         installed: Boolean(firewall.installed),
         partial: Boolean(firewall.partial),
         stale: Boolean(firewall.stale)
+      },
+      safariFilter: {
+        required: Boolean(safariFilter.required),
+        installed: Boolean(safariFilter.installed),
+        stale: Boolean(safariFilter.stale),
+        current: Boolean(safariFilter.current)
       },
       extensionRules: {
         ok: extensionRules.ok,
@@ -578,6 +675,25 @@ function targetBlockedByPolicy(state: SentinelState, front: UsageSample, policy:
   if (front.url && shouldBlockUrl(policy.profile, front.url)) return true;
   if (front.hostname && shouldBlockSite(policy.profile, front.hostname)) return true;
   return shouldBlockAppForPolicy(state, policy, front.app);
+}
+
+function hostPathPatternCanUseSystemNetwork(pattern: string): boolean {
+  const text = String(pattern || "").trim();
+  return Boolean(text && !text.startsWith("/") && text.includes("/"));
+}
+
+export function shouldRedirectActiveBlockedBrowserTab({
+  redirectEnabled,
+  networkBlocked,
+  app,
+  url
+}: {
+  redirectEnabled: boolean;
+  networkBlocked: boolean;
+  app?: string;
+  url?: string;
+}): boolean {
+  return Boolean(redirectEnabled || (networkBlocked && url && appCanReportUrls(app || "")));
 }
 
 export function sweepBlockedApps(state: SentinelState, usage: UsageState, apps: string[], now = new Date()): Array<{ app: string; policy: EnforcedPolicy }> {

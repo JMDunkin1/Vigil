@@ -140,6 +140,8 @@ export interface AppSettings {
   focusShortcutEnabled: boolean;
   focusShortcutOnName: string;
   focusShortcutOffName: string;
+  systemNetworkBlockingEnabled: boolean;
+  safariUrlFilterEnabled: boolean;
   hostsBlockingEnabled: boolean;
   protectedEditsEnabled: boolean;
   protectedEditDelaySeconds: number;
@@ -336,6 +338,46 @@ export interface IntentionalOutcome {
   weekKey: string;
 }
 
+export interface IntentionalBehavior {
+  id: string;
+  name: string;
+  description: string;
+  direction: "build" | "reduce" | "notice";
+  unit: "count" | "minutes" | "yes-no";
+  weeklyTarget: number;
+  ruleIds: string[];
+  replacement: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntentionalBehaviorCheckIn {
+  id: string;
+  behaviorId: string;
+  behaviorName: string;
+  value: number;
+  note: string;
+  at: string;
+  dateKey: string;
+  weekKey: string;
+  journalEntryId?: string;
+}
+
+export interface IntentionalJournalEntry {
+  id: string;
+  title: string;
+  body: string;
+  mood: string;
+  energy: number | null;
+  tags: string[];
+  behaviorIds: string[];
+  ruleIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  entryDate: string;
+}
+
 export interface IntentionalRuleLedger {
   seconds: number;
   pauses: number;
@@ -367,6 +409,9 @@ export interface IntentionalUseState {
   grants: IntentionalGrant[];
   ledger: Record<string, IntentionalDayLedger>;
   outcomes: IntentionalOutcome[];
+  behaviors: IntentionalBehavior[];
+  behaviorCheckIns: IntentionalBehaviorCheckIn[];
+  journalEntries: IntentionalJournalEntry[];
   accountability: IntentionalAccountabilityState;
 }
 

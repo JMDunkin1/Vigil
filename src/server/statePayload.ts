@@ -16,6 +16,7 @@ import { protectionSummary } from "../protection.js";
 import { distractionPresets } from "../presets.js";
 import { focusReport } from "../reports.js";
 import { sentinelAppInfo, sentinelStateHeaders } from "../sentinelHealth.js";
+import { safariFilterStatus } from "../safariFilter.js";
 import { sourceSealStatus } from "../sourceSeal.js";
 import { weekKey } from "../time.js";
 import { usageSummary } from "../usage.js";
@@ -53,9 +54,10 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
   const account = await currentMacAccountStatus();
   const stateSeal = await stateSealStatus(state);
   const sourceSeal = await sourceSealStatus();
+  const safariFilter = await safariFilterStatus(state);
   const protection = protectionSummary(state);
   const devices = await deviceSummary(state);
-  const foolproof = foolproofSummary(state, { hosts, firewall, agent, account, monitor: monitor.status, stateSeal, sourceSeal });
+  const foolproof = foolproofSummary(state, { hosts, firewall, safariFilter, agent, account, monitor: monitor.status, stateSeal, sourceSeal });
 
   return {
     body: {
@@ -74,6 +76,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
       hardening: {
         hosts,
         firewall,
+        safariFilter,
         launchAgent: agent,
         account,
         stateSeal,
@@ -82,7 +85,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
         hostsBlock: await buildNetworkPreview(state),
         actions: hardeningActions(localScripts),
         foolproof,
-        audit: hardeningAudit({ state, hosts, firewall, agent, account, protection, monitor: monitor.status, foolproof, stateSeal, sourceSeal })
+        audit: hardeningAudit({ state, hosts, firewall, safariFilter, agent, account, protection, monitor: monitor.status, foolproof, stateSeal, sourceSeal })
       }
     },
     headers: sentinelStateHeaders()
@@ -159,11 +162,12 @@ export async function strictPreflightStatus(state: SentinelState, profile: Profi
   }) : state;
   const hosts = await hostsStatus(preflightState, now);
   const firewall = await firewallStatus(preflightState, now);
+  const safariFilter = await safariFilterStatus(preflightState, now);
   const agent = await launchAgentStatus();
   const account = await currentMacAccountStatus();
   const stateSeal = await stateSealStatus(preflightState);
   const sourceSeal = await sourceSealStatus();
-  assertFoolproofReadyForStrict(preflightState, { hosts, firewall, agent, account, monitor: options.monitorStatus, stateSeal, sourceSeal }, now);
+  assertFoolproofReadyForStrict(preflightState, { hosts, firewall, safariFilter, agent, account, monitor: options.monitorStatus, stateSeal, sourceSeal }, now);
 }
 
 function publicPolicy(policy: ActivePolicy | null) {

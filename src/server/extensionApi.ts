@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { apiRequestGuard, extensionCorsHeaders, isTrustedExtensionRequest } from "../apiSecurity.js";
 import { truthy } from "../booleans.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "../extensionPolicy.js";
+import { confirmIntentionalPause, skipIntentionalPause } from "../intentionalUse.js";
 import { addEvent, saveState, saveUsage } from "../store.js";
 import { clampNumber } from "../time.js";
 import type { SentinelState, UsageState } from "../types.js";
@@ -47,6 +48,16 @@ export async function handleExtensionApiRoute(
 
   if (method === "POST" && path === "/api/extension/rules/sync") {
     await handleExtensionRulesSync(request, response, state);
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/extension/pause/continue") {
+    await handleExtensionPauseContinue(request, response, state);
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/extension/pause/skip") {
+    await handleExtensionPauseSkip(request, response, state);
     return true;
   }
 
@@ -178,6 +189,88 @@ async function handleExtensionRulesSync(
     await saveState(state);
   }
   sendJson(response, 200, { ok, count, expectedCount }, extensionCorsHeaders(request.headers));
+}
+
+async function handleExtensionPauseContinue(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: SentinelState
+): Promise<void> {
+  const extensionGuard = extensionRouteGuard(request.method || "POST", "/api/extension/pause/continue", request);
+  if (!extensionGuard.ok) {
+    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
+    return;
+  }
+
+  try {
+    const body = await readBody(request);
+    const result = confirmIntentionalPause(state, String(body.requestId || ""), body);
+    addEvent(state, "intentional_pause_continued", {
+      pauseId: result.pause.id,
+      ruleId: result.pause.ruleId,
+      target: result.pause.targetLabel,
+      until: result.grant.until,
+      source: "extension-overlay"
+    });
+    markExtensionActionSeen(request, state, "pause-continue");
+    await saveState(state);
+    sendJson(response, 200, { ok: true, ...result }, extensionCorsHeaders(request.headers));
+  } catch (error) {
+    sendJson(response, errorStatus(error), serializeError(error), extensionCorsHeaders(request.headers));
+  }
+}
+
+async function handleExtensionPauseSkip(
+  request: IncomingMessage,
+  response: ServerResponse,
+  state: SentinelState
+): Promise<void> {
+  const extensionGuard = extensionRouteGuard(request.method || "POST", "/api/extension/pause/skip", request);
+  if (!extensionGuard.ok) {
+    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
+    return;
+  }
+
+  try {
+    const body = await readBody(request);
+    const result = skipIntentionalPause(state, String(body.requestId || ""), body);
+    addEvent(state, "intentional_pause_skipped", {
+      pauseId: result.pause.id,
+      ruleId: result.pause.ruleId,
+      target: result.pause.targetLabel,
+      replacement: result.pause.replacement,
+      source: "extension-overlay"
+    });
+    markExtensionActionSeen(request, state, "pause-skip");
+    await saveState(state);
+    sendJson(response, 200, { ok: true, ...result }, extensionCorsHeaders(request.headers));
+  } catch (error) {
+    sendJson(response, errorStatus(error), serializeError(error), extensionCorsHeaders(request.headers));
+  }
+}
+
+function markExtensionActionSeen(request: IncomingMessage, state: SentinelState, event: string): void {
+  if (!isTrustedExtensionRequest(request.headers)) return;
+  state.extension = {
+    ...(state.extension || {}),
+    lastSeenAt: new Date().toISOString(),
+    lastVersion: state.extension?.lastVersion || null,
+    lastEvent: event,
+    lastHost: state.extension?.lastHost || null
+  };
+}
+
+function errorStatus(error: unknown): number {
+  if (hasStatus(error)) return error.status;
+  return 500;
+}
+
+function serializeError(error: unknown) {
+  return { error: error instanceof Error ? error.message : String(error || "Request failed.") };
+}
+
+function hasStatus(error: unknown): error is { status: number } {
+  return Boolean(error && typeof error === "object" && typeof (error as { status?: unknown }).status === "number");
 }
 
 function extensionRouteGuard(method: string, path: string, request: IncomingMessage): GuardResult {

@@ -208,6 +208,7 @@ export function evaluateExtensionCheck(state: SentinelState, usage: UsageState, 
         recorded,
         redirectUrl: pause.redirectUrl,
         pause: publicPause(pause.pause),
+        overlay: publicPauseOverlay(state, pause.pause, now),
         rule: publicPauseRule(pause.rule),
         contentFilterEnabled: contentFilterEnabled(state),
         browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state)
@@ -258,6 +259,23 @@ function publicPause(pause: IntentionalPause | null | undefined) {
     sessionMinutes: pause.sessionMinutes,
     budget: pause.budget || null,
     context: pause.context || null
+  };
+}
+
+function publicPauseOverlay(state: SentinelState, pause: IntentionalPause | null | undefined, now: Date) {
+  if (!pause) return null;
+  const budget = pause.budget || null;
+  const context = pause.context || null;
+  const budgetSeconds = Number(budget?.budgetSeconds || 0);
+  const seconds = Number(budget?.seconds || 0);
+  return {
+    goalStatement: state.intentionalUse?.goal?.statement || "Use screens on purpose, not by reflex.",
+    replacements: (state.intentionalUse?.goal?.replacements || []).slice(0, 6),
+    waitSeconds: Math.max(0, Math.ceil((Date.parse(pause.eligibleAt || "") - now.getTime()) / 1000)),
+    budgetText: budgetSeconds
+      ? `${Math.round(seconds / 60)} of ${Math.round(budgetSeconds / 60)} min used today`
+      : "No daily budget set",
+    contextMessage: context?.message || "Normal pause"
   };
 }
 
