@@ -41,6 +41,28 @@ interface Milestone {
   achieved: boolean;
 }
 
+interface ProgressionBadge {
+  id: string;
+  label: string;
+  earned: boolean;
+}
+
+interface ProgressionSummary {
+  level: number;
+  title: string;
+  xp: number;
+  currentLevelXp: number;
+  nextLevelXp: number;
+  levelProgressPercent: number;
+  brainHealth: number;
+  brainState: string;
+  cleanDays: number;
+  replacementChoices: number;
+  continuedChoices: number;
+  nextUnlock: string;
+  badges: ProgressionBadge[];
+}
+
 interface Culprit {
   name: string;
   seconds: number;
@@ -60,11 +82,12 @@ export function focusReport(usage: UsageState, state: SentinelState, now = new D
   const previous = aggregateWeek(previousDays);
   const allDays = rangeDays(addDays(today, -60), 61).map((date) => dayReport(usage, state, date));
   const streak = focusStreak(allDays, focusScoreGoal, today);
-  const milestones = buildMilestones({ state, current, streak, allDays, focusScoreGoal });
   const topCulprits = topCombined(currentDays, "sites").concat(topCombined(currentDays, "apps")).slice(0, 6);
   const bestDay = bestTrackedDay(currentDays);
   const worstDay = worstTrackedDay(currentDays);
   const intentionalUse = intentionalUseSummary(state, usage, now);
+  const progression = progressionSummary({ state, current, streak, allDays, intentionalUse, focusScoreGoal });
+  const milestones = buildMilestones({ state, current, streak, allDays, focusScoreGoal, progression });
 
   return {
     generatedAt: now.toISOString(),
@@ -85,6 +108,7 @@ export function focusReport(usage: UsageState, state: SentinelState, now = new D
     },
     comparison: compareWeeks(current, previous),
     streak,
+    progression,
     milestones,
     intentionalUse,
     topCulprits,
@@ -162,12 +186,13 @@ function focusStreak(days: DayReport[], goal: number, today: Date): FocusStreak 
   };
 }
 
-function buildMilestones({ state, current, streak, allDays, focusScoreGoal }: {
+function buildMilestones({ state, current, streak, allDays, focusScoreGoal, progression }: {
   state: SentinelState;
   current: WeekAggregate;
   streak: FocusStreak;
   allDays: DayReport[];
   focusScoreGoal: number;
+  progression: ProgressionSummary;
 }): Milestone[] {
   const enabledRules = [
     ...(state.schedules || []).filter((item) => item.enabled),
@@ -183,8 +208,113 @@ function buildMilestones({ state, current, streak, allDays, focusScoreGoal }: {
     milestone("low-distraction-week", "Low distraction week", current.trackedDays >= 3 && current.averageDailyDistractionSeconds <= 30 * 60),
     milestone("three-day-streak", "3 day streak", streak.days >= 3),
     milestone("seven-day-streak", "7 day streak", streak.days >= 7),
+    milestone("level-three", "Reach level 3", progression.level >= 3),
+    milestone("level-five", "Reach level 5", progression.level >= 5),
+    milestone("brain-health-80", "Brain health 80", progression.brainHealth >= 80),
     milestone("strong-week", "Strong week", current.trackedDays >= 5 && current.averageFocusScore >= focusScoreGoal)
   ];
+}
+
+function progressionSummary({ state, current, streak, allDays, intentionalUse, focusScoreGoal }: {
+  state: SentinelState;
+  current: WeekAggregate;
+  streak: FocusStreak;
+  allDays: DayReport[];
+  intentionalUse: ReturnType<typeof intentionalUseSummary>;
+  focusScoreGoal: number;
+}): ProgressionSummary {
+  const trackedDays = allDays.filter((day) => day.tracked);
+  const cleanDays = trackedDays.filter((day) => day.distractingSeconds === 0).length;
+  const outcomes = state.intentionalUse?.outcomes || [];
+  const replacementChoices = outcomes.filter((item) => item.outcome === "skipped").length;
+  const continuedChoices = outcomes.filter((item) => item.outcome === "continued").length;
+  const xp = Math.max(0, Math.round(
+    trackedDays.reduce((total, day) => total + 30 + day.focusScore + (day.focusScore >= focusScoreGoal ? 50 : 0) + (day.distractingSeconds === 0 ? 30 : 0), 0)
+    + replacementChoices * 35
+    + continuedChoices * 8
+    + streak.days * 30
+    + current.trackedDays * 20
+  ));
+  const levelState = levelFromXp(xp);
+  const intentionalToday = intentionalUse.today || {};
+  const replacementRate = successRate(Number(intentionalToday.skipped || 0), Number(intentionalToday.continued || 0));
+  const pressurePenalty = Math.min(20, Math.round((current.averageDailyOpens || 0) * 1.5));
+  const brainHealth = clamp(
+    Math.round(
+      (current.trackedDays ? current.averageFocusScore : 50)
+      + Math.min(14, streak.days * 2)
+      + Math.round(replacementRate * 0.12)
+      - pressurePenalty
+    ),
+    0,
+    100
+  );
+  const badges = [
+    badge("first-save", "First clean day", cleanDays >= 1),
+    badge("replacement-loop", "Replacement loop", replacementChoices >= 3),
+    badge("streak-3", "3 day streak", streak.days >= 3),
+    badge("streak-7", "7 day streak", streak.days >= 7),
+    badge("level-5", "Level 5", levelState.level >= 5)
+  ];
+
+  return {
+    ...levelState,
+    brainHealth,
+    brainState: brainHealth >= 85 ? "Clear" : brainHealth >= 65 ? "Recovering" : brainHealth >= 40 ? "Fragile" : "Overloaded",
+    cleanDays,
+    replacementChoices,
+    continuedChoices,
+    nextUnlock: nextUnlock({ streakDays: streak.days, cleanDays, level: levelState.level, replacementChoices }),
+    badges
+  };
+}
+
+function levelFromXp(xp: number) {
+  let level = 1;
+  let floor = 0;
+  let needed = 300;
+  while (xp >= floor + needed && level < 99) {
+    floor += needed;
+    level += 1;
+    needed = Math.round(needed * 1.22 + 60);
+  }
+  const currentLevelXp = Math.max(0, xp - floor);
+  const nextLevelXp = Math.max(1, needed);
+  return {
+    level,
+    title: levelTitle(level),
+    xp,
+    currentLevelXp,
+    nextLevelXp,
+    levelProgressPercent: Math.min(100, Math.max(4, Math.round((currentLevelXp / nextLevelXp) * 100)))
+  };
+}
+
+function levelTitle(level: number): string {
+  if (level >= 15) return "Architect";
+  if (level >= 10) return "Sentinel";
+  if (level >= 7) return "Builder";
+  if (level >= 4) return "Steady";
+  if (level >= 2) return "Awake";
+  return "Aware";
+}
+
+function nextUnlock({ streakDays, cleanDays, level, replacementChoices }: {
+  streakDays: number;
+  cleanDays: number;
+  level: number;
+  replacementChoices: number;
+}): string {
+  if (streakDays < 3) return `${3 - streakDays} more streak day${3 - streakDays === 1 ? "" : "s"} to unlock 3 day streak`;
+  if (replacementChoices < 3) return `${3 - replacementChoices} more replacement choice${3 - replacementChoices === 1 ? "" : "s"} to unlock Replacement loop`;
+  if (cleanDays < 3) return `${3 - cleanDays} more clean day${3 - cleanDays === 1 ? "" : "s"} to unlock Clean run`;
+  if (level < 5) return `Reach level 5 to unlock Builder status`;
+  if (streakDays < 7) return `${7 - streakDays} more streak day${7 - streakDays === 1 ? "" : "s"} to unlock 7 day streak`;
+  return "Next: keep the streak alive";
+}
+
+function badge(id: string, label: string, earned: boolean): ProgressionBadge {
+  return { id, label, earned };
 }
 
 function insights({ current, previous, topCulprits, streak, bestDay, worstDay, focusScoreGoal, intentionalUse }: {
@@ -281,6 +411,15 @@ function milestone(id: string, label: string, achieved: boolean): Milestone {
 
 function sum(values: DayReport[], key: keyof Pick<DayReport, "totalSeconds" | "distractingSeconds" | "savedSeconds" | "openCount" | "focusScore">): number {
   return values.reduce((total, item) => total + (item[key] || 0), 0);
+}
+
+function successRate(skipped: number, continued: number): number {
+  const total = skipped + continued;
+  return total ? Math.round((skipped / total) * 100) : 0;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function startOfDay(date: Date): Date {

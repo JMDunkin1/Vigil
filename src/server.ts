@@ -948,7 +948,13 @@ function updateSettings(body: RequestBody): void {
     "intentReasonEnabled",
     "intentReasonMinLength",
     "focusSoundEnabled",
+    "focusSoundMode",
+    "focusSoundActivity",
     "focusSoundPreset",
+    "focusSoundIntensity",
+    "focusSoundTimerMode",
+    "focusSoundTimerMinutes",
+    "focusSoundBreakMinutes",
     "focusSoundVolume",
     "typingChallengeEnabled",
     "interventionEnabled",
@@ -990,9 +996,8 @@ function updateSettings(body: RequestBody): void {
     } else if (typeof current === "number") {
       const bounds = settingsNumberBounds(key);
       mutableSettings[key] = clampNumber(value, bounds.min, bounds.max, current);
-    } else if (key === "focusSoundPreset") {
-      const preset = String(value);
-      mutableSettings[key] = ["brown-noise", "rain", "ocean"].includes(preset) ? preset : "brown-noise";
+    } else if (key.startsWith("focusSound")) {
+      mutableSettings[key] = focusSoundSetting(key, value);
     } else {
       mutableSettings[key] = String(value);
     }
@@ -1001,9 +1006,35 @@ function updateSettings(body: RequestBody): void {
 
 function settingsNumberBounds(key: string): { min: number; max: number } {
   if (key === "focusSoundVolume") return { min: 0, max: 100 };
+  if (key === "focusSoundTimerMinutes") return { min: 1, max: 480 };
+  if (key === "focusSoundBreakMinutes") return { min: 1, max: 120 };
   if (key === "intentReasonMinLength") return { min: 1, max: 280 };
   if (key === "panicLockDurationMinutes") return { min: 1, max: 1440 };
   return { min: 1, max: 100000 };
+}
+
+function focusSoundSetting(key: string, value: unknown): string {
+  const text = String(value || "");
+  const allowed: Record<string, string[]> = {
+    focusSoundMode: ["focus", "relax", "sleep", "meditate"],
+    focusSoundActivity: [
+      "deep-work",
+      "creative-flow",
+      "learning",
+      "light-work",
+      "motivation",
+      "recharge",
+      "destress",
+      "wind-down",
+      "power-nap",
+      "guided",
+      "unguided"
+    ],
+    focusSoundPreset: ["brown-noise", "pink-noise", "white-noise", "rain", "ocean", "storm", "stream"],
+    focusSoundIntensity: ["low", "medium", "high"],
+    focusSoundTimerMode: ["infinite", "timer", "interval"]
+  };
+  return allowed[key]?.includes(text) ? text : allowed[key]?.[0] || "";
 }
 
 function profileModeValue(value: unknown): ProfileMode {
