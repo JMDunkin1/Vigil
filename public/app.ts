@@ -182,15 +182,17 @@ function bindEvents() {
     await refresh();
   });
 
-  $("#focusSoundPreset").addEventListener("change", async () => {
-    try {
-      await focusSound.saveSettings();
-      toast("Focus sound saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
+  for (const id of ["focusSoundMode", "focusSoundActivity", "focusSoundPreset", "focusSoundIntensity", "focusSoundTimerMode", "focusSoundTimerMinutes", "focusSoundBreakMinutes"]) {
+    $(`#${id}`).addEventListener("change", async () => {
+      try {
+        await focusSound.saveSettings();
+        toast("Focus sound saved");
+      } catch (error) {
+        toast(errorMessage(error));
+      }
+      await refresh();
+    });
+  }
 
   $("#focusSoundVolume").addEventListener("input", () => {
     focusSound.setVolume(Number($("#focusSoundVolume").value || 0));
@@ -892,7 +894,11 @@ function renderOrbState(orbState: string): void {
 }
 
 function renderMetrics(usage: UsageSummary, report: ReportSummary): void {
+  const progression = report?.progression;
   $("#focusScore").textContent = `${usage.focusScore}`;
+  $("#progressLevel").textContent = progression ? String(progression.level) : "--";
+  $("#brainHealth").textContent = progression ? `${progression.brainHealth}` : "--";
+  $("#homeFocusStreak").textContent = report?.streak?.label || "--";
   $("#distractingToday").textContent = formatDuration(usage.distractingSeconds);
   $("#lockedToday").textContent = formatDuration(usage.protectedSeconds);
   $("#distractionTrend").textContent = signedPercent(report?.comparison?.distractingPercentDelta);
@@ -1427,10 +1433,14 @@ function renderReport(report: ReportSummary): void {
   $("#weekSavedDelta").textContent = signedDuration(report.comparison?.distractingSecondsDelta);
   $("#focusStreak").textContent = report.streak.label;
   $("#streakGoal").textContent = `${report.streak.goal}+ score goal`;
+  const progression = report.progression;
+  $("#progressLevelReport").textContent = progression ? `${progression.level}` : "--";
+  $("#xpProgress").textContent = progression ? `${progression.title} | ${progression.currentLevelXp}/${progression.nextLevelXp} XP` : "--";
+  $("#levelProgressFill").style.width = `${progression?.levelProgressPercent || 0}%`;
   $("#yearPace").textContent = formatDuration(report.currentWeek.totals.averageDailyDistractionSeconds);
   $("#decadePace").textContent = daysWithDataText(report.currentWeek.totals.trackedDays);
   $("#openPressure").textContent = String(report.currentWeek.totals.averageDailyOpens || 0);
-  $("#openPressureMeta").textContent = "avg opens / day";
+  $("#openPressureMeta").textContent = progression ? `${progression.brainState} brain health` : "avg opens / day";
   renderWeekStrip(report.currentWeek.days, report.focusScoreGoal);
   renderInsights(report.insights);
   renderMilestones(report.milestones);
@@ -1544,6 +1554,13 @@ function renderInsights(items: string[]): void {
 function renderMilestones(items: DashboardItem[]): void {
   const root = $("#milestones");
   root.replaceChildren();
+  const badges = state.data?.report?.progression?.badges || [];
+  for (const badge of badges) {
+    const row = document.createElement("div");
+    row.className = badge.earned ? "milestone achieved" : "milestone";
+    row.append(textEl("span", badge.earned ? "Earned" : "Next"), textEl("strong", badge.label));
+    root.append(row);
+  }
   for (const item of items || []) {
     const row = document.createElement("div");
     row.className = item.achieved ? "milestone achieved" : "milestone";

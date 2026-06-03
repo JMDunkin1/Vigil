@@ -107,7 +107,13 @@ export interface AppSettings {
   intentReasonEnabled: boolean;
   intentReasonMinLength: number;
   focusSoundEnabled: boolean;
+  focusSoundMode: string;
+  focusSoundActivity: string;
   focusSoundPreset: string;
+  focusSoundIntensity: string;
+  focusSoundTimerMode: string;
+  focusSoundTimerMinutes: number;
+  focusSoundBreakMinutes: number;
   focusSoundVolume: number;
   typingChallengeEnabled: boolean;
   interventionEnabled: boolean;

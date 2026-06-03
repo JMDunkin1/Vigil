@@ -591,7 +591,7 @@ button.compact {
 
 .home-strip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
   gap: 1px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -620,8 +620,36 @@ button.compact {
 
 .metric strong {
   color: var(--primary-strong);
-  font-size: 2rem;
+  font-size: 1.8rem;
   line-height: 1;
+}
+
+.focus-studio {
+  margin-top: 24px;
+}
+
+.focus-studio-grid {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) repeat(4, minmax(140px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.focus-studio-grid label {
+  min-width: 0;
+}
+
+.focus-studio-grid select,
+.focus-studio-grid input[type="number"] {
+  width: 100%;
+}
+
+.focus-studio-grid .volume-line {
+  grid-column: span 2;
+}
+
+.focus-studio-grid input[type="range"] {
+  width: 100%;
 }
 
 .workspace {
@@ -1242,6 +1270,21 @@ button:focus-visible {
   font-style: normal;
 }
 
+.level-progress {
+  height: 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 68%, transparent);
+  overflow: hidden;
+}
+
+.level-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--primary), var(--blue));
+}
+
 .week-strip {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
@@ -1468,6 +1511,10 @@ button:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .focus-studio-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .advanced-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -1506,6 +1553,7 @@ button:focus-visible {
   .device-switch,
   .home-presets,
   .home-strip,
+  .focus-studio-grid,
   .form-row,
   .form-row.thirds,
   .report-grid,
@@ -1535,6 +1583,10 @@ button:focus-visible {
 
   .home-strip {
     gap: 1px;
+  }
+
+  .focus-studio-grid .volume-line {
+    grid-column: 1 / -1;
   }
 
   .maintenance-panel .distance-input,

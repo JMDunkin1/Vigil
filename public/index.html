@@ -175,6 +175,18 @@
           <strong id="focusScore">--</strong>
         </div>
         <div class="metric">
+          <span>Level</span>
+          <strong id="progressLevel">--</strong>
+        </div>
+        <div class="metric">
+          <span>Brain Health</span>
+          <strong id="brainHealth">--</strong>
+        </div>
+        <div class="metric">
+          <span>Streak</span>
+          <strong id="homeFocusStreak">--</strong>
+        </div>
+        <div class="metric">
           <span>Distraction</span>
           <strong id="distractingToday">--</strong>
         </div>
@@ -187,6 +199,74 @@
           <strong id="distractionTrend">--</strong>
         </div>
       </div>
+
+      <section class="focus-studio panel">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Focus Studio</p>
+            <h2>Soundscape</h2>
+          </div>
+          <span id="focusSoundStatus" class="tiny-status">Off</span>
+        </div>
+        <div class="focus-studio-grid">
+          <label class="checkline"><input id="focusSoundEnabled" type="checkbox"> Play</label>
+          <label>
+            Mode
+            <select id="focusSoundMode">
+              <option value="focus">Focus</option>
+              <option value="relax">Relax</option>
+              <option value="sleep">Sleep</option>
+              <option value="meditate">Meditate</option>
+            </select>
+          </label>
+          <label>
+            Activity
+            <select id="focusSoundActivity">
+              <option value="deep-work">Deep work</option>
+            </select>
+          </label>
+          <label>
+            Sound
+            <select id="focusSoundPreset">
+              <option value="brown-noise">Brown noise</option>
+              <option value="pink-noise">Pink noise</option>
+              <option value="white-noise">White noise</option>
+              <option value="rain">Rain</option>
+              <option value="ocean">Ocean</option>
+              <option value="storm">Storm</option>
+              <option value="stream">Stream</option>
+            </select>
+          </label>
+          <label>
+            Intensity
+            <select id="focusSoundIntensity">
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </label>
+          <label>
+            Timer
+            <select id="focusSoundTimerMode">
+              <option value="infinite">Infinite</option>
+              <option value="timer">Timer</option>
+              <option value="interval">Interval</option>
+            </select>
+          </label>
+          <label>
+            Minutes
+            <input id="focusSoundTimerMinutes" type="number" min="1" max="480" step="1">
+          </label>
+          <label>
+            Break
+            <input id="focusSoundBreakMinutes" type="number" min="1" max="120" step="1">
+          </label>
+          <label class="volume-line">
+            Volume
+            <input id="focusSoundVolume" type="range" min="0" max="100" step="1">
+          </label>
+        </div>
+      </section>
     </section>
 
     <section id="view-rules" class="view" data-view="rules" hidden>
@@ -600,23 +680,6 @@
             <label class="numberline">Reason min <input id="intentReasonMinLength" type="number" min="1" max="280" step="1"> chars</label>
           </div>
 
-          <div class="focus-sound-panel">
-            <label class="checkline"><input id="focusSoundEnabled" type="checkbox"> Focus sound</label>
-            <label>
-              Sound
-              <select id="focusSoundPreset">
-                <option value="brown-noise">Brown noise</option>
-                <option value="rain">Rain</option>
-                <option value="ocean">Ocean</option>
-              </select>
-            </label>
-            <label>
-              Volume
-              <input id="focusSoundVolume" type="range" min="0" max="100" step="1">
-            </label>
-            <span id="focusSoundStatus" class="tiny-status">Off</span>
-          </div>
-
           <div class="focus-shortcut-panel">
             <div>
               <p class="eyebrow">Notification Focus</p>
@@ -875,6 +938,12 @@
               <span>Streak</span>
               <strong id="focusStreak">--</strong>
               <em id="streakGoal">--</em>
+            </div>
+            <div class="report-metric">
+              <span>Level</span>
+              <strong id="progressLevelReport">--</strong>
+              <em id="xpProgress">--</em>
+              <div class="level-progress" aria-hidden="true"><span id="levelProgressFill"></span></div>
             </div>
             <div class="report-metric">
               <span>Avg / Day</span>
