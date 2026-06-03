@@ -4,6 +4,7 @@ import { focusShortcutDetail, focusShortcutSummary } from "../focusHooks.js";
 import { integrityRuntimeSummary } from "../integrityLockdown.js";
 import { intentReasonSummary } from "../intentReason.js";
 import { keyholderSummary } from "../keyholder.js";
+import { browserCompanionRequirement, networkBlockCurrent, systemNetworkBlockingEnabled } from "../systemNetworkBlock.js";
 import type { VigilState, UnknownRecord } from "../types.js";
 
 interface SummaryRecord extends UnknownRecord {
@@ -18,6 +19,9 @@ interface SummaryRecord extends UnknownRecord {
   installed?: boolean;
   partial?: boolean;
   stale?: boolean;
+  current?: boolean;
+  required?: boolean;
+  generated?: boolean;
   duplicate?: boolean;
   legacyInstalled?: boolean;
   loaded?: boolean;
@@ -26,6 +30,7 @@ interface SummaryRecord extends UnknownRecord {
   installedEntries?: number;
   expectedEntries?: number;
   expectedDomainCount?: number;
+  pathUrlCount?: number;
   lastSealedAt?: string | null;
   sealedAt?: string | null;
   tamperDetectedAt?: string | null;
@@ -42,6 +47,7 @@ interface HardeningAuditInput {
   state: VigilState;
   hosts: SummaryRecord;
   firewall: SummaryRecord;
+  safariFilter: SummaryRecord;
   agent: SummaryRecord;
   account: SummaryRecord;
   protection: SummaryRecord;
@@ -63,7 +69,7 @@ interface HardeningActionsInput {
   resourcePath: (resourceName: string) => string;
 }
 
-export function hardeningAudit({ state, hosts, firewall, agent, account, protection, monitor, foolproof, stateSeal, sourceSeal }: HardeningAuditInput): HardeningAuditRow[] {
+export function hardeningAudit({ state, hosts, firewall, safariFilter, agent, account, protection, monitor, foolproof, stateSeal, sourceSeal }: HardeningAuditInput): HardeningAuditRow[] {
   const keyholder = keyholderSummary(state);
   const distanceKey = distanceKeySummary(state);
   const focusShortcut = focusShortcutSummary(state);
@@ -72,6 +78,9 @@ export function hardeningAudit({ state, hosts, firewall, agent, account, protect
   const dynamicRules = extensionDynamicRulesReady(state);
   const extensionVersion = extensionVersionReady(state);
   const extensionSeen = extensionRecentlySeenForState(state);
+  const networkCurrent = networkBlockCurrent(hosts, firewall);
+  const networkEnabled = systemNetworkBlockingEnabled(state);
+  const companionRequirement = browserCompanionRequirement(state);
   return [
     {
       id: "foolproof",
@@ -134,21 +143,33 @@ export function hardeningAudit({ state, hosts, firewall, agent, account, protect
       detail: focusShortcutDetail(focusShortcut)
     },
     {
+      id: "system-network-block",
+      label: "System network block",
+      ok: Boolean(networkEnabled && networkCurrent),
+      detail: systemNetworkBlockDetail(networkEnabled, networkCurrent)
+    },
+    {
+      id: "safari-url-filter",
+      label: "Safari URL filter",
+      ok: safariFilter.required ? Boolean(safariFilter.current) : true,
+      detail: safariFilterDetail(safariFilter)
+    },
+    {
       id: "browser-redirect",
-      label: "Browser redirect",
-      ok: state.settings.siteRedirectEnabled,
-      detail: state.settings.siteRedirectEnabled ? "Blocked sites redirect to the block screen." : "Blocked site redirect is disabled."
+      label: "Browser redirect fallback",
+      ok: Boolean(networkCurrent || state.settings.siteRedirectEnabled),
+      detail: browserRedirectFallbackDetail(Boolean(state.settings.siteRedirectEnabled), networkCurrent)
     },
     {
       id: "content-filter",
       label: "Content filter",
-      ok: state.settings.contentFilterEnabled !== false,
-      detail: state.settings.contentFilterEnabled !== false ? "Short-form feeds such as Shorts, Reels, Popular, and For You are blocked during locks." : "Content feature filters are disabled."
+      ok: true,
+      detail: state.settings.contentFilterEnabled !== false ? "Short-form feeds such as Shorts, Reels, Popular, and For You use precise browser companion checks." : "Content feature filters are disabled."
     },
     {
       id: "browser-noise",
       label: "Browser cleanup",
-      ok: state.settings.browserNoiseBlockingEnabled,
+      ok: true,
       detail: state.settings.browserNoiseBlockingEnabled ? "Companion extension removes common ads, trackers, cookie prompts, and social widgets." : "Browser cleanup is disabled."
     },
     {
@@ -184,20 +205,22 @@ export function hardeningAudit({ state, hosts, firewall, agent, account, protect
     {
       id: "browser-extension",
       label: "Browser extension",
-      ok: extensionSeen,
-      detail: extensionSeen ? "Companion extension checked in recently." : "Optional extension has not checked in recently."
+      ok: Boolean(!companionRequirement.required || extensionSeen),
+      detail: companionRequirement.required
+        ? (extensionSeen ? `Companion extension checked in recently. ${companionRequirement.detail}` : `Companion extension has not checked in recently. ${companionRequirement.detail}`)
+        : "Not required for current system-network site blocking."
     },
     {
       id: "extension-version",
       label: "Extension version",
-      ok: Boolean(extensionSeen && extensionVersion.ok),
-      detail: extensionVersion.detail
+      ok: Boolean(!companionRequirement.required || (extensionSeen && extensionVersion.ok)),
+      detail: companionRequirement.required ? extensionVersion.detail : "Not required for current system-network site blocking."
     },
     {
       id: "extension-rules",
       label: "Extension rules",
-      ok: dynamicRules.ok,
-      detail: dynamicRules.detail
+      ok: Boolean(!companionRequirement.required || dynamicRules.ok),
+      detail: companionRequirement.required ? dynamicRules.detail : "Not required for current system-network site blocking."
     },
     {
       id: "launch-agent",
@@ -226,6 +249,27 @@ export function hardeningAudit({ state, hosts, firewall, agent, account, protect
   ];
 }
 
+function systemNetworkBlockDetail(enabled: boolean, current: boolean): string {
+  if (!enabled) return "System network blocking is disabled.";
+  if (current) return "Blocked site domains are denied across Safari and other apps without rewriting browser tabs.";
+  return "Apply the network block so hosts and PF are current for across-app site enforcement.";
+}
+
+function browserRedirectFallbackDetail(enabled: boolean, networkCurrent: boolean): string {
+  if (networkCurrent) return "Not needed for whole-site domain blocks while the system network block is current.";
+  if (enabled) return "Blocked sites redirect to the block screen when the system network block is not current.";
+  return "Disabled; site blocking depends on the system network block being current.";
+}
+
+function safariFilterDetail(safariFilter: SummaryRecord): string {
+  if (!safariFilter.enabled) return "Safari URL filtering is disabled.";
+  if (!safariFilter.required) return "No path-specific Safari URL rules are active right now.";
+  if (safariFilter.current) return `Safari path rules are current (${safariFilter.pathUrlCount || 0} path URLs).`;
+  if (safariFilter.installed && safariFilter.stale) return "Safari URL filter profile is installed but stale; reapply it.";
+  if (safariFilter.generated) return "Safari URL filter profile is generated; approve it in System Settings.";
+  return "Apply the Safari URL filter profile for path-specific Safari blocking.";
+}
+
 export function hardeningActions({ localScriptCommand, resourcePath }: HardeningActionsInput) {
   return {
     launchAgentInstall: {
@@ -238,6 +282,12 @@ export function hardeningActions({ localScriptCommand, resourcePath }: Hardening
       method: "POST",
       path: "/api/hardening/hosts/apply",
       command: localScriptCommand("apply-hosts.mjs", { privileged: true, npmScript: "network:apply" })
+    },
+    safariFilterApply: {
+      label: "Apply Safari Filter",
+      method: "POST",
+      path: "/api/hardening/safari-filter/apply",
+      command: localScriptCommand("apply-safari-filter.mjs", { npmScript: "safari:apply" })
     },
     sourceSeal: {
       label: "Seal Source",

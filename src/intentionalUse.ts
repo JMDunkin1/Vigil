@@ -13,6 +13,9 @@ import {
 import { clampNumber, dateKey, parseClock, weekKey } from "./time.js";
 import type {
   IntentionalGrant,
+  IntentionalBehavior,
+  IntentionalBehaviorCheckIn,
+  IntentionalJournalEntry,
   IntentionalOutcome,
   IntentionalPause,
   IntentionalRuleLedger,
@@ -27,6 +30,8 @@ import type {
 const PAUSE_EVENTS = new Set(["navigation", "history", "activated", "mac-app"]);
 const OUTCOME_LIMIT = 200;
 const OPEN_LIMIT = 40;
+const JOURNAL_ENTRY_LIMIT = 250;
+const BEHAVIOR_CHECK_IN_LIMIT = 500;
 
 interface IntentionalUseOptions extends UnknownRecord {
   event?: string;
@@ -62,6 +67,9 @@ export function normalizeIntentionalUse(current: Partial<IntentionalUseState> = 
     grants: Array.isArray(current.grants) ? current.grants : [],
     ledger: current.ledger && typeof current.ledger === "object" ? current.ledger : {},
     outcomes: Array.isArray(current.outcomes) ? current.outcomes.slice(0, OUTCOME_LIMIT) : [],
+    behaviors: normalizeBehaviors(current.behaviors || fresh.behaviors || []),
+    behaviorCheckIns: normalizeBehaviorCheckIns(current.behaviorCheckIns || fresh.behaviorCheckIns || []).slice(0, BEHAVIOR_CHECK_IN_LIMIT),
+    journalEntries: normalizeJournalEntries(current.journalEntries || fresh.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT),
     accountability: {
       ...(fresh.accountability || {}),
       ...(current.accountability || {})
@@ -133,11 +141,77 @@ export function updateIntentionalUseAccountability(state: VigilState, body: Inte
   return state.intentionalUse.accountability;
 }
 
+export function upsertIntentionalBehavior(state: VigilState, body: IntentionalBody = {}, now = new Date()): IntentionalBehavior {
+  ensureIntentionalUse(state);
+  const id = String(body.id || randomUUID());
+  const existing = state.intentionalUse.behaviors.find((behavior) => behavior.id === id);
+  const behavior = normalizeBehavior(body, existing, id, now);
+  if (existing) Object.assign(existing, behavior);
+  else state.intentionalUse.behaviors.unshift(behavior);
+  return behavior;
+}
+
+export function deleteIntentionalBehavior(state: VigilState, behaviorId: string): IntentionalBehavior | null {
+  ensureIntentionalUse(state);
+  const behavior = state.intentionalUse.behaviors.find((item) => item.id === behaviorId);
+  if (!behavior) return null;
+  behavior.active = false;
+  behavior.updatedAt = new Date().toISOString();
+  return behavior;
+}
+
+export function addIntentionalJournalEntry(state: VigilState, body: IntentionalBody = {}, now = new Date()): IntentionalJournalEntry {
+  ensureIntentionalUse(state);
+  const existing = body.id ? state.intentionalUse.journalEntries.find((entry) => entry.id === String(body.id)) : null;
+  const entry = normalizeJournalEntry(body, existing || {}, String(body.id || randomUUID()), now);
+  if (existing) Object.assign(existing, entry);
+  else state.intentionalUse.journalEntries.unshift(entry);
+  state.intentionalUse.journalEntries = state.intentionalUse.journalEntries.slice(0, JOURNAL_ENTRY_LIMIT);
+  return entry;
+}
+
+export function deleteIntentionalJournalEntry(state: VigilState, entryId: string): boolean {
+  ensureIntentionalUse(state);
+  const before = state.intentionalUse.journalEntries.length;
+  state.intentionalUse.journalEntries = state.intentionalUse.journalEntries.filter((entry) => entry.id !== entryId);
+  return state.intentionalUse.journalEntries.length !== before;
+}
+
+export function recordIntentionalBehaviorCheckIn(state: VigilState, body: IntentionalBody = {}, now = new Date()): IntentionalBehaviorCheckIn {
+  ensureIntentionalUse(state);
+  const behaviorId = String(body.behaviorId || "");
+  const behavior = state.intentionalUse.behaviors.find((item) => item.id === behaviorId && item.active !== false);
+  if (!behavior) throw new IntentionalUseError("Behavior not found.", 404);
+  const value = behavior.unit === "yes-no" ? (truthy(body.value) ? 1 : 0) : clampNumber(body.value, 0, 100000, 1);
+  const checkIn: IntentionalBehaviorCheckIn = {
+    id: randomUUID(),
+    behaviorId: behavior.id,
+    behaviorName: behavior.name,
+    value,
+    note: String(body.note || "").trim().slice(0, 500),
+    at: now.toISOString(),
+    dateKey: dateKey(now),
+    weekKey: weekKey(now)
+  };
+  const journalEntryId = String(body.journalEntryId || "");
+  if (journalEntryId) checkIn.journalEntryId = journalEntryId;
+  state.intentionalUse.behaviorCheckIns.unshift(checkIn);
+  state.intentionalUse.behaviorCheckIns = state.intentionalUse.behaviorCheckIns.slice(0, BEHAVIOR_CHECK_IN_LIMIT);
+  return checkIn;
+}
+
 export function intentionalUseSummary(state: VigilState, usage: UnknownRecord = {}, now = new Date()) {
   ensureIntentionalUse(state);
   cleanupIntentionalUse(state, now);
   const day = dateKey(now);
+  const week = weekKey(now);
   const rules = state.intentionalUse.rules.map((rule) => ruleSummary(state, rule, now));
+  const behaviorSummaries = state.intentionalUse.behaviors.map((behavior) => behaviorSummary(state, behavior, week));
+  const journalEntries = [...(state.intentionalUse.journalEntries || [])]
+    .sort((a, b) => Date.parse(b.entryDate || b.createdAt || "") - Date.parse(a.entryDate || a.createdAt || ""))
+    .slice(0, 20);
+  const journalThisWeek = journalEntriesForWeek(state, week);
+  const behaviorCheckInsThisWeek = (state.intentionalUse.behaviorCheckIns || []).filter((entry) => entry.weekKey === week);
   const today = state.intentionalUse.ledger?.[day] || {};
   const totals = Object.values(today.rules || {}).reduce((acc, item) => {
     acc.seconds += item.seconds || 0;
@@ -152,6 +226,19 @@ export function intentionalUseSummary(state: VigilState, usage: UnknownRecord = 
     accountability: {
       ...(state.intentionalUse.accountability || {}),
       digest: accountabilityDigest(state, usage, now)
+    },
+    lifeLog: {
+      entries: journalEntries,
+      behaviors: behaviorSummaries,
+      recentCheckIns: (state.intentionalUse.behaviorCheckIns || []).slice(0, 20),
+      stats: {
+        weekKey: week,
+        entriesThisWeek: journalThisWeek.length,
+        totalEntries: state.intentionalUse.journalEntries.length,
+        behaviorCheckInsThisWeek: behaviorCheckInsThisWeek.length,
+        reflectionStreakDays: reflectionStreakDays(state, now),
+        activeBehaviors: state.intentionalUse.behaviors.filter((behavior) => behavior.active !== false).length
+      }
     },
     activeGrants: (state.intentionalUse.grants || []).filter((grant) => Date.parse(grant.until || "") > now.getTime()),
     pendingPauses: (state.intentionalUse.pauses || []).filter((pause) => pause.status === "pending" && Date.parse(pause.expiresAt || "") > now.getTime()),
@@ -332,6 +419,9 @@ function ensureIntentionalUse(state: VigilState): void {
   state.intentionalUse.grants ||= [];
   state.intentionalUse.ledger ||= {};
   state.intentionalUse.outcomes ||= [];
+  state.intentionalUse.behaviors ||= [];
+  state.intentionalUse.behaviorCheckIns ||= [];
+  state.intentionalUse.journalEntries ||= [];
   state.intentionalUse.accountability ||= {};
 }
 
@@ -356,6 +446,123 @@ function normalizeRules(rules: unknown): IntentionalUseRule[] {
     .map((rule) => normalizeIntentionalUseRule(rule, rule, String(rule.id || randomUUID())));
 }
 
+function normalizeBehaviors(behaviors: unknown): IntentionalBehavior[] {
+  if (!Array.isArray(behaviors)) return [];
+  return behaviors
+    .filter(isUnknownRecord)
+    .map((behavior) => normalizeBehavior(behavior, behavior, String(behavior.id || randomUUID())));
+}
+
+function normalizeBehavior(body: IntentionalBody = {}, existing: Partial<IntentionalBehavior> = {}, fallbackId: string = randomUUID(), now = new Date()): IntentionalBehavior {
+  const direction = ["build", "reduce", "notice"].includes(String(body.direction || ""))
+    ? body.direction as IntentionalBehavior["direction"]
+    : existing.direction || "build";
+  const unit = ["count", "minutes", "yes-no"].includes(String(body.unit || ""))
+    ? body.unit as IntentionalBehavior["unit"]
+    : existing.unit || "count";
+  const createdAt = existing.createdAt || now.toISOString();
+  return {
+    id: String(body.id || existing.id || fallbackId),
+    name: String(body.name || existing.name || "New behavior").trim().slice(0, 80),
+    description: String(body.description || existing.description || "").trim().slice(0, 500),
+    direction,
+    unit,
+    weeklyTarget: clampNumber(body.weeklyTarget ?? existing.weeklyTarget, 0, 100000, unit === "yes-no" ? 7 : 3),
+    ruleIds: normalizeTargets(body.ruleIds ?? existing.ruleIds).slice(0, 20),
+    replacement: String(body.replacement || existing.replacement || "").trim().slice(0, 160),
+    active: body.active === undefined ? existing.active !== false : truthy(body.active),
+    createdAt,
+    updatedAt: now.toISOString()
+  };
+}
+
+function normalizeBehaviorCheckIns(checkIns: unknown): IntentionalBehaviorCheckIn[] {
+  if (!Array.isArray(checkIns)) return [];
+  return checkIns
+    .filter(isUnknownRecord)
+    .map((checkIn) => normalizeBehaviorCheckIn(checkIn))
+    .sort((a, b) => Date.parse(b.at || "") - Date.parse(a.at || ""));
+}
+
+function normalizeBehaviorCheckIn(checkIn: UnknownRecord): IntentionalBehaviorCheckIn {
+  const at = safeIsoDate(checkIn.at) || new Date().toISOString();
+  return {
+    id: String(checkIn.id || randomUUID()),
+    behaviorId: String(checkIn.behaviorId || ""),
+    behaviorName: String(checkIn.behaviorName || "Behavior").slice(0, 80),
+    value: clampNumber(checkIn.value, 0, 100000, 1),
+    note: String(checkIn.note || "").slice(0, 500),
+    at,
+    dateKey: String(checkIn.dateKey || dateKey(new Date(at))),
+    weekKey: String(checkIn.weekKey || weekKey(new Date(at))),
+    journalEntryId: checkIn.journalEntryId ? String(checkIn.journalEntryId) : undefined
+  };
+}
+
+function normalizeJournalEntries(entries: unknown): IntentionalJournalEntry[] {
+  if (!Array.isArray(entries)) return [];
+  return entries
+    .filter(isUnknownRecord)
+    .map((entry) => normalizeJournalEntry(entry, entry, String(entry.id || randomUUID())))
+    .sort((a, b) => Date.parse(b.entryDate || b.createdAt || "") - Date.parse(a.entryDate || a.createdAt || ""));
+}
+
+function normalizeJournalEntry(body: IntentionalBody = {}, existing: Partial<IntentionalJournalEntry> = {}, fallbackId: string = randomUUID(), now = new Date()): IntentionalJournalEntry {
+  const createdAt = existing.createdAt || now.toISOString();
+  const entryDate = safeIsoDate(body.entryDate) || existing.entryDate || now.toISOString();
+  return {
+    id: String(body.id || existing.id || fallbackId),
+    title: String(body.title || existing.title || "Reflection").trim().slice(0, 120),
+    body: String(body.body || existing.body || "").trim().slice(0, 8000),
+    mood: String(body.mood || existing.mood || "").trim().slice(0, 80),
+    energy: body.energy === "" || body.energy === null || body.energy === undefined
+      ? existing.energy ?? null
+      : clampNumber(body.energy, 1, 10, existing.energy ?? 5),
+    tags: normalizeTargets(body.tags ?? existing.tags).slice(0, 20),
+    behaviorIds: normalizeTargets(body.behaviorIds ?? existing.behaviorIds).slice(0, 20),
+    ruleIds: normalizeTargets(body.ruleIds ?? existing.ruleIds).slice(0, 20),
+    createdAt,
+    updatedAt: now.toISOString(),
+    entryDate
+  };
+}
+
+function behaviorSummary(state: VigilState, behavior: IntentionalBehavior, currentWeekKey: string) {
+  const checkIns = (state.intentionalUse.behaviorCheckIns || []).filter((entry) => entry.behaviorId === behavior.id);
+  const weekly = checkIns.filter((entry) => entry.weekKey === currentWeekKey);
+  const weeklyValue = weekly.reduce((total, entry) => total + Number(entry.value || 0), 0);
+  const percent = behavior.weeklyTarget ? Math.min(100, Math.round((weeklyValue / behavior.weeklyTarget) * 100)) : 0;
+  return {
+    ...behavior,
+    weeklyValue,
+    weeklyCheckIns: weekly.length,
+    percent,
+    lastCheckInAt: checkIns[0]?.at || null
+  };
+}
+
+function journalEntriesForWeek(state: VigilState, currentWeekKey: string): IntentionalJournalEntry[] {
+  return (state.intentionalUse.journalEntries || []).filter((entry) => weekKey(new Date(entry.entryDate || entry.createdAt)) === currentWeekKey);
+}
+
+function reflectionStreakDays(state: VigilState, now: Date): number {
+  const days = new Set((state.intentionalUse.journalEntries || []).map((entry) => dateKey(new Date(entry.entryDate || entry.createdAt))));
+  let count = 0;
+  const cursor = new Date(now);
+  cursor.setHours(0, 0, 0, 0);
+  while (days.has(dateKey(cursor))) {
+    count += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return count;
+}
+
+function safeIsoDate(value: unknown): string | null {
+  if (!value) return null;
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function isUnknownRecord(value: unknown): value is UnknownRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -369,6 +576,8 @@ function cleanupIntentionalUse(state: VigilState, now: Date): void {
     return grant.status === "active" && Date.parse(grant.until || "") > nowMs;
   });
   state.intentionalUse.outcomes = (state.intentionalUse.outcomes || []).slice(0, OUTCOME_LIMIT);
+  state.intentionalUse.behaviorCheckIns = (state.intentionalUse.behaviorCheckIns || []).slice(0, BEHAVIOR_CHECK_IN_LIMIT);
+  state.intentionalUse.journalEntries = (state.intentionalUse.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT);
 }
 
 function matchingRule(state: VigilState, sample: UsageSample, now: Date): IntentionalUseRule | null {

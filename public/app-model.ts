@@ -47,8 +47,10 @@ export interface ChallengeSummary {
 export interface DashboardItem extends UnknownRecord {
   id: string;
   name: string;
+  title?: string;
   label?: string;
   detail?: string;
+  description?: string;
   ok?: boolean;
   enabled?: boolean;
   type?: string;
@@ -75,6 +77,27 @@ export interface DashboardItem extends UnknownRecord {
   frictionLevel?: string;
   sessionMinutes?: number;
   dailyBudgetMinutes?: number;
+  weeklyTarget?: number;
+  weeklyValue?: number;
+  weeklyCheckIns?: number;
+  direction?: string;
+  unit?: string;
+  replacement?: string;
+  active?: boolean;
+  body?: string;
+  mood?: string;
+  energy?: number | null;
+  tags?: string[];
+  behaviorIds?: string[];
+  ruleIds?: string[];
+  behaviorId?: string;
+  behaviorName?: string;
+  value?: number;
+  note?: string;
+  at?: string;
+  entryDate?: string;
+  createdAt?: string;
+  updatedAt?: string;
   activeBlock?: unknown;
   activeUnlock?: unknown;
   pendingRequest?: DashboardItem & {
@@ -139,14 +162,62 @@ export interface IntentionalUseSummary extends UnknownRecord {
     digest?: { text?: string };
   };
   rules?: DashboardItem[];
+  lifeLog?: {
+    entries?: Array<DashboardItem & {
+      title?: string;
+      body?: string;
+      mood?: string;
+      energy?: number | null;
+      tags?: string[];
+      behaviorIds?: string[];
+      ruleIds?: string[];
+      entryDate?: string;
+      createdAt?: string;
+      updatedAt?: string;
+    }>;
+    behaviors?: Array<DashboardItem & {
+      description?: string;
+      direction?: string;
+      unit?: string;
+      weeklyTarget?: number;
+      weeklyValue?: number;
+      weeklyCheckIns?: number;
+      percent?: number;
+      ruleIds?: string[];
+      replacement?: string;
+      active?: boolean;
+      lastCheckInAt?: string | null;
+    }>;
+    recentCheckIns?: Array<DashboardItem & {
+      behaviorId?: string;
+      behaviorName?: string;
+      value?: number;
+      note?: string;
+      at?: string;
+    }>;
+    stats?: {
+      weekKey?: string;
+      entriesThisWeek?: number;
+      totalEntries?: number;
+      behaviorCheckInsThisWeek?: number;
+      reflectionStreakDays?: number;
+      activeBehaviors?: number;
+    };
+  };
 }
 
 export interface HardeningCheck extends UnknownRecord {
+  current?: boolean;
+  enabled?: boolean;
+  generated?: boolean;
   installed?: boolean;
+  pathUrlCount?: number;
   partial?: boolean;
+  required?: boolean;
   stale?: boolean;
   status?: string;
   tamperDetectedAt?: string;
+  urlCount?: number;
 }
 
 export interface FocusShortcutSummary {
@@ -269,6 +340,9 @@ export interface ReportSummary extends UnknownRecord {
     cleanDays: number;
     replacementChoices: number;
     continuedChoices: number;
+    journalEntries?: number;
+    behaviorCheckIns?: number;
+    reflectionStreakDays?: number;
     nextUnlock: string;
     badges: Array<{
       id: string;
@@ -328,6 +402,7 @@ export interface DashboardData extends UnknownRecord {
     hostsBlock?: string;
     hosts?: HardeningCheck;
     firewall?: HardeningCheck;
+    safariFilter?: HardeningCheck;
     launchAgent?: HardeningCheck;
     stateSeal?: HardeningCheck;
     actions?: Record<string, { path?: string; command?: string }>;

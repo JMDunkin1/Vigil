@@ -379,6 +379,8 @@ export function defaultState(): VigilState {
       focusShortcutEnabled: false,
       focusShortcutOnName: "Vigil Focus On",
       focusShortcutOffName: "Vigil Focus Off",
+      systemNetworkBlockingEnabled: true,
+      safariUrlFilterEnabled: true,
       hostsBlockingEnabled: false,
       protectedEditsEnabled: true,
       protectedEditDelaySeconds: 300,
@@ -540,6 +542,9 @@ export function defaultState(): VigilState {
       grants: [],
       ledger: {},
       outcomes: [],
+      behaviors: [],
+      behaviorCheckIns: [],
+      journalEntries: [],
       accountability: {
         enabled: false,
         partnerName: "",

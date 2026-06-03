@@ -4,6 +4,8 @@ import { focusShortcutDetail, focusShortcutSummary } from "./focusHooks.js";
 import { integrityRuntimeSummary } from "./integrityLockdown.js";
 import { intentReasonSummary } from "./intentReason.js";
 import { keyholderSummary } from "./keyholder.js";
+import { safariFilterPathDenyUrls } from "./safariFilter.js";
+import { browserCompanionRequirement, networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
 import type { VigilState, UnknownRecord } from "./types.js";
 
 interface SummaryRecord extends UnknownRecord {
@@ -18,6 +20,10 @@ interface SummaryRecord extends UnknownRecord {
   installed?: boolean;
   partial?: boolean;
   stale?: boolean;
+  current?: boolean;
+  required?: boolean;
+  generated?: boolean;
+  pathUrlCount?: number;
   duplicate?: boolean;
   legacyInstalled?: boolean;
   loaded?: boolean;
@@ -45,6 +51,7 @@ interface DoctorContext {
   sourceSeal?: SummaryRecord;
   hosts?: SummaryRecord;
   firewall?: SummaryRecord;
+  safariFilter?: SummaryRecord;
   agent?: SummaryRecord;
   account?: SummaryRecord;
   monitor?: SummaryRecord;
@@ -64,10 +71,11 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
   const sourceSeal = context.sourceSeal || {};
   const hosts = context.hosts || {};
   const firewall = context.firewall || {};
+  const safariFilter = context.safariFilter || {};
   const agent = context.agent || {};
   const account = context.account || {};
   const monitor = context.monitor || monitorFromHeartbeat(state, now);
-  const foolproof = foolproofSummary(state, { hosts, firewall, agent, account, monitor, stateSeal: seal, sourceSeal }, now);
+  const foolproof = foolproofSummary(state, { hosts, firewall, safariFilter, agent, account, monitor, stateSeal: seal, sourceSeal }, now);
   const runtime = integrityRuntimeSummary(state);
   const keyholder = keyholderSummary(state);
   const distanceKey = distanceKeySummary(state);
@@ -76,6 +84,10 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
   const extensionRules = extensionDynamicRulesReady(state, now);
   const extensionSeen = extensionRecentlySeen(state, now);
   const extensionVersion = extensionVersionReady(state);
+  const networkCurrent = networkBlockCurrent(hosts, firewall);
+  const networkEnabled = systemNetworkBlockingEnabled(state);
+  const companionRequirement = browserCompanionRequirement(state, now);
+  const safariRequired = safariFilter.required ?? (safariFilterPathDenyUrls(state, now).length > 0);
 
   return [
     row("state-seal", "State seal", Boolean(seal.ok), stateSealDetail(seal)),
@@ -92,19 +104,30 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
     row("typing-challenge", "Typing challenge", settings.typingChallengeEnabled !== false, settings.typingChallengeEnabled !== false ? "Unlock confirmations require a random typing challenge." : "Unlock confirmations do not require a typing challenge."),
     row("distance-key", "Distance key", distanceKey.enabled && distanceKey.hasToken, distanceKeyDetail(distanceKey)),
     row("notification-focus", "Notification Focus", focusShortcut.enabled && !focusShortcut.lastError, focusShortcutDetail(focusShortcut)),
-    row("browser-redirect", "Browser redirect", Boolean(settings.siteRedirectEnabled), settings.siteRedirectEnabled ? "Blocked sites redirect to the block screen." : "Blocked site redirects are disabled."),
-    row("browser-cleanup", "Browser cleanup", settings.browserNoiseBlockingEnabled !== false, settings.browserNoiseBlockingEnabled !== false ? "Extension cleanup/noise rules are enabled." : "Browser cleanup/noise blocking is disabled."),
+    row("system-network-block", "System network block", networkEnabled && networkCurrent, networkEnabled ? (networkCurrent ? "Whole-site domain blocks are enforced across apps by hosts/PF." : "Apply the network block so hosts/PF are current.") : "System network blocking is disabled."),
+    row("safari-url-filter", "Safari URL filter", !safariRequired || Boolean(safariFilter.current), safariFilterDetail(safariFilter, Boolean(safariRequired))),
+    row("browser-redirect", "Browser redirect fallback", networkCurrent || Boolean(settings.siteRedirectEnabled), networkCurrent ? "Not required while the system network block is current." : (settings.siteRedirectEnabled ? "Fallback redirects blocked sites to the block screen." : "Disabled while the system network block is not current.")),
+    row("browser-cleanup", "Browser cleanup", true, settings.browserNoiseBlockingEnabled !== false ? "Extension cleanup/noise rules are enabled." : "Browser cleanup/noise blocking is disabled."),
     row("app-quit", "App quit", Boolean(settings.appQuitEnabled), settings.appQuitEnabled ? "Blocked apps are quit automatically." : "Blocked apps are not quit automatically."),
     row("bypass-tools", "Bypass tools", settings.strictBypassProtectionEnabled !== false, settings.strictBypassProtectionEnabled !== false ? "Strict locks quit common bypass tools, network/proxy/VPN tools, unsupported browsers, embedded-browser apps, and browser control pages." : "Common bypass tools, network/proxy/VPN tools, unsupported browsers, embedded-browser app bypasses, and browser control pages are not protected."),
     row("background-sweep", "Background sweep", Boolean(settings.processSweepEnabled), settings.processSweepEnabled ? `Process sweep runs every ${settings.processSweepIntervalSeconds || 15}s.` : "Background process sweep is disabled."),
     row("sweep-interval", "Sweep interval", Number(settings.processSweepIntervalSeconds || 0) <= 30, `Process sweep interval is ${settings.processSweepIntervalSeconds || 15}s.`),
     row("app-escalation", "App escalation", Number(settings.appQuitEscalationSeconds || 0) <= 30, `Forced-kill escalation is ${settings.appQuitEscalationSeconds || 10}s.`),
-    row("content-filter", "Content filter", settings.contentFilterEnabled !== false, settings.contentFilterEnabled !== false ? "Short-form feeds are blocked during active locks." : "Content feature filters are disabled."),
-    row("browser-extension", "Browser extension", extensionSeen, extensionSeen ? "Companion extension checked in recently." : "Companion extension has not checked in recently."),
-    row("extension-version", "Extension version", extensionSeen && extensionVersion.ok, extensionSeen ? extensionVersion.detail : extensionVersion.detail),
-    row("extension-rules", "Extension rules", extensionRules.ok, extensionRules.detail),
+    row("content-filter", "Content filter", true, settings.contentFilterEnabled !== false ? "Short-form feeds use precise browser companion checks during active locks." : "Content feature filters are disabled."),
+    row("browser-extension", "Browser extension", !companionRequirement.required || extensionSeen, companionRequirement.required ? (extensionSeen ? `Companion extension checked in recently. ${companionRequirement.detail}` : `Companion extension has not checked in recently. ${companionRequirement.detail}`) : "Not required for current system-network site blocking."),
+    row("extension-version", "Extension version", !companionRequirement.required || (extensionSeen && extensionVersion.ok), companionRequirement.required ? extensionVersion.detail : "Not required for current system-network site blocking."),
+    row("extension-rules", "Extension rules", !companionRequirement.required || extensionRules.ok, companionRequirement.required ? extensionRules.detail : "Not required for current system-network site blocking."),
     row("foolproof", "Foolproof readiness", foolproof.enabled && foolproof.ready, foolproofDetail(foolproof))
   ];
+}
+
+function safariFilterDetail(safariFilter: SummaryRecord, required: boolean): string {
+  if (safariFilter.enabled === false) return "Safari URL filtering is disabled.";
+  if (!required) return "No path-specific Safari URL rules are active right now.";
+  if (safariFilter.current) return `Safari path rules are current (${safariFilter.pathUrlCount || 0} path URLs).`;
+  if (safariFilter.installed && safariFilter.stale) return "Safari URL filter profile is stale.";
+  if (safariFilter.generated) return "Safari URL filter profile is generated but still needs approval in System Settings.";
+  return "Safari URL filter profile is not installed.";
 }
 
 function accountDetail(account: SummaryRecord): string {

@@ -1327,6 +1327,101 @@ button:focus-visible {
   align-items: center;
 }
 
+.journal-panel select[multiple] {
+  min-height: 132px;
+}
+
+.journal-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.journal-stats div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.journal-stats span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+  margin-bottom: 8px;
+}
+
+.journal-stats strong {
+  color: var(--primary-strong);
+  font-size: 1.5rem;
+}
+
+.journal-entry-list {
+  display: grid;
+  gap: 12px;
+}
+
+.journal-entry {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+}
+
+.journal-entry-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.journal-entry-head strong,
+.journal-entry-head span {
+  min-width: 0;
+}
+
+.journal-entry-head span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-align: right;
+}
+
+.journal-entry-body {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.tag-row,
+.journal-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tag-row span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 900;
+  padding: 5px 8px;
+}
+
+.compact-list-item {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.muted-item {
+  opacity: 0.64;
+}
+
 .device-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(300px, 0.9fr);
@@ -1557,6 +1652,7 @@ button:focus-visible {
   .form-row,
   .form-row.thirds,
   .report-grid,
+  .journal-stats,
   .watch-grid,
   .events-list,
   .maintenance-panel,
@@ -1618,6 +1714,14 @@ button:focus-visible {
   .bar-track {
     grid-column: 1 / -1;
     grid-row: 2;
+  }
+
+  .journal-entry-head {
+    display: grid;
+  }
+
+  .journal-entry-head span {
+    text-align: left;
   }
 
   .list-item,

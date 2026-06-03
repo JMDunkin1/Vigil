@@ -18,6 +18,7 @@
     <nav class="app-nav" aria-label="Primary">
       <button class="nav-tab is-active" type="button" data-view-target="home" aria-selected="true">Home</button>
       <button class="nav-tab" type="button" data-view-target="rules" aria-selected="false">Rules</button>
+      <button class="nav-tab" type="button" data-view-target="journal" aria-selected="false">Journal</button>
       <button class="nav-tab" type="button" data-view-target="settings" aria-selected="false">Settings</button>
       <button class="nav-tab" type="button" data-view-target="devices" aria-selected="false">Devices</button>
       <button class="nav-tab" type="button" data-view-target="insights" aria-selected="false">Insights</button>
@@ -642,6 +643,178 @@
       </div>
     </section>
 
+    <section id="view-journal" class="view" data-view="journal" hidden>
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Journal</p>
+          <h2>Life Log</h2>
+        </div>
+        <span id="lifeLogStatus" class="pill neutral">Ready</span>
+      </div>
+
+      <div class="workspace two-column">
+        <section class="panel journal-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Reflection</p>
+              <h2>Goals, Struggles, Wins</h2>
+            </div>
+          </div>
+          <form id="journalEntryForm" class="profile-form">
+            <input name="id" type="hidden">
+            <div class="form-row">
+              <label>
+                Title
+                <input name="title" type="text" placeholder="What are you noticing?">
+              </label>
+              <label>
+                Mood
+                <input name="mood" type="text" placeholder="Calm, restless, proud...">
+              </label>
+            </div>
+            <label>
+              Entry
+              <textarea name="body" rows="8" placeholder="Goals, struggles, patterns, commitments, wins"></textarea>
+            </label>
+            <div class="form-row thirds">
+              <label>
+                Energy
+                <input name="energy" type="number" min="1" max="10" step="1" placeholder="1-10">
+              </label>
+              <label>
+                Tags
+                <input name="tags" type="text" placeholder="sleep, work, phone">
+              </label>
+              <label>
+                Date
+                <input name="entryDate" type="datetime-local">
+              </label>
+            </div>
+            <div class="form-row">
+              <label>
+                Linked behaviors
+                <select id="journalBehaviorIds" name="behaviorIds" multiple size="5"></select>
+              </label>
+              <label>
+                Linked pause rules
+                <select id="journalRuleIds" name="ruleIds" multiple size="5"></select>
+              </label>
+            </div>
+            <button class="primary" type="submit">Save Reflection</button>
+          </form>
+        </section>
+
+        <section class="panel journal-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Behaviors</p>
+              <h2>Track Over Time</h2>
+            </div>
+            <button id="newBehavior" class="secondary" type="button">New</button>
+          </div>
+          <form id="behaviorForm" class="limit-form">
+            <input name="id" type="hidden">
+            <div class="form-row">
+              <label>
+                Name
+                <input name="name" type="text" value="Evening phone shutdown">
+              </label>
+              <label class="checkline app-lock-enabled"><input name="active" type="checkbox" checked> Active</label>
+            </div>
+            <label>
+              Why it matters
+              <textarea name="description" rows="3"></textarea>
+            </label>
+            <div class="form-row thirds">
+              <label>
+                Direction
+                <select name="direction">
+                  <option value="build">Build</option>
+                  <option value="reduce">Reduce</option>
+                  <option value="notice">Notice</option>
+                </select>
+              </label>
+              <label>
+                Unit
+                <select name="unit">
+                  <option value="count">Count</option>
+                  <option value="minutes">Minutes</option>
+                  <option value="yes-no">Yes / No</option>
+                </select>
+              </label>
+              <label>
+                Weekly target
+                <input name="weeklyTarget" type="number" min="0" max="100000" step="1" value="5">
+              </label>
+            </div>
+            <label>
+              Replacement or commitment
+              <input name="replacement" type="text" placeholder="Read for ten minutes instead">
+            </label>
+            <label>
+              Linked pause rules
+              <select id="behaviorRuleIds" name="ruleIds" multiple size="5"></select>
+            </label>
+            <button class="primary" type="submit">Save Behavior</button>
+          </form>
+          <div id="behaviorList" class="list limit-list"></div>
+        </section>
+      </div>
+
+      <div class="workspace two-column">
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Check In</p>
+              <h2>Behavior Ledger</h2>
+            </div>
+          </div>
+          <form id="behaviorCheckInForm" class="profile-form">
+            <div class="form-row">
+              <label>
+                Behavior
+                <select id="behaviorCheckInId" name="behaviorId"></select>
+              </label>
+              <label>
+                Value
+                <input name="value" type="number" min="0" max="100000" step="1" value="1">
+              </label>
+            </div>
+            <label>
+              Note
+              <input name="note" type="text" placeholder="What happened?">
+            </label>
+            <button class="secondary" type="submit">Add Check-In</button>
+          </form>
+          <div id="behaviorCheckInList" class="list limit-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Progress</p>
+              <h2>Reflection Signals</h2>
+            </div>
+          </div>
+          <div class="journal-stats">
+            <div>
+              <span>This Week</span>
+              <strong id="journalWeekCount">--</strong>
+            </div>
+            <div>
+              <span>Behavior Check-Ins</span>
+              <strong id="behaviorWeekCount">--</strong>
+            </div>
+            <div>
+              <span>Reflection Streak</span>
+              <strong id="reflectionStreak">--</strong>
+            </div>
+          </div>
+          <div id="journalEntryList" class="journal-entry-list"></div>
+        </section>
+      </div>
+    </section>
+
     <section id="view-settings" class="view" data-view="settings" hidden>
       <div class="view-head">
         <div>
@@ -660,7 +833,9 @@
             </div>
           </div>
           <div class="toggle-row">
-            <label><input id="siteRedirectEnabled" type="checkbox"> Browser redirect</label>
+            <label><input id="systemNetworkBlockingEnabled" type="checkbox"> System network block</label>
+            <label><input id="safariUrlFilterEnabled" type="checkbox"> Safari URL filter</label>
+            <label><input id="siteRedirectEnabled" type="checkbox"> Browser redirect fallback</label>
             <label><input id="contentFilterEnabled" type="checkbox"> Content filter</label>
             <label><input id="browserNoiseBlockingEnabled" type="checkbox"> Browser cleanup</label>
             <label><input id="typingChallengeEnabled" type="checkbox"> Typing challenge</label>
@@ -735,6 +910,7 @@
           <div class="hardening-actions">
             <button id="installLaunchAgent" class="secondary" type="button">Install Login Agent</button>
             <button id="applyHostsBlock" class="secondary" type="button">Apply Network Block</button>
+            <button id="applySafariFilter" class="secondary" type="button">Apply Safari Filter</button>
             <button id="clearTamperAlarm" class="secondary" type="button" hidden>Clear Tamper Alarm</button>
             <button id="copyHostsCommand" class="secondary" type="button">Copy Network Command</button>
             <button id="copySourceSealCommand" class="secondary" type="button">Copy Source Seal</button>
@@ -954,6 +1130,16 @@
               <span>Open Pressure</span>
               <strong id="openPressure">--</strong>
               <em id="openPressureMeta">--</em>
+            </div>
+            <div class="report-metric">
+              <span>Reflections</span>
+              <strong id="reportJournalEntries">--</strong>
+              <em id="reportReflectionStreak">--</em>
+            </div>
+            <div class="report-metric">
+              <span>Behavior XP</span>
+              <strong id="reportBehaviorCheckIns">--</strong>
+              <em id="reportNextUnlock">--</em>
             </div>
           </div>
           <div class="week-strip" id="weekStrip"></div>

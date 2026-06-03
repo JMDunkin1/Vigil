@@ -59,6 +59,9 @@ interface ProgressionSummary {
   cleanDays: number;
   replacementChoices: number;
   continuedChoices: number;
+  journalEntries: number;
+  behaviorCheckIns: number;
+  reflectionStreakDays: number;
   nextUnlock: string;
   badges: ProgressionBadge[];
 }
@@ -86,7 +89,7 @@ export function focusReport(usage: UsageState, state: VigilState, now = new Date
   const bestDay = bestTrackedDay(currentDays);
   const worstDay = worstTrackedDay(currentDays);
   const intentionalUse = intentionalUseSummary(state, usage, now);
-  const progression = progressionSummary({ state, current, streak, allDays, intentionalUse, focusScoreGoal });
+  const progression = progressionSummary({ state, current, streak, allDays, intentionalUse, focusScoreGoal, now });
   const milestones = buildMilestones({ state, current, streak, allDays, focusScoreGoal, progression });
 
   return {
@@ -205,6 +208,8 @@ function buildMilestones({ state, current, streak, allDays, focusScoreGoal, prog
     milestone("first-lock", "First lock", events.some((event) => event.type === "session_started")),
     milestone("rules-enabled", "Rules armed", enabledRules >= 1),
     milestone("clean-tracked-day", "Clean tracked day", hasCleanTrackedDay),
+    milestone("first-reflection", "First reflection", (state.intentionalUse?.journalEntries || []).length >= 1),
+    milestone("behavior-tracked", "Track a behavior", (state.intentionalUse?.behaviorCheckIns || []).length >= 1),
     milestone("low-distraction-week", "Low distraction week", current.trackedDays >= 3 && current.averageDailyDistractionSeconds <= 30 * 60),
     milestone("three-day-streak", "3 day streak", streak.days >= 3),
     milestone("seven-day-streak", "7 day streak", streak.days >= 7),
@@ -215,23 +220,30 @@ function buildMilestones({ state, current, streak, allDays, focusScoreGoal, prog
   ];
 }
 
-function progressionSummary({ state, current, streak, allDays, intentionalUse, focusScoreGoal }: {
+function progressionSummary({ state, current, streak, allDays, intentionalUse, focusScoreGoal, now }: {
   state: VigilState;
   current: WeekAggregate;
   streak: FocusStreak;
   allDays: DayReport[];
   intentionalUse: ReturnType<typeof intentionalUseSummary>;
   focusScoreGoal: number;
+  now: Date;
 }): ProgressionSummary {
   const trackedDays = allDays.filter((day) => day.tracked);
   const cleanDays = trackedDays.filter((day) => day.distractingSeconds === 0).length;
   const outcomes = state.intentionalUse?.outcomes || [];
   const replacementChoices = outcomes.filter((item) => item.outcome === "skipped").length;
   const continuedChoices = outcomes.filter((item) => item.outcome === "continued").length;
+  const journalEntries = state.intentionalUse?.journalEntries || [];
+  const behaviorCheckIns = state.intentionalUse?.behaviorCheckIns || [];
+  const reflectionStreak = reflectionStreakDays(state, now);
   const xp = Math.max(0, Math.round(
     trackedDays.reduce((total, day) => total + 30 + day.focusScore + (day.focusScore >= focusScoreGoal ? 50 : 0) + (day.distractingSeconds === 0 ? 30 : 0), 0)
     + replacementChoices * 35
     + continuedChoices * 8
+    + journalEntries.length * 20
+    + behaviorCheckIns.length * 15
+    + reflectionStreak * 10
     + streak.days * 30
     + current.trackedDays * 20
   ));
@@ -251,6 +263,9 @@ function progressionSummary({ state, current, streak, allDays, intentionalUse, f
   );
   const badges = [
     badge("first-save", "First clean day", cleanDays >= 1),
+    badge("first-reflection", "First reflection", journalEntries.length >= 1),
+    badge("behavior-builder", "Behavior builder", behaviorCheckIns.length >= 5),
+    badge("reflection-streak", "3 day reflection", reflectionStreak >= 3),
     badge("replacement-loop", "Replacement loop", replacementChoices >= 3),
     badge("streak-3", "3 day streak", streak.days >= 3),
     badge("streak-7", "7 day streak", streak.days >= 7),
@@ -264,7 +279,10 @@ function progressionSummary({ state, current, streak, allDays, intentionalUse, f
     cleanDays,
     replacementChoices,
     continuedChoices,
-    nextUnlock: nextUnlock({ streakDays: streak.days, cleanDays, level: levelState.level, replacementChoices }),
+    journalEntries: journalEntries.length,
+    behaviorCheckIns: behaviorCheckIns.length,
+    reflectionStreakDays: reflectionStreak,
+    nextUnlock: nextUnlock({ streakDays: streak.days, cleanDays, level: levelState.level, replacementChoices, journalEntries: journalEntries.length, behaviorCheckIns: behaviorCheckIns.length }),
     badges
   };
 }
@@ -299,12 +317,16 @@ function levelTitle(level: number): string {
   return "Aware";
 }
 
-function nextUnlock({ streakDays, cleanDays, level, replacementChoices }: {
+function nextUnlock({ streakDays, cleanDays, level, replacementChoices, journalEntries, behaviorCheckIns }: {
   streakDays: number;
   cleanDays: number;
   level: number;
   replacementChoices: number;
+  journalEntries?: number;
+  behaviorCheckIns?: number;
 }): string {
+  if ((journalEntries || 0) < 1) return "Write one reflection to unlock First reflection";
+  if ((behaviorCheckIns || 0) < 1) return "Track one behavior to unlock Behavior tracked";
   if (streakDays < 3) return `${3 - streakDays} more streak day${3 - streakDays === 1 ? "" : "s"} to unlock 3 day streak`;
   if (replacementChoices < 3) return `${3 - replacementChoices} more replacement choice${3 - replacementChoices === 1 ? "" : "s"} to unlock Replacement loop`;
   if (cleanDays < 3) return `${3 - cleanDays} more clean day${3 - cleanDays === 1 ? "" : "s"} to unlock Clean run`;
@@ -325,7 +347,7 @@ function insights({ current, previous, topCulprits, streak, bestDay, worstDay, f
   bestDay: DayReport | null;
   worstDay: DayReport | null;
   focusScoreGoal: number;
-  intentionalUse: { today?: { pauses?: number; skipped?: number } } | null;
+  intentionalUse: ReturnType<typeof intentionalUseSummary> | null;
 }): string[] {
   const output: string[] = [];
   if (current.trackedDays === 0) {
@@ -346,10 +368,25 @@ function insights({ current, previous, topCulprits, streak, bestDay, worstDay, f
   if (intentionalUse?.today?.pauses) {
     output.push(`Intentional Use paused ${intentionalUse.today.pauses} opens today; ${intentionalUse.today.skipped} became replacements.`);
   }
+  const stats = intentionalUse?.lifeLog?.stats;
+  if (stats?.entriesThisWeek) output.push(`You logged ${stats.entriesThisWeek} reflection${stats.entriesThisWeek === 1 ? "" : "s"} this week.`);
+  if (stats?.behaviorCheckInsThisWeek) output.push(`${stats.behaviorCheckInsThisWeek} behavior check-in${stats.behaviorCheckInsThisWeek === 1 ? "" : "s"} are feeding your level progress this week.`);
   if (streak.days > 0) output.push(`Current focus streak: ${streak.label}.`);
   if (bestDay) output.push(`${bestDay.label} is your strongest tracked day.`);
   if (worstDay && bestDay && worstDay.key !== bestDay.key) output.push(`${worstDay.label} is the day to tighten next.`);
   return output.slice(0, 5);
+}
+
+function reflectionStreakDays(state: VigilState, now: Date): number {
+  const days = new Set((state.intentionalUse?.journalEntries || []).map((entry) => dateKey(new Date(entry.entryDate || entry.createdAt))));
+  let count = 0;
+  const cursor = new Date(now);
+  cursor.setHours(0, 0, 0, 0);
+  while (days.has(dateKey(cursor))) {
+    count += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return count;
 }
 
 function sumOpenCounts(opens: Partial<UsageBucket["opens"]> = {}): number {

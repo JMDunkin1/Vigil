@@ -17,12 +17,13 @@ import { assertDistanceKey, updateDistanceKeySettings } from "./distanceKey.js";
 import { clearIntegrityTamper } from "./integrityLockdown.js";
 import { assertIntentReason } from "./intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "./intervention.js";
-import { confirmIntentionalPause, skipIntentionalPause, updateIntentionalUseAccountability, updateIntentionalUseGoal, upsertIntentionalUseRule } from "./intentionalUse.js";
+import { addIntentionalJournalEntry, confirmIntentionalPause, deleteIntentionalBehavior, deleteIntentionalJournalEntry, recordIntentionalBehaviorCheckIn, skipIntentionalPause, updateIntentionalUseAccountability, updateIntentionalUseGoal, upsertIntentionalBehavior, upsertIntentionalUseRule } from "./intentionalUse.js";
 import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "./iosProfiles.js";
 import { activeLimitBlocks, normalizeLimitRule } from "./limits.js";
 import { openApp } from "./macos.js";
 import { parsePlist } from "./plist.js";
+import { safariFilterStatus } from "./safariFilter.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "./protection.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "./keyholder.js";
 import { clampNumber, weekKey } from "./time.js";
@@ -434,6 +435,26 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return;
   }
 
+  if (method === "POST" && path === "/api/hardening/safari-filter/apply") {
+    try {
+      const result = await localScripts.runLocalScript("apply-safari-filter.mjs");
+      const safariFilter = await safariFilterStatus(state);
+      addEvent(state, "safari_url_filter_opened", {
+        ok: true,
+        current: safariFilter.current,
+        installed: safariFilter.installed,
+        stale: safariFilter.stale,
+        urlCount: safariFilter.urlCount || 0,
+        pathUrlCount: safariFilter.pathUrlCount || 0
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, result, safariFilter });
+    } catch (error) {
+      sendJson(response, 500, serializeError(error));
+    }
+    return;
+  }
+
   if (method === "POST" && path === "/api/integrity/clear-tamper") {
     try {
       assertProtectedEditAllowed(state, { kind: "settings" });
@@ -587,6 +608,77 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       addEvent(state, "intentional_rule_deleted", { ruleId: id });
       await saveState(state);
       sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/behavior") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const behavior = upsertIntentionalBehavior(state, body);
+      addEvent(state, "intentional_behavior_saved", { behaviorId: behavior.id, name: behavior.name, active: behavior.active });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, behavior });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/behavior/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const behavior = deleteIntentionalBehavior(state, id);
+      addEvent(state, "intentional_behavior_archived", { behaviorId: id, name: behavior?.name || "" });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, behavior });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/behavior/check-in") {
+    try {
+      const body = await readBody(request);
+      const checkIn = recordIntentionalBehaviorCheckIn(state, body);
+      addEvent(state, "intentional_behavior_check_in", { behaviorId: checkIn.behaviorId, value: checkIn.value });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, checkIn });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/journal") {
+    try {
+      const body = await readBody(request);
+      const entry = addIntentionalJournalEntry(state, body);
+      addEvent(state, "intentional_journal_saved", {
+        entryId: entry.id,
+        behaviorCount: entry.behaviorIds.length,
+        ruleCount: entry.ruleIds.length
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, entry });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/journal/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const deleted = deleteIntentionalJournalEntry(state, id);
+      addEvent(state, "intentional_journal_deleted", { entryId: id, deleted });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, deleted });
     } catch (error) {
       sendJson(response, errorStatus(error), serializeError(error));
     }
@@ -981,6 +1073,8 @@ function updateSettings(body: RequestBody): void {
     "focusShortcutEnabled",
     "focusShortcutOnName",
     "focusShortcutOffName",
+    "systemNetworkBlockingEnabled",
+    "safariUrlFilterEnabled",
     "hostsBlockingEnabled",
     "protectedEditsEnabled",
     "protectedEditDelaySeconds",
@@ -1236,6 +1330,8 @@ function isProtectedSettingsMutation(body: RequestBody): boolean {
     "focusShortcutEnabled",
     "focusShortcutOnName",
     "focusShortcutOffName",
+    "systemNetworkBlockingEnabled",
+    "safariUrlFilterEnabled",
     "intentReasonEnabled",
     "intentReasonMinLength",
     "appQuitEscalationSeconds",

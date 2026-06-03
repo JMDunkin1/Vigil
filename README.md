@@ -95,7 +95,7 @@ npm run install:agent
 
 You can also install the login agent from the Settings view. The LaunchAgent uses a runner process that waits when Vigil is already open and starts the local server if it goes down.
 
-Run this to preview system network rules. Path-only and keyword URL patterns stay in the browser extension, while host/path patterns such as `youtube.com/shorts` add their hostname to the harder fallback:
+Run this to preview system network rules. This is the preferred Safari and across-app site blocker: whole-site domains are denied by macOS instead of rewriting the browser tab to a localhost block page. Path-only and keyword URL patterns stay in browser/app-side enforcement, while host/path patterns such as `youtube.com/shorts` can add their hostname to the harder fallback when that profile allows broad network fallback:
 
 ```sh
 npm run network:preview
@@ -107,7 +107,15 @@ Run this to apply them. macOS will ask for your password because `/etc/hosts`, `
 npm run network:apply
 ```
 
-You can also apply the network block from the Settings view. The app will ask macOS for administrator approval and keeps the copyable Terminal command as a fallback. The PF layer is a SelfControl-style IP fallback: it helps catch cached DNS and direct-IP paths for resolved domains, but URL paths and fast-changing CDN targets still need the browser extension and hosts layer.
+You can also apply the network block from the Settings view. The app will ask macOS for administrator approval and keeps the copyable Terminal command as a fallback. The PF layer is a SelfControl-style IP fallback: it helps catch cached DNS and direct-IP paths for resolved domains. URL paths and fast-changing CDN targets still need browser/app-side precision unless you accept broad whole-domain blocking for those patterns.
+
+For Safari path rules, such as blocking YouTube Shorts while leaving normal YouTube videos alone, generate the macOS Safari filter profile:
+
+```sh
+npm run safari:apply
+```
+
+This writes `vigil-safari-url-filter.mobileconfig` and opens it for approval in System Settings. Safari gets native path-level blocking without the localhost redirect/back-button churn, while Chrome, Brave, Edge, and Arc keep using the browser companion extension for tab-level precision and cleanup. Reapply the Safari profile after changing URL-pattern rules so the installed profile matches the current Vigil policy.
 
 If the state seal detects protected local state tampering, or if the runtime/clock watchdog detects unexplained downtime or clock changes during a strict lock, the app enters integrity lockdown using code-defined default distractions and bypass tools. The state seal ignores repairable bookkeeping-only drift such as runtime heartbeats and event history, then refreshes the seal on the next clean save.
 

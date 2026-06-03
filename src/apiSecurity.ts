@@ -9,7 +9,9 @@ export const EXTENSION_TOKEN_HEADER = "x-vigil-extension-token";
 const EXTENSION_API_PATHS = new Set([
   "/api/extension/check",
   "/api/extension/rules",
-  "/api/extension/rules/sync"
+  "/api/extension/rules/sync",
+  "/api/extension/pause/continue",
+  "/api/extension/pause/skip"
 ]);
 
 const DEVICE_SYNC_API_PATHS = new Set([

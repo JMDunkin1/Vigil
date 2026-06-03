@@ -33,6 +33,7 @@ interface HardeningCheck {
 interface HardeningChecks {
   hosts?: HardeningCheck;
   firewall?: HardeningCheck;
+  safariFilter?: HardeningCheck;
   extensionRules?: HardeningCheck;
   sourceSeal?: HardeningCheck;
   agent?: HardeningCheck;
@@ -345,6 +346,7 @@ function hardeningIssues(checks: HardeningChecks): HardeningIssue[] {
   const issues: HardeningIssue[] = [];
   const hosts = checks.hosts;
   const firewall = checks.firewall;
+  const safariFilter = checks.safariFilter;
   const extensionRules = checks.extensionRules;
   const sourceSeal = checks.sourceSeal;
   const agent = checks.agent;
@@ -372,6 +374,15 @@ function hardeningIssues(checks: HardeningChecks): HardeningIssue[] {
       detail: firewall.partial
         ? "PF firewall markers are incomplete."
         : (firewall.stale ? "PF firewall block is stale." : "PF firewall block is not installed.")
+    });
+  }
+
+  if (safariFilter?.required && (!safariFilter.current || safariFilter.stale)) {
+    issues.push({
+      id: "safari-url-filter",
+      detail: safariFilter.stale
+        ? "Safari URL filter profile is stale."
+        : "Safari URL filter profile is not installed and current."
     });
   }
 

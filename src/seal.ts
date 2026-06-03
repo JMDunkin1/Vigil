@@ -42,6 +42,8 @@ const PROTECTED_SETTINGS = [
   "focusShortcutEnabled",
   "focusShortcutOnName",
   "focusShortcutOffName",
+  "systemNetworkBlockingEnabled",
+  "safariUrlFilterEnabled",
   "hostsBlockingEnabled",
   "protectedEditsEnabled",
   "protectedEditDelaySeconds",
