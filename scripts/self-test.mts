@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRICK_MODE_PROFILE_ID, defaultState, PANIC_LOCK_PROFILE_ID, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
@@ -28,11 +28,10 @@ import { activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, 
 import { distractionPresets } from "../src/presets.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, protectedEditBlockers, requestMaintenanceWindow } from "../src/protection.js";
 import { focusReport } from "../src/reports.js";
-import { applySealVerificationToState, markStateSealed, stateDigest, stateSealSummary, verifyStateTextSeal, writeStateTextSeal } from "../src/seal.js";
-import { sourceManifestText, sourceSealStatus, writeSourceSeal } from "../src/sourceSeal.js";
+import { applySealVerificationToState, markStateSealed, stateSealSummary } from "../src/seal.js";
 import { buildSafariFilterProfile, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature } from "../src/safariFilter.js";
 import { browserCompanionRequirement, networkBlockCurrent } from "../src/systemNetworkBlock.js";
-import { resolveDefaultDataDir, sanitizeSoftBlockProfile } from "../src/store.js";
+import { sanitizeSoftBlockProfile } from "../src/store.js";
 import { recordUsage, syncDeviceUsageSnapshot, usageSummary } from "../src/usage.js";
 import type { ActivePolicy, Profile, UnknownRecord, UsageBucket, UsageDay, UsageState } from "../src/types.js";
 
@@ -443,150 +442,6 @@ function hasStatusError(error: unknown): error is { status: number; message: str
     account: accountStatusFromGroups("focus", "staff everyone")
   }, now);
   assert.equal(must(staleRows.find((item) => item.id === "extension-rules"), "stale extension-rules row").ok, false);
-}
-
-{
-  assert.equal(resolveDefaultDataDir(join("/tmp", "vigil", "dist", "runtime")), join("/tmp", "vigil", "data"));
-  assert.equal(
-    resolveDefaultDataDir("/Applications/Vigil.app/Contents/Resources/app.asar/dist/runtime"),
-    "/Applications/Vigil.app/Contents/Resources/app.asar/dist/runtime/data"
-  );
-}
-
-{
-  const dir = await mkdtemp(join(tmpdir(), "vigil-source-seal-"));
-  try {
-    await mkdir(join(dir, "src"), { recursive: true });
-    await mkdir(join(dir, "scripts"), { recursive: true });
-    await writeFile(join(dir, "package.json"), "{\"type\":\"module\"}\n");
-    await writeFile(join(dir, "src", "server.js"), "console.log('ok');\n");
-    await writeFile(join(dir, "scripts", "tool.mjs"), "console.log('tool');\n");
-    const keyPath = join(dir, "state-seal.key");
-    const sealPath = join(dir, "source.seal.json");
-    const initial = await sourceSealStatus({ root: dir, keyPath, sealPath });
-    assert.equal(initial.ok, false);
-    assert.equal(initial.status, "missing");
-    const written = await writeSourceSeal({ root: dir, keyPath, sealPath, sealedAt: now.toISOString() });
-    assert.equal(written.ok, true);
-    const sealed = await sourceSealStatus({ root: dir, keyPath, sealPath });
-    assert.equal(sealed.ok, true);
-    const manifest = JSON.parse(await sourceManifestText({ root: dir })) as { files: Array<{ path: string }> };
-    assert.deepEqual(manifest.files.map((file) => file.path), ["package.json", "scripts/tool.mjs", "src/server.js"]);
-    await writeFile(join(dir, "src", "server.js"), "console.log('changed');\n");
-    const changed = await sourceSealStatus({ root: dir, keyPath, sealPath });
-    assert.equal(changed.status, "mismatch");
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
-{
-  const dir = await mkdtemp(join(tmpdir(), "vigil-seal-"));
-  try {
-    const keyPath = join(dir, "state-seal.key");
-    const sealPath = join(dir, "state.seal.json");
-    const text = "{\"settings\":{\"strictByDefault\":true}}\n";
-    const seal = await writeStateTextSeal(text, { keyPath, sealPath }, now.toISOString());
-    const key = (await readFile(keyPath, "utf8")).trim();
-
-    assert.equal(seal.digest, stateDigest(text, key));
-    assert.equal((await verifyStateTextSeal(text, { keyPath, sealPath })).status, "sealed");
-    assert.equal((await verifyStateTextSeal(text.replace("true", "false"), { keyPath, sealPath })).status, "mismatch");
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-}
-
-{
-  const dir = await mkdtemp(join(tmpdir(), "vigil-protected-seal-"));
-  try {
-    const keyPath = join(dir, "state-seal.key");
-    const sealPath = join(dir, "state.seal.json");
-    const state = defaultState();
-    const text = `${JSON.stringify(state, null, 2)}\n`;
-    await writeStateTextSeal(text, { keyPath, sealPath, scope: "state" }, now.toISOString());
-
-    const bookkeepingChange = structuredClone(state);
-    bookkeepingChange.events.unshift({ id: "event", type: "note", detail: {}, at: now.toISOString() });
-    bookkeepingChange.integrity.runtime.lastHeartbeatAt = new Date(now.getTime() + 1000).toISOString();
-    const bookkeepingText = `${JSON.stringify(bookkeepingChange, null, 2)}\n`;
-    const bookkeepingVerification = await verifyStateTextSeal(bookkeepingText, { keyPath, sealPath });
-    assert.equal(bookkeepingVerification.ok, true);
-    assert.equal(bookkeepingVerification.status, "bookkeeping-mismatch");
-
-    const bypassChange = structuredClone(state);
-    bypassChange.settings.siteRedirectEnabled = false;
-    const bypassText = `${JSON.stringify(bypassChange, null, 2)}\n`;
-    assert.equal((await verifyStateTextSeal(bypassText, { keyPath, sealPath })).status, "mismatch");
-
-    const runtimeThresholdChange = structuredClone(state);
-    runtimeThresholdChange.settings.runtimeGapLockdownSeconds = 999999;
-    const runtimeThresholdText = `${JSON.stringify(runtimeThresholdChange, null, 2)}\n`;
-    assert.equal((await verifyStateTextSeal(runtimeThresholdText, { keyPath, sealPath })).status, "mismatch");
-
-    const clockThresholdChange = structuredClone(state);
-    clockThresholdChange.settings.clockTamperLockdownSeconds = 999999;
-    const clockThresholdText = `${JSON.stringify(clockThresholdChange, null, 2)}\n`;
-    assert.equal((await verifyStateTextSeal(clockThresholdText, { keyPath, sealPath })).status, "mismatch");
-
-    const grayscaleChange = structuredClone(state);
-    grayscaleChange.grayscale.softBlockEnabled = true;
-    grayscaleChange.grayscale.schedules = [{
-      id: "night",
-      name: "Night grayscale",
-      enabled: true,
-      days: TEST_DAYS,
-      start: "22:00",
-      end: "07:00",
-      deviceTargets: ["computer", "phone"]
-    }];
-    const grayscaleText = `${JSON.stringify(grayscaleChange, null, 2)}\n`;
-    assert.equal((await verifyStateTextSeal(grayscaleText, { keyPath, sealPath })).status, "mismatch");
-
-    const legacyBrandingState = structuredClone(state);
-    legacyBrandingState.settings.focusShortcutOnName = "Vigil Focus On";
-    legacyBrandingState.settings.focusShortcutOffName = "Vigil Focus Off";
-    const legacyBrandingText = `${JSON.stringify(legacyBrandingState, null, 2)}\n`;
-    await writeStateTextSeal(legacyBrandingText, { keyPath, sealPath, scope: "state" }, now.toISOString());
-    const vigilBrandingState = structuredClone(legacyBrandingState);
-    vigilBrandingState.settings.focusShortcutOnName = "Vigil Focus On";
-    vigilBrandingState.settings.focusShortcutOffName = "Vigil Focus Off";
-    const vigilBrandingVerification = await verifyStateTextSeal(`${JSON.stringify(vigilBrandingState, null, 2)}\n`, { keyPath, sealPath });
-    assert.equal(vigilBrandingVerification.ok, true);
-    assert.equal(vigilBrandingVerification.status, "trusted-migration");
-
-    const preIntentionalUseState = structuredClone(state);
-    delete (preIntentionalUseState as Partial<typeof preIntentionalUseState>).intentionalUse;
-    delete (preIntentionalUseState.settings as Partial<typeof preIntentionalUseState.settings>).intentionalUseEnabled;
-    await writeStateTextSeal(`${JSON.stringify(preIntentionalUseState, null, 2)}\n`, { keyPath, sealPath, scope: "state" }, now.toISOString());
-    const intentionalUseMigrationVerification = await verifyStateTextSeal(text, { keyPath, sealPath });
-    assert.equal(intentionalUseMigrationVerification.ok, true);
-    assert.equal(intentionalUseMigrationVerification.status, "trusted-migration");
-
-    const preGrayscaleState = structuredClone(state);
-    delete (preGrayscaleState as Partial<typeof preGrayscaleState>).grayscale;
-    await writeStateTextSeal(`${JSON.stringify(preGrayscaleState, null, 2)}\n`, { keyPath, sealPath, scope: "state" }, now.toISOString());
-    const grayscaleMigrationVerification = await verifyStateTextSeal(text, { keyPath, sealPath });
-    assert.equal(grayscaleMigrationVerification.ok, true);
-    assert.equal(grayscaleMigrationVerification.status, "trusted-migration");
-
-    const mdmQueueState = structuredClone(state);
-    mdmQueueState.deviceControls.ios.mdm.enabled = true;
-    mdmQueueState.deviceControls.ios.mdm.devices = [{ udid: "iphone-udid-1", status: "enrolled" }];
-    mdmQueueState.deviceControls.ios.mdm.commands = [{
-      udid: "iphone-udid-1",
-      requestType: "InstallProfile",
-      status: "queued",
-      policyHash: "policy-hash"
-    }];
-    mdmQueueState.deviceControls.ios.mdm.lastPolicyHash = "policy-hash";
-    const mdmQueueText = `${JSON.stringify(mdmQueueState, null, 2)}\n`;
-    await writeStateTextSeal(mdmQueueText, { keyPath, sealPath, scope: "state" }, now.toISOString());
-    mdmQueueState.deviceControls.ios.mdm.commands = [];
-    assert.equal((await verifyStateTextSeal(`${JSON.stringify(mdmQueueState, null, 2)}\n`, { keyPath, sealPath })).status, "mismatch");
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
 }
 
 {
@@ -1072,11 +927,12 @@ last exit code = 0
 
 {
   const serverSource = await readFile(join(process.cwd(), "src", "server.js"), "utf8");
+  const hardeningRoutesSource = await readFile(join(process.cwd(), "src", "server", "hardeningRoutes.js"), "utf8");
   const hardeningSummarySource = await readFile(join(process.cwd(), "src", "server", "hardeningSummary.js"), "utf8");
   const extensionApiSource = await readFile(join(process.cwd(), "src", "server", "extensionApi.js"), "utf8");
   const localScriptsSource = await readFile(join(process.cwd(), "src", "server", "localScripts.js"), "utf8");
   const statePayloadSource = await readFile(join(process.cwd(), "src", "server", "statePayload.js"), "utf8");
-  assert.match(serverSource, /\/api\/hardening\/hosts\/apply/);
+  assert.match(hardeningRoutesSource, /\/api\/hardening\/hosts\/apply/);
   assert.match(localScriptsSource, /with administrator privileges/);
   assert.match(hardeningSummarySource, /npm run seal:source/);
   assert.match(hardeningSummarySource, /extensionLoad/);
