@@ -7,12 +7,13 @@ import { activePolicy, baselinePolicy, isFullLockoutPolicy, isProcessSweepExempt
 import { activeAppLockPolicy } from "./appLocks.js";
 import { extensionDynamicRulesReady } from "./foolproof.js";
 import { firewallStatus } from "./firewall.js";
+import { grayscaleDecision, grayscaleGuardEnabled, MAC_GRAYSCALE_GUARD_APPS } from "./grayscale.js";
 import { hostsStatus, launchAgentStatus, stateSealStatus } from "./hardening.js";
 import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, recordRuntimeHeartbeat } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
-import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, urlHostname } from "./macos.js";
+import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
 import { safariFilterStatus } from "./safariFilter.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
@@ -61,6 +62,7 @@ interface MonitorStatus extends UnknownRecord {
   lastImmediateEnforcement: UnknownRecord | null;
   lastSystemSleepLock: UnknownRecord | null;
   lastFocusShortcut: UnknownRecord | null;
+  lastGrayscale: UnknownRecord | null;
   accessibilityLikelyMissing: boolean;
 }
 
@@ -98,6 +100,7 @@ class Monitor implements MonitorHandle {
   nextNetworkBlockRefreshAt: number;
   nextProcessSweepAt: number;
   nextSystemSleepLockAt: number;
+  nextGrayscaleRefreshAt: number;
   runtimeGapChecked: boolean;
 
   constructor({ state, usage }: MonitorContext) {
@@ -121,6 +124,7 @@ class Monitor implements MonitorHandle {
       lastImmediateEnforcement: null,
       lastSystemSleepLock: null,
       lastFocusShortcut: null,
+      lastGrayscale: null,
       accessibilityLikelyMissing: false
     };
     this.recentBlocks = new Map();
@@ -132,6 +136,7 @@ class Monitor implements MonitorHandle {
     this.nextNetworkBlockRefreshAt = 0;
     this.nextProcessSweepAt = 0;
     this.nextSystemSleepLockAt = 0;
+    this.nextGrayscaleRefreshAt = 0;
     this.runtimeGapChecked = false;
   }
 
@@ -166,6 +171,7 @@ class Monitor implements MonitorHandle {
     await this.refreshHardeningDrift(now);
     await this.enforceSystemSleepLock(now);
     await this.syncFocusShortcut(now);
+    await this.reconcileGrayscale(now);
     const previousSample = this.lastSample;
     const front = await this.readFrontmost();
     const currentSample: FrontSample | null = front.ok ? { app: front.app, hostname: front.hostname || "", url: front.url || "" } : null;
@@ -210,6 +216,7 @@ class Monitor implements MonitorHandle {
 
     await this.enforceSystemSleepLock(now, { force: true });
     await this.syncFocusShortcut(now, { force: true });
+    await this.reconcileGrayscale(now, { force: true });
     await this.sweepBlockedProcesses(now, { force: true });
     this.syncIosMdmPolicy(now, "immediate-policy-refresh");
     await this.pushIosMdmPolicy(now, "immediate-policy-refresh", { force: true });
@@ -277,6 +284,52 @@ class Monitor implements MonitorHandle {
       this.status.lastError = summary.lastError;
     }
     return summary;
+  }
+
+  async reconcileGrayscale(now: number, options: { force?: boolean } = {}) {
+    if (!options.force && now < this.nextGrayscaleRefreshAt) return this.status.lastGrayscale;
+    this.nextGrayscaleRefreshAt = now + 5000;
+
+    const desired = grayscaleDecision(this.state, new Date(now), { device: "computer" });
+    const result = await setMacGrayscaleEnabled(desired.desired);
+    const blockedApps = desired.desired && grayscaleGuardEnabled(this.state, desired)
+      ? await this.blockGrayscaleGuardApps(now)
+      : [];
+
+    const after = result.after && typeof result.after === "object" ? result.after as UnknownRecord : {};
+    const summary = {
+      ok: Boolean(result.ok),
+      desired: desired.desired,
+      active: Boolean(after.active),
+      current: Boolean(result.ok && after.active === desired.desired),
+      reason: desired.reason,
+      label: desired.label,
+      source: desired.source,
+      changed: Boolean(result.changed),
+      blockedApps,
+      error: result.ok ? "" : String(result.error || "macOS grayscale update failed"),
+      at: new Date(now).toISOString()
+    };
+    this.status.lastGrayscale = summary;
+
+    if (summary.changed || blockedApps.length) {
+      addEvent(this.state, "grayscale_reconciled", summary);
+    }
+    if (!result.ok) {
+      this.status.ok = false;
+      this.status.lastError = summary.error;
+    }
+    return summary;
+  }
+
+  async blockGrayscaleGuardApps(_now: number): Promise<string[]> {
+    const running = await listRunningAppNames();
+    if (!running.ok) return [];
+    const blocked = running.apps.filter((app) => MAC_GRAYSCALE_GUARD_APPS.some((guard) => guard.toLowerCase() === app.toLowerCase()));
+    for (const app of blocked) {
+      await quitApp(app, { force: true });
+    }
+    return blocked;
   }
 
   syncIosMdmPolicy(now: number, reason = "monitor-policy-refresh") {

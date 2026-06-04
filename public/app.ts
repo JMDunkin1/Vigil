@@ -4,13 +4,14 @@ import { createDeviceTargetController } from "./device-targets.js";
 import { dayCheckbox, detailBlock, el, progressBlock, textEl } from "./dom.js";
 import { createFocusSoundController } from "./focus-sound.js";
 import { days, daysText, daysWithDataText, enforcementText, eventLabel, formatDuration, lines, phaseText, phaseTitle, progressText, shortDate, shortDateTime, signedDuration, signedNumber, signedPercent, sweepText, systemSleepLockText } from "./format.js";
-import type { BarEntry, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeyResponse, DistanceKeySummary, FocusShortcutSummary, FormPayload, FoolproofSummary, IntentionalUseSummary, InterventionSummary, KeyholderSummary, MonitorSummary, NamedFormControls, PendingResponse, Preset, ProgressSummary, ProtectionSummary, QueuePolicyResponse, ReportSummary, Schedule, SessionEndResponse, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary, WeekDaySummary } from "./app-model.js";
+import type { BarEntry, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeyResponse, DistanceKeySummary, FocusShortcutSummary, FormPayload, FoolproofSummary, GrayscaleSchedule, IntentionalUseSummary, InterventionSummary, KeyholderSummary, MonitorSummary, NamedFormControls, PendingResponse, Preset, ProgressSummary, ProtectionSummary, QueuePolicyResponse, ReportSummary, Schedule, SessionEndResponse, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary, WeekDaySummary } from "./app-model.js";
 
 const state: UiState = {
   data: null,
   activeView: "home",
   selectedProfileId: null,
   selectedScheduleId: null,
+  selectedGrayscaleScheduleId: null,
   pendingEmergencyId: null,
   pendingMaintenanceId: null,
   timer: null,
@@ -54,6 +55,7 @@ boot();
 function boot() {
   initTheme();
   renderScheduleDays();
+  renderGrayscaleScheduleDays();
   renderLimitDays();
   renderAppLockDays();
   renderIntentionalDays();
@@ -116,6 +118,13 @@ function selectedDeviceTargets() {
 
 function selectedDeviceLabel() {
   return deviceTargets.selectedLabel();
+}
+
+function deviceTargetsText(targets: readonly string[] = []): string {
+  const normalized = [...new Set((targets || []).map((target) => String(target).toLowerCase()))];
+  if (normalized.includes("computer") && normalized.includes("phone")) return "Computer + iPhone";
+  if (normalized.includes("phone")) return "iPhone";
+  return "Computer";
 }
 
 function bindEvents() {
@@ -245,6 +254,34 @@ function bindEvents() {
   });
 
   $("#newSchedule").addEventListener("click", resetScheduleForm);
+  $("#grayscaleSettingsForm").addEventListener("submit", async (event: Event) => {
+    event.preventDefault();
+    try {
+      await post("/api/grayscale/settings", {
+        softBlockEnabled: $("#grayscaleSoftBlockEnabled").checked,
+        preventManualChanges: $("#grayscalePreventManualChanges").checked
+      });
+      toast("Grayscale saved");
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
+  $("#grayscaleScheduleForm").addEventListener("submit", async (event: Event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget as HTMLFormElement);
+    const body = formPayload(form);
+    body.enabled = form.has("enabled");
+    body.days = [...$$("#grayscaleScheduleDays input:checked")].map((input) => Number(input.value));
+    body.deviceTargets = [...$$<HTMLInputElement>("#grayscaleScheduleForm input[name='deviceTargets']:checked")].map((input) => input.value);
+    await post("/api/grayscale/schedule", body);
+    toast("Grayscale schedule saved");
+    resetGrayscaleScheduleForm();
+    await refresh();
+  });
+
+  $("#newGrayscaleSchedule").addEventListener("click", resetGrayscaleScheduleForm);
   $("#newLimit").addEventListener("click", resetLimitForm);
   $("#newAppLock").addEventListener("click", resetAppLockForm);
   $("#newIntentionalRule").addEventListener("click", resetIntentionalRuleForm);
@@ -874,6 +911,7 @@ function render() {
   renderHardening(data);
   renderProfiles(data.state);
   renderSchedules(data.state.schedules);
+  renderGrayscale(data);
   renderLimits(data.limits.rules);
   renderAppLocks(data.appLocks.rules);
   renderBars("#appBars", data.usage.topApps);
@@ -1305,6 +1343,70 @@ function renderSchedules(schedules: Schedule[]): void {
     remove.addEventListener("click", async () => {
       await del(`/api/schedule/${encodeURIComponent(schedule.id)}`);
       toast("Schedule deleted");
+      await refresh();
+    });
+
+    row.append(label, edit, remove);
+    list.append(row);
+  }
+}
+
+function renderGrayscale(data: DashboardData): void {
+  const grayscale = (data.state.grayscale || {}) as UnknownRecord & {
+    schedules?: GrayscaleSchedule[];
+    softBlockEnabled?: boolean;
+    preventManualChanges?: boolean;
+    devices?: Record<string, UnknownRecord & { desired?: boolean; label?: string; source?: string }>;
+  };
+  $("#grayscaleSoftBlockEnabled").checked = Boolean(grayscale.softBlockEnabled);
+  $("#grayscalePreventManualChanges").checked = grayscale.preventManualChanges !== false;
+
+  const mac = data.monitor.lastGrayscale || {};
+  const computerText = mac.desired
+    ? (mac.current ? `On: ${mac.label || "active"}` : `Applying: ${mac.label || "active"}`)
+    : (mac.active ? "Turning off" : "Normal");
+  $("#grayscaleComputerStatus").textContent = mac.error ? String(mac.error) : computerText;
+
+  const phone = grayscale.devices?.phone || {};
+  const ios = data.devices?.ios || {};
+  const mdmGrayscale = ios.mdm?.grayscale || {};
+  const phoneDesired = Boolean(phone.desired || mdmGrayscale.desired);
+  const phoneLabel = String(phone.label || mdmGrayscale.label || "active");
+  const guarded = ios.profile?.grayscale?.settingsGuarded ? " + guarded" : "";
+  $("#grayscalePhoneStatus").textContent = phoneDesired ? `On: ${phoneLabel}${guarded}` : "Normal";
+  renderGrayscaleSchedules(grayscale.schedules || []);
+}
+
+function renderGrayscaleSchedules(schedules: GrayscaleSchedule[]): void {
+  const list = $("#grayscaleScheduleList");
+  list.replaceChildren();
+  if (!schedules.length) {
+    list.append(empty("No grayscale schedules saved"));
+    return;
+  }
+
+  for (const schedule of schedules) {
+    const row = document.createElement("div");
+    row.className = "list-item";
+    const targets = deviceTargetsText(schedule.deviceTargets || []);
+    const label = detailBlock(
+      schedule.name,
+      `${schedule.start} to ${schedule.end} | ${daysText(schedule.days)} | ${targets} | ${schedule.enabled ? "on" : "off"}`
+    );
+
+    const edit = document.createElement("button");
+    edit.className = "secondary";
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => loadGrayscaleSchedule(schedule));
+
+    const remove = document.createElement("button");
+    remove.className = "ghost";
+    remove.type = "button";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", async () => {
+      await del(`/api/grayscale/schedule/${encodeURIComponent(schedule.id)}`);
+      toast("Grayscale schedule deleted");
       await refresh();
     });
 
@@ -1821,6 +1923,7 @@ function renderDevices(devices: DashboardData["devices"]): void {
     ["Apps", ios.blockApps ? `${profile.appBundleCount || 0} bundle IDs` : "off"],
     ["Web", ios.blockWeb ? `${profile.deniedUrlCount || 0} denied / ${profile.allowedUrlCount || 0} allowed` : "off"],
     ["Web clips", profile.webClipCount ? `${profile.webClipCount} managed` : "none"],
+    ["Grayscale", profile.grayscale?.desired ? `${profile.grayscale.label || "on"}${profile.grayscale.settingsGuarded ? " + Settings guard" : ""}` : "normal"],
     ["Native Reels", "not available through public iOS APIs"],
     ["Removal", ios.removalHardened ? "passcode protected" : "device removable"],
     ["Profile", profile.generatedFrom || "saved policy"]
@@ -1851,6 +1954,7 @@ function renderDevices(devices: DashboardData["devices"]): void {
     ["Enroll", mdm.enrollmentUrl || mdm.localEnrollmentPath || "not ready"],
     ["Devices", `${mdm.enrolledDeviceCount || 0} enrolled`],
     ["Commands", `${mdm.pendingCommandCount || 0} queued / ${mdm.sentCommandCount || 0} sent`],
+    ["Grayscale command", mdm.grayscale?.desired ? `on: ${mdm.grayscale.label || "active"}` : "normal"],
     ["Last push", mdm.lastPushAt ? `${shortDateTime(mdm.lastPushAt)} ${mdm.lastPushStatus || ""}`.trim() : "never"],
     ["Push error", mdm.lastPushError || "none"],
     ["Last seen", mdm.lastSeenAt ? shortDateTime(mdm.lastSeenAt) : "never"],
@@ -2018,6 +2122,14 @@ function renderScheduleDays() {
   }
 }
 
+function renderGrayscaleScheduleDays() {
+  const root = $("#grayscaleScheduleDays");
+  root.replaceChildren();
+  for (const [value, label] of days) {
+    root.append(dayCheckbox(value, label, { checked: true }));
+  }
+}
+
 function renderLimitDays() {
   const root = $("#limitDays");
   root.replaceChildren();
@@ -2054,6 +2166,22 @@ function loadSchedule(schedule: Schedule): void {
   form.elements.commitmentLock.checked = Boolean(schedule.commitmentLock);
   for (const input of $$("#scheduleDays input")) {
     input.checked = schedule.days.includes(Number(input.value));
+  }
+}
+
+function loadGrayscaleSchedule(schedule: GrayscaleSchedule): void {
+  const form = $("#grayscaleScheduleForm");
+  form.elements.id.value = schedule.id;
+  form.elements.name.value = schedule.name;
+  form.elements.start.value = schedule.start;
+  form.elements.end.value = schedule.end;
+  form.elements.enabled.checked = Boolean(schedule.enabled);
+  for (const input of $$("#grayscaleScheduleDays input")) {
+    input.checked = schedule.days.includes(Number(input.value));
+  }
+  const targets = new Set(schedule.deviceTargets || ["computer", "phone"]);
+  for (const input of $$<HTMLInputElement>("#grayscaleScheduleForm input[name='deviceTargets']")) {
+    input.checked = targets.has(input.value as "computer" | "phone");
   }
 }
 
@@ -2226,6 +2354,22 @@ function resetScheduleForm(): void {
   form.elements.commitmentLock.checked = false;
   for (const input of $$("#scheduleDays input")) {
     input.checked = !["0", "6"].includes(input.value);
+  }
+}
+
+function resetGrayscaleScheduleForm(): void {
+  const form = $("#grayscaleScheduleForm");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.name.value = "Night grayscale";
+  form.elements.start.value = "22:00";
+  form.elements.end.value = "07:00";
+  form.elements.enabled.checked = false;
+  for (const input of $$("#grayscaleScheduleDays input")) {
+    input.checked = true;
+  }
+  for (const input of $$<HTMLInputElement>("#grayscaleScheduleForm input[name='deviceTargets']")) {
+    input.checked = true;
   }
 }
 

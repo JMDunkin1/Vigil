@@ -10,6 +10,7 @@ import { addEvent, loadState, loadUsage, saveState, saveUsage, sanitizeSoftBlock
 import { assertTypingChallenge, attachTypingChallenge } from "./challenge.js";
 import { hostsStatus, launchAgentStatus } from "./hardening.js";
 import { firewallStatus } from "./firewall.js";
+import { normalizeGrayscaleSchedule, normalizeGrayscaleState } from "./grayscale.js";
 import { startMonitor } from "./monitor.js";
 import { activePolicy, activeSessionForDevice, clearSessionsById, emergencyUnlockAllowedForPolicy, listFromTextarea, normalizeDeviceTarget, normalizeDeviceTargets, normalizeLockLevel, panicLockProfile, profileById, snapshotProfile } from "./policy.js";
 import { confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "./appLocks.js";
@@ -37,6 +38,7 @@ import { buildStatePayload, publicIosState, strictPreflightStatus } from "./serv
 import type {
   AppLockRule,
   DeviceTarget,
+  GrayscaleSchedule,
   LimitRule,
   LockLevel,
   MonitorHandle,
@@ -553,6 +555,36 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     await saveUsage(usage);
     await saveState(state);
     sendJson(response, 200, { ok: true, result, usage: usageSummary(usage, state) });
+    return;
+  }
+
+  if (method === "POST" && path === "/api/grayscale/settings") {
+    const body = await readBody(request);
+    assertProtectedEditAllowed(state, { kind: "settings" });
+    state.grayscale = normalizeGrayscaleState(body, state.grayscale);
+    addEvent(state, "grayscale_settings_updated", {
+      softBlockEnabled: state.grayscale.softBlockEnabled,
+      preventManualChanges: state.grayscale.preventManualChanges
+    });
+    recordIosMdmPolicyQueue("grayscale-settings");
+    await saveState(state);
+    sendJson(response, 200, { ok: true, grayscale: state.grayscale });
+    return;
+  }
+
+  if (method === "POST" && path === "/api/grayscale/schedule") {
+    const body = await readBody(request);
+    assertProtectedEditAllowed(state, { kind: "schedule", id: typeof body.id === "string" ? body.id : undefined });
+    const schedule = upsertGrayscaleSchedule(body);
+    addEvent(state, "grayscale_schedule_saved", {
+      scheduleId: schedule.id,
+      name: schedule.name,
+      enabled: schedule.enabled,
+      deviceTargets: schedule.deviceTargets
+    });
+    recordIosMdmPolicyQueue("grayscale-schedule");
+    await saveState(state);
+    sendJson(response, 200, { ok: true, schedule });
     return;
   }
 
@@ -1078,6 +1110,17 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return;
   }
 
+  if (method === "DELETE" && path.startsWith("/api/grayscale/schedule/")) {
+    const id = decodeURIComponent(path.split("/").at(-1) || "");
+    assertProtectedEditAllowed(state, { kind: "schedule", id });
+    state.grayscale.schedules = (state.grayscale.schedules || []).filter((schedule) => schedule.id !== id);
+    addEvent(state, "grayscale_schedule_deleted", { scheduleId: id });
+    recordIosMdmPolicyQueue("grayscale-schedule-deleted");
+    await saveState(state);
+    sendJson(response, 200, { ok: true });
+    return;
+  }
+
   sendJson(response, 404, { error: "Not found" });
 }
 
@@ -1231,6 +1274,23 @@ function upsertSchedule(body: RequestBody): Schedule {
 
   if (existing) Object.assign(existing, schedule);
   else state.schedules.push(schedule);
+
+  return schedule;
+}
+
+function upsertGrayscaleSchedule(body: RequestBody): GrayscaleSchedule {
+  state.grayscale ||= {
+    softBlockEnabled: false,
+    preventManualChanges: true,
+    schedules: []
+  };
+  const id = stringValue(body.id, randomUUID());
+  const existing = (state.grayscale.schedules || []).find((item) => item.id === id);
+  const schedule = normalizeGrayscaleSchedule({ ...body, id }, existing);
+
+  state.grayscale.schedules ||= [];
+  if (existing) Object.assign(existing, schedule);
+  else state.grayscale.schedules.push(schedule);
 
   return schedule;
 }

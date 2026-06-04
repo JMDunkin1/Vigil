@@ -142,12 +142,94 @@ export async function lockScreen() {
   }
 }
 
+export async function readMacGrayscaleState() {
+  const [universalAccess, coreGraphics] = await Promise.all([
+    readBooleanDefault("com.apple.universalaccess", "grayscale"),
+    readBooleanDefault("com.apple.CoreGraphics", "DisplayUseForcedGray")
+  ]);
+  const errors = [universalAccess.error, coreGraphics.error].filter(Boolean);
+  return {
+    ok: !errors.length,
+    active: Boolean(universalAccess.value || coreGraphics.value),
+    universalAccess: Boolean(universalAccess.value),
+    coreGraphics: Boolean(coreGraphics.value),
+    error: errors.join("; ")
+  };
+}
+
+export async function setMacGrayscaleEnabled(enabled: boolean) {
+  const before = await readMacGrayscaleState();
+  const desired = Boolean(enabled);
+  const alreadyCurrent = before.ok && before.universalAccess === desired && before.coreGraphics === desired;
+  if (alreadyCurrent) {
+    return {
+      ok: true,
+      desired,
+      changed: false,
+      before,
+      after: before
+    };
+  }
+
+  try {
+    await execFileAsync("/usr/bin/defaults", ["write", "com.apple.universalaccess", "grayscale", "-bool", desired ? "true" : "false"], { timeout: 1500 });
+    await execFileAsync("/usr/bin/defaults", ["write", "com.apple.CoreGraphics", "DisplayUseForcedGray", "-bool", desired ? "true" : "false"], { timeout: 1500 });
+    await refreshAccessibilityPreferences();
+    const after = await readMacGrayscaleState();
+    return {
+      ok: after.ok,
+      desired,
+      changed: true,
+      before,
+      after,
+      error: after.error
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      desired,
+      changed: false,
+      before,
+      after: before,
+      error: simplifyError(error)
+    };
+  }
+}
+
 async function forceKillApp(appName: string) {
   try {
     await execFileAsync("/usr/bin/pkill", ["-9", "-x", appName], { timeout: 1500 });
     return { ok: true, method: "pkill -9" };
   } catch (error) {
     return { ok: false, method: "pkill -9", error: simplifyError(error) };
+  }
+}
+
+async function readBooleanDefault(domain: string, key: string): Promise<{ value: boolean; error: string }> {
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/defaults", ["read", domain, key], { timeout: 1000 });
+    const text = stdout.trim().toLowerCase();
+    return { value: ["1", "true", "yes"].includes(text), error: "" };
+  } catch (error) {
+    const message = simplifyError(error);
+    if (/does not exist|domain .* does not exist|not exist/i.test(message)) return { value: false, error: "" };
+    return { value: false, error: message };
+  }
+}
+
+async function refreshAccessibilityPreferences(): Promise<void> {
+  await Promise.all([
+    killProcessIfRunning("cfprefsd"),
+    killProcessIfRunning("SystemUIServer"),
+    killProcessIfRunning("universalaccessd")
+  ]);
+}
+
+async function killProcessIfRunning(name: string): Promise<void> {
+  try {
+    await execFileAsync("/usr/bin/killall", [name], { timeout: 1000 });
+  } catch {
+    // These daemons may not be running; macOS restarts them as needed.
   }
 }
 

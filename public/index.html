@@ -1034,6 +1034,58 @@
           <div id="foolproofBlockers" class="blocker-list"></div>
           <pre id="hostsBlock" class="hosts-preview"></pre>
         </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Grayscale</p>
+              <h2>Screen Color</h2>
+            </div>
+            <button id="newGrayscaleSchedule" class="secondary" type="button">New</button>
+          </div>
+          <form id="grayscaleSettingsForm" class="profile-form">
+            <div class="toggle-row">
+              <label><input id="grayscaleSoftBlockEnabled" type="checkbox"> Soft Block grayscale</label>
+              <label><input id="grayscalePreventManualChanges" type="checkbox"> Guard Settings</label>
+            </div>
+            <div class="device-form-head">
+              <div>
+                <strong>Computer</strong>
+                <span id="grayscaleComputerStatus">Normal</span>
+              </div>
+              <div>
+                <strong>iPhone</strong>
+                <span id="grayscalePhoneStatus">Normal</span>
+              </div>
+            </div>
+            <button class="secondary" type="submit">Save Grayscale</button>
+          </form>
+          <form id="grayscaleScheduleForm" class="schedule-form">
+            <input name="id" type="hidden">
+            <div class="form-row">
+              <label>
+                Name
+                <input name="name" type="text" value="Night grayscale">
+              </label>
+              <label>
+                Start
+                <input name="start" type="time" value="22:00">
+              </label>
+              <label>
+                End
+                <input name="end" type="time" value="07:00">
+              </label>
+            </div>
+            <div class="day-grid" id="grayscaleScheduleDays"></div>
+            <div class="toggle-row">
+              <label><input name="deviceTargets" type="checkbox" value="computer" checked> Computer</label>
+              <label><input name="deviceTargets" type="checkbox" value="phone" checked> iPhone</label>
+              <label><input name="enabled" type="checkbox"> Enabled</label>
+            </div>
+            <button class="primary" type="submit">Save Grayscale Schedule</button>
+          </form>
+          <div id="grayscaleScheduleList" class="list"></div>
+        </section>
       </div>
     </section>
 

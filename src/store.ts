@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_SHORT_FORM_URL_PATTERNS, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { normalizeIntentionalUse } from "./intentionalUse.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
-import type { AppSettings, Profile, Schedule, VigilState, Session, UsageState } from "./types.js";
+import type { AppSettings, GrayscaleSchedule, GrayscaleState, Profile, Schedule, VigilState, Session, UsageState } from "./types.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const DATA_DIR = process.env.VIGIL_DATA_DIR || resolveDefaultDataDir(ROOT);
@@ -155,6 +155,7 @@ function migrateState(state: RawState): VigilState {
         ...(state.integrity?.runtime || {})
       }
     },
+    grayscale: normalizeGrayscaleState(state.grayscale, fresh.grayscale),
     deviceControls: {
       ios: {
         ...fresh.deviceControls.ios,
@@ -319,6 +320,46 @@ function normalizeSchedules(schedules: Schedule[]): Schedule[] {
     wifiNetworks: Array.isArray(schedule.wifiNetworks) ? schedule.wifiNetworks : [],
     commitmentLock: Boolean(schedule.commitmentLock)
   }));
+}
+
+function normalizeGrayscaleState(value: unknown, fallback: GrayscaleState): GrayscaleState {
+  const raw = value && typeof value === "object" ? value as Partial<GrayscaleState> : {};
+  return {
+    softBlockEnabled: Boolean(raw.softBlockEnabled),
+    preventManualChanges: raw.preventManualChanges === false ? false : fallback.preventManualChanges,
+    schedules: Array.isArray(raw.schedules)
+      ? raw.schedules.map(normalizeGrayscaleSchedule).filter((schedule) => schedule.name)
+      : []
+  };
+}
+
+function normalizeGrayscaleSchedule(schedule: Partial<GrayscaleSchedule>): GrayscaleSchedule {
+  return {
+    id: String(schedule.id || randomUUID()),
+    name: String(schedule.name || "Grayscale schedule").slice(0, 80),
+    enabled: Boolean(schedule.enabled),
+    days: normalizeDays(schedule.days),
+    start: normalizeClock(schedule.start, "22:00"),
+    end: normalizeClock(schedule.end, "07:00"),
+    deviceTargets: normalizeDeviceTargetList(schedule.deviceTargets)
+  };
+}
+
+function normalizeDays(value: unknown): number[] {
+  const values = Array.isArray(value) ? value : [];
+  const days = [...new Set(values.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))];
+  return days.length ? days : [0, 1, 2, 3, 4, 5, 6];
+}
+
+function normalizeClock(value: unknown, fallback: string): string {
+  const text = String(value || "");
+  return /^\d{2}:\d{2}$/.test(text) ? text : fallback;
+}
+
+function normalizeDeviceTargetList(value: unknown): Array<"computer" | "phone"> {
+  const source = Array.isArray(value) ? value : [];
+  const targets = [...new Set(source.map((item) => String(item || "").trim().toLowerCase()).filter((item) => item === "computer" || item === "phone"))];
+  return targets.length ? targets as Array<"computer" | "phone"> : ["computer", "phone"];
 }
 
 function normalizeProfiles(profiles: Profile[]): Profile[] {
