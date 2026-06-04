@@ -378,6 +378,39 @@ export interface IntentionalJournalEntry {
   entryDate: string;
 }
 
+export type IntentionalRecoveryStatus = "clean" | "urge" | "setback" | "victory";
+export type IntentionalRecoveryKind = "daily" | "sos" | "manual";
+
+export interface IntentionalRecoveryCheckIn {
+  id: string;
+  kind: IntentionalRecoveryKind;
+  status: IntentionalRecoveryStatus;
+  mood: string;
+  urgeIntensity: number;
+  stress: number | null;
+  sleepHours: number | null;
+  exerciseMinutes: number | null;
+  trigger: string;
+  action: string;
+  note: string;
+  at: string;
+  dateKey: string;
+  weekKey: string;
+}
+
+export interface IntentionalSosSession {
+  id: string;
+  intent: string;
+  trigger: string;
+  urgeIntensity: number;
+  reasonWhy: string;
+  replacement: string;
+  plan: string[];
+  startedAt: string;
+  dateKey: string;
+  weekKey: string;
+}
+
 export interface IntentionalRuleLedger {
   seconds: number;
   pauses: number;
@@ -412,6 +445,8 @@ export interface IntentionalUseState {
   behaviors: IntentionalBehavior[];
   behaviorCheckIns: IntentionalBehaviorCheckIn[];
   journalEntries: IntentionalJournalEntry[];
+  recoveryCheckIns: IntentionalRecoveryCheckIn[];
+  sosSessions: IntentionalSosSession[];
   accountability: IntentionalAccountabilityState;
 }
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { activeAppLockUnlockForSample } from "./appLocks.js";
-import { PORT } from "./defaults.js";
+import { DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_SHORT_FORM_URL_PATTERNS, PORT } from "./defaults.js";
 import { truthy } from "./booleans.js";
 import {
   appMatchesAppTargets,
@@ -18,7 +18,11 @@ import type {
   IntentionalJournalEntry,
   IntentionalOutcome,
   IntentionalPause,
+  IntentionalRecoveryCheckIn,
+  IntentionalRecoveryKind,
+  IntentionalRecoveryStatus,
   IntentionalRuleLedger,
+  IntentionalSosSession,
   IntentionalUseGoal,
   IntentionalUseRule,
   IntentionalUseState,
@@ -32,6 +36,38 @@ const OUTCOME_LIMIT = 200;
 const OPEN_LIMIT = 40;
 const JOURNAL_ENTRY_LIMIT = 250;
 const BEHAVIOR_CHECK_IN_LIMIT = 500;
+const RECOVERY_CHECK_IN_LIMIT = 500;
+const SOS_SESSION_LIMIT = 100;
+const RECOVERY_SETUP_RULE_ID = "porn-recovery-risk-pause";
+const RECOVERY_CHECK_IN_BEHAVIOR_ID = "daily-recovery-check-in";
+const RECOVERY_REPLACEMENT_BEHAVIOR_ID = "urge-replacement-loop";
+const RECOVERY_RISK_SITES = [
+  "reddit.com",
+  "x.com",
+  "twitter.com",
+  "tumblr.com",
+  "telegram.org",
+  "discord.com",
+  "onlyfans.com",
+  "fansly.com"
+];
+const RECOVERY_RISK_URL_PATTERNS = [
+  "porn",
+  "nsfw",
+  "xxx",
+  "gonewild",
+  "onlyfans",
+  "fansly",
+  ...DEFAULT_SHORT_FORM_URL_PATTERNS
+];
+const RECOVERY_DEFAULT_VALUES = ["Self-respect", "Sleep", "Real relationships", "Deep work"];
+const RECOVERY_DEFAULT_REPLACEMENTS = [
+  "Start the SOS reset",
+  "Text or call the accountability partner",
+  "Take a five-minute walk",
+  "Open the journal and name the trigger",
+  "Put the phone across the room"
+];
 
 interface IntentionalUseOptions extends UnknownRecord {
   event?: string;
@@ -70,6 +106,8 @@ export function normalizeIntentionalUse(current: Partial<IntentionalUseState> = 
     behaviors: normalizeBehaviors(current.behaviors || fresh.behaviors || []),
     behaviorCheckIns: normalizeBehaviorCheckIns(current.behaviorCheckIns || fresh.behaviorCheckIns || []).slice(0, BEHAVIOR_CHECK_IN_LIMIT),
     journalEntries: normalizeJournalEntries(current.journalEntries || fresh.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT),
+    recoveryCheckIns: normalizeRecoveryCheckIns(current.recoveryCheckIns || fresh.recoveryCheckIns || []).slice(0, RECOVERY_CHECK_IN_LIMIT),
+    sosSessions: normalizeSosSessions(current.sosSessions || fresh.sosSessions || []).slice(0, SOS_SESSION_LIMIT),
     accountability: {
       ...(fresh.accountability || {}),
       ...(current.accountability || {})
@@ -200,6 +238,107 @@ export function recordIntentionalBehaviorCheckIn(state: SentinelState, body: Int
   return checkIn;
 }
 
+export function recordIntentionalRecoveryCheckIn(state: SentinelState, body: IntentionalBody = {}, now = new Date()): IntentionalRecoveryCheckIn {
+  ensureIntentionalUse(state);
+  const checkIn = normalizeRecoveryCheckIn({
+    ...body,
+    id: randomUUID(),
+    at: now.toISOString(),
+    dateKey: dateKey(now),
+    weekKey: weekKey(now)
+  });
+  state.intentionalUse.recoveryCheckIns.unshift(checkIn);
+  state.intentionalUse.recoveryCheckIns = state.intentionalUse.recoveryCheckIns.slice(0, RECOVERY_CHECK_IN_LIMIT);
+  return checkIn;
+}
+
+export function startIntentionalSosSession(state: SentinelState, body: IntentionalBody = {}, now = new Date()) {
+  ensureIntentionalUse(state);
+  const intent = normalizeSosIntent(body.intent);
+  const trigger = String(body.trigger || "").trim().slice(0, 240);
+  const urgeIntensity = clampNumber(body.urgeIntensity, 0, 10, 7);
+  const replacement = String(body.replacement || state.intentionalUse.goal?.replacements?.[0] || "Step away from the screen for five minutes").trim().slice(0, 160);
+  const session: IntentionalSosSession = {
+    id: randomUUID(),
+    intent,
+    trigger,
+    urgeIntensity,
+    reasonWhy: state.intentionalUse.goal?.statement || "Use screens on purpose, not by reflex.",
+    replacement,
+    plan: sosPlan(state, { intent, trigger, replacement }),
+    startedAt: now.toISOString(),
+    dateKey: dateKey(now),
+    weekKey: weekKey(now)
+  };
+  state.intentionalUse.sosSessions.unshift(session);
+  state.intentionalUse.sosSessions = state.intentionalUse.sosSessions.slice(0, SOS_SESSION_LIMIT);
+  const checkIn = recordIntentionalRecoveryCheckIn(state, {
+    kind: "sos",
+    status: "urge",
+    mood: intent,
+    urgeIntensity,
+    trigger,
+    action: replacement,
+    note: session.plan.join(" ")
+  }, now);
+  return { session, checkIn };
+}
+
+export function applyPornRecoverySetup(state: SentinelState, body: IntentionalBody = {}, now = new Date()) {
+  ensureIntentionalUse(state);
+  state.settings.intentionalUseEnabled = true;
+  state.settings.contentFilterEnabled = true;
+  state.settings.browserNoiseBlockingEnabled = true;
+  const values = normalizeTargets(body.values);
+  const replacements = normalizeTargets(body.replacements);
+  state.intentionalUse.goal = normalizeGoal({
+    statement: String(body.statement || state.intentionalUse.goal?.statement || "Stay clear, connected, and in control when urges hit."),
+    values: values.length ? values : RECOVERY_DEFAULT_VALUES,
+    replacements: replacements.length ? replacements : RECOVERY_DEFAULT_REPLACEMENTS,
+    updatedAt: now.toISOString()
+  });
+  const rule = upsertIntentionalUseRule(state, {
+    id: RECOVERY_SETUP_RULE_ID,
+    name: "Recovery risk pause",
+    enabled: true,
+    frictionLevel: "strict",
+    days: [0, 1, 2, 3, 4, 5, 6],
+    start: "00:00",
+    end: "23:59",
+    apps: [],
+    sites: uniqueTargets([...RECOVERY_RISK_SITES, ...DEFAULT_EXPLICIT_BLOCKED_SITES]),
+    urlPatterns: uniqueTargets(RECOVERY_RISK_URL_PATTERNS),
+    delaySeconds: 30,
+    sessionMinutes: 5,
+    dailyBudgetMinutes: 10,
+    budgetWarningPercent: 50,
+    askMood: true
+  });
+  const checkInBehavior = upsertIntentionalBehavior(state, {
+    id: RECOVERY_CHECK_IN_BEHAVIOR_ID,
+    name: "Daily recovery check-in",
+    description: "Record the day's urges, mood, sleep, and next right action.",
+    direction: "build",
+    unit: "yes-no",
+    weeklyTarget: 7,
+    ruleIds: [rule.id],
+    replacement: "Use the Recovery Check-In before bed",
+    active: true
+  }, now);
+  const replacementBehavior = upsertIntentionalBehavior(state, {
+    id: RECOVERY_REPLACEMENT_BEHAVIOR_ID,
+    name: "Urge replacement loop",
+    description: "Choose a replacement action when the pull to explicit content shows up.",
+    direction: "build",
+    unit: "count",
+    weeklyTarget: 3,
+    ruleIds: [rule.id],
+    replacement: "Step away, breathe, and do one planned replacement",
+    active: true
+  }, now);
+  return { goal: state.intentionalUse.goal, rule, behaviors: [checkInBehavior, replacementBehavior] };
+}
+
 export function intentionalUseSummary(state: SentinelState, usage: UnknownRecord = {}, now = new Date()) {
   ensureIntentionalUse(state);
   cleanupIntentionalUse(state, now);
@@ -212,6 +351,7 @@ export function intentionalUseSummary(state: SentinelState, usage: UnknownRecord
     .slice(0, 20);
   const journalThisWeek = journalEntriesForWeek(state, week);
   const behaviorCheckInsThisWeek = (state.intentionalUse.behaviorCheckIns || []).filter((entry) => entry.weekKey === week);
+  const recovery = recoverySummary(state, now);
   const today = state.intentionalUse.ledger?.[day] || {};
   const totals = Object.values(today.rules || {}).reduce((acc, item) => {
     acc.seconds += item.seconds || 0;
@@ -237,9 +377,11 @@ export function intentionalUseSummary(state: SentinelState, usage: UnknownRecord
         totalEntries: state.intentionalUse.journalEntries.length,
         behaviorCheckInsThisWeek: behaviorCheckInsThisWeek.length,
         reflectionStreakDays: reflectionStreakDays(state, now),
-        activeBehaviors: state.intentionalUse.behaviors.filter((behavior) => behavior.active !== false).length
+        activeBehaviors: state.intentionalUse.behaviors.filter((behavior) => behavior.active !== false).length,
+        recoveryCheckInsThisWeek: recovery.week.checkIns
       }
     },
+    recovery,
     activeGrants: (state.intentionalUse.grants || []).filter((grant) => Date.parse(grant.until || "") > now.getTime()),
     pendingPauses: (state.intentionalUse.pauses || []).filter((pause) => pause.status === "pending" && Date.parse(pause.expiresAt || "") > now.getTime()),
     rules,
@@ -370,6 +512,7 @@ export function accountabilityDigest(state: SentinelState, _usage: UnknownRecord
   ensureIntentionalUse(state);
   const key = weekKey(now);
   const outcomes = (state.intentionalUse.outcomes || []).filter((item) => item.weekKey === key);
+  const recovery = recoverySummary(state, now);
   const continued = outcomes.filter((item) => item.outcome === "continued").length;
   const skipped = outcomes.filter((item) => item.outcome === "skipped").length;
   const seconds = Object.values(state.intentionalUse.ledger || {})
@@ -386,6 +529,11 @@ export function accountabilityDigest(state: SentinelState, _usage: UnknownRecord
     `Chose replacement: ${skipped}`,
     `Continued intentionally: ${continued}`,
     `Intentional-use time: ${formatMinutes(seconds)}`,
+    `Recovery check-ins: ${recovery.week.checkIns}`,
+    `Victories: ${recovery.week.victories}`,
+    `Setbacks: ${recovery.week.setbacks}`,
+    `SOS starts: ${recovery.week.sos}`,
+    `Top triggers: ${recovery.week.topTriggers.map((item) => `${item.label} x${item.count}`).join(", ") || "none"}`,
     `Top targets: ${topTargets.map((item) => `${item.label} x${item.count}`).join(", ") || "none"}`,
     `For: ${partner}`
   ].join("\n");
@@ -398,6 +546,7 @@ export function accountabilityDigest(state: SentinelState, _usage: UnknownRecord
     seconds,
     successRate: successRate(skipped, continued),
     topTargets,
+    recovery: recovery.week,
     text
   };
 }
@@ -422,6 +571,8 @@ function ensureIntentionalUse(state: SentinelState): void {
   state.intentionalUse.behaviors ||= [];
   state.intentionalUse.behaviorCheckIns ||= [];
   state.intentionalUse.journalEntries ||= [];
+  state.intentionalUse.recoveryCheckIns ||= [];
+  state.intentionalUse.sosSessions ||= [];
   state.intentionalUse.accountability ||= {};
 }
 
@@ -527,6 +678,64 @@ function normalizeJournalEntry(body: IntentionalBody = {}, existing: Partial<Int
   };
 }
 
+function normalizeRecoveryCheckIns(checkIns: unknown): IntentionalRecoveryCheckIn[] {
+  if (!Array.isArray(checkIns)) return [];
+  return checkIns
+    .filter(isUnknownRecord)
+    .map((checkIn) => normalizeRecoveryCheckIn(checkIn))
+    .sort((a, b) => Date.parse(b.at || "") - Date.parse(a.at || ""));
+}
+
+function normalizeRecoveryCheckIn(checkIn: UnknownRecord): IntentionalRecoveryCheckIn {
+  const at = safeIsoDate(checkIn.at) || new Date().toISOString();
+  const kindValue = String(checkIn.kind || "");
+  const statusValue = String(checkIn.status || "");
+  const kind: IntentionalRecoveryKind = ["daily", "sos", "manual"].includes(kindValue) ? kindValue as IntentionalRecoveryKind : "daily";
+  const status: IntentionalRecoveryStatus = ["clean", "urge", "setback", "victory"].includes(statusValue)
+    ? statusValue as IntentionalRecoveryStatus
+    : "clean";
+  return {
+    id: String(checkIn.id || randomUUID()),
+    kind,
+    status,
+    mood: String(checkIn.mood || "").trim().slice(0, 80),
+    urgeIntensity: clampNumber(checkIn.urgeIntensity, 0, 10, 0),
+    stress: optionalNumber(checkIn.stress, 0, 10),
+    sleepHours: optionalNumber(checkIn.sleepHours, 0, 24),
+    exerciseMinutes: optionalNumber(checkIn.exerciseMinutes, 0, 1440),
+    trigger: String(checkIn.trigger || "").trim().slice(0, 240),
+    action: String(checkIn.action || "").trim().slice(0, 240),
+    note: String(checkIn.note || "").trim().slice(0, 1000),
+    at,
+    dateKey: String(checkIn.dateKey || dateKey(new Date(at))),
+    weekKey: String(checkIn.weekKey || weekKey(new Date(at)))
+  };
+}
+
+function normalizeSosSessions(sessions: unknown): IntentionalSosSession[] {
+  if (!Array.isArray(sessions)) return [];
+  return sessions
+    .filter(isUnknownRecord)
+    .map((session) => normalizeSosSession(session))
+    .sort((a, b) => Date.parse(b.startedAt || "") - Date.parse(a.startedAt || ""));
+}
+
+function normalizeSosSession(session: UnknownRecord): IntentionalSosSession {
+  const startedAt = safeIsoDate(session.startedAt) || new Date().toISOString();
+  return {
+    id: String(session.id || randomUUID()),
+    intent: normalizeSosIntent(session.intent),
+    trigger: String(session.trigger || "").trim().slice(0, 240),
+    urgeIntensity: clampNumber(session.urgeIntensity, 0, 10, 7),
+    reasonWhy: String(session.reasonWhy || "").trim().slice(0, 240),
+    replacement: String(session.replacement || "").trim().slice(0, 160),
+    plan: normalizeTargets(session.plan).slice(0, 8),
+    startedAt,
+    dateKey: String(session.dateKey || dateKey(new Date(startedAt))),
+    weekKey: String(session.weekKey || weekKey(new Date(startedAt)))
+  };
+}
+
 function behaviorSummary(state: SentinelState, behavior: IntentionalBehavior, currentWeekKey: string) {
   const checkIns = (state.intentionalUse.behaviorCheckIns || []).filter((entry) => entry.behaviorId === behavior.id);
   const weekly = checkIns.filter((entry) => entry.weekKey === currentWeekKey);
@@ -557,6 +766,113 @@ function reflectionStreakDays(state: SentinelState, now: Date): number {
   return count;
 }
 
+function recoverySummary(state: SentinelState, now: Date) {
+  ensureIntentionalUse(state);
+  const day = dateKey(now);
+  const week = weekKey(now);
+  const checkIns = state.intentionalUse.recoveryCheckIns || [];
+  const sosSessions = state.intentionalUse.sosSessions || [];
+  const todayCheckIns = checkIns.filter((entry) => entry.dateKey === day);
+  const weekCheckIns = checkIns.filter((entry) => entry.weekKey === week);
+  const weekSos = sosSessions.filter((session) => session.weekKey === week);
+  const cleanDays = cleanRecoveryDays(weekCheckIns);
+  return {
+    today: {
+      checkIns: todayCheckIns.length,
+      latest: todayCheckIns[0] || null,
+      status: todayCheckIns[0]?.status || "none"
+    },
+    week: {
+      weekKey: week,
+      checkIns: weekCheckIns.length,
+      cleanDays,
+      victories: weekCheckIns.filter((entry) => entry.status === "victory").length,
+      setbacks: weekCheckIns.filter((entry) => entry.status === "setback").length,
+      urges: weekCheckIns.filter((entry) => entry.status === "urge").length,
+      sos: weekSos.length,
+      averageUrgeIntensity: average(weekCheckIns.map((entry) => entry.urgeIntensity)),
+      averageStress: average(weekCheckIns.map((entry) => entry.stress).filter((value): value is number => value !== null)),
+      averageSleepHours: average(weekCheckIns.map((entry) => entry.sleepHours).filter((value): value is number => value !== null)),
+      exerciseMinutes: Math.round(weekCheckIns.reduce((total, entry) => total + Number(entry.exerciseMinutes || 0), 0)),
+      topTriggers: topRecoveryTriggers(weekCheckIns)
+    },
+    recentCheckIns: checkIns.slice(0, 12),
+    recentSos: sosSessions.slice(0, 5)
+  };
+}
+
+function cleanRecoveryDays(checkIns: IntentionalRecoveryCheckIn[]): number {
+  const byDay = new Map<string, IntentionalRecoveryCheckIn[]>();
+  for (const entry of checkIns) {
+    const items = byDay.get(entry.dateKey) || [];
+    items.push(entry);
+    byDay.set(entry.dateKey, items);
+  }
+  let count = 0;
+  for (const entries of byDay.values()) {
+    if (entries.some((entry) => entry.status === "setback")) continue;
+    if (entries.some((entry) => ["clean", "victory"].includes(entry.status))) count += 1;
+  }
+  return count;
+}
+
+function topRecoveryTriggers(checkIns: IntentionalRecoveryCheckIn[]) {
+  const counts = new Map<string, number>();
+  for (const checkIn of checkIns) {
+    for (const trigger of splitTags(checkIn.trigger)) {
+      counts.set(trigger, (counts.get(trigger) || 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 5)
+    .map(([label, count]) => ({ label, count }));
+}
+
+function splitTags(value: string): string[] {
+  return String(value || "")
+    .split(/[,|]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+}
+
+function sosPlan(state: SentinelState, { intent, trigger, replacement }: { intent: string; trigger: string; replacement: string }): string[] {
+  const reason = state.intentionalUse.goal?.statement || "Use screens on purpose, not by reflex.";
+  const values = state.intentionalUse.goal?.values || [];
+  const steps = [
+    intent === "sleep" ? "Dim the screen, leave the room, and start a short wind-down." : "Take ten slow breaths before touching the browser again.",
+    `Remember why: ${reason}`,
+    trigger ? `Name the trigger without arguing with it: ${trigger}.` : "Name the trigger in one sentence.",
+    `Do this next: ${replacement}.`
+  ];
+  if (intent === "lift-mood") steps.push("Add a body reset: water, light, or a short walk.");
+  if (intent === "distraction") steps.push("Open one planned replacement, then close the tempting tab.");
+  if (values.length) steps.push(`Protect: ${values.slice(0, 3).join(", ")}.`);
+  steps.push("If the urge is still high, start a strict lock or contact your partner.");
+  return steps.slice(0, 8);
+}
+
+function normalizeSosIntent(value: unknown): string {
+  const intent = String(value || "").trim().toLowerCase();
+  return ["calm", "sleep", "lift-mood", "distraction", "unsure"].includes(intent) ? intent : "unsure";
+}
+
+function optionalNumber(value: unknown, min: number, max: number): number | null {
+  if (value === "" || value === null || value === undefined) return null;
+  return clampNumber(value, min, max, min);
+}
+
+function average(values: number[]): number | null {
+  const safe = values.filter((value) => Number.isFinite(value));
+  if (!safe.length) return null;
+  return Math.round((safe.reduce((total, value) => total + value, 0) / safe.length) * 10) / 10;
+}
+
+function uniqueTargets(values: unknown[]): string[] {
+  return [...new Set(normalizeTargets(values))];
+}
+
 function safeIsoDate(value: unknown): string | null {
   if (!value) return null;
   const date = new Date(String(value));
@@ -578,6 +894,8 @@ function cleanupIntentionalUse(state: SentinelState, now: Date): void {
   state.intentionalUse.outcomes = (state.intentionalUse.outcomes || []).slice(0, OUTCOME_LIMIT);
   state.intentionalUse.behaviorCheckIns = (state.intentionalUse.behaviorCheckIns || []).slice(0, BEHAVIOR_CHECK_IN_LIMIT);
   state.intentionalUse.journalEntries = (state.intentionalUse.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT);
+  state.intentionalUse.recoveryCheckIns = (state.intentionalUse.recoveryCheckIns || []).slice(0, RECOVERY_CHECK_IN_LIMIT);
+  state.intentionalUse.sosSessions = (state.intentionalUse.sosSessions || []).slice(0, SOS_SESSION_LIMIT);
 }
 
 function matchingRule(state: SentinelState, sample: UsageSample, now: Date): IntentionalUseRule | null {

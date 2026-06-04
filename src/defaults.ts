@@ -545,6 +545,8 @@ export function defaultState(): SentinelState {
       behaviors: [],
       behaviorCheckIns: [],
       journalEntries: [],
+      recoveryCheckIns: [],
+      sosSessions: [],
       accountability: {
         enabled: false,
         partnerName: "",

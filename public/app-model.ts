@@ -200,9 +200,53 @@ export interface IntentionalUseSummary extends UnknownRecord {
       entriesThisWeek?: number;
       totalEntries?: number;
       behaviorCheckInsThisWeek?: number;
+      recoveryCheckInsThisWeek?: number;
       reflectionStreakDays?: number;
       activeBehaviors?: number;
     };
+  };
+  recovery?: {
+    today?: {
+      checkIns?: number;
+      urges?: number;
+      setbacks?: number;
+      victories?: number;
+      sos?: number;
+      clean?: boolean;
+    };
+    week?: {
+      checkIns?: number;
+      urges?: number;
+      setbacks?: number;
+      victories?: number;
+      sos?: number;
+      cleanDays?: number;
+      topTriggers?: Array<{ label: string; count: number }>;
+      averageUrgeIntensity?: number;
+      averageStress?: number;
+    };
+    recentCheckIns?: Array<DashboardItem & {
+      kind?: string;
+      status?: string;
+      mood?: string;
+      urgeIntensity?: number;
+      stress?: number | null;
+      sleepHours?: number | null;
+      exerciseMinutes?: number | null;
+      trigger?: string;
+      action?: string;
+      note?: string;
+      at?: string;
+    }>;
+    recentSos?: Array<DashboardItem & {
+      intent?: string;
+      trigger?: string;
+      urgeIntensity?: number;
+      reasonWhy?: string;
+      replacement?: string;
+      plan?: string[];
+      startedAt?: string;
+    }>;
   };
 }
 
@@ -342,6 +386,9 @@ export interface ReportSummary extends UnknownRecord {
     continuedChoices: number;
     journalEntries?: number;
     behaviorCheckIns?: number;
+    recoveryCheckIns?: number;
+    sosStarts?: number;
+    setbacks?: number;
     reflectionStreakDays?: number;
     nextUnlock: string;
     badges: Array<{
