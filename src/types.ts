@@ -73,6 +73,16 @@ export interface Schedule {
   deviceTargets?: DeviceTarget[];
 }
 
+export interface GrayscaleSchedule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  days: number[];
+  start: string;
+  end: string;
+  deviceTargets?: DeviceTarget[];
+}
+
 export interface PolicyPhase {
   kind: PolicyPhaseKind;
   label: string;
@@ -529,6 +539,12 @@ export interface FocusShortcutState {
   lastPolicy: string;
 }
 
+export interface GrayscaleState {
+  softBlockEnabled: boolean;
+  preventManualChanges: boolean;
+  schedules: GrayscaleSchedule[];
+}
+
 export interface IosMdmSettings {
   enabled: boolean;
   publicBaseUrl: string;
@@ -552,6 +568,8 @@ export interface IosMdmSettings {
   lastPushStatus: string;
   lastPushError: string;
   lastPolicyHash: string;
+  lastGrayscaleHash: string;
+  lastGrayscaleCommandQueuedAt: string | null;
 }
 
 export interface IosSettings {
@@ -615,6 +633,7 @@ export interface SentinelState {
   keyholder: KeyholderState;
   distanceKey: DistanceKeyState;
   integrity: IntegrityState;
+  grayscale: GrayscaleState;
   deviceControls: DeviceControlsState;
   maintenance: {
     pending: MaintenanceRequest[];

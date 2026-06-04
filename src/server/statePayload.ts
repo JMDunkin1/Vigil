@@ -2,6 +2,7 @@ import { currentMacAccountStatus } from "../account.js";
 import { DEVICE_TARGETS } from "../defaults.js";
 import { buildFirewallBlock, buildPfConfBlock, firewallStatus } from "../firewall.js";
 import { focusShortcutSummary } from "../focusHooks.js";
+import { grayscaleSummary } from "../grayscale.js";
 import { assertFoolproofReadyForStrict, foolproofSummary } from "../foolproof.js";
 import { buildHostsBlock, hostsStatus, launchAgentPath, launchAgentStatus, managedBlockDomains, stateSealStatus } from "../hardening.js";
 import { appLockSummary } from "../appLocks.js";
@@ -104,6 +105,7 @@ export function publicState(current: SentinelState, policy: ActivePolicy | null)
     appLockRequests: current.appLockRequests || [],
     extension: current.extension || {},
     focusShortcut: focusShortcutSummary(current),
+    grayscale: grayscaleSummary(current),
     deviceControls: {
       ...(current.deviceControls || {}),
       ios: publicIosState(current.deviceControls?.ios || {})

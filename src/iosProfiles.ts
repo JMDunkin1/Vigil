@@ -7,6 +7,7 @@ import {
   defaultState
 } from "./defaults.js";
 import { parseBoolean } from "./booleans.js";
+import { grayscaleDecision, IOS_GRAYSCALE_GUARD_BUNDLE_IDS } from "./grayscale.js";
 import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, profileById } from "./policy.js";
 import type { IosSettings, SentinelState, UnknownRecord } from "./types.js";
@@ -30,6 +31,13 @@ interface IosPolicyTargets {
   deniedUrls: string[];
   allowedUrls: string[];
   webClips: Array<{ id: string; label: string; url: string }>;
+  grayscale: {
+    desired: boolean;
+    reason: string;
+    label: string;
+    source: string;
+    settingsGuarded: boolean;
+  };
 }
 
 type MobileConfigPayload = UnknownRecord & {
@@ -96,6 +104,7 @@ export function iosProfileSummary(state: SentinelState, now = new Date()) {
       deniedUrlCount: targets.deniedUrls.length,
       allowedUrlCount: targets.allowedUrls.length,
       webClipCount: targets.webClips.length,
+      grayscale: targets.grayscale,
       lastGeneratedAt: settings.lastGeneratedAt || null
     }
   };
@@ -167,11 +176,18 @@ export function iosPolicyTargets(state: SentinelState, now = new Date()): IosPol
   const profileName = policy?.session?.title || profile?.name || "Saved iPhone policy";
   const appMode = profile?.mode === "allowlist" ? "allowlist" : settings.mode;
   const webMode = profile?.mode === "allowlist" ? "allowlist" : settings.webMode;
-  const appBundleIds = profile?.phoneAppBlocking === false
+  let appBundleIds = profile?.phoneAppBlocking === false
     ? []
     : appMode === "allowlist"
     ? settings.allowedAppBundleIds
     : settings.blockedAppBundleIds;
+  const grayscale = grayscaleDecision(state, now, { device: "phone" });
+  const settingsGuarded = Boolean(grayscale.desired && state.grayscale?.preventManualChanges !== false);
+  if (settingsGuarded) {
+    appBundleIds = appMode === "allowlist"
+      ? appBundleIds.filter((bundleId) => !IOS_GRAYSCALE_GUARD_BUNDLE_IDS.includes(bundleId))
+      : uniqueStrings([...appBundleIds, ...IOS_GRAYSCALE_GUARD_BUNDLE_IDS]);
+  }
 
   const profileSites = webMode === "allowlist"
     ? profile?.allowedSites || []
@@ -201,7 +217,14 @@ export function iosPolicyTargets(state: SentinelState, now = new Date()): IosPol
     appBundleIds,
     deniedUrls,
     allowedUrls,
-    webClips: profile?.id === SOFT_BLOCK_PROFILE_ID ? SOFT_BLOCK_WEB_CLIPS : []
+    webClips: profile?.id === SOFT_BLOCK_PROFILE_ID ? SOFT_BLOCK_WEB_CLIPS : [],
+    grayscale: {
+      desired: grayscale.desired,
+      reason: grayscale.reason,
+      label: grayscale.label,
+      source: grayscale.source,
+      settingsGuarded
+    }
   };
 }
 
@@ -249,14 +272,21 @@ function disabledPolicyTargets(settings: IosSettings): IosPolicyTargets {
     appBundleIds: [],
     deniedUrls: [],
     allowedUrls: [],
-    webClips: []
+    webClips: [],
+    grayscale: {
+      desired: false,
+      reason: "ios-policy-disabled",
+      label: "iPhone policy off",
+      source: "normal",
+      settingsGuarded: false
+    }
   };
 }
 
 function restrictionsPayload(settings: IosSettings, targets: IosPolicyTargets): MobileConfigPayload | null {
   if (!settings.enabled) return null;
   const restrictions: UnknownRecord = {};
-  if (settings.blockApps && targets.appBundleIds.length) {
+  if ((settings.blockApps || targets.grayscale.settingsGuarded) && targets.appBundleIds.length) {
     if (targets.appMode === "allowlist") restrictions.allowListedAppBundleIDs = targets.appBundleIds;
     else restrictions.blockedAppBundleIDs = targets.appBundleIds;
   }
@@ -353,6 +383,20 @@ function urlsFromInput(value: unknown): string[] {
 }
 
 function uniqueUrls(values: readonly unknown[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const raw of values || []) {
+    const value = String(raw || "").trim();
+    if (!value) continue;
+    const key = value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(value);
+  }
+  return output.sort((a, b) => a.localeCompare(b));
+}
+
+function uniqueStrings(values: readonly unknown[]): string[] {
   const seen = new Set<string>();
   const output: string[] = [];
   for (const raw of values || []) {

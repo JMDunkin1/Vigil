@@ -529,6 +529,20 @@ function hasStatusError(error: unknown): error is { status: number; message: str
     const clockThresholdText = `${JSON.stringify(clockThresholdChange, null, 2)}\n`;
     assert.equal((await verifyStateTextSeal(clockThresholdText, { keyPath, sealPath })).status, "mismatch");
 
+    const grayscaleChange = structuredClone(state);
+    grayscaleChange.grayscale.softBlockEnabled = true;
+    grayscaleChange.grayscale.schedules = [{
+      id: "night",
+      name: "Night grayscale",
+      enabled: true,
+      days: TEST_DAYS,
+      start: "22:00",
+      end: "07:00",
+      deviceTargets: ["computer", "phone"]
+    }];
+    const grayscaleText = `${JSON.stringify(grayscaleChange, null, 2)}\n`;
+    assert.equal((await verifyStateTextSeal(grayscaleText, { keyPath, sealPath })).status, "mismatch");
+
     const legacyBrandingState = structuredClone(state);
     legacyBrandingState.settings.focusShortcutOnName = "Local Screen Time Focus On";
     legacyBrandingState.settings.focusShortcutOffName = "Local Screen Time Focus Off";
@@ -548,6 +562,13 @@ function hasStatusError(error: unknown): error is { status: number; message: str
     const intentionalUseMigrationVerification = await verifyStateTextSeal(text, { keyPath, sealPath });
     assert.equal(intentionalUseMigrationVerification.ok, true);
     assert.equal(intentionalUseMigrationVerification.status, "trusted-migration");
+
+    const preGrayscaleState = structuredClone(state);
+    delete (preGrayscaleState as Partial<typeof preGrayscaleState>).grayscale;
+    await writeStateTextSeal(`${JSON.stringify(preGrayscaleState, null, 2)}\n`, { keyPath, sealPath, scope: "state" }, now.toISOString());
+    const grayscaleMigrationVerification = await verifyStateTextSeal(text, { keyPath, sealPath });
+    assert.equal(grayscaleMigrationVerification.ok, true);
+    assert.equal(grayscaleMigrationVerification.status, "trusted-migration");
 
     const mdmQueueState = structuredClone(state);
     mdmQueueState.deviceControls.ios.mdm.enabled = true;
@@ -2076,12 +2097,25 @@ last exit code = 0
   assert.equal(pushRequest.headers["apns-push-type"], "mdm");
   assert.equal(pushRequest.payload, JSON.stringify({ mdm: "push-magic" }));
 
-  const command = handleIosMdmConnect(state, { UDID: "iphone-udid-1", Status: "Idle" }, now);
-  assert.equal(command.empty, false);
-  const commandBody = recordValue(must(command.body, "MDM command body"), "MDM command body");
-  const installCommand = recordValue(commandBody.Command, "install command");
+  const nextCommandOfType = (requestType: string) => {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const command = handleIosMdmConnect(state, { UDID: "iphone-udid-1", Status: "Idle" }, now);
+      assert.equal(command.empty, false);
+      const commandBody = recordValue(must(command.body, "MDM command body"), "MDM command body");
+      const payload = recordValue(commandBody.Command, "MDM command");
+      const commandUuid = stringValue(commandBody.CommandUUID, "sent command UUID");
+      if (payload.RequestType === requestType) return { commandBody, payload, commandUuid };
+      handleIosMdmConnect(state, {
+        UDID: "iphone-udid-1",
+        Status: "Acknowledged",
+        CommandUUID: commandUuid
+      }, now);
+    }
+    throw new Error(`Expected queued ${requestType} command.`);
+  };
+
+  const { payload: installCommand, commandUuid: sentCommandUuid } = nextCommandOfType("InstallProfile");
   assert.equal(installCommand.RequestType, "InstallProfile");
-  const sentCommandUuid = stringValue(commandBody.CommandUUID, "sent command UUID");
   const acknowledged = handleIosMdmConnect(state, {
     UDID: "iphone-udid-1",
     Status: "Acknowledged",
@@ -2094,11 +2128,9 @@ last exit code = 0
   assert.equal(duplicate.queued >= 0, true);
 
   state.deviceControls.ios.enabled = false;
-  const removePolicy = queueIosMdmPolicyRefresh(state, "disable-ios", now, { udids: ["iphone-udid-1"] });
-  assert.equal(removePolicy.queued, 1);
-  const removeCommand = handleIosMdmConnect(state, { UDID: "iphone-udid-1", Status: "Idle" }, now);
-  const removeBody = recordValue(must(removeCommand.body, "remove command body"), "remove command body");
-  const removePayload = recordValue(removeBody.Command, "remove command");
+  const removePolicy = queueIosMdmPolicyRefresh(state, "disable-ios", now, { udids: ["iphone-udid-1"] }) as { profileQueued?: number };
+  assert.equal(removePolicy.profileQueued, 1);
+  const { payload: removePayload } = nextCommandOfType("RemoveProfile");
   assert.equal(removePayload.RequestType, "RemoveProfile");
   assert.equal(removePayload.Identifier, "com.local-screen-time.ios-lock");
 }

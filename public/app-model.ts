@@ -1,6 +1,6 @@
-import type { ActivePolicy, DeviceTargetInput, PolicyPhase, Profile, Schedule, SentinelState, Session, StateEvent, UnknownRecord, UsageSample } from "../src/types.js";
+import type { ActivePolicy, DeviceTargetInput, GrayscaleSchedule, PolicyPhase, Profile, Schedule, SentinelState, Session, StateEvent, UnknownRecord, UsageSample } from "../src/types.js";
 
-export type { Schedule, StateEvent, UnknownRecord };
+export type { GrayscaleSchedule, Schedule, StateEvent, UnknownRecord };
 
 export type ControlElement = HTMLElement & {
   value: string;
@@ -305,6 +305,11 @@ export interface IosDeviceSummary extends UnknownRecord {
     allowedUrlCount?: number;
     webClipCount?: number;
     generatedFrom?: string;
+    grayscale?: UnknownRecord & {
+      desired?: boolean;
+      label?: string;
+      settingsGuarded?: boolean;
+    };
   };
   mdm?: UnknownRecord & {
     enabled?: boolean;
@@ -331,6 +336,10 @@ export interface IosDeviceSummary extends UnknownRecord {
     lastSeenAt?: string;
     pushSupported?: boolean;
     blockers?: string[];
+    grayscale?: UnknownRecord & {
+      desired?: boolean;
+      label?: string;
+    };
     devices?: Array<{
       udid?: string;
       status?: string;
@@ -408,6 +417,13 @@ export interface MonitorSummary extends UnknownRecord {
   lastEnforcement?: UnknownRecord | null;
   lastProcessSweep?: UnknownRecord;
   lastSystemSleepLock?: UnknownRecord;
+  lastGrayscale?: UnknownRecord & {
+    desired?: boolean;
+    active?: boolean;
+    current?: boolean;
+    label?: string;
+    error?: string;
+  };
   accessibilityLikelyMissing?: boolean;
   lastError?: string;
 }
@@ -463,6 +479,7 @@ export interface UiState {
   activeView: string;
   selectedProfileId: string | null;
   selectedScheduleId: string | null;
+  selectedGrayscaleScheduleId: string | null;
   pendingEmergencyId: string | null;
   pendingMaintenanceId: string | null;
   timer: ReturnType<typeof setInterval> | null;

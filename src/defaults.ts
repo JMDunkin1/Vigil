@@ -627,6 +627,11 @@ export function defaultState(): SentinelState {
         clockTamperCurrentWallAt: null
       }
     },
+    grayscale: {
+      softBlockEnabled: false,
+      preventManualChanges: true,
+      schedules: []
+    },
     deviceControls: {
       ios: {
         enabled: false,
@@ -665,7 +670,9 @@ export function defaultState(): SentinelState {
           lastPushAt: null,
           lastPushStatus: "",
           lastPushError: "",
-          lastPolicyHash: ""
+          lastPolicyHash: "",
+          lastGrayscaleHash: "",
+          lastGrayscaleCommandQueuedAt: null
         }
       }
     },

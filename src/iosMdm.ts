@@ -4,6 +4,7 @@ import type { ClientHttp2Session, ClientHttp2Stream, IncomingHttpHeaders } from 
 import { APP_NAME, PORT, defaultState } from "./defaults.js";
 import { buildIosConfigurationProfile, IOS_PROFILE_IDENTIFIER, iosPolicyTargets } from "./iosProfiles.js";
 import { parseBoolean } from "./booleans.js";
+import { grayscaleDecision } from "./grayscale.js";
 import { plistData, toPlist } from "./plist.js";
 import type { IosMdmSettings, SentinelState, UnknownRecord } from "./types.js";
 
@@ -70,6 +71,8 @@ interface MdmCommand extends UnknownRecord {
   notNowAt?: string;
   errorChain?: Array<UnknownRecord>;
   resultSummary?: { keys: string[]; error: string };
+  grayscaleDesired?: boolean;
+  grayscaleHash?: string;
 }
 
 interface MdmSettings extends IosMdmSettings {
@@ -166,7 +169,9 @@ export function normalizeIosMdmSettings(body: UnknownRecord = {}, existing: Part
     lastPushAt: current.lastPushAt || null,
     lastPushStatus: current.lastPushStatus || "",
     lastPushError: current.lastPushError || "",
-    lastPolicyHash: String(current.lastPolicyHash || "")
+    lastPolicyHash: String(current.lastPolicyHash || ""),
+    lastGrayscaleHash: String(current.lastGrayscaleHash || ""),
+    lastGrayscaleCommandQueuedAt: current.lastGrayscaleCommandQueuedAt || null
   };
 }
 
@@ -208,6 +213,7 @@ export function iosMdmSummary(state: SentinelState, now = new Date()) {
   const failed = commands.filter((command) => ["error", "command-format-error"].includes(command.status));
   const enrollmentReady = enabled && setupBlockers.length === 0;
   const ready = enabled && blockers.length === 0;
+  const grayscale = grayscaleDecision(state, now, { device: "phone" });
 
   return {
     enabled,
@@ -244,6 +250,14 @@ export function iosMdmSummary(state: SentinelState, now = new Date()) {
     lastPushStatus: mdm.lastPushStatus || "",
     lastPushError: mdm.lastPushError || "",
     lastPolicyHash: mdm.lastPolicyHash || "",
+    lastGrayscaleHash: mdm.lastGrayscaleHash || "",
+    lastGrayscaleCommandQueuedAt: mdm.lastGrayscaleCommandQueuedAt || null,
+    grayscale: {
+      desired: grayscale.desired,
+      reason: grayscale.reason,
+      label: grayscale.label,
+      source: grayscale.source
+    },
     blockers,
     devices: devices.map(publicMdmDevice),
     commands: commands.slice(0, 12).map(publicMdmCommand),
@@ -374,7 +388,9 @@ export function queueIosMdmPolicyRefresh(state: SentinelState, reason = "policy-
   const mdm = ensureMdmState(state);
   if (!mdm.enabled) return { queued: 0, reason: "disabled" };
   const policyHash = iosPolicyHash(state, now);
-  return queueIosMdmPolicyCommand(state, reason, now, options, policyHash);
+  const profile = queueIosMdmPolicyCommand(state, reason, now, options, policyHash);
+  const grayscale = queueIosMdmGrayscaleCommand(state, reason, now, options, iosGrayscaleHash(state, now), { force: true });
+  return combinedQueueResult(profile, grayscale);
 }
 
 export async function pushIosMdmQueuedCommands(state: SentinelState, reason = "queued-policy", now = new Date(), options: PushOptions = {}) {
@@ -451,9 +467,14 @@ export function maybeQueueIosMdmPolicyRefresh(state: SentinelState, reason = "po
   const mdm = ensureMdmState(state);
   if (!mdm.enabled) return { queued: 0, reason: "disabled" };
   const policyHash = iosPolicyHash(state, now);
-  if (mdm.lastPolicyHash === policyHash) return { queued: 0, unchanged: true, policyHash };
-  mdm.lastPolicyHash = policyHash;
-  return queueIosMdmPolicyCommand(state, reason, now, {}, policyHash);
+  const profile = mdm.lastPolicyHash === policyHash
+    ? { queued: 0, unchanged: true, policyHash }
+    : queueIosMdmPolicyCommand(state, reason, now, {}, policyHash);
+  const grayscaleHash = iosGrayscaleHash(state, now);
+  const grayscale = mdm.lastGrayscaleHash === grayscaleHash
+    ? { queued: 0, unchanged: true, grayscaleHash }
+    : queueIosMdmGrayscaleCommand(state, reason, now, {}, grayscaleHash);
+  return combinedQueueResult(profile, grayscale);
 }
 
 function queueIosMdmPolicyCommand(state: SentinelState, reason: string, now: Date, options: PushOptions, policyHash: string) {
@@ -496,6 +517,71 @@ function queueIosMdmPolicyCommand(state: SentinelState, reason: string, now: Dat
   return { queued, deviceCount: devices.length, policyHash };
 }
 
+function queueIosMdmGrayscaleCommand(
+  state: SentinelState,
+  reason: string,
+  now: Date,
+  options: PushOptions,
+  grayscaleHash: string,
+  queueOptions: { force?: boolean } = {}
+) {
+  const mdm = ensureMdmState(state);
+  const desired = grayscaleDecision(state, now, { device: "phone" });
+  const allowedUdids = options.udids ? new Set(options.udids) : null;
+  const devices = normalizeMdmDevices(mdm.devices)
+    .filter((device) => device.status !== "checked-out")
+    .filter((device) => !allowedUdids || allowedUdids.has(device.udid));
+
+  let queued = 0;
+  for (const device of devices) {
+    cancelQueuedGrayscaleCommands(mdm, device.udid, grayscaleHash, now);
+    const duplicate = mdm.commands.some((command) => (
+      command.udid === device.udid
+      && isGrayscaleSettingsCommand(command)
+      && ["queued", "sent"].includes(command.status)
+      && command.grayscaleHash === grayscaleHash
+    ));
+    if (duplicate) continue;
+    if (!queueOptions.force && mdm.lastGrayscaleHash === grayscaleHash) continue;
+    mdm.commands.unshift({
+      id: randomUUID(),
+      commandUuid: randomUUID(),
+      udid: device.udid,
+      requestType: "Settings",
+      command: buildIosGrayscaleSettingsCommand(desired.desired),
+      reason,
+      status: "queued",
+      queuedAt: now.toISOString(),
+      sentAt: null,
+      completedAt: null,
+      attempts: 0,
+      grayscaleDesired: desired.desired,
+      grayscaleHash
+    });
+    queued += 1;
+  }
+
+  mdm.lastGrayscaleHash = grayscaleHash;
+  if (queued) {
+    mdm.lastCommandQueuedAt = now.toISOString();
+    mdm.lastGrayscaleCommandQueuedAt = now.toISOString();
+  }
+  trimCommands(mdm);
+  return { queued, deviceCount: devices.length, grayscaleHash, grayscaleDesired: desired.desired };
+}
+
+export function buildIosGrayscaleSettingsCommand(enabled: boolean): UnknownRecord {
+  return {
+    RequestType: "Settings",
+    Settings: [
+      {
+        Item: "AccessibilitySettings",
+        GrayscaleEnabled: Boolean(enabled)
+      }
+    ]
+  };
+}
+
 function policyCommandTemplate(state: SentinelState, now: Date): Pick<MdmCommand, "requestType"> & UnknownRecord {
   if (!state.deviceControls?.ios?.enabled) {
     return {
@@ -525,8 +611,26 @@ function cancelQueuedPolicyCommands(mdm: MdmSettings, udid: string, policyHash: 
   }
 }
 
+function cancelQueuedGrayscaleCommands(mdm: MdmSettings, udid: string, grayscaleHash: string, now: Date): void {
+  for (const command of mdm.commands) {
+    if (
+      command.udid === udid
+      && isGrayscaleSettingsCommand(command)
+      && command.status === "queued"
+      && command.grayscaleHash !== grayscaleHash
+    ) {
+      command.status = "cancelled";
+      command.completedAt = now.toISOString();
+    }
+  }
+}
+
 function isPolicyCommand(command: MdmCommand | null | undefined): boolean {
   return ["InstallProfile", "RemoveProfile"].includes(command?.requestType || "");
+}
+
+function isGrayscaleSettingsCommand(command: MdmCommand | null | undefined): boolean {
+  return command?.requestType === "Settings" && typeof command.grayscaleHash === "string" && command.grayscaleHash.length > 0;
 }
 
 export function queueIosMdmInventory(state: SentinelState, udid: string, reason = "inventory", now = new Date()) {
@@ -606,6 +710,13 @@ function iosPolicyHash(state: SentinelState, now: Date): string {
   return createHash("sha256").update(JSON.stringify(stablePolicy)).digest("hex");
 }
 
+function iosGrayscaleHash(state: SentinelState, now: Date): string {
+  const desired = grayscaleDecision(state, now, { device: "phone" });
+  return createHash("sha256").update(JSON.stringify({
+    desired: desired.desired
+  })).digest("hex");
+}
+
 function ensureMdmState(state: SentinelState): MdmSettings {
   const current = state.deviceControls.ios.mdm || {};
   state.deviceControls.ios.mdm = normalizeIosMdmSettings(current as unknown as UnknownRecord, current);
@@ -643,6 +754,22 @@ function mdmNote(enabled: boolean, ready: boolean, enrollmentReady: boolean, blo
   if (ready) return "MDM enrollment profile and command endpoints are configured.";
   if (enrollmentReady) return blockers[0] || "Enrollment is configured, but wireless MDM wakeups are not ready.";
   return blockers[0] || "Finish MDM setup before enrolling an iPhone.";
+}
+
+function combinedQueueResult(
+  profile: UnknownRecord & { queued?: number; policyHash?: string; unchanged?: boolean },
+  grayscale: UnknownRecord & { queued?: number; grayscaleHash?: string; grayscaleDesired?: boolean; unchanged?: boolean }
+) {
+  return {
+    queued: Number(profile.queued || 0) + Number(grayscale.queued || 0),
+    profileQueued: Number(profile.queued || 0),
+    grayscaleQueued: Number(grayscale.queued || 0),
+    profileUnchanged: Boolean(profile.unchanged),
+    grayscaleUnchanged: Boolean(grayscale.unchanged),
+    policyHash: String(profile.policyHash || ""),
+    grayscaleHash: String(grayscale.grayscaleHash || ""),
+    grayscaleDesired: Boolean(grayscale.grayscaleDesired)
+  };
 }
 
 function buildQueuedCommandPayload(command: MdmCommand): UnknownRecord {
@@ -909,6 +1036,7 @@ function publicMdmCommand(command: MdmCommand) {
     completedAt: command.completedAt || null,
     attempts: command.attempts || 0,
     lastStatus: command.lastStatus || "",
+    grayscaleDesired: command.grayscaleDesired ?? null,
     error: command.errorChain?.[0]?.USEnglishDescription || command.resultSummary?.error || ""
   };
 }

@@ -252,6 +252,12 @@ function trustedProtectedStateMigrationVariants(snapshot: ProtectedSnapshot): Ar
       detail: "State file changed only by the trusted Intentional Use protected-state schema migration; the seal can be refreshed without entering lockdown."
     });
   }
+  for (const grayscaleSchema of grayscaleSchemaVariants(snapshot)) {
+    variants.push({
+      snapshot: grayscaleSchema,
+      detail: "State file changed only by the trusted Grayscale protected-state schema migration; the seal can be refreshed without entering lockdown."
+    });
+  }
   return variants;
 }
 
@@ -286,8 +292,17 @@ function intentionalUseSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSna
   return [absent, empty];
 }
 
+function grayscaleSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
+  if (!snapshot || !Object.hasOwn(snapshot, "grayscale")) return [];
+  const grayscale = asRecord(snapshot.grayscale);
+  if (stableText(grayscale) !== stableText(protectedGrayscale({}))) return [];
+  const absent = structuredClone(snapshot);
+  delete absent.grayscale;
+  return [absent];
+}
+
 function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnapshot {
-  return {
+  const snapshot: ProtectedSnapshot = {
     version: state.version ?? null,
     settings: pick(state.settings, PROTECTED_SETTINGS),
     profiles: state.profiles || [],
@@ -313,6 +328,10 @@ function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnapshot {
     },
     integrity: protectedIntegrity(state.integrity || {})
   };
+  if (Object.hasOwn(state, "grayscale")) {
+    snapshot.grayscale = protectedGrayscale(state.grayscale || {});
+  }
+  return snapshot;
 }
 
 function protectedIntentionalUse(intentionalUse: unknown): UnknownRecord {
@@ -322,6 +341,15 @@ function protectedIntentionalUse(intentionalUse: unknown): UnknownRecord {
     rules: record.rules || [],
     accountability: record.accountability || {},
     ledger: record.ledger || {}
+  };
+}
+
+function protectedGrayscale(grayscale: unknown): UnknownRecord {
+  const record = asRecord(grayscale);
+  return {
+    softBlockEnabled: Boolean(record.softBlockEnabled),
+    preventManualChanges: record.preventManualChanges === false ? false : true,
+    schedules: Array.isArray(record.schedules) ? record.schedules : []
   };
 }
 

@@ -16,6 +16,9 @@ assert.equal(matchApiRoute("POST", "/api/intentional-use/recovery/setup")?.id, "
 assert.equal(matchApiRoute("POST", "/api/intentional-use/recovery/check-in")?.id, "intentionalRecoveryCheckIn");
 assert.equal(matchApiRoute("POST", "/api/intentional-use/recovery/sos")?.id, "intentionalRecoverySos");
 assert.equal(matchApiRoute("DELETE", "/api/intentional-use/behavior/night-phone")?.id, "intentionalBehaviorDelete");
+assert.equal(matchApiRoute("POST", "/api/grayscale/settings")?.id, "grayscaleSettings");
+assert.equal(matchApiRoute("POST", "/api/grayscale/schedule")?.id, "grayscaleSchedule");
+assert.equal(matchApiRoute("DELETE", "/api/grayscale/schedule/night")?.id, "grayscaleScheduleDelete");
 assert.equal(matchApiRoute("GET", "/api/not-real"), null);
 
 assert.equal(isExtensionApiPath("/api/extension/check"), true);
@@ -29,6 +32,7 @@ for (const route of API_ROUTES) {
 }
 assert.equal(domains.get("sessions"), 5);
 assert.equal(domains.get("devices"), 6);
+assert.equal(domains.get("grayscale"), 3);
 assert.equal(domains.get("extension"), 5);
 assert.equal(domains.get("intentionalUse"), 14);
 assert.ok(domains.get("hardening") >= 3);
