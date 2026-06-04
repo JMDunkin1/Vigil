@@ -409,6 +409,7 @@ function protectedSecondsToday(state: VigilState, now: Date): number {
   }
 
   intervals.push(...scheduleIntervalsToday(state, now, startMs, endMs));
+  intervals.push(...plannerIntervalsToday(state, now, startMs, endMs));
 
   return Math.round(mergedIntervalMs(intervals) / 1000);
 }
@@ -505,6 +506,20 @@ function scheduleIntervalsToday(state: VigilState, now: Date, startMs: number, e
     }
   }
 
+  return intervals;
+}
+
+function plannerIntervalsToday(state: VigilState, now: Date, startMs: number, endMs: number): Array<[number, number]> {
+  const intervals: Array<[number, number]> = [];
+  for (const block of state.intentionalUse?.planBlocks || []) {
+    if (block.enabled === false || block.completed) continue;
+    const starts = parseTime(block.startsAt);
+    const ends = parseTime(block.endsAt);
+    if (!Number.isFinite(starts) || !Number.isFinite(ends)) continue;
+    const clippedStart = Math.max(startMs, starts);
+    const clippedEnd = Math.min(endMs, now.getTime(), ends);
+    if (clippedEnd > clippedStart) intervals.push([clippedStart, clippedEnd]);
+  }
   return intervals;
 }
 

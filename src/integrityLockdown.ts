@@ -449,6 +449,19 @@ function protectedLockOverlap(state: VigilState, startMs: number, endMs: number)
     if (overlap) return overlap;
   }
 
+  for (const block of state.intentionalUse?.planBlocks || []) {
+    if (block.enabled === false || block.completed || block.lockLevel !== "deep") continue;
+    if (rangesOverlap(startMs, endMs, Date.parse(block.startsAt || ""), Date.parse(block.endsAt || ""))) {
+      return {
+        kind: "schedule",
+        id: block.id,
+        name: block.title || "planner block",
+        startsAt: block.startsAt,
+        endsAt: block.endsAt
+      };
+    }
+  }
+
   return null;
 }
 

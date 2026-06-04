@@ -762,6 +762,137 @@
         </section>
       </div>
 
+      <div class="workspace two-column planner-workspace">
+        <section class="panel journal-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Lists</p>
+              <h2>Things To Do</h2>
+            </div>
+            <button id="newPlanItem" class="secondary" type="button">New</button>
+          </div>
+          <form id="planItemForm" class="profile-form">
+            <input name="id" type="hidden">
+            <div class="form-row">
+              <label>
+                List
+                <select id="planItemListId" name="listId"></select>
+              </label>
+              <label>
+                Status
+                <select name="status">
+                  <option value="open">Open</option>
+                  <option value="done">Done</option>
+                </select>
+              </label>
+            </div>
+            <label>
+              Item
+              <input name="title" type="text" value="Homework">
+            </label>
+            <label>
+              Notes
+              <textarea name="notes" rows="3"></textarea>
+            </label>
+            <div class="form-row">
+              <label>
+                Due
+                <input name="dueAt" type="datetime-local">
+              </label>
+              <label>
+                Tags
+                <input name="tags" type="text" placeholder="school, movie, errand">
+              </label>
+            </div>
+            <button class="primary" type="submit">Save Item</button>
+          </form>
+
+          <form id="planListForm" class="profile-form compact-form">
+            <input name="id" type="hidden">
+            <div class="form-row thirds">
+              <label>
+                List Name
+                <input name="name" type="text" value="To Do">
+              </label>
+              <label>
+                Type
+                <select name="kind">
+                  <option value="todo">To Do</option>
+                  <option value="watch">Watch</option>
+                  <option value="read">Read</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </label>
+              <label class="checkline app-lock-enabled"><input name="active" type="checkbox" checked> Active</label>
+            </div>
+            <button class="secondary" type="submit">Save List</button>
+          </form>
+          <div id="planItemList" class="list limit-list"></div>
+        </section>
+
+        <section class="panel journal-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Planner</p>
+              <h2>Calendar Blocks</h2>
+            </div>
+            <button id="newPlanBlock" class="secondary" type="button">New</button>
+          </div>
+          <form id="planBlockForm" class="profile-form">
+            <input name="id" type="hidden">
+            <div class="form-row">
+              <label>
+                Title
+                <input name="title" type="text" value="Homework">
+              </label>
+              <label>
+                Item
+                <select id="planBlockItemId" name="itemId"></select>
+              </label>
+            </div>
+            <div class="form-row">
+              <label>
+                Start
+                <input name="startsAt" type="datetime-local">
+              </label>
+              <label>
+                End
+                <input name="endsAt" type="datetime-local">
+              </label>
+            </div>
+            <div class="form-row thirds">
+              <label>
+                Mode
+                <input name="mode" type="text" value="focus">
+              </label>
+              <label>
+                Profile
+                <select id="planBlockProfileId" name="profileId"></select>
+              </label>
+              <label>
+                Lock
+                <select name="lockLevel">
+                  <option value="deep">Deep</option>
+                  <option value="light">Light</option>
+                </select>
+              </label>
+            </div>
+            <div class="toggle-row compact-toggle-row">
+              <label><input name="enabled" type="checkbox" checked> Enabled</label>
+              <label><input name="commitmentLock" type="checkbox"> Commitment</label>
+              <label><input name="deviceTargets" type="checkbox" value="computer" checked> Computer</label>
+              <label><input name="deviceTargets" type="checkbox" value="phone" checked> iPhone</label>
+            </div>
+            <label>
+              Notes
+              <textarea name="notes" rows="3"></textarea>
+            </label>
+            <button class="primary" type="submit">Save Block</button>
+          </form>
+          <div id="plannerAgenda" class="planner-agenda"></div>
+        </section>
+      </div>
+
       <div class="workspace two-column">
         <section class="panel">
           <div class="section-head">

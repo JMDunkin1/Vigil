@@ -545,6 +545,28 @@ export function defaultState(): VigilState {
       behaviors: [],
       behaviorCheckIns: [],
       journalEntries: [],
+      planLists: [
+        {
+          id: "todo",
+          name: "To Do",
+          kind: "todo",
+          description: "Tasks and commitments to do soon.",
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: "watchlist",
+          name: "Watchlist",
+          kind: "watch",
+          description: "Movies and shows to watch later.",
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
+      planItems: [],
+      planBlocks: [],
       recoveryCheckIns: [],
       sosSessions: [],
       accountability: {

@@ -18,7 +18,7 @@ import { assertDistanceKey, updateDistanceKeySettings } from "./distanceKey.js";
 import { clearIntegrityTamper } from "./integrityLockdown.js";
 import { assertIntentReason } from "./intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "./intervention.js";
-import { addIntentionalJournalEntry, applyPornRecoverySetup, confirmIntentionalPause, deleteIntentionalBehavior, deleteIntentionalJournalEntry, recordIntentionalBehaviorCheckIn, recordIntentionalRecoveryCheckIn, skipIntentionalPause, startIntentionalSosSession, updateIntentionalUseAccountability, updateIntentionalUseGoal, upsertIntentionalBehavior, upsertIntentionalUseRule } from "./intentionalUse.js";
+import { addIntentionalJournalEntry, applyPornRecoverySetup, completeIntentionalPlanBlock, confirmIntentionalPause, deleteIntentionalBehavior, deleteIntentionalJournalEntry, deleteIntentionalPlanBlock, deleteIntentionalPlanItem, deleteIntentionalPlanList, recordIntentionalBehaviorCheckIn, recordIntentionalRecoveryCheckIn, skipIntentionalPause, startIntentionalSosSession, updateIntentionalUseAccountability, updateIntentionalUseGoal, upsertIntentionalBehavior, upsertIntentionalPlanBlock, upsertIntentionalPlanItem, upsertIntentionalPlanList, upsertIntentionalUseRule } from "./intentionalUse.js";
 import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "./iosProfiles.js";
 import { activeLimitBlocks, normalizeLimitRule } from "./limits.js";
@@ -226,6 +226,26 @@ function scheduleImmediateSessionEnforcement(sessionId: string): void {
       await saveState(state);
     } catch (error) {
       console.error("Immediate enforcement event save failed:", error);
+    }
+  });
+}
+
+function schedulePolicyEnforcement(reason: string): void {
+  setImmediate(async () => {
+    let event: UnknownRecord;
+    try {
+      const result = await requireMonitor().enforceImmediately(reason);
+      event = { reason, ok: true, result };
+    } catch (error) {
+      event = { reason, ok: false, error: errorMessage(error) };
+      console.error("Immediate policy enforcement failed:", error);
+    }
+
+    addEvent(state, "policy_immediate_enforcement", event);
+    try {
+      await saveState(state);
+    } catch (error) {
+      console.error("Immediate policy enforcement event save failed:", error);
     }
   });
 }
@@ -734,6 +754,97 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return;
   }
 
+  if (method === "POST" && path === "/api/intentional-use/plan/list") {
+    try {
+      const body = await readBody(request);
+      const list = upsertIntentionalPlanList(state, body);
+      addEvent(state, "intentional_plan_list_saved", { listId: list.id, name: list.name, active: list.active });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, list });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/plan/list/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const list = deleteIntentionalPlanList(state, id);
+      addEvent(state, "intentional_plan_list_archived", { listId: id, name: list?.name || "" });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, list });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/plan/item") {
+    try {
+      const body = await readBody(request);
+      const item = upsertIntentionalPlanItem(state, body);
+      addEvent(state, "intentional_plan_item_saved", { itemId: item.id, listId: item.listId, status: item.status });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, item });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/plan/item/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const item = deleteIntentionalPlanItem(state, id);
+      addEvent(state, "intentional_plan_item_archived", { itemId: id, title: item?.title || "" });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, item });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/plan/block") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "schedule", id: typeof body.id === "string" ? body.id : undefined });
+      const block = upsertIntentionalPlanBlock(state, body);
+      addEvent(state, "intentional_plan_block_saved", {
+        blockId: block.id,
+        title: block.title,
+        startsAt: block.startsAt,
+        endsAt: block.endsAt,
+        profileId: block.profileId,
+        enabled: block.enabled
+      });
+      recordIosMdmPolicyQueue("planner-block");
+      await saveState(state);
+      schedulePolicyEnforcement("planner-block-saved");
+      sendJson(response, 200, { ok: true, block });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/plan/block/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      assertProtectedEditAllowed(state, { kind: "schedule", id });
+      const deleted = deleteIntentionalPlanBlock(state, id);
+      addEvent(state, "intentional_plan_block_deleted", { blockId: id, deleted });
+      recordIosMdmPolicyQueue("planner-block-deleted");
+      await saveState(state);
+      schedulePolicyEnforcement("planner-block-deleted");
+      sendJson(response, 200, { ok: true, deleted });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
   if (method === "POST" && path === "/api/intentional-use/recovery/check-in") {
     try {
       const body = await readBody(request);
@@ -925,6 +1036,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       activeKind: active?.kind || "limit",
       sessionId: active?.session.id || null,
       scheduleId: active?.schedule?.id || null,
+      plannerBlockId: active?.plannerBlock?.id || null,
       limitBlockIds: active ? [] : activeLimits.map((block) => block.id),
       until: active?.endsAt || activeLimits.map((block) => block.until).sort().at(-1)
     };
@@ -977,6 +1089,8 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
         reason: pending.reason,
         createdAt: new Date().toISOString()
       });
+    } else if (pending.activeKind === "planner" && pending.plannerBlockId) {
+      completeIntentionalPlanBlock(state, String(pending.plannerBlockId));
     } else if (pending.activeKind === "limit") {
       const ids = new Set(pending.limitBlockIds || []);
       state.limitBlocks = (state.limitBlocks || []).filter((block) => !ids.has(String(block.id || "")));

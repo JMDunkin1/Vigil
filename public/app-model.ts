@@ -1,6 +1,6 @@
-import type { ActivePolicy, DeviceTargetInput, GrayscaleSchedule, PolicyPhase, Profile, Schedule, VigilState, Session, StateEvent, UnknownRecord, UsageSample } from "../src/types.js";
+import type { ActivePolicy, DeviceTargetInput, GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, PolicyPhase, Profile, Schedule, VigilState, Session, StateEvent, UnknownRecord, UsageSample } from "../src/types.js";
 
-export type { GrayscaleSchedule, Schedule, StateEvent, UnknownRecord };
+export type { GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, Schedule, StateEvent, UnknownRecord };
 
 export type ControlElement = HTMLElement & {
   value: string;
@@ -188,6 +188,17 @@ export interface IntentionalUseSummary extends UnknownRecord {
       active?: boolean;
       lastCheckInAt?: string | null;
     }>;
+    planner?: {
+      lists?: IntentionalPlanList[];
+      items?: IntentionalPlanItem[];
+      recentItems?: IntentionalPlanItem[];
+      blocks?: IntentionalPlanBlock[];
+      todayBlocks?: IntentionalPlanBlock[];
+      upcomingBlocks?: IntentionalPlanBlock[];
+      activeBlocks?: IntentionalPlanBlock[];
+      openItems?: number;
+      completedItems?: number;
+    };
     recentCheckIns?: Array<DashboardItem & {
       behaviorId?: string;
       behaviorName?: string;
@@ -203,6 +214,8 @@ export interface IntentionalUseSummary extends UnknownRecord {
       recoveryCheckInsThisWeek?: number;
       reflectionStreakDays?: number;
       activeBehaviors?: number;
+      openPlanItems?: number;
+      activePlanBlocks?: number;
     };
   };
   recovery?: {

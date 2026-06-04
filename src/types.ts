@@ -11,7 +11,7 @@ export type DeviceTargetInput = DeviceTarget;
 export type LockLevel = "light" | "deep";
 export type ProfileMode = "blocklist" | "allowlist";
 export type PolicyPhaseKind = "work" | "break";
-export type ActivePolicyKind = "baseline" | "manual" | "schedule" | "panic" | "integrity" | "app-lock" | "limit" | "browser-control" | "content-filter" | "url-pattern" | "allowlist";
+export type ActivePolicyKind = "baseline" | "manual" | "schedule" | "planner" | "panic" | "integrity" | "app-lock" | "limit" | "browser-control" | "content-filter" | "url-pattern" | "allowlist";
 export type LimitRuleType = "time" | "open";
 
 export interface Profile {
@@ -98,6 +98,7 @@ export interface ActivePolicy {
   session: Session;
   profile: Profile;
   schedule?: Schedule;
+  plannerBlock?: IntentionalPlanBlock;
   endsAt: string;
   phase?: PolicyPhase | null;
   appLock?: AppLockRule;
@@ -256,6 +257,7 @@ export interface EmergencyRequest {
   activeKind?: string;
   sessionId?: string | null;
   scheduleId?: string | null;
+  plannerBlockId?: string | null;
   limitBlockIds?: string[];
   until?: string;
   delaySeconds?: number;
@@ -388,6 +390,51 @@ export interface IntentionalJournalEntry {
   entryDate: string;
 }
 
+export type IntentionalPlanListKind = "todo" | "watch" | "read" | "custom";
+export type IntentionalPlanItemStatus = "open" | "done" | "archived";
+
+export interface IntentionalPlanList {
+  id: string;
+  name: string;
+  kind: IntentionalPlanListKind;
+  description: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntentionalPlanItem {
+  id: string;
+  listId: string;
+  title: string;
+  notes: string;
+  status: IntentionalPlanItemStatus;
+  dueAt: string | null;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface IntentionalPlanBlock {
+  id: string;
+  title: string;
+  notes: string;
+  listId: string;
+  itemId: string;
+  startsAt: string;
+  endsAt: string;
+  enabled: boolean;
+  completed: boolean;
+  mode: string;
+  profileId: string;
+  lockLevel: LockLevel;
+  commitmentLock: boolean;
+  deviceTargets: DeviceTarget[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type IntentionalRecoveryStatus = "clean" | "urge" | "setback" | "victory";
 export type IntentionalRecoveryKind = "daily" | "sos" | "manual";
 
@@ -455,6 +502,9 @@ export interface IntentionalUseState {
   behaviors: IntentionalBehavior[];
   behaviorCheckIns: IntentionalBehaviorCheckIn[];
   journalEntries: IntentionalJournalEntry[];
+  planLists: IntentionalPlanList[];
+  planItems: IntentionalPlanItem[];
+  planBlocks: IntentionalPlanBlock[];
   recoveryCheckIns: IntentionalRecoveryCheckIn[];
   sosSessions: IntentionalSosSession[];
   accountability: IntentionalAccountabilityState;
