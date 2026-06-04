@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { accountStatusFromGroups, parseGroups } from "../../src/account.js";
 import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, EXTENSION_TOKEN_HEADER, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "../../src/apiSecurity.js";
 import { parseBoolean } from "../../src/booleans.js";
-import { normalizeIosMdmSettings } from "../../src/iosMdm.js";
+import { iosMdmReadiness, normalizeIosMdmSettings } from "../../src/iosMdm.js";
 import { normalizeLimitRule } from "../../src/limits.js";
 
 assert.deepEqual(parseGroups("staff admin everyone staff"), ["admin", "everyone", "staff"]);
@@ -35,6 +35,34 @@ assert.equal(mdmBooleans.enabled, false);
 assert.equal(mdmBooleans.signMessage, false);
 assert.equal(mdmBooleans.useDevelopmentApns, false);
 assert.equal(mdmBooleans.checkOutWhenRemoved, false);
+assert.deepEqual(
+  {
+    status: iosMdmReadiness({ enabled: false }).status,
+    capabilityLevel: iosMdmReadiness({ enabled: false }).capabilityLevel
+  },
+  { status: "off", capabilityLevel: "static-profile" }
+);
+const mdmQueueOnly = iosMdmReadiness({
+  enabled: true,
+  publicBaseUrl: "https://vigil.example.test",
+  topic: "com.apple.mgmt.vigil",
+  identityCertificateUuid: "11111111-1111-4111-8111-111111111111",
+  identityCertificatePayloadBase64: "ZmFrZS1wa2NzMTI="
+});
+assert.equal(mdmQueueOnly.status, "queue-only");
+assert.equal(mdmQueueOnly.capabilityLevel, "command-queue");
+assert.equal(mdmQueueOnly.pushBlockers.length, 1);
+const mdmWireless = iosMdmReadiness({
+  ...mdmQueueOnly,
+  enabled: true,
+  publicBaseUrl: "https://vigil.example.test",
+  topic: "com.apple.mgmt.vigil",
+  identityCertificateUuid: "11111111-1111-4111-8111-111111111111",
+  identityCertificatePayloadBase64: "ZmFrZS1wa2NzMTI=",
+  pushCertificatePayloadBase64: "ZmFrZS1wdXNo"
+});
+assert.equal(mdmWireless.status, "ready");
+assert.equal(mdmWireless.capabilityLevel, "wireless-push");
 assert.equal(apiRequestGuard({ method: "GET", path: "/api/state", headers: {} }).ok, true);
 assert.equal(apiRequestGuard({ method: "POST", path: "/api/extension/check", headers: {} }).ok, false);
 assert.equal(apiRequestGuard({ method: "POST", path: "/api/extension/rules/sync", headers: { "content-type": "application/json" } }).ok, false);

@@ -1,13 +1,15 @@
 import { get, post, del } from "./api-client.js";
 import { renderAppLockDays, renderGrayscaleScheduleDays, renderIntentionalDays, renderLimitDays, renderScheduleDays } from "./day-controls.js";
+import { createDevicePanel } from "./device-panel.js";
 import { createDistanceKeyUi } from "./distance-key-ui.js";
 import { createDeviceTargetController } from "./device-targets.js";
 import { detailBlock, el, progressBlock, textEl } from "./dom.js";
 import { createFocusSoundController } from "./focus-sound.js";
 import { daysText, daysWithDataText, enforcementText, eventLabel, formatDuration, lines, phaseText, phaseTitle, progressText, shortDate, shortDateTime, signedDuration, signedNumber, signedPercent, sweepText, systemSleepLockText } from "./format.js";
+import { createHardeningPanel } from "./hardening-panel.js";
 import { renderPresetButtons } from "./preset-buttons.js";
 import { $, $$, bindViewNavigation, errorMessage, eventTarget, formPayload, initTheme, renderActiveView, toggleTheme } from "./ui-shell.js";
-import type { BarEntry, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeyResponse, DistanceKeySummary, FocusShortcutSummary, FormPayload, FoolproofSummary, GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, IntentionalUseSummary, InterventionSummary, KeyholderSummary, MonitorSummary, PendingResponse, ProgressSummary, ProtectionSummary, QueuePolicyResponse, ReportSummary, Schedule, SessionEndResponse, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary, WeekDaySummary } from "./app-model.js";
+import type { BarEntry, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeyResponse, GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, IntentionalUseSummary, InterventionSummary, MonitorSummary, PendingResponse, ProgressSummary, ReportSummary, Schedule, SessionEndResponse, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary, WeekDaySummary } from "./app-model.js";
 
 const state: UiState = {
   data: null,
@@ -32,6 +34,18 @@ const deviceTargets = createDeviceTargetController({
 });
 const focusSound = createFocusSoundController({ $, post });
 const distanceKeyUi = createDistanceKeyUi({ $, toast, errorMessage, scanner: state.distanceScanner });
+const devicePanel = createDevicePanel({ $, post, lines, toast, errorMessage, refresh });
+const hardeningPanel = createHardeningPanel({
+  $,
+  post,
+  toast,
+  errorMessage,
+  refresh,
+  getData: () => state.data,
+  setPendingMaintenanceId: (id) => {
+    state.pendingMaintenanceId = id;
+  }
+});
 
 boot();
 
@@ -75,6 +89,8 @@ function bindEvents() {
   $("#themeToggle").addEventListener("click", toggleTheme);
 
   deviceTargets.bind();
+  devicePanel.bind();
+  hardeningPanel.bind();
 
   $$("[data-scan-distance-key]").forEach((button) => {
     button.addEventListener("click", () => distanceKeyUi.openScanner(button.dataset.scanDistanceKey));
@@ -456,79 +472,7 @@ function bindEvents() {
   });
 
   $("#copyAccountabilityDigest").addEventListener("click", async () => {
-    await copyHardeningText($("#accountabilityDigest").textContent || "", "Digest copied");
-  });
-
-  $("#iosForm").addEventListener("submit", async (event: Event) => {
-    event.preventDefault();
-    try {
-      await post("/api/devices/ios/settings", {
-        enabled: $("#iosEnabled").checked,
-        mode: $("#iosMode").value,
-        webMode: $("#iosWebMode").value,
-        blockApps: $("#iosBlockApps").checked,
-        blockWeb: $("#iosBlockWeb").checked,
-        hardenRemoval: $("#iosHardenRemoval").checked,
-        restrictInstallAndErase: $("#iosRestrictInstallErase").checked,
-        blockedAppBundleIds: lines($("#iosBlockedBundles").value),
-        allowedAppBundleIds: lines($("#iosAllowedBundles").value),
-        deniedUrls: lines($("#iosDeniedUrls").value),
-        allowedUrls: lines($("#iosAllowedUrls").value)
-      });
-      toast("iPhone policy saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#iosDownloadProfile").addEventListener("click", () => {
-    window.location.href = "/api/devices/ios/profile.mobileconfig";
-  });
-
-  $("#iosMdmForm").addEventListener("submit", async (event: Event) => {
-    event.preventDefault();
-    try {
-      const payload: FormPayload = {
-        enabled: $("#iosMdmEnabled").checked,
-        publicBaseUrl: $("#iosMdmPublicBaseUrl").value,
-        topic: $("#iosMdmTopic").value,
-        identityCertificateUuid: $("#iosMdmIdentityUuid").value,
-        signMessage: $("#iosMdmSignMessage").checked,
-        useDevelopmentApns: $("#iosMdmDevApns").checked
-      };
-      const identityPayload = $("#iosMdmIdentityPayload").value.trim();
-      const identityPassword = $("#iosMdmIdentityPassword").value;
-      const pushPayload = $("#iosMdmPushPayload").value.trim();
-      const pushPassword = $("#iosMdmPushPassword").value;
-      if (identityPayload) payload.identityCertificatePayloadBase64 = identityPayload;
-      if (identityPassword) payload.identityCertificatePassword = identityPassword;
-      if (pushPayload) payload.pushCertificatePayloadBase64 = pushPayload;
-      if (pushPassword) payload.pushCertificatePassword = pushPassword;
-      await post("/api/devices/ios/mdm/settings", payload);
-      $("#iosMdmIdentityPayload").value = "";
-      $("#iosMdmIdentityPassword").value = "";
-      $("#iosMdmPushPayload").value = "";
-      $("#iosMdmPushPassword").value = "";
-      toast("iPhone MDM setup saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#iosMdmDownloadEnrollment").addEventListener("click", () => {
-    window.location.href = "/api/devices/ios/mdm/enrollment.mobileconfig";
-  });
-
-  $("#iosMdmQueuePolicy").addEventListener("click", async () => {
-    try {
-      const response = await post<QueuePolicyResponse>("/api/devices/ios/mdm/queue-policy", {});
-      toast(response.result?.queued ? `Queued ${response.result.queued} iPhone update(s)` : "No enrolled iPhones to update");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
+    await hardeningPanel.copyText($("#accountabilityDigest").textContent || "", "Digest copied");
   });
 
   $("#requestEmergency").addEventListener("click", async () => {
@@ -661,168 +605,6 @@ function bindEvents() {
   });
 
   $("#printDistanceKey").addEventListener("click", distanceKeyUi.print);
-
-  $("#installLaunchAgent").addEventListener("click", async () => {
-    const status = $("#hardeningActionStatus");
-    status.textContent = "Installing login agent...";
-    $("#installLaunchAgent").disabled = true;
-    try {
-      await post("/api/hardening/launch-agent/install", {});
-      status.textContent = "Login agent installed";
-      toast("Login agent installed");
-    } catch (error) {
-      status.textContent = errorMessage(error);
-      toast(errorMessage(error));
-    } finally {
-      $("#installLaunchAgent").disabled = false;
-    }
-    await refresh();
-  });
-
-  $("#applyHostsBlock").addEventListener("click", async () => {
-    const status = $("#hardeningActionStatus");
-    const action = state.data?.hardening.actions?.hostsApply || {};
-    status.textContent = "Waiting for macOS password...";
-    $("#applyHostsBlock").disabled = true;
-    try {
-      await post(action.path || "/api/hardening/hosts/apply", {});
-      status.textContent = "Network block applied";
-      toast("Network block applied");
-    } catch (error) {
-      status.textContent = errorMessage(error);
-      toast(errorMessage(error));
-    } finally {
-      $("#applyHostsBlock").disabled = false;
-    }
-    await refresh();
-  });
-
-  $("#applySafariFilter").addEventListener("click", async () => {
-    const status = $("#hardeningActionStatus");
-    const action = state.data?.hardening.actions?.safariFilterApply || {};
-    status.textContent = "Opening Safari filter profile...";
-    $("#applySafariFilter").disabled = true;
-    try {
-      await post(action.path || "/api/hardening/safari-filter/apply", {});
-      status.textContent = "Safari filter profile opened";
-      toast("Approve Safari filter in System Settings");
-    } catch (error) {
-      status.textContent = errorMessage(error);
-      toast(errorMessage(error));
-    } finally {
-      $("#applySafariFilter").disabled = false;
-    }
-    await refresh();
-  });
-
-  $("#clearTamperAlarm").addEventListener("click", async () => {
-    const status = $("#hardeningActionStatus");
-    const action = state.data?.hardening.actions?.tamperClear || {};
-    status.textContent = "Clearing tamper alarm...";
-    $("#clearTamperAlarm").disabled = true;
-    try {
-      await post(action.path || "/api/integrity/clear-tamper", {});
-      status.textContent = "Tamper alarm cleared";
-      toast("Tamper alarm cleared");
-    } catch (error) {
-      status.textContent = errorMessage(error);
-      toast(errorMessage(error));
-    } finally {
-      $("#clearTamperAlarm").disabled = false;
-    }
-    await refresh();
-  });
-
-  $("#copyHostsCommand").addEventListener("click", async () => {
-    const command = state.data?.hardening.actions?.hostsApply?.command || "npm run network:apply";
-    await copyHardeningText(command, "Network command copied");
-  });
-
-  $("#copySourceSealCommand").addEventListener("click", async () => {
-    const command = state.data?.hardening.actions?.sourceSeal?.command || "npm run seal:source";
-    await copyHardeningText(command, "Source seal command copied");
-  });
-
-  $("#copyExtensionPath").addEventListener("click", async () => {
-    const path = state.data?.hardening.actions?.extensionLoad?.path || "extension";
-    await copyHardeningText(path, "Extension path copied");
-  });
-
-  $("#saveFocusShortcuts").addEventListener("click", async () => {
-    try {
-      await post("/api/settings", {
-        focusShortcutEnabled: $("#focusShortcutEnabled").checked,
-        focusShortcutOnName: $("#focusShortcutOnName").value,
-        focusShortcutOffName: $("#focusShortcutOffName").value
-      });
-      toast("Focus hooks saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  for (const id of ["systemNetworkBlockingEnabled", "safariUrlFilterEnabled", "siteRedirectEnabled", "contentFilterEnabled", "browserNoiseBlockingEnabled", "typingChallengeEnabled", "intentReasonEnabled", "appQuitEnabled", "strictBypassProtectionEnabled", "processSweepEnabled", "systemSleepLockEnabled", "focusShortcutEnabled", "strictByDefault", "protectedEditsEnabled", "foolproofModeEnabled"]) {
-    $(`#${id}`).addEventListener("change", async (event: Event) => {
-      try {
-        await post("/api/settings", { [id]: eventTarget(event).checked });
-        toast("Setting saved");
-      } catch (error) {
-        toast(errorMessage(error));
-      }
-      await refresh();
-    });
-  }
-
-  $("#appQuitEscalationSeconds").addEventListener("change", async (event: Event) => {
-    try {
-      await post("/api/settings", { appQuitEscalationSeconds: eventTarget(event).value });
-      toast("Escalation saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#processSweepIntervalSeconds").addEventListener("change", async (event: Event) => {
-    try {
-      await post("/api/settings", { processSweepIntervalSeconds: eventTarget(event).value });
-      toast("Sweep interval saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#systemSleepLockIntervalSeconds").addEventListener("change", async (event: Event) => {
-    try {
-      await post("/api/settings", { systemSleepLockIntervalSeconds: eventTarget(event).value });
-      toast("Sleep relock saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#panicLockDurationMinutes").addEventListener("change", async (event: Event) => {
-    try {
-      await post("/api/settings", { panicLockDurationMinutes: eventTarget(event).value });
-      toast("Panic duration saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#intentReasonMinLength").addEventListener("change", async (event: Event) => {
-    try {
-      await post("/api/settings", { intentReasonMinLength: eventTarget(event).value });
-      toast("Reason gate saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
 }
 
 async function startNormalMode() {
@@ -903,7 +685,7 @@ function render() {
   renderIntervention(data.intervention);
   renderIntentionalUse(data.intentionalUse);
   renderLifeLog(data.intentionalUse);
-  renderHardening(data);
+  hardeningPanel.render(data);
   renderProfiles(data.state);
   renderSchedules(data.state.schedules);
   renderGrayscale(data);
@@ -912,7 +694,7 @@ function render() {
   renderBars("#appBars", data.usage.topApps);
   renderBars("#siteBars", data.usage.topSites);
   renderReport(data.report);
-  renderDevices(data.devices);
+  devicePanel.render(data.devices);
   renderEvents(data.state.events);
   renderEmergency(data.state);
   renderCountdowns();
@@ -1054,186 +836,6 @@ function renderIntervention(intervention: InterventionSummary): void {
     }
     root.append(targets);
   }
-}
-
-function renderHardening(data: DashboardData): void {
-  const settings = data.state.settings;
-  $("#systemNetworkBlockingEnabled").checked = settings.systemNetworkBlockingEnabled !== false;
-  $("#safariUrlFilterEnabled").checked = settings.safariUrlFilterEnabled !== false;
-  $("#siteRedirectEnabled").checked = Boolean(settings.siteRedirectEnabled);
-  $("#contentFilterEnabled").checked = settings.contentFilterEnabled !== false;
-  $("#browserNoiseBlockingEnabled").checked = settings.browserNoiseBlockingEnabled !== false;
-  $("#typingChallengeEnabled").checked = settings.typingChallengeEnabled !== false;
-  $("#intentReasonEnabled").checked = settings.intentReasonEnabled !== false;
-  $("#appQuitEnabled").checked = Boolean(settings.appQuitEnabled);
-  $("#strictBypassProtectionEnabled").checked = settings.strictBypassProtectionEnabled !== false;
-  $("#processSweepEnabled").checked = Boolean(settings.processSweepEnabled);
-  $("#systemSleepLockEnabled").checked = Boolean(settings.systemSleepLockEnabled);
-  $("#focusShortcutEnabled").checked = Boolean(settings.focusShortcutEnabled);
-  $("#strictByDefault").checked = Boolean(settings.strictByDefault);
-  $("#protectedEditsEnabled").checked = Boolean(settings.protectedEditsEnabled);
-  $("#foolproofModeEnabled").checked = Boolean(settings.foolproofModeEnabled);
-  $("#appQuitEscalationSeconds").value = String(settings.appQuitEscalationSeconds || 10);
-  $("#processSweepIntervalSeconds").value = String(settings.processSweepIntervalSeconds || 15);
-  $("#systemSleepLockIntervalSeconds").value = String(settings.systemSleepLockIntervalSeconds || 60);
-  $("#panicLockDurationMinutes").value = String(settings.panicLockDurationMinutes || 3);
-  $("#intentReasonMinLength").value = String(settings.intentReasonMinLength || 20);
-  renderIntentReasonHints(settings);
-  renderFocusShortcut(data.state.focusShortcut);
-  $("#hostsBlock").textContent = data.hardening.hostsBlock || "";
-  renderHardeningActions(data.hardening);
-  const hosts = data.hardening.hosts || {};
-  const firewall = data.hardening.firewall || {};
-  const networkCurrent = hosts.installed && !hosts.partial && !hosts.stale && firewall.installed && !firewall.partial && !firewall.stale;
-  const networkWarn = hosts.partial || hosts.stale || firewall.partial || firewall.stale || hosts.installed || firewall.installed;
-  $("#hostsStatus").textContent = networkCurrent
-    ? "Network current"
-    : (networkWarn ? "Network stale" : "Network preview");
-  $("#hostsStatus").className = networkCurrent ? "pill good" : (networkWarn ? "pill warn" : "pill neutral");
-  renderKeyholder(data.state.keyholder);
-  renderDistanceKey(data.state.distanceKey);
-  renderMaintenance(data.protection);
-  renderAudit(data.hardening.audit || []);
-  renderFoolproofBlockers(data.hardening.foolproof);
-}
-
-function renderHardeningActions(hardening: DashboardData["hardening"]): void {
-  const agent = hardening.launchAgent || {};
-  const hosts = hardening.hosts || {};
-  const firewall = hardening.firewall || {};
-  const safariFilter = hardening.safariFilter || {};
-  const networkCurrent = hosts.installed && !hosts.partial && !hosts.stale && firewall.installed && !firewall.partial && !firewall.stale;
-  const safariCurrent = safariFilter.installed && !safariFilter.stale;
-  const tamperActive = Boolean(hardening.stateSeal?.tamperDetectedAt || hardening.stateSeal?.status === "tamper-detected");
-  $("#installLaunchAgent").textContent = agent.installed ? "Reinstall Login Agent" : "Install Login Agent";
-  $("#applyHostsBlock").textContent = networkCurrent ? "Reapply Network Block" : "Apply Network Block";
-  $("#applySafariFilter").textContent = safariCurrent ? "Reapply Safari Filter" : "Apply Safari Filter";
-  $("#clearTamperAlarm").hidden = !tamperActive;
-  $("#clearTamperAlarm").disabled = !tamperActive;
-  $("#copyHostsCommand").textContent = networkCurrent ? "Copy Network Reapply" : "Copy Network Command";
-}
-
-function renderFocusShortcut(focusShortcut: FocusShortcutSummary): void {
-  const onName = $("#focusShortcutOnName");
-  const offName = $("#focusShortcutOffName");
-  if (document.activeElement !== onName) onName.value = focusShortcut?.onShortcutName || "";
-  if (document.activeElement !== offName) offName.value = focusShortcut?.offShortcutName || "";
-  const status = $("#focusShortcutStatus");
-  if (focusShortcut?.lastError) {
-    status.textContent = focusShortcut.lastError;
-  } else if (focusShortcut?.active) {
-    status.textContent = "Active";
-  } else if (focusShortcut?.enabled) {
-    status.textContent = "Ready";
-  } else {
-    status.textContent = "Disabled";
-  }
-}
-
-function renderIntentReasonHints(settings: DashboardState["settings"]): void {
-  const min = settings.intentReasonEnabled === false ? 0 : (settings.intentReasonMinLength || 20);
-  const hint = min ? `Reason (${min}+ chars)` : "Reason";
-  for (const id of ["emergencyReason", "maintenanceReason", "appLockReason"]) {
-    const field = $(`#${id}`);
-    if (field) field.placeholder = hint;
-  }
-}
-
-function renderKeyholder(keyholder: KeyholderSummary): void {
-  $("#keyholderEnabled").checked = Boolean(keyholder?.enabled);
-  $("#keyholderStatus").textContent = keyholder?.enabled
-    ? "Required"
-    : (keyholder?.hasPasscode ? "Saved" : "Not set");
-}
-
-function renderDistanceKey(distanceKey: DistanceKeySummary): void {
-  $("#distanceKeyEnabled").checked = Boolean(distanceKey?.enabled);
-  const keyFile = $("#distanceKeyFilePath");
-  if (document.activeElement !== keyFile) keyFile.value = distanceKey?.keyFilePath || "";
-  $("#distanceKeyStatus").textContent = distanceKey?.enabled
-    ? (distanceKey?.hasKeyFile ? "File required" : "Required")
-    : (distanceKey?.hasToken ? (distanceKey?.hasKeyFile ? "Saved + file" : "Saved") : "Not set");
-}
-
-function renderMaintenance(protection: ProtectionSummary): void {
-  const active = protection.activeWindow;
-  const pending = protection.pending?.[0] || null;
-  const status = $("#maintenanceStatus");
-  const confirm = $("#confirmMaintenance");
-  if (active) {
-    renderTypingChallenge($("#maintenanceChallenge"), $("#maintenanceChallengeInput"), null);
-    status.textContent = `Open for ${formatDuration((new Date(active.until).getTime() - Date.now()) / 1000)}`;
-    confirm.disabled = true;
-    return;
-  }
-  if (pending) {
-    state.pendingMaintenanceId = pending.id;
-    renderTypingChallenge($("#maintenanceChallenge"), $("#maintenanceChallengeInput"), pending.challenge || null);
-    const seconds = Math.ceil((new Date(pending.eligibleAt).getTime() - Date.now()) / 1000);
-    if (seconds > 0) {
-      status.textContent = `Confirm in ${seconds}s`;
-      confirm.disabled = true;
-    } else {
-      status.textContent = "Ready to confirm";
-      confirm.disabled = false;
-    }
-    return;
-  }
-  renderTypingChallenge($("#maintenanceChallenge"), $("#maintenanceChallengeInput"), null);
-  status.textContent = protection.enabled ? "Closed" : "Off";
-  confirm.disabled = true;
-}
-
-function renderAudit(items: DashboardItem[]): void {
-  const root = $("#hardeningAudit");
-  root.replaceChildren();
-  for (const item of items) {
-    const row = document.createElement("div");
-    row.className = item.ok ? "audit-item good" : "audit-item warn";
-    row.append(
-      textEl("span", item.ok ? "OK" : "Check"),
-      textEl("strong", item.label),
-      textEl("em", item.detail)
-    );
-    root.append(row);
-  }
-}
-
-function renderFoolproofBlockers(foolproof?: FoolproofSummary): void {
-  const root = $("#foolproofBlockers");
-  root.replaceChildren();
-  if (!foolproof) return;
-  if (foolproof.ready) {
-    const row = document.createElement("div");
-    row.className = "blocker-item good";
-    row.textContent = foolproof.enabled ? "Foolproof ready." : "Foolproof checklist ready.";
-    root.append(row);
-    return;
-  }
-  for (const item of foolproof.blockers || []) {
-    const row = document.createElement("div");
-    row.className = "blocker-item";
-    row.append(textEl("strong", prettyBlockerId(item.id)), textEl("span", item.detail));
-    root.append(row);
-  }
-}
-
-async function copyHardeningText(value: string, message: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(value);
-    $("#hardeningActionStatus").textContent = message;
-    toast(message);
-  } catch {
-    $("#hardeningActionStatus").textContent = value;
-    toast("Shown below");
-  }
-}
-
-function prettyBlockerId(value: unknown): string {
-  return String(value || "")
-    .split("-")
-    .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
-    .join(" ");
 }
 
 function renderProfiles(appState: DashboardState): void {
@@ -1988,87 +1590,6 @@ function renderReport(report: ReportSummary): void {
   renderMilestones(report.milestones);
 }
 
-function renderDevices(devices: DashboardData["devices"]): void {
-  if (!devices) return;
-  const ios = devices.ios || {};
-  $("#iosEnabled").checked = Boolean(ios.enabled);
-  $("#iosMode").value = ios.mode || "denylist";
-  $("#iosWebMode").value = ios.webMode || "denylist";
-  $("#iosBlockApps").checked = ios.blockApps !== false;
-  $("#iosBlockWeb").checked = ios.blockWeb !== false;
-  $("#iosHardenRemoval").checked = ios.removalHardened || ios.hardenRemoval !== false;
-  $("#iosRestrictInstallErase").checked = ios.restrictInstallAndErase !== false;
-  $("#iosBlockedBundles").value = (ios.blockedAppBundleIds || []).join("\n");
-  $("#iosAllowedBundles").value = (ios.allowedAppBundleIds || []).join("\n");
-  $("#iosDeniedUrls").value = (ios.deniedUrls || []).join("\n");
-  $("#iosAllowedUrls").value = (ios.allowedUrls || []).join("\n");
-
-  $("#iosStatus").textContent = ios.enabled ? "Enabled" : "Ready";
-  $("#iosStatus").className = ios.enabled ? "pill good" : "pill neutral";
-  $("#iosStatusTitle").textContent = ios.enabled ? "Supervised policy enabled" : "Supervised profile ready";
-  $("#iosStatusText").textContent = ios.note || "Apple-only iPhone blocking needs a supervised device policy.";
-
-  const iosSummary = $("#iosSummary");
-  iosSummary.replaceChildren();
-  const profile = ios.profile || {};
-  [
-    ["Integration", "Apple devices only"],
-    ["Setup", ios.supervisedRequired ? "supervised iPhone required" : "standard"],
-    ["Apps", ios.blockApps ? `${profile.appBundleCount || 0} bundle IDs` : "off"],
-    ["Web", ios.blockWeb ? `${profile.deniedUrlCount || 0} denied / ${profile.allowedUrlCount || 0} allowed` : "off"],
-    ["Web clips", profile.webClipCount ? `${profile.webClipCount} managed` : "none"],
-    ["Grayscale", profile.grayscale?.desired ? `${profile.grayscale.label || "on"}${profile.grayscale.settingsGuarded ? " + Settings guard" : ""}` : "normal"],
-    ["Native Reels", "not available through public iOS APIs"],
-    ["Removal", ios.removalHardened ? "passcode protected" : "device removable"],
-    ["Profile", profile.generatedFrom || "saved policy"]
-  ].forEach(([label, value]) => iosSummary.append(deviceRow(label, value)));
-
-  const mdm = ios.mdm || {};
-  $("#iosMdmEnabled").checked = Boolean(mdm.enabled);
-  $("#iosMdmPublicBaseUrl").value = mdm.publicBaseUrl || "";
-  $("#iosMdmTopic").value = mdm.topic || "";
-  $("#iosMdmIdentityUuid").value = mdm.identityCertificateUuid || "";
-  $("#iosMdmIdentityPayload").placeholder = mdm.identityCertificatePayloadSet ? "Saved payload is set" : "Base64 payload";
-  $("#iosMdmIdentityPassword").placeholder = mdm.identityCertificatePasswordSet ? "Saved password is set" : "Leave blank to keep saved password";
-  $("#iosMdmPushPayload").placeholder = mdm.pushCertificatePayloadSet ? "Saved APNs push certificate is set" : "Base64 APNs push PKCS#12";
-  $("#iosMdmPushPassword").placeholder = mdm.pushCertificatePasswordSet ? "Saved password is set" : "Leave blank to keep saved password";
-  $("#iosMdmSignMessage").checked = Boolean(mdm.signMessage);
-  $("#iosMdmDevApns").checked = Boolean(mdm.useDevelopmentApns);
-  $("#iosMdmStatus").textContent = mdm.enabled ? (mdm.ready ? "Ready" : (mdm.enrollmentReady ? "Queue" : "Setup")) : "Off";
-  $("#iosMdmStatus").className = mdm.enabled ? (mdm.ready ? "pill good" : "pill warn") : "pill neutral";
-  $("#iosMdmTitle").textContent = mdm.ready ? "MDM ready" : (mdm.enabled ? (mdm.enrollmentReady ? "Command queue ready" : "Setup needed") : "Server setup");
-  $("#iosMdmText").textContent = mdm.note || "Enroll a supervised iPhone so policy changes come from this computer.";
-
-  const mdmSummary = $("#iosMdmSummary");
-  mdmSummary.replaceChildren();
-  [
-    ["Public URL", mdm.publicBaseUrl || "not set"],
-    ["Identity", mdm.identityCertificatePayloadSet ? "payload set" : "missing payload"],
-    ["APNs Push", mdm.pushCertificatePayloadSet ? "certificate set" : "missing certificate"],
-    ["Enroll", mdm.enrollmentUrl || mdm.localEnrollmentPath || "not ready"],
-    ["Devices", `${mdm.enrolledDeviceCount || 0} enrolled`],
-    ["Commands", `${mdm.pendingCommandCount || 0} queued / ${mdm.sentCommandCount || 0} sent`],
-    ["Grayscale command", mdm.grayscale?.desired ? `on: ${mdm.grayscale.label || "active"}` : "normal"],
-    ["Last push", mdm.lastPushAt ? `${shortDateTime(mdm.lastPushAt)} ${mdm.lastPushStatus || ""}`.trim() : "never"],
-    ["Push error", mdm.lastPushError || "none"],
-    ["Last seen", mdm.lastSeenAt ? shortDateTime(mdm.lastSeenAt) : "never"],
-    ["Wireless", mdm.pushSupported ? "APNs ready" : "APNs sender pending"]
-  ].forEach(([label, value]) => mdmSummary.append(deviceRow(label, value)));
-  for (const blocker of mdm.blockers || []) {
-    mdmSummary.append(deviceRow("Need", blocker));
-  }
-  for (const device of (mdm.devices || []).slice(0, 3)) {
-    const details = [device.status, device.productName, device.osVersion].filter(Boolean).join(" / ");
-    mdmSummary.append(deviceRow(device.udid || "iPhone", details || device.lastStatus || "seen"));
-  }
-}
-
-function deviceRow(label: string, value: string | number | boolean | null | undefined) {
-  const row = detailBlock(label, value || "--");
-  row.className = "device-row";
-  return row;
-}
-
 function renderWeekStrip(days: WeekDaySummary[], goal: number): void {
   const root = $("#weekStrip");
   root.replaceChildren();
@@ -2185,7 +1706,7 @@ function renderCountdowns(): void {
   const active = appState?.activePolicy;
   const phase = active?.phase || appState?.sessionPhase;
   const activeLimitBlocks = (state.data?.limits.activeBlocks || []).filter((block) => new Date(block.until) > new Date());
-  if (state.data?.protection) renderMaintenance(state.data.protection);
+  if (state.data?.protection) hardeningPanel.renderMaintenance(state.data.protection);
   if (phase) {
     const seconds = Math.max(0, Math.round((new Date(phase.endsAt).getTime() - Date.now()) / 1000));
     $("#sessionCountdown").textContent = formatDuration(seconds);
