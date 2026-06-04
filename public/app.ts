@@ -1,10 +1,13 @@
 import { get, post, del } from "./api-client.js";
+import { renderAppLockDays, renderGrayscaleScheduleDays, renderIntentionalDays, renderLimitDays, renderScheduleDays } from "./day-controls.js";
 import { createDistanceKeyUi } from "./distance-key-ui.js";
 import { createDeviceTargetController } from "./device-targets.js";
-import { dayCheckbox, detailBlock, el, progressBlock, textEl } from "./dom.js";
+import { detailBlock, el, progressBlock, textEl } from "./dom.js";
 import { createFocusSoundController } from "./focus-sound.js";
-import { days, daysText, daysWithDataText, enforcementText, eventLabel, formatDuration, lines, phaseText, phaseTitle, progressText, shortDate, shortDateTime, signedDuration, signedNumber, signedPercent, sweepText, systemSleepLockText } from "./format.js";
-import type { BarEntry, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeyResponse, DistanceKeySummary, FocusShortcutSummary, FormPayload, FoolproofSummary, GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, IntentionalUseSummary, InterventionSummary, KeyholderSummary, MonitorSummary, NamedFormControls, PendingResponse, Preset, ProgressSummary, ProtectionSummary, QueuePolicyResponse, ReportSummary, Schedule, SessionEndResponse, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary, WeekDaySummary } from "./app-model.js";
+import { daysText, daysWithDataText, enforcementText, eventLabel, formatDuration, lines, phaseText, phaseTitle, progressText, shortDate, shortDateTime, signedDuration, signedNumber, signedPercent, sweepText, systemSleepLockText } from "./format.js";
+import { renderPresetButtons } from "./preset-buttons.js";
+import { $, $$, bindViewNavigation, errorMessage, eventTarget, formPayload, initTheme, renderActiveView, toggleTheme } from "./ui-shell.js";
+import type { BarEntry, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeyResponse, DistanceKeySummary, FocusShortcutSummary, FormPayload, FoolproofSummary, GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, IntentionalUseSummary, InterventionSummary, KeyholderSummary, MonitorSummary, PendingResponse, ProgressSummary, ProtectionSummary, QueuePolicyResponse, ReportSummary, Schedule, SessionEndResponse, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary, WeekDaySummary } from "./app-model.js";
 
 const state: UiState = {
   data: null,
@@ -21,26 +24,6 @@ const state: UiState = {
     target: null
   }
 };
-
-const $ = (selector: string): ControlElement => {
-  const element = document.querySelector(selector);
-  if (!element) throw new Error(`Missing UI element: ${selector}`);
-  return element as ControlElement;
-};
-
-const $$ = <T extends Element = ControlElement>(selector: string): NodeListOf<T> => document.querySelectorAll<T>(selector);
-
-function formPayload(form: FormData): FormPayload {
-  return Object.fromEntries(form.entries()) as FormPayload;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error || "Request failed");
-}
-
-function eventTarget(event: Event): ControlElement {
-  return event.target as ControlElement;
-}
 
 const BRICK_MODE_PROFILE_ID = "brick-mode";
 const SOFT_BLOCK_PROFILE_ID = "soft-block";
@@ -59,7 +42,7 @@ function boot() {
   renderLimitDays();
   renderAppLockDays();
   renderIntentionalDays();
-  bindViewNavigation();
+  bindViewNavigation(setView);
   bindEvents();
   void refresh();
   setInterval(() => {
@@ -68,48 +51,9 @@ function boot() {
   state.timer = setInterval(renderCountdowns, 1000);
 }
 
-function initTheme() {
-  let saved;
-  try {
-    saved = localStorage.getItem("sentinel-theme") || "";
-  } catch {
-    saved = "";
-  }
-  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
-  setTheme(saved || (prefersDark ? "dark" : "light"));
-}
-
-function setTheme(theme: string) {
-  const next = theme === "dark" ? "dark" : "light";
-  document.documentElement.dataset.theme = next;
-  try {
-    localStorage.setItem("sentinel-theme", next);
-  } catch {
-  }
-  const button = $("#themeToggle");
-  if (!button) return;
-  button.textContent = next === "dark" ? "Light" : "Dark";
-  button.setAttribute("aria-pressed", String(next === "dark"));
-}
-
-function bindViewNavigation() {
-  for (const button of $$("[data-view-target]")) {
-    button.addEventListener("click", () => setView(button.dataset.viewTarget));
-  }
-}
-
 function setView(view?: string) {
   state.activeView = view || "home";
-  for (const panel of $$("[data-view]")) {
-    const active = panel.dataset.view === state.activeView;
-    panel.hidden = !active;
-    panel.classList.toggle("is-active", active);
-  }
-  for (const button of $$("[data-view-target]")) {
-    const active = button.dataset.viewTarget === state.activeView;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-selected", String(active));
-  }
+  renderActiveView(state.activeView);
 }
 
 function selectedDeviceTargets() {
@@ -128,9 +72,7 @@ function deviceTargetsText(targets: readonly string[] = []): string {
 }
 
 function bindEvents() {
-  $("#themeToggle").addEventListener("click", () => {
-    setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
-  });
+  $("#themeToggle").addEventListener("click", toggleTheme);
 
   deviceTargets.bind();
 
@@ -953,7 +895,7 @@ async function refresh() {
 function render() {
   const data = state.data;
   if (!data) return;
-  renderPresetButtons(data.presets || []);
+  renderPresetButtons(data.presets || [], toast);
   renderHeader(data.state, data.monitor, data.limits.activeBlocks);
   focusSound.render(data);
   renderMetrics(data.usage, data.report);
@@ -974,56 +916,6 @@ function render() {
   renderEvents(data.state.events);
   renderEmergency(data.state);
   renderCountdowns();
-}
-
-function renderPresetButtons(presets: Preset[]) {
-  for (const strip of $$(".preset-strip")) {
-    strip.replaceChildren();
-    if (!presets.length) continue;
-    const label = document.createElement("span");
-    label.textContent = "Add preset";
-    strip.append(label);
-    for (const preset of presets) {
-      const button = document.createElement("button");
-      button.className = "secondary compact";
-      button.type = "button";
-      button.textContent = preset.label;
-      button.addEventListener("click", () => applyPreset(strip, preset));
-      strip.append(button);
-    }
-  }
-}
-
-function applyPreset(strip: ControlElement, preset: Preset): void {
-  const formName = strip.dataset.form || "";
-  const form = document.forms.namedItem(formName);
-  if (!form) return;
-  const elements = form.elements as NamedFormControls;
-  const siteValues = [...(preset.sites || [])];
-  const urlPatternValues = [...(preset.urlPatterns || [])];
-  const urlPatternField = strip.dataset.urlPatternField || "";
-  if (urlPatternField) {
-    for (const site of [...siteValues]) {
-      const patterns = PRESET_SHORT_FORM_PATTERNS[site];
-      if (!patterns) continue;
-      siteValues.splice(siteValues.indexOf(site), 1);
-      urlPatternValues.push(...patterns);
-    }
-  }
-  appendLines(elements[strip.dataset.appField || ""], preset.apps);
-  appendLines(elements[strip.dataset.siteField || ""], siteValues);
-  appendLines(elements[urlPatternField], urlPatternValues);
-  toast(`${preset.label} preset added`);
-}
-
-const PRESET_SHORT_FORM_PATTERNS: Record<string, string[]> = {
-  "youtube.com": ["youtube.com/shorts", "m.youtube.com/shorts"]
-};
-
-function appendLines(field: ControlElement | undefined, values: string[] = []): void {
-  if (!field) return;
-  const next = [...new Set([...lines(field.value), ...values].map((item) => String(item).trim()).filter(Boolean))];
-  field.value = next.join("\n");
 }
 
 function renderDeviceTargetControls(appState: Partial<DashboardState> = {}): void {
@@ -2314,46 +2206,6 @@ function renderCountdowns(): void {
   const seconds = Math.max(0, Math.round((new Date(active.endsAt).getTime() - Date.now()) / 1000));
   $("#sessionCountdown").textContent = formatDuration(seconds);
   renderEmergency(appState);
-}
-
-function renderScheduleDays() {
-  const root = $("#scheduleDays");
-  root.replaceChildren();
-  for (const [value, label] of days) {
-    root.append(dayCheckbox(value, label, { checked: !["0", "6"].includes(value) }));
-  }
-}
-
-function renderGrayscaleScheduleDays() {
-  const root = $("#grayscaleScheduleDays");
-  root.replaceChildren();
-  for (const [value, label] of days) {
-    root.append(dayCheckbox(value, label, { checked: true }));
-  }
-}
-
-function renderLimitDays() {
-  const root = $("#limitDays");
-  root.replaceChildren();
-  for (const [value, label] of days) {
-    root.append(dayCheckbox(value, label));
-  }
-}
-
-function renderAppLockDays() {
-  const root = $("#appLockDays");
-  root.replaceChildren();
-  for (const [value, label] of days) {
-    root.append(dayCheckbox(value, label));
-  }
-}
-
-function renderIntentionalDays() {
-  const root = $("#intentionalDays");
-  root.replaceChildren();
-  for (const [value, label] of days) {
-    root.append(dayCheckbox(value, label));
-  }
 }
 
 function loadSchedule(schedule: Schedule): void {

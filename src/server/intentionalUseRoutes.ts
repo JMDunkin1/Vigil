@@ -1,0 +1,378 @@
+import type { IncomingMessage, ServerResponse } from "node:http";
+import {
+  addIntentionalJournalEntry,
+  applyPornRecoverySetup,
+  confirmIntentionalPause,
+  deleteIntentionalBehavior,
+  deleteIntentionalJournalEntry,
+  deleteIntentionalPlanBlock,
+  deleteIntentionalPlanItem,
+  deleteIntentionalPlanList,
+  recordIntentionalBehaviorCheckIn,
+  recordIntentionalRecoveryCheckIn,
+  skipIntentionalPause,
+  startIntentionalSosSession,
+  updateIntentionalUseAccountability,
+  updateIntentionalUseGoal,
+  upsertIntentionalBehavior,
+  upsertIntentionalPlanBlock,
+  upsertIntentionalPlanItem,
+  upsertIntentionalPlanList,
+  upsertIntentionalUseRule
+} from "../intentionalUse.js";
+import { openApp } from "../macos.js";
+import { assertProtectedEditAllowed } from "../protection.js";
+import { addEvent, saveState } from "../store.js";
+import type { SentinelState, UnknownRecord } from "../types.js";
+import { readBody, sendJson } from "./http.js";
+
+interface IntentionalUseApiContext {
+  state: SentinelState;
+  recordIosMdmPolicyQueue: (reason: string) => unknown;
+  schedulePolicyEnforcement: (reason: string) => void;
+}
+
+export async function handleIntentionalUseApiRoute(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  { state, recordIosMdmPolicyQueue, schedulePolicyEnforcement }: IntentionalUseApiContext
+): Promise<boolean> {
+  const method = request.method || "GET";
+  const path = url.pathname;
+
+  if (method === "POST" && path === "/api/intentional-use/goal") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const goal = updateIntentionalUseGoal(state, body);
+      addEvent(state, "intentional_goal_saved", { values: goal.values?.length || 0, replacements: goal.replacements?.length || 0 });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, goal });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/accountability") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const accountability = updateIntentionalUseAccountability(state, body);
+      addEvent(state, "intentional_accountability_saved", { enabled: accountability.enabled, cadence: accountability.cadence });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, accountability });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/recovery/setup") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const setup = applyPornRecoverySetup(state, body);
+      addEvent(state, "intentional_recovery_setup_applied", {
+        ruleId: setup.rule.id,
+        behaviorCount: setup.behaviors.length
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, setup });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/rule") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const rule = upsertIntentionalUseRule(state, body);
+      addEvent(state, "intentional_rule_saved", { ruleId: rule.id, name: rule.name, enabled: rule.enabled });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, rule });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/rule/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      state.intentionalUse.rules = (state.intentionalUse.rules || []).filter((rule) => rule.id !== id);
+      state.intentionalUse.pauses = (state.intentionalUse.pauses || []).filter((pause) => pause.ruleId !== id);
+      state.intentionalUse.grants = (state.intentionalUse.grants || []).filter((grant) => grant.ruleId !== id);
+      addEvent(state, "intentional_rule_deleted", { ruleId: id });
+      await saveState(state);
+      sendJson(response, 200, { ok: true });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/behavior") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const behavior = upsertIntentionalBehavior(state, body);
+      addEvent(state, "intentional_behavior_saved", { behaviorId: behavior.id, name: behavior.name, active: behavior.active });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, behavior });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/behavior/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const behavior = deleteIntentionalBehavior(state, id);
+      addEvent(state, "intentional_behavior_archived", { behaviorId: id, name: behavior?.name || "" });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, behavior });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/behavior/check-in") {
+    try {
+      const body = await readBody(request);
+      const checkIn = recordIntentionalBehaviorCheckIn(state, body);
+      addEvent(state, "intentional_behavior_check_in", { behaviorId: checkIn.behaviorId, value: checkIn.value });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, checkIn });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/journal") {
+    try {
+      const body = await readBody(request);
+      const entry = addIntentionalJournalEntry(state, body);
+      addEvent(state, "intentional_journal_saved", {
+        entryId: entry.id,
+        behaviorCount: entry.behaviorIds.length,
+        ruleCount: entry.ruleIds.length
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, entry });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/journal/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const deleted = deleteIntentionalJournalEntry(state, id);
+      addEvent(state, "intentional_journal_deleted", { entryId: id, deleted });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, deleted });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/plan/list") {
+    try {
+      const body = await readBody(request);
+      const list = upsertIntentionalPlanList(state, body);
+      addEvent(state, "intentional_plan_list_saved", { listId: list.id, name: list.name, active: list.active });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, list });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/plan/list/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const list = deleteIntentionalPlanList(state, id);
+      addEvent(state, "intentional_plan_list_archived", { listId: id, name: list?.name || "" });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, list });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/plan/item") {
+    try {
+      const body = await readBody(request);
+      const item = upsertIntentionalPlanItem(state, body);
+      addEvent(state, "intentional_plan_item_saved", { itemId: item.id, listId: item.listId, status: item.status });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, item });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/plan/item/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const item = deleteIntentionalPlanItem(state, id);
+      addEvent(state, "intentional_plan_item_archived", { itemId: id, title: item?.title || "" });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, item });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/plan/block") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "schedule", id: typeof body.id === "string" ? body.id : undefined });
+      const block = upsertIntentionalPlanBlock(state, body);
+      addEvent(state, "intentional_plan_block_saved", {
+        blockId: block.id,
+        title: block.title,
+        startsAt: block.startsAt,
+        endsAt: block.endsAt,
+        profileId: block.profileId,
+        enabled: block.enabled
+      });
+      recordIosMdmPolicyQueue("planner-block");
+      await saveState(state);
+      schedulePolicyEnforcement("planner-block-saved");
+      sendJson(response, 200, { ok: true, block });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/intentional-use/plan/block/")) {
+    try {
+      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      assertProtectedEditAllowed(state, { kind: "schedule", id });
+      const deleted = deleteIntentionalPlanBlock(state, id);
+      addEvent(state, "intentional_plan_block_deleted", { blockId: id, deleted });
+      recordIosMdmPolicyQueue("planner-block-deleted");
+      await saveState(state);
+      schedulePolicyEnforcement("planner-block-deleted");
+      sendJson(response, 200, { ok: true, deleted });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/recovery/check-in") {
+    try {
+      const body = await readBody(request);
+      const checkIn = recordIntentionalRecoveryCheckIn(state, body);
+      addEvent(state, "intentional_recovery_check_in", {
+        status: checkIn.status,
+        kind: checkIn.kind,
+        urgeIntensity: checkIn.urgeIntensity
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, checkIn });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/recovery/sos") {
+    try {
+      const body = await readBody(request);
+      const result = startIntentionalSosSession(state, body);
+      addEvent(state, "intentional_recovery_sos_started", {
+        intent: result.session.intent,
+        urgeIntensity: result.session.urgeIntensity,
+        trigger: result.session.trigger
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, ...result });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/pause/continue") {
+    try {
+      const body = await readBody(request);
+      const result = confirmIntentionalPause(state, String(body.requestId || ""), body);
+      const launch = result.pause.targetType === "app" && result.pause.app
+        ? await openApp(result.pause.app)
+        : null;
+      addEvent(state, "intentional_pause_continued", {
+        pauseId: result.pause.id,
+        ruleId: result.pause.ruleId,
+        target: result.pause.targetLabel,
+        until: result.grant.until,
+        launch
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, ...result, launch });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/pause/skip") {
+    try {
+      const body = await readBody(request);
+      const result = skipIntentionalPause(state, String(body.requestId || ""), body);
+      addEvent(state, "intentional_pause_skipped", {
+        pauseId: result.pause.id,
+        ruleId: result.pause.ruleId,
+        target: result.pause.targetLabel,
+        replacement: result.pause.replacement
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, ...result });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function serializeError(error: unknown): { error: string; blockers?: unknown } {
+  return {
+    error: errorMessage(error),
+    blockers: objectValue(error, "blockers")
+  };
+}
+
+function errorStatus(error: unknown): number {
+  const status = Number(objectValue(error, "status"));
+  return Number.isInteger(status) ? status : 500;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function objectValue(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && key in value
+    ? (value as UnknownRecord)[key]
+    : undefined;
+}
