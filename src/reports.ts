@@ -1,4 +1,4 @@
-import { dateKey } from "./time.js";
+import { dateKey, weekKey } from "./time.js";
 import { appMatchesAppTargets, hostMatchesSiteTargets } from "./policy.js";
 import { intentionalUseSummary } from "./intentionalUse.js";
 import { normalizeUsageDay } from "./usage.js";
@@ -61,6 +61,9 @@ interface ProgressionSummary {
   continuedChoices: number;
   journalEntries: number;
   behaviorCheckIns: number;
+  recoveryCheckIns: number;
+  sosStarts: number;
+  setbacks: number;
   reflectionStreakDays: number;
   nextUnlock: string;
   badges: ProgressionBadge[];
@@ -236,6 +239,12 @@ function progressionSummary({ state, current, streak, allDays, intentionalUse, f
   const continuedChoices = outcomes.filter((item) => item.outcome === "continued").length;
   const journalEntries = state.intentionalUse?.journalEntries || [];
   const behaviorCheckIns = state.intentionalUse?.behaviorCheckIns || [];
+  const recoveryCheckIns = state.intentionalUse?.recoveryCheckIns || [];
+  const sosSessions = state.intentionalUse?.sosSessions || [];
+  const currentWeek = weekKey(now);
+  const weeklyRecovery = recoveryCheckIns.filter((entry) => entry.weekKey === currentWeek);
+  const weeklySetbacks = weeklyRecovery.filter((entry) => entry.status === "setback").length;
+  const weeklyVictories = weeklyRecovery.filter((entry) => entry.status === "victory").length;
   const reflectionStreak = reflectionStreakDays(state, now);
   const xp = Math.max(0, Math.round(
     trackedDays.reduce((total, day) => total + 30 + day.focusScore + (day.focusScore >= focusScoreGoal ? 50 : 0) + (day.distractingSeconds === 0 ? 30 : 0), 0)
@@ -243,6 +252,9 @@ function progressionSummary({ state, current, streak, allDays, intentionalUse, f
     + continuedChoices * 8
     + journalEntries.length * 20
     + behaviorCheckIns.length * 15
+    + recoveryCheckIns.length * 18
+    + sosSessions.length * 12
+    + weeklyVictories * 25
     + reflectionStreak * 10
     + streak.days * 30
     + current.trackedDays * 20
@@ -256,7 +268,9 @@ function progressionSummary({ state, current, streak, allDays, intentionalUse, f
       (current.trackedDays ? current.averageFocusScore : 50)
       + Math.min(14, streak.days * 2)
       + Math.round(replacementRate * 0.12)
+      + Math.min(8, weeklyVictories * 2)
       - pressurePenalty
+      - Math.min(18, weeklySetbacks * 6)
     ),
     0,
     100
@@ -265,6 +279,8 @@ function progressionSummary({ state, current, streak, allDays, intentionalUse, f
     badge("first-save", "First clean day", cleanDays >= 1),
     badge("first-reflection", "First reflection", journalEntries.length >= 1),
     badge("behavior-builder", "Behavior builder", behaviorCheckIns.length >= 5),
+    badge("daily-check-in", "3 recovery check-ins", recoveryCheckIns.length >= 3),
+    badge("sos-used", "SOS reset", sosSessions.length >= 1),
     badge("reflection-streak", "3 day reflection", reflectionStreak >= 3),
     badge("replacement-loop", "Replacement loop", replacementChoices >= 3),
     badge("streak-3", "3 day streak", streak.days >= 3),
@@ -281,8 +297,11 @@ function progressionSummary({ state, current, streak, allDays, intentionalUse, f
     continuedChoices,
     journalEntries: journalEntries.length,
     behaviorCheckIns: behaviorCheckIns.length,
+    recoveryCheckIns: recoveryCheckIns.length,
+    sosStarts: sosSessions.length,
+    setbacks: weeklySetbacks,
     reflectionStreakDays: reflectionStreak,
-    nextUnlock: nextUnlock({ streakDays: streak.days, cleanDays, level: levelState.level, replacementChoices, journalEntries: journalEntries.length, behaviorCheckIns: behaviorCheckIns.length }),
+    nextUnlock: nextUnlock({ streakDays: streak.days, cleanDays, level: levelState.level, replacementChoices, journalEntries: journalEntries.length, behaviorCheckIns: behaviorCheckIns.length, recoveryCheckIns: recoveryCheckIns.length, sosStarts: sosSessions.length }),
     badges
   };
 }
@@ -317,15 +336,19 @@ function levelTitle(level: number): string {
   return "Aware";
 }
 
-function nextUnlock({ streakDays, cleanDays, level, replacementChoices, journalEntries, behaviorCheckIns }: {
+function nextUnlock({ streakDays, cleanDays, level, replacementChoices, journalEntries, behaviorCheckIns, recoveryCheckIns, sosStarts }: {
   streakDays: number;
   cleanDays: number;
   level: number;
   replacementChoices: number;
   journalEntries?: number;
   behaviorCheckIns?: number;
+  recoveryCheckIns?: number;
+  sosStarts?: number;
 }): string {
   if ((journalEntries || 0) < 1) return "Write one reflection to unlock First reflection";
+  if ((recoveryCheckIns || 0) < 3) return `${3 - (recoveryCheckIns || 0)} more recovery check-in${3 - (recoveryCheckIns || 0) === 1 ? "" : "s"} to unlock 3 recovery check-ins`;
+  if ((sosStarts || 0) < 1) return "Start one SOS reset to unlock SOS reset";
   if ((behaviorCheckIns || 0) < 1) return "Track one behavior to unlock Behavior tracked";
   if (streakDays < 3) return `${3 - streakDays} more streak day${3 - streakDays === 1 ? "" : "s"} to unlock 3 day streak`;
   if (replacementChoices < 3) return `${3 - replacementChoices} more replacement choice${3 - replacementChoices === 1 ? "" : "s"} to unlock Replacement loop`;

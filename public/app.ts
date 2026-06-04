@@ -328,6 +328,20 @@ function bindEvents() {
     await refresh();
   });
 
+  $("#applyRecoverySetup").addEventListener("click", async () => {
+    try {
+      await post("/api/intentional-use/recovery/setup", {
+        statement: $("#intentionalGoalStatement").value,
+        values: lines($("#intentionalGoalValues").value),
+        replacements: lines($("#intentionalGoalReplacements").value)
+      });
+      toast("Recovery setup applied");
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
   $("#journalEntryForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
@@ -340,6 +354,35 @@ function bindEvents() {
       await post("/api/intentional-use/journal", body);
       toast("Reflection saved");
       resetJournalForm();
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
+  $("#recoveryCheckInForm").addEventListener("submit", async (event: Event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const body = formPayload(new FormData(form));
+    try {
+      await post("/api/intentional-use/recovery/check-in", body);
+      toast("Recovery check-in added");
+      form.reset();
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
+  $("#sosForm").addEventListener("submit", async (event: Event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const body = formPayload(new FormData(form));
+    try {
+      const response = await post<{ session?: DashboardItem & { plan?: string[] } }>("/api/intentional-use/recovery/sos", body);
+      toast("SOS reset started");
+      renderSosPlan(response.session || null);
+      form.reset();
     } catch (error) {
       toast(errorMessage(error));
     }
@@ -1480,15 +1523,20 @@ function renderIntentionalRuleList(rules: DashboardItem[]): void {
 function renderLifeLog(intentionalUse: IntentionalUseSummary): void {
   const lifeLog = intentionalUse?.lifeLog || {};
   const stats = lifeLog.stats || {};
+  const recovery = intentionalUse?.recovery || {};
+  const recoveryWeek = recovery.week || {};
   const behaviors = lifeLog.behaviors || [];
   const activeBehaviors = behaviors.filter((behavior) => behavior.active !== false);
   const rules = intentionalUse?.rules || [];
 
-  $("#lifeLogStatus").textContent = `${stats.entriesThisWeek || 0} reflections | ${stats.activeBehaviors || 0} behaviors`;
-  $("#lifeLogStatus").className = (stats.entriesThisWeek || stats.behaviorCheckInsThisWeek) ? "pill good" : "pill neutral";
+  $("#lifeLogStatus").textContent = `${stats.entriesThisWeek || 0} reflections | ${stats.activeBehaviors || 0} behaviors | ${recoveryWeek.checkIns || 0} recovery`;
+  $("#lifeLogStatus").className = (stats.entriesThisWeek || stats.behaviorCheckInsThisWeek || recoveryWeek.checkIns) ? "pill good" : "pill neutral";
   $("#journalWeekCount").textContent = String(stats.entriesThisWeek || 0);
   $("#behaviorWeekCount").textContent = String(stats.behaviorCheckInsThisWeek || 0);
   $("#reflectionStreak").textContent = `${stats.reflectionStreakDays || 0}d`;
+  $("#recoveryWeekCount").textContent = String(recoveryWeek.checkIns || 0);
+  $("#recoverySetbacks").textContent = String(recoveryWeek.setbacks || 0);
+  $("#recoverySosCount").textContent = String(recoveryWeek.sos || 0);
 
   renderMultiSelect($("#journalBehaviorIds"), activeBehaviors);
   renderMultiSelect($("#journalRuleIds"), rules);
@@ -1496,6 +1544,9 @@ function renderLifeLog(intentionalUse: IntentionalUseSummary): void {
   renderBehaviorCheckInSelect(activeBehaviors);
   renderBehaviorList(behaviors);
   renderBehaviorCheckIns(lifeLog.recentCheckIns || []);
+  renderRecoveryCheckIns(recovery.recentCheckIns || []);
+  renderSosPlan((recovery.recentSos || [])[0] || null);
+  renderSosSessions(recovery.recentSos || []);
   renderJournalEntries(lifeLog.entries || [], behaviors, rules);
 }
 
@@ -1559,6 +1610,76 @@ function renderBehaviorCheckIns(checkIns: DashboardItem[]): void {
     );
     list.append(row);
   }
+}
+
+function renderRecoveryCheckIns(checkIns: NonNullable<IntentionalUseSummary["recovery"]>["recentCheckIns"] = []): void {
+  const list = $("#recoveryCheckInList");
+  list.replaceChildren();
+  if (!checkIns.length) {
+    list.append(empty("No recovery check-ins yet"));
+    return;
+  }
+
+  for (const checkIn of checkIns.slice(0, 8)) {
+    const row = document.createElement("div");
+    row.className = "list-item compact-list-item";
+    const meta = [
+      checkIn.at ? shortDateTime(checkIn.at) : "",
+      checkIn.urgeIntensity !== undefined ? `urge ${checkIn.urgeIntensity}/10` : "",
+      checkIn.stress !== null && checkIn.stress !== undefined ? `stress ${checkIn.stress}/10` : "",
+      checkIn.trigger ? `trigger: ${checkIn.trigger}` : "",
+      checkIn.action ? `action: ${checkIn.action}` : ""
+    ].filter(Boolean).join(" | ");
+    row.append(detailBlock(recoveryLabel(checkIn.status), `${meta || "--"}${checkIn.note ? ` | ${checkIn.note}` : ""}`));
+    list.append(row);
+  }
+}
+
+function renderSosPlan(session: (DashboardItem & { plan?: string[] }) | null): void {
+  const list = $("#sosPlan");
+  list.replaceChildren();
+  const plan = Array.isArray(session?.plan) ? session.plan : [];
+  if (!plan.length) {
+    list.append(empty("No SOS plan started"));
+    return;
+  }
+
+  for (const step of plan.slice(0, 8)) {
+    const row = document.createElement("div");
+    row.className = "list-item compact-list-item";
+    row.append(detailBlock("Reset step", step));
+    list.append(row);
+  }
+}
+
+function renderSosSessions(sessions: NonNullable<IntentionalUseSummary["recovery"]>["recentSos"] = []): void {
+  const list = $("#sosSessionList");
+  list.replaceChildren();
+  if (!sessions.length) {
+    list.append(empty("No SOS starts yet"));
+    return;
+  }
+
+  for (const session of sessions.slice(0, 5)) {
+    const row = document.createElement("div");
+    row.className = "list-item compact-list-item";
+    const meta = [
+      session.startedAt ? shortDateTime(session.startedAt) : "",
+      session.urgeIntensity !== undefined ? `urge ${session.urgeIntensity}/10` : "",
+      session.trigger ? `trigger: ${session.trigger}` : "",
+      session.replacement ? `replacement: ${session.replacement}` : ""
+    ].filter(Boolean).join(" | ");
+    row.append(detailBlock(recoveryLabel(session.intent || "SOS"), meta || "--"));
+    list.append(row);
+  }
+}
+
+function recoveryLabel(value: unknown): string {
+  return String(value || "recovery")
+    .split("-")
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
 }
 
 function renderJournalEntries(entries: DashboardItem[], behaviors: DashboardItem[], rules: DashboardItem[]): void {
@@ -1664,6 +1785,8 @@ function renderReport(report: ReportSummary): void {
   $("#reportReflectionStreak").textContent = progression ? `${progression.reflectionStreakDays || 0} day streak` : "--";
   $("#reportBehaviorCheckIns").textContent = String(progression?.behaviorCheckIns || 0);
   $("#reportNextUnlock").textContent = progression?.nextUnlock || "--";
+  $("#reportRecoveryCheckIns").textContent = String(progression?.recoveryCheckIns || 0);
+  $("#reportRecoveryMeta").textContent = progression ? `${progression.sosStarts || 0} SOS | ${progression.setbacks || 0} setbacks` : "--";
   renderWeekStrip(report.currentWeek.days, report.focusScoreGoal);
   renderInsights(report.insights);
   renderMilestones(report.milestones);

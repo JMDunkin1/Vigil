@@ -17,7 +17,7 @@ import { assertDistanceKey, updateDistanceKeySettings } from "./distanceKey.js";
 import { clearIntegrityTamper } from "./integrityLockdown.js";
 import { assertIntentReason } from "./intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "./intervention.js";
-import { addIntentionalJournalEntry, confirmIntentionalPause, deleteIntentionalBehavior, deleteIntentionalJournalEntry, recordIntentionalBehaviorCheckIn, skipIntentionalPause, updateIntentionalUseAccountability, updateIntentionalUseGoal, upsertIntentionalBehavior, upsertIntentionalUseRule } from "./intentionalUse.js";
+import { addIntentionalJournalEntry, applyPornRecoverySetup, confirmIntentionalPause, deleteIntentionalBehavior, deleteIntentionalJournalEntry, recordIntentionalBehaviorCheckIn, recordIntentionalRecoveryCheckIn, skipIntentionalPause, startIntentionalSosSession, updateIntentionalUseAccountability, updateIntentionalUseGoal, upsertIntentionalBehavior, upsertIntentionalUseRule } from "./intentionalUse.js";
 import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "./iosProfiles.js";
 import { activeLimitBlocks, normalizeLimitRule } from "./limits.js";
@@ -584,6 +584,23 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return;
   }
 
+  if (method === "POST" && path === "/api/intentional-use/recovery/setup") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const setup = applyPornRecoverySetup(state, body);
+      addEvent(state, "intentional_recovery_setup_applied", {
+        ruleId: setup.rule.id,
+        behaviorCount: setup.behaviors.length
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, setup });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
   if (method === "POST" && path === "/api/intentional-use/rule") {
     try {
       const body = await readBody(request);
@@ -679,6 +696,40 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
       addEvent(state, "intentional_journal_deleted", { entryId: id, deleted });
       await saveState(state);
       sendJson(response, 200, { ok: true, deleted });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/recovery/check-in") {
+    try {
+      const body = await readBody(request);
+      const checkIn = recordIntentionalRecoveryCheckIn(state, body);
+      addEvent(state, "intentional_recovery_check_in", {
+        status: checkIn.status,
+        kind: checkIn.kind,
+        urgeIntensity: checkIn.urgeIntensity
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, checkIn });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/recovery/sos") {
+    try {
+      const body = await readBody(request);
+      const result = startIntentionalSosSession(state, body);
+      addEvent(state, "intentional_recovery_sos_started", {
+        intent: result.session.intent,
+        urgeIntensity: result.session.urgeIntensity,
+        trigger: result.session.trigger
+      });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, ...result });
     } catch (error) {
       sendJson(response, errorStatus(error), serializeError(error));
     }
