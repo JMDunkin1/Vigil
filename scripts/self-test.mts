@@ -2233,6 +2233,8 @@ last exit code = 0
   const serverSource = await readFile("src/server.js", "utf8");
   assert.match(serverSource, /scheduleImmediateSessionEnforcement/);
   assert.match(serverSource, /session_immediate_enforcement/);
+  assert.match(serverSource, /plannerBlockId/);
+  assert.match(serverSource, /completeIntentionalPlanBlock/);
   const monitorSource = await readFile("src/monitor.js", "utf8");
   assert.match(monitorSource, /enforceImmediately/);
   assert.match(monitorSource, /lastImmediateEnforcement/);

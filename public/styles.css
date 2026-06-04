@@ -826,6 +826,12 @@ button:focus-visible {
   gap: 12px;
 }
 
+.compact-form {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
 .form-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1404,6 +1410,52 @@ button:focus-visible {
   gap: 8px;
 }
 
+.planner-agenda {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.planner-block {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 12px;
+}
+
+#planItemList .list-item {
+  grid-template-columns: minmax(0, 1fr) repeat(4, auto);
+}
+
+#planItemList .list-item > div:first-child,
+.planner-block > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+#planItemList .list-item > div:first-child span,
+.planner-block > div:first-child span {
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.planner-block.active {
+  border-color: color-mix(in srgb, var(--primary) 48%, var(--line));
+  background: color-mix(in srgb, var(--primary) 9%, var(--surface));
+}
+
+.planner-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.compact-toggle-row {
+  margin: 0;
+}
+
 .tag-row span {
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -1626,15 +1678,19 @@ button:focus-visible {
   }
 
   .app-nav {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     justify-content: start;
     max-width: 100%;
-    overflow-x: auto;
     padding-bottom: 2px;
   }
 
   .shell {
     padding-inline: 14px;
+  }
+
+  .view-head {
+    align-items: start;
+    flex-direction: column;
   }
 
   .home-stage {

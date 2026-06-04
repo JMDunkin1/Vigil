@@ -178,6 +178,7 @@ function publicPolicy(policy: ActivePolicy | null) {
     session: policy.session,
     profile: policy.profile,
     schedule: policy.schedule || null,
+    plannerBlock: policy.plannerBlock || null,
     endsAt: policy.endsAt,
     phase: policy.phase || null
   } : null;

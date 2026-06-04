@@ -8,7 +8,9 @@ import {
   hostMatchesSiteTargets,
   listFromTextarea,
   matchBlockedUrlPattern,
-  normalizeHost
+  normalizeDeviceTargets,
+  normalizeHost,
+  normalizeLockLevel
 } from "./policy.js";
 import { clampNumber, dateKey, parseClock, weekKey } from "./time.js";
 import type {
@@ -16,6 +18,11 @@ import type {
   IntentionalBehavior,
   IntentionalBehaviorCheckIn,
   IntentionalJournalEntry,
+  IntentionalPlanBlock,
+  IntentionalPlanItem,
+  IntentionalPlanItemStatus,
+  IntentionalPlanList,
+  IntentionalPlanListKind,
   IntentionalOutcome,
   IntentionalPause,
   IntentionalRecoveryCheckIn,
@@ -35,6 +42,9 @@ const PAUSE_EVENTS = new Set(["navigation", "history", "activated", "mac-app"]);
 const OUTCOME_LIMIT = 200;
 const OPEN_LIMIT = 40;
 const JOURNAL_ENTRY_LIMIT = 250;
+const PLAN_LIST_LIMIT = 50;
+const PLAN_ITEM_LIMIT = 1000;
+const PLAN_BLOCK_LIMIT = 500;
 const BEHAVIOR_CHECK_IN_LIMIT = 500;
 const RECOVERY_CHECK_IN_LIMIT = 500;
 const SOS_SESSION_LIMIT = 100;
@@ -106,6 +116,9 @@ export function normalizeIntentionalUse(current: Partial<IntentionalUseState> = 
     behaviors: normalizeBehaviors(current.behaviors || fresh.behaviors || []),
     behaviorCheckIns: normalizeBehaviorCheckIns(current.behaviorCheckIns || fresh.behaviorCheckIns || []).slice(0, BEHAVIOR_CHECK_IN_LIMIT),
     journalEntries: normalizeJournalEntries(current.journalEntries || fresh.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT),
+    planLists: normalizePlanLists(current.planLists || fresh.planLists || []).slice(0, PLAN_LIST_LIMIT),
+    planItems: normalizePlanItems(current.planItems || fresh.planItems || []).slice(0, PLAN_ITEM_LIMIT),
+    planBlocks: normalizePlanBlocks(current.planBlocks || fresh.planBlocks || []).slice(0, PLAN_BLOCK_LIMIT),
     recoveryCheckIns: normalizeRecoveryCheckIns(current.recoveryCheckIns || fresh.recoveryCheckIns || []).slice(0, RECOVERY_CHECK_IN_LIMIT),
     sosSessions: normalizeSosSessions(current.sosSessions || fresh.sosSessions || []).slice(0, SOS_SESSION_LIMIT),
     accountability: {
@@ -213,6 +226,77 @@ export function deleteIntentionalJournalEntry(state: SentinelState, entryId: str
   const before = state.intentionalUse.journalEntries.length;
   state.intentionalUse.journalEntries = state.intentionalUse.journalEntries.filter((entry) => entry.id !== entryId);
   return state.intentionalUse.journalEntries.length !== before;
+}
+
+export function upsertIntentionalPlanList(state: SentinelState, body: IntentionalBody = {}, now = new Date()): IntentionalPlanList {
+  ensureIntentionalUse(state);
+  const id = String(body.id || randomUUID());
+  const existing = state.intentionalUse.planLists.find((list) => list.id === id);
+  const list = normalizePlanList(body, existing, id, now);
+  if (existing) Object.assign(existing, list);
+  else state.intentionalUse.planLists.unshift(list);
+  state.intentionalUse.planLists = state.intentionalUse.planLists.slice(0, PLAN_LIST_LIMIT);
+  return list;
+}
+
+export function deleteIntentionalPlanList(state: SentinelState, listId: string, now = new Date()): IntentionalPlanList | null {
+  ensureIntentionalUse(state);
+  const list = state.intentionalUse.planLists.find((item) => item.id === listId);
+  if (!list) return null;
+  list.active = false;
+  list.updatedAt = now.toISOString();
+  return list;
+}
+
+export function upsertIntentionalPlanItem(state: SentinelState, body: IntentionalBody = {}, now = new Date()): IntentionalPlanItem {
+  ensureIntentionalUse(state);
+  ensureDefaultPlanList(state, now);
+  const id = String(body.id || randomUUID());
+  const existing = state.intentionalUse.planItems.find((item) => item.id === id);
+  const item = normalizePlanItem(body, existing, id, now, defaultPlanListId(state));
+  if (existing) Object.assign(existing, item);
+  else state.intentionalUse.planItems.unshift(item);
+  state.intentionalUse.planItems = state.intentionalUse.planItems.slice(0, PLAN_ITEM_LIMIT);
+  return item;
+}
+
+export function deleteIntentionalPlanItem(state: SentinelState, itemId: string, now = new Date()): IntentionalPlanItem | null {
+  ensureIntentionalUse(state);
+  const item = state.intentionalUse.planItems.find((entry) => entry.id === itemId);
+  if (!item) return null;
+  item.status = "archived";
+  item.updatedAt = now.toISOString();
+  item.completedAt ||= now.toISOString();
+  return item;
+}
+
+export function upsertIntentionalPlanBlock(state: SentinelState, body: IntentionalBody = {}, now = new Date()): IntentionalPlanBlock {
+  ensureIntentionalUse(state);
+  const id = String(body.id || randomUUID());
+  const existing = state.intentionalUse.planBlocks.find((block) => block.id === id);
+  const block = normalizePlanBlock(body, existing, id, now, state);
+  if (existing) Object.assign(existing, block);
+  else state.intentionalUse.planBlocks.unshift(block);
+  state.intentionalUse.planBlocks = state.intentionalUse.planBlocks
+    .sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""))
+    .slice(0, PLAN_BLOCK_LIMIT);
+  return block;
+}
+
+export function deleteIntentionalPlanBlock(state: SentinelState, blockId: string): boolean {
+  ensureIntentionalUse(state);
+  const before = state.intentionalUse.planBlocks.length;
+  state.intentionalUse.planBlocks = state.intentionalUse.planBlocks.filter((block) => block.id !== blockId);
+  return state.intentionalUse.planBlocks.length !== before;
+}
+
+export function completeIntentionalPlanBlock(state: SentinelState, blockId: string, now = new Date()): IntentionalPlanBlock | null {
+  ensureIntentionalUse(state);
+  const block = state.intentionalUse.planBlocks.find((item) => item.id === blockId);
+  if (!block) return null;
+  block.completed = true;
+  block.updatedAt = now.toISOString();
+  return block;
 }
 
 export function recordIntentionalBehaviorCheckIn(state: SentinelState, body: IntentionalBody = {}, now = new Date()): IntentionalBehaviorCheckIn {
@@ -352,6 +436,7 @@ export function intentionalUseSummary(state: SentinelState, usage: UnknownRecord
   const journalThisWeek = journalEntriesForWeek(state, week);
   const behaviorCheckInsThisWeek = (state.intentionalUse.behaviorCheckIns || []).filter((entry) => entry.weekKey === week);
   const recovery = recoverySummary(state, now);
+  const planner = plannerSummary(state, now);
   const today = state.intentionalUse.ledger?.[day] || {};
   const totals = Object.values(today.rules || {}).reduce((acc, item) => {
     acc.seconds += item.seconds || 0;
@@ -370,6 +455,7 @@ export function intentionalUseSummary(state: SentinelState, usage: UnknownRecord
     lifeLog: {
       entries: journalEntries,
       behaviors: behaviorSummaries,
+      planner,
       recentCheckIns: (state.intentionalUse.behaviorCheckIns || []).slice(0, 20),
       stats: {
         weekKey: week,
@@ -378,6 +464,8 @@ export function intentionalUseSummary(state: SentinelState, usage: UnknownRecord
         behaviorCheckInsThisWeek: behaviorCheckInsThisWeek.length,
         reflectionStreakDays: reflectionStreakDays(state, now),
         activeBehaviors: state.intentionalUse.behaviors.filter((behavior) => behavior.active !== false).length,
+        openPlanItems: planner.openItems,
+        activePlanBlocks: planner.activeBlocks.length,
         recoveryCheckInsThisWeek: recovery.week.checkIns
       }
     },
@@ -571,6 +659,9 @@ function ensureIntentionalUse(state: SentinelState): void {
   state.intentionalUse.behaviors ||= [];
   state.intentionalUse.behaviorCheckIns ||= [];
   state.intentionalUse.journalEntries ||= [];
+  state.intentionalUse.planLists ||= [];
+  state.intentionalUse.planItems ||= [];
+  state.intentionalUse.planBlocks ||= [];
   state.intentionalUse.recoveryCheckIns ||= [];
   state.intentionalUse.sosSessions ||= [];
   state.intentionalUse.accountability ||= {};
@@ -678,6 +769,113 @@ function normalizeJournalEntry(body: IntentionalBody = {}, existing: Partial<Int
   };
 }
 
+function normalizePlanLists(lists: unknown): IntentionalPlanList[] {
+  if (!Array.isArray(lists)) return [];
+  return lists
+    .filter(isUnknownRecord)
+    .map((list) => normalizePlanList(list, list, String(list.id || randomUUID())))
+    .sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
+}
+
+function normalizePlanList(body: IntentionalBody = {}, existing: Partial<IntentionalPlanList> = {}, fallbackId: string = randomUUID(), now = new Date()): IntentionalPlanList {
+  const createdAt = existing.createdAt || now.toISOString();
+  return {
+    id: String(body.id || existing.id || fallbackId),
+    name: String(body.name || existing.name || "List").trim().slice(0, 80),
+    kind: normalizePlanListKind(body.kind || existing.kind),
+    description: String(bodyValue(body, "description", existing.description || "")).trim().slice(0, 500),
+    active: body.active === undefined ? existing.active !== false : truthy(body.active),
+    createdAt,
+    updatedAt: now.toISOString()
+  };
+}
+
+function normalizePlanItems(items: unknown): IntentionalPlanItem[] {
+  if (!Array.isArray(items)) return [];
+  return items
+    .filter(isUnknownRecord)
+    .map((item) => normalizePlanItem(item, item, String(item.id || randomUUID())))
+    .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
+}
+
+function normalizePlanItem(
+  body: IntentionalBody = {},
+  existing: Partial<IntentionalPlanItem> = {},
+  fallbackId: string = randomUUID(),
+  now = new Date(),
+  fallbackListId = ""
+): IntentionalPlanItem {
+  const createdAt = existing.createdAt || now.toISOString();
+  const status = normalizePlanItemStatus(body.status || existing.status);
+  const completedAt = status === "done" || status === "archived"
+    ? (safeIsoDate(body.completedAt) || existing.completedAt || now.toISOString())
+    : null;
+  const dueAt = Object.hasOwn(body, "dueAt") ? safeIsoDate(body.dueAt) : existing.dueAt || null;
+  return {
+    id: String(body.id || existing.id || fallbackId),
+    listId: String(body.listId || existing.listId || fallbackListId || "todo"),
+    title: String(body.title || existing.title || "New item").trim().slice(0, 160),
+    notes: String(bodyValue(body, "notes", existing.notes || "")).trim().slice(0, 2000),
+    status,
+    dueAt,
+    tags: normalizeTargets(body.tags ?? existing.tags).slice(0, 20),
+    createdAt,
+    updatedAt: now.toISOString(),
+    completedAt
+  };
+}
+
+function normalizePlanBlocks(blocks: unknown): IntentionalPlanBlock[] {
+  if (!Array.isArray(blocks)) return [];
+  return blocks
+    .filter(isUnknownRecord)
+    .map((block) => normalizePlanBlock(block, block, String(block.id || randomUUID())))
+    .sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""));
+}
+
+function normalizePlanBlock(
+  body: IntentionalBody = {},
+  existing: Partial<IntentionalPlanBlock> = {},
+  fallbackId: string = randomUUID(),
+  now = new Date(),
+  state?: SentinelState
+): IntentionalPlanBlock {
+  const createdAt = existing.createdAt || now.toISOString();
+  const startIso = safeIsoDate(body.startsAt) || safeIsoDate(existing.startsAt) || now.toISOString();
+  const parsedStartMs = Date.parse(startIso);
+  const startMs = Number.isFinite(parsedStartMs) ? parsedStartMs : now.getTime();
+  const requestedEnd = safeIsoDate(body.endsAt) || existing.endsAt || "";
+  const rawEndMs = Date.parse(requestedEnd);
+  const maxEndMs = startMs + 24 * 60 * 60 * 1000;
+  const endMs = Number.isFinite(rawEndMs) && rawEndMs > startMs
+    ? Math.min(rawEndMs, maxEndMs)
+    : startMs + 60 * 60 * 1000;
+  const fallbackProfileId = state?.settings?.activeProfileId || existing.profileId || "default";
+  const enabled = body.enabled === undefined ? existing.enabled !== false : truthy(body.enabled);
+  return {
+    id: String(body.id || existing.id || fallbackId),
+    title: String(body.title || existing.title || "Focus block").trim().slice(0, 160),
+    notes: String(bodyValue(body, "notes", existing.notes || "")).trim().slice(0, 2000),
+    listId: String(bodyValue(body, "listId", existing.listId || "")),
+    itemId: String(bodyValue(body, "itemId", existing.itemId || "")),
+    startsAt: new Date(startMs).toISOString(),
+    endsAt: new Date(endMs).toISOString(),
+    enabled,
+    completed: body.completed === undefined ? Boolean(existing.completed) : truthy(body.completed),
+    mode: String(body.mode || existing.mode || "focus").trim().slice(0, 80),
+    profileId: String(body.profileId || existing.profileId || fallbackProfileId),
+    lockLevel: normalizeLockLevel(body.lockLevel, existing.lockLevel || "deep"),
+    commitmentLock: body.commitmentLock === undefined ? Boolean(existing.commitmentLock) : truthy(body.commitmentLock),
+    deviceTargets: normalizeDeviceTargets(body.deviceTargets ?? existing.deviceTargets),
+    createdAt,
+    updatedAt: now.toISOString()
+  };
+}
+
+function bodyValue(body: IntentionalBody, key: string, fallback: unknown): unknown {
+  return Object.hasOwn(body, key) ? body[key] : fallback;
+}
+
 function normalizeRecoveryCheckIns(checkIns: unknown): IntentionalRecoveryCheckIn[] {
   if (!Array.isArray(checkIns)) return [];
   return checkIns
@@ -747,6 +945,45 @@ function behaviorSummary(state: SentinelState, behavior: IntentionalBehavior, cu
     weeklyCheckIns: weekly.length,
     percent,
     lastCheckInAt: checkIns[0]?.at || null
+  };
+}
+
+function plannerSummary(state: SentinelState, now: Date) {
+  const nowMs = now.getTime();
+  const dayStart = new Date(now);
+  dayStart.setHours(0, 0, 0, 0);
+  const dayEnd = new Date(dayStart);
+  dayEnd.setDate(dayEnd.getDate() + 1);
+  const lists = (state.intentionalUse.planLists || []).filter((list) => list.active !== false);
+  const items = (state.intentionalUse.planItems || []).filter((item) => item.status !== "archived");
+  const openItems = items.filter((item) => item.status === "open");
+  const blocks = (state.intentionalUse.planBlocks || []).filter((block) => block.enabled !== false);
+  const activeBlocks = blocks.filter((block) => (
+    !block.completed
+    && Date.parse(block.startsAt || "") <= nowMs
+    && Date.parse(block.endsAt || "") > nowMs
+  ));
+  const todayBlocks = blocks.filter((block) => {
+    const starts = Date.parse(block.startsAt || "");
+    const ends = Date.parse(block.endsAt || "");
+    return Number.isFinite(starts)
+      && Number.isFinite(ends)
+      && starts < dayEnd.getTime()
+      && ends > dayStart.getTime();
+  }).sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""));
+  const upcomingBlocks = blocks.filter((block) => !block.completed && Date.parse(block.startsAt || "") >= nowMs)
+    .sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""))
+    .slice(0, 20);
+  return {
+    lists,
+    items,
+    recentItems: openItems.slice(0, 40),
+    blocks,
+    todayBlocks,
+    upcomingBlocks,
+    activeBlocks,
+    openItems: openItems.length,
+    completedItems: items.filter((item) => item.status === "done").length
   };
 }
 
@@ -879,6 +1116,34 @@ function safeIsoDate(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function normalizePlanListKind(value: unknown): IntentionalPlanListKind {
+  const kind = String(value || "").trim().toLowerCase();
+  return ["todo", "watch", "read", "custom"].includes(kind) ? kind as IntentionalPlanListKind : "custom";
+}
+
+function normalizePlanItemStatus(value: unknown): IntentionalPlanItemStatus {
+  const status = String(value || "").trim().toLowerCase();
+  return ["open", "done", "archived"].includes(status) ? status as IntentionalPlanItemStatus : "open";
+}
+
+function ensureDefaultPlanList(state: SentinelState, now = new Date()): void {
+  if ((state.intentionalUse.planLists || []).some((list) => list.active !== false)) return;
+  state.intentionalUse.planLists ||= [];
+  state.intentionalUse.planLists.push({
+    id: "todo",
+    name: "To Do",
+    kind: "todo",
+    description: "Tasks and commitments to do soon.",
+    active: true,
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString()
+  });
+}
+
+function defaultPlanListId(state: SentinelState): string {
+  return (state.intentionalUse.planLists || []).find((list) => list.active !== false)?.id || "todo";
+}
+
 function isUnknownRecord(value: unknown): value is UnknownRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -894,6 +1159,9 @@ function cleanupIntentionalUse(state: SentinelState, now: Date): void {
   state.intentionalUse.outcomes = (state.intentionalUse.outcomes || []).slice(0, OUTCOME_LIMIT);
   state.intentionalUse.behaviorCheckIns = (state.intentionalUse.behaviorCheckIns || []).slice(0, BEHAVIOR_CHECK_IN_LIMIT);
   state.intentionalUse.journalEntries = (state.intentionalUse.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT);
+  state.intentionalUse.planLists = normalizePlanLists(state.intentionalUse.planLists || []).slice(0, PLAN_LIST_LIMIT);
+  state.intentionalUse.planItems = normalizePlanItems(state.intentionalUse.planItems || []).slice(0, PLAN_ITEM_LIMIT);
+  state.intentionalUse.planBlocks = normalizePlanBlocks(state.intentionalUse.planBlocks || []).slice(0, PLAN_BLOCK_LIMIT);
   state.intentionalUse.recoveryCheckIns = (state.intentionalUse.recoveryCheckIns || []).slice(0, RECOVERY_CHECK_IN_LIMIT);
   state.intentionalUse.sosSessions = (state.intentionalUse.sosSessions || []).slice(0, SOS_SESSION_LIMIT);
 }

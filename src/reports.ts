@@ -202,6 +202,7 @@ function buildMilestones({ state, current, streak, allDays, focusScoreGoal, prog
 }): Milestone[] {
   const enabledRules = [
     ...(state.schedules || []).filter((item) => item.enabled),
+    ...(state.intentionalUse?.planBlocks || []).filter((item) => item.enabled !== false && !item.completed),
     ...(state.limitRules || []).filter((item) => item.enabled),
     ...(state.appLocks || []).filter((item) => item.enabled)
   ].length;

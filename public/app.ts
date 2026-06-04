@@ -4,7 +4,7 @@ import { createDeviceTargetController } from "./device-targets.js";
 import { dayCheckbox, detailBlock, el, progressBlock, textEl } from "./dom.js";
 import { createFocusSoundController } from "./focus-sound.js";
 import { days, daysText, daysWithDataText, enforcementText, eventLabel, formatDuration, lines, phaseText, phaseTitle, progressText, shortDate, shortDateTime, signedDuration, signedNumber, signedPercent, sweepText, systemSleepLockText } from "./format.js";
-import type { BarEntry, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeyResponse, DistanceKeySummary, FocusShortcutSummary, FormPayload, FoolproofSummary, GrayscaleSchedule, IntentionalUseSummary, InterventionSummary, KeyholderSummary, MonitorSummary, NamedFormControls, PendingResponse, Preset, ProgressSummary, ProtectionSummary, QueuePolicyResponse, ReportSummary, Schedule, SessionEndResponse, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary, WeekDaySummary } from "./app-model.js";
+import type { BarEntry, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeyResponse, DistanceKeySummary, FocusShortcutSummary, FormPayload, FoolproofSummary, GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, IntentionalUseSummary, InterventionSummary, KeyholderSummary, MonitorSummary, NamedFormControls, PendingResponse, Preset, ProgressSummary, ProtectionSummary, QueuePolicyResponse, ReportSummary, Schedule, SessionEndResponse, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary, WeekDaySummary } from "./app-model.js";
 
 const state: UiState = {
   data: null,
@@ -286,6 +286,59 @@ function bindEvents() {
   $("#newAppLock").addEventListener("click", resetAppLockForm);
   $("#newIntentionalRule").addEventListener("click", resetIntentionalRuleForm);
   $("#newBehavior").addEventListener("click", resetBehaviorForm);
+  $("#newPlanItem").addEventListener("click", resetPlanItemForm);
+  $("#newPlanBlock").addEventListener("click", resetPlanBlockForm);
+
+  $("#planListForm").addEventListener("submit", async (event: Event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const body = formPayload(new FormData(form));
+    body.active = new FormData(form).has("active");
+    try {
+      await post("/api/intentional-use/plan/list", body);
+      toast("List saved");
+      resetPlanListForm();
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
+  $("#planItemForm").addEventListener("submit", async (event: Event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const body = formPayload(new FormData(form));
+    body.tags = tagList(body.tags);
+    body.dueAt = body.dueAt ? new Date(String(body.dueAt)).toISOString() : null;
+    try {
+      await post("/api/intentional-use/plan/item", body);
+      toast("Item saved");
+      resetPlanItemForm();
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
+  $("#planBlockForm").addEventListener("submit", async (event: Event) => {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const body = formPayload(new FormData(form));
+    body.enabled = new FormData(form).has("enabled");
+    body.commitmentLock = new FormData(form).has("commitmentLock");
+    body.deviceTargets = [...$$<HTMLInputElement>("#planBlockForm input[name='deviceTargets']:checked")].map((input) => input.value);
+    body.startsAt = body.startsAt ? new Date(String(body.startsAt)).toISOString() : new Date().toISOString();
+    body.endsAt = body.endsAt ? new Date(String(body.endsAt)).toISOString() : new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    body.listId = selectedPlanItemListId(String(body.itemId || ""));
+    try {
+      await post("/api/intentional-use/plan/block", body);
+      toast("Block saved");
+      resetPlanBlockForm();
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
 
   $("#limitForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
@@ -1298,6 +1351,7 @@ function renderProfiles(appState: DashboardState): void {
 
   fillSelect($("#profileSelect"), profiles, state.selectedProfileId);
   fillSelect($("#sessionProfile"), profiles, activeId);
+  fillSelect($("#planBlockProfileId"), profiles, SOFT_BLOCK_PROFILE_ID);
 
   const profile = profiles.find((item) => item.id === state.selectedProfileId) || appState.activeProfile;
   if (!profile) return;
@@ -1628,11 +1682,12 @@ function renderLifeLog(intentionalUse: IntentionalUseSummary): void {
   const recovery = intentionalUse?.recovery || {};
   const recoveryWeek = recovery.week || {};
   const behaviors = lifeLog.behaviors || [];
+  const planner = lifeLog.planner || {};
   const activeBehaviors = behaviors.filter((behavior) => behavior.active !== false);
   const rules = intentionalUse?.rules || [];
 
-  $("#lifeLogStatus").textContent = `${stats.entriesThisWeek || 0} reflections | ${stats.activeBehaviors || 0} behaviors | ${recoveryWeek.checkIns || 0} recovery`;
-  $("#lifeLogStatus").className = (stats.entriesThisWeek || stats.behaviorCheckInsThisWeek || recoveryWeek.checkIns) ? "pill good" : "pill neutral";
+  $("#lifeLogStatus").textContent = `${stats.entriesThisWeek || 0} reflections | ${stats.activeBehaviors || 0} behaviors | ${planner.openItems || 0} items | ${(planner.activeBlocks || []).length} blocks`;
+  $("#lifeLogStatus").className = (stats.entriesThisWeek || stats.behaviorCheckInsThisWeek || recoveryWeek.checkIns || planner.openItems || (planner.activeBlocks || []).length) ? "pill good" : "pill neutral";
   $("#journalWeekCount").textContent = String(stats.entriesThisWeek || 0);
   $("#behaviorWeekCount").textContent = String(stats.behaviorCheckInsThisWeek || 0);
   $("#reflectionStreak").textContent = `${stats.reflectionStreakDays || 0}d`;
@@ -1646,6 +1701,7 @@ function renderLifeLog(intentionalUse: IntentionalUseSummary): void {
   renderBehaviorCheckInSelect(activeBehaviors);
   renderBehaviorList(behaviors);
   renderBehaviorCheckIns(lifeLog.recentCheckIns || []);
+  renderPlanner(planner);
   renderRecoveryCheckIns(recovery.recentCheckIns || []);
   renderSosPlan((recovery.recentSos || [])[0] || null);
   renderSosSessions(recovery.recentSos || []);
@@ -1712,6 +1768,152 @@ function renderBehaviorCheckIns(checkIns: DashboardItem[]): void {
     );
     list.append(row);
   }
+}
+
+function renderPlanner(planner: NonNullable<NonNullable<IntentionalUseSummary["lifeLog"]>["planner"]> = {}): void {
+  const lists = planner.lists || [];
+  const items = planner.items || [];
+  const activeLists = lists.filter((list) => list.active !== false);
+  renderPlanSelects(activeLists, items);
+  renderPlanItems(planner.recentItems || items.filter((item) => item.status === "open"), activeLists);
+  renderPlannerAgenda(planner.todayBlocks || [], planner.activeBlocks || []);
+}
+
+function renderPlanSelects(lists: IntentionalPlanList[], items: IntentionalPlanItem[]): void {
+  const safeLists = lists.length ? lists : [{ id: "todo", name: "To Do" } as IntentionalPlanList];
+  fillSelect($("#planItemListId"), safeLists, safeLists[0]?.id || "");
+  renderPlanBlockItemSelect(items.filter((item) => item.status !== "archived"));
+}
+
+function renderPlanBlockItemSelect(items: IntentionalPlanItem[]): void {
+  const select = $("#planBlockItemId");
+  const current = select.value;
+  select.replaceChildren();
+  const emptyOption = document.createElement("option");
+  emptyOption.value = "";
+  emptyOption.textContent = "No linked item";
+  select.append(emptyOption);
+  for (const item of items.slice(0, 80)) {
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = item.title;
+    select.append(option);
+  }
+  select.value = items.some((item) => item.id === current) ? current : "";
+}
+
+function renderPlanItems(items: IntentionalPlanItem[], lists: IntentionalPlanList[]): void {
+  const root = $("#planItemList");
+  root.replaceChildren();
+  if (!items.length) {
+    root.append(empty("No items saved"));
+    return;
+  }
+
+  const listNames = new Map(lists.map((list) => [list.id, list.name]));
+  for (const item of items.slice(0, 12)) {
+    const row = document.createElement("div");
+    row.className = item.status === "done" ? "list-item limit-item muted-item" : "list-item limit-item";
+    const meta = [
+      listNames.get(item.listId) || item.listId || "List",
+      item.status,
+      item.dueAt ? `due ${shortDateTime(item.dueAt)}` : "",
+      ...(item.tags || []).slice(0, 3)
+    ].filter(Boolean).join(" | ");
+    const label = detailBlock(item.title, meta || "--");
+
+    const schedule = compactButton("Schedule", () => loadPlanBlockFromItem(item));
+    const done = compactButton(item.status === "done" ? "Open" : "Done", async () => {
+      await savePlanItem(item, { status: item.status === "done" ? "open" : "done" });
+      toast(item.status === "done" ? "Item reopened" : "Item completed");
+      await refresh();
+    });
+    const edit = compactButton("Edit", () => loadPlanItem(item), "secondary");
+    const archive = compactButton("Archive", async () => {
+      await del(`/api/intentional-use/plan/item/${encodeURIComponent(item.id)}`);
+      toast("Item archived");
+      await refresh();
+    }, "ghost");
+
+    row.append(label, schedule, done, edit, archive);
+    root.append(row);
+  }
+}
+
+function renderPlannerAgenda(blocks: IntentionalPlanBlock[], activeBlocks: IntentionalPlanBlock[]): void {
+  const root = $("#plannerAgenda");
+  root.replaceChildren();
+  if (!blocks.length) {
+    root.append(empty("No blocks today"));
+    return;
+  }
+
+  const activeIds = new Set(activeBlocks.map((block) => block.id));
+  for (const block of blocks.slice(0, 12)) {
+    const row = document.createElement("div");
+    row.className = activeIds.has(block.id) ? "planner-block active" : "planner-block";
+    const profile = profileName(block.profileId);
+    const time = `${shortDateTime(block.startsAt)} - ${shortTime(block.endsAt)}`;
+    const meta = [
+      time,
+      profile,
+      deviceTargetsText(block.deviceTargets || []),
+      block.enabled === false ? "off" : "on",
+      block.completed ? "done" : ""
+    ].filter(Boolean).join(" | ");
+
+    const label = detailBlock(block.title, meta);
+    const actions = el("div", { className: "planner-actions" },
+      compactButton("Earlier", () => adjustPlanBlock(block, { shiftMinutes: -15 }), "ghost"),
+      compactButton("Later", () => adjustPlanBlock(block, { shiftMinutes: 15 }), "ghost"),
+      compactButton("Shorter", () => adjustPlanBlock(block, { durationMinutes: -15 }), "ghost"),
+      compactButton("Longer", () => adjustPlanBlock(block, { durationMinutes: 15 }), "ghost"),
+      compactButton("Edit", () => loadPlanBlock(block), "secondary"),
+      compactButton(block.completed ? "Open" : "Done", () => adjustPlanBlock(block, { completed: !block.completed }), "secondary"),
+      compactButton("Delete", async () => {
+        await del(`/api/intentional-use/plan/block/${encodeURIComponent(block.id)}`);
+        toast("Block deleted");
+        await refresh();
+      }, "ghost")
+    );
+
+    row.append(label, actions);
+    root.append(row);
+  }
+}
+
+function compactButton(text: string, onClick: () => void | Promise<void>, className = "secondary"): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `${className} compact`;
+  button.textContent = text;
+  button.addEventListener("click", () => {
+    void onClick();
+  });
+  return button;
+}
+
+async function savePlanItem(item: IntentionalPlanItem, overrides: Partial<IntentionalPlanItem> = {}): Promise<void> {
+  await post("/api/intentional-use/plan/item", { ...item, ...overrides });
+}
+
+async function adjustPlanBlock(block: IntentionalPlanBlock, options: { shiftMinutes?: number; durationMinutes?: number; completed?: boolean }): Promise<void> {
+  const startsAt = new Date(block.startsAt);
+  const endsAt = new Date(block.endsAt);
+  const shiftMs = Number(options.shiftMinutes || 0) * 60 * 1000;
+  startsAt.setTime(startsAt.getTime() + shiftMs);
+  endsAt.setTime(endsAt.getTime() + shiftMs + Number(options.durationMinutes || 0) * 60 * 1000);
+  if (endsAt.getTime() <= startsAt.getTime() + 15 * 60 * 1000) {
+    endsAt.setTime(startsAt.getTime() + 15 * 60 * 1000);
+  }
+  await post("/api/intentional-use/plan/block", {
+    ...block,
+    startsAt: startsAt.toISOString(),
+    endsAt: endsAt.toISOString(),
+    completed: options.completed ?? block.completed
+  });
+  toast("Block updated");
+  await refresh();
 }
 
 function renderRecoveryCheckIns(checkIns: NonNullable<IntentionalUseSummary["recovery"]>["recentCheckIns"] = []): void {
@@ -2304,6 +2506,91 @@ function resetJournalForm(): void {
   setSelectedOptions($("#journalRuleIds"), []);
 }
 
+function loadPlanItem(item: IntentionalPlanItem): void {
+  const form = $("#planItemForm");
+  form.elements.id.value = item.id;
+  form.elements.listId.value = item.listId;
+  form.elements.status.value = item.status;
+  form.elements.title.value = item.title;
+  form.elements.notes.value = item.notes || "";
+  form.elements.dueAt.value = item.dueAt ? toDateTimeLocal(item.dueAt) : "";
+  form.elements.tags.value = (item.tags || []).join(", ");
+  setView("journal");
+}
+
+function resetPlanItemForm(): void {
+  const form = $("#planItemForm");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.title.value = "Homework";
+  form.elements.status.value = "open";
+  form.elements.notes.value = "";
+  form.elements.dueAt.value = "";
+  form.elements.tags.value = "";
+  const firstList = (state.data?.intentionalUse?.lifeLog?.planner?.lists || []).find((list) => list.active !== false);
+  form.elements.listId.value = firstList?.id || "todo";
+}
+
+function resetPlanListForm(): void {
+  const form = $("#planListForm");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.name.value = "To Do";
+  form.elements.kind.value = "todo";
+  form.elements.active.checked = true;
+}
+
+function loadPlanBlockFromItem(item: IntentionalPlanItem): void {
+  resetPlanBlockForm();
+  const form = $("#planBlockForm");
+  form.elements.title.value = item.title;
+  form.elements.itemId.value = item.id;
+  form.elements.notes.value = item.notes || "";
+  form.elements.mode.value = item.listId === "watchlist" ? "watch" : "focus";
+  setView("journal");
+}
+
+function loadPlanBlock(block: IntentionalPlanBlock): void {
+  const form = $("#planBlockForm");
+  form.elements.id.value = block.id;
+  form.elements.title.value = block.title;
+  form.elements.itemId.value = block.itemId || "";
+  form.elements.startsAt.value = toDateTimeLocal(block.startsAt);
+  form.elements.endsAt.value = toDateTimeLocal(block.endsAt);
+  form.elements.mode.value = block.mode || "focus";
+  form.elements.profileId.value = block.profileId || state.data?.state.settings.activeProfileId || "";
+  form.elements.lockLevel.value = block.lockLevel || "deep";
+  form.elements.enabled.checked = block.enabled !== false;
+  form.elements.commitmentLock.checked = Boolean(block.commitmentLock);
+  form.elements.notes.value = block.notes || "";
+  const targets = new Set(block.deviceTargets || ["computer", "phone"]);
+  for (const input of $$<HTMLInputElement>("#planBlockForm input[name='deviceTargets']")) {
+    input.checked = targets.has(input.value as "computer" | "phone");
+  }
+  setView("journal");
+}
+
+function resetPlanBlockForm(): void {
+  const form = $("#planBlockForm");
+  const start = nextQuarterHour();
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.title.value = "Homework";
+  form.elements.itemId.value = "";
+  form.elements.startsAt.value = toDateTimeLocal(start.toISOString());
+  form.elements.endsAt.value = toDateTimeLocal(end.toISOString());
+  form.elements.mode.value = "focus";
+  form.elements.profileId.value = SOFT_BLOCK_PROFILE_ID;
+  form.elements.lockLevel.value = "deep";
+  form.elements.enabled.checked = true;
+  form.elements.commitmentLock.checked = false;
+  form.elements.notes.value = "";
+  for (const input of $$<HTMLInputElement>("#planBlockForm input[name='deviceTargets']")) {
+    input.checked = true;
+  }
+}
+
 function targetCount(rule: DashboardItem): number {
   return (rule.apps || []).length + (rule.sites || []).length + (rule.urlPatterns || []).length;
 }
@@ -2443,6 +2730,29 @@ function toDateTimeLocal(value: unknown): string {
   if (Number.isNaN(date.getTime())) return "";
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
   return local.toISOString().slice(0, 16);
+}
+
+function shortTime(value: unknown): string {
+  const date = value ? new Date(String(value)) : null;
+  if (!date || Number.isNaN(date.getTime())) return "--";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function nextQuarterHour(): Date {
+  const date = new Date();
+  date.setSeconds(0, 0);
+  const minutes = date.getMinutes();
+  date.setMinutes(minutes + (15 - (minutes % 15 || 15)));
+  return date;
+}
+
+function profileName(profileId: string): string {
+  return state.data?.state.profiles.find((profile) => profile.id === profileId)?.name || profileId || "Profile";
+}
+
+function selectedPlanItemListId(itemId: string): string {
+  if (!itemId) return "";
+  return state.data?.intentionalUse?.lifeLog?.planner?.items?.find((item) => item.id === itemId)?.listId || "";
 }
 
 function renderTypingChallenge(output: ControlElement, input: ControlElement, challenge: ChallengeSummary | null): void {

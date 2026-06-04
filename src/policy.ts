@@ -11,7 +11,7 @@ import {
 } from "./defaults.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { parseClock } from "./time.js";
-import type { ActivePolicy, DeviceTarget, DeviceTargetInput, LockLevel, PolicyPhase, PolicyPhaseKind, Profile, Schedule, SentinelState, Session } from "./types.js";
+import type { ActivePolicy, DeviceTarget, DeviceTargetInput, IntentionalPlanBlock, LockLevel, PolicyPhase, PolicyPhaseKind, Profile, Schedule, SentinelState, Session } from "./types.js";
 
 const SITE_ALIAS_GROUPS = [
   ["youtube.com", "youtu.be", "youtube-nocookie.com"],
@@ -270,7 +270,19 @@ export function activePolicy(state: SentinelState, now = new Date(), options: Po
     };
   }
 
+  const planned = activePlannerBlock(state, now, { device });
   const scheduled = activeSchedule(state, now, { device });
+
+  if (planned && (!scheduled || lockPriority(planned.session.lockLevel) > lockPriority(scheduled.session.lockLevel))) {
+    return {
+      kind: "planner",
+      session: planned.session,
+      profile: profileById(state, planned.block.profileId),
+      plannerBlock: planned.block,
+      endsAt: planned.session.endsAt
+    };
+  }
+
   if (!scheduled) return null;
 
   return {
@@ -280,6 +292,10 @@ export function activePolicy(state: SentinelState, now = new Date(), options: Po
     schedule: scheduled.schedule,
     endsAt: scheduled.session.endsAt
   };
+}
+
+function lockPriority(lockLevel: LockLevel): number {
+  return lockLevel === "deep" ? 2 : 1;
 }
 
 export function activeSessionForDevice(state: SentinelState, device: DeviceTargetInput = "computer"): Session | null {
@@ -333,7 +349,7 @@ export function normalizeLockLevel(value: unknown, fallback: LockLevel = "deep")
   return level === "light" || level === "deep" ? level : fallback;
 }
 
-export function sessionTargetsDevice(session: Session | Schedule | null | undefined, device: DeviceTargetInput = "computer"): boolean {
+export function sessionTargetsDevice(session: Session | Schedule | IntentionalPlanBlock | null | undefined, device: DeviceTargetInput = "computer"): boolean {
   const targets = normalizeDeviceTargets(session?.deviceTargets, DEVICE_TARGETS);
   return targets.includes(normalizeDeviceTarget(device));
 }
@@ -415,6 +431,42 @@ export function activeSchedule(
         emergencyUnlocksAllowed: !schedule.commitmentLock,
         source: "schedule",
         deviceTargets: normalizeDeviceTargets(schedule.deviceTargets, DEVICE_TARGETS)
+      }
+    };
+  }
+  return null;
+}
+
+export function activePlannerBlock(
+  state: SentinelState,
+  now = new Date(),
+  options: PolicyDeviceOptions = {}
+): { block: IntentionalPlanBlock; session: Session } | null {
+  const device = normalizeDeviceTarget(options.device);
+  const nowMs = now.getTime();
+  const blocks = [...(state.intentionalUse?.planBlocks || [])].sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""));
+  for (const block of blocks) {
+    if (block.enabled === false || block.completed) continue;
+    if (!sessionTargetsDevice(block, device)) continue;
+    const startsAt = Date.parse(block.startsAt || "");
+    const endsAt = Date.parse(block.endsAt || "");
+    if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) continue;
+    if (nowMs < startsAt || nowMs >= endsAt) continue;
+    return {
+      block,
+      session: {
+        id: `planner:${block.id}`,
+        title: block.title,
+        mode: block.mode,
+        profileId: block.profileId,
+        lockLevel: block.lockLevel,
+        startedAt: new Date(startsAt).toISOString(),
+        endsAt: new Date(endsAt).toISOString(),
+        canEndEarly: false,
+        commitmentLock: Boolean(block.commitmentLock),
+        emergencyUnlocksAllowed: !block.commitmentLock,
+        source: "planner",
+        deviceTargets: normalizeDeviceTargets(block.deviceTargets, DEVICE_TARGETS)
       }
     };
   }
