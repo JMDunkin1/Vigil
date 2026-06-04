@@ -325,10 +325,12 @@ export interface IosDeviceSummary extends UnknownRecord {
     };
   };
   mdm?: UnknownRecord & {
-    enabled?: boolean;
-    ready?: boolean;
-    enrollmentReady?: boolean;
-    publicBaseUrl?: string;
+	    enabled?: boolean;
+	    ready?: boolean;
+	    enrollmentReady?: boolean;
+	    status?: "off" | "setup-needed" | "queue-only" | "ready";
+	    capabilityLevel?: "static-profile" | "setup-needed" | "command-queue" | "wireless-push";
+	    publicBaseUrl?: string;
     topic?: string;
     identityCertificateUuid?: string;
     identityCertificatePayloadSet?: boolean;
@@ -347,8 +349,10 @@ export interface IosDeviceSummary extends UnknownRecord {
     lastPushStatus?: string;
     lastPushError?: string;
     lastSeenAt?: string;
-    pushSupported?: boolean;
-    blockers?: string[];
+	    pushSupported?: boolean;
+	    blockers?: string[];
+	    setupBlockers?: string[];
+	    pushBlockers?: string[];
     grayscale?: UnknownRecord & {
       desired?: boolean;
       label?: string;

@@ -80,6 +80,20 @@ interface MdmSettings extends IosMdmSettings {
   commands: MdmCommand[];
 }
 
+export type IosMdmStatus = "off" | "setup-needed" | "queue-only" | "ready";
+export type IosMdmCapabilityLevel = "static-profile" | "setup-needed" | "command-queue" | "wireless-push";
+
+export interface IosMdmReadiness {
+  enabled: boolean;
+  enrollmentReady: boolean;
+  ready: boolean;
+  status: IosMdmStatus;
+  capabilityLevel: IosMdmCapabilityLevel;
+  setupBlockers: string[];
+  pushBlockers: string[];
+  blockers: string[];
+}
+
 type MdmPayload = UnknownRecord & {
   PayloadDescription: string;
   PayloadDisplayName: string;
@@ -198,29 +212,53 @@ export function publicIosMdmSettings(mdm: Partial<IosMdmSettings> | Partial<MdmS
   };
 }
 
+export function iosMdmReadiness(mdm: Partial<IosMdmSettings> | Partial<MdmSettings> = {}): IosMdmReadiness {
+  const settings = { ...defaultState().deviceControls.ios.mdm, ...mdm } as MdmSettings;
+  const setupBlockers = iosMdmReadinessBlockers(settings);
+  const pushBlockers = setupBlockers.length ? [] : iosMdmPushBlockers(settings);
+  const blockers = [...setupBlockers, ...pushBlockers];
+  const enabled = Boolean(settings.enabled);
+  const enrollmentReady = enabled && setupBlockers.length === 0;
+  const ready = enabled && blockers.length === 0;
+  const status: IosMdmStatus = !enabled ? "off" : (ready ? "ready" : (enrollmentReady ? "queue-only" : "setup-needed"));
+  const capabilityLevel: IosMdmCapabilityLevel = !enabled
+    ? "static-profile"
+    : ready
+      ? "wireless-push"
+      : enrollmentReady
+        ? "command-queue"
+        : "setup-needed";
+  return {
+    enabled,
+    enrollmentReady,
+    ready,
+    status,
+    capabilityLevel,
+    setupBlockers,
+    pushBlockers,
+    blockers
+  };
+}
+
 export function iosMdmSummary(state: SentinelState, now = new Date()) {
   const mdm = ensureMdmState(state);
   const devices = normalizeMdmDevices(mdm.devices);
   const commands = normalizeMdmCommands(mdm.commands);
-  const setupBlockers = iosMdmReadinessBlockers(mdm);
-  const pushBlockers = setupBlockers.length ? [] : iosMdmPushBlockers(mdm);
-  const blockers = [...setupBlockers, ...pushBlockers];
-  const enabled = Boolean(mdm.enabled);
+  const readiness = iosMdmReadiness(mdm);
   const enrolled = devices.filter((device) => device.status !== "checked-out");
   const pending = commands.filter((command) => command.status === "queued");
   const sent = commands.filter((command) => command.status === "sent");
   const completed = commands.filter((command) => command.status === "acknowledged");
   const failed = commands.filter((command) => ["error", "command-format-error"].includes(command.status));
-  const enrollmentReady = enabled && setupBlockers.length === 0;
-  const ready = enabled && blockers.length === 0;
   const grayscale = grayscaleDecision(state, now, { device: "phone" });
 
   return {
-    enabled,
-    ready,
-    enrollmentReady,
-    status: !enabled ? "off" : (ready ? "ready" : (enrollmentReady ? "queue-only" : "setup-needed")),
-    note: mdmNote(enabled, ready, enrollmentReady, blockers),
+    enabled: readiness.enabled,
+    ready: readiness.ready,
+    enrollmentReady: readiness.enrollmentReady,
+    status: readiness.status,
+    capabilityLevel: readiness.capabilityLevel,
+    note: mdmNote(readiness.enabled, readiness.ready, readiness.enrollmentReady, readiness.blockers),
     publicBaseUrl: mdm.publicBaseUrl,
     topic: mdm.topic,
     identityCertificateUuid: mdm.identityCertificateUuid,
@@ -233,8 +271,8 @@ export function iosMdmSummary(state: SentinelState, now = new Date()) {
     policyProfileUrl: fullMdmUrl(mdm, "/mdm/policy.mobileconfig"),
     checkInUrl: fullMdmUrl(mdm, "/mdm/checkin"),
     serverUrl: fullMdmUrl(mdm, "/mdm/connect"),
-    pushSupported: setupBlockers.length === 0 && pushBlockers.length === 0,
-    pushNote: setupBlockers.length === 0 && pushBlockers.length === 0
+    pushSupported: readiness.ready,
+    pushNote: readiness.ready
       ? "APNs wakeups are configured; queued commands can wake enrolled iPhones."
       : "APNs wakeups need a push certificate before queued commands can wake iPhones.",
     enrolledDeviceCount: enrolled.length,
@@ -258,7 +296,9 @@ export function iosMdmSummary(state: SentinelState, now = new Date()) {
       label: grayscale.label,
       source: grayscale.source
     },
-    blockers,
+    blockers: readiness.blockers,
+    setupBlockers: readiness.setupBlockers,
+    pushBlockers: readiness.pushBlockers,
     devices: devices.map(publicMdmDevice),
     commands: commands.slice(0, 12).map(publicMdmCommand),
     generatedAt: now.toISOString()

@@ -927,6 +927,7 @@ last exit code = 0
 
 {
   const serverSource = await readFile(join(process.cwd(), "src", "server.js"), "utf8");
+  const sessionRoutesSource = await readFile(join(process.cwd(), "src", "server", "sessionRoutes.js"), "utf8");
   const hardeningRoutesSource = await readFile(join(process.cwd(), "src", "server", "hardeningRoutes.js"), "utf8");
   const hardeningSummarySource = await readFile(join(process.cwd(), "src", "server", "hardeningSummary.js"), "utf8");
   const extensionApiSource = await readFile(join(process.cwd(), "src", "server", "extensionApi.js"), "utf8");
@@ -936,15 +937,15 @@ last exit code = 0
   assert.match(localScriptsSource, /with administrator privileges/);
   assert.match(hardeningSummarySource, /npm run seal:source/);
   assert.match(hardeningSummarySource, /extensionLoad/);
-  assert.match(serverSource, /Brick Mode/);
-  assert.match(serverSource, /\/api\/panic\/start/);
-  assert.match(serverSource, /panicLockDurationMinutes/);
+  assert.match(sessionRoutesSource, /Brick Mode/);
+  assert.match(sessionRoutesSource, /\/api\/panic\/start/);
+  assert.match(sessionRoutesSource, /panicLockDurationMinutes/);
   assert.match(hardeningSummarySource, /browser control pages/);
   assert.match(statePayloadSource, /strictPreflightState/);
   assert.match(statePayloadSource, /profileSnapshot: snapshotProfile\(profile\)/);
   assert.match(extensionApiSource, /\/api\/extension\/rules\/sync/);
   assert.match(statePayloadSource, /focusShortcutSummary/);
-  assert.match(serverSource, /assertIntentReason/);
+  assert.match(sessionRoutesSource, /assertIntentReason/);
   assert.doesNotMatch(serverSource, /\/api\/devices\/android|Android|android_settings/);
   const indexSource = await readFile(join(process.cwd(), "public", "index.html"), "utf8");
   assert.match(indexSource, /id="startNormalMode"/);
@@ -960,11 +961,12 @@ last exit code = 0
   assert.match(indexSource, /id="intentReasonEnabled"/);
   assert.match(indexSource, /id="focusSoundEnabled"/);
   const appSource = await readFile(join(process.cwd(), "public", "app.js"), "utf8");
+  const hardeningPanelSource = await readFile(join(process.cwd(), "public", "hardening-panel.js"), "utf8");
   assert.match(appSource, /BRICK_MODE_PROFILE_ID/);
   assert.match(appSource, /\/api\/panic\/start/);
-  assert.match(appSource, /saveFocusShortcuts/);
+  assert.match(hardeningPanelSource, /saveFocusShortcuts/);
   assert.doesNotMatch(appSource, /Android|android|ADB/);
-  assert.match(appSource, /renderIntentReasonHints/);
+  assert.match(hardeningPanelSource, /renderIntentReasonHints/);
   assert.doesNotMatch(appSource, /innerHTML|insertAdjacentHTML|outerHTML|document\.write/);
   assert.doesNotMatch(appSource, /createDistanceKeyQrSvg|BarcodeDetector/);
   const distanceKeyUiSource = await readFile(join(process.cwd(), "public", "distance-key-ui.js"), "utf8");
@@ -2087,10 +2089,11 @@ last exit code = 0
 
 {
   const serverSource = await readFile("src/server.js", "utf8");
+  const sessionRoutesSource = await readFile("src/server/sessionRoutes.js", "utf8");
   assert.match(serverSource, /scheduleImmediateSessionEnforcement/);
   assert.match(serverSource, /session_immediate_enforcement/);
-  assert.match(serverSource, /plannerBlockId/);
-  assert.match(serverSource, /completeIntentionalPlanBlock/);
+  assert.match(sessionRoutesSource, /plannerBlockId/);
+  assert.match(sessionRoutesSource, /completeIntentionalPlanBlock/);
   const monitorSource = await readFile("src/monitor.js", "utf8");
   assert.match(monitorSource, /enforceImmediately/);
   assert.match(monitorSource, /lastImmediateEnforcement/);
