@@ -212,6 +212,9 @@ last exit code = 0
   const macosSource = await readFile("src/macos.js", "utf8");
   assert.match(macosSource, /CGSession/);
   assert.match(macosSource, /displaysleepnow/);
+  assert.match(macosSource, /key code 53/);
+  assert.match(macosSource, /window\.location\.replace/);
+  assert.match(macosSource, /document\.querySelectorAll\('video,audio'\)/);
 }
 
 {
@@ -224,11 +227,14 @@ last exit code = 0
   assert.match(background, /contentBlockRules/);
   assert.match(background, /syncSiteBlockingFromServer/);
   assert.match(background, /updateDynamicRules/);
+  assert.match(background, /deferTabAction/);
   assert.match(background, /DEFAULT_LOCAL_SERVER/);
   const options = await readFile("extension/options.js", "utf8");
   assert.match(options, /vigilExtensionToken/);
   const content = await readFile("extension/content.js", "utf8");
   assert.match(content, /cleanupBrowserNoise/);
+  assert.match(content, /data-vigil-page-guard/);
+  assert.match(content, /location\.replace/);
   const installer = await readFile("scripts/install-launch-agent.mjs", "utf8");
   assert.match(installer, /agent-runner\.mjs/);
 }

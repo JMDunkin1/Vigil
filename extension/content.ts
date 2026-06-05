@@ -1,12 +1,18 @@
 let lastPulseAt = Date.now();
 let activePauseOverlay: PauseOverlayState | null = null;
 let mediaLockActive = false;
+let pageGuardActive = false;
+let pageGuardReleaseTimer: number | null = null;
 const pausedByVigil = new Set<HTMLMediaElement>();
 
-type PulseReason = "heartbeat" | "activated" | "history";
+type PulseReason = "navigation" | "heartbeat" | "activated" | "history";
 type HistoryMethod = "pushState" | "replaceState";
 
 interface PulseResponse {
+  ok?: boolean;
+  blocked?: boolean;
+  paused?: boolean;
+  redirectUrl?: string;
   browserNoiseBlockingEnabled?: boolean;
 }
 
@@ -33,6 +39,10 @@ interface PauseMessage {
   result?: unknown;
 }
 
+interface PulseOptions {
+  guard?: boolean;
+}
+
 interface PauseActionMessage {
   type: "VIGIL_PAUSE_ACTION";
   action: "continue" | "skip";
@@ -42,12 +52,14 @@ interface PauseActionMessage {
   replacement?: string;
 }
 
+activatePageGuard();
+sendPulse("navigation", { guard: true });
 setInterval(() => sendPulse("heartbeat"), 5000);
 window.addEventListener("focus", () => resetAndPulse("activated"));
-window.addEventListener("pageshow", () => resetAndPulse("activated"));
-window.addEventListener("popstate", () => resetAndPulse("history"));
+window.addEventListener("pageshow", () => resetAndPulse("activated", { guard: true }));
+window.addEventListener("popstate", () => resetAndPulse("history", { guard: true }));
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") resetAndPulse("activated");
+  if (document.visibilityState === "visible") resetAndPulse("activated", { guard: true });
 });
 document.addEventListener("play", pausePlayingMedia, true);
 document.addEventListener("keydown", trapPageKeys, true);
@@ -61,13 +73,15 @@ chrome.runtime.onMessage.addListener((message: PauseMessage, _sender, sendRespon
 patchHistory("pushState");
 patchHistory("replaceState");
 
-function resetAndPulse(reason: PulseReason): void {
+function resetAndPulse(reason: PulseReason, options: PulseOptions = {}): void {
   lastPulseAt = Date.now();
-  sendPulse(reason);
+  sendPulse(reason, options);
 }
 
-function sendPulse(reason: PulseReason): void {
-  if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+function sendPulse(reason: PulseReason, options: PulseOptions = {}): void {
+  if (document.visibilityState !== "visible") return;
+  if (!options.guard && !document.hasFocus()) return;
+  if (options.guard) activatePageGuard();
   const now = Date.now();
   const seconds = Math.max(1, Math.min(15, (now - lastPulseAt) / 1000));
   lastPulseAt = now;
@@ -80,10 +94,26 @@ function sendPulse(reason: PulseReason): void {
       seconds
     }, (result: PulseResponse | undefined) => {
       void chrome.runtime.lastError;
-      if (result?.browserNoiseBlockingEnabled) cleanupBrowserNoise();
+      handlePulseResult(result);
     });
   } catch {
+    releasePageGuard();
   }
+}
+
+function handlePulseResult(result: PulseResponse | undefined): void {
+  if (result?.browserNoiseBlockingEnabled) cleanupBrowserNoise();
+  if (result?.blocked && result.redirectUrl) {
+    replaceLocation(result.redirectUrl);
+    return;
+  }
+  if (result?.paused) {
+    if (!showPauseOverlay(result) && result.redirectUrl) {
+      replaceLocation(result.redirectUrl);
+    }
+    return;
+  }
+  releasePageGuard();
 }
 
 function patchHistory(method: HistoryMethod): void {
@@ -102,6 +132,7 @@ function showPauseOverlay(value: unknown): boolean {
 
   removePauseOverlay(false);
   pauseAllMedia();
+  activatePageGuard(0);
 
   const root = document.documentElement || document.body;
   if (!root) return false;
@@ -301,7 +332,62 @@ function removePauseOverlay(resumeMedia: boolean): void {
   if (activePauseOverlay.timer) window.clearInterval(activePauseOverlay.timer);
   activePauseOverlay.host.remove();
   activePauseOverlay = null;
+  releasePageGuard();
   if (resumeMedia) resumePausedMedia();
+}
+
+function activatePageGuard(maxMs = 3500): void {
+  if (isLocalVigilPage()) return;
+  injectPageGuardStyle();
+  pageGuardActive = true;
+  document.documentElement?.setAttribute("data-vigil-page-guard", "active");
+  if (pageGuardReleaseTimer) window.clearTimeout(pageGuardReleaseTimer);
+  pageGuardReleaseTimer = maxMs > 0
+    ? window.setTimeout(() => releasePageGuard(), maxMs)
+    : null;
+}
+
+function releasePageGuard(): void {
+  if (pageGuardReleaseTimer) window.clearTimeout(pageGuardReleaseTimer);
+  pageGuardReleaseTimer = null;
+  if (!pageGuardActive) return;
+  pageGuardActive = false;
+  document.documentElement?.removeAttribute("data-vigil-page-guard");
+}
+
+function replaceLocation(url: string): void {
+  try {
+    window.location.replace(url);
+  } catch {
+    window.location.href = url;
+  }
+}
+
+function injectPageGuardStyle(): void {
+  if (document.getElementById("vigil-page-guard-style")) return;
+  const style = document.createElement("style");
+  style.id = "vigil-page-guard-style";
+  style.textContent = `
+    html[data-vigil-page-guard="active"]::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 2147483646;
+      background: #f7faf7;
+      pointer-events: auto;
+    }
+    html[data-vigil-page-guard="active"] > body {
+      visibility: hidden !important;
+    }
+    html[data-vigil-page-guard="active"] > vigil-pause-overlay {
+      visibility: visible !important;
+    }
+  `;
+  (document.head || document.documentElement).append(style);
+}
+
+function isLocalVigilPage(): boolean {
+  return ["127.0.0.1", "localhost", "::1"].includes(location.hostname.toLowerCase());
 }
 
 function pauseAllMedia(): void {
@@ -437,8 +523,7 @@ function pauseOverlayCss() {
       display: grid;
       place-items: center;
       padding: 24px;
-      background: rgba(9, 18, 20, .72);
-      backdrop-filter: blur(8px);
+      background: #091214;
     }
     .panel {
       width: min(720px, 100%);
