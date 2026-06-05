@@ -13,6 +13,7 @@ import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMd
 import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
 import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldLockScreenForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
+import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, roundSeconds } from "./monitor/timing.js";
 import { safariFilterStatus } from "./safariFilter.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
@@ -822,26 +823,4 @@ interface IdleUsageAccounting extends UnknownRecord {
   reason?: string;
 }
 
-export function activeSecondsBeforeIdleThreshold(seconds: number, idleSeconds: number, thresholdSeconds: number): number {
-  const elapsed = finitePositiveSeconds(seconds);
-  if (!elapsed) return 0;
-  const threshold = idleUsageThresholdSeconds(thresholdSeconds);
-  const idle = Math.max(0, Number.isFinite(Number(idleSeconds)) ? Number(idleSeconds) : 0);
-  if (idle <= threshold) return elapsed;
-  return roundSeconds(Math.max(0, elapsed - (idle - threshold)));
-}
-
-function idleUsageThresholdSeconds(value: unknown): number {
-  const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds >= 30 ? Math.min(3600, seconds) : 120;
-}
-
-function finitePositiveSeconds(value: unknown): number {
-  const seconds = Number(value);
-  return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
-}
-
-function roundSeconds(value: unknown): number {
-  const seconds = Number(value);
-  return Number.isFinite(seconds) ? Math.round(seconds * 10) / 10 : 0;
-}
+export { activeSecondsBeforeIdleThreshold } from "./monitor/timing.js";

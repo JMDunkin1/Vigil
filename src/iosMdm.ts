@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import http2 from "node:http2";
 import type { ClientHttp2Session, ClientHttp2Stream, IncomingHttpHeaders } from "node:http2";
 import { APP_NAME, PORT, defaultState } from "./defaults.js";
@@ -7,6 +7,8 @@ import { parseBoolean } from "./booleans.js";
 import { grayscaleDecision } from "./grayscale.js";
 import { plistData, toPlist } from "./plist.js";
 import type { IosMdmSettings, SentinelState, UnknownRecord } from "./types.js";
+import type { MdmCommand, MdmDevice, MdmMessage, MdmPushRequest, MdmSettings } from "./iosMdmModel.js";
+import { clampInteger, dataHex, dataString, isUnknownRecord, latestDate, normalizeBase64, normalizeBaseUrl, normalizeMdmCommands, normalizeMdmDevices, normalizeStatus, normalizeUuid, obscure, publicMdmCommand, publicMdmDevice, randomSecret, tokenHexFromDevice, tokenHexFromStoredToken } from "./iosMdmModel.js";
 
 const MDM_PROFILE_IDENTIFIER = "com.local-screen-time.ios.mdm";
 const DEFAULT_ACCESS_RIGHTS = 8179;
@@ -24,61 +26,6 @@ const DEVICE_INFO_QUERIES = [
   "IsActivationLockEnabled",
   "BatteryLevel"
 ];
-
-interface MdmDevice extends UnknownRecord {
-  id: string;
-  udid: string;
-  status: string;
-  firstSeenAt?: string;
-  lastSeenAt?: string;
-  checkedOutAt?: string;
-  lastMessageType?: string;
-  pushMagic?: string;
-  topic?: string;
-  token?: string;
-  tokenHex?: string;
-  unlockToken?: string;
-  lastStatus?: string;
-  lastPushAt?: string;
-  lastPushStatus?: string;
-  lastPushError?: string;
-  info?: UnknownRecord;
-  installedApplicationCount?: number;
-  installedApplicationsSample?: unknown[];
-  profileCount?: number;
-}
-
-interface MdmCommand extends UnknownRecord {
-  id: string;
-  commandUuid: string;
-  udid: string;
-  requestType: string;
-  reason?: string;
-  status: string;
-  queuedAt?: string;
-  sentAt?: string | null;
-  completedAt?: string | null;
-  attempts?: number;
-  policyHash?: string;
-  profileBase64?: string;
-  profileIdentifier?: string;
-  command?: UnknownRecord;
-  lastPushAt?: string;
-  lastPushStatus?: string;
-  lastPushError?: string;
-  lastResponseAt?: string;
-  lastStatus?: string;
-  notNowAt?: string;
-  errorChain?: Array<UnknownRecord>;
-  resultSummary?: { keys: string[]; error: string };
-  grayscaleDesired?: boolean;
-  grayscaleHash?: string;
-}
-
-interface MdmSettings extends IosMdmSettings {
-  devices: MdmDevice[];
-  commands: MdmCommand[];
-}
 
 export type IosMdmStatus = "off" | "setup-needed" | "queue-only" | "ready";
 export type IosMdmCapabilityLevel = "static-profile" | "setup-needed" | "command-queue" | "wireless-push";
@@ -114,35 +61,6 @@ type ApnsTlsOptions = http2.ClientSessionOptions & {
   pfx?: Buffer;
   passphrase?: string;
 };
-
-type PlistDataValue = {
-  __plistData: string;
-};
-
-interface MdmMessage extends UnknownRecord {
-  UDID?: unknown;
-  EnrollmentID?: unknown;
-  UserID?: unknown;
-  MessageType?: unknown;
-  messageType?: unknown;
-  PushMagic?: unknown;
-  Topic?: unknown;
-  Token?: unknown;
-  UnlockToken?: unknown;
-  Status?: unknown;
-  CommandUUID?: unknown;
-  ErrorChain?: Array<UnknownRecord>;
-  QueryResponses?: UnknownRecord;
-  InstalledApplicationList?: unknown[];
-  ProfileList?: unknown[];
-}
-
-interface MdmPushRequest {
-  endpoint: string;
-  path: string;
-  headers: http2.OutgoingHttpHeaders;
-  payload: string;
-}
 
 interface ApnsResult extends UnknownRecord {
   ok: boolean;
@@ -1044,43 +962,6 @@ function commonPayload(type: string, name: string, suffix: string, values: Unkno
   };
 }
 
-function publicMdmDevice(device: MdmDevice) {
-  return {
-    id: device.id,
-    udid: obscure(device.udid),
-    status: device.status || "enrolled",
-    topic: device.topic || "",
-    lastStatus: device.lastStatus || "",
-    lastMessageType: device.lastMessageType || "",
-    firstSeenAt: device.firstSeenAt || null,
-    lastSeenAt: device.lastSeenAt || null,
-    checkedOutAt: device.checkedOutAt || null,
-    productName: device.info?.ProductName || "",
-    osVersion: device.info?.OSVersion || "",
-    isSupervised: device.info?.IsSupervised ?? null,
-    installedApplicationCount: device.installedApplicationCount || 0,
-    profileCount: device.profileCount || 0
-  };
-}
-
-function publicMdmCommand(command: MdmCommand) {
-  return {
-    id: command.id,
-    commandUuid: command.commandUuid,
-    udid: obscure(command.udid),
-    requestType: command.requestType,
-    reason: command.reason || "",
-    status: command.status,
-    queuedAt: command.queuedAt || null,
-    sentAt: command.sentAt || null,
-    completedAt: command.completedAt || null,
-    attempts: command.attempts || 0,
-    lastStatus: command.lastStatus || "",
-    grayscaleDesired: command.grayscaleDesired ?? null,
-    error: command.errorChain?.[0]?.USEnglishDescription || command.resultSummary?.error || ""
-  };
-}
-
 function fullMdmUrl(mdm: MdmSettings, path: string): string {
   const base = mdm.publicBaseUrl || `http://127.0.0.1:${PORT}`;
   return `${base}${path}?token=${encodeURIComponent(mdm.enrollmentSecret || "")}`;
@@ -1088,121 +969,6 @@ function fullMdmUrl(mdm: MdmSettings, path: string): string {
 
 function enrollmentPath(mdm: MdmSettings): string {
   return `/mdm/enroll.mobileconfig?token=${encodeURIComponent(mdm.enrollmentSecret || "")}`;
-}
-
-function normalizeMdmDevices(values: unknown): MdmDevice[] {
-  return Array.isArray(values)
-    ? values
-      .filter(isUnknownRecord)
-      .map((device) => normalizeMdmDevice(device))
-    : [];
-}
-
-function normalizeMdmCommands(values: unknown): MdmCommand[] {
-  return Array.isArray(values)
-    ? values
-      .filter(isUnknownRecord)
-      .map((command) => normalizeMdmCommand(command))
-    : [];
-}
-
-function normalizeMdmDevice(value: UnknownRecord): MdmDevice {
-  const device = value as UnknownRecord;
-  return {
-    ...device,
-    id: String(device.id || randomUUID()),
-    udid: String(device.udid || "unknown-device"),
-    status: String(device.status || "enrolled")
-  };
-}
-
-function normalizeMdmCommand(value: UnknownRecord): MdmCommand {
-  const command = value as UnknownRecord;
-  const nestedCommand = command.command && typeof command.command === "object" ? command.command as UnknownRecord : {};
-  const requestType = String(command.requestType || command.RequestType || nestedCommand.RequestType || "Unknown");
-  return {
-    ...command,
-    id: String(command.id || randomUUID()),
-    commandUuid: String(command.commandUuid || command.CommandUUID || randomUUID()),
-    udid: String(command.udid || command.UDID || ""),
-    requestType,
-    status: String(command.status || "queued")
-  };
-}
-
-function normalizeBaseUrl(value: unknown): string {
-  const raw = String(value || "").trim();
-  if (!raw) return "";
-  try {
-    const url = new URL(raw);
-    if (!["http:", "https:"].includes(url.protocol)) return "";
-    url.hash = "";
-    url.search = "";
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    return "";
-  }
-}
-
-function normalizeUuid(value: unknown): string {
-  const raw = String(value || "").trim();
-  return /^[0-9A-Fa-f-]{32,36}$/.test(raw) ? raw.toUpperCase() : raw;
-}
-
-function normalizeBase64(value: unknown): string {
-  return String(value || "").replace(/\s+/g, "");
-}
-
-function normalizeStatus(value: unknown): string {
-  return String(value || "Idle")
-    .replace(/([a-z])([A-Z])/g, "$1-$2")
-    .toLowerCase();
-}
-
-function latestDate(values: unknown[]): string | null {
-  const times = values
-    .map((value) => value ? new Date(String(value)).getTime() : 0)
-    .filter((value) => Number.isFinite(value) && value > 0);
-  if (!times.length) return null;
-  return new Date(Math.max(...times)).toISOString();
-}
-
-function dataString(value: unknown): string {
-  if (!value) return "";
-  if (isPlistDataRecord(value)) return value.__plistData;
-  return String(value || "");
-}
-
-function dataHex(value: unknown): string {
-  if (!value) return "";
-  if (isPlistDataRecord(value)) return bufferFromBase64(value.__plistData).toString("hex");
-  const text = String(value || "").trim();
-  if (/^[0-9a-f]+$/i.test(text) && text.length % 2 === 0) return text.toLowerCase();
-  return bufferFromBase64(text).toString("hex");
-}
-
-function tokenHexFromDevice(device: Partial<MdmDevice> = {}): string {
-  return normalizeTokenHex(device.tokenHex) || tokenHexFromStoredToken(device.token);
-}
-
-function tokenHexFromStoredToken(value: unknown): string {
-  const text = String(value || "").trim();
-  if (!text) return "";
-  return normalizeTokenHex(text) || bufferFromBase64(text).toString("hex");
-}
-
-function normalizeTokenHex(value: unknown): string {
-  const text = String(value || "").trim();
-  if (!/^[0-9a-f]+$/i.test(text) || text.length % 2 !== 0) return "";
-  return text.toLowerCase();
-}
-
-function bufferFromBase64(value: unknown): Buffer {
-  try {
-    return Buffer.from(String(value || "").replace(/\s+/g, ""), "base64");
-  } catch {
-    return Buffer.alloc(0);
-  }
 }
 
 function apnsError(body: string, statusCode: number): string {
@@ -1216,30 +982,6 @@ function apnsError(body: string, statusCode: number): string {
   return `APNs request failed with status ${statusCode || "unknown"}.`;
 }
 
-function isUnknownRecord(value: unknown): value is UnknownRecord {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
 function simplifyPushError(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "APNs push failed.");
-}
-
-function obscure(value: unknown): string {
-  const text = String(value || "");
-  if (text.length <= 10) return text;
-  return `${text.slice(0, 6)}...${text.slice(-4)}`;
-}
-
-function randomSecret(): string {
-  return randomBytes(24).toString("base64url");
-}
-
-function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
-  const number = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, number));
-}
-
-function isPlistDataRecord(value: unknown): value is PlistDataValue {
-  return Boolean(value && typeof value === "object" && typeof (value as PlistDataValue).__plistData === "string");
 }
