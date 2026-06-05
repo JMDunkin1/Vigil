@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, EXTENSION_TOKEN_HEADER } from "../../src/apiSecurity.js";
-import { defaultState } from "../../src/defaults.js";
+import { defaultState, REQUIRED_EXTENSION_VERSION } from "../../src/defaults.js";
 import { handleExtensionApiRoute } from "../../src/server/extensionApi.js";
 import type { UsageState } from "../../src/types.js";
 
@@ -111,7 +111,7 @@ try {
     request("POST", "/api/extension/check", pauseHeaders, {
       url: "https://youtube.com/shorts/demo",
       event: "navigation",
-      extensionVersion: "0.3.0"
+      extensionVersion: REQUIRED_EXTENSION_VERSION
     }),
     pauseResponse,
     new URL("http://127.0.0.1:8787/api/extension/check"),

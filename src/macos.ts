@@ -26,7 +26,7 @@ export async function runAppleScript(script: string, timeout = 2500): Promise<st
 
 export async function getFrontmostApp() {
   try {
-    const app = await runAppleScript('tell application "System Events" to get name of first application process whose frontmost is true');
+    const app = canonicalFrontmostAppName(await runAppleScript('tell application "System Events" to get name of first application process whose frontmost is true'));
     return { ok: true, app };
   } catch (error) {
     return {
@@ -85,8 +85,7 @@ export async function redirectActiveBrowserTab(appName: string, url: string) {
     const app = escapeAppleScript(appName);
     const target = escapeAppleScript(url);
     if (appName === "Safari") {
-      await runAppleScript(`tell application "${app}" to if (count of windows) > 0 then set URL of current tab of front window to "${target}"`);
-      return { ok: true };
+      return await redirectSafariTab(url);
     }
 
     if (CHROMIUM_BROWSERS.has(appName)) {
@@ -98,6 +97,47 @@ export async function redirectActiveBrowserTab(appName: string, url: string) {
   } catch (error) {
     return { ok: false, error: simplifyError(error) };
   }
+}
+
+async function redirectSafariTab(url: string) {
+  const target = escapeAppleScript(url);
+  const script = [
+    `set targetUrl to "${target}"`,
+    "tell application \"Safari\" to activate",
+    "tell application \"System Events\"",
+    "  key code 53",
+    "  delay 0.08",
+    "  key code 53",
+    "end tell",
+    "tell application \"Safari\"",
+    "  if (count of windows) = 0 then error \"No Safari windows\"",
+    "  try",
+    `    do JavaScript "${escapeAppleScript(safariInterruptionScript(url))}" in current tab of front window`,
+    "    return \"javascript-replace\"",
+    "  on error",
+    "    set URL of current tab of front window to targetUrl",
+    "    return \"set-url\"",
+    "  end try",
+    "end tell"
+  ].join("\n");
+  const method = await runAppleScript(script, 5000);
+  return { ok: true, method: method || "safari-redirect" };
+}
+
+function safariInterruptionScript(url: string): string {
+  const target = JSON.stringify(url);
+  return [
+    "try {",
+    "  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();",
+    "  document.querySelectorAll('video,audio').forEach((media) => {",
+    "    try { media.pause(); media.removeAttribute('src'); media.load(); } catch (_) {}",
+    "  });",
+    "  document.documentElement.innerHTML = '';",
+    `  window.location.replace(${target});`,
+    "} catch (_) {",
+    `  window.location.replace(${target});`,
+    "}"
+  ].join("\n");
 }
 
 export async function quitApp(appName: string, options: { force?: boolean } = {}) {
@@ -309,6 +349,12 @@ export function urlHostname(url: unknown): string {
 
 function escapeAppleScript(value: unknown): string {
   return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function canonicalFrontmostAppName(value: unknown): string {
+  const app = String(value || "").trim();
+  if (/^Safari (Web Content|Networking)$/i.test(app)) return "Safari";
+  return app;
 }
 
 function processDisplayName(value: unknown): string {

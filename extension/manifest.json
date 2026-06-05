@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sentinel Companion",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Connects browser tabs to the local Sentinel blocker.",
   "permissions": ["tabs", "webNavigation", "storage", "declarativeNetRequest"],
   "host_permissions": [

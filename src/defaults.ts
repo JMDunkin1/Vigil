@@ -2,7 +2,7 @@ import type { DeviceTarget, SentinelState } from "./types.js";
 
 export const APP_NAME = "Sentinel";
 export const PORT = Number(process.env.SENTINEL_PORT || process.env.SCREEN_TIME_PORT || 8787);
-export const REQUIRED_EXTENSION_VERSION = "0.3.0";
+export const REQUIRED_EXTENSION_VERSION = "0.3.1";
 
 export const BROWSERS = new Set([
   "Safari",

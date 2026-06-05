@@ -83,6 +83,10 @@ interface ExtensionCheckResult {
   [key: string]: unknown;
 }
 
+interface CheckUrlOptions {
+  deferTabAction?: boolean;
+}
+
 interface SiteRuleEntry {
   domain: string;
   redirectUrl: string;
@@ -161,7 +165,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse: (response?: unknown) => void) => {
   if (message?.type === "SENTINEL_PULSE") {
-    checkUrl(sender.tab?.id, message.url || "", message.reason || "heartbeat", message.seconds, message.title)
+    checkUrl(sender.tab?.id, message.url || "", message.reason || "heartbeat", message.seconds, message.title, { deferTabAction: true })
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
@@ -183,7 +187,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   tabMemory.delete(tabId);
 });
 
-async function checkUrl(tabId: number | undefined, url: string, event: string, seconds = 0, title = ""): Promise<ExtensionCheckResult> {
+async function checkUrl(
+  tabId: number | undefined,
+  url: string,
+  event: string,
+  seconds = 0,
+  title = "",
+  options: CheckUrlOptions = {}
+): Promise<ExtensionCheckResult> {
   if (!tabId || isSkippableUrl(url)) return { ok: true, skipped: true };
   if (isCoolingDown(tabId, url, event)) return { ok: true, skipped: true };
 
@@ -214,11 +225,13 @@ async function checkUrl(tabId: number | undefined, url: string, event: string, s
   }
   if (result.blocked && result.redirectUrl && url !== result.redirectUrl) {
     await setBadge(tabId, "LOCK", "#9b2f2f");
-    await updateTab(tabId, { url: result.redirectUrl });
+    if (!options.deferTabAction) await updateTab(tabId, { url: result.redirectUrl });
   } else if (result.paused && result.redirectUrl && url !== result.redirectUrl) {
     await setBadge(tabId, "WAIT", "#b67618");
-    const overlayShown = await showPauseOverlay(tabId, result);
-    if (!overlayShown) await updateTab(tabId, { url: result.redirectUrl });
+    if (!options.deferTabAction) {
+      const overlayShown = await showPauseOverlay(tabId, result);
+      if (!overlayShown) await updateTab(tabId, { url: result.redirectUrl });
+    }
   } else {
     await setBadge(tabId, "", "#126a6f");
   }
