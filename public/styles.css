@@ -1153,6 +1153,7 @@ button:focus-visible {
 }
 
 .day-grid label {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1165,6 +1166,9 @@ button:focus-visible {
 
 .day-grid input {
   position: absolute;
+  inset: 0;
+  width: 100%;
+  min-height: 100%;
   opacity: 0;
   pointer-events: none;
 }
@@ -1182,10 +1186,14 @@ button:focus-visible {
 
 .unlock-strip {
   display: grid;
-  grid-template-columns: minmax(160px, 240px) minmax(160px, 240px) minmax(160px, 240px) minmax(160px, 240px) auto;
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   gap: 10px;
   align-items: center;
   margin-top: 14px;
+}
+
+.unlock-strip .distance-input {
+  min-width: 0;
 }
 
 .list-item {
@@ -1855,6 +1863,21 @@ button:focus-visible {
   .limit-item {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  .list-item > *,
+  .limit-item > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .audit-item strong,
+  .audit-item em,
+  .list-item strong,
+  .list-item span,
+  .milestone strong,
+  .device-row strong {
+    white-space: normal;
   }
 
   .device-row {
