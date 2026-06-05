@@ -122,6 +122,19 @@ function bindHardeningActions(context: HardeningPanelContext): void {
     await copyHardeningText(path, "Extension path copied", context);
   });
 
+  $("#exportBackup").addEventListener("click", () => {
+    const status = $("#hardeningActionStatus");
+    status.textContent = "Preparing backup...";
+    const link = document.createElement("a");
+    link.href = "/api/backup/export";
+    link.download = "";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    status.textContent = "Backup download started";
+    toast("Backup download started");
+  });
+
   $("#saveFocusShortcuts").addEventListener("click", async () => {
     try {
       await post("/api/settings", {

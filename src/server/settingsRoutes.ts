@@ -115,6 +115,8 @@ const GUARDED = { guarded: true } as const;
 
 const SETTING_MUTATIONS = {
   pollIntervalMs: numberSetting("pollIntervalMs"),
+  idleUsageTrackingEnabled: booleanSetting("idleUsageTrackingEnabled", GUARDED),
+  idleUsageThresholdSeconds: numberSetting("idleUsageThresholdSeconds", { ...GUARDED, min: 30, max: 3600 }),
   strictByDefault: booleanSetting("strictByDefault", GUARDED),
   emergencyTokensPerWeek: numberSetting("emergencyTokensPerWeek"),
   emergencyDelaySeconds: numberSetting("emergencyDelaySeconds"),

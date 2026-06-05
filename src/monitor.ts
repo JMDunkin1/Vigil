@@ -10,7 +10,7 @@ import { hostsStatus, launchAgentStatus, stateSealStatus } from "./hardening.js"
 import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, recordRuntimeHeartbeat } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
-import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
+import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
 import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldLockScreenForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
 import { safariFilterStatus } from "./safariFilter.js";
@@ -49,6 +49,7 @@ interface MonitorStatus extends UnknownRecord {
   lastSystemSleepLock: UnknownRecord | null;
   lastFocusShortcut: UnknownRecord | null;
   lastGrayscale: UnknownRecord | null;
+  lastIdleAccounting: UnknownRecord | null;
   accessibilityLikelyMissing: boolean;
 }
 
@@ -119,6 +120,7 @@ class Monitor implements MonitorHandle {
       lastSystemSleepLock: null,
       lastFocusShortcut: null,
       lastGrayscale: null,
+      lastIdleAccounting: null,
       accessibilityLikelyMissing: false
     };
     this.recentBlocks = new Map();
@@ -147,7 +149,7 @@ class Monitor implements MonitorHandle {
 
   async tick(): Promise<void> {
     const frame = this.beginPollFrame();
-    this.recordElapsedUsage(frame.seconds);
+    await this.recordElapsedUsage(frame);
     await this.refreshSafetyRails(frame);
     const front = await this.updateFrontmostSample();
     await this.enforceFrontmost(front);
@@ -200,10 +202,80 @@ class Monitor implements MonitorHandle {
     };
   }
 
-  recordElapsedUsage(seconds: number): void {
-    if (!this.lastSample) return;
-    recordUsage(this.usage, this.lastSample, seconds);
-    recordIntentionalUseTime(this.state, this.lastSample, seconds);
+  async recordElapsedUsage(frame: PollFrame): Promise<void> {
+    if (!this.lastSample) {
+      this.status.lastIdleAccounting = this.idleAccountingStatus(frame, {
+        countedSeconds: 0,
+        skippedSeconds: 0,
+        reason: "no-sample"
+      });
+      return;
+    }
+
+    const accounting = await this.idleAdjustedUsage(frame);
+    if (accounting.countedSeconds > 0) {
+      recordUsage(this.usage, this.lastSample, accounting.countedSeconds);
+      recordIntentionalUseTime(this.state, this.lastSample, accounting.countedSeconds);
+    }
+    this.status.lastIdleAccounting = this.idleAccountingStatus(frame, accounting);
+  }
+
+  async idleAdjustedUsage(frame: PollFrame): Promise<IdleUsageAccounting> {
+    const thresholdSeconds = idleUsageThresholdSeconds(this.state.settings?.idleUsageThresholdSeconds);
+    if (this.state.settings?.idleUsageTrackingEnabled === false) {
+      return {
+        enabled: false,
+        ok: true,
+        countedSeconds: frame.seconds,
+        skippedSeconds: 0,
+        thresholdSeconds,
+        reason: "disabled"
+      };
+    }
+
+    const idle = await getMacIdleTime();
+    if (!idle.ok) {
+      return {
+        enabled: true,
+        ok: false,
+        countedSeconds: frame.seconds,
+        skippedSeconds: 0,
+        idleSeconds: idle.idleSeconds,
+        thresholdSeconds,
+        source: idle.source,
+        error: idle.error,
+        reason: "idle-unavailable"
+      };
+    }
+
+    const countedSeconds = activeSecondsBeforeIdleThreshold(frame.seconds, idle.idleSeconds, thresholdSeconds);
+    return {
+      enabled: true,
+      ok: true,
+      countedSeconds,
+      skippedSeconds: Math.max(0, frame.seconds - countedSeconds),
+      idleSeconds: idle.idleSeconds,
+      thresholdSeconds,
+      source: idle.source,
+      reason: countedSeconds > 0 ? "active" : "idle"
+    };
+  }
+
+  idleAccountingStatus(frame: PollFrame, accounting: IdleUsageAccounting): UnknownRecord {
+    return {
+      enabled: accounting.enabled !== false && this.state.settings?.idleUsageTrackingEnabled !== false,
+      ok: accounting.ok !== false,
+      reason: accounting.reason || "",
+      sample: this.lastSample,
+      elapsedSeconds: roundSeconds(frame.seconds),
+      countedSeconds: roundSeconds(accounting.countedSeconds || 0),
+      skippedSeconds: roundSeconds(accounting.skippedSeconds || 0),
+      idleSeconds: accounting.idleSeconds === undefined ? null : roundSeconds(accounting.idleSeconds),
+      thresholdSeconds: accounting.thresholdSeconds || idleUsageThresholdSeconds(this.state.settings?.idleUsageThresholdSeconds),
+      source: accounting.source || "",
+      error: accounting.error || "",
+      at: new Date(frame.now).toISOString()
+    };
   }
 
   async refreshSafetyRails(frame: PollFrame): Promise<void> {
@@ -736,4 +808,40 @@ class Monitor implements MonitorHandle {
       if (now - (record.lastSeenAt || 0) > 10 * 60 * 1000) this.appBlockHistory.delete(app);
     }
   }
+}
+
+interface IdleUsageAccounting extends UnknownRecord {
+  enabled?: boolean;
+  ok?: boolean;
+  countedSeconds: number;
+  skippedSeconds: number;
+  idleSeconds?: number;
+  thresholdSeconds?: number;
+  source?: string;
+  error?: string;
+  reason?: string;
+}
+
+export function activeSecondsBeforeIdleThreshold(seconds: number, idleSeconds: number, thresholdSeconds: number): number {
+  const elapsed = finitePositiveSeconds(seconds);
+  if (!elapsed) return 0;
+  const threshold = idleUsageThresholdSeconds(thresholdSeconds);
+  const idle = Math.max(0, Number.isFinite(Number(idleSeconds)) ? Number(idleSeconds) : 0);
+  if (idle <= threshold) return elapsed;
+  return roundSeconds(Math.max(0, elapsed - (idle - threshold)));
+}
+
+function idleUsageThresholdSeconds(value: unknown): number {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds >= 30 ? Math.min(3600, seconds) : 120;
+}
+
+function finitePositiveSeconds(value: unknown): number {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+}
+
+function roundSeconds(value: unknown): number {
+  const seconds = Number(value);
+  return Number.isFinite(seconds) ? Math.round(seconds * 10) / 10 : 0;
 }

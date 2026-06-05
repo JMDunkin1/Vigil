@@ -1,10 +1,13 @@
 export const API_ROUTES = Object.freeze([
   { id: "state", domain: "dashboard", methods: ["GET"], path: "/api/state" },
+  { id: "ruleExplain", domain: "policy", methods: ["GET", "POST"], path: "/api/rules/explain" },
   { id: "extensionCheck", domain: "extension", methods: ["GET", "POST"], path: "/api/extension/check" },
+  { id: "extensionPairing", domain: "extension", methods: ["GET"], path: "/api/extension/pairing" },
   { id: "extensionRules", domain: "extension", methods: ["GET"], path: "/api/extension/rules" },
   { id: "extensionRulesSync", domain: "extension", methods: ["POST"], path: "/api/extension/rules/sync" },
   { id: "extensionPauseContinue", domain: "extension", methods: ["POST"], path: "/api/extension/pause/continue" },
   { id: "extensionPauseSkip", domain: "extension", methods: ["POST"], path: "/api/extension/pause/skip" },
+  { id: "backupExport", domain: "backup", methods: ["GET"], path: "/api/backup/export" },
   { id: "settings", domain: "settings", methods: ["POST"], path: "/api/settings" },
   { id: "panicStart", domain: "sessions", methods: ["POST"], path: "/api/panic/start" },
   { id: "keyholder", domain: "protection", methods: ["POST"], path: "/api/keyholder" },

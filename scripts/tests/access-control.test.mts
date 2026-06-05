@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { accountStatusFromGroups, parseGroups } from "../../src/account.js";
-import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, EXTENSION_TOKEN_HEADER, extensionCorsHeaders, extensionRequestGuard, isTrustedExtensionRequest, publicHostGuard } from "../../src/apiSecurity.js";
+import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, EXTENSION_TOKEN_HEADER, extensionCorsHeaders, extensionRequestGuard, extensionTrustSummary, isTrustedExtensionRequest, publicHostGuard } from "../../src/apiSecurity.js";
 import { parseBoolean } from "../../src/booleans.js";
 import { iosMdmReadiness, normalizeIosMdmSettings } from "../../src/iosMdm.js";
 import { normalizeLimitRule } from "../../src/limits.js";
@@ -187,6 +187,15 @@ try {
       "content-type": "application/json"
     }
   }).ok, true);
+  assert.deepEqual({
+    trusted: extensionTrustSummary({ origin: "chrome-extension://abc" }).trusted,
+    trustedBy: extensionTrustSummary({ origin: "chrome-extension://abc" }).trustedBy,
+    suggestedIdEnv: extensionTrustSummary({ origin: "chrome-extension://abc" }).suggestedIdEnv
+  }, {
+    trusted: true,
+    trustedBy: "origin",
+    suggestedIdEnv: "VIGIL_EXTENSION_ID=abc"
+  });
   assert.equal(extensionRequestGuard({
     method: "POST",
     headers: {
@@ -214,6 +223,24 @@ try {
       [EXTENSION_TOKEN_HEADER]: "shared-extension-secret"
     }
   }).ok, true);
+  assert.deepEqual({
+    trusted: extensionTrustSummary({
+      origin: "chrome-extension://xyz",
+      [EXTENSION_TOKEN_HEADER]: "shared-extension-secret"
+    }).trusted,
+    trustedBy: extensionTrustSummary({
+      origin: "chrome-extension://xyz",
+      [EXTENSION_TOKEN_HEADER]: "shared-extension-secret"
+    }).trustedBy,
+    tokenConfigured: extensionTrustSummary({
+      origin: "chrome-extension://xyz",
+      [EXTENSION_TOKEN_HEADER]: "shared-extension-secret"
+    }).tokenConfigured
+  }, {
+    trusted: true,
+    trustedBy: "token",
+    tokenConfigured: true
+  });
   assert.equal(isTrustedExtensionRequest({ [EXTENSION_TOKEN_HEADER]: "shared-extension-secret" }), true);
   assert.equal(extensionCorsHeaders({ origin: "chrome-extension://xyz" })["Access-Control-Allow-Origin"], "chrome-extension://xyz");
 } finally {

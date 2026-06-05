@@ -268,6 +268,31 @@ export async function getCurrentWifiNetwork() {
   }
 }
 
+export async function getMacIdleTime() {
+  try {
+    const { stdout } = await execFileAsync("/usr/sbin/ioreg", ["-c", "IOHIDSystem", "-r", "-d", "1"], {
+      timeout: 750,
+      maxBuffer: 1024 * 32
+    });
+    const idleSeconds = parseHidIdleSeconds(stdout);
+    if (idleSeconds === null) {
+      return { ok: false, idleSeconds: 0, source: "ioreg:HIDIdleTime", error: "HIDIdleTime not found" };
+    }
+    return { ok: true, idleSeconds, source: "ioreg:HIDIdleTime", error: "" };
+  } catch (error) {
+    return { ok: false, idleSeconds: 0, source: "ioreg:HIDIdleTime", error: simplifyError(error) };
+  }
+}
+
+export function parseHidIdleSeconds(output: unknown): number | null {
+  const match = String(output || "").match(/"HIDIdleTime"\s*=\s*(\d+)/);
+  if (!match?.[1]) return null;
+  const idleNanoseconds = Number(match[1]);
+  return Number.isFinite(idleNanoseconds) && idleNanoseconds >= 0
+    ? idleNanoseconds / 1_000_000_000
+    : null;
+}
+
 export function appCanReportUrls(appName: string): boolean {
   return BROWSERS.has(appName);
 }

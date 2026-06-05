@@ -66,11 +66,12 @@ export function sendJson(response: ServerResponse, status: number, body: unknown
   response.end(`${JSON.stringify(body)}\n`);
 }
 
-export function sendDownload(response: ServerResponse, status: number, body: string | Buffer, filename: string, contentTypeValue: string): void {
+export function sendDownload(response: ServerResponse, status: number, body: string | Buffer, filename: string, contentTypeValue: string, headers: ResponseHeaders = {}): void {
   response.writeHead(status, {
     ...securityHeaders(),
     "Content-Type": `${contentTypeValue}; charset=utf-8`,
-    "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`
+    "Content-Disposition": `attachment; filename="${filename.replace(/"/g, "")}"`,
+    ...headers
   });
   response.end(body);
 }

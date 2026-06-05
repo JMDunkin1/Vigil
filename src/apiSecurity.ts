@@ -33,6 +33,21 @@ interface GuardInput {
   headers?: HeaderBag;
 }
 
+export interface ExtensionTrustSummary {
+  trusted: boolean;
+  trustedBy: "origin" | "token" | "none";
+  requestOrigin: string | null;
+  normalizedOrigin: string | null;
+  extensionId: string | null;
+  tokenConfigured: boolean;
+  tokenSupplied: boolean;
+  tokenHeader: string;
+  configuredOriginCount: number;
+  suggestedOriginEnv: string | null;
+  suggestedIdEnv: string | null;
+  suggestedTokenEnv: string;
+}
+
 interface DeviceUsageAuthorizationInput {
   headers?: HeaderBag;
   url?: URL | null;
@@ -160,6 +175,28 @@ export function isTrustedExtensionRequest(headers: HeaderBag = {}): boolean {
     || extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
 }
 
+export function extensionTrustSummary(headers: HeaderBag = {}): ExtensionTrustSummary {
+  const requestOrigin = headerValue(headers, "origin");
+  const normalized = requestOrigin ? normalizedOrigin(requestOrigin) : "";
+  const trustedOrigin = Boolean(requestOrigin && isTrustedExtensionOrigin(requestOrigin));
+  const trustedToken = extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
+  const extensionId = extensionIdFromOrigin(requestOrigin);
+  return {
+    trusted: trustedOrigin || trustedToken,
+    trustedBy: trustedOrigin ? "origin" : (trustedToken ? "token" : "none"),
+    requestOrigin: requestOrigin || null,
+    normalizedOrigin: normalized || null,
+    extensionId: extensionId || null,
+    tokenConfigured: Boolean(configuredExtensionToken()),
+    tokenSupplied: Boolean(headerValue(headers, EXTENSION_TOKEN_HEADER)),
+    tokenHeader: EXTENSION_TOKEN_HEADER,
+    configuredOriginCount: configuredExtensionOrigins().size,
+    suggestedOriginEnv: normalized ? `VIGIL_EXTENSION_ORIGIN=${normalized}` : null,
+    suggestedIdEnv: extensionId ? `VIGIL_EXTENSION_ID=${extensionId}` : null,
+    suggestedTokenEnv: "VIGIL_EXTENSION_TOKEN=<shared-token>"
+  };
+}
+
 function isMutationMethod(method: string): boolean {
   return !["GET", "HEAD", "OPTIONS"].includes(method);
 }
@@ -262,6 +299,15 @@ function normalizedOrigin(value: string): string {
     const url = new URL(value);
     if (isExtensionOrigin(value)) return `${url.protocol}//${url.hostname.toLowerCase()}`;
     return url.origin;
+  } catch {
+    return "";
+  }
+}
+
+function extensionIdFromOrigin(value: string): string {
+  try {
+    const url = new URL(value);
+    return isExtensionOrigin(value) ? url.hostname.toLowerCase() : "";
   } catch {
     return "";
   }

@@ -17,12 +17,14 @@ import { readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, se
 import { createLocalScriptRunner } from "./server/localScripts.js";
 import { blockedPage, pausePage } from "./server/pages.js";
 import { matchApiRoute } from "./server/apiRoutes.js";
+import { handleBackupApiRoute } from "./server/backupRoutes.js";
 import { handleDeviceApiRoute } from "./server/deviceRoutes.js";
 import type { IosMdmPushResult } from "./server/deviceRoutes.js";
 import { handleExtensionApiRoute } from "./server/extensionApi.js";
 import { handleHardeningApiRoute } from "./server/hardeningRoutes.js";
 import { handleIntentionalUseApiRoute } from "./server/intentionalUseRoutes.js";
 import { handlePolicyApiRoute } from "./server/policyRoutes.js";
+import { handleRuleSimulatorApiRoute } from "./server/ruleSimulatorRoutes.js";
 import { handleSettingsApiRoute } from "./server/settingsRoutes.js";
 import { handleSessionApiRoute, sessionIsActive } from "./server/sessionRoutes.js";
 import { buildStatePayload, strictPreflightStatus } from "./server/statePayload.js";
@@ -326,6 +328,14 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     const payload = await buildStatePayload({ state, usage, monitor: requireMonitor(), activePort, startedAt, localScripts });
     await saveState(state);
     sendJson(response, 200, payload.body, payload.headers);
+    return;
+  }
+
+  if (handleBackupApiRoute(response, { method, path, state, usage, activePort, startedAt })) {
+    return;
+  }
+
+  if (await handleRuleSimulatorApiRoute(request, response, url, { state, usage })) {
     return;
   }
 

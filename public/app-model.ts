@@ -264,16 +264,23 @@ export interface IntentionalUseSummary extends UnknownRecord {
 }
 
 export interface HardeningCheck extends UnknownRecord {
+  detail?: string;
   current?: boolean;
   enabled?: boolean;
   generated?: boolean;
   installed?: boolean;
+  isAdmin?: boolean;
+  legacyInstalled?: boolean;
+  loaded?: boolean;
+  ok?: boolean;
   pathUrlCount?: number;
   partial?: boolean;
   required?: boolean;
+  running?: boolean;
   stale?: boolean;
   status?: string;
   tamperDetectedAt?: string;
+  username?: string;
   urlCount?: number;
 }
 
@@ -484,7 +491,9 @@ export interface DashboardData extends UnknownRecord {
     firewall?: HardeningCheck;
     safariFilter?: HardeningCheck;
     launchAgent?: HardeningCheck;
+    account?: HardeningCheck;
     stateSeal?: HardeningCheck;
+    sourceSeal?: HardeningCheck;
     actions?: Record<string, { path?: string; command?: string }>;
     audit?: DashboardItem[];
     foolproof?: FoolproofSummary;

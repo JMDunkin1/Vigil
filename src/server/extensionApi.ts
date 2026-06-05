@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { apiRequestGuard, extensionCorsHeaders, isTrustedExtensionRequest } from "../apiSecurity.js";
+import { apiRequestGuard, extensionCorsHeaders, extensionTrustSummary, isTrustedExtensionRequest } from "../apiSecurity.js";
 import { truthy } from "../booleans.js";
+import { REQUIRED_EXTENSION_VERSION } from "../defaults.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "../extensionPolicy.js";
 import { confirmIntentionalPause, skipIntentionalPause } from "../intentionalUse.js";
 import { addEvent, saveState, saveUsage } from "../store.js";
@@ -38,6 +39,11 @@ export async function handleExtensionApiRoute(
 
   if ((method === "POST" || method === "GET") && path === "/api/extension/check") {
     await handleExtensionCheck(request, response, url, { state, usage });
+    return true;
+  }
+
+  if (method === "GET" && path === "/api/extension/pairing") {
+    handleExtensionPairing(request, response, url, state);
     return true;
   }
 
@@ -111,6 +117,32 @@ async function handleExtensionCheck(
   await saveUsage(usage);
   await saveState(state);
   sendJson(response, 200, result, extensionCorsHeaders(request.headers));
+}
+
+function handleExtensionPairing(
+  request: IncomingMessage,
+  response: ServerResponse,
+  url: URL,
+  state: VigilState
+): void {
+  const trust = extensionTrustSummary(request.headers);
+  sendJson(response, 200, {
+    ok: true,
+    serverUrl: url.origin,
+    requiredExtensionVersion: REQUIRED_EXTENSION_VERSION,
+    trust,
+    status: trust.trusted ? publicExtensionStatus(state) : publicPairingStatus(state),
+    setup: {
+      tokenHeader: trust.tokenHeader,
+      originEnv: trust.suggestedOriginEnv,
+      idEnv: trust.suggestedIdEnv,
+      tokenEnv: trust.suggestedTokenEnv,
+      optionsStorageKeys: {
+        localServer: "vigilLocalServer",
+        token: "vigilExtensionToken"
+      }
+    }
+  }, extensionCorsHeaders(request.headers));
 }
 
 async function handleExtensionRules(
@@ -257,6 +289,37 @@ function markExtensionActionSeen(request: IncomingMessage, state: VigilState, ev
     lastVersion: state.extension?.lastVersion || null,
     lastEvent: event,
     lastHost: state.extension?.lastHost || null
+  };
+}
+
+function publicExtensionStatus(state: VigilState) {
+  const dynamicRules = state.extension?.dynamicRules || {};
+  return {
+    lastSeenAt: state.extension?.lastSeenAt || null,
+    lastVersion: state.extension?.lastVersion || null,
+    lastEvent: state.extension?.lastEvent || null,
+    lastHost: state.extension?.lastHost || null,
+    dynamicRules: {
+      syncedAt: String(dynamicRules.syncedAt || "") || null,
+      count: Number(dynamicRules.count || 0),
+      expectedCount: Number(dynamicRules.expectedCount || 0),
+      status: String(dynamicRules.status || "missing"),
+      ok: Boolean(dynamicRules.ok),
+      fallbackRequired: Boolean(dynamicRules.fallbackRequired),
+      error: String(dynamicRules.error || "")
+    }
+  };
+}
+
+function publicPairingStatus(state: VigilState) {
+  const dynamicRules = state.extension?.dynamicRules || {};
+  return {
+    lastSeenAt: state.extension?.lastSeenAt || null,
+    lastVersion: state.extension?.lastVersion || null,
+    dynamicRules: {
+      status: String(dynamicRules.status || "missing"),
+      ok: Boolean(dynamicRules.ok)
+    }
   };
 }
 

@@ -1069,6 +1069,17 @@
       </div>
 
       <div class="workspace">
+        <section class="panel setup-panel" aria-labelledby="setupWizardTitle">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">First Run</p>
+              <h2 id="setupWizardTitle">Setup Checklist</h2>
+            </div>
+            <span id="setupProgress" class="pill neutral">0/8 ready</span>
+          </div>
+          <div id="setupChecklist" class="setup-list"></div>
+        </section>
+
         <section class="panel">
           <div class="section-head">
             <div>
@@ -1159,6 +1170,7 @@
             <button id="copyHostsCommand" class="secondary" type="button">Copy Network Command</button>
             <button id="copySourceSealCommand" class="secondary" type="button">Copy Source Seal</button>
             <button id="copyExtensionPath" class="secondary" type="button">Copy Extension Path</button>
+            <button id="exportBackup" class="secondary" type="button">Export Backup</button>
             <span id="hardeningActionStatus" class="tiny-status">Ready</span>
           </div>
           <div id="hardeningAudit" class="audit-list"></div>

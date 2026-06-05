@@ -948,6 +948,67 @@ button:focus-visible {
   min-width: 140px;
 }
 
+.setup-list {
+  display: grid;
+  gap: 10px;
+}
+
+.setup-item {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) minmax(110px, 150px);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.setup-state,
+.setup-action {
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.setup-item.good .setup-state {
+  color: #064e3b;
+  background: #d8f7e2;
+}
+
+.setup-item.warn .setup-state {
+  color: #6f4700;
+  background: #fff0bd;
+}
+
+.setup-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.setup-copy strong,
+.setup-copy em {
+  min-width: 0;
+}
+
+.setup-copy em {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.setup-action {
+  justify-self: end;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+}
+
 .audit-list,
 .blocker-list,
 .device-list,
@@ -1753,6 +1814,16 @@ button:focus-visible {
 
   .audit-item em {
     grid-column: 1 / -1;
+  }
+
+  .setup-item {
+    grid-template-columns: 66px minmax(0, 1fr);
+  }
+
+  .setup-action {
+    grid-column: 1 / -1;
+    justify-self: start;
+    white-space: normal;
   }
 
   .day-grid {
