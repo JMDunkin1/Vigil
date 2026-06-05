@@ -383,6 +383,8 @@ export function defaultState(): VigilState {
       focusShortcutOffName: "Vigil Focus Off",
       systemNetworkBlockingEnabled: true,
       safariUrlFilterEnabled: true,
+      externalNetworkBlockEnabled: false,
+      externalNetworkBlockProvider: "manual",
       hostsBlockingEnabled: false,
       protectedEditsEnabled: true,
       protectedEditDelaySeconds: 300,

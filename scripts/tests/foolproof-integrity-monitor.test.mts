@@ -202,6 +202,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     account: accountStatusFromGroups("focus", "staff everyone")
   }, now);
   const byId = new Map(rows.map((item) => [item.id, item]));
+  assert.equal(must(byId.get("external-network-block"), "external-network-block row").ok, true);
   assert.equal(must(byId.get("foolproof"), "foolproof row").ok, true);
   assert.equal(must(byId.get("mac-account"), "mac-account row").ok, true);
   assert.equal(must(byId.get("extension-version"), "extension-version row").ok, true);

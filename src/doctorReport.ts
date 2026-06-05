@@ -1,6 +1,7 @@
 import { distanceKeySummary } from "./distanceKey.js";
 import { extensionDynamicRulesReady, extensionRecentlySeen, extensionVersionReady, foolproofSummary } from "./foolproof.js";
 import { focusShortcutDetail, focusShortcutSummary } from "./focusHooks.js";
+import { externalNetworkBlockSummary } from "./externalNetworkBlock.js";
 import { integrityRuntimeSummary } from "./integrityLockdown.js";
 import { intentReasonSummary } from "./intentReason.js";
 import { keyholderSummary } from "./keyholder.js";
@@ -53,6 +54,7 @@ interface DoctorContext {
   hosts?: SummaryRecord;
   firewall?: SummaryRecord;
   safariFilter?: SummaryRecord;
+  externalNetworkBlock?: SummaryRecord;
   agent?: SummaryRecord;
   account?: SummaryRecord;
   monitor?: SummaryRecord;
@@ -73,6 +75,7 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
   const hosts = context.hosts || {};
   const firewall = context.firewall || {};
   const safariFilter = context.safariFilter || {};
+  const externalNetworkBlock = context.externalNetworkBlock || externalNetworkBlockSummary(state);
   const agent = context.agent || {};
   const account = context.account || {};
   const monitor = context.monitor || monitorFromHeartbeat(state, now);
@@ -108,6 +111,7 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
     row("notification-focus", "Notification Focus", focusShortcut.enabled && !focusShortcut.lastError, focusShortcutDetail(focusShortcut)),
     row("system-network-block", "System network block", networkEnabled && networkCurrent, networkEnabled ? (networkCurrent ? "Whole-site domain blocks are enforced across apps by hosts/PF." : "Apply the network block so hosts/PF are current.") : "System network blocking is disabled."),
     row("safari-url-filter", "Safari URL filter", !safariRequired || Boolean(safariFilter.current), safariFilterDetail(safariFilter, Boolean(safariRequired))),
+    row("external-network-block", "Apple network DNS/router", !externalNetworkBlock.enabled || Boolean(externalNetworkBlock.ready), externalNetworkBlockDetail(externalNetworkBlock)),
     row("browser-redirect", "Browser redirect fallback", networkCurrent || Boolean(settings.siteRedirectEnabled), networkCurrent ? "Not required while the system network block is current." : (settings.siteRedirectEnabled ? "Fallback redirects blocked sites to the block screen." : "Disabled while the system network block is not current.")),
     row("browser-cleanup", "Browser cleanup", true, settings.browserNoiseBlockingEnabled !== false ? "Extension cleanup/noise rules are enabled." : "Browser cleanup/noise blocking is disabled."),
     row("app-quit", "App quit", Boolean(settings.appQuitEnabled), settings.appQuitEnabled ? "Blocked apps are quit automatically." : "Blocked apps are not quit automatically."),
@@ -130,6 +134,12 @@ function safariFilterDetail(safariFilter: SummaryRecord, required: boolean): str
   if (safariFilter.installed && safariFilter.stale) return "Safari URL filter profile is stale.";
   if (safariFilter.generated) return "Safari URL filter profile is generated but still needs approval in System Settings.";
   return "Safari URL filter profile is not installed.";
+}
+
+function externalNetworkBlockDetail(externalNetworkBlock: SummaryRecord): string {
+  if (externalNetworkBlock.detail) return String(externalNetworkBlock.detail);
+  if (!externalNetworkBlock.enabled) return "Optional DNS/router sync is disabled.";
+  return `Manual DNS/router provider is ready with ${externalNetworkBlock.targetDomainCount || 0} domain targets to copy.`;
 }
 
 function accountDetail(account: SummaryRecord): string {

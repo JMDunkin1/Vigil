@@ -490,6 +490,12 @@ export interface DashboardData extends UnknownRecord {
     hosts?: HardeningCheck;
     firewall?: HardeningCheck;
     safariFilter?: HardeningCheck;
+    externalNetworkBlock?: HardeningCheck & {
+      targetDomains?: string[];
+      targetDomainCount?: number;
+      signature?: string;
+      provider?: string;
+    };
     launchAgent?: HardeningCheck;
     account?: HardeningCheck;
     stateSeal?: HardeningCheck;

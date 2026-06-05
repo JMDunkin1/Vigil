@@ -151,7 +151,7 @@ function bindHardeningActions(context: HardeningPanelContext): void {
 }
 
 function bindProtectedSettingControls({ $, post, toast, errorMessage, refresh }: HardeningPanelContext): void {
-  for (const id of ["systemNetworkBlockingEnabled", "safariUrlFilterEnabled", "siteRedirectEnabled", "contentFilterEnabled", "browserNoiseBlockingEnabled", "typingChallengeEnabled", "intentReasonEnabled", "appQuitEnabled", "strictBypassProtectionEnabled", "processSweepEnabled", "systemSleepLockEnabled", "focusShortcutEnabled", "strictByDefault", "protectedEditsEnabled", "foolproofModeEnabled"]) {
+  for (const id of ["systemNetworkBlockingEnabled", "safariUrlFilterEnabled", "externalNetworkBlockEnabled", "siteRedirectEnabled", "contentFilterEnabled", "browserNoiseBlockingEnabled", "typingChallengeEnabled", "intentReasonEnabled", "appQuitEnabled", "strictBypassProtectionEnabled", "processSweepEnabled", "systemSleepLockEnabled", "focusShortcutEnabled", "strictByDefault", "protectedEditsEnabled", "foolproofModeEnabled"]) {
     $(`#${id}`).addEventListener("change", async (event: Event) => {
       try {
         await post("/api/settings", { [id]: (event.target as ControlElement).checked });
@@ -187,6 +187,7 @@ function renderHardening(data: DashboardData, context: HardeningPanelContext): v
   const settings = data.state.settings;
   $("#systemNetworkBlockingEnabled").checked = settings.systemNetworkBlockingEnabled !== false;
   $("#safariUrlFilterEnabled").checked = settings.safariUrlFilterEnabled !== false;
+  $("#externalNetworkBlockEnabled").checked = Boolean(settings.externalNetworkBlockEnabled);
   $("#siteRedirectEnabled").checked = Boolean(settings.siteRedirectEnabled);
   $("#contentFilterEnabled").checked = settings.contentFilterEnabled !== false;
   $("#browserNoiseBlockingEnabled").checked = settings.browserNoiseBlockingEnabled !== false;

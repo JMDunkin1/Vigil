@@ -155,6 +155,8 @@ export interface AppSettings {
   focusShortcutOffName: string;
   systemNetworkBlockingEnabled: boolean;
   safariUrlFilterEnabled: boolean;
+  externalNetworkBlockEnabled: boolean;
+  externalNetworkBlockProvider: string;
   hostsBlockingEnabled: boolean;
   protectedEditsEnabled: boolean;
   protectedEditDelaySeconds: number;
