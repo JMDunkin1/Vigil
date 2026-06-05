@@ -31,6 +31,7 @@ interface SummaryRecord extends UnknownRecord {
   installedEntries?: number;
   expectedEntries?: number;
   expectedDomainCount?: number;
+  expectedUrls?: number;
   pathUrlCount?: number;
   lastSealedAt?: string | null;
   sealedAt?: string | null;
@@ -173,7 +174,7 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, externalN
       id: "content-filter",
       label: "Content filter",
       ok: true,
-      detail: state.settings.contentFilterEnabled !== false ? "Short-form feeds such as Shorts, Reels, Popular, and For You use precise browser companion checks." : "Content feature filters are disabled."
+      detail: "Apple's built-in Safari web filter stays on, with Vigil deny URLs and precise browser companion checks layered on top."
     },
     {
       id: "browser-noise",
@@ -272,11 +273,11 @@ function browserRedirectFallbackDetail(enabled: boolean, networkCurrent: boolean
 
 function safariFilterDetail(safariFilter: SummaryRecord): string {
   if (!safariFilter.enabled) return "Safari URL filtering is disabled.";
-  if (!safariFilter.required) return "No path-specific Safari URL rules are active right now.";
-  if (safariFilter.current) return `Safari path rules are current (${safariFilter.pathUrlCount || 0} path URLs).`;
-  if (safariFilter.installed && safariFilter.stale) return "Safari URL filter profile is installed but stale; reapply it.";
-  if (safariFilter.generated) return "Safari URL filter profile is generated; approve it in System Settings.";
-  return "Apply the Safari URL filter profile for path-specific Safari blocking.";
+  if (!safariFilter.required) return "Safari's Apple content-filter profile is not required right now.";
+  if (safariFilter.current) return `Safari content-filter profile is current (${safariFilter.expectedUrls || 0} deny URLs, ${safariFilter.pathUrlCount || 0} path URLs).`;
+  if (safariFilter.installed && safariFilter.stale) return "Safari content-filter profile is installed but stale; reapply it.";
+  if (safariFilter.generated) return "Safari content-filter profile is generated; approve it in System Settings.";
+  return "Apply the Safari content-filter profile for Apple built-in filtering and Safari deny-list blocking.";
 }
 
 function externalNetworkBlockDetail(externalNetwork: SummaryRecord): string {

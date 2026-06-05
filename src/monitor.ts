@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { addEvent, saveState, saveUsage } from "./store.js";
 import { PORT } from "./defaults.js";
+import { contentFilterEnabled } from "./contentFilters.js";
 import { reconcileFocusShortcut } from "./focusHooks.js";
 import { activePolicy, isFullLockoutPolicy, matchBlockedUrlPattern, shouldBlockAppForPolicy, shouldBlockSite } from "./policy.js";
 import { extensionDynamicRulesReady } from "./foolproof.js";
@@ -480,7 +481,7 @@ class Monitor implements MonitorHandle {
       return;
     }
 
-    if (front.url && policy.contentFilter && (lockdown || this.state.settings.contentFilterEnabled !== false)) {
+    if (front.url && policy.contentFilter && (lockdown || contentFilterEnabled(this.state))) {
       await this.blockSite({
         ...front,
         hostname: policy.contentFilter.label

@@ -4,7 +4,7 @@ import { stateSealSummary } from "./seal.js";
 import { REQUIRED_EXTENSION_VERSION } from "./defaults.js";
 import { extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "./extensionPolicy.js";
 import { intentReasonPolicy } from "./intentReason.js";
-import { safariFilterPathDenyUrls, safariUrlFilterEnabled } from "./safariFilter.js";
+import { safariUrlFilterEnabled } from "./safariFilter.js";
 import { browserCompanionRequirement, networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
 import type { VigilState, UnknownRecord } from "./types.js";
 
@@ -100,7 +100,7 @@ export function foolproofBlockers(state: VigilState, context: FoolproofContext =
   const reasonPolicy = intentReasonPolicy(state);
   const networkCurrent = networkBlockCurrent(hosts, firewall);
   const companionRequirement = browserCompanionRequirement(state, now);
-  const safariFilterRequired = safariUrlFilterEnabled(state) && safariFilterPathDenyUrls(state, now).length > 0;
+  const safariFilterRequired = safariUrlFilterEnabled(state);
   const blockers: FoolproofBlocker[] = [];
 
   if (!account.username) blockers.push(blocker("standard-account", "Mac account hardening status must be checked."));
@@ -114,7 +114,7 @@ export function foolproofBlockers(state: VigilState, context: FoolproofContext =
   if (settings.typingChallengeEnabled === false) blockers.push(blocker("typing-challenge", "Unlock confirmations must require a random typing challenge."));
   if (!distanceKey.enabled || !distanceKey.hasToken) blockers.push(blocker("distance-key", "Distance key must be enabled and placed away from the computer, preferably as a removable key file."));
   if (!systemNetworkBlockingEnabled(state)) blockers.push(blocker("system-network-block", "System network blocking must be enabled for across-app site enforcement."));
-  if (safariFilterRequired && !safariFilter.current) blockers.push(blocker("safari-url-filter", "Safari URL filter profile must be installed and current for Safari path-specific blocks."));
+  if (safariFilterRequired && !safariFilter.current) blockers.push(blocker("safari-url-filter", "Safari content-filter profile must be installed and current."));
   if (!networkCurrent && !settings.siteRedirectEnabled) blockers.push(blocker("browser-redirect", "Browser redirect fallback must stay enabled until the system network block is current."));
   if (!settings.appQuitEnabled) blockers.push(blocker("app-quit", "App quit must be enabled."));
   if (!settings.strictBypassProtectionEnabled) blockers.push(blocker("bypass-protection", "Strict-lock bypass protection must be enabled."));

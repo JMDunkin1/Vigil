@@ -186,10 +186,12 @@ function renderHardening(data: DashboardData, context: HardeningPanelContext): v
   const { $ } = context;
   const settings = data.state.settings;
   $("#systemNetworkBlockingEnabled").checked = settings.systemNetworkBlockingEnabled !== false;
-  $("#safariUrlFilterEnabled").checked = settings.safariUrlFilterEnabled !== false;
+  $("#safariUrlFilterEnabled").checked = true;
+  $("#safariUrlFilterEnabled").disabled = true;
   $("#externalNetworkBlockEnabled").checked = Boolean(settings.externalNetworkBlockEnabled);
   $("#siteRedirectEnabled").checked = Boolean(settings.siteRedirectEnabled);
-  $("#contentFilterEnabled").checked = settings.contentFilterEnabled !== false;
+  $("#contentFilterEnabled").checked = true;
+  $("#contentFilterEnabled").disabled = true;
   $("#browserNoiseBlockingEnabled").checked = settings.browserNoiseBlockingEnabled !== false;
   $("#typingChallengeEnabled").checked = settings.typingChallengeEnabled !== false;
   $("#intentReasonEnabled").checked = settings.intentReasonEnabled !== false;

@@ -74,7 +74,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   assert.equal(contentFilterRuleEntries(state, activePolicy(state, now)).some((rule) => rule.id === "reddit-popular"), true);
   state.settings.contentFilterEnabled = false;
   const disabledContentRules = extensionRuleSnapshot(state, now).contentRules;
-  assert.equal(disabledContentRules.some((rule) => rule.id === "reddit-popular"), false);
+  assert.equal(disabledContentRules.some((rule) => rule.id === "reddit-popular"), true);
   assert.equal(disabledContentRules.some((rule) => rule.kind === "url-pattern"), true);
 }
 

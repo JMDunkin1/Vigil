@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../../src/appLocks.js";
-import { matchContentFilterUrl } from "../../src/contentFilters.js";
+import { contentFilterEnabled, matchContentFilterUrl } from "../../src/contentFilters.js";
 import { BRICK_MODE_PROFILE_ID, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../../src/defaults.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../../src/distanceKey.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../../src/extensionPolicy.js";
@@ -13,8 +13,9 @@ import { activeLimitPolicy } from "../../src/limits.js";
 import { shouldLockScreenForPolicy } from "../../src/monitor.js";
 import { activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, panicLockProfile, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../../src/policy.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "../../src/protection.js";
-import { buildSafariFilterProfile, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature } from "../../src/safariFilter.js";
+import { buildSafariFilterProfile, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature, safariUrlFilterEnabled } from "../../src/safariFilter.js";
 import { applySealVerificationToState, markStateSealed } from "../../src/seal.js";
+import { updateSettings } from "../../src/server/settingsRoutes.js";
 import { sanitizeSoftBlockProfile } from "../../src/store.js";
 import { syncDeviceUsageSnapshot } from "../../src/usage.js";
 import type { UsageState } from "../../src/types.js";
@@ -199,6 +200,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     profileSnapshot: profile
   };
   const urls = safariFilterDenyUrls(state, now);
+  assert.equal(urls.includes("https://pornhub.com/"), true);
+  assert.equal(urls.includes("https://www.pornhub.com/"), true);
   assert.equal(urls.includes("https://youtube.com/shorts"), true);
   assert.equal(urls.includes("https://www.youtube.com/shorts"), true);
   assert.equal(urls.includes("https://m.youtube.com/shorts"), true);
@@ -207,6 +210,9 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.match(safariFilterPolicySignature(state, now), /^[a-f0-9]{64}$/);
   const profileText = buildSafariFilterProfile(state, now);
   assert.match(profileText, /<key>filterDenyList<\/key>/);
+  assert.match(profileText, /<key>restrictWeb<\/key>\s*<true\/>/);
+  assert.match(profileText, /<key>useContentFilter<\/key>\s*<true\/>/);
+  assert.match(profileText, /<key>PayloadRemovalDisallowed<\/key>\s*<true\/>/);
   assert.match(profileText, /com\.apple\.familycontrols\.contentfilter/);
   assert.match(profileText, /VigilPolicySignature:/);
 }
@@ -655,7 +661,13 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reel/xyz"), "Instagram reel filter").id, "instagram-reels");
   assert.equal(matchContentFilterUrl(state, "https://www.instagram.com/explore/"), null);
   state.settings.contentFilterEnabled = false;
-  assert.equal(matchContentFilterUrl(state, "https://www.youtube.com/shorts/abc"), null);
+  state.settings.safariUrlFilterEnabled = false;
+  assert.equal(contentFilterEnabled(state), true);
+  assert.equal(safariUrlFilterEnabled(state), true);
+  assert.equal(must(matchContentFilterUrl(state, "https://www.youtube.com/shorts/abc"), "YouTube Shorts filter").id, "youtube-shorts");
+  updateSettings(state.settings, { contentFilterEnabled: false, safariUrlFilterEnabled: false });
+  assert.equal(state.settings.contentFilterEnabled, true);
+  assert.equal(state.settings.safariUrlFilterEnabled, true);
 }
 
 {

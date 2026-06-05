@@ -36,7 +36,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "browser-noise"), false);
   state.settings.browserNoiseBlockingEnabled = true;
   state.settings.contentFilterEnabled = false;
-  assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "content-filter"), false);
+  assert.equal(browserCompanionRequirement(state, now).required, true);
   state.settings.contentFilterEnabled = true;
   state.settings.strictBypassProtectionEnabled = false;
   assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "bypass-protection"), true);
@@ -86,6 +86,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   const readyContext = {
     hosts: { installed: true, partial: false, stale: false },
     firewall: readyFirewall,
+    safariFilter: { required: true, installed: true, current: true, stale: false },
     agent: { loaded: true, running: true },
     account: accountStatusFromGroups("focus", "staff everyone"),
     monitor: { ok: true, accessibilityLikelyMissing: false },
@@ -122,18 +123,18 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   const readyContext = {
     hosts: { installed: true, partial: false, stale: false },
     firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
+    safariFilter: { required: true, installed: true, current: true, stale: false },
     agent: { loaded: true, running: true },
     account: accountStatusFromGroups("focus", "staff everyone"),
     monitor: { ok: true, accessibilityLikelyMissing: false },
     stateSeal: { ok: true, status: "sealed", detail: "State file matches its integrity seal." },
     sourceSeal: { ok: true, status: "sealed", detail: "Source files match integrity seal.", fileCount: 42 }
   };
-  assert.equal(browserCompanionRequirement(state, now).required, false);
+  assert.equal(browserCompanionRequirement(state, now).required, true);
   const blockers = foolproofBlockers(state, readyContext, now);
   assert.equal(blockers.some((item) => item.id === "browser-redirect"), false);
-  assert.equal(blockers.some((item) => item.id === "browser-extension"), false);
-  assert.equal(blockers.some((item) => item.id === "extension-rules"), false);
-  assert.deepEqual(blockers, []);
+  assert.equal(blockers.some((item) => item.id === "browser-extension"), true);
+  assert.equal(blockers.some((item) => item.id === "extension-rules"), true);
 
   const patternState = defaultState();
   patternState.settings.browserNoiseBlockingEnabled = false;
@@ -198,6 +199,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     sourceSeal: { ok: true, status: "sealed", detail: "Source files match integrity seal.", sealedAt: now.toISOString(), fileCount: 42 },
     hosts: { installed: true, partial: false, stale: false, installedEntries: 20, expectedEntries: 20 },
     firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
+    safariFilter: { required: true, installed: true, current: true, stale: false },
     agent: { installed: true, loaded: true, running: true, pid: 12345 },
     account: accountStatusFromGroups("focus", "staff everyone")
   }, now);
