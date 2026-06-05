@@ -12,7 +12,7 @@ import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLoc
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
 import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
-import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldLockScreenForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
+import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
 import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, roundSeconds } from "./monitor/timing.js";
 import { safariFilterStatus } from "./safariFilter.js";
@@ -21,7 +21,7 @@ import { networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetwo
 import { recordOpen, recordUsage } from "./usage.js";
 import type { MonitorHandle, SentinelState, UnknownRecord, UsageSample, UsageState } from "./types.js";
 
-export { appQuitEscalationDecision, shouldLockScreenForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
+export { appQuitEscalationDecision, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 
 interface MonitorContext {
   state: SentinelState;
@@ -629,8 +629,9 @@ class Monitor implements MonitorHandle {
       : options.urlPattern
         ? `url:${options.urlPattern.pattern}:${front.url || front.hostname}`
         : `site:${front.hostname}`;
-    if (this.isCoolingDown(key)) return;
-    this.markCoolingDown(key);
+    const coolingDown = this.isCoolingDown(key);
+    if (!shouldAttemptBlockedBrowserRedirect({ coolingDown, app: front.app, url: front.url })) return;
+    if (!coolingDown) this.markCoolingDown(key);
 
     const target = new URL(`http://127.0.0.1:${PORT}/blocked`);
     target.searchParams.set("site", front.hostname);
@@ -638,7 +639,7 @@ class Monitor implements MonitorHandle {
     target.searchParams.set("mode", policy.session.mode || "focus");
 
     const result = await redirectActiveBrowserTab(front.app, target.toString());
-    addEvent(this.state, options.browserControl ? "blocked_browser_control" : options.contentFilter ? "blocked_content" : options.urlPattern ? "blocked_url" : "blocked_site", {
+    const detail = {
       site: front.hostname,
       app: front.app,
       originalSite: options.originalHostname || front.hostname,
@@ -646,9 +647,13 @@ class Monitor implements MonitorHandle {
       contentFilter: options.contentFilter || null,
       urlPattern: options.urlPattern || null,
       policy: policy.session.title || policy.session.mode,
-      result
-    });
-    this.status.lastEnforcement = { type: options.browserControl ? "browser-control" : options.contentFilter ? "content" : options.urlPattern ? "url" : "site", target: front.hostname, result, at: new Date().toISOString() };
+      result,
+      coolingDownRetry: coolingDown
+    };
+    if (!coolingDown || !result.ok) {
+      addEvent(this.state, options.browserControl ? "blocked_browser_control" : options.contentFilter ? "blocked_content" : options.urlPattern ? "blocked_url" : "blocked_site", detail);
+    }
+    this.status.lastEnforcement = { type: options.browserControl ? "browser-control" : options.contentFilter ? "content" : options.urlPattern ? "url" : "site", target: front.hostname, result, coolingDownRetry: coolingDown, at: new Date().toISOString() };
   }
 
   async blockApp(front: FrontSample, policy: EnforcedPolicy, options: BlockAppOptions = {}): Promise<void> {

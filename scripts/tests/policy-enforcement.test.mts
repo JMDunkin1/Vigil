@@ -186,6 +186,18 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
 
 {
   const state = defaultState();
+  const baselineUrls = safariFilterDenyUrls(state, now);
+  assert.equal(baselineUrls.includes("https://pornhub.com/"), true);
+  assert.equal(baselineUrls.includes("https://www.pornhub.com/"), true);
+  assert.equal(baselineUrls.includes("https://youtube.com/shorts"), false);
+  const baselineProfileText = buildSafariFilterProfile(state, now);
+  assert.match(baselineProfileText, /<key>restrictWeb<\/key>\s*<true\/>/);
+  assert.match(baselineProfileText, /<key>useContentFilter<\/key>\s*<true\/>/);
+  assert.match(baselineProfileText, /com\.apple\.familycontrols\.contentfilter/);
+}
+
+{
+  const state = defaultState();
   const profile = state.profiles[0];
   state.activeSession = {
     id: "safari-filter-test",

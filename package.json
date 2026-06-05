@@ -47,6 +47,9 @@
     ],
     "asar": true,
     "asarUnpack": [
+      "dist/runtime/package.json",
+      "dist/runtime/public/**/*",
+      "dist/runtime/src/**/*",
       "dist/runtime/scripts/**/*",
       "dist/runtime/extension/**/*"
     ],
