@@ -68,6 +68,18 @@ export function shouldRedirectActiveBlockedBrowserTab({
   return Boolean(redirectEnabled || (networkBlocked && url && appCanReportUrls(app || "")));
 }
 
+export function shouldAttemptBlockedBrowserRedirect({
+  coolingDown,
+  app,
+  url
+}: {
+  coolingDown: boolean;
+  app?: string;
+  url?: string;
+}): boolean {
+  return Boolean(!coolingDown || (url && appCanReportUrls(app || "")));
+}
+
 export function sweepBlockedApps(state: VigilState, usage: UsageState, apps: string[], now = new Date()): Array<{ app: string; policy: EnforcedPolicy }> {
   const blocked: Array<{ app: string; policy: EnforcedPolicy }> = [];
   for (const app of apps || []) {

@@ -96,6 +96,9 @@ assert.match(devServerSource, /npm", \["run", "build"\]/);
 assert.equal(build.asar, true);
 assert.equal(macBuild.identity, undefined);
 assert.ok(stringArrayValue(build.files, "build files").includes("dist/runtime/**/*"));
+assert.ok(stringArrayValue(build.asarUnpack, "asar unpack").includes("dist/runtime/package.json"));
+assert.ok(stringArrayValue(build.asarUnpack, "asar unpack").includes("dist/runtime/public/**/*"));
+assert.ok(stringArrayValue(build.asarUnpack, "asar unpack").includes("dist/runtime/src/**/*"));
 assert.ok(stringArrayValue(build.asarUnpack, "asar unpack").includes("dist/runtime/scripts/**/*"));
 assert.ok(stringArrayValue(build.asarUnpack, "asar unpack").includes("dist/runtime/extension/**/*"));
 

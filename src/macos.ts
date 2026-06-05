@@ -26,7 +26,19 @@ export async function runAppleScript(script: string, timeout = 2500): Promise<st
 
 export async function getFrontmostApp() {
   try {
-    const app = canonicalFrontmostAppName(await runAppleScript('tell application "System Events" to get name of first application process whose frontmost is true'));
+    const frontmost = await runAppleScript([
+      'tell application "System Events"',
+      "  set frontProcess to first application process whose frontmost is true",
+      "  set processName to name of frontProcess",
+      "  set processBundleId to \"\"",
+      "  try",
+      "    set processBundleId to bundle identifier of frontProcess",
+      "  end try",
+      "  return processName & linefeed & processBundleId",
+      "end tell"
+    ].join("\n"));
+    const [name = "", bundleId = ""] = frontmost.split(/\r?\n/);
+    const app = canonicalFrontmostAppName(name, bundleId);
     return { ok: true, app };
   } catch (error) {
     return {
@@ -63,7 +75,7 @@ export async function getActiveBrowserUrl(appName: string) {
   try {
     const app = escapeAppleScript(appName);
     if (appName === "Safari") {
-      const url = await runAppleScript(`tell application "${app}" to if (count of windows) > 0 then get URL of current tab of front window`);
+      const url = await runAppleScript(safariCurrentTabUrlScript(app));
       return { ok: true, url };
     }
 
@@ -104,33 +116,83 @@ async function redirectSafariTab(url: string) {
   const script = [
     `set targetUrl to "${target}"`,
     "tell application \"Safari\" to activate",
-    "tell application \"System Events\"",
-    "  key code 53",
-    "  delay 0.08",
-    "  key code 53",
-    "end tell",
+    safariFullscreenInterruptionAppleScript(),
     "tell application \"Safari\"",
     "  if (count of windows) = 0 then error \"No Safari windows\"",
+    "  set redirectMethod to \"set-url\"",
     "  try",
-    `    do JavaScript "${escapeAppleScript(safariInterruptionScript(url))}" in current tab of front window`,
-    "    return \"javascript-replace\"",
+`    do JavaScript "${escapeAppleScript(safariInterruptionScript(url))}" in current tab of front window`,
+    "    set redirectMethod to \"javascript-replace\"",
     "  on error",
     "    set URL of current tab of front window to targetUrl",
-    "    return \"set-url\"",
+    "    set redirectMethod to \"set-url\"",
     "  end try",
+    "  delay 0.15",
+    "  try",
+    "    set currentUrl to URL of current tab of front window",
+    "    if currentUrl is not targetUrl then",
+    "      set URL of current tab of front window to targetUrl",
+    "      set redirectMethod to redirectMethod & \"+verified-set-url\"",
+    "    end if",
+    "  on error",
+    "    set URL of current tab of front window to targetUrl",
+    "    set redirectMethod to redirectMethod & \"+fallback-set-url\"",
+    "  end try",
+    "  return redirectMethod",
     "end tell"
   ].join("\n");
   const method = await runAppleScript(script, 5000);
   return { ok: true, method: method || "safari-redirect" };
 }
 
-function safariInterruptionScript(url: string): string {
+function safariCurrentTabUrlScript(app: string): string {
+  return [
+    `tell application "${app}"`,
+    "  if (count of windows) = 0 then return \"\"",
+    "  set candidateUrl to \"\"",
+    "  try",
+    "    set candidateUrl to URL of current tab of front window",
+    "  end try",
+    "  if candidateUrl is not missing value and candidateUrl is not \"\" then return candidateUrl",
+    "  repeat with safariWindow in windows",
+    "    try",
+    "      set candidateUrl to URL of current tab of safariWindow",
+    "      if candidateUrl is not missing value and candidateUrl is not \"\" then return candidateUrl",
+    "    end try",
+    "  end repeat",
+    "  return \"\"",
+    "end tell"
+  ].join("\n");
+}
+
+function safariFullscreenInterruptionAppleScript(): string {
+  return [
+    "tell application \"System Events\"",
+    "  try",
+    "    set frontmost of process \"Safari\" to true",
+    "  end try",
+    "  repeat 4 times",
+    "    key code 53",
+    "    delay 0.12",
+    "  end repeat",
+    "  try",
+    "    click menu item \"Exit Full Screen\" of menu \"View\" of menu bar 1 of process \"Safari\"",
+    "  end try",
+    "end tell"
+  ].join("\n");
+}
+
+export function safariInterruptionScript(url: string): string {
   const target = JSON.stringify(url);
   return [
     "try {",
-    "  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen();",
+    "  const doc = document;",
+    "  if (doc.fullscreenElement && doc.exitFullscreen) doc.exitFullscreen();",
+    "  if (doc.webkitFullscreenElement && doc.webkitExitFullscreen) doc.webkitExitFullscreen();",
+    "  if (document.pictureInPictureElement && document.exitPictureInPicture) document.exitPictureInPicture();",
+    "  window.stop();",
     "  document.querySelectorAll('video,audio').forEach((media) => {",
-    "    try { media.pause(); media.removeAttribute('src'); media.load(); } catch (_) {}",
+    "    try { media.pause(); media.srcObject = null; media.removeAttribute('src'); media.load(); } catch (_) {}",
     "  });",
     "  document.documentElement.innerHTML = '';",
     `  window.location.replace(${target});`,
@@ -351,9 +413,11 @@ function escapeAppleScript(value: unknown): string {
   return String(value || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
-function canonicalFrontmostAppName(value: unknown): string {
+export function canonicalFrontmostAppName(value: unknown, bundleId: unknown = ""): string {
   const app = String(value || "").trim();
-  if (/^Safari (Web Content|Networking)$/i.test(app)) return "Safari";
+  const id = String(bundleId || "").trim().toLowerCase();
+  if (id === "com.apple.safari") return "Safari";
+  if (/^Safari (Web Content|Networking|Graphics and Media|Safe Browsing)$/i.test(app)) return "Safari";
   return app;
 }
 
