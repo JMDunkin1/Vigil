@@ -19,6 +19,8 @@ The extension checks each tab against the local Sentinel server on this Mac. Its
 
 For extension API trust, configure either a known extension origin/id on the server (`SENTINEL_EXTENSION_ORIGINS`, `SENTINEL_EXTENSION_ID`, or their `SCREEN_TIME_` aliases) or set `SENTINEL_EXTENSION_TOKEN` on the server and enter the same token in the extension Options page. The Options page shows the current extension origin.
 
+Use the Options page's Test button after saving; it checks both the local Sentinel server and the trusted extension API path, then shows a copyable server env hint for this extension ID/origin if pairing needs repair.
+
 The extension uses the same profiles, strict sessions, schedules, App Locks, Time Limits, and Open Limits as Sentinel. It also sends active-tab pulses so browser time limits can work even when AppleScript URL access is unavailable.
 
 It also keeps Chrome dynamic network rules synced for currently blocked domains, safe profile URL patterns, and active allowlist sessions such as Mac Brick, then reports the installed rule count back to the local app so Foolproof mode can detect stale or failed syncs.

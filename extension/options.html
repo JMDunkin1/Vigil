@@ -95,6 +95,40 @@
       color: var(--muted);
       font-weight: 750;
     }
+
+    .diagnostics {
+      display: grid;
+      gap: 8px;
+      margin-top: 4px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .diagnostic-row {
+      display: grid;
+      grid-template-columns: 96px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      font-size: 0.9rem;
+    }
+
+    .diagnostic-row strong {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    code {
+      display: block;
+      overflow-wrap: anywhere;
+      border: 1px dashed var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: var(--surface);
+      color: var(--ink);
+      font-size: 0.82rem;
+      line-height: 1.35;
+    }
   </style>
 </head>
 <body>
@@ -116,6 +150,21 @@
       <div class="actions">
         <button type="submit">Save</button>
         <button type="button" id="testConnection">Test</button>
+        <button type="button" id="copyPairingEnv">Copy ID Env</button>
+      </div>
+      <div class="diagnostics" aria-live="polite">
+        <div class="diagnostic-row">
+          <strong>Server</strong>
+          <span id="serverCheck">Not checked</span>
+        </div>
+        <div class="diagnostic-row">
+          <strong>Pairing</strong>
+          <span id="pairingCheck">Not checked</span>
+        </div>
+        <div class="diagnostic-row">
+          <strong>Server env</strong>
+          <code id="pairingEnvHint"></code>
+        </div>
       </div>
       <p id="status" role="status"></p>
     </form>

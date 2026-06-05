@@ -60,6 +60,23 @@ const localBody: unknown = JSON.parse(localResponse.bodyText);
 assert.equal(isRecord(localBody) && localBody.ok, true);
 assert.equal(state.extension.lastSeenAt, null);
 
+const pairingResponse = response();
+await handleExtensionApiRoute(
+  request("GET", "/api/extension/pairing", {
+    origin: "chrome-extension://new-extension"
+  }, {}),
+  pairingResponse,
+  new URL("http://127.0.0.1:8787/api/extension/pairing"),
+  { state, usage }
+);
+
+assert.equal(pairingResponse.statusCodeValue, 200);
+const pairingBody: unknown = JSON.parse(pairingResponse.bodyText);
+assert.equal(isRecord(pairingBody) && isRecord(pairingBody.trust) && pairingBody.trust.trusted, false);
+assert.equal(isRecord(pairingBody) && isRecord(pairingBody.setup) && pairingBody.setup.idEnv, "SENTINEL_EXTENSION_ID=new-extension");
+assert.equal(isRecord(pairingBody) && isRecord(pairingBody.status) && "lastHost" in pairingBody.status, false);
+assert.equal(state.extension.lastSeenAt, null);
+
 const untrustedResponse = response();
 await handleExtensionApiRoute(
   request("POST", "/api/extension/check", {

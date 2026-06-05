@@ -339,6 +339,8 @@ export function defaultState(): SentinelState {
     createdAt: new Date().toISOString(),
     settings: {
       pollIntervalMs: 3000,
+      idleUsageTrackingEnabled: true,
+      idleUsageThresholdSeconds: 120,
       strictByDefault: true,
       emergencyTokensPerWeek: 3,
       emergencyDelaySeconds: 45,

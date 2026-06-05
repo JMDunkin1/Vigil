@@ -7,6 +7,7 @@ import { detailBlock, el, progressBlock, textEl } from "./dom.js";
 import { createFocusSoundController } from "./focus-sound.js";
 import { daysText, daysWithDataText, enforcementText, eventLabel, formatDuration, lines, phaseText, phaseTitle, progressText, shortDate, shortDateTime, signedDuration, signedNumber, signedPercent, sweepText, systemSleepLockText } from "./format.js";
 import { createHardeningPanel } from "./hardening-panel.js";
+import { renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
 import { $, $$, bindViewNavigation, errorMessage, eventTarget, formPayload, initTheme, renderActiveView, toggleTheme } from "./ui-shell.js";
 import type { BarEntry, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeyResponse, GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, IntentionalUseSummary, InterventionSummary, MonitorSummary, PendingResponse, ProgressSummary, ReportSummary, Schedule, SessionEndResponse, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary, WeekDaySummary } from "./app-model.js";
@@ -685,6 +686,7 @@ function render() {
   renderIntervention(data.intervention);
   renderIntentionalUse(data.intentionalUse);
   renderLifeLog(data.intentionalUse);
+  renderSetupWizard(data);
   hardeningPanel.render(data);
   renderProfiles(data.state);
   renderSchedules(data.state.schedules);

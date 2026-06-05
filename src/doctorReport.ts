@@ -44,6 +44,7 @@ interface SummaryRecord extends UnknownRecord {
   lastError?: string;
   minLength?: number;
   accessibilityLikelyMissing?: boolean;
+  lastIdleAccounting?: SummaryRecord | null;
 }
 
 interface DoctorContext {
@@ -94,6 +95,7 @@ export function doctorRows(state: SentinelState, context: DoctorContext = {}, no
     row("source-seal", "Source seal", Boolean(sourceSeal.ok), sourceSealDetail(sourceSeal)),
     row("runtime-watchdog", "Runtime watchdog", runtime.ok, runtime.detail),
     row("watcher-heartbeat", "Watcher heartbeat", monitor.ok, monitor.detail || "Watcher heartbeat is current."),
+    row("idle-usage", "AFK-aware usage", idleUsageOk(settings, monitor), idleUsageDetail(settings, monitor)),
     row("launch-agent", "LaunchAgent", Boolean(agent.loaded && agent.running && !agent.legacyInstalled), launchAgentDetail(agent)),
     row("mac-account", "Mac account", Boolean(account.username && !account.isAdmin), accountDetail(account)),
     row("hosts", "Hosts block", Boolean(hosts.installed && !hosts.partial && !hosts.stale), hostsDetail(hosts)),
@@ -168,6 +170,24 @@ function monitorFromHeartbeat(state: SentinelState, now: Date): SummaryRecord {
       ? `Watcher heartbeat is current (${new Date(heartbeat).toISOString()}).`
       : `Watcher heartbeat is stale (${new Date(heartbeat).toISOString()}).`
   };
+}
+
+function idleUsageOk(settings: SentinelState["settings"], monitor: SummaryRecord): boolean {
+  if (settings.idleUsageTrackingEnabled === false) return false;
+  const idle = monitor.lastIdleAccounting;
+  return !idle || idle.ok !== false;
+}
+
+function idleUsageDetail(settings: SentinelState["settings"], monitor: SummaryRecord): string {
+  const threshold = Number(settings.idleUsageThresholdSeconds || 120);
+  if (settings.idleUsageTrackingEnabled === false) return "AFK-aware usage accounting is disabled.";
+  const idle = monitor.lastIdleAccounting;
+  if (!idle) return `Usage stops after ${threshold}s of Mac input idle time; waiting for the next sample.`;
+  if (idle.ok === false) return `Idle lookup failed; usage is still recorded normally (${idle.error || "unknown error"}).`;
+  if (Number(idle.skippedSeconds || 0) > 0) {
+    return `Skipped ${idle.skippedSeconds}s after ${idle.thresholdSeconds || threshold}s idle threshold.`;
+  }
+  return `Usage stops after ${idle.thresholdSeconds || threshold}s of Mac input idle time.`;
 }
 
 function stateSealDetail(seal: SummaryRecord): string {

@@ -13,8 +13,10 @@
   "scripts": {
     "app": "npm run build && electron .",
     "build": "rm -rf dist/runtime && tsc -p tsconfig.json && node dist/runtime/scripts/copy-assets.mjs",
-    "build:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir",
-    "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg",
+    "build:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir -c.mac.identity=null",
+    "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg -c.mac.identity=null",
+    "build:mac:signed": "npm run build && electron-builder --mac dir",
+    "dist:mac:signed": "npm run build && electron-builder --mac dmg",
     "start": "npm run build && node dist/runtime/src/server.js",
     "dev": "npm run build && node --watch --watch-path=app --watch-path=src --watch-path=public --watch-path=extension --watch-path=scripts --watch-path=tsconfig.json --watch-path=package.json dist/runtime/scripts/dev-server.mjs",
     "test": "npm run build && node dist/runtime/scripts/run-tests.mjs",
@@ -51,7 +53,6 @@
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
-      "identity": null,
       "target": [
         "dir"
       ]

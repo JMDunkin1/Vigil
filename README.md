@@ -26,6 +26,14 @@ npm run build:mac
 
 The app bundle is written to `dist/mac/mac-arm64/Sentinel.app` on Apple Silicon. The packaged app stores local state in `~/Library/Application Support/Sentinel` instead of the repository `data/` folder.
 
+For release signing, keep using the unsigned commands for local checks and run the signed commands only on a Mac that has your own Apple Developer ID Application certificate available to electron-builder:
+
+```sh
+npm run dist:mac:signed
+```
+
+Notarization is the next release step after a signed DMG exists. Provide notarization credentials through your local release environment or keychain; do not commit Apple IDs, app-specific passwords, API keys, or team secrets to this repo.
+
 The app works best after granting Accessibility permission to the terminal or app that runs it:
 
 1. Open System Settings.

@@ -111,6 +111,8 @@ export interface ActivePolicy {
 
 export interface AppSettings {
   pollIntervalMs: number;
+  idleUsageTrackingEnabled: boolean;
+  idleUsageThresholdSeconds: number;
   strictByDefault: boolean;
   emergencyTokensPerWeek: number;
   emergencyDelaySeconds: number;
