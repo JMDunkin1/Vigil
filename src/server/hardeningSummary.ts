@@ -23,6 +23,9 @@ interface SummaryRecord extends UnknownRecord {
   current?: boolean;
   required?: boolean;
   generated?: boolean;
+  effectiveCurrent?: boolean;
+  appleCurrent?: boolean;
+  appleContentFilter?: SummaryRecord;
   duplicate?: boolean;
   legacyInstalled?: boolean;
   loaded?: boolean;
@@ -154,8 +157,8 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, externalN
     },
     {
       id: "safari-url-filter",
-      label: "Safari URL filter",
-      ok: safariFilter.required ? Boolean(safariFilter.current) : true,
+      label: "Safari web filter",
+      ok: safariFilter.required ? safariWebFilterCurrent(safariFilter) : true,
       detail: safariFilterDetail(safariFilter)
     },
     {
@@ -172,9 +175,9 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, externalN
     },
     {
       id: "content-filter",
-      label: "Content filter",
-      ok: true,
-      detail: "Apple's built-in Safari web filter stays on, with Vigil deny URLs and precise browser companion checks layered on top."
+      label: "Apple Screen Time web filter",
+      ok: appleContentFilterCurrent(safariFilter),
+      detail: appleContentFilterDetail(safariFilter)
     },
     {
       id: "browser-noise",
@@ -274,10 +277,28 @@ function browserRedirectFallbackDetail(enabled: boolean, networkCurrent: boolean
 function safariFilterDetail(safariFilter: SummaryRecord): string {
   if (!safariFilter.enabled) return "Safari URL filtering is disabled.";
   if (!safariFilter.required) return "Safari's Apple content-filter profile is not required right now.";
+  if (appleContentFilterCurrent(safariFilter) && !safariFilter.current) return "Apple Screen Time web content filter is on; Vigil's separate Safari profile is optional.";
   if (safariFilter.current) return `Safari content-filter profile is current (${safariFilter.expectedUrls || 0} deny URLs, ${safariFilter.pathUrlCount || 0} path URLs).`;
   if (safariFilter.installed && safariFilter.stale) return "Safari content-filter profile is installed but stale; reapply it.";
   if (safariFilter.generated) return "Safari content-filter profile is generated; approve it in System Settings.";
   return "Apply the Safari content-filter profile for Apple built-in filtering and Safari deny-list blocking.";
+}
+
+function safariWebFilterCurrent(safariFilter: SummaryRecord): boolean {
+  return Boolean(safariFilter.effectiveCurrent || safariFilter.current || appleContentFilterCurrent(safariFilter));
+}
+
+function appleContentFilterCurrent(safariFilter: SummaryRecord): boolean {
+  const apple = safariFilter.appleContentFilter;
+  if (apple && "current" in apple) return Boolean(apple.current);
+  return Boolean(safariFilter.appleCurrent || safariFilter.current);
+}
+
+function appleContentFilterDetail(safariFilter: SummaryRecord): string {
+  const apple = safariFilter.appleContentFilter;
+  if (apple?.detail) return String(apple.detail);
+  if (appleContentFilterCurrent(safariFilter)) return "Apple Screen Time Limit Adult Websites is on.";
+  return "Apple Screen Time Limit Adult Websites must stay on in System Settings.";
 }
 
 function externalNetworkBlockDetail(externalNetwork: SummaryRecord): string {

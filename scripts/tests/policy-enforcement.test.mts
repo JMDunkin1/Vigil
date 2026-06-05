@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { appleContentFilterStatusFromRecord } from "../../src/appleContentFilter.js";
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../../src/appLocks.js";
 import { contentFilterEnabled, matchContentFilterUrl } from "../../src/contentFilters.js";
 import { BRICK_MODE_PROFILE_ID, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../../src/defaults.js";
@@ -677,9 +678,30 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(contentFilterEnabled(state), true);
   assert.equal(safariUrlFilterEnabled(state), true);
   assert.equal(must(matchContentFilterUrl(state, "https://www.youtube.com/shorts/abc"), "YouTube Shorts filter").id, "youtube-shorts");
-  updateSettings(state.settings, { contentFilterEnabled: false, safariUrlFilterEnabled: false });
+  updateSettings(state.settings, { contentFilterEnabled: false, safariUrlFilterEnabled: false, strictBypassProtectionEnabled: false });
   assert.equal(state.settings.contentFilterEnabled, true);
   assert.equal(state.settings.safariUrlFilterEnabled, true);
+  assert.equal(state.settings.strictBypassProtectionEnabled, true);
+}
+
+{
+  const on = appleContentFilterStatusFromRecord({
+    restrictWeb: true,
+    useContentFilter: true,
+    allowListEnabled: false,
+    filterDenyList: ["https://pornhub.com/"]
+  }, "/tmp/com.apple.familycontrols.contentfilter.plist");
+  assert.equal(on.current, true);
+  assert.equal(on.denyUrlCount, 1);
+  assert.match(on.detail, /Limit Adult Websites is on/);
+
+  const off = appleContentFilterStatusFromRecord({
+    restrictWeb: false,
+    useContentFilter: false,
+    allowListEnabled: false
+  }, "/tmp/com.apple.familycontrols.contentfilter.plist");
+  assert.equal(off.current, false);
+  assert.match(off.detail, /off/);
 }
 
 {

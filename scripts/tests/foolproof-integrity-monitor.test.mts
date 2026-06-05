@@ -6,7 +6,7 @@ import { assertDistanceKey, updateDistanceKeySettings } from "../../src/distance
 import { doctorRows, formatDoctorRows } from "../../src/doctorReport.js";
 import { extensionRuleSnapshot } from "../../src/extensionPolicy.js";
 import { assertFoolproofReadyForStrict, extensionDynamicRulesReady, extensionVersionReady, foolproofBlockers } from "../../src/foolproof.js";
-import { clearIntegrityTamper, clearTrustedSourceSealDrift, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, recordRuntimeHeartbeat } from "../../src/integrityLockdown.js";
+import { clearIntegrityTamper, clearTrustedSourceSealDrift, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, recordRuntimeHeartbeat, syncAppleContentFilterLockdown } from "../../src/integrityLockdown.js";
 import { emergencyDelaySeconds, interventionSummary, recentBlockAttempts } from "../../src/intervention.js";
 import { updateKeyholderSettings } from "../../src/keyholder.js";
 import { activeLimitPolicy } from "../../src/limits.js";
@@ -94,6 +94,26 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     sourceSeal: { ok: true, status: "sealed", detail: "Source files match integrity seal.", fileCount: 42 }
   };
   assert.deepEqual(foolproofBlockers(state, readyContext, now), []);
+  assert.deepEqual(foolproofBlockers(state, {
+    ...readyContext,
+    safariFilter: {
+      required: true,
+      installed: false,
+      current: false,
+      stale: false,
+      appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." }
+    }
+  }, now), []);
+  assert.equal(foolproofBlockers(state, {
+    ...readyContext,
+    safariFilter: {
+      required: true,
+      installed: false,
+      current: false,
+      stale: false,
+      appleContentFilter: { current: false, detail: "Apple Screen Time Limit Adult Websites is off." }
+    }
+  }, now).some((item) => item.id === "apple-content-filter"), true);
   assert.doesNotThrow(() => assertFoolproofReadyForStrict(state, readyContext, now));
   assert.equal(networkBlockCurrent(readyContext.hosts, readyContext.firewall), true);
   assert.equal(foolproofBlockers(state, { ...readyContext, firewall: { installed: false, partial: false, stale: false } }, now).some((item) => item.id === "firewall"), true);
@@ -427,6 +447,33 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     monitor: { ok: false, accessibilityLikelyMissing: true }
   }, now), "accessibility drift");
   assert.equal(driftAccessibility.issues[0].id, "accessibility");
+  assert.equal(clearIntegrityTamper(state, now), true);
+
+  const driftAppleContentFilter = must(detectHardeningDrift(state, {
+    hosts: { installed: true, partial: false, stale: false },
+    firewall: goodFirewall,
+    safariFilter: { required: true, current: false, appleContentFilter: { current: false } },
+    extensionRules: goodRules,
+    sourceSeal: goodSourceSeal,
+    agent: { installed: true, loaded: true, running: true },
+    monitor: { ok: true, accessibilityLikelyMissing: false }
+  }, now), "Apple Screen Time content filter drift");
+  assert.equal(driftAppleContentFilter.issues[0].id, "apple-content-filter");
+
+  const upgradedDrift = must(detectHardeningDrift(state, {
+    hosts: badHosts,
+    firewall: goodFirewall,
+    safariFilter: { required: true, current: false, appleContentFilter: { current: false } },
+    extensionRules: goodRules,
+    sourceSeal: goodSourceSeal,
+    agent: { installed: true, loaded: true, running: true },
+    monitor: { ok: true, accessibilityLikelyMissing: false }
+  }, now), "combined hardening drift");
+  assert.deepEqual(upgradedDrift.issues.map((issue) => issue.id), ["hosts", "apple-content-filter"]);
+  const upgradedPolicy = mustPolicy(integrityLockdownPolicy(state, now));
+  assert.equal(upgradedPolicy.session.title, "Integrity lockdown");
+  assert.equal(upgradedPolicy.profile.mode, "blocklist");
+  assert.equal(shouldBlockAppForPolicy(state, upgradedPolicy, "System Settings"), true);
 }
 
 {
@@ -443,6 +490,52 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     sweepBlockedApps(state, {}, ["Codex", "Codex Helper (Renderer)", "Terminal", "Activity Monitor", "Discord"], now).map((item) => item.app),
     ["Activity Monitor", "Discord"]
   );
+}
+
+{
+  const state = defaultState();
+  state.settings.foolproofModeEnabled = false;
+  const started = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: false,
+    effectiveCurrent: false,
+    appleContentFilter: { current: false }
+  }, now);
+  assert.equal(started.started, true);
+  assert.equal(integrityLockdownActive(state), true);
+  const policy = mustPolicy(activePolicy(state, now));
+  assert.equal(policy.kind, "integrity");
+  assert.equal(policy.session.title, "Apple content filter recovery");
+  assert.equal(policy.endsAt, "until Apple Screen Time Limit Adult Websites is turned back on");
+  assert.equal(policy.profile.mode, "allowlist");
+  assert.equal(shouldBlockAppForPolicy(state, policy, "System Settings"), false);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Vigil"), false);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Safari"), true);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Terminal"), true);
+  assert.equal(shouldBlockSite(policy.profile, "apple.com"), true);
+  assert.deepEqual(
+    sweepBlockedApps(state, {}, ["System Settings", "Vigil", "Safari", "Terminal"], now).map((item) => item.app),
+    ["Safari", "Terminal"]
+  );
+
+  const repeated = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: false,
+    effectiveCurrent: false,
+    appleContentFilter: { current: false }
+  }, new Date(now.getTime() + 1000));
+  assert.equal(repeated.started, false);
+  assert.equal(integrityLockdownActive(state), true);
+
+  const cleared = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: false,
+    effectiveCurrent: true,
+    appleContentFilter: { current: true }
+  }, new Date(now.getTime() + 2000));
+  assert.equal(cleared.cleared, true);
+  assert.equal(integrityLockdownActive(state), false);
+  assert.equal(activePolicy(state, now), null);
 }
 
 {

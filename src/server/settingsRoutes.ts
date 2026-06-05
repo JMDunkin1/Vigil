@@ -170,7 +170,7 @@ const SETTING_MUTATIONS = {
   contentFilterEnabled: alwaysEnabledBooleanSetting("contentFilterEnabled", GUARDED),
   browserNoiseBlockingEnabled: booleanSetting("browserNoiseBlockingEnabled", GUARDED),
   appQuitEnabled: booleanSetting("appQuitEnabled", GUARDED),
-  strictBypassProtectionEnabled: booleanSetting("strictBypassProtectionEnabled", GUARDED),
+  strictBypassProtectionEnabled: alwaysEnabledBooleanSetting("strictBypassProtectionEnabled", GUARDED),
   processSweepEnabled: booleanSetting("processSweepEnabled", GUARDED),
   processSweepIntervalSeconds: numberSetting("processSweepIntervalSeconds", GUARDED),
   systemSleepLockEnabled: booleanSetting("systemSleepLockEnabled", GUARDED),

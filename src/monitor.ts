@@ -8,7 +8,7 @@ import { extensionDynamicRulesReady } from "./foolproof.js";
 import { firewallStatus } from "./firewall.js";
 import { grayscaleDecision, grayscaleGuardEnabled, MAC_GRAYSCALE_GUARD_APPS } from "./grayscale.js";
 import { hostsStatus, launchAgentStatus, stateSealStatus } from "./hardening.js";
-import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, recordRuntimeHeartbeat } from "./integrityLockdown.js";
+import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, recordRuntimeHeartbeat, syncAppleContentFilterLockdown } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
 import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
@@ -45,6 +45,7 @@ interface MonitorStatus extends UnknownRecord {
   runtimeGap: UnknownRecord | null;
   clockTamper: UnknownRecord | null;
   hardeningDrift: UnknownRecord | null;
+  appleContentFilterLockdown: UnknownRecord | null;
   networkBlock: UnknownRecord | null;
   lastProcessSweep: UnknownRecord | null;
   lastImmediateEnforcement: UnknownRecord | null;
@@ -93,6 +94,7 @@ class Monitor implements MonitorHandle {
   immediateEnforcement: Promise<UnknownRecord> | null;
   nextEnvironmentRefreshAt: number;
   nextIntegrityRefreshAt: number;
+  nextAppleContentFilterRefreshAt: number;
   nextHardeningDriftRefreshAt: number;
   nextNetworkBlockRefreshAt: number;
   nextProcessSweepAt: number;
@@ -116,6 +118,7 @@ class Monitor implements MonitorHandle {
       runtimeGap: null,
       clockTamper: null,
       hardeningDrift: null,
+      appleContentFilterLockdown: null,
       networkBlock: null,
       lastProcessSweep: null,
       lastImmediateEnforcement: null,
@@ -130,6 +133,7 @@ class Monitor implements MonitorHandle {
     this.immediateEnforcement = null;
     this.nextEnvironmentRefreshAt = 0;
     this.nextIntegrityRefreshAt = 0;
+    this.nextAppleContentFilterRefreshAt = 0;
     this.nextHardeningDriftRefreshAt = 0;
     this.nextNetworkBlockRefreshAt = 0;
     this.nextProcessSweepAt = 0;
@@ -284,6 +288,7 @@ class Monitor implements MonitorHandle {
     this.checkRuntimeGap(frame.now);
     this.checkClockTamper(frame.now, frame.previousWall, frame.previousMonotonic, frame.monotonicNow);
     await this.refreshIntegrity(frame.now);
+    await this.refreshAppleContentFilterLockdown(frame.now);
     await this.refreshHardeningDrift(frame.now);
     await this.enforceSystemSleepLock(frame.now);
     await this.syncFocusShortcut(frame.now);
@@ -638,7 +643,7 @@ class Monitor implements MonitorHandle {
     target.searchParams.set("until", policy.endsAt);
     target.searchParams.set("mode", policy.session.mode || "focus");
 
-    const result = await redirectActiveBrowserTab(front.app, target.toString());
+    const result = await redirectActiveBrowserTab(front.app, target.toString(), { currentUrl: front.url });
     const detail = {
       site: front.hostname,
       app: front.app,
@@ -712,6 +717,27 @@ class Monitor implements MonitorHandle {
     }
   }
 
+  async refreshAppleContentFilterLockdown(now: number): Promise<void> {
+    if (now < this.nextAppleContentFilterRefreshAt) return;
+    this.nextAppleContentFilterRefreshAt = now + 5000;
+    const safariFilter = await safariFilterStatus(this.state);
+    const result = syncAppleContentFilterLockdown(this.state, safariFilter, new Date(now));
+    this.status.appleContentFilterLockdown = {
+      ...result,
+      checkedAt: new Date(now).toISOString(),
+      safariFilter: {
+        required: Boolean(safariFilter.required),
+        installed: Boolean(safariFilter.installed),
+        stale: Boolean(safariFilter.stale),
+        current: Boolean(safariFilter.effectiveCurrent || safariFilter.current),
+        appleCurrent: Boolean(safariFilter.appleCurrent),
+        appleContentFilter: safariFilter.appleContentFilter || null
+      }
+    };
+    if (result.started) addEvent(this.state, "apple_content_filter_lockdown", result);
+    if (result.cleared) addEvent(this.state, "apple_content_filter_restored", result);
+  }
+
   async refreshHardeningDrift(now: number): Promise<void> {
     if (!this.state.settings?.foolproofModeEnabled) return;
     if (now < this.nextHardeningDriftRefreshAt) return;
@@ -755,7 +781,9 @@ class Monitor implements MonitorHandle {
         required: Boolean(safariFilter.required),
         installed: Boolean(safariFilter.installed),
         stale: Boolean(safariFilter.stale),
-        current: Boolean(safariFilter.current)
+        current: Boolean(safariFilter.effectiveCurrent || safariFilter.current),
+        appleCurrent: Boolean(safariFilter.appleCurrent),
+        appleContentFilter: safariFilter.appleContentFilter || null
       },
       extensionRules: {
         ok: extensionRules.ok,

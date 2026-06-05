@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { appleContentFilterStatus } from "./appleContentFilter.js";
 import { CONTENT_FILTER_RULES, contentFilterEnabled } from "./contentFilters.js";
 import { DATA_DIR } from "./store.js";
 import { toPlist } from "./plist.js";
@@ -134,13 +135,18 @@ export async function safariFilterStatus(state: VigilState, now = new Date(), op
   const pathUrls = safariFilterPathDenyUrls(state, now);
   const generated = await generatedProfileMatches(profilePath, signature);
   const installed = await installedSafariProfile();
+  const appleContentFilter = await appleContentFilterStatus();
   const required = safariUrlFilterEnabled(state) && contentFilterEnabled(state);
   const stale = Boolean(installed.installed && installed.signature !== signature);
+  const profileCurrent = Boolean(installed.installed && installed.signature === signature);
   return {
     enabled: safariUrlFilterEnabled(state),
     required,
+    appleContentFilter,
+    appleCurrent: appleContentFilter.current,
+    effectiveCurrent: profileCurrent || appleContentFilter.current,
     installed: installed.installed,
-    current: Boolean(installed.installed && installed.signature === signature),
+    current: profileCurrent,
     stale,
     generated,
     path: profilePath,

@@ -90,14 +90,14 @@ export async function getActiveBrowserUrl(appName: string) {
   }
 }
 
-export async function redirectActiveBrowserTab(appName: string, url: string) {
+export async function redirectActiveBrowserTab(appName: string, url: string, options: { currentUrl?: string } = {}) {
   if (!BROWSERS.has(appName)) return { ok: false, error: "Not a supported browser" };
 
   try {
     const app = escapeAppleScript(appName);
     const target = escapeAppleScript(url);
     if (appName === "Safari") {
-      return await redirectSafariTab(url);
+      return await redirectSafariTab(url, options);
     }
 
     if (CHROMIUM_BROWSERS.has(appName)) {
@@ -111,38 +111,78 @@ export async function redirectActiveBrowserTab(appName: string, url: string) {
   }
 }
 
-async function redirectSafariTab(url: string) {
+async function redirectSafariTab(url: string, options: { currentUrl?: string } = {}) {
+  const method = await runAppleScript(safariRedirectScript(url, options), 5000);
+  return { ok: true, method: method || "safari-redirect" };
+}
+
+export function safariRedirectScript(url: string, options: { currentUrl?: string } = {}): string {
   const target = escapeAppleScript(url);
-  const script = [
+  const current = escapeAppleScript(options.currentUrl || "");
+  return [
     `set targetUrl to "${target}"`,
-    "tell application \"Safari\" to activate",
-    safariFullscreenInterruptionAppleScript(),
+    `set previousUrl to "${current}"`,
+    "set mediaMode to \"unknown\"",
+    "set redirectMethod to \"pending\"",
+    "set redirectedTabCount to 0",
     "tell application \"Safari\"",
     "  if (count of windows) = 0 then error \"No Safari windows\"",
-    "  set redirectMethod to \"set-url\"",
     "  try",
 `    do JavaScript "${escapeAppleScript(safariInterruptionScript(url))}" in current tab of front window`,
+    "    set mediaMode to the result",
     "    set redirectMethod to \"javascript-replace\"",
     "  on error",
-    "    set URL of current tab of front window to targetUrl",
-    "    set redirectMethod to \"set-url\"",
+    "    set mediaMode to \"javascript-error\"",
+    "    set redirectMethod to \"javascript-error\"",
     "  end try",
     "  delay 0.15",
+    redirectCurrentSafariTabAppleScript(),
+    redirectMatchingSafariTabsAppleScript(),
+    "end tell",
+    "if mediaMode contains \"media-fullscreen\" or mediaMode contains \"picture-in-picture\" then",
+    safariFullscreenInterruptionAppleScript(),
+    "  tell application \"Safari\"",
+    redirectCurrentSafariTabAppleScript(),
+    redirectMatchingSafariTabsAppleScript(),
+    "  end tell",
+    "end if",
+    "return redirectMethod & \":\" & mediaMode & \":\" & (redirectedTabCount as text)"
+  ].join("\n");
+}
+
+function redirectCurrentSafariTabAppleScript(): string {
+  return [
     "  try",
     "    set currentUrl to URL of current tab of front window",
     "    if currentUrl is not targetUrl then",
     "      set URL of current tab of front window to targetUrl",
+    "      set redirectedTabCount to redirectedTabCount + 1",
     "      set redirectMethod to redirectMethod & \"+verified-set-url\"",
     "    end if",
     "  on error",
     "    set URL of current tab of front window to targetUrl",
+    "    set redirectedTabCount to redirectedTabCount + 1",
     "    set redirectMethod to redirectMethod & \"+fallback-set-url\"",
-    "  end try",
-    "  return redirectMethod",
-    "end tell"
+    "  end try"
   ].join("\n");
-  const method = await runAppleScript(script, 5000);
-  return { ok: true, method: method || "safari-redirect" };
+}
+
+function redirectMatchingSafariTabsAppleScript(): string {
+  return [
+    "  if previousUrl is not \"\" and previousUrl is not targetUrl then",
+    "    repeat with safariWindow in windows",
+    "      repeat with safariTab in tabs of safariWindow",
+    "        try",
+    "          if URL of safariTab is previousUrl then",
+    "            set URL of safariTab to targetUrl",
+    "            set redirectedTabCount to redirectedTabCount + 1",
+    "            set redirectMethod to redirectMethod & \"+matching-tab\"",
+    "          end if",
+    "        end try",
+    "      end repeat",
+    "    end repeat",
+    "  end if"
+  ].join("\n");
 }
 
 function safariCurrentTabUrlScript(app: string): string {
@@ -175,9 +215,6 @@ function safariFullscreenInterruptionAppleScript(): string {
     "    key code 53",
     "    delay 0.12",
     "  end repeat",
-    "  try",
-    "    click menu item \"Exit Full Screen\" of menu \"View\" of menu bar 1 of process \"Safari\"",
-    "  end try",
     "end tell"
   ].join("\n");
 }
@@ -185,20 +222,29 @@ function safariFullscreenInterruptionAppleScript(): string {
 export function safariInterruptionScript(url: string): string {
   const target = JSON.stringify(url);
   return [
+    "(() => {",
     "try {",
     "  const doc = document;",
-    "  if (doc.fullscreenElement && doc.exitFullscreen) doc.exitFullscreen();",
+    "  const media = Array.from(document.querySelectorAll('video,audio'));",
+    "  const status = [];",
+    "  if (doc.fullscreenElement || doc.webkitFullscreenElement) status.push('media-fullscreen');",
+    "  if (document.pictureInPictureElement) status.push('picture-in-picture');",
+    "  if (media.some((item) => !item.paused && !item.ended)) status.push('active-media');",
+    "  if ((doc.fullscreenElement || doc.webkitFullscreenElement) && doc.exitFullscreen) doc.exitFullscreen();",
     "  if (doc.webkitFullscreenElement && doc.webkitExitFullscreen) doc.webkitExitFullscreen();",
     "  if (document.pictureInPictureElement && document.exitPictureInPicture) document.exitPictureInPicture();",
     "  window.stop();",
-    "  document.querySelectorAll('video,audio').forEach((media) => {",
-    "    try { media.pause(); media.srcObject = null; media.removeAttribute('src'); media.load(); } catch (_) {}",
+    "  media.forEach((item) => {",
+    "    try { item.pause(); item.srcObject = null; item.removeAttribute('src'); item.load(); } catch (_) {}",
     "  });",
     "  document.documentElement.innerHTML = '';",
     `  window.location.replace(${target});`,
+    "  return status.length ? status.join(',') : 'standard';",
     "} catch (_) {",
     `  window.location.replace(${target});`,
-    "}"
+    "  return 'fallback';",
+    "}",
+    "})();"
   ].join("\n");
 }
 

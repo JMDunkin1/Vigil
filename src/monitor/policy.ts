@@ -172,5 +172,6 @@ function strictLimitBrowserControlPolicy(state: VigilState, now: Date): Enforced
 function shouldSweepBlockApp(state: VigilState, policy: EnforcedPolicy, appName: string): boolean {
   if (!policy?.profile) return false;
   if (!shouldBlockAppForPolicy(state, policy, appName)) return false;
+  if (policy.kind === "integrity" && policy.profile.mode === "allowlist") return true;
   return !isProcessSweepExemptApp(appName) || isStrictBypassAppForPolicy(state, policy, appName);
 }

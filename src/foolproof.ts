@@ -48,6 +48,9 @@ interface SummaryRecord extends UnknownRecord {
   stale?: boolean;
   current?: boolean;
   required?: boolean;
+  effectiveCurrent?: boolean;
+  appleCurrent?: boolean;
+  appleContentFilter?: SummaryRecord;
   pathUrlCount?: number;
   loaded?: boolean;
   running?: boolean;
@@ -114,7 +117,7 @@ export function foolproofBlockers(state: VigilState, context: FoolproofContext =
   if (settings.typingChallengeEnabled === false) blockers.push(blocker("typing-challenge", "Unlock confirmations must require a random typing challenge."));
   if (!distanceKey.enabled || !distanceKey.hasToken) blockers.push(blocker("distance-key", "Distance key must be enabled and placed away from the computer, preferably as a removable key file."));
   if (!systemNetworkBlockingEnabled(state)) blockers.push(blocker("system-network-block", "System network blocking must be enabled for across-app site enforcement."));
-  if (safariFilterRequired && !safariFilter.current) blockers.push(blocker("safari-url-filter", "Safari content-filter profile must be installed and current."));
+  if (safariFilterRequired && !safariWebFilterCurrent(safariFilter)) blockers.push(blocker("apple-content-filter", "Apple Screen Time Limit Adult Websites must stay on."));
   if (!networkCurrent && !settings.siteRedirectEnabled) blockers.push(blocker("browser-redirect", "Browser redirect fallback must stay enabled until the system network block is current."));
   if (!settings.appQuitEnabled) blockers.push(blocker("app-quit", "App quit must be enabled."));
   if (!settings.strictBypassProtectionEnabled) blockers.push(blocker("bypass-protection", "Strict-lock bypass protection must be enabled."));
@@ -241,4 +244,10 @@ export function extensionDynamicRulesReady(state: VigilState, now = new Date()) 
 
 function blocker(id: string, detail: string): FoolproofBlocker {
   return { id, detail };
+}
+
+function safariWebFilterCurrent(safariFilter: SummaryRecord): boolean {
+  const apple = safariFilter.appleContentFilter;
+  const appleCurrent = apple && "current" in apple ? Boolean(apple.current) : Boolean(safariFilter.appleCurrent);
+  return Boolean(safariFilter.effectiveCurrent || safariFilter.current || appleCurrent);
 }
