@@ -177,19 +177,48 @@ export function bindAppEvents(context: AppEventsContext) {
   });
 
   $("#newSchedule").addEventListener("click", forms.resetScheduleForm);
+  type GrayscaleSettingsPayload = {
+    softBlockEnabled: boolean;
+    preventManualChanges: boolean;
+  };
+  let pendingGrayscaleSettings: GrayscaleSettingsPayload | null = null;
+  let grayscaleSettingsSavePromise: Promise<void> | null = null;
+  const readGrayscaleSettings = (): GrayscaleSettingsPayload => ({
+    softBlockEnabled: $("#grayscaleSoftBlockEnabled").checked,
+    preventManualChanges: $("#grayscalePreventManualChanges").checked
+  });
+  const saveGrayscaleSettings = async () => {
+    pendingGrayscaleSettings = readGrayscaleSettings();
+    if (!grayscaleSettingsSavePromise) {
+      grayscaleSettingsSavePromise = (async () => {
+        try {
+          while (pendingGrayscaleSettings) {
+            const body = pendingGrayscaleSettings;
+            pendingGrayscaleSettings = null;
+            try {
+              await post("/api/grayscale/settings", body);
+              toast("Grayscale saved");
+            } catch (error) {
+              toast(errorMessage(error));
+            }
+            await refresh();
+          }
+        } finally {
+          grayscaleSettingsSavePromise = null;
+        }
+      })();
+    }
+    await grayscaleSettingsSavePromise;
+  };
+
   $("#grayscaleSettingsForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
-    try {
-      await post("/api/grayscale/settings", {
-        softBlockEnabled: $("#grayscaleSoftBlockEnabled").checked,
-        preventManualChanges: $("#grayscalePreventManualChanges").checked
-      });
-      toast("Grayscale saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
+    await saveGrayscaleSettings();
   });
+
+  for (const id of ["grayscaleSoftBlockEnabled", "grayscalePreventManualChanges"]) {
+    $(`#${id}`).addEventListener("change", saveGrayscaleSettings);
+  }
 
   $("#grayscaleScheduleForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
