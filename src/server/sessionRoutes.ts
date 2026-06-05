@@ -8,7 +8,7 @@ import { assertIntentReason } from "../intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "../intervention.js";
 import { completeIntentionalPlanBlock } from "../intentionalUse.js";
 import { assertKeyholderPasscode } from "../keyholder.js";
-import { activeLimitBlocks } from "../limits.js";
+import { activeLimitBlocks, overrideLimitRules } from "../limits.js";
 import {
   activePolicy,
   activeSessionForDevice,
@@ -36,6 +36,7 @@ interface SessionApiContext {
 
 interface LimitBlockSummary {
   id: string;
+  ruleId: string;
   until: string;
 }
 
@@ -183,6 +184,7 @@ export async function handleSessionApiRoute(
       scheduleId: active?.schedule?.id || null,
       plannerBlockId: active?.plannerBlock?.id || null,
       limitBlockIds: active ? [] : activeLimits.map((block) => block.id),
+      limitRuleIds: active ? [] : [...new Set(activeLimits.map((block) => block.ruleId).filter((ruleId): ruleId is string => Boolean(ruleId)))],
       until: active?.endsAt || activeLimits.map((block) => block.until).sort().at(-1)
     };
     attachTypingChallenge(state, pending, "emergency", new Date(now));
@@ -238,6 +240,11 @@ export async function handleSessionApiRoute(
       completeIntentionalPlanBlock(state, String(pending.plannerBlockId));
     } else if (pending.activeKind === "limit") {
       const ids = new Set(pending.limitBlockIds || []);
+      const blocks = (state.limitBlocks || []).filter((block: LimitBlock) => ids.has(String(block.id || "")));
+      const ruleIds = pending.limitRuleIds?.length
+        ? pending.limitRuleIds
+        : blocks.map((block) => block.ruleId);
+      overrideLimitRules(state, ruleIds, pending.until || blocks.map((block) => block.until).sort().at(-1), pending.reason, new Date());
       state.limitBlocks = (state.limitBlocks || []).filter((block: LimitBlock) => !ids.has(String(block.id || "")));
     }
 

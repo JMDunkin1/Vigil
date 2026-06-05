@@ -27,6 +27,14 @@ import { now, recordValue, stringArrayValue } from "./test-helpers.mjs";
   const duplicateHosts = replaceManagedHostsBlock(`${legacyHosts}\n${block}\n`, block);
   assert.equal((duplicateHosts.match(/# BEGIN VIGIL/g) || []).length, 1);
   assert.equal(duplicateHosts.includes(LEGACY_HOSTS_BEGIN), false);
+  const orphanBeginHosts = replaceManagedHostsBlock(`127.0.0.1 localhost\n\n# BEGIN VIGIL\n0.0.0.0 stale.example\n\n255.255.255.255 broadcasthost\n`, block);
+  assert.equal(hostsBlockMatches(extractHostsBlock(orphanBeginHosts), block), true);
+  assert.equal(orphanBeginHosts.includes("stale.example"), false);
+  assert.match(orphanBeginHosts, /255\.255\.255\.255 broadcasthost/);
+  const orphanEndHosts = replaceManagedHostsBlock(`127.0.0.1 localhost\n\n0.0.0.0 stale.example\n# END VIGIL\n\n255.255.255.255 broadcasthost\n`, block);
+  assert.equal(hostsBlockMatches(extractHostsBlock(orphanEndHosts), block), true);
+  assert.equal(orphanEndHosts.includes("stale.example"), false);
+  assert.match(orphanEndHosts, /255\.255\.255\.255 broadcasthost/);
 
   const launch = parseLaunchAgentPrint(`service = enabled
 pid = 12345
@@ -57,6 +65,14 @@ last exit code = 0
   assert.equal(extractManagedPfConfBlock(pfConf), pfConfBlock);
   const migratedPfConf = replaceManagedPfConfBlock(`${pfConf}\n${pfConfBlock}\n`, pfConfBlock);
   assert.equal((migratedPfConf.match(/# BEGIN VIGIL PF/g) || []).length, 1);
+  const orphanBeginPfConf = replaceManagedPfConfBlock(`anchor "com.apple/*"\n\n# BEGIN VIGIL PF\nanchor "stale"\n\nload anchor "com.apple" from "/etc/pf.anchors/com.apple"\n`, pfConfBlock);
+  assert.equal(extractManagedPfConfBlock(orphanBeginPfConf), pfConfBlock);
+  assert.equal(orphanBeginPfConf.includes("stale"), false);
+  assert.match(orphanBeginPfConf, /load anchor "com\.apple"/);
+  const orphanEndPfConf = replaceManagedPfConfBlock(`anchor "com.apple/*"\n\nanchor "stale"\n# END VIGIL PF\n\nload anchor "com.apple" from "/etc/pf.anchors/com.apple"\n`, pfConfBlock);
+  assert.equal(extractManagedPfConfBlock(orphanEndPfConf), pfConfBlock);
+  assert.equal(orphanEndPfConf.includes("stale"), false);
+  assert.match(orphanEndPfConf, /load anchor "com\.apple"/);
 
   const dir = await mkdtemp(join(tmpdir(), "vigil-firewall-"));
   const pfConfPath = join(dir, "pf.conf");

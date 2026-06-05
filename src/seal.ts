@@ -266,6 +266,12 @@ function trustedProtectedStateMigrationVariants(snapshot: ProtectedSnapshot): Ar
       detail: "State file changed only by the trusted external DNS/router protected-state schema migration; the seal can be refreshed without entering lockdown."
     });
   }
+  for (const activeSessionsSchema of activeSessionsSchemaVariants(snapshot)) {
+    variants.push({
+      snapshot: activeSessionsSchema,
+      detail: "State file changed only by the trusted per-device sessions protected-state schema migration; the seal can be refreshed without entering lockdown."
+    });
+  }
   return variants;
 }
 
@@ -322,6 +328,36 @@ function externalNetworkSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSn
   return [absent];
 }
 
+function activeSessionsSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
+  if (!snapshot || !Object.hasOwn(snapshot, "activeSessions")) return [];
+  const activeSession = snapshot.activeSession || null;
+  const activeSessions = asRecord(snapshot.activeSessions);
+  const migratedComputerOnly = {
+    computer: activeSession,
+    phone: null
+  };
+  const migratedBothDevices = {
+    computer: activeSession,
+    phone: activeSession
+  };
+  const variants: ProtectedSnapshot[] = [];
+  const activeSessionsText = stableText(activeSessions);
+  const matchesComputerOnly = activeSessionsText === stableText(migratedComputerOnly);
+  const matchesBothDevices = Boolean(activeSession) && activeSessionsText === stableText(migratedBothDevices);
+  if (!matchesComputerOnly && !matchesBothDevices) return variants;
+
+  const absent = structuredClone(snapshot);
+  delete absent.activeSessions;
+  variants.push(absent);
+
+  if (matchesBothDevices) {
+    const computerOnly = structuredClone(snapshot);
+    computerOnly.activeSessions = migratedComputerOnly;
+    variants.push(computerOnly);
+  }
+  return variants;
+}
+
 function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnapshot {
   const snapshot: ProtectedSnapshot = {
     version: state.version ?? null,
@@ -341,6 +377,7 @@ function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnapshot {
     deviceControls: protectedDeviceControls(state.deviceControls || {}),
     maintenance: state.maintenance || {},
     panicLock: state.panicLock || null,
+    activeSessions: protectedActiveSessions(state.activeSessions || {}, state.activeSession || null),
     activeSession: state.activeSession || null,
     emergency: state.emergency || {},
     overrides: state.overrides || [],
@@ -353,6 +390,14 @@ function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnapshot {
     snapshot.grayscale = protectedGrayscale(state.grayscale || {});
   }
   return snapshot;
+}
+
+function protectedActiveSessions(activeSessions: unknown, activeSession: unknown): UnknownRecord {
+  const sessions = asRecord(activeSessions);
+  return {
+    computer: sessions.computer || activeSession || null,
+    phone: sessions.phone || null
+  };
 }
 
 function protectedIntentionalUse(intentionalUse: unknown): UnknownRecord {
