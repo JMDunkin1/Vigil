@@ -117,7 +117,7 @@ export function foolproofBlockers(state: VigilState, context: FoolproofContext =
   if (settings.typingChallengeEnabled === false) blockers.push(blocker("typing-challenge", "Unlock confirmations must require a random typing challenge."));
   if (!distanceKey.enabled || !distanceKey.hasToken) blockers.push(blocker("distance-key", "Distance key must be enabled and placed away from the computer, preferably as a removable key file."));
   if (!systemNetworkBlockingEnabled(state)) blockers.push(blocker("system-network-block", "System network blocking must be enabled for across-app site enforcement."));
-  if (safariFilterRequired && !safariWebFilterCurrent(safariFilter)) blockers.push(blocker("apple-content-filter", "Apple Screen Time Limit Adult Websites must stay on."));
+  if (safariFilterRequired && !appleContentFilterCurrent(safariFilter)) blockers.push(blocker("apple-content-filter", "Apple Screen Time Limit Adult Websites and Content & Privacy Restrictions must stay on."));
   if (!networkCurrent && !settings.siteRedirectEnabled) blockers.push(blocker("browser-redirect", "Browser redirect fallback must stay enabled until the system network block is current."));
   if (!settings.appQuitEnabled) blockers.push(blocker("app-quit", "App quit must be enabled."));
   if (!settings.strictBypassProtectionEnabled) blockers.push(blocker("bypass-protection", "Strict-lock bypass protection must be enabled."));
@@ -246,8 +246,9 @@ function blocker(id: string, detail: string): FoolproofBlocker {
   return { id, detail };
 }
 
-function safariWebFilterCurrent(safariFilter: SummaryRecord): boolean {
+function appleContentFilterCurrent(safariFilter: SummaryRecord): boolean {
   const apple = safariFilter.appleContentFilter;
-  const appleCurrent = apple && "current" in apple ? Boolean(apple.current) : Boolean(safariFilter.appleCurrent);
-  return Boolean(safariFilter.effectiveCurrent || safariFilter.current || appleCurrent);
+  if (apple && "current" in apple) return Boolean(apple.current);
+  if ("appleCurrent" in safariFilter) return Boolean(safariFilter.appleCurrent);
+  return false;
 }

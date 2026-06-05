@@ -729,7 +729,9 @@ class Monitor implements MonitorHandle {
         required: Boolean(safariFilter.required),
         installed: Boolean(safariFilter.installed),
         stale: Boolean(safariFilter.stale),
-        current: Boolean(safariFilter.effectiveCurrent || safariFilter.current),
+        current: Boolean(safariFilter.appleCurrent),
+        profileCurrent: Boolean(safariFilter.current),
+        effectiveCurrent: Boolean(safariFilter.effectiveCurrent),
         appleCurrent: Boolean(safariFilter.appleCurrent),
         appleContentFilter: safariFilter.appleContentFilter || null
       }
@@ -781,7 +783,9 @@ class Monitor implements MonitorHandle {
         required: Boolean(safariFilter.required),
         installed: Boolean(safariFilter.installed),
         stale: Boolean(safariFilter.stale),
-        current: Boolean(safariFilter.effectiveCurrent || safariFilter.current),
+        current: Boolean(safariFilter.appleCurrent),
+        profileCurrent: Boolean(safariFilter.current),
+        effectiveCurrent: Boolean(safariFilter.effectiveCurrent),
         appleCurrent: Boolean(safariFilter.appleCurrent),
         appleContentFilter: safariFilter.appleContentFilter || null
       },

@@ -291,14 +291,15 @@ function safariWebFilterCurrent(safariFilter: SummaryRecord): boolean {
 function appleContentFilterCurrent(safariFilter: SummaryRecord): boolean {
   const apple = safariFilter.appleContentFilter;
   if (apple && "current" in apple) return Boolean(apple.current);
-  return Boolean(safariFilter.appleCurrent || safariFilter.current);
+  if ("appleCurrent" in safariFilter) return Boolean(safariFilter.appleCurrent);
+  return false;
 }
 
 function appleContentFilterDetail(safariFilter: SummaryRecord): string {
   const apple = safariFilter.appleContentFilter;
   if (apple?.detail) return String(apple.detail);
   if (appleContentFilterCurrent(safariFilter)) return "Apple Screen Time Limit Adult Websites is on.";
-  return "Apple Screen Time Limit Adult Websites must stay on in System Settings.";
+  return "Apple Screen Time Limit Adult Websites and Content & Privacy Restrictions must stay on in System Settings.";
 }
 
 function externalNetworkBlockDetail(externalNetwork: SummaryRecord): string {
