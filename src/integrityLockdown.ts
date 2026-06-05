@@ -532,9 +532,9 @@ function clockTamperLockdownSeconds(state: SentinelState): number {
 }
 
 function protectedLockOverlap(state: SentinelState, startMs: number, endMs: number): ProtectedOverlap | null {
-  const session = state.activeSession;
-  if (session?.lockLevel === "deep" && rangesOverlap(startMs, endMs, Date.parse(session.startedAt || ""), Date.parse(session.endsAt || ""))) {
-    return { kind: "manual", id: session.id, name: session.title || "strict session" };
+  const session = protectedSessionOverlap(state, startMs, endMs);
+  if (session) {
+    return session;
   }
 
   for (const block of state.limitBlocks || []) {
@@ -561,6 +561,24 @@ function protectedLockOverlap(state: SentinelState, startMs: number, endMs: numb
     }
   }
 
+  return null;
+}
+
+function protectedSessionOverlap(state: SentinelState, startMs: number, endMs: number): ProtectedOverlap | null {
+  const sessions = [
+    ...Object.values(state.activeSessions || {}),
+    state.activeSession
+  ];
+  const seen = new Set<string>();
+  for (const session of sessions) {
+    if (!session) continue;
+    const key = session.id || `${session.startedAt}:${session.endsAt}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (session.lockLevel === "deep" && rangesOverlap(startMs, endMs, Date.parse(session.startedAt || ""), Date.parse(session.endsAt || ""))) {
+      return { kind: "manual", id: session.id, name: session.title || "strict session" };
+    }
+  }
   return null;
 }
 

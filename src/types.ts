@@ -245,7 +245,8 @@ export interface TypingChallenge {
 
 export interface OverrideRecord {
   id?: string;
-  scheduleId: string;
+  scheduleId?: string;
+  limitRuleId?: string;
   until: string;
   createdAt?: string;
   reason?: string;
@@ -263,6 +264,7 @@ export interface EmergencyRequest {
   scheduleId?: string | null;
   plannerBlockId?: string | null;
   limitBlockIds?: string[];
+  limitRuleIds?: string[];
   until?: string;
   delaySeconds?: number;
   intervention?: UnknownRecord;

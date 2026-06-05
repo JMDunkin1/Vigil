@@ -25,6 +25,7 @@ export function activeLimitPolicy(state: SentinelState, usage: UsageState, sampl
 
   for (const rule of (state.limitRules || []).filter((item) => item.enabled)) {
     if (!ruleAppliesToday(rule, now) || !sampleMatchesRule(rule, sample, guardOptions(state))) continue;
+    if (limitRuleOverridden(state, rule.id, now)) continue;
 
     const progress = ruleProgress(usage, rule, now);
     const hit = rule.type === "open"
@@ -42,6 +43,7 @@ export function activeLimitPolicy(state: SentinelState, usage: UsageState, sampl
 
 export function limitSummary(state: SentinelState, usage: UsageState, now = new Date()) {
   cleanupExpiredLimitBlocks(state, now);
+  const activeBlocks = activeLimitBlocks(state, now);
   return {
     rules: (state.limitRules || []).map((rule) => {
       const progress = ruleProgress(usage, rule, now);
@@ -51,16 +53,16 @@ export function limitSummary(state: SentinelState, usage: UsageState, now = new 
         ...rule,
         progress,
         percent: limit ? Math.min(100, Math.round((used / limit) * 100)) : 0,
-        activeBlock: (state.limitBlocks || []).find((block) => block.ruleId === rule.id && new Date(block.until) > now) || null
+        activeBlock: activeBlocks.find((block) => block.ruleId === rule.id) || null
       };
     }),
-    activeBlocks: (state.limitBlocks || []).filter((block) => new Date(block.until) > now)
+    activeBlocks
   };
 }
 
 export function activeLimitBlocks(state: SentinelState, now = new Date()): LimitBlock[] {
   cleanupExpiredLimitBlocks(state, now);
-  return (state.limitBlocks || []).filter((block) => new Date(block.until) > now);
+  return (state.limitBlocks || []).filter((block) => new Date(block.until) > now && !limitRuleOverridden(state, block.ruleId, now));
 }
 
 export function normalizeLimitRule(body: Record<string, unknown>, existing: Partial<LimitRule> | undefined, fallbackId: string): LimitRule {
@@ -78,6 +80,29 @@ export function normalizeLimitRule(body: Record<string, unknown>, existing: Part
     unlocksAllowed: clampInteger(body.unlocksAllowed ?? existing?.unlocksAllowed, 0, 200, 5),
     blockMinutes: clampInteger(body.blockMinutes ?? existing?.blockMinutes, 0, 24 * 60, 0)
   };
+}
+
+export function overrideLimitRules(
+  state: SentinelState,
+  ruleIds: readonly unknown[],
+  until: unknown,
+  reason = "",
+  now = new Date()
+): string[] {
+  const ids = [...new Set(ruleIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (!ids.length) return [];
+  const overrideUntil = limitOverrideUntil(until, now);
+  state.overrides ||= [];
+  for (const ruleId of ids) {
+    state.overrides.push({
+      id: crypto.randomUUID(),
+      limitRuleId: ruleId,
+      until: overrideUntil.toISOString(),
+      reason,
+      createdAt: now.toISOString()
+    });
+  }
+  return ids;
 }
 
 export function targetListsForRule(rule: Pick<LimitRule, "apps" | "sites"> | Pick<LimitBlock, "apps" | "sites">): TargetLists {
@@ -141,6 +166,7 @@ function policyFromBlock(state: SentinelState, block: LimitBlock): ActivePolicy 
 function findActiveBlock(state: SentinelState, sample: UsageSample, now: Date): LimitBlock | undefined {
   return (state.limitBlocks || []).find((block) => {
     if (new Date(block.until) <= now) return false;
+    if (limitRuleOverridden(state, block.ruleId, now)) return false;
     return sampleMatchesRule(block, sample, guardOptions(state));
   });
 }
@@ -212,11 +238,24 @@ function ruleAppliesToday(rule: LimitRule, now: Date): boolean {
 
 function cleanupExpiredLimitBlocks(state: SentinelState, now: Date): void {
   state.limitBlocks = (state.limitBlocks || []).filter((block) => new Date(block.until) > now);
+  state.overrides = (state.overrides || []).filter((override) => new Date(override.until) > now);
 }
 
 function blockUntil(rule: LimitRule, now: Date): Date {
   if (!rule.blockMinutes) return endOfToday();
   return new Date(now.getTime() + rule.blockMinutes * 60 * 1000);
+}
+
+function limitRuleOverridden(state: SentinelState, ruleId: string, now: Date): boolean {
+  return (state.overrides || []).some((override) => {
+    return override.limitRuleId === ruleId && new Date(override.until) > now;
+  });
+}
+
+function limitOverrideUntil(value: unknown, now: Date): Date {
+  const parsed = new Date(String(value || ""));
+  if (Number.isFinite(parsed.getTime()) && parsed > now) return parsed;
+  return endOfToday();
 }
 
 function normalizeTargets(value: unknown): string[] {

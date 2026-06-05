@@ -10,7 +10,7 @@ import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../../src/extensionPolicy.js";
 import { buildHostsBlock } from "../../src/hardening.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "../../src/keyholder.js";
-import { activeLimitPolicy } from "../../src/limits.js";
+import { activeLimitBlocks, activeLimitPolicy, overrideLimitRules } from "../../src/limits.js";
 import { shouldLockScreenForPolicy } from "../../src/monitor.js";
 import { activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, panicLockProfile, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../../src/policy.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "../../src/protection.js";
@@ -45,6 +45,83 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(emergencyUnlockAllowedForPolicy(activePolicy(state, now)), false);
   state.environment.wifiSsid = "Home";
   assert.equal(activeSchedule(state, now), null);
+}
+
+{
+  const state = defaultState();
+  state.schedules = [
+    {
+      id: "light-first",
+      name: "Light first",
+      enabled: true,
+      mode: "focus",
+      profileId: "default",
+      lockLevel: "light",
+      commitmentLock: false,
+      days: TEST_DAYS,
+      start: "00:00",
+      end: "23:59",
+      wifiNetworks: []
+    },
+    {
+      id: "commitment-second",
+      name: "Commitment second",
+      enabled: true,
+      mode: "rehab",
+      profileId: "default",
+      lockLevel: "deep",
+      commitmentLock: true,
+      days: TEST_DAYS,
+      start: "00:00",
+      end: "23:59",
+      wifiNetworks: []
+    }
+  ];
+  const schedule = must(activeSchedule(state, now), "strongest active schedule");
+  assert.equal(schedule.schedule.id, "commitment-second");
+  assert.equal(schedule.session.lockLevel, "deep");
+  assert.equal(schedule.session.emergencyUnlocksAllowed, false);
+  const policy = mustPolicy(activePolicy(state, now));
+  assert.equal(policy.kind, "schedule");
+  assert.equal(policy.session.mode, "rehab");
+  assert.equal(emergencyUnlockAllowedForPolicy(policy), false);
+  assert.throws(() => assertProtectedEditAllowed(state, { kind: "schedule", id: "commitment-second" }, now), /Protected edits/);
+}
+
+{
+  const state = defaultState();
+  state.schedules = [
+    {
+      id: "deep-first",
+      name: "Deep first",
+      enabled: true,
+      mode: "focus",
+      profileId: "default",
+      lockLevel: "deep",
+      commitmentLock: false,
+      days: TEST_DAYS,
+      start: "00:00",
+      end: "23:59",
+      wifiNetworks: []
+    },
+    {
+      id: "commitment-second",
+      name: "Commitment second",
+      enabled: true,
+      mode: "focus",
+      profileId: "default",
+      lockLevel: "deep",
+      commitmentLock: true,
+      days: TEST_DAYS,
+      start: "00:00",
+      end: "23:59",
+      wifiNetworks: []
+    }
+  ];
+  const schedule = must(activeSchedule(state, now), "commitment schedule");
+  assert.equal(schedule.schedule.id, "commitment-second");
+  assert.equal(schedule.session.emergencyUnlocksAllowed, false);
+  assert.equal(emergencyUnlockAllowedForPolicy(activePolicy(state, now)), false);
 }
 
 {
@@ -531,6 +608,43 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     sites: { "youtube.com": 61 }
   }, now);
   assert.equal(mustPolicy(activeLimitPolicy(state, phoneUsage, { app: "Safari", hostname: "reddit.com" }, now)).kind, "limit");
+}
+
+{
+  const state = defaultState();
+  state.limitRules = [{
+    id: "emergency-time",
+    name: "Emergency Time",
+    enabled: true,
+    type: "time",
+    lockLevel: "deep",
+    days: TEST_DAYS,
+    apps: [],
+    sites: ["reddit.com"],
+    limitMinutes: 1,
+    unlocksAllowed: 5,
+    blockMinutes: 30
+  }];
+  const usage = usageFixture({
+    "2026-05-28": {
+      totalSeconds: 90,
+      apps: {},
+      sites: { "reddit.com": 90 },
+      opens: { apps: {}, sites: {} }
+    }
+  });
+  const policy = mustPolicy(activeLimitPolicy(state, usage, { app: "Safari", hostname: "reddit.com" }, now));
+  const block = must(state.limitBlocks[0], "active limit block");
+  assert.equal(policy.kind, "limit");
+  assert.equal(activeLimitBlocks(state, now).length, 1);
+
+  assert.deepEqual(overrideLimitRules(state, [block.ruleId], block.until, "Emergency unlock", now), ["emergency-time"]);
+  assert.equal(activeLimitBlocks(state, now).length, 0);
+  state.limitBlocks = [];
+  assert.equal(activeLimitPolicy(state, usage, { app: "Safari", hostname: "reddit.com" }, now), null);
+
+  const afterOverride = new Date(now.getTime() + 31 * 60 * 1000);
+  assert.equal(mustPolicy(activeLimitPolicy(state, usage, { app: "Safari", hostname: "reddit.com" }, afterOverride)).kind, "limit");
 }
 
 {

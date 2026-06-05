@@ -410,13 +410,14 @@ export function activeSchedule(
   options: PolicyDeviceOptions = {}
 ): { schedule: Schedule; session: Session } | null {
   const device = normalizeDeviceTarget(options.device);
+  let selected: { schedule: Schedule; session: Session; priority: number } | null = null;
   for (const schedule of state.schedules.filter((item) => item.enabled)) {
     if (!sessionTargetsDevice(schedule, device)) continue;
     if (!scheduleEnvironmentMatches(state, schedule)) continue;
     const match = scheduleWindow(schedule, now);
     if (!match) continue;
     if (isScheduleOverridden(state, schedule.id, match.endsAt, now)) continue;
-    return {
+    const candidate = {
       schedule,
       session: {
         id: `schedule:${schedule.id}:${match.windowKey}`,
@@ -433,8 +434,14 @@ export function activeSchedule(
         deviceTargets: normalizeDeviceTargets(schedule.deviceTargets, DEVICE_TARGETS)
       }
     };
+    const priority = schedulePolicyPriority(candidate.session);
+    if (!selected || priority > selected.priority) selected = { ...candidate, priority };
   }
-  return null;
+  return selected ? { schedule: selected.schedule, session: selected.session } : null;
+}
+
+function schedulePolicyPriority(session: Session): number {
+  return lockPriority(session.lockLevel) * 2 + (session.commitmentLock ? 1 : 0);
 }
 
 export function activePlannerBlock(

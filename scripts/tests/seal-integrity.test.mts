@@ -92,6 +92,22 @@ assert.equal(
     const clockThresholdText = `${JSON.stringify(clockThresholdChange, null, 2)}\n`;
     assert.equal((await verifyStateTextSeal(clockThresholdText, { keyPath, sealPath })).status, "mismatch");
 
+    const phoneSessionChange = structuredClone(state);
+    phoneSessionChange.activeSessions.phone = {
+      id: "phone-session-tamper",
+      title: "Phone session tamper",
+      mode: "focus",
+      profileId: "default",
+      lockLevel: "deep",
+      startedAt: now.toISOString(),
+      endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+      canEndEarly: false,
+      source: "manual",
+      deviceTargets: ["phone"]
+    };
+    const phoneSessionText = `${JSON.stringify(phoneSessionChange, null, 2)}\n`;
+    assert.equal((await verifyStateTextSeal(phoneSessionText, { keyPath, sealPath })).status, "mismatch");
+
     const grayscaleChange = structuredClone(state);
     grayscaleChange.grayscale.softBlockEnabled = true;
     grayscaleChange.grayscale.schedules = [{
@@ -132,6 +148,37 @@ assert.equal(
     const grayscaleMigrationVerification = await verifyStateTextSeal(text, { keyPath, sealPath });
     assert.equal(grayscaleMigrationVerification.ok, true);
     assert.equal(grayscaleMigrationVerification.status, "trusted-migration");
+
+    const preActiveSessionsState = structuredClone(state);
+    delete (preActiveSessionsState as Partial<typeof preActiveSessionsState>).activeSessions;
+    await writeStateTextSeal(`${JSON.stringify(preActiveSessionsState, null, 2)}\n`, { keyPath, sealPath, scope: "state" }, now.toISOString());
+    const activeSessionsMigrationVerification = await verifyStateTextSeal(text, { keyPath, sealPath });
+    assert.equal(activeSessionsMigrationVerification.ok, true);
+    assert.equal(activeSessionsMigrationVerification.status, "bookkeeping-mismatch");
+    assert.equal((await verifyStateTextSeal(phoneSessionText, { keyPath, sealPath })).status, "mismatch");
+
+    const legacyActiveSessionState = structuredClone(state);
+    legacyActiveSessionState.activeSession = {
+      id: "legacy-active-session",
+      title: "Legacy active session",
+      mode: "focus",
+      profileId: "default",
+      lockLevel: "deep",
+      startedAt: now.toISOString(),
+      endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+      canEndEarly: false,
+      source: "manual"
+    };
+    delete (legacyActiveSessionState as Partial<typeof legacyActiveSessionState>).activeSessions;
+    await writeStateTextSeal(`${JSON.stringify(legacyActiveSessionState, null, 2)}\n`, { keyPath, sealPath, scope: "state" }, now.toISOString());
+    const migratedLegacyActiveSessionState = structuredClone(legacyActiveSessionState);
+    migratedLegacyActiveSessionState.activeSessions = {
+      computer: legacyActiveSessionState.activeSession,
+      phone: legacyActiveSessionState.activeSession
+    };
+    const migratedLegacyActiveSessionVerification = await verifyStateTextSeal(`${JSON.stringify(migratedLegacyActiveSessionState, null, 2)}\n`, { keyPath, sealPath });
+    assert.equal(migratedLegacyActiveSessionVerification.ok, true);
+    assert.equal(migratedLegacyActiveSessionVerification.status, "trusted-migration");
 
     const mdmQueueState = structuredClone(state);
     mdmQueueState.deviceControls.ios.mdm.enabled = true;

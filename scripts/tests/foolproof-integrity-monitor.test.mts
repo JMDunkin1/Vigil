@@ -325,6 +325,29 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
 
 {
   const state = defaultState();
+  state.activeSessions.phone = {
+    id: "phone-offline-strict",
+    title: "Phone offline strict",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    deviceTargets: ["phone"]
+  };
+  recordRuntimeHeartbeat(state, now);
+  const gap = must(detectRuntimeGap(state, new Date(now.getTime() + 3 * 60 * 1000)), "phone runtime gap");
+  assert.equal(gap.overlap.kind, "manual");
+  assert.equal(gap.overlap.id, "phone-offline-strict");
+  assert.equal(recordValue(mustPolicy(integrityLockdownPolicy(state, now)).alarm, "phone runtime gap alarm").type, "runtime-downtime");
+  assert.equal(clearIntegrityTamper(state, now), true);
+  assert.equal(integrityRuntimeSummary(state).ok, true);
+}
+
+{
+  const state = defaultState();
   state.settings.strictBypassProtectionEnabled = false;
   state.activeSession = {
     id: "clock-strict",
@@ -357,6 +380,32 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     previousMonotonicMs: 1000,
     currentMonotonicMs: 4000
   }, new Date(now.getTime() + 10 * 60 * 1000)), null);
+}
+
+{
+  const state = defaultState();
+  state.activeSessions.phone = {
+    id: "phone-clock-strict",
+    title: "Phone clock strict",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    deviceTargets: ["phone"]
+  };
+  const tamper = must(detectClockTamper(state, {
+    previousWallMs: now.getTime(),
+    currentWallMs: now.getTime() + 10 * 60 * 1000,
+    previousMonotonicMs: 1000,
+    currentMonotonicMs: 4000
+  }, new Date(now.getTime() + 10 * 60 * 1000)), "phone clock tamper");
+  assert.equal(tamper.overlap.id, "phone-clock-strict");
+  assert.equal(recordValue(mustPolicy(integrityLockdownPolicy(state, now)).alarm, "phone clock tamper alarm").type, "clock-tamper");
+  assert.equal(clearIntegrityTamper(state, now), true);
+  assert.equal(integrityRuntimeSummary(state).ok, true);
 }
 
 {
