@@ -24,6 +24,9 @@ interface SummaryRecord extends UnknownRecord {
   current?: boolean;
   required?: boolean;
   generated?: boolean;
+  effectiveCurrent?: boolean;
+  appleCurrent?: boolean;
+  appleContentFilter?: SummaryRecord;
   pathUrlCount?: number;
   duplicate?: boolean;
   legacyInstalled?: boolean;
@@ -111,7 +114,7 @@ export function doctorRows(state: SentinelState, context: DoctorContext = {}, no
     row("distance-key", "Distance key", distanceKey.enabled && distanceKey.hasToken, distanceKeyDetail(distanceKey)),
     row("notification-focus", "Notification Focus", focusShortcut.enabled && !focusShortcut.lastError, focusShortcutDetail(focusShortcut)),
     row("system-network-block", "System network block", networkEnabled && networkCurrent, networkEnabled ? (networkCurrent ? "Whole-site domain blocks are enforced across apps by hosts/PF." : "Apply the network block so hosts/PF are current.") : "System network blocking is disabled."),
-    row("safari-url-filter", "Safari URL filter", !safariRequired || Boolean(safariFilter.current), safariFilterDetail(safariFilter, Boolean(safariRequired))),
+    row("safari-url-filter", "Safari web filter", !safariRequired || safariWebFilterCurrent(safariFilter), safariFilterDetail(safariFilter, Boolean(safariRequired))),
     row("external-network-block", "Apple network DNS/router", !externalNetworkBlock.enabled || Boolean(externalNetworkBlock.ready), externalNetworkBlockDetail(externalNetworkBlock)),
     row("browser-redirect", "Browser redirect fallback", networkCurrent || Boolean(settings.siteRedirectEnabled), networkCurrent ? "Not required while the system network block is current." : (settings.siteRedirectEnabled ? "Fallback redirects blocked sites to the block screen." : "Disabled while the system network block is not current.")),
     row("browser-cleanup", "Browser cleanup", true, settings.browserNoiseBlockingEnabled !== false ? "Extension cleanup/noise rules are enabled." : "Browser cleanup/noise blocking is disabled."),
@@ -120,7 +123,7 @@ export function doctorRows(state: SentinelState, context: DoctorContext = {}, no
     row("background-sweep", "Background sweep", Boolean(settings.processSweepEnabled), settings.processSweepEnabled ? `Process sweep runs every ${settings.processSweepIntervalSeconds || 15}s.` : "Background process sweep is disabled."),
     row("sweep-interval", "Sweep interval", Number(settings.processSweepIntervalSeconds || 0) <= 30, `Process sweep interval is ${settings.processSweepIntervalSeconds || 15}s.`),
     row("app-escalation", "App escalation", Number(settings.appQuitEscalationSeconds || 0) <= 30, `Forced-kill escalation is ${settings.appQuitEscalationSeconds || 10}s.`),
-    row("content-filter", "Content filter", true, "Apple's built-in Safari web filter stays on, with Sentinel deny URLs and precise browser companion checks layered on top."),
+    row("content-filter", "Apple Screen Time web filter", appleContentFilterCurrent(safariFilter), appleContentFilterDetail(safariFilter)),
     row("browser-extension", "Browser extension", !companionRequirement.required || extensionSeen, companionRequirement.required ? (extensionSeen ? `Companion extension checked in recently. ${companionRequirement.detail}` : `Companion extension has not checked in recently. ${companionRequirement.detail}`) : "Not required for current system-network site blocking."),
     row("extension-version", "Extension version", !companionRequirement.required || (extensionSeen && extensionVersion.ok), companionRequirement.required ? extensionVersion.detail : "Not required for current system-network site blocking."),
     row("extension-rules", "Extension rules", !companionRequirement.required || extensionRules.ok, companionRequirement.required ? extensionRules.detail : "Not required for current system-network site blocking."),
@@ -131,10 +134,28 @@ export function doctorRows(state: SentinelState, context: DoctorContext = {}, no
 function safariFilterDetail(safariFilter: SummaryRecord, required: boolean): string {
   if (safariFilter.enabled === false) return "Safari URL filtering is disabled.";
   if (!required) return "Safari's Apple content-filter profile is not required right now.";
+  if (appleContentFilterCurrent(safariFilter) && !safariFilter.current) return "Apple Screen Time web content filter is on; Sentinel's separate Safari profile is optional.";
   if (safariFilter.current) return `Safari content-filter profile is current (${safariFilter.expectedUrls || 0} deny URLs, ${safariFilter.pathUrlCount || 0} path URLs).`;
   if (safariFilter.installed && safariFilter.stale) return "Safari content-filter profile is stale.";
   if (safariFilter.generated) return "Safari content-filter profile is generated but still needs approval in System Settings.";
   return "Safari content-filter profile is not installed.";
+}
+
+function safariWebFilterCurrent(safariFilter: SummaryRecord): boolean {
+  return Boolean(safariFilter.effectiveCurrent || safariFilter.current || appleContentFilterCurrent(safariFilter));
+}
+
+function appleContentFilterCurrent(safariFilter: SummaryRecord): boolean {
+  const apple = safariFilter.appleContentFilter;
+  if (apple && "current" in apple) return Boolean(apple.current);
+  return Boolean(safariFilter.appleCurrent || safariFilter.current);
+}
+
+function appleContentFilterDetail(safariFilter: SummaryRecord): string {
+  const apple = safariFilter.appleContentFilter;
+  if (apple?.detail) return String(apple.detail);
+  if (appleContentFilterCurrent(safariFilter)) return "Apple Screen Time Limit Adult Websites is on.";
+  return "Apple Screen Time Limit Adult Websites must stay on in System Settings.";
 }
 
 function externalNetworkBlockDetail(externalNetworkBlock: SummaryRecord): string {

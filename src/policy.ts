@@ -517,7 +517,7 @@ export function shouldBlockApp(profile: Profile | null | undefined, appName: unk
 
 export function shouldBlockAppForPolicy(state: SentinelState, policy: ActivePolicy | null | undefined, appName: unknown): boolean {
   const strictBypassApps = strictBypassAppsForPolicy(state, policy);
-  const fullLockout = isFullLockoutPolicy(policy);
+  const fullLockout = isFullLockoutPolicy(policy) || policy?.kind === "integrity";
   return shouldBlockApp(policy?.profile, appName, {
     strictBypassApps,
     respectAlwaysAllowedApps: !fullLockout,

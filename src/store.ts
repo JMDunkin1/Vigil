@@ -215,6 +215,7 @@ function migrateSettings(settings: AppSettings): AppSettings {
   }
   next.contentFilterEnabled = true;
   next.safariUrlFilterEnabled = true;
+  next.strictBypassProtectionEnabled = true;
   return next;
 }
 

@@ -373,7 +373,7 @@ export function defaultState(): SentinelState {
       contentFilterEnabled: true,
       browserNoiseBlockingEnabled: true,
       appQuitEnabled: true,
-      strictBypassProtectionEnabled: false,
+      strictBypassProtectionEnabled: true,
       processSweepEnabled: true,
       processSweepIntervalSeconds: 15,
       systemSleepLockEnabled: false,

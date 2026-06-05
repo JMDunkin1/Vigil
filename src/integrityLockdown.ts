@@ -4,8 +4,10 @@ import { parseClock } from "./time.js";
 import type { ActivePolicy, HardeningIssue, IntegrityRuntimeState, Schedule, SentinelState } from "./types.js";
 
 const LOCKDOWN_ENDS_AT = "until the tamper alarm is cleared";
+const APPLE_CONTENT_FILTER_LOCKDOWN_ENDS_AT = "until Apple Screen Time Limit Adult Websites is turned back on";
 const DEFAULT_GAP_LOCKDOWN_SECONDS = 120;
 const DEFAULT_CLOCK_TAMPER_SECONDS = 90;
+export const APPLE_CONTENT_FILTER_ISSUE_ID = "apple-content-filter";
 
 interface IntegrityAlarm {
   type: string;
@@ -63,32 +65,23 @@ export function integrityLockdownActive(state: SentinelState): boolean {
 export function integrityLockdownPolicy(state: SentinelState, now = new Date()): (ActivePolicy & { alarm: IntegrityAlarm }) | null {
   const alarm = activeIntegrityAlarm(state);
   if (!alarm) return null;
+  const contentFilterRecovery = appleContentFilterRecoveryAlarm(alarm);
 
   return {
     kind: "integrity",
     session: {
       id: "integrity:tamper-lockdown",
-      title: "Integrity lockdown",
+      title: contentFilterRecovery ? "Apple content filter recovery" : "Integrity lockdown",
       mode: "integrity",
-      profileId: "integrity-lockdown",
+      profileId: contentFilterRecovery ? "apple-content-filter-recovery" : "integrity-lockdown",
       lockLevel: "deep",
       startedAt: validDateText(alarm.detectedAt) || now.toISOString(),
-      endsAt: LOCKDOWN_ENDS_AT,
+      endsAt: contentFilterRecovery ? APPLE_CONTENT_FILTER_LOCKDOWN_ENDS_AT : LOCKDOWN_ENDS_AT,
       canEndEarly: false,
       source: "integrity"
     },
-    profile: {
-      id: "integrity-lockdown",
-      name: "Integrity lockdown",
-      mode: "blocklist",
-      description: "Fail-closed defaults used after local state tampering is detected.",
-      blockedApps: unique([...DEFAULT_BLOCKED_APPS, ...STRICT_BYPASS_APPS]),
-      blockedSites: unique(DEFAULT_BLOCKED_SITES),
-      blockedUrlPatterns: [],
-      allowedApps: [],
-      allowedSites: ["localhost", "127.0.0.1"]
-    },
-    endsAt: LOCKDOWN_ENDS_AT,
+    profile: contentFilterRecovery ? appleContentFilterRecoveryProfile() : integrityTamperProfile(),
+    endsAt: contentFilterRecovery ? APPLE_CONTENT_FILTER_LOCKDOWN_ENDS_AT : LOCKDOWN_ENDS_AT,
     alarm
   };
 }
@@ -139,9 +132,62 @@ export function clearTrustedSourceSealDrift(state: SentinelState, now = new Date
   return true;
 }
 
+export function syncAppleContentFilterLockdown(state: SentinelState, safariFilter: HardeningCheck = {}, now = new Date()) {
+  const runtime = ensureRuntime(state);
+  const current = !safariFilter.required || safariWebFilterCurrent(safariFilter);
+  const issues = Array.isArray(runtime.hardeningDriftIssues) ? runtime.hardeningDriftIssues : [];
+  const existingRecovery = Boolean(runtime.hardeningDriftDetectedAt && onlyAppleContentFilterIssue(issues));
+
+  if (current) {
+    if (!existingRecovery) {
+      return { active: false, started: false, cleared: false, current: true };
+    }
+    runtime.hardeningDriftDetectedAt = null;
+    runtime.hardeningDriftDetail = "";
+    runtime.hardeningDriftIssues = [];
+    return {
+      active: false,
+      started: false,
+      cleared: true,
+      current: true,
+      detail: "Apple Screen Time Limit Adult Websites is back on; recovery lockdown cleared."
+    };
+  }
+
+  const issue = {
+    id: APPLE_CONTENT_FILTER_ISSUE_ID,
+    detail: "Apple Screen Time Limit Adult Websites is not active."
+  };
+  if (runtime.hardeningDriftDetectedAt && !existingRecovery) {
+    return {
+      active: true,
+      started: false,
+      cleared: false,
+      current: false,
+      detail: runtime.hardeningDriftDetail || issue.detail
+    };
+  }
+
+  const started = !existingRecovery;
+  runtime.hardeningDriftDetectedAt ||= now.toISOString();
+  runtime.hardeningDriftIssues = [issue];
+  runtime.hardeningDriftDetail = "Apple Screen Time Limit Adult Websites is off; recovery lockdown blocks almost everything until it is turned back on.";
+  return {
+    active: true,
+    started,
+    cleared: false,
+    current: false,
+    detectedAt: runtime.hardeningDriftDetectedAt,
+    detail: runtime.hardeningDriftDetail,
+    issues: runtime.hardeningDriftIssues
+  };
+}
+
 export function detectHardeningDrift(state: SentinelState, checks: HardeningChecks = {}, now = new Date()) {
   const runtime = ensureRuntime(state);
-  if (runtime.hardeningDriftDetectedAt) return null;
+  const existingIssues = Array.isArray(runtime.hardeningDriftIssues) ? runtime.hardeningDriftIssues : [];
+  const existingAppleContentFilterRecovery = Boolean(runtime.hardeningDriftDetectedAt && onlyAppleContentFilterIssue(existingIssues));
+  if (runtime.hardeningDriftDetectedAt && !existingAppleContentFilterRecovery) return null;
   if (!state.settings?.foolproofModeEnabled) return null;
 
   const current = now.getTime();
@@ -150,8 +196,9 @@ export function detectHardeningDrift(state: SentinelState, checks: HardeningChec
 
   const issues = hardeningIssues(checks);
   if (!issues.length) return null;
+  if (existingAppleContentFilterRecovery && onlyAppleContentFilterIssue(issues)) return null;
 
-  runtime.hardeningDriftDetectedAt = now.toISOString();
+  runtime.hardeningDriftDetectedAt = runtime.hardeningDriftDetectedAt || now.toISOString();
   runtime.hardeningDriftIssues = issues;
   runtime.hardeningDriftDetail = `Hardening drift detected during ${overlap.name}: ${issues.map((issue) => issue.detail).join(" ")}`;
 
@@ -377,12 +424,10 @@ function hardeningIssues(checks: HardeningChecks): HardeningIssue[] {
     });
   }
 
-  if (safariFilter?.required && (!safariFilter.current || safariFilter.stale)) {
+  if (safariFilter?.required && !safariWebFilterCurrent(safariFilter)) {
     issues.push({
-      id: "safari-url-filter",
-      detail: safariFilter.stale
-        ? "Safari URL filter profile is stale."
-        : "Safari URL filter profile is not installed and current."
+      id: APPLE_CONTENT_FILTER_ISSUE_ID,
+      detail: "Apple Screen Time Limit Adult Websites is not active."
     });
   }
 
@@ -417,6 +462,59 @@ function hardeningIssues(checks: HardeningChecks): HardeningIssue[] {
   }
 
   return issues;
+}
+
+function safariWebFilterCurrent(safariFilter: HardeningCheck): boolean {
+  const apple = safariFilter.appleContentFilter;
+  const appleCurrent = isRecord(apple) && "current" in apple ? Boolean(apple.current) : Boolean(safariFilter.appleCurrent);
+  return Boolean(safariFilter.effectiveCurrent || safariFilter.current || appleCurrent);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function integrityTamperProfile(): ActivePolicy["profile"] {
+  return {
+    id: "integrity-lockdown",
+    name: "Integrity lockdown",
+    mode: "blocklist",
+    description: "Fail-closed defaults used after local state tampering is detected.",
+    blockedApps: unique([...DEFAULT_BLOCKED_APPS, ...STRICT_BYPASS_APPS]),
+    blockedSites: unique(DEFAULT_BLOCKED_SITES),
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: ["localhost", "127.0.0.1"]
+  };
+}
+
+function appleContentFilterRecoveryProfile(): ActivePolicy["profile"] {
+  return {
+    id: "apple-content-filter-recovery",
+    name: "Apple content filter recovery",
+    mode: "allowlist",
+    description: "Blocks almost everything until Apple Screen Time Limit Adult Websites is turned back on.",
+    blockedApps: [],
+    blockedSites: [],
+    blockedUrlPatterns: [],
+    allowedApps: [
+      "Sentinel",
+      "System Settings",
+      "System Preferences",
+      "Finder",
+      "loginwindow",
+      "Codex"
+    ],
+    allowedSites: ["localhost", "127.0.0.1"]
+  };
+}
+
+function appleContentFilterRecoveryAlarm(alarm: IntegrityAlarm): boolean {
+  return onlyAppleContentFilterIssue(alarm.issues || []);
+}
+
+function onlyAppleContentFilterIssue(issues: readonly HardeningIssue[]): boolean {
+  return Boolean(issues.length && issues.every((issue) => issue.id === APPLE_CONTENT_FILTER_ISSUE_ID));
 }
 
 function ensureRuntime(state: SentinelState): IntegrityRuntimeState {
