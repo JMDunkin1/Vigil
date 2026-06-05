@@ -171,6 +171,8 @@ const SETTING_MUTATIONS = {
   focusShortcutOffName: stringSetting("focusShortcutOffName", GUARDED),
   systemNetworkBlockingEnabled: booleanSetting("systemNetworkBlockingEnabled", GUARDED),
   safariUrlFilterEnabled: booleanSetting("safariUrlFilterEnabled", GUARDED),
+  externalNetworkBlockEnabled: booleanSetting("externalNetworkBlockEnabled", GUARDED),
+  externalNetworkBlockProvider: enumSetting("externalNetworkBlockProvider", ["manual"], GUARDED),
   hostsBlockingEnabled: booleanSetting("hostsBlockingEnabled"),
   protectedEditsEnabled: booleanSetting("protectedEditsEnabled", GUARDED),
   protectedEditDelaySeconds: numberSetting("protectedEditDelaySeconds", GUARDED),

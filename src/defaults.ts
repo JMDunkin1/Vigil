@@ -383,6 +383,8 @@ export function defaultState(): SentinelState {
       focusShortcutOffName: "Sentinel Focus Off",
       systemNetworkBlockingEnabled: true,
       safariUrlFilterEnabled: true,
+      externalNetworkBlockEnabled: false,
+      externalNetworkBlockProvider: "manual",
       hostsBlockingEnabled: false,
       protectedEditsEnabled: true,
       protectedEditDelaySeconds: 300,

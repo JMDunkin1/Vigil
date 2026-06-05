@@ -210,6 +210,9 @@ function migrateSettings(settings: AppSettings): AppSettings {
   if (next.focusShortcutOffName === `${legacyName} Focus Off`) {
     next.focusShortcutOffName = "Sentinel Focus Off";
   }
+  if (next.externalNetworkBlockProvider !== "manual") {
+    next.externalNetworkBlockProvider = "manual";
+  }
   return next;
 }
 

@@ -44,6 +44,8 @@ const PROTECTED_SETTINGS = [
   "focusShortcutOffName",
   "systemNetworkBlockingEnabled",
   "safariUrlFilterEnabled",
+  "externalNetworkBlockEnabled",
+  "externalNetworkBlockProvider",
   "hostsBlockingEnabled",
   "protectedEditsEnabled",
   "protectedEditDelaySeconds",
@@ -258,6 +260,12 @@ function trustedProtectedStateMigrationVariants(snapshot: ProtectedSnapshot): Ar
       detail: "State file changed only by the trusted Grayscale protected-state schema migration; the seal can be refreshed without entering lockdown."
     });
   }
+  for (const externalNetworkSchema of externalNetworkSchemaVariants(snapshot)) {
+    variants.push({
+      snapshot: externalNetworkSchema,
+      detail: "State file changed only by the trusted external DNS/router protected-state schema migration; the seal can be refreshed without entering lockdown."
+    });
+  }
   return variants;
 }
 
@@ -298,6 +306,19 @@ function grayscaleSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot
   if (stableText(grayscale) !== stableText(protectedGrayscale({}))) return [];
   const absent = structuredClone(snapshot);
   delete absent.grayscale;
+  return [absent];
+}
+
+function externalNetworkSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
+  const settings = asRecord(snapshot.settings);
+  if (
+    settings.externalNetworkBlockEnabled !== false ||
+    settings.externalNetworkBlockProvider !== "manual"
+  ) return [];
+  const absent = structuredClone(snapshot);
+  const absentSettings = asRecord(absent.settings);
+  delete absentSettings.externalNetworkBlockEnabled;
+  delete absentSettings.externalNetworkBlockProvider;
   return [absent];
 }
 

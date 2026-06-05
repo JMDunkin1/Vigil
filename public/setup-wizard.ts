@@ -28,6 +28,7 @@ function setupItems(data: DashboardData): SetupItem[] {
   const hosts = check(hardening.hosts);
   const firewall = check(hardening.firewall);
   const safariFilter = check(hardening.safariFilter);
+  const externalNetworkBlock = check(hardening.externalNetworkBlock);
   const launchAgent = check(hardening.launchAgent);
   const sourceSeal = check(hardening.sourceSeal);
   const account = record(hardening.account);
@@ -84,6 +85,13 @@ function setupItems(data: DashboardData): SetupItem[] {
       action: "Apply Network Block"
     },
     {
+      id: "external-network-block",
+      label: "DNS/router sync",
+      ok: !externalNetworkBlock.enabled || Boolean(externalNetworkBlock.ready),
+      detail: externalNetworkBlockDetail(externalNetworkBlock),
+      action: "Hardening"
+    },
+    {
       id: "source-seal",
       label: "Source seal",
       ok: Boolean(sourceSeal.ok),
@@ -107,6 +115,12 @@ function setupItems(data: DashboardData): SetupItem[] {
       action: "Devices"
     }
   ];
+}
+
+function externalNetworkBlockDetail(externalNetworkBlock: HardeningCheck): string {
+  if (externalNetworkBlock.detail) return String(externalNetworkBlock.detail);
+  if (!externalNetworkBlock.enabled) return "Optional Apple-network DNS/router sync is disabled.";
+  return `Manual provider ready with ${externalNetworkBlock.targetDomainCount || 0} domain targets.`;
 }
 
 function renderSetupItem(item: SetupItem): HTMLElement {

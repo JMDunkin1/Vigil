@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { defaultState } from "../../src/defaults.js";
 import { buildBackupExport, backupExportFilename } from "../../src/server/backupRoutes.js";
+import { externalNetworkBlockSummary } from "../../src/externalNetworkBlock.js";
 import { hardeningActions, hostsDetail, launchAgentDetail } from "../../src/server/hardeningSummary.js";
 import { contentType, resolvePublicPath, securityHeaders } from "../../src/server/http.js";
 import { createLocalScriptRunner, shellQuote, appleScriptString } from "../../src/server/localScripts.js";
@@ -79,6 +80,17 @@ assert.equal(actions.hostsApply.command, "cmd:apply-hosts.mjs:network:apply:priv
 assert.equal(actions.safariFilterApply.command, "cmd:apply-safari-filter.mjs:safari:apply:user");
 assert.equal(actions.sourceSeal.command, "cmd:seal-source.mjs:seal:source:user");
 assert.equal(actions.extensionLoad.path, "/resources/extension");
+
+const externalNetworkState = defaultState();
+externalNetworkState.settings.externalNetworkBlockEnabled = true;
+const externalNetwork = externalNetworkBlockSummary(externalNetworkState);
+assert.equal(externalNetwork.provider, "manual");
+assert.equal(externalNetwork.ready, true);
+assert.equal(externalNetwork.current, false);
+assert.ok(externalNetwork.targetDomainCount > 0);
+assert.equal(externalNetwork.targetDomainCount, externalNetwork.targetDomains.length);
+assert.equal(externalNetwork.targetDomains.includes("pornhub.com"), true);
+assert.match(externalNetwork.signature, /^[a-f0-9]{16}$/);
 
 assert.equal(shellQuote("it's here"), "'it'\\''s here'");
 assert.equal(appleScriptString('say "hi" \\ now'), '"say \\"hi\\" \\\\ now"');

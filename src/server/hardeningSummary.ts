@@ -1,6 +1,7 @@
 import { distanceKeySummary } from "../distanceKey.js";
 import { extensionDynamicRulesReady, extensionRecentlySeen as extensionRecentlySeenForState, extensionVersionReady } from "../foolproof.js";
 import { focusShortcutDetail, focusShortcutSummary } from "../focusHooks.js";
+import { externalNetworkBlockSummary } from "../externalNetworkBlock.js";
 import { integrityRuntimeSummary } from "../integrityLockdown.js";
 import { intentReasonSummary } from "../intentReason.js";
 import { keyholderSummary } from "../keyholder.js";
@@ -48,6 +49,7 @@ interface HardeningAuditInput {
   hosts: SummaryRecord;
   firewall: SummaryRecord;
   safariFilter: SummaryRecord;
+  externalNetworkBlock?: SummaryRecord;
   agent: SummaryRecord;
   account: SummaryRecord;
   protection: SummaryRecord;
@@ -69,7 +71,7 @@ interface HardeningActionsInput {
   resourcePath: (resourceName: string) => string;
 }
 
-export function hardeningAudit({ state, hosts, firewall, safariFilter, agent, account, protection, monitor, foolproof, stateSeal, sourceSeal }: HardeningAuditInput): HardeningAuditRow[] {
+export function hardeningAudit({ state, hosts, firewall, safariFilter, externalNetworkBlock, agent, account, protection, monitor, foolproof, stateSeal, sourceSeal }: HardeningAuditInput): HardeningAuditRow[] {
   const keyholder = keyholderSummary(state);
   const distanceKey = distanceKeySummary(state);
   const focusShortcut = focusShortcutSummary(state);
@@ -80,6 +82,7 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, agent, ac
   const extensionSeen = extensionRecentlySeenForState(state);
   const networkCurrent = networkBlockCurrent(hosts, firewall);
   const networkEnabled = systemNetworkBlockingEnabled(state);
+  const externalNetwork = externalNetworkBlock || externalNetworkBlockSummary(state);
   const companionRequirement = browserCompanionRequirement(state);
   return [
     {
@@ -153,6 +156,12 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, agent, ac
       label: "Safari URL filter",
       ok: safariFilter.required ? Boolean(safariFilter.current) : true,
       detail: safariFilterDetail(safariFilter)
+    },
+    {
+      id: "external-network-block",
+      label: "Apple network DNS/router",
+      ok: !externalNetwork.enabled || Boolean(externalNetwork.ready),
+      detail: externalNetworkBlockDetail(externalNetwork)
     },
     {
       id: "browser-redirect",
@@ -268,6 +277,12 @@ function safariFilterDetail(safariFilter: SummaryRecord): string {
   if (safariFilter.installed && safariFilter.stale) return "Safari URL filter profile is installed but stale; reapply it.";
   if (safariFilter.generated) return "Safari URL filter profile is generated; approve it in System Settings.";
   return "Apply the Safari URL filter profile for path-specific Safari blocking.";
+}
+
+function externalNetworkBlockDetail(externalNetwork: SummaryRecord): string {
+  if (externalNetwork.detail) return String(externalNetwork.detail);
+  if (!externalNetwork.enabled) return "Optional DNS/router sync is disabled.";
+  return `Manual DNS/router provider is ready with ${externalNetwork.targetDomainCount || 0} domain targets to copy.`;
 }
 
 export function hardeningActions({ localScriptCommand, resourcePath }: HardeningActionsInput) {

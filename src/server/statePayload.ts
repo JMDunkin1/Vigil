@@ -2,6 +2,7 @@ import { currentMacAccountStatus } from "../account.js";
 import { DEVICE_TARGETS } from "../defaults.js";
 import { buildFirewallBlock, buildPfConfBlock, firewallStatus } from "../firewall.js";
 import { focusShortcutSummary } from "../focusHooks.js";
+import { externalNetworkBlockSummary } from "../externalNetworkBlock.js";
 import { grayscaleSummary } from "../grayscale.js";
 import { assertFoolproofReadyForStrict, foolproofSummary } from "../foolproof.js";
 import { buildHostsBlock, hostsStatus, launchAgentPath, launchAgentStatus, managedBlockDomains, stateSealStatus } from "../hardening.js";
@@ -56,6 +57,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
   const stateSeal = await stateSealStatus(state);
   const sourceSeal = await sourceSealStatus();
   const safariFilter = await safariFilterStatus(state);
+  const externalNetworkBlock = externalNetworkBlockSummary(state);
   const protection = protectionSummary(state);
   const devices = await deviceSummary(state);
   const foolproof = foolproofSummary(state, { hosts, firewall, safariFilter, agent, account, monitor: monitor.status, stateSeal, sourceSeal });
@@ -78,6 +80,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
         hosts,
         firewall,
         safariFilter,
+        externalNetworkBlock,
         launchAgent: agent,
         account,
         stateSeal,
@@ -86,7 +89,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
         hostsBlock: await buildNetworkPreview(state),
         actions: hardeningActions(localScripts),
         foolproof,
-        audit: hardeningAudit({ state, hosts, firewall, safariFilter, agent, account, protection, monitor: monitor.status, foolproof, stateSeal, sourceSeal })
+        audit: hardeningAudit({ state, hosts, firewall, safariFilter, externalNetworkBlock, agent, account, protection, monitor: monitor.status, foolproof, stateSeal, sourceSeal })
       }
     },
     headers: sentinelStateHeaders()
