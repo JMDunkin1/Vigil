@@ -6,8 +6,8 @@ import { promisify } from "node:util";
 import { CONTENT_FILTER_RULES, contentFilterEnabled } from "./contentFilters.js";
 import { DATA_DIR } from "./store.js";
 import { toPlist } from "./plist.js";
-import { activePolicy, baselinePolicy, normalizeHost, normalizeUrlPattern } from "./policy.js";
-import type { SentinelState } from "./types.js";
+import { activePolicy, baselinePolicy, expandSiteTargets, normalizeHost, normalizeUrlPattern } from "./policy.js";
+import type { ActivePolicy, SentinelState } from "./types.js";
 
 export const SAFARI_FILTER_PROFILE_ID = "tech.caseline.sentinel.safari-url-filter";
 export const SAFARI_FILTER_PAYLOAD_ID = `${SAFARI_FILTER_PROFILE_ID}.payload`;
@@ -15,6 +15,7 @@ export const SAFARI_FILTER_PROFILE_PATH = join(DATA_DIR, "sentinel-safari-url-fi
 
 const execFileAsync = promisify(execFile);
 const URL_LIMIT = 500;
+const SAFARI_FILTER_SIGNATURE_VERSION = 2;
 
 export interface SafariFilterUrlTarget {
   url: string;
@@ -33,7 +34,7 @@ interface ProfileListResult {
 }
 
 export function safariUrlFilterEnabled(state: SentinelState): boolean {
-  return state.settings?.safariUrlFilterEnabled !== false;
+  return contentFilterEnabled(state) || state.settings?.safariUrlFilterEnabled !== false;
 }
 
 export function safariFilterDenyUrls(state: SentinelState, now = new Date()): string[] {
@@ -51,16 +52,21 @@ export function safariFilterTargets(state: SentinelState, now = new Date()): Saf
   if (!safariUrlFilterEnabled(state)) return [];
   const targets: SafariFilterUrlTarget[] = [];
   const policy = activePolicy(state, now);
-  const profile = policy?.profile || baselinePolicy(state, now, { device: "computer" })?.profile;
+  const policies = safariFilterPolicies(state, now);
 
-  for (const pattern of profile?.blockedUrlPatterns || []) {
-    targets.push(...urlPatternTargetUrls(pattern, "url-pattern"));
+  for (const item of policies) {
+    for (const site of item.profile?.blockedSites || []) {
+      targets.push(...siteTargetUrls(site, `${item.kind}:site`));
+    }
+    for (const pattern of item.profile?.blockedUrlPatterns || []) {
+      targets.push(...urlPatternTargetUrls(pattern, `${item.kind}:url-pattern`));
+    }
   }
 
   if (policy && contentFilterEnabled(state)) {
     for (const rule of CONTENT_FILTER_RULES) {
       for (const filter of rule.urlFilters) {
-        targets.push(...urlPatternTargetUrls(filter.replace(/^\|\|/, ""), `content-filter:${rule.id}`));
+        targets.push(...contentFilterTargetUrls(filter, `content-filter:${rule.id}`));
       }
     }
   }
@@ -70,7 +76,12 @@ export function safariFilterTargets(state: SentinelState, now = new Date()): Saf
 
 export function safariFilterPolicySignature(state: SentinelState, now = new Date()): string {
   return createHash("sha256")
-    .update(JSON.stringify(safariFilterDenyUrls(state, now)))
+    .update(JSON.stringify({
+      version: SAFARI_FILTER_SIGNATURE_VERSION,
+      appleBuiltInContentFilter: true,
+      removalDisallowed: true,
+      denyUrls: safariFilterDenyUrls(state, now)
+    }))
     .digest("hex");
 }
 
@@ -84,7 +95,7 @@ export function buildSafariFilterProfile(state: SentinelState, now = new Date())
         filterDenyList: urls,
         restrictWeb: true,
         useContentFilter: true,
-        PayloadDescription: "Blocks Sentinel URL patterns in Safari without rewriting browser tabs.",
+        PayloadDescription: "Enforces Apple's built-in web content filter plus Sentinel deny URLs in Safari without rewriting browser tabs.",
         PayloadDisplayName: "Sentinel Safari URL Filter",
         PayloadIdentifier: SAFARI_FILTER_PAYLOAD_ID,
         PayloadType: "com.apple.familycontrols.contentfilter",
@@ -96,7 +107,7 @@ export function buildSafariFilterProfile(state: SentinelState, now = new Date())
     PayloadDisplayName: "Sentinel Safari URL Filter",
     PayloadIdentifier: SAFARI_FILTER_PROFILE_ID,
     PayloadOrganization: "Sentinel",
-    PayloadRemovalDisallowed: false,
+    PayloadRemovalDisallowed: true,
     PayloadType: "Configuration",
     PayloadUUID: deterministicUuid(SAFARI_FILTER_PROFILE_ID),
     PayloadVersion: 1
@@ -123,7 +134,7 @@ export async function safariFilterStatus(state: SentinelState, now = new Date(),
   const pathUrls = safariFilterPathDenyUrls(state, now);
   const generated = await generatedProfileMatches(profilePath, signature);
   const installed = await installedSafariProfile();
-  const required = safariUrlFilterEnabled(state) && pathUrls.length > 0;
+  const required = safariUrlFilterEnabled(state) && contentFilterEnabled(state);
   const stale = Boolean(installed.installed && installed.signature !== signature);
   return {
     enabled: safariUrlFilterEnabled(state),
@@ -139,6 +150,31 @@ export async function safariFilterStatus(state: SentinelState, now = new Date(),
     pathUrlCount: pathUrls.length,
     expectedUrls: urls.length
   };
+}
+
+function safariFilterPolicies(state: SentinelState, now: Date): ActivePolicy[] {
+  const policies: ActivePolicy[] = [];
+  const baseline = baselinePolicy(state, now, { device: "computer" });
+  const active = activePolicy(state, now);
+  if (baseline) policies.push(baseline);
+  if (active && !policies.some((policy) => policy.kind === active.kind && policy.session?.id === active.session?.id)) {
+    policies.push(active);
+  }
+  return policies;
+}
+
+function siteTargetUrls(site: unknown, source: string): SafariFilterUrlTarget[] {
+  return expandSiteTargets([site]).flatMap((host) => {
+    if (!isPublicHost(host)) return [];
+    return hostVariants(host).flatMap((variant) => protocolUrls(variant, "/", source, false));
+  });
+}
+
+function contentFilterTargetUrls(filter: unknown, source: string): SafariFilterUrlTarget[] {
+  const normalized = normalizeUrlPattern(String(filter || "").replace(/^\|\|/, ""));
+  if (!normalized) return [];
+  if (!normalized.includes("/")) return siteTargetUrls(normalized, source);
+  return urlPatternTargetUrls(normalized, source);
 }
 
 function urlPatternTargetUrls(pattern: unknown, source: string): SafariFilterUrlTarget[] {

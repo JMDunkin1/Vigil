@@ -76,6 +76,15 @@ function booleanSetting<Key extends BooleanSettingKey>(key: Key, options: { guar
   };
 }
 
+function alwaysEnabledBooleanSetting<Key extends BooleanSettingKey>(key: Key, options: { guarded?: boolean } = {}): SettingMutation {
+  return {
+    guarded: options.guarded,
+    apply(settings) {
+      settings[key] = true as AppSettings[Key];
+    }
+  };
+}
+
 function numberSetting<Key extends NumberSettingKey>(
   key: Key,
   { min = 1, max = 100000, guarded = false }: { min?: number; max?: number; guarded?: boolean } = {}
@@ -158,7 +167,7 @@ const SETTING_MUTATIONS = {
   foolproofModeEnabled: booleanSetting("foolproofModeEnabled", GUARDED),
   appQuitEscalationSeconds: numberSetting("appQuitEscalationSeconds", GUARDED),
   siteRedirectEnabled: booleanSetting("siteRedirectEnabled", GUARDED),
-  contentFilterEnabled: booleanSetting("contentFilterEnabled", GUARDED),
+  contentFilterEnabled: alwaysEnabledBooleanSetting("contentFilterEnabled", GUARDED),
   browserNoiseBlockingEnabled: booleanSetting("browserNoiseBlockingEnabled", GUARDED),
   appQuitEnabled: booleanSetting("appQuitEnabled", GUARDED),
   strictBypassProtectionEnabled: booleanSetting("strictBypassProtectionEnabled", GUARDED),
@@ -170,7 +179,7 @@ const SETTING_MUTATIONS = {
   focusShortcutOnName: stringSetting("focusShortcutOnName", GUARDED),
   focusShortcutOffName: stringSetting("focusShortcutOffName", GUARDED),
   systemNetworkBlockingEnabled: booleanSetting("systemNetworkBlockingEnabled", GUARDED),
-  safariUrlFilterEnabled: booleanSetting("safariUrlFilterEnabled", GUARDED),
+  safariUrlFilterEnabled: alwaysEnabledBooleanSetting("safariUrlFilterEnabled", GUARDED),
   externalNetworkBlockEnabled: booleanSetting("externalNetworkBlockEnabled", GUARDED),
   externalNetworkBlockProvider: enumSetting("externalNetworkBlockProvider", ["manual"], GUARDED),
   hostsBlockingEnabled: booleanSetting("hostsBlockingEnabled"),

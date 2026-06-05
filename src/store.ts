@@ -213,6 +213,8 @@ function migrateSettings(settings: AppSettings): AppSettings {
   if (next.externalNetworkBlockProvider !== "manual") {
     next.externalNetworkBlockProvider = "manual";
   }
+  next.contentFilterEnabled = true;
+  next.safariUrlFilterEnabled = true;
   return next;
 }
 

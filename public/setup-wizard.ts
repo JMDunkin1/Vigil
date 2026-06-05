@@ -37,7 +37,7 @@ function setupItems(data: DashboardData): SetupItem[] {
   const ios = data.devices?.ios || {};
   const mdm = record(ios.mdm);
   const networkReady = settings.systemNetworkBlockingEnabled !== false && current(hosts) && current(firewall);
-  const safariReady = Boolean(settings.safariUrlFilterEnabled !== false && (!safariFilter.required || safariFilter.current));
+  const safariReady = Boolean(!safariFilter.required || safariFilter.current);
   const extensionSeen = Boolean(extension.lastSeenAt);
   const extensionRulesReady = dynamicRules.ok !== false && dynamicRules.status !== "missing";
   const iPhoneReady = Boolean(ios.enabled && (mdm.enrollmentReady || mdm.ready || ios.profile));
@@ -73,8 +73,8 @@ function setupItems(data: DashboardData): SetupItem[] {
       label: "Safari filter",
       ok: safariReady,
       detail: safariFilter.required
-        ? (safariFilter.current ? "Safari path filter profile is current." : "Apply the Safari profile for path-specific blocks.")
-        : "No path-specific Safari profile is required for the current rules.",
+        ? (safariFilter.current ? "Safari content-filter profile is current." : "Apply the Safari profile for Apple filtering and deny-list blocks.")
+        : "No Safari content-filter profile is required for the current rules.",
       action: "Apply Safari Filter"
     },
     {

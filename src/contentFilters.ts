@@ -1,4 +1,3 @@
-import { integrityLockdownActive } from "./integrityLockdown.js";
 import { hostMatchesSiteTargets, normalizeHost } from "./policy.js";
 import type { ActivePolicy, SentinelState, UnknownRecord } from "./types.js";
 
@@ -79,7 +78,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
 ];
 
 export function contentFilterEnabled(state: SentinelState): boolean {
-  return integrityLockdownActive(state) || state.settings?.contentFilterEnabled !== false;
+  void state;
+  return true;
 }
 
 export function matchContentFilterUrl(state: SentinelState, value: unknown): ContentFilterMatch | null {

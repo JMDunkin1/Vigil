@@ -1,4 +1,5 @@
 import { activePolicy, baselinePolicy, normalizeHost, normalizeUrlPattern } from "./policy.js";
+import { contentFilterEnabled } from "./contentFilters.js";
 import type { Profile, SentinelState, UnknownRecord } from "./types.js";
 
 interface NetworkBlockSummary extends UnknownRecord {
@@ -35,7 +36,7 @@ export function browserCompanionRequirement(state: SentinelState, now = new Date
     };
   }
 
-  if (state.settings?.contentFilterEnabled !== false) {
+  if (contentFilterEnabled(state)) {
     return {
       required: true,
       detail: "Content feature filters are enabled."

@@ -5,7 +5,7 @@ import { externalNetworkBlockSummary } from "./externalNetworkBlock.js";
 import { integrityRuntimeSummary } from "./integrityLockdown.js";
 import { intentReasonSummary } from "./intentReason.js";
 import { keyholderSummary } from "./keyholder.js";
-import { safariFilterPathDenyUrls } from "./safariFilter.js";
+import { safariUrlFilterEnabled } from "./safariFilter.js";
 import { browserCompanionRequirement, networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
 import type { SentinelState, UnknownRecord } from "./types.js";
 
@@ -35,6 +35,7 @@ interface SummaryRecord extends UnknownRecord {
   legacyPath?: string;
   installedEntries?: number;
   expectedEntries?: number;
+  expectedUrls?: number;
   lastSealedAt?: string | null;
   sealedAt?: string | null;
   tamperDetectedAt?: string | null;
@@ -91,7 +92,7 @@ export function doctorRows(state: SentinelState, context: DoctorContext = {}, no
   const networkCurrent = networkBlockCurrent(hosts, firewall);
   const networkEnabled = systemNetworkBlockingEnabled(state);
   const companionRequirement = browserCompanionRequirement(state, now);
-  const safariRequired = safariFilter.required ?? (safariFilterPathDenyUrls(state, now).length > 0);
+  const safariRequired = safariFilter.required ?? safariUrlFilterEnabled(state);
 
   return [
     row("state-seal", "State seal", Boolean(seal.ok), stateSealDetail(seal)),
@@ -119,7 +120,7 @@ export function doctorRows(state: SentinelState, context: DoctorContext = {}, no
     row("background-sweep", "Background sweep", Boolean(settings.processSweepEnabled), settings.processSweepEnabled ? `Process sweep runs every ${settings.processSweepIntervalSeconds || 15}s.` : "Background process sweep is disabled."),
     row("sweep-interval", "Sweep interval", Number(settings.processSweepIntervalSeconds || 0) <= 30, `Process sweep interval is ${settings.processSweepIntervalSeconds || 15}s.`),
     row("app-escalation", "App escalation", Number(settings.appQuitEscalationSeconds || 0) <= 30, `Forced-kill escalation is ${settings.appQuitEscalationSeconds || 10}s.`),
-    row("content-filter", "Content filter", true, settings.contentFilterEnabled !== false ? "Short-form feeds use precise browser companion checks during active locks." : "Content feature filters are disabled."),
+    row("content-filter", "Content filter", true, "Apple's built-in Safari web filter stays on, with Sentinel deny URLs and precise browser companion checks layered on top."),
     row("browser-extension", "Browser extension", !companionRequirement.required || extensionSeen, companionRequirement.required ? (extensionSeen ? `Companion extension checked in recently. ${companionRequirement.detail}` : `Companion extension has not checked in recently. ${companionRequirement.detail}`) : "Not required for current system-network site blocking."),
     row("extension-version", "Extension version", !companionRequirement.required || (extensionSeen && extensionVersion.ok), companionRequirement.required ? extensionVersion.detail : "Not required for current system-network site blocking."),
     row("extension-rules", "Extension rules", !companionRequirement.required || extensionRules.ok, companionRequirement.required ? extensionRules.detail : "Not required for current system-network site blocking."),
@@ -129,11 +130,11 @@ export function doctorRows(state: SentinelState, context: DoctorContext = {}, no
 
 function safariFilterDetail(safariFilter: SummaryRecord, required: boolean): string {
   if (safariFilter.enabled === false) return "Safari URL filtering is disabled.";
-  if (!required) return "No path-specific Safari URL rules are active right now.";
-  if (safariFilter.current) return `Safari path rules are current (${safariFilter.pathUrlCount || 0} path URLs).`;
-  if (safariFilter.installed && safariFilter.stale) return "Safari URL filter profile is stale.";
-  if (safariFilter.generated) return "Safari URL filter profile is generated but still needs approval in System Settings.";
-  return "Safari URL filter profile is not installed.";
+  if (!required) return "Safari's Apple content-filter profile is not required right now.";
+  if (safariFilter.current) return `Safari content-filter profile is current (${safariFilter.expectedUrls || 0} deny URLs, ${safariFilter.pathUrlCount || 0} path URLs).`;
+  if (safariFilter.installed && safariFilter.stale) return "Safari content-filter profile is stale.";
+  if (safariFilter.generated) return "Safari content-filter profile is generated but still needs approval in System Settings.";
+  return "Safari content-filter profile is not installed.";
 }
 
 function externalNetworkBlockDetail(externalNetworkBlock: SummaryRecord): string {
