@@ -4,7 +4,7 @@ import { parseClock } from "./time.js";
 import type { ActivePolicy, HardeningIssue, IntegrityRuntimeState, Schedule, SentinelState } from "./types.js";
 
 const LOCKDOWN_ENDS_AT = "until the tamper alarm is cleared";
-const APPLE_CONTENT_FILTER_LOCKDOWN_ENDS_AT = "until Apple Screen Time Limit Adult Websites is turned back on";
+const APPLE_CONTENT_FILTER_LOCKDOWN_ENDS_AT = "until Apple Screen Time Limit Adult Websites and Content & Privacy Restrictions are turned back on";
 const DEFAULT_GAP_LOCKDOWN_SECONDS = 120;
 const DEFAULT_CLOCK_TAMPER_SECONDS = 90;
 export const APPLE_CONTENT_FILTER_ISSUE_ID = "apple-content-filter";
@@ -134,7 +134,7 @@ export function clearTrustedSourceSealDrift(state: SentinelState, now = new Date
 
 export function syncAppleContentFilterLockdown(state: SentinelState, safariFilter: HardeningCheck = {}, now = new Date()) {
   const runtime = ensureRuntime(state);
-  const current = !safariFilter.required || safariWebFilterCurrent(safariFilter);
+  const current = !safariFilter.required || appleContentFilterCurrent(safariFilter);
   const issues = Array.isArray(runtime.hardeningDriftIssues) ? runtime.hardeningDriftIssues : [];
   const existingRecovery = Boolean(runtime.hardeningDriftDetectedAt && onlyAppleContentFilterIssue(issues));
 
@@ -156,7 +156,7 @@ export function syncAppleContentFilterLockdown(state: SentinelState, safariFilte
 
   const issue = {
     id: APPLE_CONTENT_FILTER_ISSUE_ID,
-    detail: "Apple Screen Time Limit Adult Websites is not active."
+    detail: "Apple Screen Time Limit Adult Websites or Content & Privacy Restrictions are not active."
   };
   if (runtime.hardeningDriftDetectedAt && !existingRecovery) {
     return {
@@ -171,7 +171,7 @@ export function syncAppleContentFilterLockdown(state: SentinelState, safariFilte
   const started = !existingRecovery;
   runtime.hardeningDriftDetectedAt ||= now.toISOString();
   runtime.hardeningDriftIssues = [issue];
-  runtime.hardeningDriftDetail = "Apple Screen Time Limit Adult Websites is off; recovery lockdown blocks almost everything until it is turned back on.";
+  runtime.hardeningDriftDetail = "Apple Screen Time Limit Adult Websites or Content & Privacy Restrictions are off; recovery lockdown blocks almost everything until they are turned back on.";
   return {
     active: true,
     started,
@@ -424,10 +424,10 @@ function hardeningIssues(checks: HardeningChecks): HardeningIssue[] {
     });
   }
 
-  if (safariFilter?.required && !safariWebFilterCurrent(safariFilter)) {
+  if (safariFilter?.required && !appleContentFilterCurrent(safariFilter)) {
     issues.push({
       id: APPLE_CONTENT_FILTER_ISSUE_ID,
-      detail: "Apple Screen Time Limit Adult Websites is not active."
+      detail: "Apple Screen Time Limit Adult Websites or Content & Privacy Restrictions are not active."
     });
   }
 
@@ -464,10 +464,11 @@ function hardeningIssues(checks: HardeningChecks): HardeningIssue[] {
   return issues;
 }
 
-function safariWebFilterCurrent(safariFilter: HardeningCheck): boolean {
+function appleContentFilterCurrent(safariFilter: HardeningCheck): boolean {
   const apple = safariFilter.appleContentFilter;
-  const appleCurrent = isRecord(apple) && "current" in apple ? Boolean(apple.current) : Boolean(safariFilter.appleCurrent);
-  return Boolean(safariFilter.effectiveCurrent || safariFilter.current || appleCurrent);
+  if (isRecord(apple) && "current" in apple) return Boolean(apple.current);
+  if ("appleCurrent" in safariFilter) return Boolean(safariFilter.appleCurrent);
+  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -493,7 +494,7 @@ function appleContentFilterRecoveryProfile(): ActivePolicy["profile"] {
     id: "apple-content-filter-recovery",
     name: "Apple content filter recovery",
     mode: "allowlist",
-    description: "Blocks almost everything until Apple Screen Time Limit Adult Websites is turned back on.",
+    description: "Blocks almost everything until Apple Screen Time Limit Adult Websites and Content & Privacy Restrictions are turned back on.",
     blockedApps: [],
     blockedSites: [],
     blockedUrlPatterns: [],

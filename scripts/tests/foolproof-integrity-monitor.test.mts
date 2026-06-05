@@ -86,7 +86,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   const readyContext = {
     hosts: { installed: true, partial: false, stale: false },
     firewall: readyFirewall,
-    safariFilter: { required: true, installed: true, current: true, stale: false },
+    safariFilter: { required: true, installed: true, current: true, stale: false, appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." } },
     agent: { loaded: true, running: true },
     account: accountStatusFromGroups("focus", "staff everyone"),
     monitor: { ok: true, accessibilityLikelyMissing: false },
@@ -143,7 +143,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   const readyContext = {
     hosts: { installed: true, partial: false, stale: false },
     firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
-    safariFilter: { required: true, installed: true, current: true, stale: false },
+    safariFilter: { required: true, installed: true, current: true, stale: false, appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." } },
     agent: { loaded: true, running: true },
     account: accountStatusFromGroups("focus", "staff everyone"),
     monitor: { ok: true, accessibilityLikelyMissing: false },
@@ -219,7 +219,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     sourceSeal: { ok: true, status: "sealed", detail: "Source files match integrity seal.", sealedAt: now.toISOString(), fileCount: 42 },
     hosts: { installed: true, partial: false, stale: false, installedEntries: 20, expectedEntries: 20 },
     firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
-    safariFilter: { required: true, installed: true, current: true, stale: false },
+    safariFilter: { required: true, installed: true, current: true, stale: false, appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." } },
     agent: { installed: true, loaded: true, running: true, pid: 12345 },
     account: accountStatusFromGroups("focus", "staff everyone")
   }, now);
@@ -459,6 +459,24 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     monitor: { ok: true, accessibilityLikelyMissing: false }
   }, now), "Apple Screen Time content filter drift");
   assert.equal(driftAppleContentFilter.issues[0].id, "apple-content-filter");
+  assert.equal(clearIntegrityTamper(state, now), true);
+
+  const maskedAppleContentFilter = must(detectHardeningDrift(state, {
+    hosts: { installed: true, partial: false, stale: false },
+    firewall: goodFirewall,
+    safariFilter: {
+      required: true,
+      current: true,
+      effectiveCurrent: true,
+      appleCurrent: false,
+      appleContentFilter: { current: false }
+    },
+    extensionRules: goodRules,
+    sourceSeal: goodSourceSeal,
+    agent: { installed: true, loaded: true, running: true },
+    monitor: { ok: true, accessibilityLikelyMissing: false }
+  }, now), "Apple Screen Time content filter drift masked by installed profile");
+  assert.equal(maskedAppleContentFilter.issues[0].id, "apple-content-filter");
 
   const upgradedDrift = must(detectHardeningDrift(state, {
     hosts: badHosts,
@@ -495,6 +513,21 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
 {
   const state = defaultState();
   state.settings.foolproofModeEnabled = false;
+  const maskedByInstalledProfile = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: true,
+    effectiveCurrent: true,
+    appleCurrent: false,
+    appleContentFilter: { current: false }
+  }, now);
+  assert.equal(maskedByInstalledProfile.started, true);
+  assert.equal(integrityLockdownActive(state), true);
+  assert.equal(mustPolicy(activePolicy(state, now)).session.title, "Apple content filter recovery");
+}
+
+{
+  const state = defaultState();
+  state.settings.foolproofModeEnabled = false;
   const started = syncAppleContentFilterLockdown(state, {
     required: true,
     current: false,
@@ -506,7 +539,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   const policy = mustPolicy(activePolicy(state, now));
   assert.equal(policy.kind, "integrity");
   assert.equal(policy.session.title, "Apple content filter recovery");
-  assert.equal(policy.endsAt, "until Apple Screen Time Limit Adult Websites is turned back on");
+  assert.equal(policy.endsAt, "until Apple Screen Time Limit Adult Websites and Content & Privacy Restrictions are turned back on");
   assert.equal(policy.profile.mode, "allowlist");
   assert.equal(shouldBlockAppForPolicy(state, policy, "System Settings"), false);
   assert.equal(shouldBlockAppForPolicy(state, policy, "Sentinel"), false);
