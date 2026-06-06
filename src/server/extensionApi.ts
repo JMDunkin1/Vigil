@@ -8,7 +8,7 @@ import { addEvent, saveState, saveUsage } from "../store.js";
 import { clampNumber } from "../time.js";
 import type { SentinelState, UsageState } from "../types.js";
 import { isExtensionApiPath } from "./apiRoutes.js";
-import { readBody, sendEmpty, sendJson } from "./http.js";
+import { errorStatus, readBody, sendEmpty, sendJson, serializeError } from "./http.js";
 
 interface GuardResult {
   ok: boolean;
@@ -321,19 +321,6 @@ function publicPairingStatus(state: SentinelState) {
       ok: Boolean(dynamicRules.ok)
     }
   };
-}
-
-function errorStatus(error: unknown): number {
-  if (hasStatus(error)) return error.status;
-  return 500;
-}
-
-function serializeError(error: unknown) {
-  return { error: error instanceof Error ? error.message : String(error || "Request failed.") };
-}
-
-function hasStatus(error: unknown): error is { status: number } {
-  return Boolean(error && typeof error === "object" && typeof (error as { status?: unknown }).status === "number");
 }
 
 function extensionRouteGuard(method: string, path: string, request: IncomingMessage): GuardResult {

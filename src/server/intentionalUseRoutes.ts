@@ -23,8 +23,9 @@ import {
 import { openApp } from "../macos.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { addEvent, saveState } from "../store.js";
-import type { SentinelState, UnknownRecord } from "../types.js";
-import { readBody, sendJson } from "./http.js";
+import type { SentinelState } from "../types.js";
+import { pathTailId } from "../normalizers.js";
+import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
 
 interface IntentionalUseApiContext {
   state: SentinelState;
@@ -102,7 +103,7 @@ export async function handleIntentionalUseApiRoute(
 
   if (method === "DELETE" && path.startsWith("/api/intentional-use/rule/")) {
     try {
-      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const id = pathTailId(path);
       assertProtectedEditAllowed(state, { kind: "settings" });
       state.intentionalUse.rules = (state.intentionalUse.rules || []).filter((rule) => rule.id !== id);
       state.intentionalUse.pauses = (state.intentionalUse.pauses || []).filter((pause) => pause.ruleId !== id);
@@ -132,7 +133,7 @@ export async function handleIntentionalUseApiRoute(
 
   if (method === "DELETE" && path.startsWith("/api/intentional-use/behavior/")) {
     try {
-      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const id = pathTailId(path);
       assertProtectedEditAllowed(state, { kind: "settings" });
       const behavior = deleteIntentionalBehavior(state, id);
       addEvent(state, "intentional_behavior_archived", { behaviorId: id, name: behavior?.name || "" });
@@ -176,7 +177,7 @@ export async function handleIntentionalUseApiRoute(
 
   if (method === "DELETE" && path.startsWith("/api/intentional-use/journal/")) {
     try {
-      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const id = pathTailId(path);
       const deleted = deleteIntentionalJournalEntry(state, id);
       addEvent(state, "intentional_journal_deleted", { entryId: id, deleted });
       await saveState(state);
@@ -202,7 +203,7 @@ export async function handleIntentionalUseApiRoute(
 
   if (method === "DELETE" && path.startsWith("/api/intentional-use/plan/list/")) {
     try {
-      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const id = pathTailId(path);
       const list = deleteIntentionalPlanList(state, id);
       addEvent(state, "intentional_plan_list_archived", { listId: id, name: list?.name || "" });
       await saveState(state);
@@ -228,7 +229,7 @@ export async function handleIntentionalUseApiRoute(
 
   if (method === "DELETE" && path.startsWith("/api/intentional-use/plan/item/")) {
     try {
-      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const id = pathTailId(path);
       const item = deleteIntentionalPlanItem(state, id);
       addEvent(state, "intentional_plan_item_archived", { itemId: id, title: item?.title || "" });
       await saveState(state);
@@ -264,7 +265,7 @@ export async function handleIntentionalUseApiRoute(
 
   if (method === "DELETE" && path.startsWith("/api/intentional-use/plan/block/")) {
     try {
-      const id = decodeURIComponent(path.split("/").at(-1) || "");
+      const id = pathTailId(path);
       assertProtectedEditAllowed(state, { kind: "schedule", id });
       const deleted = deleteIntentionalPlanBlock(state, id);
       addEvent(state, "intentional_plan_block_deleted", { blockId: id, deleted });
@@ -353,26 +354,4 @@ export async function handleIntentionalUseApiRoute(
   }
 
   return false;
-}
-
-function serializeError(error: unknown): { error: string; blockers?: unknown } {
-  return {
-    error: errorMessage(error),
-    blockers: objectValue(error, "blockers")
-  };
-}
-
-function errorStatus(error: unknown): number {
-  const status = Number(objectValue(error, "status"));
-  return Number.isInteger(status) ? status : 500;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function objectValue(value: unknown, key: string): unknown {
-  return typeof value === "object" && value !== null && key in value
-    ? (value as UnknownRecord)[key]
-    : undefined;
 }

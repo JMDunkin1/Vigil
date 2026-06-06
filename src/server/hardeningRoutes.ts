@@ -5,8 +5,8 @@ import { clearIntegrityTamper } from "../integrityLockdown.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { safariFilterStatus } from "../safariFilter.js";
 import { addEvent, saveState } from "../store.js";
-import type { SentinelState, UnknownRecord } from "../types.js";
-import { sendJson } from "./http.js";
+import type { SentinelState } from "../types.js";
+import { errorStatus, sendJson, serializeError } from "./http.js";
 import type { createLocalScriptRunner } from "./localScripts.js";
 
 type LocalScriptRunner = ReturnType<typeof createLocalScriptRunner>;
@@ -86,26 +86,4 @@ export async function handleHardeningApiRoute(response: ServerResponse, context:
   }
 
   return false;
-}
-
-function serializeError(error: unknown): { error: string; blockers?: unknown } {
-  return {
-    error: errorMessage(error),
-    blockers: objectValue(error, "blockers")
-  };
-}
-
-function errorStatus(error: unknown): number {
-  const status = Number(objectValue(error, "status"));
-  return Number.isInteger(status) ? status : 500;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function objectValue(value: unknown, key: string): unknown {
-  return typeof value === "object" && value !== null && key in value
-    ? (value as UnknownRecord)[key]
-    : undefined;
 }

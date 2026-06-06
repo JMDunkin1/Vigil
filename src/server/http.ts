@@ -118,3 +118,25 @@ export function contentType(path: string): string {
   };
   return types[extname(path)] || "application/octet-stream";
 }
+
+export function serializeError(error: unknown): { error: string; blockers?: unknown } {
+  return {
+    error: errorMessage(error),
+    blockers: objectValue(error, "blockers")
+  };
+}
+
+export function errorStatus(error: unknown): number {
+  const status = Number(objectValue(error, "status"));
+  return Number.isInteger(status) ? status : 500;
+}
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function objectValue(value: unknown, key: string): unknown {
+  return typeof value === "object" && value !== null && key in value
+    ? (value as UnknownRecord)[key]
+    : undefined;
+}

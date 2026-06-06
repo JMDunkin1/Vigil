@@ -13,7 +13,7 @@ import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileG
 import { parsePlist } from "./plist.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "./protection.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "./keyholder.js";
-import { readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, sendMdmPlist, serveStatic, mdmHeaders } from "./server/http.js";
+import { errorMessage, errorStatus, readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, sendMdmPlist, serializeError, serveStatic, mdmHeaders } from "./server/http.js";
 import { createLocalScriptRunner } from "./server/localScripts.js";
 import { blockedPage, pausePage } from "./server/pages.js";
 import { matchApiRoute } from "./server/apiRoutes.js";
@@ -441,18 +441,6 @@ async function assertStrictLockAllowed(lockLevel: LockLevel, profile: Profile, o
   });
 }
 
-function serializeError(error: unknown): { error: string; blockers?: unknown } {
-  return {
-    error: errorMessage(error),
-    blockers: objectValue(error, "blockers")
-  };
-}
-
-function errorStatus(error: unknown): number {
-  const status = Number(objectValue(error, "status"));
-  return Number.isInteger(status) ? status : 500;
-}
-
 function requireServer(): Server {
   if (!server) throw new Error("Sentinel server is not initialized.");
   return server;
@@ -461,14 +449,4 @@ function requireServer(): Server {
 function requireMonitor(): MonitorHandle {
   if (!monitor) throw new Error("Sentinel monitor is not initialized.");
   return monitor;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function objectValue(value: unknown, key: string): unknown {
-  return typeof value === "object" && value !== null && key in value
-    ? (value as UnknownRecord)[key]
-    : undefined;
 }

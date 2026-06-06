@@ -126,10 +126,6 @@ export function deviceUsageSyncAuthorization({
   return deny("Device usage sync requires a local app intent header or the iOS device token.");
 }
 
-export function controlIntentHeaders(): Record<string, string> {
-  return { [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE };
-}
-
 export function extensionRequestGuard({ method = "GET", headers = {} }: GuardInput): GuardResult {
   const normalizedMethod = String(method || "GET").toUpperCase();
   const origin = headerValue(headers, "origin");
