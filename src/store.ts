@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_SHORT_FORM_URL_PATTERNS, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { normalizeIntentionalUse } from "./intentionalUse.js";
+import { normalizeWeekdays } from "./normalizers.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
 import type { AppSettings, GrayscaleSchedule, GrayscaleState, Profile, Schedule, VigilState, Session, UsageState } from "./types.js";
 
@@ -344,17 +345,11 @@ function normalizeGrayscaleSchedule(schedule: Partial<GrayscaleSchedule>): Grays
     id: String(schedule.id || randomUUID()),
     name: String(schedule.name || "Grayscale schedule").slice(0, 80),
     enabled: Boolean(schedule.enabled),
-    days: normalizeDays(schedule.days),
+    days: normalizeWeekdays(schedule.days, { fallback: [0, 1, 2, 3, 4, 5, 6], integersOnly: true, sort: false }),
     start: normalizeClock(schedule.start, "22:00"),
     end: normalizeClock(schedule.end, "07:00"),
     deviceTargets: normalizeDeviceTargetList(schedule.deviceTargets)
   };
-}
-
-function normalizeDays(value: unknown): number[] {
-  const values = Array.isArray(value) ? value : [];
-  const days = [...new Set(values.map((day) => Number(day)).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))];
-  return days.length ? days : [0, 1, 2, 3, 4, 5, 6];
 }
 
 function normalizeClock(value: unknown, fallback: string): string {

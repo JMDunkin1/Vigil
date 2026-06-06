@@ -25,7 +25,7 @@ import { addEvent, saveState } from "../store.js";
 import { clampNumber, weekKey } from "../time.js";
 import type { DeviceTarget, LimitBlock, LockLevel, Profile, VigilState, Session, SessionCycle, UnknownRecord } from "../types.js";
 import { commitmentLockError } from "./pages.js";
-import { readBody, sendJson } from "./http.js";
+import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
 
 interface SessionApiContext {
   state: VigilState;
@@ -335,28 +335,6 @@ function sessionTitle(mode: unknown): string {
   if (mode === "rehab") return "Rehab lock";
   if (mode === "brick") return "Brick Mode";
   return "Focus lock";
-}
-
-function serializeError(error: unknown): { error: string; blockers?: unknown } {
-  return {
-    error: errorMessage(error),
-    blockers: objectValue(error, "blockers")
-  };
-}
-
-function errorStatus(error: unknown): number {
-  const status = Number(objectValue(error, "status"));
-  return Number.isInteger(status) ? status : 500;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function objectValue(value: unknown, key: string): unknown {
-  return typeof value === "object" && value !== null && key in value
-    ? (value as UnknownRecord)[key]
-    : undefined;
 }
 
 function stringValue(value: unknown, fallback = ""): string {

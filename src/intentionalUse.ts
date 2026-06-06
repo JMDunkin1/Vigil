@@ -6,12 +6,12 @@ import {
   appMatchesAppTargets,
   expandSiteTargets,
   hostMatchesSiteTargets,
-  listFromTextarea,
   matchBlockedUrlPattern,
   normalizeDeviceTargets,
   normalizeHost,
   normalizeLockLevel
 } from "./policy.js";
+import { normalizeTextList as normalizeTargets, normalizeWeekdays as normalizeDays } from "./normalizers.js";
 import { clampNumber, dateKey, parseClock, weekKey } from "./time.js";
 import { behaviorSummary, journalEntriesForWeek, plannerSummary, recoverySummary, reflectionStreakDays, sosPlan } from "./intentionalUseSummary.js";
 import type {
@@ -1239,16 +1239,6 @@ function isVigilUrl(value: unknown): boolean {
   } catch {
     return false;
   }
-}
-
-function normalizeTargets(value: unknown): string[] {
-  if (Array.isArray(value)) return [...new Set(value.map((item) => String(item).trim()).filter(Boolean))];
-  return listFromTextarea(value);
-}
-
-function normalizeDays(value: unknown): number[] {
-  const values = Array.isArray(value) ? value : [];
-  return [...new Set(values.map(Number).filter((day) => day >= 0 && day <= 6))].sort();
 }
 
 function normalizeClock(value: unknown): string {

@@ -1,4 +1,5 @@
 import type { VigilState } from "./types.js";
+import { clampInteger } from "./normalizers.js";
 
 export class IntentReasonError extends Error {
   status: number;
@@ -40,10 +41,4 @@ export function assertIntentReason(state: Pick<VigilState, "settings">, reason: 
 
 export function normalizeIntentReason(reason: unknown): string {
   return String(reason || "").replace(/\s+/g, " ").trim().slice(0, 500);
-}
-
-function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
-  const number = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, number));
 }

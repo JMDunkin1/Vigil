@@ -5,10 +5,11 @@ import { APP_NAME, PORT, defaultState } from "./defaults.js";
 import { buildIosConfigurationProfile, IOS_PROFILE_IDENTIFIER, iosPolicyTargets } from "./iosProfiles.js";
 import { parseBoolean } from "./booleans.js";
 import { grayscaleDecision } from "./grayscale.js";
+import { clampInteger } from "./normalizers.js";
 import { plistData, toPlist } from "./plist.js";
 import type { IosMdmSettings, VigilState, UnknownRecord } from "./types.js";
 import type { MdmCommand, MdmDevice, MdmMessage, MdmPushRequest, MdmSettings } from "./iosMdmModel.js";
-import { clampInteger, dataHex, dataString, isUnknownRecord, latestDate, normalizeBase64, normalizeBaseUrl, normalizeMdmCommands, normalizeMdmDevices, normalizeStatus, normalizeUuid, obscure, publicMdmCommand, publicMdmDevice, randomSecret, tokenHexFromDevice, tokenHexFromStoredToken } from "./iosMdmModel.js";
+import { dataHex, dataString, isUnknownRecord, latestDate, normalizeBase64, normalizeBaseUrl, normalizeMdmCommands, normalizeMdmDevices, normalizeStatus, normalizeUuid, obscure, publicMdmCommand, publicMdmDevice, randomSecret, tokenHexFromDevice, tokenHexFromStoredToken } from "./iosMdmModel.js";
 
 const MDM_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios.mdm";
 const DEFAULT_ACCESS_RIGHTS = 8179;

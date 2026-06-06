@@ -7,11 +7,12 @@ import { normalizeGrayscaleSchedule, normalizeGrayscaleState } from "../grayscal
 import { confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "../appLocks.js";
 import { assertKeyholderPasscode } from "../keyholder.js";
 import { normalizeLimitRule } from "../limits.js";
+import { normalizeWeekdays as normalizeDays, pathTailId as pathId } from "../normalizers.js";
 import { listFromTextarea, normalizeDeviceTargets, normalizeLockLevel } from "../policy.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { addEvent, saveState, sanitizeSoftBlockProfile } from "../store.js";
 import type { AppLockRule, GrayscaleSchedule, LimitRule, Profile, ProfileMode, Schedule, VigilState, UnknownRecord } from "../types.js";
-import { readBody, sendJson } from "./http.js";
+import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
 
 interface PolicyApiContext {
   state: VigilState;
@@ -282,40 +283,9 @@ function normalizeArray(value: unknown): string[] {
   return listFromTextarea(value);
 }
 
-function normalizeDays(value: unknown): number[] {
-  const source = Array.isArray(value) ? value : [];
-  return [...new Set(source.map(Number).filter((day) => day >= 0 && day <= 6))].sort();
-}
-
 function normalizeClock(value: unknown): string {
   const text = String(value || "");
   return /^\d{2}:\d{2}$/.test(text) ? text : "09:00";
-}
-
-function pathId(path: string): string {
-  return decodeURIComponent(path.split("/").at(-1) || "");
-}
-
-function serializeError(error: unknown): { error: string; blockers?: unknown } {
-  return {
-    error: errorMessage(error),
-    blockers: objectValue(error, "blockers")
-  };
-}
-
-function errorStatus(error: unknown): number {
-  const status = Number(objectValue(error, "status"));
-  return Number.isInteger(status) ? status : 500;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function objectValue(value: unknown, key: string): unknown {
-  return typeof value === "object" && value !== null && key in value
-    ? (value as UnknownRecord)[key]
-    : undefined;
 }
 
 function stringValue(value: unknown, fallback = ""): string {

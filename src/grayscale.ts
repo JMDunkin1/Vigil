@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { BRICK_MODE_PROFILE_ID, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
 import { activePolicy, isFullLockoutPolicy, normalizeDeviceTarget, normalizeDeviceTargets } from "./policy.js";
 import { parseBoolean } from "./booleans.js";
+import { normalizeWeekdays } from "./normalizers.js";
 import { parseClock } from "./time.js";
 import type { ActivePolicy, DeviceTarget, GrayscaleSchedule, GrayscaleState, VigilState, UnknownRecord } from "./types.js";
 
@@ -51,7 +52,7 @@ export function normalizeGrayscaleSchedule(body: UnknownRecord = {}, existing: P
     id: stringValue(body.id, existing.id || randomUUID()),
     name: stringValue(body.name, existing.name || "Grayscale schedule").slice(0, 80),
     enabled: body.enabled === undefined ? Boolean(existing.enabled) : parseBoolean(body.enabled, false),
-    days: normalizeDays(body.days ?? existing.days ?? [0, 1, 2, 3, 4, 5, 6]),
+    days: normalizeWeekdays(body.days ?? existing.days ?? [0, 1, 2, 3, 4, 5, 6], { fallback: [0, 1, 2, 3, 4, 5, 6], integersOnly: true, sort: false }),
     start: normalizeClock(body.start ?? existing.start ?? "22:00", "22:00"),
     end: normalizeClock(body.end ?? existing.end ?? "07:00", "07:00"),
     deviceTargets: normalizeDeviceTargets(body.deviceTargets ?? existing.deviceTargets, DEVICE_TARGETS)
@@ -174,12 +175,6 @@ function grayscaleScheduleWindow(schedule: GrayscaleSchedule, now: Date): boolea
   if (overnight && days.has(day) && current >= start) return true;
   if (overnight && days.has(yesterday) && current < end) return true;
   return false;
-}
-
-function normalizeDays(value: unknown): number[] {
-  const source = Array.isArray(value) ? value : [];
-  const days = [...new Set(source.map((item) => Number(item)).filter((item) => Number.isInteger(item) && item >= 0 && item <= 6))];
-  return days.length ? days : [0, 1, 2, 3, 4, 5, 6];
 }
 
 function normalizeClock(value: unknown, fallback: string): string {

@@ -252,12 +252,6 @@ export function randomSecret(): string {
   return randomBytes(24).toString("base64url");
 }
 
-export function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
-  const number = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, number));
-}
-
 export function isPlistDataRecord(value: unknown): value is PlistDataValue {
   return Boolean(value && typeof value === "object" && typeof (value as PlistDataValue).__plistData === "string");
 }

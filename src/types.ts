@@ -736,7 +736,3 @@ export interface MonitorHandle {
   stop(): void;
   enforceImmediately(reason?: string): Promise<UnknownRecord>;
 }
-
-export interface WithStatusError extends Error {
-  status: number;
-}

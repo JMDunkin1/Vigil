@@ -1,6 +1,7 @@
 import { endOfToday, dateKey } from "./time.js";
 import { normalizeUsageDay } from "./usage.js";
 import { parseBoolean } from "./booleans.js";
+import { clampInteger, normalizeTextList as normalizeTargets, normalizeWeekdays as normalizeDays } from "./normalizers.js";
 import {
   appMatchesAppTargets,
   expandAppTargets,
@@ -256,25 +257,4 @@ function limitOverrideUntil(value: unknown, now: Date): Date {
   const parsed = new Date(String(value || ""));
   if (Number.isFinite(parsed.getTime()) && parsed > now) return parsed;
   return endOfToday();
-}
-
-function normalizeTargets(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return [...new Set(value.map((item) => String(item).trim()).filter(Boolean))];
-  }
-  return [...new Set(String(value || "")
-    .split(/\r?\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean))];
-}
-
-function normalizeDays(value: unknown): number[] {
-  const values = Array.isArray(value) ? value : [];
-  return [...new Set(values.map(Number).filter((day) => day >= 0 && day <= 6))].sort();
-}
-
-function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
-  const number = Number.parseInt(String(value), 10);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.max(min, Math.min(max, number));
 }
