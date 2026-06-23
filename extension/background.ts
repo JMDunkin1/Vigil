@@ -43,7 +43,16 @@ const NOISE_BLOCK_DOMAINS = [
   "intercom.io",
   "onesignal.com"
 ];
-const NOISE_RULE_IDS = NOISE_BLOCK_DOMAINS.map((_, index) => NOISE_RULE_START + index);
+const YOUTUBE_AUTOFILL_REQUEST_DOMAINS = [
+  "suggestqueries.google.com",
+  "suggestqueries-clients6.youtube.com",
+  "clients1.google.com"
+];
+const YOUTUBE_AUTOFILL_RULE_ID = NOISE_RULE_START + NOISE_BLOCK_DOMAINS.length;
+const NOISE_RULE_IDS = [
+  ...NOISE_BLOCK_DOMAINS.map((_, index) => NOISE_RULE_START + index),
+  YOUTUBE_AUTOFILL_RULE_ID
+];
 const SITE_BLOCK_RULE_IDS = Array.from({ length: SITE_BLOCK_RULE_LIMIT }, (_, index) => SITE_BLOCK_RULE_START + index);
 const CONTENT_BLOCK_RULE_IDS = Array.from({ length: CONTENT_BLOCK_RULE_LIMIT }, (_, index) => CONTENT_BLOCK_RULE_START + index);
 const ALLOWLIST_RULE_IDS = Array.from({ length: ALLOWLIST_RULE_LIMIT }, (_, index) => ALLOWLIST_RULE_START + index);
@@ -431,7 +440,7 @@ async function reportRuleSync(result: RuleSyncResult): Promise<void> {
 }
 
 function noiseRules(): chrome.declarativeNetRequest.Rule[] {
-  return NOISE_BLOCK_DOMAINS.map((domain, index) => ({
+  const domainRules = NOISE_BLOCK_DOMAINS.map((domain, index) => ({
     id: NOISE_RULE_START + index,
     priority: 1,
     action: { type: "block" },
@@ -440,6 +449,21 @@ function noiseRules(): chrome.declarativeNetRequest.Rule[] {
       resourceTypes: NOISE_RESOURCE_TYPES
     }
   } as chrome.declarativeNetRequest.Rule));
+  return [...domainRules, youtubeAutofillRule()];
+}
+
+function youtubeAutofillRule(): chrome.declarativeNetRequest.Rule {
+  return {
+    id: YOUTUBE_AUTOFILL_RULE_ID,
+    priority: 2,
+    action: { type: "block" },
+    condition: {
+      urlFilter: "/complete/search",
+      initiatorDomains: ["youtube.com"],
+      requestDomains: YOUTUBE_AUTOFILL_REQUEST_DOMAINS,
+      resourceTypes: ["script", "xmlhttprequest"]
+    }
+  } as chrome.declarativeNetRequest.Rule;
 }
 
 function siteBlockRules(entries: SiteRuleEntry[]): chrome.declarativeNetRequest.Rule[] {

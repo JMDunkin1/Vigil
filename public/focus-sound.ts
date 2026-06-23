@@ -26,9 +26,16 @@ interface FocusSoundData {
 
 type FocusMode = "focus" | "relax" | "sleep" | "meditate";
 type FocusActivity = "deep-work" | "creative-flow" | "learning" | "light-work" | "motivation" | "recharge" | "destress" | "wind-down" | "power-nap" | "guided" | "unguided";
-type FocusPreset = "brown-noise" | "pink-noise" | "white-noise" | "rain" | "ocean" | "storm" | "stream";
+const generatedPresetValues = ["brown-noise", "pink-noise", "white-noise", "binaural-beat", "isochronic-tone"] as const;
+const realAudioPresetValues = ["rain", "ocean", "storm", "stream", "bach-goldberg-aria", "bach-invention-8", "bach-italian-concerto", "handel-harmonious-blacksmith", "scarlatti-sonata-k87", "scarlatti-sonata-k466"] as const;
+const focusPresetValues = [...generatedPresetValues, ...realAudioPresetValues] as const;
+type GeneratedPreset = typeof generatedPresetValues[number];
+type RealAudioPreset = typeof realAudioPresetValues[number];
+type FocusPreset = GeneratedPreset | RealAudioPreset;
 type FocusIntensity = "low" | "medium" | "high";
 type FocusTimerMode = "infinite" | "timer" | "interval";
+type FocusPresetKind = "noise" | "binaural" | "isochronic";
+type NoiseColor = "brown" | "pink" | "white";
 
 interface FocusAudioState {
   context: AudioContext | null;
@@ -56,7 +63,34 @@ interface WebAudioWindow extends Window {
   webkitAudioContext?: typeof AudioContext;
 }
 
+interface PresetProfile {
+  kind: FocusPresetKind;
+  noise?: NoiseColor;
+  filter?: BiquadFilterType;
+  frequency: number;
+  q: number;
+  carrierFrequency?: number;
+}
+
+interface SoundProfile extends PresetProfile {
+  beatFrequency: number;
+  modulationRate: number;
+  modulationDepth: number;
+  toneFrequency: number;
+  toneGain: number;
+  carrierFrequency: number;
+}
+
+interface RealAudioTrack {
+  label: string;
+  src: string;
+  source: string;
+}
+
+const audioBufferCache = new Map<string, Promise<AudioBuffer>>();
+
 export function createFocusSoundController({ $, post }: { $: QueryElement; post: PostRequest }) {
+  let audioStartGeneration = 0;
   const focusAudio: FocusAudioState = {
     context: null,
     gain: null,
@@ -127,7 +161,7 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
     }
 
     const signature = soundSignature(options, timer.phase);
-    if (!focusAudio.playing || focusAudio.signature !== signature) start(options, timer.phase, signature);
+    if (!focusAudio.playing || focusAudio.signature !== signature) await start(options, timer.phase, signature);
     else setMasterVolume(options.volume, modeVolumeMultiplier(options.mode));
     status.textContent = statusText(options, timer);
   }
@@ -142,63 +176,65 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
     return focusAudio.context;
   }
 
-  function start(options: SyncOptions, phase: "work" | "break", signature: string) {
+  async function start(options: SyncOptions, phase: "work" | "break", signature: string) {
     stop();
     const context = focusAudio.context;
     if (!context) return;
+    const generation = ++audioStartGeneration;
 
     const master = context.createGain();
     master.gain.value = volumeToGain(options.volume, modeVolumeMultiplier(options.mode));
     master.connect(context.destination);
     const nodes: AudioNode[] = [master];
-    const profile = soundProfile(options, phase);
-    const noise = createNoiseSource(context, profile.noise);
-    const filter = context.createBiquadFilter();
-    filter.type = profile.filter;
-    filter.frequency.value = profile.frequency;
-    filter.Q.value = profile.q;
-    const tone = context.createBiquadFilter();
-    tone.type = "peaking";
-    tone.frequency.value = profile.toneFrequency;
-    tone.gain.value = profile.toneGain;
-    tone.Q.value = 0.7;
-    const modGain = context.createGain();
-    modGain.gain.value = 1;
-    noise.connect(filter).connect(tone).connect(modGain).connect(master);
-    nodes.push(noise, filter, tone, modGain);
-
-    const lfo = context.createOscillator();
-    const lfoGain = context.createGain();
-    lfo.frequency.value = profile.modulationRate;
-    lfoGain.gain.value = profile.modulationDepth;
-    lfo.connect(lfoGain).connect(modGain.gain);
-    lfo.start();
-    nodes.push(lfo, lfoGain);
-
-    if (profile.rumble) {
-      const rumble = context.createOscillator();
-      const rumbleGain = context.createGain();
-      rumble.type = "sine";
-      rumble.frequency.value = profile.rumble.frequency;
-      rumbleGain.gain.value = profile.rumble.gain;
-      rumble.connect(rumbleGain).connect(master);
-      rumble.start();
-      nodes.push(rumble, rumbleGain);
-    }
-
-    noise.start();
+    const preset = phase === "break" ? "ocean" : options.preset;
+    const audio = realAudioTrack(preset);
+    const profile = audio ? null : soundProfile(options, phase);
     Object.assign(focusAudio, {
       gain: master,
       nodes,
-      preset: options.preset,
+      preset,
       signature,
       playing: true,
       blocked: false
     });
+
+    try {
+      if (audio) {
+        const source = await createRealAudioSource(context, audio);
+        if (!isCurrentStart(nodes, generation, signature)) {
+          stopAudioNodes(nodes);
+          return;
+        }
+        connectRealAudioSource(source, master, nodes);
+      } else if (profile) {
+        connectSoundProfile(context, profile, master, nodes);
+      }
+    } catch (error) {
+      stopAudioNodes(nodes);
+      if (focusAudio.nodes === nodes && generation === audioStartGeneration) {
+        clearFocusAudioState();
+        throw error;
+      }
+      return;
+    }
+
+    if (!isCurrentStart(nodes, generation, signature)) {
+      stopAudioNodes(nodes);
+    }
+  }
+
+  function isCurrentStart(nodes: AudioNode[], generation: number, signature: string): boolean {
+    return focusAudio.nodes === nodes && generation === audioStartGeneration && focusAudio.signature === signature;
   }
 
   function stop() {
-    for (const node of focusAudio.nodes || []) {
+    audioStartGeneration += 1;
+    stopAudioNodes(focusAudio.nodes || []);
+    clearFocusAudioState();
+  }
+
+  function stopAudioNodes(nodes: AudioNode[]) {
+    for (const node of nodes) {
       try {
         if (isStoppableAudioNode(node)) node.stop();
       } catch {}
@@ -206,6 +242,9 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
         node.disconnect();
       } catch {}
     }
+  }
+
+  function clearFocusAudioState() {
     focusAudio.gain = null;
     focusAudio.nodes = [];
     focusAudio.playing = false;
@@ -240,6 +279,127 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
   }
 }
 
+function connectSoundProfile(context: AudioContext, profile: SoundProfile, master: GainNode, nodes: AudioNode[]): void {
+  if (profile.kind === "binaural") {
+    connectBinauralProfile(context, profile, master, nodes);
+    return;
+  }
+  if (profile.kind === "isochronic") {
+    connectIsochronicProfile(context, profile, master, nodes);
+    return;
+  }
+  connectNoiseProfile(context, profile, master, nodes);
+}
+
+function connectNoiseProfile(context: AudioContext, profile: SoundProfile, master: GainNode, nodes: AudioNode[]): void {
+  const noise = createNoiseSource(context, profile.noise || "brown");
+  const filter = context.createBiquadFilter();
+  filter.type = profile.filter || "lowpass";
+  filter.frequency.value = profile.frequency;
+  filter.Q.value = profile.q;
+  const tone = context.createBiquadFilter();
+  tone.type = "peaking";
+  tone.frequency.value = profile.toneFrequency;
+  tone.gain.value = profile.toneGain;
+  tone.Q.value = 0.7;
+  const modGain = context.createGain();
+  modGain.gain.value = 1;
+  noise.connect(filter).connect(tone).connect(modGain).connect(master);
+
+  const lfo = context.createOscillator();
+  const lfoGain = context.createGain();
+  lfo.frequency.value = profile.modulationRate;
+  lfoGain.gain.value = profile.modulationDepth;
+  lfo.connect(lfoGain).connect(modGain.gain);
+  noise.start();
+  lfo.start();
+  nodes.push(noise, filter, tone, modGain, lfo, lfoGain);
+}
+
+function connectBinauralProfile(context: AudioContext, profile: SoundProfile, master: GainNode, nodes: AudioNode[]): void {
+  const left = context.createOscillator();
+  const right = context.createOscillator();
+  const leftGain = context.createGain();
+  const rightGain = context.createGain();
+  const leftPan = context.createStereoPanner();
+  const rightPan = context.createStereoPanner();
+  const bed = createNoiseSource(context, "pink");
+  const bedFilter = context.createBiquadFilter();
+  const bedGain = context.createGain();
+
+  left.type = "sine";
+  right.type = "sine";
+  left.frequency.value = profile.carrierFrequency;
+  right.frequency.value = profile.carrierFrequency + profile.beatFrequency;
+  leftGain.gain.value = 0.075;
+  rightGain.gain.value = 0.075;
+  leftPan.pan.value = -1;
+  rightPan.pan.value = 1;
+  bedFilter.type = "lowpass";
+  bedFilter.frequency.value = 850;
+  bedFilter.Q.value = 0.35;
+  bedGain.gain.value = 0.018;
+
+  left.connect(leftGain).connect(leftPan).connect(master);
+  right.connect(rightGain).connect(rightPan).connect(master);
+  bed.connect(bedFilter).connect(bedGain).connect(master);
+  left.start();
+  right.start();
+  bed.start();
+  nodes.push(left, right, leftGain, rightGain, leftPan, rightPan, bed, bedFilter, bedGain);
+}
+
+function connectIsochronicProfile(context: AudioContext, profile: SoundProfile, master: GainNode, nodes: AudioNode[]): void {
+  const tone = context.createOscillator();
+  const toneFilter = context.createBiquadFilter();
+  const toneGain = context.createGain();
+  const pulse = context.createOscillator();
+  const pulseGain = context.createGain();
+
+  tone.type = "sine";
+  tone.frequency.value = profile.carrierFrequency;
+  toneFilter.type = "lowpass";
+  toneFilter.frequency.value = 1800;
+  toneFilter.Q.value = 0.45;
+  toneGain.gain.value = 0.22;
+  pulse.type = "square";
+  pulse.frequency.value = profile.beatFrequency;
+  pulseGain.gain.value = profile.modulationDepth;
+
+  tone.connect(toneFilter).connect(toneGain).connect(master);
+  pulse.connect(pulseGain).connect(toneGain.gain);
+  tone.start();
+  pulse.start();
+  nodes.push(tone, toneFilter, toneGain, pulse, pulseGain);
+}
+
+async function createRealAudioSource(context: AudioContext, audio: RealAudioTrack): Promise<AudioBufferSourceNode> {
+  const source = context.createBufferSource();
+  source.buffer = await loadAudioBuffer(context, audio.src);
+  source.loop = true;
+  return source;
+}
+
+function connectRealAudioSource(source: AudioBufferSourceNode, master: GainNode, nodes: AudioNode[]): void {
+  source.connect(master);
+  source.start();
+  nodes.push(source);
+}
+
+function loadAudioBuffer(context: AudioContext, src: string): Promise<AudioBuffer> {
+  let cached = audioBufferCache.get(src);
+  if (!cached) {
+    cached = fetch(src)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Could not load ${src}`);
+        return response.arrayBuffer();
+      })
+      .then((buffer) => context.decodeAudioData(buffer));
+    audioBufferCache.set(src, cached);
+  }
+  return cached;
+}
+
 function focusOptions(settings: FocusSoundData["state"]["settings"] = {}): SyncOptions {
   const mode = focusMode(settings.focusSoundMode);
   return {
@@ -256,7 +416,7 @@ function focusOptions(settings: FocusSoundData["state"]["settings"] = {}): SyncO
 }
 
 function soundProfile(options: SyncOptions, phase: "work" | "break") {
-  const presetProfile = presetProfiles[phase === "break" ? "ocean" : options.preset];
+  const presetProfile = presetProfiles[generatedPreset(phase === "break" ? "brown-noise" : options.preset)];
   const intensity = phase === "break" ? "low" : options.intensity;
   const mode = phase === "break" ? "relax" : options.mode;
   const intensityProfile = intensityProfiles[intensity];
@@ -264,27 +424,74 @@ function soundProfile(options: SyncOptions, phase: "work" | "break") {
   return {
     ...presetProfile,
     frequency: Math.round(presetProfile.frequency * modeProfile.frequencyMultiplier),
-    modulationRate: intensityProfile.rate * modeProfile.rateMultiplier,
-    modulationDepth: intensityProfile.depth * modeProfile.depthMultiplier,
+    beatFrequency: focusToneRate(options, mode, intensity),
+    modulationRate: presetProfile.kind === "isochronic" ? focusToneRate(options, mode, intensity) : intensityProfile.rate * modeProfile.rateMultiplier,
+    modulationDepth: presetProfile.kind === "isochronic" ? isochronicDepth(intensity) : intensityProfile.depth * modeProfile.depthMultiplier,
     toneFrequency: modeProfile.toneFrequency,
     toneGain: modeProfile.toneGain,
-    rumble: options.preset === "storm" && phase !== "break" ? { frequency: 54, gain: 0.018 } : null
+    carrierFrequency: Math.round((presetProfile.carrierFrequency || modeProfile.toneFrequency) * modeProfile.frequencyMultiplier)
   };
 }
 
-const presetProfiles: Record<FocusPreset, {
-  noise: "brown" | "pink" | "white";
-  filter: BiquadFilterType;
-  frequency: number;
-  q: number;
-}> = {
-  "brown-noise": { noise: "brown", filter: "lowpass", frequency: 560, q: 0.7 },
-  "pink-noise": { noise: "pink", filter: "lowpass", frequency: 980, q: 0.5 },
-  "white-noise": { noise: "white", filter: "highpass", frequency: 250, q: 0.4 },
-  rain: { noise: "white", filter: "bandpass", frequency: 1800, q: 0.9 },
-  ocean: { noise: "brown", filter: "lowpass", frequency: 620, q: 0.65 },
-  storm: { noise: "brown", filter: "lowpass", frequency: 420, q: 0.8 },
-  stream: { noise: "pink", filter: "bandpass", frequency: 1120, q: 0.55 }
+const presetProfiles: Record<GeneratedPreset, PresetProfile> = {
+  "brown-noise": { kind: "noise", noise: "brown", filter: "lowpass", frequency: 560, q: 0.7 },
+  "pink-noise": { kind: "noise", noise: "pink", filter: "lowpass", frequency: 980, q: 0.5 },
+  "white-noise": { kind: "noise", noise: "white", filter: "highpass", frequency: 250, q: 0.4 },
+  "binaural-beat": { kind: "binaural", frequency: 220, q: 0.5, carrierFrequency: 220 },
+  "isochronic-tone": { kind: "isochronic", frequency: 196, q: 0.5, carrierFrequency: 196 }
+};
+
+const realAudioTracks: Record<RealAudioPreset, RealAudioTrack> = {
+  rain: {
+    label: "Rain",
+    src: "/audio/nature/rain.ogg",
+    source: "Wikimedia Commons, public domain"
+  },
+  ocean: {
+    label: "Ocean waves",
+    src: "/audio/nature/ocean-waves.ogg",
+    source: "Wikimedia Commons, public domain"
+  },
+  storm: {
+    label: "Storm",
+    src: "/audio/nature/storm-thunderbolts.ogg",
+    source: "Wikimedia Commons, public domain"
+  },
+  stream: {
+    label: "Stream",
+    src: "/audio/nature/forest-lawn-creek.ogg",
+    source: "Wikimedia Commons, public domain"
+  },
+  "bach-goldberg-aria": {
+    label: "Bach: Goldberg Aria",
+    src: "/audio/baroque/bach-goldberg-aria-harpsichord.ogg",
+    source: "Wikimedia Commons, CC0"
+  },
+  "bach-invention-8": {
+    label: "Bach: Invention 8",
+    src: "/audio/baroque/bach-invention-8-harpsichord.ogg",
+    source: "Wikimedia Commons, CC0"
+  },
+  "bach-italian-concerto": {
+    label: "Bach: Italian Concerto",
+    src: "/audio/baroque/bach-italian-concerto-presto.ogg",
+    source: "Wikimedia Commons, CC0"
+  },
+  "handel-harmonious-blacksmith": {
+    label: "Handel: Harmonious Blacksmith",
+    src: "/audio/baroque/handel-harmonious-blacksmith.ogg",
+    source: "Wikimedia Commons, CC0"
+  },
+  "scarlatti-sonata-k87": {
+    label: "Scarlatti: Sonata K.87",
+    src: "/audio/baroque/scarlatti-sonata-k87.ogg",
+    source: "Wikimedia Commons, CC0"
+  },
+  "scarlatti-sonata-k466": {
+    label: "Scarlatti: Sonata K.466",
+    src: "/audio/baroque/scarlatti-sonata-k466.ogg",
+    source: "Wikimedia Commons, CC0"
+  }
 };
 
 const modeProfiles: Record<FocusMode, {
@@ -306,6 +513,47 @@ const intensityProfiles: Record<FocusIntensity, { rate: number; depth: number }>
   medium: { rate: 0.16, depth: 0.07 },
   high: { rate: 0.32, depth: 0.11 }
 };
+
+const focusToneRates: Record<FocusMode, number> = {
+  focus: 14,
+  relax: 8,
+  sleep: 3.5,
+  meditate: 6
+};
+
+const focusToneIntensityMultipliers: Record<FocusIntensity, number> = {
+  low: 0.78,
+  medium: 1,
+  high: 1.18
+};
+
+const focusActivityRateOffsets: Partial<Record<FocusActivity, number>> = {
+  "deep-work": 0.8,
+  "creative-flow": -1.2,
+  learning: 0.4,
+  "light-work": -0.8,
+  motivation: 1.4,
+  recharge: -1.1,
+  destress: -1.6,
+  "wind-down": -1.4,
+  "power-nap": -0.8,
+  guided: -0.5,
+  unguided: -0.9
+};
+
+function focusToneRate(options: SyncOptions, mode: FocusMode, intensity: FocusIntensity): number {
+  const base = focusToneRates[mode] * focusToneIntensityMultipliers[intensity];
+  const adjusted = base + (focusActivityRateOffsets[options.activity] || 0);
+  return clamp(Number(adjusted.toFixed(2)), 2, 18);
+}
+
+function isochronicDepth(intensity: FocusIntensity): number {
+  return {
+    low: 0.11,
+    medium: 0.16,
+    high: 0.21
+  }[intensity];
+}
 
 const activitiesByMode: Record<FocusMode, Array<{ value: FocusActivity; label: string }>> = {
   focus: [
@@ -447,7 +695,6 @@ function soundSignature(options: SyncOptions, phase: "work" | "break"): string {
     options.activity,
     phase === "break" ? "ocean" : options.preset,
     options.intensity,
-    options.volume,
     phase
   ].join(":");
 }
@@ -462,7 +709,7 @@ function focusActivity(value: unknown, mode: FocusMode): FocusActivity {
 }
 
 function focusSoundPreset(value: unknown): FocusPreset {
-  return typeof value === "string" && ["brown-noise", "pink-noise", "white-noise", "rain", "ocean", "storm", "stream"].includes(value) ? value as FocusPreset : "brown-noise";
+  return isFocusPreset(value) ? value : "brown-noise";
 }
 
 function focusIntensity(value: unknown): FocusIntensity {
@@ -474,14 +721,13 @@ function focusTimerMode(value: unknown): FocusTimerMode {
 }
 
 function presetLabel(value: FocusPreset): string {
+  if (isRealAudioPreset(value)) return realAudioTracks[value].label;
   return {
     "brown-noise": "brown noise",
     "pink-noise": "pink noise",
     "white-noise": "white noise",
-    rain: "rain",
-    ocean: "ocean",
-    storm: "storm",
-    stream: "stream"
+    "binaural-beat": "binaural beat",
+    "isochronic-tone": "isochronic tone"
   }[value];
 }
 
@@ -508,6 +754,26 @@ function modeVolumeMultiplier(mode: FocusMode): number {
 
 function volumeToGain(value: number, multiplier = 1): number {
   return clamp(Number(value || 0), 0, 100) / 100 * 0.28 * multiplier;
+}
+
+function realAudioTrack(preset: FocusPreset): RealAudioTrack | null {
+  return isRealAudioPreset(preset) ? realAudioTracks[preset] : null;
+}
+
+function generatedPreset(preset: FocusPreset): GeneratedPreset {
+  return isGeneratedPreset(preset) ? preset : "brown-noise";
+}
+
+function isFocusPreset(value: unknown): value is FocusPreset {
+  return typeof value === "string" && (focusPresetValues as readonly string[]).includes(value);
+}
+
+function isGeneratedPreset(value: FocusPreset): value is GeneratedPreset {
+  return (generatedPresetValues as readonly string[]).includes(value);
+}
+
+function isRealAudioPreset(value: FocusPreset): value is RealAudioPreset {
+  return (realAudioPresetValues as readonly string[]).includes(value);
 }
 
 function formatClock(seconds: number): string {

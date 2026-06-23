@@ -25,4 +25,4 @@ The extension uses the same profiles, strict sessions, schedules, App Locks, Tim
 
 It also keeps Chrome dynamic network rules synced for currently blocked domains, safe profile URL patterns, and active allowlist sessions such as Mac Brick, then reports the installed rule count back to the local app so Foolproof mode can detect stale or failed syncs.
 
-When Browser cleanup is enabled in Sentinel, the extension also installs local dynamic request rules for common ad/tracker/noise domains and hides common cookie prompts and social widgets on the page.
+When Browser cleanup is enabled in Sentinel, the extension also installs local dynamic request rules for common ad/tracker/noise domains, hides common cookie prompts and social widgets on the page, and suppresses YouTube search autocomplete friction without disabling normal browser autofill elsewhere.

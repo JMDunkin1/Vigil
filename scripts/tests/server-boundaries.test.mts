@@ -31,6 +31,8 @@ assert.equal(resolvePublicPath("/bad%zz", publicDir), null);
 
 assert.equal(contentType("public/app.js"), "text/javascript; charset=utf-8");
 assert.equal(contentType("public/styles.css"), "text/css; charset=utf-8");
+assert.equal(contentType("public/audio/baroque/bach-goldberg-aria-harpsichord.ogg"), "audio/ogg");
+assert.equal(contentType("public/audio/nature/rain.ogg"), "audio/ogg");
 assert.equal(contentType("unknown.bin"), "application/octet-stream");
 assert.equal(securityHeaders()["X-Content-Type-Options"], "nosniff");
 assert.match(securityHeaders()["Content-Security-Policy"], /frame-ancestors 'none'/);

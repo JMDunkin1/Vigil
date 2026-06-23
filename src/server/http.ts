@@ -114,6 +114,7 @@ export function contentType(path: string): string {
     ".css": "text/css; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
     ".json": "application/json; charset=utf-8",
+    ".ogg": "audio/ogg",
     ".svg": "image/svg+xml"
   };
   return types[extname(path)] || "application/octet-stream";

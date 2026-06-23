@@ -48,7 +48,7 @@ The app works best after granting Accessibility permission to the terminal or ap
 - Strict sessions that cannot be ended early without spending an emergency unlock.
 - Commitment locks for deep focus, rehab, or schedules that refuse ordinary emergency unlocks.
 - Opal-style focus cycles with automatic work phases and short unblocked breaks.
-- Freedom-style local focus sounds with brown-noise, rain, and ocean presets during active locks.
+- Freedom-style local focus sounds with noise, bundled nature recordings, binaural beat, isochronic tone, and bundled CC0 Baroque recordings during active locks.
 - Optional bedtime screen lock that repeatedly locks the Mac during strict sleep sessions.
 - Optional macOS Shortcuts hooks that can turn a Focus/Do Not Disturb mode on during active locks and off when the lock clears.
 - Opal-style Time Limits that lock a target group after daily cumulative use.

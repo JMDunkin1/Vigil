@@ -3,6 +3,9 @@ let activePauseOverlay: PauseOverlayState | null = null;
 let mediaLockActive = false;
 let pageGuardActive = false;
 let pageGuardReleaseTimer: number | null = null;
+let youtubeAutofillFrictionEnabled = false;
+let youtubeAutofillFrictionAttached = false;
+const YOUTUBE_AUTOFILL_PREVIOUS_ABSENT = "__sentinel_absent__";
 const pausedBySentinel = new Set<HTMLMediaElement>();
 
 type PulseReason = "navigation" | "heartbeat" | "activated" | "history";
@@ -102,7 +105,11 @@ function sendPulse(reason: PulseReason, options: PulseOptions = {}): void {
 }
 
 function handlePulseResult(result: PulseResponse | undefined): void {
-  if (result?.browserNoiseBlockingEnabled) cleanupBrowserNoise();
+  if (result?.browserNoiseBlockingEnabled === true) {
+    cleanupBrowserNoise();
+  } else if (result?.browserNoiseBlockingEnabled === false) {
+    teardownYoutubeAutofillFriction();
+  }
   if (result?.blocked && result.redirectUrl) {
     replaceLocation(result.redirectUrl);
     return;
@@ -696,6 +703,152 @@ function pauseOverlayCss() {
 function cleanupBrowserNoise() {
   injectCleanupStyle();
   removeCookiePrompts();
+  applyYoutubeAutofillFriction();
+}
+
+function applyYoutubeAutofillFriction(): void {
+  if (!isYoutubeHost()) return;
+  youtubeAutofillFrictionEnabled = true;
+  document.documentElement.setAttribute("data-sentinel-youtube-friction", "active");
+  injectYoutubeAutofillStyle();
+  hardenYoutubeSearchInputs();
+  if (youtubeAutofillFrictionAttached) return;
+  youtubeAutofillFrictionAttached = true;
+  document.addEventListener("focusin", hardenYoutubeSearchFromEvent, true);
+  document.addEventListener("input", hardenYoutubeSearchFromEvent, true);
+  document.addEventListener("keydown", hideYoutubeSearchSuggestionsFromEvent, true);
+}
+
+function teardownYoutubeAutofillFriction(): void {
+  youtubeAutofillFrictionEnabled = false;
+  document.documentElement.removeAttribute("data-sentinel-youtube-friction");
+  document.getElementById("sentinel-youtube-friction-style")?.remove();
+  restoreYoutubeSearchInputs();
+  restoreYoutubeSearchSuggestions();
+  if (!youtubeAutofillFrictionAttached) return;
+  youtubeAutofillFrictionAttached = false;
+  document.removeEventListener("focusin", hardenYoutubeSearchFromEvent, true);
+  document.removeEventListener("input", hardenYoutubeSearchFromEvent, true);
+  document.removeEventListener("keydown", hideYoutubeSearchSuggestionsFromEvent, true);
+}
+
+function isYoutubeHost(): boolean {
+  const host = location.hostname.toLowerCase();
+  return host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtu.be" || host.endsWith(".youtu.be");
+}
+
+function injectYoutubeAutofillStyle(): void {
+  if (document.getElementById("sentinel-youtube-friction-style")) return;
+  const style = document.createElement("style");
+  style.id = "sentinel-youtube-friction-style";
+  style.textContent = `
+    html[data-sentinel-youtube-friction="active"] ytd-searchbox-suggestions,
+    html[data-sentinel-youtube-friction="active"] yt-searchbox-suggestions,
+    html[data-sentinel-youtube-friction="active"] ytd-searchbox #suggestions,
+    html[data-sentinel-youtube-friction="active"] yt-searchbox #suggestions,
+    html[data-sentinel-youtube-friction="active"] .gstl_50 {
+      display: none !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
+  `;
+  document.documentElement.append(style);
+}
+
+function hardenYoutubeSearchFromEvent(event: Event): void {
+  if (!youtubeAutofillFrictionEnabled) return;
+  if (!isYoutubeSearchInput(event.target)) return;
+  hardenYoutubeSearchInput(event.target);
+  window.setTimeout(hideYoutubeSearchSuggestions, 0);
+}
+
+function hideYoutubeSearchSuggestionsFromEvent(event: Event): void {
+  if (!youtubeAutofillFrictionEnabled) return;
+  if (!isYoutubeSearchInput(event.target)) return;
+  window.setTimeout(hideYoutubeSearchSuggestions, 0);
+}
+
+function hardenYoutubeSearchInputs(): void {
+  for (const input of youtubeSearchInputs()) hardenYoutubeSearchInput(input);
+  hideYoutubeSearchSuggestions();
+}
+
+function youtubeSearchInputs(): HTMLInputElement[] {
+  return [...document.querySelectorAll<HTMLInputElement>("input[name='search_query'], input#search")]
+    .filter(isYoutubeSearchInput);
+}
+
+function isYoutubeSearchInput(value: unknown): value is HTMLInputElement {
+  if (!(value instanceof HTMLInputElement)) return false;
+  const name = value.getAttribute("name") || "";
+  const id = value.id || "";
+  const formAction = value.form?.getAttribute("action") || "";
+  const searchContainer = value.closest("ytd-searchbox, yt-searchbox, form[action='/results']");
+  return name === "search_query" || (id === "search" && (Boolean(searchContainer) || formAction === "/results"));
+}
+
+function hardenYoutubeSearchInput(input: HTMLInputElement): void {
+  rememberYoutubeSearchInputState(input);
+  input.autocomplete = "off";
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("aria-autocomplete", "none");
+  input.setAttribute("autocapitalize", "none");
+  input.setAttribute("autocorrect", "off");
+  input.spellcheck = false;
+  input.dataset.sentinelAutofillFriction = "active";
+}
+
+function rememberYoutubeSearchInputState(input: HTMLInputElement): void {
+  if (input.dataset.sentinelAutofillFriction === "active") return;
+  input.dataset.sentinelPreviousAutocomplete = input.getAttribute("autocomplete") ?? YOUTUBE_AUTOFILL_PREVIOUS_ABSENT;
+  input.dataset.sentinelPreviousAriaAutocomplete = input.getAttribute("aria-autocomplete") ?? YOUTUBE_AUTOFILL_PREVIOUS_ABSENT;
+  input.dataset.sentinelPreviousAutocapitalize = input.getAttribute("autocapitalize") ?? YOUTUBE_AUTOFILL_PREVIOUS_ABSENT;
+  input.dataset.sentinelPreviousAutocorrect = input.getAttribute("autocorrect") ?? YOUTUBE_AUTOFILL_PREVIOUS_ABSENT;
+  input.dataset.sentinelPreviousSpellcheck = String(input.spellcheck);
+}
+
+function restoreYoutubeSearchInputs(): void {
+  for (const input of document.querySelectorAll<HTMLInputElement>("input[data-sentinel-autofill-friction='active']")) {
+    restoreYoutubeSearchInputAttribute(input, "autocomplete", "sentinelPreviousAutocomplete");
+    restoreYoutubeSearchInputAttribute(input, "aria-autocomplete", "sentinelPreviousAriaAutocomplete");
+    restoreYoutubeSearchInputAttribute(input, "autocapitalize", "sentinelPreviousAutocapitalize");
+    restoreYoutubeSearchInputAttribute(input, "autocorrect", "sentinelPreviousAutocorrect");
+    if (input.dataset.sentinelPreviousSpellcheck) input.spellcheck = input.dataset.sentinelPreviousSpellcheck === "true";
+    delete input.dataset.sentinelAutofillFriction;
+    delete input.dataset.sentinelPreviousAutocomplete;
+    delete input.dataset.sentinelPreviousAriaAutocomplete;
+    delete input.dataset.sentinelPreviousAutocapitalize;
+    delete input.dataset.sentinelPreviousAutocorrect;
+    delete input.dataset.sentinelPreviousSpellcheck;
+  }
+}
+
+function restoreYoutubeSearchInputAttribute(input: HTMLInputElement, attribute: string, datasetKey: keyof DOMStringMap): void {
+  const previous = input.dataset[datasetKey];
+  if (!previous || previous === YOUTUBE_AUTOFILL_PREVIOUS_ABSENT) {
+    input.removeAttribute(attribute);
+    return;
+  }
+  input.setAttribute(attribute, previous);
+}
+
+function hideYoutubeSearchSuggestions(): void {
+  if (!youtubeAutofillFrictionEnabled) return;
+  for (const element of document.querySelectorAll<HTMLElement>("ytd-searchbox-suggestions, yt-searchbox-suggestions, ytd-searchbox #suggestions, yt-searchbox #suggestions, .gstl_50")) {
+    if (!element.hidden) element.dataset.sentinelYoutubeFrictionHidden = "active";
+    if (element.getAttribute("aria-hidden") !== "true") element.dataset.sentinelYoutubeFrictionAriaHidden = "active";
+    element.hidden = true;
+    element.setAttribute("aria-hidden", "true");
+  }
+}
+
+function restoreYoutubeSearchSuggestions(): void {
+  for (const element of document.querySelectorAll<HTMLElement>("[data-sentinel-youtube-friction-hidden], [data-sentinel-youtube-friction-aria-hidden]")) {
+    if (element.dataset.sentinelYoutubeFrictionHidden === "active") element.hidden = false;
+    if (element.dataset.sentinelYoutubeFrictionAriaHidden === "active") element.removeAttribute("aria-hidden");
+    delete element.dataset.sentinelYoutubeFrictionHidden;
+    delete element.dataset.sentinelYoutubeFrictionAriaHidden;
+  }
 }
 
 function injectCleanupStyle() {
