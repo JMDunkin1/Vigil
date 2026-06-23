@@ -127,7 +127,7 @@ export async function handleSessionApiRoute(
 
   if (method === "POST" && path === "/api/session/preview") {
     const body = await readBody(request);
-    sendJson(response, 200, { ok: true, preview: previewManualSession(state, body) });
+    sendJson(response, 200, { ok: true, preview: await previewManualSessionForRequest(state, body, context) });
     return true;
   }
 
@@ -291,6 +291,22 @@ export function previewManualSession(currentState: VigilState, body: UnknownReco
   activePolicy(state, now);
   const draft = manualSessionDraft(state, body, { id: "preview", now });
   const conflicts = activeSessionConflicts(state, draft.deviceTargets);
+  return buildSessionPreview(state, draft, conflicts, now);
+}
+
+async function previewManualSessionForRequest(
+  currentState: VigilState,
+  body: UnknownRecord,
+  context: SessionApiContext,
+  now = new Date()
+): Promise<SessionPreviewSummary> {
+  const state = jsonClone(currentState);
+  activePolicy(state, now);
+  const draft = manualSessionDraft(state, body, { id: "preview", now });
+  const conflicts = activeSessionConflicts(state, draft.deviceTargets);
+  if (!conflicts.length) {
+    await context.assertStrictLockAllowed(draft.session.lockLevel, draft.profile, { mode: draft.session.mode });
+  }
   return buildSessionPreview(state, draft, conflicts, now);
 }
 

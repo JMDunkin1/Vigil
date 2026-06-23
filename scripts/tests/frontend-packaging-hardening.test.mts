@@ -16,6 +16,7 @@ function stringArrayValue(value: unknown, label = "value"): string[] {
 
 const root = process.cwd();
 const sourceRoot = join(root, "..", "..");
+const mainTsSource = await readFile(join(sourceRoot, "app", "main.ts"), "utf8");
 const appTsSource = await readFile(join(sourceRoot, "public", "app.ts"), "utf8");
 const appModelTsSource = await readFile(join(sourceRoot, "public", "app-model.ts"), "utf8");
 const appSource = await readFile(join(root, "public", "app.js"), "utf8");
@@ -52,6 +53,10 @@ assert.doesNotMatch(appSource, /function createNoiseSource|async function parseR
 assert.doesNotMatch(appSource, /iosMdmForm|installLaunchAgent|applyHostsBlock/);
 assert.match(appTsSource, /from "\.\/app-model\.js"/);
 assert.match(appModelTsSource, /interface DashboardData/);
+assert.match(mainTsSource, /function configureMenuBarResidency/);
+assert.match(mainTsSource, /app\.dock\?\.hide\(\)/);
+assert.match(mainTsSource, /app\.setLoginItemSettings\(/);
+assert.match(mainTsSource, /wasOpenedAtLogin/);
 assert.match(devicePanelSource, /iosMdmForm/);
 assert.match(domSource, /document\.createElement/);
 assert.match(distanceKeyUiSource, /from "\.\/distance-key-qr\.js"/);
@@ -98,6 +103,7 @@ assert.match(backupRoutesSource, /restore[\s\S]*supported: false/);
 
 const build = recordValue(packageJson.build, "package build");
 const macBuild = recordValue(build.mac, "mac build");
+const macExtendInfo = recordValue(macBuild.extendInfo, "mac extendInfo");
 const scripts = recordValue(packageJson.scripts, "package scripts");
 assert.match(String(scripts.dev), /--watch-path=src/);
 assert.match(String(scripts.dev), /dist\/runtime\/scripts\/dev-server\.mjs/);
@@ -108,6 +114,7 @@ assert.doesNotMatch(String(scripts["dist:mac:signed"]), /identity=null/);
 assert.match(devServerSource, /npm", \["run", "build"\]/);
 assert.equal(build.asar, true);
 assert.equal(macBuild.identity, undefined);
+assert.equal(macExtendInfo.LSUIElement, true);
 assert.ok(stringArrayValue(build.files, "build files").includes("dist/runtime/**/*"));
 assert.ok(stringArrayValue(build.asarUnpack, "asar unpack").includes("dist/runtime/package.json"));
 assert.ok(stringArrayValue(build.asarUnpack, "asar unpack").includes("dist/runtime/public/**/*"));
