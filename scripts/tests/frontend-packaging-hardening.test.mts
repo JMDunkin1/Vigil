@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { distanceKeyQrMatrix } from "../../public/distance-key-qr.js";
 
@@ -57,6 +57,19 @@ assert.match(domSource, /document\.createElement/);
 assert.match(distanceKeyUiSource, /from "\.\/distance-key-qr\.js"/);
 assert.match(distanceKeyUiSource, /function normalizeDistanceKeyScan/);
 assert.match(focusSoundSource, /function createNoiseSource/);
+assert.match(focusSoundSource, /function connectBinauralProfile/);
+assert.match(focusSoundSource, /function connectIsochronicProfile/);
+assert.match(focusSoundSource, /forest-lawn-creek\.ogg/);
+assert.match(focusSoundSource, /bach-goldberg-aria/);
+assert.match(focusSoundSource, /audioStartGeneration/);
+assert.match(focusSoundSource, /function isCurrentStart/);
+assert.doesNotMatch(focusSoundSource, /function createBaroqueSource/);
+assert.ok((await stat(join(root, "public", "audio", "nature", "rain.ogg"))).size > 100_000);
+assert.ok((await stat(join(root, "public", "audio", "nature", "ocean-waves.ogg"))).size > 1_000_000);
+assert.ok((await stat(join(root, "public", "audio", "nature", "storm-thunderbolts.ogg"))).size > 1_000_000);
+assert.ok((await stat(join(root, "public", "audio", "nature", "forest-lawn-creek.ogg"))).size > 1_000_000);
+assert.ok((await stat(join(root, "public", "audio", "baroque", "bach-goldberg-aria-harpsichord.ogg"))).size > 1_000_000);
+assert.ok((await stat(join(root, "public", "audio", "baroque", "handel-harmonious-blacksmith.ogg"))).size > 1_000_000);
 assert.match(formatSource, /export function formatDuration/);
 assert.match(hardeningPanelSource, /function renderHardening/);
 assert.match(qrSource, /createElementNS/);

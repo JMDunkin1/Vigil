@@ -147,7 +147,7 @@ const SETTING_MUTATIONS = {
     "guided",
     "unguided"
   ]),
-  focusSoundPreset: enumSetting("focusSoundPreset", ["brown-noise", "pink-noise", "white-noise", "rain", "ocean", "storm", "stream"]),
+  focusSoundPreset: enumSetting("focusSoundPreset", ["brown-noise", "pink-noise", "white-noise", "rain", "ocean", "storm", "stream", "binaural-beat", "isochronic-tone", "bach-goldberg-aria", "bach-invention-8", "bach-italian-concerto", "handel-harmonious-blacksmith", "scarlatti-sonata-k87", "scarlatti-sonata-k466"]),
   focusSoundIntensity: enumSetting("focusSoundIntensity", ["low", "medium", "high"]),
   focusSoundTimerMode: enumSetting("focusSoundTimerMode", ["infinite", "timer", "interval"]),
   focusSoundTimerMinutes: numberSetting("focusSoundTimerMinutes", { min: 1, max: 480 }),

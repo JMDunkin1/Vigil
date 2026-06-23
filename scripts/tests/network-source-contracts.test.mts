@@ -238,6 +238,8 @@ last exit code = 0
   assert.equal(stringArrayValue(manifest.permissions, "extension permissions").includes("declarativeNetRequest"), true);
   const background = await readFile("extension/background.js", "utf8");
   assert.match(background, /NOISE_BLOCK_DOMAINS/);
+  assert.match(background, /YOUTUBE_AUTOFILL_REQUEST_DOMAINS/);
+  assert.match(background, /initiatorDomains: \["youtube\.com"\]/);
   assert.match(background, /SITE_BLOCK_RULE_START/);
   assert.match(background, /CONTENT_BLOCK_RULE_START/);
   assert.match(background, /contentBlockRules/);
@@ -249,6 +251,12 @@ last exit code = 0
   assert.match(options, /vigilExtensionToken/);
   const content = await readFile("extension/content.js", "utf8");
   assert.match(content, /cleanupBrowserNoise/);
+  assert.match(content, /applyYoutubeAutofillFriction/);
+  assert.match(content, /teardownYoutubeAutofillFriction/);
+  assert.match(content, /browserNoiseBlockingEnabled === false/);
+  assert.match(content, /removeAttribute\("data-vigil-youtube-friction"\)/);
+  assert.match(content, /removeEventListener\("focusin", hardenYoutubeSearchFromEvent, true\)/);
+  assert.match(content, /data-vigil-youtube-friction/);
   assert.match(content, /data-vigil-page-guard/);
   assert.match(content, /location\.replace/);
   const installer = await readFile("scripts/install-launch-agent.mjs", "utf8");
