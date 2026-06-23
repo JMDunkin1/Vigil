@@ -192,7 +192,6 @@ export const DEFAULT_BLOCKED_APPS = [
 
 export const DEFAULT_BLOCKED_SITES = [
   "youtube.com",
-  "reddit.com",
   "x.com",
   "twitter.com",
   "instagram.com",
@@ -219,6 +218,24 @@ export const DEFAULT_EXPLICIT_BLOCKED_SITES = [
   "cam4.com",
   "adultfriendfinder.com",
   "brazzers.com"
+];
+
+export const DEFAULT_EXPLICIT_URL_PATTERNS = [
+  "reddit.com/r/gonewild",
+  "reddit.com/r/nsfw",
+  "reddit.com/r/porn",
+  "reddit.com/r/onlyfans",
+  "reddit.com/r/fansly",
+  "reddit.com/search?q=gonewild",
+  "reddit.com/search/?q=gonewild",
+  "reddit.com/search?q=nsfw",
+  "reddit.com/search/?q=nsfw",
+  "reddit.com/search?q=porn",
+  "reddit.com/search/?q=porn",
+  "reddit.com/search?q=onlyfans",
+  "reddit.com/search/?q=onlyfans",
+  "reddit.com/search?q=fansly",
+  "reddit.com/search/?q=fansly"
 ];
 
 export const DEFAULT_SHORT_FORM_URL_PATTERNS = [
@@ -300,7 +317,6 @@ export const BRICK_ALLOWED_SITES = [
 
 export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
   "com.google.ios.youtube",
-  "com.reddit.Reddit",
   "com.atebits.Tweetie2",
   "com.burbn.instagram",
   "com.zhiliaoapp.musically",
@@ -400,9 +416,10 @@ export function defaultState(): VigilState {
         description: "Blocks social media apps and sites while keeping everything else usable.",
         blockedApps: DEFAULT_BLOCKED_APPS,
         blockedSites: DEFAULT_BLOCKED_SITES,
-        blockedUrlPatterns: DEFAULT_SHORT_FORM_URL_PATTERNS,
+        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
-        allowedSites: [...DEFAULT_ALLOWED_SITES]
+        allowedSites: [...DEFAULT_ALLOWED_SITES],
+        hostsUrlPatternBlocking: false
       },
       {
         id: NORMAL_PROFILE_ID,
@@ -411,7 +428,7 @@ export function defaultState(): VigilState {
         description: "Baseline mode: no focus lock, but explicit sites stay blocked.",
         blockedApps: [],
         blockedSites: DEFAULT_EXPLICIT_BLOCKED_SITES,
-        blockedUrlPatterns: [],
+        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES],
         phoneAppBlocking: false,
@@ -424,7 +441,7 @@ export function defaultState(): VigilState {
         description: "Blocks the normal explicit baseline plus short-form feeds while leaving regular sites usable.",
         blockedApps: [],
         blockedSites: DEFAULT_EXPLICIT_BLOCKED_SITES,
-        blockedUrlPatterns: DEFAULT_SHORT_FORM_URL_PATTERNS,
+        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES],
         phoneAppBlocking: false,
@@ -527,11 +544,12 @@ export function defaultState(): VigilState {
           sites: [
             "instagram.com",
             "tiktok.com",
-            "reddit.com",
             "x.com",
             "twitter.com"
           ],
           urlPatterns: [
+            "reddit.com/r/all",
+            "reddit.com/r/popular",
             "youtube.com/shorts",
             "m.youtube.com/shorts"
           ],

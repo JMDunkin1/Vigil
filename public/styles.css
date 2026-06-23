@@ -589,6 +589,80 @@ button.compact {
   font-size: 1.02rem;
 }
 
+.lock-preview {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.lock-preview.hidden {
+  display: none;
+}
+
+.lock-preview-head,
+.lock-preview-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lock-preview-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.lock-preview-head strong {
+  overflow-wrap: anywhere;
+  font-size: 1rem;
+}
+
+.lock-preview-head span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.lock-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.lock-preview-item {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding-left: 9px;
+  border-left: 2px solid color-mix(in srgb, var(--primary) 48%, var(--line));
+}
+
+.lock-preview-item strong,
+.lock-preview-item span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.lock-preview-item strong {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.lock-preview-item span {
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.lock-preview-actions {
+  padding-top: 2px;
+}
+
 .home-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
@@ -1772,6 +1846,7 @@ button:focus-visible {
   .hero-actions,
   .device-switch,
   .home-presets,
+  .lock-preview-grid,
   .home-strip,
   .focus-studio-grid,
   .form-row,
@@ -1788,6 +1863,12 @@ button:focus-visible {
   .unlock-strip,
   .emergency {
     grid-template-columns: 1fr;
+  }
+
+  .lock-preview-head,
+  .lock-preview-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .vigil-orb {

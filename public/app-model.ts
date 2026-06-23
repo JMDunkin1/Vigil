@@ -525,7 +525,43 @@ export interface UiState {
 export interface SessionStartResponse {
   session: {
     endsAt: string;
+    title?: string;
   };
+}
+
+export interface SessionPreviewSummary {
+  title?: string;
+  mode?: string;
+  profileName?: string;
+  profileMode?: string;
+  lockLevel?: string;
+  durationMinutes?: number;
+  endsAt?: string;
+  deviceTargets?: string[];
+  deviceLabel?: string;
+  commitmentLock?: boolean;
+  canEndEarly?: boolean;
+  blockedApps?: string[];
+  blockedSites?: string[];
+  blockedUrlPatterns?: string[];
+  allowedApps?: string[];
+  allowedSites?: string[];
+  protections?: string[];
+  conflicts?: string[];
+  phone?: {
+    targeted?: boolean;
+    ready?: boolean;
+    status?: string;
+    detail?: string;
+    blockers?: string[];
+    appCount?: number;
+    siteCount?: number;
+    mode?: string;
+  };
+}
+
+export interface SessionPreviewResponse {
+  preview: SessionPreviewSummary;
 }
 
 export interface SessionEndResponse {

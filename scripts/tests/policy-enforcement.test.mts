@@ -8,7 +8,7 @@ import { contentFilterEnabled, matchContentFilterUrl } from "../../src/contentFi
 import { BRICK_MODE_PROFILE_ID, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../../src/defaults.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../../src/distanceKey.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../../src/extensionPolicy.js";
-import { buildHostsBlock } from "../../src/hardening.js";
+import { buildHostsBlock, managedBlockDomains } from "../../src/hardening.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "../../src/keyholder.js";
 import { activeLimitBlocks, activeLimitPolicy, overrideLimitRules } from "../../src/limits.js";
 import { shouldLockScreenForPolicy } from "../../src/monitor.js";
@@ -17,7 +17,7 @@ import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanc
 import { buildSafariFilterProfile, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature, safariUrlFilterEnabled } from "../../src/safariFilter.js";
 import { applySealVerificationToState, markStateSealed } from "../../src/seal.js";
 import { updateSettings } from "../../src/server/settingsRoutes.js";
-import { sanitizeSoftBlockProfile } from "../../src/store.js";
+import { sanitizeDefaultFocusProfile, sanitizeSoftBlockProfile } from "../../src/store.js";
 import { syncDeviceUsageSnapshot } from "../../src/usage.js";
 import type { UsageState } from "../../src/types.js";
 import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile, usageFixture } from "./test-helpers.mjs";
@@ -241,7 +241,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockSite(profile, "www.youtube.com"), true);
   assert.equal(shouldBlockSite(profile, "youtu.be"), true);
   assert.equal(shouldBlockSite(profile, "www.youtube-nocookie.com"), true);
-  assert.equal(shouldBlockSite(profile, "redd.it"), true);
+  assert.equal(shouldBlockSite(profile, "redd.it"), false);
   assert.equal(shouldBlockSite(profile, "fb.com"), true);
   assert.equal(shouldBlockSite(profile, "docs.google.com"), false);
   assert.equal(expandSiteTargets(["youtube.com"]).includes("youtu.be"), true);
@@ -250,6 +250,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockSite(testProfile({ mode: "allowlist", allowedSites: ["youtube.com"], blockedSites: [] }), "reddit.com"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.youtube.com/shorts/abc"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.youtube.com/watch?v=abc"), false);
+  assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/popular"), true);
+  assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/learnprogramming/comments/demo"), false);
   assert.equal(shouldBlockUrl({ ...profile, blockedUrlPatterns: ["/reels", "casino"] }, "https://example.com/reels/latest"), true);
   assert.equal(matchBlockedUrlPattern({ ...profile, blockedUrlPatterns: ["casino"] }, "https://news.example/search?q=casino")?.pattern, "casino");
   assert.equal(expandAppTargets(["Steam"]).includes("steam helper"), true);
@@ -313,20 +315,74 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const explicit = evaluateExtensionCheck(state, usage, { url: "https://www.pornhub.com/", event: "navigation" }, now);
   assert.equal(explicit.blocked, true);
   assert.equal(recordValue(explicit.policy, "explicit policy").kind, "baseline");
+  const normalReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/learnprogramming/comments/demo", event: "navigation" }, now);
+  assert.equal(normalReddit.blocked, false);
+  assert.equal(normalReddit.paused, false);
+  const explicitReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/gonewild", event: "navigation" }, now);
+  assert.equal(explicitReddit.blocked, true);
+  assert.equal(recordValue(explicitReddit.policy, "explicit Reddit policy").kind, "baseline");
   const baselineYoutube = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
   assert.equal(baselineYoutube.blocked, false);
+  const baselineManagedDomains = managedBlockDomains(defaultState(), now);
+  assert.equal(baselineManagedDomains.includes("reddit.com"), false);
+  assert.equal(baselineManagedDomains.includes("redd.it"), false);
+  assert.equal(baselineManagedDomains.includes("pornhub.com"), true);
+  assert.equal(profileById(state, "default").blockedSites.includes("reddit.com"), false);
+  assert.equal(profileById(state, "default").blockedUrlPatterns.includes("reddit.com/r/popular"), true);
+  assert.equal(profileById(state, "default").hostsUrlPatternBlocking, false);
+  assert.equal(profileById(state, "normal").blockedUrlPatterns.includes("reddit.com/r/nsfw"), true);
+  const defaultFocusSessionState = defaultState();
+  const defaultFocusSession = {
+    id: "default-focus",
+    title: "Default Focus",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep" as const,
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: true,
+    source: "manual"
+  };
+  defaultFocusSessionState.activeSession = defaultFocusSession;
+  defaultFocusSessionState.activeSessions.computer = defaultFocusSession;
+  const defaultFocusManagedDomains = managedBlockDomains(defaultFocusSessionState, now);
+  assert.equal(defaultFocusManagedDomains.includes("reddit.com"), false);
+  assert.equal(defaultFocusManagedDomains.includes("redd.it"), false);
+  assert.equal(defaultFocusManagedDomains.includes("youtube.com"), true);
+
+  const migratedDefaultProfile = sanitizeDefaultFocusProfile({
+    ...profileById(state, "default"),
+    blockedSites: ["youtube.com", "reddit.com", "redd.it"],
+    blockedUrlPatterns: ["reddit.com", "reddit.com/", "https://reddit.com/", "redd.it/", "reddit.com/r/popular"]
+  });
+  assert.deepEqual(migratedDefaultProfile.blockedSites, ["youtube.com"]);
+  assert.equal(migratedDefaultProfile.hostsUrlPatternBlocking, false);
+  assert.equal(migratedDefaultProfile.blockedUrlPatterns.includes("reddit.com"), false);
+  assert.equal(migratedDefaultProfile.blockedUrlPatterns.includes("reddit.com/"), false);
+  assert.equal(migratedDefaultProfile.blockedUrlPatterns.includes("https://reddit.com/"), false);
+  assert.equal(migratedDefaultProfile.blockedUrlPatterns.includes("redd.it/"), false);
+  assert.equal(migratedDefaultProfile.blockedUrlPatterns.includes("reddit.com/r/popular"), true);
 
   const softProfile = profileById(state, SOFT_BLOCK_PROFILE_ID);
   const migratedSoftProfile = sanitizeSoftBlockProfile({
     ...softProfile,
     blockedApps: ["Instagram", "Discord"],
-    blockedSites: ["instagram.com", "pornhub.com"],
-    blockedUrlPatterns: ["instagram.com/explore", "instagram.com/reels"]
+    blockedSites: ["instagram.com", "reddit.com", "pornhub.com"],
+    blockedUrlPatterns: ["instagram.com/explore", "instagram.com/reels", "reddit.com", "reddit.com/", "https://reddit.com/", "redd.it/"]
   });
   assert.deepEqual(migratedSoftProfile.blockedApps, ["Discord"]);
   assert.deepEqual(migratedSoftProfile.blockedSites, ["pornhub.com"]);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("instagram.com/explore"), false);
+  assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("reddit.com"), false);
+  assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("reddit.com/"), false);
+  assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("https://reddit.com/"), false);
+  assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("redd.it/"), false);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("instagram.com/reel"), true);
+  assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("reddit.com/r/popular"), true);
+  assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("reddit.com/r/nsfw"), true);
+  assert.equal(shouldBlockUrl(migratedSoftProfile, "https://www.reddit.com/r/learnprogramming/comments/demo"), false);
+  assert.equal(shouldBlockUrl(migratedSoftProfile, "https://www.reddit.com/r/popular"), true);
+  assert.equal(shouldBlockUrl(migratedSoftProfile, "https://www.reddit.com/r/gonewild"), true);
   assert.equal(migratedSoftProfile.phoneAppBlocking, false);
 
   state.activeSessions.phone = {

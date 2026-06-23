@@ -1,12 +1,15 @@
 import { app, BrowserWindow, Menu, nativeImage, shell, Tray } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import { join } from "node:path";
+import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../src/apiSecurity.js";
 import { fetchVigilStateHealth } from "../src/vigilHealth.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.VIGIL_PORT || process.env.VIGIL_PORT || 8787);
 const BASE_URL = `http://${HOST}:${PORT}`;
 const TRAY_STATUS_CHECK_TIMEOUT_MS = 2000;
+const TRAY_ACTION_TIMEOUT_MS = 5000;
+const TRAY_STATUS_POLL_INTERVAL_MS = 30_000;
 const TRAY_ICON_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABIAAAASCAYAAABWzo5XAAAALElEQVR4nGNgGArgP5F4GBhESHwIGYSuCZ/YqEEUpCGqG4TPMJIB1QwaGAAA6A5plz/jasAAAAAASUVORK5CYII=";
 
 interface VigilServerHandle {
@@ -17,11 +20,14 @@ interface VigilServerHandle {
 interface TrayStatus {
   label: string;
   detail: string;
+  panicActionLabel: string;
+  canStartPanicLock: boolean;
 }
 
 let mainWindow: BrowserWindow | null = null;
 let ownedServer: VigilServerHandle | null = null;
 let tray: Tray | null = null;
+let trayRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -52,6 +58,7 @@ void app.whenReady().then(async () => {
 });
 
 app.on("before-quit", async (event) => {
+  stopTrayRefresh();
   if (!ownedServer) return;
   event.preventDefault();
   const server = ownedServer;
@@ -169,14 +176,23 @@ function installMenuBarCompanion(appUrl: string): void {
   icon.setTemplateImage(true);
   tray = new Tray(icon);
   tray.setToolTip("Vigil");
-  updateTrayMenu(appUrl, { label: "Status: Checking", detail: `Local server on port ${PORT}` });
+  updateTrayMenu(appUrl, checkingTrayStatus(appUrl));
   tray.on("click", () => {
     void refreshTrayStatus(appUrl);
   });
   tray.on("right-click", () => {
     void refreshTrayStatus(appUrl);
   });
+  trayRefreshTimer = setInterval(() => {
+    void refreshTrayStatus(appUrl);
+  }, TRAY_STATUS_POLL_INTERVAL_MS);
   void refreshTrayStatus(appUrl);
+}
+
+function stopTrayRefresh(): void {
+  if (!trayRefreshTimer) return;
+  clearInterval(trayRefreshTimer);
+  trayRefreshTimer = null;
 }
 
 function updateTrayMenu(appUrl: string, status: TrayStatus): void {
@@ -192,6 +208,13 @@ function updateTrayMenu(appUrl: string, status: TrayStatus): void {
     { label: status.label, enabled: false },
     { label: status.detail, enabled: false },
     { type: "separator" },
+    {
+      label: status.panicActionLabel,
+      enabled: status.canStartPanicLock,
+      click: () => {
+        void startPanicLock(appUrl);
+      }
+    },
     {
       label: "Reload Vigil",
       click: () => {
@@ -221,49 +244,125 @@ function updateTrayMenu(appUrl: string, status: TrayStatus): void {
 }
 
 async function refreshTrayStatus(appUrl: string): Promise<void> {
-  updateTrayMenu(appUrl, { label: "Status: Checking", detail: `Local server on port ${PORT}` });
-  updateTrayMenu(appUrl, await readTrayStatus());
+  updateTrayMenu(appUrl, checkingTrayStatus(appUrl));
+  updateTrayMenu(appUrl, await readTrayStatus(appUrl));
 }
 
-async function readTrayStatus(): Promise<TrayStatus> {
+async function readTrayStatus(appUrl: string): Promise<TrayStatus> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TRAY_STATUS_CHECK_TIMEOUT_MS);
+  const port = portFromUrl(appUrl);
   try {
-    const health = await fetchVigilStateHealth(`${BASE_URL}/api/state`, {
+    const health = await fetchVigilStateHealth(apiUrl(appUrl, "/api/state"), {
       signal: controller.signal,
-      expectedPort: PORT
+      expectedPort: port
     });
     if (!health.ok) {
-      return { label: "Status: Offline", detail: `No trusted Vigil server on port ${PORT}` };
+      return offlineTrayStatus(appUrl);
     }
-    return summarizeTrayStatus(health.body);
+    return summarizeTrayStatus(health.body, port);
   } catch {
-    return { label: "Status: Offline", detail: `No trusted Vigil server on port ${PORT}` };
+    return offlineTrayStatus(appUrl);
   } finally {
     clearTimeout(timeout);
   }
 }
 
-function summarizeTrayStatus(body: unknown): TrayStatus {
+async function startPanicLock(appUrl: string): Promise<void> {
+  updateTrayMenu(appUrl, {
+    label: "Status: Starting Panic Lock",
+    detail: "Requesting local Vigil lockout...",
+    panicActionLabel: "Starting Panic Lock...",
+    canStartPanicLock: false
+  });
+  try {
+    const body = await requestPanicLock(appUrl);
+    const session = asRecord(asRecord(body)?.session);
+    updateTrayMenu(appUrl, {
+      label: "Status: Panic Lock - Panic Lockout",
+      detail: session ? sessionEndDetail(session) || "Panic lock started" : "Panic lock started",
+      panicActionLabel: "Panic Lock Active",
+      canStartPanicLock: false
+    });
+    await refreshTrayStatus(appUrl);
+  } catch (error) {
+    updateTrayMenu(appUrl, {
+      label: "Status: Panic Lock Failed",
+      detail: shortTrayDetail(errorMessage(error)),
+      panicActionLabel: "Start Panic Lock",
+      canStartPanicLock: true
+    });
+  }
+}
+
+async function requestPanicLock(appUrl: string): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TRAY_ACTION_TIMEOUT_MS);
+  try {
+    const response = await fetch(apiUrl(appUrl, "/api/panic/start"), {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE
+      },
+      body: "{}"
+    });
+    const body = await responseJson(response);
+    const record = asRecord(body);
+    if (!response.ok || record?.ok !== true) {
+      throw new Error(nonEmptyString(record?.error) || `Panic lock failed (${response.status})`);
+    }
+    return body;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function responseJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
+function summarizeTrayStatus(body: unknown, port: number): TrayStatus {
   const root = asRecord(body);
   const state = asRecord(root?.state);
   const policy = asRecord(state?.activePolicy);
-  const session = asRecord(policy?.session) || asRecord(state?.activeSession);
-  if (session) {
+  const session = asRecord(policy?.session) || asRecord(state?.panicLock) || asRecord(state?.activeSession);
+  const phase = asRecord(policy?.phase) || asRecord(state?.sessionPhase);
+  if (policy || session) {
+    const kind = nonEmptyString(policy?.kind);
     return {
-      label: `Status: Locked - ${shortTrayText(sessionTitle(session))}`,
-      detail: sessionEndDetail(session) || "Active protection"
+      label: `Status: ${policyStatus(kind)} - ${shortTrayText(session ? sessionTitle(session) : policyTitle(policy || {}))}`,
+      detail: policyDetail(policy, session, phase) || `Local server online on port ${port}`,
+      panicActionLabel: kind === "panic" ? "Panic Lock Active" : "Start Panic Lock",
+      canStartPanicLock: kind !== "panic"
     };
   }
 
-  if (policy) {
-    return {
-      label: `Status: Protected - ${shortTrayText(policyTitle(policy))}`,
-      detail: `Local server online on port ${PORT}`
-    };
-  }
+  return { label: "Status: Unlocked", detail: `Local server online on port ${port}`, panicActionLabel: "Start Panic Lock", canStartPanicLock: true };
+}
 
-  return { label: "Status: Unlocked", detail: `Local server online on port ${PORT}` };
+function checkingTrayStatus(appUrl: string): TrayStatus {
+  return {
+    label: "Status: Checking",
+    detail: `Local server on port ${portFromUrl(appUrl)}`,
+    panicActionLabel: "Start Panic Lock",
+    canStartPanicLock: false
+  };
+}
+
+function offlineTrayStatus(appUrl: string): TrayStatus {
+  return {
+    label: "Status: Offline",
+    detail: `No trusted Vigil server on port ${portFromUrl(appUrl)}`,
+    panicActionLabel: "Start Panic Lock",
+    canStartPanicLock: false
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -279,11 +378,69 @@ function policyTitle(policy: Record<string, unknown>): string {
 }
 
 function sessionEndDetail(session: Record<string, unknown>): string | null {
-  const endsAt = nonEmptyString(session.endsAt);
+  return remainingDetail(nonEmptyString(session.endsAt));
+}
+
+function policyStatus(kind: string | null): string {
+  if (kind === "panic") return "Panic Lock";
+  if (kind === "manual" || kind === "schedule" || kind === "planner" || kind === "integrity") return "Locked";
+  return "Protected";
+}
+
+function policyDetail(policy: Record<string, unknown> | null, session: Record<string, unknown> | null, phase: Record<string, unknown> | null): string | null {
+  const phaseDetail = phase ? phaseEndDetail(phase) : null;
+  if (phaseDetail) return phaseDetail;
+  return remainingDetail(nonEmptyString(policy?.endsAt) || nonEmptyString(session?.endsAt));
+}
+
+function phaseEndDetail(phase: Record<string, unknown>): string | null {
+  const detail = remainingDetail(nonEmptyString(phase.endsAt));
+  if (!detail) return null;
+  const label = nonEmptyString(phase.label) || capitalize(nonEmptyString(phase.kind) || "focus");
+  const round = Number(phase.round);
+  const rounds = Number(phase.rounds);
+  const roundText = Number.isFinite(round) && Number.isFinite(rounds) && rounds > 1
+    ? ` ${round}/${rounds}`
+    : "";
+  const next = nextPhaseText(phase);
+  return next ? `${label}${roundText}: ${detail}; ${next}` : `${label}${roundText}: ${detail}`;
+}
+
+function nextPhaseText(phase: Record<string, unknown>): string | null {
+  const kind = nonEmptyString(phase.kind);
+  const round = Number(phase.round);
+  const rounds = Number(phase.rounds);
+  if (!Number.isFinite(round) || !Number.isFinite(rounds) || rounds <= 1) return null;
+  if (kind === "work" && round < rounds) return "next Break";
+  if (kind === "break") return `next Focus ${round + 1}/${rounds}`;
+  return null;
+}
+
+function remainingDetail(endsAt: string | null): string | null {
   if (!endsAt) return null;
   const date = new Date(endsAt);
-  if (!Number.isFinite(date.getTime())) return null;
-  return `Ends at ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  const remainingMs = date.getTime() - Date.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return null;
+  return `Remaining ${formatRemaining(remainingMs)} (until ${formatEndTime(date)})`;
+}
+
+function formatRemaining(ms: number): string {
+  const totalMinutes = Math.max(1, Math.ceil(ms / 60_000));
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours < 24) return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  return remainingHours ? `${days}d ${remainingHours}h` : `${days}d`;
+}
+
+function formatEndTime(date: Date): string {
+  const now = new Date();
+  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return date.toDateString() === now.toDateString()
+    ? time
+    : `${date.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
 }
 
 function nonEmptyString(value: unknown): string | null {
@@ -296,4 +453,24 @@ function capitalize(value: string): string {
 
 function shortTrayText(value: string): string {
   return value.length <= 48 ? value : `${value.slice(0, 45)}...`;
+}
+
+function shortTrayDetail(value: string): string {
+  return value.length <= 72 ? value : `${value.slice(0, 69)}...`;
+}
+
+function apiUrl(appUrl: string, path: string): string {
+  return new URL(path, appUrl).toString();
+}
+
+function portFromUrl(appUrl: string): number {
+  try {
+    return Number(new URL(appUrl).port) || PORT;
+  } catch {
+    return PORT;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

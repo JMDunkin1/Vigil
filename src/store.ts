@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_SHORT_FORM_URL_PATTERNS, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
+import { DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { normalizeIntentionalUse } from "./intentionalUse.js";
 import { normalizeWeekdays } from "./normalizers.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
@@ -227,26 +227,62 @@ function mergeBuiltinProfiles(profiles: Profile[], builtinProfiles: Profile[]): 
 }
 
 function migrateBuiltinProfiles(profiles: Profile[]): Profile[] {
-  return profiles.map((profile) => {
-    if (profile.id !== SOFT_BLOCK_PROFILE_ID) return profile;
-    return sanitizeSoftBlockProfile(profile);
-  });
+  return profiles.map(sanitizeBuiltinProfile);
 }
 
 export function sanitizeSoftBlockProfile(profile: Profile): Profile {
   const blockedUrlPatterns = uniqueList([
-    ...(profile.blockedUrlPatterns || []).filter((pattern) => !isInstagramExplorePattern(pattern)),
-    ...DEFAULT_SHORT_FORM_URL_PATTERNS.filter(isInstagramReelsPattern)
+    ...(profile.blockedUrlPatterns || []).filter((pattern) => !isInstagramExplorePattern(pattern) && !isRedditWholeSitePattern(pattern)),
+    ...DEFAULT_EXPLICIT_URL_PATTERNS,
+    ...DEFAULT_SHORT_FORM_URL_PATTERNS
   ]);
   return {
     ...profile,
     description: profile.description || "Blocks the normal explicit baseline plus short-form feeds while leaving regular sites usable.",
     blockedApps: (profile.blockedApps || []).filter((app) => !isInstagramAppTarget(app)),
-    blockedSites: (profile.blockedSites || []).filter((site) => !isInstagramSiteTarget(site)),
+    blockedSites: (profile.blockedSites || []).filter((site) => !isInstagramSiteTarget(site) && !isRedditSiteTarget(site)),
     blockedUrlPatterns,
     phoneAppBlocking: false,
     hostsUrlPatternBlocking: false
   };
+}
+
+export function sanitizeDefaultFocusProfile(profile: Profile): Profile {
+  return sanitizeRedditUrlPolicyProfile(profile, {
+    blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
+    hostsUrlPatternBlocking: false
+  });
+}
+
+function sanitizeNormalProfile(profile: Profile): Profile {
+  return sanitizeRedditUrlPolicyProfile(profile, {
+    blockedUrlPatterns: DEFAULT_EXPLICIT_URL_PATTERNS,
+    phoneAppBlocking: false,
+    hostsUrlPatternBlocking: false
+  });
+}
+
+function sanitizeRedditUrlPolicyProfile(
+  profile: Profile,
+  options: { blockedUrlPatterns: string[]; phoneAppBlocking?: false; hostsUrlPatternBlocking?: false }
+): Profile {
+  return {
+    ...profile,
+    blockedSites: (profile.blockedSites || []).filter((site) => !isRedditSiteTarget(site)),
+    blockedUrlPatterns: uniqueList([
+      ...(profile.blockedUrlPatterns || []).filter((pattern) => !isRedditWholeSitePattern(pattern)),
+      ...options.blockedUrlPatterns
+    ]),
+    phoneAppBlocking: options.phoneAppBlocking === false ? false : profile.phoneAppBlocking,
+    hostsUrlPatternBlocking: options.hostsUrlPatternBlocking === false ? false : profile.hostsUrlPatternBlocking
+  };
+}
+
+function sanitizeBuiltinProfile(profile: Profile): Profile {
+  if (profile.id === "default") return sanitizeDefaultFocusProfile(profile);
+  if (profile.id === NORMAL_PROFILE_ID) return sanitizeNormalProfile(profile);
+  if (profile.id === SOFT_BLOCK_PROFILE_ID) return sanitizeSoftBlockProfile(profile);
+  return profile;
 }
 
 function cloneProfile(profile: Profile): Profile {
@@ -293,12 +329,13 @@ function isInstagramExplorePattern(value: unknown): boolean {
   return pattern === "instagram.com/explore" || pattern.startsWith("instagram.com/explore/");
 }
 
-function isInstagramReelsPattern(value: unknown): boolean {
-  const pattern = normalizePatternTarget(value);
-  return pattern === "instagram.com/reel"
-    || pattern === "instagram.com/reels"
-    || pattern.startsWith("instagram.com/reel/")
-    || pattern.startsWith("instagram.com/reels/");
+function isRedditSiteTarget(value: unknown): boolean {
+  return ["reddit.com", "redd.it"].includes(normalizeHostTarget(value));
+}
+
+function isRedditWholeSitePattern(value: unknown): boolean {
+  const pattern = normalizePatternTarget(value).replace(/\/+$/, "");
+  return pattern === "reddit.com" || pattern === "redd.it";
 }
 
 function normalizeHostTarget(value: unknown): string {
@@ -395,13 +432,13 @@ function migrateActiveSessions(
 function migrateSessionProfileSnapshot(session: Session | null, profiles: Profile[]): Session | null {
   if (!session) return null;
   const profileId = session.profileSnapshot?.id || session.profileId;
-  if (profileId !== SOFT_BLOCK_PROFILE_ID) return session;
-  const fallback = profiles.find((profile) => profile.id === SOFT_BLOCK_PROFILE_ID);
+  const fallback = profiles.find((profile) => profile.id === profileId);
   const profileSnapshot = session.profileSnapshot || fallback;
   if (!profileSnapshot) return session;
+  if (!session.profileSnapshot && profileId !== SOFT_BLOCK_PROFILE_ID) return session;
   return {
     ...session,
-    profileSnapshot: sanitizeSoftBlockProfile(profileSnapshot)
+    profileSnapshot: sanitizeBuiltinProfile(profileSnapshot)
   };
 }
 

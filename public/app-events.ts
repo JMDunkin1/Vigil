@@ -43,13 +43,14 @@ interface AppEventsContext {
   refresh(): Promise<void>;
   toast(message: string): void;
   selectedDeviceTargets(): Array<"computer" | "phone">;
+  previewSessionStart(body: Record<string, unknown>): Promise<void>;
   startNormalMode(): Promise<void>;
   startPresetSession(kind: "soft" | "brick"): Promise<void>;
   renderSosPlan(session: (DashboardItem & { plan?: string[] }) | null): void;
 }
 
 export function bindAppEvents(context: AppEventsContext) {
-  const { state, deviceTargets, devicePanel, hardeningPanel, distanceKeyUi, focusSound, forms, post, refresh, toast, selectedDeviceTargets, startNormalMode, startPresetSession, renderSosPlan } = context;
+  const { state, deviceTargets, devicePanel, hardeningPanel, distanceKeyUi, focusSound, forms, post, refresh, toast, selectedDeviceTargets, previewSessionStart, startNormalMode, startPresetSession, renderSosPlan } = context;
 
   $("#themeToggle").addEventListener("click", toggleTheme);
 
@@ -69,9 +70,7 @@ export function bindAppEvents(context: AppEventsContext) {
     body.cycleEnabled = form.has("cycleEnabled");
     body.commitmentLock = form.has("commitmentLock");
     body.deviceTargets = selectedDeviceTargets();
-    await post("/api/session/start", body);
-    toast("Lock started");
-    await refresh();
+    await previewSessionStart(body);
   });
 
   $("#endSession").addEventListener("click", async () => {

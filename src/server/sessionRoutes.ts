@@ -7,6 +7,8 @@ import { DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID } from "../defaults.js";
 import { assertIntentReason } from "../intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "../intervention.js";
 import { completeIntentionalPlanBlock } from "../intentionalUse.js";
+import { iosMdmSummary } from "../iosMdm.js";
+import { iosPolicyTargets } from "../iosProfiles.js";
 import { assertKeyholderPasscode } from "../keyholder.js";
 import { activeLimitBlocks, overrideLimitRules } from "../limits.js";
 import {
@@ -14,16 +16,18 @@ import {
   activeSessionForDevice,
   clearSessionsById,
   emergencyUnlockAllowedForPolicy,
+  matchStrictBrowserControlUrl,
   normalizeDeviceTarget,
   normalizeDeviceTargets,
   normalizeLockLevel,
   panicLockProfile,
   profileById,
+  sessionPhase,
   snapshotProfile
 } from "../policy.js";
 import { addEvent, saveState } from "../store.js";
 import { clampNumber, weekKey } from "../time.js";
-import type { DeviceTarget, LimitBlock, LockLevel, Profile, VigilState, Session, SessionCycle, UnknownRecord } from "../types.js";
+import type { ActivePolicy, DeviceTarget, LimitBlock, LockLevel, Profile, VigilState, Session, SessionCycle, UnknownRecord } from "../types.js";
 import { commitmentLockError } from "./pages.js";
 import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
 
@@ -38,6 +42,49 @@ interface LimitBlockSummary {
   id: string;
   ruleId: string;
   until: string;
+}
+
+interface ManualSessionDraft {
+  session: Session;
+  profile: Profile;
+  deviceTargets: DeviceTarget[];
+  durationMinutes: number;
+}
+
+interface ManualSessionDraftOptions {
+  id?: string;
+  now?: Date;
+}
+
+export interface SessionPreviewSummary {
+  title: string;
+  mode: string;
+  profileName: string;
+  profileMode: string;
+  lockLevel: LockLevel;
+  durationMinutes: number;
+  endsAt: string;
+  deviceTargets: DeviceTarget[];
+  deviceLabel: string;
+  commitmentLock: boolean;
+  canEndEarly: boolean;
+  blockedApps: string[];
+  blockedSites: string[];
+  blockedUrlPatterns: string[];
+  allowedApps: string[];
+  allowedSites: string[];
+  protections: string[];
+  conflicts: DeviceTarget[];
+  phone: {
+    targeted: boolean;
+    ready: boolean;
+    status: string;
+    detail: string;
+    blockers: string[];
+    appCount: number;
+    siteCount: number;
+    mode: string;
+  };
 }
 
 export async function handleSessionApiRoute(
@@ -78,48 +125,29 @@ export async function handleSessionApiRoute(
     return true;
   }
 
+  if (method === "POST" && path === "/api/session/preview") {
+    const body = await readBody(request);
+    sendJson(response, 200, { ok: true, preview: previewManualSession(state, body) });
+    return true;
+  }
+
   if (method === "POST" && path === "/api/session/start") {
     const body = await readBody(request);
     activePolicy(state);
-    const deviceTargets = normalizeSessionDeviceTargets(body);
-    const conflicts = activeSessionConflicts(state, deviceTargets);
+    const draft = manualSessionDraft(state, body);
+    const conflicts = activeSessionConflicts(state, draft.deviceTargets);
     if (conflicts.length) {
       sendJson(response, 409, { error: `A session is already active for ${deviceLabel(conflicts)}.`, active: conflicts.map((target) => state.activeSessions?.[target] || state.activeSession) });
       return true;
     }
 
-    const cycle = normalizeSessionCycle(body);
-    const durationMinutes = cycle ? cycleDurationMinutes(cycle) : clampNumber(body.durationMinutes, 1, 60 * 24 * 45, 25);
-    const started = new Date();
-    const ends = new Date(started.getTime() + durationMinutes * 60 * 1000);
-    const lockLevel = normalizeLockLevel(body.lockLevel, state.settings.strictByDefault ? "deep" : "light");
-    const mode = stringValue(body.mode, "focus");
-    const profile = profileById(state, stringValue(body.profileId, state.settings.activeProfileId));
-    await context.assertStrictLockAllowed(lockLevel, profile, { mode });
-    const commitmentLock = lockLevel === "deep" && truthy(body.commitmentLock);
-
-    const session: Session = {
-      id: randomUUID(),
-      title: stringValue(body.title, sessionTitle(mode)),
-      mode,
-      profileId: profile.id,
-      lockLevel,
-      startedAt: started.toISOString(),
-      endsAt: ends.toISOString(),
-      canEndEarly: lockLevel === "light",
-      commitmentLock,
-      emergencyUnlocksAllowed: !commitmentLock,
-      source: "manual",
-      deviceTargets,
-      profileSnapshot: snapshotProfile(profile),
-      ...(cycle ? { cycle } : {})
-    };
-    startDeviceSession(state, deviceTargets, session);
-    addEvent(state, "session_started", session);
-    if (deviceTargets.includes("phone")) context.recordIosMdmPolicyQueue("session-start");
+    await context.assertStrictLockAllowed(draft.session.lockLevel, draft.profile, { mode: draft.session.mode });
+    startDeviceSession(state, draft.deviceTargets, draft.session);
+    addEvent(state, "session_started", draft.session);
+    if (draft.deviceTargets.includes("phone")) context.recordIosMdmPolicyQueue("session-start");
     await saveState(state);
-    context.scheduleImmediateSessionEnforcement(session.id);
-    sendJson(response, 200, { ok: true, session, activeSessions: state.activeSessions });
+    context.scheduleImmediateSessionEnforcement(draft.session.id);
+    sendJson(response, 200, { ok: true, session: draft.session, activeSessions: state.activeSessions });
     return true;
   }
 
@@ -258,6 +286,192 @@ export async function handleSessionApiRoute(
   return false;
 }
 
+export function previewManualSession(currentState: VigilState, body: UnknownRecord, now = new Date()): SessionPreviewSummary {
+  const state = jsonClone(currentState);
+  activePolicy(state, now);
+  const draft = manualSessionDraft(state, body, { id: "preview", now });
+  const conflicts = activeSessionConflicts(state, draft.deviceTargets);
+  return buildSessionPreview(state, draft, conflicts, now);
+}
+
+function manualSessionDraft(state: VigilState, body: UnknownRecord, options: ManualSessionDraftOptions = {}): ManualSessionDraft {
+  const now = options.now || new Date();
+  const deviceTargets = normalizeSessionDeviceTargets(body);
+  const cycle = normalizeSessionCycle(body);
+  const durationMinutes = cycle ? cycleDurationMinutes(cycle) : clampNumber(body.durationMinutes, 1, 60 * 24 * 45, 25);
+  const ends = new Date(now.getTime() + durationMinutes * 60 * 1000);
+  const lockLevel = normalizeLockLevel(body.lockLevel, state.settings.strictByDefault ? "deep" : "light");
+  const mode = stringValue(body.mode, "focus");
+  const profile = profileById(state, stringValue(body.profileId, state.settings.activeProfileId));
+  const commitmentLock = lockLevel === "deep" && truthy(body.commitmentLock);
+  const session: Session = {
+    id: options.id || randomUUID(),
+    title: stringValue(body.title, sessionTitle(mode)),
+    mode,
+    profileId: profile.id,
+    lockLevel,
+    startedAt: now.toISOString(),
+    endsAt: ends.toISOString(),
+    canEndEarly: lockLevel === "light",
+    commitmentLock,
+    emergencyUnlocksAllowed: !commitmentLock,
+    source: "manual",
+    deviceTargets,
+    profileSnapshot: snapshotProfile(profile),
+    ...(cycle ? { cycle } : {})
+  };
+  return {
+    session,
+    profile,
+    deviceTargets,
+    durationMinutes
+  };
+}
+
+function buildSessionPreview(state: VigilState, draft: ManualSessionDraft, conflicts: DeviceTarget[], now: Date): SessionPreviewSummary {
+  const previewState = jsonClone(state);
+  installPreviewSession(previewState, draft);
+  const phase = sessionPhase(draft.session, now);
+  const policy: ActivePolicy = {
+    kind: "manual",
+    session: draft.session,
+    profile: draft.session.profileSnapshot || snapshotProfile(draft.profile),
+    endsAt: phase?.endsAt || draft.session.endsAt,
+    phase
+  };
+  const phone = phonePreview(previewState, draft, now);
+  return {
+    title: draft.session.title,
+    mode: draft.session.mode,
+    profileName: policy.profile.name,
+    profileMode: policy.profile.mode,
+    lockLevel: draft.session.lockLevel,
+    durationMinutes: draft.durationMinutes,
+    endsAt: policy.endsAt,
+    deviceTargets: draft.deviceTargets,
+    deviceLabel: previewDeviceLabel(draft.deviceTargets),
+    commitmentLock: Boolean(draft.session.commitmentLock),
+    canEndEarly: draft.session.canEndEarly !== false,
+    blockedApps: uniqueStrings(policy.profile.blockedApps),
+    blockedSites: uniqueStrings(policy.profile.blockedSites),
+    blockedUrlPatterns: uniqueStrings(policy.profile.blockedUrlPatterns),
+    allowedApps: uniqueStrings(policy.profile.allowedApps),
+    allowedSites: uniqueStrings(policy.profile.allowedSites),
+    protections: browserProtectionPreview(previewState, policy),
+    conflicts,
+    phone
+  };
+}
+
+function installPreviewSession(state: VigilState, draft: ManualSessionDraft): void {
+  state.panicLock = null;
+  state.activeSessions = {
+    computer: state.activeSessions?.computer || state.activeSession || null,
+    phone: state.activeSessions?.phone || null
+  };
+  for (const target of draft.deviceTargets) {
+    state.activeSessions[target] = draft.session;
+  }
+  state.activeSession = state.activeSessions.computer || null;
+}
+
+function browserProtectionPreview(state: VigilState, policy: ActivePolicy): string[] {
+  const protections: string[] = [];
+  const browserControlLabels = uniqueStrings([
+    "chrome://extensions",
+    "chrome://settings",
+    "edge://extensions",
+    "brave://settings",
+    "arc://extensions"
+  ].map((url) => matchStrictBrowserControlUrl(state, policy, url)?.label).filter(isString));
+  if (browserControlLabels.length) protections.push("Browser settings and extensions controls");
+  if (state.settings?.browserNoiseBlockingEnabled !== false) protections.push("Browser cleanup rules");
+  if (state.settings?.siteRedirectEnabled) protections.push("Blocked-site redirect fallback");
+  if (state.settings?.safariUrlFilterEnabled && policyUsesWebTargets(policy.profile)) protections.push("Safari URL filter");
+  if (state.settings?.appQuitEnabled && policyUsesAppTargets(policy.profile)) protections.push("App quit enforcement");
+  if (state.settings?.processSweepEnabled && policy.session.lockLevel === "deep") protections.push("Background process sweep");
+  return uniqueStrings(protections);
+}
+
+function phonePreview(state: VigilState, draft: ManualSessionDraft, now: Date): SessionPreviewSummary["phone"] {
+  const targeted = draft.deviceTargets.includes("phone");
+  if (!targeted) {
+    return {
+      targeted: false,
+      ready: false,
+      status: "Not targeted",
+      detail: "This manual lock will only affect the Mac.",
+      blockers: [],
+      appCount: 0,
+      siteCount: 0,
+      mode: "off"
+    };
+  }
+
+  const ios = state.deviceControls?.ios;
+  const mdm = iosMdmSummary(state, now);
+  const targets = iosPolicyTargets(state, now);
+  const ready = Boolean(ios?.enabled || mdm.enrollmentReady);
+  const blockers = mdm.blockers?.length ? mdm.blockers.map(String) : [];
+  if (mdm.ready && (mdm.enrolledDeviceCount || 0) > 0) {
+    return {
+      targeted,
+      ready: true,
+      status: "Wireless ready",
+      detail: `${mdm.enrolledDeviceCount || 0} enrolled iPhone${mdm.enrolledDeviceCount === 1 ? "" : "s"}; policy can be pushed.`,
+      blockers: [],
+      appCount: targets.appBundleIds.length,
+      siteCount: targets.webMode === "allowlist" ? targets.allowedUrls.length : targets.deniedUrls.length,
+      mode: targets.webMode
+    };
+  }
+
+  if (mdm.enrollmentReady) {
+    return {
+      targeted,
+      ready: true,
+      status: "Queue ready",
+      detail: mdm.note || "Policy commands can be queued; wireless wakeups are not fully ready.",
+      blockers,
+      appCount: targets.appBundleIds.length,
+      siteCount: targets.webMode === "allowlist" ? targets.allowedUrls.length : targets.deniedUrls.length,
+      mode: targets.webMode
+    };
+  }
+
+  if (ios?.enabled) {
+    return {
+      targeted,
+      ready: true,
+      status: "Profile ready",
+      detail: "Static supervised iPhone profile is enabled; changes may require profile install or queue sync.",
+      blockers,
+      appCount: targets.appBundleIds.length,
+      siteCount: targets.webMode === "allowlist" ? targets.allowedUrls.length : targets.deniedUrls.length,
+      mode: targets.webMode
+    };
+  }
+
+  return {
+    targeted,
+    ready,
+    status: "Setup needed",
+    detail: mdm.note || "Enable supervised iPhone blocking before phone targets can enforce this lock.",
+    blockers,
+    appCount: targets.appBundleIds.length,
+    siteCount: targets.webMode === "allowlist" ? targets.allowedUrls.length : targets.deniedUrls.length,
+    mode: targets.webMode
+  };
+}
+
+function policyUsesAppTargets(profile: Profile): boolean {
+  return profile.mode === "allowlist" || Boolean((profile.blockedApps || []).length);
+}
+
+function policyUsesWebTargets(profile: Profile): boolean {
+  return profile.mode === "allowlist" || Boolean((profile.blockedSites || []).length || (profile.blockedUrlPatterns || []).length);
+}
+
 function normalizeSessionCycle(body: UnknownRecord): (SessionCycle & { enabled: true; workMinutes: number; breakMinutes: number; rounds: number }) | null {
   if (!truthy(body.cycleEnabled)) return null;
   const workMinutes = clampNumber(body.cycleWorkMinutes, 1, 240, 25);
@@ -325,6 +539,11 @@ function deviceLabel(targets: DeviceTarget[]): string {
   return targets.map((target) => target === "phone" ? "phone" : "computer").join(" and ");
 }
 
+function previewDeviceLabel(targets: DeviceTarget[]): string {
+  if (targets.includes("computer") && targets.includes("phone")) return "Computer + iPhone";
+  return targets.includes("phone") ? "iPhone" : "Computer";
+}
+
 function spendEmergencyToken(state: VigilState): void {
   const key = weekKey();
   state.emergency.tokensUsedByWeek[key] = (state.emergency.tokensUsedByWeek[key] || 0) + 1;
@@ -340,4 +559,16 @@ function sessionTitle(mode: unknown): string {
 function stringValue(value: unknown, fallback = ""): string {
   const text = String(value ?? "").trim();
   return text || fallback;
+}
+
+function uniqueStrings(values: readonly unknown[] = []): string[] {
+  return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))];
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function jsonClone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }

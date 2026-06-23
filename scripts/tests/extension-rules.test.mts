@@ -22,13 +22,17 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   const blocked = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/all", event: "navigation" }, now);
   assert.equal(blocked.blocked, true);
   assert.match(stringValue(blocked.redirectUrl, "blocked redirect URL"), /\/blocked/);
+  const normalReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/learnprogramming/comments/demo", event: "navigation" }, now);
+  assert.equal(normalReddit.blocked, false);
+  assert.equal(normalReddit.paused, false);
 
   const allowed = evaluateExtensionCheck(state, usage, { url: "https://docs.google.com/document/u/0/", event: "navigation" }, now);
   assert.equal(allowed.blocked, false);
 
   const rules = extensionRuleSnapshot(state, now);
-  assert.equal(rules.rules.some((rule) => rule.domain === "reddit.com" && rule.redirectUrl.includes("/blocked")), true);
+  assert.equal(rules.rules.some((rule) => rule.domain === "reddit.com" && rule.redirectUrl.includes("/blocked")), false);
   assert.equal(rules.rules.some((rule) => rule.domain === "youtu.be"), true);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||reddit.com/r/all"), true);
 }
 
 {

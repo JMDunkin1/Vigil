@@ -11,8 +11,8 @@ import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-
     "2026-05-25": {
       totalSeconds: 3600,
       apps: { Codex: 3000 },
-      sites: { "reddit.com": 600 },
-      opens: { apps: {}, sites: { "reddit.com": 2 } }
+      sites: { "youtube.com": 600 },
+      opens: { apps: {}, sites: { "youtube.com": 2 } }
     },
     "2026-05-26": {
       totalSeconds: 5400,
@@ -23,13 +23,13 @@ import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-
     "2026-05-20": {
       totalSeconds: 3600,
       apps: { Codex: 2400 },
-      sites: { "reddit.com": 1200 },
-      opens: { apps: {}, sites: { "reddit.com": 3 } }
+      sites: { "youtube.com": 1200 },
+      opens: { apps: {}, sites: { "youtube.com": 3 } }
     }
   });
   const report = focusReport(usage, state, new Date("2026-05-28T14:00:00-04:00"));
   assert.equal(report.currentWeek.totals.trackedDays, 2);
-  assert.equal(report.topCulprits[0].name, "reddit.com");
+  assert.equal(report.topCulprits[0].name, "youtube.com");
   assert.equal(report.comparison.distractingPercentDelta, -50);
   assert.equal(report.milestones.some((item) => item.id === "clean-tracked-day" && item.achieved), true);
 }

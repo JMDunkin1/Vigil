@@ -27,7 +27,9 @@ assert.equal(setup.rule.id, "porn-recovery-risk-pause");
 assert.equal(setup.rule.frictionLevel, "strict");
 assert.equal(setup.rule.enabled, true);
 assert.ok(setup.rule.sites.includes("onlyfans.com"));
+assert.equal(setup.rule.sites.includes("reddit.com"), false);
 assert.ok((setup.rule.urlPatterns || []).includes("porn"));
+assert.ok((setup.rule.urlPatterns || []).includes("reddit.com/r/gonewild"));
 assert.equal(setup.behaviors.some((behavior) => behavior.id === "daily-recovery-check-in"), true);
 assert.equal(setup.behaviors.some((behavior) => behavior.id === "urge-replacement-loop"), true);
 

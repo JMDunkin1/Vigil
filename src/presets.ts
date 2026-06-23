@@ -3,7 +3,7 @@ export const DISTRACTION_PRESETS = [
     id: "social",
     label: "Social",
     apps: ["Discord"],
-    sites: ["youtube.com", "reddit.com", "x.com", "instagram.com", "tiktok.com", "facebook.com", "threads.net", "snapchat.com", "pinterest.com", "discord.com"]
+    sites: ["youtube.com", "x.com", "instagram.com", "tiktok.com", "facebook.com", "threads.net", "snapchat.com", "pinterest.com", "discord.com"]
   },
   {
     id: "video",
@@ -33,7 +33,7 @@ export const DISTRACTION_PRESETS = [
     id: "rehab",
     label: "Rehab",
     apps: ["Discord", "Steam", "Epic Games Launcher", "Battle.net", "Music", "TV", "Podcasts", "News", "Photos"],
-    sites: ["youtube.com", "reddit.com", "x.com", "instagram.com", "tiktok.com", "facebook.com", "netflix.com", "twitch.tv", "threads.net", "snapchat.com", "pinterest.com"]
+    sites: ["youtube.com", "x.com", "instagram.com", "tiktok.com", "facebook.com", "netflix.com", "twitch.tv", "threads.net", "snapchat.com", "pinterest.com"]
   }
 ];
 

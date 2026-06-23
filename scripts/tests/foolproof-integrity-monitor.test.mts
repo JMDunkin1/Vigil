@@ -292,7 +292,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   const currentPolicy = mustPolicy(activePolicy(state, now));
   assert.equal(lockdownPolicy.kind, "integrity");
   assert.equal(currentPolicy.kind, "integrity");
-  assert.equal(shouldBlockSite(currentPolicy.profile, "reddit.com"), true);
+  assert.equal(shouldBlockSite(currentPolicy.profile, "youtube.com"), true);
   assert.equal(shouldBlockAppForPolicy(state, currentPolicy, "App Store"), true);
   assert.equal(protectedEditBlockers(state, { kind: "settings" }, now).some((item) => item.kind === "integrity"), true);
   assert.equal(sweepBlockedApps(state, {}, ["App Store"], now).map((item) => item.app).includes("App Store"), true);

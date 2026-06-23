@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
-import { defaultState } from "../../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, defaultState } from "../../src/defaults.js";
 import { buildBackupExport, backupExportFilename } from "../../src/server/backupRoutes.js";
 import { externalNetworkBlockSummary } from "../../src/externalNetworkBlock.js";
 import { hardeningActions, hostsDetail, launchAgentDetail } from "../../src/server/hardeningSummary.js";
 import { contentType, resolvePublicPath, securityHeaders } from "../../src/server/http.js";
 import { createLocalScriptRunner, shellQuote, appleScriptString } from "../../src/server/localScripts.js";
 import { commitmentLockError, escapeHtml, safeScriptJson } from "../../src/server/pages.js";
-import type { ActivePolicy } from "../../src/types.js";
+import { previewManualSession } from "../../src/server/sessionRoutes.js";
+import type { ActivePolicy, Session } from "../../src/types.js";
 
 const publicDir = join(process.cwd(), "public");
 
@@ -37,6 +38,49 @@ assert.equal(contentType("unknown.bin"), "application/octet-stream");
 assert.equal(securityHeaders()["X-Content-Type-Options"], "nosniff");
 assert.match(securityHeaders()["Content-Security-Policy"], /frame-ancestors 'none'/);
 assert.equal(backupExportFilename(new Date("2026-06-04T12:34:56.789Z")), "vigil-backup-2026-06-04T12-34-56Z.json");
+
+const previewState = defaultState();
+previewState.deviceControls.ios.enabled = true;
+const preview = previewManualSession(previewState, {
+  title: "Full Brick",
+  mode: "brick",
+  profileId: BRICK_MODE_PROFILE_ID,
+  durationMinutes: 90,
+  lockLevel: "deep",
+  commitmentLock: true,
+  deviceTargets: ["computer", "phone"]
+}, new Date("2026-06-04T12:00:00.000Z"));
+assert.equal(preview.title, "Full Brick");
+assert.equal(preview.deviceLabel, "Computer + iPhone");
+assert.equal(preview.profileMode, "allowlist");
+assert.equal(preview.commitmentLock, true);
+assert.equal(preview.phone.targeted, true);
+assert.equal(preview.phone.ready, true);
+assert.ok(preview.allowedApps.includes("Mail"));
+assert.ok(preview.protections.includes("Browser settings and extensions controls"));
+assert.equal(previewState.activeSession, null);
+
+const conflictState = defaultState();
+const existingSession: Session = {
+  id: "active",
+  title: "Existing",
+  mode: "focus",
+  profileId: "default",
+  lockLevel: "light",
+  startedAt: "2026-06-04T11:00:00.000Z",
+  endsAt: "2026-06-04T13:00:00.000Z",
+  canEndEarly: true,
+  source: "manual",
+  deviceTargets: ["computer"]
+};
+conflictState.activeSessions = { computer: existingSession, phone: null };
+conflictState.activeSession = existingSession;
+const conflictPreview = previewManualSession(conflictState, {
+  profileId: "default",
+  durationMinutes: 25,
+  deviceTargets: ["computer"]
+}, new Date("2026-06-04T12:00:00.000Z"));
+assert.deepEqual(conflictPreview.conflicts, ["computer"]);
 
 assert.equal(escapeHtml(`<script>"&'</script>`), "&lt;script&gt;&quot;&amp;&#39;&lt;/script&gt;");
 assert.equal(safeScriptJson({ value: "</script>&" }).includes("</script>"), false);

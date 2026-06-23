@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { activeAppLockUnlockForSample } from "./appLocks.js";
-import { DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_SHORT_FORM_URL_PATTERNS, PORT } from "./defaults.js";
+import { DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, PORT } from "./defaults.js";
 import { truthy } from "./booleans.js";
 import {
   appMatchesAppTargets,
@@ -53,7 +53,6 @@ const RECOVERY_SETUP_RULE_ID = "porn-recovery-risk-pause";
 const RECOVERY_CHECK_IN_BEHAVIOR_ID = "daily-recovery-check-in";
 const RECOVERY_REPLACEMENT_BEHAVIOR_ID = "urge-replacement-loop";
 const RECOVERY_RISK_SITES = [
-  "reddit.com",
   "x.com",
   "twitter.com",
   "tumblr.com",
@@ -69,6 +68,7 @@ const RECOVERY_RISK_URL_PATTERNS = [
   "gonewild",
   "onlyfans",
   "fansly",
+  ...DEFAULT_EXPLICIT_URL_PATTERNS,
   ...DEFAULT_SHORT_FORM_URL_PATTERNS
 ];
 const RECOVERY_DEFAULT_VALUES = ["Self-respect", "Sleep", "Real relationships", "Deep work"];
@@ -141,6 +141,21 @@ export function normalizeIntentionalUseRule(body: IntentionalBody = {}, existing
   if (id === "short-form-intent-template" && sites.includes("youtube.com") && !urlPatterns.some((pattern) => normalizeHost(pattern) === "youtube.com" && pattern.includes("/shorts"))) {
     sites = sites.filter((site) => site !== "youtube.com");
     urlPatterns = [...urlPatterns, "youtube.com/shorts", "m.youtube.com/shorts"];
+  }
+  if (id === "short-form-intent-template") {
+    sites = sites.filter((site) => !isRedditSiteTarget(site));
+    urlPatterns = uniqueTargets([
+      ...urlPatterns.filter((pattern) => !isRedditWholeSitePattern(pattern)),
+      ...DEFAULT_SHORT_FORM_URL_PATTERNS.filter(isRedditFeedPattern)
+    ]);
+  }
+  if (id === RECOVERY_SETUP_RULE_ID) {
+    sites = sites.filter((site) => !isRedditSiteTarget(site));
+    urlPatterns = uniqueTargets([
+      ...urlPatterns.filter((pattern) => !isRedditWholeSitePattern(pattern)),
+      ...DEFAULT_EXPLICIT_URL_PATTERNS,
+      ...DEFAULT_SHORT_FORM_URL_PATTERNS.filter(isRedditFeedPattern)
+    ]);
   }
   return {
     id,
@@ -1239,6 +1254,33 @@ function isVigilUrl(value: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function isRedditSiteTarget(value: unknown): boolean {
+  return ["reddit.com", "redd.it"].includes(normalizeHost(value));
+}
+
+function isRedditWholeSitePattern(value: unknown): boolean {
+  const pattern = normalizeUrlTarget(value);
+  return pattern === "reddit.com" || pattern === "redd.it";
+}
+
+function isRedditFeedPattern(value: unknown): boolean {
+  const pattern = normalizeUrlTarget(value);
+  return pattern === "reddit.com/r/all"
+    || pattern === "reddit.com/r/popular"
+    || pattern.startsWith("reddit.com/r/all/")
+    || pattern.startsWith("reddit.com/r/popular/");
+}
+
+function normalizeUrlTarget(value: unknown): string {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\s+/g, "")
+    .replace(/\/+$/, "");
 }
 
 function normalizeClock(value: unknown): string {
