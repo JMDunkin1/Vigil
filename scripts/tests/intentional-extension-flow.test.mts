@@ -8,6 +8,25 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   const state = defaultState();
   const usage = {};
   state.settings.activeProfileId = SOFT_BLOCK_PROFILE_ID;
+  const normalReddit = evaluateExtensionCheck(state, usage, {
+    url: "https://www.reddit.com/r/learnprogramming/comments/demo",
+    previousUrl: "",
+    event: "navigation",
+    extensionVersion: REQUIRED_EXTENSION_VERSION
+  }, now);
+  assert.equal(normalReddit.paused, false);
+  assert.equal(normalReddit.blocked, false);
+
+  const popularReddit = evaluateExtensionCheck(state, usage, {
+    url: "https://www.reddit.com/r/popular",
+    previousUrl: "",
+    event: "navigation",
+    extensionVersion: REQUIRED_EXTENSION_VERSION
+  }, now);
+  assert.equal(popularReddit.paused, true);
+  assert.equal(popularReddit.blocked, false);
+  state.intentionalUse.pauses = [];
+
   const watch = evaluateExtensionCheck(state, usage, {
     url: "https://www.youtube.com/watch?v=abc",
     previousUrl: "",

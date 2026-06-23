@@ -9,6 +9,7 @@ assert.equal(new Set(routeKeys).size, routeKeys.length);
 assert.equal(matchApiRoute("GET", "/api/state")?.id, "state");
 assert.equal(matchApiRoute("GET", "/api/extension/pairing")?.id, "extensionPairing");
 assert.equal(matchApiRoute("GET", "/api/backup/export")?.id, "backupExport");
+assert.equal(matchApiRoute("POST", "/api/session/preview")?.id, "sessionPreview");
 assert.equal(matchApiRoute("POST", "/api/session/start")?.domain, "sessions");
 assert.equal(matchApiRoute("POST", "/api/hardening/safari-filter/apply")?.id, "safariFilterApply");
 assert.equal(matchApiRoute("DELETE", "/api/schedule/work")?.id, "scheduleDelete");
@@ -35,7 +36,7 @@ const domains = new Map();
 for (const route of API_ROUTES) {
   domains.set(route.domain, (domains.get(route.domain) || 0) + 1);
 }
-assert.equal(domains.get("sessions"), 5);
+assert.equal(domains.get("sessions"), 6);
 assert.equal(domains.get("backup"), 1);
 assert.equal(domains.get("devices"), 6);
 assert.equal(domains.get("grayscale"), 3);

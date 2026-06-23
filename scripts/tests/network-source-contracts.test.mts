@@ -121,6 +121,7 @@ last exit code = 0
       ...state.profiles[0],
       mode: "blocklist",
       blockedSites: [],
+      hostsUrlPatternBlocking: true,
       blockedUrlPatterns: [
         "example.com/games",
         "https://www.news.example/path?q=1",

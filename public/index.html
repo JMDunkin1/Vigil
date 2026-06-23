@@ -131,6 +131,21 @@
             <button id="startPanicLock" class="danger panic-button" type="button">Panic Lock</button>
             <span id="panicStatus" class="tiny-status">3 min full lockout</span>
           </div>
+          <div id="lockPreview" class="lock-preview hidden" aria-live="polite">
+            <div class="lock-preview-head">
+              <div>
+                <p class="eyebrow">Pre-lock Preview</p>
+                <strong id="lockPreviewTitle">Manual Lock</strong>
+                <span id="lockPreviewMeta">--</span>
+              </div>
+              <button id="cancelLockPreview" class="ghost compact" type="button">Cancel</button>
+            </div>
+            <div id="lockPreviewGrid" class="lock-preview-grid"></div>
+            <div class="lock-preview-actions">
+              <span id="lockPreviewStatus" class="tiny-status">Review before starting</span>
+              <button id="confirmLockPreview" class="primary compact" type="button" disabled>Start</button>
+            </div>
+          </div>
           <details class="advanced-line">
             <summary>Timing options</summary>
             <div class="advanced-grid">

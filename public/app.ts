@@ -14,7 +14,7 @@ import { createReportView } from "./report-view.js";
 import { renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
 import { $, $$, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
-import type { ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, InterventionSummary, MonitorSummary, ProgressSummary, ReportSummary, Schedule, SessionEndResponse, StateEvent, UiState, UnknownRecord, UsageSummary } from "./app-model.js";
+import type { ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, InterventionSummary, MonitorSummary, ProgressSummary, ReportSummary, Schedule, SessionEndResponse, SessionPreviewResponse, SessionPreviewSummary, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary } from "./app-model.js";
 
 const state: UiState = {
   data: null,
@@ -34,8 +34,12 @@ const state: UiState = {
 
 const BRICK_MODE_PROFILE_ID = "brick-mode";
 const SOFT_BLOCK_PROFILE_ID = "soft-block";
+let pendingLockStart: UnknownRecord | null = null;
 const deviceTargets = createDeviceTargetController({
-  onChange: () => renderDeviceTargetControls(state.data?.state || {})
+  onChange: () => {
+    renderDeviceTargetControls(state.data?.state || {});
+    hideLockPreview();
+  }
 });
 const forms = createFormController({
   $,
@@ -93,10 +97,12 @@ function boot() {
     refresh,
     toast,
     selectedDeviceTargets,
+    previewSessionStart,
     startNormalMode,
     startPresetSession,
     renderSosPlan: lifeLogView.renderSosPlan
   });
+  bindLockPreview();
   void refresh();
   setInterval(() => {
     void refresh();
@@ -124,6 +130,50 @@ function deviceTargetsText(targets: readonly string[] = []): string {
   return "Computer";
 }
 
+function modeLabel(value: unknown): string {
+  const mode = String(value || "focus");
+  if (mode === "brick") return "Brick";
+  if (mode === "sleep") return "Sleep";
+  if (mode === "rehab") return "Rehab";
+  return "Focus";
+}
+
+function lockLevelLabel(value: unknown): string {
+  return value === "light" ? "Soft" : "Strict";
+}
+
+function previewItem(title: string, detail: string): HTMLDivElement {
+  const item = document.createElement("div");
+  item.className = "lock-preview-item";
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  const text = document.createElement("span");
+  text.textContent = detail;
+  item.append(heading, text);
+  return item;
+}
+
+function listPreview(values: readonly unknown[] = [], emptyText: string): string {
+  const items = values.map((value) => String(value || "").trim()).filter(Boolean);
+  if (!items.length) return emptyText;
+  const visible = items.slice(0, 5);
+  const suffix = items.length > visible.length ? ` +${items.length - visible.length} more` : "";
+  return `${visible.join(", ")}${suffix}`;
+}
+
+function allowlistText(values: readonly unknown[] = [], label: string): string {
+  const items = values.map((value) => String(value || "").trim()).filter(Boolean);
+  if (!items.length) return `Allowlist mode: blocks anything outside the saved ${label}.`;
+  return `Allowlist mode: ${listPreview(items, "")}; everything else blocked.`;
+}
+
+function phonePreviewText(phone: SessionPreviewSummary["phone"]): string {
+  if (!phone?.targeted) return phone?.detail || "Not targeted.";
+  const counts = `${phone.appCount || 0} app bundle${phone.appCount === 1 ? "" : "s"} / ${phone.siteCount || 0} ${phone.mode === "allowlist" ? "allowed URL" : "blocked URL"}${phone.siteCount === 1 ? "" : "s"}`;
+  const blockers = phone.blockers?.length ? ` Need: ${listPreview(phone.blockers, "")}` : "";
+  return `${phone.status || "iPhone"}: ${counts}. ${phone.detail || ""}${blockers}`.trim();
+}
+
 async function startNormalMode() {
   const targets = selectedDeviceTargets();
   const status = $("#brickStatus");
@@ -147,38 +197,125 @@ async function startPresetSession(kind: "soft" | "brick") {
     return;
   }
 
-  const button = kind === "brick" ? $("#startFullBrick") : $("#startSoftBlock");
   const status = $("#brickStatus");
-  button.disabled = true;
+  status.textContent = "Reviewing...";
+  const body = kind === "brick"
+    ? {
+        title: "Full Brick",
+        mode: "brick",
+        profileId: BRICK_MODE_PROFILE_ID,
+        durationMinutes: $("#brickDuration").value,
+        lockLevel: "deep",
+        commitmentLock: true,
+        deviceTargets: selectedDeviceTargets()
+      }
+    : {
+        title: "Soft Block",
+        mode: "focus",
+        profileId: SOFT_BLOCK_PROFILE_ID,
+        durationMinutes: $("#brickDuration").value,
+        lockLevel: "light",
+        commitmentLock: false,
+        deviceTargets: selectedDeviceTargets()
+      };
+  await previewSessionStart(body);
+}
+
+function bindLockPreview(): void {
+  $("#confirmLockPreview").addEventListener("click", () => {
+    void confirmLockPreview();
+  });
+  $("#cancelLockPreview").addEventListener("click", () => hideLockPreview());
+}
+
+async function previewSessionStart(body: UnknownRecord): Promise<void> {
+  pendingLockStart = null;
+  const panel = $("#lockPreview");
+  const status = $("#lockPreviewStatus");
+  const confirm = $("#confirmLockPreview");
+  panel.classList.remove("hidden");
+  status.textContent = "Preparing preview...";
+  confirm.disabled = true;
+  try {
+    const response = await post<SessionPreviewResponse>("/api/session/preview", body);
+    pendingLockStart = { ...body };
+    renderLockPreview(response.preview);
+    $("#brickStatus").textContent = "Preview ready";
+  } catch (error) {
+    hideLockPreview(false);
+    $("#brickStatus").textContent = errorMessage(error);
+    toast(errorMessage(error));
+  }
+}
+
+function renderLockPreview(preview: SessionPreviewSummary): void {
+  $("#lockPreviewTitle").textContent = preview.title || "Manual Lock";
+  $("#lockPreviewMeta").textContent = [
+    modeLabel(preview.mode),
+    preview.profileName || "Profile",
+    lockLevelLabel(preview.lockLevel),
+    preview.deviceLabel || deviceTargetsText(preview.deviceTargets || []),
+    formatDuration(Number(preview.durationMinutes || 0) * 60)
+  ].filter(Boolean).join(" | ");
+
+  const grid = $("#lockPreviewGrid");
+  grid.replaceChildren();
+  const profileMode = preview.profileMode === "allowlist" ? "Allowlist" : "Blocklist";
+  grid.append(
+    previewItem("Apps", profileMode === "Allowlist"
+      ? allowlistText(preview.allowedApps, "allowed apps")
+      : listPreview(preview.blockedApps, "No app blocks in this profile")),
+    previewItem("Sites", profileMode === "Allowlist"
+      ? allowlistText(preview.allowedSites, "allowed sites")
+      : listPreview(preview.blockedSites, "No site blocks in this profile")),
+    previewItem("URL/path patterns", listPreview(preview.blockedUrlPatterns, "No URL/path patterns")),
+    previewItem("Browser/control", listPreview(preview.protections, "No extra browser controls inferred")),
+    previewItem("iPhone", phonePreviewText(preview.phone))
+  );
+
+  if (preview.commitmentLock) {
+    grid.append(previewItem("Commitment", "Emergency unlocks disabled for this lock."));
+  } else if (preview.canEndEarly) {
+    grid.append(previewItem("End early", "Soft lock can be ended from this screen."));
+  }
+
+  if (preview.conflicts?.length) {
+    grid.append(previewItem("Already active", `${deviceTargetsText(preview.conflicts)} already has a session.`));
+  }
+
+  const blocked = Boolean(preview.conflicts?.length);
+  $("#confirmLockPreview").disabled = blocked;
+  $("#lockPreviewStatus").textContent = blocked ? "Resolve the active target before starting." : "Review before starting.";
+}
+
+async function confirmLockPreview(): Promise<void> {
+  if (!pendingLockStart) return;
+  const confirm = $("#confirmLockPreview");
+  const status = $("#lockPreviewStatus");
+  confirm.disabled = true;
   status.textContent = "Starting...";
   try {
-    const body = kind === "brick"
-      ? {
-          title: "Full Brick",
-          mode: "brick",
-          profileId: BRICK_MODE_PROFILE_ID,
-          durationMinutes: $("#brickDuration").value,
-          lockLevel: "deep",
-          commitmentLock: true,
-          deviceTargets: selectedDeviceTargets()
-        }
-      : {
-          title: "Soft Block",
-          mode: "focus",
-          profileId: SOFT_BLOCK_PROFILE_ID,
-          durationMinutes: $("#brickDuration").value,
-          lockLevel: "light",
-          commitmentLock: false,
-          deviceTargets: selectedDeviceTargets()
-        };
-    await post("/api/session/start", body);
-    status.textContent = kind === "brick" ? "Full Brick active" : "Soft Block active";
-    toast(`${kind === "brick" ? "Full Brick" : "Soft Block"} started for ${selectedDeviceLabel()}`);
+    const response = await post<SessionStartResponse>("/api/session/start", pendingLockStart);
+    const title = response.session?.title || String(pendingLockStart.title || "Lock");
+    toast(`${title} started for ${selectedDeviceLabel()}`);
+    $("#brickStatus").textContent = `${title} active`;
+    hideLockPreview(false);
+    await refresh();
   } catch (error) {
     status.textContent = errorMessage(error);
     toast(errorMessage(error));
+    confirm.disabled = false;
   }
-  await refresh();
+}
+
+function hideLockPreview(clearPending = true): void {
+  const panel = document.querySelector("#lockPreview");
+  if (!panel) return;
+  panel.classList.add("hidden");
+  $("#lockPreviewGrid").replaceChildren();
+  $("#lockPreviewStatus").textContent = "Review before starting";
+  $("#confirmLockPreview").disabled = true;
+  if (clearPending) pendingLockStart = null;
 }
 
 async function refresh() {

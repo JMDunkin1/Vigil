@@ -43,12 +43,17 @@ const now = new Date("2026-06-04T15:30:00.000Z");
   startSession(state, "default", ["phone"]);
 
   const computer = explainRuleDecision(state, {}, {
-    url: "https://reddit.com/",
+    url: "https://youtube.com/",
     device: "computer",
     at: now
   });
   const phone = explainRuleDecision(state, {}, {
-    url: "https://reddit.com/",
+    url: "https://youtube.com/",
+    device: "phone",
+    at: now
+  });
+  const phoneReddit = explainRuleDecision(state, {}, {
+    url: "https://reddit.com/r/learnprogramming/comments/demo",
     device: "phone",
     at: now
   });
@@ -57,6 +62,7 @@ const now = new Date("2026-06-04T15:30:00.000Z");
   assert.equal(phone.blocked, true);
   assert.equal(phone.policy?.kind, "manual");
   assert.equal(phone.target.device, "phone");
+  assert.equal(phoneReddit.allowed, true);
 }
 
 {
