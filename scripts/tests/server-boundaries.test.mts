@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { Readable } from "node:stream";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
 import { BRICK_MODE_PROFILE_ID, defaultState } from "../../src/defaults.js";
 import { buildBackupExport, backupExportFilename } from "../../src/server/backupRoutes.js";
@@ -7,7 +9,7 @@ import { hardeningActions, hostsDetail, launchAgentDetail } from "../../src/serv
 import { contentType, resolvePublicPath, securityHeaders } from "../../src/server/http.js";
 import { createLocalScriptRunner, shellQuote, appleScriptString } from "../../src/server/localScripts.js";
 import { commitmentLockError, escapeHtml, safeScriptJson } from "../../src/server/pages.js";
-import { previewManualSession } from "../../src/server/sessionRoutes.js";
+import { handleSessionApiRoute, previewManualSession } from "../../src/server/sessionRoutes.js";
 import type { ActivePolicy, Session } from "../../src/types.js";
 
 const publicDir = join(process.cwd(), "public");
@@ -81,6 +83,72 @@ const conflictPreview = previewManualSession(conflictState, {
   deviceTargets: ["computer"]
 }, new Date("2026-06-04T12:00:00.000Z"));
 assert.deepEqual(conflictPreview.conflicts, ["computer"]);
+
+{
+  const routeState = defaultState();
+  let strictPreflightCalls = 0;
+  await assert.rejects(
+    handleSessionApiRoute(
+      mockSessionRequest("POST", "/api/session/preview", {
+        title: "Full Brick",
+        mode: "brick",
+        profileId: BRICK_MODE_PROFILE_ID,
+        durationMinutes: 90,
+        lockLevel: "deep",
+        commitmentLock: true,
+        deviceTargets: ["computer"]
+      }),
+      mockSessionResponse(),
+      {
+        state: routeState,
+        recordIosMdmPolicyQueue: () => null,
+        scheduleImmediateSessionEnforcement: () => {},
+        assertStrictLockAllowed: async () => {
+          strictPreflightCalls += 1;
+          throw new Error("strict preflight failed");
+        }
+      }
+    ),
+    /strict preflight failed/
+  );
+  assert.equal(strictPreflightCalls, 1);
+}
+
+{
+  const routeState = defaultState();
+  const activeRouteSession: Session = {
+    ...existingSession,
+    startedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  };
+  routeState.activeSessions = { computer: activeRouteSession, phone: null };
+  routeState.activeSession = activeRouteSession;
+  let strictPreflightCalls = 0;
+  const response = mockSessionResponse();
+  const handled = await handleSessionApiRoute(
+    mockSessionRequest("POST", "/api/session/preview", {
+      profileId: "default",
+      durationMinutes: 25,
+      lockLevel: "deep",
+      deviceTargets: ["computer"]
+    }),
+    response,
+    {
+      state: routeState,
+      recordIosMdmPolicyQueue: () => null,
+      scheduleImmediateSessionEnforcement: () => {},
+      assertStrictLockAllowed: async () => {
+        strictPreflightCalls += 1;
+      }
+    }
+  );
+  const body = recordValue(JSON.parse(response.bodyText), "preview response");
+  const previewBody = recordValue(body.preview, "preview response preview");
+  assert.equal(handled, true);
+  assert.equal(response.statusCodeValue, 200);
+  assert.deepEqual(previewBody.conflicts, ["computer"]);
+  assert.equal(strictPreflightCalls, 0);
+}
 
 assert.equal(escapeHtml(`<script>"&'</script>`), "&lt;script&gt;&quot;&amp;&#39;&lt;/script&gt;");
 assert.equal(safeScriptJson({ value: "</script>&" }).includes("</script>"), false);
@@ -250,3 +318,33 @@ assert.match(privilegedCommand, /^sudo /);
 assert.match(privilegedCommand, /ELECTRON_RUN_AS_NODE='1'/);
 assert.match(privilegedCommand, /SENTINEL_DATA_DIR='\/tmp\/sentinel state'/);
 assert.match(privilegedCommand, /app\.asar\.unpacked\/dist\/runtime\/scripts\/apply-hosts\.mjs/);
+
+function mockSessionRequest(method: string, url: string, body: object): IncomingMessage {
+  const stream = Readable.from([JSON.stringify(body)]);
+  return Object.assign(stream, { method, url, headers: { "content-type": "application/json" } }) as IncomingMessage;
+}
+
+interface MockSessionResponse {
+  statusCodeValue?: number;
+  bodyText: string;
+  headersValue: Record<string, unknown>;
+  writeHead(statusCode: number, headers?: Record<string, unknown>): MockSessionResponse;
+  end(chunk?: unknown): MockSessionResponse;
+}
+
+function mockSessionResponse(): ServerResponse & MockSessionResponse {
+  const target: MockSessionResponse = {
+    bodyText: "",
+    headersValue: {},
+    writeHead(statusCode: number, headers: Record<string, unknown> = {}) {
+      this.statusCodeValue = statusCode;
+      this.headersValue = headers;
+      return this;
+    },
+    end(chunk?: unknown) {
+      this.bodyText += chunk ? String(chunk) : "";
+      return this;
+    }
+  };
+  return target as ServerResponse & MockSessionResponse;
+}

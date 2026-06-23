@@ -28,6 +28,7 @@ let mainWindow: BrowserWindow | null = null;
 let ownedServer: SentinelServerHandle | null = null;
 let tray: Tray | null = null;
 let trayRefreshTimer: ReturnType<typeof setInterval> | null = null;
+let currentAppUrl: string | null = null;
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -41,16 +42,23 @@ if (app.isPackaged && !process.env.SENTINEL_DATA_DIR) {
 }
 
 app.on("second-instance", () => {
+  if (!mainWindow && currentAppUrl) {
+    showSentinelWindow(currentAppUrl);
+    return;
+  }
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
   mainWindow.focus();
 });
 
 void app.whenReady().then(async () => {
+  configureMenuBarResidency();
   const appUrl = await ensureSentinelServer();
+  currentAppUrl = appUrl;
   installMenu(appUrl);
   installMenuBarCompanion(appUrl);
-  showSentinelWindow(appUrl);
+  if (shouldShowWindowOnLaunch()) showSentinelWindow(appUrl);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) showSentinelWindow(appUrl);
@@ -98,6 +106,20 @@ function createWindow(appUrl: string): void {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+
+function configureMenuBarResidency(): void {
+  if (process.platform !== "darwin" || !app.isPackaged) return;
+  app.dock?.hide();
+  app.setLoginItemSettings({
+    openAtLogin: true,
+    openAsHidden: true
+  });
+}
+
+function shouldShowWindowOnLaunch(): boolean {
+  if (process.platform !== "darwin" || !app.isPackaged) return true;
+  return !app.getLoginItemSettings().wasOpenedAtLogin;
 }
 
 async function ensureSentinelServer(): Promise<string> {
