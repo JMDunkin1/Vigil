@@ -4,30 +4,21 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { readLayoutPaths } from "./ios-backup-layout.mjs";
+
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const DATA_DIR = process.env.VIGIL_DATA_DIR || join(ROOT, "data");
 const TOOL_ROOT = join(DATA_DIR, "ios-tools");
 const VENV_DIR = join(TOOL_ROOT, "pymobiledevice3-venv");
 const PYMOBILEDEVICE3_PATH = process.env.PYMOBILEDEVICE3 || join(VENV_DIR, "bin", "pymobiledevice3");
+const PYIOSBACKUP_PYTHON_PATH = process.env.PYIOSBACKUP_PYTHON || join(VENV_DIR, "bin", "python");
 const CHECKPOINT_ROOT = join(DATA_DIR, "ios-checkpoints");
 const INSTALL_TIMEOUT_MS = 120_000;
 const BACKUP_TIMEOUT_MS = 60 * 60 * 1000;
 const QUICK_TIMEOUT_MS = 20_000;
 const GIB = 1024 ** 3;
 const DEFAULT_MIN_FREE_GIB = 80;
-const LAYOUT_QUERY = `
-SELECT domain || '/' || relativePath
-FROM Files
-WHERE domain = 'HomeDomain'
-AND (
-  lower(relativePath) LIKE '%iconstate%'
-  OR lower(relativePath) LIKE '%homescreen%'
-  OR lower(relativePath) LIKE '%springboard%'
-  OR lower(relativePath) LIKE '%applicationstate%'
-)
-ORDER BY relativePath;
-`;
 
 const options = parseArgs(process.argv.slice(2));
 await ensurePymobiledevice3();
@@ -40,7 +31,12 @@ await assertFreeSpace(checkpointRoot, minFreeBytes);
 await createBackup(udid, checkpointRoot, options.password);
 const manifestPath = join(checkpointRoot, udid, "Manifest.db");
 await access(manifestPath);
-const layoutPaths = await readLayoutPaths(manifestPath);
+const layoutPaths = await readLayoutPaths({
+  manifestPath,
+  password: options.password,
+  pythonPath: PYIOSBACKUP_PYTHON_PATH,
+  timeoutMs: QUICK_TIMEOUT_MS
+});
 if (!layoutPaths.length) {
   throw new Error([
     "Local iPhone checkpoint completed, but no SpringBoard/Home Screen layout records were found in Manifest.db.",
@@ -148,14 +144,6 @@ async function createBackup(udid, checkpointRoot, password) {
   if (password) args.push("--password", password);
   args.push(checkpointRoot);
   await runPymobiledevice3(args, BACKUP_TIMEOUT_MS);
-}
-
-async function readLayoutPaths(manifestPath) {
-  const { stdout } = await execFileAsync("/usr/bin/sqlite3", [manifestPath, LAYOUT_QUERY], {
-    timeout: QUICK_TIMEOUT_MS,
-    maxBuffer: 1024 * 1024
-  });
-  return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
 async function runPymobiledevice3(args, timeout) {

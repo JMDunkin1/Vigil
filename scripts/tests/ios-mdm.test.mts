@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { defaultState, SOFT_BLOCK_PROFILE_ID } from "../../src/defaults.js";
-import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../../src/iosMdm.js";
+import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDoctor, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../../src/iosMdm.js";
 import { buildIosConfigurationProfile } from "../../src/iosProfiles.js";
 import { parsePlist, plistData, toPlist } from "../../src/plist.js";
 import { profileById } from "../../src/policy.js";
@@ -70,37 +70,46 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.equal(recordValue(roundTrip.Token, "plist token").__plistData, Buffer.from("hello").toString("base64"));
 
   const state = defaultState();
+  const unconfiguredDoctor = iosMdmDoctor(state, now);
+  assert.ok(unconfiguredDoctor.blockers.map((item) => item.code).includes("missing-push-certificate-payload"));
   state.deviceControls.ios.enabled = true;
   state.deviceControls.ios.mdm = {
     ...state.deviceControls.ios.mdm,
     enabled: true,
     publicBaseUrl: "https://mdm.example.test",
-    topic: "com.apple.mgmt.Example",
+    topic: "com.apple.mgmt.vigil-test",
     identityCertificateUuid: "11111111-2222-3333-4444-555555555555",
-    identityCertificatePayloadBase64: Buffer.from("identity").toString("base64")
+    identityCertificatePayloadBase64: pkcs12ShapeFixture()
   };
   const summary = iosMdmSummary(state, now);
   assert.equal(summary.enrollmentReady, true);
   assert.equal(summary.ready, false);
   assert.equal(summary.status, "queue-only");
   assert.match(summary.enrollmentUrl, /^https:\/\/mdm\.example\.test\/mdm\/enroll\.mobileconfig\?token=/);
+  const doctor = iosMdmDoctor(state, now);
+  assert.equal(doctor.staticProfile.status, "supervised-profile-ready");
+  assert.equal(doctor.remoteMdm.enrollmentUrl, summary.enrollmentUrl);
+  assert.deepEqual(doctor.blockers.map((item) => item.code), ["missing-push-certificate-payload"]);
 
-  state.deviceControls.ios.mdm.pushCertificatePayloadBase64 = Buffer.from("push-cert").toString("base64");
+  state.deviceControls.ios.mdm.pushCertificatePayloadBase64 = pkcs12ShapeFixture();
   const pushReadySummary = iosMdmSummary(state, now);
   assert.equal(pushReadySummary.ready, true);
   assert.equal(pushReadySummary.pushSupported, true);
+  const readyDoctor = iosMdmDoctor(state, now);
+  assert.equal(readyDoctor.status, "ready");
+  assert.equal(readyDoctor.warnings.some((item) => item.code === "apple-credentials-not-locally-verifiable"), true);
 
   const enrollment = buildIosMdmEnrollmentProfile(state);
   const profileToken = enrollment.match(/token=([^<]+)/)?.[1] || "";
   assert.equal(authorizeIosMdmRequest(state, new URL(`https://mdm.example.test/mdm/checkin?token=${profileToken}`)), true);
   assert.match(enrollment, /com\.apple\.mdm/);
   assert.match(enrollment, /https:\/\/mdm\.example\.test\/mdm\/connect/);
-  assert.match(enrollment, /com\.apple\.mgmt\.Example/);
+  assert.match(enrollment, /com\.apple\.mgmt\.vigil-test/);
 
   const checkIn = handleIosMdmCheckIn(state, {
     MessageType: "TokenUpdate",
     UDID: "iphone-udid-1",
-    Topic: "com.apple.mgmt.Example",
+    Topic: "com.apple.mgmt.vigil-test",
     PushMagic: "push-magic",
     Token: plistData(Buffer.from("push-token"))
   }, now);
@@ -113,7 +122,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   const pushRequest = buildIosMdmPushRequest(mdmSettings, enrolledDevice);
   assert.equal(pushRequest.endpoint, "https://api.push.apple.com");
   assert.equal(pushRequest.path, `/3/device/${Buffer.from("push-token").toString("hex")}`);
-  assert.equal(pushRequest.headers["apns-topic"], "com.apple.mgmt.Example");
+  assert.equal(pushRequest.headers["apns-topic"], "com.apple.mgmt.vigil-test");
   assert.equal(pushRequest.headers["apns-push-type"], "mdm");
   assert.equal(pushRequest.payload, JSON.stringify({ mdm: "push-magic" }));
 
@@ -150,7 +159,11 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   state.deviceControls.ios.enabled = false;
   const removePolicy = queueIosMdmPolicyRefresh(state, "disable-ios", now, { udids: ["iphone-udid-1"] }) as { profileQueued?: number };
   assert.equal(removePolicy.profileQueued, 1);
-  const { payload: removePayload } = nextCommandOfType("RemoveProfile");
+const { payload: removePayload } = nextCommandOfType("RemoveProfile");
   assert.equal(removePayload.RequestType, "RemoveProfile");
   assert.equal(removePayload.Identifier, "tech.caseline.vigil.ios-lock");
+}
+
+function pkcs12ShapeFixture(): string {
+  return Buffer.concat([Buffer.from([0x30, 0x82, 0x00, 0x80]), Buffer.alloc(128, 1)]).toString("base64");
 }

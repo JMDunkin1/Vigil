@@ -162,7 +162,7 @@ Before any SHIFT-style local setup, create a local layout checkpoint while the p
 npm run ios:checkpoint
 ```
 
-The checkpoint is stored under ignored `data/ios-checkpoints` by default. It creates a local iPhone backup, then verifies the backup manifest includes SpringBoard/Home Screen layout records. If the Mac does not have enough space, pass an external volume with `-- --output=/Volumes/External/vigil-ios-checkpoints`.
+The checkpoint is stored under ignored `data/ios-checkpoints` by default. It creates a local iPhone backup, then verifies the backup manifest includes SpringBoard/Home Screen layout records. If the Mac does not have enough space, pass an external volume with `-- --output=/Volumes/External/vigil-ios-checkpoints`. For encrypted backups, pass `-- --password ...` or set `IOS_BACKUP_PASSWORD`; do not print the password into tickets, logs, or handoffs.
 
 Then use the USB apply script:
 
@@ -178,7 +178,24 @@ For a phone that is not supervised yet and must keep its current app/folder orde
 npm run ios:supervise-preserve-layout -- --yes-supervise-and-restore
 ```
 
-That flow creates and verifies a full local backup with SpringBoard/Home Screen layout records, creates or reuses `data/vigil-supervisor.keybag`, supervises the phone with that persistent Vigil identity, restores the backup with system/settings/app placement recovery flags so app placeholders and folders return to their previous grid positions, verifies the phone still reports as supervised after the restore, then applies the Vigil profile. If backup verification, supervision, restore, or post-restore supervision verification fails, it stops before installing the restrictions profile. Pass `-- --output=/Volumes/External/vigil-ios-checkpoints` for large phones or low internal disk space, `-- --password ...` when the device backup password is required, and `-- --udid ...` when multiple USB devices are connected.
+This is the slow, no-data-loss path. Like commercial phone-shifting tools, it chooses verification, local backups, layout recovery, and user prompts over speed. Before starting, turn Find My off, keep the phone on power or well charged, keep it cabled, leave time for full backup/restore passes, and be ready to unlock and accept Trust after each restore.
+
+That flow creates and verifies a full local backup with SpringBoard/Home Screen layout records, creates or reuses `data/vigil-supervisor.keybag`, builds a tiny pre-supervision restore payload from the verified checkpoint, and restores only these live-proven setup-state files before no-erase supervision:
+
+- `SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles/Library/ConfigurationProfiles/CloudConfigurationDetails.plist`
+- `HomeDomain/Library/Preferences/com.apple.purplebuddy.plist`
+
+After that tiny restore, Vigil waits until the phone is visible again and `pymobiledevice3 profile cloud-configuration` is null or empty. Only then does it supervise the phone without erasing, using the persistent Vigil identity. It then restores the full checkpoint with system/settings/app placement recovery flags so app placeholders and folders return to their previous grid positions. If the full restore clears supervision, the script re-runs no-erase supervision, pairs the supervised channel, and applies the static Vigil profile. If backup verification, tiny-payload verification, cloud-configuration clearing, supervision, restore, or post-restore supervision verification fails, it stops before installing the restrictions profile. Pass `-- --output=/Volumes/External/vigil-ios-checkpoints` for large phones or low internal disk space, `-- --password ...` when the device backup password is required, and `-- --udid ...` when multiple USB devices are connected.
+
+If a known-good local backup already restored the current layout, reuse it instead of creating a fresh checkpoint:
+
+```bash
+npm run ios:supervise-preserve-layout -- --yes-supervise-and-restore --checkpoint /path/to/checkpoint-or-UDID-backup-folder
+```
+
+The existing-checkpoint path must either contain the connected phone's UDID folder or be that UDID-named backup folder itself. Vigil verifies `Manifest.db`, complete backup metadata, the backup device identity when present, and SpringBoard/Home Screen layout records before it supervises or restores anything. For encrypted backups, also pass `-- --password ...` or set `IOS_BACKUP_PASSWORD`.
+
+Remote MDM is a separate integration boundary. The layout-preserving USB flow ends with the static Vigil profile installed locally; it does not set up remote APNs-backed MDM by itself.
 
 Real iOS MDM enrollment requires Apple supervision plus a public HTTPS URL, an APNs MDM topic and push certificate, and an identity certificate or SCEP payload. The current server handles enrollment/check-in, queues policy-profile installs for enrolled devices, and uses the saved APNs MDM push certificate to wake devices with queued commands. On first enrollment, the device's TokenUpdate queues the current policy and immediately attempts the APNs wake-up; later policy changes follow the same queue-and-push flow.
 

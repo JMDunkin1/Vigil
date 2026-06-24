@@ -19,6 +19,7 @@ export const API_ROUTES = Object.freeze([
   { id: "iosSettings", domain: "devices", methods: ["POST"], path: "/api/devices/ios/settings" },
   { id: "iosUsbProfileApply", domain: "devices", methods: ["POST"], path: "/api/devices/ios/usb-profile-apply" },
   { id: "iosMdmSettings", domain: "devices", methods: ["POST"], path: "/api/devices/ios/mdm/settings" },
+  { id: "iosMdmDoctor", domain: "devices", methods: ["GET"], path: "/api/devices/ios/mdm/doctor" },
   { id: "iosMdmEnrollment", domain: "devices", methods: ["GET"], path: "/api/devices/ios/mdm/enrollment.mobileconfig" },
   { id: "iosMdmQueuePolicy", domain: "devices", methods: ["POST"], path: "/api/devices/ios/mdm/queue-policy" },
   { id: "iosProfile", domain: "devices", methods: ["GET"], path: "/api/devices/ios/profile.mobileconfig" },

@@ -47,7 +47,7 @@ const mdmQueueOnly = iosMdmReadiness({
   publicBaseUrl: "https://vigil.example.test",
   topic: "com.apple.mgmt.vigil",
   identityCertificateUuid: "11111111-1111-4111-8111-111111111111",
-  identityCertificatePayloadBase64: "ZmFrZS1wa2NzMTI="
+  identityCertificatePayloadBase64: pkcs12ShapeFixture()
 });
 assert.equal(mdmQueueOnly.status, "queue-only");
 assert.equal(mdmQueueOnly.capabilityLevel, "command-queue");
@@ -58,11 +58,20 @@ const mdmWireless = iosMdmReadiness({
   publicBaseUrl: "https://vigil.example.test",
   topic: "com.apple.mgmt.vigil",
   identityCertificateUuid: "11111111-1111-4111-8111-111111111111",
-  identityCertificatePayloadBase64: "ZmFrZS1wa2NzMTI=",
-  pushCertificatePayloadBase64: "ZmFrZS1wdXNo"
+  identityCertificatePayloadBase64: pkcs12ShapeFixture(),
+  pushCertificatePayloadBase64: pkcs12ShapeFixture()
 });
 assert.equal(mdmWireless.status, "ready");
 assert.equal(mdmWireless.capabilityLevel, "wireless-push");
+const mdmFakeCertificate = iosMdmReadiness({
+  enabled: true,
+  publicBaseUrl: "https://vigil.example.test",
+  topic: "com.apple.mgmt.vigil",
+  identityCertificateUuid: "11111111-1111-4111-8111-111111111111",
+  identityCertificatePayloadBase64: Buffer.from("fake-pkcs12").toString("base64")
+});
+assert.equal(mdmFakeCertificate.status, "setup-needed");
+assert.equal(mdmFakeCertificate.setupBlockers.some((blocker) => blocker.includes("DER PKCS#12")), true);
 assert.equal(apiRequestGuard({ method: "GET", path: "/api/state", headers: {} }).ok, true);
 assert.equal(apiRequestGuard({ method: "POST", path: "/api/extension/check", headers: {} }).ok, false);
 assert.equal(apiRequestGuard({ method: "POST", path: "/api/extension/rules/sync", headers: { "content-type": "application/json" } }).ok, false);
@@ -271,3 +280,7 @@ assert.deepEqual(deviceUsageSyncAuthorization({
   url: new URL("https://vigil.example.test/api/devices/usage"),
   enrollmentSecret: "device-secret"
 }), { ok: true, kind: "device-token" });
+
+function pkcs12ShapeFixture(): string {
+  return Buffer.concat([Buffer.from([0x30, 0x82, 0x00, 0x80]), Buffer.alloc(128, 1)]).toString("base64");
+}

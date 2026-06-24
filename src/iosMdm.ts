@@ -30,6 +30,18 @@ const DEVICE_INFO_QUERIES = [
 
 export type IosMdmStatus = "off" | "setup-needed" | "queue-only" | "ready";
 export type IosMdmCapabilityLevel = "static-profile" | "setup-needed" | "command-queue" | "wireless-push";
+export type IosMdmDoctorArea = "server" | "identity" | "apns" | "enrollment" | "apple";
+export type IosMdmDoctorSeverity = "blocking" | "warning" | "info";
+
+export interface IosMdmDoctorItem {
+  code: string;
+  area: IosMdmDoctorArea;
+  severity: IosMdmDoctorSeverity;
+  message: string;
+  detail: string;
+  fix: string;
+  env?: string[];
+}
 
 export interface IosMdmReadiness {
   enabled: boolean;
@@ -40,6 +52,8 @@ export interface IosMdmReadiness {
   setupBlockers: string[];
   pushBlockers: string[];
   blockers: string[];
+  diagnostics: IosMdmDoctorItem[];
+  warnings: IosMdmDoctorItem[];
 }
 
 type MdmPayload = UnknownRecord & {
@@ -119,8 +133,17 @@ export function publicIosMdmSettings(mdm: Partial<IosMdmSettings> | Partial<MdmS
     commands,
     ...rest
   } = mdm || {};
+  const readiness = iosMdmReadiness(mdm);
   return {
     ...rest,
+    ready: readiness.ready,
+    enrollmentReady: readiness.enrollmentReady,
+    status: readiness.status,
+    capabilityLevel: readiness.capabilityLevel,
+    blockers: readiness.blockers,
+    setupBlockers: readiness.setupBlockers,
+    pushBlockers: readiness.pushBlockers,
+    warnings: readiness.warnings.map(publicDoctorItem),
     enrollmentSecretSet: Boolean(enrollmentSecret),
     identityCertificatePayloadSet: Boolean(identityCertificatePayloadBase64),
     identityCertificatePasswordSet: Boolean(identityCertificatePassword),
@@ -133,9 +156,14 @@ export function publicIosMdmSettings(mdm: Partial<IosMdmSettings> | Partial<MdmS
 
 export function iosMdmReadiness(mdm: Partial<IosMdmSettings> | Partial<MdmSettings> = {}): IosMdmReadiness {
   const settings = { ...defaultState().deviceControls.ios.mdm, ...mdm } as MdmSettings;
-  const setupBlockers = iosMdmReadinessBlockers(settings);
-  const pushBlockers = setupBlockers.length ? [] : iosMdmPushBlockers(settings);
-  const blockers = [...setupBlockers, ...pushBlockers];
+  const setupDiagnostics = iosMdmSetupDiagnostics(settings);
+  const pushDiagnostics = setupDiagnostics.some((item) => item.severity === "blocking") ? [] : iosMdmPushDiagnostics(settings);
+  const diagnostics = [...setupDiagnostics, ...pushDiagnostics];
+  const blockingDiagnostics = diagnostics.filter((item) => item.severity === "blocking");
+  const setupBlockers = setupDiagnostics.filter((item) => item.severity === "blocking").map((item) => item.message);
+  const pushBlockers = pushDiagnostics.filter((item) => item.severity === "blocking").map((item) => item.message);
+  const blockers = blockingDiagnostics.map((item) => item.message);
+  const warnings = diagnostics.filter((item) => item.severity === "warning");
   const enabled = Boolean(settings.enabled);
   const enrollmentReady = enabled && setupBlockers.length === 0;
   const ready = enabled && blockers.length === 0;
@@ -155,7 +183,71 @@ export function iosMdmReadiness(mdm: Partial<IosMdmSettings> | Partial<MdmSettin
     capabilityLevel,
     setupBlockers,
     pushBlockers,
-    blockers
+    blockers,
+    diagnostics: blockingDiagnostics.map(publicDoctorItem),
+    warnings: warnings.map(publicDoctorItem)
+  };
+}
+
+export function iosMdmDoctor(state: VigilState, now = new Date()) {
+  const mdm = ensureMdmState(state);
+  const readiness = iosMdmReadiness(mdm);
+  const devices = normalizeMdmDevices(mdm.devices);
+  const enrolled = devices.filter((device) => device.status !== "checked-out");
+  const pending = normalizeMdmCommands(mdm.commands).filter((command) => command.status === "queued");
+  const doctorDiagnostics = [...iosMdmSetupDiagnostics(mdm), ...iosMdmPushDiagnostics(mdm)];
+  const doctorBlockers = doctorDiagnostics.filter((item) => item.severity === "blocking").map(publicDoctorItem);
+  const doctorWarnings = doctorDiagnostics.filter((item) => item.severity === "warning").map(publicDoctorItem);
+  const externalPrerequisites = iosMdmExternalPrerequisites();
+  const nextSteps = iosMdmNextSteps(readiness, enrolled.length);
+
+  return {
+    generatedAt: now.toISOString(),
+    status: readiness.status,
+    capabilityLevel: readiness.capabilityLevel,
+    ready: readiness.ready,
+    enrollmentReady: readiness.enrollmentReady,
+    staticProfile: {
+      status: state.deviceControls?.ios?.status || "",
+      active: state.deviceControls?.ios?.status === "supervised-profile-ready",
+      note: "Static supervised USB profile status is separate from remote/wireless MDM enrollment."
+    },
+    remoteMdm: {
+      enabled: readiness.enabled,
+      publicBaseUrl: mdm.publicBaseUrl,
+      topic: mdm.topic,
+      enrollmentUrl: readiness.enrollmentReady ? fullMdmUrl(mdm, "/mdm/enroll.mobileconfig") : "",
+      localEnrollmentPath: readiness.enrollmentReady ? enrollmentPath(mdm) : "",
+      serverUrl: readiness.enrollmentReady ? fullMdmUrl(mdm, "/mdm/connect") : "",
+      checkInUrl: readiness.enrollmentReady ? fullMdmUrl(mdm, "/mdm/checkin") : "",
+      policyProfileUrl: readiness.enrollmentReady ? fullMdmUrl(mdm, "/mdm/policy.mobileconfig") : "",
+      enrolledDeviceCount: enrolled.length,
+      pendingCommandCount: pending.length,
+      identityCertificatePayloadSet: Boolean(mdm.identityCertificatePayloadBase64),
+      pushCertificatePayloadSet: Boolean(mdm.pushCertificatePayloadBase64),
+      identityCertificatePasswordSet: Boolean(mdm.identityCertificatePassword),
+      pushCertificatePasswordSet: Boolean(mdm.pushCertificatePassword),
+      lastEnrollmentProfileGeneratedAt: mdm.lastEnrollmentProfileGeneratedAt || null,
+      lastCheckInAt: mdm.lastCheckInAt || null,
+      lastPushAt: mdm.lastPushAt || null,
+      lastPushStatus: mdm.lastPushStatus || "",
+      lastPushError: mdm.lastPushError || ""
+    },
+    blockers: doctorBlockers,
+    warnings: [
+      ...doctorWarnings,
+      doctorItem(
+        "apple-credentials-not-locally-verifiable",
+        "apple",
+        "Vigil can check local shape, but cannot prove Apple MDM credentials until an iPhone enrolls and APNs accepts a push.",
+        "The APNs MDM push certificate must come from Apple's Push Certificates Portal and match the configured com.apple.mgmt.* topic.",
+        "Use real Apple-issued MDM APNs material; do not treat development identities or placeholder PKCS#12 files as sufficient.",
+        [],
+        "warning"
+      )
+    ].map(publicDoctorItem),
+    nextSteps,
+    externalPrerequisites
   };
 }
 
@@ -683,29 +775,185 @@ function ensureMdmState(state: VigilState): MdmSettings {
 }
 
 function iosMdmReadinessBlockers(mdm: MdmSettings): string[] {
-  const blockers: string[] = [];
+  return iosMdmSetupDiagnostics(mdm).filter((item) => item.severity === "blocking").map((item) => item.message);
+}
+
+function iosMdmPushBlockers(mdm: Partial<MdmSettings> = {}): string[] {
+  return iosMdmPushDiagnostics(mdm).filter((item) => item.severity === "blocking").map((item) => item.message);
+}
+
+function iosMdmSetupDiagnostics(mdm: Partial<MdmSettings> = {}): IosMdmDoctorItem[] {
+  const blockers: IosMdmDoctorItem[] = [];
   if (!mdm.publicBaseUrl) {
-    blockers.push("Set a public HTTPS URL that forwards to this local server.");
+    blockers.push(doctorItem(
+      "missing-public-base-url",
+      "server",
+      "Set a public HTTPS URL that forwards to this local server.",
+      "Remote MDM enrollment profiles must contain a public HTTPS ServerURL and CheckInURL reachable by the iPhone.",
+      "Set VIGIL_MDM_PUBLIC_BASE_URL or configure publicBaseUrl to an HTTPS tunnel/reverse proxy that routes /mdm/* to Vigil.",
+      ["VIGIL_MDM_PUBLIC_BASE_URL"]
+    ));
   } else if (!mdm.publicBaseUrl.startsWith("https://")) {
-    blockers.push("Apple MDM ServerURL and CheckInURL must use HTTPS.");
+    blockers.push(doctorItem(
+      "public-base-url-not-https",
+      "server",
+      "Apple MDM ServerURL and CheckInURL must use HTTPS.",
+      "iOS will not accept a remote MDM enrollment profile whose MDM endpoints are plain HTTP.",
+      "Use a public HTTPS URL with a valid certificate and route /mdm/* to the local Vigil server.",
+      ["VIGIL_MDM_PUBLIC_BASE_URL"]
+    ));
+  } else if (isLocalMdmHost(mdm.publicBaseUrl)) {
+    blockers.push(doctorItem(
+      "public-base-url-localhost",
+      "server",
+      "Remote MDM needs a public HTTPS URL, not localhost or a private loopback host.",
+      "The iPhone must reach the MDM server over the network after it leaves USB setup.",
+      "Put Vigil behind a real HTTPS tunnel/reverse proxy and use that public URL.",
+      ["VIGIL_MDM_PUBLIC_BASE_URL"]
+    ));
   }
-  if (!/^com\.apple\.mgmt\.[A-Za-z0-9.-]+$/.test(mdm.topic || "")) {
-    blockers.push("Set the APNs MDM topic from your Apple MDM push certificate.");
+  if (!validMdmTopic(mdm.topic || "")) {
+    blockers.push(doctorItem(
+      "invalid-apns-topic",
+      "apns",
+      "Set the APNs MDM topic from your Apple MDM push certificate.",
+      "The topic should look like com.apple.mgmt.<customer-or-vendor-id>; Apple development signing identities are not MDM push topics.",
+      "Copy the topic associated with the Apple MDM APNs push certificate.",
+      ["VIGIL_MDM_TOPIC"]
+    ));
   }
   if (!mdm.identityCertificateUuid) {
-    blockers.push("Set the UUID of the device identity certificate payload used by the MDM profile.");
-  } else if (!mdm.identityCertificatePayloadBase64) {
-    blockers.push("Paste the PKCS#12 identity certificate payload so the MDM profile can include the referenced UUID.");
+    blockers.push(doctorItem(
+      "missing-identity-certificate-uuid",
+      "identity",
+      "Set the UUID of the device identity certificate payload used by the MDM profile.",
+      "The MDM payload references this UUID so iOS can attach the device identity payload during enrollment.",
+      "Set VIGIL_MDM_IDENTITY_UUID to the PayloadUUID for the PKCS#12 identity payload.",
+      ["VIGIL_MDM_IDENTITY_UUID"]
+    ));
+  }
+  const identityStatus = certificatePayloadStatus(mdm.identityCertificatePayloadBase64 || "");
+  if (!mdm.identityCertificatePayloadBase64) {
+    blockers.push(doctorItem(
+      "missing-identity-certificate-payload",
+      "identity",
+      "Paste the PKCS#12 identity certificate payload so the MDM profile can include the referenced UUID.",
+      "A placeholder string is not enough; iOS needs a real identity payload or a real SCEP design that Vigil does not yet implement.",
+      "Set VIGIL_MDM_IDENTITY_P12 to a real identity .p12 file.",
+      ["VIGIL_MDM_IDENTITY_P12", "VIGIL_MDM_IDENTITY_P12_PASSWORD"]
+    ));
+  } else if (!identityStatus.ok) {
+    blockers.push(doctorItem(
+      "invalid-identity-certificate-payload",
+      "identity",
+      identityStatus.message,
+      "Vigil only stores the base64 PKCS#12 bytes; fake text or malformed base64 will produce an enrollment profile that cannot work.",
+      "Export a real identity certificate as PKCS#12 and pass it with VIGIL_MDM_IDENTITY_P12.",
+      ["VIGIL_MDM_IDENTITY_P12", "VIGIL_MDM_IDENTITY_P12_PASSWORD"]
+    ));
   }
   return blockers;
 }
 
-function iosMdmPushBlockers(mdm: Partial<MdmSettings> = {}): string[] {
-  const blockers: string[] = [];
+function iosMdmPushDiagnostics(mdm: Partial<MdmSettings> = {}): IosMdmDoctorItem[] {
+  const blockers: IosMdmDoctorItem[] = [];
   if (!mdm.pushCertificatePayloadBase64) {
-    blockers.push("Paste the APNs MDM push certificate PKCS#12 so queued commands can wake enrolled iPhones.");
+    blockers.push(doctorItem(
+      "missing-push-certificate-payload",
+      "apns",
+      "Paste the APNs MDM push certificate PKCS#12 so queued commands can wake enrolled iPhones.",
+      "Remote MDM commands are delivered when APNs wakes the iPhone; a normal Apple Development certificate cannot do this.",
+      "Create/download a real Apple MDM APNs push certificate, export it as .p12, and set VIGIL_MDM_PUSH_P12.",
+      ["VIGIL_MDM_PUSH_P12", "VIGIL_MDM_PUSH_P12_PASSWORD"]
+    ));
+  } else {
+    const pushStatus = certificatePayloadStatus(mdm.pushCertificatePayloadBase64);
+    if (!pushStatus.ok) {
+      blockers.push(doctorItem(
+        "invalid-push-certificate-payload",
+        "apns",
+        pushStatus.message,
+        "Vigil can only push through APNs with a real MDM push certificate exported as PKCS#12.",
+        "Use the Apple Push Certificates Portal MDM certificate, not a development signing identity or placeholder string.",
+        ["VIGIL_MDM_PUSH_P12", "VIGIL_MDM_PUSH_P12_PASSWORD"]
+      ));
+    }
   }
   return blockers;
+}
+
+function iosMdmExternalPrerequisites(): string[] {
+  return [
+    "A supervised iPhone that will install the MDM enrollment profile.",
+    "A public HTTPS base URL with a valid TLS certificate routing /mdm/* to Vigil.",
+    "An Apple MDM APNs push certificate from the Apple Push Certificates Portal, exported as PKCS#12.",
+    "The APNs MDM topic from that push certificate, usually com.apple.mgmt.<id>.",
+    "A real device identity PKCS#12 payload, or a future SCEP implementation; placeholder identity bytes are not sufficient.",
+    "Manual installation or automated delivery of the generated enrollment mobileconfig to the supervised iPhone."
+  ];
+}
+
+function iosMdmNextSteps(readiness: IosMdmReadiness, enrolledDeviceCount: number): string[] {
+  if (!readiness.enabled) return ["Enable Vigil MDM server mode after the public URL, topic, and certificate files are ready."];
+  if (readiness.blockers.length) return readiness.diagnostics.map((item) => item.fix);
+  if (!enrolledDeviceCount) return ["Install the generated MDM enrollment profile on the supervised iPhone and wait for TokenUpdate check-in."];
+  return ["Queue a policy refresh; Vigil can wake enrolled devices through APNs when commands are pending."];
+}
+
+function certificatePayloadStatus(base64: string): { ok: boolean; message: string } {
+  const normalized = normalizeBase64(base64);
+  if (!normalized) return { ok: false, message: "Missing PKCS#12 certificate payload." };
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(normalized) || normalized.length % 4 !== 0) {
+    return { ok: false, message: "Certificate payload must be standard base64-encoded PKCS#12 bytes." };
+  }
+  const bytes = Buffer.from(normalized, "base64");
+  if (!bytes.length || bytes.toString("base64") !== normalized) {
+    return { ok: false, message: "Certificate payload must decode cleanly from base64." };
+  }
+  if (bytes.length < 128 || bytes[0] !== 0x30) {
+    return { ok: false, message: "Certificate payload does not look like a DER PKCS#12 file." };
+  }
+  return { ok: true, message: "Certificate payload has a plausible PKCS#12 shape." };
+}
+
+function validMdmTopic(topic: string): boolean {
+  return /^com\.apple\.mgmt\.[A-Za-z0-9.-]+$/.test(topic) && !/replace|example|placeholder/i.test(topic);
+}
+
+function isLocalMdmHost(rawUrl: string): boolean {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase();
+    return host === "localhost"
+      || host === "127.0.0.1"
+      || host === "::1"
+      || host.endsWith(".localhost");
+  } catch {
+    return false;
+  }
+}
+
+function doctorItem(
+  code: string,
+  area: IosMdmDoctorArea,
+  message: string,
+  detail: string,
+  fix: string,
+  env: string[] = [],
+  severity: IosMdmDoctorSeverity = "blocking"
+): IosMdmDoctorItem {
+  return { code, area, severity, message, detail, fix, env };
+}
+
+function publicDoctorItem(item: IosMdmDoctorItem): IosMdmDoctorItem {
+  return {
+    code: item.code,
+    area: item.area,
+    severity: item.severity,
+    message: item.message,
+    detail: item.detail,
+    fix: item.fix,
+    ...(item.env?.length ? { env: item.env } : {})
+  };
 }
 
 function mdmNote(enabled: boolean, ready: boolean, enrollmentReady: boolean, blockers: string[]): string {

@@ -64,6 +64,25 @@ try {
   assert.equal(ios.removalPasswordSet, true);
   assert.equal(queuedReason, "ios-usb-profile-apply");
   assert.equal(state.events[0]?.type, "ios_usb_profile_apply_prepared");
+
+  const doctorResponse = mockResponse();
+  const doctorHandled = await handleDeviceApiRoute(
+    mockRequest("GET", "/api/devices/ios/mdm/doctor", {}),
+    doctorResponse,
+    new URL("http://127.0.0.1:8787/api/devices/ios/mdm/doctor"),
+    {
+      state,
+      usage: {},
+      recordIosMdmPolicyQueue: () => ({ queued: false })
+    }
+  );
+  const doctorBody = JSON.parse(doctorResponse.bodyText) as Record<string, unknown>;
+  const mdm = doctorBody.mdm as Record<string, unknown>;
+  assert.equal(doctorHandled, true);
+  assert.equal(doctorResponse.statusCodeValue, 200);
+  assert.equal(doctorBody.ok, true);
+  assert.equal(mdm.status, "off");
+  assert.equal((mdm.staticProfile as Record<string, unknown>).status, "supervised-profile-ready");
 } finally {
   await rm(dataDir, { recursive: true, force: true });
 }
