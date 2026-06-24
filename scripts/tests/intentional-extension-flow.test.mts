@@ -45,8 +45,29 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   assert.equal(first.paused, true);
   assert.equal(first.blocked, false);
   assert.match(stringValue(first.redirectUrl, "pause redirect URL"), /\/pause\?requestId=/);
+  assert.equal(must(first.overlay, "first pause overlay").waitSeconds, 12);
   assert.equal(state.intentionalUse.pauses.length, 1);
   const pauseId = must(first.pause, "first pause").id;
+
+  const reentered = evaluateExtensionCheck(state, usage, {
+    url: "https://www.youtube.com/shorts/abc",
+    previousUrl: "https://example.com/",
+    event: "navigation",
+    extensionVersion: REQUIRED_EXTENSION_VERSION
+  }, new Date(now.getTime() + 5 * 1000));
+  assert.equal(reentered.paused, true);
+  assert.equal(must(reentered.pause, "reentered pause").id, pauseId);
+  assert.equal(must(reentered.overlay, "reentered pause overlay").waitSeconds, 12);
+
+  const activated = evaluateExtensionCheck(state, usage, {
+    url: "https://www.youtube.com/shorts/abc",
+    previousUrl: "",
+    event: "activated",
+    extensionVersion: REQUIRED_EXTENSION_VERSION
+  }, new Date(now.getTime() + 8 * 1000));
+  assert.equal(activated.paused, true);
+  assert.equal(must(activated.overlay, "activated pause overlay").waitSeconds, 9);
+
   must(state.intentionalUse.pauses[0], "stored pause").eligibleAt = now.toISOString();
   const continued = confirmIntentionalPause(state, pauseId, {
     intention: "Watch one specific tutorial",

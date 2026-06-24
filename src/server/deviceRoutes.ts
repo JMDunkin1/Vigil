@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { deviceUsageSyncAuthorization } from "../apiSecurity.js";
 import { DEVICE_TARGETS } from "../defaults.js";
-import { buildIosMdmEnrollmentProfile, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "../iosMdm.js";
+import { buildIosMdmEnrollmentProfile, iosMdmDoctor, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "../iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "../iosProfiles.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { addEvent, saveState, saveUsage } from "../store.js";
@@ -95,6 +95,11 @@ export async function handleDeviceApiRoute(
     recordIosMdmPolicyQueue("ios-mdm-settings");
     await saveState(state);
     sendJson(response, 200, { ok: true, mdm: publicIosMdmSettings(state.deviceControls.ios.mdm) });
+    return true;
+  }
+
+  if (method === "GET" && path === "/api/devices/ios/mdm/doctor") {
+    sendJson(response, 200, { ok: true, mdm: iosMdmDoctor(state) });
     return true;
   }
 

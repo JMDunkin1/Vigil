@@ -40,6 +40,7 @@ import type {
 } from "./types.js";
 
 const PAUSE_EVENTS = new Set(["navigation", "history", "activated", "mac-app"]);
+const PAUSE_RESET_EVENTS = new Set(["navigation", "history"]);
 const OUTCOME_LIMIT = 200;
 const OPEN_LIMIT = 40;
 const JOURNAL_ENTRY_LIMIT = 250;
@@ -515,7 +516,10 @@ export function intentionalUseDecision(state: SentinelState, sample: UsageSample
   if (grant) return { shouldPause: false, reason: "grant", grant, rule };
 
   const existing = pendingPauseFor(state, sample, rule, now);
-  if (existing) return { shouldPause: true, rule, pause: existing, redirectUrl: pauseUrl(existing.id) };
+  if (existing) {
+    refreshPendingPauseOnReentry(state, existing, rule, sample, options, now);
+    return { shouldPause: true, rule, pause: existing, redirectUrl: pauseUrl(existing.id) };
+  }
 
   const pause = createPause(state, rule, sample, options, now);
   return { shouldPause: true, rule, pause, redirectUrl: pauseUrl(pause.id) };
@@ -1061,6 +1065,34 @@ function pendingPauseFor(state: SentinelState, sample: UsageSample, rule: Intent
       && pause.targetLabel === label
       && Date.parse(pause.expiresAt || "") > now.getTime();
   }) || null;
+}
+
+function refreshPendingPauseOnReentry(
+  state: SentinelState,
+  pause: IntentionalPause,
+  rule: IntentionalUseRule,
+  sample: UsageSample,
+  options: IntentionalUseOptions,
+  now: Date
+): void {
+  const event = String(options.event || "");
+  if (!PAUSE_RESET_EVENTS.has(event)) return;
+
+  const dayRule = ensureRuleLedger(state, rule.id, now);
+  const budget = budgetSummary(rule, dayRule);
+  const context = contextSummary(state, rule, sample, budget, now);
+  const delaySeconds = adaptiveDelay(rule, context);
+
+  pause.requestedAt = now.toISOString();
+  pause.eligibleAt = new Date(now.getTime() + delaySeconds * 1000).toISOString();
+  pause.expiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+  pause.delaySeconds = delaySeconds;
+  pause.sessionMinutes = rule.sessionMinutes;
+  pause.frictionLevel = rule.frictionLevel;
+  pause.returnUrl = safeReturnUrl(options.returnUrl || sample.url);
+  pause.event = event;
+  pause.context = context;
+  pause.budget = budget;
 }
 
 function createPause(state: SentinelState, rule: IntentionalUseRule, sample: UsageSample, options: IntentionalUseOptions, now: Date): IntentionalPause {

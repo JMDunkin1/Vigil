@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, stat } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { distanceKeyQrMatrix } from "../../public/distance-key-qr.js";
 
@@ -14,8 +14,10 @@ function stringArrayValue(value: unknown, label = "value"): string[] {
   return value as string[];
 }
 
-const root = process.cwd();
-const sourceRoot = join(root, "..", "..");
+const cwd = process.cwd();
+const sourceRoot = await fileExists(join(cwd, "README.md")) ? cwd : join(cwd, "..", "..");
+const root = await fileExists(join(cwd, "public", "app.js")) ? cwd : join(sourceRoot, "dist", "runtime");
+const readmeSource = await readFile(join(sourceRoot, "README.md"), "utf8");
 const mainTsSource = await readFile(join(sourceRoot, "app", "main.ts"), "utf8");
 const iosCheckpointSource = await readFile(join(sourceRoot, "scripts", "create-ios-layout-checkpoint.mjs"), "utf8");
 const iosUsbApplySource = await readFile(join(sourceRoot, "scripts", "apply-ios-usb-profile.mjs"), "utf8");
@@ -126,7 +128,7 @@ assert.match(iosCheckpointSource, /resolveUsbDevice\(options\.udid\)/);
 assert.match(iosUsbApplySource, /--require-checkpoint/);
 assert.match(iosUsbApplySource, /--supervisor-keybag/);
 assert.match(iosUsbApplySource, /SENTINEL_SUPERVISOR_KEYBAG/);
-assert.match(iosUsbApplySource, /readLayoutPaths\(manifestPath\)/);
+assert.match(iosUsbApplySource, /readLayoutPaths\(\{/);
 assert.match(iosUsbApplySource, /SpringBoard\/Home Screen layout records/);
 assert.match(iosUsbApplySource, /\/api\/devices\/ios\/usb-profile-apply/);
 assert.match(iosUsbApplySource, /partial-restore\/no-erase supervision trick/);
@@ -141,14 +143,26 @@ assert.match(iosSupervisePreserveSource, /backup2",\s*"backup"/);
 assert.match(iosSupervisePreserveSource, /"--full"/);
 assert.match(iosSupervisePreserveSource, /profile",\s*"create-keybag"/);
 assert.match(iosSupervisePreserveSource, /profile",\s*"supervise"/);
+assert.match(iosSupervisePreserveSource, /CloudConfigurationDetails\.plist/);
+assert.match(iosSupervisePreserveSource, /com\.apple\.purplebuddy\.plist/);
+assert.match(iosSupervisePreserveSource, /waitForCloudConfigurationCleared/);
+assert.match(iosSupervisePreserveSource, /isClearedCloudConfiguration/);
 assert.match(iosSupervisePreserveSource, /backup2",\s*"restore"/);
 assert.match(iosSupervisePreserveSource, /"--system"/);
 assert.match(iosSupervisePreserveSource, /"--settings"/);
+assert.match(iosSupervisePreserveSource, /"--no-remove"/);
+assert.match(iosSupervisePreserveSource, /"--skip-apps"/);
 assert.match(iosSupervisePreserveSource, /"--remove"/);
 assert.match(iosSupervisePreserveSource, /apply-ios-usb-profile\.mjs/);
 assert.match(iosSupervisePreserveSource, /--require-checkpoint/);
 assert.match(iosSupervisePreserveSource, /isSupervisedCloud\(restoredCloud\)/);
+assert.match(iosSupervisePreserveSource, /Layout restore cleared supervision/);
+assert.match(iosSupervisePreserveSource, /pair-supervised/);
 assert.match(iosSupervisePreserveSource, /SpringBoard\/Home Screen layout records/);
+assert.match(readmeSource, /slow, no-data-loss path/);
+assert.match(readmeSource, /Find My off/);
+assert.match(readmeSource, /CloudConfigurationDetails\.plist/);
+assert.match(readmeSource, /Remote MDM is a separate integration boundary/);
 assert.match(apiRoutesTsSource, /iosUsbProfileApply/);
 assert.match(deviceRoutesTsSource, /ios_usb_profile_apply_prepared/);
 assert.match(String(scripts["build:mac"]), /-c\.mac\.identity=null/);
@@ -171,3 +185,12 @@ assert.equal(matrix.length, 21);
 assert.equal(matrix.every((row) => row.length === 21), true);
 assert.equal(matrix.flat().every((value) => typeof value === "boolean"), true);
 assert.throws(() => distanceKeyQrMatrix("emoji-😀"), /cannot be encoded/);
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}

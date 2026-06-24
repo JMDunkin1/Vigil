@@ -5,6 +5,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { readLayoutPaths } from "./ios-backup-layout.mjs";
+
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const DATA_DIR = process.env.SENTINEL_DATA_DIR || join(ROOT, "data");
@@ -12,27 +14,16 @@ const TOOL_ROOT = join(DATA_DIR, "ios-tools");
 const VENV_DIR = join(TOOL_ROOT, "pymobiledevice3-venv");
 const DEFAULT_SUPERVISOR_KEYBAG_PATH = join(DATA_DIR, "sentinel-supervisor.keybag");
 const PYMOBILEDEVICE3_PATH = process.env.PYMOBILEDEVICE3 || join(VENV_DIR, "bin", "pymobiledevice3");
+const PYIOSBACKUP_PYTHON_PATH = process.env.PYIOSBACKUP_PYTHON || join(VENV_DIR, "bin", "python");
 const SENTINEL_SERVER = String(process.env.SENTINEL_SERVER || process.env.SCREEN_TIME_SERVER || "http://127.0.0.1:8787").replace(/\/+$/, "");
 const IOS_PROFILE_IDENTIFIER = "com.local-screen-time.ios-lock";
 const INSTALL_TIMEOUT_MS = 120_000;
 const QUICK_TIMEOUT_MS = 20_000;
-const LAYOUT_QUERY = `
-SELECT domain || '/' || relativePath
-FROM Files
-WHERE domain = 'HomeDomain'
-AND (
-  lower(relativePath) LIKE '%iconstate%'
-  OR lower(relativePath) LIKE '%homescreen%'
-  OR lower(relativePath) LIKE '%springboard%'
-  OR lower(relativePath) LIKE '%applicationstate%'
-)
-ORDER BY relativePath;
-`;
 
 const options = parseArgs(process.argv.slice(2));
 await ensurePymobiledevice3();
 const udid = await resolveUsbDevice(options.udid);
-if (options.requireCheckpoint) await verifyCheckpoint(options.requireCheckpoint, udid);
+if (options.requireCheckpoint) await verifyCheckpoint(await resolveCheckpointRoot(options.requireCheckpoint, udid), udid, options.password);
 
 const cloud = await readCloudConfiguration(udid);
 if (!isSupervisedCloud(cloud)) {
@@ -63,6 +54,7 @@ console.log([
 function parseArgs(args) {
   const output = {
     requireCheckpoint: "",
+    password: process.env.IOS_BACKUP_PASSWORD || "",
     supervisorKeybag: String(process.env.SENTINEL_SUPERVISOR_KEYBAG || "").trim(),
     udid: ""
   };
@@ -72,6 +64,8 @@ function parseArgs(args) {
     if (arg.startsWith("--udid=")) output.udid = arg.slice("--udid=".length).trim();
     if (arg === "--require-checkpoint") output.requireCheckpoint = String(args[index + 1] || "").trim();
     if (arg.startsWith("--require-checkpoint=")) output.requireCheckpoint = arg.slice("--require-checkpoint=".length).trim();
+    if (arg === "--password") output.password = String(args[index + 1] || "");
+    if (arg.startsWith("--password=")) output.password = arg.slice("--password=".length);
     if (arg === "--supervisor-keybag" || arg === "--keybag") output.supervisorKeybag = String(args[index + 1] || "").trim();
     if (arg.startsWith("--supervisor-keybag=")) output.supervisorKeybag = arg.slice("--supervisor-keybag=".length).trim();
     if (arg.startsWith("--keybag=")) output.supervisorKeybag = arg.slice("--keybag=".length).trim();
@@ -79,13 +73,18 @@ function parseArgs(args) {
   return output;
 }
 
-async function verifyCheckpoint(path, udid) {
+async function verifyCheckpoint(path, udid, password = "") {
   const manifestPath = join(path, udid, "Manifest.db");
   const manifest = await stat(manifestPath).catch(() => null);
   if (!manifest?.isFile() || manifest.size <= 0) {
     throw new Error(`Required iPhone checkpoint is missing Manifest.db for ${udid}: ${manifestPath}`);
   }
-  const layoutPaths = await readLayoutPaths(manifestPath);
+  const layoutPaths = await readLayoutPaths({
+    manifestPath,
+    password,
+    pythonPath: PYIOSBACKUP_PYTHON_PATH,
+    timeoutMs: QUICK_TIMEOUT_MS
+  });
   if (!layoutPaths.length) {
     throw new Error([
       `Required iPhone checkpoint has Manifest.db for ${udid}, but no SpringBoard/Home Screen layout records were found.`,
@@ -93,6 +92,26 @@ async function verifyCheckpoint(path, udid) {
       "Do not use this checkpoint as a layout recovery source."
     ].join("\n"));
   }
+}
+
+async function resolveCheckpointRoot(inputPath, udid) {
+  const checkpointPath = resolve(inputPath);
+  const rootManifestPath = join(checkpointPath, udid, "Manifest.db");
+  if (await fileExists(rootManifestPath)) return checkpointPath;
+  const backupFolderManifestPath = join(checkpointPath, "Manifest.db");
+  if (await fileExists(backupFolderManifestPath)) {
+    if (checkpointPath.split(/[\\/]/).at(-1) !== udid) {
+      throw new Error([
+        `Existing iPhone backup folder is not named for the connected UDID ${udid}: ${checkpointPath}`,
+        "Pass the parent checkpoint folder that contains the UDID-named backup folder, or use the matching backup for this iPhone."
+      ].join("\n"));
+    }
+    return dirname(checkpointPath);
+  }
+  throw new Error([
+    `Existing iPhone checkpoint is missing Manifest.db for ${udid}: ${checkpointPath}`,
+    `Expected either ${rootManifestPath} or ${backupFolderManifestPath}.`
+  ].join("\n"));
 }
 
 async function prepareIosServerState() {
@@ -242,14 +261,6 @@ async function profileInstalled(udid, supervisorKeybagPath) {
 
 function isProtectedPairingError(result) {
   return /MCProtected|protected/i.test(`${result.stdout}\n${result.stderr}`);
-}
-
-async function readLayoutPaths(manifestPath) {
-  const { stdout } = await execFileAsync("/usr/bin/sqlite3", [manifestPath, LAYOUT_QUERY], {
-    timeout: QUICK_TIMEOUT_MS,
-    maxBuffer: 1024 * 1024
-  });
-  return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
 async function runPymobiledevice3(args, timeout, options = {}) {
