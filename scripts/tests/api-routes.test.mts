@@ -12,6 +12,7 @@ assert.equal(matchApiRoute("GET", "/api/backup/export")?.id, "backupExport");
 assert.equal(matchApiRoute("POST", "/api/session/preview")?.id, "sessionPreview");
 assert.equal(matchApiRoute("POST", "/api/session/start")?.domain, "sessions");
 assert.equal(matchApiRoute("POST", "/api/hardening/safari-filter/apply")?.id, "safariFilterApply");
+assert.equal(matchApiRoute("POST", "/api/devices/ios/usb-profile-apply")?.id, "iosUsbProfileApply");
 assert.equal(matchApiRoute("DELETE", "/api/schedule/work")?.id, "scheduleDelete");
 assert.equal(matchApiRoute("DELETE", "/api/intentional-use/rule/pause")?.id, "intentionalRuleDelete");
 assert.equal(matchApiRoute("POST", "/api/intentional-use/journal")?.id, "intentionalJournal");
@@ -38,7 +39,7 @@ for (const route of API_ROUTES) {
 }
 assert.equal(domains.get("sessions"), 6);
 assert.equal(domains.get("backup"), 1);
-assert.equal(domains.get("devices"), 6);
+assert.equal(domains.get("devices"), 7);
 assert.equal(domains.get("grayscale"), 3);
 assert.equal(domains.get("extension"), 6);
 assert.equal(domains.get("intentionalUse"), 20);

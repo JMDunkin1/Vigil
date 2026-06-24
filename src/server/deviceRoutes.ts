@@ -55,6 +55,34 @@ export async function handleDeviceApiRoute(
     return true;
   }
 
+  if (method === "POST" && path === "/api/devices/ios/usb-profile-apply") {
+    const current = state.deviceControls.ios;
+    state.deviceControls.ios = normalizeIosSettings({
+      enabled: true,
+      mode: current.mode || "denylist",
+      webMode: current.webMode || "denylist",
+      blockApps: current.blockApps !== false,
+      blockWeb: current.blockWeb !== false,
+      hardenRemoval: current.hardenRemoval !== false,
+      restrictInstallAndErase: current.restrictInstallAndErase !== false,
+      blockedAppBundleIds: current.blockedAppBundleIds || [],
+      allowedAppBundleIds: current.allowedAppBundleIds || [],
+      deniedUrls: current.deniedUrls || [],
+      allowedUrls: current.allowedUrls || []
+    }, current) as VigilState["deviceControls"]["ios"];
+    addEvent(state, "ios_usb_profile_apply_prepared", {
+      enabled: state.deviceControls.ios.enabled,
+      mode: state.deviceControls.ios.mode,
+      webMode: state.deviceControls.ios.webMode,
+      blockedApps: state.deviceControls.ios.blockedAppBundleIds.length,
+      allowedApps: state.deviceControls.ios.allowedAppBundleIds.length
+    });
+    recordIosMdmPolicyQueue("ios-usb-profile-apply");
+    await saveState(state);
+    sendJson(response, 200, { ok: true, ios: publicIosState(state.deviceControls.ios) });
+    return true;
+  }
+
   if (method === "POST" && path === "/api/devices/ios/mdm/settings") {
     const body = await readBody(request);
     assertProtectedEditAllowed(state, { kind: "settings" });

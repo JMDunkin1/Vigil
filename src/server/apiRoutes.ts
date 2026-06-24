@@ -17,6 +17,7 @@ export const API_ROUTES = Object.freeze([
   { id: "safariFilterApply", domain: "hardening", methods: ["POST"], path: "/api/hardening/safari-filter/apply" },
   { id: "clearTamper", domain: "hardening", methods: ["POST"], path: "/api/integrity/clear-tamper" },
   { id: "iosSettings", domain: "devices", methods: ["POST"], path: "/api/devices/ios/settings" },
+  { id: "iosUsbProfileApply", domain: "devices", methods: ["POST"], path: "/api/devices/ios/usb-profile-apply" },
   { id: "iosMdmSettings", domain: "devices", methods: ["POST"], path: "/api/devices/ios/mdm/settings" },
   { id: "iosMdmEnrollment", domain: "devices", methods: ["GET"], path: "/api/devices/ios/mdm/enrollment.mobileconfig" },
   { id: "iosMdmQueuePolicy", domain: "devices", methods: ["POST"], path: "/api/devices/ios/mdm/queue-policy" },

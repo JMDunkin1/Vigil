@@ -156,6 +156,22 @@ The iPhone controls are modeled after desktop-owned phone blockers such as SHIFT
 - an experimental MDM enrollment profile at `/api/devices/ios/mdm/enrollment.mobileconfig`
 - public MDM endpoints under `/mdm/enroll.mobileconfig`, `/mdm/checkin`, `/mdm/connect`, and `/mdm/policy.mobileconfig`
 
+Before any SHIFT-style local setup, create a local layout checkpoint while the phone still looks correct:
+
+```bash
+npm run ios:checkpoint
+```
+
+The checkpoint is stored under ignored `data/ios-checkpoints` by default. It creates a local iPhone backup, then verifies the backup manifest includes SpringBoard/Home Screen layout records. If the Mac does not have enough space, pass an external volume with `-- --output=/Volumes/External/vigil-ios-checkpoints`.
+
+Then use the USB apply script:
+
+```bash
+npm run ios:apply-usb
+```
+
+This installs a local `pymobiledevice3` helper under ignored `data/ios-tools`, verifies the phone over USB, repairs the supervised pairing channel when needed, and applies the generated Vigil iPhone profile directly when the device is already supervised. The USB path requires the keybag for the same supervision identity that already supervises the phone; place it at ignored `data/vigil-supervisor.keybag`, set `VIGIL_SUPERVISOR_KEYBAG`, or pass `-- --supervisor-keybag /path/to/supervisor.keybag`. The script fails early when that matching keybag is absent because a newly created Vigil identity cannot manage a phone supervised by Apple Configurator, SHIFT, or another existing identity. Add `-- --require-checkpoint /path/to/checkpoint` when applying after a layout-sensitive setup; the apply script rechecks that checkpoint for `Manifest.db` plus SpringBoard/Home Screen layout records before it proceeds. If the connected iPhone is already activated but not supervised, iOS rejects supervised app and web restriction payloads; the script stops before erasing or partial-restoring anything. Do not add a no-erase supervision path here unless it first creates a local backup/layout recovery checkpoint and proves that Home Screen layout, Apple ID setup state, and app organization survive the flow.
+
 Real iOS MDM enrollment requires Apple supervision plus a public HTTPS URL, an APNs MDM topic and push certificate, and an identity certificate or SCEP payload. The current server handles enrollment/check-in, queues policy-profile installs for enrolled devices, and uses the saved APNs MDM push certificate to wake devices with queued commands. On first enrollment, the device's TokenUpdate queues the current policy and immediately attempts the APNs wake-up; later policy changes follow the same queue-and-push flow.
 
 Phone usage can be synced into the same dashboard totals by posting daily snapshots to `/api/devices/usage` with the local app intent header or the iOS device token (`x-vigil-device-token` header or `?token=` query). A snapshot such as `{ "device": "phone", "date": "2026-05-28", "totalSeconds": 3600, "apps": { "Instagram": 1200 }, "sites": { "reddit.com": 300 } }` replaces the phone bucket for that day, then dashboard summaries, weekly reports, and limit progress merge it with Mac usage.
