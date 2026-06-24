@@ -66,6 +66,11 @@ void app.whenReady().then(async () => {
 });
 
 app.on("before-quit", async (event) => {
+  if (shouldStayResident()) {
+    event.preventDefault();
+    hideSentinelWindow();
+    return;
+  }
   stopTrayRefresh();
   if (!ownedServer) return;
   event.preventDefault();
@@ -81,6 +86,11 @@ function showSentinelWindow(appUrl: string): void {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+function hideSentinelWindow(): void {
+  if (!mainWindow) return;
+  mainWindow.hide();
 }
 
 function createWindow(appUrl: string): void {
@@ -109,7 +119,7 @@ function createWindow(appUrl: string): void {
 }
 
 function configureMenuBarResidency(): void {
-  if (process.platform !== "darwin" || !app.isPackaged) return;
+  if (!shouldStayResident()) return;
   app.dock?.hide();
   app.setLoginItemSettings({
     openAtLogin: true,
@@ -118,8 +128,12 @@ function configureMenuBarResidency(): void {
 }
 
 function shouldShowWindowOnLaunch(): boolean {
-  if (process.platform !== "darwin" || !app.isPackaged) return true;
+  if (!shouldStayResident()) return true;
   return !app.getLoginItemSettings().wasOpenedAtLogin;
+}
+
+function shouldStayResident(): boolean {
+  return process.platform === "darwin" && app.isPackaged;
 }
 
 async function ensureSentinelServer(): Promise<string> {
@@ -157,7 +171,11 @@ function installMenu(appUrl: string): void {
         { role: "hideOthers" },
         { role: "unhide" },
         { type: "separator" },
-        { role: "quit" }
+        {
+          label: "Hide Sentinel Window",
+          accelerator: "CommandOrControl+Q",
+          click: hideSentinelWindow
+        }
       ]
     },
     {
@@ -256,10 +274,8 @@ function updateTrayMenu(appUrl: string, status: TrayStatus): void {
     },
     { type: "separator" },
     {
-      label: "Quit Sentinel",
-      click: () => {
-        app.quit();
-      }
+      label: "Hide Sentinel Window",
+      click: hideSentinelWindow
     }
   ];
   tray.setContextMenu(Menu.buildFromTemplate(template));
