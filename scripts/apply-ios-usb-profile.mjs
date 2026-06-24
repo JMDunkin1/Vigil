@@ -40,7 +40,7 @@ if (!isSupervisedCloud(cloud)) {
     "iPhone is paired over USB but is not supervised.",
     "Vigil uses the same supervised-device enforcement model as SHIFT, and iOS will not accept app or web restriction payloads until the phone is supervised.",
     "Vigil will not attempt a partial-restore/no-erase supervision trick from this script because that can disturb Apple ID, setup, and Home Screen layout state; a checkpoint proves a recovery source exists, not that the supervision flow is safe.",
-    "Back up the phone first, then supervise it through a layout-preserving flow; rerun this command after the device reports as supervised."
+    "Use `npm run ios:supervise-preserve-layout -- --yes-supervise-and-restore` to create a verified layout checkpoint, supervise with a persistent Vigil keybag, restore the checkpoint, then apply this profile."
   ].join("\n"));
 }
 
