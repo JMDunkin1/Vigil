@@ -84,6 +84,6 @@ async function fileToBase64(path: string | boolean, label: string): Promise<stri
     return (await readFile(path)).toString("base64");
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not read ${label} at ${path}: ${message}`);
+    throw new Error(`Could not read ${label} at ${path}: ${message}`, { cause: error });
   }
 }
