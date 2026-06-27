@@ -1,4 +1,5 @@
 import { PORT, REQUIRED_EXTENSION_VERSION } from "./defaults.js";
+import { ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT, adultBlocklistPreloadDomains, matchAdultBlocklistHost } from "./adultBlocklist.js";
 import { activeAppLockPolicy } from "./appLocks.js";
 import { contentFilterEnabled, contentFilterRuleEntries, matchContentFilterUrl } from "./contentFilters.js";
 import { integrityLockdownActive } from "./integrityLockdown.js";
@@ -84,6 +85,10 @@ export function extensionRuleSnapshot(state: SentinelState, now = new Date()) {
       },
       endsAt: block.until
     }, "limit");
+  }
+
+  if (baseline) {
+    addAdultBlocklistRuleEntries(entries, state, baseline);
   }
 
   const rules = [...entries.values()].sort((a, b) => a.domain.localeCompare(b.domain));
@@ -311,6 +316,19 @@ function addRuleEntries(entries: Map<string, ExtensionRule>, sites: string[], po
   }
 }
 
+function addAdultBlocklistRuleEntries(entries: Map<string, ExtensionRule>, state: SentinelState, baseline: ActivePolicy): void {
+  const available = Math.max(0, ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT - entries.size);
+  if (!available) return;
+  addRuleEntries(entries, adultBlocklistPreloadDomains(state, { limit: available }), {
+    ...baseline,
+    kind: "adult-blocklist",
+    session: {
+      ...baseline.session,
+      title: "Adult blocklist"
+    }
+  }, "adult-blocklist");
+}
+
 function contentRulesForPolicy(state: SentinelState, policy: ActivePolicy | null): UrlRuleEntry[] {
   if (!policy) return [];
   const builtIn = contentFilterRuleEntries(state, policy).map((entry) => ({
@@ -395,7 +413,35 @@ function blockingPolicyFor(state: SentinelState, usage: UsageState, sample: Usag
   const active = activeAppLockPolicy(state, sample, now) || activeLimitPolicy(state, usage, sample, now);
   if (active) return active;
   const baseline = baselinePolicy(state, now, { device: "computer" });
-  return baseline && (shouldBlockUrl(baseline.profile, sample.url) || shouldBlockSite(baseline.profile, sample.hostname)) ? baseline : null;
+  if (baseline && (shouldBlockUrl(baseline.profile, sample.url) || shouldBlockSite(baseline.profile, sample.hostname))) return baseline;
+  return adultBlocklistPolicyFor(state, sample.hostname, now);
+}
+
+function adultBlocklistPolicyFor(state: SentinelState, hostname: string | undefined, now: Date): ActivePolicy | null {
+  const match = matchAdultBlocklistHost(state, hostname);
+  if (!match) return null;
+  const baseline = baselinePolicy(state, now, { device: "computer" });
+  if (!baseline) return null;
+  return {
+    ...baseline,
+    kind: "adult-blocklist",
+    session: {
+      ...baseline.session,
+      id: "adult-blocklist:computer",
+      title: "Adult blocklist",
+      profileId: "adult-blocklist"
+    },
+    profile: {
+      id: "adult-blocklist",
+      name: match.sourceLabel || "Adult blocklist",
+      mode: "blocklist",
+      blockedApps: [],
+      blockedSites: [match.domain],
+      blockedUrlPatterns: [],
+      allowedApps: [],
+      allowedSites: []
+    }
+  };
 }
 
 function matchContentFilterForActivePolicy(state: SentinelState, url: URL, now: Date) {

@@ -1,4 +1,5 @@
 import { distanceKeySummary } from "../distanceKey.js";
+import { adultBlocklistSummary } from "../adultBlocklist.js";
 import { extensionDynamicRulesReady, extensionRecentlySeen as extensionRecentlySeenForState, extensionVersionReady } from "../foolproof.js";
 import { focusShortcutDetail, focusShortcutSummary } from "../focusHooks.js";
 import { externalNetworkBlockSummary } from "../externalNetworkBlock.js";
@@ -82,6 +83,7 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, externalN
   const intentReason = intentReasonSummary(state);
   const runtime = integrityRuntimeSummary(state);
   const dynamicRules = extensionDynamicRulesReady(state);
+  const adultBlocklist = adultBlocklistSummary(state);
   const extensionVersion = extensionVersionReady(state);
   const extensionSeen = extensionRecentlySeenForState(state);
   const networkCurrent = networkBlockCurrent(hosts, firewall);
@@ -166,6 +168,12 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, externalN
       label: "Apple network DNS/router",
       ok: !externalNetwork.enabled || Boolean(externalNetwork.ready),
       detail: externalNetworkBlockDetail(externalNetwork)
+    },
+    {
+      id: "adult-blocklist",
+      label: "Adult blocklist",
+      ok: !adultBlocklist.enabled || Boolean(adultBlocklist.ready),
+      detail: adultBlocklist.detail
     },
     {
       id: "browser-redirect",
@@ -326,6 +334,12 @@ export function hardeningActions({ localScriptCommand, resourcePath }: Hardening
       method: "POST",
       path: "/api/hardening/safari-filter/apply",
       command: localScriptCommand("apply-safari-filter.mjs", { npmScript: "safari:apply" })
+    },
+    adultBlocklistRefresh: {
+      label: "Refresh Adult List",
+      method: "POST",
+      path: "/api/adult-blocklist/refresh",
+      command: localScriptCommand("refresh-adult-blocklist.mjs", { npmScript: "adult:blocklist:refresh" })
     },
     sourceSeal: {
       label: "Seal Source",

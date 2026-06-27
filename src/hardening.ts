@@ -2,6 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { STATE_PATH, STATE_SEAL_KEY_PATH, STATE_SEAL_PATH } from "./store.js";
+import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { removeCompleteManagedBlocks, removePartialManagedBlockFragments } from "./managedBlock.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, normalizeHost, normalizeUrlPattern } from "./policy.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
@@ -241,6 +242,7 @@ function hostsProfileForState(state: SentinelState, now: Date): Profile | undefi
 
 function hostsSiteTargets(state: SentinelState, profile: Profile | undefined): string[] {
   const targets: string[] = [];
+  targets.push(...adultBlocklistPreloadDomains(state));
   if (profile?.mode === "blocklist") {
     targets.push(...(profile.blockedSites || []));
     if (profile.hostsUrlPatternBlocking !== false) {

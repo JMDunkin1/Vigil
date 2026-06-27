@@ -192,6 +192,7 @@ const actions = hardeningActions({
 });
 assert.equal(actions.hostsApply.command, "cmd:apply-hosts.mjs:network:apply:privileged");
 assert.equal(actions.safariFilterApply.command, "cmd:apply-safari-filter.mjs:safari:apply:user");
+assert.equal(actions.adultBlocklistRefresh.command, "cmd:refresh-adult-blocklist.mjs:adult:blocklist:refresh:user");
 assert.equal(actions.sourceSeal.command, "cmd:seal-source.mjs:seal:source:user");
 assert.equal(actions.extensionLoad.path, "/resources/extension");
 

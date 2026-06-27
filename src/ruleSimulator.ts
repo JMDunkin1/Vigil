@@ -1,4 +1,5 @@
 import { activeAppLockPolicy } from "./appLocks.js";
+import { matchAdultBlocklistHost } from "./adultBlocklist.js";
 import { matchContentFilterUrl } from "./contentFilters.js";
 import { EXTENSION_APP_NAME } from "./extensionPolicy.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
@@ -181,6 +182,14 @@ export function explainRuleDecision(
   }
   checks.push(noneCheck("baseline", "Baseline profile did not match this target."));
 
+  const adultBlocklistPolicy = adultBlocklistPolicyFor(state, sample.hostname, now);
+  if (adultBlocklistPolicy) {
+    const adultMatch = adultBlocklistMatch(sample.hostname, adultBlocklistPolicy);
+    checks.push(blockCheck("adult-blocklist", "Imported adult blocklist matched this target.", adultBlocklistPolicy, adultMatch));
+    return blockResult("adult-blocklist", `Blocked by adult blocklist: ${adultMatch.detail}`, now, target, adultBlocklistPolicy, adultMatch, checks);
+  }
+  checks.push(noneCheck("adult-blocklist", "Imported adult blocklist did not match this target."));
+
   const pause = intentionalUseDecision(state, sample, { event: target.event, returnUrl: target.url }, now);
   if (pause.shouldPause) {
     const ruleName = pause.rule?.name || "Intentional use";
@@ -309,6 +318,43 @@ function limitBrowserControlPolicy(block: LimitBlock): ActivePolicy {
   };
 }
 
+function adultBlocklistPolicyFor(state: SentinelState, hostname: string | undefined, now: Date): ActivePolicy | null {
+  const match = matchAdultBlocklistHost(state, hostname);
+  if (!match) return null;
+  const baseline = baselinePolicy(state, now, { device: "computer" });
+  if (!baseline) return null;
+  return {
+    ...baseline,
+    kind: "adult-blocklist",
+    session: {
+      ...baseline.session,
+      id: "adult-blocklist:computer",
+      title: "Adult blocklist",
+      profileId: "adult-blocklist"
+    },
+    profile: {
+      id: "adult-blocklist",
+      name: match.sourceLabel || "Adult blocklist",
+      mode: "blocklist",
+      blockedApps: [],
+      blockedSites: [match.domain],
+      blockedUrlPatterns: [],
+      allowedApps: [],
+      allowedSites: []
+    }
+  };
+}
+
+function adultBlocklistMatch(hostname: string | undefined, policy: ActivePolicy): SimulationMatch {
+  const domain = policy.profile.blockedSites[0] || String(hostname || "");
+  return {
+    type: "adult-blocklist",
+    label: domain,
+    detail: `${hostname || domain} matches imported adult domain ${domain}.`,
+    domain
+  };
+}
+
 function blockResult(
   reasonCode: string,
   reason: string,
@@ -380,6 +426,7 @@ function sourceLabel(policy: ActivePolicy): string {
     limit: "Limit",
     "browser-control": "Browser control",
     "content-filter": "Content filter",
+    "adult-blocklist": "Adult blocklist",
     "url-pattern": "URL pattern",
     allowlist: "Allowlist"
   };

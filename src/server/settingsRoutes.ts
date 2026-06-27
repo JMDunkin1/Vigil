@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { adultBlocklistSource, invalidateAdultBlocklistIfSourceChanged } from "../adultBlocklist.js";
 import { parseBoolean } from "../booleans.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { addEvent, saveState } from "../store.js";
@@ -41,7 +42,11 @@ export async function handleSettingsApiRoute(
     assertProtectedEditAllowed(state, { kind: "settings" });
   }
 
+  const previousAdultBlocklistSource = adultBlocklistSource(state);
   const keys = updateSettings(state.settings, body);
+  if (invalidateAdultBlocklistIfSourceChanged(state, previousAdultBlocklistSource)) {
+    keys.push("adultBlocklistSnapshot");
+  }
   addEvent(state, "settings_updated", { keys });
   await saveState(state);
   sendJson(response, 200, { ok: true, keys });
@@ -168,6 +173,10 @@ const SETTING_MUTATIONS = {
   appQuitEscalationSeconds: numberSetting("appQuitEscalationSeconds", GUARDED),
   siteRedirectEnabled: booleanSetting("siteRedirectEnabled", GUARDED),
   contentFilterEnabled: alwaysEnabledBooleanSetting("contentFilterEnabled", GUARDED),
+  adultBlocklistEnabled: booleanSetting("adultBlocklistEnabled", GUARDED),
+  adultBlocklistSourceId: enumSetting("adultBlocklistSourceId", ["hagezi-nsfw", "stevenblack-porn", "blocklistproject-porn", "shadowwhisperer-adult", "custom"], GUARDED),
+  adultBlocklistCustomUrl: stringSetting("adultBlocklistCustomUrl", GUARDED),
+  adultBlocklistPreloadLimit: numberSetting("adultBlocklistPreloadLimit", { ...GUARDED, min: 0, max: 250 }),
   browserNoiseBlockingEnabled: booleanSetting("browserNoiseBlockingEnabled", GUARDED),
   appQuitEnabled: booleanSetting("appQuitEnabled", GUARDED),
   strictBypassProtectionEnabled: alwaysEnabledBooleanSetting("strictBypassProtectionEnabled", GUARDED),

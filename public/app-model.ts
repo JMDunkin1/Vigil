@@ -496,6 +496,29 @@ export interface DashboardData extends UnknownRecord {
       signature?: string;
       provider?: string;
     };
+    adultBlocklist?: HardeningCheck & {
+      selectedSourceId?: string;
+      selectedSourceLabel?: string;
+      selectedSourceUrl?: string;
+      selectedSourceLicense?: string;
+      sources?: Array<UnknownRecord & {
+        id?: string;
+        label?: string;
+        url?: string;
+        license?: string;
+      }>;
+      allowlist?: string[];
+      allowlistCount?: number;
+      domainCount?: number;
+      activeDomainCount?: number;
+      preloadLimit?: number;
+      preloadedDomainCount?: number;
+      shortHash?: string;
+      snapshotPath?: string;
+      lastRefreshAt?: string | null;
+      lastAttemptAt?: string | null;
+      lastError?: string;
+    };
     launchAgent?: HardeningCheck;
     account?: HardeningCheck;
     stateSeal?: HardeningCheck;

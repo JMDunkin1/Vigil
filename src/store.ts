@@ -2,11 +2,11 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
+import { DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { normalizeIntentionalUse } from "./intentionalUse.js";
 import { normalizeWeekdays } from "./normalizers.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
-import type { AppSettings, GrayscaleSchedule, GrayscaleState, Profile, Schedule, SentinelState, Session, UsageState } from "./types.js";
+import type { AdultBlocklistState, AppSettings, GrayscaleSchedule, GrayscaleState, Profile, Schedule, SentinelState, Session, UsageState, UnknownRecord } from "./types.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 export const DATA_DIR = process.env.SENTINEL_DATA_DIR || resolveDefaultDataDir(ROOT);
@@ -113,6 +113,7 @@ function migrateState(state: RawState): SentinelState {
     ...fresh,
     ...state,
     settings,
+    adultBlocklist: normalizeAdultBlocklistState(state.adultBlocklist, fresh.adultBlocklist),
     profiles,
     schedules: normalizeSchedules(Array.isArray(state.schedules) ? state.schedules : fresh.schedules),
     limitRules: Array.isArray(state.limitRules) ? state.limitRules : fresh.limitRules,
@@ -214,10 +215,36 @@ function migrateSettings(settings: AppSettings): AppSettings {
   if (next.externalNetworkBlockProvider !== "manual") {
     next.externalNetworkBlockProvider = "manual";
   }
+  next.adultBlocklistEnabled = next.adultBlocklistEnabled !== false;
+  next.adultBlocklistSourceId = String(next.adultBlocklistSourceId || DEFAULT_ADULT_BLOCKLIST_SOURCE_ID);
+  next.adultBlocklistCustomUrl = String(next.adultBlocklistCustomUrl || "");
+  next.adultBlocklistPreloadLimit = clampInteger(next.adultBlocklistPreloadLimit, 0, 250, DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT);
   next.contentFilterEnabled = true;
   next.safariUrlFilterEnabled = true;
   next.strictBypassProtectionEnabled = true;
   return next;
+}
+
+function normalizeAdultBlocklistState(value: unknown, fallback: AdultBlocklistState): AdultBlocklistState {
+  const raw = value && typeof value === "object" ? value as Partial<AdultBlocklistState> : {};
+  const source = raw.source && typeof raw.source === "object" ? raw.source as unknown as UnknownRecord : null;
+  return {
+    allowlist: normalizeDomainList(raw.allowlist),
+    domainCount: clampInteger(raw.domainCount, 0, 10_000_000, fallback.domainCount),
+    activeDomainCount: clampInteger(raw.activeDomainCount, 0, 10_000_000, fallback.activeDomainCount),
+    hash: String(raw.hash || ""),
+    snapshotPath: String(raw.snapshotPath || fallback.snapshotPath || ""),
+    lastAttemptAt: nullableString(raw.lastAttemptAt),
+    lastRefreshAt: nullableString(raw.lastRefreshAt),
+    lastError: String(raw.lastError || ""),
+    source: source ? {
+      id: String(source.id || ""),
+      label: String(source.label || ""),
+      url: String(source.url || ""),
+      homepage: String(source.homepage || ""),
+      license: String(source.license || "")
+    } : null
+  };
 }
 
 function mergeBuiltinProfiles(profiles: Profile[], builtinProfiles: Profile[]): Profile[] {
@@ -300,6 +327,22 @@ function cloneProfile(profile: Profile): Profile {
 
 function uniqueList(values: unknown[] = []): string[] {
   return [...new Set((values || []).map((item) => String(item).trim()).filter(Boolean))];
+}
+
+function normalizeDomainList(values: unknown): string[] {
+  const source = Array.isArray(values) ? values : String(values || "").split(/\r?\n|,/);
+  return [...new Set(source.map(normalizeHostTarget).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function nullableString(value: unknown): string | null {
+  const text = String(value || "").trim();
+  return text || null;
+}
+
+function clampInteger(value: unknown, min: number, max: number, fallback: number): number {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(number)));
 }
 
 async function writeStateAndSeal(state: SentinelState, sealedAt: string): Promise<void> {

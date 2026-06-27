@@ -1140,6 +1140,21 @@
             <label class="numberline">Reason min <input id="intentReasonMinLength" type="number" min="1" max="280" step="1"> chars</label>
           </div>
 
+          <div class="adult-blocklist-panel">
+            <div>
+              <p class="eyebrow">Adult Web</p>
+              <p id="adultBlocklistStatus">Not refreshed</p>
+            </div>
+            <label class="checkline"><input id="adultBlocklistEnabled" type="checkbox"> Adult blocklist</label>
+            <select id="adultBlocklistSourceId" aria-label="Adult blocklist source"></select>
+            <input id="adultBlocklistCustomUrl" type="url" placeholder="Custom list URL">
+            <label class="numberline">Preload <input id="adultBlocklistPreloadLimit" type="number" min="0" max="250" step="1"> domains</label>
+            <textarea id="adultBlocklistAllowlist" rows="3" placeholder="Allowlist domains"></textarea>
+            <button id="saveAdultBlocklistSettings" class="secondary" type="button">Save Adult List</button>
+            <button id="refreshAdultBlocklist" class="secondary" type="button">Refresh Adult List</button>
+            <span id="adultBlocklistMeta" class="tiny-status">Ready</span>
+          </div>
+
           <div class="focus-shortcut-panel">
             <div>
               <p class="eyebrow">Notification Focus</p>

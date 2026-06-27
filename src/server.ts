@@ -18,6 +18,7 @@ import { createLocalScriptRunner } from "./server/localScripts.js";
 import { blockedPage, pausePage } from "./server/pages.js";
 import { matchApiRoute } from "./server/apiRoutes.js";
 import { handleBackupApiRoute } from "./server/backupRoutes.js";
+import { handleAdultBlocklistApiRoute } from "./server/adultBlocklistRoutes.js";
 import { handleDeviceApiRoute } from "./server/deviceRoutes.js";
 import type { IosMdmPushResult } from "./server/deviceRoutes.js";
 import { handleExtensionApiRoute } from "./server/extensionApi.js";
@@ -340,6 +341,10 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
   }
 
   if (await handleSettingsApiRoute(request, response, { state })) {
+    return;
+  }
+
+  if (await handleAdultBlocklistApiRoute(request, response, { state })) {
     return;
   }
 

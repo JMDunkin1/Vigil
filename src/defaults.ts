@@ -3,6 +3,8 @@ import type { DeviceTarget, SentinelState } from "./types.js";
 export const APP_NAME = "Sentinel";
 export const PORT = Number(process.env.SENTINEL_PORT || process.env.SCREEN_TIME_PORT || 8787);
 export const REQUIRED_EXTENSION_VERSION = "0.3.1";
+export const DEFAULT_ADULT_BLOCKLIST_SOURCE_ID = "hagezi-nsfw";
+export const DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT = 100;
 
 export const BROWSERS = new Set([
   "Safari",
@@ -387,6 +389,10 @@ export function defaultState(): SentinelState {
       appQuitEscalationSeconds: 10,
       siteRedirectEnabled: true,
       contentFilterEnabled: true,
+      adultBlocklistEnabled: true,
+      adultBlocklistSourceId: DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
+      adultBlocklistCustomUrl: "",
+      adultBlocklistPreloadLimit: DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT,
       browserNoiseBlockingEnabled: true,
       appQuitEnabled: true,
       strictBypassProtectionEnabled: true,
@@ -407,6 +413,17 @@ export function defaultState(): SentinelState {
       protectedEditWindowMinutes: 10,
       runtimeGapLockdownSeconds: 120,
       clockTamperLockdownSeconds: 90
+    },
+    adultBlocklist: {
+      allowlist: [],
+      domainCount: 0,
+      activeDomainCount: 0,
+      hash: "",
+      snapshotPath: "",
+      lastAttemptAt: null,
+      lastRefreshAt: null,
+      lastError: "",
+      source: null
     },
     profiles: [
       {

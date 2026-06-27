@@ -9,6 +9,8 @@ export const API_ROUTES = Object.freeze([
   { id: "extensionPauseSkip", domain: "extension", methods: ["POST"], path: "/api/extension/pause/skip" },
   { id: "backupExport", domain: "backup", methods: ["GET"], path: "/api/backup/export" },
   { id: "settings", domain: "settings", methods: ["POST"], path: "/api/settings" },
+  { id: "adultBlocklistSettings", domain: "hardening", methods: ["POST"], path: "/api/adult-blocklist/settings" },
+  { id: "adultBlocklistRefresh", domain: "hardening", methods: ["POST"], path: "/api/adult-blocklist/refresh" },
   { id: "panicStart", domain: "sessions", methods: ["POST"], path: "/api/panic/start" },
   { id: "keyholder", domain: "protection", methods: ["POST"], path: "/api/keyholder" },
   { id: "distanceKey", domain: "protection", methods: ["POST"], path: "/api/distance-key" },

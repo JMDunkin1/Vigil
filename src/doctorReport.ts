@@ -1,4 +1,5 @@
 import { distanceKeySummary } from "./distanceKey.js";
+import { adultBlocklistSummary } from "./adultBlocklist.js";
 import { extensionDynamicRulesReady, extensionRecentlySeen, extensionVersionReady, foolproofSummary } from "./foolproof.js";
 import { focusShortcutDetail, focusShortcutSummary } from "./focusHooks.js";
 import { externalNetworkBlockSummary } from "./externalNetworkBlock.js";
@@ -90,6 +91,7 @@ export function doctorRows(state: SentinelState, context: DoctorContext = {}, no
   const focusShortcut = focusShortcutSummary(state);
   const intentReason = intentReasonSummary(state);
   const extensionRules = extensionDynamicRulesReady(state, now);
+  const adultBlocklist = adultBlocklistSummary(state);
   const extensionSeen = extensionRecentlySeen(state, now);
   const extensionVersion = extensionVersionReady(state);
   const networkCurrent = networkBlockCurrent(hosts, firewall);
@@ -116,6 +118,7 @@ export function doctorRows(state: SentinelState, context: DoctorContext = {}, no
     row("system-network-block", "System network block", networkEnabled && networkCurrent, networkEnabled ? (networkCurrent ? "Whole-site domain blocks are enforced across apps by hosts/PF." : "Apply the network block so hosts/PF are current.") : "System network blocking is disabled."),
     row("safari-url-filter", "Safari web filter", !safariRequired || safariWebFilterCurrent(safariFilter), safariFilterDetail(safariFilter, Boolean(safariRequired))),
     row("external-network-block", "Apple network DNS/router", !externalNetworkBlock.enabled || Boolean(externalNetworkBlock.ready), externalNetworkBlockDetail(externalNetworkBlock)),
+    row("adult-blocklist", "Adult blocklist", !adultBlocklist.enabled || Boolean(adultBlocklist.ready), adultBlocklist.detail),
     row("browser-redirect", "Browser redirect fallback", networkCurrent || Boolean(settings.siteRedirectEnabled), networkCurrent ? "Not required while the system network block is current." : (settings.siteRedirectEnabled ? "Fallback redirects blocked sites to the block screen." : "Disabled while the system network block is not current.")),
     row("browser-cleanup", "Browser cleanup", true, settings.browserNoiseBlockingEnabled !== false ? "Extension cleanup/noise rules are enabled." : "Browser cleanup/noise blocking is disabled."),
     row("app-quit", "App quit", Boolean(settings.appQuitEnabled), settings.appQuitEnabled ? "Blocked apps are quit automatically." : "Blocked apps are not quit automatically."),

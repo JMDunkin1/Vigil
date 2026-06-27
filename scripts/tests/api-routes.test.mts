@@ -12,6 +12,8 @@ assert.equal(matchApiRoute("GET", "/api/backup/export")?.id, "backupExport");
 assert.equal(matchApiRoute("POST", "/api/session/preview")?.id, "sessionPreview");
 assert.equal(matchApiRoute("POST", "/api/session/start")?.domain, "sessions");
 assert.equal(matchApiRoute("POST", "/api/hardening/safari-filter/apply")?.id, "safariFilterApply");
+assert.equal(matchApiRoute("POST", "/api/adult-blocklist/settings")?.id, "adultBlocklistSettings");
+assert.equal(matchApiRoute("POST", "/api/adult-blocklist/refresh")?.id, "adultBlocklistRefresh");
 assert.equal(matchApiRoute("POST", "/api/devices/ios/usb-profile-apply")?.id, "iosUsbProfileApply");
 assert.equal(matchApiRoute("GET", "/api/devices/ios/mdm/doctor")?.id, "iosMdmDoctor");
 assert.equal(matchApiRoute("DELETE", "/api/schedule/work")?.id, "scheduleDelete");

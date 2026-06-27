@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { appleContentFilterStatus } from "./appleContentFilter.js";
+import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { CONTENT_FILTER_RULES, contentFilterEnabled } from "./contentFilters.js";
 import { DATA_DIR } from "./store.js";
 import { toPlist } from "./plist.js";
@@ -70,6 +71,10 @@ export function safariFilterTargets(state: SentinelState, now = new Date()): Saf
         targets.push(...contentFilterTargetUrls(filter, `content-filter:${rule.id}`));
       }
     }
+  }
+
+  for (const site of adultBlocklistPreloadDomains(state)) {
+    targets.push(...siteTargetUrls(site, "adult-blocklist:preload"));
   }
 
   return uniqueTargets(targets).slice(0, URL_LIMIT);
@@ -218,7 +223,7 @@ function uniqueTargets(targets: SafariFilterUrlTarget[]): SafariFilterUrlTarget[
     if (!target.url || byUrl.has(target.url)) continue;
     byUrl.set(target.url, target);
   }
-  return [...byUrl.values()].sort((a, b) => a.url.localeCompare(b.url));
+  return [...byUrl.values()];
 }
 
 function isPublicHost(host: string): boolean {

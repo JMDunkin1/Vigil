@@ -78,6 +78,7 @@ last exit code = 0
   const pfConfPath = join(dir, "pf.conf");
   const anchorPath = join(dir, "com.sentinel.block");
   const state = defaultState();
+  state.settings.adultBlocklistEnabled = false;
   state.profiles = [{
     id: "default",
     name: "Default focus",

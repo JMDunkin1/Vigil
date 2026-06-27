@@ -7,6 +7,7 @@ import {
   defaultState
 } from "./defaults.js";
 import { parseBoolean } from "./booleans.js";
+import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { grayscaleDecision, IOS_GRAYSCALE_GUARD_BUNDLE_IDS } from "./grayscale.js";
 import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, profileById } from "./policy.js";
@@ -201,6 +202,7 @@ export function iosPolicyTargets(state: SentinelState, now = new Date()): IosPol
     : uniqueUrls([
       ...urlsFromSiteTargets(profileSites),
       ...urlsFromPatterns(profilePatterns),
+      ...urlsFromSiteTargets(adultBlocklistPreloadDomains(state)),
       ...settings.deniedUrls
     ]).slice(0, MAX_DENY_URLS);
   const allowedUrls = webMode === "allowlist"
