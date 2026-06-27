@@ -36,8 +36,7 @@ if (!isSupervisedCloud(cloud)) {
 }
 
 const supervisorKeybagPath = await requireSupervisorKeybag(options.supervisorKeybag);
-await prepareIosServerState();
-const profilePath = await downloadActiveProfile();
+const profilePath = options.profile ? await validateProvidedProfile(options.profile) : await prepareAndDownloadActiveProfile();
 await pairSupervised(udid, supervisorKeybagPath);
 await installProfile(udid, profilePath, supervisorKeybagPath);
 const installed = await profileInstalled(udid, supervisorKeybagPath);
@@ -55,18 +54,36 @@ function parseArgs(args) {
   const output = {
     requireCheckpoint: "",
     password: process.env.IOS_BACKUP_PASSWORD || "",
+    profile: "",
     supervisorKeybag: String(process.env.SENTINEL_SUPERVISOR_KEYBAG || "").trim(),
     udid: ""
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] || "";
-    if (arg === "--udid") output.udid = String(args[index + 1] || "").trim();
+    if (arg === "--udid") {
+      output.udid = String(args[index + 1] || "").trim();
+      index += 1;
+    }
     if (arg.startsWith("--udid=")) output.udid = arg.slice("--udid=".length).trim();
-    if (arg === "--require-checkpoint") output.requireCheckpoint = String(args[index + 1] || "").trim();
+    if (arg === "--require-checkpoint") {
+      output.requireCheckpoint = String(args[index + 1] || "").trim();
+      index += 1;
+    }
     if (arg.startsWith("--require-checkpoint=")) output.requireCheckpoint = arg.slice("--require-checkpoint=".length).trim();
-    if (arg === "--password") output.password = String(args[index + 1] || "");
+    if (arg === "--password") {
+      output.password = String(args[index + 1] || "");
+      index += 1;
+    }
     if (arg.startsWith("--password=")) output.password = arg.slice("--password=".length);
-    if (arg === "--supervisor-keybag" || arg === "--keybag") output.supervisorKeybag = String(args[index + 1] || "").trim();
+    if (arg === "--profile") {
+      output.profile = String(args[index + 1] || "").trim();
+      index += 1;
+    }
+    if (arg.startsWith("--profile=")) output.profile = arg.slice("--profile=".length).trim();
+    if (arg === "--supervisor-keybag" || arg === "--keybag") {
+      output.supervisorKeybag = String(args[index + 1] || "").trim();
+      index += 1;
+    }
     if (arg.startsWith("--supervisor-keybag=")) output.supervisorKeybag = arg.slice("--supervisor-keybag=".length).trim();
     if (arg.startsWith("--keybag=")) output.supervisorKeybag = arg.slice("--keybag=".length).trim();
   }
@@ -124,12 +141,27 @@ async function prepareIosServerState() {
   await sentinelJson("/api/devices/ios/usb-profile-apply", { method: "POST" });
 }
 
+async function prepareAndDownloadActiveProfile() {
+  await prepareIosServerState();
+  return await downloadActiveProfile();
+}
+
 async function downloadActiveProfile() {
   const response = await fetch(`${SENTINEL_SERVER}/api/devices/ios/profile.mobileconfig`);
   if (!response.ok) throw new Error(`Sentinel profile download failed: HTTP ${response.status}`);
   const dir = await mkdtemp(join(tmpdir(), "sentinel-ios-profile-"));
   const path = join(dir, "sentinel-iphone-lock.mobileconfig");
   await writeFile(path, Buffer.from(await response.arrayBuffer()));
+  await execFileAsync("/usr/bin/plutil", ["-lint", path], { timeout: 5000, maxBuffer: 1024 * 64 });
+  return path;
+}
+
+async function validateProvidedProfile(inputPath) {
+  const path = resolve(inputPath);
+  const profile = await stat(path).catch(() => null);
+  if (!profile?.isFile() || profile.size <= 0) {
+    throw new Error(`Provided iOS profile is missing or empty: ${path}`);
+  }
   await execFileAsync("/usr/bin/plutil", ["-lint", path], { timeout: 5000, maxBuffer: 1024 * 64 });
   return path;
 }

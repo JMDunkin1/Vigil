@@ -172,6 +172,14 @@ npm run ios:apply-usb
 
 This installs a local `pymobiledevice3` helper under ignored `data/ios-tools`, verifies the phone over USB, repairs the supervised pairing channel when needed, and applies the generated Sentinel iPhone profile directly when the device is already supervised. The USB path requires the keybag for the same supervision identity that already supervises the phone; place it at ignored `data/sentinel-supervisor.keybag`, set `SENTINEL_SUPERVISOR_KEYBAG`, or pass `-- --supervisor-keybag /path/to/supervisor.keybag`. The script fails early when that matching keybag is absent because a newly created Sentinel identity cannot manage a phone supervised by Apple Configurator, SHIFT, or another existing identity. Add `-- --require-checkpoint /path/to/checkpoint` when applying after a layout-sensitive setup; the apply script rechecks that checkpoint for `Manifest.db` plus SpringBoard/Home Screen layout records before it proceeds. If the connected iPhone is already activated but not supervised, iOS rejects supervised app and web restriction payloads; the script stops before erasing or partial-restoring anything. Do not add a no-erase supervision path here unless it first creates a local backup/layout recovery checkpoint and proves that Home Screen layout, Apple ID setup state, and app organization survive the flow.
 
+To start the same install path before the phone is connected, use the USB watcher:
+
+```bash
+npm run ios:apply-usb:watch
+```
+
+It waits for one trusted USB iPhone, then delegates to `ios:apply-usb` once. It keeps the same safety gates: a supervised phone and matching `data/sentinel-supervisor.keybag` are still required, and unsupervised or missing-keybag failures stop instead of retrying. Pass the same installer flags after `--`, for example `npm run ios:apply-usb:watch -- --profile data/manageengine/sentinel-manageengine-enrollment-window.mobileconfig`.
+
 For a phone that is not supervised yet and must keep its current app/folder order, use the heavier layout-preserving supervision flow instead:
 
 ```bash
@@ -198,6 +206,8 @@ The existing-checkpoint path must either contain the connected phone's UDID fold
 Remote MDM is a separate integration boundary. The layout-preserving USB flow ends with the static Sentinel profile installed locally; it does not set up remote APNs-backed MDM by itself.
 
 Real iOS MDM enrollment requires Apple supervision plus a public HTTPS URL, an APNs MDM topic and push certificate, and an identity certificate or SCEP payload. The current server handles enrollment/check-in, queues policy-profile installs for enrolled devices, and uses the saved APNs MDM push certificate to wake devices with queued commands. On first enrollment, the device's TokenUpdate queues the current policy and immediately attempts the APNs wake-up; later policy changes follow the same queue-and-push flow.
+
+For the free hosted-MDM fallback, use [docs/manageengine-mdm.md](docs/manageengine-mdm.md). In that path ManageEngine owns APNs and enrollment, while Sentinel exports the supervised policy profile for custom-profile assignment.
 
 Phone usage can be synced into the same dashboard totals by posting daily snapshots to `/api/devices/usage` with the local app intent header or the iOS device token (`x-sentinel-device-token` header or `?token=` query). A snapshot such as `{ "device": "phone", "date": "2026-05-28", "totalSeconds": 3600, "apps": { "Instagram": 1200 }, "sites": { "reddit.com": 300 } }` replaces the phone bucket for that day, then dashboard summaries, weekly reports, and limit progress merge it with Mac usage.
 

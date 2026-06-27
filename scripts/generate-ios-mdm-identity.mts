@@ -124,12 +124,12 @@ async function execOpenSsl(args: string[]): Promise<void> {
     await execFileAsync("/usr/bin/openssl", args, { timeout: 15_000, maxBuffer: 1024 * 256 });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`openssl ${args[0]} failed: ${message}`);
+    throw new Error(`openssl ${args[0]} failed: ${message}`, { cause: error });
   }
 }
 
 function sanitizeSubjectValue(value: string): string {
-  return value.replace(/[\/\n\r]/g, " ").trim() || "Sentinel iPhone MDM Identity";
+  return value.replace(/[/\n\r]/g, " ").trim() || "Sentinel iPhone MDM Identity";
 }
 
 function shellQuote(value: string): string {
