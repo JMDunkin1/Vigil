@@ -11,7 +11,7 @@ export type DeviceTargetInput = DeviceTarget;
 export type LockLevel = "light" | "deep";
 export type ProfileMode = "blocklist" | "allowlist";
 export type PolicyPhaseKind = "work" | "break";
-export type ActivePolicyKind = "baseline" | "manual" | "schedule" | "planner" | "panic" | "integrity" | "app-lock" | "limit" | "browser-control" | "content-filter" | "url-pattern" | "allowlist";
+export type ActivePolicyKind = "baseline" | "manual" | "schedule" | "planner" | "panic" | "integrity" | "app-lock" | "limit" | "browser-control" | "content-filter" | "adult-blocklist" | "url-pattern" | "allowlist";
 export type LimitRuleType = "time" | "open";
 
 export interface Profile {
@@ -143,6 +143,10 @@ export interface AppSettings {
   appQuitEscalationSeconds: number;
   siteRedirectEnabled: boolean;
   contentFilterEnabled: boolean;
+  adultBlocklistEnabled: boolean;
+  adultBlocklistSourceId: string;
+  adultBlocklistCustomUrl: string;
+  adultBlocklistPreloadLimit: number;
   browserNoiseBlockingEnabled: boolean;
   appQuitEnabled: boolean;
   strictBypassProtectionEnabled: boolean;
@@ -163,6 +167,26 @@ export interface AppSettings {
   protectedEditWindowMinutes: number;
   runtimeGapLockdownSeconds: number;
   clockTamperLockdownSeconds: number;
+}
+
+export interface AdultBlocklistSourceSnapshot {
+  id: string;
+  label: string;
+  url: string;
+  homepage: string;
+  license: string;
+}
+
+export interface AdultBlocklistState {
+  allowlist: string[];
+  domainCount: number;
+  activeDomainCount: number;
+  hash: string;
+  snapshotPath: string;
+  lastAttemptAt: string | null;
+  lastRefreshAt: string | null;
+  lastError: string;
+  source: AdultBlocklistSourceSnapshot | null;
 }
 
 export interface StateEvent {
@@ -674,6 +698,7 @@ export interface VigilState {
   version: number;
   createdAt: string;
   settings: AppSettings;
+  adultBlocklist: AdultBlocklistState;
   profiles: Profile[];
   schedules: Schedule[];
   limitRules: LimitRule[];

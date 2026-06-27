@@ -27,6 +27,7 @@
     "network:preview": "npm run build && node dist/runtime/scripts/hosts-preview.mjs",
     "network:apply": "npm run build && sudo node dist/runtime/scripts/apply-hosts.mjs",
     "safari:apply": "npm run build && node dist/runtime/scripts/apply-safari-filter.mjs",
+    "adult:blocklist:refresh": "npm run build && node dist/runtime/scripts/refresh-adult-blocklist.mjs",
     "ios:checkpoint": "node scripts/create-ios-layout-checkpoint.mjs",
     "ios:supervise-preserve-layout": "node scripts/supervise-ios-preserving-layout.mjs",
     "ios:apply-usb": "node scripts/apply-ios-usb-profile.mjs",

@@ -1,4 +1,5 @@
 import { currentMacAccountStatus } from "../account.js";
+import { adultBlocklistSummary } from "../adultBlocklist.js";
 import { DEVICE_TARGETS } from "../defaults.js";
 import { buildFirewallBlock, buildPfConfBlock, firewallStatus } from "../firewall.js";
 import { focusShortcutSummary } from "../focusHooks.js";
@@ -58,6 +59,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
   const sourceSeal = await sourceSealStatus();
   const safariFilter = await safariFilterStatus(state);
   const externalNetworkBlock = externalNetworkBlockSummary(state);
+  const adultBlocklist = adultBlocklistSummary(state);
   const protection = protectionSummary(state);
   const devices = await deviceSummary(state);
   const foolproof = foolproofSummary(state, { hosts, firewall, safariFilter, agent, account, monitor: monitor.status, stateSeal, sourceSeal });
@@ -81,6 +83,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
         firewall,
         safariFilter,
         externalNetworkBlock,
+        adultBlocklist,
         launchAgent: agent,
         account,
         stateSeal,
@@ -99,6 +102,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
 export function publicState(current: VigilState, policy: ActivePolicy | null) {
   return {
     settings: current.settings,
+    adultBlocklist: current.adultBlocklist,
     profiles: current.profiles,
     schedules: current.schedules,
     limitRules: current.limitRules || [],

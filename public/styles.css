@@ -935,6 +935,7 @@ button:focus-visible {
 .maintenance-panel,
 .keyholder-panel,
 .distance-key-panel,
+.adult-blocklist-panel,
 .focus-shortcut-panel {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -951,9 +952,15 @@ button:focus-visible {
 }
 
 .maintenance-panel p,
+.adult-blocklist-panel p,
 .focus-shortcut-panel p {
   margin: 0;
   color: var(--muted);
+}
+
+.adult-blocklist-panel textarea {
+  grid-column: span 2;
+  min-height: 86px;
 }
 
 .maintenance-panel .distance-input,
@@ -1858,6 +1865,7 @@ button:focus-visible {
   .maintenance-panel,
   .keyholder-panel,
   .distance-key-panel,
+  .adult-blocklist-panel,
   .focus-shortcut-panel,
   .focus-sound-panel,
   .unlock-strip,

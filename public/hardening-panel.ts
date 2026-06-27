@@ -148,10 +148,51 @@ function bindHardeningActions(context: HardeningPanelContext): void {
     }
     await refresh();
   });
+
+  $("#adultBlocklistSourceId").addEventListener("change", () => {
+    $("#adultBlocklistCustomUrl").disabled = $("#adultBlocklistSourceId").value !== "custom";
+  });
+
+  $("#saveAdultBlocklistSettings").addEventListener("click", async () => {
+    const status = $("#adultBlocklistMeta");
+    status.textContent = "Saving...";
+    try {
+      await post("/api/adult-blocklist/settings", {
+        adultBlocklistEnabled: $("#adultBlocklistEnabled").checked,
+        adultBlocklistSourceId: $("#adultBlocklistSourceId").value,
+        adultBlocklistCustomUrl: $("#adultBlocklistCustomUrl").value,
+        adultBlocklistPreloadLimit: $("#adultBlocklistPreloadLimit").value,
+        allowlist: $("#adultBlocklistAllowlist").value
+      });
+      status.textContent = "Saved";
+      toast("Adult list saved");
+    } catch (error) {
+      status.textContent = errorMessage(error);
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
+  $("#refreshAdultBlocklist").addEventListener("click", async () => {
+    const status = $("#adultBlocklistMeta");
+    status.textContent = "Refreshing...";
+    $("#refreshAdultBlocklist").disabled = true;
+    try {
+      await post("/api/adult-blocklist/refresh", {});
+      status.textContent = "Refreshed";
+      toast("Adult list refreshed");
+    } catch (error) {
+      status.textContent = errorMessage(error);
+      toast(errorMessage(error));
+    } finally {
+      $("#refreshAdultBlocklist").disabled = false;
+    }
+    await refresh();
+  });
 }
 
 function bindProtectedSettingControls({ $, post, toast, errorMessage, refresh }: HardeningPanelContext): void {
-  for (const id of ["systemNetworkBlockingEnabled", "safariUrlFilterEnabled", "externalNetworkBlockEnabled", "siteRedirectEnabled", "contentFilterEnabled", "browserNoiseBlockingEnabled", "typingChallengeEnabled", "intentReasonEnabled", "appQuitEnabled", "strictBypassProtectionEnabled", "processSweepEnabled", "systemSleepLockEnabled", "focusShortcutEnabled", "strictByDefault", "protectedEditsEnabled", "foolproofModeEnabled"]) {
+  for (const id of ["systemNetworkBlockingEnabled", "safariUrlFilterEnabled", "externalNetworkBlockEnabled", "siteRedirectEnabled", "contentFilterEnabled", "adultBlocklistEnabled", "browserNoiseBlockingEnabled", "typingChallengeEnabled", "intentReasonEnabled", "appQuitEnabled", "strictBypassProtectionEnabled", "processSweepEnabled", "systemSleepLockEnabled", "focusShortcutEnabled", "strictByDefault", "protectedEditsEnabled", "foolproofModeEnabled"]) {
     $(`#${id}`).addEventListener("change", async (event: Event) => {
       try {
         await post("/api/settings", { [id]: (event.target as ControlElement).checked });
@@ -192,6 +233,7 @@ function renderHardening(data: DashboardData, context: HardeningPanelContext): v
   $("#siteRedirectEnabled").checked = Boolean(settings.siteRedirectEnabled);
   $("#contentFilterEnabled").checked = true;
   $("#contentFilterEnabled").disabled = true;
+  $("#adultBlocklistEnabled").checked = settings.adultBlocklistEnabled !== false;
   $("#browserNoiseBlockingEnabled").checked = settings.browserNoiseBlockingEnabled !== false;
   $("#typingChallengeEnabled").checked = settings.typingChallengeEnabled !== false;
   $("#intentReasonEnabled").checked = settings.intentReasonEnabled !== false;
@@ -209,6 +251,7 @@ function renderHardening(data: DashboardData, context: HardeningPanelContext): v
   $("#panicLockDurationMinutes").value = String(settings.panicLockDurationMinutes || 3);
   $("#intentReasonMinLength").value = String(settings.intentReasonMinLength || 20);
   renderIntentReasonHints(settings, $);
+  renderAdultBlocklist(data, $);
   renderFocusShortcut(data.state.focusShortcut, $);
   $("#hostsBlock").textContent = data.hardening.hostsBlock || "";
   renderHardeningActions(data.hardening, $);
@@ -225,6 +268,58 @@ function renderHardening(data: DashboardData, context: HardeningPanelContext): v
   renderMaintenance(data.protection, context);
   renderAudit(data.hardening.audit || [], $);
   renderFoolproofBlockers(data.hardening.foolproof, $);
+}
+
+function renderAdultBlocklist(data: DashboardData, $: QueryElement): void {
+  const settings = data.state.settings;
+  const adult = data.hardening.adultBlocklist || {};
+  $("#adultBlocklistEnabled").checked = settings.adultBlocklistEnabled !== false;
+  renderAdultBlocklistSources(adult, settings.adultBlocklistSourceId || String(adult.selectedSourceId || ""), $);
+  const customUrl = $("#adultBlocklistCustomUrl");
+  if (document.activeElement !== customUrl) customUrl.value = settings.adultBlocklistCustomUrl || "";
+  customUrl.disabled = $("#adultBlocklistSourceId").value !== "custom";
+  const preload = $("#adultBlocklistPreloadLimit");
+  if (document.activeElement !== preload) preload.value = String(settings.adultBlocklistPreloadLimit ?? adult.preloadLimit ?? 100);
+  const allowlist = $("#adultBlocklistAllowlist");
+  if (document.activeElement !== allowlist) allowlist.value = (adult.allowlist || data.state.adultBlocklist?.allowlist || []).join("\n");
+  const domainCount = Number(adult.domainCount || 0);
+  const activeCount = Number(adult.activeDomainCount || 0);
+  const preloadCount = Number(adult.preloadedDomainCount || 0);
+  const lastRefresh = adult.lastRefreshAt ? shortDate(String(adult.lastRefreshAt)) : "not refreshed";
+  const freshness = adult.enabled === false ? lastRefresh : (adult.current ? lastRefresh : "needs refresh");
+  $("#adultBlocklistStatus").textContent = adult.lastError
+    ? String(adult.lastError)
+    : (!adult.current && adult.detail ? String(adult.detail) : "")
+      || `${activeCount.toLocaleString()} active / ${domainCount.toLocaleString()} loaded`;
+  $("#adultBlocklistMeta").textContent = [
+    String(adult.selectedSourceLabel || "Adult source"),
+    `${preloadCount} preloaded`,
+    freshness,
+    adult.shortHash ? `hash ${adult.shortHash}` : ""
+  ].filter(Boolean).join(" | ");
+}
+
+function renderAdultBlocklistSources(adult: NonNullable<DashboardData["hardening"]["adultBlocklist"]>, selected: string, $: QueryElement): void {
+  const select = $("#adultBlocklistSourceId");
+  const sources = adult.sources || [];
+  const signature = sources.map((source) => `${source.id}:${source.label}`).join("|");
+  if (select.dataset.signature !== signature) {
+    select.textContent = "";
+    for (const source of sources) {
+      const option = document.createElement("option");
+      option.value = String(source.id || "");
+      option.textContent = String(source.label || source.id || "Source");
+      select.append(option);
+    }
+    select.dataset.signature = signature;
+  }
+  select.value = selected || String(adult.selectedSourceId || "hagezi-nsfw");
+}
+
+function shortDate(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return value;
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function renderHardeningActions(hardening: DashboardData["hardening"], $: QueryElement): void {
