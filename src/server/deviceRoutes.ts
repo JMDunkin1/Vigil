@@ -68,7 +68,8 @@ export async function handleDeviceApiRoute(
       blockedAppBundleIds: current.blockedAppBundleIds || [],
       allowedAppBundleIds: current.allowedAppBundleIds || [],
       deniedUrls: current.deniedUrls || [],
-      allowedUrls: current.allowedUrls || []
+      allowedUrls: current.allowedUrls || [],
+      focusedSocial: current.focusedSocial
     }, current) as SentinelState["deviceControls"]["ios"];
     addEvent(state, "ios_usb_profile_apply_prepared", {
       enabled: state.deviceControls.ios.enabled,

@@ -6,6 +6,7 @@ import { DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_ADULT_BLOCKLIST_SOURCE_I
 import { normalizeIntentionalUse } from "./intentionalUse.js";
 import { normalizeWeekdays } from "./normalizers.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
+import { withoutFocusedSocialDeniedUrls } from "./socialFeatureFilters.js";
 import type { AdultBlocklistState, AppSettings, GrayscaleSchedule, GrayscaleState, Profile, Schedule, SentinelState, Session, UsageState, UnknownRecord } from "./types.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -259,7 +260,7 @@ function migrateBuiltinProfiles(profiles: Profile[]): Profile[] {
 
 export function sanitizeSoftBlockProfile(profile: Profile): Profile {
   const blockedUrlPatterns = uniqueList([
-    ...(profile.blockedUrlPatterns || []).filter((pattern) => !isInstagramExplorePattern(pattern) && !isRedditWholeSitePattern(pattern)),
+    ...withoutFocusedSocialDeniedUrls((profile.blockedUrlPatterns || []).filter((pattern) => !isRedditWholeSitePattern(pattern))),
     ...DEFAULT_EXPLICIT_URL_PATTERNS,
     ...DEFAULT_SHORT_FORM_URL_PATTERNS
   ]);
@@ -297,7 +298,7 @@ function sanitizeRedditUrlPolicyProfile(
     ...profile,
     blockedSites: (profile.blockedSites || []).filter((site) => !isRedditSiteTarget(site)),
     blockedUrlPatterns: uniqueList([
-      ...(profile.blockedUrlPatterns || []).filter((pattern) => !isRedditWholeSitePattern(pattern)),
+      ...withoutFocusedSocialDeniedUrls((profile.blockedUrlPatterns || []).filter((pattern) => !isRedditWholeSitePattern(pattern))),
       ...options.blockedUrlPatterns
     ]),
     phoneAppBlocking: options.phoneAppBlocking === false ? false : profile.phoneAppBlocking,
@@ -365,11 +366,6 @@ function isInstagramAppTarget(value: unknown): boolean {
 
 function isInstagramSiteTarget(value: unknown): boolean {
   return ["instagram.com", "cdninstagram.com"].includes(normalizeHostTarget(value));
-}
-
-function isInstagramExplorePattern(value: unknown): boolean {
-  const pattern = normalizePatternTarget(value);
-  return pattern === "instagram.com/explore" || pattern.startsWith("instagram.com/explore/");
 }
 
 function isRedditSiteTarget(value: unknown): boolean {

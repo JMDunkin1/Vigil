@@ -59,6 +59,7 @@ const ALLOWLIST_RULE_IDS = Array.from({ length: ALLOWLIST_RULE_LIMIT }, (_, inde
 let noiseRulesEnabled: boolean | null = null;
 let siteRulesSignature = "";
 let lastRuleSyncAt = 0;
+let cachedPulseFlags: PulseFlagSnapshot = {};
 let sentinelConnection = {
   localServer: DEFAULT_LOCAL_SERVER,
   extensionToken: ""
@@ -85,15 +86,24 @@ interface ExtensionMessage extends ExtensionPulseMessage, ExtensionPauseActionMe
 
 interface ExtensionCheckResult {
   ok?: boolean;
+  skipped?: boolean;
   blocked?: boolean;
   paused?: boolean;
   redirectUrl?: string;
   browserNoiseBlockingEnabled?: boolean;
+  focusedSocialCleanupEnabled?: boolean;
+  focusedSocialCleanupSettings?: unknown;
   [key: string]: unknown;
 }
 
 interface CheckUrlOptions {
   deferTabAction?: boolean;
+}
+
+interface PulseFlagSnapshot {
+  browserNoiseBlockingEnabled?: boolean;
+  focusedSocialCleanupEnabled?: boolean;
+  focusedSocialCleanupSettings?: unknown;
 }
 
 interface SiteRuleEntry {
@@ -120,6 +130,8 @@ interface ServerRuleEntry {
 
 interface RuleSnapshot {
   browserNoiseBlockingEnabled?: boolean;
+  focusedSocialCleanupEnabled?: boolean;
+  focusedSocialCleanupSettings?: unknown;
   rules?: ServerRuleEntry[];
   contentRules?: ServerRuleEntry[];
   allowlistRules?: ServerRuleEntry[];
@@ -204,8 +216,8 @@ async function checkUrl(
   title = "",
   options: CheckUrlOptions = {}
 ): Promise<ExtensionCheckResult> {
-  if (!tabId || isSkippableUrl(url)) return { ok: true, skipped: true };
-  if (isCoolingDown(tabId, url, event)) return { ok: true, skipped: true };
+  if (!tabId || isSkippableUrl(url)) return skippedCheckResult();
+  if (isCoolingDown(tabId, url, event)) return skippedCheckResult();
 
   const previousUrl = tabMemory.get(tabId) || "";
   tabMemory.set(tabId, url);
@@ -229,6 +241,7 @@ async function checkUrl(
   }
 
   const result = await response.json() as ExtensionCheckResult;
+  rememberPulseFlags(result);
   if (typeof result.browserNoiseBlockingEnabled === "boolean") {
     await syncNoiseBlocking(result.browserNoiseBlockingEnabled);
   }
@@ -246,6 +259,25 @@ async function checkUrl(
   }
   void maybeSyncSiteBlocking();
   return result;
+}
+
+function skippedCheckResult(): ExtensionCheckResult {
+  return { ok: true, skipped: true, ...cachedPulseFlags };
+}
+
+function rememberPulseFlags(value: unknown): void {
+  if (!isRecord(value)) return;
+  const next: PulseFlagSnapshot = {};
+  if (typeof value.browserNoiseBlockingEnabled === "boolean") {
+    next.browserNoiseBlockingEnabled = value.browserNoiseBlockingEnabled;
+  }
+  if (typeof value.focusedSocialCleanupEnabled === "boolean") {
+    next.focusedSocialCleanupEnabled = value.focusedSocialCleanupEnabled;
+  }
+  if (Object.hasOwn(value, "focusedSocialCleanupSettings")) {
+    next.focusedSocialCleanupSettings = value.focusedSocialCleanupSettings;
+  }
+  if (Object.keys(next).length) cachedPulseFlags = { ...cachedPulseFlags, ...next };
 }
 
 function isSkippableUrl(value: unknown): boolean {
@@ -384,6 +416,7 @@ async function syncSiteBlockingFromServer() {
     const response = await fetchSentinel(`/api/extension/rules?version=${encodeURIComponent(manifest.version)}`);
     if (!response.ok) throw new Error(`rules ${response.status}`);
     const snapshot = await response.json() as RuleSnapshot;
+    rememberPulseFlags(snapshot);
     if (typeof snapshot.browserNoiseBlockingEnabled === "boolean") {
       await syncNoiseBlocking(snapshot.browserNoiseBlockingEnabled);
     }

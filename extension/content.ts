@@ -5,6 +5,11 @@ let pageGuardActive = false;
 let pageGuardReleaseTimer: number | null = null;
 let youtubeAutofillFrictionEnabled = false;
 let youtubeAutofillFrictionAttached = false;
+let focusedSocialCleanupEnabled = false;
+let focusedSocialCleanupAttached = false;
+let focusedSocialCleanupSignature = "";
+let focusedSocialCleanupObserver: MutationObserver | null = null;
+let focusedSocialCleanupTimer: number | null = null;
 const YOUTUBE_AUTOFILL_PREVIOUS_ABSENT = "__sentinel_absent__";
 const pausedBySentinel = new Set<HTMLMediaElement>();
 
@@ -17,6 +22,32 @@ interface PulseResponse {
   paused?: boolean;
   redirectUrl?: string;
   browserNoiseBlockingEnabled?: boolean;
+  focusedSocialCleanupEnabled?: boolean;
+  focusedSocialCleanupSettings?: unknown;
+}
+
+interface InstagramCleanupSettings {
+  enabled: boolean;
+  reels: boolean;
+  explore: boolean;
+  suggested: boolean;
+  shopping: boolean;
+  ads: boolean;
+}
+
+interface YoutubeCleanupSettings {
+  enabled: boolean;
+  shorts: boolean;
+  home: boolean;
+  explore: boolean;
+  suggested: boolean;
+  ads: boolean;
+}
+
+interface FocusedSocialCleanupSettings {
+  enabled: boolean;
+  instagram: InstagramCleanupSettings;
+  youtube: YoutubeCleanupSettings;
 }
 
 interface PauseOverlayDecision {
@@ -54,6 +85,8 @@ interface PauseActionMessage {
   mood?: string;
   replacement?: string;
 }
+
+let focusedSocialCleanupSettings = defaultFocusedSocialCleanupSettings();
 
 activatePageGuard();
 sendPulse("navigation", { guard: true });
@@ -109,6 +142,11 @@ function handlePulseResult(result: PulseResponse | undefined): void {
     cleanupBrowserNoise();
   } else if (result?.browserNoiseBlockingEnabled === false) {
     teardownYoutubeAutofillFriction();
+  }
+  if (result?.focusedSocialCleanupEnabled === true) {
+    applyFocusedSocialCleanup(result.focusedSocialCleanupSettings);
+  } else if (result?.focusedSocialCleanupEnabled === false) {
+    teardownFocusedSocialCleanup();
   }
   if (result?.blocked && result.redirectUrl) {
     replaceLocation(result.redirectUrl);
@@ -704,6 +742,397 @@ function cleanupBrowserNoise() {
   injectCleanupStyle();
   removeCookiePrompts();
   applyYoutubeAutofillFriction();
+}
+
+function applyFocusedSocialCleanup(settingsValue?: unknown): void {
+  if (!isFocusedSocialHost()) return;
+  const nextSettings = normalizeFocusedSocialCleanupSettings(settingsValue);
+  const nextSignature = JSON.stringify(nextSettings);
+  if (!focusedSocialCleanupAppliesToCurrentHost(nextSettings)) {
+    teardownFocusedSocialCleanup();
+    focusedSocialCleanupSettings = nextSettings;
+    focusedSocialCleanupSignature = nextSignature;
+    return;
+  }
+  if (focusedSocialCleanupSignature && focusedSocialCleanupSignature !== nextSignature) restoreFocusedSocialElements();
+  focusedSocialCleanupSettings = nextSettings;
+  focusedSocialCleanupSignature = nextSignature;
+  focusedSocialCleanupEnabled = true;
+  document.documentElement.setAttribute("data-sentinel-focused-social", "active");
+  injectFocusedSocialStyle();
+  runFocusedSocialCleanupSoon(0);
+  if (focusedSocialCleanupAttached) return;
+  focusedSocialCleanupAttached = true;
+  document.addEventListener("click", focusedSocialCleanupFromEvent, true);
+  focusedSocialCleanupObserver = new MutationObserver(() => runFocusedSocialCleanupSoon(80));
+  focusedSocialCleanupObserver.observe(document.documentElement, { childList: true, subtree: true });
+}
+
+function teardownFocusedSocialCleanup(): void {
+  focusedSocialCleanupEnabled = false;
+  focusedSocialCleanupSignature = "";
+  document.documentElement.removeAttribute("data-sentinel-focused-social");
+  document.getElementById("sentinel-focused-social-style")?.remove();
+  if (focusedSocialCleanupTimer) window.clearTimeout(focusedSocialCleanupTimer);
+  focusedSocialCleanupTimer = null;
+  focusedSocialCleanupObserver?.disconnect();
+  focusedSocialCleanupObserver = null;
+  restoreFocusedSocialElements();
+  if (!focusedSocialCleanupAttached) return;
+  focusedSocialCleanupAttached = false;
+  document.removeEventListener("click", focusedSocialCleanupFromEvent, true);
+}
+
+function focusedSocialCleanupFromEvent(event: Event): void {
+  if (!focusedSocialCleanupEnabled) return;
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const link = target.closest<HTMLAnchorElement>("a[href]");
+  if (!link || !isAddictiveSocialHref(link.getAttribute("href") || "")) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  runFocusedSocialCleanupSoon(0);
+}
+
+function runFocusedSocialCleanupSoon(delayMs: number): void {
+  if (focusedSocialCleanupTimer) window.clearTimeout(focusedSocialCleanupTimer);
+  focusedSocialCleanupTimer = window.setTimeout(() => {
+    focusedSocialCleanupTimer = null;
+    applyFocusedSocialDomCleanup();
+  }, delayMs);
+}
+
+function applyFocusedSocialDomCleanup(): void {
+  if (!focusedSocialCleanupEnabled) return;
+  if (isYoutubeHost() && focusedSocialCleanupSettings.youtube.enabled) cleanupYoutubeSocialFeatures();
+  if (isInstagramHost() && focusedSocialCleanupSettings.instagram.enabled) cleanupInstagramSocialFeatures();
+}
+
+function cleanupYoutubeSocialFeatures(): void {
+  const settings = focusedSocialCleanupSettings.youtube;
+  if (settings.shorts) {
+    hideSocialMatches([
+      "a[href*='/shorts']",
+      "ytd-reel-shelf-renderer",
+      "ytm-reel-shelf-renderer",
+      "ytd-rich-section-renderer:has(a[href*='/shorts'])",
+      "ytm-rich-section-renderer:has(a[href*='/shorts'])",
+      "ytd-mini-guide-entry-renderer:has(a[href*='/shorts'])",
+      "ytd-guide-entry-renderer:has(a[href*='/shorts'])",
+      "ytm-pivot-bar-item-renderer:has(a[href*='/shorts'])"
+    ], youtubeCleanupContainer);
+    hideElementsWithText([
+      "ytd-rich-section-renderer",
+      "ytm-rich-section-renderer",
+      "section",
+      "aside"
+    ], ["shorts"], youtubeCleanupContainer);
+  }
+  if (settings.explore) {
+    hideSocialMatches([
+      "a[href*='/feed/explore']",
+      "a[href*='/feed/trending']"
+    ], youtubeCleanupContainer);
+  }
+  if (settings.home) {
+    hideSocialMatches([
+      "a[href*='/feed/recommended']"
+    ], youtubeCleanupContainer);
+    hideElementsWithText([
+      "ytd-rich-section-renderer",
+      "ytm-rich-section-renderer",
+      "section",
+      "aside"
+    ], ["recommended"], youtubeCleanupContainer);
+    if (isYoutubeHomePage()) {
+      hideSocialMatches([
+        "ytd-browse[page-subtype='home'] ytd-rich-grid-renderer",
+        "ytd-browse[page-subtype='home'] ytd-two-column-browse-results-renderer",
+        "ytm-browse ytm-rich-grid-renderer",
+        "ytm-browse ytm-item-section-renderer"
+      ], youtubeCleanupContainer);
+    }
+  }
+  if (settings.suggested) {
+    hideSocialMatches([
+      "a[href^='/results?search_query=shorts']",
+      "a[href*='/results?search_query=shorts']"
+    ], youtubeCleanupContainer);
+  }
+  if (settings.ads) {
+    hideSocialMatches([
+      "ytd-promoted-video-renderer",
+      "ytd-display-ad-renderer",
+      "ytd-ad-slot-renderer",
+      "ytm-promoted-video-renderer"
+    ], youtubeCleanupContainer);
+    hideElementsWithText([
+      "ytd-rich-section-renderer",
+      "ytm-rich-section-renderer",
+      "section",
+      "aside"
+    ], ["sponsored"], youtubeCleanupContainer);
+  }
+}
+
+function cleanupInstagramSocialFeatures(): void {
+  const settings = focusedSocialCleanupSettings.instagram;
+  if (settings.reels) {
+    hideSocialMatches([
+      "a[href^='/reel']",
+      "a[href*='/reel/']",
+      "a[href^='/reels']",
+      "nav a[href*='/reel']"
+    ], instagramCleanupContainer);
+    hideElementsWithText([
+      "article",
+      "section",
+      "div[role='dialog']"
+    ], ["reels"], instagramCleanupContainer);
+  }
+  if (settings.suggested) {
+    hideSocialMatches([
+      "a[href^='/explore/people/suggested']",
+      "nav a[href*='/explore/people/suggested']"
+    ], instagramCleanupContainer);
+    hideElementsWithText([
+      "article",
+      "section",
+      "div[role='dialog']"
+    ], ["suggested for you", "suggested posts"], instagramCleanupContainer);
+  }
+  if (settings.explore) {
+    hideSocialMatches([
+      "a[href^='/explore']",
+      "nav a[href*='/explore']"
+    ], instagramCleanupContainer);
+  }
+  if (settings.shopping) {
+    hideSocialMatches([
+      "a[href^='/shop']",
+      "a[href^='/shopping']",
+      "a[href^='/live']",
+      "nav a[href*='/shop']"
+    ], instagramCleanupContainer);
+  }
+  if (settings.ads) {
+    hideElementsWithText([
+      "article",
+      "section",
+      "div[role='dialog']"
+    ], ["sponsored"], instagramCleanupContainer);
+  }
+}
+
+function hideSocialMatches(selectors: string[], containerFor: (element: Element) => HTMLElement | null): void {
+  for (const selector of selectors) {
+    for (const element of safeQuerySelectorAll(selector)) {
+      const container = containerFor(element);
+      if (container) hideFocusedSocialElement(container);
+    }
+  }
+}
+
+function hideElementsWithText(selectors: string[], needles: string[], containerFor: (element: Element) => HTMLElement | null): void {
+  const selector = selectors.join(",");
+  for (const element of safeQuerySelectorAll(selector).slice(0, 180)) {
+    const text = (element.textContent || "").trim().toLowerCase();
+    if (!text || !needles.some((needle) => text.includes(needle))) continue;
+    const container = containerFor(element);
+    if (container) hideFocusedSocialElement(container);
+  }
+}
+
+function safeQuerySelectorAll(selector: string): HTMLElement[] {
+  try {
+    return [...document.querySelectorAll<HTMLElement>(selector)];
+  } catch {
+    return [];
+  }
+}
+
+function youtubeCleanupContainer(element: Element): HTMLElement | null {
+  return closestHTMLElement(element, [
+    "ytd-reel-shelf-renderer",
+    "ytm-reel-shelf-renderer",
+    "ytd-rich-section-renderer",
+    "ytm-rich-section-renderer",
+    "ytd-mini-guide-entry-renderer",
+    "ytd-guide-entry-renderer",
+    "ytm-pivot-bar-item-renderer",
+    "ytd-promoted-video-renderer",
+    "ytd-display-ad-renderer",
+    "ytd-ad-slot-renderer",
+    "ytm-promoted-video-renderer",
+    "ytd-rich-grid-renderer",
+    "ytd-two-column-browse-results-renderer",
+    "ytm-rich-grid-renderer",
+    "ytm-item-section-renderer",
+    "a"
+  ]);
+}
+
+function instagramCleanupContainer(element: Element): HTMLElement | null {
+  return closestHTMLElement(element, [
+    "nav li",
+    "nav a",
+    "[role='tab']",
+    "article",
+    "section",
+    "div[role='dialog']",
+    "a"
+  ]);
+}
+
+function closestHTMLElement(element: Element, selectors: string[]): HTMLElement | null {
+  for (const selector of selectors) {
+    const closest = element.closest(selector);
+    if (closest instanceof HTMLElement) return closest;
+  }
+  return element instanceof HTMLElement ? element : null;
+}
+
+function hideFocusedSocialElement(element: HTMLElement): void {
+  if (element.dataset.sentinelFocusedSocialHidden === "active") return;
+  element.dataset.sentinelFocusedSocialHidden = "active";
+  element.dataset.sentinelPreviousHidden = String(element.hidden);
+  element.dataset.sentinelPreviousAriaHidden = element.getAttribute("aria-hidden") ?? YOUTUBE_AUTOFILL_PREVIOUS_ABSENT;
+  element.hidden = true;
+  element.setAttribute("aria-hidden", "true");
+  pauseMediaInside(element);
+}
+
+function restoreFocusedSocialElements(): void {
+  for (const element of document.querySelectorAll<HTMLElement>("[data-sentinel-focused-social-hidden='active']")) {
+    element.hidden = element.dataset.sentinelPreviousHidden === "true";
+    if (element.dataset.sentinelPreviousAriaHidden && element.dataset.sentinelPreviousAriaHidden !== YOUTUBE_AUTOFILL_PREVIOUS_ABSENT) {
+      element.setAttribute("aria-hidden", element.dataset.sentinelPreviousAriaHidden);
+    } else {
+      element.removeAttribute("aria-hidden");
+    }
+    delete element.dataset.sentinelFocusedSocialHidden;
+    delete element.dataset.sentinelPreviousHidden;
+    delete element.dataset.sentinelPreviousAriaHidden;
+  }
+}
+
+function pauseMediaInside(element: HTMLElement): void {
+  element.querySelectorAll("video, audio").forEach((item) => {
+    if (item instanceof HTMLMediaElement) item.pause();
+  });
+}
+
+function defaultFocusedSocialCleanupSettings(): FocusedSocialCleanupSettings {
+  return {
+    enabled: true,
+    instagram: {
+      enabled: true,
+      reels: true,
+      explore: true,
+      suggested: true,
+      shopping: true,
+      ads: true
+    },
+    youtube: {
+      enabled: true,
+      shorts: true,
+      home: true,
+      explore: true,
+      suggested: true,
+      ads: true
+    }
+  };
+}
+
+function normalizeFocusedSocialCleanupSettings(value: unknown): FocusedSocialCleanupSettings {
+  const defaults = defaultFocusedSocialCleanupSettings();
+  const record = asRecord(value);
+  const instagram = asRecord(record?.instagram);
+  const youtube = asRecord(record?.youtube);
+  return {
+    enabled: booleanField(record, "enabled", defaults.enabled),
+    instagram: {
+      enabled: booleanField(instagram, "enabled", defaults.instagram.enabled),
+      reels: booleanField(instagram, "reels", defaults.instagram.reels),
+      explore: booleanField(instagram, "explore", defaults.instagram.explore),
+      suggested: booleanField(instagram, "suggested", defaults.instagram.suggested),
+      shopping: booleanField(instagram, "shopping", defaults.instagram.shopping),
+      ads: booleanField(instagram, "ads", defaults.instagram.ads)
+    },
+    youtube: {
+      enabled: booleanField(youtube, "enabled", defaults.youtube.enabled),
+      shorts: booleanField(youtube, "shorts", defaults.youtube.shorts),
+      home: booleanField(youtube, "home", defaults.youtube.home),
+      explore: booleanField(youtube, "explore", defaults.youtube.explore),
+      suggested: booleanField(youtube, "suggested", defaults.youtube.suggested),
+      ads: booleanField(youtube, "ads", defaults.youtube.ads)
+    }
+  };
+}
+
+function booleanField(record: Record<string, unknown> | null, key: string, fallback: boolean): boolean {
+  return typeof record?.[key] === "boolean" ? Boolean(record[key]) : fallback;
+}
+
+function focusedSocialCleanupAppliesToCurrentHost(settings: FocusedSocialCleanupSettings): boolean {
+  if (!settings.enabled) return false;
+  if (isYoutubeHost()) return settings.youtube.enabled;
+  if (isInstagramHost()) return settings.instagram.enabled;
+  return false;
+}
+
+function isFocusedSocialHost(): boolean {
+  return isYoutubeHost() || isInstagramHost();
+}
+
+function isInstagramHost(): boolean {
+  const host = location.hostname.toLowerCase();
+  return host === "instagram.com" || host.endsWith(".instagram.com");
+}
+
+function isYoutubeHomePage(): boolean {
+  return isYoutubeHost() && ["/", "/feed/recommended"].includes(location.pathname || "/");
+}
+
+function isAddictiveSocialHref(raw: string): boolean {
+  try {
+    const url = new URL(raw, location.href);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const { instagram, youtube } = focusedSocialCleanupSettings;
+    if (host === "youtube.com" || host === "m.youtube.com" || host === "youtu.be") {
+      return Boolean(youtube.enabled && (
+        (youtube.shorts && /^\/shorts(?:\/|$)/i.test(url.pathname))
+        || (youtube.explore && /^\/feed\/(?:explore|trending)(?:\/|$)/i.test(url.pathname))
+        || (youtube.home && /^\/feed\/recommended(?:\/|$)/i.test(url.pathname))
+        || (youtube.suggested && url.pathname === "/results" && (url.searchParams.get("search_query") || "").toLowerCase().includes("shorts"))
+      ));
+    }
+    if (host === "instagram.com") {
+      return Boolean(instagram.enabled && (
+        (instagram.reels && /^\/reels?(?:\/|$)/i.test(url.pathname))
+        || (instagram.suggested && /^\/explore\/people\/suggested(?:\/|$)/i.test(url.pathname))
+        || (instagram.explore && /^\/explore(?:\/|$)/i.test(url.pathname))
+        || (instagram.shopping && /^\/(?:shop|shopping|live)(?:\/|$)/i.test(url.pathname))
+      ));
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+function injectFocusedSocialStyle(): void {
+  if (document.getElementById("sentinel-focused-social-style")) return;
+  const style = document.createElement("style");
+  style.id = "sentinel-focused-social-style";
+  style.textContent = `
+    html[data-sentinel-focused-social="active"] [data-sentinel-focused-social-hidden="active"] {
+      display: none !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
+  `;
+  document.documentElement.append(style);
 }
 
 function applyYoutubeAutofillFriction(): void {

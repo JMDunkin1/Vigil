@@ -317,6 +317,12 @@ export interface IosDeviceSummary extends UnknownRecord {
   allowedAppBundleIds?: string[];
   deniedUrls?: string[];
   allowedUrls?: string[];
+  focusedSocial?: UnknownRecord & {
+    enabled?: boolean;
+    forceWebClips?: boolean;
+    instagram?: UnknownRecord;
+    youtube?: UnknownRecord;
+  };
   note?: string;
   supervisedRequired?: boolean;
   profile?: {
@@ -325,6 +331,15 @@ export interface IosDeviceSummary extends UnknownRecord {
     allowedUrlCount?: number;
     webClipCount?: number;
     generatedFrom?: string;
+    focusedSocial?: UnknownRecord & {
+      enabled?: boolean;
+      forceWebClips?: boolean;
+      platformCount?: number;
+      featureCount?: number;
+      deniedUrlCount?: number;
+      nativeAppBundleCount?: number;
+      webClipCount?: number;
+    };
     grayscale?: UnknownRecord & {
       desired?: boolean;
       label?: string;

@@ -248,6 +248,9 @@ last exit code = 0
   assert.match(background, /syncSiteBlockingFromServer/);
   assert.match(background, /updateDynamicRules/);
   assert.match(background, /deferTabAction/);
+  assert.match(background, /skippedCheckResult/);
+  assert.match(background, /rememberPulseFlags/);
+  assert.match(background, /focusedSocialCleanupSettings/);
   assert.match(background, /DEFAULT_LOCAL_SERVER/);
   const options = await readFile("extension/options.js", "utf8");
   assert.match(options, /sentinelExtensionToken/);
@@ -255,6 +258,8 @@ last exit code = 0
   assert.match(content, /cleanupBrowserNoise/);
   assert.match(content, /applyYoutubeAutofillFriction/);
   assert.match(content, /teardownYoutubeAutofillFriction/);
+  assert.match(content, /cleanupInstagramSocialFeatures/);
+  assert.doesNotMatch(content, /"main > div"/);
   assert.match(content, /browserNoiseBlockingEnabled === false/);
   assert.match(content, /removeAttribute\("data-sentinel-youtube-friction"\)/);
   assert.match(content, /removeEventListener\("focusin", hardenYoutubeSearchFromEvent, true\)/);

@@ -108,6 +108,11 @@ assert.equal(
     const phoneSessionText = `${JSON.stringify(phoneSessionChange, null, 2)}\n`;
     assert.equal((await verifyStateTextSeal(phoneSessionText, { keyPath, sealPath })).status, "mismatch");
 
+    const focusedSocialChange = structuredClone(state);
+    focusedSocialChange.deviceControls.ios.focusedSocial.enabled = false;
+    const focusedSocialText = `${JSON.stringify(focusedSocialChange, null, 2)}\n`;
+    assert.equal((await verifyStateTextSeal(focusedSocialText, { keyPath, sealPath })).status, "mismatch");
+
     const grayscaleChange = structuredClone(state);
     grayscaleChange.grayscale.softBlockEnabled = true;
     grayscaleChange.grayscale.schedules = [{
