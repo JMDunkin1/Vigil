@@ -9,7 +9,7 @@ interface DayReport {
   label: string;
   totalSeconds: number;
   distractingSeconds: number;
-  savedSeconds: number;
+  savedSeconds: number | null;
   openCount: number;
   focusScore: number;
   apps: Record<string, number>;
@@ -21,7 +21,7 @@ interface DayReport {
 interface WeekAggregate {
   totalSeconds: number;
   distractingSeconds: number;
-  savedSeconds: number;
+  savedSeconds: number | null;
   openCount: number;
   trackedDays: number;
   averageFocusScore: number;
@@ -88,7 +88,10 @@ export function focusReport(usage: UsageState, state: SentinelState, now = new D
   const previous = aggregateWeek(previousDays);
   const allDays = rangeDays(addDays(today, -60), 61).map((date) => dayReport(usage, state, date));
   const streak = focusStreak(allDays, focusScoreGoal, today);
-  const topCulprits = topCombined(currentDays, "sites").concat(topCombined(currentDays, "apps")).slice(0, 6);
+  const topCulprits = topCombined(currentDays, state, "sites")
+    .concat(topCombined(currentDays, state, "apps"))
+    .sort((a, b) => b.seconds - a.seconds)
+    .slice(0, 6);
   const bestDay = bestTrackedDay(currentDays);
   const worstDay = worstTrackedDay(currentDays);
   const intentionalUse = intentionalUseSummary(state, usage, now);
@@ -134,7 +137,7 @@ function dayReport(usage: UsageState, state: SentinelState, date: Date): DayRepo
     label: date.toLocaleDateString(undefined, { weekday: "short" }),
     totalSeconds: Math.round(totalSeconds),
     distractingSeconds: Math.round(distractingSeconds),
-    savedSeconds: 0,
+    savedSeconds: null,
     openCount: sumOpenCounts(day.opens),
     focusScore,
     apps: day.apps,
@@ -148,11 +151,10 @@ function aggregateWeek(days: DayReport[]): WeekAggregate {
   const trackedDays = days.filter((day) => day.tracked);
   const totalSeconds = sum(days, "totalSeconds");
   const distractingSeconds = sum(days, "distractingSeconds");
-  const savedSeconds = sum(days, "savedSeconds");
   return {
     totalSeconds,
     distractingSeconds,
-    savedSeconds,
+    savedSeconds: null,
     openCount: sum(days, "openCount"),
     trackedDays: trackedDays.length,
     averageFocusScore: trackedDays.length ? Math.round(sum(trackedDays, "focusScore") / trackedDays.length) : 100,
@@ -163,7 +165,7 @@ function aggregateWeek(days: DayReport[]): WeekAggregate {
 
 function compareWeeks(current: WeekAggregate, previous: WeekAggregate) {
   return {
-    savedSecondsDelta: current.savedSeconds - previous.savedSeconds,
+    savedSecondsDelta: null,
     distractingSecondsDelta: current.distractingSeconds - previous.distractingSeconds,
     distractingPercentDelta: percentDelta(current.distractingSeconds, previous.distractingSeconds),
     focusScoreDelta: current.averageFocusScore - previous.averageFocusScore,
@@ -423,9 +425,9 @@ function sumObject(values: Record<string, number> = {}): number {
 
 function projections() {
   return {
-    weeklySavedSeconds: 0,
-    yearlySavedSeconds: 0,
-    yearsReclaimedAtCurrentPace: 0
+    weeklySavedSeconds: null,
+    yearlySavedSeconds: null,
+    yearsReclaimedAtCurrentPace: null
   };
 }
 
@@ -437,10 +439,16 @@ function worstTrackedDay(days: DayReport[]): DayReport | null {
   return days.filter((day) => day.tracked).sort((a, b) => a.focusScore - b.focusScore || b.distractingSeconds - a.distractingSeconds)[0] || null;
 }
 
-function topCombined(days: DayReport[], kind: "sites" | "apps"): Culprit[] {
+function topCombined(days: DayReport[], state: SentinelState, kind: "sites" | "apps"): Culprit[] {
+  const profile = state.profiles.find((item) => item.id === state.settings.activeProfileId) || state.profiles[0];
+  const blockedTargets = kind === "sites" ? profile?.blockedSites || [] : profile?.blockedApps || [];
   const values: Record<string, number> = {};
   for (const day of days) {
     for (const [name, seconds] of Object.entries(day[kind] || {})) {
+      const blocked = kind === "sites"
+        ? hostMatchesSiteTargets(name, blockedTargets)
+        : appMatchesAppTargets(name, blockedTargets);
+      if (!blocked) continue;
       values[name] = (values[name] || 0) + Number(seconds || 0);
     }
   }
@@ -450,6 +458,10 @@ function topCombined(days: DayReport[], kind: "sites" | "apps"): Culprit[] {
 }
 
 function sumBlockedSeconds(day: DayReport | ReturnType<typeof normalizeUsageDay>, state: SentinelState): number {
+  return Math.min(Math.round(day.totalSeconds || 0), rawBlockedSeconds(day, state));
+}
+
+function rawBlockedSeconds(day: DayReport | ReturnType<typeof normalizeUsageDay>, state: SentinelState): number {
   const profile = state.profiles.find((item) => item.id === state.settings.activeProfileId) || state.profiles[0];
   let total = 0;
 
@@ -470,7 +482,7 @@ function milestone(id: string, label: string, achieved: boolean): Milestone {
   return { id, label, achieved };
 }
 
-function sum(values: DayReport[], key: keyof Pick<DayReport, "totalSeconds" | "distractingSeconds" | "savedSeconds" | "openCount" | "focusScore">): number {
+function sum(values: DayReport[], key: keyof Pick<DayReport, "totalSeconds" | "distractingSeconds" | "openCount" | "focusScore">): number {
   return values.reduce((total, item) => total + (item[key] || 0), 0);
 }
 

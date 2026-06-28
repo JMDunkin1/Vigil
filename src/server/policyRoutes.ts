@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { parseBoolean, truthy } from "../booleans.js";
 import { assertDistanceKey } from "../distanceKey.js";
-import { DEVICE_TARGETS, SOFT_BLOCK_PROFILE_ID } from "../defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEVICE_TARGETS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../defaults.js";
 import { normalizeGrayscaleSchedule, normalizeGrayscaleState } from "../grayscale.js";
 import { confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "../appLocks.js";
 import { assertKeyholderPasscode } from "../keyholder.js";
@@ -76,6 +76,17 @@ export async function handlePolicyApiRoute(
     recordIosMdmPolicyQueue("profile-saved");
     await saveState(state);
     sendJson(response, 200, { ok: true, profile });
+    return true;
+  }
+
+  if (method === "DELETE" && path.startsWith("/api/profile/")) {
+    const id = pathId(path);
+    assertProtectedEditAllowed(state, { kind: "profile", id });
+    const fallbackProfile = deleteProfile(state, id);
+    addEvent(state, "profile_deleted", { profileId: id, fallbackProfileId: fallbackProfile.id });
+    recordIosMdmPolicyQueue("profile-deleted");
+    await saveState(state);
+    sendJson(response, 200, { ok: true, activeProfileId: state.settings.activeProfileId });
     return true;
   }
 
@@ -202,6 +213,46 @@ function upsertProfile(state: SentinelState, body: UnknownRecord): Profile {
 
   state.settings.activeProfileId = nextProfile.id;
   return nextProfile;
+}
+
+export function deleteProfile(state: SentinelState, id: string): Profile {
+  const existing = state.profiles.find((item) => item.id === id);
+  if (!existing) throw httpError(404, "Profile not found");
+  if (builtInProfileIds.has(id)) throw httpError(409, "Built-in profiles cannot be deleted");
+  if (state.profiles.length <= 1) throw httpError(409, "At least one profile must remain");
+
+  const blocker = profileDeleteBlocker(state, id);
+  if (blocker) throw httpError(409, `Profile is still used by ${blocker}`);
+
+  const fallback = state.profiles.find((profile) => profile.id !== id && profile.id === "default")
+    || state.profiles.find((profile) => profile.id !== id)
+    || null;
+  if (!fallback) throw httpError(409, "At least one profile must remain");
+
+  state.profiles = state.profiles.filter((profile) => profile.id !== id);
+  if (state.settings.activeProfileId === id) state.settings.activeProfileId = fallback.id;
+  if (state.settings.baselineProfileId === id) state.settings.baselineProfileId = fallback.id;
+  if (state.deviceControls?.ios?.profileId === id) state.deviceControls.ios.profileId = fallback.id;
+  return fallback;
+}
+
+const builtInProfileIds = new Set(["default", NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PROFILE_ID]);
+
+function profileDeleteBlocker(state: SentinelState, id: string): string {
+  const activeSessions = [
+    state.activeSession,
+    state.panicLock,
+    ...Object.values(state.activeSessions || {})
+  ].filter(Boolean);
+  if (activeSessions.some((session) => session && "profileId" in session && session.profileId === id)) return "an active session";
+  if ((state.schedules || []).some((schedule) => schedule.profileId === id)) return "a schedule";
+  const planBlocks = state.intentionalUse?.planBlocks || [];
+  if (planBlocks.some((block) => block.profileId === id)) return "a planner block";
+  return "";
+}
+
+function httpError(status: number, message: string): Error & { status: number } {
+  return Object.assign(new Error(message), { status });
 }
 
 function upsertSchedule(state: SentinelState, body: UnknownRecord): Schedule {

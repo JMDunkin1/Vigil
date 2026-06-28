@@ -1,40 +1,75 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildHostsBlock, loadStateForScript, replaceManagedHostsBlock } from "../src/hardening.js";
 import { buildResolvedFirewallBlock, buildPfConfBlock, firewallStatus, PF_ANCHOR_PATH, PF_CONF_PATH, replaceManagedPfConfBlock, validateAndLoadPf, writeFirewallFiles } from "../src/firewall.js";
+import type { SentinelState } from "../src/types.js";
 
 const execFileAsync = promisify(execFile);
+const HOSTS_PATH = "/etc/hosts";
 
-if (process.getuid && process.getuid() !== 0) {
-  console.error("Run with sudo: npm run network:apply");
-  process.exit(1);
+interface ApplyNetworkBlockOptions {
+  state?: SentinelState;
+  hostsPath?: string;
+  pfConfPath?: string;
+  anchorPath?: string;
+  validateAndLoadPf?: (pfConfPath: string) => Promise<void>;
+  flushDns?: () => Promise<void>;
 }
 
-const state = await loadStateForScript();
-const block = buildHostsBlock(state);
-const hostsPath = "/etc/hosts";
-const current = await readFile(hostsPath, "utf8");
-const next = replaceManagedHostsBlock(current, block);
-const currentPfConf = await readOptional(PF_CONF_PATH);
-const currentAnchor = await readOptional(PF_ANCHOR_PATH);
-const firewall = await buildResolvedFirewallBlock(state);
-const nextPfConf = replaceManagedPfConfBlock(currentPfConf || defaultPfConf(), buildPfConfBlock());
+if (isMainScript()) {
+  if (process.getuid && process.getuid() !== 0) {
+    console.error("Run with sudo: npm run network:apply");
+    process.exit(1);
+  }
 
-await writeFile(hostsPath, next.endsWith("\n") ? next : `${next}\n`);
-await writeFirewallFiles({
-  pfConfText: nextPfConf,
-  anchorText: firewall.block
-});
-try {
-  await validateAndLoadPf(PF_CONF_PATH);
-} catch (error) {
-  await restoreFirewall(currentPfConf, currentAnchor);
-  throw error;
+  const result = await applyNetworkBlock();
+  console.log(`Sentinel network block applied (${result.status.installedEntries || 0} PF address rules, ${result.domainCount} domains).`);
 }
-await flushDns();
-const status = await firewallStatus(state);
-console.log(`Sentinel network block applied (${status.installedEntries || 0} PF address rules, ${firewall.domains.length} domains).`);
+
+export async function applyNetworkBlock(options: ApplyNetworkBlockOptions = {}) {
+  const state = options.state || await loadStateForScript();
+  const hostsPath = options.hostsPath || HOSTS_PATH;
+  const pfConfPath = options.pfConfPath || PF_CONF_PATH;
+  const anchorPath = options.anchorPath || PF_ANCHOR_PATH;
+  const block = buildHostsBlock(state);
+  const currentHosts = await readFile(hostsPath, "utf8");
+  const nextHosts = replaceManagedHostsBlock(currentHosts, block);
+  const currentPfConf = await readOptional(pfConfPath);
+  const currentAnchor = await readOptional(anchorPath);
+  const firewall = await buildResolvedFirewallBlock(state);
+  const nextPfConf = replaceManagedPfConfBlock(currentPfConf || defaultPfConf(), buildPfConfBlock(anchorPath));
+
+  await writeFile(hostsPath, nextHosts.endsWith("\n") ? nextHosts : `${nextHosts}\n`);
+  try {
+    await writeFirewallFiles({
+      pfConfText: nextPfConf,
+      anchorText: firewall.block,
+      pfConfPath,
+      anchorPath
+    });
+    await (options.validateAndLoadPf || validateAndLoadPf)(pfConfPath);
+  } catch (error) {
+    await restoreNetworkFiles({
+      hostsPath,
+      hostsText: currentHosts,
+      pfConfPath,
+      pfConfText: currentPfConf,
+      anchorPath,
+      anchorText: currentAnchor
+    });
+    throw error;
+  }
+
+  await (options.flushDns || flushDns)();
+  const status = await firewallStatus(state, new Date(), { pfConfPath, anchorPath });
+  return {
+    status,
+    domainCount: firewall.domains.length
+  };
+}
 
 async function flushDns(): Promise<void> {
   try {
@@ -59,10 +94,20 @@ async function readOptional(path: string): Promise<string> {
   }
 }
 
-async function restoreFirewall(pfConf: string, anchor: string): Promise<void> {
+async function restoreNetworkFiles(options: {
+  hostsPath: string;
+  hostsText: string;
+  pfConfPath: string;
+  pfConfText: string;
+  anchorPath: string;
+  anchorText: string;
+}): Promise<void> {
+  await writeFile(options.hostsPath, options.hostsText.endsWith("\n") ? options.hostsText : `${options.hostsText}\n`, "utf8");
   await writeFirewallFiles({
-    pfConfText: pfConf || defaultPfConf(),
-    anchorText: anchor || ""
+    pfConfText: options.pfConfText || defaultPfConf(),
+    anchorText: options.anchorText || "",
+    pfConfPath: options.pfConfPath,
+    anchorPath: options.anchorPath
   });
 }
 
@@ -79,4 +124,8 @@ function defaultPfConf(): string {
 
 function isNodeErrorCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && (error as { code?: unknown }).code === code;
+}
+
+function isMainScript(): boolean {
+  return process.argv[1] ? fileURLToPath(import.meta.url) === resolve(process.argv[1]) : false;
 }

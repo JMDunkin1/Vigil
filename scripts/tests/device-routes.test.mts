@@ -85,6 +85,26 @@ try {
   assert.equal(mdm.status, "off");
   assert.equal(normalDeliveryPath.provider, "manageengine");
   assert.equal((mdm.staticProfile as Record<string, unknown>).status, "supervised-profile-ready");
+
+  const enrollmentResponse = mockResponse();
+  const enrollmentHandled = await handleDeviceApiRoute(
+    mockRequest("GET", "/api/devices/ios/mdm/enrollment.mobileconfig", {}),
+    enrollmentResponse,
+    new URL("http://127.0.0.1:8787/api/devices/ios/mdm/enrollment.mobileconfig"),
+    {
+      state,
+      usage: {},
+      recordIosMdmPolicyQueue: () => ({ queued: false })
+    }
+  );
+  const enrollmentBody = JSON.parse(enrollmentResponse.bodyText) as Record<string, unknown>;
+  assert.equal(enrollmentHandled, true);
+  assert.equal(enrollmentResponse.statusCodeValue, 409);
+  assert.equal(enrollmentBody.ok, false);
+  assert.match(String(enrollmentBody.error), /Self-hosted Sentinel MDM enrollment is not ready/);
+  assert.ok((enrollmentBody.blockers as unknown[]).some((item) => /public HTTPS URL/i.test(String(item))));
+  assert.equal(state.deviceControls.ios.mdm.lastEnrollmentProfileGeneratedAt, null);
+  assert.equal(state.events.some((event) => event.type === "ios_mdm_enrollment_generated"), false);
 } finally {
   await rm(dataDir, { recursive: true, force: true });
 }

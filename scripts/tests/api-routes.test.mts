@@ -16,6 +16,7 @@ assert.equal(matchApiRoute("POST", "/api/adult-blocklist/settings")?.id, "adultB
 assert.equal(matchApiRoute("POST", "/api/adult-blocklist/refresh")?.id, "adultBlocklistRefresh");
 assert.equal(matchApiRoute("POST", "/api/devices/ios/usb-profile-apply")?.id, "iosUsbProfileApply");
 assert.equal(matchApiRoute("GET", "/api/devices/ios/mdm/doctor")?.id, "iosMdmDoctor");
+assert.equal(matchApiRoute("DELETE", "/api/profile/custom")?.id, "profileDelete");
 assert.equal(matchApiRoute("DELETE", "/api/schedule/work")?.id, "scheduleDelete");
 assert.equal(matchApiRoute("DELETE", "/api/intentional-use/rule/pause")?.id, "intentionalRuleDelete");
 assert.equal(matchApiRoute("POST", "/api/intentional-use/journal")?.id, "intentionalJournal");
@@ -45,5 +46,6 @@ assert.equal(domains.get("backup"), 1);
 assert.equal(domains.get("devices"), 8);
 assert.equal(domains.get("grayscale"), 3);
 assert.equal(domains.get("extension"), 6);
+assert.equal(domains.get("profiles"), 2);
 assert.equal(domains.get("intentionalUse"), 20);
 assert.ok(domains.get("hardening") >= 3);

@@ -327,16 +327,30 @@ export function markIosMdmEnrollmentGenerated(state: SentinelState, at = new Dat
   mdm.lastEnrollmentProfileGeneratedAt = at.toISOString();
 }
 
+export function iosMdmEnrollmentReadiness(state: SentinelState): IosMdmReadiness {
+  return iosMdmReadiness(ensureMdmState(state));
+}
+
+export function assertIosMdmEnrollmentReady(state: SentinelState): void {
+  const readiness = iosMdmEnrollmentReadiness(state);
+  if (readiness.enrollmentReady) return;
+  throw Object.assign(new Error("Self-hosted Sentinel MDM enrollment is not ready."), {
+    status: 409,
+    blockers: readiness.setupBlockers
+  });
+}
+
 export function buildIosMdmEnrollmentProfile(state: SentinelState): string {
+  assertIosMdmEnrollmentReady(state);
   const mdm = ensureMdmState(state);
-  const baseUrl = mdm.publicBaseUrl || `https://replace-with-public-mdm-host.example`;
+  const baseUrl = mdm.publicBaseUrl;
   const mdmPayload = commonPayload("com.apple.mdm", "Sentinel MDM", "mdm", {
     AccessRights: mdm.accessRights || DEFAULT_ACCESS_RIGHTS,
     CheckInURL: `${baseUrl}/mdm/checkin?token=${encodeURIComponent(mdm.enrollmentSecret || "")}`,
     CheckOutWhenRemoved: mdm.checkOutWhenRemoved !== false,
     ServerURL: `${baseUrl}/mdm/connect?token=${encodeURIComponent(mdm.enrollmentSecret || "")}`,
     SignMessage: Boolean(mdm.signMessage),
-    Topic: mdm.topic || "com.apple.mgmt.replace-with-apns-topic",
+    Topic: mdm.topic,
     UseDevelopmentAPNS: Boolean(mdm.useDevelopmentApns)
   });
 

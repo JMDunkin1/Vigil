@@ -186,13 +186,13 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse: (response?: unknown) => void) => {
   if (message?.type === "SENTINEL_PULSE") {
-    checkUrl(sender.tab?.id, message.url || "", message.reason || "heartbeat", message.seconds, message.title, { deferTabAction: true })
+    void checkUrl(sender.tab?.id, message.url || "", message.reason || "heartbeat", message.seconds, message.title, { deferTabAction: true })
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
   if (message?.type === "SENTINEL_PAUSE_ACTION") {
-    handlePauseAction(message)
+    void handlePauseAction(message)
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;

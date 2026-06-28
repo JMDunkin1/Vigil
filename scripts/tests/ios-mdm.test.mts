@@ -227,6 +227,13 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   const state = defaultState();
   const unconfiguredDoctor = iosMdmDoctor(state, now);
   assert.ok(unconfiguredDoctor.blockers.map((item) => item.code).includes("missing-push-certificate-payload"));
+  try {
+    buildIosMdmEnrollmentProfile(state);
+    assert.fail("unconfigured self-hosted MDM enrollment should not generate a profile");
+  } catch (error) {
+    assert.equal((error as { status?: number }).status, 409);
+    assert.ok(((error as { blockers?: string[] }).blockers || []).some((item) => /public HTTPS URL/i.test(item)));
+  }
   state.deviceControls.ios.enabled = true;
   state.deviceControls.ios.mdm = {
     ...state.deviceControls.ios.mdm,
@@ -255,11 +262,17 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.equal(readyDoctor.warnings.some((item) => item.code === "apple-credentials-not-locally-verifiable"), true);
 
   const enrollment = buildIosMdmEnrollmentProfile(state);
+  assert.doesNotMatch(enrollment, /replace-with-public-mdm-host|replace-with-apns-topic/);
   const profileToken = enrollment.match(/token=([^<]+)/)?.[1] || "";
   assert.equal(authorizeIosMdmRequest(state, new URL(`https://mdm.example.test/mdm/checkin?token=${profileToken}`)), true);
   assert.match(enrollment, /com\.apple\.mdm/);
   assert.match(enrollment, /https:\/\/mdm\.example\.test\/mdm\/connect/);
   assert.match(enrollment, /com\.apple\.mgmt\.sentinel-test/);
+  const enrollmentProfile = recordValue(parsePlist(enrollment), "MDM enrollment profile");
+  const enrollmentPayloads = (enrollmentProfile.PayloadContent as unknown[]).map((item) => recordValue(item, "MDM enrollment payload"));
+  const mdmPayload = must(enrollmentPayloads.find((payload) => payload.PayloadType === "com.apple.mdm"), "MDM payload");
+  assert.equal(mdmPayload.IdentityCertificateUUID, "11111111-2222-3333-4444-555555555555");
+  assert.ok(enrollmentPayloads.some((payload) => payload.PayloadType === "com.apple.security.pkcs12"));
 
   const checkIn = handleIosMdmCheckIn(state, {
     MessageType: "TokenUpdate",

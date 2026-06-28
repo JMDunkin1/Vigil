@@ -180,7 +180,7 @@ export async function handleSessionApiRoute(
 
   if (method === "POST" && path === "/api/emergency/request") {
     const body = await readBody(request);
-    const active = activePolicy(state);
+    const active = activeEmergencyPolicy(state);
     const activeLimits = activeLimitBlocks(state) as LimitBlockSummary[];
     if (active && !emergencyUnlockAllowedForPolicy(active)) {
       sendJson(response, 423, { error: commitmentLockError(active), active: active.session });
@@ -528,6 +528,19 @@ function normalizeSessionDeviceTargets(body: UnknownRecord, fallback: readonly D
 function activeSessionConflicts(state: SentinelState, targets: DeviceTarget[]): DeviceTarget[] {
   state.activeSessions ||= { computer: state.activeSession || null, phone: null };
   return targets.filter((target) => Boolean(activeSessionForDevice(state, target)));
+}
+
+function activeEmergencyPolicy(state: SentinelState, now = new Date()): ActivePolicy | null {
+  const policies = DEVICE_TARGETS
+    .map((target) => activePolicy(state, now, { device: target }))
+    .filter((policy): policy is ActivePolicy => Boolean(policy));
+  const uniquePolicies = policies.filter((policy, index) => (
+    policies.findIndex((item) => item.kind === policy.kind && item.session.id === policy.session.id) === index
+  ));
+  return uniquePolicies.find((policy) => !emergencyUnlockAllowedForPolicy(policy))
+    || uniquePolicies.find((policy) => !policy.session.canEndEarly)
+    || uniquePolicies[0]
+    || null;
 }
 
 function startDeviceSession(state: SentinelState, targets: DeviceTarget[], session: Session): void {

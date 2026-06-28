@@ -6,6 +6,7 @@ import { defaultState, REQUIRED_EXTENSION_VERSION } from "../../src/defaults.js"
 import { buildFirewallBlock, buildPfConfBlock, extractManagedFirewallBlock, extractManagedPfConfBlock, firewallDomainSignature, firewallStatus, replaceManagedPfConfBlock } from "../../src/firewall.js";
 import { buildHostsBlock, extractHostsBlock, hostsBlockMatches, LEGACY_HOSTS_BEGIN, LEGACY_HOSTS_END, parseLaunchAgentPrint, replaceManagedHostsBlock } from "../../src/hardening.js";
 import { distractionPresets } from "../../src/presets.js";
+import { applyNetworkBlock } from "../apply-hosts.mjs";
 import { now, recordValue, stringArrayValue } from "./test-helpers.mjs";
 
 {
@@ -60,9 +61,47 @@ last exit code = 0
   assert.equal((anchor.match(/block return out quick to 93\.184\.216\.34/g) || []).length, 1);
   assert.match(anchor, new RegExp(firewallDomainSignature(domains)));
 
+  const unsafeAnchor = buildFirewallBlock(["unsafe.example"], [
+    { domain: "unsafe.example", host: "unsafe.example", address: "127.0.0.1" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "::1" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "0:0:0:0:0:0:0:1" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "0.0.0.0" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "::" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "0:0:0:0:0:0:0:0" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "169.254.10.20" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "fe80::1" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "10.1.2.3" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "192.168.1.2" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "239.1.2.3" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "fc00::1" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "ff02::1" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "::ffff:127.0.0.1" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "0:0:0:0:0:ffff:127.0.0.1" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "93.184.216.34" },
+    { domain: "unsafe.example", host: "unsafe.example", address: "2606:2800:220:1:248:1893:25c8:1946" }
+  ]);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to 127\.0\.0\.1/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to ::1/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to 0:0:0:0:0:0:0:1/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to 0\.0\.0\.0/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to ::\n/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to 0:0:0:0:0:0:0:0/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to 169\.254\.10\.20/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to fe80::1/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to 10\.1\.2\.3/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to 192\.168\.1\.2/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to 239\.1\.2\.3/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to fc00::1/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to ff02::1/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to ::ffff:127\.0\.0\.1/);
+  assert.doesNotMatch(unsafeAnchor, /block return out quick to 0:0:0:0:0:ffff:127\.0\.0\.1/);
+  assert.match(unsafeAnchor, /block return out quick to 93\.184\.216\.34/);
+  assert.match(unsafeAnchor, /block return out quick to 2606:2800:220:1:248:1893:25c8:1946/);
+
   const pfConfBlock = buildPfConfBlock();
   const pfConf = replaceManagedPfConfBlock("anchor \"com.apple/*\"\n", pfConfBlock);
   assert.equal(extractManagedPfConfBlock(pfConf), pfConfBlock);
+  assert.match(buildPfConfBlock("/tmp/sentinel-test-anchor"), /from "\/tmp\/sentinel-test-anchor"/);
   const migratedPfConf = replaceManagedPfConfBlock(`${pfConf}\n${pfConfBlock}\n`, pfConfBlock);
   assert.equal((migratedPfConf.match(/# BEGIN SENTINEL PF/g) || []).length, 1);
   const orphanBeginPfConf = replaceManagedPfConfBlock(`anchor "com.apple/*"\n\n# BEGIN SENTINEL PF\nanchor "stale"\n\nload anchor "com.apple" from "/etc/pf.anchors/com.apple"\n`, pfConfBlock);
@@ -91,6 +130,11 @@ last exit code = 0
   }];
   await writeFile(pfConfPath, pfConf, "utf8");
   await writeFile(anchorPath, buildFirewallBlock(["example.com"], [entries[0]]), "utf8");
+  const wrongPath = await firewallStatus(state, now, { pfConfPath, anchorPath });
+  assert.equal(wrongPath.current, false);
+  assert.equal(wrongPath.stale, true);
+  const tempPfConf = replaceManagedPfConfBlock("anchor \"com.apple/*\"\n", buildPfConfBlock(anchorPath));
+  await writeFile(pfConfPath, tempPfConf, "utf8");
   const current = await firewallStatus(state, now, { pfConfPath, anchorPath });
   assert.equal(current.current, true);
   assert.equal(current.installedEntries, 1);
@@ -103,6 +147,82 @@ last exit code = 0
   state.profiles[0].blockedSites = ["changed.example"];
   const stale = await firewallStatus(state, now, { pfConfPath, anchorPath });
   assert.equal(stale.stale, true);
+  await rm(dir, { recursive: true, force: true });
+}
+
+{
+  const dir = await mkdtemp(join(tmpdir(), "sentinel-apply-hosts-success-"));
+  const hostsPath = join(dir, "hosts");
+  const pfConfPath = join(dir, "pf.conf");
+  const anchorPath = join(dir, "custom.sentinel.block");
+  const state = defaultState();
+  state.settings.adultBlocklistEnabled = false;
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: [],
+    blockedSites: [],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  await writeFile(hostsPath, "127.0.0.1 localhost\n", "utf8");
+  await writeFile(pfConfPath, "anchor \"com.apple/*\"\n", "utf8");
+  const result = await applyNetworkBlock({
+    state,
+    hostsPath,
+    pfConfPath,
+    anchorPath,
+    validateAndLoadPf: async () => {},
+    flushDns: async () => {}
+  });
+  const appliedPfConf = await readFile(pfConfPath, "utf8");
+  assert.equal(result.status.current, true);
+  assert.equal(appliedPfConf.includes(`from "${anchorPath}"`), true);
+  assert.doesNotMatch(appliedPfConf, /from "\/etc\/pf\.anchors\/com\.sentinel\.block"/);
+  await rm(dir, { recursive: true, force: true });
+}
+
+{
+  const dir = await mkdtemp(join(tmpdir(), "sentinel-apply-hosts-"));
+  const hostsPath = join(dir, "hosts");
+  const pfConfPath = join(dir, "pf.conf");
+  const anchorPath = join(dir, "com.sentinel.block");
+  const originalHosts = "127.0.0.1 localhost\n255.255.255.255 broadcasthost\n";
+  const originalPfConf = "anchor \"com.apple/*\"\n";
+  const originalAnchor = "# existing sentinel anchor\n";
+  const state = defaultState();
+  state.settings.adultBlocklistEnabled = false;
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: [],
+    blockedSites: [],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  await writeFile(hostsPath, originalHosts, "utf8");
+  await writeFile(pfConfPath, originalPfConf, "utf8");
+  await writeFile(anchorPath, originalAnchor, "utf8");
+  await assert.rejects(
+    applyNetworkBlock({
+      state,
+      hostsPath,
+      pfConfPath,
+      anchorPath,
+      validateAndLoadPf: async () => {
+        throw new Error("simulated pf validation failure");
+      },
+      flushDns: async () => {}
+    }),
+    /simulated pf validation failure/
+  );
+  assert.equal(await readFile(hostsPath, "utf8"), originalHosts);
+  assert.equal(await readFile(pfConfPath, "utf8"), originalPfConf);
+  assert.equal(await readFile(anchorPath, "utf8"), originalAnchor);
   await rm(dir, { recursive: true, force: true });
 }
 

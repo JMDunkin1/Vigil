@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import { dirname } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -37,11 +38,11 @@ interface FirewallFileOptions {
   anchorPath?: string;
 }
 
-export function buildPfConfBlock(): string {
+export function buildPfConfBlock(anchorPath = PF_ANCHOR_PATH): string {
   return [
     PF_CONF_BEGIN,
     `anchor "${PF_ANCHOR_NAME}"`,
-    `load anchor "${PF_ANCHOR_NAME}" from "${PF_ANCHOR_PATH}"`,
+    `load anchor "${PF_ANCHOR_NAME}" from "${anchorPath}"`,
     PF_CONF_END
   ].join("\n");
 }
@@ -157,7 +158,7 @@ export async function firewallStatus(
   const installedEntries = countFirewallRules(anchorBlock);
   const unresolvedTargets = expectedDomains.length > 0 && installedEntries === 0;
   const stale = Boolean(state && installed && (
-    normalizeBlock(confBlock) !== normalizeBlock(buildPfConfBlock()) ||
+    normalizeBlock(confBlock) !== normalizeBlock(buildPfConfBlock(anchorPath)) ||
     firewallAnchorSignature(anchorBlock) !== expectedSignature ||
     unresolvedTargets
   ));
@@ -250,7 +251,85 @@ function normalizeEntries(entries: Array<Partial<FirewallEntry>> = []): Firewall
 }
 
 function isSafePfAddress(address: string): boolean {
-  return Boolean(address && ADDRESS_RE.test(address) && !address.includes(".."));
+  const clean = String(address || "").trim();
+  if (!clean || !ADDRESS_RE.test(clean) || clean.includes("..")) return false;
+  const family = isIP(clean);
+  if (family === 4) return isSafePublicIpv4Address(clean);
+  if (family === 6) return isSafePublicIpv6Address(clean);
+  return false;
+}
+
+function isSafePublicIpv4Address(address: string): boolean {
+  const octets = address.split(".").map((part) => Number(part));
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
+  const [a, b, c, d] = octets;
+  if (a === undefined || b === undefined || c === undefined || d === undefined) return false;
+  if (a === 0 || a === 10 || a === 127) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && b === 168) return false;
+  if (a >= 224) return false;
+  return true;
+}
+
+function isSafePublicIpv6Address(address: string): boolean {
+  const clean = address.toLowerCase();
+  const segments = parseIpv6Segments(clean);
+  if (!segments) return false;
+  if (segments.every((segment) => segment === 0)) return false;
+  if (segments.slice(0, 7).every((segment) => segment === 0) && segments[7] === 1) return false;
+
+  const mappedIpv4 = mappedIpv4Address(segments);
+  if (mappedIpv4) return isSafePublicIpv4Address(mappedIpv4);
+  if (segments.slice(0, 6).every((segment) => segment === 0)) return false;
+
+  const first = segments[0] || 0;
+  if ((first & 0xffc0) === 0xfe80) return false;
+  if ((first & 0xfe00) === 0xfc00) return false;
+  if ((first & 0xff00) === 0xff00) return false;
+  return true;
+}
+
+function parseIpv6Segments(address: string): number[] | null {
+  let normalized = address;
+  const ipv4Tail = normalized.match(/^(.*:)(\d+\.\d+\.\d+\.\d+)$/);
+  if (ipv4Tail) {
+    const octets = ipv4Tail[2]?.split(".").map((part) => Number(part)) || [];
+    if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return null;
+    normalized = `${ipv4Tail[1]}${((octets[0] || 0) << 8 | (octets[1] || 0)).toString(16)}:${((octets[2] || 0) << 8 | (octets[3] || 0)).toString(16)}`;
+  } else if (normalized.includes(".")) {
+    return null;
+  }
+
+  const compressed = normalized.split("::");
+  if (compressed.length > 2) return null;
+  const left = parseIpv6Side(compressed[0] || "");
+  const right = compressed.length === 2 ? parseIpv6Side(compressed[1] || "") : [];
+  if (!left || !right) return null;
+  if (compressed.length === 1) return left.length === 8 ? left : null;
+  const missing = 8 - left.length - right.length;
+  if (missing < 1) return null;
+  return [...left, ...Array(missing).fill(0), ...right];
+}
+
+function parseIpv6Side(value: string): number[] | null {
+  if (!value) return [];
+  const parts = value.split(":");
+  const segments = parts.map((part) => Number.parseInt(part, 16));
+  if (
+    parts.some((part) => !part || !/^[0-9a-f]{1,4}$/i.test(part)) ||
+    segments.some((segment) => !Number.isInteger(segment) || segment < 0 || segment > 0xffff)
+  ) return null;
+  return segments;
+}
+
+function mappedIpv4Address(segments: number[]): string {
+  if (segments.length !== 8) return "";
+  if (!segments.slice(0, 5).every((segment) => segment === 0) || segments[5] !== 0xffff) return "";
+  const high = segments[6] || 0;
+  const low = segments[7] || 0;
+  return `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${low & 0xff}`;
 }
 
 function hasPartialPfConfBlock(pfConf: unknown): boolean {

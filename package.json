@@ -20,8 +20,9 @@
     "start": "npm run build && node dist/runtime/src/server.js",
     "dev": "npm run build && node --watch --watch-path=app --watch-path=src --watch-path=public --watch-path=extension --watch-path=scripts --watch-path=tsconfig.json --watch-path=package.json dist/runtime/scripts/dev-server.mjs",
     "test": "npm run build && node dist/runtime/scripts/run-tests.mjs",
-    "lint": "eslint .",
-    "check": "npm run lint && npm test",
+    "lint": "node scripts/lint-source.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm run lint && npm test",
     "hosts:preview": "npm run build && node dist/runtime/scripts/hosts-preview.mjs",
     "hosts:apply": "npm run build && sudo node dist/runtime/scripts/apply-hosts.mjs",
     "network:preview": "npm run build && node dist/runtime/scripts/hosts-preview.mjs",
@@ -83,7 +84,6 @@
     "electron-builder": "^26.15.3",
     "eslint": "^10.6.0",
     "globals": "^17.7.0",
-    "typescript": "^7.0.1-rc",
-    "typescript-eslint": "^8.62.0"
+    "typescript": "^7.0.1-rc"
   }
 }

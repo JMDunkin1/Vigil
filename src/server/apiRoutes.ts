@@ -50,6 +50,7 @@ export const API_ROUTES = Object.freeze([
   { id: "intentionalPauseContinue", domain: "intentionalUse", methods: ["POST"], path: "/api/intentional-use/pause/continue" },
   { id: "intentionalPauseSkip", domain: "intentionalUse", methods: ["POST"], path: "/api/intentional-use/pause/skip" },
   { id: "profile", domain: "profiles", methods: ["POST"], path: "/api/profile" },
+  { id: "profileDelete", domain: "profiles", methods: ["DELETE"], prefix: "/api/profile/" },
   { id: "sessionPreview", domain: "sessions", methods: ["POST"], path: "/api/session/preview" },
   { id: "sessionStart", domain: "sessions", methods: ["POST"], path: "/api/session/start" },
   { id: "sessionEnd", domain: "sessions", methods: ["POST"], path: "/api/session/end" },

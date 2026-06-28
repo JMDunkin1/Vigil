@@ -16,6 +16,7 @@ import { activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, 
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "../../src/protection.js";
 import { buildSafariFilterProfile, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature, safariUrlFilterEnabled } from "../../src/safariFilter.js";
 import { applySealVerificationToState, markStateSealed } from "../../src/seal.js";
+import { deleteProfile } from "../../src/server/policyRoutes.js";
 import { updateSettings } from "../../src/server/settingsRoutes.js";
 import { sanitizeDefaultFocusProfile, sanitizeSoftBlockProfile } from "../../src/store.js";
 import { syncDeviceUsageSnapshot } from "../../src/usage.js";
@@ -931,4 +932,53 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const window = confirmMaintenanceWindow(state, pending.id, { challengeText: must(pending.challenge, "maintenance challenge").text }, new Date(now.getTime() + state.settings.protectedEditDelaySeconds * 1000));
   assert.equal(window.requestId, pending.id);
   assert.doesNotThrow(() => assertProtectedEditAllowed(state, { kind: "settings" }, new Date(now.getTime() + state.settings.protectedEditDelaySeconds * 1000)));
+}
+
+{
+  const state = defaultState();
+  state.profiles.push({
+    id: "custom-study",
+    name: "Custom study",
+    mode: "blocklist",
+    description: "",
+    blockedApps: ["Steam"],
+    blockedSites: ["example.test"],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  });
+  state.settings.activeProfileId = "custom-study";
+  const fallback = deleteProfile(state, "custom-study");
+  assert.equal(fallback.id, "default");
+  assert.equal(state.settings.activeProfileId, "default");
+  assert.equal(state.profiles.some((profile) => profile.id === "custom-study"), false);
+}
+
+{
+  const state = defaultState();
+  state.profiles.push({
+    id: "custom-scheduled",
+    name: "Custom scheduled",
+    mode: "blocklist",
+    description: "",
+    blockedApps: [],
+    blockedSites: [],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  });
+  state.schedules.push({
+    id: "custom-schedule",
+    name: "Custom schedule",
+    enabled: true,
+    mode: "focus",
+    profileId: "custom-scheduled",
+    lockLevel: "deep",
+    days: TEST_DAYS,
+    start: "00:00",
+    end: "23:59",
+    wifiNetworks: []
+  });
+  assert.throws(() => deleteProfile(state, "custom-scheduled"), /still used by a schedule/);
+  assert.throws(() => deleteProfile(state, "default"), /Built-in profiles cannot be deleted/);
 }
