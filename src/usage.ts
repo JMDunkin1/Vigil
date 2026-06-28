@@ -188,7 +188,7 @@ export function usageSummary(usage: UsageState, state: VigilState, now = new Dat
     appOpenCount,
     siteOpenCount,
     openPressure: appOpenCount + siteOpenCount,
-    savedSeconds: 0,
+    savedSeconds: null,
     focusScore,
     devices: deviceSummaries(today.devices, state),
     topApps,
@@ -375,6 +375,10 @@ function sumValues(values: Record<string, number> | undefined): number {
 }
 
 function sumBlockedSeconds(day: UsageBucket, state: VigilState): number {
+  return Math.min(Math.round(day.totalSeconds || 0), rawBlockedSeconds(day, state));
+}
+
+function rawBlockedSeconds(day: UsageBucket, state: VigilState): number {
   const profile = state.profiles.find((item) => item.id === state.settings.activeProfileId) || state.profiles[0];
   let total = 0;
 

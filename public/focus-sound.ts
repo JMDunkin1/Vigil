@@ -116,7 +116,7 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
     setFieldValue("#focusSoundBreakMinutes", String(options.breakMinutes));
     setFieldValue("#focusSoundVolume", String(options.volume));
 
-    sync(options).catch((error) => {
+    void sync(options).catch((error) => {
       focusAudio.blocked = true;
       stop();
       $("#focusSoundStatus").textContent = error instanceof Error ? error.message : "Audio blocked";

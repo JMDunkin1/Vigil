@@ -28,6 +28,7 @@ const apiRoutesTsSource = await readFile(join(sourceRoot, "src", "server", "apiR
 const deviceRoutesTsSource = await readFile(join(sourceRoot, "src", "server", "deviceRoutes.ts"), "utf8");
 const appTsSource = await readFile(join(sourceRoot, "public", "app.ts"), "utf8");
 const appModelTsSource = await readFile(join(sourceRoot, "public", "app-model.ts"), "utf8");
+const indexHtmlSource = await readFile(join(sourceRoot, "public", "index.html"), "utf8");
 const appSource = await readFile(join(root, "public", "app.js"), "utf8");
 const devicePanelSource = await readFile(join(root, "public", "device-panel.js"), "utf8");
 const domSource = await readFile(join(root, "public", "dom.js"), "utf8");
@@ -62,6 +63,8 @@ assert.doesNotMatch(appSource, /function createNoiseSource|async function parseR
 assert.doesNotMatch(appSource, /iosMdmForm|installLaunchAgent|applyHostsBlock/);
 assert.match(appTsSource, /from "\.\/app-model\.js"/);
 assert.match(appModelTsSource, /interface DashboardData/);
+assert.match(indexHtmlSource, /id="deleteProfile"/);
+assert.match(appTsSource, /\/api\/profile\/\$\{encodeURIComponent\(profile\.id\)\}/);
 assert.match(mainTsSource, /function configureMenuBarResidency/);
 assert.match(mainTsSource, /app\.dock\?\.hide\(\)/);
 assert.match(mainTsSource, /app\.setLoginItemSettings\(/);

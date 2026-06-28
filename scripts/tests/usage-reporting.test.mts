@@ -112,7 +112,7 @@ import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-
   const emptySummary = usageSummary({}, state, now);
   assert.equal(emptySummary.protectedSeconds, 0);
   assert.equal(emptySummary.blockCount, 0);
-  assert.equal(emptySummary.savedSeconds, 0);
+  assert.equal(emptySummary.savedSeconds, null);
 
   const scheduledState = defaultState();
   const scheduledStart = new Date(now.getTime() - 30 * 60 * 1000);
@@ -156,5 +156,66 @@ import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-
   const summary = usageSummary({}, state, now);
   assert.equal(summary.protectedSeconds, 30 * 60);
   assert.equal(summary.blockCount, 2);
-  assert.equal(summary.savedSeconds, 0);
+  assert.equal(summary.savedSeconds, null);
+}
+
+{
+  const state = defaultState();
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: ["Safari"],
+    blockedSites: ["reddit.com"],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  state.settings.activeProfileId = "default";
+  const usage = usageFixture({
+    "2026-05-28": {
+      totalSeconds: 600,
+      apps: { Safari: 600 },
+      sites: { "reddit.com": 600 },
+      opens: { apps: { Safari: 1 }, sites: { "reddit.com": 1 } }
+    }
+  });
+
+  const summary = usageSummary(usage, state, now);
+  assert.equal(summary.totalSeconds, 600);
+  assert.equal(summary.distractingSeconds, 600);
+
+  const report = focusReport(usage, state, now);
+  assert.equal(report.currentWeek.days.find((day) => day.key === "2026-05-28")?.distractingSeconds, 600);
+  assert.equal(report.currentWeek.totals.distractingSeconds, 600);
+}
+
+{
+  const state = defaultState();
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: ["Instagram"],
+    blockedSites: ["reddit.com"],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  state.settings.activeProfileId = "default";
+  const usage = usageFixture({
+    "2026-05-28": {
+      totalSeconds: 6000,
+      apps: { Codex: 5000, Instagram: 300 },
+      sites: { "docs.google.com": 4200, "reddit.com": 200 },
+      opens: { apps: {}, sites: {} }
+    }
+  });
+
+  const report = focusReport(usage, state, now);
+  assert.deepEqual(report.topCulprits.map((item) => item.name), ["Instagram", "reddit.com"]);
+  assert.equal(report.topCulprits.some((item) => item.name === "Codex" || item.name === "docs.google.com"), false);
+  assert.equal(report.projections.weeklySavedSeconds, null);
+  assert.equal(report.projections.yearlySavedSeconds, null);
+  assert.equal(report.projections.yearsReclaimedAtCurrentPace, null);
 }

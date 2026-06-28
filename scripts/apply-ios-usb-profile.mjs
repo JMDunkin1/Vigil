@@ -320,6 +320,8 @@ async function removeProfile(udid, supervisorKeybagPath) {
     "remove",
     "--udid",
     udid,
+    "--keybag",
+    supervisorKeybagPath,
     IOS_PROFILE_IDENTIFIER
   ], QUICK_TIMEOUT_MS);
 }

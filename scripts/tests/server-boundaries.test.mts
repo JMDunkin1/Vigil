@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { BRICK_MODE_PROFILE_ID, defaultState } from "../../src/defaults.js";
 import { buildBackupExport, backupExportFilename } from "../../src/server/backupRoutes.js";
 import { externalNetworkBlockSummary } from "../../src/externalNetworkBlock.js";
@@ -13,6 +14,7 @@ import { handleSessionApiRoute, previewManualSession } from "../../src/server/se
 import type { ActivePolicy, Session } from "../../src/types.js";
 
 const publicDir = join(process.cwd(), "public");
+const sourcePublicDir = process.cwd().endsWith("dist/runtime") ? join(dirname(dirname(process.cwd())), "public") : publicDir;
 
 function recordValue(value: unknown, label = "value"): Record<string, unknown> {
   assert.equal(typeof value, "object", `${label} should be an object`);
@@ -31,6 +33,13 @@ assert.equal(resolvePublicPath("/app.js", publicDir), join(publicDir, "app.js"))
 assert.equal(resolvePublicPath("/../package.json", publicDir), null);
 assert.equal(resolvePublicPath("/%2e%2e/package.json", publicDir), null);
 assert.equal(resolvePublicPath("/bad%zz", publicDir), null);
+
+const appSource = readFileSync(join(sourcePublicDir, "app.ts"), "utf8");
+assert.match(appSource, /function emergencyPolicy\(appState: DashboardState\): ActivePolicy \| null/);
+assert.match(appSource, /function emergencyUnlockAllowedForPolicy\(policy: ActivePolicy \| null \| undefined\): boolean/);
+assert.match(appSource, /if \(policy\.kind === "integrity"\) return false/);
+assert.match(appSource, /uniquePolicies\.find\(\(policy\) => !emergencyUnlockAllowedForPolicy\(policy\)\)/);
+assert.match(appSource, /appState\.devicePolicies\?\.phone/);
 
 assert.equal(contentType("public/app.js"), "text/javascript; charset=utf-8");
 assert.equal(contentType("public/styles.css"), "text/css; charset=utf-8");
@@ -148,6 +157,103 @@ assert.deepEqual(conflictPreview.conflicts, ["computer"]);
   assert.equal(response.statusCodeValue, 200);
   assert.deepEqual(previewBody.conflicts, ["computer"]);
   assert.equal(strictPreflightCalls, 0);
+}
+
+{
+  const routeState = defaultState();
+  routeState.settings.emergencyDelaySeconds = 0;
+  const phoneSession: Session = {
+    ...existingSession,
+    id: "phone-only-emergency",
+    title: "Phone Only Emergency",
+    startedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    emergencyUnlocksAllowed: true,
+    deviceTargets: ["phone"]
+  };
+  routeState.activeSessions = { computer: null, phone: phoneSession };
+  routeState.activeSession = null;
+  let queuedReason = "";
+  const context = {
+    state: routeState,
+    recordIosMdmPolicyQueue: (reason: string) => {
+      queuedReason = reason;
+      return null;
+    },
+    scheduleImmediateSessionEnforcement: () => {},
+    assertStrictLockAllowed: async () => {}
+  };
+
+  const requestResponse = mockSessionResponse();
+  const requestHandled = await handleSessionApiRoute(
+    mockSessionRequest("POST", "/api/emergency/request", {
+      reason: "I need to temporarily unlock my phone for a legitimate urgent task."
+    }),
+    requestResponse,
+    context
+  );
+  const requestBody = recordValue(JSON.parse(requestResponse.bodyText), "phone emergency request response");
+  const pending = recordValue(requestBody.pending, "phone emergency pending");
+  assert.equal(requestHandled, true);
+  assert.equal(requestResponse.statusCodeValue, 200);
+  assert.equal(pending.activeKind, "manual");
+  assert.equal(pending.sessionId, "phone-only-emergency");
+  const storedPending = routeState.emergency.pending.find((item) => item.id === pending.id);
+  assert.ok(storedPending, "phone emergency request should be stored");
+  storedPending.eligibleAt = new Date(Date.now() - 1000).toISOString();
+
+  const confirmResponse = mockSessionResponse();
+  const confirmHandled = await handleSessionApiRoute(
+    mockSessionRequest("POST", "/api/emergency/confirm", {
+      requestId: pending.id,
+      challengeText: String(recordValue(pending.challenge, "phone emergency challenge").text || "")
+    }),
+    confirmResponse,
+    context
+  );
+  assert.equal(confirmHandled, true);
+  assert.equal(confirmResponse.statusCodeValue, 200);
+  assert.equal(recordValue(JSON.parse(confirmResponse.bodyText), "phone emergency confirm response").ok, true);
+  assert.equal(routeState.activeSessions.phone, null);
+  assert.equal(routeState.activeSession, null);
+  assert.equal(queuedReason, "emergency-unlock");
+}
+
+{
+  const routeState = defaultState();
+  const phoneSession: Session = {
+    ...existingSession,
+    id: "phone-only-commitment",
+    title: "Phone Only Commitment",
+    startedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    endsAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    commitmentLock: true,
+    emergencyUnlocksAllowed: false,
+    deviceTargets: ["phone"]
+  };
+  routeState.activeSessions = { computer: null, phone: phoneSession };
+  routeState.activeSession = null;
+  const response = mockSessionResponse();
+  const handled = await handleSessionApiRoute(
+    mockSessionRequest("POST", "/api/emergency/request", {
+      reason: "I want to bypass the commitment lock on the phone right now."
+    }),
+    response,
+    {
+      state: routeState,
+      recordIosMdmPolicyQueue: () => null,
+      scheduleImmediateSessionEnforcement: () => {},
+      assertStrictLockAllowed: async () => {}
+    }
+  );
+  const body = recordValue(JSON.parse(response.bodyText), "phone commitment emergency response");
+  assert.equal(handled, true);
+  assert.equal(response.statusCodeValue, 423);
+  assert.equal(body.error, "This commitment lock does not allow emergency unlocks. Open a protected maintenance window if this was a mistake.");
+  assert.equal(recordValue(body.active, "phone commitment active").id, "phone-only-commitment");
+  assert.equal(routeState.activeSessions.phone?.id, "phone-only-commitment");
 }
 
 assert.equal(escapeHtml(`<script>"&'</script>`), "&lt;script&gt;&quot;&amp;&#39;&lt;/script&gt;");

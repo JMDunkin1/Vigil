@@ -9,9 +9,13 @@ import type { VigilState } from "../../src/types.js";
 import { recordValue } from "./test-helpers.mjs";
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+const projectRoot = root.endsWith("dist/runtime") ? dirname(dirname(root)) : root;
 const dataDir = await mkdtemp(join(tmpdir(), "vigil-manageengine-export-"));
 
 try {
+  const usbApplySource = await readFile(join(projectRoot, "scripts", "apply-ios-usb-profile.mjs"), "utf8");
+  assert.match(usbApplySource, /"profile",\s*"remove",\s*"--udid",\s*udid,\s*"--keybag",\s*supervisorKeybagPath,\s*IOS_PROFILE_IDENTIFIER/s);
+
   const profilePath = join(dataDir, "vigil-manageengine-policy.mobileconfig");
   const summaryPath = join(dataDir, "vigil-manageengine-policy.summary.json");
   const result = await runExporter(["--out", profilePath, "--summary", summaryPath], dataDir);

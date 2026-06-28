@@ -14,7 +14,7 @@ import { createReportView } from "./report-view.js";
 import { renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
 import { $, $$, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
-import type { ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, InterventionSummary, MonitorSummary, ProgressSummary, ReportSummary, Schedule, SessionEndResponse, SessionPreviewResponse, SessionPreviewSummary, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary } from "./app-model.js";
+import type { ActivePolicy, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, InterventionSummary, MonitorSummary, ProgressSummary, ReportSummary, Schedule, SessionEndResponse, SessionPreviewResponse, SessionPreviewSummary, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary } from "./app-model.js";
 
 const state: UiState = {
   data: null,
@@ -34,6 +34,7 @@ const state: UiState = {
 
 const BRICK_MODE_PROFILE_ID = "brick-mode";
 const SOFT_BLOCK_PROFILE_ID = "soft-block";
+const BUILT_IN_PROFILE_IDS = new Set(["default", "normal", SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PROFILE_ID]);
 let pendingLockStart: UnknownRecord | null = null;
 const deviceTargets = createDeviceTargetController({
   onChange: () => {
@@ -513,6 +514,20 @@ function renderProfiles(appState: DashboardState): void {
   form.elements.blockedUrlPatterns.value = (profile.blockedUrlPatterns || []).join("\n");
   form.elements.allowedApps.value = (profile.allowedApps || []).join("\n");
   form.elements.allowedSites.value = (profile.allowedSites || []).join("\n");
+
+  const deleteButton = $("#deleteProfile");
+  const canDelete = !BUILT_IN_PROFILE_IDS.has(profile.id) && profiles.length > 1;
+  deleteButton.hidden = !canDelete;
+  deleteButton.onclick = canDelete ? async () => {
+    try {
+      await del(`/api/profile/${encodeURIComponent(profile.id)}`);
+      toast("Profile deleted");
+      state.selectedProfileId = null;
+      await refresh();
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+  } : null;
 }
 
 function renderSchedules(schedules: Schedule[]): void {
@@ -847,7 +862,7 @@ function renderEvents(events: StateEvent[]): void {
 
 function renderEmergency(appState: DashboardState): void {
   const panel = $("#emergencyPanel");
-  const active = appState.activePolicy;
+  const active = emergencyPolicy(appState);
   const activeLimitBlocks = (state.data?.limits.activeBlocks || []).filter((block) => new Date(block.until) > new Date());
   if ((!active || active.session.canEndEarly) && !activeLimitBlocks.length) {
     panel.classList.add("hidden");
@@ -857,7 +872,7 @@ function renderEmergency(appState: DashboardState): void {
   }
 
   panel.classList.remove("hidden");
-  if (active && active.session?.emergencyUnlocksAllowed === false) {
+  if (active && !emergencyUnlockAllowedForPolicy(active)) {
     $("#emergencyCopy").textContent = active.kind === "integrity"
       ? "Integrity lockdown uses protected maintenance instead of emergency unlocks."
       : active.kind === "panic"
@@ -890,6 +905,27 @@ function renderEmergency(appState: DashboardState): void {
     copy.textContent = "Cooldown complete.";
     confirm.disabled = false;
   }
+}
+
+function emergencyPolicy(appState: DashboardState): ActivePolicy | null {
+  const policies = [
+    appState.activePolicy || null,
+    appState.devicePolicies?.computer || null,
+    appState.devicePolicies?.phone || null
+  ].filter((policy): policy is ActivePolicy => Boolean(policy));
+  const uniquePolicies = policies.filter((policy, index) => (
+    policies.findIndex((item) => item.kind === policy.kind && item.session.id === policy.session.id) === index
+  ));
+  return uniquePolicies.find((policy) => !emergencyUnlockAllowedForPolicy(policy))
+    || uniquePolicies.find((policy) => !policy.session.canEndEarly)
+    || uniquePolicies[0]
+    || null;
+}
+
+function emergencyUnlockAllowedForPolicy(policy: ActivePolicy | null | undefined): boolean {
+  if (!policy) return true;
+  if (policy.kind === "integrity") return false;
+  return policy.session?.emergencyUnlocksAllowed !== false;
 }
 
 function renderCountdowns(): void {

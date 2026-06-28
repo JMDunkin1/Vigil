@@ -1,6 +1,6 @@
 import type { ActivePolicy, DeviceTargetInput, GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, PolicyPhase, Profile, Schedule, VigilState, Session, StateEvent, UnknownRecord, UsageSample } from "../src/types.js";
 
-export type { GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, Schedule, StateEvent, UnknownRecord };
+export type { ActivePolicy, GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, IntentionalPlanList, Schedule, StateEvent, UnknownRecord };
 
 export type ControlElement = HTMLElement & {
   value: string;
@@ -485,6 +485,7 @@ export interface MonitorSummary extends UnknownRecord {
 
 export interface DashboardState extends VigilState {
   activePolicy?: ActivePolicy | null;
+  devicePolicies?: Partial<Record<DeviceTargetInput, ActivePolicy | null>>;
   activeProfile?: Profile | null;
   sessionPhase?: PolicyPhase | null;
   activeSessions: Partial<Record<DeviceTargetInput, Session | null>>;

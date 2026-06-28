@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { deviceUsageSyncAuthorization } from "../apiSecurity.js";
 import { DEVICE_TARGETS } from "../defaults.js";
-import { buildIosMdmEnrollmentProfile, iosMdmDoctor, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "../iosMdm.js";
+import { buildIosMdmEnrollmentProfile, iosMdmDoctor, iosMdmEnrollmentReadiness, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "../iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "../iosProfiles.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { addEvent, saveState, saveUsage } from "../store.js";
@@ -105,6 +105,16 @@ export async function handleDeviceApiRoute(
   }
 
   if (method === "GET" && path === "/api/devices/ios/mdm/enrollment.mobileconfig") {
+    const readiness = iosMdmEnrollmentReadiness(state);
+    if (!readiness.enrollmentReady) {
+      sendJson(response, 409, {
+        ok: false,
+        error: "Self-hosted Vigil MDM enrollment is not ready.",
+        blockers: readiness.setupBlockers,
+        mdm: iosMdmDoctor(state)
+      });
+      return true;
+    }
     const profile = buildIosMdmEnrollmentProfile(state);
     markIosMdmEnrollmentGenerated(state);
     addEvent(state, "ios_mdm_enrollment_generated", { bytes: Buffer.byteLength(profile), source: "app" });
