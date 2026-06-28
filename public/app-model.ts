@@ -346,13 +346,29 @@ export interface IosDeviceSummary extends UnknownRecord {
       settingsGuarded?: boolean;
     };
   };
+  manageEngine?: UnknownRecord & {
+    preferred?: boolean;
+    deliveryProvider?: string;
+    status?: string;
+    policyPath?: string;
+    summaryPath?: string;
+    enrollmentWindowPath?: string;
+    exportCommand?: string;
+    enrollmentWindowCommand?: string;
+    docsPath?: string;
+    generatedFrom?: string;
+    appBundleCount?: number;
+    deniedUrlCount?: number;
+    allowedUrlCount?: number;
+    note?: string;
+  };
   mdm?: UnknownRecord & {
-	    enabled?: boolean;
-	    ready?: boolean;
-	    enrollmentReady?: boolean;
-	    status?: "off" | "setup-needed" | "queue-only" | "ready";
-	    capabilityLevel?: "static-profile" | "setup-needed" | "command-queue" | "wireless-push";
-	    publicBaseUrl?: string;
+    enabled?: boolean;
+    ready?: boolean;
+    enrollmentReady?: boolean;
+    status?: "off" | "setup-needed" | "queue-only" | "ready";
+    capabilityLevel?: "static-profile" | "setup-needed" | "command-queue" | "wireless-push";
+    publicBaseUrl?: string;
     topic?: string;
     identityCertificateUuid?: string;
     identityCertificatePayloadSet?: boolean;
@@ -371,10 +387,10 @@ export interface IosDeviceSummary extends UnknownRecord {
     lastPushStatus?: string;
     lastPushError?: string;
     lastSeenAt?: string;
-	    pushSupported?: boolean;
-	    blockers?: string[];
-	    setupBlockers?: string[];
-	    pushBlockers?: string[];
+    pushSupported?: boolean;
+    blockers?: string[];
+    setupBlockers?: string[];
+    pushBlockers?: string[];
     grayscale?: UnknownRecord & {
       desired?: boolean;
       label?: string;

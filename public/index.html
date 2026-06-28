@@ -1384,19 +1384,19 @@
             <form id="iosMdmForm" class="device-form mdm-form">
               <div class="device-form-head">
                 <div>
-                  <p class="eyebrow">iPhone MDM</p>
-                  <strong id="iosMdmTitle">Server setup</strong>
-                  <span id="iosMdmText">Enroll a supervised iPhone so policy changes come from this computer.</span>
+                  <p class="eyebrow">Advanced iPhone MDM</p>
+                  <strong id="iosMdmTitle">ManageEngine is the normal path</strong>
+                  <span id="iosMdmText">Sentinel exports profiles for ManageEngine; this panel is only for a self-hosted APNs-backed server.</span>
                 </div>
-                <span id="iosMdmStatus" class="pill neutral">Off</span>
+                <span id="iosMdmStatus" class="pill neutral">Not used</span>
               </div>
-              <label class="checkline"><input id="iosMdmEnabled" name="enabled" type="checkbox"> MDM server mode</label>
+              <label class="checkline"><input id="iosMdmEnabled" name="enabled" type="checkbox"> Advanced self-hosted MDM server</label>
               <label>
-                Public HTTPS URL
+                Self-hosted public HTTPS URL
                 <input id="iosMdmPublicBaseUrl" name="publicBaseUrl" type="url" placeholder="https://your-tunnel.example">
               </label>
               <label>
-                APNs MDM topic
+                Self-hosted APNs MDM topic
                 <input id="iosMdmTopic" name="topic" type="text" placeholder="com.apple.mgmt...">
               </label>
               <label>
@@ -1424,9 +1424,9 @@
                 <label class="checkline"><input id="iosMdmDevApns" name="useDevelopmentApns" type="checkbox"> Dev APNs</label>
               </div>
               <div class="button-row">
-                <button class="primary" type="submit">Save MDM Setup</button>
-                <button id="iosMdmDownloadEnrollment" class="secondary" type="button">Download Enrollment</button>
-                <button id="iosMdmQueuePolicy" class="ghost" type="button">Queue Refresh</button>
+                <button class="primary" type="submit">Save Advanced MDM Setup</button>
+                <button id="iosMdmDownloadEnrollment" class="secondary" type="button">Download Self-hosted Enrollment</button>
+                <button id="iosMdmQueuePolicy" class="ghost" type="button">Queue Self-hosted Refresh</button>
               </div>
               <div id="iosMdmSummary" class="device-list"></div>
             </form>

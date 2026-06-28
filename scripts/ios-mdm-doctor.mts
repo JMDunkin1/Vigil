@@ -16,12 +16,13 @@ if (strict && !doctor.ready) process.exitCode = 1;
 
 function formatDoctor(doctor: ReturnType<typeof iosMdmDoctor>): string {
   const lines = [
-    "Sentinel iOS Remote MDM Doctor",
+    "Sentinel Advanced Self-hosted iOS MDM Doctor",
+    "Normal free delivery path: ManageEngine (`npm run ios:manageengine:export`).",
     `Status: ${doctor.status}`,
     `Capability: ${doctor.capabilityLevel}`,
     `Static USB profile: ${doctor.staticProfile.status || "unknown"}${doctor.staticProfile.active ? " (active)" : ""}`,
-    `Remote MDM enabled: ${doctor.remoteMdm.enabled ? "yes" : "no"}`,
-    `Public base URL: ${doctor.remoteMdm.publicBaseUrl || "missing"}`,
+    `Self-hosted MDM enabled: ${doctor.remoteMdm.enabled ? "yes" : "no"}`,
+    `Self-hosted public base URL: ${doctor.remoteMdm.publicBaseUrl || "missing"}`,
     `APNs topic: ${doctor.remoteMdm.topic || "missing"}`,
     `Enrollment URL: ${doctor.remoteMdm.enrollmentUrl || "not available until setup blockers are fixed"}`,
     `Enrolled devices: ${doctor.remoteMdm.enrolledDeviceCount}`,

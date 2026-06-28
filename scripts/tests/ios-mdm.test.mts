@@ -15,13 +15,19 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
 
   state.deviceControls.ios.enabled = true;
   const enabledProfile = buildIosConfigurationProfile(state, now);
-  assert.match(enabledProfile, /blockedAppBundleIDs/);
-  assert.match(enabledProfile, /com\.burbn\.instagram/);
-  assert.match(enabledProfile, /com\.google\.ios\.youtube/);
+  assert.doesNotMatch(enabledProfile, /blockedAppBundleIDs/);
+  assert.doesNotMatch(enabledProfile, /com\.burbn\.instagram/);
+  assert.doesNotMatch(enabledProfile, /com\.google\.ios\.youtube/);
   assert.match(enabledProfile, /pornhub\.com/);
   assert.match(enabledProfile, /Sentinel Instagram/);
   assert.match(enabledProfile, /Sentinel YouTube/);
   assert.match(enabledProfile, /allowAppInstallation/);
+  const enabledSummary = iosProfileSummary(state, now);
+  assert.equal(enabledSummary.profile.appBundleCount, 0);
+  assert.equal(enabledSummary.profile.focusedSocial.nativeAppBundleCount, 0);
+  assert.equal(enabledSummary.manageEngine.deliveryProvider, "manageengine");
+  assert.equal(enabledSummary.manageEngine.preferred, true);
+  assert.equal(enabledSummary.manageEngine.exportCommand, "npm run ios:manageengine:export");
 
   state.activeSessions.phone = {
     id: "phone-strict",
@@ -38,6 +44,10 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   const activePhoneProfile = buildIosConfigurationProfile(state, now);
   assert.match(activePhoneProfile, /blockedAppBundleIDs/);
   assert.match(activePhoneProfile, /com\.google\.ios\.youtube/);
+  const activePhoneParsed = recordValue(parsePlist(activePhoneProfile), "active phone profile");
+  assert.equal(activePhoneParsed.DurationUntilRemoval, 3630);
+  const activePhoneSummary = iosProfileSummary(state, now);
+  assert.equal(activePhoneSummary.profile.focusedSocial.nativeAppBundleCount, 2);
 
   state.activeSessions.phone = {
     id: "phone-soft-ios",
@@ -167,6 +177,19 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   const noWebState = defaultState();
   noWebState.deviceControls.ios.enabled = true;
   noWebState.deviceControls.ios.blockWeb = false;
+  noWebState.activeSessions.phone = {
+    id: "phone-apps-only",
+    title: "Phone apps only",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "light",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: true,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: profileById(noWebState, "default")
+  };
   const noWebSummary = iosProfileSummary(noWebState, now);
   assert.equal(noWebSummary.profile.deniedUrlCount, 0);
   assert.equal(noWebSummary.profile.allowedUrlCount, 0);
@@ -288,12 +311,54 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   const duplicate = queueIosMdmPolicyRefresh(state, "test-refresh", now, { udids: ["iphone-udid-1"] });
   assert.equal(duplicate.queued >= 0, true);
 
+  state.activeSessions.phone = {
+    id: "phone-expiring",
+    title: "Expiring phone lock",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "light",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 1000).toISOString(),
+    canEndEarly: true,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: profileById(state, "default")
+  };
+  const activeQueue = queueIosMdmPolicyRefresh(state, "active-phone", now, { udids: ["iphone-udid-1"] }) as { profileQueued?: number };
+  assert.equal(activeQueue.profileQueued, 1);
+  const activeCommand = state.deviceControls.ios.mdm.commands.find((item) => item.reason === "active-phone" && item.requestType === "InstallProfile");
+  const activeMdmProfile = parseMdmProfile(activeCommand?.profileBase64);
+  assert.ok(profilePayload(activeMdmProfile, "com.apple.applicationaccess")?.blockedAppBundleIDs, "active phone lock should hide blocked apps");
+
+  const afterExpiry = new Date(now.getTime() + 2 * 60 * 1000);
+  const expiredQueue = queueIosMdmPolicyRefresh(state, "expired-phone", afterExpiry, { udids: ["iphone-udid-1"] }) as { profileQueued?: number };
+  assert.equal(expiredQueue.profileQueued, 1);
+  assert.equal(state.activeSessions.phone, null);
+  const expiredCommand = state.deviceControls.ios.mdm.commands.find((item) => item.reason === "expired-phone" && item.requestType === "InstallProfile");
+  const expiredMdmProfile = parseMdmProfile(expiredCommand?.profileBase64);
+  assert.equal(expiredMdmProfile.DurationUntilRemoval, undefined);
+  assert.equal(profilePayload(expiredMdmProfile, "com.apple.applicationaccess")?.blockedAppBundleIDs, undefined);
+  assert.equal(profilePayload(expiredMdmProfile, "com.apple.applicationaccess")?.allowListedAppBundleIDs, undefined);
+
   state.deviceControls.ios.enabled = false;
   const removePolicy = queueIosMdmPolicyRefresh(state, "disable-ios", now, { udids: ["iphone-udid-1"] }) as { profileQueued?: number };
   assert.equal(removePolicy.profileQueued, 1);
-const { payload: removePayload } = nextCommandOfType("RemoveProfile");
+  const { payload: removePayload } = nextCommandOfType("RemoveProfile");
   assert.equal(removePayload.RequestType, "RemoveProfile");
   assert.equal(removePayload.Identifier, "com.local-screen-time.ios-lock");
+}
+
+function parseMdmProfile(profileBase64: unknown): Record<string, unknown> {
+  assert.equal(typeof profileBase64, "string");
+  const encoded = profileBase64 as string;
+  return recordValue(parsePlist(Buffer.from(encoded, "base64").toString("utf8")), "MDM profile payload");
+}
+
+function profilePayload(profile: Record<string, unknown>, payloadType: string): Record<string, unknown> | undefined {
+  assert.ok(Array.isArray(profile.PayloadContent), "profile payload content should be an array");
+  return profile.PayloadContent
+    .map((item) => recordValue(item, "profile payload"))
+    .find((payload) => payload.PayloadType === payloadType);
 }
 
 function pkcs12ShapeFixture(): string {

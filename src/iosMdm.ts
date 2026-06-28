@@ -203,6 +203,12 @@ export function iosMdmDoctor(state: SentinelState, now = new Date()) {
 
   return {
     generatedAt: now.toISOString(),
+    normalDeliveryPath: {
+      provider: "manageengine",
+      exportCommand: "npm run ios:manageengine:export",
+      policyPath: "data/manageengine/sentinel-manageengine-policy.mobileconfig",
+      note: "ManageEngine is the normal free iPhone MDM delivery path; this doctor only covers advanced self-hosted Sentinel MDM."
+    },
     status: readiness.status,
     capabilityLevel: readiness.capabilityLevel,
     ready: readiness.ready,
@@ -210,7 +216,7 @@ export function iosMdmDoctor(state: SentinelState, now = new Date()) {
     staticProfile: {
       status: state.deviceControls?.ios?.status || "",
       active: state.deviceControls?.ios?.status === "supervised-profile-ready",
-      note: "Static supervised USB profile status is separate from remote/wireless MDM enrollment."
+      note: "Static supervised USB profile status is separate from advanced self-hosted wireless MDM enrollment."
     },
     remoteMdm: {
       enabled: readiness.enabled,
@@ -284,8 +290,8 @@ export function iosMdmSummary(state: SentinelState, now = new Date()) {
     serverUrl: fullMdmUrl(mdm, "/mdm/connect"),
     pushSupported: readiness.ready,
     pushNote: readiness.ready
-      ? "APNs wakeups are configured; queued commands can wake enrolled iPhones."
-      : "APNs wakeups need a push certificate before queued commands can wake iPhones.",
+      ? "Advanced self-hosted APNs wakeups are configured; ManageEngine is still the normal free delivery path."
+      : "ManageEngine owns APNs in the normal free path; self-hosted wakeups need a separate Apple MDM push certificate.",
     enrolledDeviceCount: enrolled.length,
     pendingCommandCount: pending.length,
     sentCommandCount: sent.length,
@@ -350,7 +356,7 @@ export function buildIosMdmEnrollmentProfile(state: SentinelState): string {
 
   return toPlist({
     PayloadContent: payloads,
-    PayloadDescription: "Enrolls this supervised iPhone with the Sentinel MDM server for desktop-managed app and web restrictions.",
+    PayloadDescription: "Enrolls this supervised iPhone with the advanced self-hosted Sentinel MDM server for desktop-managed app and web restrictions.",
     PayloadDisplayName: "Sentinel iPhone MDM",
     PayloadIdentifier: MDM_PROFILE_IDENTIFIER,
     PayloadOrganization: APP_NAME,
@@ -790,7 +796,7 @@ function iosMdmSetupDiagnostics(mdm: Partial<MdmSettings> = {}): IosMdmDoctorIte
       "missing-public-base-url",
       "server",
       "Set a public HTTPS URL that forwards to this local server.",
-      "Remote MDM enrollment profiles must contain a public HTTPS ServerURL and CheckInURL reachable by the iPhone.",
+      "Self-hosted MDM enrollment profiles must contain a public HTTPS ServerURL and CheckInURL reachable by the iPhone.",
       "Set SENTINEL_MDM_PUBLIC_BASE_URL or configure publicBaseUrl to an HTTPS tunnel/reverse proxy that routes /mdm/* to Sentinel.",
       ["SENTINEL_MDM_PUBLIC_BASE_URL"]
     ));
@@ -799,7 +805,7 @@ function iosMdmSetupDiagnostics(mdm: Partial<MdmSettings> = {}): IosMdmDoctorIte
       "public-base-url-not-https",
       "server",
       "Apple MDM ServerURL and CheckInURL must use HTTPS.",
-      "iOS will not accept a remote MDM enrollment profile whose MDM endpoints are plain HTTP.",
+      "iOS will not accept a self-hosted MDM enrollment profile whose endpoints are plain HTTP.",
       "Use a public HTTPS URL with a valid certificate and route /mdm/* to the local Sentinel server.",
       ["SENTINEL_MDM_PUBLIC_BASE_URL"]
     ));
@@ -807,8 +813,8 @@ function iosMdmSetupDiagnostics(mdm: Partial<MdmSettings> = {}): IosMdmDoctorIte
     blockers.push(doctorItem(
       "public-base-url-localhost",
       "server",
-      "Remote MDM needs a public HTTPS URL, not localhost or a private loopback host.",
-      "The iPhone must reach the MDM server over the network after it leaves USB setup.",
+      "Self-hosted MDM needs a public HTTPS URL, not localhost or a private loopback host.",
+      "The iPhone must reach the self-hosted MDM server over the network after it leaves USB setup.",
       "Put Sentinel behind a real HTTPS tunnel/reverse proxy and use that public URL.",
       ["SENTINEL_MDM_PUBLIC_BASE_URL"]
     ));
@@ -863,7 +869,7 @@ function iosMdmPushDiagnostics(mdm: Partial<MdmSettings> = {}): IosMdmDoctorItem
       "missing-push-certificate-payload",
       "apns",
       "Paste the APNs MDM push certificate PKCS#12 so queued commands can wake enrolled iPhones.",
-      "Remote MDM commands are delivered when APNs wakes the iPhone; a normal Apple Development certificate cannot do this.",
+      "Self-hosted MDM commands are delivered when APNs wakes the iPhone; a normal Apple Development certificate cannot do this.",
       "Create/download a real Apple MDM APNs push certificate, export it as .p12, and set SENTINEL_MDM_PUSH_P12.",
       ["SENTINEL_MDM_PUSH_P12", "SENTINEL_MDM_PUSH_P12_PASSWORD"]
     ));
@@ -885,7 +891,8 @@ function iosMdmPushDiagnostics(mdm: Partial<MdmSettings> = {}): IosMdmDoctorItem
 
 function iosMdmExternalPrerequisites(): string[] {
   return [
-    "A supervised iPhone that will install the MDM enrollment profile.",
+    "Use ManageEngine for the normal free path; these prerequisites apply only when replacing it with a self-hosted Sentinel MDM server.",
+    "A supervised iPhone that will install the self-hosted MDM enrollment profile.",
     "A public HTTPS base URL with a valid TLS certificate routing /mdm/* to Sentinel.",
     "An Apple MDM APNs push certificate from the Apple Push Certificates Portal, exported as PKCS#12.",
     "The APNs MDM topic from that push certificate, usually com.apple.mgmt.<id>.",
@@ -895,10 +902,10 @@ function iosMdmExternalPrerequisites(): string[] {
 }
 
 function iosMdmNextSteps(readiness: IosMdmReadiness, enrolledDeviceCount: number): string[] {
-  if (!readiness.enabled) return ["Enable Sentinel MDM server mode after the public URL, topic, and certificate files are ready."];
+  if (!readiness.enabled) return ["Use `npm run ios:manageengine:export` and assign the generated profile in ManageEngine; enable this advanced server only if you are replacing ManageEngine."];
   if (readiness.blockers.length) return readiness.diagnostics.map((item) => item.fix);
-  if (!enrolledDeviceCount) return ["Install the generated MDM enrollment profile on the supervised iPhone and wait for TokenUpdate check-in."];
-  return ["Queue a policy refresh; Sentinel can wake enrolled devices through APNs when commands are pending."];
+  if (!enrolledDeviceCount) return ["Install the generated self-hosted MDM enrollment profile only for an advanced non-ManageEngine test."];
+  return ["Queue a policy refresh for the advanced self-hosted path; ManageEngine assignment remains the normal free route."];
 }
 
 function certificatePayloadStatus(base64: string): { ok: boolean; message: string } {
@@ -958,10 +965,10 @@ function publicDoctorItem(item: IosMdmDoctorItem): IosMdmDoctorItem {
 }
 
 function mdmNote(enabled: boolean, ready: boolean, enrollmentReady: boolean, blockers: string[]): string {
-  if (!enabled) return "MDM server mode is off; static supervised profiles are still available.";
-  if (ready) return "MDM enrollment profile and command endpoints are configured.";
-  if (enrollmentReady) return blockers[0] || "Enrollment is configured, but wireless MDM wakeups are not ready.";
-  return blockers[0] || "Finish MDM setup before enrolling an iPhone.";
+  if (!enabled) return "ManageEngine is the normal free path; Sentinel's self-hosted MDM server is off.";
+  if (ready) return "Advanced self-hosted MDM endpoints and APNs wakeups are configured.";
+  if (enrollmentReady) return blockers[0] || "Advanced self-hosted enrollment is configured, but wireless wakeups are not ready.";
+  return blockers[0] || "Finish advanced self-hosted MDM setup before enrolling an iPhone outside ManageEngine.";
 }
 
 function combinedQueueResult(

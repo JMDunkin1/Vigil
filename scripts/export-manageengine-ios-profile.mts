@@ -79,6 +79,8 @@ function buildSummary(state: SentinelState, windowMode: boolean, outputPath: str
   return {
     generatedAt: new Date().toISOString(),
     mode: windowMode ? "enrollment-window" : "managed-policy",
+    deliveryProvider: "manageengine",
+    normalFreeDeliveryPath: true,
     outputPath,
     stateSaved,
     uploadToManageEngineAsCustomConfigurationProfile: true,
@@ -90,7 +92,7 @@ function buildSummary(state: SentinelState, windowMode: boolean, outputPath: str
     profileInstallAllowedByThisProfile: !ios.restrictInstallAndErase,
     warning: windowMode
       ? "Temporary profile for enrolling in ManageEngine. Replace it with the managed-policy profile after enrollment."
-      : "Final Sentinel policy profile for ManageEngine assignment.",
+      : "Final Sentinel policy profile for ManageEngine assignment and remote delivery.",
     generatedFrom: summary.profile.generatedFrom,
     appBundleCount: summary.profile.appBundleCount,
     deniedUrlCount: summary.profile.deniedUrlCount,

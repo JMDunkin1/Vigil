@@ -36,11 +36,12 @@ function setupItems(data: DashboardData): SetupItem[] {
   const dynamicRules = record(extension.dynamicRules);
   const ios = data.devices?.ios || {};
   const mdm = record(ios.mdm);
+  const manageEngine = record(ios.manageEngine);
   const networkReady = settings.systemNetworkBlockingEnabled !== false && current(hosts) && current(firewall);
   const safariReady = Boolean(!safariFilter.required || safariFilter.current);
   const extensionSeen = Boolean(extension.lastSeenAt);
   const extensionRulesReady = dynamicRules.ok !== false && dynamicRules.status !== "missing";
-  const iPhoneReady = Boolean(ios.enabled && (mdm.enrollmentReady || mdm.ready || ios.profile));
+  const iPhoneReady = Boolean(ios.enabled && (manageEngine.preferred || ios.profile));
 
   return [
     {
@@ -111,7 +112,7 @@ function setupItems(data: DashboardData): SetupItem[] {
       id: "iphone",
       label: "iPhone setup",
       ok: iPhoneReady,
-      detail: iPhoneReady ? iPhoneReadyDetail(ios, mdm) : "Enable the supervised iPhone profile or finish MDM enrollment in Devices.",
+      detail: iPhoneReady ? iPhoneReadyDetail(ios, manageEngine, mdm) : "Enable supervised iPhone policy, export it, and assign it through ManageEngine.",
       action: "Devices"
     }
   ];
@@ -157,9 +158,9 @@ function networkDetail(hosts: HardeningCheck, firewall: HardeningCheck, enabled:
   return "PF firewall block is missing or stale.";
 }
 
-function iPhoneReadyDetail(ios: NonNullable<DashboardData["devices"]["ios"]>, mdm: UnknownRecord): string {
-  if (mdm.ready) return "MDM enrollment and APNs wakeups are configured.";
-  if (mdm.enrollmentReady) return "MDM enrollment profile is ready.";
+function iPhoneReadyDetail(ios: NonNullable<DashboardData["devices"]["ios"]>, manageEngine: UnknownRecord, mdm: UnknownRecord): string {
+  if (manageEngine.preferred) return "ManageEngine handoff is ready; export and assign the profile there for remote delivery.";
+  if (mdm.ready) return "Advanced self-hosted MDM is configured.";
   const profile = ios.profile || {};
   const appCount = Number(profile.appBundleCount || 0);
   const webCount = Number(profile.deniedUrlCount || 0) + Number(profile.allowedUrlCount || 0);

@@ -86,7 +86,7 @@ console.log(`SENTINEL_MDM_IDENTITY_UUID=${identityUuid} \\`);
 console.log(`SENTINEL_MDM_IDENTITY_P12=${outPath} \\`);
 console.log(`${generatedPassword ? `SENTINEL_MDM_IDENTITY_P12_PASSWORD="$(cat ${shellQuote(passwordPath)})"` : "SENTINEL_MDM_IDENTITY_P12_PASSWORD='<same env value>'"}`);
 console.log("");
-console.log("This identity is only for the MDM enrollment profile. It is not an Apple MDM APNs push certificate.");
+console.log("ManageEngine is the normal free path. This identity is only for an advanced self-hosted MDM enrollment profile, and it is not an Apple MDM APNs push certificate.");
 
 function parseArgs(values: string[]): Record<string, string | boolean> {
   const parsed: Record<string, string | boolean> = {};
