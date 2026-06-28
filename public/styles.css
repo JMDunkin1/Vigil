@@ -1668,6 +1668,104 @@ button:focus-visible {
   gap: 10px;
 }
 
+.focused-social-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 58%, transparent);
+  padding: 12px;
+}
+
+.focused-social-head,
+.focused-social-master {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.focused-social-head {
+  justify-content: space-between;
+}
+
+.focused-social-head > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.focused-social-head strong {
+  overflow-wrap: anywhere;
+}
+
+.focused-social-master {
+  flex-wrap: wrap;
+  justify-content: end;
+}
+
+.social-menu-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.social-menu-card {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 11px;
+}
+
+.social-menu-card legend {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 5px;
+  font-weight: 900;
+}
+
+.social-menu-icon {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border-radius: 5px;
+  border: 2px solid currentColor;
+}
+
+.social-menu-icon.instagram {
+  color: #c13584;
+}
+
+.social-menu-icon.instagram::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+
+.social-menu-icon.youtube {
+  color: #dc2626;
+  border-radius: 6px;
+}
+
+.social-menu-icon.youtube::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 4px;
+  width: 0;
+  height: 0;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-left: 6px solid currentColor;
+}
+
 .device-row {
   display: grid;
   grid-template-columns: 110px minmax(0, 1fr);
@@ -1862,6 +1960,7 @@ button:focus-visible {
   .journal-stats,
   .watch-grid,
   .events-list,
+  .social-menu-grid,
   .maintenance-panel,
   .keyholder-panel,
   .distance-key-panel,
@@ -1874,9 +1973,14 @@ button:focus-visible {
   }
 
   .lock-preview-head,
-  .lock-preview-actions {
+  .lock-preview-actions,
+  .focused-social-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .focused-social-master {
+    justify-content: start;
   }
 
   .vigil-orb {

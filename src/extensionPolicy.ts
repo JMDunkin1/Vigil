@@ -6,8 +6,9 @@ import { integrityLockdownActive } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, matchBlockedUrlPattern, normalizeHost, normalizeUrlPattern, shouldBlockSite, shouldBlockUrl } from "./policy.js";
+import { focusedSocialBrowserCleanupEnabled, focusedSocialBrowserCleanupSettings } from "./socialFeatureFilters.js";
 import { recordOpen, recordUsage } from "./usage.js";
-import type { ActivePolicy, IntentionalPause, IntentionalUseRule, LimitBlock, VigilState, UnknownRecord, UsageSample, UsageState } from "./types.js";
+import type { ActivePolicy, FocusedSocialSettings, IntentionalPause, IntentionalUseRule, LimitBlock, VigilState, UnknownRecord, UsageSample, UsageState } from "./types.js";
 
 export const EXTENSION_APP_NAME = "Browser Extension";
 
@@ -101,6 +102,8 @@ export function extensionRuleSnapshot(state: VigilState, now = new Date()) {
     generatedAt: now.toISOString(),
     requiredExtensionVersion: REQUIRED_EXTENSION_VERSION,
     browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
+    focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
+    focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now),
     contentFilterEnabled: contentFilterEnabled(state),
     fallbackRequired: false,
     dynamicRuleCount: extensionDynamicRuleCount(dynamic),
@@ -142,7 +145,9 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
       reason: parsed.reason,
       recorded: false,
       contentFilterEnabled: contentFilterEnabled(state),
-      browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state)
+      browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
+      focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
+      focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now)
     };
   }
 
@@ -154,7 +159,9 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
       reason: "vigil-app",
       recorded: false,
       contentFilterEnabled: contentFilterEnabled(state),
-      browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state)
+      browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
+      focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
+      focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now)
     };
   }
 
@@ -195,7 +202,9 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
       redirectUrl: blockedUrl(contentMatch.content.label, contentMatch.policy, sample.url),
       policy: publicPolicy(contentMatch.policy),
       contentFilterEnabled: true,
-      browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state)
+      browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
+      focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
+      focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now)
     };
   }
 
@@ -216,7 +225,9 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
         overlay: publicPauseOverlay(state, pause.pause, now),
         rule: publicPauseRule(pause.rule),
         contentFilterEnabled: contentFilterEnabled(state),
-        browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state)
+        browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
+        focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
+        focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now)
       };
     }
 
@@ -230,7 +241,9 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
       event,
       recorded,
       contentFilterEnabled: contentFilterEnabled(state),
-      browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state)
+      browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
+      focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
+      focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now)
     };
   }
 
@@ -247,7 +260,9 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
     policy: publicPolicy(policy),
     urlPattern: urlPattern || null,
     contentFilterEnabled: contentFilterEnabled(state),
-    browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state)
+    browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
+    focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
+    focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now)
   };
 }
 
@@ -297,6 +312,22 @@ function publicPauseRule(rule: IntentionalUseRule | null | undefined) {
 
 function browserNoiseBlockingEnabled(state: VigilState): boolean {
   return integrityLockdownActive(state) || state.settings?.browserNoiseBlockingEnabled !== false;
+}
+
+function focusedSocialCleanupEnabled(state: VigilState, now: Date): boolean {
+  const policy = activePolicy(state, now);
+  if (policy) return true;
+  const ios = state.deviceControls?.ios;
+  return Boolean(ios?.enabled && ios.blockWeb !== false && focusedSocialBrowserCleanupEnabled(ios.focusedSocial));
+}
+
+function focusedSocialCleanupSettingsForState(state: VigilState, now: Date): FocusedSocialSettings {
+  const settings = focusedSocialBrowserCleanupSettings(state.deviceControls?.ios?.focusedSocial);
+  if (!activePolicy(state, now)) return settings;
+  return {
+    ...settings,
+    enabled: true
+  };
 }
 
 function addRuleEntries(entries: Map<string, ExtensionRule>, sites: string[], policy: BrowserPolicy, reason: string): void {

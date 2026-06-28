@@ -755,6 +755,7 @@ function iosPolicyHash(state: VigilState, now: Date): string {
     allowedAppBundleIds: ios.allowedAppBundleIds || [],
     deniedUrls: ios.deniedUrls || [],
     allowedUrls: ios.allowedUrls || [],
+    focusedSocial: ios.focusedSocial || null,
     removalPasswordSet: Boolean(ios.removalPassword),
     targets: iosPolicyTargets(state, now)
   };

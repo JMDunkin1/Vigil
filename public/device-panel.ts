@@ -40,7 +40,8 @@ function bindDeviceForms({ $, post, lines, toast, errorMessage, refresh }: Devic
         blockedAppBundleIds: lines($("#iosBlockedBundles").value),
         allowedAppBundleIds: lines($("#iosAllowedBundles").value),
         deniedUrls: lines($("#iosDeniedUrls").value),
-        allowedUrls: lines($("#iosAllowedUrls").value)
+        allowedUrls: lines($("#iosAllowedUrls").value),
+        focusedSocial: readFocusedSocialPayload($)
       });
       toast("iPhone policy saved");
     } catch (error) {
@@ -113,6 +114,7 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
   $("#iosAllowedBundles").value = (ios.allowedAppBundleIds || []).join("\n");
   $("#iosDeniedUrls").value = (ios.deniedUrls || []).join("\n");
   $("#iosAllowedUrls").value = (ios.allowedUrls || []).join("\n");
+  renderFocusedSocialSettings(ios.focusedSocial || {}, $);
 
   $("#iosStatus").textContent = ios.enabled ? "Enabled" : "Ready";
   $("#iosStatus").className = ios.enabled ? "pill good" : "pill neutral";
@@ -128,6 +130,8 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
     ["Apps", ios.blockApps ? `${profile.appBundleCount || 0} bundle IDs` : "off"],
     ["Web", ios.blockWeb ? `${profile.deniedUrlCount || 0} denied / ${profile.allowedUrlCount || 0} allowed` : "off"],
     ["Web clips", profile.webClipCount ? `${profile.webClipCount} managed` : "none"],
+    ["Focused social", focusedSocialSummaryText(profile.focusedSocial)],
+    ["Native social apps", nativeSocialText(profile.focusedSocial, Boolean(ios.enabled))],
     ["Grayscale", profile.grayscale?.desired ? `${profile.grayscale.label || "on"}${profile.grayscale.settingsGuarded ? " + Settings guard" : ""}` : "normal"],
     ["Native Reels", "not available through public iOS APIs"],
     ["Removal", ios.removalHardened ? "passcode protected" : "device removable"],
@@ -172,6 +176,69 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
     const details = [device.status, device.productName, device.osVersion].filter(Boolean).join(" / ");
     mdmSummary.append(deviceRow(device.udid || "iPhone", details || device.lastStatus || "seen"));
   }
+}
+
+function readFocusedSocialPayload($: QueryElement) {
+  return {
+    enabled: $("#iosFocusedSocialEnabled").checked,
+    forceWebClips: $("#iosFocusedSocialForceWebClips").checked,
+    instagram: {
+      enabled: $("#iosFocusedInstagramEnabled").checked,
+      reels: $("#iosFocusedInstagramReels").checked,
+      explore: $("#iosFocusedInstagramExplore").checked,
+      suggested: $("#iosFocusedInstagramSuggested").checked,
+      shopping: $("#iosFocusedInstagramShopping").checked,
+      ads: $("#iosFocusedInstagramAds").checked
+    },
+    youtube: {
+      enabled: $("#iosFocusedYoutubeEnabled").checked,
+      shorts: $("#iosFocusedYoutubeShorts").checked,
+      home: $("#iosFocusedYoutubeHome").checked,
+      explore: $("#iosFocusedYoutubeExplore").checked,
+      suggested: $("#iosFocusedYoutubeSuggested").checked,
+      ads: $("#iosFocusedYoutubeAds").checked
+    }
+  };
+}
+
+function renderFocusedSocialSettings(value: Record<string, unknown>, $: QueryElement): void {
+  const instagram = recordValue(value.instagram);
+  const youtube = recordValue(value.youtube);
+  $("#iosFocusedSocialEnabled").checked = value.enabled !== false;
+  $("#iosFocusedSocialForceWebClips").checked = value.forceWebClips !== false;
+  $("#iosFocusedInstagramEnabled").checked = instagram.enabled !== false;
+  $("#iosFocusedInstagramReels").checked = instagram.reels !== false;
+  $("#iosFocusedInstagramExplore").checked = instagram.explore !== false;
+  $("#iosFocusedInstagramSuggested").checked = instagram.suggested !== false;
+  $("#iosFocusedInstagramShopping").checked = instagram.shopping !== false;
+  $("#iosFocusedInstagramAds").checked = instagram.ads !== false;
+  $("#iosFocusedYoutubeEnabled").checked = youtube.enabled !== false;
+  $("#iosFocusedYoutubeShorts").checked = youtube.shorts !== false;
+  $("#iosFocusedYoutubeHome").checked = youtube.home !== false;
+  $("#iosFocusedYoutubeExplore").checked = youtube.explore !== false;
+  $("#iosFocusedYoutubeSuggested").checked = youtube.suggested !== false;
+  $("#iosFocusedYoutubeAds").checked = youtube.ads !== false;
+}
+
+function focusedSocialSummaryText(value: unknown): string {
+  const summary = recordValue(value);
+  if (summary.enabled === false) return "off";
+  const platformCount = Number(summary.platformCount || 0);
+  const featureCount = Number(summary.featureCount || 0);
+  const deniedUrlCount = Number(summary.deniedUrlCount || 0);
+  if (!platformCount) return "no platforms";
+  return `${platformCount} platforms / ${featureCount} features / ${deniedUrlCount} URLs`;
+}
+
+function nativeSocialText(value: unknown, active: boolean): string {
+  const summary = recordValue(value);
+  if (summary.enabled === false) return "unchanged";
+  if (!active) return "ready when enabled";
+  return summary.forceWebClips === false ? "left available" : `${Number(summary.nativeAppBundleCount || 0)} blocked for web clips`;
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
 function deviceRow(label: string, value: string | number | boolean | null | undefined) {

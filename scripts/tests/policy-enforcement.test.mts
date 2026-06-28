@@ -248,7 +248,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(hostMatchesSiteTargets("mobile.twitter.com", ["x.com"]), true);
   assert.equal(shouldBlockSite(testProfile({ mode: "allowlist", allowedSites: ["youtube.com"], blockedSites: [] }), "youtu.be"), false);
   assert.equal(shouldBlockSite(testProfile({ mode: "allowlist", allowedSites: ["youtube.com"], blockedSites: [] }), "reddit.com"), true);
-  assert.equal(shouldBlockUrl(profile, "https://www.youtube.com/shorts/abc"), true);
+  assert.equal(shouldBlockUrl(profile, "https://www.youtube.com/shorts/abc"), false);
+  assert.equal(must(matchContentFilterUrl(state, "https://www.youtube.com/shorts/abc"), "YouTube Shorts filter").id, "youtube-shorts");
   assert.equal(shouldBlockUrl(profile, "https://www.youtube.com/watch?v=abc"), false);
   assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/popular"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/learnprogramming/comments/demo"), false);
@@ -377,7 +378,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("reddit.com/"), false);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("https://reddit.com/"), false);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("redd.it/"), false);
-  assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("instagram.com/reel"), true);
+  assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("instagram.com/reel"), false);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("reddit.com/r/popular"), true);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("reddit.com/r/nsfw"), true);
   assert.equal(shouldBlockUrl(migratedSoftProfile, "https://www.reddit.com/r/learnprogramming/comments/demo"), false);
@@ -426,7 +427,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const instagramReelsTab = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/reels/", event: "navigation" }, now);
   assert.equal(instagramReelsTab.blocked, true);
   const instagramExplore = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/explore/", event: "navigation" }, now);
-  assert.equal(instagramExplore.blocked, false);
+  assert.equal(instagramExplore.blocked, true);
+  assert.equal(must(instagramExplore.contentFilter, "instagram explore filter").id, "instagram-explore");
   const hosts = buildHostsBlock(state, now);
   assert.match(hosts, /0\.0\.0\.0 pornhub\.com/);
   assert.doesNotMatch(hosts, /0\.0\.0\.0 youtube\.com/);
@@ -842,7 +844,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(watch.blocked, false);
   assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reels/xyz"), "Instagram reels filter").id, "instagram-reels");
   assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reel/xyz"), "Instagram reel filter").id, "instagram-reels");
-  assert.equal(matchContentFilterUrl(state, "https://www.instagram.com/explore/"), null);
+  assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/explore/"), "Instagram Explore filter").id, "instagram-explore");
   state.settings.contentFilterEnabled = false;
   state.settings.safariUrlFilterEnabled = false;
   assert.equal(contentFilterEnabled(state), true);

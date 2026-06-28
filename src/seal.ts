@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { dirname } from "node:path";
+import { normalizeFocusedSocialSettings } from "./socialFeatureFilters.js";
 import type { VigilState, UnknownRecord } from "./types.js";
 
 const ALGORITHM = "hmac-sha256";
@@ -437,6 +438,7 @@ function protectedDeviceControls(deviceControls: unknown): UnknownRecord {
       allowedAppBundleIds: ios.allowedAppBundleIds || [],
       deniedUrls: ios.deniedUrls || [],
       allowedUrls: ios.allowedUrls || [],
+      focusedSocial: normalizeFocusedSocialSettings(ios.focusedSocial),
       removalPassword: ios.removalPassword || null,
       mdm: {
         enabled: mdm.enabled,

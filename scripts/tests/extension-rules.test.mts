@@ -3,11 +3,30 @@ import { contentFilterRuleEntries } from "../../src/contentFilters.js";
 import { defaultState } from "../../src/defaults.js";
 import { evaluateExtensionCheck, extensionRuleSnapshot } from "../../src/extensionPolicy.js";
 import { activePolicy } from "../../src/policy.js";
-import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
+import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.mjs";
 
 {
   const state = defaultState();
   const usage = {};
+  const normalYoutube = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
+  assert.equal(normalYoutube.browserNoiseBlockingEnabled, true);
+  assert.equal(normalYoutube.focusedSocialCleanupEnabled, false);
+  assert.equal(extensionRuleSnapshot(state, now).focusedSocialCleanupEnabled, false);
+
+  state.deviceControls.ios.enabled = true;
+  state.deviceControls.ios.focusedSocial.youtube.home = false;
+  state.deviceControls.ios.focusedSocial.instagram.explore = false;
+  const iosFocusedSocial = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
+  assert.equal(iosFocusedSocial.focusedSocialCleanupEnabled, true);
+  const iosCleanup = recordValue(iosFocusedSocial.focusedSocialCleanupSettings, "iOS cleanup settings");
+  assert.equal(recordValue(iosCleanup.youtube, "YouTube cleanup settings").home, false);
+  assert.equal(recordValue(iosCleanup.instagram, "Instagram cleanup settings").explore, false);
+  const snapshotCleanup = recordValue(extensionRuleSnapshot(state, now).focusedSocialCleanupSettings, "snapshot cleanup settings");
+  assert.equal(recordValue(snapshotCleanup.youtube, "snapshot YouTube cleanup settings").home, false);
+  state.deviceControls.ios.focusedSocial.enabled = false;
+  const iosFocusedSocialOff = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
+  assert.equal(iosFocusedSocialOff.focusedSocialCleanupEnabled, false);
+
   state.activeSession = {
     id: "strict",
     title: "Strict focus",
@@ -19,6 +38,10 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
     canEndEarly: false,
     source: "manual"
   };
+  const activeYoutube = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
+  assert.equal(activeYoutube.focusedSocialCleanupEnabled, true);
+  assert.equal(recordValue(recordValue(activeYoutube.focusedSocialCleanupSettings, "active cleanup settings").youtube, "active YouTube cleanup settings").home, false);
+  assert.equal(extensionRuleSnapshot(state, now).focusedSocialCleanupEnabled, true);
   const blocked = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/all", event: "navigation" }, now);
   assert.equal(blocked.blocked, true);
   assert.match(stringValue(blocked.redirectUrl, "blocked redirect URL"), /\/blocked/);
@@ -74,7 +97,8 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   const rules = extensionRuleSnapshot(state, now);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/shorts"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), true);
-  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/explore"), false);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/explore"), true);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/feed/explore"), true);
   assert.equal(contentFilterRuleEntries(state, activePolicy(state, now)).some((rule) => rule.id === "reddit-popular"), true);
   state.settings.contentFilterEnabled = false;
   const disabledContentRules = extensionRuleSnapshot(state, now).contentRules;

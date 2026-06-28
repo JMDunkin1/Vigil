@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { defaultState, SOFT_BLOCK_PROFILE_ID } from "../../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../../src/defaults.js";
 import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDoctor, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../../src/iosMdm.js";
-import { buildIosConfigurationProfile } from "../../src/iosProfiles.js";
+import { buildIosConfigurationProfile, iosProfileSummary } from "../../src/iosProfiles.js";
 import { parsePlist, plistData, toPlist } from "../../src/plist.js";
 import { profileById } from "../../src/policy.js";
 import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
@@ -15,8 +15,12 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
 
   state.deviceControls.ios.enabled = true;
   const enabledProfile = buildIosConfigurationProfile(state, now);
-  assert.doesNotMatch(enabledProfile, /blockedAppBundleIDs/);
+  assert.match(enabledProfile, /blockedAppBundleIDs/);
+  assert.match(enabledProfile, /com\.burbn\.instagram/);
+  assert.match(enabledProfile, /com\.google\.ios\.youtube/);
   assert.match(enabledProfile, /pornhub\.com/);
+  assert.match(enabledProfile, /Vigil Instagram/);
+  assert.match(enabledProfile, /Vigil YouTube/);
   assert.match(enabledProfile, /allowAppInstallation/);
 
   state.activeSessions.phone = {
@@ -49,12 +53,140 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
     profileSnapshot: profileById(state, SOFT_BLOCK_PROFILE_ID)
   };
   const softPhoneProfile = buildIosConfigurationProfile(state, now);
-  assert.doesNotMatch(softPhoneProfile, /blockedAppBundleIDs/);
+  assert.match(softPhoneProfile, /blockedAppBundleIDs/);
   assert.match(softPhoneProfile, /com\.apple\.webClip\.managed/);
   assert.match(softPhoneProfile, /Vigil Instagram/);
+  assert.match(softPhoneProfile, /Vigil YouTube/);
   assert.match(softPhoneProfile, /instagram\.com\/direct\/inbox/);
+  assert.match(softPhoneProfile, /m\.youtube\.com\/feed\/subscriptions/);
   assert.match(softPhoneProfile, /instagram\.com\/reel/);
-  assert.doesNotMatch(softPhoneProfile, /instagram\.com\/explore/);
+  assert.match(softPhoneProfile, /instagram\.com\/explore/);
+}
+
+{
+  const state = defaultState();
+  state.deviceControls.ios.enabled = true;
+  state.deviceControls.ios.focusedSocial.youtube.shorts = false;
+  state.activeSessions.phone = {
+    id: "phone-custom-shorts",
+    title: "Custom phone Shorts block",
+    mode: "focus",
+    profileId: "custom-phone",
+    lockLevel: "light",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: true,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: {
+      id: "custom-phone",
+      name: "Custom phone",
+      mode: "blocklist",
+      blockedApps: [],
+      blockedSites: [],
+      blockedUrlPatterns: ["youtube.com/shorts"],
+      allowedApps: [],
+      allowedSites: []
+    }
+  };
+  const profile = buildIosConfigurationProfile(state, now);
+  const parsedProfile = recordValue(parsePlist(profile), "custom Shorts profile");
+  assert.ok(Array.isArray(parsedProfile.PayloadContent), "profile payload content should be an array");
+  const webFilter = parsedProfile.PayloadContent
+    .map((item) => recordValue(item, "custom Shorts payload"))
+    .find((payload) => payload.PayloadType === "com.apple.webcontent-filter");
+  assert.ok(webFilter, "custom Shorts profile should include a web filter");
+  assert.ok(Array.isArray(webFilter.DenyListURLs), "custom Shorts profile should include denied URLs");
+  assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts"), true);
+}
+
+{
+  const state = defaultState();
+  state.deviceControls.ios.enabled = true;
+  state.activeSessions.phone = {
+    id: "phone-brick-web-clips",
+    title: "Phone Brick",
+    mode: "brick",
+    profileId: BRICK_MODE_PROFILE_ID,
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: profileById(state, BRICK_MODE_PROFILE_ID)
+  };
+  const summary = iosProfileSummary(state, now);
+  assert.equal(summary.profile.webClipCount, 2);
+  const profile = buildIosConfigurationProfile(state, now);
+  const parsedProfile = recordValue(parsePlist(profile), "brick web clip profile");
+  assert.ok(Array.isArray(parsedProfile.PayloadContent), "brick profile payload content should be an array");
+  const webFilter = parsedProfile.PayloadContent
+    .map((item) => recordValue(item, "brick web clip payload"))
+    .find((payload) => payload.PayloadType === "com.apple.webcontent-filter");
+  assert.ok(webFilter, "brick web clip profile should include a web filter");
+  assert.ok(Array.isArray(webFilter.AllowListBookmarks), "brick web clip profile should include allowlist bookmarks");
+  const bookmarkUrls = webFilter.AllowListBookmarks
+    .map((item) => recordValue(item, "brick allowlist bookmark"))
+    .map((bookmark) => stringValue(bookmark.URL, "brick allowlist bookmark URL"));
+  assert.equal(bookmarkUrls.includes("https://www.instagram.com/direct/inbox/"), true);
+  assert.equal(bookmarkUrls.includes("https://m.youtube.com/feed/subscriptions"), true);
+}
+
+{
+  const state = defaultState();
+  state.deviceControls.ios.enabled = true;
+  state.deviceControls.ios.focusedSocial.forceWebClips = false;
+  const summary = iosProfileSummary(state, now);
+  assert.equal(summary.profile.webClipCount, 0);
+  assert.equal(summary.profile.focusedSocial.webClipCount, 0);
+  assert.equal(summary.profile.focusedSocial.nativeAppBundleCount, 0);
+  const profile = buildIosConfigurationProfile(state, now);
+  assert.doesNotMatch(profile, /com\.apple\.webClip\.managed/);
+  assert.doesNotMatch(profile, /Vigil YouTube/);
+
+  state.activeSessions.phone = {
+    id: "phone-soft-no-web-clips",
+    title: "Phone Soft Block",
+    mode: "focus",
+    profileId: SOFT_BLOCK_PROFILE_ID,
+    lockLevel: "light",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: true,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: profileById(state, SOFT_BLOCK_PROFILE_ID)
+  };
+  const softProfile = buildIosConfigurationProfile(state, now);
+  assert.doesNotMatch(softProfile, /com\.apple\.webClip\.managed/);
+  assert.match(softProfile, /instagram\.com\/reel/);
+}
+
+{
+  const noWebState = defaultState();
+  noWebState.deviceControls.ios.enabled = true;
+  noWebState.deviceControls.ios.blockWeb = false;
+  const noWebSummary = iosProfileSummary(noWebState, now);
+  assert.equal(noWebSummary.profile.deniedUrlCount, 0);
+  assert.equal(noWebSummary.profile.allowedUrlCount, 0);
+  assert.equal(noWebSummary.profile.webClipCount, 0);
+  assert.equal(noWebSummary.profile.focusedSocial.deniedUrlCount, 0);
+  assert.equal(noWebSummary.profile.focusedSocial.webClipCount, 0);
+  const noWebProfile = buildIosConfigurationProfile(noWebState, now);
+  assert.doesNotMatch(noWebProfile, /com\.apple\.webClip\.managed/);
+  assert.doesNotMatch(noWebProfile, /DenyListURLs/);
+  assert.match(noWebProfile, /blockedAppBundleIDs/);
+
+  const noAppsState = defaultState();
+  noAppsState.deviceControls.ios.enabled = true;
+  noAppsState.deviceControls.ios.blockApps = false;
+  const noAppsSummary = iosProfileSummary(noAppsState, now);
+  assert.equal(noAppsSummary.profile.appBundleCount, 0);
+  assert.equal(noAppsSummary.profile.focusedSocial.nativeAppBundleCount, 0);
+  const noAppsProfile = buildIosConfigurationProfile(noAppsState, now);
+  assert.doesNotMatch(noAppsProfile, /blockedAppBundleIDs/);
+  assert.match(noAppsProfile, /DenyListURLs/);
 }
 
 {

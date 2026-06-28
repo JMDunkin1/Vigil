@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Vigil Companion",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Connects browser tabs to the local Vigil blocker.",
   "permissions": ["tabs", "webNavigation", "storage", "declarativeNetRequest"],
   "host_permissions": [

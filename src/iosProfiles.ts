@@ -11,6 +11,7 @@ import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { grayscaleDecision, IOS_GRAYSCALE_GUARD_BUNDLE_IDS } from "./grayscale.js";
 import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, profileById } from "./policy.js";
+import { focusedSocialBlockedBundleIds, focusedSocialDeniedUrls, focusedSocialSummary, focusedSocialWebClips, normalizeFocusedSocialSettings } from "./socialFeatureFilters.js";
 import type { IosSettings, VigilState, UnknownRecord } from "./types.js";
 
 export const IOS_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
@@ -32,6 +33,7 @@ interface IosPolicyTargets {
   deniedUrls: string[];
   allowedUrls: string[];
   webClips: Array<{ id: string; label: string; url: string }>;
+  focusedSocial: ReturnType<typeof focusedSocialSummary>;
   grayscale: {
     desired: boolean;
     reason: string;
@@ -65,7 +67,8 @@ export function normalizeIosSettings(body: UnknownRecord = {}, existing: Partial
     blockedAppBundleIds: normalizeBundleIds(body.blockedAppBundleIds ?? body.blockedApps ?? current.blockedAppBundleIds ?? DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS),
     allowedAppBundleIds: normalizeBundleIds(body.allowedAppBundleIds ?? body.allowedApps ?? current.allowedAppBundleIds ?? DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS),
     deniedUrls: normalizeUrlList(body.deniedUrls ?? current.deniedUrls ?? []),
-    allowedUrls: normalizeUrlList(body.allowedUrls ?? current.allowedUrls ?? [])
+    allowedUrls: normalizeUrlList(body.allowedUrls ?? current.allowedUrls ?? []),
+    focusedSocial: normalizeFocusedSocialSettings(body.focusedSocial ?? current.focusedSocial, current.focusedSocial)
   };
 
   if (next.hardenRemoval && !next.removalPassword) next.removalPassword = randomRemovalPassword();
@@ -96,6 +99,7 @@ export function iosProfileSummary(state: VigilState, now = new Date()) {
     allowedAppBundleIds: settings.allowedAppBundleIds,
     deniedUrls: settings.deniedUrls,
     allowedUrls: settings.allowedUrls,
+    focusedSocial: settings.focusedSocial,
     profile: {
       identifier: IOS_PROFILE_IDENTIFIER,
       fileName: "vigil-iphone-lock.mobileconfig",
@@ -105,6 +109,7 @@ export function iosProfileSummary(state: VigilState, now = new Date()) {
       deniedUrlCount: targets.deniedUrls.length,
       allowedUrlCount: targets.allowedUrls.length,
       webClipCount: targets.webClips.length,
+      focusedSocial: targets.focusedSocial,
       grayscale: targets.grayscale,
       lastGeneratedAt: settings.lastGeneratedAt || null
     }
@@ -177,13 +182,14 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
   const profileName = policy?.session?.title || profile?.name || "Saved iPhone policy";
   const appMode = profile?.mode === "allowlist" ? "allowlist" : settings.mode;
   const webMode = profile?.mode === "allowlist" ? "allowlist" : settings.webMode;
+  const grayscale = grayscaleDecision(state, now, { device: "phone" });
+  const settingsGuarded = Boolean(grayscale.desired && state.grayscale?.preventManualChanges !== false);
   let appBundleIds = profile?.phoneAppBlocking === false
     ? []
     : appMode === "allowlist"
     ? settings.allowedAppBundleIds
     : settings.blockedAppBundleIds;
-  const grayscale = grayscaleDecision(state, now, { device: "phone" });
-  const settingsGuarded = Boolean(grayscale.desired && state.grayscale?.preventManualChanges !== false);
+  if (!settings.blockApps && !settingsGuarded) appBundleIds = [];
   if (settingsGuarded) {
     appBundleIds = appMode === "allowlist"
       ? appBundleIds.filter((bundleId) => !IOS_GRAYSCALE_GUARD_BUNDLE_IDS.includes(bundleId))
@@ -196,21 +202,39 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
   const profilePatterns = webMode === "allowlist"
     ? []
     : profile?.blockedUrlPatterns || [];
+  const focusedSocialSettings = normalizeFocusedSocialSettings(settings.focusedSocial);
+  const socialDeniedUrls = focusedSocialDeniedUrls(focusedSocialSettings);
+  const webClips = settings.blockWeb && focusedSocialSettings.forceWebClips
+    ? uniqueWebClips([
+      ...(profile?.id === SOFT_BLOCK_PROFILE_ID ? SOFT_BLOCK_WEB_CLIPS : []),
+      ...focusedSocialWebClips(focusedSocialSettings)
+    ])
+    : [];
 
-  const deniedUrls = webMode === "allowlist"
+  const deniedUrls = !settings.blockWeb || webMode === "allowlist"
     ? []
     : uniqueUrls([
       ...urlsFromSiteTargets(profileSites),
       ...urlsFromPatterns(profilePatterns),
+      ...urlsFromPatterns(socialDeniedUrls),
       ...urlsFromSiteTargets(adultBlocklistPreloadDomains(state)),
       ...settings.deniedUrls
     ]).slice(0, MAX_DENY_URLS);
-  const allowedUrls = webMode === "allowlist"
+  const allowedUrls = !settings.blockWeb
+    ? []
+    : webMode === "allowlist"
     ? uniqueUrls([
       ...urlsFromSiteTargets(profileSites),
-      ...settings.allowedUrls
+      ...settings.allowedUrls,
+      ...webClips.map((clip) => clip.url)
     ])
     : uniqueUrls(settings.allowedUrls);
+  if (settings.blockApps && appMode !== "allowlist") {
+    appBundleIds = uniqueStrings([
+      ...appBundleIds,
+      ...focusedSocialBlockedBundleIds(focusedSocialSettings)
+    ]);
+  }
 
   return {
     profileName,
@@ -219,7 +243,12 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     appBundleIds,
     deniedUrls,
     allowedUrls,
-    webClips: profile?.id === SOFT_BLOCK_PROFILE_ID ? SOFT_BLOCK_WEB_CLIPS : [],
+    webClips,
+    focusedSocial: focusedSocialSummary(focusedSocialSettings, {
+      includeDeniedUrls: settings.blockWeb && webMode !== "allowlist",
+      includeNativeApps: settings.blockApps && appMode !== "allowlist",
+      includeWebClips: settings.blockWeb
+    }),
     grayscale: {
       desired: grayscale.desired,
       reason: grayscale.reason,
@@ -262,7 +291,8 @@ function currentIosSettings(state: VigilState): IosSettings {
     blockedAppBundleIds: state.deviceControls?.ios?.blockedAppBundleIds,
     allowedAppBundleIds: state.deviceControls?.ios?.allowedAppBundleIds,
     deniedUrls: state.deviceControls?.ios?.deniedUrls,
-    allowedUrls: state.deviceControls?.ios?.allowedUrls
+    allowedUrls: state.deviceControls?.ios?.allowedUrls,
+    focusedSocial: state.deviceControls?.ios?.focusedSocial
   }, state.deviceControls?.ios || {});
 }
 
@@ -275,6 +305,11 @@ function disabledPolicyTargets(settings: IosSettings): IosPolicyTargets {
     deniedUrls: [],
     allowedUrls: [],
     webClips: [],
+    focusedSocial: focusedSocialSummary(settings.focusedSocial, {
+      includeDeniedUrls: false,
+      includeNativeApps: false,
+      includeWebClips: false
+    }),
     grayscale: {
       desired: false,
       reason: "ios-policy-disabled",
@@ -410,6 +445,18 @@ function uniqueStrings(values: readonly unknown[]): string[] {
     output.push(value);
   }
   return output.sort((a, b) => a.localeCompare(b));
+}
+
+function uniqueWebClips(values: ReadonlyArray<{ id: string; label: string; url: string }>): Array<{ id: string; label: string; url: string }> {
+  const seen = new Set<string>();
+  const output: Array<{ id: string; label: string; url: string }> = [];
+  for (const clip of values || []) {
+    const key = String(clip.id || clip.url || "").toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(clip);
+  }
+  return output;
 }
 
 function bookmarkTitle(value: string): string {

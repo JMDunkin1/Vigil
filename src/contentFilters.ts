@@ -41,6 +41,27 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     paths: [/^\/reels?(?:\/|$)/i]
   },
   {
+    id: "instagram-explore",
+    label: "Instagram Explore",
+    sites: ["instagram.com"],
+    urlFilters: ["||instagram.com/explore"],
+    paths: [/^\/explore(?:\/|$)/i]
+  },
+  {
+    id: "instagram-shopping-live",
+    label: "Instagram Shopping and Live",
+    sites: ["instagram.com"],
+    urlFilters: ["||instagram.com/shop", "||instagram.com/shopping", "||instagram.com/live"],
+    paths: [/^\/(?:shop|shopping|live)(?:\/|$)/i]
+  },
+  {
+    id: "youtube-explore",
+    label: "YouTube Explore and Recommendations",
+    sites: ["youtube.com"],
+    urlFilters: ["||youtube.com/feed/explore", "||m.youtube.com/feed/explore", "||youtube.com/feed/trending", "||m.youtube.com/feed/trending", "||youtube.com/feed/recommended", "||m.youtube.com/feed/recommended"],
+    paths: [/^\/feed\/(?:explore|trending|recommended)(?:\/|$)/i]
+  },
+  {
     id: "facebook-reels",
     label: "Facebook Reels",
     sites: ["facebook.com", "fb.com"],

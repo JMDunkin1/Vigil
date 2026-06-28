@@ -652,6 +652,32 @@ export interface IosMdmSettings {
   lastGrayscaleCommandQueuedAt: string | null;
 }
 
+export type FocusedSocialPlatformId = "instagram" | "youtube";
+
+export interface FocusedSocialPlatformSettings {
+  enabled: boolean;
+  reels?: boolean;
+  shorts?: boolean;
+  home?: boolean;
+  explore: boolean;
+  suggested: boolean;
+  shopping?: boolean;
+  ads: boolean;
+}
+
+export interface FocusedSocialSettings {
+  enabled: boolean;
+  forceWebClips: boolean;
+  instagram: FocusedSocialPlatformSettings & {
+    reels: boolean;
+    shopping: boolean;
+  };
+  youtube: FocusedSocialPlatformSettings & {
+    shorts: boolean;
+    home: boolean;
+  };
+}
+
 export interface IosSettings {
   enabled: boolean;
   status: string;
@@ -665,6 +691,7 @@ export interface IosSettings {
   allowedAppBundleIds: string[];
   deniedUrls: string[];
   allowedUrls: string[];
+  focusedSocial: FocusedSocialSettings;
   removalPassword: string | null;
   lastGeneratedAt: string | null;
   profileId?: string;
