@@ -1,8 +1,10 @@
-# Vigil iOS Remote MDM Setup
+# Vigil iOS Advanced Self-hosted MDM Setup
 
-Vigil's static supervised USB profile and remote MDM are separate setup paths. A phone can be supervised and have the static Vigil restrictions profile installed while remote/wireless MDM is still completely unconfigured.
+This document is for advanced self-hosted MDM experiments. For the normal free path, use ManageEngine: Vigil exports `data/manageengine/vigil-manageengine-policy.mobileconfig`, and ManageEngine owns enrollment, APNs wakeups, assignment, and removal. Start with `docs/manageengine-mdm.md` unless you are intentionally replacing ManageEngine with your own Apple MDM infrastructure.
 
-When you need the iPhone UDID, read it locally with `pymobiledevice3 usbmux list --usb` and use the reported identifier as `<IPHONE_UDID>`. The static supervised profile `tech.caseline.vigil.ios-lock` can keep working unplugged while you finish this remote MDM setup; do not remove or reinstall that profile just to work on wireless MDM.
+Vigil's static supervised USB profile and advanced self-hosted MDM are separate setup paths. A phone can be supervised and have the static Vigil restrictions profile installed while this advanced wireless MDM experiment is still completely unconfigured.
+
+When you need the iPhone UDID, read it locally with `pymobiledevice3 usbmux list --usb` and use the reported identifier as `<IPHONE_UDID>`. The static supervised profile `tech.caseline.vigil.ios-lock` can keep working unplugged while you finish this self-hosted MDM setup; do not remove or reinstall that profile just to work on wireless MDM.
 
 Run the read-only doctor:
 

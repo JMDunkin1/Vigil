@@ -78,10 +78,12 @@ try {
   );
   const doctorBody = JSON.parse(doctorResponse.bodyText) as Record<string, unknown>;
   const mdm = doctorBody.mdm as Record<string, unknown>;
+  const normalDeliveryPath = mdm.normalDeliveryPath as Record<string, unknown>;
   assert.equal(doctorHandled, true);
   assert.equal(doctorResponse.statusCodeValue, 200);
   assert.equal(doctorBody.ok, true);
   assert.equal(mdm.status, "off");
+  assert.equal(normalDeliveryPath.provider, "manageengine");
   assert.equal((mdm.staticProfile as Record<string, unknown>).status, "supervised-profile-ready");
 } finally {
   await rm(dataDir, { recursive: true, force: true });

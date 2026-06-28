@@ -37,6 +37,8 @@ try {
   const summaryText = await readFile(summaryPath, "utf8");
   const summary = recordValue(JSON.parse(summaryText), "ManageEngine export summary");
   assert.equal(summary.stateSaved, true);
+  assert.equal(summary.deliveryProvider, "manageengine");
+  assert.equal(summary.normalFreeDeliveryPath, true);
   assert.equal(summary.hardenRemoval, true);
   assert.equal(summary.removalPasswordStoredInVigilState, true);
   assert.equal(summaryText.includes(removalPassword), false);
@@ -63,6 +65,7 @@ try {
   assert.match(await readFile(inlineEqualsProfilePath, "utf8"), /^\s*<\?xml/);
   const inlineEqualsSummary = recordValue(JSON.parse(await readFile(inlineEqualsSummaryPath, "utf8")), "inline-equals summary");
   assert.equal(inlineEqualsSummary.mode, "enrollment-window");
+  assert.equal(inlineEqualsSummary.deliveryProvider, "manageengine");
   assert.equal(inlineEqualsSummary.outputPath, inlineEqualsProfilePath);
   assert.equal(inlineEqualsSummary.hardenRemoval, false);
   assert.equal(inlineEqualsSummary.restrictInstallAndErase, false);

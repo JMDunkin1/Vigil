@@ -13,6 +13,7 @@ AND (
   OR lower(relativePath) LIKE '%homescreen%'
   OR lower(relativePath) LIKE '%springboard%'
   OR lower(relativePath) LIKE '%applicationstate%'
+  OR lower(relativePath) LIKE '%widget%'
 )
 ORDER BY relativePath;
 `;
@@ -26,7 +27,7 @@ from pyiosbackup.backup import Backup
 
 backup_path = Path(sys.argv[1])
 password = os.environ.get("PYIOSBACKUP_PASSWORD", "")
-needles = ("iconstate", "homescreen", "springboard", "applicationstate")
+needles = ("iconstate", "homescreen", "springboard", "applicationstate", "widget")
 backup = Backup.from_path(backup_path, password)
 matches = []
 for entry in backup.iter_entries():

@@ -39,7 +39,7 @@ if (!dryRun) await saveState(state);
 if (json) {
   console.log(JSON.stringify({ ok: true, dryRun, mdm: doctor }, null, 2));
 } else {
-  console.log(`${dryRun ? "Dry run" : "Saved"} Vigil remote MDM settings.`);
+  console.log(`${dryRun ? "Dry run" : "Saved"} advanced self-hosted Vigil MDM settings.`);
   console.log(`Status: ${doctor.status}`);
   console.log(`Capability: ${doctor.capabilityLevel}`);
   console.log(`Enrollment URL: ${doctor.remoteMdm.enrollmentUrl || "not available until setup blockers are fixed"}`);
@@ -47,7 +47,7 @@ if (json) {
     console.log("\nBlocking setup items:");
     for (const item of doctor.blockers) console.log(`- ${item.message}`);
   }
-  console.log("\nApple credential note: this helper only stores real files you provide; it does not generate APNs MDM certificates, SCEP service credentials, or working test certs.");
+  console.log("\nManageEngine note: use ManageEngine for the normal free path. This helper only stores real files for an advanced self-hosted APNs server; it does not generate APNs MDM certificates, SCEP service credentials, or working test certs.");
 }
 
 function parseArgs(values: string[]): Record<string, string | boolean> {

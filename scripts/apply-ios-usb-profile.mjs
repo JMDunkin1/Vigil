@@ -25,7 +25,8 @@ await ensurePymobiledevice3();
 const udid = await resolveUsbDevice(options.udid);
 if (options.requireCheckpoint) await verifyCheckpoint(await resolveCheckpointRoot(options.requireCheckpoint, udid), udid, options.password);
 
-const cloud = await readCloudConfiguration(udid);
+const supervisorKeybagPath = await requireSupervisorKeybag(options.supervisorKeybag);
+const cloud = await readCloudConfiguration(udid, supervisorKeybagPath);
 if (!isSupervisedCloud(cloud)) {
   throw new Error([
     "iPhone is paired over USB but is not supervised.",
@@ -35,9 +36,21 @@ if (!isSupervisedCloud(cloud)) {
   ].join("\n"));
 }
 
-const supervisorKeybagPath = await requireSupervisorKeybag(options.supervisorKeybag);
 const profilePath = options.profile ? await validateProvidedProfile(options.profile) : await prepareAndDownloadActiveProfile();
-await pairSupervised(udid, supervisorKeybagPath);
+await ensureProfileAccess(udid, supervisorKeybagPath);
+if (!profilePath) {
+  await removeProfile(udid, supervisorKeybagPath);
+  const installedAfterRemove = await profileInstalled(udid, supervisorKeybagPath);
+  if (installedAfterRemove) {
+    throw new Error(`Vigil profile remove command completed, but ${IOS_PROFILE_IDENTIFIER} is still present in the device profile list.`);
+  }
+  console.log([
+    `Vigil iPhone profile removed over USB from ${udid}.`,
+    `Profile: ${IOS_PROFILE_IDENTIFIER}`,
+    "Reason: Vigil has no active iPhone policy."
+  ].join("\n"));
+  process.exit(0);
+}
 await installProfile(udid, profilePath, supervisorKeybagPath);
 const installed = await profileInstalled(udid, supervisorKeybagPath);
 if (!installed) {
@@ -137,13 +150,20 @@ async function prepareIosServerState() {
   if (!ios || typeof ios !== "object" || Array.isArray(ios)) {
     throw new Error("Vigil API /api/state did not include state.deviceControls.ios; cannot safely preserve iOS settings before applying over USB.");
   }
-  if (ios.enabled) return;
+  if (ios.enabled) return { state, active: true };
+  if (!hasActivePhonePolicy(state)) return { state, active: false };
   await vigilJson("/api/devices/ios/usb-profile-apply", { method: "POST" });
+  return { state: await vigilJson("/api/state"), active: true };
 }
 
 async function prepareAndDownloadActiveProfile() {
-  await prepareIosServerState();
+  const prepared = await prepareIosServerState();
+  if (!prepared.active) return "";
   return await downloadActiveProfile();
+}
+
+function hasActivePhonePolicy(state) {
+  return Boolean(state?.state?.devicePolicies?.phone);
 }
 
 async function downloadActiveProfile() {
@@ -246,8 +266,15 @@ function usbDeviceSummary(device) {
   return `${device?.DeviceName || "iOS device"} (${deviceUdid(device) || "unknown udid"})`;
 }
 
-async function readCloudConfiguration(udid) {
-  const { stdout } = await runPymobiledevice3(["profile", "cloud-configuration", "--udid", udid], QUICK_TIMEOUT_MS);
+async function readCloudConfiguration(udid, supervisorKeybagPath) {
+  const initial = await runPymobiledevice3(["profile", "cloud-configuration", "--udid", udid], QUICK_TIMEOUT_MS, { reject: false });
+  let stdout = initial.stdout;
+  if (initial.code !== 0 && isProtectedPairingError(initial)) {
+    await pairSupervised(udid, supervisorKeybagPath);
+    stdout = (await runPymobiledevice3(["profile", "cloud-configuration", "--udid", udid], QUICK_TIMEOUT_MS)).stdout;
+  } else if (initial.code !== 0) {
+    throw new Error(`${initial.stdout}\n${initial.stderr}`.trim());
+  }
   const parsed = JSON.parse(stdout.trim());
   return parsed && typeof parsed === "object" ? parsed : {};
 }
@@ -278,10 +305,30 @@ async function installProfile(udid, profilePath, supervisorKeybagPath) {
   ], QUICK_TIMEOUT_MS);
 }
 
-async function profileInstalled(udid, supervisorKeybagPath) {
+async function ensureProfileAccess(udid, supervisorKeybagPath) {
+  const initial = await runPymobiledevice3(["profile", "list", "--udid", udid], QUICK_TIMEOUT_MS, { reject: false });
+  if (initial.code === 0) return;
+  if (!isProtectedPairingError(initial)) throw new Error(`${initial.stdout}\n${initial.stderr}`.trim());
+  await pairSupervised(udid, supervisorKeybagPath);
+}
+
+async function removeProfile(udid, supervisorKeybagPath) {
+  const installed = await profileInstalled(udid, supervisorKeybagPath);
+  if (!installed) return;
+  await runPymobiledevice3([
+    "profile",
+    "remove",
+    "--udid",
+    udid,
+    IOS_PROFILE_IDENTIFIER
+  ], QUICK_TIMEOUT_MS);
+}
+
+async function profileInstalled(udid, supervisorKeybagPath = "") {
   const initial = await runPymobiledevice3(["profile", "list", "--udid", udid], QUICK_TIMEOUT_MS, { reject: false });
   let stdout = initial.stdout;
   if (initial.code !== 0 && isProtectedPairingError(initial)) {
+    if (!supervisorKeybagPath) throw new Error(`${initial.stdout}\n${initial.stderr}`.trim());
     await pairSupervised(udid, supervisorKeybagPath);
     stdout = (await runPymobiledevice3(["profile", "list", "--udid", udid], QUICK_TIMEOUT_MS)).stdout;
   } else if (initial.code !== 0) {

@@ -59,8 +59,8 @@ The app works best after granting Accessibility permission to the terminal or ap
 - Random typing challenges on emergency, App Lock, and maintenance confirmations.
 - Configurable intent-reason minimums for emergency unlocks, App Lock unlocks, and protected maintenance windows.
 - Brick-style distance key that can be typed, stored as a removable key file, or printed as a scannable QR key for emergency, App Lock, and maintenance confirmations.
-- Supervised iPhone profile generation for desktop-managed app and web restrictions.
-- Experimental local iPhone MDM server scaffolding with enrollment profiles, check-in/connect endpoints, enrolled-device tracking, and queued InstallProfile policy refreshes.
+- Supervised iPhone profile generation for desktop-managed app and web restrictions, with ManageEngine as the normal free hosted-MDM delivery path.
+- Advanced local iPhone MDM server scaffolding for non-ManageEngine experiments only.
 - Optional unpacked browser extension companion for faster tab-level blocking and browser time-limit tracking.
 - Browser extension dynamic block rules that redirect active blocked domains, safe URL patterns, and allowlist/Brick Mode misses at request time while acknowledging installed rule counts to Foolproof mode.
 - Content feature filters that block short-form and infinite-scroll surfaces such as YouTube Shorts, Instagram Reels, Reddit Popular, X Explore, and TikTok during active locks while keeping regular Instagram pages such as DMs and Stories available.
@@ -203,11 +203,19 @@ npm run ios:supervise-preserve-layout -- --yes-supervise-and-restore --checkpoin
 
 The existing-checkpoint path must either contain the connected phone's UDID folder or be that UDID-named backup folder itself. Vigil verifies `Manifest.db`, complete backup metadata, the backup device identity when present, and SpringBoard/Home Screen layout records before it supervises or restores anything. For encrypted backups, also pass `-- --password ...` or set `IOS_BACKUP_PASSWORD`.
 
-Remote MDM is a separate integration boundary. The layout-preserving USB flow ends with the static Vigil profile installed locally; it does not set up remote APNs-backed MDM by itself.
+ManageEngine is the normal free remote-MDM path. Vigil generates the supervised iPhone policy profile; ManageEngine owns enrollment, APNs wakeups, assignment, and removal. Generate the custom profile with:
 
-Real iOS MDM enrollment requires Apple supervision plus a public HTTPS URL, an APNs MDM topic and push certificate, and an identity certificate or SCEP payload. The current server handles enrollment/check-in, queues policy-profile installs for enrolled devices, and uses the saved APNs MDM push certificate to wake devices with queued commands. On first enrollment, the device's TokenUpdate queues the current policy and immediately attempts the APNs wake-up; later policy changes follow the same queue-and-push flow.
+```bash
+npm run ios:manageengine:export
+```
 
-For the free hosted-MDM fallback, use [docs/manageengine-mdm.md](docs/manageengine-mdm.md). In that path ManageEngine owns APNs and enrollment, while Vigil exports the supervised policy profile for custom-profile assignment.
+Then upload `data/manageengine/vigil-manageengine-policy.mobileconfig` as a ManageEngine custom iOS configuration profile and assign it to the phone. If the current hardened Vigil profile blocks installing ManageEngine enrollment, generate and apply the temporary enrollment-window profile:
+
+```bash
+npm run ios:manageengine:apply-enrollment-window
+```
+
+See [docs/manageengine-mdm.md](docs/manageengine-mdm.md). The older `ios:mdm:*` commands are advanced self-hosted APNs-server tooling for experiments outside ManageEngine; they are not the expected free production path.
 
 Phone usage can be synced into the same dashboard totals by posting daily snapshots to `/api/devices/usage` with the local app intent header or the iOS device token (`x-vigil-device-token` header or `?token=` query). A snapshot such as `{ "device": "phone", "date": "2026-05-28", "totalSeconds": 3600, "apps": { "Instagram": 1200 }, "sites": { "reddit.com": 300 } }` replaces the phone bucket for that day, then dashboard summaries, weekly reports, and limit progress merge it with Mac usage.
 

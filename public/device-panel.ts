@@ -78,7 +78,7 @@ function bindDeviceForms({ $, post, lines, toast, errorMessage, refresh }: Devic
       $("#iosMdmIdentityPassword").value = "";
       $("#iosMdmPushPayload").value = "";
       $("#iosMdmPushPassword").value = "";
-      toast("iPhone MDM setup saved");
+      toast("Advanced iPhone MDM setup saved");
     } catch (error) {
       toast(errorMessage(error));
     }
@@ -124,8 +124,9 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
   const iosSummary = $("#iosSummary");
   iosSummary.replaceChildren();
   const profile = ios.profile || {};
+  const manageEngine = ios.manageEngine || {};
   [
-    ["Integration", "Apple devices only"],
+    ["Delivery", manageEngine.deliveryProvider === "manageengine" ? "ManageEngine" : "Apple devices only"],
     ["Setup", ios.supervisedRequired ? "supervised iPhone required" : "standard"],
     ["Apps", ios.blockApps ? `${profile.appBundleCount || 0} bundle IDs` : "off"],
     ["Web", ios.blockWeb ? `${profile.deniedUrlCount || 0} denied / ${profile.allowedUrlCount || 0} allowed` : "off"],
@@ -135,7 +136,10 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
     ["Grayscale", profile.grayscale?.desired ? `${profile.grayscale.label || "on"}${profile.grayscale.settingsGuarded ? " + Settings guard" : ""}` : "normal"],
     ["Native Reels", "not available through public iOS APIs"],
     ["Removal", ios.removalHardened ? "passcode protected" : "device removable"],
-    ["Profile", profile.generatedFrom || "saved policy"]
+    ["Profile", profile.generatedFrom || "saved policy"],
+    ["ManageEngine export", manageEngine.exportCommand || "npm run ios:manageengine:export"],
+    ["ManageEngine policy", manageEngine.policyPath || "data/manageengine/vigil-manageengine-policy.mobileconfig"],
+    ["Enrollment window", manageEngine.enrollmentWindowCommand || "npm run ios:manageengine:apply-enrollment-window"]
   ].forEach(([label, value]) => iosSummary.append(deviceRow(label, value)));
 
   const mdm = ios.mdm || {};
@@ -149,28 +153,29 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
   $("#iosMdmPushPassword").placeholder = mdm.pushCertificatePasswordSet ? "Saved password is set" : "Leave blank to keep saved password";
   $("#iosMdmSignMessage").checked = Boolean(mdm.signMessage);
   $("#iosMdmDevApns").checked = Boolean(mdm.useDevelopmentApns);
-  $("#iosMdmStatus").textContent = mdm.enabled ? (mdm.ready ? "Ready" : (mdm.enrollmentReady ? "Queue" : "Setup")) : "Off";
+  $("#iosMdmStatus").textContent = mdm.enabled ? (mdm.ready ? "Advanced Ready" : "Advanced Setup") : "Not used";
   $("#iosMdmStatus").className = mdm.enabled ? (mdm.ready ? "pill good" : "pill warn") : "pill neutral";
-  $("#iosMdmTitle").textContent = mdm.ready ? "MDM ready" : (mdm.enabled ? (mdm.enrollmentReady ? "Command queue ready" : "Setup needed") : "Server setup");
-  $("#iosMdmText").textContent = mdm.note || "Enroll a supervised iPhone so policy changes come from this computer.";
+  $("#iosMdmTitle").textContent = mdm.enabled ? "Advanced self-hosted MDM" : "ManageEngine is the normal path";
+  $("#iosMdmText").textContent = mdm.note || "Vigil normally exports profiles for ManageEngine; use this only if replacing ManageEngine with your own APNs-backed MDM server.";
 
   const mdmSummary = $("#iosMdmSummary");
   mdmSummary.replaceChildren();
   [
-    ["Public URL", mdm.publicBaseUrl || "not set"],
-    ["Identity", mdm.identityCertificatePayloadSet ? "payload set" : "missing payload"],
-    ["APNs Push", mdm.pushCertificatePayloadSet ? "certificate set" : "missing certificate"],
-    ["Enroll", mdm.enrollmentUrl || mdm.localEnrollmentPath || "not ready"],
-    ["Devices", `${mdm.enrolledDeviceCount || 0} enrolled`],
-    ["Commands", `${mdm.pendingCommandCount || 0} queued / ${mdm.sentCommandCount || 0} sent`],
+    ["Default delivery", "ManageEngine"],
+    ["Self-hosted URL", mdm.publicBaseUrl || "not set"],
+    ["Self-hosted identity", mdm.identityCertificatePayloadSet ? "payload set" : "missing payload"],
+    ["Self-hosted APNs", mdm.pushCertificatePayloadSet ? "certificate set" : "missing certificate"],
+    ["Self-hosted enroll", mdm.enrollmentUrl || mdm.localEnrollmentPath || "not ready"],
+    ["Self-hosted devices", `${mdm.enrolledDeviceCount || 0} enrolled`],
+    ["Self-hosted commands", `${mdm.pendingCommandCount || 0} queued / ${mdm.sentCommandCount || 0} sent`],
     ["Grayscale command", mdm.grayscale?.desired ? `on: ${mdm.grayscale.label || "active"}` : "normal"],
     ["Last push", mdm.lastPushAt ? `${shortDateTime(mdm.lastPushAt)} ${mdm.lastPushStatus || ""}`.trim() : "never"],
     ["Push error", mdm.lastPushError || "none"],
     ["Last seen", mdm.lastSeenAt ? shortDateTime(mdm.lastSeenAt) : "never"],
-    ["Wireless", mdm.pushSupported ? "APNs ready" : "APNs sender pending"]
+    ["Self-hosted wireless", mdm.pushSupported ? "APNs ready" : "not the ManageEngine path"]
   ].forEach(([label, value]) => mdmSummary.append(deviceRow(label, value)));
   for (const blocker of mdm.blockers || []) {
-    mdmSummary.append(deviceRow("Need", blocker));
+    mdmSummary.append(deviceRow("Self-hosted need", blocker));
   }
   for (const device of (mdm.devices || []).slice(0, 3)) {
     const details = [device.status, device.productName, device.osVersion].filter(Boolean).join(" / ");
@@ -234,7 +239,9 @@ function nativeSocialText(value: unknown, active: boolean): string {
   const summary = recordValue(value);
   if (summary.enabled === false) return "unchanged";
   if (!active) return "ready when enabled";
-  return summary.forceWebClips === false ? "left available" : `${Number(summary.nativeAppBundleCount || 0)} blocked for web clips`;
+  if (summary.forceWebClips === false) return "left available";
+  const nativeAppBundleCount = Number(summary.nativeAppBundleCount || 0);
+  return nativeAppBundleCount > 0 ? `${nativeAppBundleCount} blocked for web clips` : "ready during phone lock";
 }
 
 function recordValue(value: unknown): Record<string, unknown> {

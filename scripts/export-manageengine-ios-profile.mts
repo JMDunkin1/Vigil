@@ -79,6 +79,8 @@ function buildSummary(state: VigilState, windowMode: boolean, outputPath: string
   return {
     generatedAt: new Date().toISOString(),
     mode: windowMode ? "enrollment-window" : "managed-policy",
+    deliveryProvider: "manageengine",
+    normalFreeDeliveryPath: true,
     outputPath,
     stateSaved,
     uploadToManageEngineAsCustomConfigurationProfile: true,
@@ -90,7 +92,7 @@ function buildSummary(state: VigilState, windowMode: boolean, outputPath: string
     profileInstallAllowedByThisProfile: !ios.restrictInstallAndErase,
     warning: windowMode
       ? "Temporary profile for enrolling in ManageEngine. Replace it with the managed-policy profile after enrollment."
-      : "Final Vigil policy profile for ManageEngine assignment.",
+      : "Final Vigil policy profile for ManageEngine assignment and remote delivery.",
     generatedFrom: summary.profile.generatedFrom,
     appBundleCount: summary.profile.appBundleCount,
     deniedUrlCount: summary.profile.deniedUrlCount,

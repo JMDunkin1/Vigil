@@ -1,6 +1,6 @@
 # Vigil + ManageEngine MDM Setup
 
-This is the hosted-MDM path for a solo Vigil install. ManageEngine owns Apple APNs enrollment and device wakeups; Vigil exports the supervised iPhone policy as a custom configuration profile.
+This is the normal hosted-MDM path for a solo Vigil install. ManageEngine owns Apple APNs enrollment, device wakeups, profile assignment, and profile removal; Vigil exports the supervised iPhone policy as a custom configuration profile.
 
 Use this path when Apple Business Manager is not available and you do not want to pay for Apple Developer Program MDM Vendor CSR access.
 
@@ -70,7 +70,7 @@ Keep using the same `data/vigil-supervisor.keybag` or `VIGIL_SUPERVISOR_KEYBAG` 
 
 ## Operational Notes
 
-- Vigil's self-hosted remote MDM doctor is still expected to report APNs certificate blockers. That is fine for this path because ManageEngine, not Vigil, is the MDM server.
+- Treat Vigil's self-hosted MDM doctor as advanced diagnostic tooling only. It can still report APNs certificate blockers while the ManageEngine path is healthy, because ManageEngine, not Vigil, is the MDM server in normal use.
 - The static Vigil USB profile can remain in place during setup. If ManageEngine reports a duplicate profile identifier conflict, apply the enrollment-window profile over USB, enroll, then push the final ManageEngine policy again.
 - Re-export and re-upload the policy after changing Vigil's iPhone app/web targets.
 - API automation should wait until the manual upload/assignment path works once. After that, wire the ManageEngine API using the tenant URL, OAuth token, device/group IDs, and the exact profile endpoint shape from your tenant.
