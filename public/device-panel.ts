@@ -205,6 +205,11 @@ function readFocusedSocialPayload($: QueryElement) {
       explore: $("#iosFocusedYoutubeExplore").checked,
       suggested: $("#iosFocusedYoutubeSuggested").checked,
       ads: $("#iosFocusedYoutubeAds").checked
+    },
+    snapchat: {
+      enabled: $("#iosFocusedSnapchatEnabled").checked,
+      spotlight: $("#iosFocusedSnapchatSpotlight").checked,
+      stories: $("#iosFocusedSnapchatStories").checked
     }
   };
 }
@@ -212,6 +217,7 @@ function readFocusedSocialPayload($: QueryElement) {
 function renderFocusedSocialSettings(value: Record<string, unknown>, $: QueryElement): void {
   const instagram = recordValue(value.instagram);
   const youtube = recordValue(value.youtube);
+  const snapchat = recordValue(value.snapchat);
   $("#iosFocusedSocialEnabled").checked = value.enabled !== false;
   $("#iosFocusedSocialForceWebClips").checked = value.forceWebClips !== false;
   $("#iosFocusedInstagramEnabled").checked = instagram.enabled !== false;
@@ -226,6 +232,9 @@ function renderFocusedSocialSettings(value: Record<string, unknown>, $: QueryEle
   $("#iosFocusedYoutubeExplore").checked = youtube.explore !== false;
   $("#iosFocusedYoutubeSuggested").checked = youtube.suggested !== false;
   $("#iosFocusedYoutubeAds").checked = youtube.ads !== false;
+  $("#iosFocusedSnapchatEnabled").checked = snapchat.enabled !== false;
+  $("#iosFocusedSnapchatSpotlight").checked = snapchat.spotlight !== false;
+  $("#iosFocusedSnapchatStories").checked = snapchat.stories !== false;
 }
 
 function focusedSocialSummaryText(value: unknown): string {

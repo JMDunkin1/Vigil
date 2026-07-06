@@ -652,12 +652,14 @@ export interface IosMdmSettings {
   lastGrayscaleCommandQueuedAt: string | null;
 }
 
-export type FocusedSocialPlatformId = "instagram" | "youtube";
+export type FocusedSocialPlatformId = "instagram" | "youtube" | "snapchat";
 
 export interface FocusedSocialPlatformSettings {
   enabled: boolean;
   reels?: boolean;
   shorts?: boolean;
+  spotlight?: boolean;
+  stories?: boolean;
   home?: boolean;
   explore: boolean;
   suggested: boolean;
@@ -675,6 +677,10 @@ export interface FocusedSocialSettings {
   youtube: FocusedSocialPlatformSettings & {
     shorts: boolean;
     home: boolean;
+  };
+  snapchat: FocusedSocialPlatformSettings & {
+    spotlight: boolean;
+    stories: boolean;
   };
 }
 

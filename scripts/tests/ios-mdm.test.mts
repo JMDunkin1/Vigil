@@ -22,6 +22,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.match(enabledProfile, /pornhub\.com/);
   assert.match(enabledProfile, /Sentinel Instagram/);
   assert.match(enabledProfile, /Sentinel YouTube/);
+  assert.match(enabledProfile, /Sentinel Snapchat/);
   assert.match(enabledProfile, /allowAppInstallation/);
   const enabledParsed = recordValue(parsePlist(enabledProfile), "enabled phone profile");
   assert.ok(Array.isArray(enabledParsed.PayloadContent), "enabled phone profile payload content should be an array");
@@ -58,7 +59,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   const activePhoneParsed = recordValue(parsePlist(activePhoneProfile), "active phone profile");
   assert.equal(activePhoneParsed.DurationUntilRemoval, 3630);
   const activePhoneSummary = iosProfileSummary(state, now);
-  assert.equal(activePhoneSummary.profile.focusedSocial.nativeAppBundleCount, 2);
+  assert.equal(activePhoneSummary.profile.focusedSocial.nativeAppBundleCount, 3);
 
   state.activeSessions.phone = {
     id: "phone-soft-ios",
@@ -78,10 +79,14 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.match(softPhoneProfile, /com\.apple\.webClip\.managed/);
   assert.match(softPhoneProfile, /Sentinel Instagram/);
   assert.match(softPhoneProfile, /Sentinel YouTube/);
+  assert.match(softPhoneProfile, /Sentinel Snapchat/);
   assert.match(softPhoneProfile, /instagram\.com\/direct\/inbox/);
   assert.match(softPhoneProfile, /m\.youtube\.com\/feed\/subscriptions/);
+  assert.match(softPhoneProfile, /web\.snapchat\.com/);
   assert.match(softPhoneProfile, /instagram\.com\/reel/);
   assert.match(softPhoneProfile, /instagram\.com\/explore/);
+  assert.match(softPhoneProfile, /snapchat\.com\/spotlight/);
+  assert.match(softPhoneProfile, /story\.snapchat\.com/);
 }
 
 {
@@ -138,7 +143,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
     profileSnapshot: profileById(state, BRICK_MODE_PROFILE_ID)
   };
   const summary = iosProfileSummary(state, now);
-  assert.equal(summary.profile.webClipCount, 2);
+  assert.equal(summary.profile.webClipCount, 3);
   const profile = buildIosConfigurationProfile(state, now);
   const parsedProfile = recordValue(parsePlist(profile), "brick web clip profile");
   assert.ok(Array.isArray(parsedProfile.PayloadContent), "brick profile payload content should be an array");
@@ -152,6 +157,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
     .map((bookmark) => stringValue(bookmark.URL, "brick allowlist bookmark URL"));
   assert.equal(bookmarkUrls.includes("https://www.instagram.com/direct/inbox/"), true);
   assert.equal(bookmarkUrls.includes("https://m.youtube.com/feed/subscriptions"), true);
+  assert.equal(bookmarkUrls.includes("https://web.snapchat.com/"), true);
 }
 
 {

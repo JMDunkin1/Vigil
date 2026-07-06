@@ -44,10 +44,17 @@ interface YoutubeCleanupSettings {
   ads: boolean;
 }
 
+interface SnapchatCleanupSettings {
+  enabled: boolean;
+  spotlight: boolean;
+  stories: boolean;
+}
+
 interface FocusedSocialCleanupSettings {
   enabled: boolean;
   instagram: InstagramCleanupSettings;
   youtube: YoutubeCleanupSettings;
+  snapchat: SnapchatCleanupSettings;
 }
 
 interface PauseOverlayDecision {
@@ -806,6 +813,7 @@ function applyFocusedSocialDomCleanup(): void {
   if (!focusedSocialCleanupEnabled) return;
   if (isYoutubeHost() && focusedSocialCleanupSettings.youtube.enabled) cleanupYoutubeSocialFeatures();
   if (isInstagramHost() && focusedSocialCleanupSettings.instagram.enabled) cleanupInstagramSocialFeatures();
+  if (isSnapchatHost() && focusedSocialCleanupSettings.snapchat.enabled) cleanupSnapchatSocialFeatures();
 }
 
 function cleanupYoutubeSocialFeatures(): void {
@@ -924,6 +932,39 @@ function cleanupInstagramSocialFeatures(): void {
   }
 }
 
+function cleanupSnapchatSocialFeatures(): void {
+  const settings = focusedSocialCleanupSettings.snapchat;
+  if (settings.spotlight) {
+    hideSocialMatches([
+      "a[href*='/spotlight']",
+      "a[href*='snapchat.com/spotlight']",
+      "button[aria-label*='Spotlight' i]",
+      "[role='button'][aria-label*='Spotlight' i]"
+    ], snapchatCleanupContainer);
+    hideElementsWithText([
+      "nav a",
+      "nav button",
+      "[role='tab']",
+      "[role='button']"
+    ], ["spotlight"], snapchatCleanupContainer);
+  }
+  if (settings.stories) {
+    hideSocialMatches([
+      "a[href*='/stories']",
+      "a[href*='story.snapchat.com']",
+      "a[href*='snapchat.com/stories']",
+      "button[aria-label*='Stories' i]",
+      "[role='button'][aria-label*='Stories' i]"
+    ], snapchatCleanupContainer);
+    hideElementsWithText([
+      "nav a",
+      "nav button",
+      "[role='tab']",
+      "[role='button']"
+    ], ["stories"], snapchatCleanupContainer);
+  }
+}
+
 function hideSocialMatches(selectors: string[], containerFor: (element: Element) => HTMLElement | null): void {
   for (const selector of selectors) {
     for (const element of safeQuerySelectorAll(selector)) {
@@ -984,6 +1025,19 @@ function instagramCleanupContainer(element: Element): HTMLElement | null {
   ]);
 }
 
+function snapchatCleanupContainer(element: Element): HTMLElement | null {
+  return closestHTMLElement(element, [
+    "nav li",
+    "nav a",
+    "nav button",
+    "[role='tab']",
+    "[role='button']",
+    "a",
+    "button",
+    "div[role='dialog']"
+  ]);
+}
+
 function closestHTMLElement(element: Element, selectors: string[]): HTMLElement | null {
   for (const selector of selectors) {
     const closest = element.closest(selector);
@@ -1040,6 +1094,11 @@ function defaultFocusedSocialCleanupSettings(): FocusedSocialCleanupSettings {
       explore: true,
       suggested: true,
       ads: true
+    },
+    snapchat: {
+      enabled: true,
+      spotlight: true,
+      stories: true
     }
   };
 }
@@ -1049,6 +1108,7 @@ function normalizeFocusedSocialCleanupSettings(value: unknown): FocusedSocialCle
   const record = asRecord(value);
   const instagram = asRecord(record?.instagram);
   const youtube = asRecord(record?.youtube);
+  const snapchat = asRecord(record?.snapchat);
   return {
     enabled: booleanField(record, "enabled", defaults.enabled),
     instagram: {
@@ -1066,6 +1126,11 @@ function normalizeFocusedSocialCleanupSettings(value: unknown): FocusedSocialCle
       explore: booleanField(youtube, "explore", defaults.youtube.explore),
       suggested: booleanField(youtube, "suggested", defaults.youtube.suggested),
       ads: booleanField(youtube, "ads", defaults.youtube.ads)
+    },
+    snapchat: {
+      enabled: booleanField(snapchat, "enabled", defaults.snapchat.enabled),
+      spotlight: booleanField(snapchat, "spotlight", defaults.snapchat.spotlight),
+      stories: booleanField(snapchat, "stories", defaults.snapchat.stories)
     }
   };
 }
@@ -1078,11 +1143,12 @@ function focusedSocialCleanupAppliesToCurrentHost(settings: FocusedSocialCleanup
   if (!settings.enabled) return false;
   if (isYoutubeHost()) return settings.youtube.enabled;
   if (isInstagramHost()) return settings.instagram.enabled;
+  if (isSnapchatHost()) return settings.snapchat.enabled;
   return false;
 }
 
 function isFocusedSocialHost(): boolean {
-  return isYoutubeHost() || isInstagramHost();
+  return isYoutubeHost() || isInstagramHost() || isSnapchatHost();
 }
 
 function isInstagramHost(): boolean {
@@ -1094,11 +1160,16 @@ function isYoutubeHomePage(): boolean {
   return isYoutubeHost() && ["/", "/feed/recommended"].includes(location.pathname || "/");
 }
 
+function isSnapchatHost(): boolean {
+  const host = location.hostname.toLowerCase();
+  return host === "snapchat.com" || host.endsWith(".snapchat.com");
+}
+
 function isAddictiveSocialHref(raw: string): boolean {
   try {
     const url = new URL(raw, location.href);
     const host = url.hostname.toLowerCase().replace(/^www\./, "");
-    const { instagram, youtube } = focusedSocialCleanupSettings;
+    const { instagram, youtube, snapchat } = focusedSocialCleanupSettings;
     if (host === "youtube.com" || host === "m.youtube.com" || host === "youtu.be") {
       return Boolean(youtube.enabled && (
         (youtube.shorts && /^\/shorts(?:\/|$)/i.test(url.pathname))
@@ -1113,6 +1184,12 @@ function isAddictiveSocialHref(raw: string): boolean {
         || (instagram.suggested && /^\/explore\/people\/suggested(?:\/|$)/i.test(url.pathname))
         || (instagram.explore && /^\/explore(?:\/|$)/i.test(url.pathname))
         || (instagram.shopping && /^\/(?:shop|shopping|live)(?:\/|$)/i.test(url.pathname))
+      ));
+    }
+    if (host === "snapchat.com" || host.endsWith(".snapchat.com")) {
+      return Boolean(snapchat.enabled && (
+        (snapchat.spotlight && /^\/spotlight(?:\/|$)/i.test(url.pathname))
+        || (snapchat.stories && (host === "story.snapchat.com" || /^\/stories?(?:\/|$)/i.test(url.pathname)))
       ));
     }
   } catch {

@@ -323,6 +323,7 @@ export interface IosDeviceSummary extends UnknownRecord {
     forceWebClips?: boolean;
     instagram?: UnknownRecord;
     youtube?: UnknownRecord;
+    snapchat?: UnknownRecord;
   };
   note?: string;
   supervisedRequired?: boolean;

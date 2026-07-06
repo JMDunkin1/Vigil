@@ -379,6 +379,7 @@ last exit code = 0
   assert.match(content, /applyYoutubeAutofillFriction/);
   assert.match(content, /teardownYoutubeAutofillFriction/);
   assert.match(content, /cleanupInstagramSocialFeatures/);
+  assert.match(content, /cleanupSnapchatSocialFeatures/);
   assert.doesNotMatch(content, /"main > div"/);
   assert.match(content, /browserNoiseBlockingEnabled === false/);
   assert.match(content, /removeAttribute\("data-sentinel-youtube-friction"\)/);
