@@ -15,6 +15,7 @@ import { focusedSocialBlockedBundleIds, focusedSocialDeniedUrls, focusedSocialSu
 import type { IosSettings, SentinelState, UnknownRecord } from "./types.js";
 
 export const IOS_PROFILE_IDENTIFIER = "com.local-screen-time.ios-lock";
+export const IOS_MANAGED_HELPER_APP_BUNDLE_IDS = ["com.zohocorp.mdm"];
 const MAX_DENY_URLS = 500;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const SOFT_BLOCK_WEB_CLIPS = [
@@ -33,6 +34,7 @@ interface IosPolicyTargets {
   deniedUrls: string[];
   allowedUrls: string[];
   webClips: Array<{ id: string; label: string; url: string }>;
+  managedHelperAppBundleIds: string[];
   focusedSocial: ReturnType<typeof focusedSocialSummary>;
   grayscale: {
     desired: boolean;
@@ -64,6 +66,7 @@ export function normalizeIosSettings(body: UnknownRecord = {}, existing: Partial
     blockWeb: body.blockWeb === undefined ? current.blockWeb !== false : parseBoolean(body.blockWeb, true),
     hardenRemoval: body.hardenRemoval === undefined ? current.hardenRemoval !== false : parseBoolean(body.hardenRemoval, true),
     restrictInstallAndErase: body.restrictInstallAndErase === undefined ? current.restrictInstallAndErase !== false : parseBoolean(body.restrictInstallAndErase, true),
+    allowSafariHistoryClearing: body.allowSafariHistoryClearing === undefined ? current.allowSafariHistoryClearing !== false : parseBoolean(body.allowSafariHistoryClearing, true),
     blockedAppBundleIds: normalizeBundleIds(body.blockedAppBundleIds ?? body.blockedApps ?? current.blockedAppBundleIds ?? DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS),
     allowedAppBundleIds: normalizeBundleIds(body.allowedAppBundleIds ?? body.allowedApps ?? current.allowedAppBundleIds ?? DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS),
     deniedUrls: normalizeUrlList(body.deniedUrls ?? current.deniedUrls ?? []),
@@ -91,6 +94,7 @@ export function iosProfileSummary(state: SentinelState, now = new Date()) {
     supervisedRequired: true,
     removalHardened: Boolean(active && settings.hardenRemoval && settings.removalPassword),
     restrictInstallAndErase: Boolean(settings.restrictInstallAndErase),
+    allowSafariHistoryClearing: settings.allowSafariHistoryClearing !== false,
     mode: settings.mode,
     webMode: settings.webMode,
     blockApps: Boolean(settings.blockApps),
@@ -109,6 +113,7 @@ export function iosProfileSummary(state: SentinelState, now = new Date()) {
       deniedUrlCount: targets.deniedUrls.length,
       allowedUrlCount: targets.allowedUrls.length,
       webClipCount: targets.webClips.length,
+      managedHelperAppBundleIds: targets.managedHelperAppBundleIds,
       focusedSocial: targets.focusedSocial,
       grayscale: targets.grayscale,
       lastGeneratedAt: settings.lastGeneratedAt || null
@@ -201,6 +206,7 @@ function manageEngineHandoffSummary(active: boolean, targets: IosPolicyTargets):
     appBundleCount: targets.appBundleIds.length,
     deniedUrlCount: targets.deniedUrls.length,
     allowedUrlCount: targets.allowedUrls.length,
+    managedHelperAppBundleIds: targets.managedHelperAppBundleIds,
     note: active
       ? "Normal free iPhone delivery path: Sentinel exports this profile and ManageEngine owns enrollment, APNs wakeups, assignment, and removal."
       : "Enable the Sentinel iPhone policy before exporting a ManageEngine custom profile."
@@ -277,6 +283,12 @@ export function iosPolicyTargets(state: SentinelState, now = new Date()): IosPol
       ...focusedSocialBlockedBundleIds(focusedSocialSettings)
     ]);
   }
+  const managedHelperAppBundleIds = settings.blockApps ? [...IOS_MANAGED_HELPER_APP_BUNDLE_IDS] : [];
+  if (managedHelperAppBundleIds.length) {
+    appBundleIds = appMode === "allowlist"
+      ? withoutBundleIds(appBundleIds, managedHelperAppBundleIds)
+      : uniqueStrings([...appBundleIds, ...managedHelperAppBundleIds]);
+  }
 
   return {
     profileName,
@@ -286,6 +298,7 @@ export function iosPolicyTargets(state: SentinelState, now = new Date()): IosPol
     deniedUrls,
     allowedUrls,
     webClips,
+    managedHelperAppBundleIds,
     focusedSocial: focusedSocialSummary(focusedSocialSettings, {
       includeDeniedUrls: settings.blockWeb && webMode !== "allowlist",
       includeNativeApps: includeFocusedSocialNativeApps,
@@ -330,6 +343,7 @@ function currentIosSettings(state: SentinelState): IosSettings {
     blockWeb: state.deviceControls?.ios?.blockWeb,
     hardenRemoval: state.deviceControls?.ios?.hardenRemoval,
     restrictInstallAndErase: state.deviceControls?.ios?.restrictInstallAndErase,
+    allowSafariHistoryClearing: state.deviceControls?.ios?.allowSafariHistoryClearing,
     blockedAppBundleIds: state.deviceControls?.ios?.blockedAppBundleIds,
     allowedAppBundleIds: state.deviceControls?.ios?.allowedAppBundleIds,
     deniedUrls: state.deviceControls?.ios?.deniedUrls,
@@ -347,6 +361,7 @@ function disabledPolicyTargets(settings: IosSettings): IosPolicyTargets {
     deniedUrls: [],
     allowedUrls: [],
     webClips: [],
+    managedHelperAppBundleIds: [],
     focusedSocial: focusedSocialSummary(settings.focusedSocial, {
       includeDeniedUrls: false,
       includeNativeApps: false,
@@ -364,7 +379,9 @@ function disabledPolicyTargets(settings: IosSettings): IosPolicyTargets {
 
 function restrictionsPayload(settings: IosSettings, targets: IosPolicyTargets): MobileConfigPayload | null {
   if (!settings.enabled) return null;
-  const restrictions: UnknownRecord = {};
+  const restrictions: UnknownRecord = {
+    allowSafariHistoryClearing: settings.allowSafariHistoryClearing !== false
+  };
   if ((settings.blockApps || targets.grayscale.settingsGuarded) && targets.appBundleIds.length) {
     if (targets.appMode === "allowlist") restrictions.allowListedAppBundleIDs = targets.appBundleIds;
     else restrictions.blockedAppBundleIDs = targets.appBundleIds;
@@ -487,6 +504,11 @@ function uniqueStrings(values: readonly unknown[]): string[] {
     output.push(value);
   }
   return output.sort((a, b) => a.localeCompare(b));
+}
+
+function withoutBundleIds(values: readonly string[], bundleIdsToRemove: readonly string[]): string[] {
+  const blocked = new Set(bundleIdsToRemove.map((value) => value.toLowerCase()));
+  return values.filter((value) => !blocked.has(value.toLowerCase()));
 }
 
 function uniqueWebClips(values: ReadonlyArray<{ id: string; label: string; url: string }>): Array<{ id: string; label: string; url: string }> {

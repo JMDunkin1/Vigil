@@ -68,6 +68,8 @@ Keep using the same `data/sentinel-supervisor.keybag` or `SENTINEL_SUPERVISOR_KE
 5. Assign that profile to the enrolled iPhone.
 6. Confirm the policy is installed on the phone under Settings > General > VPN & Device Management.
 
+Sentinel includes ManageEngine's iOS helper app bundle (`com.zohocorp.mdm`) in the app restrictions payload when app restrictions are enabled. That hides the visible vendor app without removing the managed profile, enrollment, or hosted remote-delivery channel.
+
 ## Operational Notes
 
 - Treat Sentinel's self-hosted MDM doctor as advanced diagnostic tooling only. It can still report APNs certificate blockers while the ManageEngine path is healthy, because ManageEngine, not Sentinel, is the MDM server in normal use.

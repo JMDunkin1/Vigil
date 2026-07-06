@@ -37,14 +37,22 @@ try {
     .find((payload) => payload.PayloadType === "com.apple.profileRemovalPassword");
   assert.ok(removalPayload, "hardened ManageEngine profile should include a removal password payload");
   assert.equal(removalPayload.RemovalPassword, removalPassword);
+  const restrictionsPayload = profile.PayloadContent
+    .map((item) => recordValue(item, "profile payload"))
+    .find((payload) => payload.PayloadType === "com.apple.applicationaccess");
+  assert.deepEqual(restrictionsPayload?.blockedAppBundleIDs, ["com.zohocorp.mdm"]);
+  assert.equal(restrictionsPayload?.allowSafariHistoryClearing, true);
 
   const summaryText = await readFile(summaryPath, "utf8");
   const summary = recordValue(JSON.parse(summaryText), "ManageEngine export summary");
   assert.equal(summary.stateSaved, true);
   assert.equal(summary.deliveryProvider, "manageengine");
   assert.equal(summary.normalFreeDeliveryPath, true);
+  assert.equal(summary.appBundleCount, 1);
+  assert.deepEqual(summary.managedHelperAppBundleIds, ["com.zohocorp.mdm"]);
   assert.equal(summary.hardenRemoval, true);
   assert.equal(summary.removalPasswordStoredInSentinelState, true);
+  assert.equal(summary.allowSafariHistoryClearing, true);
   assert.equal(summaryText.includes(removalPassword), false);
 
   const typoProfilePath = join(dataDir, "typo-should-not-write.mobileconfig");

@@ -582,10 +582,15 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   const parsed = parseHttpUrl(value);
   if (!parsed) return null;
   const candidates = urlPatternCandidates(parsed);
+  const compactCandidates = candidates.map(compactUrlPatternText).filter(Boolean);
   for (const raw of profile.blockedUrlPatterns || []) {
     const pattern = normalizeUrlPattern(raw);
     if (!pattern) continue;
-    if (!candidates.some((candidate) => candidate.includes(pattern))) continue;
+    const compactPattern = compactUrlPatternText(pattern);
+    const matchesRaw = candidates.some((candidate) => candidate.includes(pattern));
+    const matchesCompact = compactPattern.length >= 4
+      && compactCandidates.some((candidate) => candidate.includes(compactPattern));
+    if (!matchesRaw && !matchesCompact) continue;
     return {
       pattern: raw,
       label: `URL pattern: ${raw}`,
@@ -745,12 +750,34 @@ function urlPatternCandidates(url: URL): string[] {
   const host = normalizeHost(url.hostname);
   const hostPath = `${host}${url.pathname}${url.search}${url.hash}`.toLowerCase();
   const path = `${url.pathname}${url.search}${url.hash}`.toLowerCase();
-  return [
+  const raw = [
     hostPath,
     hostPath.replace(/^www\./, ""),
     path,
     url.toString().toLowerCase().replace(/^https?:\/\//, "").replace(/^www\./, "")
   ];
+  const decoded = raw.flatMap(decodedUrlPatternCandidates);
+  return [...new Set([...raw, ...decoded])];
+}
+
+function decodedUrlPatternCandidates(value: string): string[] {
+  const plusAsSpace = value.replace(/\+/g, " ");
+  const decoded = safeDecodeUrlText(plusAsSpace);
+  return [plusAsSpace, decoded].map((candidate) => candidate.toLowerCase());
+}
+
+function safeDecodeUrlText(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function compactUrlPatternText(value: string): string {
+  return safeDecodeUrlText(String(value || "").replace(/\+/g, " "))
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "");
 }
 
 function cleanupExpired(state: SentinelState, now: Date): void {

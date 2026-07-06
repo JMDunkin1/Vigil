@@ -771,6 +771,7 @@ function iosPolicyHash(state: SentinelState, now: Date): string {
     blockWeb: ios.blockWeb !== false,
     hardenRemoval: ios.hardenRemoval !== false,
     restrictInstallAndErase: ios.restrictInstallAndErase !== false,
+    allowSafariHistoryClearing: ios.allowSafariHistoryClearing !== false,
     blockedAppBundleIds: ios.blockedAppBundleIds || [],
     allowedAppBundleIds: ios.allowedAppBundleIds || [],
     deniedUrls: ios.deniedUrls || [],

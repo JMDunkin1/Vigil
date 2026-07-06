@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { BRICK_MODE_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../../src/defaults.js";
 import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDoctor, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../../src/iosMdm.js";
-import { buildIosConfigurationProfile, iosProfileSummary } from "../../src/iosProfiles.js";
+import { IOS_MANAGED_HELPER_APP_BUNDLE_IDS, buildIosConfigurationProfile, iosProfileSummary } from "../../src/iosProfiles.js";
 import { parsePlist, plistData, toPlist } from "../../src/plist.js";
 import { profileById } from "../../src/policy.js";
 import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
@@ -15,15 +15,26 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
 
   state.deviceControls.ios.enabled = true;
   const enabledProfile = buildIosConfigurationProfile(state, now);
-  assert.doesNotMatch(enabledProfile, /blockedAppBundleIDs/);
+  assert.match(enabledProfile, /blockedAppBundleIDs/);
+  assert.match(enabledProfile, /com\.zohocorp\.mdm/);
   assert.doesNotMatch(enabledProfile, /com\.burbn\.instagram/);
   assert.doesNotMatch(enabledProfile, /com\.google\.ios\.youtube/);
   assert.match(enabledProfile, /pornhub\.com/);
   assert.match(enabledProfile, /Sentinel Instagram/);
   assert.match(enabledProfile, /Sentinel YouTube/);
   assert.match(enabledProfile, /allowAppInstallation/);
+  const enabledParsed = recordValue(parsePlist(enabledProfile), "enabled phone profile");
+  assert.ok(Array.isArray(enabledParsed.PayloadContent), "enabled phone profile payload content should be an array");
+  const enabledRestrictions = enabledParsed.PayloadContent
+    .map((item) => recordValue(item, "enabled phone payload"))
+    .find((payload) => payload.PayloadType === "com.apple.applicationaccess");
+  assert.ok(enabledRestrictions, "enabled phone profile should include restrictions");
+  assert.equal(enabledRestrictions.allowSafariHistoryClearing, true);
   const enabledSummary = iosProfileSummary(state, now);
-  assert.equal(enabledSummary.profile.appBundleCount, 0);
+  assert.equal(enabledSummary.profile.appBundleCount, IOS_MANAGED_HELPER_APP_BUNDLE_IDS.length);
+  assert.equal(enabledSummary.allowSafariHistoryClearing, true);
+  assert.deepEqual(enabledSummary.profile.managedHelperAppBundleIds, IOS_MANAGED_HELPER_APP_BUNDLE_IDS);
+  assert.deepEqual(enabledSummary.manageEngine.managedHelperAppBundleIds, IOS_MANAGED_HELPER_APP_BUNDLE_IDS);
   assert.equal(enabledSummary.profile.focusedSocial.nativeAppBundleCount, 0);
   assert.equal(enabledSummary.manageEngine.deliveryProvider, "manageengine");
   assert.equal(enabledSummary.manageEngine.preferred, true);
@@ -206,6 +217,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   noAppsState.deviceControls.ios.blockApps = false;
   const noAppsSummary = iosProfileSummary(noAppsState, now);
   assert.equal(noAppsSummary.profile.appBundleCount, 0);
+  assert.deepEqual(noAppsSummary.profile.managedHelperAppBundleIds, []);
   assert.equal(noAppsSummary.profile.focusedSocial.nativeAppBundleCount, 0);
   const noAppsProfile = buildIosConfigurationProfile(noAppsState, now);
   assert.doesNotMatch(noAppsProfile, /blockedAppBundleIDs/);
@@ -350,8 +362,9 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   const expiredCommand = state.deviceControls.ios.mdm.commands.find((item) => item.reason === "expired-phone" && item.requestType === "InstallProfile");
   const expiredMdmProfile = parseMdmProfile(expiredCommand?.profileBase64);
   assert.equal(expiredMdmProfile.DurationUntilRemoval, undefined);
-  assert.equal(profilePayload(expiredMdmProfile, "com.apple.applicationaccess")?.blockedAppBundleIDs, undefined);
-  assert.equal(profilePayload(expiredMdmProfile, "com.apple.applicationaccess")?.allowListedAppBundleIDs, undefined);
+  const expiredRestrictions = profilePayload(expiredMdmProfile, "com.apple.applicationaccess");
+  assert.deepEqual(expiredRestrictions?.blockedAppBundleIDs, IOS_MANAGED_HELPER_APP_BUNDLE_IDS);
+  assert.equal(expiredRestrictions?.allowListedAppBundleIDs, undefined);
 
   state.deviceControls.ios.enabled = false;
   const removePolicy = queueIosMdmPolicyRefresh(state, "disable-ios", now, { udids: ["iphone-udid-1"] }) as { profileQueued?: number };

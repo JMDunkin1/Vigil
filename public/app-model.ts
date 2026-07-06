@@ -313,6 +313,7 @@ export interface IosDeviceSummary extends UnknownRecord {
   removalHardened?: boolean;
   hardenRemoval?: boolean;
   restrictInstallAndErase?: boolean;
+  allowSafariHistoryClearing?: boolean;
   blockedAppBundleIds?: string[];
   allowedAppBundleIds?: string[];
   deniedUrls?: string[];

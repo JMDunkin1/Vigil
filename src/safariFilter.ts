@@ -13,6 +13,7 @@ import type { ActivePolicy, SentinelState } from "./types.js";
 
 export const SAFARI_FILTER_PROFILE_ID = "tech.caseline.sentinel.safari-url-filter";
 export const SAFARI_FILTER_PAYLOAD_ID = `${SAFARI_FILTER_PROFILE_ID}.payload`;
+const SAFARI_HISTORY_RESTRICTIONS_PAYLOAD_ID = `${SAFARI_FILTER_PROFILE_ID}.history-clearing`;
 export const SAFARI_FILTER_PROFILE_PATH = join(DATA_DIR, "sentinel-safari-url-filter.mobileconfig");
 
 const execFileAsync = promisify(execFile);
@@ -86,6 +87,7 @@ export function safariFilterPolicySignature(state: SentinelState, now = new Date
       version: SAFARI_FILTER_SIGNATURE_VERSION,
       appleBuiltInContentFilter: true,
       removalDisallowed: true,
+      allowSafariHistoryClearing: true,
       denyUrls: safariFilterDenyUrls(state, now)
     }))
     .digest("hex");
@@ -106,6 +108,15 @@ export function buildSafariFilterProfile(state: SentinelState, now = new Date())
         PayloadIdentifier: SAFARI_FILTER_PAYLOAD_ID,
         PayloadType: "com.apple.familycontrols.contentfilter",
         PayloadUUID: deterministicUuid(SAFARI_FILTER_PAYLOAD_ID),
+        PayloadVersion: 1
+      },
+      {
+        allowSafariHistoryClearing: true,
+        PayloadDescription: "Allows Safari history clearing while Sentinel's Safari URL filter is installed.",
+        PayloadDisplayName: "Sentinel Safari History Clearing",
+        PayloadIdentifier: SAFARI_HISTORY_RESTRICTIONS_PAYLOAD_ID,
+        PayloadType: "com.apple.applicationaccess",
+        PayloadUUID: deterministicUuid(SAFARI_HISTORY_RESTRICTIONS_PAYLOAD_ID),
         PayloadVersion: 1
       }
     ],

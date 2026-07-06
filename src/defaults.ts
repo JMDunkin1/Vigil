@@ -223,7 +223,67 @@ export const DEFAULT_EXPLICIT_BLOCKED_SITES = [
   "brazzers.com"
 ];
 
+const DEFAULT_EXPLICIT_SEARCH_TERMS = [
+  "porn",
+  "porno",
+  "xxx",
+  "nsfw",
+  "hentai",
+  "rule34",
+  "gonewild",
+  "onlyfans",
+  "fansly",
+  "chaturbate",
+  "stripchat",
+  "cam4",
+  "redtube",
+  "youporn",
+  "spankbang",
+  "xvideos",
+  "xnxx",
+  "xhamster",
+  "18+",
+  "18%2b",
+  "18plus",
+  "18-plus"
+];
+
+const DEFAULT_EXPLICIT_COMIC_SITE_TERMS = [
+  "honeytoon",
+  "honeytoons",
+  "hooneytoon",
+  "hooneytoons",
+  "mawha"
+];
+
+const DEFAULT_EXPLICIT_COMIC_TERMS = [
+  "manhwa",
+  "mawha",
+  "manhua",
+  "webtoon",
+  "webtoons"
+];
+
+const DEFAULT_EXPLICIT_COMIC_RISK_MARKERS = [
+  "18",
+  "18plus",
+  "adult",
+  "nsfw",
+  "porn",
+  "hentai",
+  "lewd",
+  "mature",
+  "uncensored"
+];
+
+function combinedExplicitTerms(terms: readonly string[], markers: readonly string[]): string[] {
+  return terms.flatMap((term) => markers.flatMap((marker) => [`${marker}${term}`, `${term}${marker}`]));
+}
+
 export const DEFAULT_EXPLICIT_URL_PATTERNS = [
+  ...DEFAULT_EXPLICIT_SEARCH_TERMS,
+  ...DEFAULT_EXPLICIT_COMIC_SITE_TERMS,
+  ...combinedExplicitTerms(DEFAULT_EXPLICIT_COMIC_TERMS, DEFAULT_EXPLICIT_COMIC_RISK_MARKERS),
   "reddit.com/r/gonewild",
   "reddit.com/r/nsfw",
   "reddit.com/r/porn",
@@ -700,6 +760,7 @@ export function defaultState(): SentinelState {
         blockWeb: true,
         hardenRemoval: true,
         restrictInstallAndErase: true,
+        allowSafariHistoryClearing: true,
         blockedAppBundleIds: DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
         allowedAppBundleIds: DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS,
         deniedUrls: [],

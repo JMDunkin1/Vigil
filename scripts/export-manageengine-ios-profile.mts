@@ -89,12 +89,14 @@ function buildSummary(state: SentinelState, windowMode: boolean, outputPath: str
     hardenRemoval: ios.hardenRemoval,
     removalPasswordStoredInSentinelState: Boolean(ios.hardenRemoval && ios.removalPassword),
     restrictInstallAndErase: ios.restrictInstallAndErase,
+    allowSafariHistoryClearing: ios.allowSafariHistoryClearing !== false,
     profileInstallAllowedByThisProfile: !ios.restrictInstallAndErase,
     warning: windowMode
       ? "Temporary profile for enrolling in ManageEngine. Replace it with the managed-policy profile after enrollment."
       : "Final Sentinel policy profile for ManageEngine assignment and remote delivery.",
     generatedFrom: summary.profile.generatedFrom,
     appBundleCount: summary.profile.appBundleCount,
+    managedHelperAppBundleIds: summary.profile.managedHelperAppBundleIds,
     deniedUrlCount: summary.profile.deniedUrlCount,
     allowedUrlCount: summary.profile.allowedUrlCount,
     webClipCount: summary.profile.webClipCount,
