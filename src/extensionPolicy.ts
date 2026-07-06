@@ -188,7 +188,8 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
 
   const policy = blockingPolicyFor(state, usage, sample, now);
   const contentMatch = matchContentFilterForActivePolicy(state, parsed.url, now);
-  const urlPattern = policy ? matchBlockedUrlPattern(policy.profile, sample.url) : null;
+  const siteBlocked = policy ? shouldBlockSite(policy.profile, hostname) : false;
+  const urlPattern = policy && !siteBlocked ? matchBlockedUrlPattern(policy.profile, sample.url) : null;
   if (contentMatch) {
     return {
       ok: true,
@@ -208,7 +209,7 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
     };
   }
 
-  if (!policy || (!urlPattern && !shouldBlockSite(policy.profile, hostname))) {
+  if (!policy || (!urlPattern && !siteBlocked)) {
     const pause = intentionalUseDecision(state, sample, { event, returnUrl: sample.url }, now);
     if (pause.shouldPause) {
       return {

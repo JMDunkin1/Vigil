@@ -37,6 +37,7 @@ function bindDeviceForms({ $, post, lines, toast, errorMessage, refresh }: Devic
         blockWeb: $("#iosBlockWeb").checked,
         hardenRemoval: $("#iosHardenRemoval").checked,
         restrictInstallAndErase: $("#iosRestrictInstallErase").checked,
+        allowSafariHistoryClearing: $("#iosAllowSafariHistoryClearing").checked,
         blockedAppBundleIds: lines($("#iosBlockedBundles").value),
         allowedAppBundleIds: lines($("#iosAllowedBundles").value),
         deniedUrls: lines($("#iosDeniedUrls").value),
@@ -110,6 +111,7 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
   $("#iosBlockWeb").checked = ios.blockWeb !== false;
   $("#iosHardenRemoval").checked = ios.removalHardened || ios.hardenRemoval !== false;
   $("#iosRestrictInstallErase").checked = ios.restrictInstallAndErase !== false;
+  $("#iosAllowSafariHistoryClearing").checked = ios.allowSafariHistoryClearing !== false;
   $("#iosBlockedBundles").value = (ios.blockedAppBundleIds || []).join("\n");
   $("#iosAllowedBundles").value = (ios.allowedAppBundleIds || []).join("\n");
   $("#iosDeniedUrls").value = (ios.deniedUrls || []).join("\n");
@@ -135,6 +137,7 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
     ["Native social apps", nativeSocialText(profile.focusedSocial, Boolean(ios.enabled))],
     ["Grayscale", profile.grayscale?.desired ? `${profile.grayscale.label || "on"}${profile.grayscale.settingsGuarded ? " + Settings guard" : ""}` : "normal"],
     ["Native Reels", "not available through public iOS APIs"],
+    ["Safari history", ios.allowSafariHistoryClearing !== false ? "clearing allowed" : "clearing blocked"],
     ["Removal", ios.removalHardened ? "passcode protected" : "device removable"],
     ["Profile", profile.generatedFrom || "saved policy"],
     ["ManageEngine export", manageEngine.exportCommand || "npm run ios:manageengine:export"],

@@ -687,6 +687,7 @@ export interface IosSettings {
   blockWeb: boolean;
   hardenRemoval: boolean;
   restrictInstallAndErase: boolean;
+  allowSafariHistoryClearing: boolean;
   blockedAppBundleIds: string[];
   allowedAppBundleIds: string[];
   deniedUrls: string[];

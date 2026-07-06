@@ -89,12 +89,14 @@ function buildSummary(state: VigilState, windowMode: boolean, outputPath: string
     hardenRemoval: ios.hardenRemoval,
     removalPasswordStoredInVigilState: Boolean(ios.hardenRemoval && ios.removalPassword),
     restrictInstallAndErase: ios.restrictInstallAndErase,
+    allowSafariHistoryClearing: ios.allowSafariHistoryClearing !== false,
     profileInstallAllowedByThisProfile: !ios.restrictInstallAndErase,
     warning: windowMode
       ? "Temporary profile for enrolling in ManageEngine. Replace it with the managed-policy profile after enrollment."
       : "Final Vigil policy profile for ManageEngine assignment and remote delivery.",
     generatedFrom: summary.profile.generatedFrom,
     appBundleCount: summary.profile.appBundleCount,
+    managedHelperAppBundleIds: summary.profile.managedHelperAppBundleIds,
     deniedUrlCount: summary.profile.deniedUrlCount,
     allowedUrlCount: summary.profile.allowedUrlCount,
     webClipCount: summary.profile.webClipCount,

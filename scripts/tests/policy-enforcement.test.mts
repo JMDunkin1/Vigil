@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { appleContentFilterStatusFromRecord } from "../../src/appleContentFilter.js";
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../../src/appLocks.js";
 import { contentFilterEnabled, matchContentFilterUrl } from "../../src/contentFilters.js";
-import { BRICK_MODE_PROFILE_ID, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_EXPLICIT_URL_PATTERNS, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../../src/defaults.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../../src/distanceKey.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../../src/extensionPolicy.js";
 import { buildHostsBlock, managedBlockDomains } from "../../src/hardening.js";
@@ -254,6 +254,16 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockUrl(profile, "https://www.youtube.com/watch?v=abc"), false);
   assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/popular"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/learnprogramming/comments/demo"), false);
+  assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("honeytoon"), true);
+  assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("webtoon18"), true);
+  assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=porn"), true);
+  assert.equal(shouldBlockUrl(profile, "https://duckduckgo.com/?q=hooneytoons"), true);
+  assert.equal(shouldBlockUrl(profile, "https://search.example/?q=mawha"), true);
+  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=webtoon%2018")?.pattern, "webtoon18");
+  assert.equal(shouldBlockUrl(profile, "https://search.example/?q=18%2B+manhwa"), true);
+  assert.equal(shouldBlockUrl(profile, "https://search.example/?q=webtoon+cooking"), false);
+  assert.equal(shouldBlockUrl(profile, "https://search.example/?q=18"), false);
+  assert.equal(shouldBlockUrl(profile, "https://example.com/archive/2018/report"), false);
   assert.equal(shouldBlockUrl({ ...profile, blockedUrlPatterns: ["/reels", "casino"] }, "https://example.com/reels/latest"), true);
   assert.equal(matchBlockedUrlPattern({ ...profile, blockedUrlPatterns: ["casino"] }, "https://news.example/search?q=casino")?.pattern, "casino");
   assert.equal(expandAppTargets(["Steam"]).includes("steam helper"), true);
@@ -308,6 +318,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.match(profileText, /<key>useContentFilter<\/key>\s*<true\/>/);
   assert.match(profileText, /<key>PayloadRemovalDisallowed<\/key>\s*<true\/>/);
   assert.match(profileText, /com\.apple\.familycontrols\.contentfilter/);
+  assert.match(profileText, /<key>allowSafariHistoryClearing<\/key>\s*<true\/>/);
+  assert.match(profileText, /com\.apple\.applicationaccess/);
   assert.match(profileText, /VigilPolicySignature:/);
 }
 
@@ -323,6 +335,12 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const explicitReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/gonewild", event: "navigation" }, now);
   assert.equal(explicitReddit.blocked, true);
   assert.equal(recordValue(explicitReddit.policy, "explicit Reddit policy").kind, "baseline");
+  const explicitComicSearch = evaluateExtensionCheck(state, usage, { url: "https://www.google.com/search?q=webtoon%2018", event: "navigation" }, now);
+  assert.equal(explicitComicSearch.blocked, true);
+  assert.equal(recordValue(explicitComicSearch.policy, "explicit comic-search policy").kind, "baseline");
+  assert.equal(recordValue(explicitComicSearch.urlPattern, "explicit comic-search pattern").pattern, "webtoon18");
+  const bare18Search = evaluateExtensionCheck(state, usage, { url: "https://www.google.com/search?q=18", event: "navigation" }, now);
+  assert.equal(bare18Search.blocked, false);
   const baselineYoutube = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
   assert.equal(baselineYoutube.blocked, false);
   const baselineManagedDomains = managedBlockDomains(defaultState(), now);

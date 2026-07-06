@@ -68,6 +68,8 @@ Keep using the same `data/vigil-supervisor.keybag` or `VIGIL_SUPERVISOR_KEYBAG` 
 5. Assign that profile to the enrolled iPhone.
 6. Confirm the policy is installed on the phone under Settings > General > VPN & Device Management.
 
+Vigil includes ManageEngine's iOS helper app bundle (`com.zohocorp.mdm`) in the app restrictions payload when app restrictions are enabled. That hides the visible vendor app without removing the managed profile, enrollment, or hosted remote-delivery channel.
+
 ## Operational Notes
 
 - Treat Vigil's self-hosted MDM doctor as advanced diagnostic tooling only. It can still report APNs certificate blockers while the ManageEngine path is healthy, because ManageEngine, not Vigil, is the MDM server in normal use.

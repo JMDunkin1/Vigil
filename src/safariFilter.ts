@@ -13,6 +13,7 @@ import type { ActivePolicy, VigilState } from "./types.js";
 
 export const SAFARI_FILTER_PROFILE_ID = "tech.caseline.vigil.safari-url-filter";
 export const SAFARI_FILTER_PAYLOAD_ID = `${SAFARI_FILTER_PROFILE_ID}.payload`;
+const SAFARI_HISTORY_RESTRICTIONS_PAYLOAD_ID = `${SAFARI_FILTER_PROFILE_ID}.history-clearing`;
 export const SAFARI_FILTER_PROFILE_PATH = join(DATA_DIR, "vigil-safari-url-filter.mobileconfig");
 
 const execFileAsync = promisify(execFile);
@@ -86,6 +87,7 @@ export function safariFilterPolicySignature(state: VigilState, now = new Date())
       version: SAFARI_FILTER_SIGNATURE_VERSION,
       appleBuiltInContentFilter: true,
       removalDisallowed: true,
+      allowSafariHistoryClearing: true,
       denyUrls: safariFilterDenyUrls(state, now)
     }))
     .digest("hex");
@@ -106,6 +108,15 @@ export function buildSafariFilterProfile(state: VigilState, now = new Date()): s
         PayloadIdentifier: SAFARI_FILTER_PAYLOAD_ID,
         PayloadType: "com.apple.familycontrols.contentfilter",
         PayloadUUID: deterministicUuid(SAFARI_FILTER_PAYLOAD_ID),
+        PayloadVersion: 1
+      },
+      {
+        allowSafariHistoryClearing: true,
+        PayloadDescription: "Allows Safari history clearing while Vigil's Safari URL filter is installed.",
+        PayloadDisplayName: "Vigil Safari History Clearing",
+        PayloadIdentifier: SAFARI_HISTORY_RESTRICTIONS_PAYLOAD_ID,
+        PayloadType: "com.apple.applicationaccess",
+        PayloadUUID: deterministicUuid(SAFARI_HISTORY_RESTRICTIONS_PAYLOAD_ID),
         PayloadVersion: 1
       }
     ],

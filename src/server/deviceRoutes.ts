@@ -65,6 +65,7 @@ export async function handleDeviceApiRoute(
       blockWeb: current.blockWeb !== false,
       hardenRemoval: current.hardenRemoval !== false,
       restrictInstallAndErase: current.restrictInstallAndErase !== false,
+      allowSafariHistoryClearing: current.allowSafariHistoryClearing !== false,
       blockedAppBundleIds: current.blockedAppBundleIds || [],
       allowedAppBundleIds: current.allowedAppBundleIds || [],
       deniedUrls: current.deniedUrls || [],

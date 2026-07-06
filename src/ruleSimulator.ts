@@ -239,6 +239,15 @@ export function explainRuleDecision(
 
 function matchTargetForPolicy(state: VigilState, policy: ActivePolicy | null | undefined, sample: UsageSample): SimulationMatch | null {
   if (!policy?.profile) return null;
+  if (sample.hostname && shouldBlockSite(policy.profile, sample.hostname)) {
+    const mode = policy.profile.mode === "allowlist" ? "is outside the allowed sites" : "is on the profile site blocklist";
+    return {
+      type: "site",
+      label: sample.hostname,
+      detail: `${sample.hostname} ${mode}.`
+    };
+  }
+
   const urlPattern = sample.url ? matchBlockedUrlPattern(policy.profile, sample.url) : null;
   if (urlPattern) {
     return {
@@ -246,15 +255,6 @@ function matchTargetForPolicy(state: VigilState, policy: ActivePolicy | null | u
       label: urlPattern.label,
       detail: `${urlPattern.url} matches URL pattern ${urlPattern.pattern}.`,
       pattern: urlPattern.pattern
-    };
-  }
-
-  if (sample.hostname && shouldBlockSite(policy.profile, sample.hostname)) {
-    const mode = policy.profile.mode === "allowlist" ? "is outside the allowed sites" : "is on the profile site blocklist";
-    return {
-      type: "site",
-      label: sample.hostname,
-      detail: `${sample.hostname} ${mode}.`
     };
   }
 
