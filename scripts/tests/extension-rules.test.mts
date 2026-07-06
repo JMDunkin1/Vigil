@@ -16,13 +16,16 @@ import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.m
   state.deviceControls.ios.enabled = true;
   state.deviceControls.ios.focusedSocial.youtube.home = false;
   state.deviceControls.ios.focusedSocial.instagram.explore = false;
+  state.deviceControls.ios.focusedSocial.snapchat.stories = false;
   const iosFocusedSocial = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
   assert.equal(iosFocusedSocial.focusedSocialCleanupEnabled, true);
   const iosCleanup = recordValue(iosFocusedSocial.focusedSocialCleanupSettings, "iOS cleanup settings");
   assert.equal(recordValue(iosCleanup.youtube, "YouTube cleanup settings").home, false);
   assert.equal(recordValue(iosCleanup.instagram, "Instagram cleanup settings").explore, false);
+  assert.equal(recordValue(iosCleanup.snapchat, "Snapchat cleanup settings").stories, false);
   const snapshotCleanup = recordValue(extensionRuleSnapshot(state, now).focusedSocialCleanupSettings, "snapshot cleanup settings");
   assert.equal(recordValue(snapshotCleanup.youtube, "snapshot YouTube cleanup settings").home, false);
+  assert.equal(recordValue(snapshotCleanup.snapchat, "snapshot Snapchat cleanup settings").stories, false);
   state.deviceControls.ios.focusedSocial.enabled = false;
   const iosFocusedSocialOff = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
   assert.equal(iosFocusedSocialOff.focusedSocialCleanupEnabled, false);

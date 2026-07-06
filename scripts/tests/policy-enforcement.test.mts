@@ -850,7 +850,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
       ...state.profiles[0],
       mode: "allowlist",
       blockedSites: [],
-      allowedSites: ["youtube.com", "instagram.com", "reddit.com"]
+      allowedSites: ["youtube.com", "instagram.com", "reddit.com", "snapchat.com"]
     }
   };
   const usage = {};
@@ -864,11 +864,21 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reels/xyz"), "Instagram reels filter").id, "instagram-reels");
   assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reel/xyz"), "Instagram reel filter").id, "instagram-reels");
   assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/explore/"), "Instagram Explore filter").id, "instagram-explore");
+  const snapFriend = evaluateExtensionCheck(state, usage, { url: "https://web.snapchat.com/", event: "navigation" }, now);
+  assert.equal(snapFriend.blocked, false);
+  const snapSpotlight = evaluateExtensionCheck(state, usage, { url: "https://www.snapchat.com/spotlight/demo", event: "navigation" }, now);
+  assert.equal(snapSpotlight.blocked, true);
+  assert.equal(snapSpotlight.reason, "content-filter");
+  assert.equal(must(snapSpotlight.contentFilter, "Snapchat Spotlight filter").id, "snapchat-spotlight");
+  const snapStories = evaluateExtensionCheck(state, usage, { url: "https://story.snapchat.com/p/demo", event: "navigation" }, now);
+  assert.equal(snapStories.blocked, true);
+  assert.equal(must(snapStories.contentFilter, "Snapchat Stories filter").id, "snapchat-public-stories");
   state.settings.contentFilterEnabled = false;
   state.settings.safariUrlFilterEnabled = false;
   assert.equal(contentFilterEnabled(state), true);
   assert.equal(safariUrlFilterEnabled(state), true);
   assert.equal(must(matchContentFilterUrl(state, "https://www.youtube.com/shorts/abc"), "YouTube Shorts filter").id, "youtube-shorts");
+  assert.equal(must(matchContentFilterUrl(state, "https://snapchat.com/stories"), "Snapchat Stories filter").id, "snapchat-stories");
   updateSettings(state.settings, { contentFilterEnabled: false, safariUrlFilterEnabled: false, strictBypassProtectionEnabled: false });
   assert.equal(state.settings.contentFilterEnabled, true);
   assert.equal(state.settings.safariUrlFilterEnabled, true);

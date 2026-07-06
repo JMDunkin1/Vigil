@@ -309,6 +309,8 @@ export const DEFAULT_SHORT_FORM_URL_PATTERNS = [
   "x.com/explore",
   "twitter.com/explore",
   "snapchat.com/spotlight",
+  "snapchat.com/stories",
+  "story.snapchat.com",
   "tiktok.com"
 ];
 

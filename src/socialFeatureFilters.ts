@@ -7,6 +7,8 @@ export type FocusedSocialFeatureKey =
   | "suggested"
   | "shopping"
   | "shorts"
+  | "spotlight"
+  | "stories"
   | "home"
   | "ads";
 
@@ -127,6 +129,34 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
         deniedUrls: []
       }
     ]
+  },
+  {
+    id: "snapchat",
+    label: "Snapchat",
+    nativeBundleId: "com.toyopagroup.picaboo",
+    webClip: {
+      id: "snapchat",
+      label: "Vigil Snapchat",
+      url: "https://web.snapchat.com/"
+    },
+    features: [
+      {
+        key: "spotlight",
+        label: "Spotlight",
+        deniedUrls: [
+          "snapchat.com/spotlight",
+          "web.snapchat.com/spotlight"
+        ]
+      },
+      {
+        key: "stories",
+        label: "Stories",
+        deniedUrls: [
+          "snapchat.com/stories",
+          "story.snapchat.com"
+        ]
+      }
+    ]
   }
 ];
 
@@ -154,6 +184,14 @@ export function defaultFocusedSocialSettings(): FocusedSocialSettings {
       explore: true,
       suggested: true,
       ads: true
+    },
+    snapchat: {
+      enabled: true,
+      spotlight: true,
+      stories: true,
+      explore: true,
+      suggested: true,
+      ads: true
     }
   };
 }
@@ -166,7 +204,8 @@ export function normalizeFocusedSocialSettings(value: unknown = {}, existing: Pa
     enabled: body.enabled === undefined ? current.enabled !== false : parseBoolean(body.enabled, true),
     forceWebClips: body.forceWebClips === undefined ? current.forceWebClips !== false : parseBoolean(body.forceWebClips, true),
     instagram: normalizeInstagramSettings(recordValue(body.instagram), current.instagram, defaults.instagram),
-    youtube: normalizeYoutubeSettings(recordValue(body.youtube), current.youtube, defaults.youtube)
+    youtube: normalizeYoutubeSettings(recordValue(body.youtube), current.youtube, defaults.youtube),
+    snapchat: normalizeSnapchatSettings(recordValue(body.snapchat), current.snapchat, defaults.snapchat)
   };
 }
 
@@ -189,7 +228,7 @@ export function withoutFocusedSocialDeniedUrls(values: readonly unknown[]): stri
 
 export function focusedSocialBrowserCleanupEnabled(value: unknown): boolean {
   const settings = normalizeFocusedSocialSettings(value);
-  return Boolean(settings.enabled && (settings.instagram.enabled || settings.youtube.enabled));
+  return Boolean(settings.enabled && (settings.instagram.enabled || settings.youtube.enabled || settings.snapchat.enabled));
 }
 
 export function focusedSocialBrowserCleanupSettings(value: unknown): FocusedSocialSettings {
@@ -261,6 +300,10 @@ function mergeFocusedSocialSettings(defaults: FocusedSocialSettings, existing: P
     youtube: {
       ...defaults.youtube,
       ...(recordValue(existing.youtube) as Partial<FocusedSocialSettings["youtube"]>)
+    },
+    snapchat: {
+      ...defaults.snapchat,
+      ...(recordValue(existing.snapchat) as Partial<FocusedSocialSettings["snapchat"]>)
     }
   };
 }
@@ -289,6 +332,21 @@ function normalizeYoutubeSettings(
     enabled: body.enabled === undefined ? current.enabled !== false : parseBoolean(body.enabled, defaults.enabled),
     shorts: body.shorts === undefined ? current.shorts !== false : parseBoolean(body.shorts, defaults.shorts),
     home: body.home === undefined ? current.home !== false : parseBoolean(body.home, defaults.home),
+    explore: body.explore === undefined ? current.explore !== false : parseBoolean(body.explore, defaults.explore),
+    suggested: body.suggested === undefined ? current.suggested !== false : parseBoolean(body.suggested, defaults.suggested),
+    ads: body.ads === undefined ? current.ads !== false : parseBoolean(body.ads, defaults.ads)
+  };
+}
+
+function normalizeSnapchatSettings(
+  body: UnknownRecord,
+  current: FocusedSocialSettings["snapchat"],
+  defaults: FocusedSocialSettings["snapchat"]
+): FocusedSocialSettings["snapchat"] {
+  return {
+    enabled: body.enabled === undefined ? current.enabled !== false : parseBoolean(body.enabled, defaults.enabled),
+    spotlight: body.spotlight === undefined ? current.spotlight !== false : parseBoolean(body.spotlight, defaults.spotlight),
+    stories: body.stories === undefined ? current.stories !== false : parseBoolean(body.stories, defaults.stories),
     explore: body.explore === undefined ? current.explore !== false : parseBoolean(body.explore, defaults.explore),
     suggested: body.suggested === undefined ? current.suggested !== false : parseBoolean(body.suggested, defaults.suggested),
     ads: body.ads === undefined ? current.ads !== false : parseBoolean(body.ads, defaults.ads)

@@ -86,8 +86,22 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     id: "snapchat-spotlight",
     label: "Snapchat Spotlight",
     sites: ["snapchat.com"],
-    urlFilters: ["||snapchat.com/spotlight"],
+    urlFilters: ["||snapchat.com/spotlight", "||web.snapchat.com/spotlight"],
     paths: [/^\/spotlight(?:\/|$)/i]
+  },
+  {
+    id: "snapchat-stories",
+    label: "Snapchat Stories",
+    sites: ["snapchat.com"],
+    urlFilters: ["||snapchat.com/stories"],
+    paths: [/^\/stories?(?:\/|$)/i]
+  },
+  {
+    id: "snapchat-public-stories",
+    label: "Snapchat Stories",
+    sites: ["story.snapchat.com"],
+    urlFilters: ["||story.snapchat.com"],
+    paths: [/^\/(?:$|s(?:\/|$)|p(?:\/|$))/i]
   },
   {
     id: "tiktok-feed",
