@@ -563,7 +563,7 @@ function normalizeContentRuleEntries(entries: ServerRuleEntry[]): ContentRuleEnt
   const output: ContentRuleEntry[] = [];
   for (const entry of entries || []) {
     const urlFilter = safeUrlFilter(entry.urlFilter);
-    const redirectUrl = safeLocalRedirect(entry.redirectUrl);
+    const redirectUrl = safeContentRedirect(entry.redirectUrl);
     if (!urlFilter || !redirectUrl || seen.has(urlFilter)) continue;
     seen.add(urlFilter);
     output.push({ urlFilter, redirectUrl });
@@ -602,6 +602,18 @@ function safeLocalRedirect(value: unknown): string {
     const url = new URL(String(value || ""));
     const localServer = new URL(sentinelConnection.localServer);
     if (!sameHost(url, localServer) || normalizedPort(url) !== normalizedPort(localServer) || url.pathname !== "/blocked") return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function safeContentRedirect(value: unknown): string {
+  const local = safeLocalRedirect(value);
+  if (local) return local;
+  try {
+    const url = new URL(String(value || ""));
+    if (!["http:", "https:"].includes(url.protocol) || isLocalHost(url.hostname)) return "";
     return url.toString();
   } catch {
     return "";

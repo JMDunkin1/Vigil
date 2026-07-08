@@ -3,10 +3,11 @@ import { deviceUsageSyncAuthorization } from "../apiSecurity.js";
 import { DEVICE_TARGETS } from "../defaults.js";
 import { buildIosMdmEnrollmentProfile, iosMdmDoctor, iosMdmEnrollmentReadiness, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "../iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "../iosProfiles.js";
+import { activeLimitPolicy } from "../limits.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { addEvent, saveState, saveUsage } from "../store.js";
-import type { SentinelState, UnknownRecord, UsageState } from "../types.js";
-import { syncDeviceUsageSnapshot, usageSummary } from "../usage.js";
+import type { SentinelState, UnknownRecord, UsageBucket, UsageState } from "../types.js";
+import { normalizeUsageDay, syncDeviceUsageSnapshot, usageSummary } from "../usage.js";
 import { readBody, sendDownload, sendJson } from "./http.js";
 import { publicIosState } from "./statePayload.js";
 
@@ -50,6 +51,19 @@ export async function handleDeviceApiRoute(
       allowedApps: state.deviceControls.ios.allowedAppBundleIds.length
     });
     recordIosMdmPolicyQueue("ios-settings");
+    await saveState(state);
+    sendJson(response, 200, { ok: true, ios: publicIosState(state.deviceControls.ios) });
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/devices/ios/app-removal") {
+    const body = await readBody(request);
+    assertProtectedEditAllowed(state, { kind: "settings" });
+    state.deviceControls.ios.blockApps = parseToggle(body.enabled, state.deviceControls.ios.blockApps !== false);
+    addEvent(state, "ios_app_removal_toggled", {
+      enabled: state.deviceControls.ios.blockApps
+    });
+    recordIosMdmPolicyQueue("ios-app-removal-toggle");
     await saveState(state);
     sendJson(response, 200, { ok: true, ios: publicIosState(state.deviceControls.ios) });
     return true;
@@ -157,13 +171,17 @@ export async function handleDeviceApiRoute(
       return true;
     }
 
-    const result = syncDeviceUsageSnapshot(usage, body, new Date(), {
+    const now = new Date();
+    const result = syncDeviceUsageSnapshot(usage, body, now, {
       allowedDevices: authorization.kind === "device-token" ? ["phone"] : DEVICE_TARGETS
     });
+    const newLimitBlocks = evaluateDeviceLimitBlocks(state, usage, result, now);
+    if (newLimitBlocks.length) recordIosMdmPolicyQueue("device-usage-limit-block");
     addEvent(state, "device_usage_synced", {
       device: result.device,
       dayKey: result.dayKey,
-      totalSeconds: result.deviceTotalSeconds
+      totalSeconds: result.deviceTotalSeconds,
+      limitBlocks: newLimitBlocks.length
     });
     await saveUsage(usage);
     await saveState(state);
@@ -172,4 +190,38 @@ export async function handleDeviceApiRoute(
   }
 
   return false;
+}
+
+function parseToggle(value: unknown, fallback: boolean): boolean {
+  if (typeof value === "boolean") return value;
+  const text = String(value ?? "").trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(text)) return true;
+  if (["0", "false", "no", "off"].includes(text)) return false;
+  return fallback;
+}
+
+function evaluateDeviceLimitBlocks(
+  state: SentinelState,
+  usage: UsageState,
+  result: { device: string; dayKey: string },
+  now: Date
+): string[] {
+  const before = new Set((state.limitBlocks || []).filter((block) => new Date(block.until) > now).map((block) => block.id));
+  const day = normalizeUsageDay(usage[result.dayKey] || {});
+  const bucket = day.devices?.[result.device] as UsageBucket | undefined;
+  if (!bucket) return [];
+
+  for (const [app, seconds] of Object.entries(bucket.apps || {})) {
+    if (Number(seconds || 0) <= 0) continue;
+    activeLimitPolicy(state, usage, { app, device: result.device }, now);
+  }
+
+  for (const [hostname, seconds] of Object.entries(bucket.sites || {})) {
+    if (Number(seconds || 0) <= 0) continue;
+    activeLimitPolicy(state, usage, { app: "Mobile Safari", hostname, device: result.device }, now);
+  }
+
+  return (state.limitBlocks || [])
+    .filter((block) => new Date(block.until) > now && !before.has(block.id))
+    .map((block) => block.id);
 }

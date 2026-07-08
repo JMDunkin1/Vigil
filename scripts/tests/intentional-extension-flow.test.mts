@@ -37,7 +37,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   assert.equal(watch.blocked, false);
 
   const first = evaluateExtensionCheck(state, usage, {
-    url: "https://www.youtube.com/shorts/abc",
+    url: "https://www.reddit.com/r/popular",
     previousUrl: "",
     event: "navigation",
     extensionVersion: REQUIRED_EXTENSION_VERSION
@@ -50,7 +50,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   const pauseId = must(first.pause, "first pause").id;
 
   const reentered = evaluateExtensionCheck(state, usage, {
-    url: "https://www.youtube.com/shorts/abc",
+    url: "https://www.reddit.com/r/popular",
     previousUrl: "https://example.com/",
     event: "navigation",
     extensionVersion: REQUIRED_EXTENSION_VERSION
@@ -60,7 +60,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   assert.equal(must(reentered.overlay, "reentered pause overlay").waitSeconds, 12);
 
   const activated = evaluateExtensionCheck(state, usage, {
-    url: "https://www.youtube.com/shorts/abc",
+    url: "https://www.reddit.com/r/popular",
     previousUrl: "",
     event: "activated",
     extensionVersion: REQUIRED_EXTENSION_VERSION
@@ -70,12 +70,12 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
 
   must(state.intentionalUse.pauses[0], "stored pause").eligibleAt = now.toISOString();
   const continued = confirmIntentionalPause(state, pauseId, {
-    intention: "Watch one specific tutorial",
+    intention: "Read one specific thread",
     mood: "Focused"
   }, now);
   assert.equal(continued.grant.targetType, "url");
   const allowed = evaluateExtensionCheck(state, usage, {
-    url: "https://youtube.com/shorts/abc",
+    url: "https://reddit.com/r/popular",
     previousUrl: "",
     event: "activated",
     seconds: 45,
@@ -111,7 +111,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
     reason: "Watch one intentional video"
   }];
   const appLockUnlocked = evaluateExtensionCheck(unlockedState, {}, {
-    url: "https://www.youtube.com/shorts/abc",
+    url: "https://www.youtube.com/watch?v=abc",
     previousUrl: "",
     event: "navigation",
     extensionVersion: REQUIRED_EXTENSION_VERSION

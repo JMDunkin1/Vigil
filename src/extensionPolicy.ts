@@ -2,6 +2,7 @@ import { PORT, REQUIRED_EXTENSION_VERSION } from "./defaults.js";
 import { ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT, adultBlocklistPreloadDomains, matchAdultBlocklistHost } from "./adultBlocklist.js";
 import { activeAppLockPolicy } from "./appLocks.js";
 import { contentFilterEnabled, contentFilterRuleEntries, matchContentFilterUrl } from "./contentFilters.js";
+import type { ContentFilterMatch } from "./contentFilters.js";
 import { integrityLockdownActive } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
@@ -74,7 +75,7 @@ export function extensionRuleSnapshot(state: SentinelState, now = new Date()) {
     }
   }
 
-  for (const block of activeLimitBlocks(state, now)) {
+  for (const block of activeLimitBlocks(state, now, { device: "computer" })) {
     addRuleEntries(entries, block.sites || [], {
       kind: "limit",
       limitBlock: block,
@@ -93,7 +94,7 @@ export function extensionRuleSnapshot(state: SentinelState, now = new Date()) {
   }
 
   const rules = [...entries.values()].sort((a, b) => a.domain.localeCompare(b.domain));
-  const contentRules = contentRulesForPolicy(state, sessionPolicy);
+  const contentRules = contentRulesForPolicy(state, sessionPolicy, now);
   const allowlistRules = allowlistRulesForPolicy(sessionPolicy);
 
   const dynamic = { rules, contentRules, allowlistRules };
@@ -191,6 +192,8 @@ export function evaluateExtensionCheck(state: SentinelState, usage: UsageState, 
   const siteBlocked = policy ? shouldBlockSite(policy.profile, hostname) : false;
   const urlPattern = policy && !siteBlocked ? matchBlockedUrlPattern(policy.profile, sample.url) : null;
   if (contentMatch) {
+    const redirectUrl = contentFilterEscapeUrl(state, input, parsed.url, contentMatch.policy, contentMatch.content, now)
+      || blockedUrl(contentMatch.content.label, contentMatch.policy, sample.url, safeBackUrl(state, input.previousUrl, parsed.url, now));
     return {
       ok: true,
       blocked: true,
@@ -200,7 +203,7 @@ export function evaluateExtensionCheck(state: SentinelState, usage: UsageState, 
       event,
       recorded,
       contentFilter: contentMatch.content,
-      redirectUrl: blockedUrl(contentMatch.content.label, contentMatch.policy, sample.url),
+      redirectUrl,
       policy: publicPolicy(contentMatch.policy),
       contentFilterEnabled: true,
       browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
@@ -248,6 +251,10 @@ export function evaluateExtensionCheck(state: SentinelState, usage: UsageState, 
     };
   }
 
+  const urlPatternContent = urlPattern ? matchContentFilterUrl(state, parsed.url) : null;
+  const redirectUrl = contentFilterEscapeUrl(state, input, parsed.url, policy, urlPatternContent, now)
+    || blockedUrl(urlPattern?.label || hostname, policy, sample.url, safeBackUrl(state, input.previousUrl, parsed.url, now));
+
   return {
     ok: true,
     blocked: true,
@@ -257,7 +264,7 @@ export function evaluateExtensionCheck(state: SentinelState, usage: UsageState, 
     hostname: urlPattern?.label || hostname,
     event,
     recorded,
-    redirectUrl: blockedUrl(urlPattern?.label || hostname, policy, sample.url),
+    redirectUrl,
     policy: publicPolicy(policy),
     urlPattern: urlPattern || null,
     contentFilterEnabled: contentFilterEnabled(state),
@@ -361,11 +368,11 @@ function addAdultBlocklistRuleEntries(entries: Map<string, ExtensionRule>, state
   }, "adult-blocklist");
 }
 
-function contentRulesForPolicy(state: SentinelState, policy: ActivePolicy | null): UrlRuleEntry[] {
+function contentRulesForPolicy(state: SentinelState, policy: ActivePolicy | null, now: Date): UrlRuleEntry[] {
   if (!policy) return [];
   const builtIn = contentFilterRuleEntries(state, policy).map((entry) => ({
     ...entry,
-    redirectUrl: blockedUrl(entry.label, {
+    redirectUrl: safeContentFallbackUrlForPolicy(state, entry.fallbackUrl, policy, now) || blockedUrl(entry.label, {
       ...policy,
       kind: "content-filter"
     })
@@ -493,7 +500,65 @@ function publicPolicy(policy: BrowserPolicy) {
   };
 }
 
-function blockedUrl(hostname: string, policy: BrowserPolicy, returnUrl = ""): string {
+function contentFilterEscapeUrl(
+  state: SentinelState,
+  input: ExtensionCheckInput,
+  currentUrl: URL,
+  policy: ActivePolicy,
+  content: ContentFilterMatch | null | undefined,
+  now: Date
+): string {
+  const fallbackUrl = safeContentFallbackUrlForPolicy(state, content?.fallbackUrl, policy, now);
+  if (!fallbackUrl) return "";
+  return safeBackUrl(state, input.previousUrl, currentUrl, now) || fallbackUrl;
+}
+
+function safeBackUrl(state: SentinelState, value: unknown, currentUrl: URL, now: Date): string {
+  const parsed = parseHttpUrl(value);
+  if (!parsed.ok || isSentinelUrl(parsed.url) || sameHttpUrl(parsed.url, currentUrl)) return "";
+  if (matchContentFilterUrl(state, parsed.url)) return "";
+  if (profileBlocksBrowserUrl(activePolicy(state, now), parsed.url)) return "";
+  if (profileBlocksBrowserUrl(baselinePolicy(state, now, { device: "computer" }), parsed.url)) return "";
+  return parsed.url.toString();
+}
+
+function profileBlocksBrowserUrl(policy: ActivePolicy | null | undefined, url: URL): boolean {
+  if (!policy?.profile) return false;
+  const hostname = normalizeHost(url.hostname);
+  return shouldBlockSite(policy.profile, hostname) || Boolean(matchBlockedUrlPattern(policy.profile, url.toString()));
+}
+
+function safeContentFallbackUrlForPolicy(
+  state: SentinelState,
+  value: unknown,
+  policy: ActivePolicy | null | undefined,
+  now = new Date()
+): string {
+  try {
+    const url = new URL(String(value || ""));
+    if (!["http:", "https:"].includes(url.protocol) || isLocalHost(url.hostname)) return "";
+    if (matchContentFilterUrl(state, url)) return "";
+    if (profileBlocksBrowserUrl(policy, url)) return "";
+    if (profileBlocksBrowserUrl(baselinePolicy(state, now, { device: "computer" }), url)) return "";
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function sameHttpUrl(left: URL, right: URL): boolean {
+  return left.protocol === right.protocol
+    && left.hostname.toLowerCase() === right.hostname.toLowerCase()
+    && String(left.port || defaultPort(left)) === String(right.port || defaultPort(right))
+    && left.pathname === right.pathname
+    && left.search === right.search;
+}
+
+function defaultPort(url: URL): string {
+  return url.protocol === "https:" ? "443" : "80";
+}
+
+function blockedUrl(hostname: string, policy: BrowserPolicy, returnUrl = "", backUrl = ""): string {
   const target = new URL(`http://127.0.0.1:${PORT}/blocked`);
   target.searchParams.set("site", hostname);
   target.searchParams.set("until", policy.endsAt || "");
@@ -502,6 +567,7 @@ function blockedUrl(hostname: string, policy: BrowserPolicy, returnUrl = ""): st
   const lockId = policy.appLock?.id || policy.session?.lockId || "";
   if (lockId) target.searchParams.set("lockId", lockId);
   if (returnUrl) target.searchParams.set("return", returnUrl);
+  if (backUrl) target.searchParams.set("back", backUrl);
   return target.toString();
 }
 

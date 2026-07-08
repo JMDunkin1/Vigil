@@ -109,7 +109,7 @@ try {
   const pauseResponse = response();
   await handleExtensionApiRoute(
     request("POST", "/api/extension/check", pauseHeaders, {
-      url: "https://youtube.com/shorts/demo",
+      url: "https://reddit.com/r/popular",
       event: "navigation",
       extensionVersion: REQUIRED_EXTENSION_VERSION
     }),

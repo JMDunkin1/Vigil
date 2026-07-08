@@ -194,7 +194,7 @@ async function startPresetSession(kind: "soft" | "brick") {
   const profileId = kind === "brick" ? BRICK_MODE_PROFILE_ID : SOFT_BLOCK_PROFILE_ID;
   const profile = state.data?.state.profiles.find((item) => item.id === profileId);
   if (!profile) {
-    toast(kind === "brick" ? "Full Brick profile is unavailable" : "Soft Block profile is unavailable");
+    toast(kind === "brick" ? "Full Brick profile is unavailable" : "Soft Lock profile is unavailable");
     return;
   }
 
@@ -211,12 +211,12 @@ async function startPresetSession(kind: "soft" | "brick") {
         deviceTargets: selectedDeviceTargets()
       }
     : {
-        title: "Soft Block",
+        title: "Soft Lock",
         mode: "focus",
         profileId: SOFT_BLOCK_PROFILE_ID,
         durationMinutes: $("#brickDuration").value,
-        lockLevel: "light",
-        commitmentLock: false,
+        lockLevel: "deep",
+        commitmentLock: true,
         deviceTargets: selectedDeviceTargets()
       };
   await previewSessionStart(body);
@@ -409,7 +409,7 @@ function renderHeader(appState: DashboardState, monitor: MonitorSummary, activeB
     brickButton.disabled = selectedActive;
     if (softButton) softButton.disabled = selectedActive;
     if (normalButton) normalButton.disabled = false;
-    if (!selectedActive && ["Full Brick active", "Soft Block active"].includes($("#brickStatus").textContent)) $("#brickStatus").textContent = "Normal baseline";
+    if (!selectedActive && ["Full Brick active", "Soft Lock active"].includes($("#brickStatus").textContent)) $("#brickStatus").textContent = "Normal baseline";
   }
   if (panicButton && panicStatus) {
     const panicActive = active?.kind === "panic";
@@ -647,9 +647,10 @@ function renderLimits(rules: DashboardItem[]): void {
     const progress = rule.progress || {};
     const used = rule.type === "open" ? (progress.opens || 0) : (progress.seconds || 0);
     const cap = rule.type === "open" ? (rule.unlocksAllowed || 0) : (rule.limitMinutes || 0) * 60;
+    const scope = limitScopeText(rule);
     const label = progressBlock(
       rule.name,
-      `${rule.type} | ${progressText(rule, used, cap)} | ${daysText(rule.days || [])} | ${rule.enabled ? "on" : "off"}${rule.activeBlock ? " | locked" : ""}`,
+      `${rule.type} | ${progressText(rule, used, cap)} | ${daysText(rule.days || [])}${scope ? ` | ${scope}` : ""} | ${rule.enabled ? "on" : "off"}${rule.activeBlock ? " | locked" : ""}`,
       rule.percent || 0
     );
 
@@ -672,6 +673,11 @@ function renderLimits(rules: DashboardItem[]): void {
     row.append(label, edit, remove);
     list.append(row);
   }
+}
+
+function limitScopeText(rule: DashboardItem): string {
+  if (Array.isArray(rule.excludedProfileIds) && rule.excludedProfileIds.includes("soft-block")) return "Off during Soft Lock";
+  return rule.requiredProfileId === "soft-block" ? "Soft Lock only" : "";
 }
 
 function renderAppLocks(rules: DashboardItem[]): void {

@@ -3,16 +3,18 @@ import { normalizeUsageDay } from "./usage.js";
 import { parseBoolean } from "./booleans.js";
 import { clampInteger, normalizeTextList as normalizeTargets, normalizeWeekdays as normalizeDays } from "./normalizers.js";
 import {
+  activePolicy,
   appMatchesAppTargets,
   expandAppTargets,
   expandSiteTargets,
   hostMatchesSiteTargets,
   isStrictEmbeddedBrowserApp,
   isStrictUnsupportedBrowser,
+  normalizeDeviceTarget,
   normalizeLockLevel,
   normalizeHost
 } from "./policy.js";
-import type { ActivePolicy, LimitBlock, LimitProgress, LimitRule, SentinelState, UsageSample, UsageState } from "./types.js";
+import type { ActivePolicy, DeviceTarget, DeviceTargetInput, LimitBlock, LimitProgress, LimitRule, SentinelState, UsageSample, UsageState } from "./types.js";
 
 type TargetLists = { apps: string[]; sites: string[] };
 type GuardOptions = { strictUnsupportedBrowserGuard?: boolean };
@@ -26,16 +28,18 @@ export function activeLimitPolicy(state: SentinelState, usage: UsageState, sampl
 
   for (const rule of (state.limitRules || []).filter((item) => item.enabled)) {
     if (!ruleAppliesToday(rule, now) || !sampleMatchesRule(rule, sample, guardOptions(state))) continue;
+    if (!limitRuleContextMatches(state, rule, sample, now)) continue;
     if (limitRuleOverridden(state, rule.id, now)) continue;
 
-    const progress = ruleProgress(usage, rule, now);
+    const rawProgress = rawRuleProgress(usage, rule, now);
+    const progress = adjustedRuleProgress(rawProgress, rule, now);
     const hit = rule.type === "open"
       ? (progress.opens ?? 0) > (rule.unlocksAllowed || 0)
       : (progress.seconds ?? 0) >= (rule.limitMinutes || 1) * 60;
 
     if (!hit) continue;
 
-    const block = createLimitBlock(state, rule, progress, now);
+    const block = createLimitBlock(state, rule, progress, rawProgress, now);
     return policyFromBlock(state, block);
   }
 
@@ -61,9 +65,13 @@ export function limitSummary(state: SentinelState, usage: UsageState, now = new 
   };
 }
 
-export function activeLimitBlocks(state: SentinelState, now = new Date()): LimitBlock[] {
+export function activeLimitBlocks(state: SentinelState, now = new Date(), options: { device?: DeviceTargetInput } = {}): LimitBlock[] {
   cleanupExpiredLimitBlocks(state, now);
-  return (state.limitBlocks || []).filter((block) => new Date(block.until) > now && !limitRuleOverridden(state, block.ruleId, now));
+  return (state.limitBlocks || []).filter((block) => {
+    return new Date(block.until) > now
+      && !limitRuleOverridden(state, block.ruleId, now)
+      && limitBlockContextMatches(state, block, now, options.device);
+  });
 }
 
 export function normalizeLimitRule(body: Record<string, unknown>, existing: Partial<LimitRule> | undefined, fallbackId: string): LimitRule {
@@ -79,7 +87,12 @@ export function normalizeLimitRule(body: Record<string, unknown>, existing: Part
     sites: normalizeTargets(body.sites ?? existing?.sites).map(normalizeHost).filter(Boolean),
     limitMinutes: clampInteger(body.limitMinutes ?? existing?.limitMinutes, 1, 24 * 60, 30),
     unlocksAllowed: clampInteger(body.unlocksAllowed ?? existing?.unlocksAllowed, 0, 200, 5),
-    blockMinutes: clampInteger(body.blockMinutes ?? existing?.blockMinutes, 0, 24 * 60, 0)
+    blockMinutes: clampInteger(body.blockMinutes ?? existing?.blockMinutes, 0, 24 * 60, 0),
+    requiredProfileId: optionalString(body.requiredProfileId ?? existing?.requiredProfileId),
+    excludedProfileIds: optionalStringList(body.excludedProfileIds ?? existing?.excludedProfileIds),
+    cycleAnchorDateKey: typeof existing?.cycleAnchorDateKey === "string" ? existing.cycleAnchorDateKey : undefined,
+    cycleAnchorSeconds: clampOptionalInteger(existing?.cycleAnchorSeconds, 0),
+    cycleAnchorOpens: clampOptionalInteger(existing?.cycleAnchorOpens, 0)
   };
 }
 
@@ -113,7 +126,7 @@ export function targetListsForRule(rule: Pick<LimitRule, "apps" | "sites"> | Pic
   };
 }
 
-function createLimitBlock(state: SentinelState, rule: LimitRule, progress: LimitProgress, now: Date): LimitBlock {
+function createLimitBlock(state: SentinelState, rule: LimitRule, progress: LimitProgress, rawProgress: LimitProgress, now: Date): LimitBlock {
   const existing = (state.limitBlocks || []).find((block) => block.ruleId === rule.id && new Date(block.until) > now);
   if (existing) return existing;
 
@@ -127,8 +140,11 @@ function createLimitBlock(state: SentinelState, rule: LimitRule, progress: Limit
     sites: expandSiteTargets(rule.sites),
     createdAt: now.toISOString(),
     until: blockUntil(rule, now).toISOString(),
-    progress
+    progress,
+    requiredProfileId: rule.requiredProfileId,
+    excludedProfileIds: rule.excludedProfileIds ? [...rule.excludedProfileIds] : undefined
   };
+  updateLimitRuleCycleAnchor(rule, rawProgress, now);
   state.limitBlocks ||= [];
   state.limitBlocks.push(block);
   return block;
@@ -168,11 +184,16 @@ function findActiveBlock(state: SentinelState, sample: UsageSample, now: Date): 
   return (state.limitBlocks || []).find((block) => {
     if (new Date(block.until) <= now) return false;
     if (limitRuleOverridden(state, block.ruleId, now)) return false;
+    if (!limitBlockContextMatches(state, block, now, sample.device || "computer")) return false;
     return sampleMatchesRule(block, sample, guardOptions(state));
   });
 }
 
 function ruleProgress(usage: UsageState, rule: LimitRule, now: Date): LimitProgress {
+  return adjustedRuleProgress(rawRuleProgress(usage, rule, now), rule, now);
+}
+
+function rawRuleProgress(usage: UsageState, rule: LimitRule, now: Date): LimitProgress {
   const day = normalizeUsageDay(usage[dateKey(now)] || {});
   const lists = targetListsForRule(rule);
   const apps = day.apps || {};
@@ -186,12 +207,54 @@ function ruleProgress(usage: UsageState, rule: LimitRule, now: Date): LimitProgr
   };
 }
 
+function adjustedRuleProgress(progress: LimitProgress, rule: LimitRule, now: Date): LimitProgress {
+  if (!rule.blockMinutes || rule.cycleAnchorDateKey !== dateKey(now)) return progress;
+  return {
+    seconds: Math.max(0, Number(progress.seconds || 0) - Number(rule.cycleAnchorSeconds || 0)),
+    opens: Math.max(0, Number(progress.opens || 0) - Number(rule.cycleAnchorOpens || 0))
+  };
+}
+
 function sampleMatchesRule(rule: LimitRule | LimitBlock, sample: UsageSample, options: GuardOptions = {}): boolean {
   const lists = targetListsForRule(rule);
 
   if (shouldGuardSiteBypassApp(rule, sample, lists, options)) return true;
   if (appMatchesAppTargets(sample.app || "", lists.apps)) return true;
   return hostMatchesSiteTargets(sample.hostname || "", lists.sites);
+}
+
+function limitRuleContextMatches(state: SentinelState, rule: LimitRule, sample: UsageSample, now: Date): boolean {
+  return limitContextMatches(state, rule, now, sample.device || "computer");
+}
+
+export function limitBlockContextMatches(
+  state: SentinelState,
+  block: Pick<LimitBlock, "requiredProfileId" | "excludedProfileIds">,
+  now = new Date(),
+  device?: DeviceTargetInput
+): boolean {
+  return limitContextMatches(state, block, now, device);
+}
+
+function limitContextMatches(
+  state: SentinelState,
+  context: Pick<LimitRule | LimitBlock, "requiredProfileId" | "excludedProfileIds">,
+  now: Date,
+  device?: DeviceTargetInput
+): boolean {
+  const targets: DeviceTarget[] = device
+    ? [normalizeDeviceTarget(device)]
+    : ["computer", "phone"];
+  return targets.some((target) => {
+    if (context.requiredProfileId && !activeContextMatchesProfile(state, context.requiredProfileId, now, target)) return false;
+    if ((context.excludedProfileIds || []).some((profileId) => activeContextMatchesProfile(state, profileId, now, target))) return false;
+    return true;
+  });
+}
+
+function activeContextMatchesProfile(state: SentinelState, profileId: string, now: Date, device: DeviceTarget): boolean {
+  const policy = activePolicy(state, now, { device });
+  return policy?.session?.profileId === profileId || policy?.profile?.id === profileId;
 }
 
 function guardOptions(state: SentinelState): GuardOptions {
@@ -247,6 +310,13 @@ function blockUntil(rule: LimitRule, now: Date): Date {
   return new Date(now.getTime() + rule.blockMinutes * 60 * 1000);
 }
 
+function updateLimitRuleCycleAnchor(rule: LimitRule, rawProgress: LimitProgress, now: Date): void {
+  if (!rule.blockMinutes) return;
+  rule.cycleAnchorDateKey = dateKey(now);
+  rule.cycleAnchorSeconds = Math.max(0, Math.round(Number(rawProgress.seconds || 0)));
+  rule.cycleAnchorOpens = Math.max(0, Math.round(Number(rawProgress.opens || 0)));
+}
+
 function limitRuleOverridden(state: SentinelState, ruleId: string, now: Date): boolean {
   return (state.overrides || []).some((override) => {
     return override.limitRuleId === ruleId && new Date(override.until) > now;
@@ -257,4 +327,21 @@ function limitOverrideUntil(value: unknown, now: Date): Date {
   const parsed = new Date(String(value || ""));
   if (Number.isFinite(parsed.getTime()) && parsed > now) return parsed;
   return endOfToday();
+}
+
+function optionalString(value: unknown): string | undefined {
+  const text = String(value || "").trim();
+  return text || undefined;
+}
+
+function optionalStringList(value: unknown): string[] | undefined {
+  const values = normalizeTargets(value);
+  return values.length ? values : undefined;
+}
+
+function clampOptionalInteger(value: unknown, min: number): number | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return undefined;
+  return Math.max(min, Math.trunc(number));
 }
