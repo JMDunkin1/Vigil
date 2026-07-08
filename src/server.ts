@@ -17,6 +17,8 @@ import { errorMessage, errorStatus, readBody, readTextBody, sendDownload, sendEm
 import { createLocalScriptRunner } from "./server/localScripts.js";
 import { blockedPage, pausePage } from "./server/pages.js";
 import { matchApiRoute } from "./server/apiRoutes.js";
+import { handleAppUpdateApiRoute } from "./server/appUpdateRoutes.js";
+import type { AppUpdateController } from "./server/appUpdateRoutes.js";
 import { handleBackupApiRoute } from "./server/backupRoutes.js";
 import { handleAdultBlocklistApiRoute } from "./server/adultBlocklistRoutes.js";
 import { handleDeviceApiRoute } from "./server/deviceRoutes.js";
@@ -50,10 +52,12 @@ let monitor: MonitorHandle | null = null;
 let server: Server | null = null;
 let activeHost = DEFAULT_HOST;
 let activePort = PORT;
+let appUpdateController: AppUpdateController | null = null;
 
 interface ServerOptions {
   host?: string;
   port?: number | string;
+  appUpdate?: AppUpdateController | null;
 }
 
 interface GuardResult {
@@ -70,6 +74,7 @@ export async function startSentinelServer(options: ServerOptions = {}) {
 
   activeHost = options.host || DEFAULT_HOST;
   activePort = Number(options.port ?? PORT);
+  appUpdateController = options.appUpdate || null;
   startedAt = new Date().toISOString();
   state = await loadState();
   usage = await loadUsage();
@@ -329,6 +334,10 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     const payload = await buildStatePayload({ state, usage, monitor: requireMonitor(), activePort, startedAt, localScripts });
     await saveState(state);
     sendJson(response, 200, payload.body, payload.headers);
+    return;
+  }
+
+  if (await handleAppUpdateApiRoute(request, response, { controller: appUpdateController })) {
     return;
   }
 

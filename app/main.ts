@@ -3,6 +3,7 @@ import type { MenuItemConstructorOptions } from "electron";
 import { join } from "node:path";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../src/apiSecurity.js";
 import { fetchSentinelStateHealth } from "../src/sentinelHealth.js";
+import { createSentinelAppUpdateController } from "./updater.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.SENTINEL_PORT || process.env.SCREEN_TIME_PORT || 8787);
@@ -24,11 +25,28 @@ interface TrayStatus {
   canStartPanicLock: boolean;
 }
 
+interface AppUpdateActionState {
+  checked: boolean;
+  checking: boolean;
+  running: boolean;
+  installable: boolean;
+  message: string;
+}
+
 let mainWindow: BrowserWindow | null = null;
 let ownedServer: SentinelServerHandle | null = null;
 let tray: Tray | null = null;
+let lastTrayStatus: TrayStatus | null = null;
 let trayRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let currentAppUrl: string | null = null;
+let quitForUpdate = false;
+let appUpdateActionState: AppUpdateActionState = {
+  checked: false,
+  checking: false,
+  running: false,
+  installable: false,
+  message: ""
+};
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -66,7 +84,7 @@ void app.whenReady().then(async () => {
 });
 
 app.on("before-quit", async (event) => {
-  if (shouldStayResident()) {
+  if (shouldStayResident() && !quitForUpdate) {
     event.preventDefault();
     hideSentinelWindow();
     return;
@@ -140,7 +158,14 @@ async function ensureSentinelServer(): Promise<string> {
   if (await serverIsHealthy()) return BASE_URL;
 
   const { startSentinelServer } = await import("../src/server.js");
-  ownedServer = await startSentinelServer({ host: HOST, port: PORT }) as SentinelServerHandle;
+  const appUpdate = createSentinelAppUpdateController({
+    app,
+    quitForUpdate: () => {
+      quitForUpdate = true;
+      app.quit();
+    }
+  });
+  ownedServer = await startSentinelServer({ host: HOST, port: PORT, appUpdate }) as SentinelServerHandle;
   return ownedServer.url;
 }
 
@@ -170,6 +195,14 @@ function installMenu(appUrl: string): void {
         { role: "hide" },
         { role: "hideOthers" },
         { role: "unhide" },
+        { type: "separator" },
+        {
+          label: appUpdateActionLabel(),
+          enabled: canUseAppUpdateAction(),
+          click: () => {
+            void handleAppUpdateAction(appUrl);
+          }
+        },
         { type: "separator" },
         {
           label: "Hide Sentinel Window",
@@ -236,7 +269,9 @@ function stopTrayRefresh(): void {
 }
 
 function updateTrayMenu(appUrl: string, status: TrayStatus): void {
+  lastTrayStatus = status;
   if (!tray) return;
+  const updateDetail = appUpdateActionDetail();
   const template: MenuItemConstructorOptions[] = [
     {
       label: "Open Sentinel",
@@ -255,6 +290,14 @@ function updateTrayMenu(appUrl: string, status: TrayStatus): void {
         void startPanicLock(appUrl);
       }
     },
+    {
+      label: appUpdateActionLabel(),
+      enabled: canUseAppUpdateAction(),
+      click: () => {
+        void handleAppUpdateAction(appUrl);
+      }
+    },
+    ...(updateDetail ? [{ label: updateDetail, enabled: false } satisfies MenuItemConstructorOptions] : []),
     {
       label: "Reload Sentinel",
       click: () => {
@@ -279,6 +322,36 @@ function updateTrayMenu(appUrl: string, status: TrayStatus): void {
     }
   ];
   tray.setContextMenu(Menu.buildFromTemplate(template));
+}
+
+function refreshUpdateMenus(appUrl: string): void {
+  installMenu(appUrl);
+  if (lastTrayStatus) updateTrayMenu(appUrl, lastTrayStatus);
+}
+
+function appUpdateActionLabel(): string {
+  if (appUpdateActionState.checking) return "Checking for Updates...";
+  if (appUpdateActionState.running) return "Updating Sentinel...";
+  if (appUpdateActionState.installable) return "Install Update";
+  return "Check for Updates";
+}
+
+function appUpdateActionDetail(): string {
+  if (appUpdateActionState.checking) return "Updates: checking...";
+  if (!appUpdateActionState.checked && !appUpdateActionState.running) return "";
+  return appUpdateActionState.message ? `Updates: ${shortTrayDetail(appUpdateActionState.message)}` : "";
+}
+
+function canUseAppUpdateAction(): boolean {
+  return !appUpdateActionState.checking && !appUpdateActionState.running;
+}
+
+async function handleAppUpdateAction(appUrl: string): Promise<void> {
+  if (appUpdateActionState.installable) {
+    await startAppUpdate(appUrl);
+    return;
+  }
+  await checkAppUpdate(appUrl);
 }
 
 async function refreshTrayStatus(appUrl: string): Promise<void> {
@@ -333,6 +406,61 @@ async function startPanicLock(appUrl: string): Promise<void> {
   }
 }
 
+async function checkAppUpdate(appUrl: string): Promise<void> {
+  appUpdateActionState = {
+    checked: appUpdateActionState.checked,
+    checking: true,
+    running: false,
+    installable: false,
+    message: "Checking for updates"
+  };
+  refreshUpdateMenus(appUrl);
+  try {
+    const status = asRecord(await requestAppUpdateStatus(appUrl, { checkRemote: true }));
+    const running = Boolean(status?.running);
+    const installable = isInstallableAppUpdate(status);
+    appUpdateActionState = {
+      checked: true,
+      checking: false,
+      running,
+      installable,
+      message: nonEmptyString(status?.message) || (installable ? "Update available" : "Sentinel is current")
+    };
+  } catch (error) {
+    appUpdateActionState = {
+      checked: true,
+      checking: false,
+      running: false,
+      installable: false,
+      message: errorMessage(error)
+    };
+  }
+  refreshUpdateMenus(appUrl);
+}
+
+async function startAppUpdate(appUrl: string): Promise<void> {
+  appUpdateActionState = {
+    checked: true,
+    checking: false,
+    running: true,
+    installable: false,
+    message: "Sentinel will quit, update, and reopen"
+  };
+  refreshUpdateMenus(appUrl);
+  try {
+    await requestAppUpdate(appUrl);
+  } catch (error) {
+    appUpdateActionState = {
+      checked: true,
+      checking: false,
+      running: false,
+      installable: true,
+      message: errorMessage(error)
+    };
+    refreshUpdateMenus(appUrl);
+  }
+}
+
 async function requestPanicLock(appUrl: string): Promise<unknown> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TRAY_ACTION_TIMEOUT_MS);
@@ -351,6 +479,54 @@ async function requestPanicLock(appUrl: string): Promise<unknown> {
     const record = asRecord(body);
     if (!response.ok || record?.ok !== true) {
       throw new Error(nonEmptyString(record?.error) || `Panic lock failed (${response.status})`);
+    }
+    return body;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function requestAppUpdate(appUrl: string): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TRAY_ACTION_TIMEOUT_MS);
+  try {
+    const response = await fetch(apiUrl(appUrl, "/api/app-update/start"), {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE
+      },
+      body: "{}"
+    });
+    const body = await responseJson(response);
+    const record = asRecord(body);
+    if (!response.ok || record?.ok !== true) {
+      throw new Error(nonEmptyString(record?.error) || nonEmptyString(record?.message) || `Update failed (${response.status})`);
+    }
+    return body;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function requestAppUpdateStatus(appUrl: string, { checkRemote = false }: { checkRemote?: boolean } = {}): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TRAY_ACTION_TIMEOUT_MS);
+  try {
+    const response = await fetch(apiUrl(appUrl, checkRemote ? "/api/app-update/status?check=1" : "/api/app-update/status"), {
+      method: "GET",
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+        [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE
+      }
+    });
+    const body = await responseJson(response);
+    const record = asRecord(body);
+    if (!response.ok || record?.ok !== true) {
+      throw new Error(nonEmptyString(record?.error) || nonEmptyString(record?.message) || `Update check failed (${response.status})`);
     }
     return body;
   } finally {
@@ -382,7 +558,12 @@ function summarizeTrayStatus(body: unknown, port: number): TrayStatus {
     };
   }
 
-  return { label: "Status: Unlocked", detail: `Local server online on port ${port}`, panicActionLabel: "Start Panic Lock", canStartPanicLock: true };
+  return {
+    label: "Status: Unlocked",
+    detail: `Local server online on port ${port}`,
+    panicActionLabel: "Start Panic Lock",
+    canStartPanicLock: true
+  };
 }
 
 function checkingTrayStatus(appUrl: string): TrayStatus {
@@ -405,6 +586,11 @@ function offlineTrayStatus(appUrl: string): TrayStatus {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function isInstallableAppUpdate(status: Record<string, unknown> | null): boolean {
+  if (!status || status.supported === false || status.running) return false;
+  return Boolean(status.updateAvailable || status.appBundleOutdated || Number(status.behind || 0) > 0);
 }
 
 function sessionTitle(session: Record<string, unknown>): string {
