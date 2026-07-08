@@ -12,7 +12,7 @@
   },
   "scripts": {
     "app": "npm run build && electron .",
-    "build": "rm -rf dist/runtime && tsc -p tsconfig.json && node dist/runtime/scripts/copy-assets.mjs",
+    "build": "rm -rf dist/runtime && tsc -p tsconfig.json && node dist/runtime/scripts/copy-assets.mjs && node dist/runtime/scripts/write-build-info.mjs",
     "build:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir -c.mac.identity=null",
     "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg -c.mac.identity=null",
     "build:mac:signed": "npm run build && electron-builder --mac dir",

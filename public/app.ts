@@ -1,4 +1,5 @@
 import { get, post, del } from "./api-client.js";
+import { createAppUpdatePanel } from "./app-update.js";
 import { renderAppLockDays, renderGrayscaleScheduleDays, renderIntentionalDays, renderLimitDays, renderScheduleDays } from "./day-controls.js";
 import { createDevicePanel } from "./device-panel.js";
 import { bindAppEvents } from "./app-events.js";
@@ -50,6 +51,7 @@ const forms = createFormController({
   defaultPlanBlockProfileId: SOFT_BLOCK_PROFILE_ID
 });
 const focusSound = createFocusSoundController({ $, post });
+const appUpdatePanel = createAppUpdatePanel({ $, get, post, toast, errorMessage });
 const distanceKeyUi = createDistanceKeyUi({ $, toast, errorMessage, scanner: state.distanceScanner });
 const devicePanel = createDevicePanel({ $, post, lines, toast, errorMessage, refresh });
 const lifeLogView = createLifeLogView({
@@ -86,6 +88,7 @@ function boot() {
   renderAppLockDays();
   renderIntentionalDays();
   bindViewNavigation(setView);
+  appUpdatePanel.bind();
   bindAppEvents({
     state,
     deviceTargets,
@@ -341,6 +344,7 @@ function render() {
   renderIntentionalUse(data.intentionalUse);
   lifeLogView.renderLifeLog(data.intentionalUse);
   renderSetupWizard(data);
+  appUpdatePanel.render();
   hardeningPanel.render(data);
   renderProfiles(data.state);
   renderSchedules(data.state.schedules);

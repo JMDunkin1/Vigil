@@ -936,6 +936,7 @@ button:focus-visible {
 .keyholder-panel,
 .distance-key-panel,
 .adult-blocklist-panel,
+.app-update-panel,
 .focus-shortcut-panel {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -953,9 +954,17 @@ button:focus-visible {
 
 .maintenance-panel p,
 .adult-blocklist-panel p,
+.app-update-panel p,
 .focus-shortcut-panel p {
   margin: 0;
   color: var(--muted);
+}
+
+.app-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 8px;
 }
 
 .adult-blocklist-panel textarea {
@@ -1979,6 +1988,7 @@ button:focus-visible {
   .keyholder-panel,
   .distance-key-panel,
   .adult-blocklist-panel,
+  .app-update-panel,
   .focus-shortcut-panel,
   .focus-sound-panel,
   .unlock-strip,
@@ -1988,7 +1998,8 @@ button:focus-visible {
 
   .lock-preview-head,
   .lock-preview-actions,
-  .focused-social-head {
+  .focused-social-head,
+  .app-update-actions {
     align-items: stretch;
     flex-direction: column;
   }
