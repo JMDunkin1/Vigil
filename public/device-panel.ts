@@ -26,6 +26,18 @@ export function createDevicePanel(context: DevicePanelContext) {
 }
 
 function bindDeviceForms({ $, post, lines, toast, errorMessage, refresh }: DevicePanelContext): void {
+  $("#iosBlockApps").addEventListener("change", async () => {
+    try {
+      await post("/api/devices/ios/app-removal", {
+        enabled: $("#iosBlockApps").checked
+      });
+      toast($("#iosBlockApps").checked ? "MDM app removal enabled" : "MDM app removal off");
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  });
+
   $("#iosForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
     try {
@@ -227,14 +239,17 @@ function renderFocusedSocialSettings(value: Record<string, unknown>, $: QueryEle
   $("#iosFocusedInstagramShopping").checked = instagram.shopping !== false;
   $("#iosFocusedInstagramAds").checked = instagram.ads !== false;
   $("#iosFocusedYoutubeEnabled").checked = youtube.enabled !== false;
-  $("#iosFocusedYoutubeShorts").checked = youtube.shorts !== false;
+  $("#iosFocusedYoutubeShorts").checked = true;
+  $("#iosFocusedYoutubeShorts").disabled = true;
   $("#iosFocusedYoutubeHome").checked = youtube.home !== false;
   $("#iosFocusedYoutubeExplore").checked = youtube.explore !== false;
   $("#iosFocusedYoutubeSuggested").checked = youtube.suggested !== false;
   $("#iosFocusedYoutubeAds").checked = youtube.ads !== false;
   $("#iosFocusedSnapchatEnabled").checked = snapchat.enabled !== false;
-  $("#iosFocusedSnapchatSpotlight").checked = snapchat.spotlight !== false;
-  $("#iosFocusedSnapchatStories").checked = snapchat.stories !== false;
+  $("#iosFocusedSnapchatSpotlight").checked = true;
+  $("#iosFocusedSnapchatSpotlight").disabled = true;
+  $("#iosFocusedSnapchatStories").checked = true;
+  $("#iosFocusedSnapchatStories").disabled = true;
 }
 
 function focusedSocialSummaryText(value: unknown): string {
@@ -253,7 +268,7 @@ function nativeSocialText(value: unknown, active: boolean): string {
   if (!active) return "ready when enabled";
   if (summary.forceWebClips === false) return "left available";
   const nativeAppBundleCount = Number(summary.nativeAppBundleCount || 0);
-  return nativeAppBundleCount > 0 ? `${nativeAppBundleCount} blocked for web clips` : "ready during phone lock";
+  return nativeAppBundleCount > 0 ? `${nativeAppBundleCount} removed by MDM` : "ready during phone lock";
 }
 
 function recordValue(value: unknown): Record<string, unknown> {

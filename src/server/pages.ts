@@ -50,6 +50,7 @@ export function blockedPage({ url, state, port = PORT }: PageInput): string {
   const initialStatus = breakStatus || reasonStatus;
   const breakDisabled = emergencyAllowed && !reasonPolicy.enabled ? "" : " disabled";
   const intervention = interventionSummary(state);
+  const backUrl = safePageNavigationUrl(url.searchParams.get("back"));
   const interventionClass = escapeHtml(intervention.level);
   const interventionCopy = escapeHtml(intervention.message);
   const interventionTargets = escapeHtml(intervention.topTargets.map((target) => `${target.label} x${target.count}`).join(" | ") || "No recent targets");
@@ -58,6 +59,7 @@ export function blockedPage({ url, state, port = PORT }: PageInput): string {
     kind: url.searchParams.get("kind") || "manual",
     lockId: url.searchParams.get("lockId") || "",
     returnUrl: url.searchParams.get("return") || "",
+    backUrl,
     emergencyAllowed,
     reasonGate: reasonPolicy
   };
@@ -84,6 +86,8 @@ export function blockedPage({ url, state, port = PORT }: PageInput): string {
     button:disabled { cursor: not-allowed; opacity: .52; }
     .primary { color: #fffdf6; background: #126a6f; }
     .secondary { color: #17201d; background: #ded8ca; }
+    .escape-actions { display: none; margin-top: 22px; }
+    .escape-actions a { min-height: 44px; border-radius: 6px; padding: 0 16px; display: inline-grid; place-items: center; color: #17201d; background: #ded8ca; text-decoration: none; font-weight: 800; }
     .status { min-height: 22px; color: #5c6762; font-size: .94rem; }
     .intervention { margin-top: 18px; border: 1px solid #d8d3c6; border-radius: 8px; background: #fffcf4; padding: 12px; }
     .intervention strong { display: block; margin-bottom: 5px; }
@@ -97,6 +101,9 @@ export function blockedPage({ url, state, port = PORT }: PageInput): string {
   <main>
     <h1>${site} is blocked.</h1>
     <p>The ${mode} lock is active. The useful move is to close this tab and go back to the thing you chose before impulse got loud.</p>
+    <div id="escapeActions" class="escape-actions">
+      <a id="leaveBlockedPage" href="${escapeHtml(backUrl || "#")}">Go back</a>
+    </div>
     <div class="intervention ${interventionClass}">
       <strong>Adaptive friction</strong>
       <span>${interventionCopy}</span>
@@ -133,7 +140,23 @@ export function blockedPage({ url, state, port = PORT }: PageInput): string {
     const confirmButton = document.querySelector("#confirmBreak");
     const scanButton = document.querySelector("#scanBreakDistanceKey");
     const status = document.querySelector("#breakStatus");
+    const escapeActions = document.querySelector("#escapeActions");
+    const leaveBlockedPage = document.querySelector("#leaveBlockedPage");
     let scanStream = null;
+
+    const escapeTarget = blockedEscapeTarget();
+    if (escapeActions && leaveBlockedPage && (escapeTarget || history.length > 1)) {
+      escapeActions.style.display = "flex";
+      if (escapeTarget) leaveBlockedPage.href = escapeTarget;
+      leaveBlockedPage.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (escapeTarget) {
+          location.replace(escapeTarget);
+        } else {
+          history.go(-2);
+        }
+      });
+    }
 
     reason.addEventListener("input", syncRequestButton);
     syncRequestButton();
@@ -266,6 +289,31 @@ export function blockedPage({ url, state, port = PORT }: PageInput): string {
     function syncRequestButton() {
       if (!requestButton || pending) return;
       requestButton.disabled = !pageData.emergencyAllowed || !reasonReady();
+    }
+
+    function blockedEscapeTarget() {
+      return safeNavigationTarget(pageData.backUrl) || safeNavigationTarget(document.referrer);
+    }
+
+    function safeNavigationTarget(value) {
+      try {
+        const url = new URL(String(value || ""));
+        if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+        const host = url.hostname.replace(/^\\[|\\]$/g, "").toLowerCase();
+        if (["127.0.0.1", "localhost", "::1"].includes(host)) return "";
+        if (sameNavigationUrl(url.href, pageData.returnUrl) || sameNavigationUrl(url.href, location.href)) return "";
+        return url.href;
+      } catch {
+        return "";
+      }
+    }
+
+    function sameNavigationUrl(left, right) {
+      try {
+        return new URL(String(left || "")).href === new URL(String(right || "")).href;
+      } catch {
+        return false;
+      }
     }
 
     function renderChallenge() {
@@ -495,6 +543,19 @@ export function safeScriptJson(value: unknown): string {
     "&": "\\u0026"
   };
   return JSON.stringify(value).replace(/[<>&]/g, (char) => entities[char] || char);
+}
+
+function safePageNavigationUrl(value: unknown): string {
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:"].includes(url.protocol) && !isLocalPageHost(url.hostname) ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function isLocalPageHost(hostname: unknown): boolean {
+  return ["127.0.0.1", "localhost", "::1"].includes(String(hostname || "").replace(/^\[|\]$/g, "").toLowerCase());
 }
 
 export function commitmentLockError(policy: ActivePolicy | null | undefined): string {

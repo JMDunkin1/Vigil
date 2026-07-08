@@ -268,13 +268,15 @@ export function createFormController({ $, $$, getData, setView, defaultPlanBlock
     const form = $("#limitForm");
     form.reset();
     form.elements.id.value = "";
-    form.elements.name.value = "Social cap";
+    form.elements.name.value = "Instagram 20/20";
     form.elements.type.value = "time";
     form.elements.lockLevel.value = "deep";
-    form.elements.limitMinutes.value = "45";
-    form.elements.unlocksAllowed.value = "5";
-    form.elements.blockMinutes.value = "0";
-    form.elements.enabled.checked = false;
+    form.elements.limitMinutes.value = "20";
+    form.elements.unlocksAllowed.value = "0";
+    form.elements.blockMinutes.value = "20";
+    form.elements.apps.value = "Instagram\ncom.burbn.instagram";
+    form.elements.sites.value = "instagram.com";
+    form.elements.enabled.checked = true;
     for (const input of $$("#limitDays input")) {
       input.checked = true;
     }

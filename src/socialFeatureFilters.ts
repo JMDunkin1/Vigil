@@ -16,6 +16,7 @@ interface FocusedSocialFeatureDefinition {
   key: FocusedSocialFeatureKey;
   label: string;
   deniedUrls: string[];
+  permanent?: boolean;
 }
 
 interface FocusedSocialPlatformDefinition {
@@ -92,6 +93,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "shorts",
         label: "Shorts",
+        permanent: true,
         deniedUrls: [
           "youtube.com/shorts",
           "m.youtube.com/shorts"
@@ -143,6 +145,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "spotlight",
         label: "Spotlight",
+        permanent: true,
         deniedUrls: [
           "snapchat.com/spotlight",
           "web.snapchat.com/spotlight"
@@ -151,6 +154,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "stories",
         label: "Stories",
+        permanent: true,
         deniedUrls: [
           "snapchat.com/stories",
           "story.snapchat.com"
@@ -164,6 +168,10 @@ export const FOCUSED_SOCIAL_URL_PATTERNS = FOCUSED_SOCIAL_PLATFORMS.flatMap((pla
   platform.features.flatMap((feature) => feature.deniedUrls)
 ));
 const FOCUSED_SOCIAL_URL_PATTERN_KEYS = new Set(FOCUSED_SOCIAL_URL_PATTERNS.map(normalizePatternKey));
+
+export const PERMANENT_SOCIAL_URL_PATTERNS = FOCUSED_SOCIAL_PLATFORMS.flatMap((platform) => (
+  platform.features.flatMap((feature) => feature.permanent ? feature.deniedUrls : [])
+));
 
 export function defaultFocusedSocialSettings(): FocusedSocialSettings {
   return {
@@ -211,12 +219,19 @@ export function normalizeFocusedSocialSettings(value: unknown = {}, existing: Pa
 
 export function focusedSocialDeniedUrls(value: unknown): string[] {
   const settings = normalizeFocusedSocialSettings(value);
-  if (!settings.enabled) return [];
+  const permanent = alwaysBannedSocialDeniedUrls();
+  if (!settings.enabled) return permanent;
   return uniqueStrings(FOCUSED_SOCIAL_PLATFORMS.flatMap((platform) => {
     const platformSettings = settings[platform.id];
-    if (!platformSettings.enabled) return [];
+    if (!platformSettings.enabled) {
+      return platform.features.flatMap((feature) => feature.permanent ? feature.deniedUrls : []);
+    }
     return platform.features.flatMap((feature) => platformSettings[feature.key] === false ? [] : feature.deniedUrls);
-  }));
+  }).concat(permanent));
+}
+
+export function alwaysBannedSocialDeniedUrls(): string[] {
+  return uniqueStrings(PERMANENT_SOCIAL_URL_PATTERNS);
 }
 
 export function withoutFocusedSocialDeniedUrls(values: readonly unknown[]): string[] {
@@ -330,7 +345,7 @@ function normalizeYoutubeSettings(
 ): FocusedSocialSettings["youtube"] {
   return {
     enabled: body.enabled === undefined ? current.enabled !== false : parseBoolean(body.enabled, defaults.enabled),
-    shorts: body.shorts === undefined ? current.shorts !== false : parseBoolean(body.shorts, defaults.shorts),
+    shorts: true,
     home: body.home === undefined ? current.home !== false : parseBoolean(body.home, defaults.home),
     explore: body.explore === undefined ? current.explore !== false : parseBoolean(body.explore, defaults.explore),
     suggested: body.suggested === undefined ? current.suggested !== false : parseBoolean(body.suggested, defaults.suggested),
@@ -345,8 +360,8 @@ function normalizeSnapchatSettings(
 ): FocusedSocialSettings["snapchat"] {
   return {
     enabled: body.enabled === undefined ? current.enabled !== false : parseBoolean(body.enabled, defaults.enabled),
-    spotlight: body.spotlight === undefined ? current.spotlight !== false : parseBoolean(body.spotlight, defaults.spotlight),
-    stories: body.stories === undefined ? current.stories !== false : parseBoolean(body.stories, defaults.stories),
+    spotlight: true,
+    stories: true,
     explore: body.explore === undefined ? current.explore !== false : parseBoolean(body.explore, defaults.explore),
     suggested: body.suggested === undefined ? current.suggested !== false : parseBoolean(body.suggested, defaults.suggested),
     ads: body.ads === undefined ? current.ads !== false : parseBoolean(body.ads, defaults.ads)

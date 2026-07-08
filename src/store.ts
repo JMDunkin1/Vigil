@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
+import { DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { normalizeIntentionalUse } from "./intentionalUse.js";
 import { normalizeWeekdays } from "./normalizers.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
@@ -117,7 +117,7 @@ function migrateState(state: RawState): VigilState {
     adultBlocklist: normalizeAdultBlocklistState(state.adultBlocklist, fresh.adultBlocklist),
     profiles,
     schedules: normalizeSchedules(Array.isArray(state.schedules) ? state.schedules : fresh.schedules),
-    limitRules: Array.isArray(state.limitRules) ? state.limitRules : fresh.limitRules,
+    limitRules: normalizeLimitRules(Array.isArray(state.limitRules) ? state.limitRules : [], fresh.limitRules),
     limitBlocks: Array.isArray(state.limitBlocks) ? state.limitBlocks : [],
     appLocks: Array.isArray(state.appLocks) ? state.appLocks : fresh.appLocks,
     appLockUnlocks: Array.isArray(state.appLockUnlocks) ? state.appLockUnlocks : [],
@@ -262,11 +262,15 @@ export function sanitizeSoftBlockProfile(profile: Profile): Profile {
   const blockedUrlPatterns = uniqueList([
     ...withoutFocusedSocialDeniedUrls((profile.blockedUrlPatterns || []).filter((pattern) => !isRedditWholeSitePattern(pattern))),
     ...DEFAULT_EXPLICIT_URL_PATTERNS,
+    ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS,
     ...DEFAULT_SHORT_FORM_URL_PATTERNS
   ]);
   return {
     ...profile,
-    description: profile.description || "Blocks the normal explicit baseline plus short-form feeds while leaving regular sites usable.",
+    name: profile.name === "Soft Block" ? "Soft Lock" : profile.name,
+    description: profile.description && profile.description !== "Blocks the normal explicit baseline plus short-form feeds while leaving regular sites usable."
+      ? profile.description
+      : "Blocks explicit sites and non-social short-form surfaces while leaving regular apps usable.",
     blockedApps: (profile.blockedApps || []).filter((app) => !isInstagramAppTarget(app)),
     blockedSites: (profile.blockedSites || []).filter((site) => !isInstagramSiteTarget(site) && !isRedditSiteTarget(site)),
     blockedUrlPatterns,
@@ -277,14 +281,14 @@ export function sanitizeSoftBlockProfile(profile: Profile): Profile {
 
 export function sanitizeDefaultFocusProfile(profile: Profile): Profile {
   return sanitizeRedditUrlPolicyProfile(profile, {
-    blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
+    blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
     hostsUrlPatternBlocking: false
   });
 }
 
 function sanitizeNormalProfile(profile: Profile): Profile {
   return sanitizeRedditUrlPolicyProfile(profile, {
-    blockedUrlPatterns: DEFAULT_EXPLICIT_URL_PATTERNS,
+    blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS],
     phoneAppBlocking: false,
     hostsUrlPatternBlocking: false
   });
@@ -450,6 +454,35 @@ function normalizeProfiles(profiles: Profile[]): Profile[] {
     phoneAppBlocking: profile.phoneAppBlocking === false ? false : undefined,
     hostsUrlPatternBlocking: profile.hostsUrlPatternBlocking === false ? false : undefined
   }));
+}
+
+function normalizeLimitRules(existingRules: VigilState["limitRules"], builtinRules: VigilState["limitRules"]): VigilState["limitRules"] {
+  const builtinById = new Map(builtinRules.map((rule) => [rule.id, rule]));
+  const mergedExisting = existingRules.map((rule) => {
+    const builtin = builtinById.get(rule.id);
+    if (!builtin) return rule;
+    return {
+      ...rule,
+      requiredProfileId: builtin.requiredProfileId || rule.requiredProfileId,
+      excludedProfileIds: uniqueList([
+        ...(rule.excludedProfileIds || []),
+        ...(builtin.excludedProfileIds || [])
+      ])
+    };
+  });
+  const existingIds = new Set(mergedExisting.map((rule) => rule.id).filter(Boolean));
+  const missingBuiltins = builtinRules.filter((rule) => rule.id && !existingIds.has(rule.id));
+  return [...mergedExisting, ...missingBuiltins.map(cloneLimitRule)];
+}
+
+function cloneLimitRule(rule: VigilState["limitRules"][number]): VigilState["limitRules"][number] {
+  return {
+    ...rule,
+    apps: [...rule.apps],
+    sites: [...rule.sites],
+    days: [...rule.days],
+    excludedProfileIds: rule.excludedProfileIds ? [...rule.excludedProfileIds] : undefined
+  };
 }
 
 function migrateActiveSessions(

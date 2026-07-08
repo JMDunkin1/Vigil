@@ -9,6 +9,7 @@ import {
 import { parseBoolean } from "./booleans.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { grayscaleDecision, IOS_GRAYSCALE_GUARD_BUNDLE_IDS } from "./grayscale.js";
+import { activeLimitBlocks } from "./limits.js";
 import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, profileById } from "./policy.js";
 import { focusedSocialBlockedBundleIds, focusedSocialDeniedUrls, focusedSocialSummary, focusedSocialWebClips, normalizeFocusedSocialSettings } from "./socialFeatureFilters.js";
@@ -228,7 +229,6 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
   const grayscale = grayscaleDecision(state, now, { device: "phone" });
   const settingsGuarded = Boolean(grayscale.desired && state.grayscale?.preventManualChanges !== false);
   const phoneAppBlocking = profile?.phoneAppBlocking !== false;
-  const focusedSocialNativeAppBlocking = Boolean(activePhonePolicy);
   let appBundleIds = phoneAppBlocking
     ? appMode === "allowlist"
       ? settings.allowedAppBundleIds
@@ -247,10 +247,13 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
   const profilePatterns = webMode === "allowlist"
     ? []
     : profile?.blockedUrlPatterns || [];
+  const activePhoneLimitBlocks = activeLimitBlocks(state, now, { device: "phone" });
+  const activeLimitBundleIds = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.apps || []).filter(isLikelyIosBundleId));
+  const activeLimitSites = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.sites || []));
   const focusedSocialSettings = normalizeFocusedSocialSettings(settings.focusedSocial);
   const socialDeniedUrls = focusedSocialDeniedUrls(focusedSocialSettings);
   const includeFocusedSocialNativeApps = settings.blockApps
-    && (phoneAppBlocking || focusedSocialNativeAppBlocking)
+    && phoneAppBlocking
     && appMode !== "allowlist";
   const webClips = settings.blockWeb && focusedSocialSettings.forceWebClips
     ? uniqueWebClips([
@@ -263,6 +266,7 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     ? []
     : uniqueUrls([
       ...urlsFromSiteTargets(profileSites),
+      ...urlsFromSiteTargets(activeLimitSites),
       ...urlsFromPatterns(profilePatterns),
       ...urlsFromPatterns(socialDeniedUrls),
       ...urlsFromSiteTargets(adultBlocklistPreloadDomains(state)),
@@ -281,6 +285,12 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     appBundleIds = uniqueStrings([
       ...appBundleIds,
       ...focusedSocialBlockedBundleIds(focusedSocialSettings)
+    ]);
+  }
+  if (settings.blockApps && appMode !== "allowlist" && activeLimitBundleIds.length) {
+    appBundleIds = uniqueStrings([
+      ...appBundleIds,
+      ...activeLimitBundleIds
     ]);
   }
   const managedHelperAppBundleIds = settings.blockApps ? [...IOS_MANAGED_HELPER_APP_BUNDLE_IDS] : [];
@@ -327,6 +337,11 @@ export function normalizeBundleIds(values: unknown): string[] {
     output.push(value);
   }
   return output.sort((a, b) => a.localeCompare(b));
+}
+
+function isLikelyIosBundleId(value: unknown): value is string {
+  const text = String(value || "").trim();
+  return text.includes(".") && IOS_BUNDLE_ID_PATTERN.test(text);
 }
 
 export function normalizeUrlList(values: unknown): string[] {

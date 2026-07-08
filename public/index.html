@@ -105,12 +105,12 @@
               <em>Explicit stays blocked</em>
             </button>
             <button id="startSoftBlock" class="primary preset-button" type="button">
-              <span>Soft Block</span>
-              <em>Short-form off</em>
+              <span>Soft Lock</span>
+              <em>IG cleanup</em>
             </button>
             <button id="startFullBrick" class="danger preset-button" type="button">
               <span>Full Brick</span>
-              <em>Essentials only</em>
+              <em>MDM app removal</em>
             </button>
           </div>
           <div class="brick-quick">
@@ -421,7 +421,7 @@
             <div class="form-row thirds">
               <label>
                 Name
-                <input name="name" type="text" value="Social cap">
+                <input name="name" type="text" value="Instagram 20/20">
               </label>
               <label>
                 Type
@@ -441,7 +441,7 @@
             <div class="form-row thirds">
               <label>
                 Minutes
-                <input name="limitMinutes" type="number" min="1" max="1440" value="45">
+                <input name="limitMinutes" type="number" min="1" max="1440" value="20">
               </label>
               <label>
                 Opens
@@ -451,6 +451,7 @@
                 Block
                 <select name="blockMinutes">
                   <option value="0">Rest of day</option>
+                  <option value="20" selected>20 min</option>
                   <option value="30">30 min</option>
                   <option value="60">1 hour</option>
                   <option value="180">3 hours</option>
@@ -1319,7 +1320,7 @@
                 </label>
               </div>
               <div class="toggle-grid">
-                <label class="checkline"><input id="iosBlockApps" name="blockApps" type="checkbox"> Apps</label>
+                <label class="checkline"><input id="iosBlockApps" name="blockApps" type="checkbox"> MDM app removal</label>
                 <label class="checkline"><input id="iosBlockWeb" name="blockWeb" type="checkbox"> Web</label>
                 <label class="checkline"><input id="iosHardenRemoval" name="hardenRemoval" type="checkbox"> Removal passcode</label>
                 <label class="checkline"><input id="iosRestrictInstallErase" name="restrictInstallAndErase" type="checkbox"> Lock escapes</label>
@@ -1355,7 +1356,7 @@
                       YouTube
                     </legend>
                     <label class="checkline"><input id="iosFocusedYoutubeEnabled" type="checkbox"> Platform</label>
-                    <label class="checkline"><input id="iosFocusedYoutubeShorts" type="checkbox"> Shorts</label>
+                    <label class="checkline"><input id="iosFocusedYoutubeShorts" type="checkbox" disabled> Shorts</label>
                     <label class="checkline"><input id="iosFocusedYoutubeHome" type="checkbox"> Home feed</label>
                     <label class="checkline"><input id="iosFocusedYoutubeExplore" type="checkbox"> Explore</label>
                     <label class="checkline"><input id="iosFocusedYoutubeSuggested" type="checkbox"> Suggested next</label>
@@ -1367,8 +1368,8 @@
                       Snapchat
                     </legend>
                     <label class="checkline"><input id="iosFocusedSnapchatEnabled" type="checkbox"> Platform</label>
-                    <label class="checkline"><input id="iosFocusedSnapchatSpotlight" type="checkbox"> Spotlight</label>
-                    <label class="checkline"><input id="iosFocusedSnapchatStories" type="checkbox"> Stories</label>
+                    <label class="checkline"><input id="iosFocusedSnapchatSpotlight" type="checkbox" disabled> Spotlight</label>
+                    <label class="checkline"><input id="iosFocusedSnapchatStories" type="checkbox" disabled> Stories</label>
                   </fieldset>
                 </div>
               </div>

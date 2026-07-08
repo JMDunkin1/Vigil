@@ -1,5 +1,5 @@
 import type { DeviceTarget, VigilState } from "./types.js";
-import { defaultFocusedSocialSettings } from "./socialFeatureFilters.js";
+import { PERMANENT_SOCIAL_URL_PATTERNS, defaultFocusedSocialSettings } from "./socialFeatureFilters.js";
 
 export const APP_NAME = "Vigil";
 export const PORT = Number(process.env.VIGIL_PORT || process.env.VIGIL_PORT || 8787);
@@ -301,6 +301,10 @@ export const DEFAULT_EXPLICIT_URL_PATTERNS = [
   "reddit.com/search/?q=fansly"
 ];
 
+export const DEFAULT_ALWAYS_BANNED_URL_PATTERNS = [
+  ...PERMANENT_SOCIAL_URL_PATTERNS
+];
+
 export const DEFAULT_SHORT_FORM_URL_PATTERNS = [
   "facebook.com/reel",
   "facebook.com/watch/reel",
@@ -492,7 +496,7 @@ export function defaultState(): VigilState {
         description: "Blocks social media apps and sites while keeping everything else usable.",
         blockedApps: DEFAULT_BLOCKED_APPS,
         blockedSites: DEFAULT_BLOCKED_SITES,
-        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
+        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES],
         hostsUrlPatternBlocking: false
@@ -501,10 +505,10 @@ export function defaultState(): VigilState {
         id: NORMAL_PROFILE_ID,
         name: "Normal",
         mode: "blocklist",
-        description: "Baseline mode: no focus lock, but explicit sites stay blocked.",
+        description: "Baseline mode: no focus lock, but explicit sites and permanent short-form bans stay blocked.",
         blockedApps: [],
         blockedSites: DEFAULT_EXPLICIT_BLOCKED_SITES,
-        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS],
+        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES],
         phoneAppBlocking: false,
@@ -512,12 +516,12 @@ export function defaultState(): VigilState {
       },
       {
         id: SOFT_BLOCK_PROFILE_ID,
-        name: "Soft Block",
+        name: "Soft Lock",
         mode: "blocklist",
-        description: "Blocks the normal explicit baseline plus short-form feeds while leaving regular sites usable.",
+        description: "Blocks explicit sites and non-social short-form surfaces while leaving regular apps usable.",
         blockedApps: [],
         blockedSites: DEFAULT_EXPLICIT_BLOCKED_SITES,
-        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
+        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES],
         phoneAppBlocking: false,
@@ -551,17 +555,32 @@ export function defaultState(): VigilState {
     ],
     limitRules: [
       {
-        id: "social-time-template",
-        name: "Social time cap",
-        enabled: false,
+        id: "instagram-20-20-template",
+        name: "Instagram 20/20",
+        enabled: true,
         type: "time",
         lockLevel: "deep",
         days: [0, 1, 2, 3, 4, 5, 6],
-        apps: [],
-        sites: DEFAULT_BLOCKED_SITES,
-        limitMinutes: 45,
-        unlocksAllowed: 5,
-        blockMinutes: 0
+        apps: ["Instagram", "com.burbn.instagram"],
+        sites: ["instagram.com"],
+        limitMinutes: 20,
+        unlocksAllowed: 0,
+        blockMinutes: 20,
+        excludedProfileIds: [SOFT_BLOCK_PROFILE_ID]
+      },
+      {
+        id: "soft-lock-youtube-20-20-template",
+        name: "Soft Lock YouTube 20/20",
+        enabled: true,
+        type: "time",
+        lockLevel: "deep",
+        days: [0, 1, 2, 3, 4, 5, 6],
+        apps: ["YouTube", "com.google.ios.youtube"],
+        sites: ["youtube.com"],
+        limitMinutes: 20,
+        unlocksAllowed: 0,
+        blockMinutes: 20,
+        requiredProfileId: SOFT_BLOCK_PROFILE_ID
       },
       {
         id: "social-open-template",

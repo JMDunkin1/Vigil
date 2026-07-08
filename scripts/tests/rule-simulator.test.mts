@@ -139,9 +139,9 @@ const now = new Date("2026-06-04T15:30:00.000Z");
     at: now
   });
 
-  assert.equal(result.blocked, false);
-  assert.equal(result.paused, true);
-  assert.equal(result.reasonCode, "intentional-use");
+  assert.equal(result.blocked, true);
+  assert.equal(result.paused, false);
+  assert.equal(result.reasonCode, "baseline-url-pattern");
   assert.equal(state.intentionalUse.pauses.length, 0);
 }
 

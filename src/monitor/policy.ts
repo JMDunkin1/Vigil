@@ -138,7 +138,7 @@ function strictAppLockBrowserControlPolicy(state: VigilState, now: Date): Enforc
 }
 
 function strictLimitBrowserControlPolicy(state: VigilState, now: Date): EnforcedPolicy | null {
-  const block = activeLimitBlocks(state, now).find((item) => (item.lockLevel || "deep") === "deep" && (item.sites || []).length);
+  const block = activeLimitBlocks(state, now, { device: "computer" }).find((item) => (item.lockLevel || "deep") === "deep" && (item.sites || []).length);
   if (!block) return null;
   return {
     kind: "limit",

@@ -9,8 +9,9 @@ import type { Session } from "../../src/types.js";
 const dataDir = await mkdtemp(join(tmpdir(), "vigil-device-routes-"));
 process.env.VIGIL_DATA_DIR = dataDir;
 
-const { defaultState } = await import("../../src/defaults.js");
+const { defaultState, SOFT_BLOCK_PROFILE_ID } = await import("../../src/defaults.js");
 const { assertProtectedEditAllowed } = await import("../../src/protection.js");
+const { profileById } = await import("../../src/policy.js");
 const { handleDeviceApiRoute } = await import("../../src/server/deviceRoutes.js");
 
 try {
@@ -32,10 +33,32 @@ try {
   state.activeSession = strictSession;
   state.deviceControls.ios.enabled = false;
   state.deviceControls.ios.mode = "allowlist";
-  state.deviceControls.ios.blockApps = false;
+  state.deviceControls.ios.blockApps = true;
 
   assert.throws(() => assertProtectedEditAllowed(state, { kind: "settings" }, now), /Protected edits/);
 
+  let blockedAppRemovalQueued = "";
+  await assert.rejects(
+    () => handleDeviceApiRoute(
+      mockRequest("POST", "/api/devices/ios/app-removal", { enabled: false }),
+      mockResponse(),
+      new URL("http://127.0.0.1:8787/api/devices/ios/app-removal"),
+      {
+        state,
+        usage: {},
+        recordIosMdmPolicyQueue: (reason: string) => {
+          blockedAppRemovalQueued = reason;
+          return { queued: true };
+        }
+      }
+    ),
+    /Protected edits/
+  );
+  assert.equal(state.deviceControls.ios.blockApps, true);
+  assert.equal(blockedAppRemovalQueued, "");
+  assert.equal(state.events.some((event) => event.type === "ios_app_removal_toggled"), false);
+
+  state.deviceControls.ios.blockApps = false;
   let queuedReason = "";
   const response = mockResponse();
   const handled = await handleDeviceApiRoute(
@@ -105,13 +128,88 @@ try {
   assert.ok((enrollmentBody.blockers as unknown[]).some((item) => /public HTTPS URL/i.test(String(item))));
   assert.equal(state.deviceControls.ios.mdm.lastEnrollmentProfileGeneratedAt, null);
   assert.equal(state.events.some((event) => event.type === "ios_mdm_enrollment_generated"), false);
+
+  const softState = defaultState();
+  softState.deviceControls.ios.enabled = true;
+  softState.activeSessions.phone = {
+    id: "phone-soft-youtube-route",
+    title: "Phone Soft Lock",
+    mode: "focus",
+    profileId: SOFT_BLOCK_PROFILE_ID,
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: profileById(softState, SOFT_BLOCK_PROFILE_ID)
+  };
+  const routeUsage = {};
+  const queuedReasons: string[] = [];
+  const instagramUsageResponse = mockResponse();
+  const instagramUsageHandled = await handleDeviceApiRoute(
+    mockRequest("POST", "/api/devices/usage", {
+      device: "phone",
+      totalSeconds: 20 * 60,
+      apps: { "com.burbn.instagram": 20 * 60 },
+      sites: { "instagram.com": 20 * 60 }
+    }, {
+      host: "127.0.0.1:8787",
+      "x-vigil-intent": "vigil-app"
+    }),
+    instagramUsageResponse,
+    new URL("http://127.0.0.1:8787/api/devices/usage"),
+    {
+      state: softState,
+      usage: routeUsage,
+      recordIosMdmPolicyQueue: (reason: string) => {
+        queuedReasons.push(reason);
+        return { queued: true };
+      }
+    }
+  );
+  const instagramUsageBody = JSON.parse(instagramUsageResponse.bodyText) as Record<string, unknown>;
+  assert.equal(instagramUsageHandled, true);
+  assert.equal(instagramUsageResponse.statusCodeValue, 200);
+  assert.equal(instagramUsageBody.ok, true);
+  assert.equal(softState.limitBlocks.some((block) => block.ruleId === "instagram-20-20-template"), false);
+  assert.equal(queuedReasons.length, 0);
+
+  const usageResponse = mockResponse();
+  const usageHandled = await handleDeviceApiRoute(
+    mockRequest("POST", "/api/devices/usage", {
+      device: "phone",
+      totalSeconds: 20 * 60,
+      apps: { "com.google.ios.youtube": 20 * 60 },
+      sites: { "youtube.com": 20 * 60 }
+    }, {
+      host: "127.0.0.1:8787",
+      "x-vigil-intent": "vigil-app"
+    }),
+    usageResponse,
+    new URL("http://127.0.0.1:8787/api/devices/usage"),
+    {
+      state: softState,
+      usage: routeUsage,
+      recordIosMdmPolicyQueue: (reason: string) => {
+        queuedReasons.push(reason);
+        return { queued: true };
+      }
+    }
+  );
+  const usageBody = JSON.parse(usageResponse.bodyText) as Record<string, unknown>;
+  assert.equal(usageHandled, true);
+  assert.equal(usageResponse.statusCodeValue, 200);
+  assert.equal(usageBody.ok, true);
+  assert.equal(softState.limitBlocks.some((block) => block.ruleId === "soft-lock-youtube-20-20-template"), true);
+  assert.deepEqual(queuedReasons, ["device-usage-limit-block"]);
 } finally {
   await rm(dataDir, { recursive: true, force: true });
 }
 
-function mockRequest(method: string, url: string, body: object): IncomingMessage {
+function mockRequest(method: string, url: string, body: object, headers: Record<string, string> = {}): IncomingMessage {
   const stream = Readable.from([JSON.stringify(body)]);
-  return Object.assign(stream, { method, url, headers: { "content-type": "application/json" } }) as IncomingMessage;
+  return Object.assign(stream, { method, url, headers: { "content-type": "application/json", ...headers } }) as IncomingMessage;
 }
 
 interface MockResponse {

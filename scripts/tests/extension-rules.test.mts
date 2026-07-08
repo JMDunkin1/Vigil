@@ -22,10 +22,10 @@ import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.m
   const iosCleanup = recordValue(iosFocusedSocial.focusedSocialCleanupSettings, "iOS cleanup settings");
   assert.equal(recordValue(iosCleanup.youtube, "YouTube cleanup settings").home, false);
   assert.equal(recordValue(iosCleanup.instagram, "Instagram cleanup settings").explore, false);
-  assert.equal(recordValue(iosCleanup.snapchat, "Snapchat cleanup settings").stories, false);
+  assert.equal(recordValue(iosCleanup.snapchat, "Snapchat cleanup settings").stories, true);
   const snapshotCleanup = recordValue(extensionRuleSnapshot(state, now).focusedSocialCleanupSettings, "snapshot cleanup settings");
   assert.equal(recordValue(snapshotCleanup.youtube, "snapshot YouTube cleanup settings").home, false);
-  assert.equal(recordValue(snapshotCleanup.snapchat, "snapshot Snapchat cleanup settings").stories, false);
+  assert.equal(recordValue(snapshotCleanup.snapchat, "snapshot Snapchat cleanup settings").stories, true);
   state.deviceControls.ios.focusedSocial.enabled = false;
   const iosFocusedSocialOff = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
   assert.equal(iosFocusedSocialOff.focusedSocialCleanupEnabled, false);
@@ -47,7 +47,7 @@ import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.m
   assert.equal(extensionRuleSnapshot(state, now).focusedSocialCleanupEnabled, true);
   const blocked = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/all", event: "navigation" }, now);
   assert.equal(blocked.blocked, true);
-  assert.match(stringValue(blocked.redirectUrl, "blocked redirect URL"), /\/blocked/);
+  assert.equal(stringValue(blocked.redirectUrl, "blocked redirect URL"), "https://www.reddit.com/");
   const normalReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/learnprogramming/comments/demo", event: "navigation" }, now);
   assert.equal(normalReddit.blocked, false);
   assert.equal(normalReddit.paused, false);
@@ -99,6 +99,7 @@ import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.m
   };
   const rules = extensionRuleSnapshot(state, now);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/shorts"), true);
+  assert.match(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "YouTube Shorts dynamic rule").redirectUrl, /\/blocked/);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/explore"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/feed/explore"), true);
@@ -107,6 +108,34 @@ import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.m
   const disabledContentRules = extensionRuleSnapshot(state, now).contentRules;
   assert.equal(disabledContentRules.some((rule) => rule.id === "reddit-popular"), true);
   assert.equal(disabledContentRules.some((rule) => rule.kind === "url-pattern"), true);
+}
+
+{
+  const state = defaultState();
+  state.activeSession = {
+    id: "content-fallbacks",
+    title: "Content fallbacks",
+    mode: "focus",
+    profileId: "custom-allowlist",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    profileSnapshot: {
+      id: "custom-allowlist",
+      name: "Content allowlist",
+      mode: "allowlist",
+      blockedApps: [],
+      blockedSites: [],
+      blockedUrlPatterns: [],
+      allowedApps: [],
+      allowedSites: ["youtube.com", "instagram.com"]
+    }
+  };
+  const rules = extensionRuleSnapshot(state, now);
+  assert.equal(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "allowed YouTube Shorts rule").redirectUrl, "https://www.youtube.com/");
+  assert.equal(must(rules.contentRules.find((rule) => rule.urlFilter === "||instagram.com/reel"), "allowed Instagram Reels rule").redirectUrl, "https://www.instagram.com/direct/inbox/");
 }
 
 {

@@ -7,7 +7,7 @@ export interface JsonObject {
 export type UnknownRecord = Record<string, unknown>;
 
 export type DeviceTarget = "computer" | "phone";
-export type DeviceTargetInput = DeviceTarget;
+export type DeviceTargetInput = DeviceTarget | string;
 export type LockLevel = "light" | "deep";
 export type ProfileMode = "blocklist" | "allowlist";
 export type PolicyPhaseKind = "work" | "break";
@@ -213,6 +213,11 @@ export interface LimitRule {
   limitMinutes: number;
   unlocksAllowed: number;
   blockMinutes: number;
+  requiredProfileId?: string;
+  excludedProfileIds?: string[];
+  cycleAnchorDateKey?: string;
+  cycleAnchorSeconds?: number;
+  cycleAnchorOpens?: number;
 }
 
 export interface LimitBlock {
@@ -226,6 +231,8 @@ export interface LimitBlock {
   createdAt: string;
   until: string;
   progress?: LimitProgress;
+  requiredProfileId?: string;
+  excludedProfileIds?: string[];
 }
 
 export interface AppLockRule {

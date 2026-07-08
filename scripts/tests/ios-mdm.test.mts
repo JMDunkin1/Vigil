@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { BRICK_MODE_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../../src/defaults.js";
 import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDoctor, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../../src/iosMdm.js";
 import { IOS_MANAGED_HELPER_APP_BUNDLE_IDS, buildIosConfigurationProfile, iosProfileSummary } from "../../src/iosProfiles.js";
+import { activeLimitPolicy } from "../../src/limits.js";
 import { parsePlist, plistData, toPlist } from "../../src/plist.js";
 import { profileById } from "../../src/policy.js";
+import type { UsageState } from "../../src/types.js";
+import { syncDeviceUsageSnapshot } from "../../src/usage.js";
 import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
 
 {
@@ -76,6 +79,9 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   };
   const softPhoneProfile = buildIosConfigurationProfile(state, now);
   assert.match(softPhoneProfile, /blockedAppBundleIDs/);
+  assert.doesNotMatch(softPhoneProfile, /com\.burbn\.instagram/);
+  assert.doesNotMatch(softPhoneProfile, /com\.google\.ios\.youtube/);
+  assert.doesNotMatch(softPhoneProfile, /com\.toyopagroup\.picaboo/);
   assert.match(softPhoneProfile, /com\.apple\.webClip\.managed/);
   assert.match(softPhoneProfile, /Vigil Instagram/);
   assert.match(softPhoneProfile, /Vigil YouTube/);
@@ -87,6 +93,44 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.match(softPhoneProfile, /instagram\.com\/explore/);
   assert.match(softPhoneProfile, /snapchat\.com\/spotlight/);
   assert.match(softPhoneProfile, /story\.snapchat\.com/);
+  const softPhoneSummary = iosProfileSummary(state, now);
+  assert.equal(softPhoneSummary.profile.focusedSocial.nativeAppBundleCount, 0);
+
+  const instagramPhoneUsage: UsageState = {};
+  syncDeviceUsageSnapshot(instagramPhoneUsage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 20 * 60,
+    apps: { "com.burbn.instagram": 20 * 60 },
+    sites: { "instagram.com": 20 * 60 }
+  }, now);
+  assert.equal(activeLimitPolicy(state, instagramPhoneUsage, { app: "com.burbn.instagram", hostname: "instagram.com", device: "phone" }, now), null);
+  const softInstagramProfile = buildIosConfigurationProfile(state, now);
+  assert.doesNotMatch(softInstagramProfile, /com\.burbn\.instagram/);
+
+  const phoneUsage: UsageState = {};
+  syncDeviceUsageSnapshot(phoneUsage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 20 * 60,
+    apps: { "com.google.ios.youtube": 20 * 60 },
+    sites: { "youtube.com": 20 * 60 }
+  }, now);
+  const softYoutubePolicy = must(activeLimitPolicy(state, phoneUsage, { app: "com.google.ios.youtube", hostname: "youtube.com", device: "phone" }, now), "soft lock YouTube limit policy");
+  assert.equal(softYoutubePolicy.session.ruleId, "soft-lock-youtube-20-20-template");
+  const softYoutubeProfile = buildIosConfigurationProfile(state, now);
+  assert.match(softYoutubeProfile, /com\.google\.ios\.youtube/);
+  const softYoutubeParsed = recordValue(parsePlist(softYoutubeProfile), "soft YouTube active profile");
+  const softYoutubeRestrictions = profilePayload(softYoutubeParsed, "com.apple.applicationaccess");
+  assert.ok((softYoutubeRestrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.google.ios.youtube"), "active Soft Lock YouTube rest should hide YouTube through MDM");
+  const softYoutubeWebFilter = profilePayload(softYoutubeParsed, "com.apple.webcontent-filter");
+  assert.ok((softYoutubeWebFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://youtube.com/"), "active Soft Lock YouTube rest should deny regular YouTube web URLs");
+
+  state.activeSessions.phone = null;
+  state.limitBlocks = [];
+  assert.equal(activeLimitPolicy(state, phoneUsage, { app: "com.google.ios.youtube", hostname: "youtube.com", device: "phone" }, now), null);
+  const normalYoutubeProfile = buildIosConfigurationProfile(state, now);
+  assert.doesNotMatch(normalYoutubeProfile, /com\.google\.ios\.youtube/);
 }
 
 {

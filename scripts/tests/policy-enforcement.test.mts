@@ -16,11 +16,12 @@ import { activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, 
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "../../src/protection.js";
 import { buildSafariFilterProfile, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature, safariUrlFilterEnabled } from "../../src/safariFilter.js";
 import { applySealVerificationToState, markStateSealed } from "../../src/seal.js";
+import { blockedPage } from "../../src/server/pages.js";
 import { deleteProfile } from "../../src/server/policyRoutes.js";
 import { updateSettings } from "../../src/server/settingsRoutes.js";
 import { sanitizeDefaultFocusProfile, sanitizeSoftBlockProfile } from "../../src/store.js";
 import { syncDeviceUsageSnapshot } from "../../src/usage.js";
-import type { UsageState } from "../../src/types.js";
+import type { Session, UsageState } from "../../src/types.js";
 import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile, usageFixture } from "./test-helpers.mjs";
 
 {
@@ -249,7 +250,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(hostMatchesSiteTargets("mobile.twitter.com", ["x.com"]), true);
   assert.equal(shouldBlockSite(testProfile({ mode: "allowlist", allowedSites: ["youtube.com"], blockedSites: [] }), "youtu.be"), false);
   assert.equal(shouldBlockSite(testProfile({ mode: "allowlist", allowedSites: ["youtube.com"], blockedSites: [] }), "reddit.com"), true);
-  assert.equal(shouldBlockUrl(profile, "https://www.youtube.com/shorts/abc"), false);
+  assert.equal(shouldBlockUrl(profile, "https://www.youtube.com/shorts/abc"), true);
   assert.equal(must(matchContentFilterUrl(state, "https://www.youtube.com/shorts/abc"), "YouTube Shorts filter").id, "youtube-shorts");
   assert.equal(shouldBlockUrl(profile, "https://www.youtube.com/watch?v=abc"), false);
   assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/popular"), true);
@@ -278,10 +279,43 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
 
 {
   const state = defaultState();
+  const usage = {};
+  const fromWatch = evaluateExtensionCheck(state, usage, {
+    url: "https://www.youtube.com/shorts/abc",
+    previousUrl: "https://www.youtube.com/watch?v=abc",
+    event: "navigation"
+  }, now);
+  assert.equal(fromWatch.blocked, true);
+  assert.equal(fromWatch.reason, "url-pattern");
+  assert.equal(stringValue(fromWatch.redirectUrl, "Shorts previous-page redirect"), "https://www.youtube.com/watch?v=abc");
+
+  const direct = evaluateExtensionCheck(state, usage, {
+    url: "https://www.youtube.com/shorts/abc",
+    previousUrl: "",
+    event: "navigation"
+  }, now);
+  assert.equal(direct.blocked, true);
+  assert.equal(stringValue(direct.redirectUrl, "Shorts fallback redirect"), "https://www.youtube.com/");
+}
+
+{
+  const state = defaultState();
+  const page = blockedPage({
+    url: new URL("http://127.0.0.1:8787/blocked?site=Example&back=https%3A%2F%2Fexample.com%2Fdocs"),
+    state
+  });
+  assert.match(page, /id="leaveBlockedPage"/);
+  assert.match(page, /https:\/\/example\.com\/docs/);
+  assert.match(page, /document\.referrer/);
+  assert.match(page, /history\.go\(-2\)/);
+}
+
+{
+  const state = defaultState();
   const baselineUrls = safariFilterDenyUrls(state, now);
   assert.equal(baselineUrls.includes("https://pornhub.com/"), true);
   assert.equal(baselineUrls.includes("https://www.pornhub.com/"), true);
-  assert.equal(baselineUrls.includes("https://youtube.com/shorts"), false);
+  assert.equal(baselineUrls.includes("https://youtube.com/shorts"), true);
   const baselineProfileText = buildSafariFilterProfile(state, now);
   assert.match(baselineProfileText, /<key>restrictWeb<\/key>\s*<true\/>/);
   assert.match(baselineProfileText, /<key>useContentFilter<\/key>\s*<true\/>/);
@@ -684,7 +718,67 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     totalSeconds: 61,
     sites: { "youtube.com": 61 }
   }, now);
-  assert.equal(mustPolicy(activeLimitPolicy(state, phoneUsage, { app: "Safari", hostname: "reddit.com" }, now)).kind, "limit");
+  assert.equal(mustPolicy(activeLimitPolicy(state, phoneUsage, { app: "Safari", hostname: "reddit.com", device: "phone" }, now)).kind, "limit");
+}
+
+{
+  const state = defaultState();
+  const instagramUsage = usageFixture({
+    "2026-05-28": {
+      totalSeconds: 20 * 60,
+      apps: { Instagram: 20 * 60 },
+      sites: { "instagram.com": 20 * 60 },
+      opens: { apps: {}, sites: {} }
+    }
+  });
+  const instagramPolicy = mustPolicy(activeLimitPolicy(state, instagramUsage, { app: "Instagram", hostname: "instagram.com" }, now));
+  assert.equal(instagramPolicy.kind, "limit");
+  assert.equal(instagramPolicy.session.ruleId, "instagram-20-20-template");
+  state.limitBlocks = [];
+
+  const usage = usageFixture({
+    "2026-05-28": {
+      totalSeconds: 20 * 60,
+      apps: {},
+      sites: { "youtube.com": 20 * 60 },
+      opens: { apps: {}, sites: {} }
+    }
+  });
+
+  assert.equal(activeLimitPolicy(state, usage, { app: "Safari", hostname: "youtube.com" }, now), null);
+  assert.equal(activeLimitBlocks(state, now, { device: "computer" }).length, 0);
+
+  const softLock: Session = {
+    id: "computer-soft-lock",
+    title: "Soft Lock",
+    mode: "focus",
+    profileId: SOFT_BLOCK_PROFILE_ID,
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    deviceTargets: ["computer"],
+    profileSnapshot: profileById(state, SOFT_BLOCK_PROFILE_ID)
+  };
+  state.activeSessions.computer = softLock;
+  state.activeSession = softLock;
+
+  assert.equal(activeLimitPolicy(state, instagramUsage, { app: "Instagram", hostname: "instagram.com" }, now), null);
+  assert.equal(activeLimitBlocks(state, now, { device: "computer" }).length, 0);
+
+  const policy = mustPolicy(activeLimitPolicy(state, usage, { app: "Safari", hostname: "youtube.com" }, now));
+  assert.equal(policy.kind, "limit");
+  assert.equal(policy.session.ruleId, "soft-lock-youtube-20-20-template");
+  assert.equal(policy.profile.blockedSites.includes("youtube.com"), true);
+  assert.equal(policy.profile.blockedSites.includes("youtu.be"), true);
+  assert.equal(activeLimitBlocks(state, now, { device: "computer" }).length, 1);
+  assert.equal(activeLimitBlocks(state, now, { device: "phone" }).length, 0);
+
+  state.activeSessions.computer = null;
+  state.activeSession = null;
+  assert.equal(activeLimitBlocks(state, now, { device: "computer" }).length, 0);
+  assert.equal(activeLimitPolicy(state, usage, { app: "Safari", hostname: "youtube.com" }, now), null);
 }
 
 {
@@ -721,7 +815,17 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(activeLimitPolicy(state, usage, { app: "Safari", hostname: "reddit.com" }, now), null);
 
   const afterOverride = new Date(now.getTime() + 31 * 60 * 1000);
-  assert.equal(mustPolicy(activeLimitPolicy(state, usage, { app: "Safari", hostname: "reddit.com" }, afterOverride)).kind, "limit");
+  assert.equal(activeLimitPolicy(state, usage, { app: "Safari", hostname: "reddit.com" }, afterOverride), null);
+
+  const secondWindowUsage = usageFixture({
+    "2026-05-28": {
+      totalSeconds: 151,
+      apps: {},
+      sites: { "reddit.com": 151 },
+      opens: { apps: {}, sites: {} }
+    }
+  });
+  assert.equal(mustPolicy(activeLimitPolicy(state, secondWindowUsage, { app: "Safari", hostname: "reddit.com" }, afterOverride)).kind, "limit");
 }
 
 {
@@ -824,7 +928,11 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     unlockMinutes: 5,
     delaySeconds: 0
   }];
-  const result = evaluateExtensionCheck(state, usage, { url: "https://redd.it/abc123", event: "navigation" }, now);
+  const result = evaluateExtensionCheck(state, usage, {
+    url: "https://redd.it/abc123",
+    previousUrl: "https://example.com/work",
+    event: "navigation"
+  }, now);
   const redirect = new URL(stringValue(result.redirectUrl, "app lock redirect URL"));
   assert.equal(result.reason, "app-lock");
   assert.equal(recordValue(result.policy, "app lock policy").lockId, "lock-social");
@@ -832,6 +940,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(redirect.searchParams.get("kind"), "app-lock");
   assert.equal(redirect.searchParams.get("lockId"), "lock-social");
   assert.equal(redirect.searchParams.get("return"), "https://redd.it/abc123");
+  assert.equal(redirect.searchParams.get("back"), "https://example.com/work");
 }
 
 {
@@ -858,7 +967,13 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shorts.blocked, true);
   assert.equal(shorts.reason, "content-filter");
   assert.equal(must(shorts.contentFilter, "YouTube Shorts filter").id, "youtube-shorts");
-  assert.equal(new URL(stringValue(shorts.redirectUrl, "content filter redirect URL")).searchParams.get("site"), "YouTube Shorts");
+  assert.equal(stringValue(shorts.redirectUrl, "content filter redirect URL"), "https://www.youtube.com/");
+  const shortsFromWatch = evaluateExtensionCheck(state, usage, {
+    url: "https://www.youtube.com/shorts/def",
+    previousUrl: "https://www.youtube.com/watch?v=abc",
+    event: "navigation"
+  }, now);
+  assert.equal(stringValue(shortsFromWatch.redirectUrl, "content filter previous-page redirect URL"), "https://www.youtube.com/watch?v=abc");
   const watch = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
   assert.equal(watch.blocked, false);
   assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reels/xyz"), "Instagram reels filter").id, "instagram-reels");
