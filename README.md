@@ -164,6 +164,14 @@ npm run ios:checkpoint
 
 The checkpoint is stored under ignored `data/ios-checkpoints` by default. It creates a local iPhone backup, then verifies the backup manifest includes SpringBoard/Home Screen layout records. If the Mac does not have enough space, pass an external volume with `-- --output=/Volumes/External/sentinel-ios-checkpoints`. For encrypted backups, pass `-- --password ...` or set `IOS_BACKUP_PASSWORD`; do not print the password into tickets, logs, or handoffs.
 
+To inspect or restore Home Screen layout records from an existing backup, use:
+
+```bash
+npm run ios:restore-layout
+```
+
+Without `-- --backup ...`, Sentinel chooses the newest complete backup for the connected phone across the local MobileSync folder, ignored `data/ios-checkpoints`, and mounted external volumes such as `/Volumes/iPhone Backups/MobileSync/Backup`, `/Volumes/iPhone Backups/PyMobileBackups`, or T7/Time Machine-style dated snapshots. In-progress or incomplete backups are skipped even when their folder timestamp is newest; a usable source must have non-empty `Info.plist`, `Manifest.plist`, `Manifest.db`, and `Status.plist`, and `Status.plist` must not report an unfinished snapshot. The command is a dry run until you pass `-- --yes-restore-layout`.
+
 Then use the USB apply script:
 
 ```bash
@@ -201,7 +209,7 @@ If a known-good local backup already restored the current layout, reuse it inste
 npm run ios:supervise-preserve-layout -- --yes-supervise-and-restore --checkpoint /path/to/checkpoint-or-UDID-backup-folder
 ```
 
-The existing-checkpoint path must either contain the connected phone's UDID folder or be that UDID-named backup folder itself. Sentinel verifies `Manifest.db`, complete backup metadata, the backup device identity when present, and SpringBoard/Home Screen layout records before it supervises or restores anything. For encrypted backups, also pass `-- --password ...` or set `IOS_BACKUP_PASSWORD`.
+The existing-checkpoint path may be a specific UDID-named backup folder, a parent checkpoint folder, or a mounted external root such as `/Volumes/T7 Shield` or `/Volumes/iPhone Backups`. Sentinel resolves that path to the newest complete backup for the connected phone, then verifies `Manifest.db`, complete backup metadata, the backup device identity when present, and SpringBoard/Home Screen layout records before it supervises or restores anything. For encrypted backups, also pass `-- --password ...` or set `IOS_BACKUP_PASSWORD`.
 
 ManageEngine is the normal free remote-MDM path. Sentinel generates the supervised iPhone policy profile; ManageEngine owns enrollment, APNs wakeups, assignment, and removal. Generate the custom profile with:
 
