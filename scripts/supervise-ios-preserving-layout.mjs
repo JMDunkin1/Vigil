@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { access, chmod, copyFile, mkdir, stat } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { readLayoutPaths } from "./ios-backup-layout.mjs";
+import { readLayoutPaths, resolveNewestLayoutBackup } from "./ios-backup-layout.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -177,27 +177,25 @@ async function createCheckpoint(udid, options) {
 }
 
 async function resolveExistingCheckpointRoot(inputPath, udid) {
-  const checkpointPath = resolve(inputPath);
-  const rootManifestPath = join(checkpointPath, udid, "Manifest.db");
-  if (await fileExists(rootManifestPath)) {
-    return checkpointPath;
+  const backup = await resolveNewestLayoutBackup({
+    inputPath,
+    udid,
+    dataDir: DATA_DIR
+  });
+  if (basename(backup.path) !== udid) {
+    throw new Error([
+      `Existing iPhone backup folder is not named for the connected UDID ${udid}: ${backup.path}`,
+      "Pass the parent checkpoint folder that contains the UDID-named backup folder, or use the matching backup for this iPhone.",
+      "Vigil will not restore a backup unless the backup folder identity matches the connected device."
+    ].join("\n"));
   }
-  const backupFolderManifestPath = join(checkpointPath, "Manifest.db");
-  if (await fileExists(backupFolderManifestPath)) {
-    if (checkpointPath.split(/[\\/]/).at(-1) !== udid) {
-      throw new Error([
-        `Existing iPhone backup folder is not named for the connected UDID ${udid}: ${checkpointPath}`,
-        "Pass the parent checkpoint folder that contains the UDID-named backup folder, or use the matching backup for this iPhone.",
-        "Vigil will not restore a backup unless the backup folder identity matches the connected device."
-      ].join("\n"));
-    }
-    return dirname(checkpointPath);
-  }
-  throw new Error([
-    `Existing iPhone checkpoint is missing Manifest.db for ${udid}: ${checkpointPath}`,
-    `Expected either ${rootManifestPath} or ${backupFolderManifestPath}.`,
-    "Do not supervise until the known-good layout recovery backup can be verified."
+  console.log([
+    "Using existing iPhone checkpoint.",
+    `Backup: ${backup.path}`,
+    `Backup date: ${backup.completedAt}`,
+    `Backup source: ${backup.source}`
   ].join("\n"));
+  return dirname(backup.path);
 }
 
 async function verifyCheckpoint(path, udid, password = "") {

@@ -1,11 +1,10 @@
 import { execFile } from "node:child_process";
 import { access, copyFile, mkdir, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { readLayoutPaths } from "./ios-backup-layout.mjs";
+import { readLayoutPaths, resolveNewestLayoutBackup } from "./ios-backup-layout.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -16,7 +15,6 @@ const PYMOBILEDEVICE3_PATH = process.env.PYMOBILEDEVICE3 || join(VENV_DIR, "bin"
 const PYIOSBACKUP_PYTHON_PATH = process.env.PYIOSBACKUP_PYTHON || join(VENV_DIR, "bin", "python");
 const DEFAULT_SUPERVISOR_KEYBAG_PATH = join(DATA_DIR, "vigil-supervisor.keybag");
 const LAYOUT_RESTORE_ROOT = join(DATA_DIR, "ios-home-layout-restore");
-const MOBILESYNC_BACKUP_ROOT = join(homedir(), "Library", "Application Support", "MobileSync", "Backup");
 const QUICK_TIMEOUT_MS = 20_000;
 const INSTALL_TIMEOUT_MS = 120_000;
 const RESTORE_TIMEOUT_MS = 60 * 60 * 1000;
@@ -24,7 +22,12 @@ const RESTORE_TIMEOUT_MS = 60 * 60 * 1000;
 const options = parseArgs(process.argv.slice(2));
 await ensurePymobiledevice3();
 const udid = await resolveUsbDevice(options.udid);
-const backupRoot = await resolveBackupRoot(options.backup, udid);
+const backupCandidate = await resolveNewestLayoutBackup({
+  inputPath: options.backup,
+  udid,
+  dataDir: DATA_DIR
+});
+const backupRoot = backupCandidate.path;
 await verifyBackupDevice(backupRoot, udid);
 const manifestPath = join(backupRoot, "Manifest.db");
 const layoutPaths = await readLayoutPaths({
@@ -52,6 +55,8 @@ console.log([
   "Prepared Vigil iPhone Home Screen layout restore payload.",
   `UDID: ${udid}`,
   `Backup: ${backupRoot}`,
+  `Backup date: ${backupCandidate.completedAt}`,
+  `Backup source: ${backupCandidate.source}`,
   `Payload: ${payloadRoot}`,
   `Verified layout/widget records: ${layoutPaths.length}`,
   ...layoutPaths.slice(0, 16).map((item) => `- ${item}`)
@@ -233,24 +238,6 @@ async function restoreLayoutPayload(udid, payloadRoot, password = "") {
     ...passwordArgs(password),
     payloadRoot
   ], RESTORE_TIMEOUT_MS);
-}
-
-async function resolveBackupRoot(inputPath, udid) {
-  const candidates = [];
-  if (inputPath) candidates.push(resolve(inputPath));
-  candidates.push(join(MOBILESYNC_BACKUP_ROOT, udid));
-
-  for (const candidate of candidates) {
-    const directManifest = join(candidate, "Manifest.db");
-    if (await fileExists(directManifest)) return candidate;
-    const nestedManifest = join(candidate, udid, "Manifest.db");
-    if (await fileExists(nestedManifest)) return join(candidate, udid);
-  }
-  throw new Error([
-    `Could not find a local iPhone backup for ${udid}.`,
-    inputPath ? `Requested backup: ${resolve(inputPath)}` : `Default backup: ${join(MOBILESYNC_BACKUP_ROOT, udid)}`,
-    "Create or point to a backup before restoring layout."
-  ].join("\n"));
 }
 
 async function verifyBackupDevice(backupRoot, udid) {

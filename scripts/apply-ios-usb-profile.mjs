@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process";
 import { access, chmod, mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { readLayoutPaths } from "./ios-backup-layout.mjs";
+import { readLayoutPaths, resolveNewestLayoutBackup } from "./ios-backup-layout.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -23,7 +23,14 @@ const QUICK_TIMEOUT_MS = 20_000;
 const options = parseArgs(process.argv.slice(2));
 await ensurePymobiledevice3();
 const udid = await resolveUsbDevice(options.udid);
-if (options.requireCheckpoint) await verifyCheckpoint(await resolveCheckpointRoot(options.requireCheckpoint, udid), udid, options.password);
+if (options.requireCheckpoint) {
+  const checkpoint = await resolveNewestLayoutBackup({
+    inputPath: options.requireCheckpoint,
+    udid,
+    dataDir: DATA_DIR
+  });
+  await verifyCheckpoint(checkpoint.path, udid, options.password);
+}
 
 const supervisorKeybagPath = await requireSupervisorKeybag(options.supervisorKeybag);
 const cloud = await readCloudConfiguration(udid, supervisorKeybagPath);
@@ -103,8 +110,9 @@ function parseArgs(args) {
   return output;
 }
 
-async function verifyCheckpoint(path, udid, password = "") {
-  const manifestPath = join(path, udid, "Manifest.db");
+async function verifyCheckpoint(backupRoot, udid, password = "") {
+  await verifyBackupDevice(backupRoot, udid);
+  const manifestPath = join(backupRoot, "Manifest.db");
   const manifest = await stat(manifestPath).catch(() => null);
   if (!manifest?.isFile() || manifest.size <= 0) {
     throw new Error(`Required iPhone checkpoint is missing Manifest.db for ${udid}: ${manifestPath}`);
@@ -118,30 +126,52 @@ async function verifyCheckpoint(path, udid, password = "") {
   if (!layoutPaths.length) {
     throw new Error([
       `Required iPhone checkpoint has Manifest.db for ${udid}, but no SpringBoard/Home Screen layout records were found.`,
-      `Checkpoint path: ${path}`,
+      `Checkpoint path: ${backupRoot}`,
       "Do not use this checkpoint as a layout recovery source."
     ].join("\n"));
   }
 }
 
-async function resolveCheckpointRoot(inputPath, udid) {
-  const checkpointPath = resolve(inputPath);
-  const rootManifestPath = join(checkpointPath, udid, "Manifest.db");
-  if (await fileExists(rootManifestPath)) return checkpointPath;
-  const backupFolderManifestPath = join(checkpointPath, "Manifest.db");
-  if (await fileExists(backupFolderManifestPath)) {
-    if (checkpointPath.split(/[\\/]/).at(-1) !== udid) {
-      throw new Error([
-        `Existing iPhone backup folder is not named for the connected UDID ${udid}: ${checkpointPath}`,
-        "Pass the parent checkpoint folder that contains the UDID-named backup folder, or use the matching backup for this iPhone."
-      ].join("\n"));
-    }
-    return dirname(checkpointPath);
+async function verifyBackupDevice(backupRoot, udid) {
+  const infoPath = join(backupRoot, "Info.plist");
+  const info = await stat(infoPath).catch(() => null);
+  if (!info?.isFile() || info.size <= 0) {
+    throw new Error(`Required iPhone checkpoint is missing Info.plist for ${udid}: ${infoPath}`);
   }
-  throw new Error([
-    `Existing iPhone checkpoint is missing Manifest.db for ${udid}: ${checkpointPath}`,
-    `Expected either ${rootManifestPath} or ${backupFolderManifestPath}.`
-  ].join("\n"));
+  const ids = await readBackupDeviceIds(infoPath);
+  if (ids.length && !ids.includes(udid)) {
+    throw new Error([
+      `Required iPhone checkpoint metadata does not match the connected device ${udid}.`,
+      `Checkpoint path: ${backupRoot}`,
+      `Backup device identifiers: ${ids.join(", ")}`,
+      "Vigil will not apply a USB profile until the recovery checkpoint belongs to this iPhone."
+    ].join("\n"));
+  }
+  if (!ids.length && basename(backupRoot) !== udid) {
+    throw new Error([
+      `Required iPhone checkpoint folder is not named for the connected UDID ${udid}: ${backupRoot}`,
+      "The backup metadata does not expose a device identifier, so Vigil cannot prove this recovery source belongs to the connected iPhone.",
+      "Pass the parent checkpoint folder that contains the UDID-named backup folder, or use a checkpoint with matching Info.plist identifiers."
+    ].join("\n"));
+  }
+}
+
+async function readBackupDeviceIds(infoPath) {
+  const keys = ["Unique Identifier", "Target Identifier", "UniqueDeviceID", "Unique Device ID"];
+  const values = [];
+  for (const key of keys) {
+    try {
+      const { stdout } = await execFileAsync("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", infoPath], {
+        timeout: QUICK_TIMEOUT_MS,
+        maxBuffer: 1024 * 16
+      });
+      const value = stdout.trim();
+      if (value && !values.includes(value)) values.push(value);
+    } catch {
+      // Older backups omit some identifiers.
+    }
+  }
+  return values;
 }
 
 async function prepareIosServerState() {
