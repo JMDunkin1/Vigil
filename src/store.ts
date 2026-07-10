@@ -287,11 +287,15 @@ export function sanitizeDefaultFocusProfile(profile: Profile): Profile {
 }
 
 function sanitizeNormalProfile(profile: Profile): Profile {
-  return sanitizeRedditUrlPolicyProfile(profile, {
-    blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS],
+  return {
+    ...profile,
+    description: "Level 1 baseline: no active focus restrictions.",
+    blockedApps: [],
+    blockedSites: [],
+    blockedUrlPatterns: [],
     phoneAppBlocking: false,
     hostsUrlPatternBlocking: false
-  });
+  };
 }
 
 function sanitizeRedditUrlPolicyProfile(

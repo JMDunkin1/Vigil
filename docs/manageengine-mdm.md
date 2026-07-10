@@ -1,6 +1,6 @@
 # Vigil + ManageEngine MDM Setup
 
-This is the normal hosted-MDM path for a solo Vigil install. ManageEngine owns Apple APNs enrollment, device wakeups, profile assignment, and profile removal; Vigil exports the supervised iPhone policy as a custom configuration profile.
+This is the normal hosted-MDM path for a solo Vigil install. ManageEngine owns Apple APNs enrollment, device wakeups, profile assignment, and profile removal; Vigil exports supervised iPhone profiles as custom configuration profiles. Exporting files locally does not upload, assign, or deploy them.
 
 Use this path when Apple Business Manager is not available and you do not want to pay for Apple Developer Program MDM Vendor CSR access.
 
@@ -23,6 +23,32 @@ That writes:
 
 - `data/manageengine/vigil-manageengine-policy.mobileconfig`
 - `data/manageengine/vigil-manageengine-policy.summary.json`
+- `data/manageengine/vigil-social-launchers.mobileconfig`
+- `data/manageengine/vigil-social-launchers.summary.json`
+
+The social-launcher profile is static, has stable payload UUIDs, and never receives `DurationUntilRemoval`. Keep it assigned separately from the dynamic policy profile so Level changes cannot delete and recreate the Instagram, YouTube, and Snapchat launcher icons. The summary sidecars report `deployment.status: unverified` until an installed-profile observation proves the uploaded artifact is current.
+
+The first migration from an older combined Vigil profile is different: the Web Clip payload identifiers move from `tech.caseline.vigil.ios-lock.*` to `tech.caseline.vigil.ios-social-launchers.*`. iOS can remove and recreate those icons during that one-time handoff even when labels and URLs match. A current, complete layout checkpoint is mandatory before assigning the launcher profile or updating the old policy profile, and the rendered Home Screen must be compared after the migration before continuing.
+
+To make deployment status verifiable, provide separate read-only observations for the dynamic and launcher profiles:
+
+```json
+{
+  "observedAt": "2026-07-10T12:00:00.000Z",
+  "installedProfileIdentifier": "tech.caseline.vigil.ios-lock",
+  "installedProfileHash": "<sha256-of-the-exact-deployed-mobileconfig-bytes>",
+  "effectiveProhibitAppInstall": false,
+  "effectiveProhibitAppDelete": false
+}
+```
+
+```sh
+npm run ios:manageengine:export -- \
+  --deployment-observation /path/to/policy-observation.json \
+  --launcher-deployment-observation /path/to/launcher-observation.json
+```
+
+Use `tech.caseline.vigil.ios-social-launchers` in the launcher observation. A hash is comparable only when it was computed over the exact bytes ManageEngine deployed; if ManageEngine signs or reserializes the profile and those deployed bytes cannot be retrieved, omit the hash and keep the artifact status `unverified`. Effective restriction conflicts are reported separately from artifact staleness.
 
 Generate a temporary enrollment-window profile if the currently installed Vigil profile blocks installing new profiles:
 
@@ -37,7 +63,7 @@ That writes:
 
 The enrollment-window profile keeps the Vigil policy enabled but turns off the profile-install and removal hardening that can block installing ManageEngine's enrollment profile. It does not save Vigil state.
 
-If needed, apply the enrollment-window profile over USB to an already supervised phone:
+Only after creating and validating a current, complete iPhone layout checkpoint, the enrollment-window profile can be applied over USB to an already supervised phone:
 
 ```sh
 npm run ios:apply-usb -- --profile data/manageengine/vigil-manageengine-enrollment-window.mobileconfig
@@ -64,9 +90,11 @@ Keep using the same `data/vigil-supervisor.keybag` or `VIGIL_SUPERVISOR_KEYBAG` 
 3. Enroll the iPhone into ManageEngine.
    - If iOS refuses to install the enrollment profile, apply the Vigil enrollment-window profile over USB first.
    - Do not erase the phone for this path.
-4. In ManageEngine, create an iOS custom configuration profile and upload `data/manageengine/vigil-manageengine-policy.mobileconfig`.
-5. Assign that profile to the enrolled iPhone.
-6. Confirm the policy is installed on the phone under Settings > General > VPN & Device Management.
+4. Build and install the signed `ios/VigilSocial` companion app, then create a static iOS custom configuration profile and upload `data/manageengine/vigil-social-launchers.mobileconfig`. The launchers target the companion bundle identifier.
+5. Assign the static launcher profile once. Do not add a timed removal command to it.
+6. Create a second iOS custom configuration profile and upload `data/manageengine/vigil-manageengine-policy.mobileconfig`.
+7. Assign the dynamic policy profile to the enrolled iPhone.
+8. Confirm both profile identifiers are installed on the phone under Settings > General > VPN & Device Management.
 
 Vigil includes ManageEngine's iOS helper app bundle (`com.zohocorp.mdm`) in the app restrictions payload when app restrictions are enabled. That hides the visible vendor app without removing the managed profile, enrollment, or hosted remote-delivery channel.
 
@@ -74,5 +102,6 @@ Vigil includes ManageEngine's iOS helper app bundle (`com.zohocorp.mdm`) in the 
 
 - Treat Vigil's self-hosted MDM doctor as advanced diagnostic tooling only. It can still report APNs certificate blockers while the ManageEngine path is healthy, because ManageEngine, not Vigil, is the MDM server in normal use.
 - The static Vigil USB profile can remain in place during setup. If ManageEngine reports a duplicate profile identifier conflict, apply the enrollment-window profile over USB, enroll, then push the final ManageEngine policy again.
-- Re-export and re-upload the policy after changing Vigil's iPhone app/web targets.
+- Re-export and re-upload the dynamic policy after changing Vigil's iPhone app/web targets. Re-upload the launcher profile only when launcher URLs, labels, icons, or the companion app target change.
+- `appStoreAllowedByThisProfile: true` means the exported artifact omits App Store prohibition keys; it does not prove that an older installed profile stopped enforcing them. Use the deployment hash and effective-restriction check in the summary before calling the phone current.
 - API automation should wait until the manual upload/assignment path works once. After that, wire the ManageEngine API using the tenant URL, OAuth token, device/group IDs, and the exact profile endpoint shape from your tenant.

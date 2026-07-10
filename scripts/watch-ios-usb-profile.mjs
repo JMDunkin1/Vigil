@@ -151,6 +151,9 @@ function transientUsbMessage(detail) {
   if (/Trust This Computer|approve Trust|not paired|pairing dialog|PasswordProtectedError|Please unlock/i.test(detail)) {
     return "The iPhone is present but not ready; unlock it and approve Trust This Computer.";
   }
+  if (/Status['"]?:\s*['"]?NotNow|ProfileError:\s*invalid response .*NotNow/i.test(detail)) {
+    return "The iPhone is present but iOS is not ready for profile install yet; keep it unlocked and still connected.";
+  }
   if (/NoDeviceConnected|No device found|Could not find device|Device is not connected|MuxError|MuxException|Connection refused/i.test(detail)) {
     return "USB connection is not ready yet; still waiting.";
   }

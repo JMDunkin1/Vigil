@@ -19,6 +19,7 @@ const sourceRoot = await fileExists(join(cwd, "README.md")) ? cwd : join(cwd, ".
 const root = await fileExists(join(cwd, "public", "app.js")) ? cwd : join(sourceRoot, "dist", "runtime");
 const readmeSource = await readFile(join(sourceRoot, "README.md"), "utf8");
 const mainTsSource = await readFile(join(sourceRoot, "app", "main.ts"), "utf8");
+const preloadSource = await readFile(join(sourceRoot, "app", "preload.cjs"), "utf8");
 const iosCheckpointSource = await readFile(join(sourceRoot, "scripts", "create-ios-layout-checkpoint.mjs"), "utf8");
 const iosRestoreLayoutSource = await readFile(join(sourceRoot, "scripts", "restore-ios-home-layout.mjs"), "utf8");
 const iosUsbApplySource = await readFile(join(sourceRoot, "scripts", "apply-ios-usb-profile.mjs"), "utf8");
@@ -79,6 +80,9 @@ assert.match(mainTsSource, /app\.setLoginItemSettings\(/);
 assert.match(mainTsSource, /wasOpenedAtLogin/);
 assert.match(mainTsSource, /function shouldStayResident/);
 assert.match(mainTsSource, /function hideVigilWindow/);
+assert.match(mainTsSource, /preload\.cjs/);
+assert.match(preloadSource, /require\("electron"\)/);
+assert.doesNotMatch(preloadSource, /^\s*import\s/m);
 assert.doesNotMatch(mainTsSource, /label: "Quit Vigil"|role: "quit"/);
 assert.match(updaterSource, /\/api\/app-update\/start|update-packaged-app\.mjs/);
 assert.match(updateScriptSource, /git", \["fetch", "--prune"\]/);

@@ -1,15 +1,17 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { apiRequestGuard, publicHostGuard } from "./apiSecurity.js";
+import { requireHostedAccount } from "./auth.js";
 import { APP_NAME, PORT, defaultState } from "./defaults.js";
-import { addEvent, loadState, loadUsage, saveState } from "./store.js";
+import { DATA_DIR, addEvent, loadState, loadUsage, saveState } from "./store.js";
 import { launchAgentStatus } from "./hardening.js";
 import { startMonitor } from "./monitor.js";
 import { assertDistanceKey, updateDistanceKeySettings } from "./distanceKey.js";
 import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated } from "./iosProfiles.js";
+import { exportManageEngineIosProfile } from "./manageEngineExport.js";
 import { parsePlist } from "./plist.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "./protection.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "./keyholder.js";
@@ -18,6 +20,7 @@ import { createLocalScriptRunner } from "./server/localScripts.js";
 import { blockedPage, pausePage } from "./server/pages.js";
 import { matchApiRoute } from "./server/apiRoutes.js";
 import { handleAppUpdateApiRoute } from "./server/appUpdateRoutes.js";
+import { handleAccountApiRoute } from "./server/accountRoutes.js";
 import type { AppUpdateController } from "./server/appUpdateRoutes.js";
 import { handleBackupApiRoute } from "./server/backupRoutes.js";
 import { handleAdultBlocklistApiRoute } from "./server/adultBlocklistRoutes.js";
@@ -53,6 +56,8 @@ let server: Server | null = null;
 let activeHost = DEFAULT_HOST;
 let activePort = PORT;
 let appUpdateController: AppUpdateController | null = null;
+let manageEngineExportScheduled = false;
+const pendingManageEngineExportReasons = new Set<string>();
 
 interface ServerOptions {
   host?: string;
@@ -321,7 +326,20 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return;
   }
 
+  if (await handleAccountApiRoute(request, response, path)) {
+    return;
+  }
+
   if (await handleExtensionApiRoute(request, response, url, { state, usage })) {
+    return;
+  }
+
+  try {
+    if (path !== "/api/devices/usage") {
+      await requireHostedAccount(request, { admin: !["GET", "HEAD", "OPTIONS"].includes(method) });
+    }
+  } catch (error) {
+    sendJson(response, errorStatus(error), serializeError(error), { "Cache-Control": "no-store" });
     return;
   }
 
@@ -438,12 +456,86 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
 }
 
 function recordIosMdmPolicyQueue(reason: string): IosMdmPushResult {
+  scheduleManageEnginePolicyExport(reason);
   const result = queueIosMdmPolicyRefresh(state, reason) as unknown as IosMdmPushResult;
   if (result.queued) {
     addEvent(state, "ios_mdm_policy_queued", { reason, ...result });
     scheduleIosMdmPush(reason);
   }
   return result;
+}
+
+function scheduleManageEnginePolicyExport(reason: string): void {
+  pendingManageEngineExportReasons.add(reason);
+  if (manageEngineExportScheduled) return;
+  manageEngineExportScheduled = true;
+  setImmediate(async () => {
+    try {
+      while (pendingManageEngineExportReasons.size) {
+        const reasons = [...pendingManageEngineExportReasons];
+        pendingManageEngineExportReasons.clear();
+        const paths = manageEnginePolicyOutputPaths();
+        try {
+          const result = await exportManageEngineIosProfile(state, {
+            currentState: true,
+            outPath: paths.outPath,
+            saveState,
+            summaryPath: paths.summaryPath
+          });
+          addEvent(state, "ios_manageengine_policy_exported", {
+            reasons,
+            bytes: result.profileBytes,
+            hash: result.profileHash,
+            launcherHash: result.launcherProfileHash,
+            launcherOutputPath: result.launcherOutPath,
+            launcherSummaryPath: result.launcherSummaryPath,
+            mirroredLauncherOutputPath: result.mirroredLauncherOutPath,
+            mirroredLauncherSummaryPath: result.mirroredLauncherSummaryPath,
+            mirroredOutputPath: result.mirroredOutPath,
+            mirroredSummaryPath: result.mirroredSummaryPath,
+            outputPath: result.outPath,
+            summaryPath: result.summaryPath
+          });
+          await saveState(state);
+        } catch (error) {
+          addEvent(state, "ios_manageengine_policy_export_failed", {
+            reasons,
+            error: errorMessage(error),
+            outputPath: paths.outPath,
+            summaryPath: paths.summaryPath
+          });
+          try {
+            await saveState(state);
+          } catch (saveError) {
+            console.error("ManageEngine iOS export failure save failed:", saveError);
+          }
+        }
+      }
+    } finally {
+      manageEngineExportScheduled = false;
+    }
+  });
+}
+
+function manageEnginePolicyOutputPaths(): { outPath: string; summaryPath: string } {
+  const dir = process.env.VIGIL_MANAGEENGINE_DIR || defaultManageEngineExportDir();
+  return {
+    outPath: join(dir, "vigil-manageengine-policy.mobileconfig"),
+    summaryPath: join(dir, "vigil-manageengine-policy.summary.json")
+  };
+}
+
+function defaultManageEngineExportDir(): string {
+  const explicitRoot = process.env.VIGIL_REPO_ROOT || "";
+  if (explicitRoot) return join(explicitRoot, "data", "manageengine");
+  const repoRoot = repoRootFromRuntimePath(ROOT);
+  return repoRoot ? join(repoRoot, "data", "manageengine") : join(DATA_DIR, "manageengine");
+}
+
+function repoRootFromRuntimePath(runtimeRoot: string): string {
+  const marker = `${sep}dist${sep}mac${sep}`;
+  const index = runtimeRoot.indexOf(marker);
+  return index > 0 ? runtimeRoot.slice(0, index) : "";
 }
 
 async function assertStrictLockAllowed(lockLevel: LockLevel, profile: Profile, options: { mode?: string } = {}): Promise<void> {

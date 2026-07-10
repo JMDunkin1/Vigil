@@ -265,6 +265,40 @@ assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "localhost:8
 assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "vigil.example.test" } }).ok, false);
 assert.equal(publicHostGuard({ path: "/mdm/checkin", headers: { host: "vigil.example.test" } }).ok, true);
 assert.equal(publicHostGuard({ path: "/api/devices/usage", headers: { host: "vigil.example.test" } }).ok, true);
+const previousHostedEnv = {
+  auth: process.env.VIGIL_AUTH_ENABLED,
+  hosts: process.env.VIGIL_PUBLIC_HOSTS
+};
+try {
+  process.env.VIGIL_AUTH_ENABLED = "1";
+  process.env.VIGIL_PUBLIC_HOSTS = "vigil.example.test";
+  assert.equal(publicHostGuard({ path: "/", headers: { host: "vigil.example.test" } }).ok, true);
+  assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "unknown.example.test" } }).ok, false);
+  assert.equal(apiRequestGuard({
+    method: "POST",
+    path: "/api/account/login",
+    headers: {
+      host: "vigil.example.test",
+      origin: "https://vigil.example.test",
+      "sec-fetch-site": "same-origin",
+      "content-type": "application/json"
+    }
+  }).ok, true);
+  assert.equal(apiRequestGuard({
+    method: "POST",
+    path: "/api/account/login",
+    headers: {
+      host: "vigil.example.test",
+      origin: "https://attacker.example.test",
+      "content-type": "application/json"
+    }
+  }).ok, false);
+} finally {
+  if (previousHostedEnv.auth === undefined) delete process.env.VIGIL_AUTH_ENABLED;
+  else process.env.VIGIL_AUTH_ENABLED = previousHostedEnv.auth;
+  if (previousHostedEnv.hosts === undefined) delete process.env.VIGIL_PUBLIC_HOSTS;
+  else process.env.VIGIL_PUBLIC_HOSTS = previousHostedEnv.hosts;
+}
 assert.deepEqual(deviceUsageSyncAuthorization({
   headers: { host: "127.0.0.1:8787", [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE },
   url: new URL("http://127.0.0.1:8787/api/devices/usage"),

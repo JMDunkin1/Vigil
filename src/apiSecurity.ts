@@ -60,8 +60,28 @@ export function apiRequestGuard({ method = "GET", path = "", headers = {} }: Gua
   if (EXTENSION_API_PATHS.has(path)) return extensionApiRequestGuard({ method: normalizedMethod, headers });
   if (DEVICE_SYNC_API_PATHS.has(path)) return allow();
   if (!isMutationMethod(normalizedMethod)) return allow();
+  if (hostedAccountsEnabled()) return hostedMutationGuard({ method: normalizedMethod, headers });
 
   return localMutationGuard({ method: normalizedMethod, headers });
+}
+
+function hostedMutationGuard({ method = "GET", headers = {} }: GuardInput): GuardResult {
+  const origin = headerValue(headers, "origin");
+  const host = headerValue(headers, "host").toLowerCase();
+  if (origin) {
+    try {
+      if (new URL(origin).host.toLowerCase() !== host) return deny("Cross-origin mutation blocked.");
+    } catch {
+      return deny("Cross-origin mutation blocked.");
+    }
+  }
+
+  const fetchSite = headerValue(headers, "sec-fetch-site").toLowerCase();
+  if (fetchSite && !["same-origin", "none"].includes(fetchSite)) return deny("Cross-site mutation blocked.");
+  if (method === "POST" && !isJsonContentType(headerValue(headers, "content-type"))) {
+    return deny("Mutation requests must use application/json.");
+  }
+  return allow();
 }
 
 function extensionApiRequestGuard({ method = "GET", headers = {} }: GuardInput): GuardResult {
@@ -98,6 +118,7 @@ export function publicHostGuard({ path = "", headers = {} }: GuardInput): GuardR
   if (String(path || "").startsWith("/mdm/")) return allow();
   if (DEVICE_SYNC_API_PATHS.has(path)) return allow();
   if (isLocalHostHeader(headerValue(headers, "host"))) return allow();
+  if (hostedAccountsEnabled() && configuredPublicHosts().has(normalizedHost(headerValue(headers, "host")))) return allow();
   return deny("Public tunnel requests may only reach MDM endpoints.");
 }
 
@@ -221,6 +242,24 @@ function isLocalHostHeader(value: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function configuredPublicHosts(): Set<string> {
+  return new Set(csvEnv("VIGIL_PUBLIC_HOSTS").map(normalizedHost).filter(Boolean));
+}
+
+function normalizedHost(value: unknown): string {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  try {
+    return new URL(`http://${raw}`).host.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function hostedAccountsEnabled(): boolean {
+  return ["1", "true", "yes", "on"].includes(String(process.env.VIGIL_AUTH_ENABLED || "").trim().toLowerCase());
 }
 
 function isLocalRequestHost(headers: HeaderBag, url: URL | null): boolean {

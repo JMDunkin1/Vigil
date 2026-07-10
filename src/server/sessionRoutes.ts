@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { truthy } from "../booleans.js";
 import { assertTypingChallenge, attachTypingChallenge } from "../challenge.js";
 import { assertDistanceKey } from "../distanceKey.js";
-import { DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID } from "../defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../defaults.js";
 import { assertIntentReason } from "../intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "../intervention.js";
 import { completeIntentionalPlanBlock } from "../intentionalUse.js";
@@ -97,8 +97,9 @@ export async function handleSessionApiRoute(
   const { state } = context;
 
   if (method === "POST" && path === "/api/panic/start") {
+    const body = await readBody(request);
     activePolicy(state);
-    const durationMinutes = panicLockDurationMinutes(state);
+    const durationMinutes = clampNumber(body.durationMinutes, 1, 1440, panicLockDurationMinutes(state));
     const started = new Date();
     const ends = new Date(started.getTime() + durationMinutes * 60 * 1000);
     const profile = panicLockProfile();
@@ -122,6 +123,51 @@ export async function handleSessionApiRoute(
     await saveState(state);
     context.scheduleImmediateSessionEnforcement(state.panicLock.id);
     sendJson(response, 200, { ok: true, session: state.panicLock });
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/protection/level") {
+    const body = await readBody(request);
+    activePolicy(state);
+    if (state.panicLock) {
+      sendJson(response, 423, { error: "Panic stays locked for its full three minutes.", active: state.panicLock });
+      return true;
+    }
+
+    const level = Math.round(clampNumber(body.level, 1, 3, 1));
+    const deviceTargets = normalizeSessionDeviceTargets(body);
+    if (level === 1) {
+      for (const target of deviceTargets) clearDeviceSession(state, target);
+      addEvent(state, "protection_level_changed", { level, deviceTargets });
+      if (deviceTargets.includes("phone")) context.recordIosMdmPolicyQueue("protection-level-1");
+      await saveState(state);
+      sendJson(response, 200, { ok: true, level, activeSessions: state.activeSessions });
+      return true;
+    }
+
+    const profileId = level === 3 ? BRICK_MODE_PROFILE_ID : SOFT_BLOCK_PROFILE_ID;
+    const draft = manualSessionDraft(state, {
+      title: level === 3 ? "Full Brick" : "Soft Lock",
+      mode: level === 3 ? "brick" : "focus",
+      profileId,
+      durationMinutes: 60 * 24 * 45,
+      lockLevel: "deep",
+      commitmentLock: false,
+      deviceTargets
+    });
+    await context.assertStrictLockAllowed(draft.session.lockLevel, draft.profile, { mode: draft.session.mode });
+    const persistentEndsAt = new Date(draft.session.startedAt);
+    persistentEndsAt.setUTCFullYear(persistentEndsAt.getUTCFullYear() + 100);
+    draft.session.endsAt = persistentEndsAt.toISOString();
+    draft.session.canEndEarly = true;
+    draft.session.commitmentLock = false;
+    draft.session.emergencyUnlocksAllowed = true;
+    startDeviceSession(state, deviceTargets, draft.session);
+    addEvent(state, "protection_level_changed", { level, deviceTargets, sessionId: draft.session.id });
+    if (deviceTargets.includes("phone")) context.recordIosMdmPolicyQueue(`protection-level-${level}`);
+    await saveState(state);
+    context.scheduleImmediateSessionEnforcement(draft.session.id);
+    sendJson(response, 200, { ok: true, level, session: draft.session, activeSessions: state.activeSessions });
     return true;
   }
 

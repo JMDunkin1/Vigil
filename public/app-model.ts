@@ -116,10 +116,32 @@ export interface LimitBlockItem extends UnknownRecord {
 }
 
 export interface WeekDaySummary extends UnknownRecord {
+  key?: string;
   label: string;
   tracked?: boolean;
   focusScore?: number;
   distractingSeconds?: number;
+  totalSeconds?: number;
+}
+
+export interface HabitCalendarCheckIn extends DashboardItem {
+  behaviorId?: string;
+  behaviorName?: string;
+  value?: number;
+  note?: string;
+  at?: string;
+  dateKey?: string;
+  weekKey?: string;
+}
+
+export interface JournalVaultSummary extends UnknownRecord {
+  configured?: boolean;
+  passwordSetAt?: string | null;
+  autoLockMinutes?: number;
+  touchIdAvailable?: boolean;
+  entries?: number;
+  locked?: boolean;
+  error?: string;
 }
 
 export interface InterventionSummary extends UnknownRecord {
@@ -163,6 +185,8 @@ export interface IntentionalUseSummary extends UnknownRecord {
   };
   rules?: DashboardItem[];
   lifeLog?: {
+    entriesLocked?: boolean;
+    journalVault?: JournalVaultSummary;
     entries?: Array<DashboardItem & {
       title?: string;
       body?: string;
@@ -199,13 +223,12 @@ export interface IntentionalUseSummary extends UnknownRecord {
       openItems?: number;
       completedItems?: number;
     };
-    recentCheckIns?: Array<DashboardItem & {
-      behaviorId?: string;
-      behaviorName?: string;
-      value?: number;
-      note?: string;
-      at?: string;
-    }>;
+    recentCheckIns?: HabitCalendarCheckIn[];
+    habitCheckIns?: HabitCalendarCheckIn[];
+    calendar?: {
+      month?: string;
+      checkIns?: HabitCalendarCheckIn[];
+    };
     stats?: {
       weekKey?: string;
       entriesThisWeek?: number;
@@ -411,8 +434,17 @@ export interface UsageSummary extends UnknownRecord {
   focusScore: number;
   distractingSeconds: number;
   protectedSeconds: number;
+  totalSeconds?: number;
   topApps: BarEntry[];
   topSites: BarEntry[];
+  devices?: Record<string, UnknownRecord & {
+    totalSeconds?: number;
+    distractingSeconds?: number;
+    appOpenCount?: number;
+    siteOpenCount?: number;
+    topApps?: BarEntry[];
+    topSites?: BarEntry[];
+  }>;
 }
 
 export interface ReportSummary extends UnknownRecord {
@@ -519,6 +551,7 @@ export interface DashboardData extends UnknownRecord {
   };
   presets: Preset[];
   protection: ProtectionSummary;
+  journalVault?: JournalVaultSummary;
   hardening: UnknownRecord & {
     hostsBlock?: string;
     hosts?: HardeningCheck;

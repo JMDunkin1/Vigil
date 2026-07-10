@@ -212,6 +212,8 @@ function pauseOverlayContent(decision: PauseOverlayDecision): HTMLElement {
   const eyebrow = element("p", "eyebrow", "Intentional Use");
   const title = element("h1", "", `Before ${decision.targetLabel}.`);
   const lead = element("p", "lead", decision.goalStatement);
+  const quote = element("blockquote", "", "“The measure of love is to love without measure.”");
+  quote.append(element("cite", "", "Saint Augustine"));
   const timer = element("div", "timer");
   const countdown = element("strong", "", String(decision.waitSeconds));
   countdown.id = "vigil-countdown";
@@ -281,7 +283,7 @@ function pauseOverlayContent(decision: PauseOverlayDecision): HTMLElement {
     });
   });
 
-  panel.append(eyebrow, title, lead, timer, grid, meta, actions, status);
+  panel.append(eyebrow, title, lead, quote, timer, grid, meta, actions, status);
   backdrop.append(panel);
   return backdrop;
 }
@@ -425,7 +427,7 @@ function injectPageGuardStyle(): void {
       position: fixed;
       inset: 0;
       z-index: 2147483646;
-      background: #f7faf7;
+      background: #080d15;
       pointer-events: auto;
     }
     html[data-vigil-page-guard="active"] > body {
@@ -562,8 +564,8 @@ function errorMessage(error: unknown): string {
 function pauseOverlayCss() {
   return `
     :host {
-      color-scheme: light;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: dark;
+      font-family: Georgia, "Times New Roman", serif;
     }
     * {
       box-sizing: border-box;
@@ -575,35 +577,36 @@ function pauseOverlayCss() {
       display: grid;
       place-items: center;
       padding: 24px;
-      background: #091214;
+      background: radial-gradient(circle at 50% 18%, #18345b 0, #0a111d 44%, #05080e 100%);
     }
     .panel {
       width: min(720px, 100%);
       max-height: min(760px, calc(100vh - 48px));
       overflow: auto;
-      border: 1px solid rgba(255, 255, 255, .46);
-      border-radius: 8px;
-      background: #f7faf7;
-      color: #15201c;
-      box-shadow: 0 24px 80px rgba(0, 0, 0, .34);
+      border: 1px solid #6a522b;
+      border-radius: 6px;
+      background: linear-gradient(145deg, #142238f7, #0b121df7);
+      color: #f1eee4;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, .7), inset 0 0 0 3px #080d15, inset 0 0 0 4px #6f5529;
       padding: 28px;
     }
     .eyebrow {
       margin: 0 0 8px;
-      color: #48655a;
+      color: #d1a94d;
       font-size: 12px;
-      font-weight: 800;
+      font: 900 12px ui-monospace, SFMono-Regular, Menlo, monospace;
       text-transform: uppercase;
+      letter-spacing: .14em;
     }
     h1 {
       margin: 0;
       font-size: 32px;
       line-height: 1.12;
-      font-weight: 850;
+      font-weight: 800;
     }
     .lead {
       margin: 12px 0 20px;
-      color: #4f5f59;
+      color: #aeb3af;
       font-size: 16px;
       line-height: 1.45;
     }
@@ -612,9 +615,10 @@ function pauseOverlayCss() {
       place-items: center;
       min-height: 120px;
       margin: 0 0 18px;
-      border: 1px solid #d8e2dc;
-      border-radius: 8px;
-      background: #ffffff;
+      border: 5px solid #d1a94d;
+      border-radius: 5px;
+      background: radial-gradient(circle, #172b48, #090f19);
+      box-shadow: 5px 5px 0 #04070c, inset 0 0 0 3px #6a5128;
     }
     .timer strong {
       display: block;
@@ -623,7 +627,7 @@ function pauseOverlayCss() {
     }
     .timer span {
       display: block;
-      color: #66756f;
+      color: #aeb3af;
       font-size: 12px;
       font-weight: 800;
       text-transform: uppercase;
@@ -635,6 +639,8 @@ function pauseOverlayCss() {
     }
     section {
       min-width: 0;
+      border-top: 1px solid #4d402d;
+      padding-top: 14px;
     }
     h2 {
       margin: 0 0 8px;
@@ -646,10 +652,10 @@ function pauseOverlayCss() {
       width: 100%;
       min-height: 44px;
       margin: 0 0 10px;
-      border: 1px solid #cfdad4;
-      border-radius: 8px;
-      background: #ffffff;
-      color: #14201c;
+      border: 1px solid #554b3b;
+      border-radius: 3px;
+      background: #080e17;
+      color: #f1eee4;
       font: inherit;
       padding: 10px 12px;
     }
@@ -660,10 +666,13 @@ function pauseOverlayCss() {
     button {
       min-height: 42px;
       border: 1px solid transparent;
-      border-radius: 8px;
-      font: inherit;
+      border-radius: 3px;
+      font: 800 12px ui-monospace, SFMono-Regular, Menlo, monospace;
       font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .04em;
       cursor: pointer;
+      box-shadow: 3px 3px 0 #04070c;
     }
     button:disabled {
       cursor: not-allowed;
@@ -671,15 +680,16 @@ function pauseOverlayCss() {
     }
     .choice {
       width: 100%;
-      border-color: #cfdad4;
-      background: #ffffff;
-      color: #20302a;
+      border-color: #40536d;
+      background: #1b293c;
+      color: #e6e3da;
       text-align: left;
       padding: 10px 12px;
     }
     .choice.selected {
-      border-color: #1d6b4f;
-      background: #e9f5ef;
+      border-color: #d1a94d;
+      background: #3a2d16;
+      color: #fff0b3;
     }
     .meta {
       display: flex;
@@ -688,10 +698,10 @@ function pauseOverlayCss() {
       margin: 18px 0;
     }
     .meta span {
-      border: 1px solid #d8e2dc;
-      border-radius: 999px;
-      background: #ffffff;
-      color: #4f5f59;
+      border: 1px solid #4d4436;
+      border-radius: 3px;
+      background: #090f18;
+      color: #aeb3af;
       font-size: 12px;
       font-weight: 750;
       padding: 7px 10px;
@@ -703,22 +713,39 @@ function pauseOverlayCss() {
       gap: 10px;
     }
     .primary {
-      background: #176a4d;
-      color: #ffffff;
+      border-color: #efd47f;
+      background: #d1a94d;
+      color: #120e07;
       padding: 10px 16px;
     }
     .secondary {
-      border-color: #cfdad4;
-      background: #ffffff;
-      color: #20302a;
+      border-color: #40536d;
+      background: #1b293c;
+      color: #e6e3da;
       padding: 10px 14px;
     }
     .status {
       min-height: 22px;
       margin: 14px 0 0;
-      color: #52635d;
+      color: #aeb3af;
       font-size: 14px;
       line-height: 1.4;
+    }
+    blockquote {
+      margin: 14px 0 22px;
+      padding: 11px 14px;
+      border-left: 3px solid #d1a94d;
+      background: #080d15a8;
+      color: #d8d5ca;
+      font-style: italic;
+      line-height: 1.45;
+    }
+    blockquote cite {
+      display: block;
+      margin-top: 6px;
+      color: #979e9a;
+      font-size: 12px;
+      font-style: normal;
     }
     @media (max-width: 700px) {
       .backdrop {

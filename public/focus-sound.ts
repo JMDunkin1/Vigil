@@ -1,4 +1,6 @@
 import { clamp } from "./format.js";
+import { sacredAudioCatalog } from "./sacred-audio-catalog.js";
+import type { SacredAudioTrackId } from "./sacred-audio-catalog.js";
 
 type ControlElement = HTMLElement & {
   checked: boolean;
@@ -27,10 +29,13 @@ interface FocusSoundData {
 type FocusMode = "focus" | "relax" | "sleep" | "meditate";
 type FocusActivity = "deep-work" | "creative-flow" | "learning" | "light-work" | "motivation" | "recharge" | "destress" | "wind-down" | "power-nap" | "guided" | "unguided";
 const generatedPresetValues = ["brown-noise", "pink-noise", "white-noise", "binaural-beat", "isochronic-tone"] as const;
-const realAudioPresetValues = ["rain", "ocean", "storm", "stream", "bach-goldberg-aria", "bach-invention-8", "bach-italian-concerto", "handel-harmonious-blacksmith", "scarlatti-sonata-k87", "scarlatti-sonata-k466"] as const;
-const focusPresetValues = [...generatedPresetValues, ...realAudioPresetValues] as const;
+const standardAudioPresetValues = ["rain", "ocean", "storm", "stream", "bach-goldberg-aria", "bach-invention-8", "bach-italian-concerto", "handel-harmonious-blacksmith", "scarlatti-sonata-k87", "scarlatti-sonata-k466"] as const;
+const sacredAudioPresetValues = sacredAudioCatalog.map((track) => track.id) as SacredAudioTrackId[];
+const realAudioPresetValues: readonly RealAudioPreset[] = [...standardAudioPresetValues, ...sacredAudioPresetValues];
+const focusPresetValues: readonly FocusPreset[] = [...generatedPresetValues, ...realAudioPresetValues];
 type GeneratedPreset = typeof generatedPresetValues[number];
-type RealAudioPreset = typeof realAudioPresetValues[number];
+type StandardAudioPreset = typeof standardAudioPresetValues[number];
+type RealAudioPreset = StandardAudioPreset | SacredAudioTrackId;
 type FocusPreset = GeneratedPreset | RealAudioPreset;
 type FocusIntensity = "low" | "medium" | "high";
 type FocusTimerMode = "infinite" | "timer" | "interval";
@@ -115,6 +120,7 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
     setFieldValue("#focusSoundTimerMinutes", String(options.timerMinutes));
     setFieldValue("#focusSoundBreakMinutes", String(options.breakMinutes));
     setFieldValue("#focusSoundVolume", String(options.volume));
+    renderFocusStudio(options);
 
     void sync(options).catch((error) => {
       focusAudio.blocked = true;
@@ -415,6 +421,132 @@ function focusOptions(settings: FocusSoundData["state"]["settings"] = {}): SyncO
   };
 }
 
+function renderFocusStudio(options: SyncOptions): void {
+  const player = document.querySelector<HTMLElement>("#audioPlayer");
+  if (!player) return;
+
+  const details = presetUiDetails(options.preset);
+  player.dataset.playing = String(options.enabled);
+
+  const title = document.querySelector<HTMLElement>("#focusSoundNowPlaying");
+  const category = document.querySelector<HTMLElement>("#focusSoundCategory");
+  const description = document.querySelector<HTMLElement>("#focusSoundDescription");
+  const playButton = document.querySelector<HTMLButtonElement>("#focusSoundPlayButton");
+  const playLabel = document.querySelector<HTMLElement>("#focusSoundPlayLabel");
+  const volumeValue = document.querySelector<HTMLOutputElement>("#focusSoundVolumeValue");
+
+  if (title) title.textContent = details.title;
+  if (category) category.textContent = details.category;
+  if (description) description.textContent = details.description;
+  if (volumeValue) volumeValue.value = String(options.volume);
+  if (playLabel) playLabel.textContent = options.enabled ? "Pause" : "Listen";
+  if (playButton) {
+    playButton.setAttribute("aria-pressed", String(options.enabled));
+    playButton.setAttribute("aria-label", `${options.enabled ? "Pause" : "Play"} ${details.title}`);
+  }
+
+  setPressedState("[data-focus-mode]", "focusMode", options.mode);
+  setPressedState("[data-focus-intensity]", "focusIntensity", options.intensity);
+  renderActivityButtons(options.mode, options.activity);
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-focus-preset]")) {
+    const selected = button.dataset.focusPreset === options.preset;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+    const action = button.querySelector<HTMLElement>("em");
+    if (action) action.textContent = selected ? (options.enabled ? "Playing" : "Ready") : "Play";
+  }
+
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-focus-timer-mode]")) {
+    const timerMode = button.dataset.focusTimerMode;
+    const minutes = Number(button.dataset.focusTimerMinutes || options.timerMinutes);
+    const breakMinutes = Number(button.dataset.focusBreakMinutes || options.breakMinutes);
+    const selected = timerMode === options.timerMode
+      && (timerMode === "infinite" || minutes === options.timerMinutes)
+      && (timerMode !== "interval" || breakMinutes === options.breakMinutes);
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
+}
+
+function setPressedState(selector: string, datasetKey: string, selectedValue: string): void {
+  for (const button of document.querySelectorAll<HTMLButtonElement>(selector)) {
+    const selected = button.dataset[datasetKey] === selectedValue;
+    button.classList.toggle("is-active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
+}
+
+function renderActivityButtons(mode: FocusMode, selected: FocusActivity): void {
+  const container = document.querySelector<HTMLElement>("#focusSoundActivityButtons");
+  if (!container) return;
+  const options = activitiesByMode[mode];
+  const current = Array.from(container.querySelectorAll<HTMLButtonElement>("[data-focus-activity]"))
+    .map((button) => button.dataset.focusActivity)
+    .join(":");
+  const desired = options.map((option) => option.value).join(":");
+
+  if (current !== desired) {
+    container.replaceChildren(...options.map((option) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.focusActivity = option.value;
+      button.textContent = option.label;
+      return button;
+    }));
+  }
+
+  setPressedState("#focusSoundActivityButtons [data-focus-activity]", "focusActivity", selected);
+}
+
+function presetUiDetails(preset: FocusPreset): { title: string; category: string; description: string } {
+  const sacred = sacredAudioCatalog.find((track) => track.id === preset);
+  if (sacred) {
+    return {
+      title: sacred.title,
+      category: "Sacred",
+      description: `${sacred.performer} · Real recording`
+    };
+  }
+
+  if ((["rain", "ocean", "storm", "stream"] as readonly string[]).includes(preset)) {
+    return {
+      title: presetLabel(preset),
+      category: "Nature",
+      description: {
+        rain: "Steady rainfall with a soft, even texture.",
+        ocean: "Rolling ocean waves for an open, unhurried room.",
+        storm: "Rain and distant thunder with a darker atmosphere.",
+        stream: "A real forest creek recording with gentle movement."
+      }[preset as "rain" | "ocean" | "storm" | "stream"]
+    };
+  }
+
+  if ((standardAudioPresetValues as readonly string[]).includes(preset)) {
+    return {
+      title: presetLabel(preset),
+      category: "Baroque",
+      description: "A real harpsichord performance for clear, structured work."
+    };
+  }
+
+  return {
+    title: sentenceCase(presetLabel(preset)),
+    category: "Noise & tones",
+    description: {
+      "brown-noise": "A low, steady texture for sustained concentration.",
+      "pink-noise": "A warm, balanced texture that softens the room.",
+      "white-noise": "A bright, even mask for voices and sudden sounds.",
+      "binaural-beat": "A focused stereo pulse. Headphones work best.",
+      "isochronic-tone": "A steady rhythmic pulse for alert, directed work."
+    }[preset as GeneratedPreset]
+  };
+}
+
+function sentenceCase(value: string): string {
+  return value ? value[0].toUpperCase() + value.slice(1) : value;
+}
+
 function soundProfile(options: SyncOptions, phase: "work" | "break") {
   const presetProfile = presetProfiles[generatedPreset(phase === "break" ? "brown-noise" : options.preset)];
   const intensity = phase === "break" ? "low" : options.intensity;
@@ -491,7 +623,12 @@ const realAudioTracks: Record<RealAudioPreset, RealAudioTrack> = {
     label: "Scarlatti: Sonata K.466",
     src: "/audio/baroque/scarlatti-sonata-k466.ogg",
     source: "Wikimedia Commons, CC0"
-  }
+  },
+  ...Object.fromEntries(sacredAudioCatalog.map((track) => [track.id, {
+    label: track.title,
+    src: track.src,
+    source: `${track.performer}; ${track.license}`
+  }])) as Record<SacredAudioTrackId, RealAudioTrack>
 };
 
 const modeProfiles: Record<FocusMode, {

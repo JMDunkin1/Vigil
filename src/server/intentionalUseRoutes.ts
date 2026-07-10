@@ -21,6 +21,14 @@ import {
   upsertIntentionalUseRule
 } from "../intentionalUse.js";
 import { openApp } from "../macos.js";
+import {
+  journalVaultSummary,
+  requireJournalVaultSession,
+  revokeJournalVaultSession,
+  setJournalVaultPassword,
+  unlockJournalVaultWithPassword,
+  unlockJournalVaultWithTouchId
+} from "../journalVault.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { addEvent, saveState } from "../store.js";
 import type { VigilState } from "../types.js";
@@ -41,6 +49,64 @@ export async function handleIntentionalUseApiRoute(
 ): Promise<boolean> {
   const method = request.method || "GET";
   const path = url.pathname;
+
+  if (method === "GET" && path === "/api/intentional-use/journal/security") {
+    sendJson(response, 200, { ok: true, journalVault: journalVaultSummary(state) });
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/journal/password") {
+    try {
+      const body = await readBody(request);
+      assertProtectedEditAllowed(state, { kind: "settings" });
+      const journalVault = setJournalVaultPassword(state, body);
+      addEvent(state, "intentional_journal_password_set", { autoLockMinutes: journalVault.autoLockMinutes });
+      await saveState(state);
+      sendJson(response, 200, { ok: true, journalVault });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/journal/unlock") {
+    try {
+      const body = await readBody(request);
+      const session = unlockJournalVaultWithPassword(state, body);
+      addEvent(state, "intentional_journal_unlocked", { method: session.method });
+      sendJson(response, 200, { ok: true, session });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/journal/unlock-touch-id") {
+    try {
+      const session = unlockJournalVaultWithTouchId(state, request.headers);
+      addEvent(state, "intentional_journal_unlocked", { method: session.method });
+      sendJson(response, 200, { ok: true, session });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/intentional-use/journal/lock") {
+    const locked = revokeJournalVaultSession(request.headers);
+    sendJson(response, 200, { ok: true, locked });
+    return true;
+  }
+
+  if (method === "GET" && path === "/api/intentional-use/journal/entries") {
+    try {
+      requireJournalVaultSession(state, request.headers);
+      sendJson(response, 200, { ok: true, entries: state.intentionalUse.journalEntries || [] });
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+    }
+    return true;
+  }
 
   if (method === "POST" && path === "/api/intentional-use/goal") {
     try {
@@ -149,9 +215,13 @@ export async function handleIntentionalUseApiRoute(
     try {
       const body = await readBody(request);
       const checkIn = recordIntentionalBehaviorCheckIn(state, body);
-      addEvent(state, "intentional_behavior_check_in", { behaviorId: checkIn.behaviorId, value: checkIn.value });
+      addEvent(state, checkIn ? "intentional_behavior_check_in" : "intentional_behavior_check_in_cleared", {
+        behaviorId: checkIn?.behaviorId || String(body.behaviorId || ""),
+        value: checkIn?.value ?? null,
+        dateKey: checkIn?.dateKey || String(body.dateKey || "")
+      });
       await saveState(state);
-      sendJson(response, 200, { ok: true, checkIn });
+      sendJson(response, 200, { ok: true, checkIn, cleared: !checkIn });
     } catch (error) {
       sendJson(response, errorStatus(error), serializeError(error));
     }
@@ -161,6 +231,7 @@ export async function handleIntentionalUseApiRoute(
   if (method === "POST" && path === "/api/intentional-use/journal") {
     try {
       const body = await readBody(request);
+      requireJournalVaultSession(state, request.headers);
       const entry = addIntentionalJournalEntry(state, body);
       addEvent(state, "intentional_journal_saved", {
         entryId: entry.id,
@@ -177,6 +248,7 @@ export async function handleIntentionalUseApiRoute(
 
   if (method === "DELETE" && path.startsWith("/api/intentional-use/journal/")) {
     try {
+      requireJournalVaultSession(state, request.headers);
       const id = pathTailId(path);
       const deleted = deleteIntentionalJournalEntry(state, id);
       addEvent(state, "intentional_journal_deleted", { entryId: id, deleted });

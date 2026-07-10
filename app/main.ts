@@ -1,6 +1,8 @@
-import { app, BrowserWindow, Menu, nativeImage, shell, Tray } from "electron";
+import { randomBytes } from "node:crypto";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, systemPreferences, Tray } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
-import { join } from "node:path";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../src/apiSecurity.js";
 import { fetchVigilStateHealth } from "../src/vigilHealth.js";
 import { createVigilAppUpdateController } from "./updater.js";
@@ -8,6 +10,7 @@ import { createVigilAppUpdateController } from "./updater.js";
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.VIGIL_PORT || process.env.VIGIL_PORT || 8787);
 const BASE_URL = `http://${HOST}:${PORT}`;
+const TOUCH_ID_SECRET = randomBytes(32).toString("base64url");
 const TRAY_STATUS_CHECK_TIMEOUT_MS = 2000;
 const TRAY_ACTION_TIMEOUT_MS = 5000;
 const TRAY_STATUS_POLL_INTERVAL_MS = 30_000;
@@ -47,6 +50,9 @@ let appUpdateActionState: AppUpdateActionState = {
   installable: false,
   message: ""
 };
+
+process.env.VIGIL_TOUCH_ID_SECRET = TOUCH_ID_SECRET;
+ipcMain.handle("vigil:journal-touch-id", handleJournalTouchId);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -118,13 +124,21 @@ function createWindow(appUrl: string): void {
     minWidth: 940,
     minHeight: 680,
     title: "Vigil",
-    backgroundColor: "#f7f4ed",
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 18, y: 19 },
+    backgroundColor: "#14191c",
+    alwaysOnTop: false,
+    fullscreenable: true,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true
+      sandbox: true,
+      preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs")
     }
   });
+
+  mainWindow.setAlwaysOnTop(false);
+  mainWindow.setVisibleOnAllWorkspaces(false);
 
   void mainWindow.loadURL(appUrl);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -134,6 +148,27 @@ function createWindow(appUrl: string): void {
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+
+async function handleJournalTouchId(): Promise<unknown> {
+  if (process.platform !== "darwin" || !systemPreferences.canPromptTouchID()) {
+    return { ok: false, error: "Touch ID is not available on this Mac." };
+  }
+  try {
+    await systemPreferences.promptTouchID("Unlock your private Vigil journal");
+    const response = await fetch(`${BASE_URL}/api/intentional-use/journal/unlock-touch-id`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE,
+        "X-Vigil-Touch-ID-Secret": TOUCH_ID_SECRET
+      },
+      body: "{}"
+    });
+    return await response.json() as unknown;
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "Touch ID was not accepted." };
+  }
 }
 
 function configureMenuBarResidency(): void {

@@ -67,6 +67,7 @@ The app works best after granting Accessibility permission to the terminal or ap
 - Custom URL pattern blocking for paths and keywords such as `youtube.com/shorts`, `/reels`, or `casino`.
 - Protected edits: strict active protections block weakening config changes until a maintenance cooldown completes.
 - Local API mutation hardening blocks cross-site localhost POSTs, requires JSON mutations, and adds clickjacking protection headers.
+- Opt-in hosted account foundation with sign-up, sign-in, signed HTTP-only sessions, and admin/member roles for one shared Vigil workspace.
 - Optional strict-lock bypass guard for common escape tools such as Activity Monitor, App Store, installers, app managers, and device/profile utilities.
 - Strict-lock network bypass guard for VPN, proxy, DNS, packet-inspection, and firewall-configuration apps such as Tailscale, Cloudflare WARP, WireGuard, Proxyman, Charles, Wireshark, Little Snitch, LuLu, and AdGuard.
 - Strict site locks also quit unsupported browsers and embedded-browser apps such as Firefox, Tor Browser, LibreWolf, DuckDuckGo Browser, Chromium, Slack, Teams, Telegram, Discord, and Steam when tab-level blocking cannot inspect them.
@@ -92,6 +93,12 @@ The app works best after granting Accessibility permission to the terminal or ap
 - Emergency unlock cooldowns and weekly token limits.
 - Optional LaunchAgent installer to keep the service running after login.
 - Optional network blocker preview/apply script for harder domain fallback blocking: `/etc/hosts` DNS denial plus a Vigil PF firewall anchor for resolved target IPs.
+
+## Optional hosted accounts
+
+Vigil stays local-only by default. An opt-in account layer is available for developing a hosted, single-workspace version without weakening the default localhost boundary. It includes password hashing, signed HTTP-only session cookies, first-account administrator bootstrapping, member accounts, and administrator-only mutations.
+
+See [docs/hosted-accounts.md](docs/hosted-accounts.md) for the environment flags, HTTPS/reverse-proxy requirements, and the remaining work required before treating a deployment as a public multi-user service.
 
 ## Hardening
 

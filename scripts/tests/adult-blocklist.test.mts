@@ -12,7 +12,7 @@ import {
   parseAdultBlocklistDomains,
   setAdultBlocklistDomainsForTest
 } from "../../src/adultBlocklist.js";
-import { defaultState } from "../../src/defaults.js";
+import { SOFT_BLOCK_PROFILE_ID, defaultState } from "../../src/defaults.js";
 import { evaluateExtensionCheck, extensionRuleSnapshot } from "../../src/extensionPolicy.js";
 import { buildHostsBlock } from "../../src/hardening.js";
 import { iosPolicyTargets } from "../../src/iosProfiles.js";
@@ -91,8 +91,25 @@ bad_domain
   assert.equal(safariUrls.includes("https://exampleadult.test/"), true);
 
   state.deviceControls.ios.enabled = true;
-  const iosTargets = iosPolicyTargets(state, now);
-  assert.equal(iosTargets.deniedUrls.includes("https://exampleadult.test/"), true);
+  const levelOneIosTargets = iosPolicyTargets(state, now);
+  assert.deepEqual(levelOneIosTargets.deniedUrls, []);
+  const softProfile = state.profiles.find((profile) => profile.id === SOFT_BLOCK_PROFILE_ID);
+  assert.ok(softProfile, "Soft Lock profile should exist");
+  state.activeSessions.phone = {
+    id: "adult-blocklist-phone-soft",
+    title: "Phone Soft Lock",
+    mode: "focus",
+    profileId: softProfile.id,
+    lockLevel: "light",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: true,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: softProfile
+  };
+  const activeIosTargets = iosPolicyTargets(state, now);
+  assert.equal(activeIosTargets.deniedUrls.includes("https://exampleadult.test/"), true);
 
   const previousSource = adultBlocklistSource(state);
   state.settings.adultBlocklistSourceId = "custom";

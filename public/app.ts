@@ -1,4 +1,5 @@
-import { get, post, del } from "./api-client.js";
+import { clearJournalSession, del, get, journalSessionActive, post, storeJournalSession } from "./api-client.js";
+import { createAccountUi } from "./account-ui.js";
 import { createAppUpdatePanel } from "./app-update.js";
 import { renderAppLockDays, renderGrayscaleScheduleDays, renderIntentionalDays, renderLimitDays, renderScheduleDays } from "./day-controls.js";
 import { createDevicePanel } from "./device-panel.js";
@@ -11,11 +12,37 @@ import { daysText, enforcementText, eventLabel, formatDuration, lines, phaseText
 import { createFormController } from "./forms.js";
 import { createHardeningPanel } from "./hardening-panel.js";
 import { createLifeLogView } from "./life-log-view.js";
+import { createRankingView } from "./ranking-view.js";
 import { createReportView } from "./report-view.js";
+import { createSaintStage } from "./saint-stage.js";
 import { renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
-import { $, $$, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
-import type { ActivePolicy, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, InterventionSummary, MonitorSummary, ProgressSummary, ReportSummary, Schedule, SessionEndResponse, SessionPreviewResponse, SessionPreviewSummary, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary } from "./app-model.js";
+import { createTrackingView } from "./tracking-view.js";
+import { $, $$, bindSidebar, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
+import type { ActivePolicy, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, InterventionSummary, JournalVaultSummary, MonitorSummary, ProgressSummary, ReportSummary, Schedule, SessionEndResponse, SessionPreviewResponse, SessionPreviewSummary, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary } from "./app-model.js";
+
+interface JournalUnlockResponse extends UnknownRecord {
+  ok?: boolean;
+  error?: string;
+  session?: {
+    token?: string;
+    expiresAt?: string;
+    method?: string;
+  };
+}
+
+interface VigilJournalWindow extends Window {
+  vigilJournal?: {
+    promptTouchId(): Promise<unknown>;
+  };
+}
+
+type JournalEntryItem = NonNullable<NonNullable<IntentionalUseSummary["lifeLog"]>["entries"]>[number];
+
+interface JournalEntriesResponse extends UnknownRecord {
+  ok?: boolean;
+  entries?: JournalEntryItem[];
+}
 
 const state: UiState = {
   data: null,
@@ -37,6 +64,7 @@ const BRICK_MODE_PROFILE_ID = "brick-mode";
 const SOFT_BLOCK_PROFILE_ID = "soft-block";
 const BUILT_IN_PROFILE_IDS = new Set(["default", "normal", SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PROFILE_ID]);
 let pendingLockStart: UnknownRecord | null = null;
+let protectionLevelRequestInFlight = false;
 const deviceTargets = createDeviceTargetController({
   onChange: () => {
     renderDeviceTargetControls(state.data?.state || {});
@@ -77,6 +105,10 @@ const hardeningPanel = createHardeningPanel({
     state.pendingMaintenanceId = id;
   }
 });
+const saintStage = createSaintStage();
+const rankingView = createRankingView();
+const trackingView = createTrackingView({ post, refresh, toast });
+const accountUi = createAccountUi();
 
 boot();
 
@@ -87,7 +119,14 @@ function boot() {
   renderLimitDays();
   renderAppLockDays();
   renderIntentionalDays();
+  bindSidebar();
   bindViewNavigation(setView);
+  renderActiveView(state.activeView);
+  saintStage.bind();
+  trackingView.bind();
+  accountUi.bind();
+  bindJournalUnlockGate();
+  bindJournalSecuritySettings();
   appUpdatePanel.bind();
   bindAppEvents({
     state,
@@ -104,6 +143,7 @@ function boot() {
     previewSessionStart,
     startNormalMode,
     startPresetSession,
+    setProtectionLevel,
     renderSosPlan: lifeLogView.renderSosPlan
   });
   bindLockPreview();
@@ -117,6 +157,160 @@ function boot() {
 function setView(view?: string) {
   state.activeView = view || "home";
   renderActiveView(state.activeView);
+}
+
+function bindJournalUnlockGate(): void {
+  const password = document.querySelector<HTMLInputElement>("#journalPassword");
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-journal-unlock-method]")) {
+    button.addEventListener("click", () => {
+      void unlockJournal(button.dataset.journalUnlockMethod || "password", password?.value || "");
+    });
+  }
+  password?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") $("#journalPasswordUnlock").click();
+  });
+}
+
+function bindJournalSecuritySettings(): void {
+  $("#journalSecurityForm").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveJournalSecurity();
+  });
+  $("#lockJournalNow").addEventListener("click", () => {
+    void lockJournalNow();
+  });
+}
+
+async function unlockJournal(method: string, password: string): Promise<void> {
+  const status = $("#journalUnlockStatus");
+  const passwordButton = $("#journalPasswordUnlock");
+  const touchIdButton = $("#journalTouchIdUnlock");
+  passwordButton.disabled = true;
+  touchIdButton.disabled = true;
+  status.textContent = method === "biometric" ? "Waiting for Touch ID…" : "Checking password…";
+  try {
+    const vault = journalVault(state.data);
+    if (!vault.configured && method === "password") {
+      status.textContent = "Protecting the journal…";
+      await post("/api/intentional-use/journal/password", {
+        password,
+        autoLockMinutes: Number(vault.autoLockMinutes || 15)
+      });
+    }
+
+    let response: JournalUnlockResponse;
+    if (method === "biometric") {
+      const bridge = (window as VigilJournalWindow).vigilJournal;
+      if (!bridge?.promptTouchId) throw new Error("Touch ID is available in the Vigil Mac app.");
+      response = normalizeJournalUnlockResponse(await bridge.promptTouchId());
+    } else {
+      response = await post<JournalUnlockResponse>("/api/intentional-use/journal/unlock", { password });
+    }
+    if (response.ok === false || !response.session?.token) {
+      throw new Error(response.error || "Journal authentication was not accepted.");
+    }
+    storeJournalSession(response.session);
+    $("#journalPassword").value = "";
+    status.textContent = response.session.expiresAt
+      ? `Unlocked until ${new Date(response.session.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+      : "Unlocked";
+    toast("Journal unlocked");
+    await refresh();
+  } catch (error) {
+    clearJournalSession();
+    status.textContent = errorMessage(error);
+    toast(errorMessage(error));
+  } finally {
+    passwordButton.disabled = false;
+    touchIdButton.disabled = false;
+  }
+}
+
+async function saveJournalSecurity(): Promise<void> {
+  const save = $("#saveJournalSecurity");
+  const status = $("#journalSecurityHelp");
+  save.disabled = true;
+  status.textContent = "Saving journal security…";
+  try {
+    await post("/api/intentional-use/journal/password", {
+      currentPassword: $("#journalCurrentPassword").value,
+      password: $("#journalNewPassword").value,
+      autoLockMinutes: Number($("#journalAutoLockMinutes").value || 15)
+    });
+    $("#journalCurrentPassword").value = "";
+    $("#journalNewPassword").value = "";
+    status.textContent = "Saved. Unlock the journal again to continue.";
+    toast("Journal security saved");
+    await refresh();
+  } catch (error) {
+    status.textContent = errorMessage(error);
+    toast(errorMessage(error));
+  } finally {
+    save.disabled = false;
+  }
+}
+
+async function lockJournalNow(): Promise<void> {
+  const status = $("#journalSecurityHelp");
+  status.textContent = "Locking journal…";
+  try {
+    if (journalSessionActive()) await post("/api/intentional-use/journal/lock", {});
+    clearJournalSession();
+    status.textContent = "Journal locked for this app session.";
+    toast("Journal locked");
+    await refresh();
+  } catch (error) {
+    clearJournalSession();
+    status.textContent = errorMessage(error);
+    toast(errorMessage(error));
+    await refresh();
+  }
+}
+
+function renderJournalGate(data: DashboardData): void {
+  const vault = journalVault(data);
+  const locked = !vault.configured || !journalSessionActive();
+  const gate = $("#journalUnlockGate");
+  gate.hidden = !locked;
+  $("#journalUnlockTitle").textContent = vault.configured ? "Your entries remain private." : "Protect your journal first.";
+  $("#journalUnlockCopy").textContent = vault.configured
+    ? "Authenticate with Touch ID or your journal password. The journal locks again automatically."
+    : "Create a password before writing or reading entries. Vigil keeps only a short-lived unlock token in this app session.";
+  const password = $("#journalPassword");
+  password.placeholder = vault.configured ? "Journal password" : "Create a journal password";
+  password.setAttribute("autocomplete", vault.configured ? "current-password" : "new-password");
+  $("#journalPasswordUnlock").textContent = vault.configured ? "Unlock" : "Set password";
+  const bridgeAvailable = Boolean((window as VigilJournalWindow).vigilJournal?.promptTouchId);
+  $("#journalTouchIdUnlock").hidden = !vault.configured || vault.touchIdAvailable === false || !bridgeAvailable;
+  $("#journalUnlockStatus").textContent = vault.error || (vault.configured ? "Authentication required" : "A protected settings window may be required for setup");
+  if (locked) forms.resetJournalForm();
+  for (const content of $$<HTMLElement>("[data-journal-content]")) {
+    content.hidden = locked;
+    content.inert = locked;
+  }
+}
+
+function renderJournalSecurity(data: DashboardData): void {
+  const vault = journalVault(data);
+  $("#journalCurrentPasswordField").hidden = !vault.configured;
+  $("#journalNewPasswordLabel").textContent = vault.configured ? "New password" : "Journal password";
+  $("#saveJournalSecurity").textContent = vault.configured ? "Change password" : "Set journal password";
+  $("#journalSecurityStatus").textContent = vault.configured
+    ? (journalSessionActive() ? "Unlocked" : "Locked")
+    : "Not configured";
+  $("#journalSecurityStatus").className = vault.configured && journalSessionActive() ? "pill good" : "pill neutral";
+  $("#lockJournalNow").disabled = !journalSessionActive();
+  if (document.activeElement !== $("#journalAutoLockMinutes")) {
+    $("#journalAutoLockMinutes").value = String(vault.autoLockMinutes || 15);
+  }
+}
+
+function journalVault(data: DashboardData | null): JournalVaultSummary {
+  return data?.intentionalUse?.lifeLog?.journalVault || data?.journalVault || {};
+}
+
+function normalizeJournalUnlockResponse(value: unknown): JournalUnlockResponse {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JournalUnlockResponse : {};
 }
 
 function selectedDeviceTargets() {
@@ -225,6 +419,33 @@ async function startPresetSession(kind: "soft" | "brick") {
   await previewSessionStart(body);
 }
 
+async function setProtectionLevel(requestedLevel: number): Promise<void> {
+  if (protectionLevelRequestInFlight) return;
+  const level = Math.max(1, Math.min(4, Math.round(requestedLevel || 1)));
+  const input = $("#protectionLevel");
+  protectionLevelRequestInFlight = true;
+  input.disabled = true;
+  $("#protectionLevelStatus").textContent = level === 4 ? "Locking..." : "Applying...";
+  try {
+    if (level === 4) {
+      await post<SessionStartResponse>("/api/panic/start", { durationMinutes: 3 });
+      toast("Panic locked for 3 minutes");
+    } else {
+      await post("/api/protection/level", {
+        level,
+        deviceTargets: selectedDeviceTargets()
+      });
+      toast(level === 1 ? "Level 1 active" : `Level ${level} active`);
+    }
+  } catch (error) {
+    toast(errorMessage(error));
+  } finally {
+    await refresh();
+    protectionLevelRequestInFlight = false;
+    renderProtectionLevel(state.data?.state);
+  }
+}
+
 function bindLockPreview(): void {
   $("#confirmLockPreview").addEventListener("click", () => {
     void confirmLockPreview();
@@ -322,13 +543,36 @@ function hideLockPreview(clearPending = true): void {
   if (clearPending) pendingLockStart = null;
 }
 
+async function hydrateJournalEntries(data: DashboardData): Promise<void> {
+  const lifeLog = data.intentionalUse?.lifeLog;
+  if (!lifeLog) return;
+  const vault = journalVault(data);
+  if (!vault.configured || !journalSessionActive()) {
+    lifeLog.entries = [];
+    lifeLog.entriesLocked = true;
+    return;
+  }
+  try {
+    const response = await get<JournalEntriesResponse>("/api/intentional-use/journal/entries");
+    lifeLog.entries = response.entries || [];
+    lifeLog.entriesLocked = false;
+    delete vault.error;
+  } catch (error) {
+    clearJournalSession();
+    lifeLog.entries = [];
+    lifeLog.entriesLocked = true;
+    vault.error = errorMessage(error);
+  }
+}
+
 async function refresh() {
   try {
-    state.data = await get<DashboardData>("/api/state");
+    const data = await get<DashboardData>("/api/state");
+    await hydrateJournalEntries(data);
+    state.data = data;
     render();
   } catch (error) {
-    $("#watcherStatus").textContent = errorMessage(error);
-    $("#watcherStatus").className = "tiny-status";
+    toast(errorMessage(error));
   }
 }
 
@@ -336,13 +580,17 @@ function render() {
   const data = state.data;
   if (!data) return;
   renderPresetButtons(data.presets || [], toast);
-  renderHeader(data.state, data.monitor, data.limits.activeBlocks);
+  renderHeader(data.state, data.limits.activeBlocks);
   focusSound.render(data);
   renderMetrics(data.usage, data.report);
+  rankingView.render(data);
+  renderJournalGate(data);
+  renderJournalSecurity(data);
   renderWatcher(data.monitor);
   renderIntervention(data.intervention);
   renderIntentionalUse(data.intentionalUse);
   lifeLogView.renderLifeLog(data.intentionalUse);
+  trackingView.render(data);
   renderSetupWizard(data);
   appUpdatePanel.render();
   hardeningPanel.render(data);
@@ -364,7 +612,7 @@ function renderDeviceTargetControls(appState: Partial<DashboardState> = {}): voi
   deviceTargets.render(appState);
 }
 
-function renderHeader(appState: DashboardState, monitor: MonitorSummary, activeBlocks: UnknownRecord[] = []): void {
+function renderHeader(appState: DashboardState, activeBlocks: UnknownRecord[] = []): void {
   const active = appState.activePolicy;
   const session = appState.activeSession;
   const phase = active?.phase || appState.sessionPhase;
@@ -373,40 +621,28 @@ function renderHeader(appState: DashboardState, monitor: MonitorSummary, activeB
   const normalButton = $("#startNormalMode");
   const panicButton = $("#startPanicLock");
   const panicStatus = $("#panicStatus");
-  const lock = $("#lockStatus");
   let orbState = "idle";
   if (active?.kind === "integrity") {
-    lock.textContent = "Integrity lockdown";
-    lock.className = "pill bad";
     $("#sessionTitle").textContent = active.session.title;
     orbState = "integrity";
   } else if (active) {
-    lock.textContent = `${phaseText(phase, active.session.mode)} locked`;
-    lock.className = "pill bad";
     $("#sessionTitle").textContent = phaseTitle(active.session, phase);
     orbState = "locked";
   } else if (session && phase?.kind === "break") {
-    lock.textContent = "Break";
-    lock.className = "pill good";
     $("#sessionTitle").textContent = phaseTitle(session, phase);
     orbState = "break";
   } else if (session) {
-    lock.textContent = "Session";
-    lock.className = "pill warn";
     $("#sessionTitle").textContent = session.title || "Session running";
     orbState = "session";
   } else if (activeBlocks.length) {
-    lock.textContent = "Limits active";
-    lock.className = "pill bad";
     $("#sessionTitle").textContent = "Limit lock";
     orbState = "limit";
   } else {
-    lock.textContent = "Unlocked";
-    lock.className = "pill good";
     $("#sessionTitle").textContent = "Ready";
   }
   renderOrbState(orbState);
   renderDeviceTargetControls(appState);
+  renderProtectionLevel(appState);
 
   if (brickButton) {
     const selectedActive = selectedDeviceTargets().some((target) => Boolean(appState.activeSessions?.[target]));
@@ -423,7 +659,37 @@ function renderHeader(appState: DashboardState, monitor: MonitorSummary, activeB
       ? `All screens locked until ${shortDateTime(active.endsAt)}`
       : `${duration} min full lockout`;
   }
-  $("#watcherStatus").textContent = monitor.ok ? "Watcher online" : "Watcher needs permission";
+}
+
+function renderProtectionLevel(appState: DashboardState | null | undefined): void {
+  if (!appState) return;
+  const active = appState.activePolicy;
+  const sessions = Object.values(appState.activeSessions || {}).filter(Boolean);
+  const profileIds = new Set([
+    active?.session?.profileId,
+    active?.profile?.id,
+    ...sessions.map((session) => session?.profileId)
+  ].filter(Boolean));
+  const level = active?.kind === "panic"
+    ? 4
+    : profileIds.has(BRICK_MODE_PROFILE_ID)
+      ? 3
+      : profileIds.has(SOFT_BLOCK_PROFILE_ID)
+        ? 2
+        : 1;
+  const input = $("#protectionLevel");
+  const label = level === 4 ? "Panic" : `Level ${level}`;
+  input.value = String(level);
+  input.disabled = protectionLevelRequestInFlight || level === 4;
+  input.setAttribute("aria-valuetext", level === 4 ? "Panic, locked for three minutes" : label);
+  $("#protectionLevelControl").dataset.level = String(level);
+  $("#protectionLevelLabel").textContent = label;
+  if (level === 4 && active) {
+    const seconds = Math.max(0, Math.ceil((new Date(active.endsAt).getTime() - Date.now()) / 1000));
+    $("#protectionLevelStatus").textContent = `${formatDuration(seconds)} locked`;
+  } else {
+    $("#protectionLevelStatus").textContent = level === 1 ? "Normal" : level === 2 ? "Soft Lock" : "Full Brick";
+  }
 }
 
 function renderOrbState(orbState: string): void {
@@ -940,6 +1206,7 @@ function emergencyUnlockAllowedForPolicy(policy: ActivePolicy | null | undefined
 
 function renderCountdowns(): void {
   const appState = state.data?.state;
+  renderProtectionLevel(appState);
   const active = appState?.activePolicy;
   const phase = active?.phase || appState?.sessionPhase;
   const activeLimitBlocks = (state.data?.limits.activeBlocks || []).filter((block) => new Date(block.until) > new Date());

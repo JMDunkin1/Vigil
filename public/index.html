@@ -6,131 +6,80 @@
   <title>Vigil</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
-  <header class="app-chrome">
+<body data-active-view="home" data-sidebar-open="false">
+  <aside class="app-chrome" aria-label="Vigil navigation">
     <div class="brand-lockup">
-      <span class="brand-mark" aria-hidden="true"></span>
-      <div>
-        <p class="eyebrow">Vigil</p>
-        <h1>Command</h1>
-      </div>
+      <h1>Vigil</h1>
+      <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-expanded="false" aria-controls="primaryNavigation">Menu</button>
     </div>
-    <nav class="app-nav" aria-label="Primary">
-      <button class="nav-tab is-active" type="button" data-view-target="home" aria-selected="true">Home</button>
-      <button class="nav-tab" type="button" data-view-target="rules" aria-selected="false">Rules</button>
-      <button class="nav-tab" type="button" data-view-target="journal" aria-selected="false">Journal</button>
-      <button class="nav-tab" type="button" data-view-target="settings" aria-selected="false">Settings</button>
-      <button class="nav-tab" type="button" data-view-target="devices" aria-selected="false">Devices</button>
-      <button class="nav-tab" type="button" data-view-target="insights" aria-selected="false">Insights</button>
+    <nav id="primaryNavigation" class="app-nav" aria-label="Primary">
+      <button class="nav-tab is-active" type="button" data-view-target="home" aria-selected="true"><span aria-hidden="true">&#8962;</span>Home</button>
+      <button class="nav-tab" type="button" data-view-target="ranking" aria-selected="false"><span aria-hidden="true">&#10016;</span>Ranking</button>
+      <button class="nav-tab" type="button" data-view-target="tracking" aria-selected="false"><span aria-hidden="true">&#10003;</span>Tracking</button>
+      <button class="nav-tab" type="button" data-view-target="audio" aria-selected="false"><span aria-hidden="true">&#9835;</span>Audio</button>
+      <button class="nav-tab" type="button" data-view-target="journal" aria-selected="false"><span aria-hidden="true">&#10070;</span>Journal</button>
     </nav>
-    <div class="status-stack">
-      <button id="themeToggle" class="theme-toggle" type="button" aria-pressed="false">Dark</button>
-      <span id="lockStatus" class="pill neutral">Loading</span>
-      <span id="watcherStatus" class="tiny-status">Watcher starting</span>
+    <div class="sidebar-account">
+      <button id="accountButton" class="account-button" type="button" aria-haspopup="dialog" aria-controls="accountDialog">
+        <span id="accountAvatar" class="account-avatar" aria-hidden="true">JD</span>
+        <span class="account-identity">
+          <strong id="accountName">James Dunkin</strong>
+          <small id="accountRole">Admin account</small>
+        </span>
+      </button>
+      <button class="settings-gear" type="button" data-view-target="settings" aria-label="Open settings" title="Settings">
+        <span aria-hidden="true">&#9881;</span>
+      </button>
     </div>
-  </header>
+  </aside>
 
   <main class="shell">
     <section id="view-home" class="view is-active" data-view="home">
       <div class="home-stage">
-        <div id="vigilOrb" class="vigil-orb idle" aria-hidden="true">
-          <span class="orb-ring"></span>
-          <span class="orb-core"></span>
-          <span class="orb-glint"></span>
-        </div>
-        <div class="home-copy">
-          <p class="eyebrow">Current State</p>
-          <h2 id="sessionTitle">Ready</h2>
-          <div id="sessionCountdown" class="countdown">--</div>
+        <div id="vigilOrb" class="vigil-orb idle" aria-hidden="true"></div>
+        <div id="saintStage" class="saint-stage" data-saint="michael">
+          <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next patron saint">
+            <span class="saint-halo" aria-hidden="true"></span>
+            <span class="saint-symbol saint-symbol-one" aria-hidden="true"></span>
+            <span class="saint-symbol saint-symbol-two" aria-hidden="true"></span>
+            <img id="saintArtwork" class="saint-artwork" src="/art/saints/michael.png" alt="Saint Michael the Archangel">
+            <span id="saintFallback" class="saint-fallback" aria-hidden="true">M</span>
+          </button>
         </div>
 
-        <form id="startSessionForm" class="home-controls">
-          <label>
-            Mode
-            <select name="mode">
-              <option value="focus">Focus</option>
-              <option value="brick">Brick</option>
-              <option value="sleep">Sleep</option>
-              <option value="rehab">Rehab</option>
-            </select>
-          </label>
-          <label>
-            Duration
-            <select name="durationMinutes">
-              <option value="25">25 min</option>
-              <option value="50">50 min</option>
-              <option value="90">90 min</option>
-              <option value="180">3 hours</option>
-              <option value="480">8 hours</option>
-              <option value="10080">7 days</option>
-              <option value="43200">30 days</option>
-            </select>
-          </label>
-          <label>
-            Profile
-            <select name="profileId" id="sessionProfile"></select>
-          </label>
-          <label>
-            Lock
-            <select name="lockLevel">
-              <option value="deep">Strict</option>
-              <option value="light">Soft</option>
-            </select>
-          </label>
-          <div class="device-target-panel">
-            <div class="device-target-head">
-              <span>Targets</span>
-              <strong id="deviceTargetStatus">Computer</strong>
-            </div>
-            <div class="device-switch" role="group" aria-label="Lock target devices">
-              <button class="device-chip is-selected" type="button" data-device-target="computer" aria-pressed="true">
-                <span class="device-icon computer" aria-hidden="true"></span>
-                <span>Computer</span>
-                <em id="computerTargetState">Ready</em>
-              </button>
-              <button class="device-chip" type="button" data-device-target="phone" aria-pressed="false">
-                <span class="device-icon phone" aria-hidden="true"></span>
-                <span>iPhone</span>
-                <em id="phoneTargetState">Ready</em>
-              </button>
-            </div>
+        <div id="protectionLevelControl" class="protection-level-control" data-level="1">
+          <div class="protection-level-readout">
+            <output id="protectionLevelLabel" for="protectionLevel">Level 1</output>
+            <span id="protectionLevelStatus" aria-live="polite">Normal</span>
           </div>
-          <div class="hero-actions">
-            <button class="primary" type="submit">Start Lock</button>
-            <button class="secondary" id="endSession" type="button">End Soft Lock</button>
+          <input id="protectionLevel" type="range" min="1" max="4" step="1" value="1" aria-label="Protection level. Level 4 starts a three minute Panic lock.">
+          <div class="protection-level-scale" aria-hidden="true">
+            <span>1</span>
+            <span>2</span>
+            <span>3</span>
+            <span>!</span>
           </div>
-          <div class="home-presets" aria-label="Default lock presets">
-            <button id="startNormalMode" class="secondary preset-button" type="button">
-              <span>Normal</span>
-              <em>Explicit stays blocked</em>
-            </button>
-            <button id="startSoftBlock" class="primary preset-button" type="button">
-              <span>Soft Lock</span>
-              <em>IG cleanup</em>
-            </button>
-            <button id="startFullBrick" class="danger preset-button" type="button">
-              <span>Full Brick</span>
-              <em>MDM app removal</em>
-            </button>
-          </div>
-          <div class="brick-quick">
-            <label>
-              Preset duration
-              <select id="brickDuration">
-                <option value="25">25 min</option>
-                <option value="50">50 min</option>
-                <option value="90" selected>90 min</option>
-                <option value="180">3 hours</option>
-                <option value="480">8 hours</option>
-                <option value="10080">7 days</option>
-              </select>
-            </label>
-            <span id="brickStatus" class="tiny-status">Mac Brick</span>
-          </div>
-          <div class="panic-quick">
-            <button id="startPanicLock" class="danger panic-button" type="button">Panic Lock</button>
-            <span id="panicStatus" class="tiny-status">3 min full lockout</span>
-          </div>
+        </div>
+
+        <div class="home-runtime-status" aria-live="polite">
+          <span id="sessionTitle">Ready</span>
+          <span id="sessionCountdown">--</span>
+        </div>
+
+        <form id="startSessionForm" class="legacy-home-actions" aria-hidden="true">
+          <select name="mode"><option value="focus">Focus</option></select>
+          <select name="durationMinutes"><option value="90">90 min</option></select>
+          <select name="profileId" id="sessionProfile"></select>
+          <select name="lockLevel"><option value="deep">Strict</option></select>
+          <button type="submit">Start</button>
+          <button id="endSession" type="button">End</button>
+          <button id="startNormalMode" type="button">Level 1</button>
+          <button id="startSoftBlock" type="button">Level 2</button>
+          <button id="startFullBrick" type="button">Level 3</button>
+          <select id="brickDuration"><option value="90">90 min</option></select>
+          <span id="brickStatus">Normal baseline</span>
+          <button id="startPanicLock" type="button">Panic</button>
+          <span id="panicStatus">3 min full lockout</span>
           <div id="lockPreview" class="lock-preview hidden" aria-live="polite">
             <div class="lock-preview-head">
               <div>
@@ -146,25 +95,6 @@
               <button id="confirmLockPreview" class="primary compact" type="button" disabled>Start</button>
             </div>
           </div>
-          <details class="advanced-line">
-            <summary>Timing options</summary>
-            <div class="advanced-grid">
-              <label class="checkline"><input name="commitmentLock" type="checkbox"> Commitment</label>
-              <label class="checkline cycle-toggle"><input name="cycleEnabled" type="checkbox"> Cycles</label>
-              <label>
-                Work
-                <input name="cycleWorkMinutes" type="number" min="1" max="240" step="1" value="25">
-              </label>
-              <label>
-                Break
-                <input name="cycleBreakMinutes" type="number" min="1" max="120" step="1" value="5">
-              </label>
-              <label>
-                Rounds
-                <input name="cycleRounds" type="number" min="1" max="24" step="1" value="4">
-              </label>
-            </div>
-          </details>
         </form>
 
         <div id="emergencyPanel" class="emergency hidden">
@@ -185,127 +115,289 @@
         </div>
       </div>
 
-      <div class="home-strip">
-        <div class="metric">
-          <span>Focus Score</span>
-          <strong id="focusScore">--</strong>
-        </div>
-        <div class="metric">
-          <span>Level</span>
-          <strong id="progressLevel">--</strong>
-        </div>
-        <div class="metric">
-          <span>Brain Health</span>
-          <strong id="brainHealth">--</strong>
-        </div>
-        <div class="metric">
-          <span>Streak</span>
-          <strong id="homeFocusStreak">--</strong>
-        </div>
-        <div class="metric">
-          <span>Distraction</span>
-          <strong id="distractingToday">--</strong>
-        </div>
-        <div class="metric">
-          <span>Locked Today</span>
-          <strong id="lockedToday">--</strong>
-        </div>
-        <div class="metric">
-          <span>Vs Last Week</span>
-          <strong id="distractionTrend">--</strong>
-        </div>
-      </div>
-
-      <section class="focus-studio panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Focus Studio</p>
-            <h2>Soundscape</h2>
-          </div>
-          <span id="focusSoundStatus" class="tiny-status">Off</span>
-        </div>
-        <div class="focus-studio-grid">
-          <label class="checkline"><input id="focusSoundEnabled" type="checkbox"> Play</label>
-          <label>
-            Mode
-            <select id="focusSoundMode">
-              <option value="focus">Focus</option>
-              <option value="relax">Relax</option>
-              <option value="sleep">Sleep</option>
-              <option value="meditate">Meditate</option>
-            </select>
-          </label>
-          <label>
-            Activity
-            <select id="focusSoundActivity">
-              <option value="deep-work">Deep work</option>
-            </select>
-          </label>
-          <label>
-            Sound
-            <select id="focusSoundPreset">
-              <optgroup label="Noise and Tones">
-                <option value="brown-noise">Brown noise</option>
-                <option value="pink-noise">Pink noise</option>
-                <option value="white-noise">White noise</option>
-                <option value="binaural-beat">Binaural beat</option>
-                <option value="isochronic-tone">Isochronic tone</option>
-              </optgroup>
-              <optgroup label="Nature">
-                <option value="rain">Rain</option>
-                <option value="ocean">Ocean</option>
-                <option value="storm">Storm</option>
-                <option value="stream">Stream</option>
-              </optgroup>
-              <optgroup label="Baroque">
-                <option value="bach-goldberg-aria">Bach: Goldberg Aria</option>
-                <option value="bach-invention-8">Bach: Invention 8</option>
-                <option value="bach-italian-concerto">Bach: Italian Concerto</option>
-                <option value="handel-harmonious-blacksmith">Handel: Harmonious Blacksmith</option>
-                <option value="scarlatti-sonata-k87">Scarlatti: Sonata K.87</option>
-                <option value="scarlatti-sonata-k466">Scarlatti: Sonata K.466</option>
-              </optgroup>
-            </select>
-          </label>
-          <label>
-            Intensity
-            <select id="focusSoundIntensity">
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
-          </label>
-          <label>
-            Timer
-            <select id="focusSoundTimerMode">
-              <option value="infinite">Infinite</option>
-              <option value="timer">Timer</option>
-              <option value="interval">Interval</option>
-            </select>
-          </label>
-          <label>
-            Minutes
-            <input id="focusSoundTimerMinutes" type="number" min="1" max="480" step="1">
-          </label>
-          <label>
-            Break
-            <input id="focusSoundBreakMinutes" type="number" min="1" max="120" step="1">
-          </label>
-          <label class="volume-line">
-            Volume
-            <input id="focusSoundVolume" type="range" min="0" max="100" step="1">
-          </label>
-        </div>
-      </section>
     </section>
 
-    <section id="view-rules" class="view" data-view="rules" hidden>
-      <div class="view-head">
+    <section id="view-ranking" class="view ranking-dashboard" data-view="ranking" hidden>
+      <header class="ranking-titlebar">
         <div>
-          <p class="eyebrow">Rules</p>
-          <h2>Profiles, Schedules, Limits</h2>
+          <p class="eyebrow">This week</p>
+          <h2>Your path</h2>
+        </div>
+        <div class="ranking-standing" aria-label="Current standing">
+          <span id="knightStanding">Pilgrim</span>
+          <strong id="knightRank">Rank --</strong>
+          <em id="knightState">Awaiting the first watch</em>
+        </div>
+      </header>
+
+      <div class="ranking-vitals" aria-label="Today's key statistics">
+        <div class="ranking-vital ranking-vital-primary">
+          <span>Total today</span>
+          <strong id="totalUsageToday">--</strong>
+        </div>
+        <div class="ranking-vital">
+          <span>Focus quality</span>
+          <strong id="focusScore">--</strong>
+          <em>out of 100</em>
+        </div>
+        <div class="ranking-vital">
+          <span>Vs last week</span>
+          <strong id="distractionTrend">--</strong>
+          <em>distraction time</em>
         </div>
       </div>
+
+      <section class="journey-section" aria-labelledby="rankTimelineTitle">
+        <div class="ranking-section-head">
+          <div>
+            <p class="eyebrow">Daily focus</p>
+            <h3 id="rankTimelineTitle">The week's ascent</h3>
+          </div>
+          <span id="rankTimelineStatus">Waiting for usage</span>
+        </div>
+        <div id="rankTimeline" class="rank-journey" role="img" aria-label="Focus score path for the week">
+          <svg id="rankJourneySvg" viewBox="0 0 700 220" preserveAspectRatio="none" aria-hidden="true">
+            <path class="journey-ground" d=""></path>
+            <path id="rankJourneyPath" class="journey-path" d=""></path>
+          </svg>
+          <div id="rankJourneyDays" class="journey-days" aria-hidden="true"></div>
+          <div id="journeyKnight" class="journey-knight" aria-hidden="true">
+            <div id="knightAvatar" class="knight-avatar" data-rank-tier="pilgrim">
+              <span class="knight-banner"></span>
+              <span class="knight-plume"></span>
+              <span class="knight-helm"></span>
+              <span class="knight-body"></span>
+              <span class="knight-shield"></span>
+              <span class="knight-sword"></span>
+            </div>
+          </div>
+        </div>
+        <div class="journey-progress" aria-hidden="true"><span id="knightProgressFill"></span></div>
+      </section>
+
+      <div class="ranking-lower">
+        <section class="usage-wave-section" aria-labelledby="usageWaveTitle">
+          <div class="ranking-section-head">
+            <div>
+              <p class="eyebrow">Screen time</p>
+              <h3 id="usageWaveTitle">Seven-day wave</h3>
+            </div>
+            <span id="usageWaveAverage">-- daily</span>
+          </div>
+          <svg id="usageWave" class="usage-wave" viewBox="0 0 700 220" preserveAspectRatio="none" role="img" aria-label="Total screen time by day">
+            <path id="usageWaveArea" class="usage-wave-area" d=""></path>
+            <path id="usageWaveLine" class="usage-wave-line" d=""></path>
+            <g id="usageWavePoints"></g>
+          </svg>
+        </section>
+
+        <section class="today-apps-section" aria-labelledby="todayAppsTitle">
+          <div class="ranking-section-head">
+            <div>
+              <p class="eyebrow">Today</p>
+              <h3 id="todayAppsTitle">Time by app</h3>
+            </div>
+          </div>
+          <div id="rankingAppUsage" class="ranking-app-usage"></div>
+        </section>
+      </div>
+
+      <div class="ranking-data-sinks" hidden aria-hidden="true">
+        <span id="progressLevel"></span>
+        <span id="brainHealth"></span>
+        <span id="homeFocusStreak"></span>
+        <span id="distractingToday"></span>
+        <span id="phoneUsageToday"></span>
+        <span id="lockedToday"></span>
+      </div>
+    </section>
+
+    <section id="view-audio" class="view" data-view="audio" hidden>
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Listening Room</p>
+          <h2>Sound</h2>
+        </div>
+        <p class="view-intro">Choose anything once. It begins immediately.</p>
+      </div>
+
+      <div class="audio-desk">
+        <section id="audioPlayer" class="audio-player" aria-labelledby="focusSoundNowPlaying" data-playing="false">
+          <div class="audio-player-status" aria-live="polite">
+            <span class="audio-live-dot" aria-hidden="true"></span>
+            <span id="focusSoundStatus">Off</span>
+          </div>
+
+          <div class="audio-wave" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+
+          <p id="focusSoundCategory" class="audio-track-category">Noise &amp; tones</p>
+          <h2 id="focusSoundNowPlaying">Brown noise</h2>
+          <p id="focusSoundDescription" class="audio-track-description">A low, steady texture for sustained concentration.</p>
+
+          <button id="focusSoundPlayButton" class="audio-master-toggle" type="button" aria-pressed="false" aria-label="Play Brown noise">
+            <span class="audio-play-symbol" aria-hidden="true"></span>
+            <strong id="focusSoundPlayLabel">Listen</strong>
+          </button>
+
+          <label class="audio-volume-line" for="focusSoundVolume">
+            <span>Volume</span>
+            <input id="focusSoundVolume" type="range" min="0" max="100" step="1">
+            <output id="focusSoundVolumeValue" for="focusSoundVolume">35</output>
+          </label>
+
+          <div class="audio-session-controls" aria-label="Listening settings">
+            <fieldset>
+              <legend>Purpose</legend>
+              <div class="audio-option-row" role="group" aria-label="Purpose">
+                <button type="button" data-focus-mode="focus" data-focus-activity-default="deep-work">Focus</button>
+                <button type="button" data-focus-mode="relax" data-focus-activity-default="recharge">Relax</button>
+                <button type="button" data-focus-mode="sleep" data-focus-activity-default="wind-down">Sleep</button>
+                <button type="button" data-focus-mode="meditate" data-focus-activity-default="guided">Pray</button>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>Activity</legend>
+              <div id="focusSoundActivityButtons" class="audio-option-row" role="group" aria-label="Activity"></div>
+            </fieldset>
+            <fieldset>
+              <legend>Intensity</legend>
+              <div class="audio-option-row" role="group" aria-label="Intensity">
+                <button type="button" data-focus-intensity="low">Soft</button>
+                <button type="button" data-focus-intensity="medium">Balanced</button>
+                <button type="button" data-focus-intensity="high">Strong</button>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>Stop after</legend>
+              <div class="audio-option-row audio-timer-options" role="group" aria-label="Stop after">
+                <button type="button" data-focus-timer-mode="infinite">Never</button>
+                <button type="button" data-focus-timer-mode="timer" data-focus-timer-minutes="25">25 min</button>
+                <button type="button" data-focus-timer-mode="timer" data-focus-timer-minutes="50">50 min</button>
+                <button type="button" data-focus-timer-mode="interval" data-focus-timer-minutes="50" data-focus-break-minutes="5">50 / 5</button>
+              </div>
+            </fieldset>
+          </div>
+        </section>
+
+        <section id="audioSoundLibrary" class="audio-library" aria-labelledby="audioLibraryTitle">
+          <header class="audio-library-head">
+            <div>
+              <p class="eyebrow">Library</p>
+              <h3 id="audioLibraryTitle">Choose a sound</h3>
+            </div>
+            <p>One click changes the room.</p>
+          </header>
+
+          <div class="audio-library-grid">
+            <section class="audio-library-group audio-library-group-wide" aria-labelledby="sacredSoundsTitle">
+              <div class="audio-group-title">
+                <h4 id="sacredSoundsTitle">Sacred</h4>
+                <span>Chant, hymn &amp; prayer</span>
+              </div>
+              <div class="audio-track-list audio-track-list-columns">
+                <button type="button" class="audio-track-row" data-focus-preset="rorate-caeli"><span><strong>Rorate Caeli</strong><small>Gregorian chant</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="o-come-emmanuel"><span><strong>O Come, O Come, Emmanuel</strong><small>Traditional hymn</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="o-come-all-ye-faithful"><span><strong>O Come, All Ye Faithful</strong><small>Choir &amp; concert band</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="crux-fidelis"><span><strong>Crux Fidelis</strong><small>Gregorian chant</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="pange-lingua"><span><strong>Pange Lingua</strong><small>Gregorian chant</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="victimae-paschali-laudes"><span><strong>Victimae Paschali Laudes</strong><small>Easter sequence</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="regina-caeli"><span><strong>Regina Caeli</strong><small>Marian antiphon</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="ave-maria-gregorian"><span><strong>Ave Maria</strong><small>Gregorian choir</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="salve-regina"><span><strong>Salve Regina</strong><small>Marian antiphon</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="veni-creator-spiritus"><span><strong>Veni Creator Spiritus</strong><small>Gregorian chant</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="kyrie-xi-orbis-factor"><span><strong>Kyrie XI</strong><small>Orbis Factor</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="dies-irae"><span><strong>Dies Irae</strong><small>Requiem sequence</small></span><em>Play</em></button>
+              </div>
+            </section>
+
+            <section class="audio-library-group audio-library-group-wide" aria-labelledby="baroqueSoundsTitle">
+              <div class="audio-group-title">
+                <h4 id="baroqueSoundsTitle">Baroque</h4>
+                <span>Real harpsichord recordings</span>
+              </div>
+              <div class="audio-track-list audio-track-list-columns">
+                <button type="button" class="audio-track-row" data-focus-preset="bach-goldberg-aria"><span><strong>Goldberg Aria</strong><small>J. S. Bach</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="bach-invention-8"><span><strong>Invention No. 8</strong><small>J. S. Bach</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="bach-italian-concerto"><span><strong>Italian Concerto</strong><small>J. S. Bach</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="handel-harmonious-blacksmith"><span><strong>Harmonious Blacksmith</strong><small>G. F. Handel</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="scarlatti-sonata-k87"><span><strong>Sonata K.87</strong><small>D. Scarlatti</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="scarlatti-sonata-k466"><span><strong>Sonata K.466</strong><small>D. Scarlatti</small></span><em>Play</em></button>
+              </div>
+            </section>
+
+            <section class="audio-library-group" aria-labelledby="natureSoundsTitle">
+              <div class="audio-group-title">
+                <h4 id="natureSoundsTitle">Nature</h4>
+                <span>Field recordings</span>
+              </div>
+              <div class="audio-track-list">
+                <button type="button" class="audio-track-row" data-focus-preset="rain"><span><strong>Rain</strong><small>Steady rainfall</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="ocean"><span><strong>Ocean</strong><small>Rolling waves</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="storm"><span><strong>Storm</strong><small>Rain &amp; thunder</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="stream"><span><strong>Stream</strong><small>Forest creek</small></span><em>Play</em></button>
+              </div>
+            </section>
+
+            <section class="audio-library-group" aria-labelledby="textureSoundsTitle">
+              <div class="audio-group-title">
+                <h4 id="textureSoundsTitle">Noise &amp; tones</h4>
+                <span>Generated continuously</span>
+              </div>
+              <div class="audio-track-list">
+                <button type="button" class="audio-track-row" data-focus-preset="brown-noise"><span><strong>Brown noise</strong><small>Deep &amp; soft</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="pink-noise"><span><strong>Pink noise</strong><small>Warm &amp; balanced</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="white-noise"><span><strong>White noise</strong><small>Bright &amp; masking</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="binaural-beat"><span><strong>Binaural beat</strong><small>Headphones recommended</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="isochronic-tone"><span><strong>Isochronic tone</strong><small>Rhythmic pulse</small></span><em>Play</em></button>
+              </div>
+            </section>
+          </div>
+        </section>
+      </div>
+
+      <div class="audio-control-bridge" hidden aria-hidden="true">
+        <input id="focusSoundEnabled" type="checkbox">
+        <select id="focusSoundMode">
+          <option value="focus">Focus</option><option value="relax">Relax</option><option value="sleep">Sleep</option><option value="meditate">Meditate</option>
+        </select>
+        <select id="focusSoundActivity"><option value="deep-work">Deep work</option></select>
+        <select id="focusSoundPreset">
+          <option value="brown-noise">Brown noise</option><option value="pink-noise">Pink noise</option><option value="white-noise">White noise</option><option value="binaural-beat">Binaural beat</option><option value="isochronic-tone">Isochronic tone</option>
+          <option value="rain">Rain</option><option value="ocean">Ocean</option><option value="storm">Storm</option><option value="stream">Stream</option>
+          <option value="rorate-caeli">Rorate Caeli</option><option value="o-come-emmanuel">O Come, O Come, Emmanuel</option><option value="o-come-all-ye-faithful">O Come, All Ye Faithful</option><option value="crux-fidelis">Crux Fidelis</option><option value="pange-lingua">Pange Lingua</option><option value="victimae-paschali-laudes">Victimae Paschali Laudes</option><option value="regina-caeli">Regina Caeli</option><option value="ave-maria-gregorian">Ave Maria</option><option value="salve-regina">Salve Regina</option><option value="veni-creator-spiritus">Veni Creator Spiritus</option><option value="kyrie-xi-orbis-factor">Kyrie XI</option><option value="dies-irae">Dies Irae</option>
+          <option value="bach-goldberg-aria">Bach: Goldberg Aria</option><option value="bach-invention-8">Bach: Invention 8</option><option value="bach-italian-concerto">Bach: Italian Concerto</option><option value="handel-harmonious-blacksmith">Handel: Harmonious Blacksmith</option><option value="scarlatti-sonata-k87">Scarlatti: Sonata K.87</option><option value="scarlatti-sonata-k466">Scarlatti: Sonata K.466</option>
+        </select>
+        <select id="focusSoundIntensity"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select>
+        <select id="focusSoundTimerMode"><option value="infinite">Infinite</option><option value="timer">Timer</option><option value="interval">Interval</option></select>
+        <input id="focusSoundTimerMinutes" type="number" min="1" max="480" step="1">
+        <input id="focusSoundBreakMinutes" type="number" min="1" max="120" step="1">
+      </div>
+    </section>
+
+    <section id="view-rules" class="view settings-root" data-view="settings" hidden>
+      <div class="view-head">
+        <div>
+          <p class="eyebrow">Quiet by default</p>
+          <h2>Settings</h2>
+        </div>
+        <p class="view-intro">The everyday controls stay in Ranking. Configuration lives here when you or your agent need it.</p>
+      </div>
+
+      <section class="agent-settings-card panel" aria-label="Agent-focused settings">
+        <span class="agent-sigil" aria-hidden="true">A</span>
+        <div>
+          <p class="eyebrow">Agent Focus</p>
+          <h2>Describe the change; keep the machinery out of sight.</h2>
+          <p>Vigil's existing protected APIs remain the source of truth. The detailed controls below are the manual fallback.</p>
+        </div>
+      </section>
+
+      <details class="settings-disclosure">
+        <summary><span>Rules and limits</span><em>Profiles, schedules, goals, and pause rules</em></summary>
+        <div class="settings-disclosure-body">
 
       <div class="workspace two-column">
         <section class="panel">
@@ -675,76 +767,144 @@
           <div id="intentionalRuleList" class="list limit-list"></div>
         </section>
       </div>
+        </div>
+      </details>
     </section>
 
-    <section id="view-journal" class="view" data-view="journal" hidden>
-      <div class="view-head">
+    <section id="view-journal" class="view" data-view="tracking journal" hidden>
+      <div class="view-head tracking-only">
         <div>
-          <p class="eyebrow">Journal</p>
-          <h2>Life Log</h2>
+          <p class="eyebrow">Daily Rule</p>
+          <h2>Tracking</h2>
         </div>
         <span id="lifeLogStatus" class="pill neutral">Ready</span>
       </div>
 
-      <div class="workspace two-column">
-        <section class="panel journal-panel">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Reflection</p>
-              <h2>Goals, Struggles, Wins</h2>
-            </div>
+      <div class="view-head journal-only">
+        <div>
+          <p class="eyebrow">Private Reflection</p>
+          <h2>Journal</h2>
+        </div>
+        <span class="pill neutral">Private</span>
+      </div>
+
+      <section id="journalUnlockGate" class="journal-unlock-gate journal-only panel" hidden aria-labelledby="journalUnlockTitle">
+        <span class="journal-lock-sigil" aria-hidden="true">&#10070;</span>
+        <p class="eyebrow">Journal Locked</p>
+        <h2 id="journalUnlockTitle">Your entries remain private.</h2>
+        <p id="journalUnlockCopy">Authenticate with Touch ID or your journal password. The journal locks again automatically.</p>
+        <div class="journal-unlock-actions">
+          <button id="journalTouchIdUnlock" class="primary" type="button" data-journal-unlock-method="biometric">Use Touch ID</button>
+          <input id="journalPassword" type="password" autocomplete="current-password" placeholder="Journal password">
+          <button id="journalPasswordUnlock" class="secondary" type="button" data-journal-unlock-method="password">Unlock</button>
+        </div>
+        <span id="journalUnlockStatus" class="tiny-status">Authentication required</span>
+      </section>
+
+      <section class="habit-calendar-panel tracking-only panel" aria-labelledby="habitCalendarTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Monthly Rule</p>
+            <h2 id="habitCalendarTitle">Habit calendar</h2>
           </div>
-          <form id="journalEntryForm" class="profile-form">
+          <div class="habit-calendar-nav">
+            <button id="habitPreviousMonth" class="ghost compact" type="button" aria-label="Previous month">&#8592;</button>
+            <strong id="habitCalendarMonth">This month</strong>
+            <button id="habitNextMonth" class="ghost compact" type="button" aria-label="Next month">&#8594;</button>
+            <button id="habitCurrentMonth" class="secondary compact" type="button">Today</button>
+          </div>
+        </div>
+        <div class="habit-calendar-legend" aria-label="Habit calendar legend">
+          <span><i class="habit-key success"></i>Done</span>
+          <span><i class="habit-key missed"></i>Missed</span>
+          <span><i class="habit-key unreported"></i>Empty</span>
+        </div>
+        <div id="habitCalendar" class="habit-calendar" aria-live="polite"></div>
+        <p id="habitCalendarStatus" class="tiny-status">Click a day to mark it done or missed.</p>
+      </section>
+
+      <section class="daily-checkin tracking-only" aria-labelledby="dailyCheckInTitle">
+        <header class="daily-checkin-head">
+          <div>
+            <p class="eyebrow">Quick entry</p>
+            <h2 id="dailyCheckInTitle">Today</h2>
+            <p id="dailyCheckInProgress" class="daily-checkin-progress">Nothing recorded yet</p>
+          </div>
+          <div class="daily-checkin-datebar" aria-label="Choose a day to check in">
+            <button id="habitSelectedPrevious" class="ghost compact" type="button" aria-label="Previous day">&#8592;</button>
+            <input id="habitSelectedDate" type="date" aria-label="Check-in date">
+            <button id="habitSelectedNext" class="ghost compact" type="button" aria-label="Next day">&#8594;</button>
+            <button id="habitSelectedToday" class="secondary compact" type="button">Today</button>
+          </div>
+        </header>
+        <div class="daily-checkin-toolbar">
+          <span>One tap per habit</span>
+          <div>
+            <button id="habitMarkRemainingDone" class="secondary compact" type="button">Finish remaining</button>
+            <button id="habitClearSelectedDay" class="ghost compact" type="button">Clear day</button>
+            <button id="habitManage" class="ghost compact" type="button">Edit habits</button>
+          </div>
+        </div>
+        <div id="habitQuickCheckIn" class="habit-quick-checkin" aria-live="polite"></div>
+      </section>
+
+      <div class="journal-page journal-only" data-journal-content>
+        <section class="journal-composer" aria-labelledby="journalComposerTitle">
+          <header class="journal-section-head">
+            <div>
+              <p class="eyebrow">New Entry</p>
+              <h2 id="journalComposerTitle">Write it down.</h2>
+            </div>
+            <p>Private, unstructured, and only for you.</p>
+          </header>
+          <form id="journalEntryForm" class="journal-form">
             <input name="id" type="hidden">
-            <div class="form-row">
-              <label>
-                Title
-                <input name="title" type="text" placeholder="What are you noticing?">
-              </label>
-              <label>
-                Mood
-                <input name="mood" type="text" placeholder="Calm, restless, proud...">
-              </label>
-            </div>
-            <label>
-              Entry
-              <textarea name="body" rows="8" placeholder="Goals, struggles, patterns, commitments, wins"></textarea>
+            <label class="journal-title-field">
+              <span>Title</span>
+              <input name="title" type="text" maxlength="120" placeholder="Give this entry a title" required>
             </label>
-            <div class="form-row thirds">
-              <label>
-                Energy
-                <input name="energy" type="number" min="1" max="10" step="1" placeholder="1-10">
-              </label>
-              <label>
-                Tags
-                <input name="tags" type="text" placeholder="sleep, work, phone">
-              </label>
-              <label>
-                Date
-                <input name="entryDate" type="datetime-local">
-              </label>
+            <label class="journal-body-field">
+              <span>Entry</span>
+              <textarea name="body" rows="10" maxlength="8000" placeholder="Start writing…" required></textarea>
+            </label>
+            <div class="journal-form-actions">
+              <button class="primary" type="submit">Save Entry</button>
             </div>
-            <div class="form-row">
-              <label>
-                Linked behaviors
-                <select id="journalBehaviorIds" name="behaviorIds" multiple size="5"></select>
-              </label>
-              <label>
-                Linked pause rules
-                <select id="journalRuleIds" name="ruleIds" multiple size="5"></select>
-              </label>
-            </div>
-            <button class="primary" type="submit">Save Reflection</button>
           </form>
         </section>
 
-        <section class="panel journal-panel">
+        <section class="journal-archive" aria-labelledby="journalArchiveTitle">
+          <header class="journal-section-head">
+            <div>
+              <p class="eyebrow">Private Archive</p>
+              <h2 id="journalArchiveTitle">Past entries</h2>
+            </div>
+          </header>
+          <div class="journal-stats tracking-only" aria-hidden="true">
+            <strong id="journalWeekCount">--</strong>
+            <strong id="behaviorWeekCount">--</strong>
+            <strong id="reflectionStreak">--</strong>
+            <strong id="recoveryWeekCount">--</strong>
+            <strong id="recoverySetbacks">--</strong>
+            <strong id="recoverySosCount">--</strong>
+          </div>
+          <div id="journalEntryList" class="journal-entry-list"></div>
+        </section>
+      </div>
+
+      <div class="workspace two-column split-surface">
+
+        <dialog id="habitManagerDialog" class="habit-manager-dialog tracking-only" aria-labelledby="habitManagerTitle">
+          <div class="habit-manager-sheet">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Behaviors</p>
-              <h2>Track Over Time</h2>
+              <p class="eyebrow">Calendar setup</p>
+              <h2 id="habitManagerTitle">Edit habits</h2>
             </div>
-            <button id="newBehavior" class="secondary" type="button">New</button>
+            <div class="habit-manager-actions">
+              <button id="newBehavior" class="secondary compact" type="button">New habit</button>
+              <button id="habitManagerClose" class="ghost compact" type="button">Done</button>
+            </div>
           </div>
           <form id="behaviorForm" class="limit-form">
             <input name="id" type="hidden">
@@ -792,10 +952,11 @@
             <button class="primary" type="submit">Save Behavior</button>
           </form>
           <div id="behaviorList" class="list limit-list"></div>
-        </section>
+          </div>
+        </dialog>
       </div>
 
-      <div class="workspace two-column planner-workspace">
+      <div class="workspace two-column planner-workspace tracking-only tracking-legacy-surface">
         <section class="panel journal-panel">
           <div class="section-head">
             <div>
@@ -926,7 +1087,7 @@
         </section>
       </div>
 
-      <div class="workspace two-column">
+      <div class="workspace two-column tracking-only tracking-legacy-surface">
         <section class="panel">
           <div class="section-head">
             <div>
@@ -1026,8 +1187,8 @@
         </section>
       </div>
 
-      <div class="workspace two-column">
-        <section class="panel">
+      <div class="workspace two-column split-surface">
+        <section class="panel tracking-only tracking-legacy-surface">
           <div class="section-head">
             <div>
               <p class="eyebrow">Check In</p>
@@ -1054,52 +1215,56 @@
           <div id="behaviorCheckInList" class="list limit-list"></div>
         </section>
 
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Progress</p>
-              <h2>Reflection Signals</h2>
-            </div>
-          </div>
-          <div class="journal-stats">
-            <div>
-              <span>This Week</span>
-              <strong id="journalWeekCount">--</strong>
-            </div>
-            <div>
-              <span>Behavior Check-Ins</span>
-              <strong id="behaviorWeekCount">--</strong>
-            </div>
-            <div>
-              <span>Reflection Streak</span>
-              <strong id="reflectionStreak">--</strong>
-            </div>
-            <div>
-              <span>Recovery Check-Ins</span>
-              <strong id="recoveryWeekCount">--</strong>
-            </div>
-            <div>
-              <span>Setbacks</span>
-              <strong id="recoverySetbacks">--</strong>
-            </div>
-            <div>
-              <span>SOS Starts</span>
-              <strong id="recoverySosCount">--</strong>
-            </div>
-          </div>
-          <div id="journalEntryList" class="journal-entry-list"></div>
-        </section>
       </div>
     </section>
 
-    <section id="view-settings" class="view" data-view="settings" hidden>
-      <div class="view-head">
-        <div>
-          <p class="eyebrow">Settings</p>
-          <h2>Protection & Hardening</h2>
+    <section id="view-settings" class="view settings-segment" data-view="settings" hidden>
+      <details class="settings-disclosure journal-security-settings">
+        <summary><span>Journal privacy</span><em>Password, Touch ID, and automatic locking</em></summary>
+        <div class="settings-disclosure-body">
+          <section class="journal-security-panel panel" aria-labelledby="journalSecurityTitle">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Private Vault</p>
+                <h2 id="journalSecurityTitle">Journal security</h2>
+              </div>
+              <span id="journalSecurityStatus" class="pill neutral">Not configured</span>
+            </div>
+            <form id="journalSecurityForm" class="profile-form">
+              <p class="field-note">The unlock token lasts only for this app session and is never stored in local storage.</p>
+              <label id="journalCurrentPasswordField" hidden>
+                Current password
+                <input id="journalCurrentPassword" name="currentPassword" type="password" autocomplete="current-password">
+              </label>
+              <div class="form-row">
+                <label>
+                  <span id="journalNewPasswordLabel">New password</span>
+                  <input id="journalNewPassword" name="password" type="password" minlength="6" autocomplete="new-password" required>
+                </label>
+                <label>
+                  Lock after
+                  <select id="journalAutoLockMinutes" name="autoLockMinutes">
+                    <option value="5">5 minutes</option>
+                    <option value="15" selected>15 minutes</option>
+                    <option value="30">30 minutes</option>
+                    <option value="60">1 hour</option>
+                    <option value="120">2 hours</option>
+                  </select>
+                </label>
+              </div>
+              <div class="form-actions">
+                <button id="saveJournalSecurity" class="primary" type="submit">Set journal password</button>
+                <button id="lockJournalNow" class="secondary" type="button">Lock now</button>
+              </div>
+            </form>
+            <p id="journalSecurityHelp" class="tiny-status">A protected maintenance window may be required to change this setting.</p>
+          </section>
         </div>
-        <span id="hostsStatus" class="pill neutral">Network</span>
-      </div>
+      </details>
+
+      <details class="settings-disclosure">
+        <summary><span>Protection and hardening</span><em>Setup, local protections, updates, and grayscale</em><span id="hostsStatus" class="pill neutral">Network</span></summary>
+        <div class="settings-disclosure-body">
 
       <div class="workspace">
         <section class="panel setup-panel" aria-labelledby="setupWizardTitle">
@@ -1290,16 +1455,14 @@
           <div id="grayscaleScheduleList" class="list"></div>
         </section>
       </div>
+        </div>
+      </details>
     </section>
 
-    <section id="view-devices" class="view" data-view="devices" hidden>
-      <div class="view-head">
-        <div>
-          <p class="eyebrow">Apple Devices</p>
-          <h2>Apple Companion Control</h2>
-        </div>
-        <span class="pill good">Apple only</span>
-      </div>
+    <section id="view-devices" class="view settings-segment" data-view="settings" hidden>
+      <details class="settings-disclosure">
+        <summary><span>Devices and iPhone</span><em>Apple companion control and advanced delivery</em><span class="pill good">Apple only</span></summary>
+        <div class="settings-disclosure-body">
 
       <section class="panel">
         <div class="device-grid">
@@ -1458,13 +1621,15 @@
           </div>
         </div>
       </section>
+        </div>
+      </details>
     </section>
 
-    <section id="view-insights" class="view" data-view="insights" hidden>
+    <section id="view-insights" class="view ranking-details" data-view="legacy-ranking" hidden>
       <div class="view-head">
         <div>
-          <p class="eyebrow">Insights</p>
-          <h2>Watcher, Usage, Report</h2>
+          <p class="eyebrow">Campaign Ledger</p>
+          <h2>Statistics</h2>
         </div>
       </div>
 
@@ -1532,7 +1697,7 @@
               <em id="streakGoal">--</em>
             </div>
             <div class="report-metric">
-              <span>Level</span>
+              <span>Rank</span>
               <strong id="progressLevelReport">--</strong>
               <em id="xpProgress">--</em>
               <div class="level-progress" aria-hidden="true"><span id="levelProgressFill"></span></div>
@@ -1609,6 +1774,50 @@
       </section>
     </section>
   </main>
+
+  <dialog id="accountDialog" class="account-dialog" aria-labelledby="accountDialogTitle">
+    <div class="account-dialog-head">
+      <div>
+        <p class="eyebrow">Vigil account</p>
+        <h2 id="accountDialogTitle">Your profile</h2>
+      </div>
+      <button id="closeAccountDialog" class="account-dialog-close" type="button" aria-label="Close account panel">&times;</button>
+    </div>
+
+    <section id="accountSignedIn" class="account-signed-in">
+      <div class="account-profile-card">
+        <span id="accountDialogAvatar" class="account-avatar account-avatar-large" aria-hidden="true">JD</span>
+        <div>
+          <strong id="accountDialogName">James Dunkin</strong>
+          <span id="accountDialogEmail">Local administrator</span>
+          <small id="accountDialogRole">Admin account</small>
+        </div>
+      </div>
+      <p id="accountModeCopy" class="account-mode-copy">This administrator profile owns the local Vigil installation.</p>
+      <button id="accountSignOut" class="account-secondary-action" type="button" hidden>Sign out</button>
+    </section>
+
+    <section id="accountAuth" class="account-auth" hidden>
+      <div class="account-auth-tabs" role="tablist" aria-label="Account access">
+        <button class="is-active" type="button" role="tab" aria-selected="true" data-auth-panel="signin">Sign in</button>
+        <button type="button" role="tab" aria-selected="false" data-auth-panel="signup">Create account</button>
+      </div>
+
+      <form id="accountSignInForm" class="account-auth-form" data-auth-form="signin">
+        <label>Email<input name="email" type="email" autocomplete="email" required></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" minlength="12" required></label>
+        <button class="account-primary-action" type="submit">Sign in</button>
+      </form>
+
+      <form id="accountSignUpForm" class="account-auth-form" data-auth-form="signup" hidden>
+        <label>Name<input name="name" type="text" autocomplete="name" maxlength="80" required></label>
+        <label>Email<input name="email" type="email" autocomplete="email" required></label>
+        <label>Password<input name="password" type="password" autocomplete="new-password" minlength="12" required></label>
+        <button class="account-primary-action" type="submit">Create account</button>
+      </form>
+      <p id="accountAuthStatus" class="account-auth-status" aria-live="polite"></p>
+    </section>
+  </dialog>
 
   <div id="toast" class="toast hidden"></div>
   <div id="distanceScanner" class="scanner hidden" role="dialog" aria-modal="true" aria-label="Scan distance key">

@@ -285,17 +285,21 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     previousUrl: "https://www.youtube.com/watch?v=abc",
     event: "navigation"
   }, now);
-  assert.equal(fromWatch.blocked, true);
-  assert.equal(fromWatch.reason, "url-pattern");
-  assert.equal(stringValue(fromWatch.redirectUrl, "Shorts previous-page redirect"), "https://www.youtube.com/watch?v=abc");
+  assert.equal(fromWatch.blocked, false);
+  assert.equal(fromWatch.paused, true);
+  assert.equal(fromWatch.reason, "intentional-use");
+  const pauseRedirect = new URL(stringValue(fromWatch.redirectUrl, "Shorts Level 1 pause redirect"));
+  assert.equal(pauseRedirect.pathname, "/pause");
+  assert.ok(pauseRedirect.searchParams.get("requestId"));
 
   const direct = evaluateExtensionCheck(state, usage, {
     url: "https://www.youtube.com/shorts/abc",
     previousUrl: "",
     event: "navigation"
   }, now);
-  assert.equal(direct.blocked, true);
-  assert.equal(stringValue(direct.redirectUrl, "Shorts fallback redirect"), "https://www.youtube.com/");
+  assert.equal(direct.blocked, false);
+  assert.equal(direct.paused, true);
+  assert.equal(stringValue(direct.redirectUrl, "Shorts repeated Level 1 pause redirect"), pauseRedirect.toString());
 }
 
 {
@@ -315,7 +319,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const baselineUrls = safariFilterDenyUrls(state, now);
   assert.equal(baselineUrls.includes("https://pornhub.com/"), true);
   assert.equal(baselineUrls.includes("https://www.pornhub.com/"), true);
-  assert.equal(baselineUrls.includes("https://youtube.com/shorts"), true);
+  assert.equal(baselineUrls.includes("https://youtube.com/shorts"), false);
   const baselineProfileText = buildSafariFilterProfile(state, now);
   assert.match(baselineProfileText, /<key>restrictWeb<\/key>\s*<true\/>/);
   assert.match(baselineProfileText, /<key>useContentFilter<\/key>\s*<true\/>/);
@@ -362,17 +366,16 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const usage = {};
   const explicit = evaluateExtensionCheck(state, usage, { url: "https://www.pornhub.com/", event: "navigation" }, now);
   assert.equal(explicit.blocked, true);
-  assert.equal(recordValue(explicit.policy, "explicit policy").kind, "baseline");
+  assert.equal(recordValue(explicit.policy, "explicit policy").kind, "adult-blocklist");
   const normalReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/learnprogramming/comments/demo", event: "navigation" }, now);
   assert.equal(normalReddit.blocked, false);
   assert.equal(normalReddit.paused, false);
   const explicitReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/gonewild", event: "navigation" }, now);
-  assert.equal(explicitReddit.blocked, true);
-  assert.equal(recordValue(explicitReddit.policy, "explicit Reddit policy").kind, "baseline");
+  assert.equal(explicitReddit.blocked, false);
+  assert.equal(explicitReddit.paused, false);
   const explicitComicSearch = evaluateExtensionCheck(state, usage, { url: "https://www.google.com/search?q=webtoon%2018", event: "navigation" }, now);
-  assert.equal(explicitComicSearch.blocked, true);
-  assert.equal(recordValue(explicitComicSearch.policy, "explicit comic-search policy").kind, "baseline");
-  assert.equal(recordValue(explicitComicSearch.urlPattern, "explicit comic-search pattern").pattern, "webtoon18");
+  assert.equal(explicitComicSearch.blocked, false);
+  assert.equal(explicitComicSearch.paused, false);
   const bare18Search = evaluateExtensionCheck(state, usage, { url: "https://www.google.com/search?q=18", event: "navigation" }, now);
   assert.equal(bare18Search.blocked, false);
   const baselineYoutube = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
@@ -384,7 +387,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(profileById(state, "default").blockedSites.includes("reddit.com"), false);
   assert.equal(profileById(state, "default").blockedUrlPatterns.includes("reddit.com/r/popular"), true);
   assert.equal(profileById(state, "default").hostsUrlPatternBlocking, false);
-  assert.equal(profileById(state, "normal").blockedUrlPatterns.includes("reddit.com/r/nsfw"), true);
+  assert.deepEqual(profileById(state, "normal").blockedUrlPatterns, []);
   const defaultFocusSessionState = defaultState();
   const defaultFocusSession = {
     id: "default-focus",

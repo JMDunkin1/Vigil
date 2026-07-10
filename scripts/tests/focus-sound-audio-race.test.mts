@@ -154,6 +154,14 @@ try {
 
   assert.equal(sources[2].starts, 1);
   assert.equal(sources[2].stops, 0);
+
+  focusSound.render(dataForPreset("rorate-caeli"));
+  await settle();
+  assert.equal(requestedFetches.includes("/audio/sacred/advent-rorate-caeli.ogg"), true);
+  assert.equal(sources.length, 4);
+  resolveFetch("/audio/sacred/advent-rorate-caeli.ogg");
+  await settle();
+  assert.equal(sources[3].starts, 1);
 } finally {
   restoreGlobal("window", originalWindow);
   restoreGlobal("document", originalDocument);

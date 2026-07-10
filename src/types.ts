@@ -427,6 +427,13 @@ export interface IntentionalJournalEntry {
   entryDate: string;
 }
 
+export interface JournalVaultState {
+  passwordSalt: string;
+  passwordHash: string;
+  passwordSetAt: string | null;
+  autoLockMinutes: number;
+}
+
 export type IntentionalPlanListKind = "todo" | "watch" | "read" | "custom";
 export type IntentionalPlanItemStatus = "open" | "done" | "archived";
 
@@ -539,6 +546,7 @@ export interface IntentionalUseState {
   behaviors: IntentionalBehavior[];
   behaviorCheckIns: IntentionalBehaviorCheckIn[];
   journalEntries: IntentionalJournalEntry[];
+  journalVault: JournalVaultState;
   planLists: IntentionalPlanList[];
   planItems: IntentionalPlanItem[];
   planBlocks: IntentionalPlanBlock[];
