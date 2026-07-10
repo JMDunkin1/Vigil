@@ -39,6 +39,11 @@ try {
   await status("packing", "Refreshing packaged Sentinel app");
   await refreshPackagedApp();
 
+  await status("exporting-ios-policy", "Refreshing ManageEngine iPhone policy artifact");
+  await run("node", ["dist/runtime/scripts/export-manageengine-ios-profile.mjs", "--current-state"], {
+    env: manageEngineExportEnv()
+  });
+
   if (options.restart) {
     await status("relaunching", "Reopening Sentinel");
     await run("/usr/bin/open", [options.appPath]);
@@ -100,13 +105,13 @@ async function capture(command: string, args: string[]): Promise<string> {
 async function run(
   command: string,
   args: string[],
-  optionsForRun: { allowFailure?: boolean; capture?: boolean; timeoutMs?: number } = {}
+  optionsForRun: { allowFailure?: boolean; capture?: boolean; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}
 ): Promise<{ stdout: string }> {
   return await new Promise((resolveRun, rejectRun) => {
     let settled = false;
     const child = spawn(command, args, {
       cwd: options.repoRoot,
-      env: process.env,
+      env: optionsForRun.env || process.env,
       detached: Boolean(optionsForRun.timeoutMs),
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -148,6 +153,14 @@ async function run(
       }
     });
   });
+}
+
+function manageEngineExportEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  if (!env.SENTINEL_DATA_DIR && env.HOME) {
+    env.SENTINEL_DATA_DIR = join(env.HOME, "Library", "Application Support", "Sentinel");
+  }
+  return env;
 }
 
 function stopChild(pid: number | undefined, signal: NodeJS.Signals): void {

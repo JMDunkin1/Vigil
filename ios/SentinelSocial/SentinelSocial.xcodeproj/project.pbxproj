@@ -1,0 +1,360 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* SentinelSocialApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* SentinelSocialApp.swift */; };
+		A10000000000000000000002 /* SocialService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* SocialService.swift */; };
+		A10000000000000000000003 /* DOMAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* DOMAdapters.swift */; };
+		A10000000000000000000004 /* SocialWebViewStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* SocialWebViewStore.swift */; };
+		A10000000000000000000005 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* RootView.swift */; };
+		A10000000000000000000006 /* SentinelSocialTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* SentinelSocialTests.swift */; };
+		A10000000000000000000007 /* icon.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* icon.png */; };
+		A10000000000000000000008 /* instagram.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* instagram.png */; };
+		A10000000000000000000009 /* youtube.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* youtube.png */; };
+		A1000000000000000000000A /* snapchat.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* snapchat.png */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A30000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A60000000000000000000001;
+			remoteInfo = SentinelSocial;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* SentinelSocialApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelSocialApp.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* SocialService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialService.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* DOMAdapters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DOMAdapters.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* SocialWebViewStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialWebViewStore.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20000000000000000000007 /* SentinelSocialTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SentinelSocialTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000008 /* SentinelSocial.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SentinelSocial.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000009 /* SentinelSocialTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SentinelSocialTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000000000010 /* icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon.png; path = ../../../build/icon.png; sourceTree = "<group>"; };
+		A20000000000000000000011 /* instagram.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icons/instagram.png; sourceTree = "<group>"; };
+		A20000000000000000000012 /* youtube.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icons/youtube.png; sourceTree = "<group>"; };
+		A20000000000000000000013 /* snapchat.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icons/snapchat.png; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A40000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A40000000000000000000004 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A50000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				A50000000000000000000002 /* SentinelSocial */,
+				A50000000000000000000003 /* SentinelSocialTests */,
+				A50000000000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A50000000000000000000002 /* SentinelSocial */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001 /* SentinelSocialApp.swift */,
+				A20000000000000000000002 /* SocialService.swift */,
+				A20000000000000000000003 /* DOMAdapters.swift */,
+				A20000000000000000000004 /* SocialWebViewStore.swift */,
+				A20000000000000000000005 /* RootView.swift */,
+				A20000000000000000000006 /* Info.plist */,
+				A20000000000000000000010 /* icon.png */,
+				A20000000000000000000011 /* instagram.png */,
+				A20000000000000000000012 /* youtube.png */,
+				A20000000000000000000013 /* snapchat.png */,
+			);
+			path = SentinelSocial;
+			sourceTree = "<group>";
+		};
+		A50000000000000000000003 /* SentinelSocialTests */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000007 /* SentinelSocialTests.swift */,
+			);
+			path = SentinelSocialTests;
+			sourceTree = "<group>";
+		};
+		A50000000000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000008 /* SentinelSocial.app */,
+				A20000000000000000000009 /* SentinelSocialTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A60000000000000000000001 /* SentinelSocial */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000000000002 /* Build configuration list for PBXNativeTarget "SentinelSocial" */;
+			buildPhases = (
+				A40000000000000000000002 /* Sources */,
+				A40000000000000000000001 /* Frameworks */,
+				A40000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SentinelSocial;
+			productName = SentinelSocial;
+			productReference = A20000000000000000000008 /* SentinelSocial.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A60000000000000000000002 /* SentinelSocialTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000000000003 /* Build configuration list for PBXNativeTarget "SentinelSocialTests" */;
+			buildPhases = (
+				A40000000000000000000005 /* Sources */,
+				A40000000000000000000004 /* Frameworks */,
+				A40000000000000000000006 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A70000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = SentinelSocialTests;
+			productName = SentinelSocialTests;
+			productReference = A20000000000000000000009 /* SentinelSocialTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A90000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2660;
+				LastUpgradeCheck = 2660;
+				TargetAttributes = {
+					A60000000000000000000001 = { CreatedOnToolsVersion = 26.6; };
+					A60000000000000000000002 = { CreatedOnToolsVersion = 26.6; TestTargetID = A60000000000000000000001; };
+				};
+			};
+			buildConfigurationList = A80000000000000000000001 /* Build configuration list for PBXProject "SentinelSocial" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A50000000000000000000001;
+			productRefGroup = A50000000000000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A60000000000000000000001 /* SentinelSocial */,
+				A60000000000000000000002 /* SentinelSocialTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000007 /* icon.png in Resources */, A10000000000000000000008 /* instagram.png in Resources */, A10000000000000000000009 /* youtube.png in Resources */, A1000000000000000000000A /* snapchat.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		A40000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A40000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001 /* SentinelSocialApp.swift in Sources */,
+				A10000000000000000000002 /* SocialService.swift in Sources */,
+				A10000000000000000000003 /* DOMAdapters.swift in Sources */,
+				A10000000000000000000004 /* SocialWebViewStore.swift in Sources */,
+				A10000000000000000000005 /* RootView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A40000000000000000000005 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000006 /* SentinelSocialTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A70000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A60000000000000000000001 /* SentinelSocial */;
+			targetProxy = A30000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		B10000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		B10000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		B10000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3RY7A22U4L;
+				ENABLE_PREVIEWS = YES;
+				INFOPLIST_FILE = SentinelSocial/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = tech.caseline.sentinel.youtube;
+				PRODUCT_MODULE_NAME = SentinelSocial;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SENTINEL_SERVICE = youtube;
+				SOCIAL_APP_NAME = YouTube;
+				SOCIAL_ICON_NAME = youtube.png;
+				SOCIAL_URL_SCHEME = sentinel-youtube;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B10000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3RY7A22U4L;
+				INFOPLIST_FILE = SentinelSocial/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = tech.caseline.sentinel.youtube;
+				PRODUCT_MODULE_NAME = SentinelSocial;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SENTINEL_SERVICE = youtube;
+				SOCIAL_APP_NAME = YouTube;
+				SOCIAL_ICON_NAME = youtube.png;
+				SOCIAL_URL_SCHEME = sentinel-youtube;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		B10000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 3RY7A22U4L;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = tech.caseline.sentinel.social.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SentinelSocial.app/SentinelSocial";
+			};
+			name = Debug;
+		};
+		B10000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 3RY7A22U4L;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = tech.caseline.sentinel.social.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/SentinelSocial.app/SentinelSocial";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A80000000000000000000001 /* Build configuration list for PBXProject "SentinelSocial" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (B10000000000000000000001 /* Debug */, B10000000000000000000002 /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A80000000000000000000002 /* Build configuration list for PBXNativeTarget "SentinelSocial" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (B10000000000000000000003 /* Debug */, B10000000000000000000004 /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A80000000000000000000003 /* Build configuration list for PBXNativeTarget "SentinelSocialTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (B10000000000000000000005 /* Debug */, B10000000000000000000006 /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A90000000000000000000001 /* Project object */;
+}

@@ -18,9 +18,10 @@ const now = new Date("2026-06-04T15:30:00.000Z");
   });
 
   assert.equal(result.blocked, true);
-  assert.equal(result.reasonCode, "baseline-site");
-  assert.equal(result.policy?.kind, "baseline");
-  assert.match(result.reason, /baseline Normal/);
+  assert.equal(result.reasonCode, "adult-blocklist");
+  assert.equal(result.policy?.kind, "adult-blocklist");
+  assert.equal(result.match?.domain, "pornhub.com");
+  assert.match(result.reason, /adult blocklist/i);
 }
 
 {
@@ -139,10 +140,10 @@ const now = new Date("2026-06-04T15:30:00.000Z");
     at: now
   });
 
-  assert.equal(result.blocked, true);
-  assert.equal(result.paused, false);
-  assert.equal(result.reasonCode, "baseline-url-pattern");
-  assert.equal(state.intentionalUse.pauses.length, 0);
+  assert.equal(result.blocked, false);
+  assert.equal(result.paused, true);
+  assert.equal(result.reasonCode, "intentional-use");
+  assert.equal(state.intentionalUse.pauses.length, 0, "rule simulation must not mutate source state");
 }
 
 {
@@ -177,7 +178,7 @@ const now = new Date("2026-06-04T15:30:00.000Z");
   assert.equal(response.statusCodeValue, 200);
   const body = JSON.parse(response.bodyText) as { blocked?: boolean; policy?: { kind?: string } };
   assert.equal(body.blocked, true);
-  assert.equal(body.policy?.kind, "baseline");
+  assert.equal(body.policy?.kind, "adult-blocklist");
 }
 
 {

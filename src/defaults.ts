@@ -394,6 +394,7 @@ export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
 ];
 
 export const DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS = [
+  "com.apple.AppStore",
   "com.apple.Preferences",
   "com.apple.mobilephone",
   "com.apple.MobileSMS",
@@ -505,10 +506,10 @@ export function defaultState(): SentinelState {
         id: NORMAL_PROFILE_ID,
         name: "Normal",
         mode: "blocklist",
-        description: "Baseline mode: no focus lock, but explicit sites and permanent short-form bans stay blocked.",
+        description: "Level 1 baseline: no active focus restrictions.",
         blockedApps: [],
-        blockedSites: DEFAULT_EXPLICIT_BLOCKED_SITES,
-        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS],
+        blockedSites: [],
+        blockedUrlPatterns: [],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES],
         phoneAppBlocking: false,
@@ -659,9 +660,94 @@ export function defaultState(): SentinelState {
       grants: [],
       ledger: {},
       outcomes: [],
-      behaviors: [],
+      behaviors: [
+        {
+          id: "habit-chastity",
+          name: "Chastity",
+          description: "Remain free from masturbation and pornography today.",
+          direction: "build",
+          unit: "yes-no",
+          weeklyTarget: 7,
+          ruleIds: [],
+          replacement: "Pray, move to a public room, and begin the next good action.",
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: "habit-rosary",
+          name: "Pray the Rosary",
+          description: "Pray five decades with attention.",
+          direction: "build",
+          unit: "yes-no",
+          weeklyTarget: 7,
+          ruleIds: [],
+          replacement: "Begin with one decade rather than skipping the day.",
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: "habit-morning-offering",
+          name: "Morning Offering",
+          description: "Offer the day to God before opening distracting apps.",
+          direction: "build",
+          unit: "yes-no",
+          weeklyTarget: 7,
+          ruleIds: [],
+          replacement: "Pause now and make the offering, even if the morning has passed.",
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: "habit-scripture",
+          name: "Sacred Scripture",
+          description: "Read Scripture attentively each day.",
+          direction: "build",
+          unit: "yes-no",
+          weeklyTarget: 7,
+          ruleIds: [],
+          replacement: "Read the Gospel of the day for five minutes.",
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: "habit-examen",
+          name: "Nightly Examen",
+          description: "Review the day with gratitude, contrition, and a concrete resolution.",
+          direction: "build",
+          unit: "yes-no",
+          weeklyTarget: 7,
+          ruleIds: [],
+          replacement: "Name one grace, one failure, and tomorrow's first good action.",
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        },
+        {
+          id: "habit-exercise",
+          name: "Exercise",
+          description: "Train the body with deliberate movement.",
+          direction: "build",
+          unit: "yes-no",
+          weeklyTarget: 5,
+          ruleIds: [],
+          replacement: "Take a brisk ten-minute walk.",
+          active: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      ],
       behaviorCheckIns: [],
       journalEntries: [],
+      journalVault: {
+        passwordSalt: "",
+        passwordHash: "",
+        passwordSetAt: null,
+        autoLockMinutes: 15
+      },
       planLists: [
         {
           id: "todo",
@@ -780,7 +866,7 @@ export function defaultState(): SentinelState {
         blockApps: true,
         blockWeb: true,
         hardenRemoval: true,
-        restrictInstallAndErase: true,
+        restrictInstallAndErase: false,
         allowSafariHistoryClearing: true,
         blockedAppBundleIds: DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
         allowedAppBundleIds: DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS,

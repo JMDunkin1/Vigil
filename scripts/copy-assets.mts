@@ -7,6 +7,7 @@ const projectRoot = dirname(dirname(runtimeRoot));
 const ignoredSourceExtensions = new Set([".ts", ".mts"]);
 
 await copyProjectFile("package.json");
+await copyProjectFile("app/preload.cjs");
 await copyAssetDir("public");
 await copyAssetDir("extension");
 

@@ -275,6 +275,7 @@ last exit code = 0
   assert.match(hardeningSummarySource, /extensionLoad/);
   assert.match(sessionRoutesSource, /Brick Mode/);
   assert.match(sessionRoutesSource, /\/api\/panic\/start/);
+  assert.match(sessionRoutesSource, /\/api\/protection\/level/);
   assert.match(sessionRoutesSource, /panicLockDurationMinutes/);
   assert.match(hardeningSummarySource, /browser control pages/);
   assert.match(statePayloadSource, /strictPreflightState/);
@@ -287,9 +288,10 @@ last exit code = 0
   assert.match(indexSource, /id="startNormalMode"/);
   assert.match(indexSource, /id="startSoftBlock"/);
   assert.match(indexSource, /id="startFullBrick"/);
-  assert.match(indexSource, /data-device-target="computer"/);
-  assert.match(indexSource, /data-device-target="phone"/);
-  assert.match(indexSource, /Apple Companion Control/);
+  assert.match(indexSource, /id="protectionLevel" type="range"/);
+  assert.doesNotMatch(indexSource, /Protected devices|Current State|Preset duration/);
+  assert.doesNotMatch(indexSource, /data-device-target=/);
+  assert.match(indexSource, /Devices and iPhone/);
   assert.doesNotMatch(indexSource, /Android|ADB/);
   assert.match(indexSource, /id="startPanicLock"/);
   assert.match(indexSource, /id="panicLockDurationMinutes"/);

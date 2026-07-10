@@ -41,8 +41,6 @@ export function createLifeLogView(context: LifeLogViewContext) {
     $("#recoverySetbacks").textContent = String(recoveryWeek.setbacks || 0);
     $("#recoverySosCount").textContent = String(recoveryWeek.sos || 0);
 
-    forms.renderMultiSelect($("#journalBehaviorIds"), activeBehaviors);
-    forms.renderMultiSelect($("#journalRuleIds"), rules);
     forms.renderMultiSelect($("#behaviorRuleIds"), rules);
     forms.renderBehaviorCheckInSelect(activeBehaviors);
     renderBehaviorList(behaviors);
@@ -51,7 +49,7 @@ export function createLifeLogView(context: LifeLogViewContext) {
     renderRecoveryCheckIns(recovery.recentCheckIns || []);
     renderSosPlan((recovery.recentSos || [])[0] || null);
     renderSosSessions(recovery.recentSos || []);
-    renderJournalEntries(lifeLog.entries || [], behaviors, rules);
+    renderJournalEntries(lifeLog.entries || []);
   }
 
   function renderBehaviorList(behaviors: DashboardItem[]): void {
@@ -332,7 +330,7 @@ export function createLifeLogView(context: LifeLogViewContext) {
       .join(" ");
   }
 
-  function renderJournalEntries(entries: DashboardItem[], behaviors: DashboardItem[], rules: DashboardItem[]): void {
+  function renderJournalEntries(entries: DashboardItem[]): void {
     const list = $("#journalEntryList");
     list.replaceChildren();
     if (!entries.length) {
@@ -340,30 +338,16 @@ export function createLifeLogView(context: LifeLogViewContext) {
       return;
     }
 
-    const behaviorNames = new Map(behaviors.map((behavior) => [behavior.id, behavior.name]));
-    const ruleNames = new Map(rules.map((rule) => [rule.id, rule.name]));
     for (const entry of entries.slice(0, 12)) {
       const article = document.createElement("article");
       article.className = "journal-entry";
-      const metaParts = [
-        entry.entryDate ? shortDateTime(entry.entryDate) : "",
-        entry.mood,
-        entry.energy ? `energy ${entry.energy}/10` : ""
-      ].filter(Boolean);
-      const linked = [
-        ...(entry.behaviorIds || []).map((id) => behaviorNames.get(id) || id),
-        ...(entry.ruleIds || []).map((id) => ruleNames.get(id) || id)
-      ].filter(Boolean);
-      const tagLine = [...(entry.tags || []), ...linked].slice(0, 8);
 
       const head = el(
         "div",
         { className: "journal-entry-head" },
-        textEl("strong", entry.title || "Reflection"),
-        textEl("span", metaParts.join(" | ") || "--")
+        textEl("strong", entry.title || "Reflection")
       );
       const body = textEl("p", entry.body || "", { className: "journal-entry-body" });
-      const tags = el("div", { className: "tag-row" }, tagLine.map((tag) => textEl("span", tag)));
       const actions = el("div", { className: "journal-entry-actions" });
 
       const edit = document.createElement("button");
@@ -384,7 +368,6 @@ export function createLifeLogView(context: LifeLogViewContext) {
 
       actions.append(edit, remove);
       article.append(head, body);
-      if (tagLine.length) article.append(tags);
       article.append(actions);
       list.append(article);
     }

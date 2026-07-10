@@ -1,40 +1,48 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   APP_NAME,
   DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS,
   DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
-  SOFT_BLOCK_PROFILE_ID,
+  NORMAL_PROFILE_ID,
   defaultState
 } from "./defaults.js";
 import { parseBoolean } from "./booleans.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { grayscaleDecision, IOS_GRAYSCALE_GUARD_BUNDLE_IDS } from "./grayscale.js";
 import { activeLimitBlocks } from "./limits.js";
-import { toPlist } from "./plist.js";
+import { plistData, toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, profileById } from "./policy.js";
-import { focusedSocialBlockedBundleIds, focusedSocialDeniedUrls, focusedSocialSummary, focusedSocialWebClips, normalizeFocusedSocialSettings } from "./socialFeatureFilters.js";
+import { IOS_SOCIAL_COMPANION_BUNDLE_IDS, focusedSocialBlockedBundleIds, focusedSocialDeniedUrls, focusedSocialLauncherWebClips, focusedSocialSummary, normalizeFocusedSocialSettings, withoutFocusedSocialDeniedUrls } from "./socialFeatureFilters.js";
+import type { FocusedSocialWebClip } from "./socialFeatureFilters.js";
 import type { IosSettings, SentinelState, UnknownRecord } from "./types.js";
 
 export const IOS_PROFILE_IDENTIFIER = "com.local-screen-time.ios-lock";
+export const IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER = "com.local-screen-time.ios-social-launchers";
+export const IOS_APP_STORE_BUNDLE_ID = "com.apple.AppStore";
 export const IOS_MANAGED_HELPER_APP_BUNDLE_IDS = ["com.zohocorp.mdm"];
 const MAX_DENY_URLS = 500;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
-const SOFT_BLOCK_WEB_CLIPS = [
-  {
-    id: "instagram",
-    label: "Sentinel Instagram",
-    url: "https://www.instagram.com/direct/inbox/"
-  }
+const IOS_SOCIAL_COMPANION_ALLOWED_URLS = [
+  "https://instagram.com/",
+  "https://www.instagram.com/",
+  "https://youtube.com/",
+  "https://www.youtube.com/",
+  "https://m.youtube.com/",
+  "https://youtu.be/",
+  "https://snapchat.com/",
+  "https://web.snapchat.com/",
+  "https://accounts.google.com/"
 ];
-
 interface IosPolicyTargets {
   profileName: string;
   appMode: string;
   webMode: string;
+  enforcementActive: boolean;
+  focusedSocialEnforcementActive: boolean;
   appBundleIds: string[];
   deniedUrls: string[];
   allowedUrls: string[];
-  webClips: Array<{ id: string; label: string; url: string }>;
+  webClips: FocusedSocialWebClip[];
   managedHelperAppBundleIds: string[];
   focusedSocial: ReturnType<typeof focusedSocialSummary>;
   grayscale: {
@@ -85,16 +93,32 @@ export function iosProfileSummary(state: SentinelState, now = new Date()) {
   const settings = currentIosSettings(state);
   const active = Boolean(settings.enabled);
   const targets = active ? iosPolicyTargets(state, now) : disabledPolicyTargets(settings);
+  const launcherClips = focusedSocialLauncherWebClips();
+  const appListRestrictionEmitted = Boolean(active
+    && targets.enforcementActive
+    && (settings.blockApps || targets.grayscale.settingsGuarded)
+    && targets.appBundleIds.length);
+  const appStoreVisibleByAppList = !appListRestrictionEmitted
+    || (targets.appMode === "allowlist"
+      ? includesBundleId(targets.appBundleIds, IOS_APP_STORE_BUNDLE_ID)
+      : !includesBundleId(targets.appBundleIds, IOS_APP_STORE_BUNDLE_ID));
+  const appStoreInstallAllowed = Boolean(!active || !targets.enforcementActive || !settings.restrictInstallAndErase);
   return {
     enabled: active,
     supported: true,
-    status: active ? "supervised-policy-enabled" : "ready",
+    status: active && targets.enforcementActive ? "supervised-policy-enabled" : "ready",
     note: active
-      ? "Desktop-generated supervised iPhone profile is ready to install."
+      ? targets.enforcementActive
+        ? "Desktop-generated supervised iPhone enforcement profile is ready to install."
+        : "Level 1 is active, so the dynamic iPhone profile emits no restrictions."
       : "Enable this to generate a supervised iPhone policy profile.",
     supervisedRequired: true,
-    removalHardened: Boolean(active && settings.hardenRemoval && settings.removalPassword),
+    removalHardened: Boolean(active && targets.enforcementActive && settings.hardenRemoval && settings.removalPassword),
     restrictInstallAndErase: Boolean(settings.restrictInstallAndErase),
+    appStoreAllowedByThisProfile: Boolean(appStoreVisibleByAppList && appStoreInstallAllowed),
+    appStoreVisibleByAppList,
+    appStoreInstallAllowed,
+    appStoreRestrictionKeysEmitted: Boolean(active && targets.enforcementActive && settings.restrictInstallAndErase),
     allowSafariHistoryClearing: settings.allowSafariHistoryClearing !== false,
     mode: settings.mode,
     webMode: settings.webMode,
@@ -113,11 +137,21 @@ export function iosProfileSummary(state: SentinelState, now = new Date()) {
       appBundleCount: targets.appBundleIds.length,
       deniedUrlCount: targets.deniedUrls.length,
       allowedUrlCount: targets.allowedUrls.length,
-      webClipCount: targets.webClips.length,
+      webClipCount: 0,
+      enforcementActive: targets.enforcementActive,
+      focusedSocialEnforcementActive: targets.focusedSocialEnforcementActive,
       managedHelperAppBundleIds: targets.managedHelperAppBundleIds,
       focusedSocial: targets.focusedSocial,
       grayscale: targets.grayscale,
       lastGeneratedAt: settings.lastGeneratedAt || null
+    },
+    launcherProfile: {
+      identifier: IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER,
+      fileName: "sentinel-social-launchers.mobileconfig",
+      managedSeparately: true,
+      durationUntilRemoval: false,
+      webClipCount: launcherClips.length,
+      labels: launcherClips.map((clip) => clip.label)
     },
     manageEngine: manageEngineHandoffSummary(active, targets)
   };
@@ -146,6 +180,7 @@ export function buildIosConfigurationProfile(state: SentinelState, now = new Dat
   const settings = currentIosSettings(state);
   const active = Boolean(settings.enabled);
   const targets = active ? iosPolicyTargets(state, now) : disabledPolicyTargets(settings);
+  const enforcementActive = Boolean(active && targets.enforcementActive);
   const autoRemoval = profileAutoRemoval(state, now, active);
   const payloads: MobileConfigPayload[] = [];
 
@@ -154,9 +189,8 @@ export function buildIosConfigurationProfile(state: SentinelState, now = new Dat
 
   const webFilter = webContentFilterPayload(settings, targets);
   if (webFilter) payloads.push(webFilter);
-  payloads.push(...webClipPayloads(settings, targets));
 
-  if (active && settings.hardenRemoval && settings.removalPassword) {
+  if (enforcementActive && settings.hardenRemoval && settings.removalPassword) {
     payloads.push(commonPayload("com.apple.profileRemovalPassword", "Profile Removal Password", "removal-password", {
       RemovalPassword: settings.removalPassword
     }));
@@ -164,19 +198,35 @@ export function buildIosConfigurationProfile(state: SentinelState, now = new Dat
 
   const profile = {
     PayloadContent: payloads,
-    PayloadDescription: active
+    PayloadDescription: enforcementActive
       ? "Locks distracting iPhone apps and websites using supervised Apple device-management restrictions generated by Sentinel."
-      : "Disabled Sentinel iPhone policy profile with no app or web restrictions.",
+      : "Sentinel Level 1 profile with no app or web restrictions.",
     PayloadDisplayName: "Sentinel iPhone Lock",
     ...autoRemoval,
     PayloadIdentifier: IOS_PROFILE_IDENTIFIER,
     PayloadOrganization: APP_NAME,
-    PayloadRemovalDisallowed: Boolean(active && settings.hardenRemoval),
+    PayloadRemovalDisallowed: Boolean(enforcementActive && settings.hardenRemoval),
     PayloadType: "Configuration",
-    PayloadUUID: randomUUID(),
+    PayloadUUID: stableIosPayloadUuid(IOS_PROFILE_IDENTIFIER),
     PayloadVersion: 1
   };
 
+  return toPlist(profile);
+}
+
+export function buildIosSocialLauncherProfile(): string {
+  const clips = focusedSocialLauncherWebClips();
+  const profile = {
+    PayloadContent: webClipPayloads(clips, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER),
+    PayloadDescription: "Stable social launchers managed separately from Sentinel's time-limited iPhone enforcement policy.",
+    PayloadDisplayName: "Sentinel Social Launchers",
+    PayloadIdentifier: IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER,
+    PayloadOrganization: APP_NAME,
+    PayloadRemovalDisallowed: false,
+    PayloadType: "Configuration",
+    PayloadUUID: stableIosPayloadUuid(IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER),
+    PayloadVersion: 1
+  };
   return toPlist(profile);
 }
 
@@ -200,6 +250,7 @@ function manageEngineHandoffSummary(active: boolean, targets: IosPolicyTargets):
     policyPath: "data/manageengine/sentinel-manageengine-policy.mobileconfig",
     summaryPath: "data/manageengine/sentinel-manageengine-policy.summary.json",
     enrollmentWindowPath: "data/manageengine/sentinel-manageengine-enrollment-window.mobileconfig",
+    launcherProfilePath: "data/manageengine/sentinel-social-launchers.mobileconfig",
     exportCommand: "npm run ios:manageengine:export",
     enrollmentWindowCommand: "npm run ios:manageengine:apply-enrollment-window",
     docsPath: "docs/manageengine-mdm.md",
@@ -207,6 +258,8 @@ function manageEngineHandoffSummary(active: boolean, targets: IosPolicyTargets):
     appBundleCount: targets.appBundleIds.length,
     deniedUrlCount: targets.deniedUrls.length,
     allowedUrlCount: targets.allowedUrls.length,
+    enforcementActive: targets.enforcementActive,
+    focusedSocialEnforcementActive: targets.focusedSocialEnforcementActive,
     managedHelperAppBundleIds: targets.managedHelperAppBundleIds,
     note: active
       ? "Normal free iPhone delivery path: Sentinel exports this profile and ManageEngine owns enrollment, APNs wakeups, assignment, and removal."
@@ -222,12 +275,14 @@ export function iosPolicyTargets(state: SentinelState, now = new Date()): IosPol
     || profileById(state, settings.profileId || state.settings.activeProfileId)
     || state.profiles?.[0]
     || null;
+  const focusedSocialEnforcementActive = Boolean(activePhonePolicy && profile?.id !== NORMAL_PROFILE_ID);
 
   const profileName = policy?.session?.title || profile?.name || "Saved iPhone policy";
   const appMode = profile?.mode === "allowlist" ? "allowlist" : settings.mode;
   const webMode = profile?.mode === "allowlist" ? "allowlist" : settings.webMode;
   const grayscale = grayscaleDecision(state, now, { device: "phone" });
-  const settingsGuarded = Boolean(grayscale.desired && state.grayscale?.preventManualChanges !== false);
+  const enforcementActive = Boolean(activePhonePolicy);
+  const settingsGuarded = Boolean(enforcementActive && grayscale.desired && state.grayscale?.preventManualChanges !== false);
   const phoneAppBlocking = profile?.phoneAppBlocking !== false;
   let appBundleIds = phoneAppBlocking
     ? appMode === "allowlist"
@@ -244,26 +299,28 @@ export function iosPolicyTargets(state: SentinelState, now = new Date()): IosPol
   const profileSites = webMode === "allowlist"
     ? profile?.allowedSites || []
     : profile?.blockedSites || [];
-  const profilePatterns = webMode === "allowlist"
-    ? []
-    : profile?.blockedUrlPatterns || [];
   const activePhoneLimitBlocks = activeLimitBlocks(state, now, { device: "phone" });
   const activeLimitBundleIds = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.apps || []).filter(isLikelyIosBundleId));
   const activeLimitSites = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.sites || []));
-  const focusedSocialSettings = normalizeFocusedSocialSettings(settings.focusedSocial);
-  const socialDeniedUrls = focusedSocialDeniedUrls(focusedSocialSettings);
-  const includeFocusedSocialNativeApps = settings.blockApps
-    && phoneAppBlocking
-    && appMode !== "allowlist";
-  const webClips = settings.blockWeb && focusedSocialSettings.forceWebClips
-    ? uniqueWebClips([
-      ...(profile?.id === SOFT_BLOCK_PROFILE_ID ? SOFT_BLOCK_WEB_CLIPS : []),
-      ...focusedSocialWebClips(focusedSocialSettings)
-    ])
+  const configuredProfilePatterns = enforcementActive && webMode !== "allowlist"
+    ? profile?.blockedUrlPatterns || []
     : [];
+  const profilePatterns = focusedSocialEnforcementActive
+    ? configuredProfilePatterns
+    : withoutFocusedSocialDeniedUrls(configuredProfilePatterns);
+  const focusedSocialSettings = normalizeFocusedSocialSettings(settings.focusedSocial);
+  const socialDeniedUrls = focusedSocialEnforcementActive
+    ? focusedSocialDeniedUrls(focusedSocialSettings)
+    : [];
+  const includeFocusedSocialNativeApps = settings.blockApps
+    && focusedSocialEnforcementActive
+    && appMode !== "allowlist";
+  const webClips = uniqueWebClips(focusedSocialLauncherWebClips());
 
-  const deniedUrls = !settings.blockWeb || webMode === "allowlist"
+  const deniedUrls = !enforcementActive || !settings.blockWeb
     ? []
+    : webMode === "allowlist"
+    ? uniqueUrls(urlsFromPatterns(socialDeniedUrls)).slice(0, MAX_DENY_URLS)
     : uniqueUrls([
       ...urlsFromSiteTargets(profileSites),
       ...urlsFromSiteTargets(activeLimitSites),
@@ -272,12 +329,13 @@ export function iosPolicyTargets(state: SentinelState, now = new Date()): IosPol
       ...urlsFromSiteTargets(adultBlocklistPreloadDomains(state)),
       ...settings.deniedUrls
     ]).slice(0, MAX_DENY_URLS);
-  const allowedUrls = !settings.blockWeb
+  const allowedUrls = !enforcementActive || !settings.blockWeb
     ? []
     : webMode === "allowlist"
     ? uniqueUrls([
       ...urlsFromSiteTargets(profileSites),
       ...settings.allowedUrls,
+      ...IOS_SOCIAL_COMPANION_ALLOWED_URLS,
       ...webClips.map((clip) => clip.url)
     ])
     : uniqueUrls(settings.allowedUrls);
@@ -287,13 +345,22 @@ export function iosPolicyTargets(state: SentinelState, now = new Date()): IosPol
       ...focusedSocialBlockedBundleIds(focusedSocialSettings)
     ]);
   }
-  if (settings.blockApps && appMode !== "allowlist" && activeLimitBundleIds.length) {
+  if (settings.blockApps && focusedSocialEnforcementActive && appMode === "allowlist") {
+    appBundleIds = uniqueStrings([
+      ...appBundleIds,
+      IOS_APP_STORE_BUNDLE_ID,
+      ...Object.values(IOS_SOCIAL_COMPANION_BUNDLE_IDS)
+    ]);
+  }
+  if (enforcementActive && settings.blockApps && appMode !== "allowlist" && activeLimitBundleIds.length) {
     appBundleIds = uniqueStrings([
       ...appBundleIds,
       ...activeLimitBundleIds
     ]);
   }
-  const managedHelperAppBundleIds = settings.blockApps ? [...IOS_MANAGED_HELPER_APP_BUNDLE_IDS] : [];
+  const managedHelperAppBundleIds = settings.blockApps && focusedSocialEnforcementActive
+    ? [...IOS_MANAGED_HELPER_APP_BUNDLE_IDS]
+    : [];
   if (managedHelperAppBundleIds.length) {
     appBundleIds = appMode === "allowlist"
       ? withoutBundleIds(appBundleIds, managedHelperAppBundleIds)
@@ -304,15 +371,17 @@ export function iosPolicyTargets(state: SentinelState, now = new Date()): IosPol
     profileName,
     appMode,
     webMode,
+    enforcementActive,
+    focusedSocialEnforcementActive,
     appBundleIds,
     deniedUrls,
     allowedUrls,
     webClips,
     managedHelperAppBundleIds,
     focusedSocial: focusedSocialSummary(focusedSocialSettings, {
-      includeDeniedUrls: settings.blockWeb && webMode !== "allowlist",
+      includeDeniedUrls: focusedSocialEnforcementActive && settings.blockWeb && webMode !== "allowlist",
       includeNativeApps: includeFocusedSocialNativeApps,
-      includeWebClips: settings.blockWeb
+      includeWebClips: false
     }),
     grayscale: {
       desired: grayscale.desired,
@@ -372,6 +441,8 @@ function disabledPolicyTargets(settings: IosSettings): IosPolicyTargets {
     profileName: "iPhone blocking disabled",
     appMode: settings.mode,
     webMode: settings.webMode,
+    enforcementActive: false,
+    focusedSocialEnforcementActive: false,
     appBundleIds: [],
     deniedUrls: [],
     allowedUrls: [],
@@ -394,6 +465,20 @@ function disabledPolicyTargets(settings: IosSettings): IosPolicyTargets {
 
 function restrictionsPayload(settings: IosSettings, targets: IosPolicyTargets): MobileConfigPayload | null {
   if (!settings.enabled) return null;
+  if (!targets.enforcementActive) {
+    return commonPayload("com.apple.applicationaccess", "Level 1 Application Access", "restrictions", {
+      allowAppInstallation: true,
+      allowAppRemoval: true,
+      allowEraseContentAndSettings: true,
+      allowHostPairing: true,
+      allowSafariHistoryClearing: true,
+      allowUIAppInstallation: true,
+      allowUIConfigurationProfileInstallation: true,
+      allowVPNCreation: true,
+      allowWebDistributionAppInstallation: true,
+      forceAutomaticDateAndTime: false
+    });
+  }
   const restrictions: UnknownRecord = {
     allowSafariHistoryClearing: settings.allowSafariHistoryClearing !== false
   };
@@ -402,7 +487,7 @@ function restrictionsPayload(settings: IosSettings, targets: IosPolicyTargets): 
     else restrictions.blockedAppBundleIDs = targets.appBundleIds;
   }
 
-  if (settings.restrictInstallAndErase) {
+  if (targets.enforcementActive && settings.restrictInstallAndErase) {
     restrictions.allowAppInstallation = false;
     restrictions.allowAppRemoval = false;
     restrictions.allowEraseContentAndSettings = false;
@@ -420,15 +505,18 @@ function restrictionsPayload(settings: IosSettings, targets: IosPolicyTargets): 
 
 function webContentFilterPayload(settings: IosSettings, targets: IosPolicyTargets): MobileConfigPayload | null {
   if (!settings.enabled) return null;
+  if (!targets.enforcementActive) return null;
   if (!settings.blockWeb) return null;
   const content: UnknownRecord & {
     AutoFilterEnabled: boolean;
     FilterType: string;
     AllowListBookmarks?: Array<{ Title: string; URL: string }>;
     DenyListURLs?: string[];
+    SafariHistoryRetentionEnabled: boolean;
   } = {
     AutoFilterEnabled: true,
-    FilterType: "BuiltIn"
+    FilterType: "BuiltIn",
+    SafariHistoryRetentionEnabled: settings.allowSafariHistoryClearing === false
   };
 
   if (targets.webMode === "allowlist") {
@@ -436,7 +524,8 @@ function webContentFilterPayload(settings: IosSettings, targets: IosPolicyTarget
       Title: bookmarkTitle(url),
       URL: url
     }));
-  } else {
+  }
+  if (targets.deniedUrls.length) {
     content.DenyListURLs = targets.deniedUrls;
   }
 
@@ -444,27 +533,36 @@ function webContentFilterPayload(settings: IosSettings, targets: IosPolicyTarget
   return commonPayload("com.apple.webcontent-filter", "iPhone Web Filter", "web-filter", content);
 }
 
-function webClipPayloads(settings: IosSettings, targets: IosPolicyTargets): MobileConfigPayload[] {
-  if (!settings.enabled) return [];
-  if (!settings.blockWeb) return [];
-  return (targets.webClips || []).map((clip) => commonPayload("com.apple.webClip.managed", clip.label, `webclip.${clip.id}`, {
+function webClipPayloads(clips: readonly FocusedSocialWebClip[], identifierPrefix = IOS_PROFILE_IDENTIFIER): MobileConfigPayload[] {
+  return (clips || []).map((clip) => commonPayload("com.apple.webClip.managed", clip.displayName || clip.label, `webclip.${clip.id}`, {
     URL: clip.url,
     Label: clip.label,
     FullScreen: true,
-    IsRemovable: true
-  }));
+    IsRemovable: true,
+    Precomposed: true,
+    TargetApplicationBundleIdentifier: clip.targetApplicationBundleIdentifier,
+    Icon: clip.iconPngBase64 ? plistData(clip.iconPngBase64) : undefined
+  }, identifierPrefix));
 }
 
-function commonPayload(type: string, name: string, suffix: string, values: UnknownRecord = {}): MobileConfigPayload {
+function commonPayload(type: string, name: string, suffix: string, values: UnknownRecord = {}, identifierPrefix = IOS_PROFILE_IDENTIFIER): MobileConfigPayload {
   return {
     ...values,
     PayloadDescription: `${name} generated by ${APP_NAME}.`,
     PayloadDisplayName: name,
-    PayloadIdentifier: `${IOS_PROFILE_IDENTIFIER}.${suffix}`,
+    PayloadIdentifier: `${identifierPrefix}.${suffix}`,
     PayloadType: type,
-    PayloadUUID: randomUUID(),
+    PayloadUUID: stableIosPayloadUuid(`${identifierPrefix}.${suffix}`),
     PayloadVersion: 1
   };
+}
+
+export function stableIosPayloadUuid(seed: string): string {
+  const bytes = Buffer.from(createHash("sha256").update(seed).digest().subarray(0, 16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16), hex.slice(16, 20), hex.slice(20)].join("-").toUpperCase();
 }
 
 function urlsFromSiteTargets(values: readonly unknown[]): string[] {
@@ -489,8 +587,10 @@ function urlsFromInput(value: unknown): string[] {
 
   const stripped = input.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\s+/g, "");
   if (!stripped || stripped.startsWith("/") || !stripped.includes(".")) return [];
-  const suffix = stripped.endsWith("/") ? stripped : stripped.includes("/") ? stripped : `${stripped}/`;
-  return [`https://${suffix}`, `http://${suffix}`];
+  const slashIndex = stripped.indexOf("/");
+  const host = slashIndex === -1 ? stripped.replace(/\/+$/, "") : stripped.slice(0, slashIndex);
+  const path = slashIndex === -1 ? "/" : stripped.slice(slashIndex) || "/";
+  return iosUrlHostVariants(host).flatMap((variant) => [`https://${variant}${path}`, `http://${variant}${path}`]);
 }
 
 function uniqueUrls(values: readonly unknown[]): string[] {
@@ -504,7 +604,16 @@ function uniqueUrls(values: readonly unknown[]): string[] {
     seen.add(key);
     output.push(value);
   }
-  return output.sort((a, b) => a.localeCompare(b));
+  return output;
+}
+
+function iosUrlHostVariants(host: string): string[] {
+  const normalized = String(host || "").trim().toLowerCase();
+  if (!normalized) return [];
+  const variants = [normalized];
+  const labels = normalized.split(".").filter(Boolean);
+  if (!normalized.startsWith("www.") && labels.length === 2) variants.push(`www.${normalized}`);
+  return [...new Set(variants)];
 }
 
 function uniqueStrings(values: readonly unknown[]): string[] {
@@ -526,9 +635,14 @@ function withoutBundleIds(values: readonly string[], bundleIdsToRemove: readonly
   return values.filter((value) => !blocked.has(value.toLowerCase()));
 }
 
-function uniqueWebClips(values: ReadonlyArray<{ id: string; label: string; url: string }>): Array<{ id: string; label: string; url: string }> {
+function includesBundleId(values: readonly string[], bundleId: string): boolean {
+  const expected = bundleId.toLowerCase();
+  return values.some((value) => value.toLowerCase() === expected);
+}
+
+function uniqueWebClips(values: ReadonlyArray<FocusedSocialWebClip>): FocusedSocialWebClip[] {
   const seen = new Set<string>();
-  const output: Array<{ id: string; label: string; url: string }> = [];
+  const output: FocusedSocialWebClip[] = [];
   for (const clip of values || []) {
     const key = String(clip.id || clip.url || "").toLowerCase();
     if (!key || seen.has(key)) continue;

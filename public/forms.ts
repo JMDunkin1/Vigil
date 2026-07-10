@@ -122,7 +122,7 @@ export function createFormController({ $, $$, getData, setView, defaultPlanBlock
     form.elements.replacement.value = behavior.replacement || "";
     form.elements.active.checked = behavior.active !== false;
     setSelectedOptions($("#behaviorRuleIds"), behavior.ruleIds || []);
-    setView("journal");
+    setView("tracking");
   }
 
   function resetBehaviorForm(): void {
@@ -143,23 +143,15 @@ export function createFormController({ $, $$, getData, setView, defaultPlanBlock
     const form = $("#journalEntryForm");
     form.elements.id.value = entry.id;
     form.elements.title.value = entry.title || "";
-    form.elements.mood.value = entry.mood || "";
     form.elements.body.value = entry.body || "";
-    form.elements.energy.value = entry.energy ? String(entry.energy) : "";
-    form.elements.tags.value = (entry.tags || []).join(", ");
-    form.elements.entryDate.value = toDateTimeLocal(entry.entryDate || entry.createdAt);
-    setSelectedOptions($("#journalBehaviorIds"), entry.behaviorIds || []);
-    setSelectedOptions($("#journalRuleIds"), entry.ruleIds || []);
     setView("journal");
+    form.elements.title.focus();
   }
 
   function resetJournalForm(): void {
     const form = $("#journalEntryForm");
     form.reset();
     form.elements.id.value = "";
-    form.elements.entryDate.value = toDateTimeLocal(new Date().toISOString());
-    setSelectedOptions($("#journalBehaviorIds"), []);
-    setSelectedOptions($("#journalRuleIds"), []);
   }
 
   function loadPlanItem(item: IntentionalPlanItem): void {
@@ -171,7 +163,7 @@ export function createFormController({ $, $$, getData, setView, defaultPlanBlock
     form.elements.notes.value = item.notes || "";
     form.elements.dueAt.value = item.dueAt ? toDateTimeLocal(item.dueAt) : "";
     form.elements.tags.value = (item.tags || []).join(", ");
-    setView("journal");
+    setView("tracking");
   }
 
   function resetPlanItemForm(): void {
@@ -203,7 +195,7 @@ export function createFormController({ $, $$, getData, setView, defaultPlanBlock
     form.elements.itemId.value = item.id;
     form.elements.notes.value = item.notes || "";
     form.elements.mode.value = item.listId === "watchlist" ? "watch" : "focus";
-    setView("journal");
+    setView("tracking");
   }
 
   function loadPlanBlock(block: IntentionalPlanBlock): void {
@@ -223,7 +215,7 @@ export function createFormController({ $, $$, getData, setView, defaultPlanBlock
     for (const input of $$<HTMLInputElement>("#planBlockForm input[name='deviceTargets']")) {
       input.checked = targets.has(input.value as "computer" | "phone");
     }
-    setView("journal");
+    setView("tracking");
   }
 
   function resetPlanBlockForm(): void {

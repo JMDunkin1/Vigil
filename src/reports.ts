@@ -15,6 +15,10 @@ interface DayReport {
   apps: Record<string, number>;
   sites: Record<string, number>;
   opens: UsageBucket["opens"];
+  devices: {
+    computerSeconds: number | null;
+    phoneSeconds: number | null;
+  };
   tracked: boolean;
 }
 
@@ -65,6 +69,10 @@ interface ProgressionSummary {
   sosStarts: number;
   setbacks: number;
   reflectionStreakDays: number;
+  standingScore: number;
+  standingTitle: string;
+  standingDirection: "rising" | "holding" | "falling";
+  armorTier: number;
   nextUnlock: string;
   badges: ProgressionBadge[];
 }
@@ -116,6 +124,7 @@ export function focusReport(usage: UsageState, state: SentinelState, now = new D
       totals: previous
     },
     comparison: compareWeeks(current, previous),
+    timeline: allDays,
     streak,
     progression,
     milestones,
@@ -143,6 +152,10 @@ function dayReport(usage: UsageState, state: SentinelState, date: Date): DayRepo
     apps: day.apps,
     sites: day.sites,
     opens: day.opens,
+    devices: {
+      computerSeconds: day.devices?.computer ? Math.round(day.devices.computer.totalSeconds || 0) : null,
+      phoneSeconds: day.devices?.phone ? Math.round(day.devices.phone.totalSeconds || 0) : null
+    },
     tracked: totalSeconds > 0
   };
 }
@@ -290,6 +303,8 @@ function progressionSummary({ state, current, streak, allDays, intentionalUse, f
     badge("streak-7", "7 day streak", streak.days >= 7),
     badge("level-5", "Level 5", levelState.level >= 5)
   ];
+  const standingDirection = previousStandingDirection(current, allDays);
+  const standing = standingFromScore(brainHealth);
 
   return {
     ...levelState,
@@ -304,6 +319,10 @@ function progressionSummary({ state, current, streak, allDays, intentionalUse, f
     sosStarts: sosSessions.length,
     setbacks: weeklySetbacks,
     reflectionStreakDays: reflectionStreak,
+    standingScore: brainHealth,
+    standingTitle: standing.title,
+    standingDirection,
+    armorTier: standing.armorTier,
     nextUnlock: nextUnlock({ streakDays: streak.days, cleanDays, level: levelState.level, replacementChoices, journalEntries: journalEntries.length, behaviorCheckIns: behaviorCheckIns.length, recoveryCheckIns: recoveryCheckIns.length, sosStarts: sosSessions.length }),
     badges
   };
@@ -331,12 +350,33 @@ function levelFromXp(xp: number) {
 }
 
 function levelTitle(level: number): string {
-  if (level >= 15) return "Architect";
-  if (level >= 10) return "Sentinel";
-  if (level >= 7) return "Builder";
-  if (level >= 4) return "Steady";
-  if (level >= 2) return "Awake";
-  return "Aware";
+  if (level >= 15) return "Defender of the Gate";
+  if (level >= 10) return "Banner Knight";
+  if (level >= 7) return "Knight of the Cross";
+  if (level >= 4) return "Armed Squire";
+  if (level >= 2) return "Page";
+  return "Pilgrim";
+}
+
+function standingFromScore(score: number): { title: string; armorTier: number } {
+  if (score >= 90) return { title: "Crusader Captain", armorTier: 5 };
+  if (score >= 75) return { title: "Banner Knight", armorTier: 4 };
+  if (score >= 60) return { title: "Knight Errant", armorTier: 3 };
+  if (score >= 40) return { title: "Squire", armorTier: 2 };
+  return { title: "Wayfaring Pilgrim", armorTier: 1 };
+}
+
+function previousStandingDirection(
+  current: WeekAggregate,
+  allDays: DayReport[]
+): "rising" | "holding" | "falling" {
+  const priorDays = allDays.slice(-14, -7);
+  const prior = aggregateWeek(priorDays);
+  if (!current.trackedDays || !prior.trackedDays) return "holding";
+  const delta = current.averageFocusScore - prior.averageFocusScore;
+  if (delta >= 4) return "rising";
+  if (delta <= -4) return "falling";
+  return "holding";
 }
 
 function nextUnlock({ streakDays, cleanDays, level, replacementChoices, journalEntries, behaviorCheckIns, recoveryCheckIns, sosStarts }: {

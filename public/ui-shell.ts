@@ -38,14 +38,6 @@ export function setTheme(theme: string): void {
     localStorage.setItem("sentinel-theme", next);
   } catch {
   }
-  const button = $("#themeToggle");
-  if (!button) return;
-  button.textContent = next === "dark" ? "Light" : "Dark";
-  button.setAttribute("aria-pressed", String(next === "dark"));
-}
-
-export function toggleTheme(): void {
-  setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
 }
 
 export function bindViewNavigation(onNavigate: (view?: string) => void): void {
@@ -54,9 +46,32 @@ export function bindViewNavigation(onNavigate: (view?: string) => void): void {
   }
 }
 
+export function bindSidebar(): void {
+  const toggle = document.querySelector<HTMLButtonElement>("#sidebarToggle");
+  const navigation = document.querySelector<HTMLElement>("#primaryNavigation");
+  if (!toggle || !navigation) return;
+
+  const setOpen = (open: boolean): void => {
+    document.body.dataset.sidebarOpen = String(open);
+    toggle.setAttribute("aria-expanded", String(open));
+  };
+
+  toggle.addEventListener("click", () => {
+    setOpen(document.body.dataset.sidebarOpen !== "true");
+  });
+  navigation.addEventListener("click", (event) => {
+    if (!(event.target as Element | null)?.closest("[data-view-target]")) return;
+    if (window.matchMedia("(max-width: 900px)").matches) setOpen(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setOpen(false);
+  });
+}
+
 export function renderActiveView(activeView: string): void {
+  document.body.dataset.activeView = activeView;
   for (const panel of $$("[data-view]")) {
-    const active = panel.dataset.view === activeView;
+    const active = (panel.dataset.view || "").split(/\s+/).includes(activeView);
     panel.hidden = !active;
     panel.classList.toggle("is-active", active);
   }

@@ -203,7 +203,7 @@ async function downloadActiveProfile() {
   const path = join(dir, "sentinel-iphone-lock.mobileconfig");
   await writeFile(path, Buffer.from(await response.arrayBuffer()));
   await execFileAsync("/usr/bin/plutil", ["-lint", path], { timeout: 5000, maxBuffer: 1024 * 64 });
-  return path;
+  return await profileHasPayloads(path) ? path : "";
 }
 
 async function validateProvidedProfile(inputPath) {
@@ -213,7 +213,16 @@ async function validateProvidedProfile(inputPath) {
     throw new Error(`Provided iOS profile is missing or empty: ${path}`);
   }
   await execFileAsync("/usr/bin/plutil", ["-lint", path], { timeout: 5000, maxBuffer: 1024 * 64 });
-  return path;
+  return await profileHasPayloads(path) ? path : "";
+}
+
+async function profileHasPayloads(path) {
+  const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", path], {
+    timeout: 5000,
+    maxBuffer: 1024 * 1024
+  });
+  const profile = JSON.parse(stdout);
+  return Array.isArray(profile?.PayloadContent) && profile.PayloadContent.length > 0;
 }
 
 async function sentinelJson(path, options = {}) {
@@ -345,13 +354,12 @@ async function ensureProfileAccess(udid, supervisorKeybagPath) {
 async function removeProfile(udid, supervisorKeybagPath) {
   const installed = await profileInstalled(udid, supervisorKeybagPath);
   if (!installed) return;
+  await pairSupervised(udid, supervisorKeybagPath);
   await runPymobiledevice3([
     "profile",
     "remove",
     "--udid",
     udid,
-    "--keybag",
-    supervisorKeybagPath,
     IOS_PROFILE_IDENTIFIER
   ], QUICK_TIMEOUT_MS);
 }

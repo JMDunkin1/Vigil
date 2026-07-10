@@ -14,6 +14,7 @@ import {
 import { normalizeTextList as normalizeTargets, normalizeWeekdays as normalizeDays } from "./normalizers.js";
 import { clampNumber, dateKey, parseClock, weekKey } from "./time.js";
 import { behaviorSummary, journalEntriesForWeek, plannerSummary, recoverySummary, reflectionStreakDays, sosPlan } from "./intentionalUseSummary.js";
+import { journalVaultSummary, normalizeJournalVaultState } from "./journalVault.js";
 import type {
   IntentionalGrant,
   IntentionalBehavior,
@@ -115,9 +116,10 @@ export function normalizeIntentionalUse(current: Partial<IntentionalUseState> = 
     grants: Array.isArray(current.grants) ? current.grants : [],
     ledger: current.ledger && typeof current.ledger === "object" ? current.ledger : {},
     outcomes: Array.isArray(current.outcomes) ? current.outcomes.slice(0, OUTCOME_LIMIT) : [],
-    behaviors: normalizeBehaviors(current.behaviors || fresh.behaviors || []),
+    behaviors: normalizeBehaviors(mergeSeededBehaviors(fresh.behaviors, current.behaviors)),
     behaviorCheckIns: normalizeBehaviorCheckIns(current.behaviorCheckIns || fresh.behaviorCheckIns || []).slice(0, BEHAVIOR_CHECK_IN_LIMIT),
     journalEntries: normalizeJournalEntries(current.journalEntries || fresh.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT),
+    journalVault: normalizeJournalVaultState(current.journalVault || {}, fresh.journalVault || {}),
     planLists: normalizePlanLists(current.planLists || fresh.planLists || []).slice(0, PLAN_LIST_LIMIT),
     planItems: normalizePlanItems(current.planItems || fresh.planItems || []).slice(0, PLAN_ITEM_LIMIT),
     planBlocks: normalizePlanBlocks(current.planBlocks || fresh.planBlocks || []).slice(0, PLAN_BLOCK_LIMIT),
@@ -316,26 +318,36 @@ export function completeIntentionalPlanBlock(state: SentinelState, blockId: stri
   return block;
 }
 
-export function recordIntentionalBehaviorCheckIn(state: SentinelState, body: IntentionalBody = {}, now = new Date()): IntentionalBehaviorCheckIn {
+export function recordIntentionalBehaviorCheckIn(state: SentinelState, body: IntentionalBody = {}, now = new Date()): IntentionalBehaviorCheckIn | null {
   ensureIntentionalUse(state);
   const behaviorId = String(body.behaviorId || "");
   const behavior = state.intentionalUse.behaviors.find((item) => item.id === behaviorId && item.active !== false);
   if (!behavior) throw new IntentionalUseError("Behavior not found.", 404);
+  const checkInDateKey = normalizeBehaviorDateKey(body.dateKey, now);
+  const existingIndex = state.intentionalUse.behaviorCheckIns.findIndex((item) => (
+    item.behaviorId === behavior.id && item.dateKey === checkInDateKey
+  ));
+  if (truthy(body.clear)) {
+    if (existingIndex >= 0) state.intentionalUse.behaviorCheckIns.splice(existingIndex, 1);
+    return null;
+  }
   const value = behavior.unit === "yes-no" ? (truthy(body.value) ? 1 : 0) : clampNumber(body.value, 0, 100000, 1);
+  const checkInDate = checkInDateKey === dateKey(now) ? now : new Date(`${checkInDateKey}T12:00:00`);
   const checkIn: IntentionalBehaviorCheckIn = {
-    id: randomUUID(),
+    id: existingIndex >= 0 ? state.intentionalUse.behaviorCheckIns[existingIndex].id : randomUUID(),
     behaviorId: behavior.id,
     behaviorName: behavior.name,
     value,
     note: String(body.note || "").trim().slice(0, 500),
-    at: now.toISOString(),
-    dateKey: dateKey(now),
-    weekKey: weekKey(now)
+    at: checkInDate.toISOString(),
+    dateKey: checkInDateKey,
+    weekKey: weekKey(checkInDate)
   };
   const journalEntryId = String(body.journalEntryId || "");
   if (journalEntryId) checkIn.journalEntryId = journalEntryId;
+  if (existingIndex >= 0) state.intentionalUse.behaviorCheckIns.splice(existingIndex, 1);
   state.intentionalUse.behaviorCheckIns.unshift(checkIn);
-  state.intentionalUse.behaviorCheckIns = state.intentionalUse.behaviorCheckIns.slice(0, BEHAVIOR_CHECK_IN_LIMIT);
+  state.intentionalUse.behaviorCheckIns = normalizeBehaviorCheckIns(state.intentionalUse.behaviorCheckIns).slice(0, BEHAVIOR_CHECK_IN_LIMIT);
   return checkIn;
 }
 
@@ -470,10 +482,20 @@ export function intentionalUseSummary(state: SentinelState, usage: UnknownRecord
       digest: accountabilityDigest(state, usage, now)
     },
     lifeLog: {
-      entries: journalEntries,
+      entries: [],
+      entriesLocked: true,
+      journalVault: journalVaultSummary(state),
       behaviors: behaviorSummaries,
       planner,
       recentCheckIns: (state.intentionalUse.behaviorCheckIns || []).slice(0, 20),
+      habitCheckIns: (state.intentionalUse.behaviorCheckIns || []).map((entry) => ({
+        id: entry.id,
+        behaviorId: entry.behaviorId,
+        behaviorName: entry.behaviorName,
+        value: entry.value,
+        dateKey: entry.dateKey,
+        at: entry.at
+      })),
       stats: {
         weekKey: week,
         entriesThisWeek: journalThisWeek.length,
@@ -679,6 +701,7 @@ function ensureIntentionalUse(state: SentinelState): void {
   state.intentionalUse.behaviors ||= [];
   state.intentionalUse.behaviorCheckIns ||= [];
   state.intentionalUse.journalEntries ||= [];
+  state.intentionalUse.journalVault ||= normalizeJournalVaultState();
   state.intentionalUse.planLists ||= [];
   state.intentionalUse.planItems ||= [];
   state.intentionalUse.planBlocks ||= [];
@@ -713,6 +736,30 @@ function normalizeBehaviors(behaviors: unknown): IntentionalBehavior[] {
   return behaviors
     .filter(isUnknownRecord)
     .map((behavior) => normalizeBehavior(behavior, behavior, String(behavior.id || randomUUID())));
+}
+
+function mergeSeededBehaviors(seedBehaviors: unknown, currentBehaviors: unknown): unknown[] {
+  const seeds = Array.isArray(seedBehaviors) ? seedBehaviors.filter(isUnknownRecord) : [];
+  const current = Array.isArray(currentBehaviors) ? currentBehaviors.filter(isUnknownRecord) : [];
+  const currentIds = new Set(current.map((behavior) => String(behavior.id || "")).filter(Boolean));
+  return [...current, ...seeds.filter((behavior) => !currentIds.has(String(behavior.id || "")))];
+}
+
+function normalizeBehaviorDateKey(value: unknown, now: Date): string {
+  const requested = String(value || "").trim();
+  if (!requested) return dateKey(now);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(requested)) {
+    throw new IntentionalUseError("Behavior date must use YYYY-MM-DD.");
+  }
+  const parsed = new Date(`${requested}T12:00:00`);
+  if (!Number.isFinite(parsed.getTime()) || dateKey(parsed) !== requested) {
+    throw new IntentionalUseError("Behavior date is invalid.");
+  }
+  const today = new Date(`${dateKey(now)}T12:00:00`);
+  const ageDays = Math.round((today.getTime() - parsed.getTime()) / 86_400_000);
+  if (ageDays < 0) throw new IntentionalUseError("Future behavior check-ins are not allowed.");
+  if (ageDays > 400) throw new IntentionalUseError("Behavior check-ins can be backdated up to 400 days.");
+  return requested;
 }
 
 function normalizeBehavior(body: IntentionalBody = {}, existing: Partial<IntentionalBehavior> = {}, fallbackId: string = randomUUID(), now = new Date()): IntentionalBehavior {

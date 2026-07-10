@@ -229,10 +229,12 @@ export function adultBlocklistPreloadDomains(state: SentinelState, options: { li
   const limit = adultBlocklistPreloadLimit(state, options.limit);
   if (limit <= 0) return [];
   const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
-  const candidates = uniqueDomains([
-    ...DEFAULT_EXPLICIT_BLOCKED_SITES,
-    ...(snapshot?.domains || [])
-  ]);
+  const representative = [...new Set(DEFAULT_EXPLICIT_BLOCKED_SITES.map(normalizeAdultDomain).filter(Boolean))];
+  const representativeSet = new Set(representative);
+  const candidates = [
+    ...representative,
+    ...(snapshot?.domains || []).filter((domain) => !representativeSet.has(domain))
+  ];
   return candidates
     .filter((domain) => !adultBlocklistAllowsHost(state, domain))
     .slice(0, limit);

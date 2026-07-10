@@ -1,7 +1,7 @@
 import type { DashboardItem, DistanceKeyResponse, PendingResponse, SessionStartResponse, UiState } from "./app-model.js";
 import { lines, shortDateTime } from "./format.js";
 import type { FormController } from "./forms.js";
-import { $, $$, errorMessage, eventTarget, formPayload, toggleTheme } from "./ui-shell.js";
+import { $, $$, errorMessage, eventTarget, formPayload } from "./ui-shell.js";
 
 type PostRequest = <T = unknown>(path: string, body: unknown) => Promise<T>;
 
@@ -46,13 +46,12 @@ interface AppEventsContext {
   previewSessionStart(body: Record<string, unknown>): Promise<void>;
   startNormalMode(): Promise<void>;
   startPresetSession(kind: "soft" | "brick"): Promise<void>;
+  setProtectionLevel(level: number): Promise<void>;
   renderSosPlan(session: (DashboardItem & { plan?: string[] }) | null): void;
 }
 
 export function bindAppEvents(context: AppEventsContext) {
-  const { state, deviceTargets, devicePanel, hardeningPanel, distanceKeyUi, focusSound, forms, post, refresh, toast, selectedDeviceTargets, previewSessionStart, startNormalMode, startPresetSession, renderSosPlan } = context;
-
-  $("#themeToggle").addEventListener("click", toggleTheme);
+  const { state, deviceTargets, devicePanel, hardeningPanel, distanceKeyUi, focusSound, forms, post, refresh, toast, selectedDeviceTargets, previewSessionStart, startNormalMode, startPresetSession, setProtectionLevel, renderSosPlan } = context;
 
   deviceTargets.bind();
   devicePanel.bind();
@@ -86,6 +85,17 @@ export function bindAppEvents(context: AppEventsContext) {
   $("#startNormalMode").addEventListener("click", () => startNormalMode());
   $("#startSoftBlock").addEventListener("click", () => startPresetSession("soft"));
   $("#startFullBrick").addEventListener("click", () => startPresetSession("brick"));
+
+  const protectionLevel = $("#protectionLevel");
+  protectionLevel.addEventListener("input", () => {
+    const level = Math.max(1, Math.min(4, Number(protectionLevel.value || 1)));
+    $("#protectionLevelControl").dataset.level = String(level);
+    $("#protectionLevelLabel").textContent = level === 4 ? "Panic" : `Level ${level}`;
+    $("#protectionLevelStatus").textContent = level === 4 ? "3 min lock" : "Release to apply";
+  });
+  protectionLevel.addEventListener("change", () => {
+    void setProtectionLevel(Number(protectionLevel.value || 1));
+  });
 
   $("#startPanicLock").addEventListener("click", async () => {
     const status = $("#panicStatus");
@@ -126,7 +136,10 @@ export function bindAppEvents(context: AppEventsContext) {
   }
 
   $("#focusSoundVolume").addEventListener("input", () => {
-    focusSound.setVolume(Number($("#focusSoundVolume").value || 0));
+    const value = Number($("#focusSoundVolume").value || 0);
+    focusSound.setVolume(value);
+    const output = document.querySelector<HTMLOutputElement>("#focusSoundVolumeValue");
+    if (output) output.value = String(value);
   });
 
   $("#focusSoundVolume").addEventListener("change", async () => {
@@ -138,6 +151,64 @@ export function bindAppEvents(context: AppEventsContext) {
     }
     await refresh();
   });
+
+  $("#focusSoundPlayButton").addEventListener("click", async () => {
+    const enabled = !$("#focusSoundEnabled").checked;
+    $("#focusSoundEnabled").checked = enabled;
+    await persistFocusSound(enabled ? "Sound on" : "Sound paused", enabled);
+  });
+
+  $("#audioSoundLibrary").addEventListener("click", async (event: Event) => {
+    const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-focus-preset]");
+    if (!button?.dataset.focusPreset) return;
+    $("#focusSoundPreset").value = button.dataset.focusPreset;
+    $("#focusSoundEnabled").checked = true;
+    await persistFocusSound(`Playing ${button.querySelector("strong")?.textContent || "sound"}`, true);
+  });
+
+  for (const button of $$<HTMLButtonElement>("[data-focus-mode]")) {
+    button.addEventListener("click", async () => {
+      $("#focusSoundMode").value = button.dataset.focusMode || "focus";
+      $("#focusSoundActivity").value = button.dataset.focusActivityDefault || "deep-work";
+      await persistFocusSound("Purpose changed");
+    });
+  }
+
+  $("#focusSoundActivityButtons").addEventListener("click", async (event: Event) => {
+    const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-focus-activity]");
+    if (!button?.dataset.focusActivity) return;
+    $("#focusSoundActivity").value = button.dataset.focusActivity;
+    await persistFocusSound("Activity changed");
+  });
+
+  for (const button of $$<HTMLButtonElement>("[data-focus-intensity]")) {
+    button.addEventListener("click", async () => {
+      $("#focusSoundIntensity").value = button.dataset.focusIntensity || "medium";
+      await persistFocusSound("Intensity changed");
+    });
+  }
+
+  for (const button of $$<HTMLButtonElement>("[data-focus-timer-mode]")) {
+    button.addEventListener("click", async () => {
+      $("#focusSoundTimerMode").value = button.dataset.focusTimerMode || "infinite";
+      if (button.dataset.focusTimerMinutes) $("#focusSoundTimerMinutes").value = button.dataset.focusTimerMinutes;
+      if (button.dataset.focusBreakMinutes) $("#focusSoundBreakMinutes").value = button.dataset.focusBreakMinutes;
+      await persistFocusSound("Timer changed");
+    });
+  }
+
+  async function persistFocusSound(message: string, prime = false): Promise<void> {
+    try {
+      if (prime) {
+        void focusSound.prime().catch((error) => toast(errorMessage(error)));
+      }
+      await focusSound.saveSettings();
+      toast(message);
+    } catch (error) {
+      toast(errorMessage(error));
+    }
+    await refresh();
+  }
 
   $("#profileSelect").addEventListener("change", async (event: Event) => {
     state.selectedProfileId = eventTarget(event).value;
@@ -387,13 +458,9 @@ export function bindAppEvents(context: AppEventsContext) {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
     const body = formPayload(new FormData(form));
-    body.tags = forms.tagList(body.tags);
-    body.behaviorIds = forms.selectedValues("#journalBehaviorIds");
-    body.ruleIds = forms.selectedValues("#journalRuleIds");
-    body.entryDate = body.entryDate ? new Date(String(body.entryDate)).toISOString() : new Date().toISOString();
     try {
       await post("/api/intentional-use/journal", body);
-      toast("Reflection saved");
+      toast("Entry saved");
       forms.resetJournalForm();
     } catch (error) {
       toast(errorMessage(error));
