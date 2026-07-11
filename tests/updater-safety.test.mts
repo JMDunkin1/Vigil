@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { acquireUpdaterLock } from "../app/updater.js";
@@ -17,8 +17,24 @@ const preflightIndex = updaterSource.indexOf("await assertLocallyRebuildableApp(
 const quitIndex = updaterSource.indexOf("setTimeout(quitForUpdate");
 assert.ok(preflightIndex >= 0 && quitIndex > preflightIndex, "signature preflight must finish before the app is told to quit");
 assert.match(updaterSource, /let startInFlight: Promise<unknown> \| null = null/u);
+assert.match(
+  updaterSource,
+  /plistStringForKey\(plist, "SentinelSourceRoot"\) \|\| plistStringForKey\(plist, "WorkingDirectory"\)/u,
+  "updater discovery must retain a repository pointer when the agent runs from its installed runtime"
+);
 assert.match(updateScriptSource, /\["worktree", "add", "--detach"/u);
 assert.match(updateScriptSource, /await openAndVerifyReplacement\(/u);
+assert.match(updateScriptSource, /launchAgentRuntimePath\(\)/u);
+assert.ok(
+  updateScriptSource.indexOf("agentRuntimeInstallation = await atomicInstallBuiltApp(")
+    < updateScriptSource.indexOf("const backend = launchAgentWasPresent ? await restartLaunchAgent()"),
+  "the updater must replace the installed LaunchAgent runtime before restarting it"
+);
+assert.match(
+  updateScriptSource,
+  /run\("\/usr\/bin\/open", \["-g", options\.appPath, "--args", BACKGROUND_LAUNCH_ARG\]\)/u,
+  "updater verification must relaunch Sentinel without activating it or opening a window"
+);
 assert.ok(
   updateScriptSource.indexOf("await openAndVerifyReplacement(")
     < updateScriptSource.indexOf("await run(\"git\", [\"merge\", \"--ff-only\", stagedBuild.expectedCommit]"),
@@ -53,6 +69,22 @@ try {
 
 await verifyOriginalSurvivesMoveFailure("backup", (source, installedApp) => source === installedApp);
 await verifyOriginalSurvivesMoveFailure("replacement", (source) => source.endsWith(".sentinel-next"));
+
+const symlinkRoot = await mkdtemp(join(tmpdir(), "sentinel-updater-symlinks-"));
+try {
+  const builtApp = join(symlinkRoot, "built", "Sentinel.app");
+  const installedApp = join(symlinkRoot, "installed", "Sentinel.app");
+  await mkdir(join(builtApp, "Versions", "A", "Resources"), { recursive: true });
+  await writeFile(join(builtApp, "Versions", "A", "Resources", "icudtl.dat"), "icu");
+  await symlink("A", join(builtApp, "Versions", "Current"));
+  await symlink("Versions/Current/Resources", join(builtApp, "Resources"));
+  const installation = await atomicInstallBuiltApp(builtApp, installedApp, "");
+  assert.equal(await readlink(join(installedApp, "Resources")), "Versions/Current/Resources");
+  assert.equal(await readFile(join(installedApp, "Resources", "icudtl.dat"), "utf8"), "icu");
+  await installation.finalize();
+} finally {
+  await rm(symlinkRoot, { recursive: true, force: true });
+}
 
 async function verifyOriginalSurvivesMoveFailure(
   label: string,

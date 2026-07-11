@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createContext, runInContext } from "node:vm";
 import { contentFilterRuleEntries } from "../src/contentFilters.js";
-import { defaultState } from "../src/defaults.js";
+import { SOFT_BLOCK_PROFILE_ID, defaultState } from "../src/defaults.js";
 import { evaluateExtensionCheck, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { activePolicy } from "../src/policy.js";
 import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.mjs";
@@ -40,7 +40,7 @@ assert.ok(
   state.deviceControls.ios.focusedSocial.instagram.explore = false;
   state.deviceControls.ios.focusedSocial.snapchat.stories = false;
   const iosFocusedSocial = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
-  assert.equal(iosFocusedSocial.focusedSocialCleanupEnabled, true);
+  assert.equal(iosFocusedSocial.focusedSocialCleanupEnabled, false);
   const iosCleanup = recordValue(iosFocusedSocial.focusedSocialCleanupSettings, "iOS cleanup settings");
   assert.equal(recordValue(iosCleanup.youtube, "YouTube cleanup settings").home, false);
   assert.equal(recordValue(iosCleanup.instagram, "Instagram cleanup settings").explore, false);
@@ -56,7 +56,7 @@ assert.ok(
     id: "strict",
     title: "Strict focus",
     mode: "focus",
-    profileId: "default",
+    profileId: SOFT_BLOCK_PROFILE_ID,
     lockLevel: "deep",
     startedAt: now.toISOString(),
     endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
@@ -81,7 +81,7 @@ assert.ok(
   assert.equal(new Set(rules.contentRules.map((rule) => rule.urlFilter)).size, rules.contentRules.length);
   assert.equal(rules.dynamicRuleCount, rules.rules.length + rules.contentRules.length + rules.allowlistRules.length);
   assert.equal(rules.rules.some((rule) => rule.domain === "reddit.com" && rule.redirectUrl.includes("/blocked")), false);
-  assert.equal(rules.rules.some((rule) => rule.domain === "youtu.be"), true);
+  assert.equal(rules.rules.some((rule) => rule.domain === "youtu.be"), false);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||reddit.com/r/all"), true);
 }
 
@@ -114,7 +114,7 @@ assert.ok(
     id: "content-rules",
     title: "Content rules",
     mode: "focus",
-    profileId: "default",
+    profileId: SOFT_BLOCK_PROFILE_ID,
     lockLevel: "deep",
     startedAt: now.toISOString(),
     endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
@@ -123,7 +123,7 @@ assert.ok(
   };
   const rules = extensionRuleSnapshot(state, now);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/shorts"), true);
-  assert.match(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "YouTube Shorts dynamic rule").redirectUrl, /\/blocked/);
+  assert.equal(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "YouTube Shorts dynamic rule").redirectUrl, "https://www.youtube.com/");
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/explore"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/feed/explore"), true);
@@ -163,7 +163,7 @@ assert.ok(
   assert.equal(allowlistRule.until, state.activeSession.endsAt);
   assert.equal(rules.dynamicRuleCount, rules.rules.length + rules.contentRules.length + rules.allowlistRules.length + 1);
   assert.equal(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "allowed YouTube Shorts rule").redirectUrl, "https://www.youtube.com/");
-  assert.equal(must(rules.contentRules.find((rule) => rule.urlFilter === "||instagram.com/reel"), "allowed Instagram Reels rule").redirectUrl, "https://www.instagram.com/direct/inbox/");
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), false);
 }
 
 {

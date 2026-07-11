@@ -31,10 +31,12 @@ export type EnforcedPolicy = ActivePolicy & {
 
 export function policyForSample(state: SentinelState, usage: UsageState, sample: UsageSample, now = new Date()): EnforcedPolicy | null {
   const sessionPolicy = activePolicy(state, now);
+  const baseline = baselinePolicy(state, now, { device: "computer" });
   const sessionBrowserControl = sample.url && matchStrictBrowserControlUrl(state, sessionPolicy, sample.url);
   if (sessionBrowserControl && sessionPolicy) return { ...sessionPolicy, kind: "browser-control", browserControl: sessionBrowserControl };
-  const contentFilter = sample.url && sessionPolicy ? matchContentFilterUrl(state, sample.url) : null;
-  if (contentFilter && sessionPolicy) return { ...sessionPolicy, kind: "content-filter", contentFilter };
+  const contentPolicy = sessionPolicy || baseline;
+  const contentFilter = sample.url && contentPolicy ? matchContentFilterUrl(state, sample.url, contentPolicy) : null;
+  if (contentFilter && contentPolicy) return { ...contentPolicy, kind: "content-filter", contentFilter };
   const appLockPolicy = activeAppLockPolicy(state, sample, now) as EnforcedPolicy | null;
   const limitPolicy = activeLimitPolicy(state, usage, sample, now) as EnforcedPolicy | null;
   const appLockControlPolicy = sample.url ? strictAppLockBrowserControlPolicy(state, now) : null;
@@ -45,7 +47,6 @@ export function policyForSample(state: SentinelState, usage: UsageState, sample:
   if (limitBrowserControl && limitControlPolicy) return { ...limitControlPolicy, kind: "browser-control", browserControl: limitBrowserControl };
   if (targetBlockedByPolicy(state, sample, sessionPolicy)) return sessionPolicy;
   if (appLockPolicy || limitPolicy) return appLockPolicy || limitPolicy;
-  const baseline = baselinePolicy(state, now, { device: "computer" });
   return targetBlockedByPolicy(state, sample, baseline) ? baseline : null;
 }
 

@@ -104,21 +104,22 @@ export function explainRuleDecision(
   }
   checks.push(noneCheck("browser-control", sessionPolicy ? "No browser-control rule matched the active policy." : "No active policy for browser-control checks."));
 
-  const contentFilter = target.url && sessionPolicy ? matchContentFilterUrl(state, target.url) : null;
-  if (contentFilter && sessionPolicy) {
+  const contentPolicy = sessionPolicy || baselinePolicy(state, now, { device: target.device });
+  const contentFilter = target.url && contentPolicy ? matchContentFilterUrl(state, target.url, contentPolicy) : null;
+  if (contentFilter && contentPolicy) {
     const match = {
       type: "content-filter",
       label: contentFilter.label,
       detail: `${contentFilter.hostname} matches the ${contentFilter.label} content filter.`
     };
-    checks.push(blockCheck("content-filter", "Content filter matched during the active policy.", sessionPolicy, match));
-    return blockResult("content-filter", `Blocked by ${contentFilter.label} content filter during ${policyTitle(sessionPolicy)}.`, now, target, {
-      ...sessionPolicy,
+    checks.push(blockCheck("content-filter", "Content filter matched the current protection level.", contentPolicy, match));
+    return blockResult("content-filter", `Blocked by ${contentFilter.label} content filter during ${policyTitle(contentPolicy)}.`, now, target, {
+      ...contentPolicy,
       kind: "content-filter",
       contentFilter
     }, match, checks);
   }
-  checks.push(noneCheck("content-filter", sessionPolicy ? "No content filter matched this URL." : "Content filters only block while an active policy is present."));
+  checks.push(noneCheck("content-filter", "No content filter matched this URL at the current protection level."));
 
   const appLockPolicy = activeAppLockPolicy(state, sample, now);
   const limitPolicy = activeLimitPolicy(state, usage, sample, now);

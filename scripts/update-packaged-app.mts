@@ -46,6 +46,7 @@ export interface AtomicInstallOperations {
 
 const FETCH_TIMEOUT_MS = 8_000;
 const HEALTH_TIMEOUT_MS = 30_000;
+const BACKGROUND_LAUNCH_ARG = "--sentinel-background";
 let options: Options;
 let log: ReturnType<typeof createWriteStream>;
 let activeChild: ChildProcess | null = null;
@@ -57,6 +58,7 @@ async function runUpdate(): Promise<void> {
   let stagedBuild: StagedBuild | null = null;
   let appInstallation: AppInstallation | null = null;
   let runtimeInstallation: AppInstallation | null = null;
+  let agentRuntimeInstallation: AppInstallation | null = null;
   let parentExited = false;
   let replacementCommitted = false;
   let launchAgentWasPresent = false;
@@ -86,6 +88,7 @@ async function runUpdate(): Promise<void> {
     });
 
     await assertActiveCheckoutUnchanged(stagedBuild);
+    launchAgentWasPresent = await launchAgentExists();
     await status("installing-runtime", "Staging the rebuilt Sentinel background runtime");
     runtimeInstallation = await atomicInstallBuiltApp(
       join(stagedBuild.repoRoot, "dist", "runtime"),
@@ -97,12 +100,24 @@ async function runUpdate(): Promise<void> {
       stagedBuild.expectedCommit,
       "installed Sentinel runtime"
     );
+    if (launchAgentWasPresent) {
+      const installedAgentRuntime = launchAgentRuntimePath();
+      agentRuntimeInstallation = await atomicInstallBuiltApp(
+        join(stagedBuild.repoRoot, "dist", "runtime"),
+        installedAgentRuntime,
+        ""
+      );
+      await verifyBuildInfo(
+        join(installedAgentRuntime, "build-info.json"),
+        stagedBuild.expectedCommit,
+        "installed Sentinel LaunchAgent runtime"
+      );
+    }
 
     await status("installing-app", "Installing the rebuilt Sentinel app");
     appInstallation = await atomicInstallBuiltApp(stagedBuild.builtAppPath, options.appPath, "");
     await verifyInstalledAppBuild(stagedBuild.expectedCommit);
 
-    launchAgentWasPresent = await launchAgentExists();
     const backend = launchAgentWasPresent ? await restartLaunchAgent() : null;
     if (!options.restart) throw new Error("Sentinel app replacement verification requires --restart.");
     await status("verifying", "Reopening and verifying the rebuilt Sentinel app");
@@ -120,9 +135,11 @@ async function runUpdate(): Promise<void> {
 
     const appToFinalize = appInstallation;
     const runtimeToFinalize = runtimeInstallation;
+    const agentRuntimeToFinalize = agentRuntimeInstallation;
     appInstallation = null;
     runtimeInstallation = null;
-    const cleanupErrors = await finalizeInstallations([appToFinalize, runtimeToFinalize]);
+    agentRuntimeInstallation = null;
+    const cleanupErrors = await finalizeInstallations([appToFinalize, agentRuntimeToFinalize, runtimeToFinalize]);
     const message = cleanupErrors.length
       ? `Sentinel update complete. Cleanup warning: ${cleanupErrors.join(" ")}`
       : "Sentinel update complete";
@@ -136,6 +153,7 @@ async function runUpdate(): Promise<void> {
       const recoveryErrors = await recoverFailedUpdate({
         appInstallation,
         runtimeInstallation,
+        agentRuntimeInstallation,
         parentExited,
         launchAgentWasPresent
       });
@@ -188,14 +206,14 @@ async function buildInIsolatedWorktree(): Promise<StagedBuild> {
       "rebuilt Sentinel runtime"
     );
 
-    const outputPath = join(repoRoot, "dist", "update-mac");
+    const outputPath = join(repoRoot, "dist", "update-mac.noindex");
     await rm(outputPath, { recursive: true, force: true });
     await status("packaging", "Packaging a staged Sentinel app");
     await run(npmExecutable(), [
       "exec", "--", "electron-builder", "--mac", "dir",
-      "-c.mac.identity=null",
+      "-c.mac.identity=-",
       "-c.asarUnpack=dist.nosync/runtime/**/*",
-      "-c.directories.output=dist/update-mac"
+      "-c.directories.output=dist/update-mac.noindex"
     ], { cwd: repoRoot });
 
     const builtAppPath = join(outputPath, process.arch === "arm64" ? "mac-arm64" : "mac", "Sentinel.app");
@@ -286,7 +304,11 @@ export async function atomicInstallBuiltApp(
 const defaultInstallOperations: AtomicInstallOperations = {
   pathExists,
   async copy(source, destination) {
-    await cp(source, destination, { recursive: true, preserveTimestamps: true });
+    await cp(source, destination, {
+      recursive: true,
+      preserveTimestamps: true,
+      verbatimSymlinks: true
+    });
   },
   async move(source, destination) {
     await rename(source, destination);
@@ -299,23 +321,28 @@ const defaultInstallOperations: AtomicInstallOperations = {
 async function recoverFailedUpdate({
   appInstallation,
   runtimeInstallation,
+  agentRuntimeInstallation,
   parentExited,
   launchAgentWasPresent
 }: {
   appInstallation: AppInstallation | null;
   runtimeInstallation: AppInstallation | null;
+  agentRuntimeInstallation: AppInstallation | null;
   parentExited: boolean;
   launchAgentWasPresent: boolean;
 }): Promise<string[]> {
   const errors: string[] = [];
   if (appInstallation) await collectRecoveryError(errors, "Could not stop the rebuilt app.", terminateInstalledApp());
   if (appInstallation) await collectRecoveryError(errors, "Could not restore the previous app.", appInstallation.rollback());
+  if (agentRuntimeInstallation) {
+    await collectRecoveryError(errors, "Could not restore the previous LaunchAgent runtime.", agentRuntimeInstallation.rollback());
+  }
   if (runtimeInstallation) await collectRecoveryError(errors, "Could not restore the previous runtime.", runtimeInstallation.rollback());
-  if (launchAgentWasPresent && runtimeInstallation) {
+  if (launchAgentWasPresent && agentRuntimeInstallation) {
     await collectRecoveryError(errors, "Could not restart the previous background service.", restartLaunchAgent().then(() => undefined));
   }
   if (parentExited && options.restart) {
-    await collectRecoveryError(errors, "Could not reopen the existing app.", run("/usr/bin/open", [options.appPath]).then(() => undefined));
+    await collectRecoveryError(errors, "Could not reopen the existing app.", openAppInBackground());
   }
   return errors;
 }
@@ -396,6 +423,12 @@ async function launchAgentExists(): Promise<boolean> {
   return Boolean(home && await pathExists(join(home, "Library", "LaunchAgents", "com.sentinel.agent.plist")));
 }
 
+function launchAgentRuntimePath(): string {
+  const home = process.env.HOME;
+  if (!home) throw new Error("Sentinel could not identify the current user runtime directory.");
+  return join(home, "Library", "Application Support", "Sentinel", "agent-runtime");
+}
+
 async function backendHealthContext(plist: string): Promise<BackendHealthContext> {
   const configuredPort = process.env.SENTINEL_PORT
     || process.env.SCREEN_TIME_PORT
@@ -449,7 +482,7 @@ async function waitForLaunchAgent(restartedAfter: number, context: BackendHealth
 }
 
 async function openAndVerifyReplacement(context: BackendHealthContext): Promise<void> {
-  await run("/usr/bin/open", [options.appPath]);
+  await openAppInBackground();
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   let healthySince = 0;
   while (Date.now() < deadline) {
@@ -466,6 +499,10 @@ async function openAndVerifyReplacement(context: BackendHealthContext): Promise<
     await delay(500);
   }
   throw new Error("The rebuilt Sentinel app or backend did not remain healthy after launch.");
+}
+
+async function openAppInBackground(): Promise<void> {
+  await run("/usr/bin/open", ["-g", options.appPath, "--args", BACKGROUND_LAUNCH_ARG]);
 }
 
 async function backendIsHealthy(context: BackendHealthContext): Promise<boolean> {

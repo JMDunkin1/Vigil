@@ -255,8 +255,8 @@ export function buildManageEngineIosExportSummary(
     warning: windowMode
       ? "Temporary profile for enrolling in ManageEngine. Replace it with the managed-policy profile after enrollment."
       : summary.profile.enforcementActive
-        ? "Active Sentinel enforcement profile for ManageEngine assignment and remote delivery."
-        : "Level 1 is active, so this dynamic policy artifact intentionally contains no restrictions.",
+      ? "Active Sentinel enforcement profile for ManageEngine assignment and remote delivery."
+        : "Level 1 is active with permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Stories web protection.",
     generatedFrom: summary.profile.generatedFrom,
     appBundleCount: summary.profile.appBundleCount,
     managedHelperAppBundleIds: summary.profile.managedHelperAppBundleIds,

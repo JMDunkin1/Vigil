@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, systemPreferences, Tray } from "electron";
 import type { IpcMainInvokeEvent, MenuItemConstructorOptions } from "electron";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../src/apiSecurity.js";
@@ -19,7 +19,13 @@ const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const TRAY_STATUS_CHECK_TIMEOUT_MS = 2000;
 const TRAY_ACTION_TIMEOUT_MS = 5000;
 const TRAY_STATUS_POLL_INTERVAL_MS = 30_000;
-const TRAY_ICON_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABIAAAASCAYAAABWzo5XAAAALElEQVR4nGNgGArgP5F4GBhESHwIGYSuCZ/YqEEUpCGqG4TPMJIB1QwaGAAA6A5plz/jasAAAAAASUVORK5CYII=";
+const BACKGROUND_LAUNCH_ARG = "--sentinel-background";
+const DEFAULT_WINDOW_SIZE = 680;
+const MIN_WINDOW_SIZE = 680;
+const WINDOW_ASPECT_RATIO = 1;
+const ICON_THEMES = ["jerusalem-cross", "sacred-heart"] as const;
+type IconTheme = typeof ICON_THEMES[number];
+const DEFAULT_ICON_THEME: IconTheme = "jerusalem-cross";
 
 interface SentinelServerHandle {
   url: string;
@@ -50,6 +56,7 @@ let currentAppUrl: string | null = null;
 let instanceSecretPromise: Promise<string> | null = null;
 let appUpdateController: SentinelAppUpdateController | null = null;
 let quitForUpdate = false;
+let selectedIconTheme: IconTheme = DEFAULT_ICON_THEME;
 let appUpdateActionState: AppUpdateActionState = {
   checked: false,
   checking: false,
@@ -61,6 +68,8 @@ let appUpdateActionState: AppUpdateActionState = {
 ipcMain.handle("sentinel:journal-touch-id", handleJournalTouchId);
 ipcMain.handle("sentinel:app-update-status", handleAppUpdateStatus);
 ipcMain.handle("sentinel:app-update-start", handleAppUpdateStart);
+ipcMain.handle("sentinel:icon-theme-get", handleIconThemeGet);
+ipcMain.handle("sentinel:icon-theme-set", handleIconThemeSet);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -73,7 +82,8 @@ if (app.isPackaged && !process.env.SENTINEL_DATA_DIR) {
   process.env.SENTINEL_DATA_DIR = configuredLaunchAgentDataDir() || app.getPath("userData");
 }
 
-app.on("second-instance", () => {
+app.on("second-instance", (_event, commandLine) => {
+  if (commandLine.includes(BACKGROUND_LAUNCH_ARG)) return;
   if (!mainWindow && currentAppUrl) {
     showSentinelWindow(currentAppUrl);
     return;
@@ -85,7 +95,9 @@ app.on("second-instance", () => {
 });
 
 void app.whenReady().then(async () => {
+  selectedIconTheme = loadIconThemePreference();
   configureMenuBarResidency();
+  configureLiveDevelopmentSource();
   appUpdateController = createSentinelAppUpdateController({
     app,
     quitForUpdate: () => {
@@ -97,11 +109,9 @@ void app.whenReady().then(async () => {
   currentAppUrl = appUrl;
   installMenu(appUrl);
   installMenuBarCompanion(appUrl);
+  applyIconTheme(selectedIconTheme);
   if (shouldShowWindowOnLaunch()) showSentinelWindow(appUrl);
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) showSentinelWindow(appUrl);
-  });
 });
 
 app.on("before-quit", async (event) => {
@@ -119,6 +129,10 @@ app.on("before-quit", async (event) => {
   app.quit();
 });
 
+app.on("window-all-closed", () => {
+  if (!shouldStayResident()) app.quit();
+});
+
 function showSentinelWindow(appUrl: string): void {
   if (!mainWindow) createWindow(appUrl);
   if (!mainWindow) return;
@@ -134,11 +148,13 @@ function hideSentinelWindow(): void {
 
 function createWindow(appUrl: string): void {
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 860,
-    minWidth: 940,
-    minHeight: 680,
+    width: DEFAULT_WINDOW_SIZE,
+    height: DEFAULT_WINDOW_SIZE,
+    minWidth: MIN_WINDOW_SIZE,
+    minHeight: MIN_WINDOW_SIZE,
+    center: true,
     title: "Sentinel",
+    icon: iconAssetPath(`${selectedIconTheme}.png`),
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 18, y: 19 },
     backgroundColor: "#14191c",
@@ -153,6 +169,7 @@ function createWindow(appUrl: string): void {
     }
   });
 
+  mainWindow.setAspectRatio(WINDOW_ASPECT_RATIO);
   mainWindow.setAlwaysOnTop(false);
   mainWindow.setVisibleOnAllWorkspaces(false);
 
@@ -216,6 +233,33 @@ async function handleAppUpdateStart(event: IpcMainInvokeEvent): Promise<unknown>
   return await controller.start();
 }
 
+function handleIconThemeGet(event: IpcMainInvokeEvent): Record<string, unknown> {
+  if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return rejectedIconThemeRequest();
+  return { ok: true, theme: selectedIconTheme };
+}
+
+function handleIconThemeSet(event: IpcMainInvokeEvent, value: unknown): Record<string, unknown> {
+  if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return rejectedIconThemeRequest();
+  const theme = normalizeIconTheme(value);
+  if (!theme) return { ok: false, theme: selectedIconTheme, error: "Unknown Sentinel icon." };
+  try {
+    saveIconThemePreference(theme);
+    selectedIconTheme = theme;
+    applyIconTheme(theme);
+    return { ok: true, theme };
+  } catch (error) {
+    return {
+      ok: false,
+      theme: selectedIconTheme,
+      error: error instanceof Error ? error.message : "Icon choice could not be saved."
+    };
+  }
+}
+
+function rejectedIconThemeRequest(): Record<string, unknown> {
+  return { ok: false, theme: selectedIconTheme, error: "Icon request origin was rejected." };
+}
+
 function trustedAppUpdateController(event: IpcMainInvokeEvent): SentinelAppUpdateController | null {
   if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
   return appUpdateController;
@@ -240,6 +284,7 @@ function configureMenuBarResidency(): void {
 }
 
 function shouldShowWindowOnLaunch(): boolean {
+  if (process.argv.includes(BACKGROUND_LAUNCH_ARG)) return false;
   if (!shouldStayResident()) return true;
   return !app.getLoginItemSettings().wasOpenedAtLogin;
 }
@@ -258,6 +303,20 @@ function configuredLaunchAgentDataDir(): string {
     return workingDirectory ? resolveDefaultDataDir(workingDirectory) : "";
   } catch {
     return "";
+  }
+}
+
+function configureLiveDevelopmentSource(): void {
+  try {
+    const plistPath = join(app.getPath("home"), "Library", "LaunchAgents", "com.sentinel.agent.plist");
+    const xml = readFileSync(plistPath, "utf8");
+    if (plistStringForKey(xml, "SENTINEL_LIVE_SOURCE") !== "1") return;
+    const sourceRoot = plistStringForKey(xml, "SENTINEL_SOURCE_ROOT");
+    if (!sourceRoot) return;
+    process.env.SENTINEL_LIVE_SOURCE = "1";
+    process.env.SENTINEL_SOURCE_ROOT = sourceRoot;
+  } catch {
+    // A self-contained app continues to use its packaged frontend.
   }
 }
 
@@ -332,6 +391,10 @@ function installMenu(appUrl: string): void {
       ]
     },
     {
+      label: "File",
+      submenu: [{ role: "close" }]
+    },
+    {
       label: "View",
       submenu: viewSubmenu
     },
@@ -366,7 +429,7 @@ function isSafeExternalUrl(value: string): boolean {
 
 function installMenuBarCompanion(appUrl: string): void {
   if (tray) return;
-  const icon = nativeImage.createFromDataURL(TRAY_ICON_DATA_URL);
+  const icon = trayIconForTheme(selectedIconTheme);
   icon.setTemplateImage(true);
   tray = new Tray(icon);
   tray.setToolTip("Sentinel");
@@ -381,6 +444,50 @@ function installMenuBarCompanion(appUrl: string): void {
     void refreshTrayStatus(appUrl);
   }, TRAY_STATUS_POLL_INTERVAL_MS);
   void refreshTrayStatus(appUrl);
+}
+
+function normalizeIconTheme(value: unknown): IconTheme | null {
+  return typeof value === "string" && ICON_THEMES.includes(value as IconTheme) ? value as IconTheme : null;
+}
+
+function loadIconThemePreference(): IconTheme {
+  try {
+    const value = JSON.parse(readFileSync(iconThemePreferencePath(), "utf8")) as { theme?: unknown };
+    return normalizeIconTheme(value.theme) || DEFAULT_ICON_THEME;
+  } catch {
+    return DEFAULT_ICON_THEME;
+  }
+}
+
+function saveIconThemePreference(theme: IconTheme): void {
+  const path = iconThemePreferencePath();
+  const temporaryPath = `${path}.tmp`;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(temporaryPath, `${JSON.stringify({ theme }, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporaryPath, path);
+}
+
+function iconThemePreferencePath(): string {
+  return join(app.getPath("userData"), "appearance.json");
+}
+
+function applyIconTheme(theme: IconTheme): void {
+  const appIcon = nativeImage.createFromPath(iconAssetPath(`${theme}.png`));
+  if (!appIcon.isEmpty()) {
+    app.dock?.setIcon(appIcon);
+    mainWindow?.setIcon(appIcon);
+  }
+  const trayIcon = trayIconForTheme(theme);
+  trayIcon.setTemplateImage(true);
+  tray?.setImage(trayIcon);
+}
+
+function trayIconForTheme(theme: IconTheme): Electron.NativeImage {
+  return nativeImage.createFromPath(iconAssetPath(`tray-${theme}Template.png`));
+}
+
+function iconAssetPath(filename: string): string {
+  return join(RUNTIME_ROOT, "public", "app-icons", filename);
 }
 
 function stopTrayRefresh(): void {
@@ -427,12 +534,6 @@ function updateTrayMenu(appUrl: string, status: TrayStatus): void {
         } else {
           showSentinelWindow(appUrl);
         }
-        void refreshTrayStatus(appUrl);
-      }
-    },
-    {
-      label: "Refresh Status",
-      click: () => {
         void refreshTrayStatus(appUrl);
       }
     },

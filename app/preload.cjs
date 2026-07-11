@@ -14,3 +14,8 @@ contextBridge.exposeInMainWorld("sentinelAppUpdate", {
   }),
   start: () => ipcRenderer.invoke("sentinel:app-update-start")
 });
+
+contextBridge.exposeInMainWorld("sentinelAppearance", {
+  getIconTheme: () => ipcRenderer.invoke("sentinel:icon-theme-get"),
+  setIconTheme: (theme) => ipcRenderer.invoke("sentinel:icon-theme-set", theme)
+});

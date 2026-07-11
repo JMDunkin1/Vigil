@@ -1,9 +1,11 @@
 import {
   ALWAYS_ALLOWED_APPS,
+  BRICK_MODE_PROFILE_ID,
   DEVICE_TARGETS,
   NORMAL_PROFILE_ID,
   PANIC_LOCK_PROFILE_ID,
   PROCESS_SWEEP_EXEMPT_APPS,
+  SOFT_BLOCK_PROFILE_ID,
   STRICT_BYPASS_APPS,
   STRICT_EMBEDDED_BROWSER_APPS,
   STRICT_NETWORK_BYPASS_APPS,
@@ -35,6 +37,7 @@ for (const group of SITE_ALIAS_GROUPS) {
 }
 
 const APP_ALIAS_GROUPS = [
+  ["Sentinel", "Sentinel Helper", "Sentinel Helper (GPU)", "Sentinel Helper (Plugin)", "Sentinel Helper (Renderer)"],
   ["Discord", "Discord Helper", "Discord Canary", "Discord PTB"],
   ["Steam", "Steam Helper", "steam_osx", "steamwebhelper"],
   ["Epic Games Launcher", "Epic Games", "EpicWebHelper"],
@@ -828,6 +831,7 @@ function shouldApplyStrictBypassProtection(state: SentinelState, policy: ActiveP
 
 function strictBypassAppsForPolicy(state: SentinelState, policy: ActivePolicy | null | undefined): string[] {
   if (!shouldApplyStrictBypassProtection(state, policy)) return [];
+  if ([SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PROFILE_ID].includes(policy?.profile?.id || "")) return [];
   const apps = [...STRICT_BYPASS_APPS, ...STRICT_NETWORK_BYPASS_APPS];
   if (policyUsesSiteBlocking(policy)) apps.push(...STRICT_UNSUPPORTED_BROWSERS, ...STRICT_EMBEDDED_BROWSER_APPS);
   return apps;

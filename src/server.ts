@@ -38,6 +38,7 @@ import { buildStatePayload, invalidateStateDiagnostics, strictPreflightStatus } 
 import { sentinelAppInfo, sentinelStateHeaders } from "./sentinelHealth.js";
 import { SENTINEL_HEALTH_CHALLENGE_HEADER, SENTINEL_HEALTH_SIGNATURE_HEADER } from "./sentinelHealth.js";
 import { getInstanceSecret, instanceChallengeSignature } from "./instanceIdentity.js";
+import { resolvePublicAssets } from "./publicAssets.js";
 import type {
   LockLevel,
   MonitorHandle,
@@ -48,7 +49,7 @@ import type {
 } from "./types.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const PUBLIC_DIR = join(ROOT, "public");
+const PUBLIC_ASSETS = resolvePublicAssets(ROOT);
 const DEFAULT_HOST = "127.0.0.1";
 const localScripts = createLocalScriptRunner({ root: ROOT, launchAgentStatus });
 
@@ -159,7 +160,12 @@ async function requestHandler(request: IncomingMessage, response: ServerResponse
       return;
     }
 
-    await serveStatic(response, url.pathname, { publicDir: PUBLIC_DIR });
+    await serveStatic(response, url.pathname, {
+      publicDir: PUBLIC_ASSETS.directory,
+      fallbackPublicDir: PUBLIC_ASSETS.fallbackDirectory,
+      noCache: PUBLIC_ASSETS.live,
+      typescriptSourceRoot: PUBLIC_ASSETS.sourceRoot
+    });
   } catch (error) {
     sendJson(response, errorStatus(error), serializeError(error));
   }

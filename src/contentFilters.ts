@@ -1,4 +1,5 @@
-import { hostMatchesSiteTargets, normalizeHost } from "./policy.js";
+import { SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
+import { activePolicy, baselinePolicy, hostMatchesSiteTargets, normalizeHost } from "./policy.js";
 import type { ActivePolicy, SentinelState, UnknownRecord } from "./types.js";
 
 interface ContentFilterRule {
@@ -8,6 +9,7 @@ interface ContentFilterRule {
   urlFilters: string[];
   paths: RegExp[];
   fallbackUrl?: string;
+  scope: "permanent" | "soft-lock";
 }
 
 export interface ContentFilterMatch extends UnknownRecord {
@@ -35,7 +37,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["youtube.com", "youtu.be"],
     urlFilters: ["||youtube.com/shorts", "||m.youtube.com/shorts"],
     paths: [/^\/shorts(?:\/|$)/i],
-    fallbackUrl: "https://www.youtube.com/"
+    fallbackUrl: "https://www.youtube.com/",
+    scope: "permanent"
   },
   {
     id: "instagram-reels",
@@ -43,7 +46,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["instagram.com"],
     urlFilters: ["||instagram.com/reel", "||instagram.com/reels"],
     paths: [/^\/reels?(?:\/|$)/i],
-    fallbackUrl: "https://www.instagram.com/direct/inbox/"
+    fallbackUrl: "https://www.instagram.com/direct/inbox/",
+    scope: "soft-lock"
   },
   {
     id: "instagram-explore",
@@ -51,7 +55,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["instagram.com"],
     urlFilters: ["||instagram.com/explore"],
     paths: [/^\/explore(?:\/|$)/i],
-    fallbackUrl: "https://www.instagram.com/direct/inbox/"
+    fallbackUrl: "https://www.instagram.com/direct/inbox/",
+    scope: "soft-lock"
   },
   {
     id: "instagram-shopping-live",
@@ -59,7 +64,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["instagram.com"],
     urlFilters: ["||instagram.com/shop", "||instagram.com/shopping", "||instagram.com/live"],
     paths: [/^\/(?:shop|shopping|live)(?:\/|$)/i],
-    fallbackUrl: "https://www.instagram.com/direct/inbox/"
+    fallbackUrl: "https://www.instagram.com/direct/inbox/",
+    scope: "soft-lock"
   },
   {
     id: "youtube-explore",
@@ -67,7 +73,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["youtube.com"],
     urlFilters: ["||youtube.com/feed/explore", "||m.youtube.com/feed/explore", "||youtube.com/feed/trending", "||m.youtube.com/feed/trending", "||youtube.com/feed/recommended", "||m.youtube.com/feed/recommended"],
     paths: [/^\/feed\/(?:explore|trending|recommended)(?:\/|$)/i],
-    fallbackUrl: "https://www.youtube.com/feed/subscriptions"
+    fallbackUrl: "https://www.youtube.com/feed/subscriptions",
+    scope: "soft-lock"
   },
   {
     id: "facebook-reels",
@@ -75,7 +82,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["facebook.com", "fb.com"],
     urlFilters: ["||facebook.com/reel", "||facebook.com/watch/reel"],
     paths: [/^\/reel(?:\/|$)/i, /^\/watch\/reel(?:\/|$)/i],
-    fallbackUrl: "https://www.facebook.com/"
+    fallbackUrl: "https://www.facebook.com/",
+    scope: "soft-lock"
   },
   {
     id: "reddit-popular",
@@ -83,7 +91,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["reddit.com", "redd.it"],
     urlFilters: ["||reddit.com/r/popular", "||reddit.com/r/all"],
     paths: [/^\/r\/popular(?:\/|$)/i, /^\/r\/all(?:\/|$)/i],
-    fallbackUrl: "https://www.reddit.com/"
+    fallbackUrl: "https://www.reddit.com/",
+    scope: "soft-lock"
   },
   {
     id: "x-explore",
@@ -91,7 +100,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["x.com", "twitter.com"],
     urlFilters: ["||x.com/explore", "||twitter.com/explore"],
     paths: [/^\/explore(?:\/|$)/i],
-    fallbackUrl: "https://x.com/home"
+    fallbackUrl: "https://x.com/home",
+    scope: "soft-lock"
   },
   {
     id: "snapchat-spotlight",
@@ -99,7 +109,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["snapchat.com"],
     urlFilters: ["||snapchat.com/spotlight", "||web.snapchat.com/spotlight"],
     paths: [/^\/spotlight(?:\/|$)/i],
-    fallbackUrl: "https://web.snapchat.com/"
+    fallbackUrl: "https://web.snapchat.com/",
+    scope: "permanent"
   },
   {
     id: "snapchat-stories",
@@ -107,7 +118,8 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["snapchat.com"],
     urlFilters: ["||snapchat.com/stories"],
     paths: [/^\/stories?(?:\/|$)/i],
-    fallbackUrl: "https://web.snapchat.com/"
+    fallbackUrl: "https://web.snapchat.com/",
+    scope: "permanent"
   },
   {
     id: "snapchat-public-stories",
@@ -115,14 +127,16 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     sites: ["story.snapchat.com"],
     urlFilters: ["||story.snapchat.com"],
     paths: [/^\/(?:$|s(?:\/|$)|p(?:\/|$))/i],
-    fallbackUrl: "https://web.snapchat.com/"
+    fallbackUrl: "https://web.snapchat.com/",
+    scope: "permanent"
   },
   {
     id: "tiktok-feed",
     label: "TikTok Feed",
     sites: ["tiktok.com", "tiktokv.com"],
     urlFilters: ["||tiktok.com"],
-    paths: [/^\/(?:foryou|following|@|tag|music|video|t|$)/i]
+    paths: [/^\/(?:foryou|following|@|tag|music|video|t|$)/i],
+    scope: "soft-lock"
   }
 ];
 
@@ -131,12 +145,13 @@ export function contentFilterEnabled(state: SentinelState): boolean {
   return true;
 }
 
-export function matchContentFilterUrl(state: SentinelState, value: unknown): ContentFilterMatch | null {
+export function matchContentFilterUrl(state: SentinelState, value: unknown, policy: ActivePolicy | null = activePolicy(state) || baselinePolicy(state)): ContentFilterMatch | null {
   if (!contentFilterEnabled(state)) return null;
   const parsed = parseUrl(value);
   if (!parsed) return null;
   const hostname = normalizeHost(parsed.hostname);
   for (const rule of CONTENT_FILTER_RULES) {
+    if (!contentFilterRuleApplies(rule, policy)) continue;
     if (!hostMatchesSiteTargets(hostname, rule.sites)) continue;
     if (!rule.paths.some((pattern) => pattern.test(parsed.pathname))) continue;
     return {
@@ -152,7 +167,7 @@ export function matchContentFilterUrl(state: SentinelState, value: unknown): Con
 
 export function contentFilterRuleEntries(state: SentinelState, policy: ActivePolicy | null | undefined): ContentFilterRuleEntry[] {
   if (!contentFilterEnabled(state) || !policy) return [];
-  return CONTENT_FILTER_RULES.flatMap((rule) => {
+  return CONTENT_FILTER_RULES.filter((rule) => contentFilterRuleApplies(rule, policy)).flatMap((rule) => {
     return rule.urlFilters.map((urlFilter) => ({
       id: rule.id,
       label: rule.label,
@@ -163,6 +178,11 @@ export function contentFilterRuleEntries(state: SentinelState, policy: ActivePol
       until: policy.endsAt || policy.session?.endsAt || ""
     }));
   });
+}
+
+function contentFilterRuleApplies(rule: ContentFilterRule, policy: ActivePolicy | null | undefined): boolean {
+  if (rule.scope === "permanent") return true;
+  return policy?.profile?.id === SOFT_BLOCK_PROFILE_ID;
 }
 
 function parseUrl(value: unknown): URL | null {

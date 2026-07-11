@@ -55,15 +55,55 @@ export function bindAppEvents(context: AppEventsContext) {
   $("#closeDistanceScanner").addEventListener("click", distanceKeyUi.closeScanner);
 
   const protectionLevel = $("#protectionLevel");
-  protectionLevel.addEventListener("input", () => {
-    const level = Math.max(1, Math.min(4, Number(protectionLevel.value || 1)));
-    $("#protectionLevelControl").dataset.level = String(level);
+  const protectionLevelControl = $("#protectionLevelControl");
+  let protectionLevelWheelTimer: ReturnType<typeof setTimeout> | null = null;
+  let protectionLevelSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  const releaseProtectionLevelSettle = () => {
+    if (!protectionLevelControl.matches(":hover") && !protectionLevelControl.matches(":focus-within")) {
+      protectionLevelControl.classList.remove("is-settling");
+    }
+  };
+  const previewProtectionLevel = (requestedLevel: number) => {
+    const level = Math.max(1, Math.min(4, Math.round(requestedLevel || 1)));
+    protectionLevel.value = String(level);
+    protectionLevelControl.dataset.level = String(level);
     $("#protectionLevelLabel").textContent = level === 4 ? "Panic" : `Level ${level}`;
     $("#protectionLevelStatus").textContent = level === 4 ? "3 min lock" : "Release to apply";
+    return level;
+  };
+  const settleProtectionLevel = (level: number) => {
+    protectionLevelControl.classList.add("is-settling");
+    if (protectionLevelSettleTimer) clearTimeout(protectionLevelSettleTimer);
+    protectionLevelSettleTimer = setTimeout(releaseProtectionLevelSettle, 620);
+    void setProtectionLevel(level);
+  };
+  protectionLevelControl.addEventListener("pointerleave", releaseProtectionLevelSettle);
+  protectionLevelControl.addEventListener("focusout", () => setTimeout(releaseProtectionLevelSettle));
+  protectionLevel.addEventListener("input", () => {
+    previewProtectionLevel(Number(protectionLevel.value || 1));
   });
   protectionLevel.addEventListener("change", () => {
-    void setProtectionLevel(Number(protectionLevel.value || 1));
+    settleProtectionLevel(Number(protectionLevel.value || 1));
   });
+  for (const choice of $$<HTMLButtonElement>("[data-protection-level-choice]")) {
+    choice.addEventListener("click", () => {
+      if (protectionLevel.disabled) return;
+      const level = previewProtectionLevel(Number(choice.dataset.protectionLevelChoice || 1));
+      settleProtectionLevel(level);
+    });
+  }
+  protectionLevelControl.addEventListener("wheel", (event: WheelEvent) => {
+    if (protectionLevel.disabled || Math.abs(event.deltaY) < 2) return;
+    event.preventDefault();
+    protectionLevelControl.classList.add("is-scrolling");
+    const direction = event.deltaY > 0 ? 1 : -1;
+    const level = previewProtectionLevel(Number(protectionLevel.value || 1) + direction);
+    if (protectionLevelWheelTimer) clearTimeout(protectionLevelWheelTimer);
+    protectionLevelWheelTimer = setTimeout(() => {
+      protectionLevelControl.classList.remove("is-scrolling");
+      settleProtectionLevel(level);
+    }, 360);
+  }, { passive: false });
 
   $("#focusSoundEnabled").addEventListener("change", async (event: Event) => {
     try {

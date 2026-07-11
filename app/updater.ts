@@ -275,7 +275,8 @@ function findRepoRoot(app: App): string {
 function launchAgentRepoRoot(app: App): string {
   try {
     const plistPath = join(app.getPath("home"), "Library", "LaunchAgents", "com.sentinel.agent.plist");
-    return plistStringForKey(readFileSync(plistPath, "utf8"), "WorkingDirectory");
+    const plist = readFileSync(plistPath, "utf8");
+    return plistStringForKey(plist, "SentinelSourceRoot") || plistStringForKey(plist, "WorkingDirectory");
   } catch {
     return "";
   }
@@ -294,7 +295,7 @@ function packagedAppPath(repoRoot: string): string {
   if (process.platform === "darwin" && process.execPath.includes(".app/Contents/MacOS/")) {
     return dirname(dirname(dirname(process.execPath)));
   }
-  return join(repoRoot, "dist", "mac", process.arch === "arm64" ? "mac-arm64" : "mac", "Sentinel.app");
+  return join(repoRoot, "dist", "mac.noindex", process.arch === "arm64" ? "mac-arm64" : "mac", "Sentinel.app");
 }
 
 function updateScriptPath(repoRoot: string): string | null {

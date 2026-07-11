@@ -36,10 +36,22 @@ export function createAccountUi() {
   let session: AccountSession | null = null;
 
   function bind(): void {
-    openAccountButton.addEventListener("click", () => accountDialog.showModal());
-    closeAccountButton.addEventListener("click", () => accountDialog.close());
+    openAccountButton.addEventListener("click", () => {
+      if (accountDialog.open) closeAccountDialog();
+      else openAccountDialog();
+    });
+    closeAccountButton.addEventListener("click", closeAccountDialog);
     accountDialog.addEventListener("click", (event) => {
-      if (event.target === accountDialog) accountDialog.close();
+      if (event.target === accountDialog) closeAccountDialog();
+    });
+    document.addEventListener("pointerdown", (event) => {
+      if (!accountDialog.open) return;
+      const target = event.target as Node | null;
+      if (target && (accountDialog.contains(target) || openAccountButton.contains(target))) return;
+      closeAccountDialog();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && accountDialog.open) closeAccountDialog();
     });
 
     for (const button of document.querySelectorAll<HTMLButtonElement>("[data-auth-panel]")) {
@@ -62,7 +74,7 @@ export function createAccountUi() {
     try {
       session = await get<AccountSession>("/api/account/session");
       render();
-      if (session.hostedAccountsEnabled && !session.authenticated && !accountDialog.open) accountDialog.showModal();
+      if (session.hostedAccountsEnabled && !session.authenticated && !accountDialog.open) openAccountDialog(true);
     } catch (error) {
       setStatus(errorMessage(error));
     }
@@ -76,7 +88,7 @@ export function createAccountUi() {
       session = await post<AccountSession>(path, Object.fromEntries(new FormData(form).entries()));
       form.reset();
       render();
-      if (session.authenticated) accountDialog.close();
+      if (session.authenticated) closeAccountDialog();
       window.location.reload();
     } catch (error) {
       setStatus(errorMessage(error));
@@ -147,6 +159,17 @@ export function createAccountUi() {
 
   function setStatus(message: string): void {
     setText("#accountAuthStatus", message);
+  }
+
+  function openAccountDialog(modal = false): void {
+    if (modal) accountDialog.showModal();
+    else accountDialog.show();
+    openAccountButton.setAttribute("aria-expanded", "true");
+  }
+
+  function closeAccountDialog(): void {
+    accountDialog.close();
+    openAccountButton.setAttribute("aria-expanded", "false");
   }
 
   return { bind };

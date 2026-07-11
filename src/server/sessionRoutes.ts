@@ -152,13 +152,14 @@ export async function handleSessionApiRoute(
     }
 
     const profileId = level === 3 ? BRICK_MODE_PROFILE_ID : SOFT_BLOCK_PROFILE_ID;
+    const stickySoftLock = level === 2;
     const draft = manualSessionDraft(state, {
       title: level === 3 ? "Full Brick" : "Soft Lock",
       mode: level === 3 ? "brick" : "focus",
       profileId,
       durationMinutes: 60 * 24 * 45,
       lockLevel: "deep",
-      commitmentLock: false,
+      commitmentLock: stickySoftLock,
       deviceTargets
     });
     await context.assertStrictLockAllowed(draft.session.lockLevel, draft.profile, { mode: draft.session.mode });
@@ -166,9 +167,9 @@ export async function handleSessionApiRoute(
     persistentEndsAt.setUTCFullYear(persistentEndsAt.getUTCFullYear() + 100);
     draft.session.endsAt = persistentEndsAt.toISOString();
     draft.session.source = "protection-level";
-    draft.session.canEndEarly = true;
-    draft.session.commitmentLock = false;
-    draft.session.emergencyUnlocksAllowed = true;
+    draft.session.canEndEarly = !stickySoftLock;
+    draft.session.commitmentLock = stickySoftLock;
+    draft.session.emergencyUnlocksAllowed = !stickySoftLock;
     startDeviceSession(state, deviceTargets, draft.session);
     addEvent(state, "protection_level_changed", { level, deviceTargets, sessionId: draft.session.id });
     if (deviceTargets.includes("phone")) context.recordIosMdmPolicyQueue(`protection-level-${level}`);

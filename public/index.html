@@ -6,21 +6,35 @@
   <title>Sentinel</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body data-active-view="home" data-sidebar-open="false">
+<body data-active-view="home">
   <aside class="app-chrome" aria-label="Sentinel navigation">
     <div class="brand-lockup">
       <h1>Sentinel</h1>
-      <button id="sidebarToggle" class="sidebar-toggle" type="button" aria-expanded="false" aria-controls="primaryNavigation">Menu</button>
     </div>
     <nav id="primaryNavigation" class="app-nav" aria-label="Primary">
-      <button class="nav-tab is-active" type="button" data-view-target="home" aria-selected="true"><span aria-hidden="true">&#8962;</span>Home</button>
-      <button class="nav-tab" type="button" data-view-target="ranking" aria-selected="false"><span aria-hidden="true">&#10016;</span>Ranking</button>
-      <button class="nav-tab" type="button" data-view-target="tracking" aria-selected="false"><span aria-hidden="true">&#10003;</span>Tracking</button>
-      <button class="nav-tab" type="button" data-view-target="audio" aria-selected="false"><span aria-hidden="true">&#9835;</span>Audio</button>
-      <button class="nav-tab" type="button" data-view-target="journal" aria-selected="false"><span aria-hidden="true">&#10070;</span>Journal</button>
+      <button class="nav-tab is-active" type="button" data-view-target="home" aria-selected="true">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3.75 10.5 12 3.75l8.25 6.75v8.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5Z"/><path d="M9 20.25v-6h6v6"/></svg>
+        <span class="nav-label">Home</span>
+      </button>
+      <button class="nav-tab" type="button" data-view-target="ranking" aria-selected="false">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M8 4.25h8v2.5a4 4 0 0 1-8 0Z"/><path d="M8 5.25H4.5v1.5A3.5 3.5 0 0 0 8 10.25M16 5.25h3.5v1.5a3.5 3.5 0 0 1-3.5 3.5M12 10.75v4.5M8.25 20h7.5M9.5 15.25h5l1 4.75h-7Z"/></svg>
+        <span class="nav-label">Ranking</span>
+      </button>
+      <button class="nav-tab" type="button" data-view-target="tracking" aria-selected="false">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.75"/><path d="m7.75 12.25 2.75 2.75 5.75-6"/></svg>
+        <span class="nav-label">Tracking</span>
+      </button>
+      <button class="nav-tab" type="button" data-view-target="audio" aria-selected="false">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 14.75v-2.5a7 7 0 0 1 14 0v2.5"/><path d="M5 14.25H4.25A1.25 1.25 0 0 0 3 15.5v2.25A1.25 1.25 0 0 0 4.25 19H6v-4.75ZM19 14.25h.75A1.25 1.25 0 0 1 21 15.5v2.25A1.25 1.25 0 0 1 19.75 19H18v-4.75ZM18 19a3 3 0 0 1-3 3h-2"/></svg>
+        <span class="nav-label">Audio</span>
+      </button>
+      <button class="nav-tab" type="button" data-view-target="journal" aria-selected="false">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5.25 3.5h11.5a2 2 0 0 1 2 2v15H6.5a2.5 2.5 0 0 1-2.5-2.5V4.75A1.25 1.25 0 0 1 5.25 3.5Z"/><path d="M4 17.75a2.75 2.75 0 0 1 2.75-2.75h12M8 7.5h6.5M8 11h5"/></svg>
+        <span class="nav-label">Journal</span>
+      </button>
     </nav>
     <div class="sidebar-account">
-      <button id="accountButton" class="account-button" type="button" aria-haspopup="dialog" aria-controls="accountDialog">
+      <button id="accountButton" class="account-button" type="button" aria-haspopup="dialog" aria-controls="accountDialog" aria-expanded="false">
         <span id="accountAvatar" class="account-avatar" aria-hidden="true">JD</span>
         <span class="account-identity">
           <strong id="accountName">James Dunkin</strong>
@@ -28,7 +42,7 @@
         </span>
       </button>
       <button class="settings-gear" type="button" data-view-target="settings" aria-label="Open settings" title="Settings">
-        <span aria-hidden="true">&#9881;</span>
+        <svg class="settings-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3.25"/><path d="M19.4 13.5a7.8 7.8 0 0 0 0-3l1.7-1.3-2-3.45-2.1.9a8.1 8.1 0 0 0-2.6-1.5L14.15 3h-4.3L9.6 5.15A8.1 8.1 0 0 0 7 6.65l-2.1-.9-2 3.45 1.7 1.3a7.8 7.8 0 0 0 0 3l-1.7 1.3 2 3.45 2.1-.9a8.1 8.1 0 0 0 2.6 1.5l.25 2.15h4.3l.25-2.15a8.1 8.1 0 0 0 2.6-1.5l2.1.9 2-3.45Z"/></svg>
       </button>
     </div>
   </aside>
@@ -38,13 +52,22 @@
       <div class="home-stage">
         <div id="sentinelOrb" class="sentinel-orb idle" aria-hidden="true"></div>
         <div id="saintStage" class="saint-stage" data-saint="michael">
-          <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next patron saint">
+          <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next patron saint" aria-haspopup="dialog" aria-controls="saintInfoPopover" aria-expanded="false" title="Click for the next saint. Two-finger click for details.">
             <span class="saint-halo" aria-hidden="true"></span>
             <span class="saint-symbol saint-symbol-one" aria-hidden="true"></span>
             <span class="saint-symbol saint-symbol-two" aria-hidden="true"></span>
             <img id="saintArtwork" class="saint-artwork" src="/art/saints/michael.png" alt="Saint Michael the Archangel">
             <span id="saintFallback" class="saint-fallback" aria-hidden="true">M</span>
           </button>
+          <aside id="saintInfoPopover" class="saint-info-popover" role="dialog" aria-labelledby="saintInfoName" tabindex="-1" hidden>
+            <button id="saintInfoClose" class="saint-info-close" type="button" aria-label="Close saint details">&times;</button>
+            <p id="saintInfoEpithet" class="saint-info-eyebrow"></p>
+            <h2 id="saintInfoName"></h2>
+            <blockquote>
+              <p id="saintInfoQuote"></p>
+              <cite id="saintInfoSource"></cite>
+            </blockquote>
+          </aside>
         </div>
 
         <div id="protectionLevelControl" class="protection-level-control" data-level="1">
@@ -53,11 +76,21 @@
             <span id="protectionLevelStatus" aria-live="polite">Normal</span>
           </div>
           <input id="protectionLevel" type="range" min="1" max="4" step="1" value="1" aria-label="Protection level. Level 4 starts a three minute Panic lock.">
-          <div class="protection-level-scale" aria-hidden="true">
-            <span>1</span>
-            <span>2</span>
-            <span>3</span>
-            <span>!</span>
+          <div class="protection-level-bloom" aria-hidden="true">
+            <span class="protection-level-trace"></span>
+            <button class="protection-level-choice" type="button" tabindex="-1" data-protection-level-choice="1" aria-label="Level 1, Normal">
+              <span>1</span>
+            </button>
+            <button class="protection-level-choice" type="button" tabindex="-1" data-protection-level-choice="2" aria-label="Level 2, Soft Lock">
+              <span>2</span>
+            </button>
+            <button class="protection-level-choice" type="button" tabindex="-1" data-protection-level-choice="3" aria-label="Level 3, Full Brick">
+              <span>3</span>
+            </button>
+            <button class="protection-level-choice protection-level-choice-panic" type="button" tabindex="-1" data-protection-level-choice="4" aria-label="Panic, three minute lock">
+              <span>!</span>
+            </button>
+            <span class="protection-level-scroll-hint">Scroll to choose</span>
           </div>
         </div>
 
@@ -215,38 +248,47 @@
             <output id="focusSoundVolumeValue" for="focusSoundVolume">35</output>
           </label>
 
-          <div class="audio-session-controls" aria-label="Listening settings">
-            <fieldset>
-              <legend>Purpose</legend>
-              <div class="audio-option-row" role="group" aria-label="Purpose">
-                <button type="button" data-focus-mode="focus" data-focus-activity-default="deep-work">Focus</button>
-                <button type="button" data-focus-mode="relax" data-focus-activity-default="recharge">Relax</button>
-                <button type="button" data-focus-mode="sleep" data-focus-activity-default="wind-down">Sleep</button>
-                <button type="button" data-focus-mode="meditate" data-focus-activity-default="guided">Pray</button>
-              </div>
-            </fieldset>
-            <fieldset>
-              <legend>Activity</legend>
-              <div id="focusSoundActivityButtons" class="audio-option-row" role="group" aria-label="Activity"></div>
-            </fieldset>
-            <fieldset>
-              <legend>Intensity</legend>
-              <div class="audio-option-row" role="group" aria-label="Intensity">
-                <button type="button" data-focus-intensity="low">Soft</button>
-                <button type="button" data-focus-intensity="medium">Balanced</button>
-                <button type="button" data-focus-intensity="high">Strong</button>
-              </div>
-            </fieldset>
-            <fieldset>
-              <legend>Stop after</legend>
-              <div class="audio-option-row audio-timer-options" role="group" aria-label="Stop after">
-                <button type="button" data-focus-timer-mode="infinite">Never</button>
-                <button type="button" data-focus-timer-mode="timer" data-focus-timer-minutes="25">25 min</button>
-                <button type="button" data-focus-timer-mode="timer" data-focus-timer-minutes="50">50 min</button>
-                <button type="button" data-focus-timer-mode="interval" data-focus-timer-minutes="50" data-focus-break-minutes="5">50 / 5</button>
-              </div>
-            </fieldset>
-          </div>
+          <details class="audio-settings-disclosure">
+            <summary>
+              <span>
+                <strong>Session settings</strong>
+                <small id="focusSoundSettingsSummary">Focus · Deep work · Balanced · Never</small>
+              </span>
+              <span class="audio-disclosure-chevron" aria-hidden="true"></span>
+            </summary>
+            <div class="audio-session-controls" aria-label="Listening settings">
+              <fieldset>
+                <legend>Purpose</legend>
+                <div class="audio-option-row" role="group" aria-label="Purpose">
+                  <button type="button" data-focus-mode="focus" data-focus-activity-default="deep-work">Focus</button>
+                  <button type="button" data-focus-mode="relax" data-focus-activity-default="recharge">Relax</button>
+                  <button type="button" data-focus-mode="sleep" data-focus-activity-default="wind-down">Sleep</button>
+                  <button type="button" data-focus-mode="meditate" data-focus-activity-default="guided">Pray</button>
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>Activity</legend>
+                <div id="focusSoundActivityButtons" class="audio-option-row" role="group" aria-label="Activity"></div>
+              </fieldset>
+              <fieldset>
+                <legend>Intensity</legend>
+                <div class="audio-option-row" role="group" aria-label="Intensity">
+                  <button type="button" data-focus-intensity="low">Soft</button>
+                  <button type="button" data-focus-intensity="medium">Balanced</button>
+                  <button type="button" data-focus-intensity="high">Strong</button>
+                </div>
+              </fieldset>
+              <fieldset>
+                <legend>Stop after</legend>
+                <div class="audio-option-row audio-timer-options" role="group" aria-label="Stop after">
+                  <button type="button" data-focus-timer-mode="infinite">Never</button>
+                  <button type="button" data-focus-timer-mode="timer" data-focus-timer-minutes="25">25 min</button>
+                  <button type="button" data-focus-timer-mode="timer" data-focus-timer-minutes="50">50 min</button>
+                  <button type="button" data-focus-timer-mode="interval" data-focus-timer-minutes="50" data-focus-break-minutes="5">50 / 5</button>
+                </div>
+              </fieldset>
+            </div>
+          </details>
         </section>
 
         <section id="audioSoundLibrary" class="audio-library" aria-labelledby="audioLibraryTitle">
@@ -259,11 +301,11 @@
           </header>
 
           <div class="audio-library-grid">
-            <section class="audio-library-group audio-library-group-wide" aria-labelledby="sacredSoundsTitle">
-              <div class="audio-group-title">
-                <h4 id="sacredSoundsTitle">Sacred</h4>
-                <span>Chant, hymn &amp; prayer</span>
-              </div>
+            <details class="audio-library-group audio-library-group-wide" aria-labelledby="sacredSoundsTitle">
+              <summary class="audio-group-title">
+                <span><strong id="sacredSoundsTitle">Sacred</strong><small data-audio-group-current data-default-summary="12 sounds">12 sounds</small></span>
+                <span class="audio-disclosure-chevron" aria-hidden="true"></span>
+              </summary>
               <div class="audio-track-list audio-track-list-columns">
                 <button type="button" class="audio-track-row" data-focus-preset="rorate-caeli"><span><strong>Rorate Caeli</strong><small>Gregorian chant</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="o-come-emmanuel"><span><strong>O Come, O Come, Emmanuel</strong><small>Traditional hymn</small></span><em>Play</em></button>
@@ -278,13 +320,13 @@
                 <button type="button" class="audio-track-row" data-focus-preset="kyrie-xi-orbis-factor"><span><strong>Kyrie XI</strong><small>Orbis Factor</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="dies-irae"><span><strong>Dies Irae</strong><small>Requiem sequence</small></span><em>Play</em></button>
               </div>
-            </section>
+            </details>
 
-            <section class="audio-library-group audio-library-group-wide" aria-labelledby="baroqueSoundsTitle">
-              <div class="audio-group-title">
-                <h4 id="baroqueSoundsTitle">Baroque</h4>
-                <span>Real harpsichord recordings</span>
-              </div>
+            <details class="audio-library-group audio-library-group-wide" aria-labelledby="baroqueSoundsTitle">
+              <summary class="audio-group-title">
+                <span><strong id="baroqueSoundsTitle">Baroque</strong><small data-audio-group-current data-default-summary="6 sounds">6 sounds</small></span>
+                <span class="audio-disclosure-chevron" aria-hidden="true"></span>
+              </summary>
               <div class="audio-track-list audio-track-list-columns">
                 <button type="button" class="audio-track-row" data-focus-preset="bach-goldberg-aria"><span><strong>Goldberg Aria</strong><small>J. S. Bach</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="bach-invention-8"><span><strong>Invention No. 8</strong><small>J. S. Bach</small></span><em>Play</em></button>
@@ -293,26 +335,26 @@
                 <button type="button" class="audio-track-row" data-focus-preset="scarlatti-sonata-k87"><span><strong>Sonata K.87</strong><small>D. Scarlatti</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="scarlatti-sonata-k466"><span><strong>Sonata K.466</strong><small>D. Scarlatti</small></span><em>Play</em></button>
               </div>
-            </section>
+            </details>
 
-            <section class="audio-library-group" aria-labelledby="natureSoundsTitle">
-              <div class="audio-group-title">
-                <h4 id="natureSoundsTitle">Nature</h4>
-                <span>Field recordings</span>
-              </div>
+            <details class="audio-library-group" aria-labelledby="natureSoundsTitle">
+              <summary class="audio-group-title">
+                <span><strong id="natureSoundsTitle">Nature</strong><small data-audio-group-current data-default-summary="4 sounds">4 sounds</small></span>
+                <span class="audio-disclosure-chevron" aria-hidden="true"></span>
+              </summary>
               <div class="audio-track-list">
                 <button type="button" class="audio-track-row" data-focus-preset="rain"><span><strong>Rain</strong><small>Steady rainfall</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="ocean"><span><strong>Ocean</strong><small>Rolling waves</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="storm"><span><strong>Storm</strong><small>Rain &amp; thunder</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="stream"><span><strong>Stream</strong><small>Forest creek</small></span><em>Play</em></button>
               </div>
-            </section>
+            </details>
 
-            <section class="audio-library-group" aria-labelledby="textureSoundsTitle">
-              <div class="audio-group-title">
-                <h4 id="textureSoundsTitle">Noise &amp; tones</h4>
-                <span>Generated continuously</span>
-              </div>
+            <details class="audio-library-group" aria-labelledby="textureSoundsTitle">
+              <summary class="audio-group-title">
+                <span><strong id="textureSoundsTitle">Noise &amp; tones</strong><small data-audio-group-current data-default-summary="5 sounds">5 sounds</small></span>
+                <span class="audio-disclosure-chevron" aria-hidden="true"></span>
+              </summary>
               <div class="audio-track-list">
                 <button type="button" class="audio-track-row" data-focus-preset="brown-noise"><span><strong>Brown noise</strong><small>Deep &amp; soft</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="pink-noise"><span><strong>Pink noise</strong><small>Warm &amp; balanced</small></span><em>Play</em></button>
@@ -320,7 +362,7 @@
                 <button type="button" class="audio-track-row" data-focus-preset="binaural-beat"><span><strong>Binaural beat</strong><small>Headphones recommended</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="isochronic-tone"><span><strong>Isochronic tone</strong><small>Rhythmic pulse</small></span><em>Play</em></button>
               </div>
-            </section>
+            </details>
           </div>
         </section>
       </div>
@@ -909,6 +951,26 @@
     </section>
 
     <section id="view-settings" class="view settings-segment" data-view="settings" hidden>
+      <details class="settings-disclosure icon-theme-settings" open>
+        <summary><span>App icon</span><em id="iconThemeStatus">Loading icon choice…</em></summary>
+        <div class="settings-disclosure-body">
+          <fieldset class="icon-theme-picker">
+            <legend>Choose the icon used by Sentinel and its menu-bar companion</legend>
+            <label class="icon-theme-option">
+              <input type="radio" name="appIconTheme" value="jerusalem-cross">
+              <span class="icon-theme-preview"><img src="/app-icons/jerusalem-cross.png" alt=""></span>
+              <span><strong>Jerusalem Cross</strong><small>Five crosses · parchment and midnight blue</small></span>
+            </label>
+            <label class="icon-theme-option">
+              <input type="radio" name="appIconTheme" value="sacred-heart">
+              <span class="icon-theme-preview"><img src="/app-icons/sacred-heart.png" alt=""></span>
+              <span><strong>Sacred Heart</strong><small>Heart, thorns, flame, and cross</small></span>
+            </label>
+          </fieldset>
+          <p class="field-note">The menu-bar icon changes immediately. macOS keeps the installed app bundle's Jerusalem Cross icon in Finder and Spotlight until the app is rebuilt.</p>
+        </div>
+      </details>
+
       <details class="settings-disclosure journal-security-settings">
         <summary><span>Journal access</span><em>Password, Touch ID, and automatic locking</em></summary>
         <div class="settings-disclosure-body">

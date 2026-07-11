@@ -1,4 +1,4 @@
-import { PORT, REQUIRED_EXTENSION_VERSION } from "./defaults.js";
+import { PORT, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
 import { ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT, adultBlocklistPreloadDomains, matchAdultBlocklistHost } from "./adultBlocklist.js";
 import { activeAppLockPolicy } from "./appLocks.js";
 import { contentFilterEnabled, contentFilterRuleEntries, matchContentFilterUrl } from "./contentFilters.js";
@@ -7,7 +7,7 @@ import { integrityLockdownActive } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, matchBlockedUrlPattern, normalizeHost, normalizeUrlPattern, shouldBlockSite, shouldBlockUrl } from "./policy.js";
-import { focusedSocialBrowserCleanupEnabled, focusedSocialBrowserCleanupSettings } from "./socialFeatureFilters.js";
+import { focusedSocialBrowserCleanupSettings } from "./socialFeatureFilters.js";
 import { recordOpen, recordUsage } from "./usage.js";
 import type { ActivePolicy, FocusedSocialSettings, IntentionalPause, IntentionalUseRule, LimitBlock, SentinelState, UnknownRecord, UsageSample, UsageState } from "./types.js";
 
@@ -96,7 +96,7 @@ export function extensionRuleSnapshot(state: SentinelState, now = new Date()) {
 
   const dynamic = canonicalExtensionDynamicSnapshot({
     rules: [...entries.values()],
-    contentRules: contentRulesForPolicy(state, sessionPolicy, now),
+    contentRules: contentRulesForPolicy(state, sessionPolicy || baseline, now),
     allowlistRules: allowlistRulesForPolicy(sessionPolicy)
   });
   return {
@@ -290,7 +290,7 @@ export function evaluateExtensionCheck(state: SentinelState, usage: UsageState, 
     };
   }
 
-  const urlPatternContent = urlPattern ? matchContentFilterUrl(state, parsed.url) : null;
+  const urlPatternContent = urlPattern ? matchContentFilterUrl(state, parsed.url, policy) : null;
   const redirectUrl = contentFilterEscapeUrl(state, input, parsed.url, policy, urlPatternContent, now)
     || blockedUrl(urlPattern?.label || hostname, policy, sample.url, safeBackUrl(state, input.previousUrl, parsed.url, now));
 
@@ -363,14 +363,14 @@ function browserNoiseBlockingEnabled(state: SentinelState): boolean {
 
 function focusedSocialCleanupEnabled(state: SentinelState, now: Date): boolean {
   const policy = activePolicy(state, now);
-  if (policy) return true;
-  const ios = state.deviceControls?.ios;
-  return Boolean(ios?.enabled && ios.blockWeb !== false && focusedSocialBrowserCleanupEnabled(ios.focusedSocial));
+  return policy?.profile?.id === SOFT_BLOCK_PROFILE_ID;
 }
 
 function focusedSocialCleanupSettingsForState(state: SentinelState, now: Date): FocusedSocialSettings {
   const settings = focusedSocialBrowserCleanupSettings(state.deviceControls?.ios?.focusedSocial);
-  if (!activePolicy(state, now)) return settings;
+  if (activePolicy(state, now)?.profile?.id !== SOFT_BLOCK_PROFILE_ID) {
+    return { ...settings, enabled: false };
+  }
   return {
     ...settings,
     enabled: true
@@ -523,9 +523,9 @@ function adultBlocklistPolicyFor(state: SentinelState, hostname: string | undefi
 }
 
 function matchContentFilterForActivePolicy(state: SentinelState, url: URL, now: Date) {
-  const policy = activePolicy(state, now);
+  const policy = activePolicy(state, now) || baselinePolicy(state, now, { device: "computer" });
   if (!policy) return null;
-  const content = matchContentFilterUrl(state, url);
+  const content = matchContentFilterUrl(state, url, policy);
   return content ? { policy, content } : null;
 }
 
@@ -549,13 +549,13 @@ function contentFilterEscapeUrl(
 ): string {
   const fallbackUrl = safeContentFallbackUrlForPolicy(state, content?.fallbackUrl, policy, now);
   if (!fallbackUrl) return "";
-  return safeBackUrl(state, input.previousUrl, currentUrl, now) || fallbackUrl;
+  return safeBackUrl(state, input.previousUrl, currentUrl, now, policy) || fallbackUrl;
 }
 
-function safeBackUrl(state: SentinelState, value: unknown, currentUrl: URL, now: Date): string {
+function safeBackUrl(state: SentinelState, value: unknown, currentUrl: URL, now: Date, policy: ActivePolicy | null = activePolicy(state, now) || baselinePolicy(state, now, { device: "computer" })): string {
   const parsed = parseHttpUrl(value);
   if (!parsed.ok || isSentinelUrl(parsed.url) || sameHttpUrl(parsed.url, currentUrl)) return "";
-  if (matchContentFilterUrl(state, parsed.url)) return "";
+  if (matchContentFilterUrl(state, parsed.url, policy)) return "";
   if (profileBlocksBrowserUrl(activePolicy(state, now), parsed.url)) return "";
   if (profileBlocksBrowserUrl(baselinePolicy(state, now, { device: "computer" }), parsed.url)) return "";
   return parsed.url.toString();
@@ -576,7 +576,7 @@ function safeContentFallbackUrlForPolicy(
   try {
     const url = new URL(String(value || ""));
     if (!["http:", "https:"].includes(url.protocol) || isLocalHost(url.hostname)) return "";
-    if (matchContentFilterUrl(state, url)) return "";
+    if (matchContentFilterUrl(state, url, policy || baselinePolicy(state, now, { device: "computer" }))) return "";
     if (profileBlocksBrowserUrl(policy, url)) return "";
     if (profileBlocksBrowserUrl(baselinePolicy(state, now, { device: "computer" }), url)) return "";
     return url.toString();

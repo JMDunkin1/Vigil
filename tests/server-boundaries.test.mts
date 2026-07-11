@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRICK_MODE_PROFILE_ID, defaultState } from "../src/defaults.js";
 import { buildDiagnosticExport, diagnosticExportFilename } from "../src/server/diagnosticExportRoutes.js";
 import { externalNetworkBlockSummary } from "../src/externalNetworkBlock.js";
 import { hardeningActions, hostsDetail, launchAgentDetail } from "../src/server/hardeningSummary.js";
-import { contentType, resolvePublicPath, securityHeaders } from "../src/server/http.js";
+import { contentType, resolvePublicPath, securityHeaders, transpilePublicTypescript } from "../src/server/http.js";
+import { resolvePublicAssets } from "../src/publicAssets.js";
 import { createLocalScriptRunner, shellQuote, appleScriptString } from "../src/server/localScripts.js";
 import { commitmentLockError, escapeHtml, safeScriptJson } from "../src/server/pages.js";
 import { handleSessionApiRoute, previewManualSession } from "../src/server/sessionRoutes.js";
@@ -40,6 +43,36 @@ assert.equal(contentType("public/audio/nature/rain.ogg"), "audio/ogg");
 assert.equal(contentType("unknown.bin"), "application/octet-stream");
 assert.equal(securityHeaders()["X-Content-Type-Options"], "nosniff");
 assert.match(securityHeaders()["Content-Security-Policy"], /frame-ancestors 'none'/);
+
+const liveSourceRoot = await mkdtemp(join(tmpdir(), "sentinel-live-source-"));
+try {
+  await mkdir(join(liveSourceRoot, "app"), { recursive: true });
+  await mkdir(join(liveSourceRoot, "public"), { recursive: true });
+  await writeFile(join(liveSourceRoot, "package.json"), JSON.stringify({ name: "sentinel" }));
+  await writeFile(join(liveSourceRoot, "app", "main.ts"), "");
+  await writeFile(join(liveSourceRoot, "public", "index.html"), "working tree");
+  assert.deepEqual(resolvePublicAssets("/packaged/runtime", {
+    SENTINEL_LIVE_SOURCE: "1",
+    SENTINEL_SOURCE_ROOT: liveSourceRoot
+  }), {
+    directory: join(liveSourceRoot, "public"),
+    fallbackDirectory: "/packaged/runtime/public",
+    live: true,
+    sourceRoot: liveSourceRoot
+  });
+  assert.deepEqual(resolvePublicAssets("/packaged/runtime", {
+    SENTINEL_SOURCE_ROOT: liveSourceRoot
+  }), {
+    directory: "/packaged/runtime/public",
+    live: false
+  });
+} finally {
+  await rm(liveSourceRoot, { recursive: true, force: true });
+}
+assert.match(
+  transpilePublicTypescript("const count: number = 2; export { count };", "sample.ts"),
+  /const count\s+= 2;/u
+);
 assert.equal(diagnosticExportFilename(new Date("2026-06-04T12:34:56.789Z")), "sentinel-diagnostic-2026-06-04T12-34-56Z.json");
 
 const previewState = defaultState();
@@ -55,12 +88,14 @@ const preview = previewManualSession(previewState, {
 }, new Date("2026-06-04T12:00:00.000Z"));
 assert.equal(preview.title, "Full Brick");
 assert.equal(preview.deviceLabel, "Computer + iPhone");
-assert.equal(preview.profileMode, "allowlist");
+assert.equal(preview.profileMode, "blocklist");
 assert.equal(preview.commitmentLock, true);
 assert.equal(preview.phone.targeted, true);
 assert.equal(preview.phone.ready, true);
 assert.ok(preview.allowedApps.includes("Mail"));
 assert.ok(preview.protections.includes("Browser settings and extensions controls"));
+assert.ok(preview.blockedApps.includes("Instagram"));
+assert.ok(preview.protections.includes("App quit enforcement"));
 assert.equal(previewState.activeSession, null);
 
 const conflictState = defaultState();
