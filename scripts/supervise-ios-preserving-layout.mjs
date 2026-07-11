@@ -4,7 +4,12 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { readLayoutPaths, resolveNewestLayoutBackup } from "./ios-backup-layout.mjs";
+import {
+  assertRestorableLayoutBackup,
+  readLayoutPaths,
+  resolveNewestLayoutBackup,
+  validateRestorableBackupPayload
+} from "./ios-backup-layout.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -67,6 +72,7 @@ const checkpointRoot = options.existingCheckpoint
   ? await resolveExistingCheckpointRoot(options.existingCheckpoint, udid)
   : await createCheckpoint(udid, options);
 const layoutPaths = await verifyCheckpoint(checkpointRoot, udid, options.password);
+await validateCheckpointPayload(checkpointRoot, udid, options.password, "before any iPhone restore or supervision");
 const supervisorKeybagPath = await ensureSupervisorKeybag(options.supervisorKeybag, options.organization);
 
 const preSupervisionPayloadRoot = await createPreSupervisionRestorePayload(checkpointRoot, udid, options.password);
@@ -199,27 +205,9 @@ async function resolveExistingCheckpointRoot(inputPath, udid) {
 }
 
 async function verifyCheckpoint(path, udid, password = "") {
-  const manifestPath = join(path, udid, "Manifest.db");
-  const statusPath = join(path, udid, "Status.plist");
-  const infoPath = join(path, udid, "Info.plist");
-  const manifest = await stat(manifestPath).catch(() => null);
-  const status = await stat(statusPath).catch(() => null);
-  const info = await stat(infoPath).catch(() => null);
-  if (!manifest?.isFile() || manifest.size <= 0) {
-    throw new Error(`Required iPhone checkpoint is missing Manifest.db for ${udid}: ${manifestPath}`);
-  }
-  if (!status?.isFile() || status.size <= 0 || !info?.isFile() || info.size <= 0) {
-    throw new Error(`Required iPhone checkpoint is missing complete backup metadata for ${udid}: ${path}`);
-  }
-  const backupDeviceIds = await readBackupDeviceIds(infoPath);
-  if (backupDeviceIds.length && !backupDeviceIds.includes(udid)) {
-    throw new Error([
-      `Required iPhone checkpoint metadata does not match the connected device ${udid}.`,
-      `Checkpoint path: ${path}`,
-      `Backup device identifiers: ${backupDeviceIds.join(", ")}`,
-      "Sentinel will not restore a backup from a different iPhone."
-    ].join("\n"));
-  }
+  const backupPath = join(path, udid);
+  await assertRestorableLayoutBackup(backupPath, { udid, source: "required iPhone checkpoint" });
+  const manifestPath = join(backupPath, "Manifest.db");
   const layoutPaths = await readLayoutPaths({
     manifestPath,
     password,
@@ -355,24 +343,6 @@ async function restorePreSupervisionSetupState(udid, payloadRoot, password = "")
   ], RESTORE_TIMEOUT_MS);
 }
 
-async function readBackupDeviceIds(infoPath) {
-  const keys = ["Unique Identifier", "Target Identifier", "UniqueDeviceID", "Unique Device ID"];
-  const values = [];
-  for (const key of keys) {
-    try {
-      const { stdout } = await execFileAsync("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", infoPath], {
-        timeout: QUICK_TIMEOUT_MS,
-        maxBuffer: 1024 * 16
-      });
-      const value = stdout.trim();
-      if (value && !values.includes(value)) values.push(value);
-    } catch {
-      // Older backup formats omit some of these keys.
-    }
-  }
-  return values;
-}
-
 async function ensurePymobiledevice3() {
   if (process.env.PYMOBILEDEVICE3) {
     await access(PYMOBILEDEVICE3_PATH);
@@ -427,7 +397,7 @@ async function assertPyiosbackupPython(pythonPath) {
       `Python runtime for iPhone backup payloads is missing pyiosbackup support: ${pythonPath}`,
       "Unset PYIOSBACKUP_PYTHON to let Sentinel install its local runtime, or point it at a Python that can import pyiosbackup and pymobiledevice3.services.mobilebackup2.",
       detail
-    ].filter(Boolean).join("\n"));
+    ].filter(Boolean).join("\n"), { cause: error });
   }
 }
 
@@ -601,6 +571,12 @@ async function pairSupervised(udid, supervisorKeybagPath) {
 }
 
 async function restoreCheckpoint(udid, checkpointRoot, password) {
+  const backupPath = join(checkpointRoot, udid);
+  await assertRestorableLayoutBackup(backupPath, {
+    udid,
+    source: "pre-restore iPhone checkpoint"
+  });
+  await validateCheckpointPayload(checkpointRoot, udid, password, "immediately before full remove-style restore");
   await runPymobiledevice3([
     "--reconnect",
     "backup2",
@@ -615,6 +591,25 @@ async function restoreCheckpoint(udid, checkpointRoot, password) {
     ...passwordArgs(password),
     checkpointRoot
   ], RESTORE_TIMEOUT_MS);
+}
+
+async function validateCheckpointPayload(checkpointRoot, udid, password, phase) {
+  const backupPath = join(checkpointRoot, udid);
+  const payloadValidation = await validateRestorableBackupPayload({
+    backupPath,
+    password,
+    pythonPath: PYIOSBACKUP_PYTHON_PATH,
+    timeoutMs: RESTORE_TIMEOUT_MS
+  });
+  console.log([
+    `Verified every file payload in the iPhone checkpoint ${phase}.`,
+    `Manifest entries traversed: ${payloadValidation.manifestEntries}`,
+    `Manifest file entries: ${payloadValidation.manifestFiles}`,
+    `Regular payload files found: ${payloadValidation.payloadFilesFound}`,
+    `Encrypted backup: ${payloadValidation.encrypted ? "yes" : "no"}`,
+    `Validation time: ${(payloadValidation.durationMs / 1000).toFixed(1)} seconds`
+  ].join("\n"));
+  return payloadValidation;
 }
 
 async function applySentinelProfile(udid, supervisorKeybagPath, checkpointRoot = "", password = "") {
@@ -655,7 +650,7 @@ async function runPymobiledevice3(args, timeout) {
       maxBuffer: 1024 * 1024
     });
   } catch (error) {
-    throw new Error(`${error?.stdout || ""}\n${error?.stderr || error}`.trim());
+    throw new Error(`${error?.stdout || ""}\n${error?.stderr || error}`.trim(), { cause: error });
   }
 }
 

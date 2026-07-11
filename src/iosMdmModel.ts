@@ -25,6 +25,13 @@ export interface MdmDevice extends UnknownRecord {
   profileCount?: number;
 }
 
+export interface MdmEnrollmentToken extends UnknownRecord {
+  hash: string;
+  createdAt: string;
+  boundUdid?: string;
+  lastSeenAt?: string;
+}
+
 export interface MdmCommand extends UnknownRecord {
   id: string;
   commandUuid: string;
@@ -53,6 +60,7 @@ export interface MdmCommand extends UnknownRecord {
 }
 
 export interface MdmSettings extends IosMdmSettings {
+  enrollmentTokens: MdmEnrollmentToken[];
   devices: MdmDevice[];
   commands: MdmCommand[];
 }
@@ -128,6 +136,20 @@ export function normalizeMdmDevices(values: unknown): MdmDevice[] {
     ? values
       .filter(isUnknownRecord)
       .map((device) => normalizeMdmDevice(device))
+    : [];
+}
+
+export function normalizeMdmEnrollmentTokens(values: unknown): MdmEnrollmentToken[] {
+  return Array.isArray(values)
+    ? values
+      .filter(isUnknownRecord)
+      .map((value) => ({
+        hash: String(value.hash || ""),
+        createdAt: String(value.createdAt || ""),
+        boundUdid: value.boundUdid ? String(value.boundUdid) : undefined,
+        lastSeenAt: value.lastSeenAt ? String(value.lastSeenAt) : undefined
+      }))
+      .filter((value) => /^[a-f0-9]{64}$/.test(value.hash) && Number.isFinite(Date.parse(value.createdAt)))
     : [];
 }
 

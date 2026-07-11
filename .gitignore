@@ -3,7 +3,8 @@
 # Dependencies and build/test output
 node_modules/
 coverage/
-dist/
+/dist
+dist.nosync/
 npm-debug.log*
 
 # Local environment files

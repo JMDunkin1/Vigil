@@ -12,6 +12,15 @@ interface AppUpdatePanelContext {
   errorMessage(error: unknown): string;
 }
 
+interface SentinelAppUpdateBridge {
+  status(options?: { checkRemote?: boolean }): Promise<unknown>;
+  start(): Promise<unknown>;
+}
+
+interface SentinelAppUpdateWindow extends Window {
+  sentinelAppUpdate?: SentinelAppUpdateBridge;
+}
+
 export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppUpdatePanelContext) {
   let cached: UnknownRecord | null = null;
   let checking = false;
@@ -40,11 +49,10 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     button.textContent = "Checking...";
     $("#appUpdateStatus").textContent = "Checking...";
     try {
-      cached = await get<UnknownRecord>(checkRemote ? "/api/app-update/status?check=1" : "/api/app-update/status");
+      cached = await requestStatus(checkRemote);
       renderStatus(cached);
     } catch (error) {
-      $("#appUpdateStatus").textContent = errorMessage(error);
-      $("#appUpdateMeta").textContent = "Unavailable";
+      cached = failedStatus(errorMessage(error));
     } finally {
       checking = false;
       renderStatus(cached);
@@ -57,14 +65,31 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     button.textContent = "Starting Update...";
     $("#appUpdateStatus").textContent = "Starting update...";
     try {
-      cached = await post<UnknownRecord>("/api/app-update/start", {});
+      cached = await requestStart();
       renderStatus(cached);
       toast("Sentinel update started");
     } catch (error) {
-      $("#appUpdateStatus").textContent = errorMessage(error);
-      toast(errorMessage(error));
+      const message = errorMessage(error);
+      cached = failedStatus(message, cached);
+      toast(message);
       renderStatus(cached);
     }
+  }
+
+  async function requestStatus(checkRemote: boolean): Promise<UnknownRecord> {
+    const bridge = appUpdateBridge();
+    const result = bridge
+      ? await bridge.status({ checkRemote })
+      : await get<UnknownRecord>(checkRemote ? "/api/app-update/status?check=1" : "/api/app-update/status");
+    return successfulResult(result, "Update check failed.");
+  }
+
+  async function requestStart(): Promise<UnknownRecord> {
+    const bridge = appUpdateBridge();
+    const result = bridge
+      ? await bridge.start()
+      : await post<UnknownRecord>("/api/app-update/start", {});
+    return successfulResult(result, "Update could not start.");
   }
 
   function renderStatus(status: UnknownRecord | null): void {
@@ -103,8 +128,30 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
 }
 
 function canInstall(status: UnknownRecord | null): boolean {
-  if (!status || status.supported === false || status.running) return false;
+  if (!status || status.ok !== true || status.supported === false || status.running || status.dirty || status.remoteCheckOk === false) return false;
   return Boolean(status.updateAvailable || status.appBundleOutdated || Number(status.behind || 0) > 0);
+}
+
+function appUpdateBridge(): SentinelAppUpdateBridge | null {
+  return (window as SentinelAppUpdateWindow).sentinelAppUpdate || null;
+}
+
+function successfulResult(value: unknown, fallback: string): UnknownRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(fallback);
+  const result = value as UnknownRecord;
+  if (result.ok !== true) throw new Error(String(result.error || result.message || fallback));
+  return result;
+}
+
+function failedStatus(message: string, previous: UnknownRecord | null = null): UnknownRecord {
+  return {
+    ...(previous || {}),
+    ok: false,
+    supported: previous?.supported !== false,
+    running: false,
+    updateAvailable: false,
+    message
+  };
 }
 
 function shortCommit(value: unknown): string {

@@ -3,7 +3,7 @@ import { PERMANENT_SOCIAL_URL_PATTERNS, defaultFocusedSocialSettings } from "./s
 
 export const APP_NAME = "Sentinel";
 export const PORT = Number(process.env.SENTINEL_PORT || process.env.SCREEN_TIME_PORT || 8787);
-export const REQUIRED_EXTENSION_VERSION = "0.3.2";
+export const REQUIRED_EXTENSION_VERSION = "0.3.3";
 export const DEFAULT_ADULT_BLOCKLIST_SOURCE_ID = "hagezi-nsfw";
 export const DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT = 100;
 
@@ -833,6 +833,11 @@ export function defaultState(): SentinelState {
         tamperDetectedAt: null,
         tamperDetail: ""
       },
+      usageSeal: {
+        required: false,
+        migrationVersion: 0,
+        migratedAt: null
+      },
       runtime: {
         lastHeartbeatAt: null,
         downtimeDetectedAt: null,
@@ -889,6 +894,7 @@ export function defaultState(): SentinelState {
           useDevelopmentApns: false,
           checkOutWhenRemoved: true,
           enrollmentSecret: null,
+          enrollmentTokens: [],
           devices: [],
           commands: [],
           lastEnrollmentProfileGeneratedAt: null,

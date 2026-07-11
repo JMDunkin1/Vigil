@@ -49,34 +49,49 @@ interface StrictPreflightOptions {
   monitorStatus?: UnknownRecord;
 }
 
+interface DiagnosticSnapshot {
+  hosts: Awaited<ReturnType<typeof hostsStatus>>;
+  firewall: Awaited<ReturnType<typeof firewallStatus>>;
+  agent: Awaited<ReturnType<typeof launchAgentStatus>>;
+  account: Awaited<ReturnType<typeof currentMacAccountStatus>>;
+  stateSeal: Awaited<ReturnType<typeof stateSealStatus>>;
+  sourceSeal: Awaited<ReturnType<typeof sourceSealStatus>>;
+  safariFilter: Awaited<ReturnType<typeof safariFilterStatus>>;
+  devices: Awaited<ReturnType<typeof deviceSummary>>;
+  hostsBlock: string;
+}
+
+const DIAGNOSTIC_CACHE_MS = 30_000;
+let diagnosticCache: { expiresAt: number; key: string; promise: Promise<DiagnosticSnapshot> } | null = null;
+
+export function invalidateStateDiagnostics(): void {
+  diagnosticCache = null;
+}
+
 export async function buildStatePayload({ state, usage, monitor, activePort, startedAt, localScripts }: BuildStatePayloadInput) {
-  const policy = activePolicy(state);
-  const hosts = await hostsStatus(state);
-  const firewall = await firewallStatus(state);
-  const agent = await launchAgentStatus();
-  const account = await currentMacAccountStatus();
-  const stateSeal = await stateSealStatus(state);
-  const sourceSeal = await sourceSealStatus();
-  const safariFilter = await safariFilterStatus(state);
-  const externalNetworkBlock = externalNetworkBlockSummary(state);
-  const adultBlocklist = adultBlocklistSummary(state);
-  const protection = protectionSummary(state);
-  const devices = await deviceSummary(state);
-  const foolproof = foolproofSummary(state, { hosts, firewall, safariFilter, agent, account, monitor: monitor.status, stateSeal, sourceSeal });
+  const currentState = structuredClone(state);
+  const currentUsage = structuredClone(usage);
+  const monitorStatus = structuredClone(monitor.status);
+  const policy = activePolicy(currentState);
+  const { hosts, firewall, agent, account, stateSeal, sourceSeal, safariFilter, devices, hostsBlock } = await stateDiagnostics(currentState);
+  const externalNetworkBlock = externalNetworkBlockSummary(currentState);
+  const adultBlocklist = adultBlocklistSummary(currentState);
+  const protection = protectionSummary(currentState);
+  const foolproof = foolproofSummary(currentState, { hosts, firewall, safariFilter, agent, account, monitor: monitorStatus, stateSeal, sourceSeal });
 
   return {
     body: {
       app: sentinelAppInfo({ port: activePort, startedAt }),
-      state: publicState(state, policy),
-      usage: usageSummary(usage, state),
-      report: focusReport(usage, state),
-      intentionalUse: intentionalUseSummary(state, usage),
-      limits: limitSummary(state, usage),
-      appLocks: appLockSummary(state),
+      state: publicState(currentState, policy),
+      usage: usageSummary(currentUsage, currentState),
+      report: focusReport(currentUsage, currentState),
+      intentionalUse: intentionalUseSummary(currentState, currentUsage),
+      limits: limitSummary(currentState, currentUsage),
+      appLocks: appLockSummary(currentState),
       devices,
       protection,
-      intervention: interventionSummary(state),
-      monitor: monitor.status,
+      intervention: interventionSummary(currentState),
+      monitor: monitorStatus,
       presets: distractionPresets(),
       hardening: {
         hosts,
@@ -89,13 +104,114 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
         stateSeal,
         sourceSeal,
         launchAgentPath: launchAgentPath(),
-        hostsBlock: await buildNetworkPreview(state),
+        hostsBlock,
         actions: hardeningActions(localScripts),
         foolproof,
-        audit: hardeningAudit({ state, hosts, firewall, safariFilter, externalNetworkBlock, agent, account, protection, monitor: monitor.status, foolproof, stateSeal, sourceSeal })
+        audit: hardeningAudit({ state: currentState, hosts, firewall, safariFilter, externalNetworkBlock, agent, account, protection, monitor: monitorStatus, foolproof, stateSeal, sourceSeal })
       }
     },
     headers: sentinelStateHeaders()
+  };
+}
+
+async function stateDiagnostics(state: SentinelState): Promise<DiagnosticSnapshot> {
+  const now = Date.now();
+  const key = diagnosticStateKey(state);
+  if (diagnosticCache && diagnosticCache.key === key && diagnosticCache.expiresAt > now) return await diagnosticCache.promise;
+  const promise = Promise.all([
+    hostsStatus(state),
+    firewallStatus(state),
+    launchAgentStatus(),
+    currentMacAccountStatus(),
+    stateSealStatus(state),
+    sourceSealStatus(),
+    safariFilterStatus(state),
+    deviceSummary(state),
+    buildNetworkPreview(state)
+  ]).then(([hosts, firewall, agent, account, stateSeal, sourceSeal, safariFilter, devices, hostsBlock]) => ({
+    hosts,
+    firewall,
+    agent,
+    account,
+    stateSeal,
+    sourceSeal,
+    safariFilter,
+    devices,
+    hostsBlock
+  }));
+  diagnosticCache = { expiresAt: now + DIAGNOSTIC_CACHE_MS, key, promise };
+  try {
+    return await promise;
+  } catch (error) {
+    if (diagnosticCache?.promise === promise) diagnosticCache = null;
+    throw error;
+  }
+}
+
+function diagnosticStateKey(state: SentinelState): string {
+  return JSON.stringify({
+    settings: state.settings,
+    profiles: state.profiles,
+    schedules: state.schedules,
+    activeSessions: state.activeSessions,
+    activeSession: state.activeSession,
+    panicLock: state.panicLock,
+    limitBlocks: state.limitBlocks,
+    appLocks: state.appLocks,
+    appLockUnlocks: state.appLockUnlocks,
+    deviceControls: diagnosticDeviceControls(state),
+    adultBlocklist: state.adultBlocklist,
+    intentionalUse: {
+      pauses: state.intentionalUse?.pauses,
+      grants: state.intentionalUse?.grants,
+      planBlocks: state.intentionalUse?.planBlocks
+    },
+    overrides: state.overrides,
+    environment: {
+      wifiSsid: state.environment?.wifiSsid
+    },
+    grayscale: state.grayscale,
+    stateSeal: {
+      tamperDetectedAt: state.integrity?.stateSeal?.tamperDetectedAt,
+      tamperDetail: state.integrity?.stateSeal?.tamperDetail
+    }
+  });
+}
+
+function diagnosticDeviceControls(state: SentinelState): UnknownRecord {
+  const ios = state.deviceControls?.ios || {};
+  const mdm = ios.mdm || {};
+  return {
+    ios: {
+      enabled: ios.enabled,
+      status: ios.status,
+      mode: ios.mode,
+      webMode: ios.webMode,
+      blockApps: ios.blockApps,
+      blockWeb: ios.blockWeb,
+      hardenRemoval: ios.hardenRemoval,
+      restrictInstallAndErase: ios.restrictInstallAndErase,
+      allowSafariHistoryClearing: ios.allowSafariHistoryClearing,
+      blockedAppBundleIds: ios.blockedAppBundleIds,
+      allowedAppBundleIds: ios.allowedAppBundleIds,
+      deniedUrls: ios.deniedUrls,
+      allowedUrls: ios.allowedUrls,
+      focusedSocial: ios.focusedSocial,
+      mdm: {
+        enabled: mdm.enabled,
+        publicBaseUrl: mdm.publicBaseUrl,
+        topic: mdm.topic,
+        identityCertificateUuid: mdm.identityCertificateUuid,
+        hasIdentityCertificate: Boolean(mdm.identityCertificatePayloadBase64),
+        hasPushCertificate: Boolean(mdm.pushCertificatePayloadBase64),
+        accessRights: mdm.accessRights,
+        signMessage: mdm.signMessage,
+        useDevelopmentApns: mdm.useDevelopmentApns,
+        checkOutWhenRemoved: mdm.checkOutWhenRemoved,
+        deviceCount: mdm.devices?.length || 0,
+        pendingCommandCount: mdm.commands?.filter((command) => ["queued", "sent"].includes(String(command.status))).length || 0
+      }
+    }
   };
 }
 
@@ -186,6 +302,7 @@ function publicPolicy(policy: ActivePolicy | null) {
     profile: policy.profile,
     schedule: policy.schedule || null,
     plannerBlock: policy.plannerBlock || null,
+    contributors: policy.contributors || [],
     endsAt: policy.endsAt,
     phase: policy.phase || null
   } : null;

@@ -1,10 +1,10 @@
 export async function get<T = unknown>(path: string): Promise<T> {
-  const response = await fetch(path, { headers: journalHeaders(path) });
+  const response = await request(path, { headers: journalHeaders(path) }, 10_000);
   return parseResponse<T>(response, path);
 }
 
 export async function post<T = unknown>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(path, {
+  const response = await request(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -12,7 +12,7 @@ export async function post<T = unknown>(path: string, body: unknown): Promise<T>
       ...journalHeaders(path)
     },
     body: JSON.stringify(body)
-  });
+  }, 120_000);
   const result = await parseResponse<T>(response, path);
   if (path === "/api/intentional-use/journal/lock" || path === "/api/intentional-use/journal/password") {
     clearJournalSession();
@@ -21,14 +21,27 @@ export async function post<T = unknown>(path: string, body: unknown): Promise<T>
 }
 
 export async function del<T = unknown>(path: string): Promise<T> {
-  const response = await fetch(path, {
+  const response = await request(path, {
     method: "DELETE",
     headers: {
       "X-Sentinel-Intent": "sentinel-app",
       ...journalHeaders(path)
     }
-  });
+  }, 30_000);
   return parseResponse<T>(response, path);
+}
+
+async function request(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(path, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("Sentinel did not respond in time.");
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 const JOURNAL_TOKEN_KEY = "sentinel-journal-token";

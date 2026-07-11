@@ -35,6 +35,27 @@ export function createHardeningPanel(context: HardeningPanelContext) {
 
 function bindHardeningActions(context: HardeningPanelContext): void {
   const { $, post, toast, errorMessage, refresh, getData } = context;
+  const adultSave = $("#saveAdultBlocklistSettings");
+  const focusSave = $("#saveFocusShortcuts");
+  let adultRevision = 0;
+  let focusRevision = 0;
+
+  for (const id of ["adultBlocklistSourceId", "adultBlocklistCustomUrl", "adultBlocklistPreloadLimit", "adultBlocklistAllowlist"]) {
+    $(`#${id}`).addEventListener("input", () => {
+      adultSave.dataset.dirty = "true";
+      adultRevision += 1;
+    });
+    $(`#${id}`).addEventListener("change", () => {
+      adultSave.dataset.dirty = "true";
+      adultRevision += 1;
+    });
+  }
+  for (const id of ["focusShortcutOnName", "focusShortcutOffName"]) {
+    $(`#${id}`).addEventListener("input", () => {
+      focusSave.dataset.dirty = "true";
+      focusRevision += 1;
+    });
+  }
 
   $("#installLaunchAgent").addEventListener("click", async () => {
     const status = $("#hardeningActionStatus");
@@ -122,26 +143,28 @@ function bindHardeningActions(context: HardeningPanelContext): void {
     await copyHardeningText(path, "Extension path copied", context);
   });
 
-  $("#exportBackup").addEventListener("click", () => {
+  $("#exportDiagnosticSnapshot").addEventListener("click", () => {
     const status = $("#hardeningActionStatus");
-    status.textContent = "Preparing backup...";
+    status.textContent = "Preparing diagnostic snapshot...";
     const link = document.createElement("a");
-    link.href = "/api/backup/export";
+    link.href = "/api/diagnostic/export";
     link.download = "";
     document.body.append(link);
     link.click();
     link.remove();
-    status.textContent = "Backup download started";
-    toast("Backup download started");
+    status.textContent = "Diagnostic snapshot download started";
+    toast("Diagnostic snapshot download started");
   });
 
   $("#saveFocusShortcuts").addEventListener("click", async () => {
+    const submittedRevision = focusRevision;
     try {
       await post("/api/settings", {
         focusShortcutEnabled: $("#focusShortcutEnabled").checked,
         focusShortcutOnName: $("#focusShortcutOnName").value,
         focusShortcutOffName: $("#focusShortcutOffName").value
       });
+      if (focusRevision === submittedRevision) delete focusSave.dataset.dirty;
       toast("Focus hooks saved");
     } catch (error) {
       toast(errorMessage(error));
@@ -154,6 +177,7 @@ function bindHardeningActions(context: HardeningPanelContext): void {
   });
 
   $("#saveAdultBlocklistSettings").addEventListener("click", async () => {
+    const submittedRevision = adultRevision;
     const status = $("#adultBlocklistMeta");
     status.textContent = "Saving...";
     try {
@@ -164,6 +188,7 @@ function bindHardeningActions(context: HardeningPanelContext): void {
         adultBlocklistPreloadLimit: $("#adultBlocklistPreloadLimit").value,
         allowlist: $("#adultBlocklistAllowlist").value
       });
+      if (adultRevision === submittedRevision) delete adultSave.dataset.dirty;
       status.textContent = "Saved";
       toast("Adult list saved");
     } catch (error) {
@@ -245,11 +270,11 @@ function renderHardening(data: DashboardData, context: HardeningPanelContext): v
   $("#strictByDefault").checked = Boolean(settings.strictByDefault);
   $("#protectedEditsEnabled").checked = Boolean(settings.protectedEditsEnabled);
   $("#foolproofModeEnabled").checked = Boolean(settings.foolproofModeEnabled);
-  $("#appQuitEscalationSeconds").value = String(settings.appQuitEscalationSeconds || 10);
-  $("#processSweepIntervalSeconds").value = String(settings.processSweepIntervalSeconds || 15);
-  $("#systemSleepLockIntervalSeconds").value = String(settings.systemSleepLockIntervalSeconds || 60);
-  $("#panicLockDurationMinutes").value = String(settings.panicLockDurationMinutes || 3);
-  $("#intentReasonMinLength").value = String(settings.intentReasonMinLength || 20);
+  setValueUnlessEditing($("#appQuitEscalationSeconds"), String(settings.appQuitEscalationSeconds || 10));
+  setValueUnlessEditing($("#processSweepIntervalSeconds"), String(settings.processSweepIntervalSeconds || 15));
+  setValueUnlessEditing($("#systemSleepLockIntervalSeconds"), String(settings.systemSleepLockIntervalSeconds || 60));
+  setValueUnlessEditing($("#panicLockDurationMinutes"), String(settings.panicLockDurationMinutes || 3));
+  setValueUnlessEditing($("#intentReasonMinLength"), String(settings.intentReasonMinLength || 20));
   renderIntentReasonHints(settings, $);
   renderAdultBlocklist(data, $);
   renderFocusShortcut(data.state.focusShortcut, $);
@@ -270,18 +295,23 @@ function renderHardening(data: DashboardData, context: HardeningPanelContext): v
   renderFoolproofBlockers(data.hardening.foolproof, $);
 }
 
+function setValueUnlessEditing(control: ControlElement, value: string): void {
+  if (document.activeElement !== control) control.value = value;
+}
+
 function renderAdultBlocklist(data: DashboardData, $: QueryElement): void {
   const settings = data.state.settings;
   const adult = data.hardening.adultBlocklist || {};
   $("#adultBlocklistEnabled").checked = settings.adultBlocklistEnabled !== false;
-  renderAdultBlocklistSources(adult, settings.adultBlocklistSourceId || String(adult.selectedSourceId || ""), $);
   const customUrl = $("#adultBlocklistCustomUrl");
-  if (document.activeElement !== customUrl) customUrl.value = settings.adultBlocklistCustomUrl || "";
+  const settingsDirty = $("#saveAdultBlocklistSettings").dataset.dirty === "true";
+  if (!settingsDirty) {
+    renderAdultBlocklistSources(adult, settings.adultBlocklistSourceId || String(adult.selectedSourceId || ""), $);
+    customUrl.value = settings.adultBlocklistCustomUrl || "";
+    $("#adultBlocklistPreloadLimit").value = String(settings.adultBlocklistPreloadLimit ?? adult.preloadLimit ?? 100);
+    $("#adultBlocklistAllowlist").value = (adult.allowlist || data.state.adultBlocklist?.allowlist || []).join("\n");
+  }
   customUrl.disabled = $("#adultBlocklistSourceId").value !== "custom";
-  const preload = $("#adultBlocklistPreloadLimit");
-  if (document.activeElement !== preload) preload.value = String(settings.adultBlocklistPreloadLimit ?? adult.preloadLimit ?? 100);
-  const allowlist = $("#adultBlocklistAllowlist");
-  if (document.activeElement !== allowlist) allowlist.value = (adult.allowlist || data.state.adultBlocklist?.allowlist || []).join("\n");
   const domainCount = Number(adult.domainCount || 0);
   const activeCount = Number(adult.activeDomainCount || 0);
   const preloadCount = Number(adult.preloadedDomainCount || 0);
@@ -341,8 +371,10 @@ function renderHardeningActions(hardening: DashboardData["hardening"], $: QueryE
 function renderFocusShortcut(focusShortcut: FocusShortcutSummary, $: QueryElement): void {
   const onName = $("#focusShortcutOnName");
   const offName = $("#focusShortcutOffName");
-  if (document.activeElement !== onName) onName.value = focusShortcut?.onShortcutName || "";
-  if (document.activeElement !== offName) offName.value = focusShortcut?.offShortcutName || "";
+  if ($("#saveFocusShortcuts").dataset.dirty !== "true") {
+    onName.value = focusShortcut?.onShortcutName || "";
+    offName.value = focusShortcut?.offShortcutName || "";
+  }
   const status = $("#focusShortcutStatus");
   if (focusShortcut?.lastError) {
     status.textContent = focusShortcut.lastError;

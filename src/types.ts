@@ -93,6 +93,16 @@ export interface PolicyPhase {
   endsAt: string;
 }
 
+export interface ActivePolicyContributor {
+  kind: ActivePolicyKind;
+  sessionId: string;
+  profileId: string;
+  endsAt: string;
+  scheduleId?: string;
+  plannerBlockId?: string;
+  emergencyUnlocksAllowed?: boolean;
+}
+
 export interface ActivePolicy {
   kind: ActivePolicyKind;
   session: Session;
@@ -107,6 +117,7 @@ export interface ActivePolicy {
   contentFilter?: UnknownRecord & { id?: string; label: string };
   urlPattern?: { pattern: string; label: string };
   alarm?: unknown;
+  contributors?: ActivePolicyContributor[];
 }
 
 export interface AppSettings {
@@ -233,6 +244,7 @@ export interface LimitBlock {
   progress?: LimitProgress;
   requiredProfileId?: string;
   excludedProfileIds?: string[];
+  deviceTargets?: DeviceTarget[];
 }
 
 export interface AppLockRule {
@@ -283,6 +295,16 @@ export interface OverrideRecord {
   reason?: string;
 }
 
+export interface EmergencyPolicyContributor {
+  kind: "manual" | "schedule" | "planner";
+  sessionId: string;
+  profileId: string;
+  endsAt: string;
+  scheduleId?: string;
+  plannerBlockId?: string;
+  emergencyUnlocksAllowed?: boolean;
+}
+
 export interface EmergencyRequest {
   id: string;
   status: string;
@@ -294,6 +316,7 @@ export interface EmergencyRequest {
   sessionId?: string | null;
   scheduleId?: string | null;
   plannerBlockId?: string | null;
+  policyContributors?: EmergencyPolicyContributor[];
   limitBlockIds?: string[];
   limitRuleIds?: string[];
   until?: string;
@@ -564,6 +587,12 @@ export interface StateSealState {
   tamperDetail?: string;
 }
 
+export interface UsageSealState {
+  required: boolean;
+  migrationVersion: number;
+  migratedAt: string | null;
+}
+
 export interface HardeningIssue {
   id: string;
   detail: string;
@@ -654,6 +683,7 @@ export interface IosMdmSettings {
   useDevelopmentApns: boolean;
   checkOutWhenRemoved: boolean;
   enrollmentSecret: string | null;
+  enrollmentTokens: Record<string, unknown>[];
   devices: Record<string, unknown>[];
   commands: Record<string, unknown>[];
   lastEnrollmentProfileGeneratedAt: string | null;
@@ -736,6 +766,7 @@ export interface EnvironmentState {
 
 export interface IntegrityState {
   stateSeal: StateSealState;
+  usageSeal: UsageSealState;
   runtime: IntegrityRuntimeState;
 }
 
@@ -791,6 +822,11 @@ export interface UsageBucket {
   totalSeconds: number;
   apps: Record<string, number>;
   sites: Record<string, number>;
+  contexts?: Record<string, number>;
+  openContexts?: Record<string, number>;
+  contextVersion?: 1;
+  openContextVersion?: 1;
+  legacyTargetAggregation?: "max" | "sum";
   opens: {
     apps: Record<string, number>;
     sites: Record<string, number>;
@@ -807,6 +843,6 @@ export type UsageState = Record<string, UsageDay>;
 
 export interface MonitorHandle {
   status: UnknownRecord;
-  stop(): void;
+  stop(): Promise<void>;
   enforceImmediately(reason?: string): Promise<UnknownRecord>;
 }

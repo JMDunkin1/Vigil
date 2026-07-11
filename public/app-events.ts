@@ -1,13 +1,10 @@
-import type { DashboardItem, DistanceKeyResponse, PendingResponse, SessionStartResponse, UiState } from "./app-model.js";
-import { lines, shortDateTime } from "./format.js";
+import type { DistanceKeyResponse, PendingResponse, UiState } from "./app-model.js";
+import { lines } from "./format.js";
+import { formRevision, markFormSaved, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
 import type { FormController } from "./forms.js";
 import { $, $$, errorMessage, eventTarget, formPayload } from "./ui-shell.js";
 
 type PostRequest = <T = unknown>(path: string, body: unknown) => Promise<T>;
-
-type DeviceTargetsController = {
-  bind(): void;
-};
 
 type BasicPanelController = {
   bind(): void;
@@ -33,7 +30,6 @@ type FocusSoundController = {
 
 interface AppEventsContext {
   state: UiState;
-  deviceTargets: DeviceTargetsController;
   devicePanel: BasicPanelController;
   hardeningPanel: HardeningEventPanel;
   distanceKeyUi: DistanceKeyUiController;
@@ -42,49 +38,21 @@ interface AppEventsContext {
   post: PostRequest;
   refresh(): Promise<void>;
   toast(message: string): void;
-  selectedDeviceTargets(): Array<"computer" | "phone">;
-  previewSessionStart(body: Record<string, unknown>): Promise<void>;
-  startNormalMode(): Promise<void>;
-  startPresetSession(kind: "soft" | "brick"): Promise<void>;
   setProtectionLevel(level: number): Promise<void>;
-  renderSosPlan(session: (DashboardItem & { plan?: string[] }) | null): void;
 }
 
 export function bindAppEvents(context: AppEventsContext) {
-  const { state, deviceTargets, devicePanel, hardeningPanel, distanceKeyUi, focusSound, forms, post, refresh, toast, selectedDeviceTargets, previewSessionStart, startNormalMode, startPresetSession, setProtectionLevel, renderSosPlan } = context;
+  const { state, devicePanel, hardeningPanel, distanceKeyUi, focusSound, forms, post, refresh, toast, setProtectionLevel } = context;
 
-  deviceTargets.bind();
   devicePanel.bind();
   hardeningPanel.bind();
+  const profileForm = $("#profileForm") as unknown as HTMLFormElement;
+  trackFormChanges(profileForm);
 
   $$("[data-scan-distance-key]").forEach((button) => {
     button.addEventListener("click", () => distanceKeyUi.openScanner(button.dataset.scanDistanceKey));
   });
   $("#closeDistanceScanner").addEventListener("click", distanceKeyUi.closeScanner);
-
-  $("#startSessionForm").addEventListener("submit", async (event: Event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget as HTMLFormElement);
-    const body = formPayload(form);
-    body.cycleEnabled = form.has("cycleEnabled");
-    body.commitmentLock = form.has("commitmentLock");
-    body.deviceTargets = selectedDeviceTargets();
-    await previewSessionStart(body);
-  });
-
-  $("#endSession").addEventListener("click", async () => {
-    try {
-      await post("/api/session/end", { deviceTargets: selectedDeviceTargets() });
-      toast("Selected soft lock ended");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#startNormalMode").addEventListener("click", () => startNormalMode());
-  $("#startSoftBlock").addEventListener("click", () => startPresetSession("soft"));
-  $("#startFullBrick").addEventListener("click", () => startPresetSession("brick"));
 
   const protectionLevel = $("#protectionLevel");
   protectionLevel.addEventListener("input", () => {
@@ -95,21 +63,6 @@ export function bindAppEvents(context: AppEventsContext) {
   });
   protectionLevel.addEventListener("change", () => {
     void setProtectionLevel(Number(protectionLevel.value || 1));
-  });
-
-  $("#startPanicLock").addEventListener("click", async () => {
-    const status = $("#panicStatus");
-    $("#startPanicLock").disabled = true;
-    status.textContent = "Locking...";
-    try {
-      const response = await post<SessionStartResponse>("/api/panic/start", {});
-      status.textContent = `Locked until ${shortDateTime(response.session.endsAt)}`;
-      toast("Panic lock started");
-    } catch (error) {
-      status.textContent = errorMessage(error);
-      toast(errorMessage(error));
-    }
-    await refresh();
   });
 
   $("#focusSoundEnabled").addEventListener("change", async (event: Event) => {
@@ -212,12 +165,14 @@ export function bindAppEvents(context: AppEventsContext) {
 
   $("#profileSelect").addEventListener("change", async (event: Event) => {
     state.selectedProfileId = eventTarget(event).value;
+    markFormSaved(profileForm);
     await post("/api/settings", { activeProfileId: state.selectedProfileId });
     await refresh();
   });
 
   $("#profileForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
+    const submittedRevision = formRevision(profileForm);
     const form = new FormData(event.currentTarget as HTMLFormElement);
     const body = formPayload(form);
     body.blockedApps = lines(body.blockedApps);
@@ -226,6 +181,7 @@ export function bindAppEvents(context: AppEventsContext) {
     body.allowedApps = lines(body.allowedApps);
     body.allowedSites = lines(body.allowedSites);
     await post("/api/profile", body);
+    markFormSavedAtRevision(profileForm, submittedRevision);
     toast("Profile saved");
     await refresh();
   });
@@ -308,59 +264,6 @@ export function bindAppEvents(context: AppEventsContext) {
   $("#newAppLock").addEventListener("click", forms.resetAppLockForm);
   $("#newIntentionalRule").addEventListener("click", forms.resetIntentionalRuleForm);
   $("#newBehavior").addEventListener("click", forms.resetBehaviorForm);
-  $("#newPlanItem").addEventListener("click", forms.resetPlanItemForm);
-  $("#newPlanBlock").addEventListener("click", forms.resetPlanBlockForm);
-
-  $("#planListForm").addEventListener("submit", async (event: Event) => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const body = formPayload(new FormData(form));
-    body.active = new FormData(form).has("active");
-    try {
-      await post("/api/intentional-use/plan/list", body);
-      toast("List saved");
-      forms.resetPlanListForm();
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#planItemForm").addEventListener("submit", async (event: Event) => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const body = formPayload(new FormData(form));
-    body.tags = forms.tagList(body.tags);
-    body.dueAt = body.dueAt ? new Date(String(body.dueAt)).toISOString() : null;
-    try {
-      await post("/api/intentional-use/plan/item", body);
-      toast("Item saved");
-      forms.resetPlanItemForm();
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#planBlockForm").addEventListener("submit", async (event: Event) => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const body = formPayload(new FormData(form));
-    body.enabled = new FormData(form).has("enabled");
-    body.commitmentLock = new FormData(form).has("commitmentLock");
-    body.deviceTargets = [...$$<HTMLInputElement>("#planBlockForm input[name='deviceTargets']:checked")].map((input) => input.value);
-    body.startsAt = body.startsAt ? new Date(String(body.startsAt)).toISOString() : new Date().toISOString();
-    body.endsAt = body.endsAt ? new Date(String(body.endsAt)).toISOString() : new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    body.listId = forms.selectedPlanItemListId(String(body.itemId || ""));
-    try {
-      await post("/api/intentional-use/plan/block", body);
-      toast("Block saved");
-      forms.resetPlanBlockForm();
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
 
   $("#limitForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
@@ -468,35 +371,6 @@ export function bindAppEvents(context: AppEventsContext) {
     await refresh();
   });
 
-  $("#recoveryCheckInForm").addEventListener("submit", async (event: Event) => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const body = formPayload(new FormData(form));
-    try {
-      await post("/api/intentional-use/recovery/check-in", body);
-      toast("Recovery check-in added");
-      form.reset();
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#sosForm").addEventListener("submit", async (event: Event) => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const body = formPayload(new FormData(form));
-    try {
-      const response = await post<{ session?: DashboardItem & { plan?: string[] } }>("/api/intentional-use/recovery/sos", body);
-      toast("SOS reset started");
-      renderSosPlan(response.session || null);
-      form.reset();
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
   $("#behaviorForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
@@ -507,24 +381,6 @@ export function bindAppEvents(context: AppEventsContext) {
       await post("/api/intentional-use/behavior", body);
       toast("Behavior saved");
       forms.resetBehaviorForm();
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
-  $("#behaviorCheckInForm").addEventListener("submit", async (event: Event) => {
-    event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
-    const body = formPayload(new FormData(form));
-    if (!body.behaviorId) {
-      toast("Save a behavior first");
-      return;
-    }
-    try {
-      await post("/api/intentional-use/behavior/check-in", body);
-      toast("Check-in added");
-      form.reset();
     } catch (error) {
       toast(errorMessage(error));
     }

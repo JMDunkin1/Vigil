@@ -36,6 +36,9 @@ enum DOMAdapters {
             const applyAudioPreference = () => {
               const hasGesture = !navigator.userActivation || navigator.userActivation.hasBeenActive;
               document.querySelectorAll('video, audio').forEach((media) => {
+                const shouldMute = !window.__sentinelAudioPreferred;
+                media.defaultMuted = shouldMute;
+                media.muted = shouldMute;
                 if (window.__sentinelAudioPreferred && hasGesture) {
                   media.defaultMuted = false;
                   media.muted = false;
@@ -45,11 +48,7 @@ enum DOMAdapters {
 
             window.__sentinelSetAudioPreference = (enabled) => {
               window.__sentinelAudioPreferred = Boolean(enabled);
-              if (!enabled) {
-                document.querySelectorAll('video, audio').forEach((media) => { media.muted = true; });
-              } else {
-                applyAudioPreference();
-              }
+              applyAudioPreference();
               bridge({ type: 'audio', enabled: Boolean(enabled) });
             };
 

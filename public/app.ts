@@ -5,21 +5,20 @@ import { renderAppLockDays, renderGrayscaleScheduleDays, renderIntentionalDays, 
 import { createDevicePanel } from "./device-panel.js";
 import { bindAppEvents } from "./app-events.js";
 import { createDistanceKeyUi } from "./distance-key-ui.js";
-import { createDeviceTargetController } from "./device-targets.js";
 import { detailBlock, progressBlock } from "./dom.js";
 import { createFocusSoundController } from "./focus-sound.js";
-import { daysText, enforcementText, eventLabel, formatDuration, lines, phaseText, phaseTitle, progressText, shortDateTime, signedPercent, sweepText, systemSleepLockText } from "./format.js";
+import { daysText, formatDuration, lines, phaseTitle, progressText } from "./format.js";
+import { formHasUnsavedChanges, markFormSaved } from "./form-state.js";
 import { createFormController } from "./forms.js";
 import { createHardeningPanel } from "./hardening-panel.js";
 import { createLifeLogView } from "./life-log-view.js";
 import { createRankingView } from "./ranking-view.js";
-import { createReportView } from "./report-view.js";
 import { createSaintStage } from "./saint-stage.js";
 import { renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
 import { createTrackingView } from "./tracking-view.js";
 import { $, $$, bindSidebar, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
-import type { ActivePolicy, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, InterventionSummary, JournalVaultSummary, MonitorSummary, ProgressSummary, ReportSummary, Schedule, SessionEndResponse, SessionPreviewResponse, SessionPreviewSummary, SessionStartResponse, StateEvent, UiState, UnknownRecord, UsageSummary } from "./app-model.js";
+import type { ActivePolicy, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, JournalVaultSummary, ProgressSummary, Schedule, SessionStartResponse, UiState, UnknownRecord } from "./app-model.js";
 
 interface JournalUnlockResponse extends UnknownRecord {
   ok?: boolean;
@@ -62,21 +61,15 @@ const state: UiState = {
 
 const BRICK_MODE_PROFILE_ID = "brick-mode";
 const SOFT_BLOCK_PROFILE_ID = "soft-block";
+const SESSION_DEVICE_TARGETS = ["computer", "phone"] as const;
 const BUILT_IN_PROFILE_IDS = new Set(["default", "normal", SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PROFILE_ID]);
-let pendingLockStart: UnknownRecord | null = null;
 let protectionLevelRequestInFlight = false;
-const deviceTargets = createDeviceTargetController({
-  onChange: () => {
-    renderDeviceTargetControls(state.data?.state || {});
-    hideLockPreview();
-  }
-});
+let refreshCycle: Promise<void> | null = null;
+let refreshRequested = false;
 const forms = createFormController({
   $,
   $$,
-  getData: () => state.data,
-  setView,
-  defaultPlanBlockProfileId: SOFT_BLOCK_PROFILE_ID
+  setView
 });
 const focusSound = createFocusSoundController({ $, post });
 const appUpdatePanel = createAppUpdatePanel({ $, get, post, toast, errorMessage });
@@ -84,16 +77,12 @@ const distanceKeyUi = createDistanceKeyUi({ $, toast, errorMessage, scanner: sta
 const devicePanel = createDevicePanel({ $, post, lines, toast, errorMessage, refresh });
 const lifeLogView = createLifeLogView({
   $,
-  post,
   del,
   toast,
   refresh,
   forms,
-  deviceTargetsText,
-  profileName,
   empty
 });
-const reportView = createReportView({ $, empty });
 const hardeningPanel = createHardeningPanel({
   $,
   post,
@@ -130,7 +119,6 @@ function boot() {
   appUpdatePanel.bind();
   bindAppEvents({
     state,
-    deviceTargets,
     devicePanel,
     hardeningPanel,
     distanceKeyUi,
@@ -139,19 +127,17 @@ function boot() {
     post,
     refresh,
     toast,
-    selectedDeviceTargets,
-    previewSessionStart,
-    startNormalMode,
-    startPresetSession,
-    setProtectionLevel,
-    renderSosPlan: lifeLogView.renderSosPlan
+    setProtectionLevel
   });
-  bindLockPreview();
-  void refresh();
-  setInterval(() => {
-    void refresh();
-  }, 3000);
+  void pollState();
   state.timer = setInterval(renderCountdowns, 1000);
+}
+
+async function pollState(): Promise<void> {
+  await refresh();
+  window.setTimeout(() => {
+    void pollState();
+  }, 3000);
 }
 
 function setView(view?: string) {
@@ -272,10 +258,10 @@ function renderJournalGate(data: DashboardData): void {
   const locked = !vault.configured || !journalSessionActive();
   const gate = $("#journalUnlockGate");
   gate.hidden = !locked;
-  $("#journalUnlockTitle").textContent = vault.configured ? "Your entries remain private." : "Protect your journal first.";
+  $("#journalUnlockTitle").textContent = vault.configured ? "Journal locked." : "Set journal access.";
   $("#journalUnlockCopy").textContent = vault.configured
     ? "Authenticate with Touch ID or your journal password. The journal locks again automatically."
-    : "Create a password before writing or reading entries. Sentinel keeps only a short-lived unlock token in this app session.";
+    : "Set a password to restrict access in Sentinel. Entries are stored locally and are not encrypted.";
   const password = $("#journalPassword");
   password.placeholder = vault.configured ? "Journal password" : "Create a journal password";
   password.setAttribute("autocomplete", vault.configured ? "current-password" : "new-password");
@@ -306,7 +292,7 @@ function renderJournalSecurity(data: DashboardData): void {
 }
 
 function journalVault(data: DashboardData | null): JournalVaultSummary {
-  return data?.intentionalUse?.lifeLog?.journalVault || data?.journalVault || {};
+  return data?.intentionalUse?.lifeLog?.journalVault || {};
 }
 
 function normalizeJournalUnlockResponse(value: unknown): JournalUnlockResponse {
@@ -314,11 +300,7 @@ function normalizeJournalUnlockResponse(value: unknown): JournalUnlockResponse {
 }
 
 function selectedDeviceTargets() {
-  return deviceTargets.selectedTargets() as Array<"computer" | "phone">;
-}
-
-function selectedDeviceLabel() {
-  return deviceTargets.selectedLabel();
+  return [...SESSION_DEVICE_TARGETS];
 }
 
 function deviceTargetsText(targets: readonly string[] = []): string {
@@ -326,97 +308,6 @@ function deviceTargetsText(targets: readonly string[] = []): string {
   if (normalized.includes("computer") && normalized.includes("phone")) return "Computer + iPhone";
   if (normalized.includes("phone")) return "iPhone";
   return "Computer";
-}
-
-function modeLabel(value: unknown): string {
-  const mode = String(value || "focus");
-  if (mode === "brick") return "Brick";
-  if (mode === "sleep") return "Sleep";
-  if (mode === "rehab") return "Rehab";
-  return "Focus";
-}
-
-function lockLevelLabel(value: unknown): string {
-  return value === "light" ? "Soft" : "Strict";
-}
-
-function previewItem(title: string, detail: string): HTMLDivElement {
-  const item = document.createElement("div");
-  item.className = "lock-preview-item";
-  const heading = document.createElement("strong");
-  heading.textContent = title;
-  const text = document.createElement("span");
-  text.textContent = detail;
-  item.append(heading, text);
-  return item;
-}
-
-function listPreview(values: readonly unknown[] = [], emptyText: string): string {
-  const items = values.map((value) => String(value || "").trim()).filter(Boolean);
-  if (!items.length) return emptyText;
-  const visible = items.slice(0, 5);
-  const suffix = items.length > visible.length ? ` +${items.length - visible.length} more` : "";
-  return `${visible.join(", ")}${suffix}`;
-}
-
-function allowlistText(values: readonly unknown[] = [], label: string): string {
-  const items = values.map((value) => String(value || "").trim()).filter(Boolean);
-  if (!items.length) return `Allowlist mode: blocks anything outside the saved ${label}.`;
-  return `Allowlist mode: ${listPreview(items, "")}; everything else blocked.`;
-}
-
-function phonePreviewText(phone: SessionPreviewSummary["phone"]): string {
-  if (!phone?.targeted) return phone?.detail || "Not targeted.";
-  const counts = `${phone.appCount || 0} app bundle${phone.appCount === 1 ? "" : "s"} / ${phone.siteCount || 0} ${phone.mode === "allowlist" ? "allowed URL" : "blocked URL"}${phone.siteCount === 1 ? "" : "s"}`;
-  const blockers = phone.blockers?.length ? ` Need: ${listPreview(phone.blockers, "")}` : "";
-  return `${phone.status || "iPhone"}: ${counts}. ${phone.detail || ""}${blockers}`.trim();
-}
-
-async function startNormalMode() {
-  const targets = selectedDeviceTargets();
-  const status = $("#brickStatus");
-  status.textContent = "Returning to Normal...";
-  try {
-    const response = await post<SessionEndResponse>("/api/session/end", { deviceTargets: targets });
-    status.textContent = response.ended ? "Normal active" : "Normal already active";
-    toast(`${selectedDeviceLabel()} set to Normal`);
-  } catch (error) {
-    status.textContent = errorMessage(error);
-    toast(errorMessage(error));
-  }
-  await refresh();
-}
-
-async function startPresetSession(kind: "soft" | "brick") {
-  const profileId = kind === "brick" ? BRICK_MODE_PROFILE_ID : SOFT_BLOCK_PROFILE_ID;
-  const profile = state.data?.state.profiles.find((item) => item.id === profileId);
-  if (!profile) {
-    toast(kind === "brick" ? "Full Brick profile is unavailable" : "Soft Lock profile is unavailable");
-    return;
-  }
-
-  const status = $("#brickStatus");
-  status.textContent = "Reviewing...";
-  const body = kind === "brick"
-    ? {
-        title: "Full Brick",
-        mode: "brick",
-        profileId: BRICK_MODE_PROFILE_ID,
-        durationMinutes: $("#brickDuration").value,
-        lockLevel: "deep",
-        commitmentLock: true,
-        deviceTargets: selectedDeviceTargets()
-      }
-    : {
-        title: "Soft Lock",
-        mode: "focus",
-        profileId: SOFT_BLOCK_PROFILE_ID,
-        durationMinutes: $("#brickDuration").value,
-        lockLevel: "deep",
-        commitmentLock: true,
-        deviceTargets: selectedDeviceTargets()
-      };
-  await previewSessionStart(body);
 }
 
 async function setProtectionLevel(requestedLevel: number): Promise<void> {
@@ -446,103 +337,6 @@ async function setProtectionLevel(requestedLevel: number): Promise<void> {
   }
 }
 
-function bindLockPreview(): void {
-  $("#confirmLockPreview").addEventListener("click", () => {
-    void confirmLockPreview();
-  });
-  $("#cancelLockPreview").addEventListener("click", () => hideLockPreview());
-}
-
-async function previewSessionStart(body: UnknownRecord): Promise<void> {
-  pendingLockStart = null;
-  const panel = $("#lockPreview");
-  const status = $("#lockPreviewStatus");
-  const confirm = $("#confirmLockPreview");
-  panel.classList.remove("hidden");
-  status.textContent = "Preparing preview...";
-  confirm.disabled = true;
-  try {
-    const response = await post<SessionPreviewResponse>("/api/session/preview", body);
-    pendingLockStart = { ...body };
-    renderLockPreview(response.preview);
-    $("#brickStatus").textContent = "Preview ready";
-  } catch (error) {
-    hideLockPreview(false);
-    $("#brickStatus").textContent = errorMessage(error);
-    toast(errorMessage(error));
-  }
-}
-
-function renderLockPreview(preview: SessionPreviewSummary): void {
-  $("#lockPreviewTitle").textContent = preview.title || "Manual Lock";
-  $("#lockPreviewMeta").textContent = [
-    modeLabel(preview.mode),
-    preview.profileName || "Profile",
-    lockLevelLabel(preview.lockLevel),
-    preview.deviceLabel || deviceTargetsText(preview.deviceTargets || []),
-    formatDuration(Number(preview.durationMinutes || 0) * 60)
-  ].filter(Boolean).join(" | ");
-
-  const grid = $("#lockPreviewGrid");
-  grid.replaceChildren();
-  const profileMode = preview.profileMode === "allowlist" ? "Allowlist" : "Blocklist";
-  grid.append(
-    previewItem("Apps", profileMode === "Allowlist"
-      ? allowlistText(preview.allowedApps, "allowed apps")
-      : listPreview(preview.blockedApps, "No app blocks in this profile")),
-    previewItem("Sites", profileMode === "Allowlist"
-      ? allowlistText(preview.allowedSites, "allowed sites")
-      : listPreview(preview.blockedSites, "No site blocks in this profile")),
-    previewItem("URL/path patterns", listPreview(preview.blockedUrlPatterns, "No URL/path patterns")),
-    previewItem("Browser/control", listPreview(preview.protections, "No extra browser controls inferred")),
-    previewItem("iPhone", phonePreviewText(preview.phone))
-  );
-
-  if (preview.commitmentLock) {
-    grid.append(previewItem("Commitment", "Emergency unlocks disabled for this lock."));
-  } else if (preview.canEndEarly) {
-    grid.append(previewItem("End early", "Soft lock can be ended from this screen."));
-  }
-
-  if (preview.conflicts?.length) {
-    grid.append(previewItem("Already active", `${deviceTargetsText(preview.conflicts)} already has a session.`));
-  }
-
-  const blocked = Boolean(preview.conflicts?.length);
-  $("#confirmLockPreview").disabled = blocked;
-  $("#lockPreviewStatus").textContent = blocked ? "Resolve the active target before starting." : "Review before starting.";
-}
-
-async function confirmLockPreview(): Promise<void> {
-  if (!pendingLockStart) return;
-  const confirm = $("#confirmLockPreview");
-  const status = $("#lockPreviewStatus");
-  confirm.disabled = true;
-  status.textContent = "Starting...";
-  try {
-    const response = await post<SessionStartResponse>("/api/session/start", pendingLockStart);
-    const title = response.session?.title || String(pendingLockStart.title || "Lock");
-    toast(`${title} started for ${selectedDeviceLabel()}`);
-    $("#brickStatus").textContent = `${title} active`;
-    hideLockPreview(false);
-    await refresh();
-  } catch (error) {
-    status.textContent = errorMessage(error);
-    toast(errorMessage(error));
-    confirm.disabled = false;
-  }
-}
-
-function hideLockPreview(clearPending = true): void {
-  const panel = document.querySelector("#lockPreview");
-  if (!panel) return;
-  panel.classList.add("hidden");
-  $("#lockPreviewGrid").replaceChildren();
-  $("#lockPreviewStatus").textContent = "Review before starting";
-  $("#confirmLockPreview").disabled = true;
-  if (clearPending) pendingLockStart = null;
-}
-
 async function hydrateJournalEntries(data: DashboardData): Promise<void> {
   const lifeLog = data.intentionalUse?.lifeLog;
   if (!lifeLog) return;
@@ -565,14 +359,27 @@ async function hydrateJournalEntries(data: DashboardData): Promise<void> {
   }
 }
 
-async function refresh() {
+function refresh(): Promise<void> {
+  refreshRequested = true;
+  refreshCycle ||= runRefreshLoop();
+  return refreshCycle;
+}
+
+async function runRefreshLoop(): Promise<void> {
   try {
-    const data = await get<DashboardData>("/api/state");
-    await hydrateJournalEntries(data);
-    state.data = data;
-    render();
-  } catch (error) {
-    toast(errorMessage(error));
+    while (refreshRequested) {
+      refreshRequested = false;
+      try {
+        const data = await get<DashboardData>("/api/state");
+        await hydrateJournalEntries(data);
+        state.data = data;
+        render();
+      } catch (error) {
+        toast(errorMessage(error));
+      }
+    }
+  } finally {
+    refreshCycle = null;
   }
 }
 
@@ -582,12 +389,9 @@ function render() {
   renderPresetButtons(data.presets || [], toast);
   renderHeader(data.state, data.limits.activeBlocks);
   focusSound.render(data);
-  renderMetrics(data.usage, data.report);
   rankingView.render(data);
   renderJournalGate(data);
   renderJournalSecurity(data);
-  renderWatcher(data.monitor);
-  renderIntervention(data.intervention);
   renderIntentionalUse(data.intentionalUse);
   lifeLogView.renderLifeLog(data.intentionalUse);
   trackingView.render(data);
@@ -599,28 +403,15 @@ function render() {
   renderGrayscale(data);
   renderLimits(data.limits.rules);
   renderAppLocks(data.appLocks.rules);
-  reportView.renderBars("#appBars", data.usage.topApps);
-  reportView.renderBars("#siteBars", data.usage.topSites);
-  reportView.renderReport(data.report);
   devicePanel.render(data.devices);
-  renderEvents(data.state.events);
   renderEmergency(data.state);
   renderCountdowns();
-}
-
-function renderDeviceTargetControls(appState: Partial<DashboardState> = {}): void {
-  deviceTargets.render(appState);
 }
 
 function renderHeader(appState: DashboardState, activeBlocks: UnknownRecord[] = []): void {
   const active = appState.activePolicy;
   const session = appState.activeSession;
   const phase = active?.phase || appState.sessionPhase;
-  const softButton = $("#startSoftBlock");
-  const brickButton = $("#startFullBrick");
-  const normalButton = $("#startNormalMode");
-  const panicButton = $("#startPanicLock");
-  const panicStatus = $("#panicStatus");
   let orbState = "idle";
   if (active?.kind === "integrity") {
     $("#sessionTitle").textContent = active.session.title;
@@ -641,24 +432,7 @@ function renderHeader(appState: DashboardState, activeBlocks: UnknownRecord[] = 
     $("#sessionTitle").textContent = "Ready";
   }
   renderOrbState(orbState);
-  renderDeviceTargetControls(appState);
   renderProtectionLevel(appState);
-
-  if (brickButton) {
-    const selectedActive = selectedDeviceTargets().some((target) => Boolean(appState.activeSessions?.[target]));
-    brickButton.disabled = selectedActive;
-    if (softButton) softButton.disabled = selectedActive;
-    if (normalButton) normalButton.disabled = false;
-    if (!selectedActive && ["Full Brick active", "Soft Lock active"].includes($("#brickStatus").textContent)) $("#brickStatus").textContent = "Normal baseline";
-  }
-  if (panicButton && panicStatus) {
-    const panicActive = active?.kind === "panic";
-    const duration = Number(appState.settings?.panicLockDurationMinutes || 3);
-    panicButton.disabled = panicActive;
-    panicStatus.textContent = panicActive
-      ? `All screens locked until ${shortDateTime(active.endsAt)}`
-      : `${duration} min full lockout`;
-  }
 }
 
 function renderProtectionLevel(appState: DashboardState | null | undefined): void {
@@ -679,11 +453,14 @@ function renderProtectionLevel(appState: DashboardState | null | undefined): voi
         : 1;
   const input = $("#protectionLevel");
   const label = level === 4 ? "Panic" : `Level ${level}`;
-  input.value = String(level);
+  const userAdjusting = document.activeElement === input;
+  if (!userAdjusting) input.value = String(level);
   input.disabled = protectionLevelRequestInFlight || level === 4;
   input.setAttribute("aria-valuetext", level === 4 ? "Panic, locked for three minutes" : label);
-  $("#protectionLevelControl").dataset.level = String(level);
-  $("#protectionLevelLabel").textContent = label;
+  if (!userAdjusting) {
+    $("#protectionLevelControl").dataset.level = String(level);
+    $("#protectionLevelLabel").textContent = label;
+  }
   if (level === 4 && active) {
     const seconds = Math.max(0, Math.ceil((new Date(active.endsAt).getTime() - Date.now()) / 1000));
     $("#protectionLevelStatus").textContent = `${formatDuration(seconds)} locked`;
@@ -699,91 +476,27 @@ function renderOrbState(orbState: string): void {
   document.body.dataset.lockState = orbState;
 }
 
-function renderMetrics(usage: UsageSummary, report: ReportSummary): void {
-  const progression = report?.progression;
-  $("#focusScore").textContent = `${usage.focusScore}`;
-  $("#progressLevel").textContent = progression ? String(progression.level) : "--";
-  $("#brainHealth").textContent = progression ? `${progression.brainHealth}` : "--";
-  $("#homeFocusStreak").textContent = report?.streak?.label || "--";
-  $("#distractingToday").textContent = formatDuration(usage.distractingSeconds);
-  $("#lockedToday").textContent = formatDuration(usage.protectedSeconds);
-  $("#distractionTrend").textContent = signedPercent(report?.comparison?.distractingPercentDelta);
-}
-
-function renderWatcher(monitor: MonitorSummary): void {
-  const sample = monitor.lastSample || {};
-  $("#activeApp").textContent = sample.app || "No sample";
-  $("#watchApp").textContent = sample.app || "--";
-  $("#watchSite").textContent = sample.hostname || "--";
-  $("#lastBlock").textContent = monitor.lastEnforcement ? enforcementText(monitor.lastEnforcement) : "--";
-  $("#watchWifi").textContent = state.data?.state.environment?.wifiSsid || "--";
-  $("#watchSweep").textContent = sweepText(monitor.lastProcessSweep);
-  $("#watchSystemLock").textContent = systemSleepLockText(monitor.lastSystemSleepLock);
-
-  const warning = $("#permissionWarning");
-  if (monitor.accessibilityLikelyMissing) {
-    warning.textContent = "Accessibility permission is required for live app detection.";
-    warning.classList.remove("hidden");
-  } else if (monitor.lastError) {
-    warning.textContent = monitor.lastError;
-    warning.classList.remove("hidden");
-  } else {
-    warning.classList.add("hidden");
-  }
-}
-
-function renderIntervention(intervention: InterventionSummary): void {
-  const root = $("#interventionPanel");
-  root.replaceChildren();
-  if (!intervention?.enabled) {
-    root.className = "intervention-panel muted";
-    root.textContent = "Adaptive friction off";
-    return;
-  }
-
-  root.className = `intervention-panel ${intervention.level || "calm"}`;
-  const label = document.createElement("strong");
-  label.textContent = "Adaptive Friction";
-  const message = document.createElement("span");
-  message.textContent = intervention.message || "";
-  const meta = document.createElement("em");
-  meta.textContent = intervention.resetsAt
-    ? `Window resets ${new Date(intervention.resetsAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-    : `${intervention.windowMinutes}m rolling window`;
-  root.append(label, message, meta);
-
-  if (intervention.topTargets?.length) {
-    const targets = document.createElement("div");
-    targets.className = "intervention-targets";
-    for (const target of intervention.topTargets) {
-      const chip = document.createElement("span");
-      chip.textContent = `${target.label} x${target.count}`;
-      targets.append(chip);
-    }
-    root.append(targets);
-  }
-}
-
 function renderProfiles(appState: DashboardState): void {
   const profiles = appState.profiles;
   const activeId = appState.settings.activeProfileId;
   state.selectedProfileId ||= activeId;
 
   forms.fillSelect($("#profileSelect"), profiles, state.selectedProfileId);
-  forms.fillSelect($("#sessionProfile"), profiles, activeId);
-  forms.fillSelect($("#planBlockProfileId"), profiles, SOFT_BLOCK_PROFILE_ID);
 
   const profile = profiles.find((item) => item.id === state.selectedProfileId) || appState.activeProfile;
   if (!profile) return;
   const form = $("#profileForm");
-  form.elements.id.value = profile.id;
-  form.elements.name.value = profile.name;
-  form.elements.mode.value = profile.mode;
-  form.elements.blockedApps.value = (profile.blockedApps || []).join("\n");
-  form.elements.blockedSites.value = (profile.blockedSites || []).join("\n");
-  form.elements.blockedUrlPatterns.value = (profile.blockedUrlPatterns || []).join("\n");
-  form.elements.allowedApps.value = (profile.allowedApps || []).join("\n");
-  form.elements.allowedSites.value = (profile.allowedSites || []).join("\n");
+  const trackedForm = form as unknown as HTMLFormElement;
+  if (!formHasUnsavedChanges(trackedForm)) {
+    form.elements.id.value = profile.id;
+    form.elements.name.value = profile.name;
+    form.elements.mode.value = profile.mode;
+    form.elements.blockedApps.value = (profile.blockedApps || []).join("\n");
+    form.elements.blockedSites.value = (profile.blockedSites || []).join("\n");
+    form.elements.blockedUrlPatterns.value = (profile.blockedUrlPatterns || []).join("\n");
+    form.elements.allowedApps.value = (profile.allowedApps || []).join("\n");
+    form.elements.allowedSites.value = (profile.allowedSites || []).join("\n");
+  }
 
   const deleteButton = $("#deleteProfile");
   const canDelete = !BUILT_IN_PROFILE_IDS.has(profile.id) && profiles.length > 1;
@@ -793,6 +506,7 @@ function renderProfiles(appState: DashboardState): void {
       await del(`/api/profile/${encodeURIComponent(profile.id)}`);
       toast("Profile deleted");
       state.selectedProfileId = null;
+      markFormSaved(trackedForm);
       await refresh();
     } catch (error) {
       toast(errorMessage(error));
@@ -1116,26 +830,6 @@ function renderIntentionalRuleList(rules: DashboardItem[]): void {
   }
 }
 
-function renderEvents(events: StateEvent[]): void {
-  const root = $("#eventsList");
-  root.replaceChildren();
-  if (!events.length) {
-    root.append(empty("No events yet"));
-    return;
-  }
-
-  for (const event of events.slice(0, 12)) {
-    const row = document.createElement("div");
-    row.className = "event";
-    const title = document.createElement("strong");
-    title.textContent = eventLabel(event);
-    const meta = document.createElement("span");
-    meta.textContent = new Date(event.at).toLocaleString();
-    row.append(title, meta);
-    root.append(row);
-  }
-}
-
 function renderEmergency(appState: DashboardState): void {
   const panel = $("#emergencyPanel");
   const active = emergencyPolicy(appState);
@@ -1211,6 +905,11 @@ function renderCountdowns(): void {
   const phase = active?.phase || appState?.sessionPhase;
   const activeLimitBlocks = (state.data?.limits.activeBlocks || []).filter((block) => new Date(block.until) > new Date());
   if (state.data?.protection) hardeningPanel.renderMaintenance(state.data.protection);
+  if (active?.session?.source === "protection-level") {
+    $("#sessionCountdown").textContent = "Until changed";
+    if (appState) renderEmergency(appState);
+    return;
+  }
   if (phase) {
     const seconds = Math.max(0, Math.round((new Date(phase.endsAt).getTime() - Date.now()) / 1000));
     $("#sessionCountdown").textContent = formatDuration(seconds);
@@ -1235,10 +934,6 @@ function renderCountdowns(): void {
 
 function targetCount(rule: DashboardItem): number {
   return (rule.apps || []).length + (rule.sites || []).length + (rule.urlPatterns || []).length;
-}
-
-function profileName(profileId: string): string {
-  return state.data?.state.profiles.find((profile) => profile.id === profileId)?.name || profileId || "Profile";
 }
 
 function renderTypingChallenge(output: ControlElement, input: ControlElement, challenge: ChallengeSummary | null): void {

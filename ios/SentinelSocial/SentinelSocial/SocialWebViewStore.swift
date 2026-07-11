@@ -10,17 +10,24 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     let fixedService: SocialService
     private let defaults: UserDefaults
+    private let loadInitialPages: Bool
     private var webViews: [SocialService: WKWebView] = [:]
     private var serviceByWebView: [ObjectIdentifier: SocialService] = [:]
     private var messageBridges: [SocialService: ScriptMessageBridge] = [:]
 
-    init(defaults: UserDefaults = .standard, fixedService: SocialService? = nil, bundle: Bundle = .main) {
+    init(
+        defaults: UserDefaults = .standard,
+        fixedService: SocialService? = nil,
+        bundle: Bundle = .main,
+        loadInitialPages: Bool = true
+    ) {
         let configured = fixedService
             ?? (bundle.object(forInfoDictionaryKey: "SentinelService") as? String).flatMap(SocialService.init(rawValue:))
             ?? .youtube
         self.fixedService = configured
         self.selectedService = configured
         self.defaults = defaults
+        self.loadInitialPages = loadInitialPages
         super.init()
         for service in SocialService.allCases {
             let key = audioPreferenceKey(service)
@@ -38,7 +45,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     func open(_ url: URL) {
         guard let service = SocialService.resolve(url), service == fixedService else { return }
         select(service)
-        guard url.scheme?.lowercased().hasPrefix("http") == true else { return }
+        guard service.allowsNavigation(to: url) else { return }
         webView(for: service).load(URLRequest(url: url))
     }
 
@@ -46,8 +53,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if let existing = webViews[service] { return existing }
 
         let controller = WKUserContentController()
-        let bridge = ScriptMessageBridge { [weak self] payload in
-            Task { @MainActor in self?.handle(payload, service: service) }
+        let bridge = ScriptMessageBridge { [weak self] message in
+            Task { @MainActor in self?.handle(message, service: service) }
         }
         controller.add(bridge, name: "sentinel")
         if let preflight = DOMAdapters.preflightScript(for: service) {
@@ -78,7 +85,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.alwaysBounceVertical = true
         webView.scrollView.isDirectionalLockEnabled = true
+        #if DEBUG
         if #available(iOS 16.4, *) { webView.isInspectable = true }
+        #endif
         if service == .snapchat {
             webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         }
@@ -86,7 +95,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         webViews[service] = webView
         serviceByWebView[ObjectIdentifier(webView)] = service
         messageBridges[service] = bridge
-        webView.load(URLRequest(url: service.homeURL))
+        if loadInitialPages { webView.load(URLRequest(url: service.homeURL)) }
         return webView
     }
 
@@ -120,7 +129,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         webViews.values.forEach { $0.evaluateJavaScript("window.__sentinelPauseAllMedia?.();") }
     }
 
-    private func handle(_ payload: Any, service: SocialService) {
+    private func handle(_ message: WKScriptMessage, service: SocialService) {
+        guard message.frameInfo.isMainFrame,
+              let url = message.frameInfo.request.url ?? message.webView?.url,
+              service.allowsNavigation(to: url) else { return }
+        let payload = message.body
         guard let body = payload as? [String: Any], let type = body["type"] as? String else { return }
         switch type {
         case "health":
@@ -187,6 +200,10 @@ extension SocialWebViewStore: WKNavigationDelegate {
         }
 
         if service == .snapchat { preferences.preferredContentMode = .desktop }
+        guard service.allowsNavigation(to: url) else {
+            decisionHandler(.cancel, preferences)
+            return
+        }
         let path = url.path.lowercased()
         let blocked = (service == .youtube && path.hasPrefix("/shorts"))
             || (service == .snapchat && (path.contains("/spotlight") || path.contains("/stories")))
@@ -229,13 +246,13 @@ extension SocialWebViewStore: WKUIDelegate {
 }
 
 private final class ScriptMessageBridge: NSObject, WKScriptMessageHandler {
-    private let handler: (Any) -> Void
+    private let handler: (WKScriptMessage) -> Void
 
-    init(handler: @escaping (Any) -> Void) {
+    init(handler: @escaping (WKScriptMessage) -> Void) {
         self.handler = handler
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        handler(message.body)
+        handler(message)
     }
 }

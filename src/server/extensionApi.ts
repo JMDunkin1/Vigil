@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { apiRequestGuard, extensionCorsHeaders, extensionTrustSummary, isTrustedExtensionRequest } from "../apiSecurity.js";
+import type { RequestTransportContext } from "../apiSecurity.js";
 import { truthy } from "../booleans.js";
 import { REQUIRED_EXTENSION_VERSION } from "../defaults.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "../extensionPolicy.js";
@@ -33,7 +34,7 @@ export async function handleExtensionApiRoute(
   if (method === "OPTIONS" && isExtensionApiPath(path)) {
     const extensionGuard = extensionRouteGuard(method, path, request);
     if (!extensionGuard.ok) sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" });
-    else sendEmpty(response, 204, extensionCorsHeaders(request.headers));
+    else sendEmpty(response, 204, extensionResponseCorsHeaders(request));
     return true;
   }
 
@@ -79,7 +80,7 @@ async function handleExtensionCheck(
   const method = request.method || "GET";
   const extensionGuard = extensionRouteGuard(method, url.pathname, request);
   if (!extensionGuard.ok) {
-    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
+    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionResponseCorsHeaders(request));
     return;
   }
   const body = method === "POST"
@@ -91,7 +92,7 @@ async function handleExtensionCheck(
         seconds: url.searchParams.get("seconds")
       };
   const result = evaluateExtensionCheck(state, usage, body);
-  if (isTrustedExtensionRequest(request.headers)) {
+  if (trustedExtensionRequest(request)) {
     state.extension = {
       ...(state.extension || {}),
       lastSeenAt: new Date().toISOString(),
@@ -116,7 +117,7 @@ async function handleExtensionCheck(
   }
   await saveUsage(usage);
   await saveState(state);
-  sendJson(response, 200, result, extensionCorsHeaders(request.headers));
+  sendJson(response, 200, result, extensionResponseCorsHeaders(request));
 }
 
 function handleExtensionPairing(
@@ -125,7 +126,7 @@ function handleExtensionPairing(
   url: URL,
   state: SentinelState
 ): void {
-  const trust = extensionTrustSummary(request.headers);
+  const trust = extensionRequestTrustSummary(request);
   sendJson(response, 200, {
     ok: true,
     serverUrl: url.origin,
@@ -142,7 +143,7 @@ function handleExtensionPairing(
         token: "sentinelExtensionToken"
       }
     }
-  }, extensionCorsHeaders(request.headers));
+  }, extensionResponseCorsHeaders(request));
 }
 
 async function handleExtensionRules(
@@ -154,13 +155,13 @@ async function handleExtensionRules(
   const method = request.method || "GET";
   const extensionGuard = extensionRouteGuard(method, url.pathname, request);
   if (!extensionGuard.ok) {
-    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
+    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionResponseCorsHeaders(request));
     return;
   }
   const snapshot = extensionRuleSnapshot(state);
   const expectedCount = extensionDynamicRuleCount(snapshot);
   const expectedSignature = extensionDynamicRuleSignature(snapshot);
-  if (isTrustedExtensionRequest(request.headers)) {
+  if (trustedExtensionRequest(request)) {
     state.extension = {
       ...(state.extension || {}),
       lastSeenAt: new Date().toISOString(),
@@ -177,7 +178,7 @@ async function handleExtensionRules(
     };
     await saveState(state);
   }
-  sendJson(response, 200, snapshot, extensionCorsHeaders(request.headers));
+  sendJson(response, 200, snapshot, extensionResponseCorsHeaders(request));
 }
 
 async function handleExtensionRulesSync(
@@ -188,7 +189,7 @@ async function handleExtensionRulesSync(
   const method = request.method || "GET";
   const extensionGuard = extensionRouteGuard(method, "/api/extension/rules/sync", request);
   if (!extensionGuard.ok) {
-    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
+    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionResponseCorsHeaders(request));
     return;
   }
 
@@ -199,7 +200,7 @@ async function handleExtensionRulesSync(
   const count = clampNumber(body.count, 0, 1000, 0);
   const signature = String(body.signature || "");
   const ok = truthy(body.ok) && count === expectedCount && signature === expectedSignature && !snapshot.fallbackRequired;
-  if (isTrustedExtensionRequest(request.headers)) {
+  if (trustedExtensionRequest(request)) {
     state.extension = {
       ...(state.extension || {}),
       lastSeenAt: new Date().toISOString(),
@@ -220,7 +221,7 @@ async function handleExtensionRulesSync(
     };
     await saveState(state);
   }
-  sendJson(response, 200, { ok, count, expectedCount }, extensionCorsHeaders(request.headers));
+  sendJson(response, 200, { ok, count, expectedCount }, extensionResponseCorsHeaders(request));
 }
 
 async function handleExtensionPauseContinue(
@@ -230,7 +231,7 @@ async function handleExtensionPauseContinue(
 ): Promise<void> {
   const extensionGuard = extensionRouteGuard(request.method || "POST", "/api/extension/pause/continue", request);
   if (!extensionGuard.ok) {
-    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
+    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionResponseCorsHeaders(request));
     return;
   }
 
@@ -246,9 +247,9 @@ async function handleExtensionPauseContinue(
     });
     markExtensionActionSeen(request, state, "pause-continue");
     await saveState(state);
-    sendJson(response, 200, { ok: true, ...result }, extensionCorsHeaders(request.headers));
+    sendJson(response, 200, { ok: true, ...result }, extensionResponseCorsHeaders(request));
   } catch (error) {
-    sendJson(response, errorStatus(error), serializeError(error), extensionCorsHeaders(request.headers));
+    sendJson(response, errorStatus(error), serializeError(error), extensionResponseCorsHeaders(request));
   }
 }
 
@@ -259,7 +260,7 @@ async function handleExtensionPauseSkip(
 ): Promise<void> {
   const extensionGuard = extensionRouteGuard(request.method || "POST", "/api/extension/pause/skip", request);
   if (!extensionGuard.ok) {
-    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionCorsHeaders(request.headers));
+    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionResponseCorsHeaders(request));
     return;
   }
 
@@ -275,14 +276,14 @@ async function handleExtensionPauseSkip(
     });
     markExtensionActionSeen(request, state, "pause-skip");
     await saveState(state);
-    sendJson(response, 200, { ok: true, ...result }, extensionCorsHeaders(request.headers));
+    sendJson(response, 200, { ok: true, ...result }, extensionResponseCorsHeaders(request));
   } catch (error) {
-    sendJson(response, errorStatus(error), serializeError(error), extensionCorsHeaders(request.headers));
+    sendJson(response, errorStatus(error), serializeError(error), extensionResponseCorsHeaders(request));
   }
 }
 
 function markExtensionActionSeen(request: IncomingMessage, state: SentinelState, event: string): void {
-  if (!isTrustedExtensionRequest(request.headers)) return;
+  if (!trustedExtensionRequest(request)) return;
   state.extension = {
     ...(state.extension || {}),
     lastSeenAt: new Date().toISOString(),
@@ -324,5 +325,26 @@ function publicPairingStatus(state: SentinelState) {
 }
 
 function extensionRouteGuard(method: string, path: string, request: IncomingMessage): GuardResult {
-  return apiRequestGuard({ method, path, headers: request.headers }) as GuardResult;
+  return apiRequestGuard({
+    method,
+    path,
+    headers: request.headers,
+    remoteAddress: request.socket?.remoteAddress || null
+  }) as GuardResult;
+}
+
+function requestTransport(request: IncomingMessage): RequestTransportContext {
+  return { remoteAddress: request.socket?.remoteAddress || null };
+}
+
+function extensionResponseCorsHeaders(request: IncomingMessage): Record<string, string> {
+  return extensionCorsHeaders(request.headers, requestTransport(request));
+}
+
+function trustedExtensionRequest(request: IncomingMessage): boolean {
+  return isTrustedExtensionRequest(request.headers, requestTransport(request));
+}
+
+function extensionRequestTrustSummary(request: IncomingMessage) {
+  return extensionTrustSummary(request.headers, requestTransport(request));
 }

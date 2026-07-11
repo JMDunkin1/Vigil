@@ -15,8 +15,17 @@ export function weekKey(date = new Date()): string {
 }
 
 export function parseClock(value: unknown): number {
-  const [hour = 0, minute = 0] = String(value || "00:00").split(":").map(Number);
+  const [hour, minute] = normalizeClock(value, "00:00").split(":").map(Number);
   return hour * 60 + minute;
+}
+
+export function normalizeClock(value: unknown, fallback = "00:00"): string {
+  const text = String(value || "").trim();
+  return isClock(text) ? text : (isClock(fallback) ? fallback : "00:00");
+}
+
+export function isClock(value: unknown): boolean {
+  return /^(?:[01]\d|2[0-3]):[0-5]\d$/u.test(String(value || ""));
 }
 
 export function formatDuration(seconds: unknown): string {

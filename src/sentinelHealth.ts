@@ -1,10 +1,14 @@
 import { APP_NAME } from "./defaults.js";
+import { randomBytes } from "node:crypto";
+import { verifyInstanceChallenge } from "./instanceIdentity.js";
 import type { UnknownRecord } from "./types.js";
 
 export const SENTINEL_APP_ID = "tech.caseline.sentinel";
 export const SENTINEL_STATE_API_VERSION = 1;
 export const SENTINEL_STATE_HEADER = "x-sentinel-app";
 export const SENTINEL_STATE_HEADER_VALUE = `${SENTINEL_APP_ID}; state-api=${SENTINEL_STATE_API_VERSION}`;
+export const SENTINEL_HEALTH_CHALLENGE_HEADER = "x-sentinel-health-challenge";
+export const SENTINEL_HEALTH_SIGNATURE_HEADER = "x-sentinel-health-signature";
 
 export function sentinelAppInfo({ port = null, startedAt = null }: { port?: number | null; startedAt?: string | null } = {}) {
   return {
@@ -20,10 +24,21 @@ export function sentinelStateHeaders(): Record<string, string> {
   return { [SENTINEL_STATE_HEADER]: SENTINEL_STATE_HEADER_VALUE };
 }
 
-export async function fetchSentinelStateHealth(url: string | URL, { signal = undefined, expectedPort = undefined }: { signal?: AbortSignal; expectedPort?: number } = {}) {
+export async function fetchSentinelStateHealth(
+  url: string | URL,
+  { signal = undefined, expectedPort = undefined, instanceSecret = "" }: {
+    signal?: AbortSignal;
+    expectedPort?: number;
+    instanceSecret?: string;
+  } = {}
+) {
+  const challenge = instanceSecret ? randomBytes(24).toString("base64url") : "";
   const response = await fetch(url, {
     signal,
-    headers: { Accept: "application/json" }
+    headers: {
+      Accept: "application/json",
+      ...(challenge ? { [SENTINEL_HEALTH_CHALLENGE_HEADER]: challenge } : {})
+    }
   });
 
   if (!response.ok) return { ok: false, status: response.status, reason: "http-status" };
@@ -31,6 +46,13 @@ export async function fetchSentinelStateHealth(url: string | URL, { signal = und
   const signature = response.headers.get(SENTINEL_STATE_HEADER);
   if (signature !== SENTINEL_STATE_HEADER_VALUE) {
     return { ok: false, status: response.status, reason: "app-signature" };
+  }
+  if (instanceSecret && !verifyInstanceChallenge(
+    instanceSecret,
+    challenge,
+    response.headers.get(SENTINEL_HEALTH_SIGNATURE_HEADER) || ""
+  )) {
+    return { ok: false, status: response.status, reason: "instance-signature" };
   }
 
   const contentType = response.headers.get("content-type") || "";

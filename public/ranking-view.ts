@@ -1,6 +1,6 @@
 import type { BarEntry, DashboardData, WeekDaySummary } from "./app-model.js";
 import { el, textEl } from "./dom.js";
-import { formatDuration } from "./format.js";
+import { formatDuration, signedPercent } from "./format.js";
 
 interface KnightTier {
   id: "penitent" | "pilgrim" | "squire" | "knight" | "banneret";
@@ -28,6 +28,8 @@ export function createRankingView() {
   const journeyKnight = required<HTMLElement>("#journeyKnight");
   const timelineStatus = required<HTMLElement>("#rankTimelineStatus");
   const totalUsage = required<HTMLElement>("#totalUsageToday");
+  const focusScore = required<HTMLElement>("#focusScore");
+  const distractionTrend = required<HTMLElement>("#distractionTrend");
   const phoneUsage = required<HTMLElement>("#phoneUsageToday");
   const waveLine = required<SVGPathElement>("#usageWaveLine");
   const waveArea = required<SVGPathElement>("#usageWaveArea");
@@ -47,6 +49,8 @@ export function createRankingView() {
       : "Awaiting the first watch";
     progress.style.width = `${clampPercent(progression?.levelProgressPercent)}%`;
     totalUsage.textContent = formatDuration(Number(data.usage?.totalSeconds || 0));
+    focusScore.textContent = String(clampPercent(data.usage?.focusScore));
+    distractionTrend.textContent = signedPercent(data.report?.comparison?.distractingPercentDelta);
     const phone = data.usage?.devices?.phone;
     phoneUsage.textContent = phone ? formatDuration(Number(phone.totalSeconds || 0)) : "Unavailable";
     phoneUsage.classList.toggle("is-unavailable", !phone);

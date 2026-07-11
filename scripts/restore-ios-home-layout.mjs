@@ -4,7 +4,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { readLayoutPaths, resolveNewestLayoutBackup } from "./ios-backup-layout.mjs";
+import {
+  readLayoutPaths,
+  resolveNewestLayoutBackup,
+  validateRestorableBackupPayload
+} from "./ios-backup-layout.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -70,6 +74,7 @@ if (!options.confirm) {
   process.exit(0);
 }
 
+await validateLayoutRestorePayload(payloadRoot, udid, options.password);
 await ensureRestorePairing(udid, options.supervisorKeybag);
 await restoreLayoutPayload(udid, payloadRoot, options.password);
 console.log([
@@ -240,6 +245,23 @@ async function restoreLayoutPayload(udid, payloadRoot, password = "") {
   ], RESTORE_TIMEOUT_MS);
 }
 
+async function validateLayoutRestorePayload(payloadRoot, udid, password = "") {
+  const payloadValidation = await validateRestorableBackupPayload({
+    backupPath: join(payloadRoot, udid),
+    password,
+    pythonPath: PYIOSBACKUP_PYTHON_PATH,
+    timeoutMs: RESTORE_TIMEOUT_MS
+  });
+  console.log([
+    "Deep-validated the pruned iPhone Home Screen restore payload before pairing or restore.",
+    `Manifest entries traversed: ${payloadValidation.manifestEntries}`,
+    `Manifest file entries: ${payloadValidation.manifestFiles}`,
+    `Regular payload files found: ${payloadValidation.payloadFilesFound}`,
+    `Encrypted backup: ${payloadValidation.encrypted ? "yes" : "no"}`
+  ].join("\n"));
+  return payloadValidation;
+}
+
 async function verifyBackupDevice(backupRoot, udid) {
   const infoPath = join(backupRoot, "Info.plist");
   const info = await stat(infoPath).catch(() => null);
@@ -323,7 +345,7 @@ async function runPymobiledevice3(args, timeout) {
       maxBuffer: 1024 * 1024
     });
   } catch (error) {
-    throw new Error(`${error?.stdout || ""}\n${error?.stderr || error}`.trim());
+    throw new Error(`${error?.stdout || ""}\n${error?.stderr || error}`.trim(), { cause: error });
   }
 }
 

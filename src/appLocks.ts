@@ -59,6 +59,12 @@ export function appLockSummary(state: SentinelState, now = new Date()) {
   };
 }
 
+export function persistentAppLockSiteTargets(state: SentinelState): string[] {
+  return (state.appLocks || [])
+    .filter((lock) => lock.enabled && isPermanentLock(lock))
+    .flatMap((lock) => lock.sites || []);
+}
+
 export function normalizeAppLock(body: UnknownRecord, existing: Partial<AppLockRule> | undefined, fallbackId: string): AppLockRule {
   return {
     id: String(body.id || existing?.id || fallbackId),
@@ -217,6 +223,11 @@ function targetLists(lock: AppLockRule): TargetLists {
 function appliesToday(lock: AppLockRule, now: Date): boolean {
   const days = new Set(lock.days || []);
   return days.size === 0 || days.has(now.getDay());
+}
+
+function isPermanentLock(lock: AppLockRule): boolean {
+  const days = new Set(lock.days || []);
+  return (lock.unlocksAllowed || 0) === 0 && [0, 1, 2, 3, 4, 5, 6].every((day) => days.has(day));
 }
 
 function shouldGuardSiteBypassApp(state: SentinelState, lock: AppLockRule, sample: UsageSample, lists: TargetLists): boolean {

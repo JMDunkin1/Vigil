@@ -8,6 +8,7 @@ import { addEvent, saveState } from "../store.js";
 import type { SentinelState } from "../types.js";
 import { errorStatus, sendJson, serializeError } from "./http.js";
 import type { createLocalScriptRunner } from "./localScripts.js";
+import { invalidateStateDiagnostics } from "./statePayload.js";
 
 type LocalScriptRunner = ReturnType<typeof createLocalScriptRunner>;
 
@@ -27,6 +28,7 @@ export async function handleHardeningApiRoute(response: ServerResponse, context:
       addEvent(state, "launch_agent_installed", { ok: true });
       await saveState(state);
       const launchAgent = await localScripts.waitForLaunchAgentRunning();
+      invalidateStateDiagnostics();
       sendJson(response, 200, { ok: true, result, launchAgent });
     } catch (error) {
       sendJson(response, 500, serializeError(error));
@@ -45,6 +47,7 @@ export async function handleHardeningApiRoute(response: ServerResponse, context:
         firewallEntries: firewall.installedEntries || 0
       });
       await saveState(state);
+      invalidateStateDiagnostics();
       sendJson(response, 200, { ok: true, result, hosts, firewall });
     } catch (error) {
       sendJson(response, 500, serializeError(error));
@@ -65,6 +68,7 @@ export async function handleHardeningApiRoute(response: ServerResponse, context:
         pathUrlCount: safariFilter.pathUrlCount || 0
       });
       await saveState(state);
+      invalidateStateDiagnostics();
       sendJson(response, 200, { ok: true, result, safariFilter });
     } catch (error) {
       sendJson(response, 500, serializeError(error));

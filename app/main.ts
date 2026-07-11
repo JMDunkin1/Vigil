@@ -1,16 +1,21 @@
-import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, systemPreferences, Tray } from "electron";
-import type { MenuItemConstructorOptions } from "electron";
+import type { IpcMainInvokeEvent, MenuItemConstructorOptions } from "electron";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../src/apiSecurity.js";
+import { resolveDefaultDataDir } from "../src/dataPaths.js";
+import { plistStringForKey } from "../src/plist.js";
 import { fetchSentinelStateHealth } from "../src/sentinelHealth.js";
+import { getTouchIdSecret } from "../src/touchIdAuth.js";
+import { getInstanceSecret } from "../src/instanceIdentity.js";
 import { createSentinelAppUpdateController } from "./updater.js";
+import type { SentinelAppUpdateController } from "./updater.js";
 
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.SENTINEL_PORT || process.env.SCREEN_TIME_PORT || 8787);
 const BASE_URL = `http://${HOST}:${PORT}`;
-const TOUCH_ID_SECRET = randomBytes(32).toString("base64url");
+const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const TRAY_STATUS_CHECK_TIMEOUT_MS = 2000;
 const TRAY_ACTION_TIMEOUT_MS = 5000;
 const TRAY_STATUS_POLL_INTERVAL_MS = 30_000;
@@ -42,6 +47,8 @@ let tray: Tray | null = null;
 let lastTrayStatus: TrayStatus | null = null;
 let trayRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let currentAppUrl: string | null = null;
+let instanceSecretPromise: Promise<string> | null = null;
+let appUpdateController: SentinelAppUpdateController | null = null;
 let quitForUpdate = false;
 let appUpdateActionState: AppUpdateActionState = {
   checked: false,
@@ -51,8 +58,9 @@ let appUpdateActionState: AppUpdateActionState = {
   message: ""
 };
 
-process.env.SENTINEL_TOUCH_ID_SECRET = TOUCH_ID_SECRET;
 ipcMain.handle("sentinel:journal-touch-id", handleJournalTouchId);
+ipcMain.handle("sentinel:app-update-status", handleAppUpdateStatus);
+ipcMain.handle("sentinel:app-update-start", handleAppUpdateStart);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -62,7 +70,7 @@ app.setName("Sentinel");
 
 if (app.isPackaged && !process.env.SENTINEL_DATA_DIR) {
   app.setPath("userData", join(app.getPath("appData"), "Sentinel"));
-  process.env.SENTINEL_DATA_DIR = app.getPath("userData");
+  process.env.SENTINEL_DATA_DIR = configuredLaunchAgentDataDir() || app.getPath("userData");
 }
 
 app.on("second-instance", () => {
@@ -78,7 +86,14 @@ app.on("second-instance", () => {
 
 void app.whenReady().then(async () => {
   configureMenuBarResidency();
-  const appUrl = await ensureSentinelServer();
+  appUpdateController = createSentinelAppUpdateController({
+    app,
+    quitForUpdate: () => {
+      quitForUpdate = true;
+      app.quit();
+    }
+  });
+  const appUrl = await ensureSentinelServer(appUpdateController);
   currentAppUrl = appUrl;
   installMenu(appUrl);
   installMenuBarCompanion(appUrl);
@@ -131,6 +146,7 @@ function createWindow(appUrl: string): void {
     fullscreenable: true,
     webPreferences: {
       contextIsolation: true,
+      devTools: !app.isPackaged,
       nodeIntegration: false,
       sandbox: true,
       preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs")
@@ -141,8 +157,11 @@ function createWindow(appUrl: string): void {
   mainWindow.setVisibleOnAllWorkspaces(false);
 
   void mainWindow.loadURL(appUrl);
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (!isTrustedAppUrl(url)) event.preventDefault();
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url);
+    if (isSafeExternalUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
   mainWindow.on("closed", () => {
@@ -150,18 +169,31 @@ function createWindow(appUrl: string): void {
   });
 }
 
-async function handleJournalTouchId(): Promise<unknown> {
+async function handleJournalTouchId(event: IpcMainInvokeEvent): Promise<unknown> {
+  if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) {
+    return { ok: false, error: "Touch ID request origin was rejected." };
+  }
   if (process.platform !== "darwin" || !systemPreferences.canPromptTouchID()) {
     return { ok: false, error: "Touch ID is not available on this Mac." };
   }
   try {
-    await systemPreferences.promptTouchID("Unlock your private Sentinel journal");
-    const response = await fetch(`${BASE_URL}/api/intentional-use/journal/unlock-touch-id`, {
+    await systemPreferences.promptTouchID("Unlock your Sentinel journal");
+    const touchIdSecret = await getTouchIdSecret(
+      process.env.SENTINEL_DATA_DIR || resolveDefaultDataDir(RUNTIME_ROOT)
+    );
+    const appUrl = currentAppUrl || BASE_URL;
+    const sessionCookies = await event.sender.session.cookies.get({ url: appUrl });
+    const cookieHeader = sessionCookies
+      .filter((cookie) => cookie.name === "sentinel_session")
+      .map((cookie) => `${cookie.name}=${cookie.value}`)
+      .join("; ");
+    const response = await fetch(`${appUrl}/api/intentional-use/journal/unlock-touch-id`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE,
-        "X-Sentinel-Touch-ID-Secret": TOUCH_ID_SECRET
+        "X-Sentinel-Touch-ID-Secret": touchIdSecret,
+        ...(cookieHeader ? { Cookie: cookieHeader } : {})
       },
       body: "{}"
     });
@@ -169,6 +201,33 @@ async function handleJournalTouchId(): Promise<unknown> {
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Touch ID was not accepted." };
   }
+}
+
+async function handleAppUpdateStatus(event: IpcMainInvokeEvent, options: unknown): Promise<unknown> {
+  const controller = trustedAppUpdateController(event);
+  if (!controller) return rejectedAppUpdateRequest();
+  const input = asRecord(options);
+  return await controller.status({ checkRemote: input?.checkRemote === true });
+}
+
+async function handleAppUpdateStart(event: IpcMainInvokeEvent): Promise<unknown> {
+  const controller = trustedAppUpdateController(event);
+  if (!controller) return rejectedAppUpdateRequest();
+  return await controller.start();
+}
+
+function trustedAppUpdateController(event: IpcMainInvokeEvent): SentinelAppUpdateController | null {
+  if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
+  return appUpdateController;
+}
+
+function rejectedAppUpdateRequest(): Record<string, unknown> {
+  return {
+    ok: false,
+    supported: false,
+    running: false,
+    error: "App update request origin was rejected."
+  };
 }
 
 function configureMenuBarResidency(): void {
@@ -189,17 +248,23 @@ function shouldStayResident(): boolean {
   return process.platform === "darwin" && app.isPackaged;
 }
 
-async function ensureSentinelServer(): Promise<string> {
+function configuredLaunchAgentDataDir(): string {
+  try {
+    const plistPath = join(app.getPath("home"), "Library", "LaunchAgents", "com.sentinel.agent.plist");
+    const xml = readFileSync(plistPath, "utf8");
+    const explicit = plistStringForKey(xml, "SENTINEL_DATA_DIR");
+    if (explicit) return explicit;
+    const workingDirectory = plistStringForKey(xml, "WorkingDirectory");
+    return workingDirectory ? resolveDefaultDataDir(workingDirectory) : "";
+  } catch {
+    return "";
+  }
+}
+
+async function ensureSentinelServer(appUpdate: SentinelAppUpdateController): Promise<string> {
   if (await serverIsHealthy()) return BASE_URL;
 
   const { startSentinelServer } = await import("../src/server.js");
-  const appUpdate = createSentinelAppUpdateController({
-    app,
-    quitForUpdate: () => {
-      quitForUpdate = true;
-      app.quit();
-    }
-  });
   ownedServer = await startSentinelServer({ host: HOST, port: PORT, appUpdate }) as SentinelServerHandle;
   return ownedServer.url;
 }
@@ -208,9 +273,10 @@ async function serverIsHealthy(): Promise<boolean> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2000);
   try {
-    const health = await fetchSentinelStateHealth(`${BASE_URL}/api/state`, {
+    const health = await fetchSentinelStateHealth(`${BASE_URL}/api/health`, {
       signal: controller.signal,
-      expectedPort: PORT
+      expectedPort: PORT,
+      instanceSecret: await appInstanceSecret()
     });
     return health.ok;
   } catch {
@@ -221,6 +287,25 @@ async function serverIsHealthy(): Promise<boolean> {
 }
 
 function installMenu(appUrl: string): void {
+  const viewSubmenu: MenuItemConstructorOptions[] = [
+    {
+      label: "Reload Sentinel",
+      accelerator: "CommandOrControl+R",
+      click: () => {
+        void mainWindow?.loadURL(appUrl);
+      }
+    }
+  ];
+  if (!app.isPackaged) viewSubmenu.push({ role: "toggleDevTools" });
+  viewSubmenu.push(
+    { type: "separator" },
+    { role: "resetZoom" },
+    { role: "zoomIn" },
+    { role: "zoomOut" },
+    { type: "separator" },
+    { role: "togglefullscreen" }
+  );
+
   const template: MenuItemConstructorOptions[] = [
     {
       label: "Sentinel",
@@ -248,22 +333,7 @@ function installMenu(appUrl: string): void {
     },
     {
       label: "View",
-      submenu: [
-        {
-          label: "Reload Sentinel",
-          accelerator: "CommandOrControl+R",
-          click: () => {
-            void mainWindow?.loadURL(appUrl);
-          }
-        },
-        { role: "toggleDevTools" },
-        { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn" },
-        { role: "zoomOut" },
-        { type: "separator" },
-        { role: "togglefullscreen" }
-      ]
+      submenu: viewSubmenu
     },
     {
       label: "Window",
@@ -276,6 +346,22 @@ function installMenu(appUrl: string): void {
     }
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+function isTrustedAppUrl(value: string): boolean {
+  try {
+    return new URL(value).origin === BASE_URL;
+  } catch {
+    return false;
+  }
+}
+
+function isSafeExternalUrl(value: string): boolean {
+  try {
+    return ["http:", "https:", "mailto:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
 }
 
 function installMenuBarCompanion(appUrl: string): void {
@@ -401,7 +487,8 @@ async function readTrayStatus(appUrl: string): Promise<TrayStatus> {
   try {
     const health = await fetchSentinelStateHealth(apiUrl(appUrl, "/api/state"), {
       signal: controller.signal,
-      expectedPort: port
+      expectedPort: port,
+      instanceSecret: await appInstanceSecret()
     });
     if (!health.ok) {
       return offlineTrayStatus(appUrl);
@@ -412,6 +499,13 @@ async function readTrayStatus(appUrl: string): Promise<TrayStatus> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function appInstanceSecret(): Promise<string> {
+  instanceSecretPromise ||= getInstanceSecret(
+    process.env.SENTINEL_DATA_DIR || resolveDefaultDataDir(RUNTIME_ROOT)
+  );
+  return instanceSecretPromise;
 }
 
 async function startPanicLock(appUrl: string): Promise<void> {
@@ -451,7 +545,7 @@ async function checkAppUpdate(appUrl: string): Promise<void> {
   };
   refreshUpdateMenus(appUrl);
   try {
-    const status = asRecord(await requestAppUpdateStatus(appUrl, { checkRemote: true }));
+    const status = asRecord(await requestAppUpdateStatus({ checkRemote: true }));
     const running = Boolean(status?.running);
     const installable = isInstallableAppUpdate(status);
     appUpdateActionState = {
@@ -483,13 +577,13 @@ async function startAppUpdate(appUrl: string): Promise<void> {
   };
   refreshUpdateMenus(appUrl);
   try {
-    await requestAppUpdate(appUrl);
+    await requestAppUpdate();
   } catch (error) {
     appUpdateActionState = {
       checked: true,
       checking: false,
       running: false,
-      installable: true,
+      installable: false,
       message: errorMessage(error)
     };
     refreshUpdateMenus(appUrl);
@@ -521,52 +615,26 @@ async function requestPanicLock(appUrl: string): Promise<unknown> {
   }
 }
 
-async function requestAppUpdate(appUrl: string): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TRAY_ACTION_TIMEOUT_MS);
-  try {
-    const response = await fetch(apiUrl(appUrl, "/api/app-update/start"), {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE
-      },
-      body: "{}"
-    });
-    const body = await responseJson(response);
-    const record = asRecord(body);
-    if (!response.ok || record?.ok !== true) {
-      throw new Error(nonEmptyString(record?.error) || nonEmptyString(record?.message) || `Update failed (${response.status})`);
-    }
-    return body;
-  } finally {
-    clearTimeout(timeout);
+async function requestAppUpdate(): Promise<unknown> {
+  const controller = appUpdateController;
+  if (!controller) throw new Error("The Sentinel app updater is not ready.");
+  const result = await controller.start();
+  const record = asRecord(result);
+  if (record?.ok !== true) {
+    throw new Error(nonEmptyString(record?.error) || nonEmptyString(record?.message) || "Update could not start.");
   }
+  return result;
 }
 
-async function requestAppUpdateStatus(appUrl: string, { checkRemote = false }: { checkRemote?: boolean } = {}): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TRAY_ACTION_TIMEOUT_MS);
-  try {
-    const response = await fetch(apiUrl(appUrl, checkRemote ? "/api/app-update/status?check=1" : "/api/app-update/status"), {
-      method: "GET",
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE
-      }
-    });
-    const body = await responseJson(response);
-    const record = asRecord(body);
-    if (!response.ok || record?.ok !== true) {
-      throw new Error(nonEmptyString(record?.error) || nonEmptyString(record?.message) || `Update check failed (${response.status})`);
-    }
-    return body;
-  } finally {
-    clearTimeout(timeout);
+async function requestAppUpdateStatus({ checkRemote = false }: { checkRemote?: boolean } = {}): Promise<unknown> {
+  const controller = appUpdateController;
+  if (!controller) throw new Error("The Sentinel app updater is not ready.");
+  const result = await controller.status({ checkRemote });
+  const record = asRecord(result);
+  if (record?.ok !== true) {
+    throw new Error(nonEmptyString(record?.error) || nonEmptyString(record?.message) || "Update check failed.");
   }
+  return result;
 }
 
 async function responseJson(response: Response): Promise<unknown> {
@@ -624,7 +692,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function isInstallableAppUpdate(status: Record<string, unknown> | null): boolean {
-  if (!status || status.supported === false || status.running) return false;
+  if (!status || status.ok !== true || status.supported === false || status.running || status.dirty || status.remoteCheckOk === false) return false;
   return Boolean(status.updateAvailable || status.appBundleOutdated || Number(status.behind || 0) > 0);
 }
 

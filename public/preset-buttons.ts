@@ -1,4 +1,5 @@
 import type { ControlElement, NamedFormControls, Preset } from "./app-model.js";
+import { markFormDirty } from "./form-state.js";
 import { lines } from "./format.js";
 import { $$ } from "./ui-shell.js";
 
@@ -45,6 +46,7 @@ function applyPreset(strip: ControlElement, preset: Preset, toast: ToastHandler)
   appendLines(elements[strip.dataset.appField || ""], preset.apps);
   appendLines(elements[strip.dataset.siteField || ""], siteValues);
   appendLines(elements[urlPatternField], urlPatternValues);
+  markFormDirty(form);
   toast(`${preset.label} preset added`);
 }
 

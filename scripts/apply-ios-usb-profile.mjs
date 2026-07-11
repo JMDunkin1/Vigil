@@ -5,7 +5,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { readLayoutPaths, resolveNewestLayoutBackup } from "./ios-backup-layout.mjs";
+import {
+  readLayoutPaths,
+  resolveNewestLayoutBackup,
+  validateRestorableBackupPayload
+} from "./ios-backup-layout.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -19,6 +23,7 @@ const SENTINEL_SERVER = String(process.env.SENTINEL_SERVER || process.env.SCREEN
 const IOS_PROFILE_IDENTIFIER = "com.local-screen-time.ios-lock";
 const INSTALL_TIMEOUT_MS = 120_000;
 const QUICK_TIMEOUT_MS = 20_000;
+const PAYLOAD_VALIDATION_TIMEOUT_MS = 60 * 60 * 1000;
 
 const options = parseArgs(process.argv.slice(2));
 await ensurePymobiledevice3();
@@ -130,6 +135,19 @@ async function verifyCheckpoint(backupRoot, udid, password = "") {
       "Do not use this checkpoint as a layout recovery source."
     ].join("\n"));
   }
+  const payloadValidation = await validateRestorableBackupPayload({
+    backupPath: backupRoot,
+    password,
+    pythonPath: PYIOSBACKUP_PYTHON_PATH,
+    timeoutMs: PAYLOAD_VALIDATION_TIMEOUT_MS
+  });
+  console.log([
+    "Verified every file payload in the required iPhone recovery checkpoint before any device or profile mutation.",
+    `Manifest entries traversed: ${payloadValidation.manifestEntries}`,
+    `Manifest file entries: ${payloadValidation.manifestFiles}`,
+    `Regular payload files found: ${payloadValidation.payloadFilesFound}`,
+    `Encrypted backup: ${payloadValidation.encrypted ? "yes" : "no"}`
+  ].join("\n"));
 }
 
 async function verifyBackupDevice(backupRoot, udid) {
@@ -396,7 +414,7 @@ async function runPymobiledevice3(args, timeout, options = {}) {
       code: Number(error?.code || 1)
     };
     if (options.reject === false) return result;
-    throw new Error(`${result.stdout}\n${result.stderr}`.trim());
+    throw new Error(`${result.stdout}\n${result.stderr}`.trim(), { cause: error });
   }
 }
 

@@ -1,15 +1,16 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
-import { join, resolve, sep } from "node:path";
+import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { apiRequestGuard, publicHostGuard } from "./apiSecurity.js";
-import { requireHostedAccount } from "./auth.js";
+import { hostedAdminRequired, requireHostedAccount } from "./auth.js";
 import { APP_NAME, PORT, defaultState } from "./defaults.js";
-import { DATA_DIR, addEvent, loadState, loadUsage, saveState } from "./store.js";
+import { isDirectRun } from "./directRun.js";
+import { DATA_DIR, addEvent, loadState, loadUsage, saveState, saveUsage } from "./store.js";
 import { launchAgentStatus } from "./hardening.js";
 import { startMonitor } from "./monitor.js";
 import { assertDistanceKey, updateDistanceKeySettings } from "./distanceKey.js";
-import { authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
+import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated } from "./iosProfiles.js";
 import { exportManageEngineIosProfile } from "./manageEngineExport.js";
 import { parsePlist } from "./plist.js";
@@ -22,7 +23,7 @@ import { matchApiRoute } from "./server/apiRoutes.js";
 import { handleAppUpdateApiRoute } from "./server/appUpdateRoutes.js";
 import { handleAccountApiRoute } from "./server/accountRoutes.js";
 import type { AppUpdateController } from "./server/appUpdateRoutes.js";
-import { handleBackupApiRoute } from "./server/backupRoutes.js";
+import { handleDiagnosticExportApiRoute } from "./server/diagnosticExportRoutes.js";
 import { handleAdultBlocklistApiRoute } from "./server/adultBlocklistRoutes.js";
 import { handleDeviceApiRoute } from "./server/deviceRoutes.js";
 import type { IosMdmPushResult } from "./server/deviceRoutes.js";
@@ -33,7 +34,10 @@ import { handlePolicyApiRoute } from "./server/policyRoutes.js";
 import { handleRuleSimulatorApiRoute } from "./server/ruleSimulatorRoutes.js";
 import { handleSettingsApiRoute } from "./server/settingsRoutes.js";
 import { handleSessionApiRoute, sessionIsActive } from "./server/sessionRoutes.js";
-import { buildStatePayload, strictPreflightStatus } from "./server/statePayload.js";
+import { buildStatePayload, invalidateStateDiagnostics, strictPreflightStatus } from "./server/statePayload.js";
+import { sentinelAppInfo, sentinelStateHeaders } from "./sentinelHealth.js";
+import { SENTINEL_HEALTH_CHALLENGE_HEADER, SENTINEL_HEALTH_SIGNATURE_HEADER } from "./sentinelHealth.js";
+import { getInstanceSecret, instanceChallengeSignature } from "./instanceIdentity.js";
 import type {
   LockLevel,
   MonitorHandle,
@@ -56,6 +60,7 @@ let server: Server | null = null;
 let activeHost = DEFAULT_HOST;
 let activePort = PORT;
 let appUpdateController: AppUpdateController | null = null;
+let instanceSecret = "";
 let manageEngineExportScheduled = false;
 const pendingManageEngineExportReasons = new Set<string>();
 
@@ -82,7 +87,9 @@ export async function startSentinelServer(options: ServerOptions = {}) {
   appUpdateController = options.appUpdate || null;
   startedAt = new Date().toISOString();
   state = await loadState();
-  usage = await loadUsage();
+  usage = await loadUsage(state);
+  instanceSecret = await getInstanceSecret(DATA_DIR);
+  invalidateStateDiagnostics();
   monitor = startMonitor({ state, usage }) as unknown as MonitorHandle;
   server = createServer(requestHandler);
 
@@ -116,7 +123,11 @@ export async function stopSentinelServer(): Promise<void> {
 async function requestHandler(request: IncomingMessage, response: ServerResponse): Promise<void> {
   try {
     const url = new URL(request.url || "/", `http://${request.headers.host || `${activeHost}:${activePort}`}`);
-    const hostGuard = publicHostGuard({ path: url.pathname, headers: request.headers }) as GuardResult;
+    const hostGuard = publicHostGuard({
+      path: url.pathname,
+      headers: request.headers,
+      remoteAddress: request.socket.remoteAddress
+    }) as GuardResult;
     if (!hostGuard.ok) {
       sendJson(response, hostGuard.status || 403, { error: hostGuard.error || "Forbidden" });
       return;
@@ -166,14 +177,14 @@ function serverHandle() {
 }
 
 async function shutdown({ exit = true }: { exit?: boolean } = {}): Promise<void> {
-  monitor?.stop();
+  const activeMonitor = monitor;
+  const activeServer = server;
+  const serverClosed = closeListeningServer(activeServer);
+
+  await activeMonitor?.stop();
+  await serverClosed;
+  await saveUsage(usage);
   await saveState(state);
-  if (server?.listening) {
-    const currentServer = server;
-    await new Promise<void>((resolveClose) => {
-      currentServer.close(() => resolveClose());
-    });
-  }
   server = null;
   monitor = null;
   state = defaultState();
@@ -181,14 +192,27 @@ async function shutdown({ exit = true }: { exit?: boolean } = {}): Promise<void>
   if (exit) process.exit(0);
 }
 
-if (isDirectRun()) {
-  process.on("SIGINT", () => shutdown());
-  process.on("SIGTERM", () => shutdown());
-  await startSentinelServer();
+async function closeListeningServer(activeServer: Server | null): Promise<void> {
+  if (!activeServer?.listening) return;
+  await new Promise<void>((resolveClose) => {
+    activeServer.close(() => resolveClose());
+  });
 }
 
-function isDirectRun(): boolean {
-  return Boolean(process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1]));
+if (isDirectRun(import.meta.url)) {
+  process.on("SIGINT", () => {
+    void shutdown().catch((error) => {
+      console.error("Sentinel shutdown failed:", error);
+      process.exit(1);
+    });
+  });
+  process.on("SIGTERM", () => {
+    void shutdown().catch((error) => {
+      console.error("Sentinel shutdown failed:", error);
+      process.exit(1);
+    });
+  });
+  await startSentinelServer();
 }
 
 function scheduleImmediateSessionEnforcement(sessionId: string): void {
@@ -260,6 +284,41 @@ function scheduleIosMdmPush(reason: string, options: UnknownRecord = {}): void {
 async function handleMdm(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
   const method = request.method || "GET";
   const path = url.pathname;
+
+  if ((method === "PUT" || method === "POST") && (path === "/mdm/checkin" || path === "/mdm/connect")) {
+    const body = parsePlist(await readTextBody(request)) as UnknownRecord;
+    if (!authorizeIosMdmDeviceRequest(state, url, body)) {
+      sendEmpty(response, 403);
+      return;
+    }
+
+    if (path === "/mdm/checkin") {
+      const result = handleIosMdmCheckIn(state, body);
+      addEvent(state, "ios_mdm_checkin", {
+        messageType: result.messageType,
+        udid: result.udid,
+        ok: result.ok
+      });
+      await saveState(state);
+      sendEmpty(response, 200, mdmHeaders());
+      if (result.messageType === "TokenUpdate" && result.udid) {
+        scheduleIosMdmPush("checkin", { force: true, udids: [result.udid] });
+      }
+      return;
+    }
+
+    const result = handleIosMdmConnect(state, body);
+    addEvent(state, "ios_mdm_connect", {
+      status: result.status,
+      udid: result.udid,
+      command: result.command?.requestType || "none"
+    });
+    await saveState(state);
+    if (result.empty) sendEmpty(response, 200, mdmHeaders());
+    else sendMdmPlist(response, 200, result.body);
+    return;
+  }
+
   if (!authorizeIosMdmRequest(state, url)) {
     sendEmpty(response, 403);
     return;
@@ -284,43 +343,18 @@ async function handleMdm(request: IncomingMessage, response: ServerResponse, url
     return;
   }
 
-  if ((method === "PUT" || method === "POST") && path === "/mdm/checkin") {
-    const body = parsePlist(await readTextBody(request)) as UnknownRecord;
-    const result = handleIosMdmCheckIn(state, body);
-    addEvent(state, "ios_mdm_checkin", {
-      messageType: result.messageType,
-      udid: result.udid,
-      ok: result.ok
-    });
-    await saveState(state);
-    sendEmpty(response, 200, mdmHeaders());
-    if (result.messageType === "TokenUpdate" && result.udid) {
-      scheduleIosMdmPush("checkin", { force: true, udids: [result.udid] });
-    }
-    return;
-  }
-
-  if ((method === "PUT" || method === "POST") && path === "/mdm/connect") {
-    const body = parsePlist(await readTextBody(request)) as UnknownRecord;
-    const result = handleIosMdmConnect(state, body);
-    addEvent(state, "ios_mdm_connect", {
-      status: result.status,
-      udid: result.udid,
-      command: result.command?.requestType || "none"
-    });
-    await saveState(state);
-    if (result.empty) sendEmpty(response, 200, mdmHeaders());
-    else sendMdmPlist(response, 200, result.body);
-    return;
-  }
-
   sendEmpty(response, 404);
 }
 
 async function handleApi(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
   const method = request.method || "GET";
   const path = url.pathname;
-  const guard = apiRequestGuard({ method, path, headers: request.headers }) as GuardResult;
+  const guard = apiRequestGuard({
+    method,
+    path,
+    headers: request.headers,
+    remoteAddress: request.socket.remoteAddress
+  }) as GuardResult;
   if (!guard.ok) {
     sendJson(response, guard.status || 403, { error: guard.error || "Forbidden" });
     return;
@@ -334,9 +368,21 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return;
   }
 
+  if (method === "GET" && path === "/api/health") {
+    sendJson(response, 200, {
+      app: sentinelAppInfo({ port: activePort, startedAt }),
+      state: {},
+      monitor: { status: "healthy" }
+    }, {
+      ...sentinelStateHeaders(),
+      ...healthSignatureHeaders(request)
+    });
+    return;
+  }
+
   try {
     if (path !== "/api/devices/usage") {
-      await requireHostedAccount(request, { admin: !["GET", "HEAD", "OPTIONS"].includes(method) });
+      await requireHostedAccount(request, { admin: hostedAdminRequired(method, path) });
     }
   } catch (error) {
     sendJson(response, errorStatus(error), serializeError(error), { "Cache-Control": "no-store" });
@@ -350,8 +396,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
 
   if (method === "GET" && path === "/api/state") {
     const payload = await buildStatePayload({ state, usage, monitor: requireMonitor(), activePort, startedAt, localScripts });
-    await saveState(state);
-    sendJson(response, 200, payload.body, payload.headers);
+    sendJson(response, 200, payload.body, { ...payload.headers, ...healthSignatureHeaders(request) });
     return;
   }
 
@@ -359,7 +404,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return;
   }
 
-  if (handleBackupApiRoute(response, { method, path, state, usage, activePort, startedAt })) {
+  if (handleDiagnosticExportApiRoute(response, { method, path, state, usage, activePort, startedAt })) {
     return;
   }
 
@@ -453,6 +498,13 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
   }
 
   sendJson(response, 404, { error: "Not found" });
+}
+
+function healthSignatureHeaders(request: IncomingMessage): Record<string, string> {
+  const challenge = String(request.headers[SENTINEL_HEALTH_CHALLENGE_HEADER] || "");
+  return challenge
+    ? { [SENTINEL_HEALTH_SIGNATURE_HEADER]: instanceChallengeSignature(instanceSecret, challenge) }
+    : {};
 }
 
 function recordIosMdmPolicyQueue(reason: string): IosMdmPushResult {

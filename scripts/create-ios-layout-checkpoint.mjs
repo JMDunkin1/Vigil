@@ -153,7 +153,7 @@ async function runPymobiledevice3(args, timeout) {
       maxBuffer: 1024 * 1024
     });
   } catch (error) {
-    throw new Error(`${error?.stdout || ""}\n${error?.stderr || error}`.trim());
+    throw new Error(`${error?.stdout || ""}\n${error?.stderr || error}`.trim(), { cause: error });
   }
 }
 

@@ -1,9 +1,10 @@
-import { activePolicy } from "./policy.js";
+import { activePolicy, activeSessionForDevice, normalizeDeviceTarget } from "./policy.js";
+import { DEVICE_TARGETS } from "./defaults.js";
 import { activeLimitBlocks } from "./limits.js";
 import { integrityLockdownActive } from "./integrityLockdown.js";
 import { assertTypingChallenge, attachTypingChallenge } from "./challenge.js";
 import { assertIntentReason } from "./intentReason.js";
-import type { AppLockRule, MaintenanceRequest, MaintenanceWindow, SentinelState } from "./types.js";
+import type { AppLockRule, DeviceTargetInput, MaintenanceRequest, MaintenanceWindow, SentinelState, Session } from "./types.js";
 
 interface ProtectionAction {
   kind: string;
@@ -19,6 +20,10 @@ export interface ProtectionBlocker {
 
 interface MaintenanceConfirmInput {
   challengeText?: unknown;
+}
+
+interface SessionTransitionOptions {
+  authorization?: "standard" | "validated-emergency";
 }
 
 export class ProtectionError extends Error {
@@ -39,6 +44,32 @@ export function assertProtectedEditAllowed(state: SentinelState, action: Partial
   }
 }
 
+export function assertSessionTransitionAllowed(
+  state: SentinelState,
+  targets: readonly DeviceTargetInput[],
+  options: SessionTransitionOptions = {},
+  now = new Date()
+): void {
+  cleanupMaintenance(state, now);
+  const activeSessions = targets
+    .map((target) => activeSessionForDevice(state, normalizeDeviceTarget(target)))
+    .filter((session): session is Session => Boolean(session));
+  const sessions = [...new Map(activeSessions.map((session) => [session.id, session] as const)).values()];
+  const locked = sessions.filter((session) => session.commitmentLock || session.canEndEarly !== true);
+  if (!locked.length || activeMaintenanceWindow(state, now)) return;
+  if (options.authorization === "validated-emergency" && locked.every((session) => !session.commitmentLock && session.emergencyUnlocksAllowed !== false)) return;
+
+  throw new ProtectionError(
+    "Locked sessions cannot be ended or replaced outside a validated maintenance or emergency unlock.",
+    locked.map((session) => ({
+      kind: "manual",
+      id: session.id,
+      name: session.title,
+      reason: session.commitmentLock ? "A commitment session is active" : "A session that cannot end early is active"
+    }))
+  );
+}
+
 export function protectedEditBlockers(state: SentinelState, action: Partial<ProtectionAction> = {}, now = new Date()): ProtectionBlocker[] {
   cleanupMaintenance(state, now);
   const lockdown = integrityLockdownActive(state);
@@ -46,14 +77,28 @@ export function protectedEditBlockers(state: SentinelState, action: Partial<Prot
   if (activeMaintenanceWindow(state, now)) return [];
 
   const blockers: ProtectionBlocker[] = [];
-  const active = activePolicy(state, now);
-  if ((active?.session?.lockLevel === "deep" || active?.kind === "integrity") && guardedKind(action.kind)) {
-    blockers.push({
-      kind: active.kind,
-      id: active.session.id,
-      name: active.session.title,
-      reason: active.kind === "integrity" ? "State tampering triggered integrity lockdown" : "A strict session is active"
-    });
+  if (guardedKind(action.kind)) {
+    for (const device of DEVICE_TARGETS) {
+      const active = activePolicy(state, now, { device });
+      if (!active) continue;
+      const protectedPolicy = active.kind === "integrity"
+        || active.session.lockLevel === "deep"
+        || active.session.commitmentLock
+        || active.session.canEndEarly !== true;
+      if (!protectedPolicy) continue;
+      blockers.push({
+        kind: active.kind,
+        id: active.session.id,
+        name: active.session.title,
+        reason: active.kind === "integrity"
+          ? "State tampering triggered integrity lockdown"
+          : active.session.commitmentLock
+            ? "A commitment policy is active"
+            : active.session.canEndEarly !== true
+              ? "A policy that cannot end early is active"
+              : "A strict session is active"
+      });
+    }
   }
 
   for (const block of activeLimitBlocks(state, now)) {

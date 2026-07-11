@@ -11,6 +11,7 @@ import { iosMdmSummary } from "../iosMdm.js";
 import { iosPolicyTargets } from "../iosProfiles.js";
 import { assertKeyholderPasscode } from "../keyholder.js";
 import { activeLimitBlocks, overrideLimitRules } from "../limits.js";
+import { assertSessionTransitionAllowed } from "../protection.js";
 import {
   activePolicy,
   activeSessionForDevice,
@@ -27,7 +28,7 @@ import {
 } from "../policy.js";
 import { addEvent, saveState } from "../store.js";
 import { clampNumber, weekKey } from "../time.js";
-import type { ActivePolicy, DeviceTarget, LimitBlock, LockLevel, Profile, SentinelState, Session, SessionCycle, UnknownRecord } from "../types.js";
+import type { ActivePolicy, ActivePolicyContributor, DeviceTarget, EmergencyPolicyContributor, EmergencyRequest, LimitBlock, LockLevel, Profile, SentinelState, Session, SessionCycle, UnknownRecord } from "../types.js";
 import { commitmentLockError } from "./pages.js";
 import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
 
@@ -99,6 +100,10 @@ export async function handleSessionApiRoute(
   if (method === "POST" && path === "/api/panic/start") {
     const body = await readBody(request);
     activePolicy(state);
+    if (state.panicLock) {
+      sendJson(response, 423, { error: "Panic lock is already active and cannot be shortened.", active: state.panicLock });
+      return true;
+    }
     const durationMinutes = clampNumber(body.durationMinutes, 1, 1440, panicLockDurationMinutes(state));
     const started = new Date();
     const ends = new Date(started.getTime() + durationMinutes * 60 * 1000);
@@ -136,6 +141,7 @@ export async function handleSessionApiRoute(
 
     const level = Math.round(clampNumber(body.level, 1, 3, 1));
     const deviceTargets = normalizeSessionDeviceTargets(body);
+    if (!authorizeSessionTransition(response, state, deviceTargets)) return true;
     if (level === 1) {
       for (const target of deviceTargets) clearDeviceSession(state, target);
       addEvent(state, "protection_level_changed", { level, deviceTargets });
@@ -159,6 +165,7 @@ export async function handleSessionApiRoute(
     const persistentEndsAt = new Date(draft.session.startedAt);
     persistentEndsAt.setUTCFullYear(persistentEndsAt.getUTCFullYear() + 100);
     draft.session.endsAt = persistentEndsAt.toISOString();
+    draft.session.source = "protection-level";
     draft.session.canEndEarly = true;
     draft.session.commitmentLock = false;
     draft.session.emergencyUnlocksAllowed = true;
@@ -201,15 +208,11 @@ export async function handleSessionApiRoute(
     const body = await readBody(request);
     activePolicy(state);
     const deviceTargets = normalizeSessionDeviceTargets(body, ["computer"]);
+    if (!authorizeSessionTransition(response, state, deviceTargets)) return true;
     const ended: Array<{ target: DeviceTarget; session: Session }> = [];
     for (const target of deviceTargets) {
       const session = activeSessionForDevice(state, target);
       if (!session) continue;
-      if (!session.canEndEarly) {
-        sendJson(response, 423, { error: `The ${target} session is locked. Use an emergency unlock if you really need to end it.`, active: session });
-        return true;
-      }
-
       clearDeviceSession(state, target);
       ended.push({ target, session });
       addEvent(state, "session_ended", { ...session, endedTarget: target });
@@ -236,6 +239,11 @@ export async function handleSessionApiRoute(
       sendJson(response, 409, { error: "There is no active locked session." });
       return true;
     }
+    const policyContributors = active ? emergencyPolicyContributors(active) : [];
+    if (active && !policyContributors.length) {
+      sendJson(response, 409, { error: "The active policy cannot be released through an emergency unlock." });
+      return true;
+    }
     const remaining = emergencyRemaining(state);
     if (remaining <= 0) {
       sendJson(response, 429, { error: "No emergency unlocks remain this week." });
@@ -257,6 +265,7 @@ export async function handleSessionApiRoute(
       sessionId: active?.session.id || null,
       scheduleId: active?.schedule?.id || null,
       plannerBlockId: active?.plannerBlock?.id || null,
+      policyContributors,
       limitBlockIds: active ? [] : activeLimits.map((block) => block.id),
       limitRuleIds: active ? [] : [...new Set(activeLimits.map((block) => block.ruleId).filter((ruleId): ruleId is string => Boolean(ruleId)))],
       until: active?.endsAt || activeLimits.map((block) => block.until).sort().at(-1)
@@ -271,13 +280,23 @@ export async function handleSessionApiRoute(
 
   if (method === "POST" && path === "/api/emergency/confirm") {
     const body = await readBody(request);
-    const pending = state.emergency.pending.find((item) => item.id === body.requestId && item.status === "pending");
-    if (!pending) {
+    const pending = state.emergency.pending.find((item) => item.id === body.requestId);
+    if (!pending || pending.status !== "pending") {
       sendJson(response, 404, { error: "Emergency request not found or expired." });
       return true;
     }
 
-    if (new Date(pending.eligibleAt || "") > new Date()) {
+    const confirmedAt = new Date();
+    const expiresAt = Date.parse(pending.expiresAt || "");
+    if (!Number.isFinite(expiresAt) || expiresAt <= confirmedAt.getTime()) {
+      pending.status = "expired";
+      addEvent(state, "emergency_expired", { requestId: pending.id, expiredAt: confirmedAt.toISOString() });
+      await saveState(state);
+      sendJson(response, 410, { error: "Emergency request expired before confirmation." });
+      return true;
+    }
+
+    if (new Date(pending.eligibleAt || "") > confirmedAt) {
       sendJson(response, 425, { error: "Emergency unlock cooldown is still running.", pending });
       return true;
     }
@@ -297,35 +316,71 @@ export async function handleSessionApiRoute(
       return true;
     }
 
+    const requestedContributors = emergencyRequestContributors(pending);
+    const currentContributors = currentEmergencyPolicyContributors(state, confirmedAt);
+    const matchingContributors = requestedContributors
+      .map((requested) => currentContributors.find((current) => emergencyContributorMatches(requested, current)))
+      .filter((contributor): contributor is EmergencyPolicyContributor => Boolean(contributor));
+    const disallowedContributor = matchingContributors.find((contributor) => contributor.emergencyUnlocksAllowed === false);
+    if (disallowedContributor) {
+      sendJson(response, 423, { error: "An intended policy contributor no longer allows emergency unlocks." });
+      return true;
+    }
+    const releasableContributors = uniqueEmergencyPolicyContributors(matchingContributors);
+    const limitIds = new Set(pending.limitBlockIds || []);
+    const releasableLimitBlocks = pending.activeKind === "limit"
+      ? (state.limitBlocks || []).filter((block: LimitBlock) => limitIds.has(String(block.id || "")))
+      : [];
+    if (!releasableContributors.length && !releasableLimitBlocks.length) {
+      sendJson(response, 409, { error: "The policy captured by this emergency request is no longer active." });
+      return true;
+    }
+
+    const manualSessionIds = new Set(
+      releasableContributors.filter((contributor) => contributor.kind === "manual").map((contributor) => contributor.sessionId)
+    );
+    if (manualSessionIds.size) {
+      const sessionTargets = DEVICE_TARGETS.filter((target) => manualSessionIds.has(activeSessionForDevice(state, target)?.id || ""));
+      if (!authorizeSessionTransition(response, state, sessionTargets, "validated-emergency")) return true;
+    }
+
     spendEmergencyToken(state);
     pending.status = "used";
 
-    if (pending.activeKind === "manual") {
-      clearSessionsById(state, pending.sessionId);
-    } else if (pending.scheduleId) {
+    for (const sessionId of manualSessionIds) clearSessionsById(state, sessionId);
+    for (const contributor of releasableContributors.filter((item) => item.kind === "schedule")) {
       state.overrides.push({
         id: randomUUID(),
-        scheduleId: pending.scheduleId,
-        until: pending.until || "",
+        scheduleId: contributor.scheduleId,
+        until: contributor.endsAt,
         reason: pending.reason,
-        createdAt: new Date().toISOString()
+        createdAt: confirmedAt.toISOString()
       });
-    } else if (pending.activeKind === "planner" && pending.plannerBlockId) {
-      completeIntentionalPlanBlock(state, String(pending.plannerBlockId));
-    } else if (pending.activeKind === "limit") {
-      const ids = new Set(pending.limitBlockIds || []);
-      const blocks = (state.limitBlocks || []).filter((block: LimitBlock) => ids.has(String(block.id || "")));
-      const ruleIds = pending.limitRuleIds?.length
-        ? pending.limitRuleIds
-        : blocks.map((block) => block.ruleId);
-      overrideLimitRules(state, ruleIds, pending.until || blocks.map((block) => block.until).sort().at(-1), pending.reason, new Date());
-      state.limitBlocks = (state.limitBlocks || []).filter((block: LimitBlock) => !ids.has(String(block.id || "")));
+    }
+    for (const contributor of releasableContributors.filter((item) => item.kind === "planner")) {
+      completeIntentionalPlanBlock(state, String(contributor.plannerBlockId), confirmedAt);
+    }
+    if (releasableLimitBlocks.length) {
+      const releasedLimitIds = new Set(releasableLimitBlocks.map((block) => String(block.id || "")));
+      overrideLimitRules(
+        state,
+        releasableLimitBlocks.map((block) => block.ruleId),
+        releasableLimitBlocks.map((block) => block.until).sort().at(-1),
+        pending.reason,
+        confirmedAt
+      );
+      state.limitBlocks = (state.limitBlocks || []).filter((block: LimitBlock) => !releasedLimitIds.has(String(block.id || "")));
     }
 
     addEvent(state, "emergency_used", pending);
     context.recordIosMdmPolicyQueue("emergency-unlock");
     await saveState(state);
-    sendJson(response, 200, { ok: true, remaining: emergencyRemaining(state) });
+    sendJson(response, 200, {
+      ok: true,
+      remaining: emergencyRemaining(state),
+      releasedPolicyContributors: releasableContributors,
+      releasedLimitBlockIds: releasableLimitBlocks.map((block) => block.id)
+    });
     return true;
   }
 
@@ -580,13 +635,140 @@ function activeEmergencyPolicy(state: SentinelState, now = new Date()): ActivePo
   const policies = DEVICE_TARGETS
     .map((target) => activePolicy(state, now, { device: target }))
     .filter((policy): policy is ActivePolicy => Boolean(policy));
-  const uniquePolicies = policies.filter((policy, index) => (
-    policies.findIndex((item) => item.kind === policy.kind && item.session.id === policy.session.id) === index
-  ));
-  return uniquePolicies.find((policy) => !emergencyUnlockAllowedForPolicy(policy))
-    || uniquePolicies.find((policy) => !policy.session.canEndEarly)
-    || uniquePolicies[0]
+  const selected = policies.find((policy) => !emergencyUnlockAllowedForPolicy(policy))
+    || policies.find((policy) => !policy.session.canEndEarly)
+    || policies[0]
     || null;
+  if (!selected) return null;
+
+  const matchingPolicies = policies.filter((policy) => (
+    policy.kind === selected.kind && policy.session.id === selected.session.id
+  ));
+  const contributors = uniqueActivePolicyContributors(
+    matchingPolicies.flatMap((policy) => policy.contributors || [])
+  );
+  return contributors.length ? { ...selected, contributors } : selected;
+}
+
+function emergencyPolicyContributors(policy: ActivePolicy): EmergencyPolicyContributor[] {
+  const contributors: ActivePolicyContributor[] = policy.contributors?.length
+    ? policy.contributors
+    : [{
+        kind: policy.kind,
+        sessionId: policy.session.id,
+        profileId: policy.profile.id,
+        endsAt: policy.endsAt,
+        scheduleId: policy.schedule?.id,
+        plannerBlockId: policy.plannerBlock?.id,
+        emergencyUnlocksAllowed: emergencyUnlockAllowedForPolicy(policy)
+      }];
+  const snapshots: EmergencyPolicyContributor[] = [];
+  for (const contributor of contributors) {
+    if (!isEmergencyPolicyContributorKind(contributor.kind)) continue;
+    if (!contributor.sessionId || !contributor.profileId) continue;
+    if (contributor.kind === "schedule" && !contributor.scheduleId) continue;
+    if (contributor.kind === "planner" && !contributor.plannerBlockId) continue;
+    snapshots.push({
+      kind: contributor.kind,
+      sessionId: contributor.sessionId,
+      profileId: contributor.profileId,
+      endsAt: contributor.endsAt,
+      scheduleId: contributor.scheduleId,
+      plannerBlockId: contributor.plannerBlockId,
+      emergencyUnlocksAllowed: contributor.emergencyUnlocksAllowed !== false
+    });
+  }
+  return uniqueEmergencyPolicyContributors(snapshots);
+}
+
+function currentEmergencyPolicyContributors(state: SentinelState, now: Date): EmergencyPolicyContributor[] {
+  return uniqueEmergencyPolicyContributors(
+    DEVICE_TARGETS.flatMap((target) => {
+      const policy = activePolicy(state, now, { device: target });
+      return policy ? emergencyPolicyContributors(policy) : [];
+    })
+  );
+}
+
+function emergencyRequestContributors(request: EmergencyRequest): EmergencyPolicyContributor[] {
+  const snapshots = Array.isArray(request.policyContributors)
+    ? request.policyContributors.map(normalizeEmergencyPolicyContributor).filter((item): item is EmergencyPolicyContributor => Boolean(item))
+    : [];
+  return uniqueEmergencyPolicyContributors(snapshots);
+}
+
+function normalizeEmergencyPolicyContributor(value: unknown): EmergencyPolicyContributor | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as UnknownRecord;
+  const kind = record.kind;
+  if (!isEmergencyPolicyContributorKind(kind)) return null;
+  const sessionId = String(record.sessionId || "").trim();
+  const profileId = String(record.profileId || "").trim();
+  const endsAt = String(record.endsAt || "").trim();
+  const scheduleId = String(record.scheduleId || "").trim() || undefined;
+  const plannerBlockId = String(record.plannerBlockId || "").trim() || undefined;
+  if (!sessionId || !profileId || !endsAt) return null;
+  if (kind === "schedule" && !scheduleId) return null;
+  if (kind === "planner" && !plannerBlockId) return null;
+  return {
+    kind,
+    sessionId,
+    profileId,
+    endsAt,
+    scheduleId,
+    plannerBlockId,
+    emergencyUnlocksAllowed: record.emergencyUnlocksAllowed !== false
+  };
+}
+
+function emergencyContributorMatches(
+  requested: EmergencyPolicyContributor,
+  current: EmergencyPolicyContributor
+): boolean {
+  if (requested.kind !== current.kind || requested.sessionId !== current.sessionId) return false;
+  if (requested.profileId !== current.profileId) return false;
+  if (requested.kind === "manual") return true;
+  if (requested.endsAt !== current.endsAt) return false;
+  if (requested.kind === "schedule") return requested.scheduleId === current.scheduleId;
+  return requested.plannerBlockId === current.plannerBlockId;
+}
+
+function uniqueEmergencyPolicyContributors(values: EmergencyPolicyContributor[]): EmergencyPolicyContributor[] {
+  const unique = new Map<string, EmergencyPolicyContributor>();
+  for (const value of values) unique.set(emergencyPolicyContributorKey(value), value);
+  return [...unique.values()];
+}
+
+function emergencyPolicyContributorKey(contributor: EmergencyPolicyContributor): string {
+  const boundary = contributor.kind === "manual" ? "" : contributor.endsAt;
+  return [
+    contributor.kind,
+    contributor.sessionId,
+    contributor.profileId,
+    boundary,
+    contributor.scheduleId || "",
+    contributor.plannerBlockId || ""
+  ].join("\u0000");
+}
+
+function uniqueActivePolicyContributors(values: ActivePolicyContributor[]): ActivePolicyContributor[] {
+  const unique = new Map<string, ActivePolicyContributor>();
+  for (const value of values) {
+    const key = [
+      value.kind,
+      value.sessionId,
+      value.profileId,
+      value.endsAt,
+      value.scheduleId || "",
+      value.plannerBlockId || ""
+    ].join("\u0000");
+    unique.set(key, value);
+  }
+  return [...unique.values()];
+}
+
+function isEmergencyPolicyContributorKind(value: unknown): value is EmergencyPolicyContributor["kind"] {
+  return value === "manual" || value === "schedule" || value === "planner";
 }
 
 function startDeviceSession(state: SentinelState, targets: DeviceTarget[], session: Session): void {
@@ -602,6 +784,21 @@ function clearDeviceSession(state: SentinelState, target: unknown): void {
   state.activeSessions ||= { computer: state.activeSession || null, phone: null };
   state.activeSessions[device] = null;
   state.activeSession = state.activeSessions.computer || null;
+}
+
+function authorizeSessionTransition(
+  response: ServerResponse,
+  state: SentinelState,
+  targets: readonly DeviceTarget[],
+  authorization: "standard" | "validated-emergency" = "standard"
+): boolean {
+  try {
+    assertSessionTransitionAllowed(state, targets, { authorization });
+    return true;
+  } catch (error) {
+    sendJson(response, errorStatus(error), serializeError(error));
+    return false;
+  }
 }
 
 export function sessionIsActive(state: SentinelState, sessionId: unknown): boolean {

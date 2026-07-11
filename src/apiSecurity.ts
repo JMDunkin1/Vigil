@@ -25,9 +25,15 @@ interface GuardResult {
   status?: number;
   error?: string;
   kind?: string;
+  deviceId?: string;
 }
 
-interface GuardInput {
+export interface RequestTransportContext {
+  remoteAddress?: string | null;
+  trustedLoopback?: boolean;
+}
+
+interface GuardInput extends RequestTransportContext {
   method?: string;
   path?: string;
   headers?: HeaderBag;
@@ -48,21 +54,21 @@ export interface ExtensionTrustSummary {
   suggestedTokenEnv: string;
 }
 
-interface DeviceUsageAuthorizationInput {
+interface DeviceUsageAuthorizationInput extends RequestTransportContext {
   headers?: HeaderBag;
   url?: URL | null;
   body?: UnknownRecord;
-  enrollmentSecret?: string | null;
+  deviceTokens?: Record<string, string>;
 }
 
-export function apiRequestGuard({ method = "GET", path = "", headers = {} }: GuardInput): GuardResult {
+export function apiRequestGuard({ method = "GET", path = "", headers = {}, remoteAddress = null, trustedLoopback = false }: GuardInput): GuardResult {
   const normalizedMethod = String(method || "GET").toUpperCase();
-  if (EXTENSION_API_PATHS.has(path)) return extensionApiRequestGuard({ method: normalizedMethod, headers });
+  if (EXTENSION_API_PATHS.has(path)) return extensionApiRequestGuard({ method: normalizedMethod, headers, remoteAddress, trustedLoopback });
   if (DEVICE_SYNC_API_PATHS.has(path)) return allow();
   if (!isMutationMethod(normalizedMethod)) return allow();
   if (hostedAccountsEnabled()) return hostedMutationGuard({ method: normalizedMethod, headers });
 
-  return localMutationGuard({ method: normalizedMethod, headers });
+  return localMutationGuard({ method: normalizedMethod, headers, remoteAddress, trustedLoopback });
 }
 
 function hostedMutationGuard({ method = "GET", headers = {} }: GuardInput): GuardResult {
@@ -84,15 +90,19 @@ function hostedMutationGuard({ method = "GET", headers = {} }: GuardInput): Guar
   return allow();
 }
 
-function extensionApiRequestGuard({ method = "GET", headers = {} }: GuardInput): GuardResult {
-  const extensionGuard = extensionRequestGuard({ method, headers });
+function extensionApiRequestGuard({ method = "GET", headers = {}, remoteAddress = null, trustedLoopback = false }: GuardInput): GuardResult {
+  const extensionGuard = extensionRequestGuard({ method, headers, remoteAddress, trustedLoopback });
   if (extensionGuard.ok) return extensionGuard;
 
-  if (!isMutationMethod(method)) return extensionGuard;
-  return localMutationGuard({ method, headers });
+  if (!isMutationMethod(method) || hostedAccountsEnabled()) return extensionGuard;
+  return localMutationGuard({ method, headers, remoteAddress, trustedLoopback });
 }
 
-function localMutationGuard({ method = "GET", headers = {} }: GuardInput): GuardResult {
+function localMutationGuard({ method = "GET", headers = {}, remoteAddress = null, trustedLoopback = false }: GuardInput): GuardResult {
+  if (!isDirectLoopbackRequest(headers, { remoteAddress, trustedLoopback })) {
+    return deny("Local mutations require a loopback connection.");
+  }
+
   const origin = headerValue(headers, "origin");
   if (origin && !isLocalOrigin(origin)) {
     return deny("Cross-origin mutation blocked.");
@@ -114,10 +124,10 @@ function localMutationGuard({ method = "GET", headers = {} }: GuardInput): Guard
   return allow();
 }
 
-export function publicHostGuard({ path = "", headers = {} }: GuardInput): GuardResult {
+export function publicHostGuard({ path = "", headers = {}, remoteAddress = null, trustedLoopback = false }: GuardInput): GuardResult {
   if (String(path || "").startsWith("/mdm/")) return allow();
   if (DEVICE_SYNC_API_PATHS.has(path)) return allow();
-  if (isLocalHostHeader(headerValue(headers, "host"))) return allow();
+  if (isDirectLoopbackRequest(headers, { remoteAddress, trustedLoopback })) return allow();
   if (hostedAccountsEnabled() && configuredPublicHosts().has(normalizedHost(headerValue(headers, "host")))) return allow();
   return deny("Public tunnel requests may only reach MDM endpoints.");
 }
@@ -126,39 +136,49 @@ export function deviceUsageSyncAuthorization({
   headers = {},
   url = null,
   body = {},
-  enrollmentSecret = ""
+  deviceTokens = {},
+  remoteAddress = null,
+  trustedLoopback = false
 }: DeviceUsageAuthorizationInput = {}): GuardResult {
   if (
     headerValue(headers, CONTROL_INTENT_HEADER) === CONTROL_INTENT_VALUE
-    && isLocalRequestHost(headers, url)
+    && isDirectLoopbackRequest(headers, { remoteAddress, trustedLoopback })
   ) {
     return { ok: true, kind: "local-intent" };
   }
 
-  const token = String(enrollmentSecret || "");
+  const deviceId = String(
+    headerValue(headers, "x-sentinel-device-id")
+    || url?.searchParams?.get("deviceId")
+    || body.deviceId
+    || ""
+  );
+  const token = String(deviceTokens[deviceId] || "");
   const supplied = String(
     headerValue(headers, "x-sentinel-device-token")
     || url?.searchParams?.get("token")
     || body?.token
     || ""
   );
-  if (token && supplied && token === supplied) return { ok: true, kind: "device-token" };
+  if (deviceId && secretMatches(token, supplied)) return { ok: true, kind: "device-token", deviceId };
 
   return deny("Device usage sync requires a local app intent header or the iOS device token.");
 }
 
-export function extensionRequestGuard({ method = "GET", headers = {} }: GuardInput): GuardResult {
+export function extensionRequestGuard({ method = "GET", headers = {}, remoteAddress = null, trustedLoopback = false }: GuardInput): GuardResult {
   const normalizedMethod = String(method || "GET").toUpperCase();
   const origin = headerValue(headers, "origin");
+  const localTransport = isDirectLoopbackRequest(headers, { remoteAddress, trustedLoopback });
 
   if (normalizedMethod === "OPTIONS") {
-    if (!origin || !isExtensionOrigin(origin) || (!isTrustedExtensionOrigin(origin) && !configuredExtensionToken())) {
+    const originTrustedLocally = localTransport && isTrustedExtensionOrigin(origin);
+    if (!origin || !isExtensionOrigin(origin) || (!originTrustedLocally && !configuredExtensionToken())) {
       return deny("Untrusted extension origin blocked.");
     }
     return allow();
   }
 
-  const trustedOrigin = origin && isTrustedExtensionOrigin(origin);
+  const trustedOrigin = Boolean(localTransport && origin && isTrustedExtensionOrigin(origin));
   const trustedToken = extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
   if (!trustedOrigin && !trustedToken) {
     return deny("Untrusted extension origin blocked.");
@@ -176,9 +196,10 @@ export function extensionRequestGuard({ method = "GET", headers = {} }: GuardInp
   return allow();
 }
 
-export function extensionCorsHeaders(headers: HeaderBag = {}): Record<string, string> {
+export function extensionCorsHeaders(headers: HeaderBag = {}, transport: RequestTransportContext = {}): Record<string, string> {
   const origin = headerValue(headers, "origin");
-  if (!origin || !isExtensionOrigin(origin) || (!isTrustedExtensionOrigin(origin) && !configuredExtensionToken())) return {};
+  const trustedLocalOrigin = isDirectLoopbackRequest(headers, transport) && isTrustedExtensionOrigin(origin);
+  if (!origin || !isExtensionOrigin(origin) || (!trustedLocalOrigin && !configuredExtensionToken())) return {};
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -187,15 +208,15 @@ export function extensionCorsHeaders(headers: HeaderBag = {}): Record<string, st
   };
 }
 
-export function isTrustedExtensionRequest(headers: HeaderBag = {}): boolean {
-  return isTrustedExtensionOrigin(headerValue(headers, "origin"))
+export function isTrustedExtensionRequest(headers: HeaderBag = {}, transport: RequestTransportContext = {}): boolean {
+  return (isDirectLoopbackRequest(headers, transport) && isTrustedExtensionOrigin(headerValue(headers, "origin")))
     || extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
 }
 
-export function extensionTrustSummary(headers: HeaderBag = {}): ExtensionTrustSummary {
+export function extensionTrustSummary(headers: HeaderBag = {}, transport: RequestTransportContext = {}): ExtensionTrustSummary {
   const requestOrigin = headerValue(headers, "origin");
   const normalized = requestOrigin ? normalizedOrigin(requestOrigin) : "";
-  const trustedOrigin = Boolean(requestOrigin && isTrustedExtensionOrigin(requestOrigin));
+  const trustedOrigin = Boolean(isDirectLoopbackRequest(headers, transport) && requestOrigin && isTrustedExtensionOrigin(requestOrigin));
   const trustedToken = extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
   const extensionId = extensionIdFromOrigin(requestOrigin);
   return {
@@ -225,23 +246,31 @@ function isJsonContentType(value: unknown): boolean {
 function isLocalOrigin(value: string): boolean {
   try {
     const url = new URL(value);
-    const host = url.hostname.toLowerCase();
+    const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
     return ["127.0.0.1", "localhost", "::1"].includes(host) && ["http:", "https:"].includes(url.protocol);
   } catch {
     return false;
   }
 }
 
-function isLocalHostHeader(value: unknown): boolean {
+export function isLoopbackHostHeader(value: unknown): boolean {
   const raw = String(value || "").trim();
-  if (!raw) return true;
+  if (!raw) return false;
   try {
     const url = new URL(`http://${raw}`);
+    if (url.username || url.password || url.pathname !== "/" || url.search || url.hash) return false;
     const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
     return ["127.0.0.1", "localhost", "::1"].includes(host);
   } catch {
     return false;
   }
+}
+
+export function isLoopbackRemoteAddress(value: unknown): boolean {
+  const address = String(value || "").trim().toLowerCase();
+  return address === "::1"
+    || address === "127.0.0.1"
+    || address === "::ffff:127.0.0.1";
 }
 
 function configuredPublicHosts(): Set<string> {
@@ -262,11 +291,33 @@ function hostedAccountsEnabled(): boolean {
   return ["1", "true", "yes", "on"].includes(String(process.env.SENTINEL_AUTH_ENABLED || "").trim().toLowerCase());
 }
 
-function isLocalRequestHost(headers: HeaderBag, url: URL | null): boolean {
-  const host = headerValue(headers, "host");
-  if (host) return isLocalHostHeader(host);
-  const hostname = String(url?.hostname || "").replace(/^\[|\]$/g, "").toLowerCase();
-  return ["127.0.0.1", "localhost", "::1"].includes(hostname);
+function isDirectLoopbackRequest(
+  headers: HeaderBag,
+  { remoteAddress = null, trustedLoopback = false }: RequestTransportContext
+): boolean {
+  if (trustedLoopback === true) return true;
+  return isLoopbackRemoteAddress(remoteAddress)
+    && isLoopbackHostHeader(headerValue(headers, "host"))
+    && !hasForwardingHeaders(headers);
+}
+
+function hasForwardingHeaders(headers: HeaderBag): boolean {
+  return [
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-port",
+    "x-forwarded-proto",
+    "x-real-ip",
+    "x-client-ip",
+    "x-cluster-client-ip",
+    "cf-connecting-ip",
+    "true-client-ip",
+    "fastly-client-ip",
+    "fly-client-ip",
+    "x-vercel-forwarded-for",
+    "via"
+  ].some((name) => Boolean(headerValue(headers, name)));
 }
 
 function isExtensionOrigin(value: string): boolean {
@@ -314,8 +365,10 @@ function configuredExtensionToken(): string {
 }
 
 function extensionTokenMatches(value: unknown): boolean {
-  const expected = configuredExtensionToken();
-  const supplied = String(value || "");
+  return secretMatches(configuredExtensionToken(), String(value || ""));
+}
+
+function secretMatches(expected: string, supplied: string): boolean {
   if (!expected || !supplied) return false;
   const expectedBytes = Buffer.from(expected);
   const suppliedBytes = Buffer.from(supplied);

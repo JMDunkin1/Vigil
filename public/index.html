@@ -66,37 +66,6 @@
           <span id="sessionCountdown">--</span>
         </div>
 
-        <form id="startSessionForm" class="legacy-home-actions" aria-hidden="true">
-          <select name="mode"><option value="focus">Focus</option></select>
-          <select name="durationMinutes"><option value="90">90 min</option></select>
-          <select name="profileId" id="sessionProfile"></select>
-          <select name="lockLevel"><option value="deep">Strict</option></select>
-          <button type="submit">Start</button>
-          <button id="endSession" type="button">End</button>
-          <button id="startNormalMode" type="button">Level 1</button>
-          <button id="startSoftBlock" type="button">Level 2</button>
-          <button id="startFullBrick" type="button">Level 3</button>
-          <select id="brickDuration"><option value="90">90 min</option></select>
-          <span id="brickStatus">Normal baseline</span>
-          <button id="startPanicLock" type="button">Panic</button>
-          <span id="panicStatus">3 min full lockout</span>
-          <div id="lockPreview" class="lock-preview hidden" aria-live="polite">
-            <div class="lock-preview-head">
-              <div>
-                <p class="eyebrow">Pre-lock Preview</p>
-                <strong id="lockPreviewTitle">Manual Lock</strong>
-                <span id="lockPreviewMeta">--</span>
-              </div>
-              <button id="cancelLockPreview" class="ghost compact" type="button">Cancel</button>
-            </div>
-            <div id="lockPreviewGrid" class="lock-preview-grid"></div>
-            <div class="lock-preview-actions">
-              <span id="lockPreviewStatus" class="tiny-status">Review before starting</span>
-              <button id="confirmLockPreview" class="primary compact" type="button" disabled>Start</button>
-            </div>
-          </div>
-        </form>
-
         <div id="emergencyPanel" class="emergency hidden">
           <div>
             <p class="eyebrow">Emergency</p>
@@ -144,6 +113,11 @@
           <span>Vs last week</span>
           <strong id="distractionTrend">--</strong>
           <em>distraction time</em>
+        </div>
+        <div class="ranking-vital">
+          <span>iPhone today</span>
+          <strong id="phoneUsageToday">--</strong>
+          <em>synced usage</em>
         </div>
       </div>
 
@@ -202,14 +176,6 @@
         </section>
       </div>
 
-      <div class="ranking-data-sinks" hidden aria-hidden="true">
-        <span id="progressLevel"></span>
-        <span id="brainHealth"></span>
-        <span id="homeFocusStreak"></span>
-        <span id="distractingToday"></span>
-        <span id="phoneUsageToday"></span>
-        <span id="lockedToday"></span>
-      </div>
     </section>
 
     <section id="view-audio" class="view" data-view="audio" hidden>
@@ -236,6 +202,7 @@
           <p id="focusSoundCategory" class="audio-track-category">Noise &amp; tones</p>
           <h2 id="focusSoundNowPlaying">Brown noise</h2>
           <p id="focusSoundDescription" class="audio-track-description">A low, steady texture for sustained concentration.</p>
+          <p id="focusSoundAttribution" class="audio-track-attribution" hidden></p>
 
           <button id="focusSoundPlayButton" class="audio-master-toggle" type="button" aria-pressed="false" aria-label="Play Brown noise">
             <span class="audio-play-symbol" aria-hidden="true"></span>
@@ -383,17 +350,8 @@
           <p class="eyebrow">Quiet by default</p>
           <h2>Settings</h2>
         </div>
-        <p class="view-intro">The everyday controls stay in Ranking. Configuration lives here when you or your agent need it.</p>
+        <p class="view-intro">The everyday controls stay in Ranking. Configuration lives here when you need it.</p>
       </div>
-
-      <section class="agent-settings-card panel" aria-label="Agent-focused settings">
-        <span class="agent-sigil" aria-hidden="true">A</span>
-        <div>
-          <p class="eyebrow">Agent Focus</p>
-          <h2>Describe the change; keep the machinery out of sight.</h2>
-          <p>Sentinel's existing protected APIs remain the source of truth. The detailed controls below are the manual fallback.</p>
-        </div>
-      </section>
 
       <details class="settings-disclosure">
         <summary><span>Rules and limits</span><em>Profiles, schedules, goals, and pause rules</em></summary>
@@ -782,16 +740,16 @@
 
       <div class="view-head journal-only">
         <div>
-          <p class="eyebrow">Private Reflection</p>
+          <p class="eyebrow">Reflection</p>
           <h2>Journal</h2>
         </div>
-        <span class="pill neutral">Private</span>
+        <span class="pill neutral">Local</span>
       </div>
 
       <section id="journalUnlockGate" class="journal-unlock-gate journal-only panel" hidden aria-labelledby="journalUnlockTitle">
         <span class="journal-lock-sigil" aria-hidden="true">&#10070;</span>
         <p class="eyebrow">Journal Locked</p>
-        <h2 id="journalUnlockTitle">Your entries remain private.</h2>
+        <h2 id="journalUnlockTitle">Journal locked.</h2>
         <p id="journalUnlockCopy">Authenticate with Touch ID or your journal password. The journal locks again automatically.</p>
         <div class="journal-unlock-actions">
           <button id="journalTouchIdUnlock" class="primary" type="button" data-journal-unlock-method="biometric">Use Touch ID</button>
@@ -855,7 +813,7 @@
               <p class="eyebrow">New Entry</p>
               <h2 id="journalComposerTitle">Write it down.</h2>
             </div>
-            <p>Private, unstructured, and only for you.</p>
+            <p>Stored locally with access controls. Entries are not encrypted.</p>
           </header>
           <form id="journalEntryForm" class="journal-form">
             <input name="id" type="hidden">
@@ -876,18 +834,10 @@
         <section class="journal-archive" aria-labelledby="journalArchiveTitle">
           <header class="journal-section-head">
             <div>
-              <p class="eyebrow">Private Archive</p>
+              <p class="eyebrow">Local Archive</p>
               <h2 id="journalArchiveTitle">Past entries</h2>
             </div>
           </header>
-          <div class="journal-stats tracking-only" aria-hidden="true">
-            <strong id="journalWeekCount">--</strong>
-            <strong id="behaviorWeekCount">--</strong>
-            <strong id="reflectionStreak">--</strong>
-            <strong id="recoveryWeekCount">--</strong>
-            <strong id="recoverySetbacks">--</strong>
-            <strong id="recoverySosCount">--</strong>
-          </div>
           <div id="journalEntryList" class="journal-entry-list"></div>
         </section>
       </div>
@@ -956,276 +906,16 @@
         </dialog>
       </div>
 
-      <div class="workspace two-column planner-workspace tracking-only tracking-legacy-surface">
-        <section class="panel journal-panel">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Lists</p>
-              <h2>Things To Do</h2>
-            </div>
-            <button id="newPlanItem" class="secondary" type="button">New</button>
-          </div>
-          <form id="planItemForm" class="profile-form">
-            <input name="id" type="hidden">
-            <div class="form-row">
-              <label>
-                List
-                <select id="planItemListId" name="listId"></select>
-              </label>
-              <label>
-                Status
-                <select name="status">
-                  <option value="open">Open</option>
-                  <option value="done">Done</option>
-                </select>
-              </label>
-            </div>
-            <label>
-              Item
-              <input name="title" type="text" value="Homework">
-            </label>
-            <label>
-              Notes
-              <textarea name="notes" rows="3"></textarea>
-            </label>
-            <div class="form-row">
-              <label>
-                Due
-                <input name="dueAt" type="datetime-local">
-              </label>
-              <label>
-                Tags
-                <input name="tags" type="text" placeholder="school, movie, errand">
-              </label>
-            </div>
-            <button class="primary" type="submit">Save Item</button>
-          </form>
-
-          <form id="planListForm" class="profile-form compact-form">
-            <input name="id" type="hidden">
-            <div class="form-row thirds">
-              <label>
-                List Name
-                <input name="name" type="text" value="To Do">
-              </label>
-              <label>
-                Type
-                <select name="kind">
-                  <option value="todo">To Do</option>
-                  <option value="watch">Watch</option>
-                  <option value="read">Read</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </label>
-              <label class="checkline app-lock-enabled"><input name="active" type="checkbox" checked> Active</label>
-            </div>
-            <button class="secondary" type="submit">Save List</button>
-          </form>
-          <div id="planItemList" class="list limit-list"></div>
-        </section>
-
-        <section class="panel journal-panel">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Planner</p>
-              <h2>Calendar Blocks</h2>
-            </div>
-            <button id="newPlanBlock" class="secondary" type="button">New</button>
-          </div>
-          <form id="planBlockForm" class="profile-form">
-            <input name="id" type="hidden">
-            <div class="form-row">
-              <label>
-                Title
-                <input name="title" type="text" value="Homework">
-              </label>
-              <label>
-                Item
-                <select id="planBlockItemId" name="itemId"></select>
-              </label>
-            </div>
-            <div class="form-row">
-              <label>
-                Start
-                <input name="startsAt" type="datetime-local">
-              </label>
-              <label>
-                End
-                <input name="endsAt" type="datetime-local">
-              </label>
-            </div>
-            <div class="form-row thirds">
-              <label>
-                Mode
-                <input name="mode" type="text" value="focus">
-              </label>
-              <label>
-                Profile
-                <select id="planBlockProfileId" name="profileId"></select>
-              </label>
-              <label>
-                Lock
-                <select name="lockLevel">
-                  <option value="deep">Deep</option>
-                  <option value="light">Light</option>
-                </select>
-              </label>
-            </div>
-            <div class="toggle-row compact-toggle-row">
-              <label><input name="enabled" type="checkbox" checked> Enabled</label>
-              <label><input name="commitmentLock" type="checkbox"> Commitment</label>
-              <label><input name="deviceTargets" type="checkbox" value="computer" checked> Computer</label>
-              <label><input name="deviceTargets" type="checkbox" value="phone" checked> iPhone</label>
-            </div>
-            <label>
-              Notes
-              <textarea name="notes" rows="3"></textarea>
-            </label>
-            <button class="primary" type="submit">Save Block</button>
-          </form>
-          <div id="plannerAgenda" class="planner-agenda"></div>
-        </section>
-      </div>
-
-      <div class="workspace two-column tracking-only tracking-legacy-surface">
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Recovery</p>
-              <h2>Daily Check-In</h2>
-            </div>
-          </div>
-          <form id="recoveryCheckInForm" class="profile-form">
-            <div class="form-row thirds">
-              <label>
-                Status
-                <select name="status">
-                  <option value="clean">Clean</option>
-                  <option value="urge">Urge</option>
-                  <option value="setback">Setback</option>
-                  <option value="victory">Victory</option>
-                </select>
-              </label>
-              <label>
-                Mood
-                <input name="mood" type="text" placeholder="Steady, tense, proud">
-              </label>
-              <label>
-                Urge
-                <input name="urgeIntensity" type="number" min="0" max="10" step="1" value="0">
-              </label>
-            </div>
-            <div class="form-row thirds">
-              <label>
-                Stress
-                <input name="stress" type="number" min="0" max="10" step="1" placeholder="0-10">
-              </label>
-              <label>
-                Sleep
-                <input name="sleepHours" type="number" min="0" max="24" step="0.25" placeholder="hours">
-              </label>
-              <label>
-                Exercise
-                <input name="exerciseMinutes" type="number" min="0" max="1440" step="1" placeholder="minutes">
-              </label>
-            </div>
-            <div class="form-row">
-              <label>
-                Trigger
-                <input name="trigger" type="text" placeholder="late night, stress, boredom">
-              </label>
-              <label>
-                Action
-                <input name="action" type="text" placeholder="walked, called, blocked, journaled">
-              </label>
-            </div>
-            <label>
-              Note
-              <textarea name="note" rows="3"></textarea>
-            </label>
-            <button class="secondary" type="submit">Add Recovery Check-In</button>
-          </form>
-          <div id="recoveryCheckInList" class="list limit-list"></div>
-        </section>
-
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">SOS</p>
-              <h2>Urge Reset</h2>
-            </div>
-          </div>
-          <form id="sosForm" class="profile-form">
-            <div class="form-row thirds">
-              <label>
-                Intent
-                <select name="intent">
-                  <option value="calm">Calm</option>
-                  <option value="sleep">Sleep</option>
-                  <option value="lift-mood">Lift Mood</option>
-                  <option value="distraction">Distraction</option>
-                  <option value="unsure">Unsure</option>
-                </select>
-              </label>
-              <label>
-                Urge
-                <input name="urgeIntensity" type="number" min="0" max="10" step="1" value="7">
-              </label>
-              <label>
-                Replacement
-                <input name="replacement" type="text" placeholder="leave room, shower, call someone">
-              </label>
-            </div>
-            <label>
-              Trigger
-              <input name="trigger" type="text" placeholder="What is pulling you in?">
-            </label>
-            <button class="primary" type="submit">Start SOS Reset</button>
-          </form>
-          <div id="sosPlan" class="list limit-list"></div>
-          <div id="sosSessionList" class="list limit-list"></div>
-        </section>
-      </div>
-
-      <div class="workspace two-column split-surface">
-        <section class="panel tracking-only tracking-legacy-surface">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Check In</p>
-              <h2>Behavior Ledger</h2>
-            </div>
-          </div>
-          <form id="behaviorCheckInForm" class="profile-form">
-            <div class="form-row">
-              <label>
-                Behavior
-                <select id="behaviorCheckInId" name="behaviorId"></select>
-              </label>
-              <label>
-                Value
-                <input name="value" type="number" min="0" max="100000" step="1" value="1">
-              </label>
-            </div>
-            <label>
-              Note
-              <input name="note" type="text" placeholder="What happened?">
-            </label>
-            <button class="secondary" type="submit">Add Check-In</button>
-          </form>
-          <div id="behaviorCheckInList" class="list limit-list"></div>
-        </section>
-
-      </div>
     </section>
 
     <section id="view-settings" class="view settings-segment" data-view="settings" hidden>
       <details class="settings-disclosure journal-security-settings">
-        <summary><span>Journal privacy</span><em>Password, Touch ID, and automatic locking</em></summary>
+        <summary><span>Journal access</span><em>Password, Touch ID, and automatic locking</em></summary>
         <div class="settings-disclosure-body">
           <section class="journal-security-panel panel" aria-labelledby="journalSecurityTitle">
             <div class="section-head">
               <div>
-                <p class="eyebrow">Private Vault</p>
+                <p class="eyebrow">Access Control</p>
                 <h2 id="journalSecurityTitle">Journal security</h2>
               </div>
               <span id="journalSecurityStatus" class="pill neutral">Not configured</span>
@@ -1395,7 +1085,7 @@
             <button id="copyHostsCommand" class="secondary" type="button">Copy Network Command</button>
             <button id="copySourceSealCommand" class="secondary" type="button">Copy Source Seal</button>
             <button id="copyExtensionPath" class="secondary" type="button">Copy Extension Path</button>
-            <button id="exportBackup" class="secondary" type="button">Export Backup</button>
+            <button id="exportDiagnosticSnapshot" class="secondary" type="button">Export Diagnostic Snapshot</button>
             <span id="hardeningActionStatus" class="tiny-status">Ready</span>
           </div>
           <div id="hardeningAudit" class="audit-list"></div>
@@ -1625,154 +1315,6 @@
       </details>
     </section>
 
-    <section id="view-insights" class="view ranking-details" data-view="legacy-ranking" hidden>
-      <div class="view-head">
-        <div>
-          <p class="eyebrow">Campaign Ledger</p>
-          <h2>Statistics</h2>
-        </div>
-      </div>
-
-      <div class="workspace two-column">
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Now</p>
-              <h2>Live Watcher</h2>
-            </div>
-            <span id="activeApp" class="pill neutral">No sample</span>
-          </div>
-          <div class="watch-grid">
-            <div>
-              <span>App</span>
-              <strong id="watchApp">--</strong>
-            </div>
-            <div>
-              <span>Site</span>
-              <strong id="watchSite">--</strong>
-            </div>
-            <div>
-              <span>Last Block</span>
-              <strong id="lastBlock">--</strong>
-            </div>
-            <div>
-              <span>Wi-Fi</span>
-              <strong id="watchWifi">--</strong>
-            </div>
-            <div>
-              <span>Sweep</span>
-              <strong id="watchSweep">--</strong>
-            </div>
-            <div>
-              <span>Sleep Lock</span>
-              <strong id="watchSystemLock">--</strong>
-            </div>
-          </div>
-          <div id="interventionPanel" class="intervention-panel"></div>
-          <div id="permissionWarning" class="warning hidden"></div>
-        </section>
-
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Report</p>
-              <h2>Weekly Focus Report</h2>
-            </div>
-            <span id="reportRange" class="pill neutral">This week</span>
-          </div>
-          <div class="report-grid">
-            <div class="report-metric">
-              <span>Week Score</span>
-              <strong id="weekFocusScore">--</strong>
-              <em id="weekScoreDelta">--</em>
-            </div>
-            <div class="report-metric">
-              <span>Distraction</span>
-              <strong id="weekSaved">--</strong>
-              <em id="weekSavedDelta">--</em>
-            </div>
-            <div class="report-metric">
-              <span>Streak</span>
-              <strong id="focusStreak">--</strong>
-              <em id="streakGoal">--</em>
-            </div>
-            <div class="report-metric">
-              <span>Rank</span>
-              <strong id="progressLevelReport">--</strong>
-              <em id="xpProgress">--</em>
-              <div class="level-progress" aria-hidden="true"><span id="levelProgressFill"></span></div>
-            </div>
-            <div class="report-metric">
-              <span>Avg / Day</span>
-              <strong id="yearPace">--</strong>
-              <em id="decadePace">--</em>
-            </div>
-            <div class="report-metric">
-              <span>Open Pressure</span>
-              <strong id="openPressure">--</strong>
-              <em id="openPressureMeta">--</em>
-            </div>
-            <div class="report-metric">
-              <span>Reflections</span>
-              <strong id="reportJournalEntries">--</strong>
-              <em id="reportReflectionStreak">--</em>
-            </div>
-            <div class="report-metric">
-              <span>Behavior XP</span>
-              <strong id="reportBehaviorCheckIns">--</strong>
-              <em id="reportNextUnlock">--</em>
-            </div>
-            <div class="report-metric">
-              <span>Recovery</span>
-              <strong id="reportRecoveryCheckIns">--</strong>
-              <em id="reportRecoveryMeta">--</em>
-            </div>
-          </div>
-          <div class="week-strip" id="weekStrip"></div>
-          <div class="report-split">
-            <div>
-              <p class="eyebrow">Insights</p>
-              <div id="reportInsights" class="insight-list"></div>
-            </div>
-            <div>
-              <p class="eyebrow">Milestones</p>
-              <div id="milestones" class="milestone-list"></div>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <div class="workspace two-column">
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Apps</p>
-              <h2>Today</h2>
-            </div>
-          </div>
-          <div id="appBars" class="bar-list"></div>
-        </section>
-        <section class="panel">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Sites</p>
-              <h2>Today</h2>
-            </div>
-          </div>
-          <div id="siteBars" class="bar-list"></div>
-        </section>
-      </div>
-
-      <section class="panel events-panel">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Log</p>
-            <h2>Recent Events</h2>
-          </div>
-        </div>
-        <div id="eventsList" class="events-list"></div>
-      </section>
-    </section>
   </main>
 
   <dialog id="accountDialog" class="account-dialog" aria-labelledby="accountDialogTitle">
@@ -1819,7 +1361,7 @@
     </section>
   </dialog>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite" aria-atomic="true"></div>
   <div id="distanceScanner" class="scanner hidden" role="dialog" aria-modal="true" aria-label="Scan distance key">
     <div class="scanner-box">
       <div class="section-head">

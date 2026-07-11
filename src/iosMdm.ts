@@ -1,19 +1,23 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import http2 from "node:http2";
 import type { ClientHttp2Session, ClientHttp2Stream, IncomingHttpHeaders } from "node:http2";
-import { APP_NAME, PORT, defaultState } from "./defaults.js";
+import { APP_NAME, defaultState } from "./defaults.js";
 import { buildIosConfigurationProfile, IOS_PROFILE_IDENTIFIER, iosPolicyTargets } from "./iosProfiles.js";
 import { parseBoolean } from "./booleans.js";
 import { grayscaleDecision } from "./grayscale.js";
 import { clampInteger } from "./normalizers.js";
 import { plistData, toPlist } from "./plist.js";
+import { activePolicy } from "./policy.js";
 import type { IosMdmSettings, SentinelState, UnknownRecord } from "./types.js";
-import type { MdmCommand, MdmDevice, MdmMessage, MdmPushRequest, MdmSettings } from "./iosMdmModel.js";
-import { dataHex, dataString, isUnknownRecord, latestDate, normalizeBase64, normalizeBaseUrl, normalizeMdmCommands, normalizeMdmDevices, normalizeStatus, normalizeUuid, obscure, publicMdmCommand, publicMdmDevice, randomSecret, tokenHexFromDevice, tokenHexFromStoredToken } from "./iosMdmModel.js";
+import type { MdmCommand, MdmDevice, MdmEnrollmentToken, MdmMessage, MdmPushRequest, MdmSettings } from "./iosMdmModel.js";
+import { dataHex, dataString, isUnknownRecord, latestDate, normalizeBase64, normalizeBaseUrl, normalizeMdmCommands, normalizeMdmDevices, normalizeMdmEnrollmentTokens, normalizeStatus, normalizeUuid, obscure, publicMdmCommand, publicMdmDevice, randomSecret, tokenHexFromDevice, tokenHexFromStoredToken } from "./iosMdmModel.js";
 
 const MDM_PROFILE_IDENTIFIER = "com.local-screen-time.ios.mdm";
 const DEFAULT_ACCESS_RIGHTS = 8179;
 const MAX_COMMANDS = 500;
+const MAX_MDM_DEVICES = 64;
+const MAX_ENROLLMENT_TOKENS = 128;
+const PENDING_ENROLLMENT_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const PUSH_COOLDOWN_MS = 30_000;
 const APNS_TIMEOUT_MS = 5_000;
 const DEVICE_INFO_QUERIES = [
@@ -108,7 +112,8 @@ export function normalizeIosMdmSettings(body: UnknownRecord = {}, existing: Part
     useDevelopmentApns: body.useDevelopmentApns === undefined ? Boolean(current.useDevelopmentApns) : parseBoolean(body.useDevelopmentApns, false),
     checkOutWhenRemoved: body.checkOutWhenRemoved === undefined ? current.checkOutWhenRemoved !== false : parseBoolean(body.checkOutWhenRemoved, true),
     enrollmentSecret: current.enrollmentSecret || randomSecret(),
-    devices: normalizeMdmDevices(current.devices),
+    enrollmentTokens: normalizeMdmEnrollmentTokens(current.enrollmentTokens),
+    devices: normalizeMdmDevices(current.devices).slice(0, MAX_MDM_DEVICES),
     commands: normalizeMdmCommands(current.commands),
     lastEnrollmentProfileGeneratedAt: current.lastEnrollmentProfileGeneratedAt || null,
     lastCheckInAt: current.lastCheckInAt || null,
@@ -129,6 +134,7 @@ export function publicIosMdmSettings(mdm: Partial<IosMdmSettings> | Partial<MdmS
     identityCertificatePassword,
     pushCertificatePayloadBase64,
     pushCertificatePassword,
+    enrollmentTokens,
     devices,
     commands,
     ...rest
@@ -152,6 +158,34 @@ export function publicIosMdmSettings(mdm: Partial<IosMdmSettings> | Partial<MdmS
     enrolledDeviceCount: normalizeMdmDevices(devices).filter((device) => device.status !== "checked-out").length,
     pendingCommandCount: normalizeMdmCommands(commands).filter((command) => command.status === "queued").length
   };
+}
+
+export function iosMdmDeviceUsageCredential(
+  state: SentinelState,
+  identifier: string
+): { deviceId: string; token: string } | null {
+  const mdm = ensureMdmState(state);
+  const device = normalizeMdmDevices(mdm.devices).find((candidate) => (
+    candidate.status !== "checked-out"
+    && (candidate.id === identifier || candidate.udid === identifier)
+  ));
+  const secret = String(mdm.enrollmentSecret || "");
+  if (!device || !secret) return null;
+  return {
+    deviceId: device.udid,
+    token: createHmac("sha256", secret).update(`usage:${device.udid}`).digest("base64url")
+  };
+}
+
+export function iosMdmDeviceUsageTokens(state: SentinelState): Record<string, string> {
+  const mdm = ensureMdmState(state);
+  return Object.fromEntries(normalizeMdmDevices(mdm.devices)
+    .filter((device) => device.status !== "checked-out")
+    .map((device) => {
+      const credential = iosMdmDeviceUsageCredential(state, device.udid);
+      return credential ? [credential.deviceId, credential.token] : [];
+    })
+    .filter((entry): entry is [string, string] => entry.length === 2));
 }
 
 export function iosMdmReadiness(mdm: Partial<IosMdmSettings> | Partial<MdmSettings> = {}): IosMdmReadiness {
@@ -222,11 +256,9 @@ export function iosMdmDoctor(state: SentinelState, now = new Date()) {
       enabled: readiness.enabled,
       publicBaseUrl: mdm.publicBaseUrl,
       topic: mdm.topic,
-      enrollmentUrl: readiness.enrollmentReady ? fullMdmUrl(mdm, "/mdm/enroll.mobileconfig") : "",
-      localEnrollmentPath: readiness.enrollmentReady ? enrollmentPath(mdm) : "",
-      serverUrl: readiness.enrollmentReady ? fullMdmUrl(mdm, "/mdm/connect") : "",
-      checkInUrl: readiness.enrollmentReady ? fullMdmUrl(mdm, "/mdm/checkin") : "",
-      policyProfileUrl: readiness.enrollmentReady ? fullMdmUrl(mdm, "/mdm/policy.mobileconfig") : "",
+      enrollmentUrl: readiness.enrollmentReady ? "/api/devices/ios/mdm/enrollment.mobileconfig" : "",
+      localEnrollmentPath: readiness.enrollmentReady ? "/api/devices/ios/mdm/enrollment.mobileconfig" : "",
+      serverConfigured: readiness.enrollmentReady,
       enrolledDeviceCount: enrolled.length,
       pendingCommandCount: pending.length,
       identityCertificatePayloadSet: Boolean(mdm.identityCertificatePayloadBase64),
@@ -283,11 +315,9 @@ export function iosMdmSummary(state: SentinelState, now = new Date()) {
     signMessage: Boolean(mdm.signMessage),
     useDevelopmentApns: Boolean(mdm.useDevelopmentApns),
     checkOutWhenRemoved: mdm.checkOutWhenRemoved !== false,
-    localEnrollmentPath: enrollmentPath(mdm),
-    enrollmentUrl: fullMdmUrl(mdm, "/mdm/enroll.mobileconfig"),
-    policyProfileUrl: fullMdmUrl(mdm, "/mdm/policy.mobileconfig"),
-    checkInUrl: fullMdmUrl(mdm, "/mdm/checkin"),
-    serverUrl: fullMdmUrl(mdm, "/mdm/connect"),
+    localEnrollmentPath: readiness.enrollmentReady ? "/api/devices/ios/mdm/enrollment.mobileconfig" : "",
+    enrollmentUrl: readiness.enrollmentReady ? "/api/devices/ios/mdm/enrollment.mobileconfig" : "",
+    serverConfigured: readiness.enrollmentReady,
     pushSupported: readiness.ready,
     pushNote: readiness.ready
       ? "Advanced self-hosted APNs wakeups are configured; ManageEngine is still the normal free delivery path."
@@ -344,11 +374,12 @@ export function buildIosMdmEnrollmentProfile(state: SentinelState): string {
   assertIosMdmEnrollmentReady(state);
   const mdm = ensureMdmState(state);
   const baseUrl = mdm.publicBaseUrl;
+  const deviceSecret = createEnrollmentToken(mdm);
   const mdmPayload = commonPayload("com.apple.mdm", "Sentinel MDM", "mdm", {
     AccessRights: mdm.accessRights || DEFAULT_ACCESS_RIGHTS,
-    CheckInURL: `${baseUrl}/mdm/checkin?token=${encodeURIComponent(mdm.enrollmentSecret || "")}`,
+    CheckInURL: `${baseUrl}/mdm/checkin?token=${encodeURIComponent(deviceSecret)}`,
     CheckOutWhenRemoved: mdm.checkOutWhenRemoved !== false,
-    ServerURL: `${baseUrl}/mdm/connect?token=${encodeURIComponent(mdm.enrollmentSecret || "")}`,
+    ServerURL: `${baseUrl}/mdm/connect?token=${encodeURIComponent(deviceSecret)}`,
     SignMessage: Boolean(mdm.signMessage),
     Topic: mdm.topic,
     UseDevelopmentAPNS: Boolean(mdm.useDevelopmentApns)
@@ -381,10 +412,36 @@ export function buildIosMdmEnrollmentProfile(state: SentinelState): string {
   });
 }
 
-export function authorizeIosMdmRequest(state: SentinelState, url: URL): boolean {
+export function authorizeIosMdmRequest(state: SentinelState, url: URL, now = new Date()): boolean {
   const mdm = currentIosMdmSettings(state);
   const token = url.searchParams.get("token") || "";
-  return Boolean(mdm.enrollmentSecret && token && token === mdm.enrollmentSecret);
+  if (["/mdm/checkin", "/mdm/connect"].includes(url.pathname) && mdm.enrollmentTokens.length) {
+    return Boolean(findEnrollmentToken(mdm, token, now));
+  }
+  return secretsEqual(String(mdm.enrollmentSecret || ""), token);
+}
+
+export function authorizeIosMdmDeviceRequest(state: SentinelState, url: URL, requestBody: MdmMessage, now = new Date()): boolean {
+  const mdm = ensureMdmState(state);
+  const udid = mdmIdentifier(requestBody);
+  if (!udid) return false;
+
+  const suppliedToken = url.searchParams.get("token") || "";
+  const enrollment = findEnrollmentToken(mdm, suppliedToken, now);
+  if (enrollment) {
+    if (enrollment.boundUdid && enrollment.boundUdid !== udid) return false;
+    enrollment.boundUdid = udid;
+    enrollment.lastSeenAt = now.toISOString();
+    return true;
+  }
+
+  const isLegacyDevice = mdm.devices.some((device) => device.udid === udid && device.status !== "checked-out");
+  if (mdm.devices.length) {
+    return isLegacyDevice && secretsEqual(String(mdm.enrollmentSecret || ""), suppliedToken);
+  }
+
+  const isFirstEnrollmentMigration = mdm.enrollmentTokens.length === 0;
+  return isFirstEnrollmentMigration && secretsEqual(String(mdm.enrollmentSecret || ""), suppliedToken);
 }
 
 export function handleIosMdmCheckIn(state: SentinelState, requestBody: MdmMessage, now = new Date()) {
@@ -763,6 +820,7 @@ function currentIosMdmSettings(state: SentinelState): MdmSettings {
 
 function iosPolicyHash(state: SentinelState, now: Date): string {
   const ios = state.deviceControls?.ios || {};
+  const policy = activePolicy(state, now, { device: "phone" });
   const stablePolicy = {
     enabled: Boolean(ios.enabled),
     mode: ios.mode || "denylist",
@@ -778,7 +836,11 @@ function iosPolicyHash(state: SentinelState, now: Date): string {
     allowedUrls: ios.allowedUrls || [],
     focusedSocial: ios.focusedSocial || null,
     removalPasswordSet: Boolean(ios.removalPassword),
-    targets: iosPolicyTargets(state, now)
+    targets: iosPolicyTargets(state, now),
+    policyBoundary: policy ? {
+      endsAt: policy.endsAt,
+      contributors: policy.contributors || []
+    } : null
   };
   return createHash("sha256").update(JSON.stringify(stablePolicy)).digest("hex");
 }
@@ -1154,7 +1216,7 @@ function markDevicesPushSkipped(mdm: MdmSettings, devices: MdmDevice[], now: Dat
 }
 
 function recordMdmCommandResult(mdm: MdmSettings, device: MdmDevice, requestBody: MdmMessage, status: string, now: Date): void {
-  const command = mdm.commands.find((item) => item.commandUuid === requestBody.CommandUUID);
+  const command = mdm.commands.find((item) => item.commandUuid === requestBody.CommandUUID && item.udid === device.udid);
   if (!command) return;
 
   command.lastResponseAt = now.toISOString();
@@ -1193,8 +1255,12 @@ function summarizeMdmResult(body: MdmMessage): { keys: string[]; error: string }
 }
 
 function upsertMdmDevice(mdm: MdmSettings, message: MdmMessage, now: Date): MdmDevice {
-  const udid = String(message.UDID || message.EnrollmentID || message.UserID || "unknown-device").trim();
+  const udid = mdmIdentifier(message);
+  if (!udid) throw Object.assign(new Error("MDM device identifier is missing or invalid."), { status: 400 });
   const existing = mdm.devices.find((device) => device.udid === udid);
+  if (!existing && mdm.devices.length >= MAX_MDM_DEVICES) {
+    throw Object.assign(new Error("Sentinel has reached the enrolled-device limit."), { status: 409 });
+  }
   const device = existing || {
     id: randomUUID(),
     udid,
@@ -1207,6 +1273,44 @@ function upsertMdmDevice(mdm: MdmSettings, message: MdmMessage, now: Date): MdmD
   if (message.Topic) device.topic = String(message.Topic);
   if (!existing) mdm.devices.unshift(device);
   return device;
+}
+
+function mdmIdentifier(message: MdmMessage): string | null {
+  const value = String(message.UDID || message.EnrollmentID || message.UserID || "").trim();
+  return /^[A-Za-z0-9._:-]{1,128}$/.test(value) ? value : null;
+}
+
+function createEnrollmentToken(mdm: MdmSettings, now = new Date()): string {
+  const secret = randomSecret();
+  const cutoff = now.getTime() - PENDING_ENROLLMENT_TOKEN_TTL_MS;
+  const retained = normalizeMdmEnrollmentTokens(mdm.enrollmentTokens).filter((token) => {
+    return Boolean(token.boundUdid) || Date.parse(token.createdAt) >= cutoff;
+  });
+  mdm.enrollmentTokens = [{ hash: secretHash(secret), createdAt: now.toISOString() }, ...retained]
+    .slice(0, MAX_ENROLLMENT_TOKENS);
+  return secret;
+}
+
+function findEnrollmentToken(mdm: MdmSettings, supplied: string, now = new Date()): MdmEnrollmentToken | null {
+  if (!supplied) return null;
+  const pendingCutoff = now.getTime() - PENDING_ENROLLMENT_TOKEN_TTL_MS;
+  const suppliedHash = Buffer.from(secretHash(supplied), "hex");
+  return mdm.enrollmentTokens.find((token) => {
+    const createdAt = Date.parse(token.createdAt);
+    if (!token.boundUdid && (!Number.isFinite(createdAt) || createdAt < pendingCutoff)) return false;
+    const expectedHash = Buffer.from(token.hash, "hex");
+    return expectedHash.length === suppliedHash.length && timingSafeEqual(expectedHash, suppliedHash);
+  }) || null;
+}
+
+function secretsEqual(expectedValue: string, suppliedValue: string): boolean {
+  const expected = Buffer.from(expectedValue);
+  const supplied = Buffer.from(suppliedValue);
+  return expected.length > 0 && expected.length === supplied.length && timingSafeEqual(expected, supplied);
+}
+
+function secretHash(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function cancelQueuedCommandsForDevice(mdm: MdmSettings, udid: string): void {
@@ -1232,15 +1336,6 @@ function commonPayload(type: string, name: string, suffix: string, values: Unkno
     PayloadUUID: String(values.PayloadUUID || randomUUID()),
     PayloadVersion: 1
   };
-}
-
-function fullMdmUrl(mdm: MdmSettings, path: string): string {
-  const base = mdm.publicBaseUrl || `http://127.0.0.1:${PORT}`;
-  return `${base}${path}?token=${encodeURIComponent(mdm.enrollmentSecret || "")}`;
-}
-
-function enrollmentPath(mdm: MdmSettings): string {
-  return `/mdm/enroll.mobileconfig?token=${encodeURIComponent(mdm.enrollmentSecret || "")}`;
 }
 
 function apnsError(body: string, statusCode: number): string {

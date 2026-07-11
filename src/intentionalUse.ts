@@ -12,7 +12,7 @@ import {
   normalizeLockLevel
 } from "./policy.js";
 import { normalizeTextList as normalizeTargets, normalizeWeekdays as normalizeDays } from "./normalizers.js";
-import { clampNumber, dateKey, parseClock, weekKey } from "./time.js";
+import { clampNumber, dateKey, normalizeClock, parseClock, weekKey } from "./time.js";
 import { behaviorSummary, journalEntriesForWeek, plannerSummary, recoverySummary, reflectionStreakDays, sosPlan } from "./intentionalUseSummary.js";
 import { journalVaultSummary, normalizeJournalVaultState } from "./journalVault.js";
 import type {
@@ -166,8 +166,8 @@ export function normalizeIntentionalUseRule(body: IntentionalBody = {}, existing
     enabled: body.enabled === undefined ? Boolean(existing.enabled) : truthy(body.enabled),
     frictionLevel: friction,
     days: normalizeDays(body.days ?? existing.days ?? [0, 1, 2, 3, 4, 5, 6]),
-    start: normalizeClock(body.start || existing.start || "00:00"),
-    end: normalizeClock(body.end || existing.end || "23:59"),
+    start: normalizeClock(body.start || existing.start || "00:00", "00:00"),
+    end: normalizeClock(body.end || existing.end || "23:59", "23:59"),
     apps: normalizeTargets(body.apps ?? existing.apps),
     sites,
     urlPatterns,
@@ -459,9 +459,6 @@ export function intentionalUseSummary(state: SentinelState, usage: UnknownRecord
   const week = weekKey(now);
   const rules = state.intentionalUse.rules.map((rule) => ruleSummary(state, rule, now));
   const behaviorSummaries = state.intentionalUse.behaviors.map((behavior) => behaviorSummary(state, behavior, week));
-  const journalEntries = [...(state.intentionalUse.journalEntries || [])]
-    .sort((a, b) => Date.parse(b.entryDate || b.createdAt || "") - Date.parse(a.entryDate || a.createdAt || ""))
-    .slice(0, 20);
   const journalThisWeek = journalEntriesForWeek(state, week);
   const behaviorCheckInsThisWeek = (state.intentionalUse.behaviorCheckIns || []).filter((entry) => entry.weekKey === week);
   const recovery = recoverySummary(state, now);
@@ -1360,11 +1357,6 @@ function normalizeUrlTarget(value: unknown): string {
     .replace(/^www\./, "")
     .replace(/\s+/g, "")
     .replace(/\/+$/, "");
-}
-
-function normalizeClock(value: unknown): string {
-  const text = String(value || "");
-  return /^\d{2}:\d{2}$/.test(text) ? text : "00:00";
 }
 
 function successRate(skipped: number, continued: number): number {

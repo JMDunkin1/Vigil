@@ -12,17 +12,20 @@
   },
   "scripts": {
     "app": "npm run build && electron .",
-    "build": "rm -rf dist/runtime && tsc -p tsconfig.json && node dist/runtime/scripts/copy-assets.mjs && node dist/runtime/scripts/write-build-info.mjs",
-    "build:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir -c.mac.identity=null",
-    "dist:mac": "npm run build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg -c.mac.identity=null",
+    "build": "node scripts/prepare-build-dir.mjs && rm -rf dist/runtime && tsc -p tsconfig.json && node dist/runtime/scripts/copy-assets.mjs && node dist/runtime/scripts/write-build-info.mjs",
+    "build:mac": "npm run build && npm run package:mac",
+    "package:mac": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dir -c.mac.identity=null",
+    "dist:mac": "npm run build && npm run package:mac:dmg",
+    "package:mac:dmg": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac dmg -c.mac.identity=null",
     "build:mac:signed": "npm run build && electron-builder --mac dir",
     "dist:mac:signed": "npm run build && electron-builder --mac dmg",
     "start": "npm run build && node dist/runtime/src/server.js",
-    "dev": "npm run build && node --watch --watch-path=app --watch-path=src --watch-path=public --watch-path=extension --watch-path=scripts --watch-path=tsconfig.json --watch-path=package.json dist/runtime/scripts/dev-server.mjs",
-    "test": "npm run build && node dist/runtime/scripts/run-tests.mjs",
-    "lint": "node scripts/lint-source.mjs",
+    "dev": "node --watch --watch-preserve-output --watch-path=app --watch-path=src --watch-path=public --watch-path=extension --watch-path=scripts --watch-path=tsconfig.json --watch-path=package.json scripts/dev.mjs",
+    "test": "npm run build && npm run test:runtime",
+    "test:runtime": "node dist/runtime/scripts/run-tests.mjs",
+    "lint": "eslint . && node scripts/lint-source.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "check": "npm run typecheck && npm run lint && npm test",
+    "check": "npm run lint && npm test",
     "hosts:preview": "npm run build && node dist/runtime/scripts/hosts-preview.mjs",
     "hosts:apply": "npm run build && sudo node dist/runtime/scripts/apply-hosts.mjs",
     "network:preview": "npm run build && node dist/runtime/scripts/hosts-preview.mjs",
@@ -34,6 +37,9 @@
     "ios:supervise-preserve-layout": "node scripts/supervise-ios-preserving-layout.mjs",
     "ios:apply-usb": "node scripts/apply-ios-usb-profile.mjs",
     "ios:apply-usb:watch": "node scripts/watch-ios-usb-profile.mjs",
+    "ios:social:build": "npm run build && node dist/runtime/scripts/build-ios-social-app.mjs",
+    "ios:social:test": "npm run build && npm run ios:social:test:runtime",
+    "ios:social:test:runtime": "node dist/runtime/scripts/test-ios-social.mjs",
     "ios:manageengine:export": "npm run build && node dist/runtime/scripts/export-manageengine-ios-profile.mjs",
     "ios:manageengine:apply-enrollment-window": "npm run ios:manageengine:export -- --enrollment-window && node scripts/watch-ios-usb-profile.mjs --profile data/manageengine/sentinel-manageengine-enrollment-window.mobileconfig",
     "ios:mdm:identity": "npm run build && node dist/runtime/scripts/generate-ios-mdm-identity.mjs",
@@ -54,16 +60,31 @@
       "output": "dist/mac"
     },
     "files": [
-      "dist/runtime/**/*",
+      {
+        "from": "dist.nosync/runtime",
+        "to": "dist/runtime",
+        "filter": [
+          "**/*",
+          "!tests/**/*",
+          "!scripts/build-ios-social-app.mjs",
+          "!scripts/copy-assets.mjs",
+          "!scripts/dev-server.mjs",
+          "!scripts/run-tests.mjs",
+          "!scripts/test-ios-social.mjs",
+          "!scripts/write-build-info.mjs",
+          "!**/* [0-9]*"
+        ]
+      },
       "package.json"
     ],
     "asar": true,
     "asarUnpack": [
-      "dist/runtime/package.json",
-      "dist/runtime/public/**/*",
-      "dist/runtime/src/**/*",
-      "dist/runtime/scripts/**/*",
-      "dist/runtime/extension/**/*"
+      "dist.nosync/runtime/build-info.json",
+      "dist.nosync/runtime/package.json",
+      "dist.nosync/runtime/public/**/*",
+      "dist.nosync/runtime/src/**/*",
+      "dist.nosync/runtime/scripts/**/*",
+      "dist.nosync/runtime/extension/**/*"
     ],
     "mac": {
       "category": "public.app-category.productivity",
@@ -78,12 +99,12 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/chrome": "^0.2.0",
-    "@types/node": "^26.0.1",
-    "electron": "^42.5.0",
+    "@types/chrome": "^0.2.2",
+    "@types/node": "^26.1.1",
+    "electron": "^42.6.1",
     "electron-builder": "^26.15.3",
-    "eslint": "^10.6.0",
-    "globals": "^17.7.0",
-    "typescript": "^7.0.1-rc"
+    "eslint": "^10.7.0",
+    "globals": "^17.4.0",
+    "typescript": "^7.0.2"
   }
 }

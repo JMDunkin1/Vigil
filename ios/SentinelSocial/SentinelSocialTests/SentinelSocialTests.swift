@@ -6,7 +6,15 @@ final class SentinelSocialTests: XCTestCase {
         XCTAssertEqual(SocialService.resolve(try XCTUnwrap(URL(string: "sentinelsocial://open/youtube"))), .youtube)
         XCTAssertEqual(SocialService.resolve(try XCTUnwrap(URL(string: "https://www.instagram.com/direct/inbox/"))), .instagram)
         XCTAssertEqual(SocialService.resolve(try XCTUnwrap(URL(string: "https://web.snapchat.com/"))), .snapchat)
+        XCTAssertNil(SocialService.resolve(try XCTUnwrap(URL(string: "http://www.instagram.com/"))))
         XCTAssertNil(SocialService.resolve(try XCTUnwrap(URL(string: "https://example.com/"))))
+    }
+
+    func testServicesOnlyAllowTheirRequiredHTTPSNavigationHosts() throws {
+        XCTAssertTrue(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(URL(string: "https://accounts.google.com/"))))
+        XCTAssertFalse(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(URL(string: "https://example.com/"))))
+        XCTAssertFalse(SocialService.instagram.allowsNavigation(to: try XCTUnwrap(URL(string: "http://www.instagram.com/"))))
+        XCTAssertTrue(SocialService.snapchat.allowsNavigation(to: try XCTUnwrap(URL(string: "https://accounts.snapchat.com/"))))
     }
 
     func testEveryServiceHasAnHTTPSHomeURL() {
@@ -48,7 +56,7 @@ final class SentinelSocialTests: XCTestCase {
 
     @MainActor
     func testServiceWebViewsAreDistinctAndPersistent() {
-        let store = SocialWebViewStore(defaults: UserDefaults(suiteName: #function)!, fixedService: .youtube)
+        let store = SocialWebViewStore(defaults: UserDefaults(suiteName: #function)!, fixedService: .youtube, loadInitialPages: false)
         let youtube = store.webView(for: .youtube)
         XCTAssertTrue(youtube === store.webView(for: .youtube))
         XCTAssertFalse(youtube === store.webView(for: .instagram))
@@ -57,7 +65,7 @@ final class SentinelSocialTests: XCTestCase {
 
     @MainActor
     func testConfiguredAppCannotSwitchIntoAnotherService() {
-        let store = SocialWebViewStore(defaults: UserDefaults(suiteName: #function)!, fixedService: .instagram)
+        let store = SocialWebViewStore(defaults: UserDefaults(suiteName: #function)!, fixedService: .instagram, loadInitialPages: false)
         store.select(.youtube)
         XCTAssertEqual(store.selectedService, .instagram)
         XCTAssertEqual(store.fixedService, .instagram)

@@ -1,4 +1,4 @@
-import type { ControlElement, DashboardData, DashboardItem, GrayscaleSchedule, IntentionalPlanBlock, IntentionalPlanItem, Schedule } from "./app-model.js";
+import type { ControlElement, DashboardItem, GrayscaleSchedule, Schedule } from "./app-model.js";
 
 type QueryElement = (selector: string) => ControlElement;
 type QueryElements = <T extends Element = ControlElement>(selector: string) => NodeListOf<T>;
@@ -6,12 +6,10 @@ type QueryElements = <T extends Element = ControlElement>(selector: string) => N
 interface FormControllerContext {
   $: QueryElement;
   $$: QueryElements;
-  getData(): DashboardData | null;
   setView(view?: string): void;
-  defaultPlanBlockProfileId: string;
 }
 
-export function createFormController({ $, $$, getData, setView, defaultPlanBlockProfileId }: FormControllerContext) {
+export function createFormController({ $, $$, setView }: FormControllerContext) {
   function loadSchedule(schedule: Schedule): void {
     const form = $("#scheduleForm");
     form.elements.id.value = schedule.id;
@@ -154,91 +152,6 @@ export function createFormController({ $, $$, getData, setView, defaultPlanBlock
     form.elements.id.value = "";
   }
 
-  function loadPlanItem(item: IntentionalPlanItem): void {
-    const form = $("#planItemForm");
-    form.elements.id.value = item.id;
-    form.elements.listId.value = item.listId;
-    form.elements.status.value = item.status;
-    form.elements.title.value = item.title;
-    form.elements.notes.value = item.notes || "";
-    form.elements.dueAt.value = item.dueAt ? toDateTimeLocal(item.dueAt) : "";
-    form.elements.tags.value = (item.tags || []).join(", ");
-    setView("tracking");
-  }
-
-  function resetPlanItemForm(): void {
-    const form = $("#planItemForm");
-    form.reset();
-    form.elements.id.value = "";
-    form.elements.title.value = "Homework";
-    form.elements.status.value = "open";
-    form.elements.notes.value = "";
-    form.elements.dueAt.value = "";
-    form.elements.tags.value = "";
-    const firstList = (getData()?.intentionalUse?.lifeLog?.planner?.lists || []).find((list) => list.active !== false);
-    form.elements.listId.value = firstList?.id || "todo";
-  }
-
-  function resetPlanListForm(): void {
-    const form = $("#planListForm");
-    form.reset();
-    form.elements.id.value = "";
-    form.elements.name.value = "To Do";
-    form.elements.kind.value = "todo";
-    form.elements.active.checked = true;
-  }
-
-  function loadPlanBlockFromItem(item: IntentionalPlanItem): void {
-    resetPlanBlockForm();
-    const form = $("#planBlockForm");
-    form.elements.title.value = item.title;
-    form.elements.itemId.value = item.id;
-    form.elements.notes.value = item.notes || "";
-    form.elements.mode.value = item.listId === "watchlist" ? "watch" : "focus";
-    setView("tracking");
-  }
-
-  function loadPlanBlock(block: IntentionalPlanBlock): void {
-    const form = $("#planBlockForm");
-    form.elements.id.value = block.id;
-    form.elements.title.value = block.title;
-    form.elements.itemId.value = block.itemId || "";
-    form.elements.startsAt.value = toDateTimeLocal(block.startsAt);
-    form.elements.endsAt.value = toDateTimeLocal(block.endsAt);
-    form.elements.mode.value = block.mode || "focus";
-    form.elements.profileId.value = block.profileId || getData()?.state.settings.activeProfileId || "";
-    form.elements.lockLevel.value = block.lockLevel || "deep";
-    form.elements.enabled.checked = block.enabled !== false;
-    form.elements.commitmentLock.checked = Boolean(block.commitmentLock);
-    form.elements.notes.value = block.notes || "";
-    const targets = new Set(block.deviceTargets || ["computer", "phone"]);
-    for (const input of $$<HTMLInputElement>("#planBlockForm input[name='deviceTargets']")) {
-      input.checked = targets.has(input.value as "computer" | "phone");
-    }
-    setView("tracking");
-  }
-
-  function resetPlanBlockForm(): void {
-    const form = $("#planBlockForm");
-    const start = nextQuarterHour();
-    const end = new Date(start.getTime() + 60 * 60 * 1000);
-    form.reset();
-    form.elements.id.value = "";
-    form.elements.title.value = "Homework";
-    form.elements.itemId.value = "";
-    form.elements.startsAt.value = toDateTimeLocal(start.toISOString());
-    form.elements.endsAt.value = toDateTimeLocal(end.toISOString());
-    form.elements.mode.value = "focus";
-    form.elements.profileId.value = defaultPlanBlockProfileId;
-    form.elements.lockLevel.value = "deep";
-    form.elements.enabled.checked = true;
-    form.elements.commitmentLock.checked = false;
-    form.elements.notes.value = "";
-    for (const input of $$<HTMLInputElement>("#planBlockForm input[name='deviceTargets']")) {
-      input.checked = true;
-    }
-  }
-
   function loadLimit(rule: DashboardItem): void {
     const form = $("#limitForm");
     form.elements.id.value = rule.id;
@@ -330,26 +243,6 @@ export function createFormController({ $, $$, getData, setView, defaultPlanBlock
     }
   }
 
-  function renderBehaviorCheckInSelect(behaviors: Array<{ id: string; name?: string }>): void {
-    const select = $("#behaviorCheckInId");
-    const current = select.value;
-    select.replaceChildren();
-    if (!behaviors.length) {
-      const option = document.createElement("option");
-      option.value = "";
-      option.textContent = "No behaviors saved";
-      select.append(option);
-      return;
-    }
-    for (const behavior of behaviors) {
-      const option = document.createElement("option");
-      option.value = behavior.id;
-      option.textContent = behavior.name || behavior.id;
-      select.append(option);
-    }
-    select.value = behaviors.some((behavior) => behavior.id === current) ? current : behaviors[0].id;
-  }
-
   function selectedValues(target: string | ControlElement): string[] {
     const select = typeof target === "string" ? $(target) : target;
     return Array.from((select as unknown as HTMLSelectElement).selectedOptions || [])
@@ -364,33 +257,6 @@ export function createFormController({ $, $$, getData, setView, defaultPlanBlock
     }
   }
 
-  function tagList(value: unknown): string[] {
-    return String(value || "")
-      .split(/[\n,]/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
-  function toDateTimeLocal(value: unknown): string {
-    const date = value ? new Date(String(value)) : new Date();
-    if (Number.isNaN(date.getTime())) return "";
-    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60 * 1000);
-    return local.toISOString().slice(0, 16);
-  }
-
-  function nextQuarterHour(): Date {
-    const date = new Date();
-    date.setSeconds(0, 0);
-    const minutes = date.getMinutes();
-    date.setMinutes(minutes + (15 - (minutes % 15 || 15)));
-    return date;
-  }
-
-  function selectedPlanItemListId(itemId: string): string {
-    if (!itemId) return "";
-    return getData()?.intentionalUse?.lifeLog?.planner?.items?.find((item) => item.id === itemId)?.listId || "";
-  }
-
   return {
     loadSchedule,
     loadGrayscaleSchedule,
@@ -402,24 +268,14 @@ export function createFormController({ $, $$, getData, setView, defaultPlanBlock
     resetBehaviorForm,
     loadJournalEntry,
     resetJournalForm,
-    loadPlanItem,
-    resetPlanItemForm,
-    resetPlanListForm,
-    loadPlanBlockFromItem,
-    loadPlanBlock,
-    resetPlanBlockForm,
     loadLimit,
     resetLimitForm,
     resetScheduleForm,
     resetGrayscaleScheduleForm,
     fillSelect,
     renderMultiSelect,
-    renderBehaviorCheckInSelect,
     selectedValues,
-    setSelectedOptions,
-    tagList,
-    toDateTimeLocal,
-    selectedPlanItemListId
+    setSelectedOptions
   };
 }
 

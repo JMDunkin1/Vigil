@@ -13,6 +13,8 @@
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true,
     "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
@@ -24,7 +26,8 @@
     "extension/**/*.ts",
     "public/**/*.ts",
     "scripts/**/*.mts",
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "tests/**/*.mts"
   ],
   "exclude": [
     "build",

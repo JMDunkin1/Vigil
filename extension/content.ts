@@ -24,6 +24,7 @@ interface PulseResponse {
   browserNoiseBlockingEnabled?: boolean;
   focusedSocialCleanupEnabled?: boolean;
   focusedSocialCleanupSettings?: unknown;
+  offline?: boolean;
 }
 
 interface InstagramCleanupSettings {
@@ -140,20 +141,28 @@ function sendPulse(reason: PulseReason, options: PulseOptions = {}): void {
       handlePulseResult(result);
     });
   } catch {
-    releasePageGuard();
+    if (!activePauseOverlay) releasePageGuard();
   }
 }
 
 function handlePulseResult(result: PulseResponse | undefined): void {
-  if (result?.browserNoiseBlockingEnabled === true) {
+  if (!result) {
+    if (!activePauseOverlay) releasePageGuard();
+    return;
+  }
+  if (result.browserNoiseBlockingEnabled === true) {
     cleanupBrowserNoise();
-  } else if (result?.browserNoiseBlockingEnabled === false) {
+  } else if (result.browserNoiseBlockingEnabled === false) {
     teardownYoutubeAutofillFriction();
   }
-  if (result?.focusedSocialCleanupEnabled === true) {
+  if (result.focusedSocialCleanupEnabled === true) {
     applyFocusedSocialCleanup(result.focusedSocialCleanupSettings);
-  } else if (result?.focusedSocialCleanupEnabled === false) {
+  } else if (result.focusedSocialCleanupEnabled === false) {
     teardownFocusedSocialCleanup();
+  }
+  if (result.offline === true || result.ok === false) {
+    if (!activePauseOverlay) releasePageGuard();
+    return;
   }
   if (result?.blocked && result.redirectUrl) {
     replaceLocation(result.redirectUrl);
