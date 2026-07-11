@@ -380,7 +380,6 @@ export interface IosDeviceSummary extends UnknownRecord {
     enrollmentWindowPath?: string;
     exportCommand?: string;
     enrollmentWindowCommand?: string;
-    docsPath?: string;
     generatedFrom?: string;
     appBundleCount?: number;
     deniedUrlCount?: number;
@@ -551,7 +550,6 @@ export interface DashboardData extends UnknownRecord {
   };
   presets: Preset[];
   protection: ProtectionSummary;
-  journalVault?: JournalVaultSummary;
   hardening: UnknownRecord & {
     hostsBlock?: string;
     hosts?: HardeningCheck;

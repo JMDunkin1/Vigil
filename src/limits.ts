@@ -1,5 +1,5 @@
 import { endOfToday, dateKey } from "./time.js";
-import { normalizeUsageDay } from "./usage.js";
+import { normalizeUsageDay, usageContextSample } from "./usage.js";
 import { parseBoolean } from "./booleans.js";
 import { clampInteger, normalizeTextList as normalizeTargets, normalizeWeekdays as normalizeDays } from "./normalizers.js";
 import {
@@ -31,6 +31,16 @@ export function activeLimitPolicy(state: VigilState, usage: UsageState, sample: 
     if (!limitRuleContextMatches(state, rule, sample, now)) continue;
     if (limitRuleOverridden(state, rule.id, now)) continue;
 
+    const activeRuleBlock = (state.limitBlocks || []).find((block) => (
+      block.ruleId === rule.id && new Date(block.until) > now
+    ));
+    if (activeRuleBlock) {
+      const device = normalizeDeviceTarget(sample.device || "computer");
+      const targets: DeviceTarget[] = activeRuleBlock.deviceTargets?.length ? activeRuleBlock.deviceTargets : ["computer"];
+      if (!targets.includes(device)) activeRuleBlock.deviceTargets = [...targets, device];
+      return policyFromBlock(state, activeRuleBlock);
+    }
+
     const rawProgress = rawRuleProgress(usage, rule, now);
     const progress = adjustedRuleProgress(rawProgress, rule, now);
     const hit = rule.type === "open"
@@ -39,7 +49,7 @@ export function activeLimitPolicy(state: VigilState, usage: UsageState, sample: 
 
     if (!hit) continue;
 
-    const block = createLimitBlock(state, rule, progress, rawProgress, now);
+    const block = createLimitBlock(state, rule, progress, rawProgress, sample, now);
     return policyFromBlock(state, block);
   }
 
@@ -126,8 +136,13 @@ export function targetListsForRule(rule: Pick<LimitRule, "apps" | "sites"> | Pic
   };
 }
 
-function createLimitBlock(state: VigilState, rule: LimitRule, progress: LimitProgress, rawProgress: LimitProgress, now: Date): LimitBlock {
-  const existing = (state.limitBlocks || []).find((block) => block.ruleId === rule.id && new Date(block.until) > now);
+function createLimitBlock(state: VigilState, rule: LimitRule, progress: LimitProgress, rawProgress: LimitProgress, sample: UsageSample, now: Date): LimitBlock {
+  const device = normalizeDeviceTarget(sample.device || "computer");
+  const existing = (state.limitBlocks || []).find((block) => (
+    block.ruleId === rule.id
+    && new Date(block.until) > now
+    && limitBlockTargetsDevice(block, device)
+  ));
   if (existing) return existing;
 
   const block = {
@@ -142,7 +157,8 @@ function createLimitBlock(state: VigilState, rule: LimitRule, progress: LimitPro
     until: blockUntil(rule, now).toISOString(),
     progress,
     requiredProfileId: rule.requiredProfileId,
-    excludedProfileIds: rule.excludedProfileIds ? [...rule.excludedProfileIds] : undefined
+    excludedProfileIds: rule.excludedProfileIds ? [...rule.excludedProfileIds] : undefined,
+    deviceTargets: [device]
   };
   updateLimitRuleCycleAnchor(rule, rawProgress, now);
   state.limitBlocks ||= [];
@@ -164,7 +180,8 @@ function policyFromBlock(state: VigilState, block: LimitBlock): ActivePolicy {
       endsAt: block.until,
       canEndEarly: false,
       source: "limit",
-      ruleId: block.ruleId
+      ruleId: block.ruleId,
+      deviceTargets: block.deviceTargets || ["computer"]
     },
     profile: {
       id: `limit:${block.ruleId}`,
@@ -196,14 +213,28 @@ function ruleProgress(usage: UsageState, rule: LimitRule, now: Date): LimitProgr
 function rawRuleProgress(usage: UsageState, rule: LimitRule, now: Date): LimitProgress {
   const day = normalizeUsageDay(usage[dateKey(now)] || {});
   const lists = targetListsForRule(rule);
-  const apps = day.apps || {};
-  const sites = day.sites || {};
-  const appOpens = day.opens?.apps || {};
-  const siteOpens = day.opens?.sites || {};
+  const deviceBuckets = Object.values(day.devices || {});
+  if (!deviceBuckets.length) return bucketRuleProgress(day, lists);
+  return deviceBuckets.reduce<LimitProgress>((total, bucket) => {
+    const progress = bucketRuleProgress(bucket, lists);
+    return {
+      seconds: Number(total.seconds || 0) + Number(progress.seconds || 0),
+      opens: Number(total.opens || 0) + Number(progress.opens || 0)
+    };
+  }, { seconds: 0, opens: 0 });
+}
 
+function bucketRuleProgress(
+  bucket: Pick<UsageState[string], "apps" | "sites" | "contexts" | "openContexts" | "contextVersion" | "openContextVersion" | "legacyTargetAggregation" | "opens">,
+  lists: TargetLists
+): LimitProgress {
   return {
-    seconds: sumTargetSeconds(apps, sites, lists),
-    opens: sumTargetOpens(appOpens, siteOpens, lists)
+    seconds: bucket.contextVersion === 1
+      ? sumTargetContexts(bucket.contexts, lists)
+      : sumTargetSeconds(bucket.apps || {}, bucket.sites || {}, lists, bucket.legacyTargetAggregation),
+    opens: bucket.openContextVersion === 1
+      ? sumTargetContexts(bucket.openContexts, lists)
+      : sumTargetOpens(bucket.opens?.apps || {}, bucket.opens?.sites || {}, lists, bucket.legacyTargetAggregation)
   };
 }
 
@@ -229,11 +260,17 @@ function limitRuleContextMatches(state: VigilState, rule: LimitRule, sample: Usa
 
 export function limitBlockContextMatches(
   state: VigilState,
-  block: Pick<LimitBlock, "requiredProfileId" | "excludedProfileIds">,
+  block: Pick<LimitBlock, "requiredProfileId" | "excludedProfileIds" | "deviceTargets">,
   now = new Date(),
   device?: DeviceTargetInput
 ): boolean {
+  if (device && !limitBlockTargetsDevice(block, normalizeDeviceTarget(device))) return false;
   return limitContextMatches(state, block, now, device);
+}
+
+function limitBlockTargetsDevice(block: Pick<LimitBlock, "deviceTargets">, device: DeviceTarget): boolean {
+  const targets = block.deviceTargets?.length ? block.deviceTargets : ["computer"];
+  return targets.includes(device);
 }
 
 function limitContextMatches(
@@ -273,26 +310,50 @@ function shouldGuardSiteBypassApp(rule: LimitRule | LimitBlock, sample: UsageSam
   );
 }
 
-function sumTargetSeconds(apps: Record<string, number>, sites: Record<string, number>, lists: TargetLists): number {
-  let total = 0;
+function sumTargetSeconds(
+  apps: Record<string, number>,
+  sites: Record<string, number>,
+  lists: TargetLists,
+  aggregation: "max" | "sum" = "max"
+): number {
+  let appTotal = 0;
   for (const [app, seconds] of Object.entries(apps || {})) {
-    if (appMatchesAppTargets(app, lists.apps)) total += Number(seconds || 0);
+    if (appMatchesAppTargets(app, lists.apps)) appTotal += Number(seconds || 0);
   }
+  let siteTotal = 0;
   for (const [site, seconds] of Object.entries(sites || {})) {
-    if (hostMatchesSiteTargets(site, lists.sites)) total += Number(seconds || 0);
+    if (hostMatchesSiteTargets(site, lists.sites)) siteTotal += Number(seconds || 0);
   }
-  return Math.round(total);
+  return Math.round(aggregation === "sum" ? appTotal + siteTotal : Math.max(appTotal, siteTotal));
 }
 
-function sumTargetOpens(appOpens: Record<string, number>, siteOpens: Record<string, number>, lists: TargetLists): number {
-  let total = 0;
+function sumTargetOpens(
+  appOpens: Record<string, number>,
+  siteOpens: Record<string, number>,
+  lists: TargetLists,
+  aggregation: "max" | "sum" = "max"
+): number {
+  let appTotal = 0;
   for (const [app, count] of Object.entries(appOpens || {})) {
-    if (appMatchesAppTargets(app, lists.apps)) total += Number(count || 0);
+    if (appMatchesAppTargets(app, lists.apps)) appTotal += Number(count || 0);
   }
+  let siteTotal = 0;
   for (const [site, count] of Object.entries(siteOpens || {})) {
-    if (hostMatchesSiteTargets(site, lists.sites)) total += Number(count || 0);
+    if (hostMatchesSiteTargets(site, lists.sites)) siteTotal += Number(count || 0);
   }
-  return total;
+  return aggregation === "sum" ? appTotal + siteTotal : Math.max(appTotal, siteTotal);
+}
+
+function sumTargetContexts(contexts: Record<string, number> | undefined, lists: TargetLists): number {
+  let total = 0;
+  for (const [context, amount] of Object.entries(contexts || {})) {
+    const sample = usageContextSample(context);
+    if (!sample) continue;
+    if (appMatchesAppTargets(sample.app || "", lists.apps) || hostMatchesSiteTargets(sample.hostname || "", lists.sites)) {
+      total += Number(amount || 0);
+    }
+  }
+  return Math.round(total);
 }
 
 function ruleAppliesToday(rule: LimitRule, now: Date): boolean {

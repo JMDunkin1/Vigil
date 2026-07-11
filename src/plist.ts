@@ -44,6 +44,28 @@ export function parsePlist(text: unknown): PlistValue {
   return value;
 }
 
+export function plistStringForKey(text: unknown, key: string): string {
+  const value = findValueForKey(parsePlist(text), key);
+  return typeof value === "string" ? value : "";
+}
+
+function findValueForKey(value: PlistValue, key: string): PlistValue | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findValueForKey(item, key);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== "object" || isPlistData(value)) return undefined;
+  if (Object.hasOwn(value, key)) return value[key];
+  for (const item of Object.values(value)) {
+    const found = findValueForKey(item, key);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
 function plistValue(value: unknown, level: number): string {
   const indent = "  ".repeat(level);
   if (isPlistData(value)) {

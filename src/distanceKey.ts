@@ -1,6 +1,18 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import {
+  accessSync,
+  closeSync,
+  constants as fsConstants,
+  fchmodSync,
+  fsyncSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync
+} from "node:fs";
+import { dirname, join, parse, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parseBoolean, truthy } from "./booleans.js";
 import type { DistanceKeyState, VigilState, UnknownRecord } from "./types.js";
@@ -113,8 +125,69 @@ function normalizeKeyFilePath(value: unknown): string {
 }
 
 function writeKeyFile(path: string, token: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${token}\n`, { mode: 0o600 });
+  const directory = dirname(path);
+  assertNoSymlinkComponents(directory);
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  assertNoSymlinkComponents(directory);
+
+  let descriptor = -1;
+  let created = false;
+  try {
+    const noFollow = typeof fsConstants.O_NOFOLLOW === "number" ? fsConstants.O_NOFOLLOW : 0;
+    descriptor = openSync(
+      path,
+      fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
+      0o600
+    );
+    created = true;
+    fchmodSync(descriptor, 0o600);
+    writeFileSync(descriptor, `${token}\n`, "utf8");
+    fsyncSync(descriptor);
+  } catch (error) {
+    if (created) {
+      try {
+        unlinkSync(path);
+      } catch {
+        // Preserve the original write error; a newly-created partial file is never reused.
+      }
+    }
+    if (isNodeErrorCode(error, "EEXIST") || isNodeErrorCode(error, "ELOOP")) {
+      throw new DistanceKeyError(
+        `Distance key file already exists or is a symbolic link: ${path}. Choose a new path, or move the existing file first.`,
+        409
+      );
+    }
+    throw error;
+  } finally {
+    if (descriptor >= 0) closeSync(descriptor);
+  }
+}
+
+function assertNoSymlinkComponents(path: string): void {
+  const absolute = resolve(path);
+  const root = parse(absolute).root;
+  let current = root;
+  for (const component of absolute.slice(root.length).split(/[\\/]+/u).filter(Boolean)) {
+    current = join(current, component);
+    try {
+      if (lstatSync(current).isSymbolicLink()) {
+        try {
+          accessSync(dirname(current), fsConstants.W_OK);
+          throw new DistanceKeyError(`Distance key path cannot pass through a replaceable symbolic link: ${current}.`, 400);
+        } catch (error) {
+          if (error instanceof DistanceKeyError) throw error;
+          if (
+            !isNodeErrorCode(error, "EACCES")
+            && !isNodeErrorCode(error, "EPERM")
+            && !isNodeErrorCode(error, "EROFS")
+          ) throw error;
+        }
+      }
+    } catch (error) {
+      if (isNodeErrorCode(error, "ENOENT")) continue;
+      throw error;
+    }
+  }
 }
 
 function readKeyFileToken(path: string): string {
@@ -124,4 +197,8 @@ function readKeyFileToken(path: string): string {
   } catch {
     return "";
   }
+}
+
+function isNodeErrorCode(error: unknown, code: string): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }

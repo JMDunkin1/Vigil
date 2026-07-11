@@ -83,7 +83,7 @@ export async function handleIntentionalUseApiRoute(
 
   if (method === "POST" && path === "/api/intentional-use/journal/unlock-touch-id") {
     try {
-      const session = unlockJournalVaultWithTouchId(state, request.headers);
+      const session = await unlockJournalVaultWithTouchId(state, request.headers);
       addEvent(state, "intentional_journal_unlocked", { method: session.method });
       sendJson(response, 200, { ok: true, session });
     } catch (error) {

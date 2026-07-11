@@ -8,6 +8,7 @@ const execFileAsync = promisify(execFile);
 const MOBILESYNC_RELATIVE_BACKUP_ROOT = ["Library", "Application Support", "MobileSync", "Backup"];
 const COMPLETE_BACKUP_FILES = ["Info.plist", "Manifest.plist", "Manifest.db", "Status.plist"];
 const FINISHED_SNAPSHOT_STATE = "finished";
+const DEFAULT_PAYLOAD_VALIDATION_TIMEOUT_MS = 60 * 60 * 1000;
 
 const LAYOUT_QUERY = `
 SELECT domain || '/' || relativePath
@@ -43,6 +44,154 @@ for entry in backup.iter_entries():
 print(json.dumps(sorted(matches)))
 `;
 
+const PYIOSBACKUP_PAYLOAD_VALIDATION_SCRIPT = `
+import json
+import os
+import re
+import stat
+import sys
+import time
+from pathlib import Path
+from pyiosbackup.backup import Backup
+
+backup_path = Path(sys.argv[1]).resolve()
+password = os.environ.get("PYIOSBACKUP_PASSWORD", "")
+started = time.monotonic()
+backup = Backup.from_path(backup_path, password)
+if backup.is_encrypted:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives.keywrap import aes_key_unwrap
+    from pyiosbackup.keybag import encryption_key_struct
+issue_counts = {
+    "invalidFileIds": 0,
+    "invalidManifestSizes": 0,
+    "invalidPayloadBuckets": 0,
+    "missingPayloads": 0,
+    "nonRegularPayloads": 0,
+    "emptyPayloads": 0,
+    "sizeMismatches": 0,
+    "invalidCiphertextShapes": 0,
+    "decryptFailures": 0,
+    "paddingFailures": 0,
+    "decryptedSizeMismatches": 0,
+    "unreadablePayloads": 0,
+}
+samples = {key: [] for key in issue_counts}
+manifest_entries = 0
+manifest_files = 0
+payload_files_found = 0
+expected_bytes = 0
+payload_bytes = 0
+checked_buckets = {}
+
+def record_issue(kind, label):
+    issue_counts[kind] += 1
+    if len(samples[kind]) < 12:
+        samples[kind].append(label)
+
+for entry in backup.iter_entries():
+    manifest_entries += 1
+    if not entry.is_file():
+        continue
+    manifest_files += 1
+    label = f"{entry.domain}/{entry.relative_path}" if entry.domain or entry.relative_path else str(entry.file_id)
+    file_id = str(entry.file_id or "")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", file_id):
+        record_issue("invalidFileIds", label)
+        continue
+    try:
+        expected_size = int(entry.size)
+    except (TypeError, ValueError):
+        record_issue("invalidManifestSizes", label)
+        continue
+    if expected_size < 0:
+        record_issue("invalidManifestSizes", label)
+        continue
+    expected_bytes += expected_size
+    hash_path = Path(entry.hash_path)
+    valid_hash_paths = {(file_id,), (file_id[:2], file_id)}
+    if hash_path.is_absolute() or ".." in hash_path.parts or tuple(hash_path.parts) not in valid_hash_paths:
+        record_issue("invalidFileIds", label)
+        continue
+    payload_path = backup_path / hash_path
+    bucket_path = payload_path.parent
+    bucket_valid = checked_buckets.get(bucket_path)
+    if bucket_valid is None:
+        try:
+            bucket_valid = stat.S_ISDIR(bucket_path.lstat().st_mode)
+        except OSError:
+            bucket_valid = False
+        checked_buckets[bucket_path] = bucket_valid
+    if not bucket_valid:
+        record_issue("invalidPayloadBuckets", label)
+        continue
+    try:
+        payload_stat = payload_path.lstat()
+    except FileNotFoundError:
+        record_issue("missingPayloads", label)
+        continue
+    except OSError:
+        record_issue("unreadablePayloads", label)
+        continue
+    if not stat.S_ISREG(payload_stat.st_mode):
+        record_issue("nonRegularPayloads", label)
+        continue
+    payload_files_found += 1
+    actual_size = payload_stat.st_size
+    payload_bytes += actual_size
+    if expected_size > 0 and actual_size <= 0:
+        record_issue("emptyPayloads", label)
+    if not backup.is_encrypted and actual_size != expected_size:
+        record_issue("sizeMismatches", f"{label} expected={expected_size} actual={actual_size}")
+    if backup.is_encrypted:
+        if actual_size <= 0 or actual_size % 16 != 0:
+            record_issue("invalidCiphertextShapes", f"{label} ciphertext={actual_size}")
+            continue
+        try:
+            parsed_key = encryption_key_struct.parse(entry.encryption_key)
+            file_key = aes_key_unwrap(backup.keybag.get_key(parsed_key.class_), parsed_key.key)
+            with payload_path.open("rb") as payload_file:
+                if actual_size >= 32:
+                    payload_file.seek(-32, 2)
+                    final_blocks = payload_file.read(32)
+                    previous_block = final_blocks[:16]
+                    final_block = final_blocks[16:]
+                else:
+                    payload_file.seek(-16, 2)
+                    previous_block = bytes(16)
+                    final_block = payload_file.read(16)
+            if len(previous_block) != 16 or len(final_block) != 16:
+                raise ValueError("could not read final CBC block")
+            decryptor = Cipher(algorithms.AES(file_key), modes.CBC(previous_block)).decryptor()
+            final_plaintext = decryptor.update(final_block) + decryptor.finalize()
+        except Exception:
+            record_issue("decryptFailures", label)
+            continue
+        pad_length = final_plaintext[-1]
+        if pad_length < 1 or pad_length > 16 or final_plaintext[-pad_length:] != bytes([pad_length]) * pad_length:
+            record_issue("paddingFailures", label)
+            continue
+        decrypted_size = actual_size - pad_length
+        if decrypted_size != expected_size:
+            record_issue("decryptedSizeMismatches", f"{label} expected={expected_size} decrypted={decrypted_size}")
+
+result = {
+    "ok": not any(issue_counts.values()),
+    "encrypted": bool(backup.is_encrypted),
+    "manifestEntries": manifest_entries,
+    "manifestFiles": manifest_files,
+    "payloadFilesFound": payload_files_found,
+    "expectedBytes": expected_bytes,
+    "payloadBytes": payload_bytes,
+    "durationMs": round((time.monotonic() - started) * 1000),
+    "issueCounts": issue_counts,
+    "samples": {key: value for key, value in samples.items() if value},
+}
+print(json.dumps(result, sort_keys=True))
+if not result["ok"]:
+    raise SystemExit(2)
+`;
+
 export async function readLayoutPaths({ manifestPath, password = "", pythonPath, timeoutMs }) {
   if (password) {
     return await readLayoutPathsWithPyiosbackup({ manifestPath, password, pythonPath, timeoutMs });
@@ -63,7 +212,7 @@ export async function readLayoutPaths({ manifestPath, password = "", pythonPath,
           ? "This backup appears to be encrypted; rerun with --password or set IOS_BACKUP_PASSWORD."
           : "macOS denied access to the backup database; grant Full Disk Access to the terminal app running this command.",
         detail
-      ].join("\n"));
+      ].join("\n"), { cause: error });
     }
     throw error;
   }
@@ -91,6 +240,50 @@ export async function resolveNewestLayoutBackup({
 export async function inspectLayoutBackupCandidates(candidates, udid = "") {
   const unique = uniqueCandidates(candidates);
   return await Promise.all(unique.map((candidate) => inspectLayoutBackupCandidate(candidate, udid)));
+}
+
+export async function assertRestorableLayoutBackup(backupPath, { udid = "", source = "selected backup" } = {}) {
+  const inspected = await inspectLayoutBackupCandidate({ path: backupPath, source }, udid);
+  if (inspected.usable) return inspected;
+  throw new Error([
+    `Refusing to restore an iPhone backup whose completion cannot be proven: ${inspected.path}`,
+    `Reason: ${inspected.reason}`,
+    "A restorable backup must have non-empty Info.plist, Manifest.plist, Manifest.db, and Status.plist metadata with SnapshotState=finished."
+  ].join("\n"));
+}
+
+export async function validateRestorableBackupPayload({
+  backupPath,
+  password = "",
+  pythonPath,
+  timeoutMs = DEFAULT_PAYLOAD_VALIDATION_TIMEOUT_MS
+}) {
+  if (!backupPath) throw new Error("Deep iPhone backup validation requires a backup path.");
+  if (!pythonPath) throw new Error("Deep iPhone backup validation requires a Python path with pyiosbackup installed.");
+  try {
+    const { stdout } = await execFileAsync(pythonPath, ["-c", PYIOSBACKUP_PAYLOAD_VALIDATION_SCRIPT, resolve(backupPath)], {
+      timeout: timeoutMs,
+      maxBuffer: 1024 * 1024,
+      env: {
+        ...process.env,
+        PYIOSBACKUP_PASSWORD: password
+      }
+    });
+    const result = JSON.parse(stdout);
+    if (result?.ok !== true
+      || !Number.isInteger(result.manifestEntries)
+      || !Number.isInteger(result.manifestFiles)
+      || result.manifestFiles < 1) {
+      throw new Error("Deep iPhone backup validation returned an invalid result.");
+    }
+    return result;
+  } catch (error) {
+    throw new Error([
+      `Deep iPhone backup payload validation failed for ${resolve(backupPath)}.`,
+      "Vigil fully traversed the backup manifest and will not use this recovery source for a device mutation unless every file entry has a valid hashed payload.",
+      errorDetail(error)
+    ].filter(Boolean).join("\n"), { cause: error });
+  }
 }
 
 async function inspectLayoutBackupCandidate(candidate, udid) {
@@ -122,8 +315,16 @@ async function inspectLayoutBackupCandidate(candidate, udid) {
   }
 
   const statusPath = join(backupRoot, "Status.plist");
-  const snapshotState = (await readPlistValue(statusPath, "SnapshotState").catch(() => "")).toLowerCase();
-  if (snapshotState && snapshotState !== FINISHED_SNAPSHOT_STATE) {
+  let snapshotState;
+  try {
+    snapshotState = (await readPlistValue(statusPath, "SnapshotState")).trim().toLowerCase();
+  } catch {
+    return unusableCandidate(candidate, backupRoot, "backup snapshot completion is not proven: Status.plist has no readable SnapshotState");
+  }
+  if (!snapshotState) {
+    return unusableCandidate(candidate, backupRoot, "backup snapshot completion is not proven: SnapshotState is empty");
+  }
+  if (snapshotState !== FINISHED_SNAPSHOT_STATE) {
     return unusableCandidate(candidate, backupRoot, `backup snapshot is not finished: SnapshotState=${snapshotState}`);
   }
 
@@ -300,7 +501,7 @@ async function readLayoutPathsWithPyiosbackup({ manifestPath, password, pythonPa
       `Could not decrypt or inspect iPhone backup layout records in ${manifestPath}.`,
       "Confirm the backup password is correct before supervising.",
       detail
-    ].join("\n"));
+    ].join("\n"), { cause: error });
   }
 }
 

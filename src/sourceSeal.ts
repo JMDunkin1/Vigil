@@ -3,13 +3,28 @@ import { createHash } from "node:crypto";
 import { dirname, extname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SOURCE_SEAL_PATH, STATE_SEAL_KEY_PATH } from "./store.js";
+import { packageableRuntimePath } from "./runtimePackaging.js";
 import { verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
 import type { UnknownRecord } from "./types.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const SOURCE_DIRS = ["src", "scripts", "public", "extension"];
+const SOURCE_DIRS = ["app", "extension", "ios", "public", "scripts", "src"];
 const SOURCE_FILES = ["package.json"];
-const SOURCE_EXTENSIONS = new Set([".ts", ".mts", ".js", ".mjs", ".json", ".html", ".css"]);
+const SOURCE_EXTENSIONS = new Set([
+  ".cjs",
+  ".css",
+  ".html",
+  ".js",
+  ".json",
+  ".mjs",
+  ".mts",
+  ".pbxproj",
+  ".plist",
+  ".png",
+  ".swift",
+  ".ts",
+  ".xcscheme"
+]);
 
 interface SourceSealOptions {
   root?: string;
@@ -135,6 +150,8 @@ async function walkSourceDir(root: string, dir: string, files: SourceManifestFil
 
   for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
     const fullPath = join(dir, entry.name);
+    const runtimePath = relative(root, fullPath).split(sep).join("/");
+    if (!packageableRuntimePath(runtimePath)) continue;
     if (entry.isDirectory()) {
       await walkSourceDir(root, fullPath, files);
     } else if (entry.isFile() && SOURCE_EXTENSIONS.has(extname(entry.name))) {

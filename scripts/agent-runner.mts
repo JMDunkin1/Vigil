@@ -4,10 +4,14 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchVigilStateHealth } from "../src/vigilHealth.js";
+import { getInstanceSecret } from "../src/instanceIdentity.js";
+import { resolveDefaultDataDir } from "../src/dataPaths.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const serverPath = join(root, "src", "server.js");
-const healthUrl = "http://127.0.0.1:8787/api/state";
+const port = Number(process.env.VIGIL_PORT || process.env.VIGIL_PORT || 8787);
+const healthUrl = `http://127.0.0.1:${port}/api/health`;
+const instanceSecret = await getInstanceSecret(process.env.VIGIL_DATA_DIR || resolveDefaultDataDir(root));
 
 let child: ChildProcess | null = null;
 
@@ -41,7 +45,8 @@ async function serverIsHealthy(): Promise<boolean> {
   try {
     const health = await fetchVigilStateHealth(healthUrl, {
       signal: controller.signal,
-      expectedPort: 8787
+      expectedPort: port,
+      instanceSecret
     });
     return health.ok;
   } catch {

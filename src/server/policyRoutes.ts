@@ -11,6 +11,7 @@ import { normalizeWeekdays as normalizeDays, pathTailId as pathId } from "../nor
 import { listFromTextarea, normalizeDeviceTargets, normalizeLockLevel } from "../policy.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { addEvent, saveState, sanitizeSoftBlockProfile } from "../store.js";
+import { normalizeClock } from "../time.js";
 import type { AppLockRule, GrayscaleSchedule, LimitRule, Profile, ProfileMode, Schedule, VigilState, UnknownRecord } from "../types.js";
 import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
 
@@ -268,8 +269,8 @@ function upsertSchedule(state: VigilState, body: UnknownRecord): Schedule {
     commitmentLock: body.commitmentLock === undefined ? Boolean(existing?.commitmentLock) : truthy(body.commitmentLock),
     deviceTargets: normalizeDeviceTargets(body.deviceTargets ?? existing?.deviceTargets, DEVICE_TARGETS),
     days: normalizeDays(body.days ?? existing?.days ?? [1, 2, 3, 4, 5]),
-    start: normalizeClock(body.start ?? existing?.start ?? "09:00"),
-    end: normalizeClock(body.end ?? existing?.end ?? "17:00"),
+    start: normalizeClock(body.start ?? existing?.start ?? "09:00", "09:00"),
+    end: normalizeClock(body.end ?? existing?.end ?? "17:00", "17:00"),
     wifiNetworks: normalizeArray(body.wifiNetworks ?? existing?.wifiNetworks)
   };
 
@@ -332,11 +333,6 @@ function optionalDisabledFlag(value: unknown, existing: unknown): boolean | unde
 function normalizeArray(value: unknown): string[] {
   if (Array.isArray(value)) return [...new Set(value.map((item) => String(item).trim()).filter(Boolean))];
   return listFromTextarea(value);
-}
-
-function normalizeClock(value: unknown): string {
-  const text = String(value || "");
-  return /^\d{2}:\d{2}$/.test(text) ? text : "09:00";
 }
 
 function stringValue(value: unknown, fallback = ""): string {

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import {
@@ -65,6 +65,8 @@ export interface ManageEngineIosExportResult {
 }
 
 const manageEngineExportLocks = new Map<string, Promise<void>>();
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
 
 export async function exportManageEngineIosProfile(
   savedState: VigilState,
@@ -144,10 +146,9 @@ async function exportManageEngineIosProfileUnlocked(
     deployment: launcherDeployment
   };
 
-  await mkdir(dirname(outPath), { recursive: true });
-  await mkdir(dirname(summaryPath), { recursive: true });
-  await mkdir(dirname(launcherOutPath), { recursive: true });
-  await mkdir(dirname(launcherSummaryPath), { recursive: true });
+  for (const directory of new Set([dirname(outPath), dirname(summaryPath), dirname(launcherOutPath), dirname(launcherSummaryPath)])) {
+    await ensurePrivateDirectory(directory);
+  }
   await writeFileAtomically(outPath, profile);
   await writeFileAtomically(launcherOutPath, launcherProfile);
   await writeFileAtomically(launcherSummaryPath, `${JSON.stringify(launcherSummary, null, 2)}\n`);
@@ -158,7 +159,7 @@ async function exportManageEngineIosProfileUnlocked(
     summaryPath: join(dirname(mirror.summaryPath), basename(launcherSummaryPath))
   } : null;
   if (mirror) {
-    await mkdir(dirname(mirror.outPath), { recursive: true });
+    await ensurePrivateDirectory(dirname(mirror.outPath));
     await writeFileAtomically(mirror.outPath, profile);
     await writeFileAtomically(mirror.summaryPath, `${JSON.stringify({
       ...summary,
@@ -171,7 +172,7 @@ async function exportManageEngineIosProfileUnlocked(
     }, null, 2)}\n`);
   }
   if (launcherMirror) {
-    await mkdir(dirname(launcherMirror.outPath), { recursive: true });
+    await ensurePrivateDirectory(dirname(launcherMirror.outPath));
     await writeFileAtomically(launcherMirror.outPath, launcherProfile);
     await writeFileAtomically(launcherMirror.summaryPath, `${JSON.stringify({ ...launcherSummary, outputPath: launcherMirror.outPath }, null, 2)}\n`);
   }
@@ -413,10 +414,32 @@ function defaultPolicyHandoffMirrorPaths(outPath: string, summaryPath: string): 
 async function writeFileAtomically(path: string, content: string): Promise<void> {
   const temporaryPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
   try {
-    await writeFile(temporaryPath, content);
+    await writeFile(temporaryPath, content, { flag: "wx", mode: PRIVATE_FILE_MODE });
+    await chmod(temporaryPath, PRIVATE_FILE_MODE);
     await rename(temporaryPath, path);
-  } catch (error) {
+    await chmod(path, PRIVATE_FILE_MODE);
+  } finally {
     await rm(temporaryPath, { force: true }).catch(() => {});
-    throw error;
   }
+}
+
+async function ensurePrivateDirectory(path: string): Promise<void> {
+  let exists = true;
+  try {
+    await stat(path);
+  } catch (error) {
+    if (!isNodeErrorCode(error, "ENOENT")) throw error;
+    exists = false;
+  }
+  await mkdir(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+  if (!exists || managedOutputDirectory(path)) await chmod(path, PRIVATE_DIRECTORY_MODE);
+}
+
+function managedOutputDirectory(path: string): boolean {
+  const name = basename(resolve(path)).toLowerCase();
+  return name === "manageengine" || name === "vigil-manageengine-mdm";
+}
+
+function isNodeErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === code;
 }

@@ -1,13 +1,15 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { launchAgentDataDirFromPlist, launchAgentDataRootsConflict, resolveDefaultDataDir } from "../src/dataPaths.js";
 
 const execFileAsync = promisify(execFile);
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const home = process.env.HOME;
 if (!home) throw new Error("HOME is required to install the Vigil LaunchAgent.");
+const homeDir = home;
 const uid = process.getuid?.();
 if (uid === undefined) throw new Error("process.getuid is required to install the Vigil LaunchAgent.");
 const label = "com.vigil.agent";
@@ -17,6 +19,7 @@ const legacyPlistPath = join(home, "Library", "LaunchAgents", `${legacyLabel}.pl
 const logDir = join(home, "Library", "Logs", "Vigil");
 const nodePath = process.execPath;
 const runnerPath = join(root, "scripts", "agent-runner.mjs");
+const dataDir = await resolveLaunchAgentDataDir();
 const environment = launchAgentEnvironment();
 
 await cleanupLegacyLaunchAgent();
@@ -60,9 +63,10 @@ ${environment}
 }
 
 function launchAgentEnvironment(): string {
-  const values: Record<string, string> = {};
+  const values: Record<string, string> = {
+    VIGIL_DATA_DIR: dataDir
+  };
   if (process.versions.electron) values.ELECTRON_RUN_AS_NODE = "1";
-  if (process.env.VIGIL_DATA_DIR) values.VIGIL_DATA_DIR = process.env.VIGIL_DATA_DIR;
   if (process.env.VIGIL_PORT) values.VIGIL_PORT = process.env.VIGIL_PORT;
   if (process.env.VIGIL_PORT) values.VIGIL_PORT = process.env.VIGIL_PORT;
 
@@ -73,6 +77,74 @@ function launchAgentEnvironment(): string {
     .map(([key, value]) => `    <key>${escapeXml(key)}</key>\n    <string>${escapeXml(value)}</string>`)
     .join("\n");
   return `  <key>EnvironmentVariables</key>\n  <dict>\n${body}\n  </dict>\n`;
+}
+
+async function resolveLaunchAgentDataDir(): Promise<string> {
+  if (process.env.VIGIL_DATA_DIR) return process.env.VIGIL_DATA_DIR;
+  const existingPlist = await optionalRead(plistPath);
+  if (existingPlist !== null) {
+    const existing = launchAgentDataDirFromPlist(existingPlist);
+    if (existing.source === "environment") return existing.dataDir;
+    if (existing.source === "working-directory") {
+      const currentDataDir = resolveDefaultDataDir(root);
+      if (existing.dataDir !== currentDataDir) {
+        const [existingHasState, currentHasState] = await Promise.all([
+          hasVigilState(existing.dataDir),
+          hasVigilState(currentDataDir)
+        ]);
+        if (launchAgentDataRootsConflict(existing.dataDir, currentDataDir, existingHasState, currentHasState)) {
+          throw new Error(
+            `Vigil found state in both the existing LaunchAgent data directory ${existing.dataDir} and the current runtime data directory ${currentDataDir}. Set VIGIL_DATA_DIR explicitly before reinstalling the LaunchAgent.`
+          );
+        }
+      }
+      return existing.dataDir;
+    }
+    return resolveDefaultDataDir(root);
+  }
+
+  const repositoryData = resolveDefaultDataDir(root);
+  const applicationSupportData = join(homeDir, "Library", "Application Support", "Vigil");
+  const [repositoryHasState, applicationSupportHasState] = await Promise.all([
+    hasVigilState(repositoryData),
+    hasVigilState(applicationSupportData)
+  ]);
+  if (repositoryHasState && applicationSupportHasState) {
+    throw new Error(
+      `Vigil found state in both ${repositoryData} and ${applicationSupportData}. Set VIGIL_DATA_DIR explicitly before installing the LaunchAgent.`
+    );
+  }
+  return repositoryHasState ? repositoryData : applicationSupportData;
+}
+
+async function hasVigilState(directory: string): Promise<boolean> {
+  for (const name of [
+    "state.json",
+    "usage.json",
+    "accounts.json",
+    "state-seal.key",
+    "state.seal.json",
+    "source.seal.json",
+    "touch-id.key",
+    "adult-blocklist.json"
+  ]) {
+    try {
+      await access(join(directory, name));
+      return true;
+    } catch {
+      // Try the next Vigil state file.
+    }
+  }
+  return false;
+}
+
+async function optionalRead(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 async function cleanupLegacyLaunchAgent(): Promise<void> {

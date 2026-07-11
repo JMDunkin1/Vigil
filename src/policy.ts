@@ -257,45 +257,89 @@ export function activePolicy(state: VigilState, now = new Date(), options: Polic
     };
   }
 
+  const candidates: ActivePolicy[] = [];
   const manualSession = activeSessionForDevice(state, device);
-  if (manualSession) {
-    const phase = sessionPhase(manualSession, now);
-    if (phase && !phase.blocking) return null;
-    return {
+  const manualPhase = sessionPhase(manualSession, now);
+  if (manualSession && (!manualPhase || manualPhase.blocking)) {
+    candidates.push({
       kind: "manual",
       session: manualSession,
       profile: manualSession.profileSnapshot || profileById(state, manualSession.profileId),
-      endsAt: phase?.endsAt || manualSession.endsAt,
-      phase
-    };
+      endsAt: manualPhase?.endsAt || manualSession.endsAt,
+      phase: manualPhase
+    });
   }
 
-  const planned = activePlannerBlock(state, now, { device });
-  const scheduled = activeSchedule(state, now, { device });
-
-  if (planned && (!scheduled || lockPriority(planned.session.lockLevel) > lockPriority(scheduled.session.lockLevel))) {
-    return {
+  for (const planned of activePlannerBlocks(state, now, device)) {
+    candidates.push({
       kind: "planner",
       session: planned.session,
       profile: profileById(state, planned.block.profileId),
       plannerBlock: planned.block,
       endsAt: planned.session.endsAt
-    };
+    });
   }
 
-  if (!scheduled) return null;
+  for (const scheduled of activeSchedules(state, now, device)) {
+    candidates.push({
+      kind: "schedule",
+      session: scheduled.session,
+      profile: profileById(state, scheduled.schedule.profileId),
+      schedule: scheduled.schedule,
+      endsAt: scheduled.session.endsAt
+    });
+  }
 
+  const selected = candidates.reduce<ActivePolicy | null>((selected, candidate) => {
+    return !selected || comparePolicyStrength(candidate, selected) > 0 ? candidate : selected;
+  }, null);
+  if (!selected) return null;
+  const contributors = candidates.map((candidate) => ({
+    kind: candidate.kind,
+    sessionId: candidate.session.id,
+    profileId: candidate.profile.id,
+    endsAt: candidate.endsAt,
+    scheduleId: candidate.schedule?.id,
+    plannerBlockId: candidate.plannerBlock?.id,
+    emergencyUnlocksAllowed: candidate.session.emergencyUnlocksAllowed !== false && !candidate.session.commitmentLock
+  }));
   return {
-    kind: "schedule",
-    session: scheduled.session,
-    profile: profileById(state, scheduled.schedule.profileId),
-    schedule: scheduled.schedule,
-    endsAt: scheduled.session.endsAt
+    ...selected,
+    profile: combineActiveProfiles(selected.profile, candidates.map((candidate) => candidate.profile)),
+    endsAt: earliestPolicyBoundary(contributors.map((contributor) => contributor.endsAt), selected.endsAt),
+    contributors
   };
+}
+
+function earliestPolicyBoundary(values: string[], fallback: string): string {
+  const boundaries = values
+    .map((value) => ({ value, timestamp: Date.parse(value || "") }))
+    .filter((item) => Number.isFinite(item.timestamp))
+    .sort((left, right) => left.timestamp - right.timestamp);
+  return boundaries[0]?.value || fallback;
 }
 
 function lockPriority(lockLevel: LockLevel): number {
   return lockLevel === "deep" ? 2 : 1;
+}
+
+function comparePolicyStrength(left: ActivePolicy, right: ActivePolicy): number {
+  const leftStrength = policyStrength(left);
+  const rightStrength = policyStrength(right);
+  for (let index = 0; index < leftStrength.length; index += 1) {
+    const difference = leftStrength[index] - rightStrength[index];
+    if (difference) return difference;
+  }
+  return 0;
+}
+
+function policyStrength(policy: ActivePolicy): number[] {
+  return [
+    lockPriority(policy.session.lockLevel),
+    policy.session.commitmentLock ? 1 : 0,
+    policy.session.canEndEarly !== true ? 1 : 0,
+    policy.kind === "schedule" ? 3 : policy.kind === "planner" ? 2 : 1
+  ];
 }
 
 export function activeSessionForDevice(state: VigilState, device: DeviceTargetInput = "computer"): Session | null {
@@ -357,7 +401,8 @@ export function sessionTargetsDevice(session: Session | Schedule | IntentionalPl
 export function emergencyUnlockAllowedForPolicy(policy: ActivePolicy | null | undefined): boolean {
   if (!policy) return true;
   if (policy.kind === "integrity") return false;
-  return policy.session?.emergencyUnlocksAllowed !== false;
+  if (policy.session?.commitmentLock || policy.session?.emergencyUnlocksAllowed === false) return false;
+  return !(policy.contributors || []).some((contributor) => contributor.emergencyUnlocksAllowed === false);
 }
 
 export function sessionPhase(session: Session | null | undefined, now = new Date()): PolicyPhase | null {
@@ -410,12 +455,21 @@ export function activeSchedule(
   options: PolicyDeviceOptions = {}
 ): { schedule: Schedule; session: Session } | null {
   const device = normalizeDeviceTarget(options.device);
-  let selected: { schedule: Schedule; session: Session; priority: number } | null = null;
+  const candidates = activeSchedules(state, now, device);
+  return candidates.reduce<{ schedule: Schedule; session: Session } | null>((selected, candidate) => {
+    return !selected || schedulePolicyPriority(candidate.session) > schedulePolicyPriority(selected.session)
+      ? candidate
+      : selected;
+  }, null);
+}
+
+function activeSchedules(state: VigilState, now: Date, device: DeviceTarget): Array<{ schedule: Schedule; session: Session }> {
+  const candidates: Array<{ schedule: Schedule; session: Session }> = [];
   for (const schedule of state.schedules.filter((item) => item.enabled)) {
     if (!sessionTargetsDevice(schedule, device)) continue;
-    if (!scheduleEnvironmentMatches(state, schedule)) continue;
     const match = scheduleWindow(schedule, now);
     if (!match) continue;
+    if (!scheduleEnvironmentMatches(state, schedule, match, now)) continue;
     if (isScheduleOverridden(state, schedule.id, match.endsAt, now)) continue;
     const candidate = {
       schedule,
@@ -434,10 +488,9 @@ export function activeSchedule(
         deviceTargets: normalizeDeviceTargets(schedule.deviceTargets, DEVICE_TARGETS)
       }
     };
-    const priority = schedulePolicyPriority(candidate.session);
-    if (!selected || priority > selected.priority) selected = { ...candidate, priority };
+    candidates.push(candidate);
   }
-  return selected ? { schedule: selected.schedule, session: selected.session } : null;
+  return candidates;
 }
 
 function schedulePolicyPriority(session: Session): number {
@@ -450,7 +503,21 @@ export function activePlannerBlock(
   options: PolicyDeviceOptions = {}
 ): { block: IntentionalPlanBlock; session: Session } | null {
   const device = normalizeDeviceTarget(options.device);
+  const candidates = activePlannerBlocks(state, now, device);
+  return candidates.reduce<{ block: IntentionalPlanBlock; session: Session } | null>((selected, candidate) => {
+    return !selected || schedulePolicyPriority(candidate.session) > schedulePolicyPriority(selected.session)
+      ? candidate
+      : selected;
+  }, null);
+}
+
+function activePlannerBlocks(
+  state: VigilState,
+  now: Date,
+  device: DeviceTarget
+): Array<{ block: IntentionalPlanBlock; session: Session }> {
   const nowMs = now.getTime();
+  const candidates: Array<{ block: IntentionalPlanBlock; session: Session }> = [];
   const blocks = [...(state.intentionalUse?.planBlocks || [])].sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""));
   for (const block of blocks) {
     if (block.enabled === false || block.completed) continue;
@@ -459,7 +526,7 @@ export function activePlannerBlock(
     const endsAt = Date.parse(block.endsAt || "");
     if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt)) continue;
     if (nowMs < startsAt || nowMs >= endsAt) continue;
-    return {
+    candidates.push({
       block,
       session: {
         id: `planner:${block.id}`,
@@ -475,9 +542,63 @@ export function activePlannerBlock(
         source: "planner",
         deviceTargets: normalizeDeviceTargets(block.deviceTargets, DEVICE_TARGETS)
       }
-    };
+    });
   }
-  return null;
+  return candidates;
+}
+
+function combineActiveProfiles(selected: Profile, profiles: Profile[]): Profile {
+  const activeProfiles = [selected, ...profiles.filter((profile) => profile !== selected)];
+  if (activeProfiles.length === 1) return selected;
+
+  const blockedApps = uniquePolicyTargets(activeProfiles.flatMap((profile) => profile.blockedApps || []));
+  const blockedSites = uniquePolicyTargets(activeProfiles.flatMap((profile) => profile.blockedSites || []));
+  const blockedUrlPatterns = uniquePolicyTargets(activeProfiles.flatMap((profile) => profile.blockedUrlPatterns || []));
+  const allowlists = activeProfiles.filter((profile) => profile.mode === "allowlist");
+  const mode = allowlists.length ? "allowlist" : "blocklist";
+  const allowedApps = mode === "allowlist"
+    ? intersectAppTargets(allowlists.map((profile) => profile.allowedApps || []))
+      .filter((target) => !appMatchesAppTargets(target, blockedApps))
+    : uniquePolicyTargets(activeProfiles.flatMap((profile) => profile.allowedApps || []));
+  const allowedSites = mode === "allowlist"
+    ? intersectSiteTargets(allowlists.map((profile) => profile.allowedSites || []))
+      .filter((target) => !hostMatchesSiteTargets(target, blockedSites))
+    : uniquePolicyTargets(activeProfiles.flatMap((profile) => profile.allowedSites || []));
+
+  return {
+    ...selected,
+    mode,
+    blockedApps,
+    blockedSites,
+    blockedUrlPatterns,
+    allowedApps,
+    allowedSites,
+    phoneAppBlocking: activeProfiles.every((profile) => profile.phoneAppBlocking === false) ? false : undefined,
+    hostsUrlPatternBlocking: activeProfiles.every((profile) => profile.hostsUrlPatternBlocking === false) ? false : undefined
+  };
+}
+
+function intersectAppTargets(lists: string[][]): string[] {
+  if (!lists.length) return [];
+  return uniquePolicyTargets(lists[0]).filter((target) => lists.slice(1).every((list) => appMatchesAppTargets(target, list)));
+}
+
+function intersectSiteTargets(lists: string[][]): string[] {
+  if (!lists.length) return [];
+  return uniquePolicyTargets(lists[0]).filter((target) => lists.slice(1).every((list) => hostMatchesSiteTargets(target, list)));
+}
+
+function uniquePolicyTargets(values: readonly unknown[]): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const target = String(value || "").trim();
+    const key = target.toLowerCase();
+    if (!target || seen.has(key)) continue;
+    seen.add(key);
+    output.push(target);
+  }
+  return output;
 }
 
 export function scheduleWindow(schedule: Schedule, now = new Date()): ScheduleWindow | null {
@@ -806,11 +927,32 @@ function isScheduleOverridden(state: VigilState, scheduleId: string, endsAt: str
   });
 }
 
-function scheduleEnvironmentMatches(state: VigilState, schedule: Schedule): boolean {
+const WIFI_OBSERVATION_FRESHNESS_MS = 2 * 60 * 1000;
+
+function scheduleEnvironmentMatches(
+  state: VigilState,
+  schedule: Schedule,
+  window: ScheduleWindow,
+  now: Date
+): boolean {
   const networks = normalizeList(schedule.wifiNetworks || []);
   if (!networks.length) return true;
   const current = normalize(state.environment?.wifiSsid || "");
-  return Boolean(current && networks.includes(current));
+  if (!current || !networks.includes(current)) return false;
+
+  const checkedAt = Date.parse(state.environment?.wifiCheckedAt || "");
+  if (!Number.isFinite(checkedAt)) return false;
+  if (state.environment?.wifiError) {
+    const windowStart = Date.parse(window.startsAt);
+    const windowEnd = Date.parse(window.endsAt);
+    return Number.isFinite(windowStart)
+      && Number.isFinite(windowEnd)
+      && checkedAt >= windowStart
+      && checkedAt < windowEnd;
+  }
+
+  const age = now.getTime() - checkedAt;
+  return age >= 0 && age <= WIFI_OBSERVATION_FRESHNESS_MS;
 }
 
 function makeWindow(now: Date, startMinutes: number, endMinutes: number, addEndDays: number, startOffsetDays = 0): ScheduleWindow {

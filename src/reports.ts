@@ -1,7 +1,7 @@
 import { dateKey, weekKey } from "./time.js";
 import { appMatchesAppTargets, hostMatchesSiteTargets } from "./policy.js";
 import { intentionalUseSummary } from "./intentionalUse.js";
-import { normalizeUsageDay } from "./usage.js";
+import { normalizeUsageDay, usageBlockedSeconds, usageOpenCount } from "./usage.js";
 import type { VigilState, UsageBucket, UsageState } from "./types.js";
 
 interface DayReport {
@@ -138,7 +138,7 @@ export function focusReport(usage: UsageState, state: VigilState, now = new Date
 function dayReport(usage: UsageState, state: VigilState, date: Date): DayReport {
   const key = dateKey(date);
   const day = normalizeUsageDay(usage[key]);
-  const distractingSeconds = sumBlockedSeconds(day, state);
+  const distractingSeconds = usageBlockedSeconds(day, state);
   const totalSeconds = day.totalSeconds || 0;
   const focusScore = totalSeconds ? Math.max(0, Math.round(100 - (distractingSeconds / Math.max(totalSeconds, 1)) * 100)) : 100;
   return {
@@ -147,7 +147,7 @@ function dayReport(usage: UsageState, state: VigilState, date: Date): DayReport 
     totalSeconds: Math.round(totalSeconds),
     distractingSeconds: Math.round(distractingSeconds),
     savedSeconds: null,
-    openCount: sumOpenCounts(day.opens),
+    openCount: usageOpenCount(day),
     focusScore,
     apps: day.apps,
     sites: day.sites,
@@ -455,14 +455,6 @@ function reflectionStreakDays(state: VigilState, now: Date): number {
   return count;
 }
 
-function sumOpenCounts(opens: Partial<UsageBucket["opens"]> = {}): number {
-  return sumObject(opens.apps) + sumObject(opens.sites);
-}
-
-function sumObject(values: Record<string, number> = {}): number {
-  return Object.values(values || {}).reduce((total, value) => total + Number(value || 0), 0);
-}
-
 function projections() {
   return {
     weeklySavedSeconds: null,
@@ -495,27 +487,6 @@ function topCombined(days: DayReport[], state: VigilState, kind: "sites" | "apps
   return Object.entries(values)
     .sort((a, b) => b[1] - a[1])
     .map(([name, seconds]) => ({ name, seconds: Math.round(seconds), kind: kind === "sites" ? "site" : "app" }));
-}
-
-function sumBlockedSeconds(day: DayReport | ReturnType<typeof normalizeUsageDay>, state: VigilState): number {
-  return Math.min(Math.round(day.totalSeconds || 0), rawBlockedSeconds(day, state));
-}
-
-function rawBlockedSeconds(day: DayReport | ReturnType<typeof normalizeUsageDay>, state: VigilState): number {
-  const profile = state.profiles.find((item) => item.id === state.settings.activeProfileId) || state.profiles[0];
-  let total = 0;
-
-  for (const [app, seconds] of Object.entries(day.apps || {})) {
-    if (appMatchesAppTargets(app, profile?.blockedApps || [])) total += seconds;
-  }
-
-  for (const [site, seconds] of Object.entries(day.sites || {})) {
-    if (hostMatchesSiteTargets(site, profile?.blockedSites || [])) {
-      total += seconds;
-    }
-  }
-
-  return Math.round(total);
 }
 
 function milestone(id: string, label: string, achieved: boolean): Milestone {

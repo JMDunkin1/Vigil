@@ -69,17 +69,12 @@ export function buildFirewallBlock(domains: unknown[] = [], entries: FirewallEnt
   const cleanEntries = normalizeEntries(entries);
   const lines = [
     PF_ANCHOR_BEGIN,
-    "# Managed by Vigil. Edit profile site blocklists or host/path URL patterns, then re-run npm run network:apply.",
     `# Domain-Signature: ${firewallDomainSignature(cleanDomains)}`,
     `# Domain-Count: ${cleanDomains.length}`,
     `# Address-Count: ${cleanEntries.length}`
   ];
 
-  if (!cleanDomains.length) {
-    lines.push("# No hostname-based block targets are active for the current policy.");
-  } else if (!cleanEntries.length) {
-    lines.push("# No resolved IP addresses are available for the current Vigil domain targets.");
-  } else {
+  if (cleanDomains.length && cleanEntries.length) {
     for (const entry of cleanEntries) {
       lines.push(`# ${entry.domain} via ${entry.host}`);
       lines.push(`block return out quick to ${entry.address}`);

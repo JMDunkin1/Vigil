@@ -2,6 +2,7 @@ import { createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from "no
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { dirname, join } from "node:path";
+import { isLoopbackHostHeader } from "./apiSecurity.js";
 import { DATA_DIR } from "./store.js";
 import type { UnknownRecord } from "./types.js";
 
@@ -9,6 +10,17 @@ const SESSION_COOKIE = "vigil_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7;
 const ACCOUNTS_PATH = join(DATA_DIR, "accounts.json");
 const AUTH_SECRET_PATH = join(DATA_DIR, "auth-secret.key");
+const AUTH_ATTEMPT_LIMIT = 5;
+const AUTH_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
+const MAX_AUTH_ATTEMPT_KEYS = 2_048;
+const SENSITIVE_HOSTED_ADMIN_GET_PATHS = new Set([
+  "/api/diagnostic/export",
+  "/api/devices/ios/mdm/doctor",
+  "/api/devices/ios/mdm/enrollment.mobileconfig",
+  "/api/devices/ios/profile.mobileconfig"
+]);
+
+export const BOOTSTRAP_TOKEN_HEADER = "x-vigil-bootstrap-token";
 
 export type AccountRole = "admin" | "member";
 
@@ -34,6 +46,13 @@ interface SessionPayload {
   exp: number;
 }
 
+type AuthAttemptKind = "login" | "signup";
+
+interface AuthAttemptBucket {
+  count: number;
+  resetAt: number;
+}
+
 export interface PublicAccount {
   id: string;
   name: string;
@@ -51,13 +70,22 @@ export interface AccountSessionSummary {
 
 let cachedSecret: Buffer | null = null;
 let accountMutationQueue: Promise<unknown> | null = null;
+const authIpAttemptBuckets = new Map<string, AuthAttemptBucket>();
+const authAccountAttemptBuckets = new Map<string, AuthAttemptBucket>();
 
 export function hostedAccountsEnabled(): boolean {
   return truthy(process.env.VIGIL_AUTH_ENABLED);
 }
 
 export function hostedSignupsEnabled(): boolean {
-  return hostedAccountsEnabled() && !falsy(process.env.VIGIL_SIGNUPS_ENABLED);
+  return hostedAccountsEnabled() && truthy(process.env.VIGIL_SIGNUPS_ENABLED);
+}
+
+export function hostedAdminRequired(method: string, path: string): boolean {
+  const normalizedMethod = String(method || "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(normalizedMethod)) return true;
+  if (normalizedMethod !== "GET") return false;
+  return SENSITIVE_HOSTED_ADMIN_GET_PATHS.has(path) || path.startsWith("/api/devices/ios/mdm/");
 }
 
 function assertHostedAccountsEnabled(): void {
@@ -94,8 +122,9 @@ export async function createAccount(body: UnknownRecord, request: IncomingMessag
   assertHostedAccountsEnabled();
   if (!hostedSignupsEnabled()) throw authError(403, "New account registration is closed.");
 
-  const name = cleanName(body.name);
   const email = cleanEmail(body.email);
+  recordAuthAttempt("signup", email, request);
+  const name = cleanName(body.name);
   const password = cleanPassword(body.password);
 
   return queueAccountMutation(async () => {
@@ -103,6 +132,7 @@ export async function createAccount(body: UnknownRecord, request: IncomingMessag
     if (store.accounts.some((account) => account.email === email)) {
       throw authError(409, "An account with that email already exists.");
     }
+    if (store.accounts.length === 0) assertFirstAdminBootstrapAuthorized(request);
 
     const salt = randomBytes(16);
     const account: StoredAccount = {
@@ -117,20 +147,25 @@ export async function createAccount(body: UnknownRecord, request: IncomingMessag
     };
     store.accounts.push(account);
     await saveAccounts(store);
-    return authenticatedResult(account, request);
+    const result = await authenticatedResult(account, request);
+    clearAuthAttempts("signup", email, request);
+    return result;
   });
 }
 
 export async function signInAccount(body: UnknownRecord, request: IncomingMessage): Promise<{ session: AccountSessionSummary; cookie: string }> {
   assertHostedAccountsEnabled();
   const email = cleanEmail(body.email);
+  recordAuthAttempt("login", email, request);
   const password = cleanPassword(body.password);
   const store = await loadAccounts();
   const account = store.accounts.find((item) => item.email === email);
   if (!account || !(await passwordMatches(password, account))) {
     throw authError(401, "Email or password is incorrect.");
   }
-  return authenticatedResult(account, request);
+  const result = await authenticatedResult(account, request);
+  clearAuthAttempts("login", email, request);
+  return result;
 }
 
 export function signOutAccount(request: IncomingMessage): string {
@@ -270,6 +305,86 @@ function cookieValue(header: string | undefined, key: string): string {
   return "";
 }
 
+function assertFirstAdminBootstrapAuthorized(request: IncomingMessage): void {
+  if (hostedAccountsEnabled()) {
+    if (bootstrapTokenMatches(request)) return;
+    throw authError(403, "First administrator creation requires a valid bootstrap token in hosted mode.");
+  }
+  if (
+    isLoopbackHostHeader(request.headers.host)
+    && isLoopbackRemoteAddress(request.socket?.remoteAddress)
+  ) return;
+  if (bootstrapTokenMatches(request)) return;
+  throw authError(403, "First administrator creation requires loopback access or a valid bootstrap token.");
+}
+
+function isLoopbackRemoteAddress(value: unknown): boolean {
+  const address = String(value || "").trim().toLowerCase();
+  if (address === "::1") return true;
+  const ipv4 = address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
+  return /^127(?:\.\d{1,3}){3}$/.test(ipv4)
+    && ipv4.split(".").slice(1).every((part) => Number(part) <= 255);
+}
+
+function bootstrapTokenMatches(request: IncomingMessage): boolean {
+  const expected = String(process.env.VIGIL_BOOTSTRAP_TOKEN || "");
+  const supplied = requestHeader(request, BOOTSTRAP_TOKEN_HEADER);
+  if (!expected || !supplied) return false;
+  const comparisonKey = "vigil-bootstrap-token-comparison";
+  const expectedDigest = createHmac("sha256", comparisonKey).update(expected).digest();
+  const suppliedDigest = createHmac("sha256", comparisonKey).update(supplied).digest();
+  return timingSafeEqual(expectedDigest, suppliedDigest);
+}
+
+function recordAuthAttempt(kind: AuthAttemptKind, email: string, request: IncomingMessage, now = Date.now()): void {
+  pruneAuthAttemptBuckets(now);
+  incrementAuthAttemptBucket(authIpAttemptBuckets, authIpAttemptKey(kind, request), now);
+  incrementAuthAttemptBucket(authAccountAttemptBuckets, authAccountAttemptKey(kind, email), now);
+}
+
+function clearAuthAttempts(kind: AuthAttemptKind, email: string, request: IncomingMessage): void {
+  authAccountAttemptBuckets.delete(authAccountAttemptKey(kind, email));
+  authIpAttemptBuckets.delete(authIpAttemptKey(kind, request));
+}
+
+function pruneAuthAttemptBuckets(now: number): void {
+  for (const buckets of [authIpAttemptBuckets, authAccountAttemptBuckets]) {
+    for (const [key, bucket] of buckets) {
+      if (bucket.resetAt <= now) buckets.delete(key);
+    }
+  }
+}
+
+function incrementAuthAttemptBucket(buckets: Map<string, AuthAttemptBucket>, key: string, now: number): void {
+  const existing = buckets.get(key);
+  if (existing && existing.resetAt > now && existing.count >= AUTH_ATTEMPT_LIMIT) {
+    throw authError(429, "Too many account attempts. Try again later.");
+  }
+  if (!existing && buckets.size >= MAX_AUTH_ATTEMPT_KEYS) {
+    const oldestKey = buckets.keys().next().value;
+    if (typeof oldestKey === "string") buckets.delete(oldestKey);
+  }
+  buckets.delete(key);
+  buckets.set(key, {
+    count: existing && existing.resetAt > now ? existing.count + 1 : 1,
+    resetAt: existing && existing.resetAt > now ? existing.resetAt : now + AUTH_ATTEMPT_WINDOW_MS
+  });
+}
+
+function authIpAttemptKey(kind: AuthAttemptKind, request: IncomingMessage): string {
+  const remoteAddress = String(request.socket?.remoteAddress || "unknown").trim().toLowerCase() || "unknown";
+  return `${kind}\u0000ip\u0000${remoteAddress}`;
+}
+
+function authAccountAttemptKey(kind: AuthAttemptKind, email: string): string {
+  return `${kind}\u0000account\u0000${email}`;
+}
+
+function requestHeader(request: IncomingMessage, name: string): string {
+  const value = request.headers[name.toLowerCase()];
+  return Array.isArray(value) ? value.join(",") : String(value || "");
+}
+
 function cleanName(value: unknown): string {
   const name = String(value || "").trim().replace(/\s+/g, " ");
   if (name.length < 2 || name.length > 80) throw authError(400, "Enter a name between 2 and 80 characters.");
@@ -305,10 +420,6 @@ function derivePassword(password: string, salt: Buffer): Promise<Buffer> {
 
 function truthy(value: unknown): boolean {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
-}
-
-function falsy(value: unknown): boolean {
-  return ["0", "false", "no", "off"].includes(String(value || "").trim().toLowerCase());
 }
 
 function isNodeErrorCode(error: unknown, code: string): boolean {

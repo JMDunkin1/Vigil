@@ -1,7 +1,11 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
+import { resolveDefaultDataDir } from "./dataPaths.js";
 import { clampNumber } from "./time.js";
+import { getTouchIdSecret } from "./touchIdAuth.js";
 import type { JournalVaultState, VigilState, UnknownRecord } from "./types.js";
 
 const PASSWORD_MIN_LENGTH = 6;
@@ -9,6 +13,7 @@ const PASSWORD_MAX_LENGTH = 256;
 const SESSION_TOKEN_BYTES = 32;
 const HASH_BYTES = 32;
 const TOUCH_ID_SECRET_HEADER = "x-vigil-touch-id-secret";
+const DEFAULT_DATA_DIR = process.env.VIGIL_DATA_DIR || resolveDefaultDataDir(dirname(dirname(fileURLToPath(import.meta.url))));
 
 interface JournalVaultSession {
   token: string;
@@ -46,7 +51,7 @@ export function journalVaultSummary(state: VigilState) {
     configured: journalVaultConfigured(vault),
     passwordSetAt: vault.passwordSetAt,
     autoLockMinutes: vault.autoLockMinutes,
-    touchIdAvailable: Boolean(process.env.VIGIL_TOUCH_ID_SECRET),
+    touchIdAvailable: process.platform === "darwin",
     entries: state.intentionalUse?.journalEntries?.length || 0
   };
 }
@@ -87,16 +92,17 @@ export function unlockJournalVaultWithPassword(state: VigilState, body: UnknownR
   return createJournalVaultSession(vault, "password", now);
 }
 
-export function unlockJournalVaultWithTouchId(
+export async function unlockJournalVaultWithTouchId(
   state: VigilState,
   headers: IncomingHttpHeaders,
-  now = new Date()
+  now = new Date(),
+  dataDir = DEFAULT_DATA_DIR
 ) {
   const vault = normalizeJournalVaultState(state.intentionalUse.journalVault || {});
   if (!journalVaultConfigured(vault)) {
     throw new JournalVaultError("Set a journal password before enabling Touch ID fallback.", 409);
   }
-  if (!validTouchIdSecret(headers)) {
+  if (!await validTouchIdSecret(headers, dataDir)) {
     throw new JournalVaultError("Touch ID proof was not accepted.", 403);
   }
   return createJournalVaultSession(vault, "touch-id", now);
@@ -175,8 +181,8 @@ function passwordHash(password: string, salt: string): string {
   return scryptSync(password, salt, HASH_BYTES).toString("hex");
 }
 
-function validTouchIdSecret(headers: IncomingHttpHeaders): boolean {
-  const expected = process.env.VIGIL_TOUCH_ID_SECRET || "";
+async function validTouchIdSecret(headers: IncomingHttpHeaders, dataDir: string): Promise<boolean> {
+  const expected = await getTouchIdSecret(dataDir);
   const actual = headerValue(headers[TOUCH_ID_SECRET_HEADER]);
   if (!expected || !actual) return false;
   const expectedBuffer = Buffer.from(expected);

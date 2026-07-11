@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { STATE_PATH, STATE_SEAL_KEY_PATH, STATE_SEAL_PATH } from "./store.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
+import { persistentAppLockSiteTargets } from "./appLocks.js";
 import { removeCompleteManagedBlocks, removePartialManagedBlockFragments } from "./managedBlock.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, normalizeHost, normalizeUrlPattern } from "./policy.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
@@ -30,18 +31,10 @@ interface LaunchAgentPrintStatus {
 
 export function buildHostsBlock(state: VigilState, now = new Date()): string {
   const domains = managedBlockDomains(state, now);
-  const lines = [
-    HOSTS_BEGIN,
-    "# Managed by Vigil. Edit profile site blocklists or host/path URL patterns, then re-run npm run network:apply."
-  ];
-
-  if (!domains.length) {
-    lines.push("# No hostname-based block targets are active for the current policy.");
-  } else {
-    for (const domain of domains) {
-      lines.push(`0.0.0.0 ${domain}`);
-      lines.push(`0.0.0.0 www.${domain}`);
-    }
+  const lines = [HOSTS_BEGIN];
+  for (const domain of domains) {
+    lines.push(`0.0.0.0 ${domain}`);
+    lines.push(`0.0.0.0 www.${domain}`);
   }
 
   lines.push(HOSTS_END);
@@ -250,9 +243,7 @@ function hostsSiteTargets(state: VigilState, profile: Profile | undefined): stri
     }
   }
 
-  for (const lock of (state.appLocks || []).filter((item) => item.enabled)) {
-    targets.push(...(lock.sites || []));
-  }
+  targets.push(...persistentAppLockSiteTargets(state));
 
   return targets;
 }

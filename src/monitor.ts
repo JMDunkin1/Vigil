@@ -36,6 +36,27 @@ interface FrontSample extends UsageSample {
 
 type FrontResult = (FrontSample & { ok: true }) | { ok: false; app: string; error: string };
 
+interface WifiEnvironmentObservation {
+  ok: boolean;
+  ssid?: string;
+  error?: string;
+}
+
+export function applyWifiEnvironmentObservation(
+  state: VigilState,
+  observation: WifiEnvironmentObservation,
+  now = new Date()
+): void {
+  if (observation.ok) {
+    state.environment.wifiSsid = String(observation.ssid || "");
+    state.environment.wifiCheckedAt = now.toISOString();
+    state.environment.wifiError = "";
+    return;
+  }
+
+  state.environment.wifiError = observation.error || "Wi-Fi lookup failed";
+}
+
 interface MonitorStatus extends UnknownRecord {
   ok: boolean;
   lastError: string;
@@ -81,7 +102,7 @@ export function startMonitor(context: MonitorContext): MonitorHandle {
   return monitor;
 }
 
-class Monitor implements MonitorHandle {
+export class Monitor implements MonitorHandle {
   state: VigilState;
   usage: UsageState;
   lastPollAt: number;
@@ -92,6 +113,9 @@ class Monitor implements MonitorHandle {
   recentBlocks: Map<string, number>;
   appBlockHistory: Map<string, AppBlockRecord>;
   immediateEnforcement: Promise<UnknownRecord> | null;
+  tickInFlight: Promise<void> | null;
+  operationTail: Promise<void>;
+  stopping: boolean;
   nextEnvironmentRefreshAt: number;
   nextIntegrityRefreshAt: number;
   nextAppleContentFilterRefreshAt: number;
@@ -131,6 +155,9 @@ class Monitor implements MonitorHandle {
     this.recentBlocks = new Map();
     this.appBlockHistory = new Map();
     this.immediateEnforcement = null;
+    this.tickInFlight = null;
+    this.operationTail = Promise.resolve();
+    this.stopping = false;
     this.nextEnvironmentRefreshAt = 0;
     this.nextIntegrityRefreshAt = 0;
     this.nextAppleContentFilterRefreshAt = 0;
@@ -143,14 +170,44 @@ class Monitor implements MonitorHandle {
   }
 
   start(): void {
-    void this.tick();
+    if (this.timer) return;
+    this.stopping = false;
+    void this.runScheduledTick();
     this.timer = setInterval(() => {
-      void this.tick();
+      void this.runScheduledTick();
     }, this.state.settings.pollIntervalMs || 3000);
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    this.stopping = true;
+    await this.operationTail;
+  }
+
+  runScheduledTick(): Promise<void> {
+    if (this.stopping) return Promise.resolve();
+    if (this.tickInFlight) return this.tickInFlight;
+    const operation = this.enqueueOperation(() => this.tick())
+      .catch((error) => {
+        this.reportTickFailure(error);
+      });
+    const tracked = operation.finally(() => {
+      if (this.tickInFlight === tracked) this.tickInFlight = null;
+    });
+    this.tickInFlight = tracked;
+    return tracked;
+  }
+
+  reportTickFailure(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    const detail = {
+      error: message || "Unknown monitor tick failure",
+      at: new Date().toISOString()
+    };
+    this.status.ok = false;
+    this.status.lastError = `Monitor tick failed: ${detail.error}`;
+    addEvent(this.state, "monitor_tick_failed", detail);
   }
 
   async tick(): Promise<void> {
@@ -164,12 +221,20 @@ class Monitor implements MonitorHandle {
   }
 
   enforceImmediately(reason = "manual"): Promise<UnknownRecord> {
+    if (this.stopping) return Promise.reject(new Error("Vigil monitor is stopping."));
     if (this.immediateEnforcement) return this.immediateEnforcement;
-    this.immediateEnforcement = this.runImmediateEnforcement(reason)
-      .finally(() => {
-        this.immediateEnforcement = null;
-      });
-    return this.immediateEnforcement;
+    const operation = this.enqueueOperation(() => this.runImmediateEnforcement(reason));
+    const tracked = operation.finally(() => {
+      if (this.immediateEnforcement === tracked) this.immediateEnforcement = null;
+    });
+    this.immediateEnforcement = tracked;
+    return tracked;
+  }
+
+  enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const queued = this.operationTail.then(operation);
+    this.operationTail = queued.then(() => {}, () => {});
+    return queued;
   }
 
   async runImmediateEnforcement(reason: string): Promise<UnknownRecord> {
@@ -824,14 +889,7 @@ class Monitor implements MonitorHandle {
     if (now < this.nextEnvironmentRefreshAt) return;
     this.nextEnvironmentRefreshAt = now + 30 * 1000;
     const wifi = await getCurrentWifiNetwork();
-    this.state.environment.wifiCheckedAt = new Date().toISOString();
-    if (wifi.ok) {
-      this.state.environment.wifiSsid = wifi.ssid;
-      this.state.environment.wifiError = "";
-    } else {
-      this.state.environment.wifiSsid = "";
-      this.state.environment.wifiError = wifi.error || "Wi-Fi lookup failed";
-    }
+    applyWifiEnvironmentObservation(this.state, wifi, new Date(now));
   }
 
   isCoolingDown(key: string): boolean {

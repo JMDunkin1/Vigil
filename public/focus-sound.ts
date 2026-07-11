@@ -89,7 +89,10 @@ interface SoundProfile extends PresetProfile {
 interface RealAudioTrack {
   label: string;
   src: string;
-  source: string;
+  attribution: string;
+  sourcePage: string;
+  license: string;
+  licenseUrl: string;
 }
 
 const audioBufferCache = new Map<string, Promise<AudioBuffer>>();
@@ -400,7 +403,11 @@ function loadAudioBuffer(context: AudioContext, src: string): Promise<AudioBuffe
         if (!response.ok) throw new Error(`Could not load ${src}`);
         return response.arrayBuffer();
       })
-      .then((buffer) => context.decodeAudioData(buffer));
+      .then((buffer) => context.decodeAudioData(buffer))
+      .catch((error) => {
+        audioBufferCache.delete(src);
+        throw error;
+      });
     audioBufferCache.set(src, cached);
   }
   return cached;
@@ -431,6 +438,7 @@ function renderFocusStudio(options: SyncOptions): void {
   const title = document.querySelector<HTMLElement>("#focusSoundNowPlaying");
   const category = document.querySelector<HTMLElement>("#focusSoundCategory");
   const description = document.querySelector<HTMLElement>("#focusSoundDescription");
+  const attribution = document.querySelector<HTMLElement>("#focusSoundAttribution");
   const playButton = document.querySelector<HTMLButtonElement>("#focusSoundPlayButton");
   const playLabel = document.querySelector<HTMLElement>("#focusSoundPlayLabel");
   const volumeValue = document.querySelector<HTMLOutputElement>("#focusSoundVolumeValue");
@@ -438,6 +446,7 @@ function renderFocusStudio(options: SyncOptions): void {
   if (title) title.textContent = details.title;
   if (category) category.textContent = details.category;
   if (description) description.textContent = details.description;
+  if (attribution) renderTrackAttribution(attribution, options.preset);
   if (volumeValue) volumeValue.value = String(options.volume);
   if (playLabel) playLabel.textContent = options.enabled ? "Pause" : "Listen";
   if (playButton) {
@@ -467,6 +476,27 @@ function renderFocusStudio(options: SyncOptions): void {
     button.classList.toggle("is-active", selected);
     button.setAttribute("aria-pressed", String(selected));
   }
+}
+
+function renderTrackAttribution(container: HTMLElement, preset: FocusPreset): void {
+  const track = realAudioTrack(preset);
+  container.replaceChildren();
+  container.hidden = !track;
+  if (!track) return;
+
+  container.append(document.createTextNode(`${track.attribution} `));
+  container.append(attributionLink("Source", track.sourcePage));
+  container.append(document.createTextNode(" · "));
+  container.append(attributionLink(track.license, track.licenseUrl));
+}
+
+function attributionLink(label: string, href: string): HTMLAnchorElement {
+  const anchor = document.createElement("a");
+  anchor.textContent = label;
+  anchor.href = href;
+  anchor.target = "_blank";
+  anchor.rel = "noreferrer noopener";
+  return anchor;
 }
 
 function setPressedState(selector: string, datasetKey: string, selectedValue: string): void {
@@ -577,57 +607,90 @@ const realAudioTracks: Record<RealAudioPreset, RealAudioTrack> = {
   rain: {
     label: "Rain",
     src: "/audio/nature/rain.ogg",
-    source: "Wikimedia Commons, public domain"
+    attribution: "Rain field recording from PDSounds; public-domain release via Wikimedia Commons.",
+    sourcePage: "https://commons.wikimedia.org/wiki/File:Rain_(1).ogg",
+    license: "Public domain",
+    licenseUrl: "https://creativecommons.org/publicdomain/mark/1.0/"
   },
   ocean: {
     label: "Ocean waves",
     src: "/audio/nature/ocean-waves.ogg",
-    source: "Wikimedia Commons, public domain"
+    attribution: "Shore wave field recording; public-domain release via Wikimedia Commons.",
+    sourcePage: "https://commons.wikimedia.org/wiki/File:Waves.ogg",
+    license: "Public domain",
+    licenseUrl: "https://creativecommons.org/publicdomain/mark/1.0/"
   },
   storm: {
     label: "Storm",
     src: "/audio/nature/storm-thunderbolts.ogg",
-    source: "Wikimedia Commons, public domain"
+    attribution: "Thunderstorm field recording from PDSounds; public-domain release via Wikimedia Commons.",
+    sourcePage: "https://commons.wikimedia.org/wiki/File:Storm_thunderbolts.ogg",
+    license: "Public domain",
+    licenseUrl: "https://creativecommons.org/publicdomain/mark/1.0/"
   },
   stream: {
     label: "Stream",
     src: "/audio/nature/forest-lawn-creek.ogg",
-    source: "Wikimedia Commons, public domain"
+    attribution: "Forest Lawn Creek field recording; public-domain release via Wikimedia Commons.",
+    sourcePage: "https://commons.wikimedia.org/wiki/File:Forest_lawn_creek.ogg",
+    license: "Public domain",
+    licenseUrl: "https://creativecommons.org/publicdomain/mark/1.0/"
   },
   "bach-goldberg-aria": {
     label: "Bach: Goldberg Aria",
     src: "/audio/baroque/bach-goldberg-aria-harpsichord.ogg",
-    source: "Wikimedia Commons, CC0"
+    attribution: "J. S. Bach, Goldberg Variations, Aria, harpsichord performance via Wikimedia Commons.",
+    sourcePage: "https://commons.wikimedia.org/wiki/File:Bach.Aria.Goldberg-Variationen.WerckmeisterIII.Harpsichord.ogg",
+    license: "CC0 1.0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/"
   },
   "bach-invention-8": {
     label: "Bach: Invention 8",
     src: "/audio/baroque/bach-invention-8-harpsichord.ogg",
-    source: "Wikimedia Commons, CC0"
+    attribution: "J. S. Bach, Invention 8, BWV 779, harpsichord performance via Wikimedia Commons.",
+    sourcePage: "https://commons.wikimedia.org/wiki/File:J.S._Bach%27s_Invention_8_(BWV_779)_on_harpsichord.ogg",
+    license: "CC0 1.0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/"
   },
   "bach-italian-concerto": {
     label: "Bach: Italian Concerto",
     src: "/audio/baroque/bach-italian-concerto-presto.ogg",
-    source: "Wikimedia Commons, CC0"
+    attribution: "J. S. Bach, Italian Concerto, BWV 971, third movement, via Wikimedia Commons.",
+    sourcePage: "https://commons.wikimedia.org/wiki/File:J._S._Bach_-_Italian_Concerto,_BWV._971_-_3._Presto.ogg",
+    license: "CC0 1.0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/"
   },
   "handel-harmonious-blacksmith": {
     label: "Handel: Harmonious Blacksmith",
     src: "/audio/baroque/handel-harmonious-blacksmith.ogg",
-    source: "Wikimedia Commons, CC0"
+    attribution: "G. F. Handel, The Harmonious Blacksmith, harpsichord performance via Wikimedia Commons.",
+    sourcePage: "https://commons.wikimedia.org/wiki/File:Handel_-_Suites_for_Harpsichord_-_No.5_in_E_major_-_The_Harmonious_Blacksmith.ogg",
+    license: "CC0 1.0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/"
   },
   "scarlatti-sonata-k87": {
     label: "Scarlatti: Sonata K.87",
     src: "/audio/baroque/scarlatti-sonata-k87.ogg",
-    source: "Wikimedia Commons, CC0"
+    attribution: "Domenico Scarlatti, Sonata in B minor, K.87, digital harpsichord via Wikimedia Commons.",
+    sourcePage: "https://commons.wikimedia.org/wiki/File:Domenico.Scarlatti.Sonata.b.minor.Kirkpatrick.87.ogg",
+    license: "CC0 1.0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/"
   },
   "scarlatti-sonata-k466": {
     label: "Scarlatti: Sonata K.466",
     src: "/audio/baroque/scarlatti-sonata-k466.ogg",
-    source: "Wikimedia Commons, CC0"
+    attribution: "Domenico Scarlatti, Sonata in F minor, K.466, digital harpsichord via Wikimedia Commons.",
+    sourcePage: "https://commons.wikimedia.org/wiki/File:Domenico.Scarlatti.Sonata.f.minor.Kirkpatrick.466.ogg",
+    license: "CC0 1.0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/"
   },
   ...Object.fromEntries(sacredAudioCatalog.map((track) => [track.id, {
     label: track.title,
     src: track.src,
-    source: `${track.performer}; ${track.license}`
+    attribution: track.attribution,
+    sourcePage: track.sourcePage,
+    license: track.license,
+    licenseUrl: track.licenseUrl
   }])) as Record<SacredAudioTrackId, RealAudioTrack>
 };
 

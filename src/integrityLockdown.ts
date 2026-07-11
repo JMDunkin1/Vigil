@@ -218,6 +218,27 @@ export function detectRuntimeGap(state: VigilState, now = new Date()) {
   if (!Number.isFinite(previous)) return null;
 
   const current = now.getTime();
+  if (previous > current) {
+    const futureSeconds = Math.max(1, Math.ceil((previous - current) / 1000));
+    const overlap = protectedLockOverlap(state, current, previous);
+    if (!overlap) return null;
+
+    runtime.downtimeDetectedAt = now.toISOString();
+    runtime.downtimeDetail = `Vigil's saved runtime heartbeat was ${futureSeconds}s in the future during ${overlap.name}.`;
+    runtime.lastGapSeconds = futureSeconds;
+    runtime.lastGapStartedAt = now.toISOString();
+    runtime.lastGapEndedAt = new Date(previous).toISOString();
+    return {
+      detectedAt: runtime.downtimeDetectedAt,
+      detail: runtime.downtimeDetail,
+      gapSeconds: futureSeconds,
+      gapStartedAt: runtime.lastGapStartedAt,
+      gapEndedAt: runtime.lastGapEndedAt,
+      futureHeartbeat: true,
+      overlap
+    };
+  }
+
   const gapSeconds = Math.round((current - previous) / 1000);
   if (gapSeconds < runtimeGapLockdownSeconds(state)) return null;
 

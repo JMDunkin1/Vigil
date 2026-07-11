@@ -1,9 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { buildHostsBlock, loadStateForScript, replaceManagedHostsBlock } from "../src/hardening.js";
+import { isDirectRun } from "../src/directRun.js";
 import { buildResolvedFirewallBlock, buildPfConfBlock, firewallStatus, PF_ANCHOR_PATH, PF_CONF_PATH, replaceManagedPfConfBlock, validateAndLoadPf, writeFirewallFiles } from "../src/firewall.js";
 import type { VigilState } from "../src/types.js";
 
@@ -19,7 +18,7 @@ interface ApplyNetworkBlockOptions {
   flushDns?: () => Promise<void>;
 }
 
-if (isMainScript()) {
+if (isDirectRun(import.meta.url)) {
   if (process.getuid && process.getuid() !== 0) {
     console.error("Run with sudo: npm run network:apply");
     process.exit(1);
@@ -124,8 +123,4 @@ function defaultPfConf(): string {
 
 function isNodeErrorCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && (error as { code?: unknown }).code === code;
-}
-
-function isMainScript(): boolean {
-  return process.argv[1] ? fileURLToPath(import.meta.url) === resolve(process.argv[1]) : false;
 }

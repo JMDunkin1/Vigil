@@ -10,17 +10,42 @@ type ResponseHeaders = Record<string, string>;
 
 export async function readBody(request: IncomingMessage): Promise<UnknownRecord> {
   const raw = await readTextBody(request);
-  const parsed: unknown = raw ? JSON.parse(raw) : {};
-  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as UnknownRecord : {};
+  if (!raw.trim()) throw requestBodyError(400, "Request body must be a JSON object.");
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw requestBodyError(400, "Request body contains malformed JSON.");
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw requestBodyError(400, "Request body must be a JSON object.");
+  }
+  return parsed as UnknownRecord;
 }
 
 export async function readTextBody(request: IncomingMessage): Promise<string> {
-  let raw = "";
+  const chunks: Buffer[] = [];
+  let byteLength = 0;
   for await (const chunk of request) {
-    raw += chunk;
-    if (raw.length > MAX_BODY_BYTES) throw new Error("Request body too large");
+    const buffer = bodyChunkBuffer(chunk);
+    byteLength += buffer.length;
+    if (byteLength > MAX_BODY_BYTES) throw requestBodyError(413, "Request body too large.");
+    chunks.push(buffer);
   }
-  return raw;
+  return Buffer.concat(chunks, byteLength).toString("utf8");
+}
+
+function bodyChunkBuffer(chunk: unknown): Buffer {
+  if (Buffer.isBuffer(chunk)) return chunk;
+  if (typeof chunk === "string") return Buffer.from(chunk);
+  if (chunk instanceof Uint8Array) return Buffer.from(chunk);
+  return Buffer.from(String(chunk));
+}
+
+function requestBodyError(status: number, message: string): Error & { status: number } {
+  return Object.assign(new Error(message), { status });
 }
 
 export async function serveStatic(response: ServerResponse, pathname: string, { publicDir }: { publicDir: string }): Promise<void> {

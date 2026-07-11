@@ -4,8 +4,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 const projectRoot = process.cwd();
-const sourceRoots = ["app", "extension", "public", "scripts", "src"];
-const sourceExtensions = new Set([".js", ".mjs", ".ts", ".mts"]);
+const sourceRoots = ["app", "extension", "public", "scripts", "src", "tests"];
+const sourceExtensions = new Set([".cjs", ".js", ".mjs", ".ts", ".mts"]);
 const identifierPattern = String.raw`[A-Za-z_$][\w$]*`;
 const reservedIdentifiers = new Set([
   "async",
@@ -31,7 +31,7 @@ const reservedIdentifiers = new Set([
 
 async function listFiles(root, extensions) {
   const rootPath = path.join(projectRoot, root);
-  let entries = [];
+  let entries;
   try {
     entries = await fs.readdir(rootPath, { withFileTypes: true });
   } catch {
@@ -460,6 +460,14 @@ function checkPromiseRejectionErrors(filePath, source, stripped, errors) {
   }
 }
 
+function checkUnsafeDomWrites(filePath, source, stripped, errors) {
+  if (!relativePath(filePath).startsWith("public/")) return;
+  const pattern = /\.(?:innerHTML|outerHTML)\s*=|\.insertAdjacentHTML\s*\(|\bdocument\.write\s*\(/gu;
+  for (const match of stripped.matchAll(pattern)) {
+    errors.push(`${relativePath(filePath)}:${lineNumber(source, match.index || 0)} uses an unsafe HTML injection API.`);
+  }
+}
+
 function assertScanner() {
   const forbiddenType = "a" + "ny";
   const stripped = stripCommentAndStringContent(`const text = \`plain ${forbiddenType}\`; const value = \`\${foo as ${forbiddenType}}\`;`);
@@ -516,6 +524,18 @@ function assertScanner() {
   if (rejectionErrors.length !== 2) {
     throw new Error("Source lint Error-rejection self-check failed.");
   }
+
+  const unsafeDomErrors = [];
+  const unsafeDomSource = "node.innerHTML = value;\nnode.textContent = value;\n";
+  checkUnsafeDomWrites(
+    path.join(projectRoot, "public", "lint-source-self-check.ts"),
+    unsafeDomSource,
+    stripCommentAndStringContent(unsafeDomSource),
+    unsafeDomErrors
+  );
+  if (unsafeDomErrors.length !== 1) {
+    throw new Error("Source lint unsafe-DOM self-check failed.");
+  }
 }
 
 const errors = [];
@@ -544,6 +564,7 @@ for (const record of records) {
   checkFloatingPromiseChains(filePath, source, stripped, errors);
   checkFloatingPromiseCalls(filePath, source, stripped, promiseSymbolsForRecord(record, exportedPromiseNamesByFile, filePathSet), errors);
   checkPromiseRejectionErrors(filePath, source, stripped, errors);
+  checkUnsafeDomWrites(filePath, source, stripped, errors);
 }
 
 if (errors.length) {

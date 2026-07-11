@@ -7,15 +7,28 @@ export default [
       "build/**",
       "data/**",
       "dist/**",
+      "dist.nosync/**",
       "node_modules/**"
     ]
   },
   {
-    files: ["*.js", "*.mjs", "scripts/**/*.mjs"],
+    files: ["**/*.js", "**/*.mjs"],
     languageOptions: {
       ecmaVersion: "latest",
       sourceType: "module",
       globals: globals.node
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      "no-empty": ["error", { allowEmptyCatch: true }]
+    }
+  },
+  {
+    files: ["app/**/*.cjs"],
+    languageOptions: {
+      ecmaVersion: "latest",
+      sourceType: "commonjs",
+      globals: { ...globals.node, ...globals.browser }
     },
     rules: {
       ...js.configs.recommended.rules,

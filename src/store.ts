@@ -1,12 +1,15 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { preserveCorruptStateEvidence } from "./corruptStateEvidence.js";
 import { DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { normalizeIntentionalUse } from "./intentionalUse.js";
+import { resolveDefaultDataDir } from "./dataPaths.js";
 import { normalizeWeekdays } from "./normalizers.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
 import { withoutFocusedSocialDeniedUrls } from "./socialFeatureFilters.js";
+import { dateKey, normalizeClock } from "./time.js";
 import type { AdultBlocklistState, AppSettings, GrayscaleSchedule, GrayscaleState, Profile, Schedule, VigilState, Session, UsageState, UnknownRecord } from "./types.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -16,41 +19,40 @@ export const STATE_SEAL_PATH = join(DATA_DIR, "state.seal.json");
 export const STATE_SEAL_KEY_PATH = join(DATA_DIR, "state-seal.key");
 export const SOURCE_SEAL_PATH = join(DATA_DIR, "source.seal.json");
 export const USAGE_PATH = join(DATA_DIR, "usage.json");
+export const USAGE_SEAL_PATH = join(DATA_DIR, "usage.seal.json");
+
+export { resolveDefaultDataDir } from "./dataPaths.js";
 
 type RawState = Partial<VigilState> & Record<string, unknown>;
 let stateSaveQueue: Promise<void> = Promise.resolve();
+let usageSaveQueue: Promise<void> = Promise.resolve();
+const PRIVATE_DIRECTORY_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+let stateWritesSuppressedForCorruptEvidence = false;
 
-export function resolveDefaultDataDir(runtimeRoot: string): string {
-  const parent = dirname(runtimeRoot);
-  const projectRoot = basename(runtimeRoot) === "runtime" && basename(parent) === "dist" && !runtimeRoot.includes(".asar")
-    ? dirname(parent)
-    : runtimeRoot;
-  return join(projectRoot, "data");
-}
-
-async function readJson<T>(path: string, fallback: T): Promise<T> {
+async function writeJson(path: string, value: unknown): Promise<string> {
+  await ensurePrivateDirectory(dirname(path));
+  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const text = `${JSON.stringify(value, null, 2)}\n`;
   try {
-    return JSON.parse(await readFile(path, "utf8")) as T;
-  } catch (error) {
-    if (isNodeErrorCode(error, "ENOENT")) return fallback;
-    throw error;
+    await writeFile(temp, text, { flag: "wx", mode: PRIVATE_FILE_MODE });
+    await chmod(temp, PRIVATE_FILE_MODE);
+    await rename(temp, path);
+    await chmod(path, PRIVATE_FILE_MODE);
+    return text;
+  } finally {
+    await rm(temp, { force: true }).catch(() => {});
   }
 }
 
-async function writeJson(path: string, value: unknown): Promise<string> {
-  await mkdir(dirname(path), { recursive: true });
-  const temp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  const text = `${JSON.stringify(value, null, 2)}\n`;
-  await writeFile(temp, text);
-  await rename(temp, path);
-  return text;
-}
-
 export async function loadState(): Promise<VigilState> {
-  await mkdir(DATA_DIR, { recursive: true });
+  await ensurePrivateDirectory(DATA_DIR);
   let raw: string;
+  let rawBytes: Buffer;
   try {
-    raw = await readFile(STATE_PATH, "utf8");
+    rawBytes = await readFile(STATE_PATH);
+    raw = rawBytes.toString("utf8");
+    await chmod(STATE_PATH, PRIVATE_FILE_MODE);
   } catch (error) {
     if (!isNodeErrorCode(error, "ENOENT")) throw error;
     const fresh = defaultState();
@@ -61,19 +63,28 @@ export async function loadState(): Promise<VigilState> {
   let verification = await verifyStateTextSeal(raw, { keyPath: STATE_SEAL_KEY_PATH, sealPath: STATE_SEAL_PATH });
   if (verification.status === "mismatch") {
     await sleep(300);
-    const retryRaw = await readFile(STATE_PATH, "utf8");
+    const retryBytes = await readFile(STATE_PATH);
+    const retryRaw = retryBytes.toString("utf8");
     const retryVerification = await verifyStateTextSeal(retryRaw, { keyPath: STATE_SEAL_KEY_PATH, sealPath: STATE_SEAL_PATH });
     if (retryVerification.ok) {
+      rawBytes = retryBytes;
       raw = retryRaw;
       verification = retryVerification;
     }
   }
-  const state = migrateState(JSON.parse(raw) as RawState);
+  let state: VigilState;
+  try {
+    state = migrateState(JSON.parse(raw) as RawState);
+  } catch (error) {
+    return await recoverMalformedState(rawBytes, error);
+  }
   applySealVerificationToState(state, verification);
+  if (verification.status === "missing") await saveState(state);
   return state;
 }
 
 export function saveState(state: VigilState): Promise<void> {
+  if (stateWritesSuppressedForCorruptEvidence) return Promise.resolve();
   const sealedAt = new Date().toISOString();
   markStateSealed(state, sealedAt);
   const snapshot = jsonClone(state);
@@ -85,13 +96,110 @@ export function saveState(state: VigilState): Promise<void> {
   return save;
 }
 
-export async function loadUsage(): Promise<UsageState> {
-  await mkdir(DATA_DIR, { recursive: true });
-  return readJson<UsageState>(USAGE_PATH, {});
+async function recoverMalformedState(raw: Buffer, error: unknown, now = new Date()): Promise<VigilState> {
+  const recovered = defaultState();
+  const evidence = await preserveCorruptStateEvidence(raw, {
+    dataDir: DATA_DIR,
+    sealPath: STATE_SEAL_PATH,
+    now
+  });
+  if (!evidence.complete) {
+    stateWritesSuppressedForCorruptEvidence = true;
+    console.error("Vigil could not preserve all corrupt-state evidence; state writes are suppressed to preserve the originals:", evidence.error);
+  }
+
+  const parseDetail = error instanceof Error && error.message
+    ? error.message
+    : "State data could not be parsed.";
+  const detail = evidence.complete
+    ? `State file is invalid and was quarantined at ${evidence.stateEvidencePath}. ${parseDetail}`
+    : `State file is invalid. Vigil could not preserve all evidence, so the original files remain in place and state writes are disabled. ${parseDetail}`;
+  recovered.integrity.stateSeal.tamperDetectedAt = now.toISOString();
+  recovered.integrity.stateSeal.tamperDetail = detail;
+  recovered.integrity.stateSeal.lastStatus = "invalid-state";
+  recovered.integrity.stateSeal.lastDetail = detail;
+  recovered.integrity.stateSeal.lastCheckedAt = now.toISOString();
+  addEvent(recovered, "invalid_state_quarantined", {
+    evidencePath: evidence.stateEvidenceSaved ? evidence.stateEvidencePath : null,
+    detail
+  });
+
+  if (evidence.complete) {
+    try {
+      await saveState(recovered);
+    } catch (saveError) {
+      console.error("Vigil preserved corrupt state evidence but could not persist the fail-closed recovery state:", saveError);
+    }
+  }
+  return recovered;
 }
 
-export async function saveUsage(usage: UsageState): Promise<void> {
-  await writeJson(USAGE_PATH, usage);
+export async function loadUsage(state: VigilState): Promise<UsageState> {
+  await ensurePrivateDirectory(DATA_DIR);
+  let current = await readUsageText();
+  let verification = await verifyStateTextSeal(current.text, {
+    keyPath: STATE_SEAL_KEY_PATH,
+    sealPath: USAGE_SEAL_PATH
+  });
+  if (verification.status === "mismatch") {
+    await sleep(300);
+    const retry = await readUsageText();
+    const retryVerification = await verifyStateTextSeal(retry.text, {
+      keyPath: STATE_SEAL_KEY_PATH,
+      sealPath: USAGE_SEAL_PATH
+    });
+    if (retryVerification.ok) {
+      current = retry;
+      verification = retryVerification;
+    }
+  }
+
+  const marker = state.integrity.usageSeal;
+  const sealRequired = marker.required === true
+    || marker.migrationVersion >= 1
+    || Boolean(marker.migratedAt);
+  const legacyMigrationAllowed = !sealRequired
+    && !verification.hasSeal
+    && !state.integrity.stateSeal.tamperDetectedAt;
+
+  if (legacyMigrationAllowed) {
+    let usage: UsageState;
+    try {
+      usage = parseUsageText(current.text);
+    } catch {
+      return recoverUsageConservatively(state, "The legacy usage file is not valid JSON.");
+    }
+    await saveUsage(usage);
+    markUsageSealRequired(state);
+    await saveState(state);
+    return usage;
+  }
+
+  if (!current.exists || !verification.ok) {
+    return recoverUsageConservatively(state, usageSealFailureDetail(verification.status));
+  }
+
+  let usage: UsageState;
+  try {
+    usage = parseUsageText(current.text);
+  } catch {
+    return recoverUsageConservatively(state, "The sealed usage file is not valid JSON.");
+  }
+  if (!sealRequired) {
+    markUsageSealRequired(state);
+    await saveState(state);
+  }
+  return usage;
+}
+
+export function saveUsage(usage: UsageState): Promise<void> {
+  const snapshot = jsonClone(usage);
+  const save = usageSaveQueue.then(
+    () => writeUsageSnapshot(snapshot),
+    () => writeUsageSnapshot(snapshot)
+  );
+  usageSaveQueue = save.catch(() => {});
+  return save;
 }
 
 export function addEvent(state: VigilState, type: string, detail: object = {}): void {
@@ -152,6 +260,11 @@ function migrateState(state: RawState): VigilState {
       stateSeal: {
         ...fresh.integrity.stateSeal,
         ...(state.integrity?.stateSeal || {})
+      },
+      usageSeal: {
+        required: state.integrity?.usageSeal?.required === true,
+        migrationVersion: clampInteger(state.integrity?.usageSeal?.migrationVersion, 0, 1, 0),
+        migratedAt: nullableString(state.integrity?.usageSeal?.migratedAt)
       },
       runtime: {
         ...fresh.integrity.runtime,
@@ -359,6 +472,101 @@ async function writeStateAndSeal(state: VigilState, sealedAt: string): Promise<v
   await writeStateTextSeal(text, { keyPath: STATE_SEAL_KEY_PATH, sealPath: STATE_SEAL_PATH, scope: "state" }, sealedAt);
 }
 
+async function writeUsageSnapshot(usage: UsageState): Promise<void> {
+  const sealedAt = new Date().toISOString();
+  const text = await writeJson(USAGE_PATH, usage);
+  await writeStateTextSeal(text, {
+    keyPath: STATE_SEAL_KEY_PATH,
+    sealPath: USAGE_SEAL_PATH
+  }, sealedAt);
+}
+
+async function ensurePrivateDirectory(path: string): Promise<void> {
+  await mkdir(path, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+  await chmod(path, PRIVATE_DIRECTORY_MODE);
+}
+
+async function readUsageText(): Promise<{ exists: boolean; text: string }> {
+  try {
+    const text = await readFile(USAGE_PATH, "utf8");
+    await chmod(USAGE_PATH, PRIVATE_FILE_MODE);
+    return { exists: true, text };
+  } catch (error) {
+    if (isNodeErrorCode(error, "ENOENT")) return { exists: false, text: "{}\n" };
+    throw error;
+  }
+}
+
+function parseUsageText(text: string): UsageState {
+  const parsed: unknown = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Usage data must be a JSON object.");
+  }
+  return parsed as UsageState;
+}
+
+function markUsageSealRequired(state: VigilState, now = new Date()): void {
+  state.integrity.usageSeal = {
+    required: true,
+    migrationVersion: 1,
+    migratedAt: state.integrity.usageSeal.migratedAt || now.toISOString()
+  };
+}
+
+async function recoverUsageConservatively(state: VigilState, reason: string, now = new Date()): Promise<UsageState> {
+  const usage = conservativeUsageState(state, now);
+  await saveUsage(usage);
+  markUsageSealRequired(state, now);
+
+  const detail = `Usage integrity failure: ${reason} Usage counters were recovered conservatively.`;
+  const stateSeal = state.integrity.stateSeal;
+  const previousDetail = String(stateSeal.tamperDetail || "").trim();
+  stateSeal.tamperDetectedAt ||= now.toISOString();
+  stateSeal.tamperDetail = previousDetail && previousDetail !== detail
+    ? `${previousDetail} ${detail}`
+    : detail;
+  stateSeal.lastStatus = "tamper-detected";
+  stateSeal.lastDetail = detail;
+  stateSeal.lastCheckedAt = now.toISOString();
+  await saveState(state);
+  return usage;
+}
+
+function conservativeUsageState(state: VigilState, now = new Date()): UsageState {
+  const maximumSeconds = 24 * 60 * 60;
+  const maximumOpens = 100_000;
+  const apps: Record<string, number> = {};
+  const sites: Record<string, number> = {};
+  for (const rule of state.limitRules || []) {
+    for (const app of rule.apps || []) apps[app] = maximumSeconds;
+    for (const site of rule.sites || []) sites[site] = maximumSeconds;
+  }
+  return {
+    [dateKey(now)]: {
+      totalSeconds: maximumSeconds,
+      apps,
+      sites,
+      opens: {
+        apps: Object.fromEntries(Object.keys(apps).map((app) => [app, maximumOpens])),
+        sites: Object.fromEntries(Object.keys(sites).map((site) => [site, maximumOpens]))
+      },
+      devices: {},
+      updatedAt: now.toISOString()
+    }
+  };
+}
+
+function usageSealFailureDetail(status: string): string {
+  switch (status) {
+    case "missing": return "The usage seal key and seal file are missing.";
+    case "missing-key": return "The usage seal key is missing.";
+    case "missing-seal": return "The usage seal file is missing.";
+    case "invalid-seal": return "The usage seal file is invalid.";
+    case "mismatch": return "The usage file does not match its integrity seal.";
+    default: return `The usage integrity check failed with status ${status}.`;
+  }
+}
+
 function jsonClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -434,11 +642,6 @@ function normalizeGrayscaleSchedule(schedule: Partial<GrayscaleSchedule>): Grays
     end: normalizeClock(schedule.end, "07:00"),
     deviceTargets: normalizeDeviceTargetList(schedule.deviceTargets)
   };
-}
-
-function normalizeClock(value: unknown, fallback: string): string {
-  const text = String(value || "");
-  return /^\d{2}:\d{2}$/.test(text) ? text : fallback;
 }
 
 function normalizeDeviceTargetList(value: unknown): Array<"computer" | "phone"> {

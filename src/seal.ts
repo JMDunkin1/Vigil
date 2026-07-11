@@ -11,8 +11,10 @@ const BOOKKEEPING_MISMATCH_STATUS = "bookkeeping-mismatch";
 const TRUSTED_MIGRATION_STATUS = "trusted-migration";
 const LEGACY_APP_NAME = "Vigil";
 const CURRENT_APP_NAME = "Vigil";
-const PROTECTED_SETTINGS = [
+export const PROTECTED_SETTINGS = [
   "pollIntervalMs",
+  "idleUsageTrackingEnabled",
+  "idleUsageThresholdSeconds",
   "strictByDefault",
   "emergencyTokensPerWeek",
   "emergencyDelaySeconds",
@@ -29,10 +31,15 @@ const PROTECTED_SETTINGS = [
   "runtimeGapLockdownSeconds",
   "clockTamperLockdownSeconds",
   "activeProfileId",
+  "baselineProfileId",
   "foolproofModeEnabled",
   "appQuitEscalationSeconds",
   "siteRedirectEnabled",
   "contentFilterEnabled",
+  "adultBlocklistEnabled",
+  "adultBlocklistSourceId",
+  "adultBlocklistCustomUrl",
+  "adultBlocklistPreloadLimit",
   "browserNoiseBlockingEnabled",
   "appQuitEnabled",
   "strictBypassProtectionEnabled",
@@ -51,7 +58,13 @@ const PROTECTED_SETTINGS = [
   "protectedEditsEnabled",
   "protectedEditDelaySeconds",
   "protectedEditWindowMinutes"
-];
+] as const;
+
+const protectedSettingKeys = new Set<string>(PROTECTED_SETTINGS);
+
+export function isProtectedSetting(key: string): boolean {
+  return protectedSettingKeys.has(key);
+}
 
 interface SealPaths {
   keyPath: string;
@@ -158,18 +171,19 @@ export async function writeStateTextSeal(text: string, { keyPath, sealPath, scop
 export function applySealVerificationToState(state: VigilState, verification: SealVerification, now = new Date()): void {
   state.integrity.stateSeal ||= {};
   const seal = state.integrity.stateSeal;
-  const previousSealed = Boolean(seal.lastSealedAt);
-  const previousSealArtifacts = Boolean(verification.sealedAt || verification.hasKey || verification.hasSeal);
   const tamperStatus = ["mismatch", "missing", "missing-key", "missing-seal", "invalid-seal"];
+  const detail = verification.status === "missing"
+    ? "An existing state file has no integrity key or seal. Both seal artifacts may have been removed."
+    : verification.detail;
 
   seal.lastCheckedAt = now.toISOString();
   seal.lastStatus = verification.status;
-  seal.lastDetail = verification.detail;
+  seal.lastDetail = detail;
   if (verification.sealedAt) seal.lastSealedAt = verification.sealedAt;
 
-  if (tamperStatus.includes(verification.status) && (previousSealed || previousSealArtifacts)) {
+  if (tamperStatus.includes(verification.status)) {
     seal.tamperDetectedAt ||= now.toISOString();
-    seal.tamperDetail = verification.detail;
+    seal.tamperDetail = detail;
   }
 }
 
@@ -273,7 +287,78 @@ function trustedProtectedStateMigrationVariants(snapshot: ProtectedSnapshot): Ar
       detail: "State file changed only by the trusted per-device sessions protected-state schema migration; the seal can be refreshed without entering lockdown."
     });
   }
+  for (const usageSealSchema of usageSealSchemaVariants(snapshot)) {
+    variants.push({
+      snapshot: usageSealSchema,
+      detail: "State file changed only by the trusted usage-seal protected-state schema migration; the seal can be refreshed without entering lockdown."
+    });
+  }
+  const enforcementSchema = enforcementStateSchemaVariant(snapshot);
+  if (enforcementSchema) {
+    variants.push({
+      snapshot: enforcementSchema,
+      detail: "State file changed only by the trusted enforcement-state seal schema migration; the seal can be refreshed without entering lockdown."
+    });
+  }
+  const iosEnforcementSchema = iosEnforcementStateSchemaVariant(snapshot);
+  if (iosEnforcementSchema) {
+    variants.push({
+      snapshot: iosEnforcementSchema,
+      detail: "State file changed only by the trusted iOS enforcement-state seal schema migration; the seal can be refreshed without entering lockdown."
+    });
+  }
   return variants;
+}
+
+function usageSealSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
+  const integrity = asRecord(snapshot.integrity);
+  if (!Object.hasOwn(integrity, "usageSeal")) return [];
+  const variants: ProtectedSnapshot[] = [];
+  const absent = structuredClone(snapshot);
+  delete asRecord(absent.integrity).usageSeal;
+  variants.push(absent);
+
+  const usageSeal = asRecord(integrity.usageSeal);
+  if (usageSeal.required === true && Number(usageSeal.migrationVersion) >= 1) {
+    const unmigrated = structuredClone(snapshot);
+    asRecord(unmigrated.integrity).usageSeal = {
+      required: false,
+      migrationVersion: 0,
+      migratedAt: null
+    };
+    variants.push(unmigrated);
+  }
+  return variants;
+}
+
+function enforcementStateSchemaVariant(snapshot: ProtectedSnapshot): ProtectedSnapshot | null {
+  if (!snapshot || !Object.hasOwn(snapshot, "adultBlocklist")) return null;
+  const variant = structuredClone(snapshot);
+  delete variant.adultBlocklist;
+  const intentionalUse = asRecord(variant.intentionalUse);
+  delete intentionalUse.pauses;
+  delete intentionalUse.grants;
+  delete intentionalUse.planBlocks;
+  const deviceControls = asRecord(variant.deviceControls);
+  const ios = asRecord(deviceControls.ios);
+  const mdm = asRecord(ios.mdm);
+  delete ios.allowSafariHistoryClearing;
+  delete mdm.enrollmentTokens;
+  delete mdm.lastGrayscaleHash;
+  return variant;
+}
+
+function iosEnforcementStateSchemaVariant(snapshot: ProtectedSnapshot): ProtectedSnapshot | null {
+  const deviceControls = asRecord(snapshot.deviceControls);
+  const ios = asRecord(deviceControls.ios);
+  const mdm = asRecord(ios.mdm);
+  if (!Object.hasOwn(ios, "allowSafariHistoryClearing") || !Object.hasOwn(mdm, "lastGrayscaleHash")) return null;
+  const variant = structuredClone(snapshot);
+  const variantIos = asRecord(asRecord(variant.deviceControls).ios);
+  const variantMdm = asRecord(variantIos.mdm);
+  delete variantIos.allowSafariHistoryClearing;
+  delete variantMdm.lastGrayscaleHash;
+  return variant;
 }
 
 function legacyBrandingVariant(snapshot: ProtectedSnapshot): ProtectedSnapshot | null {
@@ -302,9 +387,12 @@ function intentionalUseSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSna
   const absent = structuredClone(base);
   delete absent.intentionalUse;
 
+  const currentEmpty = structuredClone(base);
+  currentEmpty.intentionalUse = protectedIntentionalUse({});
+
   const empty = structuredClone(base);
   empty.intentionalUse = { accountability: {}, goal: {}, ledger: {}, rules: [] };
-  return [absent, empty];
+  return [base, absent, currentEmpty, empty];
 }
 
 function grayscaleSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
@@ -371,6 +459,7 @@ function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnapshot {
     appLockUnlocks: state.appLockUnlocks || [],
     appLockRequests: state.appLockRequests || [],
     appLockLedger: state.appLockLedger || {},
+    adultBlocklist: protectedAdultBlocklist(state.adultBlocklist || {}),
     intentionalUse: protectedIntentionalUse(state.intentionalUse || {}),
     extension: protectedExtension(state.extension || {}),
     keyholder: state.keyholder || {},
@@ -406,8 +495,24 @@ function protectedIntentionalUse(intentionalUse: unknown): UnknownRecord {
   return {
     goal: record.goal || {},
     rules: record.rules || [],
+    pauses: record.pauses || [],
+    grants: record.grants || [],
+    planBlocks: record.planBlocks || [],
     accountability: record.accountability || {},
     ledger: record.ledger || {}
+  };
+}
+
+function protectedAdultBlocklist(adultBlocklist: unknown): UnknownRecord {
+  const record = asRecord(adultBlocklist);
+  return {
+    allowlist: record.allowlist || [],
+    domainCount: record.domainCount || 0,
+    activeDomainCount: record.activeDomainCount || 0,
+    hash: record.hash || "",
+    snapshotPath: record.snapshotPath || "",
+    lastRefreshAt: record.lastRefreshAt || null,
+    source: record.source || null
   };
 }
 
@@ -434,6 +539,7 @@ function protectedDeviceControls(deviceControls: unknown): UnknownRecord {
       blockWeb: ios.blockWeb,
       hardenRemoval: ios.hardenRemoval,
       restrictInstallAndErase: ios.restrictInstallAndErase,
+      allowSafariHistoryClearing: ios.allowSafariHistoryClearing,
       blockedAppBundleIds: ios.blockedAppBundleIds || [],
       allowedAppBundleIds: ios.allowedAppBundleIds || [],
       deniedUrls: ios.deniedUrls || [],
@@ -454,9 +560,11 @@ function protectedDeviceControls(deviceControls: unknown): UnknownRecord {
         useDevelopmentApns: mdm.useDevelopmentApns,
         checkOutWhenRemoved: mdm.checkOutWhenRemoved,
         enrollmentSecret: mdm.enrollmentSecret || "",
+        enrollmentTokens: mdm.enrollmentTokens || [],
         devices: mdm.devices || [],
         commands: mdm.commands || [],
-        lastPolicyHash: mdm.lastPolicyHash || ""
+        lastPolicyHash: mdm.lastPolicyHash || "",
+        lastGrayscaleHash: mdm.lastGrayscaleHash || ""
       }
     }
   };
@@ -484,11 +592,17 @@ function protectedExtension(extension: unknown): UnknownRecord {
 function protectedIntegrity(integrity: unknown): UnknownRecord {
   const record = asRecord(integrity);
   const stateSeal = asRecord(record.stateSeal);
+  const usageSeal = asRecord(record.usageSeal);
   const runtime = asRecord(record.runtime);
   return {
     stateSeal: {
       tamperDetectedAt: stateSeal.tamperDetectedAt || null,
       tamperDetail: stateSeal.tamperDetail || ""
+    },
+    usageSeal: {
+      required: usageSeal.required === true,
+      migrationVersion: usageSeal.migrationVersion ?? 0,
+      migratedAt: typeof usageSeal.migratedAt === "string" ? usageSeal.migratedAt : null
     },
     runtime: {
       downtimeDetectedAt: runtime.downtimeDetectedAt || null,
@@ -504,7 +618,7 @@ function protectedIntegrity(integrity: unknown): UnknownRecord {
   };
 }
 
-function pick(value: unknown = {}, keys: string[] = []): UnknownRecord {
+function pick(value: unknown = {}, keys: readonly string[] = []): UnknownRecord {
   const record = asRecord(value);
   return Object.fromEntries(keys.map((key) => [key, record[key]]));
 }

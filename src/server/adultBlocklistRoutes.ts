@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   adultBlocklistSource,
   adultBlocklistSummary,
+  finalizeAdultBlocklistSnapshot,
   invalidateAdultBlocklistIfSourceChanged,
   normalizeAdultDomainList,
   refreshAdultBlocklist
@@ -57,6 +58,7 @@ export async function handleAdultBlocklistApiRoute(
         hash: summary.shortHash
       });
       await saveState(state);
+      await finalizeAdultBlocklistSnapshot(state);
       sendJson(response, 200, { ok: true, adultBlocklist: summary });
     } catch (error) {
       addEvent(state, "adult_blocklist_refresh_failed", { error: error instanceof Error ? error.message : String(error) });

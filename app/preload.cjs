@@ -7,3 +7,10 @@ window.addEventListener("DOMContentLoaded", () => {
 contextBridge.exposeInMainWorld("vigilJournal", {
   promptTouchId: () => ipcRenderer.invoke("vigil:journal-touch-id")
 });
+
+contextBridge.exposeInMainWorld("vigilAppUpdate", {
+  status: (options = {}) => ipcRenderer.invoke("vigil:app-update-status", {
+    checkRemote: options?.checkRemote === true
+  }),
+  start: () => ipcRenderer.invoke("vigil:app-update-start")
+});

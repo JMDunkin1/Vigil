@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { deviceUsageSyncAuthorization } from "../apiSecurity.js";
 import { DEVICE_TARGETS } from "../defaults.js";
-import { buildIosMdmEnrollmentProfile, iosMdmDoctor, iosMdmEnrollmentReadiness, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "../iosMdm.js";
+import { buildIosMdmEnrollmentProfile, iosMdmDeviceUsageCredential, iosMdmDeviceUsageTokens, iosMdmDoctor, iosMdmEnrollmentReadiness, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "../iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "../iosProfiles.js";
 import { activeLimitPolicy } from "../limits.js";
 import { assertProtectedEditAllowed } from "../protection.js";
@@ -16,6 +16,7 @@ interface GuardResult {
   status?: number;
   error?: string;
   kind?: string;
+  deviceId?: string;
 }
 
 export interface IosMdmPushResult extends UnknownRecord {
@@ -138,6 +139,17 @@ export async function handleDeviceApiRoute(
     return true;
   }
 
+  if (method === "GET" && path === "/api/devices/ios/mdm/device-usage-token") {
+    const identifier = String(url.searchParams.get("device") || "");
+    const credential = iosMdmDeviceUsageCredential(state, identifier);
+    if (!credential) {
+      sendJson(response, 404, { ok: false, error: "Enrolled iPhone not found." });
+      return true;
+    }
+    sendJson(response, 200, { ok: true, ...credential });
+    return true;
+  }
+
   if (method === "POST" && path === "/api/devices/ios/mdm/queue-policy") {
     const result = queueIosMdmPolicyRefresh(state, "app-refresh");
     const push = await pushIosMdmQueuedCommands(state, "app-refresh", new Date(), { force: true }) as IosMdmPushResult;
@@ -164,7 +176,8 @@ export async function handleDeviceApiRoute(
       headers: request.headers,
       url,
       body,
-      enrollmentSecret: state.deviceControls?.ios?.mdm?.enrollmentSecret
+      deviceTokens: iosMdmDeviceUsageTokens(state),
+      remoteAddress: request.socket?.remoteAddress || null
     }) as GuardResult;
     if (!authorization.ok) {
       sendJson(response, authorization.status || 403, { error: authorization.error || "Forbidden" });

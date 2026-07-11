@@ -43,11 +43,32 @@ enum SocialService: String, CaseIterable, Identifiable {
             return allCases.first { candidates.contains($0.rawValue) }
         }
 
+        guard scheme == "https" else { return nil }
+
         let host = url.host?.lowercased() ?? ""
         if host == "instagram.com" || host.hasSuffix(".instagram.com") { return .instagram }
         if host == "youtube.com" || host.hasSuffix(".youtube.com") || host == "youtu.be" { return .youtube }
         if host == "snapchat.com" || host.hasSuffix(".snapchat.com") { return .snapchat }
         return nil
+    }
+
+    func allowsNavigation(to url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https" else { return false }
+        let host = url.host?.lowercased() ?? ""
+        switch self {
+        case .instagram:
+            return Self.host(host, matches: "instagram.com") || Self.host(host, matches: "facebook.com")
+        case .youtube:
+            return Self.host(host, matches: "youtube.com")
+                || host == "youtu.be"
+                || host == "accounts.google.com"
+        case .snapchat:
+            return Self.host(host, matches: "snapchat.com")
+        }
+    }
+
+    private static func host(_ host: String, matches domain: String) -> Bool {
+        host == domain || host.hasSuffix(".\(domain)")
     }
 }
 

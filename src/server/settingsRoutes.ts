@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { adultBlocklistSource, invalidateAdultBlocklistIfSourceChanged } from "../adultBlocklist.js";
 import { parseBoolean } from "../booleans.js";
 import { assertProtectedEditAllowed } from "../protection.js";
+import { isProtectedSetting } from "../seal.js";
 import { addEvent, saveState } from "../store.js";
 import { clampNumber } from "../time.js";
 import type { AppSettings, VigilState, UnknownRecord } from "../types.js";
@@ -20,7 +21,6 @@ type StringSettingKey = {
 }[keyof AppSettings];
 
 interface SettingMutation {
-  guarded?: boolean;
   apply(settings: AppSettings, value: unknown): void;
 }
 
@@ -65,25 +65,23 @@ export function updateSettings(settings: AppSettings, body: UnknownRecord): stri
 }
 
 export function isProtectedSettingsMutation(body: UnknownRecord): boolean {
-  return Object.keys(body || {}).some((key) => Boolean(settingMutation(key)?.guarded));
+  return Object.keys(body || {}).some((key) => Boolean(settingMutation(key)) && isProtectedSetting(key));
 }
 
 function settingMutation(key: string): SettingMutation | null {
   return Object.hasOwn(SETTING_MUTATIONS, key) ? SETTING_MUTATIONS[key as keyof typeof SETTING_MUTATIONS] : null;
 }
 
-function booleanSetting<Key extends BooleanSettingKey>(key: Key, options: { guarded?: boolean } = {}): SettingMutation {
+function booleanSetting<Key extends BooleanSettingKey>(key: Key): SettingMutation {
   return {
-    guarded: options.guarded,
     apply(settings, value) {
       settings[key] = parseBoolean(value, settings[key] as boolean) as AppSettings[Key];
     }
   };
 }
 
-function alwaysEnabledBooleanSetting<Key extends BooleanSettingKey>(key: Key, options: { guarded?: boolean } = {}): SettingMutation {
+function alwaysEnabledBooleanSetting<Key extends BooleanSettingKey>(key: Key): SettingMutation {
   return {
-    guarded: options.guarded,
     apply(settings) {
       settings[key] = true as AppSettings[Key];
     }
@@ -92,19 +90,17 @@ function alwaysEnabledBooleanSetting<Key extends BooleanSettingKey>(key: Key, op
 
 function numberSetting<Key extends NumberSettingKey>(
   key: Key,
-  { min = 1, max = 100000, guarded = false }: { min?: number; max?: number; guarded?: boolean } = {}
+  { min = 1, max = 100000 }: { min?: number; max?: number } = {}
 ): SettingMutation {
   return {
-    guarded,
     apply(settings, value) {
       settings[key] = clampNumber(value, min, max, settings[key] as number) as AppSettings[Key];
     }
   };
 }
 
-function stringSetting<Key extends StringSettingKey>(key: Key, options: { guarded?: boolean } = {}): SettingMutation {
+function stringSetting<Key extends StringSettingKey>(key: Key): SettingMutation {
   return {
-    guarded: options.guarded,
     apply(settings, value) {
       settings[key] = String(value);
     }
@@ -113,11 +109,9 @@ function stringSetting<Key extends StringSettingKey>(key: Key, options: { guarde
 
 function enumSetting<Key extends StringSettingKey>(
   key: Key,
-  values: readonly string[],
-  options: { guarded?: boolean } = {}
+  values: readonly string[]
 ): SettingMutation {
   return {
-    guarded: options.guarded,
     apply(settings, value) {
       const text = String(value || "");
       settings[key] = (values.includes(text) ? text : values[0]) as AppSettings[Key];
@@ -125,18 +119,16 @@ function enumSetting<Key extends StringSettingKey>(
   };
 }
 
-const GUARDED = { guarded: true } as const;
-
 const SETTING_MUTATIONS = {
   pollIntervalMs: numberSetting("pollIntervalMs"),
-  idleUsageTrackingEnabled: booleanSetting("idleUsageTrackingEnabled", GUARDED),
-  idleUsageThresholdSeconds: numberSetting("idleUsageThresholdSeconds", { ...GUARDED, min: 30, max: 3600 }),
-  strictByDefault: booleanSetting("strictByDefault", GUARDED),
+  idleUsageTrackingEnabled: booleanSetting("idleUsageTrackingEnabled"),
+  idleUsageThresholdSeconds: numberSetting("idleUsageThresholdSeconds", { min: 30, max: 3600 }),
+  strictByDefault: booleanSetting("strictByDefault"),
   emergencyTokensPerWeek: numberSetting("emergencyTokensPerWeek"),
   emergencyDelaySeconds: numberSetting("emergencyDelaySeconds"),
-  panicLockDurationMinutes: numberSetting("panicLockDurationMinutes", { ...GUARDED, min: 1, max: 1440 }),
-  intentReasonEnabled: booleanSetting("intentReasonEnabled", GUARDED),
-  intentReasonMinLength: numberSetting("intentReasonMinLength", { ...GUARDED, min: 1, max: 280 }),
+  panicLockDurationMinutes: numberSetting("panicLockDurationMinutes", { min: 1, max: 1440 }),
+  intentReasonEnabled: booleanSetting("intentReasonEnabled"),
+  intentReasonMinLength: numberSetting("intentReasonMinLength", { min: 1, max: 280 }),
   focusSoundEnabled: booleanSetting("focusSoundEnabled"),
   focusSoundMode: enumSetting("focusSoundMode", ["focus", "relax", "sleep", "meditate"]),
   focusSoundActivity: enumSetting("focusSoundActivity", [
@@ -163,41 +155,41 @@ const SETTING_MUTATIONS = {
   focusSoundTimerMinutes: numberSetting("focusSoundTimerMinutes", { min: 1, max: 480 }),
   focusSoundBreakMinutes: numberSetting("focusSoundBreakMinutes", { min: 1, max: 120 }),
   focusSoundVolume: numberSetting("focusSoundVolume", { min: 0, max: 100 }),
-  typingChallengeEnabled: booleanSetting("typingChallengeEnabled", GUARDED),
-  interventionEnabled: booleanSetting("interventionEnabled", GUARDED),
-  interventionWindowMinutes: numberSetting("interventionWindowMinutes", GUARDED),
-  interventionThreshold: numberSetting("interventionThreshold", GUARDED),
-  interventionExtraDelaySeconds: numberSetting("interventionExtraDelaySeconds", GUARDED),
-  interventionMaxExtraDelaySeconds: numberSetting("interventionMaxExtraDelaySeconds", GUARDED),
-  intentionalUseEnabled: booleanSetting("intentionalUseEnabled", GUARDED),
+  typingChallengeEnabled: booleanSetting("typingChallengeEnabled"),
+  interventionEnabled: booleanSetting("interventionEnabled"),
+  interventionWindowMinutes: numberSetting("interventionWindowMinutes"),
+  interventionThreshold: numberSetting("interventionThreshold"),
+  interventionExtraDelaySeconds: numberSetting("interventionExtraDelaySeconds"),
+  interventionMaxExtraDelaySeconds: numberSetting("interventionMaxExtraDelaySeconds"),
+  intentionalUseEnabled: booleanSetting("intentionalUseEnabled"),
   baselineDailyMinutes: numberSetting("baselineDailyMinutes"),
   focusScoreGoal: numberSetting("focusScoreGoal"),
-  activeProfileId: stringSetting("activeProfileId", GUARDED),
-  baselineProfileId: stringSetting("baselineProfileId", GUARDED),
-  foolproofModeEnabled: booleanSetting("foolproofModeEnabled", GUARDED),
-  appQuitEscalationSeconds: numberSetting("appQuitEscalationSeconds", GUARDED),
-  siteRedirectEnabled: booleanSetting("siteRedirectEnabled", GUARDED),
-  contentFilterEnabled: alwaysEnabledBooleanSetting("contentFilterEnabled", GUARDED),
-  adultBlocklistEnabled: booleanSetting("adultBlocklistEnabled", GUARDED),
-  adultBlocklistSourceId: enumSetting("adultBlocklistSourceId", ["hagezi-nsfw", "stevenblack-porn", "blocklistproject-porn", "shadowwhisperer-adult", "custom"], GUARDED),
-  adultBlocklistCustomUrl: stringSetting("adultBlocklistCustomUrl", GUARDED),
-  adultBlocklistPreloadLimit: numberSetting("adultBlocklistPreloadLimit", { ...GUARDED, min: 0, max: 250 }),
-  browserNoiseBlockingEnabled: booleanSetting("browserNoiseBlockingEnabled", GUARDED),
-  appQuitEnabled: booleanSetting("appQuitEnabled", GUARDED),
-  strictBypassProtectionEnabled: alwaysEnabledBooleanSetting("strictBypassProtectionEnabled", GUARDED),
-  processSweepEnabled: booleanSetting("processSweepEnabled", GUARDED),
-  processSweepIntervalSeconds: numberSetting("processSweepIntervalSeconds", GUARDED),
-  systemSleepLockEnabled: booleanSetting("systemSleepLockEnabled", GUARDED),
-  systemSleepLockIntervalSeconds: numberSetting("systemSleepLockIntervalSeconds", GUARDED),
-  focusShortcutEnabled: booleanSetting("focusShortcutEnabled", GUARDED),
-  focusShortcutOnName: stringSetting("focusShortcutOnName", GUARDED),
-  focusShortcutOffName: stringSetting("focusShortcutOffName", GUARDED),
-  systemNetworkBlockingEnabled: booleanSetting("systemNetworkBlockingEnabled", GUARDED),
-  safariUrlFilterEnabled: alwaysEnabledBooleanSetting("safariUrlFilterEnabled", GUARDED),
-  externalNetworkBlockEnabled: booleanSetting("externalNetworkBlockEnabled", GUARDED),
-  externalNetworkBlockProvider: enumSetting("externalNetworkBlockProvider", ["manual"], GUARDED),
+  activeProfileId: stringSetting("activeProfileId"),
+  baselineProfileId: stringSetting("baselineProfileId"),
+  foolproofModeEnabled: booleanSetting("foolproofModeEnabled"),
+  appQuitEscalationSeconds: numberSetting("appQuitEscalationSeconds"),
+  siteRedirectEnabled: booleanSetting("siteRedirectEnabled"),
+  contentFilterEnabled: alwaysEnabledBooleanSetting("contentFilterEnabled"),
+  adultBlocklistEnabled: booleanSetting("adultBlocklistEnabled"),
+  adultBlocklistSourceId: enumSetting("adultBlocklistSourceId", ["hagezi-nsfw", "stevenblack-porn", "blocklistproject-porn", "shadowwhisperer-adult", "custom"]),
+  adultBlocklistCustomUrl: stringSetting("adultBlocklistCustomUrl"),
+  adultBlocklistPreloadLimit: numberSetting("adultBlocklistPreloadLimit", { min: 0, max: 250 }),
+  browserNoiseBlockingEnabled: booleanSetting("browserNoiseBlockingEnabled"),
+  appQuitEnabled: booleanSetting("appQuitEnabled"),
+  strictBypassProtectionEnabled: alwaysEnabledBooleanSetting("strictBypassProtectionEnabled"),
+  processSweepEnabled: booleanSetting("processSweepEnabled"),
+  processSweepIntervalSeconds: numberSetting("processSweepIntervalSeconds"),
+  systemSleepLockEnabled: booleanSetting("systemSleepLockEnabled"),
+  systemSleepLockIntervalSeconds: numberSetting("systemSleepLockIntervalSeconds"),
+  focusShortcutEnabled: booleanSetting("focusShortcutEnabled"),
+  focusShortcutOnName: stringSetting("focusShortcutOnName"),
+  focusShortcutOffName: stringSetting("focusShortcutOffName"),
+  systemNetworkBlockingEnabled: booleanSetting("systemNetworkBlockingEnabled"),
+  safariUrlFilterEnabled: alwaysEnabledBooleanSetting("safariUrlFilterEnabled"),
+  externalNetworkBlockEnabled: booleanSetting("externalNetworkBlockEnabled"),
+  externalNetworkBlockProvider: enumSetting("externalNetworkBlockProvider", ["manual"]),
   hostsBlockingEnabled: booleanSetting("hostsBlockingEnabled"),
-  protectedEditsEnabled: booleanSetting("protectedEditsEnabled", GUARDED),
-  protectedEditDelaySeconds: numberSetting("protectedEditDelaySeconds", GUARDED),
-  protectedEditWindowMinutes: numberSetting("protectedEditWindowMinutes", GUARDED)
+  protectedEditsEnabled: booleanSetting("protectedEditsEnabled"),
+  protectedEditDelaySeconds: numberSetting("protectedEditDelaySeconds"),
+  protectedEditWindowMinutes: numberSetting("protectedEditWindowMinutes")
 } satisfies Partial<Record<keyof AppSettings, SettingMutation>>;

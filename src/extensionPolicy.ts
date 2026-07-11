@@ -37,6 +37,7 @@ interface UrlRuleEntry extends UnknownRecord {
   urlFilter?: string;
   excludedDomains?: string[];
   redirectUrl: string;
+  until: string;
 }
 
 interface ExtensionDynamicSnapshot {
@@ -93,11 +94,11 @@ export function extensionRuleSnapshot(state: VigilState, now = new Date()) {
     addAdultBlocklistRuleEntries(entries, state, baseline);
   }
 
-  const rules = [...entries.values()].sort((a, b) => a.domain.localeCompare(b.domain));
-  const contentRules = contentRulesForPolicy(state, sessionPolicy, now);
-  const allowlistRules = allowlistRulesForPolicy(sessionPolicy);
-
-  const dynamic = { rules, contentRules, allowlistRules };
+  const dynamic = canonicalExtensionDynamicSnapshot({
+    rules: [...entries.values()],
+    contentRules: contentRulesForPolicy(state, sessionPolicy, now),
+    allowlistRules: allowlistRulesForPolicy(sessionPolicy)
+  });
   return {
     ok: true,
     generatedAt: now.toISOString(),
@@ -109,31 +110,69 @@ export function extensionRuleSnapshot(state: VigilState, now = new Date()) {
     fallbackRequired: false,
     dynamicRuleCount: extensionDynamicRuleCount(dynamic),
     dynamicRuleSignature: extensionDynamicRuleSignature(dynamic),
-    rules,
-    contentRules,
-    allowlistRules
+    rules: dynamic.rules,
+    contentRules: dynamic.contentRules,
+    allowlistRules: dynamic.allowlistRules
   };
 }
 
 export function extensionDynamicRuleCount(snapshot: Partial<ExtensionDynamicSnapshot> = {}): number {
-  return (snapshot.rules || []).length + (snapshot.contentRules || []).length + (snapshot.allowlistRules || []).length;
+  const canonical = canonicalExtensionDynamicSnapshot(snapshot);
+  return canonical.rules.length
+    + canonical.contentRules.length
+    + canonical.allowlistRules.length
+    + (canonical.allowlistRules.length ? 1 : 0);
 }
 
 export function extensionDynamicRuleSignature(snapshot: Partial<ExtensionDynamicSnapshot> = {}): string {
+  const canonical = canonicalExtensionDynamicSnapshot(snapshot);
   return JSON.stringify({
-    site: (snapshot.rules || []).map((rule) => ({
+    site: canonical.rules.map((rule) => ({
       domain: rule.domain,
-      redirectUrl: rule.redirectUrl
+      redirectUrl: rule.redirectUrl,
+      until: rule.until
     })),
-    content: (snapshot.contentRules || []).map((rule) => ({
+    content: canonical.contentRules.map((rule) => ({
       urlFilter: rule.urlFilter,
-      redirectUrl: rule.redirectUrl
+      redirectUrl: rule.redirectUrl,
+      until: rule.until
     })),
-    allowlist: (snapshot.allowlistRules || []).map((rule) => ({
+    allowlist: canonical.allowlistRules.map((rule) => ({
       excludedDomains: rule.excludedDomains || [],
-      redirectUrl: rule.redirectUrl
-    }))
+      redirectUrl: rule.redirectUrl,
+      until: rule.until
+    })),
+    localServerAllow: canonical.allowlistRules.length > 0
   });
+}
+
+function canonicalExtensionDynamicSnapshot(snapshot: Partial<ExtensionDynamicSnapshot>): ExtensionDynamicSnapshot {
+  const rules = uniqueBy(snapshot.rules || [], (rule) => rule.domain)
+    .sort((a, b) => a.domain.localeCompare(b.domain));
+  const contentRules = uniqueBy(snapshot.contentRules || [], (rule) => String(rule.urlFilter || ""))
+    .filter((rule) => Boolean(rule.urlFilter))
+    .sort((a, b) => String(a.urlFilter).localeCompare(String(b.urlFilter)));
+  const allowlistRules = uniqueBy((snapshot.allowlistRules || []).map((rule) => ({
+    ...rule,
+    excludedDomains: [...new Set(rule.excludedDomains || [])].sort((a, b) => a.localeCompare(b))
+  })), (rule) => JSON.stringify({
+    excludedDomains: rule.excludedDomains,
+    redirectUrl: rule.redirectUrl,
+    until: rule.until
+  })).sort((a, b) => JSON.stringify(a.excludedDomains).localeCompare(JSON.stringify(b.excludedDomains)));
+  return { rules, contentRules, allowlistRules };
+}
+
+function uniqueBy<T>(values: T[], keyFor: (value: T) => string): T[] {
+  const seen = new Set<string>();
+  const output: T[] = [];
+  for (const value of values) {
+    const key = keyFor(value);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    output.push(value);
+  }
+  return output;
 }
 
 export function evaluateExtensionCheck(state: VigilState, usage: UsageState, input: ExtensionCheckInput = {}, now = new Date()) {
@@ -398,7 +437,7 @@ function allowlistRulesForPolicy(policy: ActivePolicy | null): UrlRuleEntry[] {
 }
 
 function allowedDomainsForPolicy(policy: ActivePolicy): string[] {
-  const allowed = new Set(["localhost", "127.0.0.1"]);
+  const allowed = new Set(["localhost", "127.0.0.1", "::1"]);
   for (const domain of expandSiteTargets(policy.profile?.allowedSites || [])) {
     allowed.add(domain);
   }

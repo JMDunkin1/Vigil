@@ -3,7 +3,7 @@ import { BRICK_MODE_PROFILE_ID, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, SOFT_BLOC
 import { activePolicy, isFullLockoutPolicy, normalizeDeviceTarget, normalizeDeviceTargets } from "./policy.js";
 import { parseBoolean } from "./booleans.js";
 import { normalizeWeekdays } from "./normalizers.js";
-import { parseClock } from "./time.js";
+import { normalizeClock, parseClock } from "./time.js";
 import type { ActivePolicy, DeviceTarget, GrayscaleSchedule, GrayscaleState, VigilState, UnknownRecord } from "./types.js";
 
 export const IOS_GRAYSCALE_GUARD_BUNDLE_IDS = [
@@ -175,11 +175,6 @@ function grayscaleScheduleWindow(schedule: GrayscaleSchedule, now: Date): boolea
   if (overnight && days.has(day) && current >= start) return true;
   if (overnight && days.has(yesterday) && current < end) return true;
   return false;
-}
-
-function normalizeClock(value: unknown, fallback: string): string {
-  const text = String(value || "");
-  return /^\d{2}:\d{2}$/.test(text) ? text : fallback;
 }
 
 function stringValue(value: unknown, fallback: string): string {

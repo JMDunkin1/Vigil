@@ -1,4 +1,4 @@
-import { adultBlocklistSummary, refreshAdultBlocklist } from "../src/adultBlocklist.js";
+import { adultBlocklistSummary, finalizeAdultBlocklistSnapshot, refreshAdultBlocklist } from "../src/adultBlocklist.js";
 import { addEvent, loadState, saveState } from "../src/store.js";
 
 const state = await loadState();
@@ -12,6 +12,7 @@ try {
     hash: summary.shortHash
   });
   await saveState(state);
+  await finalizeAdultBlocklistSnapshot(state);
   console.log([
     `Adult blocklist refreshed from ${summary.selectedSourceLabel}.`,
     `Domains: ${summary.domainCount}`,

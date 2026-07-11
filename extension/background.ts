@@ -6,14 +6,19 @@ const CONNECTION_DEFAULTS = {
 };
 const manifest = chrome.runtime.getManifest();
 const tabMemory = new Map<number, string>();
-const recentChecks = new Map<string, number>();
+const tabRequestGenerations = new Map<number, number>();
+const inFlightChecks = new Map<string, Promise<ExtensionCheckResult>>();
+const recentCheckResults = new Map<string, { expiresAt: number; result: ExtensionCheckResult }>();
 const NOISE_RULE_START = 9100;
 const SITE_BLOCK_RULE_START = 10000;
 const CONTENT_BLOCK_RULE_START = 11000;
 const ALLOWLIST_RULE_START = 12000;
+const LOCAL_SERVER_ALLOW_RULE_ID = ALLOWLIST_RULE_START - 1;
 const SITE_BLOCK_RULE_LIMIT = 300;
 const CONTENT_BLOCK_RULE_LIMIT = 200;
 const ALLOWLIST_RULE_LIMIT = 20;
+const VIGIL_REQUEST_TIMEOUT_MS = 2500;
+const PERSISTENT_RULE_UNTIL = "until the tamper alarm is cleared";
 const NOISE_RESOURCE_TYPES = ["script", "image", "xmlhttprequest", "sub_frame", "stylesheet", "media", "font", "ping", "other"];
 const SITE_BLOCK_RESOURCE_TYPES = ["main_frame"];
 const NOISE_BLOCK_DOMAINS = [
@@ -58,8 +63,12 @@ const CONTENT_BLOCK_RULE_IDS = Array.from({ length: CONTENT_BLOCK_RULE_LIMIT }, 
 const ALLOWLIST_RULE_IDS = Array.from({ length: ALLOWLIST_RULE_LIMIT }, (_, index) => ALLOWLIST_RULE_START + index);
 let noiseRulesEnabled: boolean | null = null;
 let siteRulesSignature = "";
+let siteRuleCount = 0;
 let lastRuleSyncAt = 0;
 let cachedPulseFlags: PulseFlagSnapshot = {};
+const pulseFlagsReady = loadPulseFlags();
+const RULE_SYNC_ALARM = "vigil-rule-sync";
+const RULE_EXPIRY_ALARM = "vigil-rule-expiry";
 let vigilConnection = {
   localServer: DEFAULT_LOCAL_SERVER,
   extensionToken: ""
@@ -93,6 +102,7 @@ interface ExtensionCheckResult {
   browserNoiseBlockingEnabled?: boolean;
   focusedSocialCleanupEnabled?: boolean;
   focusedSocialCleanupSettings?: unknown;
+  offline?: boolean;
   [key: string]: unknown;
 }
 
@@ -109,16 +119,19 @@ interface PulseFlagSnapshot {
 interface SiteRuleEntry {
   domain: string;
   redirectUrl: string;
+  until: string;
 }
 
 interface ContentRuleEntry {
   urlFilter: string;
   redirectUrl: string;
+  until: string;
 }
 
 interface AllowlistRuleEntry {
   excludedDomains: string[];
   redirectUrl: string;
+  until: string;
 }
 
 interface ServerRuleEntry {
@@ -126,6 +139,7 @@ interface ServerRuleEntry {
   redirectUrl?: unknown;
   urlFilter?: unknown;
   excludedDomains?: unknown;
+  until?: unknown;
 }
 
 interface RuleSnapshot {
@@ -135,6 +149,7 @@ interface RuleSnapshot {
   rules?: ServerRuleEntry[];
   contentRules?: ServerRuleEntry[];
   allowlistRules?: ServerRuleEntry[];
+  dynamicRuleCount?: number;
   dynamicRuleSignature?: string;
 }
 
@@ -150,10 +165,14 @@ type StorageResult<T extends StorageDefaults> = T & Record<string, unknown>;
 
 void loadVigilConnection();
 void loadNoisePreference();
-void syncSiteBlockingFromServer();
-setInterval(() => {
-  void syncSiteBlockingFromServer();
-}, 15000);
+void pulseFlagsReady;
+void initializeSiteBlocking();
+chrome.alarms.create(RULE_SYNC_ALARM, { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === RULE_SYNC_ALARM || alarm.name === RULE_EXPIRY_ALARM) {
+    void syncSiteBlockingFromServer();
+  }
+});
 
 chrome.runtime.onInstalled.addListener(loadNoisePreference);
 chrome.runtime.onInstalled.addListener(syncSiteBlockingFromServer);
@@ -206,6 +225,13 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabMemory.delete(tabId);
+  tabRequestGenerations.delete(tabId);
+  for (const key of inFlightChecks.keys()) {
+    if (key.startsWith(`${tabId}:`)) inFlightChecks.delete(key);
+  }
+  for (const key of recentCheckResults.keys()) {
+    if (key.startsWith(`${tabId}:`)) recentCheckResults.delete(key);
+  }
 });
 
 async function checkUrl(
@@ -217,34 +243,98 @@ async function checkUrl(
   options: CheckUrlOptions = {}
 ): Promise<ExtensionCheckResult> {
   if (!tabId || isSkippableUrl(url)) return skippedCheckResult();
-  if (isCoolingDown(tabId, url, event)) return skippedCheckResult();
+  const key = duplicateCheckKey(tabId, url, event, seconds, options);
+  if (key) {
+    const running = inFlightChecks.get(key);
+    if (running) return await running;
+    const recent = recentCheckResults.get(key);
+    if (recent && recent.expiresAt > Date.now()) {
+      return { ...recent.result, skipped: true };
+    }
+  }
+
+  const request = performCheckUrl(tabId, url, event, seconds, title, options);
+  if (key) inFlightChecks.set(key, request);
+  try {
+    const result = await request;
+    if (key) recentCheckResults.set(key, { expiresAt: Date.now() + 1_000, result });
+    return result;
+  } finally {
+    if (key && inFlightChecks.get(key) === request) inFlightChecks.delete(key);
+    const now = Date.now();
+    for (const [item, value] of recentCheckResults) {
+      if (value.expiresAt <= now) recentCheckResults.delete(item);
+    }
+  }
+}
+
+function duplicateCheckKey(
+  tabId: number,
+  url: string,
+  event: string,
+  seconds: number,
+  options: CheckUrlOptions
+): string | null {
+  if (Number(seconds) > 0 || event === "heartbeat") return null;
+  return `${tabId}:${event}:${options.deferTabAction ? "defer" : "direct"}:${url}`;
+}
+
+async function performCheckUrl(
+  tabId: number,
+  url: string,
+  event: string,
+  seconds: number,
+  title: string,
+  options: CheckUrlOptions
+): Promise<ExtensionCheckResult> {
+  const generation = (tabRequestGenerations.get(tabId) || 0) + 1;
+  tabRequestGenerations.set(tabId, generation);
 
   const previousUrl = tabMemory.get(tabId) || "";
   tabMemory.set(tabId, url);
 
-  const response = await fetchVigil("/api/extension/check", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url,
-      previousUrl,
-      event,
-      seconds,
-      title,
-      extensionVersion: manifest.version
-    })
-  });
-
-  if (!response.ok) {
-    await setBadge(tabId, "OFF", "#9b2f2f");
-    return { ok: false, status: response.status };
+  let response: Response;
+  try {
+    response = await fetchVigil("/api/extension/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url,
+        previousUrl,
+        event,
+        seconds,
+        title,
+        extensionVersion: manifest.version
+      })
+    });
+  } catch {
+    await pulseFlagsReady;
+    if (await isCurrentTabRequest(tabId, generation, url)) await setBadge(tabId, "OFF", "#9b2f2f");
+    return offlineCheckResult();
   }
 
-  const result = await response.json() as ExtensionCheckResult;
-  rememberPulseFlags(result);
+  if (!await isCurrentTabRequest(tabId, generation, url)) {
+    return skippedCheckResult();
+  }
+  if (!response.ok) {
+    await pulseFlagsReady;
+    await setBadge(tabId, "OFF", "#9b2f2f");
+    return { ...offlineCheckResult(), status: response.status };
+  }
+
+  let result: ExtensionCheckResult;
+  try {
+    result = await response.json() as ExtensionCheckResult;
+  } catch {
+    await pulseFlagsReady;
+    await setBadge(tabId, "OFF", "#9b2f2f");
+    return offlineCheckResult();
+  }
+  await rememberPulseFlags(result);
   if (typeof result.browserNoiseBlockingEnabled === "boolean") {
     await syncNoiseBlocking(result.browserNoiseBlockingEnabled);
   }
+  if (!await isCurrentTabRequest(tabId, generation, url)) return skippedCheckResult();
   if (result.blocked && result.redirectUrl && url !== result.redirectUrl) {
     await setBadge(tabId, "LOCK", "#9b2f2f");
     if (!options.deferTabAction) await updateTab(tabId, { url: result.redirectUrl });
@@ -261,11 +351,21 @@ async function checkUrl(
   return result;
 }
 
+async function isCurrentTabRequest(tabId: number, generation: number, url: string): Promise<boolean> {
+  if (tabRequestGenerations.get(tabId) !== generation) return false;
+  const currentTab = await getTab(tabId);
+  return tabRequestGenerations.get(tabId) === generation && currentTab?.url === url;
+}
+
 function skippedCheckResult(): ExtensionCheckResult {
   return { ok: true, skipped: true, ...cachedPulseFlags };
 }
 
-function rememberPulseFlags(value: unknown): void {
+function offlineCheckResult(): ExtensionCheckResult {
+  return { ok: false, offline: true, ...cachedPulseFlags };
+}
+
+async function rememberPulseFlags(value: unknown): Promise<void> {
   if (!isRecord(value)) return;
   const next: PulseFlagSnapshot = {};
   if (typeof value.browserNoiseBlockingEnabled === "boolean") {
@@ -277,7 +377,26 @@ function rememberPulseFlags(value: unknown): void {
   if (Object.hasOwn(value, "focusedSocialCleanupSettings")) {
     next.focusedSocialCleanupSettings = value.focusedSocialCleanupSettings;
   }
-  if (Object.keys(next).length) cachedPulseFlags = { ...cachedPulseFlags, ...next };
+  if (!Object.keys(next).length) return;
+  const merged = { ...cachedPulseFlags, ...next };
+  if (JSON.stringify(merged) === JSON.stringify(cachedPulseFlags)) return;
+  cachedPulseFlags = merged;
+  await storageSet({ vigilPulseFlags: cachedPulseFlags });
+}
+
+async function loadPulseFlags(): Promise<void> {
+  const stored = await storageGet({ vigilPulseFlags: {} });
+  if (!isRecord(stored.vigilPulseFlags)) return;
+  const flags = stored.vigilPulseFlags;
+  if (typeof flags.browserNoiseBlockingEnabled === "boolean") {
+    cachedPulseFlags.browserNoiseBlockingEnabled = flags.browserNoiseBlockingEnabled;
+  }
+  if (typeof flags.focusedSocialCleanupEnabled === "boolean") {
+    cachedPulseFlags.focusedSocialCleanupEnabled = flags.focusedSocialCleanupEnabled;
+  }
+  if (Object.hasOwn(flags, "focusedSocialCleanupSettings")) {
+    cachedPulseFlags.focusedSocialCleanupSettings = flags.focusedSocialCleanupSettings;
+  }
 }
 
 function isSkippableUrl(value: unknown): boolean {
@@ -289,18 +408,6 @@ function isSkippableUrl(value: unknown): boolean {
   } catch {
     return true;
   }
-}
-
-function isCoolingDown(tabId: number, url: string, event: string): boolean {
-  const key = `${tabId}:${event}:${url}`;
-  const now = Date.now();
-  const until = recentChecks.get(key) || 0;
-  if (until > now) return true;
-  recentChecks.set(key, now + (event === "heartbeat" ? 3500 : 1000));
-  for (const [item, expiry] of recentChecks) {
-    if (expiry <= now) recentChecks.delete(item);
-  }
-  return false;
 }
 
 function getTab(tabId: number): Promise<chrome.tabs.Tab | null> {
@@ -410,21 +517,41 @@ async function maybeSyncSiteBlocking() {
   await syncSiteBlockingFromServer();
 }
 
+async function initializeSiteBlocking(): Promise<void> {
+  await Promise.all([loadVigilConnection(), pulseFlagsReady]);
+  await pruneStoredSiteBlocking();
+  await syncSiteBlockingFromServer();
+}
+
 async function syncSiteBlockingFromServer() {
   lastRuleSyncAt = Date.now();
   try {
     const response = await fetchVigil(`/api/extension/rules?version=${encodeURIComponent(manifest.version)}`);
     if (!response.ok) throw new Error(`rules ${response.status}`);
     const snapshot = await response.json() as RuleSnapshot;
-    rememberPulseFlags(snapshot);
+    await rememberPulseFlags(snapshot);
     if (typeof snapshot.browserNoiseBlockingEnabled === "boolean") {
       await syncNoiseBlocking(snapshot.browserNoiseBlockingEnabled);
     }
     const result = await syncSiteBlocking(snapshot.rules || [], snapshot.contentRules || [], snapshot.allowlistRules || []);
-    result.signature = snapshot.dynamicRuleSignature || result.signature;
+    if (Number.isFinite(Number(snapshot.dynamicRuleCount)) && Number(snapshot.dynamicRuleCount) !== result.count) {
+      result.ok = false;
+      result.error = `Rule count mismatch: installed ${result.count}, expected ${Number(snapshot.dynamicRuleCount)}.`;
+    }
+    if (snapshot.dynamicRuleSignature && snapshot.dynamicRuleSignature !== result.signature) {
+      result.ok = false;
+      result.error = "Rule signature mismatch after client normalization.";
+    }
     await reportRuleSync(result);
-  } catch {
-    await syncSiteBlocking([], [], []);
+  } catch (error) {
+    await pruneStoredSiteBlocking();
+    await storageSet({
+      siteBlockRules: {
+        count: siteRuleCount,
+        staleAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : String(error)
+      }
+    });
   }
 }
 
@@ -435,12 +562,26 @@ async function syncSiteBlocking(entries: ServerRuleEntry[], contentEntries: Serv
   const safeEntries = normalizeSiteRuleEntries(entries).slice(0, SITE_BLOCK_RULE_LIMIT);
   const safeContentEntries = normalizeContentRuleEntries(contentEntries).slice(0, CONTENT_BLOCK_RULE_LIMIT);
   const safeAllowlistEntries = normalizeAllowlistRuleEntries(allowlistEntries).slice(0, ALLOWLIST_RULE_LIMIT);
-  const count = safeEntries.length + safeContentEntries.length + safeAllowlistEntries.length;
-  const signature = JSON.stringify({ site: safeEntries, content: safeContentEntries, allowlist: safeAllowlistEntries });
+  const hasLocalServerAllowRule = safeAllowlistEntries.length > 0;
+  const count = safeEntries.length + safeContentEntries.length + safeAllowlistEntries.length + (hasLocalServerAllowRule ? 1 : 0);
+  const signature = JSON.stringify({
+    site: safeEntries,
+    content: safeContentEntries,
+    allowlist: safeAllowlistEntries,
+    localServerAllow: hasLocalServerAllowRule
+  });
+  await storageSet({
+    siteBlockRuleSnapshot: {
+      rules: safeEntries,
+      contentRules: safeContentEntries,
+      allowlistRules: safeAllowlistEntries
+    }
+  });
+  scheduleRuleExpiry([...safeEntries, ...safeContentEntries, ...safeAllowlistEntries]);
   if (siteRulesSignature === signature) return { ok: true, count, signature };
 
   const ok = await updateDynamicRules({
-    removeRuleIds: [...SITE_BLOCK_RULE_IDS, ...CONTENT_BLOCK_RULE_IDS, ...ALLOWLIST_RULE_IDS],
+    removeRuleIds: [...SITE_BLOCK_RULE_IDS, ...CONTENT_BLOCK_RULE_IDS, LOCAL_SERVER_ALLOW_RULE_ID, ...ALLOWLIST_RULE_IDS],
     addRules: [
       ...siteBlockRules(safeEntries),
       ...contentBlockRules(safeContentEntries),
@@ -450,8 +591,28 @@ async function syncSiteBlocking(entries: ServerRuleEntry[], contentEntries: Serv
   if (!ok) return { ok: false, count, signature, error: "Dynamic rule update failed" };
 
   siteRulesSignature = signature;
+  siteRuleCount = count;
   await storageSet({ siteBlockRules: { count, syncedAt: new Date().toISOString() } });
   return { ok: true, count, signature };
+}
+
+async function pruneStoredSiteBlocking(): Promise<void> {
+  const stored = await storageGet({ siteBlockRuleSnapshot: null });
+  const snapshot: Record<string, unknown> = isRecord(stored.siteBlockRuleSnapshot) ? stored.siteBlockRuleSnapshot : {};
+  const rules = Array.isArray(snapshot.rules) ? snapshot.rules as ServerRuleEntry[] : [];
+  const contentRules = Array.isArray(snapshot.contentRules) ? snapshot.contentRules as ServerRuleEntry[] : [];
+  const allowlistRules = Array.isArray(snapshot.allowlistRules) ? snapshot.allowlistRules as ServerRuleEntry[] : [];
+  await syncSiteBlocking(rules, contentRules, allowlistRules);
+}
+
+function scheduleRuleExpiry(entries: Array<SiteRuleEntry | ContentRuleEntry | AllowlistRuleEntry>): void {
+  const expirations = entries
+    .map((entry) => Date.parse(entry.until))
+    .filter((value) => Number.isFinite(value) && value > Date.now());
+  chrome.alarms.clear(RULE_EXPIRY_ALARM, () => {
+    if (!expirations.length) return;
+    chrome.alarms.create(RULE_EXPIRY_ALARM, { when: Math.max(Date.now() + 1_000, Math.min(...expirations) + 250) });
+  });
 }
 
 async function reportRuleSync(result: RuleSyncResult): Promise<void> {
@@ -530,7 +691,8 @@ function contentBlockRules(entries: ContentRuleEntry[]): chrome.declarativeNetRe
 }
 
 function allowlistBlockRules(entries: AllowlistRuleEntry[]): chrome.declarativeNetRequest.Rule[] {
-  return entries.map((entry, index) => ({
+  if (!entries.length) return [];
+  return [localServerAllowRule(), ...entries.map((entry, index) => ({
     id: ALLOWLIST_RULE_START + index,
     priority: 80,
     action: {
@@ -542,7 +704,20 @@ function allowlistBlockRules(entries: AllowlistRuleEntry[]): chrome.declarativeN
       excludedRequestDomains: entry.excludedDomains,
       resourceTypes: SITE_BLOCK_RESOURCE_TYPES
     }
-  } as chrome.declarativeNetRequest.Rule));
+  } as chrome.declarativeNetRequest.Rule))];
+}
+
+function localServerAllowRule(): chrome.declarativeNetRequest.Rule {
+  const origin = new URL(vigilConnection.localServer).origin.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return {
+    id: LOCAL_SERVER_ALLOW_RULE_ID,
+    priority: 1_000,
+    action: { type: "allow" },
+    condition: {
+      regexFilter: `^${origin}(?:/|$)`,
+      resourceTypes: SITE_BLOCK_RESOURCE_TYPES
+    }
+  } as chrome.declarativeNetRequest.Rule;
 }
 
 function normalizeSiteRuleEntries(entries: ServerRuleEntry[]): SiteRuleEntry[] {
@@ -551,9 +726,10 @@ function normalizeSiteRuleEntries(entries: ServerRuleEntry[]): SiteRuleEntry[] {
   for (const entry of entries || []) {
     const domain = normalizeDomain(entry.domain);
     const redirectUrl = safeLocalRedirect(entry.redirectUrl);
-    if (!domain || !redirectUrl || seen.has(domain)) continue;
+    const until = normalizedRuleUntil(entry.until);
+    if (!domain || !redirectUrl || until === null || seen.has(domain)) continue;
     seen.add(domain);
-    output.push({ domain, redirectUrl });
+    output.push({ domain, redirectUrl, until });
   }
   return output.sort((a, b) => a.domain.localeCompare(b.domain));
 }
@@ -564,9 +740,10 @@ function normalizeContentRuleEntries(entries: ServerRuleEntry[]): ContentRuleEnt
   for (const entry of entries || []) {
     const urlFilter = safeUrlFilter(entry.urlFilter);
     const redirectUrl = safeContentRedirect(entry.redirectUrl);
-    if (!urlFilter || !redirectUrl || seen.has(urlFilter)) continue;
+    const until = normalizedRuleUntil(entry.until);
+    if (!urlFilter || !redirectUrl || until === null || seen.has(urlFilter)) continue;
     seen.add(urlFilter);
-    output.push({ urlFilter, redirectUrl });
+    output.push({ urlFilter, redirectUrl, until });
   }
   return output.sort((a, b) => a.urlFilter.localeCompare(b.urlFilter));
 }
@@ -575,23 +752,35 @@ function normalizeAllowlistRuleEntries(entries: ServerRuleEntry[]): AllowlistRul
   const output: AllowlistRuleEntry[] = [];
   for (const entry of entries || []) {
     const redirectUrl = safeLocalRedirect(entry.redirectUrl);
+    const until = normalizedRuleUntil(entry.until);
     const rawExcludedDomains = Array.isArray(entry.excludedDomains) ? entry.excludedDomains : [];
     const excludedDomains = [...new Set(rawExcludedDomains
       .map(normalizeDomain)
       .filter(Boolean))]
       .sort((a, b) => a.localeCompare(b));
-    if (!redirectUrl || !excludedDomains.length) continue;
-    output.push({ excludedDomains, redirectUrl });
+    if (!redirectUrl || until === null || !excludedDomains.length) continue;
+    output.push({ excludedDomains, redirectUrl, until });
   }
   return output;
 }
 
+function normalizedRuleUntil(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw === PERSISTENT_RULE_UNTIL) return raw;
+  const time = Date.parse(raw);
+  if (!Number.isFinite(time) || time <= Date.now()) return null;
+  return new Date(time).toISOString();
+}
+
 function normalizeDomain(value: unknown): string {
-  return String(value || "")
+  const raw = String(value || "")
     .trim()
     .toLowerCase()
     .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
+    .replace(/^www\./, "");
+  if (["::1", "[::1]"].includes(raw)) return "::1";
+  return raw
     .split("/")[0]
     .split(":")[0]
     .replace(/[^a-z0-9.-]/g, "");
@@ -624,10 +813,22 @@ async function fetchVigil(path: string, options: RequestInit = {}): Promise<Resp
   const connection = await loadVigilConnection();
   const headers: Record<string, string> = Object.fromEntries(new Headers(options.headers || {}).entries());
   if (connection.extensionToken) headers[EXTENSION_TOKEN_HEADER] = connection.extensionToken;
-  return fetch(vigilUrl(path, connection.localServer), {
-    ...options,
-    headers
-  });
+  const controller = new AbortController();
+  const sourceSignal = options.signal;
+  const abortFromSource = () => controller.abort(sourceSignal?.reason);
+  if (sourceSignal?.aborted) abortFromSource();
+  else sourceSignal?.addEventListener("abort", abortFromSource, { once: true });
+  const timeout = setTimeout(() => controller.abort(), VIGIL_REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(vigilUrl(path, connection.localServer), {
+      ...options,
+      headers,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+    sourceSignal?.removeEventListener("abort", abortFromSource);
+  }
 }
 
 async function loadVigilConnection(): Promise<typeof vigilConnection> {
@@ -673,7 +874,7 @@ function normalizedPort(url: URL): string {
 function safeUrlFilter(value: unknown): string {
   const filter = String(value || "").trim().toLowerCase();
   if (!filter.startsWith("||")) return "";
-  if (!/^\|\|[a-z0-9.-]+(?:\/[a-z0-9._~!$&'()*+,;=:@%-]*)*$/.test(filter)) return "";
+  if (!/^\|\|[a-z0-9.-]+(?:\/[a-z0-9._~!$&'()*+,;=:@?%-]*)*$/.test(filter)) return "";
   return filter;
 }
 

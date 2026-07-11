@@ -11,7 +11,7 @@ import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { grayscaleDecision, IOS_GRAYSCALE_GUARD_BUNDLE_IDS } from "./grayscale.js";
 import { activeLimitBlocks } from "./limits.js";
 import { plistData, toPlist } from "./plist.js";
-import { activePolicy, baselinePolicy, expandSiteTargets, profileById } from "./policy.js";
+import { activePolicy, baselinePolicy, expandSiteTargets, hostMatchesSiteTargets, profileById } from "./policy.js";
 import { IOS_SOCIAL_COMPANION_BUNDLE_IDS, focusedSocialBlockedBundleIds, focusedSocialDeniedUrls, focusedSocialLauncherWebClips, focusedSocialSummary, normalizeFocusedSocialSettings, withoutFocusedSocialDeniedUrls } from "./socialFeatureFilters.js";
 import type { FocusedSocialWebClip } from "./socialFeatureFilters.js";
 import type { IosSettings, VigilState, UnknownRecord } from "./types.js";
@@ -253,7 +253,6 @@ function manageEngineHandoffSummary(active: boolean, targets: IosPolicyTargets):
     launcherProfilePath: "data/manageengine/vigil-social-launchers.mobileconfig",
     exportCommand: "npm run ios:manageengine:export",
     enrollmentWindowCommand: "npm run ios:manageengine:apply-enrollment-window",
-    docsPath: "docs/manageengine-mdm.md",
     generatedFrom: targets.profileName,
     appBundleCount: targets.appBundleIds.length,
     deniedUrlCount: targets.deniedUrls.length,
@@ -270,6 +269,8 @@ function manageEngineHandoffSummary(active: boolean, targets: IosPolicyTargets):
 export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicyTargets {
   const settings = currentIosSettings(state);
   const activePhonePolicy = activePolicy(state, now, { device: "phone" });
+  const activePhoneLimitBlocks = activeLimitBlocks(state, now, { device: "phone" });
+  const limitOnly = !activePhonePolicy && activePhoneLimitBlocks.length > 0;
   const policy = activePhonePolicy || baselinePolicy(state, now, { device: "phone" });
   const profile = policy?.profile
     || profileById(state, settings.profileId || state.settings.activeProfileId)
@@ -277,14 +278,16 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     || null;
   const focusedSocialEnforcementActive = Boolean(activePhonePolicy && profile?.id !== NORMAL_PROFILE_ID);
 
-  const profileName = policy?.session?.title || profile?.name || "Saved iPhone policy";
-  const appMode = profile?.mode === "allowlist" ? "allowlist" : settings.mode;
-  const webMode = profile?.mode === "allowlist" ? "allowlist" : settings.webMode;
+  const profileName = limitOnly
+    ? activePhoneLimitBlocks.map((block) => block.ruleName).join(" + ")
+    : policy?.session?.title || profile?.name || "Saved iPhone policy";
+  const appMode = limitOnly ? "denylist" : profile?.mode === "allowlist" ? "allowlist" : settings.mode;
+  const webMode = limitOnly ? "denylist" : profile?.mode === "allowlist" ? "allowlist" : settings.webMode;
   const grayscale = grayscaleDecision(state, now, { device: "phone" });
-  const enforcementActive = Boolean(activePhonePolicy);
+  const enforcementActive = Boolean(activePhonePolicy || limitOnly);
   const settingsGuarded = Boolean(enforcementActive && grayscale.desired && state.grayscale?.preventManualChanges !== false);
   const phoneAppBlocking = profile?.phoneAppBlocking !== false;
-  let appBundleIds = phoneAppBlocking
+  let appBundleIds = limitOnly ? [] : phoneAppBlocking
     ? appMode === "allowlist"
       ? settings.allowedAppBundleIds
       : settings.blockedAppBundleIds
@@ -296,13 +299,14 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
       : uniqueStrings([...appBundleIds, ...IOS_GRAYSCALE_GUARD_BUNDLE_IDS]);
   }
 
-  const profileSites = webMode === "allowlist"
+  const profileSites = limitOnly
+    ? []
+    : webMode === "allowlist"
     ? profile?.allowedSites || []
     : profile?.blockedSites || [];
-  const activePhoneLimitBlocks = activeLimitBlocks(state, now, { device: "phone" });
   const activeLimitBundleIds = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.apps || []).filter(isLikelyIosBundleId));
   const activeLimitSites = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.sites || []));
-  const configuredProfilePatterns = enforcementActive && webMode !== "allowlist"
+  const configuredProfilePatterns = enforcementActive && !limitOnly && webMode !== "allowlist"
     ? profile?.blockedUrlPatterns || []
     : [];
   const profilePatterns = focusedSocialEnforcementActive
@@ -326,10 +330,10 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
       ...urlsFromSiteTargets(activeLimitSites),
       ...urlsFromPatterns(profilePatterns),
       ...urlsFromPatterns(socialDeniedUrls),
-      ...urlsFromSiteTargets(adultBlocklistPreloadDomains(state)),
-      ...settings.deniedUrls
+      ...(limitOnly ? [] : urlsFromSiteTargets(adultBlocklistPreloadDomains(state))),
+      ...(limitOnly ? [] : settings.deniedUrls)
     ]).slice(0, MAX_DENY_URLS);
-  const allowedUrls = !enforcementActive || !settings.blockWeb
+  let allowedUrls = !enforcementActive || !settings.blockWeb
     ? []
     : webMode === "allowlist"
     ? uniqueUrls([
@@ -338,7 +342,7 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
       ...IOS_SOCIAL_COMPANION_ALLOWED_URLS,
       ...webClips.map((clip) => clip.url)
     ])
-    : uniqueUrls(settings.allowedUrls);
+    : limitOnly ? [] : uniqueUrls(settings.allowedUrls);
   if (includeFocusedSocialNativeApps) {
     appBundleIds = uniqueStrings([
       ...appBundleIds,
@@ -351,6 +355,12 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
       IOS_APP_STORE_BUNDLE_ID,
       ...Object.values(IOS_SOCIAL_COMPANION_BUNDLE_IDS)
     ]);
+  }
+  if (enforcementActive && appMode === "allowlist" && activeLimitBundleIds.length) {
+    appBundleIds = withoutBundleIds(appBundleIds, activeLimitBundleIds);
+  }
+  if (enforcementActive && webMode === "allowlist" && activeLimitSites.length) {
+    allowedUrls = withoutSiteTargets(allowedUrls, activeLimitSites);
   }
   if (enforcementActive && settings.blockApps && appMode !== "allowlist" && activeLimitBundleIds.length) {
     appBundleIds = uniqueStrings([
@@ -633,6 +643,16 @@ function uniqueStrings(values: readonly unknown[]): string[] {
 function withoutBundleIds(values: readonly string[], bundleIdsToRemove: readonly string[]): string[] {
   const blocked = new Set(bundleIdsToRemove.map((value) => value.toLowerCase()));
   return values.filter((value) => !blocked.has(value.toLowerCase()));
+}
+
+function withoutSiteTargets(values: readonly string[], siteTargetsToRemove: readonly string[]): string[] {
+  return values.filter((value) => {
+    try {
+      return !hostMatchesSiteTargets(new URL(value).hostname, siteTargetsToRemove);
+    } catch {
+      return true;
+    }
+  });
 }
 
 function includesBundleId(values: readonly string[], bundleId: string): boolean {

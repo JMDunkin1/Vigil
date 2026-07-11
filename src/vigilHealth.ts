@@ -1,10 +1,14 @@
 import { APP_NAME } from "./defaults.js";
+import { randomBytes } from "node:crypto";
+import { verifyInstanceChallenge } from "./instanceIdentity.js";
 import type { UnknownRecord } from "./types.js";
 
 export const VIGIL_APP_ID = "tech.caseline.vigil";
 export const VIGIL_STATE_API_VERSION = 1;
 export const VIGIL_STATE_HEADER = "x-vigil-app";
 export const VIGIL_STATE_HEADER_VALUE = `${VIGIL_APP_ID}; state-api=${VIGIL_STATE_API_VERSION}`;
+export const VIGIL_HEALTH_CHALLENGE_HEADER = "x-vigil-health-challenge";
+export const VIGIL_HEALTH_SIGNATURE_HEADER = "x-vigil-health-signature";
 
 export function vigilAppInfo({ port = null, startedAt = null }: { port?: number | null; startedAt?: string | null } = {}) {
   return {
@@ -20,10 +24,21 @@ export function vigilStateHeaders(): Record<string, string> {
   return { [VIGIL_STATE_HEADER]: VIGIL_STATE_HEADER_VALUE };
 }
 
-export async function fetchVigilStateHealth(url: string | URL, { signal = undefined, expectedPort = undefined }: { signal?: AbortSignal; expectedPort?: number } = {}) {
+export async function fetchVigilStateHealth(
+  url: string | URL,
+  { signal = undefined, expectedPort = undefined, instanceSecret = "" }: {
+    signal?: AbortSignal;
+    expectedPort?: number;
+    instanceSecret?: string;
+  } = {}
+) {
+  const challenge = instanceSecret ? randomBytes(24).toString("base64url") : "";
   const response = await fetch(url, {
     signal,
-    headers: { Accept: "application/json" }
+    headers: {
+      Accept: "application/json",
+      ...(challenge ? { [VIGIL_HEALTH_CHALLENGE_HEADER]: challenge } : {})
+    }
   });
 
   if (!response.ok) return { ok: false, status: response.status, reason: "http-status" };
@@ -31,6 +46,13 @@ export async function fetchVigilStateHealth(url: string | URL, { signal = undefi
   const signature = response.headers.get(VIGIL_STATE_HEADER);
   if (signature !== VIGIL_STATE_HEADER_VALUE) {
     return { ok: false, status: response.status, reason: "app-signature" };
+  }
+  if (instanceSecret && !verifyInstanceChallenge(
+    instanceSecret,
+    challenge,
+    response.headers.get(VIGIL_HEALTH_SIGNATURE_HEADER) || ""
+  )) {
+    return { ok: false, status: response.status, reason: "instance-signature" };
   }
 
   const contentType = response.headers.get("content-type") || "";

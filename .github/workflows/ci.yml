@@ -17,11 +17,24 @@ jobs:
           node-version: "24"
           cache: npm
 
+      - name: Use Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install Python validation dependencies
+        run: python -m pip install cryptography
+
       - name: Install
         run: npm ci
 
       - name: Test
-        run: npm test
+        env:
+          PYIOSBACKUP_PYTHON: python
+        run: npm run check
+
+      - name: Test iOS social app
+        run: npm run ios:social:test:runtime
 
       - name: Build macOS app
-        run: npm run build:mac
+        run: npm run package:mac

@@ -1,6 +1,7 @@
 import type { ControlElement, DashboardData, FormPayload, QueuePolicyResponse } from "./app-model.js";
 import { detailBlock } from "./dom.js";
 import { shortDateTime } from "./format.js";
+import { formHasUnsavedChanges, formRevision, markControlSaved, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
 
 type QueryElement = (selector: string) => ControlElement;
 type PostRequest = <T = unknown>(path: string, body: unknown) => Promise<T>;
@@ -26,40 +27,61 @@ export function createDevicePanel(context: DevicePanelContext) {
 }
 
 function bindDeviceForms({ $, post, lines, toast, errorMessage, refresh }: DevicePanelContext): void {
-  $("#iosBlockApps").addEventListener("change", async () => {
-    try {
-      await post("/api/devices/ios/app-removal", {
-        enabled: $("#iosBlockApps").checked
-      });
-      toast($("#iosBlockApps").checked ? "MDM app removal enabled" : "MDM app removal off");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
+  const iosForm = $("#iosForm") as unknown as HTMLFormElement;
+  const mdmForm = $("#iosMdmForm") as unknown as HTMLFormElement;
+  trackFormChanges(iosForm);
+  trackFormChanges(mdmForm);
+  let iosSaveTail: Promise<void> = Promise.resolve();
+  let appRemovalGeneration = 0;
+  const queueIosSave = (task: () => Promise<void>): Promise<void> => {
+    const next = iosSaveTail.then(task, task);
+    iosSaveTail = next.catch(() => {});
+    return next;
+  };
+
+  const iosBlockApps = $("#iosBlockApps");
+  iosBlockApps.addEventListener("change", () => {
+    const enabled = iosBlockApps.checked;
+    const generation = ++appRemovalGeneration;
+    void queueIosSave(async () => {
+      try {
+        await post("/api/devices/ios/app-removal", { enabled });
+        if (generation !== appRemovalGeneration) return;
+        markControlSaved(iosForm, iosBlockApps);
+        toast(enabled ? "MDM app removal enabled" : "MDM app removal off");
+      } catch (error) {
+        if (generation === appRemovalGeneration) toast(errorMessage(error));
+      }
+      if (generation === appRemovalGeneration) await refresh();
+    });
   });
 
   $("#iosForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
-    try {
-      await post("/api/devices/ios/settings", {
-        enabled: $("#iosEnabled").checked,
-        mode: $("#iosMode").value,
-        webMode: $("#iosWebMode").value,
-        blockApps: $("#iosBlockApps").checked,
-        blockWeb: $("#iosBlockWeb").checked,
-        hardenRemoval: $("#iosHardenRemoval").checked,
-        restrictInstallAndErase: $("#iosRestrictInstallErase").checked,
-        allowSafariHistoryClearing: $("#iosAllowSafariHistoryClearing").checked,
-        blockedAppBundleIds: lines($("#iosBlockedBundles").value),
-        allowedAppBundleIds: lines($("#iosAllowedBundles").value),
-        deniedUrls: lines($("#iosDeniedUrls").value),
-        allowedUrls: lines($("#iosAllowedUrls").value),
-        focusedSocial: readFocusedSocialPayload($)
-      });
-      toast("iPhone policy saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
+    const submittedRevision = formRevision(iosForm);
+    await queueIosSave(async () => {
+      try {
+        await post("/api/devices/ios/settings", {
+          enabled: $("#iosEnabled").checked,
+          mode: $("#iosMode").value,
+          webMode: $("#iosWebMode").value,
+          blockApps: $("#iosBlockApps").checked,
+          blockWeb: $("#iosBlockWeb").checked,
+          hardenRemoval: $("#iosHardenRemoval").checked,
+          restrictInstallAndErase: $("#iosRestrictInstallErase").checked,
+          allowSafariHistoryClearing: $("#iosAllowSafariHistoryClearing").checked,
+          blockedAppBundleIds: lines($("#iosBlockedBundles").value),
+          allowedAppBundleIds: lines($("#iosAllowedBundles").value),
+          deniedUrls: lines($("#iosDeniedUrls").value),
+          allowedUrls: lines($("#iosAllowedUrls").value),
+          focusedSocial: readFocusedSocialPayload($)
+        });
+        markFormSavedAtRevision(iosForm, submittedRevision);
+        toast("iPhone policy saved");
+      } catch (error) {
+        toast(errorMessage(error));
+      }
+    });
     await refresh();
   });
 
@@ -69,6 +91,7 @@ function bindDeviceForms({ $, post, lines, toast, errorMessage, refresh }: Devic
 
   $("#iosMdmForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
+    const submittedRevision = formRevision(mdmForm);
     try {
       const payload: FormPayload = {
         enabled: $("#iosMdmEnabled").checked,
@@ -87,10 +110,12 @@ function bindDeviceForms({ $, post, lines, toast, errorMessage, refresh }: Devic
       if (pushPayload) payload.pushCertificatePayloadBase64 = pushPayload;
       if (pushPassword) payload.pushCertificatePassword = pushPassword;
       await post("/api/devices/ios/mdm/settings", payload);
-      $("#iosMdmIdentityPayload").value = "";
-      $("#iosMdmIdentityPassword").value = "";
-      $("#iosMdmPushPayload").value = "";
-      $("#iosMdmPushPassword").value = "";
+      if (markFormSavedAtRevision(mdmForm, submittedRevision)) {
+        $("#iosMdmIdentityPayload").value = "";
+        $("#iosMdmIdentityPassword").value = "";
+        $("#iosMdmPushPayload").value = "";
+        $("#iosMdmPushPassword").value = "";
+      }
       toast("Advanced iPhone MDM setup saved");
     } catch (error) {
       toast(errorMessage(error));
@@ -116,23 +141,26 @@ function bindDeviceForms({ $, post, lines, toast, errorMessage, refresh }: Devic
 function renderDevices(devices: DashboardData["devices"], $: QueryElement): void {
   if (!devices) return;
   const ios = devices.ios || {};
-  $("#iosEnabled").checked = Boolean(ios.enabled);
-  $("#iosMode").value = ios.mode || "denylist";
-  $("#iosWebMode").value = ios.webMode || "denylist";
-  $("#iosBlockApps").checked = ios.blockApps !== false;
-  $("#iosBlockWeb").checked = ios.blockWeb !== false;
-  $("#iosHardenRemoval").checked = ios.removalHardened || ios.hardenRemoval !== false;
-  $("#iosRestrictInstallErase").checked = ios.restrictInstallAndErase !== false;
-  $("#iosAllowSafariHistoryClearing").checked = ios.allowSafariHistoryClearing !== false;
-  $("#iosBlockedBundles").value = (ios.blockedAppBundleIds || []).join("\n");
-  $("#iosAllowedBundles").value = (ios.allowedAppBundleIds || []).join("\n");
-  $("#iosDeniedUrls").value = (ios.deniedUrls || []).join("\n");
-  $("#iosAllowedUrls").value = (ios.allowedUrls || []).join("\n");
-  renderFocusedSocialSettings(ios.focusedSocial || {}, $);
+  const iosForm = $("#iosForm") as unknown as HTMLFormElement;
+  if (!formHasUnsavedChanges(iosForm)) {
+    $("#iosEnabled").checked = Boolean(ios.enabled);
+    $("#iosMode").value = ios.mode || "denylist";
+    $("#iosWebMode").value = ios.webMode || "denylist";
+    $("#iosBlockApps").checked = ios.blockApps !== false;
+    $("#iosBlockWeb").checked = ios.blockWeb !== false;
+    $("#iosHardenRemoval").checked = ios.removalHardened || ios.hardenRemoval !== false;
+    $("#iosRestrictInstallErase").checked = ios.restrictInstallAndErase !== false;
+    $("#iosAllowSafariHistoryClearing").checked = ios.allowSafariHistoryClearing !== false;
+    $("#iosBlockedBundles").value = (ios.blockedAppBundleIds || []).join("\n");
+    $("#iosAllowedBundles").value = (ios.allowedAppBundleIds || []).join("\n");
+    $("#iosDeniedUrls").value = (ios.deniedUrls || []).join("\n");
+    $("#iosAllowedUrls").value = (ios.allowedUrls || []).join("\n");
+    renderFocusedSocialSettings(ios.focusedSocial || {}, $);
+  }
 
-  $("#iosStatus").textContent = ios.enabled ? "Enabled" : "Ready";
+  $("#iosStatus").textContent = ios.enabled ? "Configured" : "Ready";
   $("#iosStatus").className = ios.enabled ? "pill good" : "pill neutral";
-  $("#iosStatusTitle").textContent = ios.enabled ? "Supervised policy enabled" : "Supervised profile ready";
+  $("#iosStatusTitle").textContent = ios.enabled ? "Supervised policy configured" : "Supervised profile ready";
   $("#iosStatusText").textContent = ios.note || "Apple-only iPhone blocking needs a supervised device policy.";
 
   const iosSummary = $("#iosSummary");
@@ -158,16 +186,19 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
   ].forEach(([label, value]) => iosSummary.append(deviceRow(label, value)));
 
   const mdm = ios.mdm || {};
-  $("#iosMdmEnabled").checked = Boolean(mdm.enabled);
-  $("#iosMdmPublicBaseUrl").value = mdm.publicBaseUrl || "";
-  $("#iosMdmTopic").value = mdm.topic || "";
-  $("#iosMdmIdentityUuid").value = mdm.identityCertificateUuid || "";
+  const mdmForm = $("#iosMdmForm") as unknown as HTMLFormElement;
+  if (!formHasUnsavedChanges(mdmForm)) {
+    $("#iosMdmEnabled").checked = Boolean(mdm.enabled);
+    $("#iosMdmPublicBaseUrl").value = mdm.publicBaseUrl || "";
+    $("#iosMdmTopic").value = mdm.topic || "";
+    $("#iosMdmIdentityUuid").value = mdm.identityCertificateUuid || "";
+    $("#iosMdmSignMessage").checked = Boolean(mdm.signMessage);
+    $("#iosMdmDevApns").checked = Boolean(mdm.useDevelopmentApns);
+  }
   $("#iosMdmIdentityPayload").placeholder = mdm.identityCertificatePayloadSet ? "Saved payload is set" : "Base64 payload";
   $("#iosMdmIdentityPassword").placeholder = mdm.identityCertificatePasswordSet ? "Saved password is set" : "Leave blank to keep saved password";
   $("#iosMdmPushPayload").placeholder = mdm.pushCertificatePayloadSet ? "Saved APNs push certificate is set" : "Base64 APNs push PKCS#12";
   $("#iosMdmPushPassword").placeholder = mdm.pushCertificatePasswordSet ? "Saved password is set" : "Leave blank to keep saved password";
-  $("#iosMdmSignMessage").checked = Boolean(mdm.signMessage);
-  $("#iosMdmDevApns").checked = Boolean(mdm.useDevelopmentApns);
   $("#iosMdmStatus").textContent = mdm.enabled ? (mdm.ready ? "Advanced Ready" : "Advanced Setup") : "Not used";
   $("#iosMdmStatus").className = mdm.enabled ? (mdm.ready ? "pill good" : "pill warn") : "pill neutral";
   $("#iosMdmTitle").textContent = mdm.enabled ? "Advanced self-hosted MDM" : "ManageEngine is the normal path";
@@ -265,10 +296,10 @@ function focusedSocialSummaryText(value: unknown): string {
 function nativeSocialText(value: unknown, active: boolean): string {
   const summary = recordValue(value);
   if (summary.enabled === false) return "unchanged";
-  if (!active) return "ready when enabled";
+  if (!active) return "configured for phone locks";
   if (summary.forceWebClips === false) return "left available";
   const nativeAppBundleCount = Number(summary.nativeAppBundleCount || 0);
-  return nativeAppBundleCount > 0 ? `${nativeAppBundleCount} removed by MDM` : "ready during phone lock";
+  return nativeAppBundleCount > 0 ? `${nativeAppBundleCount} configured for restriction` : "ready during phone lock";
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
