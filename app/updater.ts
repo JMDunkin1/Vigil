@@ -1,4 +1,5 @@
 import type { App } from "electron";
+import { isLocallyRebuildableSignature } from "../scripts/mac-signing-identity.mjs";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -515,7 +516,7 @@ async function assertLocallyRebuildableApp(appPath: string): Promise<void> {
   const detail = `${result.stdout}\n${result.stderr}`;
   if (!result.ok && /code object is not signed at all/iu.test(detail)) return;
   if (!result.ok) throw new Error("Sentinel could not verify the installed app signature, so the update was stopped before quitting.");
-  if (!/\bSignature=adhoc\b/u.test(detail)) {
+  if (!isLocallyRebuildableSignature(detail)) {
     throw new Error("This Sentinel app has a distribution signature. Install a complete signed release instead of rebuilding it in place.");
   }
 }

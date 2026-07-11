@@ -35,6 +35,7 @@ for (const button of navButtons) {
 assert.match(html, /<svg class="settings-icon"[^>]*aria-hidden="true"/, "settings must use the shared rounded SVG treatment");
 assert.match(html, /name="appIconTheme" value="jerusalem-cross"/, "settings must offer the Jerusalem Cross icon");
 assert.match(html, /name="appIconTheme" value="sacred-heart"/, "settings must offer the Sacred Heart icon");
+assert.match(html, /name="appIconTheme" value="saint-michael"/, "settings must offer the Saint Michael icon");
 assert.match(html, /id="accountButton"[^>]*aria-expanded="false"/, "the account button must expose its toggle state");
 const sidebarMarkup = html.match(/<aside class="app-chrome"[\s\S]*?<\/aside>/)?.[0] || "";
 assert.doesNotMatch(sidebarMarkup, /&#(?:8962|10016|10003|9835|10070|9881);/, "font-glyph sidebar icons must not return");
@@ -44,13 +45,22 @@ const styles = await readFile("public/styles.css", "utf8");
 assert.doesNotMatch(styles, /data-sidebar-open|\.sidebar-toggle/, "responsive styles must not restore the collapsible top menu");
 assert.doesNotMatch(styles, /@media \(max-width: 900px\)\s*\{\s*body\s*\{\s*display:\s*block/, "narrow windows must retain the sidebar grid");
 
-const protectionMarkup = html.match(/<div id="protectionLevelControl"[\s\S]*?<div class="home-runtime-status"/)?.[0] || "";
+const protectionMarkup = html.match(/<div id="protectionLevelControl"[\s\S]*?<div[^>]*class="home-runtime-status"/)?.[0] || "";
 assert.equal(
   [...protectionMarkup.matchAll(/data-protection-level-choice="[1-4]"/g)].length,
   4,
   "the protection selector bloom must expose all four levels"
 );
 assert.match(protectionMarkup, /class="protection-level-scroll-hint">Scroll to choose</, "the expanded selector should explain wheel interaction");
+
+const emergencyMarkup = html.match(/<details id="emergencyPanel"[\s\S]*?<\/details>/)?.[0] || "";
+assert.match(emergencyMarkup, /<summary class="emergency-summary">/, "emergency UI must be a collapsible top drawer");
+assert.match(emergencyMarkup, /id="emergencyExplanation"/, "integrity lockdowns must expose protected-maintenance guidance");
+assert.doesNotMatch(emergencyMarkup, /emergency-indicator/, "the floating integrity notice must not include a misaligned status dot");
+assert.match(styles, /#view-home \.emergency-drawer\s*\{[\s\S]*?position:\s*absolute;/, "the emergency drawer must overlay the home view instead of stretching it");
+assert.match(styles, /#view-home \.emergency-drawer\s*\{[\s\S]*?top:\s*12px;[\s\S]*?width:\s*min\(420px,[\s\S]*?border-radius:\s*13px;/, "the integrity notice must float independently near the top of the home view");
+assert.match(styles, /\.electron-shell \.app-chrome::before\s*\{\s*content:\s*none;/, "the title-bar drag layer must not cover the emergency drawer");
+assert.match(styles, /\.electron-shell \.app-chrome\s*\{\s*-webkit-app-region:\s*drag;/, "the sidebar must remain available for window dragging");
 
 assert.match(html, /id="saintStageButton"[^>]*aria-controls="saintInfoPopover"[^>]*aria-expanded="false"/, "saint artwork must expose its details popover");
 assert.match(html, /id="saintStageButton"[^>]*title="[^"]*Two-finger click for details\./, "saint details must advertise the trackpad gesture");
@@ -65,7 +75,7 @@ assert.doesNotMatch(saintStageSource, /event\.detail|clickTimer|setTimeout/, "ev
 assert.match(styles, /\.saint-artifact:focus-visible\s*\{\s*outline:\s*none;/, "the saint button must not draw a rectangular focus artifact");
 
 const audioMarkup = html.match(/<section id="view-audio"[\s\S]*?<div class="audio-control-bridge"/)?.[0] || "";
-assert.match(audioMarkup, /<details class="audio-settings-disclosure">/, "secondary listening settings should stay behind one disclosure");
+assert.doesNotMatch(audioMarkup, /audio-settings-disclosure|audio-volume-line/, "playback should not expose redundant session or volume controls");
 assert.equal(
   [...audioMarkup.matchAll(/<details class="audio-library-group/g)].length,
   4,
@@ -73,4 +83,3 @@ assert.equal(
 );
 assert.doesNotMatch(audioMarkup, /<details class="audio-library-group[^>]*\sopen(?:\s|>)/, "the sound library should start collapsed");
 assert.match(audioMarkup, /id="focusSoundPlayButton"/, "play and pause must remain outside the collapsed settings");
-assert.match(audioMarkup, /id="focusSoundVolume"/, "volume must remain outside the collapsed settings");

@@ -45,7 +45,7 @@
 
 .icon-theme-picker {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 14px;
   margin: 0;
   padding: 0;
@@ -122,6 +122,8 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
+  -webkit-user-select: none;
+  user-select: none;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background:
     radial-gradient(circle at 15% 5%, rgba(37, 99, 235, 0.16), transparent 28rem),
@@ -135,6 +137,14 @@ input,
 select,
 textarea {
   font: inherit;
+}
+
+input,
+textarea,
+pre,
+code {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 button {
@@ -1558,13 +1568,10 @@ button:focus-visible {
 }
 
 .electron-shell .app-chrome::before {
-  content: "";
-  position: fixed;
-  z-index: 40;
-  top: 0;
-  left: 0;
-  width: 264px;
-  height: 38px;
+  content: none;
+}
+
+.electron-shell .app-chrome {
   -webkit-app-region: drag;
 }
 
@@ -1589,10 +1596,6 @@ button:focus-visible {
 @media (max-width: 900px) {
   .electron-shell .app-chrome {
     padding-top: 42px;
-  }
-
-  .electron-shell .app-chrome::before {
-    width: 100%;
   }
 
   #view-home .home-stage {
@@ -5524,5 +5527,141 @@ h3,
 
   .protection-level-scroll-hint::after {
     animation: none;
+  }
+}
+
+/* Compact top drawer for integrity notices and emergency unlocks. */
+#view-home .emergency-drawer {
+  position: absolute;
+  z-index: 18;
+  top: 12px;
+  left: 50%;
+  width: min(420px, calc(100% - 32px));
+  display: block;
+  overflow: hidden;
+  transform: translateX(-50%);
+  border: 1px solid color-mix(in srgb, var(--oxblood) 40%, var(--line));
+  border-radius: 13px;
+  padding: 0;
+  background: color-mix(in srgb, var(--surface-strong) 94%, var(--night));
+  box-shadow: 0 14px 34px rgba(14, 12, 11, 0.28);
+}
+
+#view-home .emergency-drawer[open] {
+  box-shadow: 0 18px 46px rgba(14, 12, 11, 0.3);
+}
+
+.emergency-summary {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 13px 9px 15px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.emergency-summary::-webkit-details-marker {
+  display: none;
+}
+
+.emergency-summary:hover {
+  background: color-mix(in srgb, var(--oxblood) 6%, transparent);
+}
+
+.emergency-summary-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.emergency-summary-copy strong {
+  flex: 0 0 auto;
+  color: var(--text, var(--ink));
+  font-size: 0.78rem;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.emergency-summary-copy > span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emergency-chevron {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+  transition: transform 160ms ease;
+}
+
+.emergency-drawer[open] .emergency-chevron {
+  transform: rotate(180deg);
+}
+
+.emergency-drawer-body {
+  max-height: calc(100vh - 70px);
+  overflow: auto;
+  border-top: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  padding: 14px;
+}
+
+.emergency-explanation {
+  max-width: 58ch;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.emergency-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(150px, 0.8fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.emergency-controls .distance-input,
+.emergency-controls .typing-challenge,
+.emergency-controls #emergencyChallengeInput {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .emergency-summary-copy {
+    display: grid;
+    gap: 1px;
+  }
+
+  .emergency-summary-copy strong,
+  .emergency-summary-copy > span {
+    font-size: 0.72rem;
+  }
+
+  .emergency-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .emergency-controls .distance-input,
+  .emergency-controls .typing-challenge,
+  .emergency-controls #emergencyChallengeInput {
+    grid-column: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .emergency-chevron {
+    transition: none;
   }
 }

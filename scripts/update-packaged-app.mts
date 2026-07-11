@@ -7,6 +7,7 @@ import { getInstanceSecret } from "../src/instanceIdentity.js";
 import { fetchSentinelStateHealth } from "../src/sentinelHealth.js";
 import { isDirectRun } from "../src/directRun.js";
 import { plistStringForKey } from "../src/plist.js";
+import { isLocallyRebuildableSignature, resolveMacSigningIdentity } from "./mac-signing-identity.mjs";
 
 interface Options {
   repoRoot: string;
@@ -209,9 +210,10 @@ async function buildInIsolatedWorktree(): Promise<StagedBuild> {
     const outputPath = join(repoRoot, "dist", "update-mac.noindex");
     await rm(outputPath, { recursive: true, force: true });
     await status("packaging", "Packaging a staged Sentinel app");
+    const signingIdentity = await resolveMacSigningIdentity();
     await run(npmExecutable(), [
       "exec", "--", "electron-builder", "--mac", "dir",
-      "-c.mac.identity=-",
+      `-c.mac.identity=${signingIdentity}`,
       "-c.asarUnpack=dist.nosync/runtime/**/*",
       "-c.directories.output=dist/update-mac.noindex"
     ], { cwd: repoRoot });
@@ -397,7 +399,7 @@ async function assertLocallyRebuildableApp(): Promise<void> {
   const detail = `${result.stdout}\n${result.stderr}`;
   if (!result.ok && /code object is not signed at all/iu.test(detail)) return;
   if (!result.ok) throw new Error("Sentinel could not verify the installed app signature, so the update was stopped.");
-  if (!/\bSignature=adhoc\b/u.test(detail)) {
+  if (!isLocallyRebuildableSignature(detail)) {
     throw new Error("This Sentinel app has a distribution signature. Install a complete signed release instead of rebuilding it in place.");
   }
 }

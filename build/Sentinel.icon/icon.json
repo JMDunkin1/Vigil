@@ -1,0 +1,29 @@
+{
+  "fill": {
+    "solid": "display-p3:0.01569,0.03529,0.07843,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "jerusalem-cross.svg",
+          "name": "Jerusalem Cross"
+        }
+      ],
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.35
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}
