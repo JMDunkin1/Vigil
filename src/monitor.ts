@@ -786,7 +786,11 @@ export class Monitor implements MonitorHandle {
     if (now < this.nextAppleContentFilterRefreshAt) return;
     this.nextAppleContentFilterRefreshAt = now + 5000;
     const safariFilter = await safariFilterStatus(this.state);
-    const result = syncAppleContentFilterLockdown(this.state, safariFilter, new Date(now));
+    const recoveryRequired = Boolean(this.state.settings?.foolproofModeEnabled && safariFilter.required);
+    const result = syncAppleContentFilterLockdown(this.state, {
+      ...safariFilter,
+      required: recoveryRequired
+    }, new Date(now));
     this.status.appleContentFilterLockdown = {
       ...result,
       checkedAt: new Date(now).toISOString(),

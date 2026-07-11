@@ -584,20 +584,20 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   const state = defaultState();
   state.settings.foolproofModeEnabled = false;
   const maskedByInstalledProfile = syncAppleContentFilterLockdown(state, {
-    required: true,
+    required: state.settings.foolproofModeEnabled,
     current: true,
     effectiveCurrent: true,
     appleCurrent: false,
     appleContentFilter: { current: false }
   }, now);
-  assert.equal(maskedByInstalledProfile.started, true);
-  assert.equal(integrityLockdownActive(state), true);
-  assert.equal(mustPolicy(activePolicy(state, now)).session.title, "Apple content filter recovery");
+  assert.equal(maskedByInstalledProfile.started, false);
+  assert.equal(integrityLockdownActive(state), false);
+  assert.equal(activePolicy(state, now), null);
 }
 
 {
   const state = defaultState();
-  state.settings.foolproofModeEnabled = false;
+  state.settings.foolproofModeEnabled = true;
   const started = syncAppleContentFilterLockdown(state, {
     required: true,
     current: false,
