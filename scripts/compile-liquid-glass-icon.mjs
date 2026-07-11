@@ -16,6 +16,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
 }
 
 export async function compileLiquidGlassIcon(targetAppPath) {
+  if (!await commandSucceeds("xcrun", ["--find", "actool"])) {
+    console.warn("actool is unavailable; keeping the packaged fallback Vigil.icns icon.");
+    return;
+  }
+
   const source = join(projectRoot, "build", "Vigil.icon");
   const resources = join(targetAppPath, "Contents", "Resources");
   const compiled = join(projectRoot, "dist", "liquid-glass-icon.noindex");
@@ -37,6 +42,14 @@ export async function compileLiquidGlassIcon(targetAppPath) {
   const plist = join(targetAppPath, "Contents", "Info.plist");
   await run("/usr/libexec/PlistBuddy", ["-c", "Set :CFBundleIconFile Vigil", plist]);
   await run("/usr/libexec/PlistBuddy", ["-c", "Add :CFBundleIconName string Vigil", plist]);
+}
+
+function commandSucceeds(command, args) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: "ignore", cwd: projectRoot });
+    child.once("error", () => resolve(false));
+    child.once("exit", (code) => resolve(code === 0));
+  });
 }
 
 function run(command, args) {
