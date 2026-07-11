@@ -1,9 +1,11 @@
 import { activeAppLockPolicy } from "../appLocks.js";
 import { matchContentFilterUrl } from "../contentFilters.js";
+import { FULL_BRICK_BLOCKED_APPS } from "../defaults.js";
 import { activeLimitBlocks, activeLimitPolicy } from "../limits.js";
 import { appCanReportUrls } from "../macos.js";
 import {
   activePolicy,
+  appMatchesAppTargets,
   baselinePolicy,
   isProcessSweepExemptApp,
   isStrictBypassAppForPolicy,
@@ -92,6 +94,14 @@ export function sweepBlockedApps(state: VigilState, usage: UsageState, apps: str
   return blocked;
 }
 
+export function shouldQuitAppForPolicy(state: VigilState, policy: EnforcedPolicy | null | undefined, appName: string): boolean {
+  if (!policy?.profile) return false;
+  if (policy.profile.id === "apple-content-filter-recovery") {
+    return appMatchesAppTargets(appName, FULL_BRICK_BLOCKED_APPS);
+  }
+  return shouldBlockAppForPolicy(state, policy, appName);
+}
+
 export function shouldLockScreenForPolicy(state: VigilState, policy: ActivePolicy | null | undefined): boolean {
   if (policy?.session?.mode === "panic" && policy?.session?.lockLevel === "deep") return true;
   return Boolean(
@@ -172,7 +182,6 @@ function strictLimitBrowserControlPolicy(state: VigilState, now: Date): Enforced
 
 function shouldSweepBlockApp(state: VigilState, policy: EnforcedPolicy, appName: string): boolean {
   if (!policy?.profile) return false;
-  if (!shouldBlockAppForPolicy(state, policy, appName)) return false;
-  if (policy.kind === "integrity" && policy.profile.mode === "allowlist") return true;
+  if (!shouldQuitAppForPolicy(state, policy, appName)) return false;
   return !isProcessSweepExemptApp(appName) || isStrictBypassAppForPolicy(state, policy, appName);
 }

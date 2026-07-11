@@ -3,7 +3,7 @@ import { addEvent, saveState, saveUsage } from "./store.js";
 import { PORT } from "./defaults.js";
 import { contentFilterEnabled } from "./contentFilters.js";
 import { reconcileFocusShortcut } from "./focusHooks.js";
-import { activePolicy, isFullLockoutPolicy, matchBlockedUrlPattern, shouldBlockAppForPolicy, shouldBlockSite } from "./policy.js";
+import { activePolicy, isFullLockoutPolicy, matchBlockedUrlPattern, shouldBlockSite } from "./policy.js";
 import { extensionDynamicRulesReady } from "./foolproof.js";
 import { firewallStatus } from "./firewall.js";
 import { grayscaleDecision, grayscaleGuardEnabled, MAC_GRAYSCALE_GUARD_APPS } from "./grayscale.js";
@@ -12,7 +12,7 @@ import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLoc
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
 import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
-import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
+import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldQuitAppForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
 import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, roundSeconds } from "./monitor/timing.js";
 import { safariFilterStatus } from "./safariFilter.js";
@@ -21,7 +21,7 @@ import { networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetwo
 import { recordOpen, recordUsage } from "./usage.js";
 import type { MonitorHandle, VigilState, UnknownRecord, UsageSample, UsageState } from "./types.js";
 
-export { appQuitEscalationDecision, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
+export { appQuitEscalationDecision, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldQuitAppForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 
 interface MonitorContext {
   state: VigilState;
@@ -585,7 +585,7 @@ export class Monitor implements MonitorHandle {
       return;
     }
 
-    if ((lockdown || this.state.settings.appQuitEnabled) && shouldBlockAppForPolicy(this.state, policy, front.app)) {
+    if ((lockdown || this.state.settings.appQuitEnabled) && shouldQuitAppForPolicy(this.state, policy, front.app)) {
       await this.blockApp(front, policy);
     }
   }
