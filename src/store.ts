@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { preserveCorruptStateEvidence } from "./corruptStateEvidence.js";
-import { DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID, DEFAULT_ALLOWED_APPS, DEFAULT_ALLOWED_SITES, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_BLOCKED_SITES, DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, FULL_BRICK_BLOCKED_APPS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { normalizeIntentionalUse } from "./intentionalUse.js";
 import { resolveDefaultDataDir } from "./dataPaths.js";
 import { normalizeWeekdays } from "./normalizers.js";
@@ -384,7 +384,7 @@ export function sanitizeSoftBlockProfile(profile: Profile): Profile {
     description: profile.description && profile.description !== "Blocks the normal explicit baseline plus short-form feeds while leaving regular sites usable."
       ? profile.description
       : "Blocks explicit sites and non-social short-form surfaces while leaving regular apps usable.",
-    blockedApps: (profile.blockedApps || []).filter((app) => !isInstagramAppTarget(app)),
+    blockedApps: [],
     blockedSites: (profile.blockedSites || []).filter((site) => !isInstagramSiteTarget(site) && !isRedditSiteTarget(site)),
     blockedUrlPatterns,
     phoneAppBlocking: false,
@@ -402,11 +402,26 @@ export function sanitizeDefaultFocusProfile(profile: Profile): Profile {
 function sanitizeNormalProfile(profile: Profile): Profile {
   return {
     ...profile,
-    description: "Level 1 baseline: no active focus restrictions.",
+    description: "Normal use with permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Stories protection.",
     blockedApps: [],
-    blockedSites: [],
-    blockedUrlPatterns: [],
+    blockedSites: [...DEFAULT_EXPLICIT_BLOCKED_SITES],
+    blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS],
     phoneAppBlocking: false,
+    hostsUrlPatternBlocking: false
+  };
+}
+
+export function sanitizeFullBrickProfile(profile: Profile): Profile {
+  return {
+    ...profile,
+    name: "Full Brick",
+    mode: "blocklist",
+    description: "Removes social apps and blocks social sites while leaving unrelated work and system apps alone.",
+    blockedApps: [...FULL_BRICK_BLOCKED_APPS],
+    blockedSites: [...DEFAULT_BLOCKED_SITES],
+    blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
+    allowedApps: [...DEFAULT_ALLOWED_APPS],
+    allowedSites: [...DEFAULT_ALLOWED_SITES],
     hostsUrlPatternBlocking: false
   };
 }
@@ -431,6 +446,7 @@ function sanitizeBuiltinProfile(profile: Profile): Profile {
   if (profile.id === "default") return sanitizeDefaultFocusProfile(profile);
   if (profile.id === NORMAL_PROFILE_ID) return sanitizeNormalProfile(profile);
   if (profile.id === SOFT_BLOCK_PROFILE_ID) return sanitizeSoftBlockProfile(profile);
+  if (profile.id === BRICK_MODE_PROFILE_ID) return sanitizeFullBrickProfile(profile);
   return profile;
 }
 
@@ -569,15 +585,6 @@ function usageSealFailureDetail(status: string): string {
 
 function jsonClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-function isInstagramAppTarget(value: unknown): boolean {
-  const app = String(value || "")
-    .trim()
-    .replace(/\.app$/i, "")
-    .replace(/\s+/g, " ")
-    .toLowerCase();
-  return ["instagram", "instagram helper", "com.burbn.instagram"].includes(app);
 }
 
 function isInstagramSiteTarget(value: unknown): boolean {

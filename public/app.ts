@@ -17,7 +17,7 @@ import { createSaintStage } from "./saint-stage.js";
 import { renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
 import { createTrackingView } from "./tracking-view.js";
-import { $, $$, bindSidebar, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
+import { $, $$, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
 import type { ActivePolicy, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, JournalVaultSummary, ProgressSummary, Schedule, SessionStartResponse, UiState, UnknownRecord } from "./app-model.js";
 
 interface JournalUnlockResponse extends UnknownRecord {
@@ -34,6 +34,15 @@ interface VigilJournalWindow extends Window {
   vigilJournal?: {
     promptTouchId(): Promise<unknown>;
   };
+}
+
+interface VigilAppearanceBridge {
+  getIconTheme(): Promise<unknown>;
+  setIconTheme(theme: string): Promise<unknown>;
+}
+
+interface VigilAppearanceWindow extends Window {
+  vigilAppearance?: VigilAppearanceBridge;
 }
 
 type JournalEntryItem = NonNullable<NonNullable<IntentionalUseSummary["lifeLog"]>["entries"]>[number];
@@ -58,6 +67,8 @@ const state: UiState = {
     target: null
   }
 };
+
+let viewBeforeSettings = "home";
 
 const BRICK_MODE_PROFILE_ID = "brick-mode";
 const SOFT_BLOCK_PROFILE_ID = "soft-block";
@@ -108,7 +119,6 @@ function boot() {
   renderLimitDays();
   renderAppLockDays();
   renderIntentionalDays();
-  bindSidebar();
   bindViewNavigation(setView);
   renderActiveView(state.activeView);
   saintStage.bind();
@@ -116,6 +126,7 @@ function boot() {
   accountUi.bind();
   bindJournalUnlockGate();
   bindJournalSecuritySettings();
+  bindIconThemeSettings();
   appUpdatePanel.bind();
   bindAppEvents({
     state,
@@ -133,6 +144,57 @@ function boot() {
   state.timer = setInterval(renderCountdowns, 1000);
 }
 
+function bindIconThemeSettings(): void {
+  const bridge = (window as VigilAppearanceWindow).vigilAppearance;
+  const status = $("#iconThemeStatus");
+  if (!bridge) {
+    status.textContent = "Available in the Vigil Mac app";
+    for (const input of $$<HTMLInputElement>('input[name="appIconTheme"]')) input.disabled = true;
+    return;
+  }
+  void loadIconTheme(bridge, status);
+  for (const input of $$<HTMLInputElement>('input[name="appIconTheme"]')) {
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      status.textContent = "Applying icon…";
+      void saveIconTheme(bridge, input.value, status);
+    });
+  }
+}
+
+async function loadIconTheme(bridge: VigilAppearanceBridge, status: HTMLElement): Promise<void> {
+  try {
+    const response = await bridge.getIconTheme();
+    const value = response as { ok?: boolean; theme?: string; error?: string };
+    if (!value.ok || !value.theme) throw new Error(value.error || "Icon choice is unavailable.");
+    selectIconTheme(value.theme);
+    status.textContent = "Changes apply immediately";
+  } catch (error) {
+    status.textContent = errorMessage(error);
+  }
+}
+
+async function saveIconTheme(bridge: VigilAppearanceBridge, theme: string, status: HTMLElement): Promise<void> {
+  try {
+    const response = await bridge.setIconTheme(theme);
+    const value = response as { ok?: boolean; theme?: string; error?: string };
+    if (!value.ok || !value.theme) throw new Error(value.error || "Icon choice was not saved.");
+    selectIconTheme(value.theme);
+    status.textContent = "Changes apply immediately";
+    toast(`${iconThemeLabel(value.theme)} icon selected`);
+  } catch (error) {
+    status.textContent = errorMessage(error);
+  }
+}
+
+function selectIconTheme(theme: string): void {
+  for (const input of $$<HTMLInputElement>('input[name="appIconTheme"]')) input.checked = input.value === theme;
+}
+
+function iconThemeLabel(theme: string): string {
+  return theme === "sacred-heart" ? "Sacred Heart" : "Jerusalem Cross";
+}
+
 async function pollState(): Promise<void> {
   await refresh();
   window.setTimeout(() => {
@@ -141,7 +203,18 @@ async function pollState(): Promise<void> {
 }
 
 function setView(view?: string) {
-  state.activeView = view || "home";
+  const nextView = view || "home";
+  if (nextView === "settings") {
+    if (state.activeView === "settings") {
+      state.activeView = viewBeforeSettings;
+    } else {
+      viewBeforeSettings = state.activeView;
+      state.activeView = "settings";
+    }
+  } else {
+    state.activeView = nextView;
+    viewBeforeSettings = nextView;
+  }
   renderActiveView(state.activeView);
 }
 
@@ -460,6 +533,11 @@ function renderProtectionLevel(appState: DashboardState | null | undefined): voi
   if (!userAdjusting) {
     $("#protectionLevelControl").dataset.level = String(level);
     $("#protectionLevelLabel").textContent = label;
+  }
+  for (const choice of $$<HTMLButtonElement>("[data-protection-level-choice]")) {
+    const selected = Number(choice.dataset.protectionLevelChoice) === level;
+    choice.classList.toggle("is-selected", selected);
+    choice.setAttribute("aria-pressed", String(selected));
   }
   if (level === 4 && active) {
     const seconds = Math.max(0, Math.ceil((new Date(active.endsAt).getTime() - Date.now()) / 1000));

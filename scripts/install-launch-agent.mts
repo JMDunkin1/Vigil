@@ -1,12 +1,16 @@
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { launchAgentDataDirFromPlist, launchAgentDataRootsConflict, resolveDefaultDataDir } from "../src/dataPaths.js";
+import { plistStringForKey } from "../src/plist.js";
 
 const execFileAsync = promisify(execFile);
-const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const root = basename(runtimeRoot) === "runtime" && ["dist", "dist.nosync"].includes(basename(dirname(runtimeRoot)))
+  ? dirname(dirname(runtimeRoot))
+  : runtimeRoot;
 const home = process.env.HOME;
 if (!home) throw new Error("HOME is required to install the Vigil LaunchAgent.");
 const homeDir = home;
@@ -17,24 +21,119 @@ const legacyLabel = "tech.caseline.vigil.agent";
 const plistPath = join(home, "Library", "LaunchAgents", `${label}.plist`);
 const legacyPlistPath = join(home, "Library", "LaunchAgents", `${legacyLabel}.plist`);
 const logDir = join(home, "Library", "Logs", "Vigil");
+const installedRuntimeRoot = join(home, "Library", "Application Support", "Vigil", "agent-runtime");
 const nodePath = process.execPath;
-const runnerPath = join(root, "scripts", "agent-runner.mjs");
+const runnerPath = join(installedRuntimeRoot, "scripts", "agent-runner.mjs");
 const dataDir = await resolveLaunchAgentDataDir();
+const sourceRoot = await resolveSourceRoot();
 const environment = launchAgentEnvironment();
 
 await cleanupLegacyLaunchAgent();
-await mkdir(dirname(plistPath), { recursive: true });
-await mkdir(logDir, { recursive: true });
-await writeFile(plistPath, plist(), "utf8");
+const previousPlist = await optionalRead(plistPath);
+const runtimeInstallation = await installRuntime(runtimeRoot, installedRuntimeRoot);
+try {
+  await mkdir(dirname(plistPath), { recursive: true });
+  await mkdir(logDir, { recursive: true });
+  await writeFile(plistPath, plist(), "utf8");
 
-await runLaunchctl(["bootout", `gui/${uid}`, plistPath]);
-await runLaunchctl(["bootstrap", `gui/${uid}`, plistPath]);
-await runLaunchctl(["enable", `gui/${uid}/${label}`]);
-await runLaunchctl(["kickstart", "-k", `gui/${uid}/${label}`], { optional: true });
+  await runLaunchctl(["bootout", `gui/${uid}`, plistPath]);
+  await runLaunchctl(["enable", `gui/${uid}/${label}`]);
+  await runLaunchctl(["bootstrap", `gui/${uid}`, plistPath]);
+  await runLaunchctl(["kickstart", "-k", `gui/${uid}/${label}`], { optional: true });
+  await runtimeInstallation.finalize();
+} catch (error) {
+  const rollbackErrors: unknown[] = [];
+  await runLaunchctl(["bootout", `gui/${uid}/${label}`], { optional: true });
+  try {
+    await runtimeInstallation.rollback();
+  } catch (rollbackError) {
+    rollbackErrors.push(rollbackError);
+  }
+  try {
+    await restoreLaunchAgentPlist(previousPlist);
+  } catch (rollbackError) {
+    rollbackErrors.push(rollbackError);
+  }
+  if (rollbackErrors.length) {
+    throw new AggregateError([error, ...rollbackErrors], "Vigil installation failed and could not be fully rolled back.");
+  }
+  throw error;
+}
 
 console.log(`Installed LaunchAgent: ${plistPath}`);
 
+async function installRuntime(
+  source: string,
+  destination: string
+): Promise<{ finalize(): Promise<void>; rollback(): Promise<void> }> {
+  const nextPath = `${destination}.vigil-next`;
+  const previousPath = `${destination}.vigil-previous`;
+  const reinstallingFromInstalledRuntime = source === destination;
+  if (await pathExists(previousPath)) {
+    throw new Error(`A previous Vigil runtime recovery copy still exists at ${previousPath}.`);
+  }
+
+  await mkdir(dirname(destination), { recursive: true });
+  await rm(nextPath, { recursive: true, force: true });
+  // Always finish staging before moving the installed tree. This is essential when
+  // the running hardening API invokes this script from the installed runtime itself.
+  await cp(reinstallingFromInstalledRuntime ? destination : source, nextPath, {
+    recursive: true,
+    preserveTimestamps: true,
+    verbatimSymlinks: true
+  });
+
+  let backedUp = false;
+  let installed = false;
+  try {
+    if (await pathExists(destination)) {
+      await rename(destination, previousPath);
+      backedUp = true;
+    }
+    await rename(nextPath, destination);
+    installed = true;
+  } catch (error) {
+    if (backedUp) {
+      await rm(destination, { recursive: true, force: true });
+      await rename(previousPath, destination);
+    }
+    throw error;
+  } finally {
+    await rm(nextPath, { recursive: true, force: true });
+  }
+
+  return {
+    async finalize() {
+      await rm(previousPath, { recursive: true, force: true });
+    },
+    async rollback() {
+      if (backedUp) {
+        if (!(await pathExists(previousPath))) {
+          throw new Error(`Vigil runtime recovery copy is missing at ${previousPath}.`);
+        }
+        await rm(destination, { recursive: true, force: true });
+        await rename(previousPath, destination);
+      } else if (installed) {
+        await rm(destination, { recursive: true, force: true });
+      }
+    }
+  };
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 function plist(): string {
+  const sourceRootEntry = sourceRoot
+    ? `  <key>VigilSourceRoot</key>\n  <string>${escapeXml(sourceRoot)}</string>\n`
+    : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -47,8 +146,8 @@ function plist(): string {
     <string>${escapeXml(runnerPath)}</string>
   </array>
 ${environment}
-  <key>WorkingDirectory</key>
-  <string>${escapeXml(root)}</string>
+${sourceRootEntry}  <key>WorkingDirectory</key>
+  <string>${escapeXml(installedRuntimeRoot)}</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -60,6 +159,39 @@ ${environment}
 </dict>
 </plist>
 `;
+}
+
+async function resolveSourceRoot(): Promise<string> {
+  const existingPlist = await optionalRead(plistPath);
+  if (existingPlist !== null) {
+    const existingSourceRoot = plistStringForKey(existingPlist, "VigilSourceRoot");
+    if (await isSourceRoot(existingSourceRoot)) return existingSourceRoot;
+    const legacyWorkingDirectory = plistStringForKey(existingPlist, "WorkingDirectory");
+    if (await isSourceRoot(legacyWorkingDirectory)) return legacyWorkingDirectory;
+  }
+  return await isSourceRoot(root) ? root : "";
+}
+
+async function isSourceRoot(candidate: string): Promise<boolean> {
+  if (!candidate) return false;
+  try {
+    const pkg = JSON.parse(await readFile(join(candidate, "package.json"), "utf8")) as { name?: string };
+    await access(join(candidate, "app", "main.ts"));
+    return pkg.name === "vigil";
+  } catch {
+    return false;
+  }
+}
+
+async function restoreLaunchAgentPlist(previousPlist: string | null): Promise<void> {
+  if (previousPlist === null) {
+    await rm(plistPath, { force: true });
+    return;
+  }
+  await writeFile(plistPath, previousPlist, "utf8");
+  await runLaunchctl(["enable", `gui/${uid}/${label}`]);
+  await runLaunchctl(["bootstrap", `gui/${uid}`, plistPath]);
+  await runLaunchctl(["kickstart", "-k", `gui/${uid}/${label}`], { optional: true });
 }
 
 function launchAgentEnvironment(): string {

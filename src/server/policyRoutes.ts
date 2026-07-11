@@ -10,7 +10,7 @@ import { normalizeLimitRule } from "../limits.js";
 import { normalizeWeekdays as normalizeDays, pathTailId as pathId } from "../normalizers.js";
 import { listFromTextarea, normalizeDeviceTargets, normalizeLockLevel } from "../policy.js";
 import { assertProtectedEditAllowed } from "../protection.js";
-import { addEvent, saveState, sanitizeSoftBlockProfile } from "../store.js";
+import { addEvent, saveState, sanitizeFullBrickProfile, sanitizeSoftBlockProfile } from "../store.js";
 import { normalizeClock } from "../time.js";
 import type { AppLockRule, GrayscaleSchedule, LimitRule, Profile, ProfileMode, Schedule, VigilState, UnknownRecord } from "../types.js";
 import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
@@ -207,7 +207,11 @@ function upsertProfile(state: VigilState, body: UnknownRecord): Profile {
     phoneAppBlocking: optionalDisabledFlag(body.phoneAppBlocking, existing?.phoneAppBlocking),
     hostsUrlPatternBlocking: optionalDisabledFlag(body.hostsUrlPatternBlocking, existing?.hostsUrlPatternBlocking)
   };
-  const nextProfile = id === SOFT_BLOCK_PROFILE_ID ? sanitizeSoftBlockProfile(profile) : profile;
+  const nextProfile = id === SOFT_BLOCK_PROFILE_ID
+    ? sanitizeSoftBlockProfile(profile)
+    : id === BRICK_MODE_PROFILE_ID
+      ? sanitizeFullBrickProfile(profile)
+      : profile;
 
   if (existing) Object.assign(existing, nextProfile);
   else state.profiles.push(nextProfile);

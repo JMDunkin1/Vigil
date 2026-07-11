@@ -18,6 +18,11 @@ interface Invocation {
   args: unknown[];
 }
 
+interface AppearanceBridge {
+  getIconTheme(): Promise<unknown>;
+  setIconTheme(theme: string): Promise<unknown>;
+}
+
 const sourceRoot = existsSync(join(process.cwd(), "app", "main.ts"))
   ? process.cwd()
   : resolve(process.cwd(), "..", "..");
@@ -66,19 +71,29 @@ assert.deepEqual(Object.keys(invocations[0]?.args[0] as object), ["checkRemote"]
 assert.equal((invocations[0]?.args[0] as { checkRemote?: unknown }).checkRemote, true);
 assert.equal(invocations[1]?.channel, "vigil:app-update-start");
 assert.equal(invocations[1]?.args.length, 0);
+const appearanceBridge = exposed.get("vigilAppearance") as AppearanceBridge | undefined;
+assert.ok(appearanceBridge, "preload should expose the icon appearance bridge");
+await appearanceBridge.getIconTheme();
+await appearanceBridge.setIconTheme("sacred-heart");
+assert.equal(invocations[2]?.channel, "vigil:icon-theme-get");
+assert.equal(invocations[3]?.channel, "vigil:icon-theme-set");
+assert.deepEqual(invocations[3]?.args, ["sacred-heart"]);
 assert.match(mainSource, /ipcMain\.handle\("vigil:app-update-status", handleAppUpdateStatus\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:app-update-start", handleAppUpdateStart\)/u);
+assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-get", handleIconThemeGet\)/u);
+assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-set", handleIconThemeSet\)/u);
+assert.match(mainSource, /ICON_THEMES = \["jerusalem-cross", "sacred-heart"\]/u);
 assert.match(mainSource, /!event\.senderFrame \|\| !isTrustedAppUrl\(event\.senderFrame\.url\)/u);
 assert.doesNotMatch(mainSource, /\/api\/app-update\/(?:status|start)/u);
 assert.match(updaterSource, /launchAgentRepoRoot\(app\)/u);
-assert.match(updateScriptSource, /-c\.directories\.output=dist\/update-mac/u);
+assert.match(updateScriptSource, /-c\.directories\.output=dist\/update-mac\.noindex/u);
 assert.doesNotMatch(updateScriptSource, /"build:mac"/u);
 
 const installRoot = await mkdtemp(join(tmpdir(), "vigil-app-update-install-"));
 try {
-  const stageRoot = join(installRoot, "dist", "update-mac");
+  const stageRoot = join(installRoot, "dist", "update-mac.noindex");
   const builtApp = join(stageRoot, "mac-arm64", "Vigil.app");
-  const installedApp = join(installRoot, "dist", "mac", "mac-arm64", "Vigil.app");
+  const installedApp = join(installRoot, "dist", "mac.noindex", "mac-arm64", "Vigil.app");
   await mkdir(builtApp, { recursive: true });
   await mkdir(installedApp, { recursive: true });
   await writeFile(join(builtApp, "version.txt"), "new");

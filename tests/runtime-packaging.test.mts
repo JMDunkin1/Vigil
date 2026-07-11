@@ -49,6 +49,28 @@ assert.equal(launchAgentDataRootsConflict("/legacy/data", "/current/data", true,
 assert.equal(launchAgentDataRootsConflict("/legacy/data", "/current/data", true, false), false);
 assert.equal(launchAgentDataRootsConflict("/same/data", "/same/data", true, true), false);
 
+const launchAgentSource = await readFile(new URL("../scripts/install-launch-agent.mjs", import.meta.url), "utf8");
+assert.doesNotMatch(launchAgentSource, /VIGIL_LIVE_SOURCE/u);
+assert.doesNotMatch(launchAgentSource, /VIGIL_SOURCE_ROOT/u);
+assert.match(launchAgentSource, /basename\(runtimeRoot\) === "runtime"/u);
+assert.match(launchAgentSource, /installRuntime\(runtimeRoot, installedRuntimeRoot\)/u);
+assert.match(launchAgentSource, /reinstallingFromInstalledRuntime = source === destination/u);
+assert.ok(
+  launchAgentSource.indexOf("await cp(reinstallingFromInstalledRuntime")
+    < launchAgentSource.indexOf("await rename(destination, previousPath)"),
+  "the installer must finish staging before moving a runtime that may be its own source"
+);
+assert.match(launchAgentSource, /runnerPath = join\(installedRuntimeRoot, "scripts", "agent-runner\.mjs"\)/u);
+assert.match(launchAgentSource, /<key>VigilSourceRoot<\/key>/u);
+assert.match(launchAgentSource, /legacyWorkingDirectory/u);
+assert.match(launchAgentSource, /pkg\.name === "vigil"/u);
+assert.match(launchAgentSource, /restoreLaunchAgentPlist\(previousPlist\)/u);
+assert.match(launchAgentSource, /<key>WorkingDirectory<\/key>\s*\n\s*<string>\$\{escapeXml\(installedRuntimeRoot\)\}<\/string>/u);
+assert.ok(
+  launchAgentSource.indexOf('runLaunchctl(["enable"') < launchAgentSource.indexOf('runLaunchctl(["bootstrap"'),
+  "the agent must be enabled before bootstrap so a previously disabled service can load"
+);
+
 const directRunDir = await mkdtemp(join(tmpdir(), "vigil-direct-run-"));
 try {
   const realPath = join(directRunDir, "server.js");
@@ -73,6 +95,7 @@ try {
   const prepareModule = await import(prepareModuleUrl) as { prepareBuildDirectory(root: string): Promise<void> };
   await prepareModule.prepareBuildDirectory(buildMigrationDir);
   assert.equal(await readlink(join(buildMigrationDir, "dist")), "dist.nosync");
+  assert.equal(existsSync(join(buildMigrationDir, "dist.nosync", ".metadata_never_index")), true);
   assert.equal(await readFile(join(buildMigrationDir, "dist", "mac", "Vigil.app", "executable"), "utf8"), "preserved");
   assert.equal(await readFile(join(buildMigrationDir, "dist", "runtime", "existing"), "utf8"), "preserved");
 } finally {
@@ -80,14 +103,22 @@ try {
 }
 
 const packageJson = recordValue(JSON.parse(await readFile("package.json", "utf8")), "package.json");
+assert.equal(recordValue(packageJson.engines, "package engines").node, ">=22.6");
 const build = recordValue(packageJson.build, "package build");
 const scripts = recordValue(packageJson.scripts, "package scripts");
 const macBuild = recordValue(build.mac, "mac build");
 const macInfo = recordValue(macBuild.extendInfo, "mac build info");
-assert.match(String(scripts["package:mac"]), /identity=null/);
-assert.match(String(scripts["package:mac:dmg"]), /identity=null/);
+const buildDirectories = recordValue(build.directories, "package build directories");
+assert.equal(buildDirectories.output, "dist/mac.noindex");
+assert.match(String(scripts["package:mac"]), /identity=-/);
+assert.match(String(scripts["package:mac:dmg"]), /identity=-/);
+for (const command of ["package:mac", "package:mac:dmg", "build:mac:signed", "dist:mac:signed"]) {
+  assert.match(String(scripts[command]), /prepare-mac-output\.mjs/, `${command} must package outside the synced workspace`);
+  assert.match(String(scripts[command]), /hide-mac-build\.mjs/, `${command} must unregister its development app bundle`);
+}
 assert.doesNotMatch(String(scripts["build:mac:signed"]), /identity=null/);
 assert.doesNotMatch(String(scripts["dist:mac:signed"]), /identity=null/);
+assert.equal(macBuild.sign, "scripts/sign-mac.mjs");
 assert.equal(macInfo.LSUIElement, true);
 assert.ok(Array.isArray(build.files), "package files should be an array");
 const runtimeFileSet = recordValue(build.files[0], "runtime package file set");

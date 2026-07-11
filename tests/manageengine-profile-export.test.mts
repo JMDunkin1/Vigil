@@ -65,6 +65,11 @@ try {
   assert.equal(restrictionsPayload?.allowUIAppInstallation, true);
   assert.equal(restrictionsPayload?.blockedAppBundleIDs, undefined);
   assert.equal(restrictionsPayload?.allowListedAppBundleIDs, undefined);
+  const baselineWebFilter = profile.PayloadContent
+    .map((item) => recordValue(item, "profile payload"))
+    .find((payload) => payload.PayloadType === "com.apple.webcontent-filter");
+  assert.ok(Array.isArray(baselineWebFilter?.DenyListURLs));
+  assert.equal((baselineWebFilter?.DenyListURLs as unknown[]).includes("https://youtube.com/shorts"), true);
   const webClips = profile.PayloadContent
     .map((item) => recordValue(item, "profile payload"))
     .filter((payload) => payload.PayloadType === "com.apple.webClip.managed");
@@ -92,7 +97,7 @@ try {
   assert.equal(summary.deliveryProvider, "manageengine");
   assert.equal(summary.normalFreeDeliveryPath, true);
   assert.equal(summary.appBundleCount, 0);
-  assert.equal(summary.deniedUrlCount, 0);
+  assert.ok(Number(summary.deniedUrlCount) > 0);
   assert.equal(summary.enforcementActive, false);
   assert.equal(summary.focusedSocialEnforcementActive, false);
   assert.deepEqual(summary.managedHelperAppBundleIds, []);
@@ -285,11 +290,14 @@ try {
     assert.equal(summary.enforcementActive, false, "the second queued Level 1 export should win as a complete artifact set");
     const profile = recordValue(parsePlist(profileText), "overlap profile");
     assert.ok(Array.isArray(profile.PayloadContent));
-    assert.equal(profile.PayloadContent.length, 1);
+    assert.equal(profile.PayloadContent.length, 2);
     const releasePayload = recordValue(profile.PayloadContent[0], "overlap Level 1 release payload");
     assert.equal(releasePayload.PayloadType, "com.apple.applicationaccess");
     assert.equal(releasePayload.allowAppInstallation, true);
     assert.equal(releasePayload.allowAppRemoval, true);
+    const baselineFilter = recordValue(profile.PayloadContent[1], "overlap Level 1 web filter");
+    assert.equal(baselineFilter.PayloadType, "com.apple.webcontent-filter");
+    assert.ok(Array.isArray(baselineFilter.DenyListURLs));
     const launcherPath = join(overlapDir, "vigil-social-launchers.mobileconfig");
     const launcherText = await readFile(launcherPath, "utf8");
     assert.equal(recordValue(summary.launcherProfile, "overlap launcher summary").artifactHash, createHash("sha256").update(launcherText).digest("hex"));

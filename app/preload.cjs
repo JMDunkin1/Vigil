@@ -14,3 +14,8 @@ contextBridge.exposeInMainWorld("vigilAppUpdate", {
   }),
   start: () => ipcRenderer.invoke("vigil:app-update-start")
 });
+
+contextBridge.exposeInMainWorld("vigilAppearance", {
+  getIconTheme: () => ipcRenderer.invoke("vigil:icon-theme-get"),
+  setIconTheme: (theme) => ipcRenderer.invoke("vigil:icon-theme-set", theme)
+});

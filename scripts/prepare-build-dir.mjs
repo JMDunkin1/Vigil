@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, readlink, realpath, rename, rm, symlink } from "node:fs/promises";
+import { cp, lstat, mkdir, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -32,6 +32,7 @@ export async function prepareBuildDirectory(root) {
   }
 
   await mkdir(buildRoot, { recursive: true });
+  await writeFile(join(buildRoot, ".metadata_never_index"), "");
   if (!linkReady) await symlink("dist.nosync", buildLink, "dir");
 }
 

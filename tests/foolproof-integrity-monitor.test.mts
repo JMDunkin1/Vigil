@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { accountStatusFromGroups } from "../src/account.js";
 import { activeAppLockPolicy } from "../src/appLocks.js";
-import { defaultState, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, defaultState, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { assertDistanceKey, updateDistanceKeySettings } from "../src/distanceKey.js";
 import { doctorRows, formatDoctorRows } from "../src/doctorReport.js";
 import { extensionRuleSnapshot } from "../src/extensionPolicy.js";
@@ -12,7 +12,7 @@ import { updateKeyholderSettings } from "../src/keyholder.js";
 import { activeLimitPolicy } from "../src/limits.js";
 import { parseProcessList } from "../src/macos.js";
 import { appQuitEscalationDecision, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "../src/monitor.js";
-import { activePolicy, shouldBlockAppForPolicy, shouldBlockSite } from "../src/policy.js";
+import { activePolicy, profileById, shouldBlockAppForPolicy, shouldBlockSite } from "../src/policy.js";
 import { protectedEditBlockers } from "../src/protection.js";
 import { applySealVerificationToState, markStateSealed, stateSealSummary } from "../src/seal.js";
 import { browserCompanionRequirement, networkBlockCurrent } from "../src/systemNetworkBlock.js";
@@ -726,6 +726,50 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   };
   state.settings.strictBypassProtectionEnabled = false;
   assert.deepEqual(sweepBlockedApps(state, usage, ["Terminal", "App Store"], now), []);
+}
+
+{
+  const state = defaultState();
+  const usage = {};
+  const softSession = {
+    id: "level-2",
+    title: "Soft Lock",
+    mode: "focus",
+    profileId: SOFT_BLOCK_PROFILE_ID,
+    lockLevel: "deep" as const,
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    commitmentLock: true,
+    source: "protection-level",
+    deviceTargets: ["computer" as const],
+    profileSnapshot: profileById(state, SOFT_BLOCK_PROFILE_ID)
+  };
+  state.activeSession = softSession;
+  state.activeSessions.computer = softSession;
+  assert.deepEqual(
+    sweepBlockedApps(state, usage, ["ChatGPT", "Codex (Renderer)", "Vigil", "Slack", "System Settings", "Discord"], now),
+    [],
+    "Level 2 must enforce content without quitting unrelated apps"
+  );
+
+  const brickSession = {
+    ...softSession,
+    id: "level-3",
+    title: "Full Brick",
+    mode: "brick",
+    profileId: BRICK_MODE_PROFILE_ID,
+    canEndEarly: true,
+    commitmentLock: false,
+    profileSnapshot: profileById(state, BRICK_MODE_PROFILE_ID)
+  };
+  state.activeSession = brickSession;
+  state.activeSessions.computer = brickSession;
+  assert.deepEqual(
+    sweepBlockedApps(state, usage, ["ChatGPT", "Codex (Renderer)", "Vigil", "Siri", "MenuBarAgent", "Instagram", "Discord", "YouTube"], now).map((item) => item.app),
+    ["Instagram", "Discord", "YouTube"],
+    "Level 3 must quit only targeted social apps"
+  );
 }
 
 {

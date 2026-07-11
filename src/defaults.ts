@@ -193,6 +193,20 @@ export const DEFAULT_BLOCKED_APPS = [
   "Discord"
 ];
 
+export const FULL_BRICK_BLOCKED_APPS = [
+  "YouTube",
+  "X",
+  "Twitter",
+  "Instagram",
+  "TikTok",
+  "Facebook",
+  "Messenger",
+  "Threads",
+  "Snapchat",
+  "Discord",
+  "Pinterest"
+];
+
 export const DEFAULT_BLOCKED_SITES = [
   "youtube.com",
   "x.com",
@@ -506,10 +520,10 @@ export function defaultState(): VigilState {
         id: NORMAL_PROFILE_ID,
         name: "Normal",
         mode: "blocklist",
-        description: "Level 1 baseline: no active focus restrictions.",
+        description: "Normal use with permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Stories protection.",
         blockedApps: [],
-        blockedSites: [],
-        blockedUrlPatterns: [],
+        blockedSites: DEFAULT_EXPLICIT_BLOCKED_SITES,
+        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES],
         phoneAppBlocking: false,
@@ -530,14 +544,14 @@ export function defaultState(): VigilState {
       },
       {
         id: BRICK_MODE_PROFILE_ID,
-        name: "Mac Brick",
-        mode: "allowlist",
-        description: "Only essential apps and approved work sites remain available.",
-        blockedApps: [],
-        blockedSites: [],
-        blockedUrlPatterns: [],
-        allowedApps: [...BRICK_ALLOWED_APPS],
-        allowedSites: [...BRICK_ALLOWED_SITES]
+        name: "Full Brick",
+        mode: "blocklist",
+        description: "Removes social apps and blocks social sites while leaving unrelated work and system apps alone.",
+        blockedApps: [...FULL_BRICK_BLOCKED_APPS],
+        blockedSites: [...DEFAULT_BLOCKED_SITES],
+        blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
+        allowedApps: [...DEFAULT_ALLOWED_APPS],
+        allowedSites: [...DEFAULT_ALLOWED_SITES]
       }
     ],
     schedules: [

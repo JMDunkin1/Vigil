@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
 import { toPlist } from "../plist.js";
@@ -48,7 +49,21 @@ function requestBodyError(status: number, message: string): Error & { status: nu
   return Object.assign(new Error(message), { status });
 }
 
-export async function serveStatic(response: ServerResponse, pathname: string, { publicDir }: { publicDir: string }): Promise<void> {
+export async function serveStatic(
+  response: ServerResponse,
+  pathname: string,
+  {
+    publicDir,
+    fallbackPublicDir,
+    noCache = false,
+    typescriptSourceRoot
+  }: {
+    publicDir: string;
+    fallbackPublicDir?: string;
+    noCache?: boolean;
+    typescriptSourceRoot?: string;
+  }
+): Promise<void> {
   const fullPath = resolvePublicPath(pathname, publicDir);
   if (!fullPath) {
     sendJson(response, 403, { error: "Forbidden" });
@@ -56,12 +71,58 @@ export async function serveStatic(response: ServerResponse, pathname: string, { 
   }
 
   try {
-    const data = await readFile(fullPath);
-    response.writeHead(200, { ...securityHeaders(), "Content-Type": contentType(fullPath) });
+    const data = await readPublicAsset(fullPath, pathname, {
+      fallbackPublicDir,
+      typescriptSourceRoot
+    });
+    response.writeHead(200, {
+      ...securityHeaders(),
+      "Content-Type": contentType(fullPath),
+      ...(noCache ? { "Cache-Control": "no-store" } : {})
+    });
     response.end(data);
   } catch {
     sendJson(response, 404, { error: "Not found" });
   }
+}
+
+async function readPublicAsset(
+  fullPath: string,
+  pathname: string,
+  options: { fallbackPublicDir?: string; typescriptSourceRoot?: string }
+): Promise<Buffer | string> {
+  try {
+    return await readFile(fullPath);
+  } catch (error) {
+    if (!isMissingFile(error)) throw error;
+  }
+
+  if (options.typescriptSourceRoot && extname(fullPath) === ".js") {
+    const sourcePath = `${fullPath.slice(0, -3)}.ts`;
+    try {
+      const source = await readFile(sourcePath, "utf8");
+      return transpilePublicTypescript(source, sourcePath);
+    } catch (error) {
+      if (!isMissingFile(error)) throw error;
+    }
+  }
+
+  if (options.fallbackPublicDir) {
+    const fallbackPath = resolvePublicPath(pathname, options.fallbackPublicDir);
+    if (fallbackPath) return await readFile(fallbackPath);
+  }
+  throw Object.assign(new Error("Public asset was not found."), { code: "ENOENT" });
+}
+
+export function transpilePublicTypescript(source: string, filename: string): string {
+  return stripTypeScriptTypes(source, {
+    mode: "strip",
+    sourceUrl: filename
+  });
+}
+
+function isMissingFile(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 export function resolvePublicPath(pathname: string, publicDir: string): string | null {

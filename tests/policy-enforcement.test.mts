@@ -19,7 +19,7 @@ import { applySealVerificationToState, markStateSealed } from "../src/seal.js";
 import { blockedPage } from "../src/server/pages.js";
 import { deleteProfile } from "../src/server/policyRoutes.js";
 import { updateSettings } from "../src/server/settingsRoutes.js";
-import { sanitizeDefaultFocusProfile, sanitizeSoftBlockProfile } from "../src/store.js";
+import { sanitizeDefaultFocusProfile, sanitizeFullBrickProfile, sanitizeSoftBlockProfile } from "../src/store.js";
 import { recordOpen, recordUsage, syncDeviceUsageSnapshot } from "../src/usage.js";
 import type { Session, UsageState } from "../src/types.js";
 import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile, usageFixture } from "./test-helpers.mjs";
@@ -482,21 +482,19 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     previousUrl: "https://www.youtube.com/watch?v=abc",
     event: "navigation"
   }, now);
-  assert.equal(fromWatch.blocked, false);
-  assert.equal(fromWatch.paused, true);
-  assert.equal(fromWatch.reason, "intentional-use");
-  const pauseRedirect = new URL(stringValue(fromWatch.redirectUrl, "Shorts Level 1 pause redirect"));
-  assert.equal(pauseRedirect.pathname, "/pause");
-  assert.ok(pauseRedirect.searchParams.get("requestId"));
+  assert.equal(fromWatch.blocked, true);
+  assert.equal(fromWatch.paused, undefined);
+  assert.equal(fromWatch.reason, "content-filter");
+  assert.equal(stringValue(fromWatch.redirectUrl, "Shorts Level 1 redirect"), "https://www.youtube.com/watch?v=abc");
 
   const direct = evaluateExtensionCheck(state, usage, {
     url: "https://www.youtube.com/shorts/abc",
     previousUrl: "",
     event: "navigation"
   }, now);
-  assert.equal(direct.blocked, false);
-  assert.equal(direct.paused, true);
-  assert.equal(stringValue(direct.redirectUrl, "Shorts repeated Level 1 pause redirect"), pauseRedirect.toString());
+  assert.equal(direct.blocked, true);
+  assert.equal(direct.reason, "content-filter");
+  assert.equal(stringValue(direct.redirectUrl, "Shorts direct Level 1 redirect"), "https://www.youtube.com/");
 }
 
 {
@@ -516,7 +514,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const baselineUrls = safariFilterDenyUrls(state, now);
   assert.equal(baselineUrls.includes("https://pornhub.com/"), true);
   assert.equal(baselineUrls.includes("https://www.pornhub.com/"), true);
-  assert.equal(baselineUrls.includes("https://youtube.com/shorts"), false);
+  assert.equal(baselineUrls.includes("https://youtube.com/shorts"), true);
+  assert.equal(baselineUrls.includes("https://snapchat.com/spotlight"), true);
   const baselineProfileText = buildSafariFilterProfile(state, now);
   assert.match(baselineProfileText, /<key>restrictWeb<\/key>\s*<true\/>/);
   assert.match(baselineProfileText, /<key>useContentFilter<\/key>\s*<true\/>/);
@@ -563,16 +562,16 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const usage = {};
   const explicit = evaluateExtensionCheck(state, usage, { url: "https://www.pornhub.com/", event: "navigation" }, now);
   assert.equal(explicit.blocked, true);
-  assert.equal(recordValue(explicit.policy, "explicit policy").kind, "adult-blocklist");
+  assert.equal(recordValue(explicit.policy, "explicit policy").kind, "baseline");
   const normalReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/learnprogramming/comments/demo", event: "navigation" }, now);
   assert.equal(normalReddit.blocked, false);
   assert.equal(normalReddit.paused, false);
   const explicitReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/gonewild", event: "navigation" }, now);
-  assert.equal(explicitReddit.blocked, false);
-  assert.equal(explicitReddit.paused, false);
+  assert.equal(explicitReddit.blocked, true);
+  assert.equal(explicitReddit.reason, "url-pattern");
   const explicitComicSearch = evaluateExtensionCheck(state, usage, { url: "https://www.google.com/search?q=webtoon%2018", event: "navigation" }, now);
-  assert.equal(explicitComicSearch.blocked, false);
-  assert.equal(explicitComicSearch.paused, false);
+  assert.equal(explicitComicSearch.blocked, true);
+  assert.equal(explicitComicSearch.reason, "url-pattern");
   const bare18Search = evaluateExtensionCheck(state, usage, { url: "https://www.google.com/search?q=18", event: "navigation" }, now);
   assert.equal(bare18Search.blocked, false);
   const baselineYoutube = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
@@ -584,7 +583,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(profileById(state, "default").blockedSites.includes("reddit.com"), false);
   assert.equal(profileById(state, "default").blockedUrlPatterns.includes("reddit.com/r/popular"), true);
   assert.equal(profileById(state, "default").hostsUrlPatternBlocking, false);
-  assert.deepEqual(profileById(state, "normal").blockedUrlPatterns, []);
+  assert.equal(profileById(state, "normal").blockedUrlPatterns.includes("youtube.com/shorts"), true);
+  assert.equal(profileById(state, "normal").blockedUrlPatterns.includes("reddit.com/r/gonewild"), true);
   const defaultFocusSessionState = defaultState();
   const defaultFocusSession = {
     id: "default-focus",
@@ -624,7 +624,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     blockedSites: ["instagram.com", "reddit.com", "pornhub.com"],
     blockedUrlPatterns: ["instagram.com/explore", "instagram.com/reels", "reddit.com", "reddit.com/", "https://reddit.com/", "redd.it/"]
   });
-  assert.deepEqual(migratedSoftProfile.blockedApps, ["Discord"]);
+  assert.deepEqual(migratedSoftProfile.blockedApps, []);
   assert.deepEqual(migratedSoftProfile.blockedSites, ["pornhub.com"]);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("instagram.com/explore"), false);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("reddit.com"), false);
@@ -707,10 +707,22 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const state = defaultState();
   state.settings.strictBypassProtectionEnabled = true;
   const brick = profileById(state, BRICK_MODE_PROFILE_ID);
-  assert.equal(brick.name, "Mac Brick");
-  assert.equal(brick.mode, "allowlist");
+  assert.equal(brick.name, "Full Brick");
+  assert.equal(brick.mode, "blocklist");
   assert.equal(shouldBlockSite(brick, "docs.google.com"), false);
   assert.equal(shouldBlockSite(brick, "youtube.com"), true);
+  const migratedBrick = sanitizeFullBrickProfile({
+    ...brick,
+    name: "Mac Brick",
+    mode: "allowlist",
+    blockedApps: [],
+    blockedSites: [],
+    blockedUrlPatterns: []
+  });
+  assert.equal(migratedBrick.name, "Full Brick");
+  assert.equal(migratedBrick.mode, "blocklist");
+  assert.equal(migratedBrick.blockedApps.includes("Instagram"), true);
+  assert.equal(migratedBrick.blockedSites.includes("youtube.com"), true);
   state.activeSession = {
     id: "brick",
     title: "Brick Mode",
@@ -729,6 +741,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockAppForPolicy(state, policy, "Mail"), false);
   assert.equal(shouldBlockAppForPolicy(state, policy, "Discord"), true);
   assert.equal(shouldBlockAppForPolicy(state, policy, "Terminal"), false);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "ChatGPT"), false);
+  assert.equal(shouldBlockAppForPolicy(state, policy, "Vigil"), false);
   assert.equal(emergencyUnlockAllowedForPolicy(policy), false);
   assert.equal(matchStrictBrowserControlUrl(state, policy, "chrome://extensions/")?.area, "extensions");
   assert.equal(matchStrictBrowserControlUrl(state, policy, "edge://settings/privacy")?.area, "settings");
@@ -740,20 +754,14 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   state.settings.strictBypassProtectionEnabled = true;
   const snapshot = extensionRuleSnapshot(state, now);
   assert.equal(snapshot.fallbackRequired, false);
-  assert.equal(snapshot.allowlistRules.length, 1);
+  assert.equal(snapshot.allowlistRules.length, 0);
   assert.equal(snapshot.dynamicRuleCount, extensionDynamicRuleCount(snapshot));
   assert.equal(
     snapshot.dynamicRuleCount,
-    snapshot.rules.length + snapshot.contentRules.length + snapshot.allowlistRules.length + 1,
-    "allowlist mode installs one additional local-server allow rule"
+    snapshot.rules.length + snapshot.contentRules.length,
+    "Full Brick installs only targeted site and content rules"
   );
   assert.equal(typeof snapshot.dynamicRuleSignature, "string");
-  assert.equal(snapshot.dynamicRuleSignature.includes("allowlist"), true);
-  const allowlistRule = must(snapshot.allowlistRules[0], "allowlist rule");
-  assert.equal(allowlistRule.kind, "allowlist");
-  assert.equal((allowlistRule.excludedDomains || []).includes("docs.google.com"), true);
-  assert.equal((allowlistRule.excludedDomains || []).includes("youtube.com"), false);
-  assert.equal(new URL(allowlistRule.redirectUrl).searchParams.get("kind"), "allowlist");
 }
 
 {
@@ -1225,14 +1233,14 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     id: "content-filter",
     title: "Content filter session",
     mode: "focus",
-    profileId: "default",
+    profileId: SOFT_BLOCK_PROFILE_ID,
     lockLevel: "deep",
     startedAt: now.toISOString(),
     endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
     canEndEarly: false,
     source: "manual",
     profileSnapshot: {
-      ...state.profiles[0],
+      ...profileById(state, SOFT_BLOCK_PROFILE_ID),
       mode: "allowlist",
       blockedSites: [],
       allowedSites: ["youtube.com", "instagram.com", "reddit.com", "snapchat.com"]
@@ -1252,9 +1260,10 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(stringValue(shortsFromWatch.redirectUrl, "content filter previous-page redirect URL"), "https://www.youtube.com/watch?v=abc");
   const watch = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
   assert.equal(watch.blocked, false);
-  assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reels/xyz"), "Instagram reels filter").id, "instagram-reels");
-  assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reel/xyz"), "Instagram reel filter").id, "instagram-reels");
-  assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/explore/"), "Instagram Explore filter").id, "instagram-explore");
+  const softContentPolicy = mustPolicy(activePolicy(state, now));
+  assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reels/xyz", softContentPolicy), "Instagram reels filter").id, "instagram-reels");
+  assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reel/xyz", softContentPolicy), "Instagram reel filter").id, "instagram-reels");
+  assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/explore/", softContentPolicy), "Instagram Explore filter").id, "instagram-explore");
   const snapFriend = evaluateExtensionCheck(state, usage, { url: "https://web.snapchat.com/", event: "navigation" }, now);
   assert.equal(snapFriend.blocked, false);
   const snapSpotlight = evaluateExtensionCheck(state, usage, { url: "https://www.snapchat.com/spotlight/demo", event: "navigation" }, now);

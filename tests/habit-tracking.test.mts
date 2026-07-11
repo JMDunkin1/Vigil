@@ -23,8 +23,9 @@ assert.equal(migrated.behaviors.some((behavior) => behavior.id === "habit-rosary
 const normal = state.profiles.find((profile) => profile.id === NORMAL_PROFILE_ID);
 assert.ok(normal);
 assert.deepEqual(normal.blockedApps, []);
-assert.deepEqual(normal.blockedSites, []);
-assert.deepEqual(normal.blockedUrlPatterns, []);
+assert.ok(normal.blockedSites.includes("pornhub.com"));
+assert.ok(normal.blockedUrlPatterns.includes("youtube.com/shorts"));
+assert.ok(normal.blockedUrlPatterns.includes("snapchat.com/spotlight"));
 
 const success = recordIntentionalBehaviorCheckIn(state, {
   behaviorId: "habit-rosary",

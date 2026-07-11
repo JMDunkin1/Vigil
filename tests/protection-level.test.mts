@@ -106,12 +106,22 @@ assert.equal(await handleSessionApiRoute(request("/api/protection/level", { leve
 assert.equal(allowedLevelTwo.statusCodeValue, 200);
 assert.equal(state.activeSessions.computer?.profileId, SOFT_BLOCK_PROFILE_ID);
 assert.equal(state.activeSessions.phone?.profileId, SOFT_BLOCK_PROFILE_ID);
-assert.equal(state.activeSessions.computer?.canEndEarly, true);
-assert.equal(state.activeSessions.computer?.commitmentLock, false);
+assert.equal(state.activeSessions.computer?.canEndEarly, false);
+assert.equal(state.activeSessions.computer?.commitmentLock, true);
+assert.equal(state.activeSessions.computer?.emergencyUnlocksAllowed, false);
 assert.equal(state.activeSessions.computer?.source, "protection-level");
 assert.ok(new Date(state.activeSessions.computer?.endsAt || 0).getUTCFullYear() >= new Date().getUTCFullYear() + 99);
 assert.equal(queuedReasons.at(-1), "protection-level-2");
 assert.equal(enforcedSessions.at(-1), state.activeSessions.computer?.id);
+
+state.maintenance.windows = [];
+const stickyLevelOne = response();
+assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 1 }), stickyLevelOne, context), true);
+assert.equal(stickyLevelOne.statusCodeValue, 423, "Soft Lock must not be casually reversible");
+
+const releaseRequest = requestMaintenanceWindow(state, "I intentionally want to leave the current Soft Lock.", new Date()).pending;
+assert.ok(releaseRequest);
+confirmMaintenanceWindow(state, releaseRequest.id, { challengeText: releaseRequest.challenge?.text }, new Date());
 
 const allowedLevelOne = response();
 assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 1 }), allowedLevelOne, context), true);
@@ -119,6 +129,22 @@ assert.equal(allowedLevelOne.statusCodeValue, 200);
 assert.equal(state.activeSessions.computer, null);
 assert.equal(state.activeSessions.phone, null);
 assert.equal(queuedReasons.at(-1), "protection-level-1");
+
+const levelThree = response();
+assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 3 }), levelThree, context), true);
+assert.equal(levelThree.statusCodeValue, 200);
+const activeLevelThree = state.activeSessions.computer as Session | null;
+assert.ok(activeLevelThree);
+assert.equal(activeLevelThree.profileId, BRICK_MODE_PROFILE_ID);
+assert.equal(activeLevelThree.canEndEarly, true);
+assert.equal(activeLevelThree.commitmentLock, false);
+
+state.maintenance.windows = [];
+const reversibleLevelOne = response();
+assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 1 }), reversibleLevelOne, context), true);
+assert.equal(reversibleLevelOne.statusCodeValue, 200, "Full Brick must remain directly reversible");
+assert.equal(state.activeSessions.computer, null);
+assert.equal(state.activeSessions.phone, null);
 
 function request(url: string, body: object): IncomingMessage {
   const stream = Readable.from([JSON.stringify(body)]);

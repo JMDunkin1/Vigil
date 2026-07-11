@@ -72,12 +72,39 @@ export function createSaintStage() {
   const stageButton = required<HTMLButtonElement>("#saintStageButton");
   const artwork = required<HTMLImageElement>("#saintArtwork");
   const fallback = required<HTMLElement>("#saintFallback");
+  const infoPopover = required<HTMLElement>("#saintInfoPopover");
+  const infoClose = required<HTMLButtonElement>("#saintInfoClose");
+  const infoName = required<HTMLElement>("#saintInfoName");
+  const infoEpithet = required<HTMLElement>("#saintInfoEpithet");
+  const infoQuote = required<HTMLElement>("#saintInfoQuote");
+  const infoSource = required<HTMLElement>("#saintInfoSource");
   let selectedId = storedSaintId();
   let pointerFrame: number | null = null;
 
   function bind(): void {
     select(selectedId, false);
-    stageButton.addEventListener("click", () => select(nextSaintId(selectedId)));
+    stageButton.addEventListener("click", () => {
+      select(nextSaintId(selectedId));
+    });
+    stageButton.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      openInfo(event.clientX, event.clientY);
+    });
+    stageButton.addEventListener("keydown", (event) => {
+      if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+      event.preventDefault();
+      openInfo();
+    });
+    infoClose.addEventListener("click", () => closeInfo());
+    document.addEventListener("pointerdown", (event) => {
+      if (infoPopover.hidden) return;
+      const target = event.target;
+      if (target instanceof Node && (infoPopover.contains(target) || stageButton.contains(target))) return;
+      closeInfo();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !infoPopover.hidden) closeInfo(true);
+    });
     artwork.addEventListener("load", () => {
       stage.dataset.artMissing = "false";
     });
@@ -103,6 +130,7 @@ export function createSaintStage() {
 
   function select(id: SaintPatron["id"], persist = true): void {
     const saint = SAINT_PATRONS.find((item) => item.id === id) || SAINT_PATRONS[0];
+    closeInfo();
     selectedId = saint.id;
     stage.dataset.saint = saint.id;
     stage.dataset.artMissing = "false";
@@ -111,6 +139,39 @@ export function createSaintStage() {
     fallback.textContent = saint.fallback;
     stageButton.setAttribute("aria-label", `${saint.name}. Show the next patron saint.`);
     if (persist) storeSaintId(saint.id);
+  }
+
+  function openInfo(clientX?: number, clientY?: number): void {
+    const saint = SAINT_PATRONS.find((item) => item.id === selectedId) || SAINT_PATRONS[0];
+    infoName.textContent = saint.name;
+    infoEpithet.textContent = saint.epithet;
+    infoQuote.textContent = `\u201c${saint.quote}\u201d`;
+    infoSource.textContent = saint.source;
+    infoPopover.hidden = false;
+    stageButton.setAttribute("aria-expanded", "true");
+
+    const stageBounds = stage.getBoundingClientRect();
+    const anchorX = clientX === undefined ? stageBounds.width / 2 : clientX - stageBounds.left;
+    const anchorY = clientY === undefined ? stageBounds.height / 2 : clientY - stageBounds.top;
+    const inset = 12;
+    const left = Math.min(
+      Math.max(inset, anchorX + 14),
+      Math.max(inset, stage.clientWidth - infoPopover.offsetWidth - inset)
+    );
+    const preferredTop = anchorY + 14;
+    const top = preferredTop + infoPopover.offsetHeight <= stage.clientHeight - inset
+      ? preferredTop
+      : Math.max(inset, anchorY - infoPopover.offsetHeight - 14);
+    infoPopover.style.left = `${left}px`;
+    infoPopover.style.top = `${top}px`;
+    infoPopover.focus({ preventScroll: true });
+  }
+
+  function closeInfo(restoreFocus = false): void {
+    if (infoPopover.hidden) return;
+    infoPopover.hidden = true;
+    stageButton.setAttribute("aria-expanded", "false");
+    if (restoreFocus) stageButton.focus({ preventScroll: true });
   }
 
   function resetPointer(): void {

@@ -442,12 +442,14 @@ function renderFocusStudio(options: SyncOptions): void {
   const playButton = document.querySelector<HTMLButtonElement>("#focusSoundPlayButton");
   const playLabel = document.querySelector<HTMLElement>("#focusSoundPlayLabel");
   const volumeValue = document.querySelector<HTMLOutputElement>("#focusSoundVolumeValue");
+  const settingsSummary = document.querySelector<HTMLElement>("#focusSoundSettingsSummary");
 
   if (title) title.textContent = details.title;
   if (category) category.textContent = details.category;
   if (description) description.textContent = details.description;
   if (attribution) renderTrackAttribution(attribution, options.preset);
   if (volumeValue) volumeValue.value = String(options.volume);
+  if (settingsSummary) settingsSummary.textContent = sessionSettingsSummary(options);
   if (playLabel) playLabel.textContent = options.enabled ? "Pause" : "Listen";
   if (playButton) {
     playButton.setAttribute("aria-pressed", String(options.enabled));
@@ -466,6 +468,14 @@ function renderFocusStudio(options: SyncOptions): void {
     if (action) action.textContent = selected ? (options.enabled ? "Playing" : "Ready") : "Play";
   }
 
+  for (const group of document.querySelectorAll<HTMLDetailsElement>(".audio-library-group")) {
+    const selectedTrack = group.querySelector<HTMLButtonElement>(`[data-focus-preset="${options.preset}"]`);
+    group.dataset.selected = String(Boolean(selectedTrack));
+    const summary = group.querySelector<HTMLElement>("[data-audio-group-current]");
+    const selectedTitle = selectedTrack?.querySelector<HTMLElement>("strong")?.textContent;
+    if (summary) summary.textContent = selectedTitle || summary.dataset.defaultSummary || "Sounds";
+  }
+
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-focus-timer-mode]")) {
     const timerMode = button.dataset.focusTimerMode;
     const minutes = Number(button.dataset.focusTimerMinutes || options.timerMinutes);
@@ -476,6 +486,19 @@ function renderFocusStudio(options: SyncOptions): void {
     button.classList.toggle("is-active", selected);
     button.setAttribute("aria-pressed", String(selected));
   }
+}
+
+function sessionSettingsSummary(options: SyncOptions): string {
+  const activity = activitiesByMode[options.mode].find((option) => option.value === options.activity)?.label
+    || sentenceCase(options.activity.replaceAll("-", " "));
+  const purpose = options.mode === "meditate" ? "Pray" : sentenceCase(options.mode);
+  const intensity = { low: "Soft", medium: "Balanced", high: "Strong" }[options.intensity];
+  const timer = options.timerMode === "infinite"
+    ? "Never"
+    : options.timerMode === "interval"
+      ? `${options.timerMinutes} / ${options.breakMinutes}`
+      : `${options.timerMinutes} min`;
+  return `${purpose} · ${activity} · ${intensity} · ${timer}`;
 }
 
 function renderTrackAttribution(container: HTMLElement, preset: FocusPreset): void {
