@@ -7,6 +7,8 @@ import type { UnknownRecord } from "../src/types.js";
 
 const execFileAsync = promisify(execFile);
 
+export const SIMCTL_LIST_TIMEOUT_MS = 120_000;
+
 interface SimulatorDevice {
   name?: unknown;
   udid?: unknown;
@@ -30,7 +32,9 @@ export function selectIosSimulator(value: unknown): { name: string; udid: string
 
 async function main(): Promise<void> {
   const { stdout } = await execFileAsync("xcrun", ["simctl", "list", "devices", "available", "-j"], {
-    timeout: 15_000,
+    // A freshly provisioned GitHub macOS runner can spend well over 15 seconds
+    // starting CoreSimulator before this read-only command returns.
+    timeout: SIMCTL_LIST_TIMEOUT_MS,
     maxBuffer: 4 * 1024 * 1024
   });
   const selected = selectIosSimulator(JSON.parse(stdout));

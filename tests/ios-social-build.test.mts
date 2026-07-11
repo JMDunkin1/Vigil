@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildArguments } from "../scripts/build-ios-social-app.mjs";
-import { selectIosSimulator } from "../scripts/test-ios-social.mjs";
+import { SIMCTL_LIST_TIMEOUT_MS, selectIosSimulator } from "../scripts/test-ios-social.mjs";
 import { FOCUSED_SOCIAL_PLATFORMS } from "../src/socialFeatureFilters.js";
 import { socialIconPngBase64 } from "../src/socialIconAssets.js";
 
@@ -59,3 +59,4 @@ assert.deepEqual(selectIosSimulator({
   }
 }), { name: "iPhone 17 Pro", udid: "newer" });
 assert.equal(selectIosSimulator({ devices: {} }), null);
+assert.equal(SIMCTL_LIST_TIMEOUT_MS, 120_000);
