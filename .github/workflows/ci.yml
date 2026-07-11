@@ -35,8 +35,10 @@ jobs:
           PYIOSBACKUP_PYTHON: python
         run: npm run check
 
-      - name: Test iOS social app
-        run: npm run ios:social:test:runtime
+      - name: Build iOS social app
+        # Hosted runners can hang indefinitely while starting CoreSimulator.
+        # Compile the real Xcode project here; keep simulator execution local.
+        run: node dist/runtime/scripts/build-ios-social-app.mjs instagram --unsigned --destination "generic/platform=iOS" --derived-data /tmp/SentinelSocialCIDerivedData
 
       - name: Build macOS app
         run: npm run package:mac
