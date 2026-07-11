@@ -441,24 +441,16 @@ function renderFocusStudio(options: SyncOptions): void {
   const attribution = document.querySelector<HTMLElement>("#focusSoundAttribution");
   const playButton = document.querySelector<HTMLButtonElement>("#focusSoundPlayButton");
   const playLabel = document.querySelector<HTMLElement>("#focusSoundPlayLabel");
-  const volumeValue = document.querySelector<HTMLOutputElement>("#focusSoundVolumeValue");
-  const settingsSummary = document.querySelector<HTMLElement>("#focusSoundSettingsSummary");
 
   if (title) title.textContent = details.title;
   if (category) category.textContent = details.category;
   if (description) description.textContent = details.description;
   if (attribution) renderTrackAttribution(attribution, options.preset);
-  if (volumeValue) volumeValue.value = String(options.volume);
-  if (settingsSummary) settingsSummary.textContent = sessionSettingsSummary(options);
   if (playLabel) playLabel.textContent = options.enabled ? "Pause" : "Listen";
   if (playButton) {
     playButton.setAttribute("aria-pressed", String(options.enabled));
     playButton.setAttribute("aria-label", `${options.enabled ? "Pause" : "Play"} ${details.title}`);
   }
-
-  setPressedState("[data-focus-mode]", "focusMode", options.mode);
-  setPressedState("[data-focus-intensity]", "focusIntensity", options.intensity);
-  renderActivityButtons(options.mode, options.activity);
 
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-focus-preset]")) {
     const selected = button.dataset.focusPreset === options.preset;
@@ -488,19 +480,6 @@ function renderFocusStudio(options: SyncOptions): void {
   }
 }
 
-function sessionSettingsSummary(options: SyncOptions): string {
-  const activity = activitiesByMode[options.mode].find((option) => option.value === options.activity)?.label
-    || sentenceCase(options.activity.replaceAll("-", " "));
-  const purpose = options.mode === "meditate" ? "Pray" : sentenceCase(options.mode);
-  const intensity = { low: "Soft", medium: "Balanced", high: "Strong" }[options.intensity];
-  const timer = options.timerMode === "infinite"
-    ? "Never"
-    : options.timerMode === "interval"
-      ? `${options.timerMinutes} / ${options.breakMinutes}`
-      : `${options.timerMinutes} min`;
-  return `${purpose} · ${activity} · ${intensity} · ${timer}`;
-}
-
 function renderTrackAttribution(container: HTMLElement, preset: FocusPreset): void {
   const track = realAudioTrack(preset);
   container.replaceChildren();
@@ -520,36 +499,6 @@ function attributionLink(label: string, href: string): HTMLAnchorElement {
   anchor.target = "_blank";
   anchor.rel = "noreferrer noopener";
   return anchor;
-}
-
-function setPressedState(selector: string, datasetKey: string, selectedValue: string): void {
-  for (const button of document.querySelectorAll<HTMLButtonElement>(selector)) {
-    const selected = button.dataset[datasetKey] === selectedValue;
-    button.classList.toggle("is-active", selected);
-    button.setAttribute("aria-pressed", String(selected));
-  }
-}
-
-function renderActivityButtons(mode: FocusMode, selected: FocusActivity): void {
-  const container = document.querySelector<HTMLElement>("#focusSoundActivityButtons");
-  if (!container) return;
-  const options = activitiesByMode[mode];
-  const current = Array.from(container.querySelectorAll<HTMLButtonElement>("[data-focus-activity]"))
-    .map((button) => button.dataset.focusActivity)
-    .join(":");
-  const desired = options.map((option) => option.value).join(":");
-
-  if (current !== desired) {
-    container.replaceChildren(...options.map((option) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.dataset.focusActivity = option.value;
-      button.textContent = option.label;
-      return button;
-    }));
-  }
-
-  setPressedState("#focusSoundActivityButtons [data-focus-activity]", "focusActivity", selected);
 }
 
 function presetUiDetails(preset: FocusPreset): { title: string; category: string; description: string } {

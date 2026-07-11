@@ -304,7 +304,8 @@ function publicPolicy(policy: ActivePolicy | null) {
     plannerBlock: policy.plannerBlock || null,
     contributors: policy.contributors || [],
     endsAt: policy.endsAt,
-    phase: policy.phase || null
+    phase: policy.phase || null,
+    alarm: policy.alarm || null
   } : null;
 }
 

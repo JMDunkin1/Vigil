@@ -82,7 +82,7 @@ assert.match(mainSource, /ipcMain\.handle\("vigil:app-update-status", handleAppU
 assert.match(mainSource, /ipcMain\.handle\("vigil:app-update-start", handleAppUpdateStart\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-get", handleIconThemeGet\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-set", handleIconThemeSet\)/u);
-assert.match(mainSource, /ICON_THEMES = \["jerusalem-cross", "sacred-heart"\]/u);
+assert.match(mainSource, /ICON_THEMES = \["jerusalem-cross", "sacred-heart", "saint-michael"\]/u);
 assert.match(mainSource, /!event\.senderFrame \|\| !isTrustedAppUrl\(event\.senderFrame\.url\)/u);
 assert.doesNotMatch(mainSource, /\/api\/app-update\/(?:status|start)/u);
 assert.match(updaterSource, /launchAgentRepoRoot\(app\)/u);

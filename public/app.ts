@@ -192,7 +192,9 @@ function selectIconTheme(theme: string): void {
 }
 
 function iconThemeLabel(theme: string): string {
-  return theme === "sacred-heart" ? "Sacred Heart" : "Jerusalem Cross";
+  if (theme === "sacred-heart") return "Sacred Heart";
+  if (theme === "saint-michael") return "Saint Michael";
+  return "Jerusalem Cross";
 }
 
 async function pollState(): Promise<void> {
@@ -485,6 +487,7 @@ function renderHeader(appState: DashboardState, activeBlocks: UnknownRecord[] = 
   const active = appState.activePolicy;
   const session = appState.activeSession;
   const phase = active?.phase || appState.sessionPhase;
+  $("#homeRuntimeStatus").classList.toggle("hidden", active?.kind === "integrity");
   let orbState = "idle";
   if (active?.kind === "integrity") {
     $("#sessionTitle").textContent = active.session.title;
@@ -910,10 +913,13 @@ function renderIntentionalRuleList(rules: DashboardItem[]): void {
 
 function renderEmergency(appState: DashboardState): void {
   const panel = $("#emergencyPanel");
+  const controls = $("#emergencyControls");
+  const explanation = $("#emergencyExplanation");
   const active = emergencyPolicy(appState);
   const activeLimitBlocks = (state.data?.limits.activeBlocks || []).filter((block) => new Date(block.until) > new Date());
   if ((!active || active.session.canEndEarly) && !activeLimitBlocks.length) {
     panel.classList.add("hidden");
+    panel.removeAttribute("open");
     state.pendingEmergencyId = null;
     renderTypingChallenge($("#emergencyChallenge"), $("#emergencyChallengeInput"), null);
     return;
@@ -921,16 +927,30 @@ function renderEmergency(appState: DashboardState): void {
 
   panel.classList.remove("hidden");
   if (active && !emergencyUnlockAllowedForPolicy(active)) {
-    $("#emergencyCopy").textContent = active.kind === "integrity"
-      ? "Integrity lockdown uses protected maintenance instead of emergency unlocks."
+    const integrity = active.kind === "integrity";
+    const copy = $("#emergencyCopy");
+    panel.classList.add("is-not-unlockable");
+    controls.classList.add("hidden");
+    explanation.classList.remove("hidden");
+    $("#emergencyTitle").textContent = integrity ? "Integrity lockdown" : "Lock cannot end early";
+    copy.classList.toggle("hidden", integrity);
+    copy.textContent = integrity ? "" : "Emergency unlock unavailable";
+    explanation.textContent = integrity
+      ? "This protected state can only be reviewed and cleared through protected maintenance."
       : active.kind === "panic"
         ? "Panic lockout cannot be ended early."
-      : "Commitment lock: emergency unlocks are disabled. Use protected maintenance if this was a mistake.";
+        : "This commitment lock has emergency unlocks disabled. Use protected maintenance if it was started by mistake.";
     $("#requestEmergency").disabled = true;
     $("#confirmEmergency").disabled = true;
     renderTypingChallenge($("#emergencyChallenge"), $("#emergencyChallengeInput"), null);
     return;
   }
+  panel.classList.remove("is-not-unlockable");
+  controls.classList.remove("hidden");
+  explanation.classList.add("hidden");
+  explanation.textContent = "";
+  $("#emergencyCopy").classList.remove("hidden");
+  $("#emergencyTitle").textContent = "Emergency unlock";
   $("#requestEmergency").disabled = false;
   const pending = appState.emergency.pending.find((item) => item.status === "pending");
   if (pending) state.pendingEmergencyId = pending.id;
@@ -983,6 +1003,11 @@ function renderCountdowns(): void {
   const phase = active?.phase || appState?.sessionPhase;
   const activeLimitBlocks = (state.data?.limits.activeBlocks || []).filter((block) => new Date(block.until) > new Date());
   if (state.data?.protection) hardeningPanel.renderMaintenance(state.data.protection);
+  if (active?.kind === "integrity") {
+    $("#sessionCountdown").textContent = "Until cleared";
+    if (appState) renderEmergency(appState);
+    return;
+  }
   if (active?.session?.source === "protection-level") {
     $("#sessionCountdown").textContent = "Until changed";
     if (appState) renderEmergency(appState);

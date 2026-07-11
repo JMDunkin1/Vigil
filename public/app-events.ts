@@ -128,23 +128,6 @@ export function bindAppEvents(context: AppEventsContext) {
     });
   }
 
-  $("#focusSoundVolume").addEventListener("input", () => {
-    const value = Number($("#focusSoundVolume").value || 0);
-    focusSound.setVolume(value);
-    const output = document.querySelector<HTMLOutputElement>("#focusSoundVolumeValue");
-    if (output) output.value = String(value);
-  });
-
-  $("#focusSoundVolume").addEventListener("change", async () => {
-    try {
-      await focusSound.saveSettings();
-      toast("Focus sound saved");
-    } catch (error) {
-      toast(errorMessage(error));
-    }
-    await refresh();
-  });
-
   $("#focusSoundPlayButton").addEventListener("click", async () => {
     const enabled = !$("#focusSoundEnabled").checked;
     $("#focusSoundEnabled").checked = enabled;
@@ -158,37 +141,6 @@ export function bindAppEvents(context: AppEventsContext) {
     $("#focusSoundEnabled").checked = true;
     await persistFocusSound(`Playing ${button.querySelector("strong")?.textContent || "sound"}`, true);
   });
-
-  for (const button of $$<HTMLButtonElement>("[data-focus-mode]")) {
-    button.addEventListener("click", async () => {
-      $("#focusSoundMode").value = button.dataset.focusMode || "focus";
-      $("#focusSoundActivity").value = button.dataset.focusActivityDefault || "deep-work";
-      await persistFocusSound("Purpose changed");
-    });
-  }
-
-  $("#focusSoundActivityButtons").addEventListener("click", async (event: Event) => {
-    const button = (event.target as Element | null)?.closest<HTMLButtonElement>("[data-focus-activity]");
-    if (!button?.dataset.focusActivity) return;
-    $("#focusSoundActivity").value = button.dataset.focusActivity;
-    await persistFocusSound("Activity changed");
-  });
-
-  for (const button of $$<HTMLButtonElement>("[data-focus-intensity]")) {
-    button.addEventListener("click", async () => {
-      $("#focusSoundIntensity").value = button.dataset.focusIntensity || "medium";
-      await persistFocusSound("Intensity changed");
-    });
-  }
-
-  for (const button of $$<HTMLButtonElement>("[data-focus-timer-mode]")) {
-    button.addEventListener("click", async () => {
-      $("#focusSoundTimerMode").value = button.dataset.focusTimerMode || "infinite";
-      if (button.dataset.focusTimerMinutes) $("#focusSoundTimerMinutes").value = button.dataset.focusTimerMinutes;
-      if (button.dataset.focusBreakMinutes) $("#focusSoundBreakMinutes").value = button.dataset.focusBreakMinutes;
-      await persistFocusSound("Timer changed");
-    });
-  }
 
   async function persistFocusSound(message: string, prime = false): Promise<void> {
     try {

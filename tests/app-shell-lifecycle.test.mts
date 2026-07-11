@@ -10,10 +10,10 @@ assert.notEqual(beforeQuitStart, -1, "the app must retain a before-quit cleanup 
 assert.notEqual(beforeQuitEnd, -1, "the before-quit cleanup hook must be complete");
 const beforeQuitSource = mainSource.slice(beforeQuitStart, beforeQuitEnd + 4);
 
-assert.doesNotMatch(
+assert.match(
   mainSource,
-  /app\.on\("activate"/,
-  "incidental macOS activation must never create or reveal a Vigil window"
+  /app\.on\("activate", \(\) => \{\s*if \(!currentAppUrl\) return;\s*showVigilWindow\(currentAppUrl\);\s*\}\);/,
+  "activating the resident macOS app from Spotlight must create or reveal its window"
 );
 assert.match(
   mainSource,

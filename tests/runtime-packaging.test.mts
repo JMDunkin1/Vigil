@@ -110,8 +110,8 @@ const macBuild = recordValue(build.mac, "mac build");
 const macInfo = recordValue(macBuild.extendInfo, "mac build info");
 const buildDirectories = recordValue(build.directories, "package build directories");
 assert.equal(buildDirectories.output, "dist/mac.noindex");
-assert.match(String(scripts["package:mac"]), /identity=-/);
-assert.match(String(scripts["package:mac:dmg"]), /identity=-/);
+assert.match(String(scripts["package:mac"]), /package-mac\.mjs dir/);
+assert.match(String(scripts["package:mac:dmg"]), /package-mac\.mjs dmg/);
 for (const command of ["package:mac", "package:mac:dmg", "build:mac:signed", "dist:mac:signed"]) {
   assert.match(String(scripts[command]), /prepare-mac-output\.mjs/, `${command} must package outside the synced workspace`);
   assert.match(String(scripts[command]), /hide-mac-build\.mjs/, `${command} must unregister its development app bundle`);

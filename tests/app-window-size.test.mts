@@ -7,21 +7,17 @@ const mainSource = await readFile(join(root, "app", "main.ts"), "utf8");
 
 assert.match(
   mainSource,
-  /const DEFAULT_WINDOW_SIZE = 680;\s*const MIN_WINDOW_SIZE = 680;\s*const WINDOW_ASPECT_RATIO = 1;/,
-  "the desktop window should define a square default and matching minimum size"
+  /const DEFAULT_WINDOW_WIDTH = 980;\s*const DEFAULT_WINDOW_HEIGHT = 680;\s*const MIN_WINDOW_WIDTH = 680;\s*const MIN_WINDOW_HEIGHT = 520;/,
+  "the desktop window should define a landscape default and a compact independent minimum size"
 );
 
 assert.match(
   mainSource,
-  /width: DEFAULT_WINDOW_SIZE,\s*height: DEFAULT_WINDOW_SIZE,\s*minWidth: MIN_WINDOW_SIZE,\s*minHeight: MIN_WINDOW_SIZE,\s*center: true,/,
-  "the desktop window should open centered at the compact square size"
+  /width: DEFAULT_WINDOW_WIDTH,\s*height: DEFAULT_WINDOW_HEIGHT,\s*minWidth: MIN_WINDOW_WIDTH,\s*minHeight: MIN_WINDOW_HEIGHT,\s*center: true,/,
+  "the desktop window should open centered with a landscape shape"
 );
 
-assert.match(
-  mainSource,
-  /mainWindow\.setAspectRatio\(WINDOW_ASPECT_RATIO\);/,
-  "manual resizing should preserve the square desktop window shape"
-);
+assert.doesNotMatch(mainSource, /setAspectRatio\(/, "manual resizing must allow width and height to change independently");
 
 async function sourceRoot(): Promise<string> {
   for (const candidate of [process.cwd(), resolve(process.cwd(), "..", "..")]) {

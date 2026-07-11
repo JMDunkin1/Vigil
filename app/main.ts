@@ -20,10 +20,11 @@ const TRAY_STATUS_CHECK_TIMEOUT_MS = 2000;
 const TRAY_ACTION_TIMEOUT_MS = 5000;
 const TRAY_STATUS_POLL_INTERVAL_MS = 30_000;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
-const DEFAULT_WINDOW_SIZE = 680;
-const MIN_WINDOW_SIZE = 680;
-const WINDOW_ASPECT_RATIO = 1;
-const ICON_THEMES = ["jerusalem-cross", "sacred-heart"] as const;
+const DEFAULT_WINDOW_WIDTH = 980;
+const DEFAULT_WINDOW_HEIGHT = 680;
+const MIN_WINDOW_WIDTH = 680;
+const MIN_WINDOW_HEIGHT = 520;
+const ICON_THEMES = ["jerusalem-cross", "sacred-heart", "saint-michael"] as const;
 type IconTheme = typeof ICON_THEMES[number];
 const DEFAULT_ICON_THEME: IconTheme = "jerusalem-cross";
 
@@ -94,6 +95,11 @@ app.on("second-instance", (_event, commandLine) => {
   mainWindow.focus();
 });
 
+app.on("activate", () => {
+  if (!currentAppUrl) return;
+  showVigilWindow(currentAppUrl);
+});
+
 void app.whenReady().then(async () => {
   selectedIconTheme = loadIconThemePreference();
   configureMenuBarResidency();
@@ -148,10 +154,10 @@ function hideVigilWindow(): void {
 
 function createWindow(appUrl: string): void {
   mainWindow = new BrowserWindow({
-    width: DEFAULT_WINDOW_SIZE,
-    height: DEFAULT_WINDOW_SIZE,
-    minWidth: MIN_WINDOW_SIZE,
-    minHeight: MIN_WINDOW_SIZE,
+    width: DEFAULT_WINDOW_WIDTH,
+    height: DEFAULT_WINDOW_HEIGHT,
+    minWidth: MIN_WINDOW_WIDTH,
+    minHeight: MIN_WINDOW_HEIGHT,
     center: true,
     title: "Vigil",
     icon: iconAssetPath(`${selectedIconTheme}.png`),
@@ -169,7 +175,6 @@ function createWindow(appUrl: string): void {
     }
   });
 
-  mainWindow.setAspectRatio(WINDOW_ASPECT_RATIO);
   mainWindow.setAlwaysOnTop(false);
   mainWindow.setVisibleOnAllWorkspaces(false);
 

@@ -94,27 +94,35 @@
           </div>
         </div>
 
-        <div class="home-runtime-status" aria-live="polite">
+        <div id="homeRuntimeStatus" class="home-runtime-status" aria-live="polite">
           <span id="sessionTitle">Ready</span>
           <span id="sessionCountdown">--</span>
         </div>
 
-        <div id="emergencyPanel" class="emergency hidden">
-          <div>
-            <p class="eyebrow">Emergency</p>
-            <p id="emergencyCopy">No pending unlock.</p>
+        <details id="emergencyPanel" class="emergency emergency-drawer hidden">
+          <summary class="emergency-summary">
+            <span class="emergency-summary-copy">
+              <strong id="emergencyTitle">Emergency unlock</strong>
+              <span id="emergencyCopy">No pending unlock.</span>
+            </span>
+            <svg class="emergency-chevron" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="m5.5 7.5 4.5 4.5 4.5-4.5"/></svg>
+          </summary>
+          <div class="emergency-drawer-body">
+            <p id="emergencyExplanation" class="emergency-explanation hidden"></p>
+            <div id="emergencyControls" class="emergency-controls">
+              <input id="emergencyReason" type="text" placeholder="Reason (20+ characters)">
+              <input id="emergencyPasscode" type="password" placeholder="Keyholder passcode">
+              <div class="distance-input">
+                <input id="emergencyDistanceKey" type="password" placeholder="Distance key">
+                <button class="secondary compact" type="button" data-scan-distance-key="#emergencyDistanceKey">Scan</button>
+              </div>
+              <code id="emergencyChallenge" class="typing-challenge hidden"></code>
+              <input id="emergencyChallengeInput" class="hidden" type="text" placeholder="Typing challenge">
+              <button id="requestEmergency" class="danger" type="button">Request</button>
+              <button id="confirmEmergency" class="danger ghost" type="button" disabled>Confirm</button>
+            </div>
           </div>
-          <input id="emergencyReason" type="text" placeholder="Reason">
-          <input id="emergencyPasscode" type="password" placeholder="Keyholder passcode">
-          <div class="distance-input">
-            <input id="emergencyDistanceKey" type="password" placeholder="Distance key">
-            <button class="secondary compact" type="button" data-scan-distance-key="#emergencyDistanceKey">Scan</button>
-          </div>
-          <code id="emergencyChallenge" class="typing-challenge hidden"></code>
-          <input id="emergencyChallengeInput" class="hidden" type="text" placeholder="Typing challenge">
-          <button id="requestEmergency" class="danger" type="button">Request</button>
-          <button id="confirmEmergency" class="danger ghost" type="button" disabled>Confirm</button>
-        </div>
+        </details>
       </div>
 
     </section>
@@ -241,54 +249,6 @@
             <span class="audio-play-symbol" aria-hidden="true"></span>
             <strong id="focusSoundPlayLabel">Listen</strong>
           </button>
-
-          <label class="audio-volume-line" for="focusSoundVolume">
-            <span>Volume</span>
-            <input id="focusSoundVolume" type="range" min="0" max="100" step="1">
-            <output id="focusSoundVolumeValue" for="focusSoundVolume">35</output>
-          </label>
-
-          <details class="audio-settings-disclosure">
-            <summary>
-              <span>
-                <strong>Session settings</strong>
-                <small id="focusSoundSettingsSummary">Focus · Deep work · Balanced · Never</small>
-              </span>
-              <span class="audio-disclosure-chevron" aria-hidden="true"></span>
-            </summary>
-            <div class="audio-session-controls" aria-label="Listening settings">
-              <fieldset>
-                <legend>Purpose</legend>
-                <div class="audio-option-row" role="group" aria-label="Purpose">
-                  <button type="button" data-focus-mode="focus" data-focus-activity-default="deep-work">Focus</button>
-                  <button type="button" data-focus-mode="relax" data-focus-activity-default="recharge">Relax</button>
-                  <button type="button" data-focus-mode="sleep" data-focus-activity-default="wind-down">Sleep</button>
-                  <button type="button" data-focus-mode="meditate" data-focus-activity-default="guided">Pray</button>
-                </div>
-              </fieldset>
-              <fieldset>
-                <legend>Activity</legend>
-                <div id="focusSoundActivityButtons" class="audio-option-row" role="group" aria-label="Activity"></div>
-              </fieldset>
-              <fieldset>
-                <legend>Intensity</legend>
-                <div class="audio-option-row" role="group" aria-label="Intensity">
-                  <button type="button" data-focus-intensity="low">Soft</button>
-                  <button type="button" data-focus-intensity="medium">Balanced</button>
-                  <button type="button" data-focus-intensity="high">Strong</button>
-                </div>
-              </fieldset>
-              <fieldset>
-                <legend>Stop after</legend>
-                <div class="audio-option-row audio-timer-options" role="group" aria-label="Stop after">
-                  <button type="button" data-focus-timer-mode="infinite">Never</button>
-                  <button type="button" data-focus-timer-mode="timer" data-focus-timer-minutes="25">25 min</button>
-                  <button type="button" data-focus-timer-mode="timer" data-focus-timer-minutes="50">50 min</button>
-                  <button type="button" data-focus-timer-mode="interval" data-focus-timer-minutes="50" data-focus-break-minutes="5">50 / 5</button>
-                </div>
-              </fieldset>
-            </div>
-          </details>
         </section>
 
         <section id="audioSoundLibrary" class="audio-library" aria-labelledby="audioLibraryTitle">
@@ -383,6 +343,7 @@
         <select id="focusSoundTimerMode"><option value="infinite">Infinite</option><option value="timer">Timer</option><option value="interval">Interval</option></select>
         <input id="focusSoundTimerMinutes" type="number" min="1" max="480" step="1">
         <input id="focusSoundBreakMinutes" type="number" min="1" max="120" step="1">
+        <input id="focusSoundVolume" type="number" value="35">
       </div>
     </section>
 
@@ -965,6 +926,11 @@
               <input type="radio" name="appIconTheme" value="sacred-heart">
               <span class="icon-theme-preview"><img src="/app-icons/sacred-heart.png" alt=""></span>
               <span><strong>Sacred Heart</strong><small>Heart, thorns, flame, and cross</small></span>
+            </label>
+            <label class="icon-theme-option">
+              <input type="radio" name="appIconTheme" value="saint-michael">
+              <span class="icon-theme-preview"><img src="/app-icons/saint-michael.png" alt=""></span>
+              <span><strong>Saint Michael</strong><small>Archangel, spear, radiant eye, and dragon</small></span>
             </label>
           </fieldset>
           <p class="field-note">The menu-bar icon changes immediately. macOS keeps the installed app bundle's Jerusalem Cross icon in Finder and Spotlight until the app is rebuilt.</p>
