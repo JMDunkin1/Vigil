@@ -11,7 +11,7 @@ import { emergencyDelaySeconds, interventionSummary, recentBlockAttempts } from 
 import { updateKeyholderSettings } from "../src/keyholder.js";
 import { activeLimitPolicy } from "../src/limits.js";
 import { parseProcessList } from "../src/macos.js";
-import { appQuitEscalationDecision, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "../src/monitor.js";
+import { appQuitEscalationDecision, shouldQuitAppForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "../src/monitor.js";
 import { activePolicy, profileById, shouldBlockAppForPolicy, shouldBlockSite } from "../src/policy.js";
 import { protectedEditBlockers } from "../src/protection.js";
 import { applySealVerificationToState, markStateSealed, stateSealSummary } from "../src/seal.js";
@@ -616,9 +616,19 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   assert.equal(shouldBlockAppForPolicy(state, policy, "Safari"), true);
   assert.equal(shouldBlockAppForPolicy(state, policy, "Terminal"), true);
   assert.equal(shouldBlockSite(policy.profile, "apple.com"), true);
+  assert.equal(shouldQuitAppForPolicy(state, policy, "ChatGPT"), false);
+  assert.equal(shouldQuitAppForPolicy(state, policy, "Codex (Renderer)"), false);
+  assert.equal(shouldQuitAppForPolicy(state, policy, "LM Studio Helper (GPU)"), false);
+  assert.equal(shouldQuitAppForPolicy(state, policy, "SystemUIServer"), false);
+  assert.equal(shouldQuitAppForPolicy(state, policy, "Siri AI"), false);
+  assert.equal(shouldQuitAppForPolicy(state, policy, "WiFiAgent"), false);
+  assert.equal(shouldQuitAppForPolicy(state, policy, "IMTransferAgent"), false);
+  assert.equal(shouldQuitAppForPolicy(state, policy, "XProtect"), false);
+  assert.equal(shouldQuitAppForPolicy(state, policy, "Instagram"), true);
+  assert.equal(shouldQuitAppForPolicy(state, policy, "Discord Helper"), true);
   assert.deepEqual(
-    sweepBlockedApps(state, {}, ["System Settings", "Sentinel", "Safari", "Terminal"], now).map((item) => item.app),
-    ["Safari", "Terminal"]
+    sweepBlockedApps(state, {}, ["ChatGPT", "Codex (Renderer)", "LM Studio", "Dock", "ControlCenter", "NotificationCenter", "SystemUIServer", "Siri", "Siri AI", "WiFiAgent", "WindowManager", "UniversalControl", "AirPlayUIAgent", "IMTransferAgent", "identityservicesd", "XProtect", "Instagram", "Discord", "YouTube"], now).map((item) => item.app),
+    ["Instagram", "Discord", "YouTube"]
   );
 
   const repeated = syncAppleContentFilterLockdown(state, {
