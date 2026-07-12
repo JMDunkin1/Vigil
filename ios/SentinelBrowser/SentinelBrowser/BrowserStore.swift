@@ -22,6 +22,7 @@ final class BrowserStore: NSObject, ObservableObject {
     private var observations: [NSKeyValueObservation] = []
     private var contentSafetyBridge: BrowserScriptMessageBridge?
     private var textInspections: [String: BrowserTextInspection] = [:]
+    private static let contentSafetyWorld = WKContentWorld.world(name: "SentinelContentSafety")
 
     override convenience init() { self.init(rulesProvider: AppGroupFilterRulesProvider()) }
 
@@ -45,12 +46,17 @@ final class BrowserStore: NSObject, ObservableObject {
         configuration.allowsPictureInPictureMediaPlayback = false
         configuration.preferences.isFraudulentWebsiteWarningEnabled = true
         let bridge = BrowserScriptMessageBridge()
-        configuration.userContentController.add(bridge, name: "sentinelContentSafety")
+        configuration.userContentController.addScriptMessageHandler(
+            bridge,
+            contentWorld: Self.contentSafetyWorld,
+            name: "sentinelContentSafety"
+        )
         let safetySource = ContentSafetyScript.load() ?? ContentSafetyScript.failClosedBootstrap
         configuration.userContentController.addUserScript(WKUserScript(
             source: safetySource,
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
+            forMainFrameOnly: false,
+            in: Self.contentSafetyWorld
         ))
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
@@ -149,17 +155,18 @@ final class BrowserStore: NSObject, ObservableObject {
     }
 
     private func handleContentSafety(_ message: WKScriptMessage) {
-        guard message.frameInfo.isMainFrame,
+        guard message.webView === webView,
               let body = message.body as? [String: Any],
+              let frameID = body["frameID"] as? String, !frameID.isEmpty,
               let type = body["type"] as? String else { return }
         switch type {
-        case "classifyMedia": classifyMedia(body)
-        case "classifyText": classifyText(body)
+        case "classifyMedia": classifyMedia(body, in: message.frameInfo)
+        case "classifyText": classifyText(body, frameID: frameID, in: message.frameInfo)
         default: break
         }
     }
 
-    private func classifyMedia(_ body: [String: Any]) {
+    private func classifyMedia(_ body: [String: Any], in frame: WKFrameInfo) {
         guard let id = body["id"] as? String, !id.isEmpty,
               let token = body["token"] as? String, !token.isEmpty else { return }
         let inlineData = ContentSafetyPayload.inlineMedia(from: body)
@@ -173,39 +180,49 @@ final class BrowserStore: NSObject, ObservableObject {
             let verdict: ContentSafetyVerdict
             if let data { verdict = await self.mediaClassifier.classify(imageData: data) }
             else { verdict = .unknown }
-            let encodedID = self.javascriptString(id)
-            let encodedToken = self.javascriptString(token)
-            self.webView.evaluateJavaScript("window.__sentinelResolveMedia?.(\(encodedID), \(encodedToken), '\(verdict.rawValue)');")
+            self.resolveContentSafety(
+                "globalThis.__sentinelResolveMedia?.(id, token, verdict)",
+                arguments: ["id": id, "token": token, "verdict": verdict.rawValue],
+                in: frame
+            )
         }
     }
 
-    private func classifyText(_ body: [String: Any]) {
+    private func classifyText(_ body: [String: Any], frameID: String, in frame: WKFrameInfo) {
         guard let revision = body["revision"] as? String,
               let index = body["index"] as? Int,
               let total = body["total"] as? Int,
               let text = body["text"] as? String,
               total > 0, total <= 32, index >= 0, index < total else { return }
         let wasTruncated = body["wasTruncated"] as? Bool ?? true
-        var inspection = textInspections[revision]
+        let inspectionKey = "\(frameID):\(revision)"
+        var inspection = textInspections[inspectionKey]
             ?? BrowserTextInspection(chunks: [:], total: total, wasTruncated: wasTruncated)
         guard inspection.total == total else { return }
         inspection.chunks[index] = text
-        textInspections = [revision: inspection]
+        textInspections[inspectionKey] = inspection
         guard inspection.chunks.count == total else { return }
+        textInspections.removeValue(forKey: inspectionKey)
         let pageText = (0..<total).compactMap { inspection.chunks[$0] }.joined()
         Task { [weak self] in
             guard let self else { return }
             let verdict = await self.textClassifier.classify(pageText: pageText, wasTruncated: inspection.wasTruncated)
-            let encodedRevision = self.javascriptString(revision)
-            self.webView.evaluateJavaScript("window.__sentinelResolvePageText?.(\(encodedRevision), '\(verdict.rawValue)');")
+            self.resolveContentSafety(
+                "globalThis.__sentinelResolvePageText?.(revision, verdict)",
+                arguments: ["revision": revision, "verdict": verdict.rawValue],
+                in: frame
+            )
             if verdict == .sensitive { self.status = "Sensitive page content was hidden" }
         }
     }
 
-    private func javascriptString(_ value: String) -> String {
-        guard let data = try? JSONSerialization.data(withJSONObject: [value]),
-              let array = String(data: data, encoding: .utf8) else { return "\"\"" }
-        return String(array.dropFirst().dropLast())
+    private func resolveContentSafety(_ script: String, arguments: [String: Any], in frame: WKFrameInfo) {
+        webView.callAsyncJavaScript(
+            script,
+            arguments: arguments,
+            in: frame,
+            contentWorld: Self.contentSafetyWorld
+        ) { _ in }
     }
 }
 

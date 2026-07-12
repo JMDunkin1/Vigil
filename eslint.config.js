@@ -34,5 +34,11 @@ export default [
       ...js.configs.recommended.rules,
       "no-empty": ["error", { allowEmptyCatch: true }]
     }
+  },
+  {
+    files: ["ios/SentinelBrowser/SentinelSafariExtension/Resources/*.js"],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.webextensions }
+    }
   }
 ];
