@@ -538,7 +538,7 @@ function presetUiDetails(preset: FocusPreset): { title: string; category: string
     description: {
       "brown-noise": "A low, steady texture for sustained concentration.",
       "pink-noise": "A warm, balanced texture that softens the room.",
-      "white-noise": "A bright, even mask for voices and sudden sounds.",
+      "white-noise": "A softened, even mask for voices and sudden sounds.",
       "binaural-beat": "A focused stereo pulse. Headphones work best.",
       "isochronic-tone": "A steady rhythmic pulse for alert, directed work."
     }[preset as GeneratedPreset]
@@ -570,7 +570,7 @@ function soundProfile(options: SyncOptions, phase: "work" | "break") {
 const presetProfiles: Record<GeneratedPreset, PresetProfile> = {
   "brown-noise": { kind: "noise", noise: "brown", filter: "lowpass", frequency: 560, q: 0.7 },
   "pink-noise": { kind: "noise", noise: "pink", filter: "lowpass", frequency: 980, q: 0.5 },
-  "white-noise": { kind: "noise", noise: "white", filter: "highpass", frequency: 250, q: 0.4 },
+  "white-noise": { kind: "noise", noise: "white", filter: "lowpass", frequency: 5200, q: 0.22 },
   "binaural-beat": { kind: "binaural", frequency: 220, q: 0.5, carrierFrequency: 220 },
   "isochronic-tone": { kind: "isochronic", frequency: 196, q: 0.5, carrierFrequency: 196 }
 };
@@ -776,7 +776,7 @@ function createNoiseSource(context: AudioContext, color: "brown" | "pink" | "whi
       data[index] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.08;
       b6 = white * 0.115926;
     } else {
-      data[index] = white * 0.45;
+      data[index] = white * 0.28;
     }
   }
   const source = context.createBufferSource();

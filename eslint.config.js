@@ -34,5 +34,11 @@ export default [
       ...js.configs.recommended.rules,
       "no-empty": ["error", { allowEmptyCatch: true }]
     }
+  },
+  {
+    files: ["ios/VigilBrowser/VigilSafariExtension/Resources/*.js"],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.webextensions }
+    }
   }
 ];

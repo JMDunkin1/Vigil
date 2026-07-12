@@ -120,7 +120,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
       status.appBuiltAt ? `built ${formatDate(status.appBuiltAt)}` : ""
     ].filter(Boolean).join(" | ") || "--";
     const installable = canInstall(status);
-    button.textContent = installable ? "Install Update" : "Check for Updates";
+    button.textContent = installable ? (dirty ? "Run Local Changes" : "Install Update") : "Check for Updates";
     button.disabled = !supported || running;
     button.classList.toggle("primary", installable);
     button.classList.toggle("secondary", !installable);
@@ -128,7 +128,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
 }
 
 function canInstall(status: UnknownRecord | null): boolean {
-  if (!status || status.ok !== true || status.supported === false || status.running || status.dirty || status.remoteCheckOk === false) return false;
+  if (!status || status.ok !== true || status.supported === false || status.running || (!status.dirty && status.remoteCheckOk === false)) return false;
   return Boolean(status.updateAvailable || status.appBundleOutdated || Number(status.behind || 0) > 0);
 }
 

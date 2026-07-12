@@ -64,6 +64,10 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
   function renderCalendar(): void {
     monthLabel.textContent = selectedMonth.toLocaleDateString([], { month: "long", year: "numeric" });
     root.replaceChildren();
+    const pulseRoot = required<HTMLElement>("#habitMonthPulse");
+    const monthRate = required<HTMLElement>("#habitMonthRate");
+    const monthSummary = required<HTMLElement>("#habitMonthSummary");
+    pulseRoot.replaceChildren();
     const lifeLog = data?.intentionalUse?.lifeLog;
     const behaviors = (lifeLog?.behaviors || []).filter((behavior) => behavior.active !== false);
     const checkIns = lifeLog?.calendar?.checkIns?.length
@@ -80,12 +84,24 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
         textNode("p", "Create a behavior below, then use this calendar to keep the chain visible.")
       );
       root.append(empty);
+      monthRate.textContent = "—";
+      monthSummary.textContent = "Add a habit to begin your rhythm";
       statusLabel.textContent = "Create a habit to begin tracking.";
       return;
     }
 
     const dates = datesInMonth(selectedMonth);
     const values = checkInMap(checkIns);
+    renderMonthPulse(pulseRoot, dates, behaviors, values);
+    const today = dayStart(new Date()).getTime();
+    const visibleDates = dates.filter((date) => date.getTime() <= today);
+    const monthStatuses = visibleDates.flatMap((date) => behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${localDateKey(date)}`))));
+    const reported = monthStatuses.filter((status) => status !== "unreported");
+    const completed = reported.filter((status) => status === "success").length;
+    monthRate.textContent = reported.length ? `${Math.round((completed / reported.length) * 100)}%` : "—";
+    monthSummary.textContent = reported.length
+      ? `${completed} of ${reported.length} check-ins completed`
+      : "Your rhythm will appear here";
     const table = document.createElement("table");
     table.className = "habit-calendar-table";
     const head = document.createElement("thead");
@@ -114,6 +130,37 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     statusLabel.textContent = hasCalendar
       ? "Click a day to mark it done or missed."
       : "Recent check-ins are shown. Click a day to add a result.";
+  }
+
+  function renderMonthPulse(
+    pulseRoot: HTMLElement,
+    dates: Date[],
+    behaviors: DashboardItem[],
+    values: Map<string, HabitCalendarCheckIn>
+  ): void {
+    const today = dayStart(new Date()).getTime();
+    for (const date of dates) {
+      const key = localDateKey(date);
+      const statuses = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${key}`)));
+      const reported = statuses.filter((status) => status !== "unreported").length;
+      const done = statuses.filter((status) => status === "success").length;
+      const future = date.getTime() > today;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `habit-pulse-day${isSameDay(date, new Date()) ? " is-today" : ""}${future ? " is-future" : ""}${reported ? " has-data" : ""}`;
+      button.disabled = future;
+      button.style.setProperty("--reported", String(reported / behaviors.length));
+      button.style.setProperty("--completed", String(reported ? done / reported : 0));
+      button.setAttribute("aria-label", `${date.toLocaleDateString([], { month: "long", day: "numeric" })}: ${done} done, ${reported - done} missed, ${behaviors.length - reported} not recorded`);
+      button.title = future ? "Future date" : `${done} done · ${reported - done} missed`;
+      const bar = document.createElement("i");
+      bar.setAttribute("aria-hidden", "true");
+      const label = document.createElement("span");
+      label.textContent = String(date.getDate());
+      button.append(bar, label);
+      button.addEventListener("click", () => selectDate(date));
+      pulseRoot.append(button);
+    }
   }
 
   function habitRow(behavior: DashboardItem, dates: Date[], values: Map<string, HabitCalendarCheckIn>): HTMLTableRowElement {
@@ -170,6 +217,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const next = required<HTMLButtonElement>("#habitSelectedNext");
     const finish = required<HTMLButtonElement>("#habitMarkRemainingDone");
     const clear = required<HTMLButtonElement>("#habitClearSelectedDay");
+    const meter = required<HTMLElement>("#dailyCheckInMeterBar");
 
     title.textContent = today
       ? "Today"
@@ -180,6 +228,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
 
     if (!behaviors.length) {
       progress.textContent = "No active habits";
+      meter.style.width = "0%";
       finish.disabled = true;
       clear.disabled = true;
       const empty = document.createElement("p");
@@ -192,6 +241,8 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const statuses = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${dateKey}`)));
     const recorded = statuses.filter((status) => status !== "unreported").length;
     const done = statuses.filter((status) => status === "success").length;
+    meter.style.width = `${Math.round((recorded / behaviors.length) * 100)}%`;
+    meter.parentElement?.classList.toggle("is-complete", recorded === behaviors.length);
     progress.textContent = recorded === behaviors.length
       ? `${done} done · ${behaviors.length - done} missed · complete`
       : `${recorded} of ${behaviors.length} recorded`;
@@ -210,9 +261,8 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       controls.setAttribute("role", "group");
       controls.setAttribute("aria-label", `${behavior.name || "Habit"} result`);
       controls.append(
-        statusButton("Done", "success", status, () => saveHabitStatus(behavior.id, dateKey, "success")),
-        statusButton("Missed", "missed", status, () => saveHabitStatus(behavior.id, dateKey, "missed")),
-        statusButton("Clear", "unreported", status, () => saveHabitStatus(behavior.id, dateKey, "unreported"))
+        statusButton("Done", "success", status, () => saveHabitStatus(behavior.id, dateKey, status === "success" ? "unreported" : "success")),
+        statusButton("Missed", "missed", status, () => saveHabitStatus(behavior.id, dateKey, status === "missed" ? "unreported" : "missed"))
       );
       row.append(name, controls);
       quickRoot.append(row);
@@ -230,9 +280,15 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const button = document.createElement("button");
     button.type = "button";
     button.className = `habit-status-option ${value}${current === value ? " is-selected" : ""}`;
-    button.textContent = label;
+    const mark = document.createElement("span");
+    mark.className = "habit-status-mark";
+    mark.textContent = value === "success" ? "✓" : "×";
+    const text = document.createElement("span");
+    text.textContent = label;
+    button.append(mark, text);
     button.disabled = saving;
     button.setAttribute("aria-pressed", String(current === value));
+    button.title = current === value ? `Clear ${label.toLowerCase()} result` : `Mark ${label.toLowerCase()}`;
     button.addEventListener("click", () => void onClick());
     return button;
   }

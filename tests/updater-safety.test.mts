@@ -12,6 +12,7 @@ const sourceRoot = existsSync(join(process.cwd(), "app", "updater.ts"))
   : resolve(process.cwd(), "..", "..");
 const updaterSource = await readFile(join(sourceRoot, "app", "updater.ts"), "utf8");
 const updateScriptSource = await readFile(join(sourceRoot, "scripts", "update-packaged-app.mts"), "utf8");
+const localLauncherSource = await readFile(join(sourceRoot, "scripts", "launch-local-app.mts"), "utf8");
 
 const preflightIndex = updaterSource.indexOf("await assertLocallyRebuildableApp(appPath)");
 const quitIndex = updaterSource.indexOf("setTimeout(quitForUpdate");
@@ -23,6 +24,14 @@ assert.match(
   "updater discovery must retain a repository pointer when the agent runs from its installed runtime"
 );
 assert.match(updateScriptSource, /\["worktree", "add", "--detach"/u);
+assert.match(updaterSource, /packagedBuildRepoRoot\(app\)/u, "the installed app must retain its source checkout pointer");
+assert.match(updateScriptSource, /VIGIL_BUILD_SOURCE_ROOT: options\.repoRoot/u, "staged update builds must preserve the real checkout pointer");
+assert.match(updaterSource, /repo\.dirty \|\| remoteCheckOk !== false/u, "local changes must remain runnable without a remote fetch");
+assert.match(updaterSource, /launchLocalChanges\(currentStatus, updateLock\)/u, "dirty source must use the local app launcher");
+assert.match(updaterSource, /"--app-path", appPath/u, "the local launcher must receive the installed app path for recovery");
+assert.match(localLauncherSource, /exitCode = await runLocalApp\(options, log\)/u, "the local launcher must remain alive through the build and app run");
+assert.match(localLauncherSource, /await reopenInstalledApp\(options\.appPath, log\)/u, "a failed local launch must reopen the installed app");
+assert.match(localLauncherSource, /"Library", "Logs", "Vigil", "local-launch\.log"/u, "local launch output must remain available in a durable log");
 assert.match(updateScriptSource, /await openAndVerifyReplacement\(/u);
 assert.match(updateScriptSource, /launchAgentRuntimePath\(\)/u);
 assert.ok(

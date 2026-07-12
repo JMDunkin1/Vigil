@@ -507,6 +507,11 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.match(page, /https:\/\/example\.com\/docs/);
   assert.match(page, /document\.referrer/);
   assert.match(page, /history\.go\(-2\)/);
+  assert.match(page, /--paper: #eee8dc/);
+  assert.doesNotMatch(page, /Adaptive friction/);
+  assert.doesNotMatch(page, /Intentional break/);
+  assert.doesNotMatch(page, /<blockquote>/);
+  assert.doesNotMatch(page, /<section/);
 }
 
 {

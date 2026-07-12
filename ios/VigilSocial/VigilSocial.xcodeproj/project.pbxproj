@@ -17,6 +17,7 @@
 		A10000000000000000000008 /* instagram.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* instagram.png */; };
 		A10000000000000000000009 /* youtube.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* youtube.png */; };
 		A1000000000000000000000A /* snapchat.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* snapchat.png */; };
+		A1000000000000000000000B /* ContentSafetyClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* ContentSafetyClassifier.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -43,6 +44,8 @@
 		A20000000000000000000011 /* instagram.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icons/instagram.png; sourceTree = "<group>"; };
 		A20000000000000000000012 /* youtube.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icons/youtube.png; sourceTree = "<group>"; };
 		A20000000000000000000013 /* snapchat.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icons/snapchat.png; sourceTree = "<group>"; };
+		A20000000000000000000014 /* ContentSafetyClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentSafetyClassifier.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 /* VigilSocial.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VigilSocial.entitlements; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -85,6 +88,8 @@
 				A20000000000000000000011 /* instagram.png */,
 				A20000000000000000000012 /* youtube.png */,
 				A20000000000000000000013 /* snapchat.png */,
+				A20000000000000000000014 /* ContentSafetyClassifier.swift */,
+				A20000000000000000000015 /* VigilSocial.entitlements */,
 			);
 			path = VigilSocial;
 			sourceTree = "<group>";
@@ -192,6 +197,7 @@
 				A10000000000000000000003 /* DOMAdapters.swift in Sources */,
 				A10000000000000000000004 /* SocialWebViewStore.swift in Sources */,
 				A10000000000000000000005 /* RootView.swift in Sources */,
+				A1000000000000000000000B /* ContentSafetyClassifier.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -249,6 +255,7 @@
 		B10000000000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = VigilSocial/VigilSocial.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 3RY7A22U4L;
@@ -275,6 +282,7 @@
 		B10000000000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = VigilSocial/VigilSocial.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 3RY7A22U4L;

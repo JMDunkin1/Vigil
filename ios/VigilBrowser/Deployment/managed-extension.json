@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "containerBundleIdentifier": "tech.caseline.vigil.browser",
+  "extensionBundleIdentifier": "tech.caseline.vigil.browser.safari-filter",
+  "appGroup": "group.tech.caseline.vigil.browser",
+  "requiredEntitlements": [
+    "com.apple.security.application-groups",
+    "com.apple.developer.sensitivecontentanalysis.client"
+  ],
+  "requiredAccess": ["http://*/*", "https://*/*"],
+  "requiredState": "always-on",
+  "notes": "Informational metadata for the Vigil MDM exporter. This file is not an installable profile and performs no device mutation. Translate it through the deployed iOS version's documented Safari extension management payload."
+}

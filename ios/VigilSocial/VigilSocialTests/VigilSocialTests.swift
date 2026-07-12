@@ -2,6 +2,37 @@ import XCTest
 @testable import VigilSocial
 
 final class VigilSocialTests: XCTestCase {
+    func testContentFilterPreblursAndObservesDynamicMediaAndText() {
+        let bootstrap = DOMAdapters.contentFilterBootstrap
+        let script = DOMAdapters.script(for: .instagram, audioEnabled: true)
+        XCTAssertTrue(bootstrap.contains("filter: blur"))
+        XCTAssertTrue(bootstrap.contains("background-image: none"))
+        XCTAssertTrue(bootstrap.contains("canvas, svg"))
+        XCTAssertTrue(bootstrap.contains("vigilPageVerdict = 'unknown'"))
+        XCTAssertTrue(script.contains("mediaCandidate"))
+        XCTAssertTrue(script.contains("pageText"))
+        XCTAssertTrue(script.contains("MutationObserver"))
+        XCTAssertTrue(script.contains("videoFrame"))
+        XCTAssertTrue(script.contains("__vigilResolveMedia"))
+        XCTAssertFalse(script.contains("sourceURL"))
+    }
+
+    func testConservativeTextClassifierStillChecksBoundedTextWhenPageIsLong() async {
+        let classifier = ConservativePageTextClassifier()
+        let truncated = await classifier.classify(pageText: "ordinary page", wasTruncated: true)
+        let explicit = await classifier.classify(pageText: "contains explicit sexual content", wasTruncated: false)
+        let ordinary = await classifier.classify(pageText: "ordinary page", wasTruncated: false)
+        XCTAssertEqual(truncated, .safe)
+        XCTAssertEqual(explicit, .sensitive)
+        XCTAssertEqual(ordinary, .safe)
+    }
+
+    func testInjectedMediaClassifierCanBeUsedWithoutAProductionModel() async {
+        let classifier = StubMediaClassifier(verdict: .sensitive)
+        let verdict = await classifier.classify(imageData: Data([1, 2, 3]))
+        XCTAssertEqual(verdict, .sensitive)
+    }
+
     func testDeepLinksResolveServices() throws {
         XCTAssertEqual(SocialService.resolve(try XCTUnwrap(URL(string: "vigilsocial://open/youtube"))), .youtube)
         XCTAssertEqual(SocialService.resolve(try XCTUnwrap(URL(string: "https://www.instagram.com/direct/inbox/"))), .instagram)
@@ -70,4 +101,9 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(store.selectedService, .instagram)
         XCTAssertEqual(store.fixedService, .instagram)
     }
+}
+
+private struct StubMediaClassifier: MediaSafetyClassifying {
+    let verdict: ContentSafetyVerdict
+    func classify(imageData: Data) async -> ContentSafetyVerdict { verdict }
 }

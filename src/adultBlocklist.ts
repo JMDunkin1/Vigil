@@ -8,6 +8,11 @@ import { isIP } from "node:net";
 import type { LookupFunction } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
 import {
+  buildPhoneBlocklistArtifact,
+  writePhoneBlocklistArtifactAtomically,
+  type PhoneBlocklistMetadata
+} from "./adultBlocklistPhoneArtifact.js";
+import {
   DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT,
   DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
   DEFAULT_EXPLICIT_BLOCKED_SITES
@@ -18,6 +23,7 @@ import type { AdultBlocklistSourceSnapshot, VigilState, UnknownRecord } from "./
 
 export const ADULT_BLOCKLIST_SNAPSHOT_PATH = join(DATA_DIR, "adult-blocklist.json");
 export const ADULT_BLOCKLIST_PREVIOUS_SNAPSHOT_PATH = join(DATA_DIR, "adult-blocklist.previous.json");
+export const ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH = join(DATA_DIR, "adult-blocklist.sdi");
 const VERSIONED_SNAPSHOT_PATTERN = /^adult-blocklist\.([a-f0-9]{64})\.json$/;
 export const ADULT_BLOCKLIST_CUSTOM_SOURCE_ID = "custom";
 export const ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT = 300;
@@ -407,6 +413,22 @@ export async function finalizeAdultBlocklistSnapshot(state: VigilState): Promise
     await rm(item.path, { force: true }).catch(() => {});
     diskSnapshotCache.delete(item.path);
   }));
+}
+
+export async function writeAdultBlocklistPhoneArtifact(
+  state: VigilState,
+  path = ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH
+): Promise<PhoneBlocklistMetadata> {
+  const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
+  if (!snapshot) throw new Error("A current adult blocklist snapshot is required before generating the phone artifact.");
+  const artifact = buildPhoneBlocklistArtifact({
+    domains: snapshot.domains,
+    snapshotHash: snapshot.hash,
+    generatedAt: snapshot.generatedAt,
+    source: snapshot.source
+  });
+  await writePhoneBlocklistArtifactAtomically(path, artifact);
+  return artifact.metadata;
 }
 
 function clearAdultBlocklistCache(): void {
