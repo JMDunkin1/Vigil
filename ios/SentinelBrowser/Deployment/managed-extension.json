@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "containerBundleIdentifier": "tech.caseline.sentinel.browser",
+  "extensionBundleIdentifier": "tech.caseline.sentinel.browser.safari-filter",
+  "appGroup": "group.tech.caseline.sentinel.browser",
+  "requiredEntitlements": [
+    "com.apple.security.application-groups",
+    "com.apple.developer.sensitivecontentanalysis.client"
+  ],
+  "requiredAccess": ["http://*/*", "https://*/*"],
+  "requiredState": "always-on",
+  "notes": "Informational metadata for the Sentinel MDM exporter. This file is not an installable profile and performs no device mutation. Translate it through the deployed iOS version's documented Safari extension management payload."
+}

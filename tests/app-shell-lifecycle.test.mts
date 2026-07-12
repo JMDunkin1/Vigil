@@ -46,6 +46,16 @@ assert.match(
   /quitForUpdate: \(\) => \{\s*quitForUpdate = true;\s*app\.quit\(\);\s*\}/,
   "an app update must still be able to perform the intentional full quit needed to replace the app"
 );
+assert.match(
+  mainSource,
+  /\.on\("enter-full-screen", \(\) => \{\s*sentinelWindow\.setWindowButtonVisibility\(false\);\s*\}\);/,
+  "native macOS window controls must be hidden while the custom-titlebar window is fullscreen"
+);
+assert.match(
+  mainSource,
+  /\.on\("leave-full-screen", \(\) => \{\s*sentinelWindow\.setWindowButtonVisibility\(true\);\s*\}\);/,
+  "native macOS window controls must be restored after leaving fullscreen"
+);
 
 async function sourceRoot(): Promise<string> {
   for (const candidate of [process.cwd(), resolve(process.cwd(), "..", "..")]) {

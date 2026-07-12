@@ -1,4 +1,10 @@
-import { adultBlocklistSummary, finalizeAdultBlocklistSnapshot, refreshAdultBlocklist } from "../src/adultBlocklist.js";
+import {
+  ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH,
+  adultBlocklistSummary,
+  finalizeAdultBlocklistSnapshot,
+  refreshAdultBlocklist,
+  writeAdultBlocklistPhoneArtifact
+} from "../src/adultBlocklist.js";
 import { addEvent, loadState, saveState } from "../src/store.js";
 
 const state = await loadState();
@@ -12,13 +18,15 @@ try {
     hash: summary.shortHash
   });
   await saveState(state);
+  const phoneArtifact = await writeAdultBlocklistPhoneArtifact(state);
   await finalizeAdultBlocklistSnapshot(state);
   console.log([
     `Adult blocklist refreshed from ${summary.selectedSourceLabel}.`,
     `Domains: ${summary.domainCount}`,
     `Active: ${summary.activeDomainCount}`,
     `Hash: ${summary.shortHash}`,
-    `Snapshot: ${summary.snapshotPath}`
+    `Snapshot: ${summary.snapshotPath}`,
+    `Phone artifact: ${ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH} (${phoneArtifact.payloadBytes} compressed payload bytes)`
   ].join("\n"));
 } catch (error) {
   addEvent(state, "adult_blocklist_refresh_failed", {

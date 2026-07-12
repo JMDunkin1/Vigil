@@ -56,8 +56,14 @@ export function bindAppEvents(context: AppEventsContext) {
 
   const protectionLevel = $("#protectionLevel");
   const protectionLevelControl = $("#protectionLevelControl");
+  const protectionLevelChoices = $$<HTMLButtonElement>("[data-protection-level-choice]");
   let protectionLevelWheelTimer: ReturnType<typeof setTimeout> | null = null;
   let protectionLevelSettleTimer: ReturnType<typeof setTimeout> | null = null;
+  const setProtectionLevelOpen = (open: boolean) => {
+    protectionLevelControl.classList.toggle("is-open", open);
+    protectionLevelControl.setAttribute("aria-expanded", String(open));
+    for (const choice of protectionLevelChoices) choice.tabIndex = open ? 0 : -1;
+  };
   const releaseProtectionLevelSettle = () => {
     if (!protectionLevelControl.matches(":hover") && !protectionLevelControl.matches(":focus-within")) {
       protectionLevelControl.classList.remove("is-settling");
@@ -79,16 +85,30 @@ export function bindAppEvents(context: AppEventsContext) {
   };
   protectionLevelControl.addEventListener("pointerleave", releaseProtectionLevelSettle);
   protectionLevelControl.addEventListener("focusout", () => setTimeout(releaseProtectionLevelSettle));
+  document.addEventListener("pointerdown", (event) => {
+    if (!protectionLevelControl.contains(event.target as Node)) setProtectionLevelOpen(false);
+  });
+  protectionLevelControl.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      setProtectionLevelOpen(false);
+      protectionLevel.focus();
+    }
+  });
   protectionLevel.addEventListener("input", () => {
     previewProtectionLevel(Number(protectionLevel.value || 1));
   });
   protectionLevel.addEventListener("change", () => {
     settleProtectionLevel(Number(protectionLevel.value || 1));
   });
-  for (const choice of $$<HTMLButtonElement>("[data-protection-level-choice]")) {
+  for (const choice of protectionLevelChoices) {
     choice.addEventListener("click", () => {
       if (protectionLevel.disabled) return;
+      if (!protectionLevelControl.classList.contains("is-open")) {
+        setProtectionLevelOpen(true);
+        return;
+      }
       const level = previewProtectionLevel(Number(choice.dataset.protectionLevelChoice || 1));
+      setProtectionLevelOpen(false);
       settleProtectionLevel(level);
     });
   }

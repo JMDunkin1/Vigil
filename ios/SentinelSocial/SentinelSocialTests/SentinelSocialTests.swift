@@ -2,6 +2,42 @@ import XCTest
 @testable import SentinelSocial
 
 final class SentinelSocialTests: XCTestCase {
+    func testContentFilterPreblursAndObservesDynamicMediaAndText() {
+        let bootstrap = DOMAdapters.contentFilterBootstrap
+        let script = DOMAdapters.script(for: .instagram, audioEnabled: true)
+        XCTAssertTrue(bootstrap.contains("filter: blur"))
+        XCTAssertFalse(bootstrap.contains("background-image"))
+        XCTAssertTrue(bootstrap.contains("sentinelPageVerdict = 'unknown'"))
+        XCTAssertTrue(script.contains("mediaCandidate"))
+        XCTAssertTrue(script.contains("pageText"))
+        XCTAssertTrue(script.contains("MutationObserver"))
+        XCTAssertTrue(script.contains("videoFrame"))
+        XCTAssertTrue(script.contains("__sentinelResolveMedia"))
+    }
+
+    func testConservativeTextClassifierStillChecksBoundedTextWhenPageIsLong() async {
+        let classifier = ConservativePageTextClassifier()
+        let truncated = await classifier.classify(pageText: "ordinary page", wasTruncated: true)
+        let explicit = await classifier.classify(pageText: "contains explicit sexual content", wasTruncated: false)
+        let ordinary = await classifier.classify(pageText: "ordinary page", wasTruncated: false)
+        XCTAssertEqual(truncated, .safe)
+        XCTAssertEqual(explicit, .sensitive)
+        XCTAssertEqual(ordinary, .safe)
+    }
+
+    func testInjectedMediaClassifierCanBeUsedWithoutAProductionModel() async {
+        let classifier = StubMediaClassifier(verdict: .sensitive)
+        let verdict = await classifier.classify(imageData: Data([1, 2, 3]))
+        XCTAssertEqual(verdict, .sensitive)
+    }
+
+    func testMediaLoaderRejectsLocalAndInsecureURLs() async throws {
+        let loader = EphemeralMediaDataLoader()
+        let insecure = await loader.loadImage(from: try XCTUnwrap(URL(string: "http://example.com/a.jpg")), maximumBytes: 10)
+        let local = await loader.loadImage(from: try XCTUnwrap(URL(string: "https://127.0.0.1/a.jpg")), maximumBytes: 10)
+        XCTAssertNil(insecure)
+        XCTAssertNil(local)
+    }
     func testDeepLinksResolveServices() throws {
         XCTAssertEqual(SocialService.resolve(try XCTUnwrap(URL(string: "sentinelsocial://open/youtube"))), .youtube)
         XCTAssertEqual(SocialService.resolve(try XCTUnwrap(URL(string: "https://www.instagram.com/direct/inbox/"))), .instagram)
@@ -70,4 +106,9 @@ final class SentinelSocialTests: XCTestCase {
         XCTAssertEqual(store.selectedService, .instagram)
         XCTAssertEqual(store.fixedService, .instagram)
     }
+}
+
+private struct StubMediaClassifier: MediaSafetyClassifying {
+    let verdict: ContentSafetyVerdict
+    func classify(imageData: Data) async -> ContentSafetyVerdict { verdict }
 }

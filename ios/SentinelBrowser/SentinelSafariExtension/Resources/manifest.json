@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Sentinel Safari Filter",
+  "version": "0.1.0",
+  "description": "Applies Sentinel navigation rules inside Safari.",
+  "permissions": ["nativeMessaging", "storage"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "content_scripts": [{
+    "matches": ["http://*/*", "https://*/*"],
+    "js": ["ContentSafety.js", "content.js"],
+    "run_at": "document_start",
+    "all_frames": false
+  }]
+}

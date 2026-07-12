@@ -70,7 +70,7 @@
           </aside>
         </div>
 
-        <div id="protectionLevelControl" class="protection-level-control" data-level="1">
+        <div id="protectionLevelControl" class="protection-level-control" data-level="1" aria-expanded="false">
           <div class="protection-level-readout">
             <output id="protectionLevelLabel" for="protectionLevel">Level 1</output>
             <span id="protectionLevelStatus" aria-live="polite">Normal</span>
@@ -90,7 +90,6 @@
             <button class="protection-level-choice protection-level-choice-panic" type="button" tabindex="-1" data-protection-level-choice="4" aria-label="Panic, three minute lock">
               <span>!</span>
             </button>
-            <span class="protection-level-scroll-hint">Scroll to choose</span>
           </div>
         </div>
 
@@ -142,8 +141,9 @@
 
       <div class="ranking-vitals" aria-label="Today's key statistics">
         <div class="ranking-vital ranking-vital-primary">
-          <span>Total today</span>
+          <span>Combined today</span>
           <strong id="totalUsageToday">--</strong>
+          <em>Mac + iPhone usage</em>
         </div>
         <div class="ranking-vital">
           <span>Focus quality</span>
@@ -156,9 +156,9 @@
           <em>distraction time</em>
         </div>
         <div class="ranking-vital">
-          <span>iPhone today</span>
-          <strong id="phoneUsageToday">--</strong>
-          <em>synced usage</em>
+          <span>Devices included</span>
+          <strong id="combinedDevicesToday">Mac + iPhone</strong>
+          <em id="combinedDevicesStatus">checking sync</em>
         </div>
       </div>
 
@@ -194,12 +194,12 @@
         <section class="usage-wave-section" aria-labelledby="usageWaveTitle">
           <div class="ranking-section-head">
             <div>
-              <p class="eyebrow">Screen time</p>
+              <p class="eyebrow">Combined screen time</p>
               <h3 id="usageWaveTitle">Seven-day wave</h3>
             </div>
             <span id="usageWaveAverage">-- daily</span>
           </div>
-          <svg id="usageWave" class="usage-wave" viewBox="0 0 700 220" preserveAspectRatio="none" role="img" aria-label="Total screen time by day">
+          <svg id="usageWave" class="usage-wave" viewBox="0 0 700 220" preserveAspectRatio="none" role="img" aria-label="Combined Mac and iPhone screen time by day">
             <path id="usageWaveArea" class="usage-wave-area" d=""></path>
             <path id="usageWaveLine" class="usage-wave-line" d=""></path>
             <g id="usageWavePoints"></g>
@@ -209,7 +209,7 @@
         <section class="today-apps-section" aria-labelledby="todayAppsTitle">
           <div class="ranking-section-head">
             <div>
-              <p class="eyebrow">Today</p>
+              <p class="eyebrow">Combined today</p>
               <h3 id="todayAppsTitle">Time by app</h3>
             </div>
           </div>
@@ -318,7 +318,7 @@
               <div class="audio-track-list">
                 <button type="button" class="audio-track-row" data-focus-preset="brown-noise"><span><strong>Brown noise</strong><small>Deep &amp; soft</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="pink-noise"><span><strong>Pink noise</strong><small>Warm &amp; balanced</small></span><em>Play</em></button>
-                <button type="button" class="audio-track-row" data-focus-preset="white-noise"><span><strong>White noise</strong><small>Bright &amp; masking</small></span><em>Play</em></button>
+                <button type="button" class="audio-track-row" data-focus-preset="white-noise"><span><strong>White noise</strong><small>Soft &amp; masking</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="binaural-beat"><span><strong>Binaural beat</strong><small>Headphones recommended</small></span><em>Play</em></button>
                 <button type="button" class="audio-track-row" data-focus-preset="isochronic-tone"><span><strong>Isochronic tone</strong><small>Rhythmic pulse</small></span><em>Play</em></button>
               </div>
@@ -355,6 +355,31 @@
         </div>
         <p class="view-intro">The everyday controls stay in Ranking. Configuration lives here when you need it.</p>
       </div>
+
+      <details class="settings-disclosure icon-theme-settings">
+        <summary><span>App icon</span><em id="iconThemeStatus">Loading icon choice…</em></summary>
+        <div class="settings-disclosure-body">
+          <fieldset class="icon-theme-picker">
+            <legend>Choose the icon used by Sentinel and its menu-bar companion</legend>
+            <label class="icon-theme-option">
+              <input type="radio" name="appIconTheme" value="jerusalem-cross">
+              <span class="icon-theme-preview"><img src="/app-icons/jerusalem-cross.png" alt=""></span>
+              <span><strong>Jerusalem Cross</strong><small>Five crosses · parchment and midnight blue</small></span>
+            </label>
+            <label class="icon-theme-option">
+              <input type="radio" name="appIconTheme" value="sacred-heart">
+              <span class="icon-theme-preview"><img src="/app-icons/sacred-heart.png" alt=""></span>
+              <span><strong>Sacred Heart</strong><small>Heart, thorns, flame, and cross</small></span>
+            </label>
+            <label class="icon-theme-option">
+              <input type="radio" name="appIconTheme" value="saint-michael">
+              <span class="icon-theme-preview"><img src="/app-icons/saint-michael.png" alt=""></span>
+              <span><strong>Saint Michael</strong><small>Archangel, spear, radiant eye, and dragon</small></span>
+            </label>
+          </fieldset>
+          <p class="field-note">The menu-bar icon changes immediately. macOS keeps the installed app bundle's Jerusalem Cross icon in Finder and Spotlight until the app is rebuilt.</p>
+        </div>
+      </details>
 
       <details class="settings-disclosure">
         <summary><span>Rules and limits</span><em>Profiles, schedules, goals, and pause rules</em></summary>
@@ -749,45 +774,24 @@
         <span class="pill neutral">Local</span>
       </div>
 
-      <section id="journalUnlockGate" class="journal-unlock-gate journal-only panel" hidden aria-labelledby="journalUnlockTitle">
-        <span class="journal-lock-sigil" aria-hidden="true">&#10070;</span>
-        <p class="eyebrow">Journal Locked</p>
-        <h2 id="journalUnlockTitle">Journal locked.</h2>
-        <p id="journalUnlockCopy">Authenticate with Touch ID or your journal password. The journal locks again automatically.</p>
-        <div class="journal-unlock-actions">
-          <button id="journalTouchIdUnlock" class="primary" type="button" data-journal-unlock-method="biometric">Use Touch ID</button>
-          <input id="journalPassword" type="password" autocomplete="current-password" placeholder="Journal password">
-          <button id="journalPasswordUnlock" class="secondary" type="button" data-journal-unlock-method="password">Unlock</button>
+      <section id="journalUnlockGate" class="journal-unlock-gate journal-only" hidden aria-labelledby="journalUnlockTitle">
+        <div class="journal-gate-copy">
+          <p class="eyebrow">Journal access</p>
+          <h2 id="journalUnlockTitle">Journal locked.</h2>
+          <p id="journalUnlockCopy">Enter your password to continue.</p>
         </div>
+        <div class="journal-unlock-actions">
+          <input id="journalPassword" type="password" autocomplete="current-password" aria-label="Journal password" placeholder="Journal password">
+          <button id="journalPasswordUnlock" class="primary" type="button" data-journal-unlock-method="password">Unlock</button>
+        </div>
+        <button id="journalTouchIdUnlock" class="journal-touch-id" type="button" data-journal-unlock-method="biometric">Use Touch ID</button>
         <span id="journalUnlockStatus" class="tiny-status">Authentication required</span>
       </section>
 
-      <section class="habit-calendar-panel tracking-only panel" aria-labelledby="habitCalendarTitle">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Monthly Rule</p>
-            <h2 id="habitCalendarTitle">Habit calendar</h2>
-          </div>
-          <div class="habit-calendar-nav">
-            <button id="habitPreviousMonth" class="ghost compact" type="button" aria-label="Previous month">&#8592;</button>
-            <strong id="habitCalendarMonth">This month</strong>
-            <button id="habitNextMonth" class="ghost compact" type="button" aria-label="Next month">&#8594;</button>
-            <button id="habitCurrentMonth" class="secondary compact" type="button">Today</button>
-          </div>
-        </div>
-        <div class="habit-calendar-legend" aria-label="Habit calendar legend">
-          <span><i class="habit-key success"></i>Done</span>
-          <span><i class="habit-key missed"></i>Missed</span>
-          <span><i class="habit-key unreported"></i>Empty</span>
-        </div>
-        <div id="habitCalendar" class="habit-calendar" aria-live="polite"></div>
-        <p id="habitCalendarStatus" class="tiny-status">Click a day to mark it done or missed.</p>
-      </section>
-
-      <section class="daily-checkin tracking-only" aria-labelledby="dailyCheckInTitle">
+      <section class="daily-checkin tracking-only panel" aria-labelledby="dailyCheckInTitle">
         <header class="daily-checkin-head">
           <div>
-            <p class="eyebrow">Quick entry</p>
+            <p class="eyebrow">Daily ritual</p>
             <h2 id="dailyCheckInTitle">Today</h2>
             <p id="dailyCheckInProgress" class="daily-checkin-progress">Nothing recorded yet</p>
           </div>
@@ -798,15 +802,55 @@
             <button id="habitSelectedToday" class="secondary compact" type="button">Today</button>
           </div>
         </header>
+        <div class="daily-checkin-meter" aria-hidden="true">
+          <span id="dailyCheckInMeterBar"></span>
+        </div>
         <div class="daily-checkin-toolbar">
-          <span>One tap per habit</span>
+          <span>How did you show up?</span>
           <div>
-            <button id="habitMarkRemainingDone" class="secondary compact" type="button">Finish remaining</button>
-            <button id="habitClearSelectedDay" class="ghost compact" type="button">Clear day</button>
-            <button id="habitManage" class="ghost compact" type="button">Edit habits</button>
+            <button id="habitMarkRemainingDone" class="secondary compact" type="button">Complete the rest</button>
+            <button id="habitClearSelectedDay" class="habit-text-action compact" type="button">Reset day</button>
+            <button id="habitManage" class="habit-text-action compact" type="button">Manage habits</button>
           </div>
         </div>
         <div id="habitQuickCheckIn" class="habit-quick-checkin" aria-live="polite"></div>
+      </section>
+
+      <section class="habit-calendar-panel tracking-only" aria-labelledby="habitCalendarTitle">
+        <header class="habit-month-head">
+          <div>
+            <p class="eyebrow">Monthly rhythm</p>
+            <h2 id="habitCalendarTitle">Your month at a glance</h2>
+          </div>
+          <div class="habit-calendar-nav">
+            <button id="habitPreviousMonth" class="habit-nav-arrow compact" type="button" aria-label="Previous month">&#8592;</button>
+            <strong id="habitCalendarMonth">This month</strong>
+            <button id="habitNextMonth" class="habit-nav-arrow compact" type="button" aria-label="Next month">&#8594;</button>
+            <button id="habitCurrentMonth" class="habit-text-action compact" type="button">Today</button>
+          </div>
+        </header>
+        <div class="habit-month-overview">
+          <div class="habit-month-score">
+            <strong id="habitMonthRate">—</strong>
+            <span id="habitMonthSummary">Your rhythm will appear here</span>
+          </div>
+          <div id="habitMonthPulse" class="habit-month-pulse" aria-label="Daily completion for this month"></div>
+        </div>
+        <details id="habitCalendarDetails" class="habit-calendar-details">
+          <summary>
+            <span>Detailed habit grid</span>
+            <small>Review or edit any day</small>
+          </summary>
+          <div class="habit-calendar-detail-body">
+            <div class="habit-calendar-legend" aria-label="Habit calendar legend">
+              <span><i class="habit-key success"></i>Done</span>
+              <span><i class="habit-key missed"></i>Missed</span>
+              <span><i class="habit-key unreported"></i>Not recorded</span>
+            </div>
+            <div id="habitCalendar" class="habit-calendar" aria-live="polite"></div>
+            <p id="habitCalendarStatus" class="tiny-status">Click a day to mark it done or missed.</p>
+          </div>
+        </details>
       </section>
 
       <div class="journal-page journal-only" data-journal-content>
@@ -912,31 +956,6 @@
     </section>
 
     <section id="view-settings" class="view settings-segment" data-view="settings" hidden>
-      <details class="settings-disclosure icon-theme-settings" open>
-        <summary><span>App icon</span><em id="iconThemeStatus">Loading icon choice…</em></summary>
-        <div class="settings-disclosure-body">
-          <fieldset class="icon-theme-picker">
-            <legend>Choose the icon used by Sentinel and its menu-bar companion</legend>
-            <label class="icon-theme-option">
-              <input type="radio" name="appIconTheme" value="jerusalem-cross">
-              <span class="icon-theme-preview"><img src="/app-icons/jerusalem-cross.png" alt=""></span>
-              <span><strong>Jerusalem Cross</strong><small>Five crosses · parchment and midnight blue</small></span>
-            </label>
-            <label class="icon-theme-option">
-              <input type="radio" name="appIconTheme" value="sacred-heart">
-              <span class="icon-theme-preview"><img src="/app-icons/sacred-heart.png" alt=""></span>
-              <span><strong>Sacred Heart</strong><small>Heart, thorns, flame, and cross</small></span>
-            </label>
-            <label class="icon-theme-option">
-              <input type="radio" name="appIconTheme" value="saint-michael">
-              <span class="icon-theme-preview"><img src="/app-icons/saint-michael.png" alt=""></span>
-              <span><strong>Saint Michael</strong><small>Archangel, spear, radiant eye, and dragon</small></span>
-            </label>
-          </fieldset>
-          <p class="field-note">The menu-bar icon changes immediately. macOS keeps the installed app bundle's Jerusalem Cross icon in Finder and Spotlight until the app is rebuilt.</p>
-        </div>
-      </details>
-
       <details class="settings-disclosure journal-security-settings">
         <summary><span>Journal access</span><em>Password, Touch ID, and automatic locking</em></summary>
         <div class="settings-disclosure-body">

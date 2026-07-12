@@ -20,8 +20,8 @@ const TRAY_STATUS_CHECK_TIMEOUT_MS = 2000;
 const TRAY_ACTION_TIMEOUT_MS = 5000;
 const TRAY_STATUS_POLL_INTERVAL_MS = 30_000;
 const BACKGROUND_LAUNCH_ARG = "--sentinel-background";
-const DEFAULT_WINDOW_WIDTH = 980;
-const DEFAULT_WINDOW_HEIGHT = 680;
+const DEFAULT_WINDOW_WIDTH = 750;
+const DEFAULT_WINDOW_HEIGHT = 550;
 const MIN_WINDOW_WIDTH = 680;
 const MIN_WINDOW_HEIGHT = 520;
 const ICON_THEMES = ["jerusalem-cross", "sacred-heart", "saint-michael"] as const;
@@ -45,6 +45,7 @@ interface AppUpdateActionState {
   checking: boolean;
   running: boolean;
   installable: boolean;
+  localChanges: boolean;
   message: string;
 }
 
@@ -63,6 +64,7 @@ let appUpdateActionState: AppUpdateActionState = {
   checking: false,
   running: false,
   installable: false,
+  localChanges: false,
   message: ""
 };
 
@@ -153,7 +155,7 @@ function hideSentinelWindow(): void {
 }
 
 function createWindow(appUrl: string): void {
-  mainWindow = new BrowserWindow({
+  const sentinelWindow = new BrowserWindow({
     width: DEFAULT_WINDOW_WIDTH,
     height: DEFAULT_WINDOW_HEIGHT,
     minWidth: MIN_WINDOW_WIDTH,
@@ -174,20 +176,27 @@ function createWindow(appUrl: string): void {
       preload: join(dirname(fileURLToPath(import.meta.url)), "preload.cjs")
     }
   });
+  mainWindow = sentinelWindow;
 
-  mainWindow.setAlwaysOnTop(false);
-  mainWindow.setVisibleOnAllWorkspaces(false);
+  sentinelWindow.setAlwaysOnTop(false);
+  sentinelWindow.setVisibleOnAllWorkspaces(false);
+  sentinelWindow.on("enter-full-screen", () => {
+    sentinelWindow.setWindowButtonVisibility(false);
+  });
+  sentinelWindow.on("leave-full-screen", () => {
+    sentinelWindow.setWindowButtonVisibility(true);
+  });
 
-  void mainWindow.loadURL(appUrl);
-  mainWindow.webContents.on("will-navigate", (event, url) => {
+  void sentinelWindow.loadURL(appUrl);
+  sentinelWindow.webContents.on("will-navigate", (event, url) => {
     if (!isTrustedAppUrl(url)) event.preventDefault();
   });
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  sentinelWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
-  mainWindow.on("closed", () => {
-    mainWindow = null;
+  sentinelWindow.on("closed", () => {
+    if (mainWindow === sentinelWindow) mainWindow = null;
   });
 }
 
@@ -559,6 +568,7 @@ function refreshUpdateMenus(appUrl: string): void {
 function appUpdateActionLabel(): string {
   if (appUpdateActionState.checking) return "Checking for Updates...";
   if (appUpdateActionState.running) return "Updating Sentinel...";
+  if (appUpdateActionState.installable && appUpdateActionState.localChanges) return "Run Local Changes";
   if (appUpdateActionState.installable) return "Install Update";
   return "Check for Updates";
 }
@@ -647,6 +657,7 @@ async function checkAppUpdate(appUrl: string): Promise<void> {
     checking: true,
     running: false,
     installable: false,
+    localChanges: false,
     message: "Checking for updates"
   };
   refreshUpdateMenus(appUrl);
@@ -659,6 +670,7 @@ async function checkAppUpdate(appUrl: string): Promise<void> {
       checking: false,
       running,
       installable,
+      localChanges: Boolean(status?.dirty),
       message: nonEmptyString(status?.message) || (installable ? "Update available" : "Sentinel is current")
     };
   } catch (error) {
@@ -667,6 +679,7 @@ async function checkAppUpdate(appUrl: string): Promise<void> {
       checking: false,
       running: false,
       installable: false,
+      localChanges: false,
       message: errorMessage(error)
     };
   }
@@ -679,6 +692,7 @@ async function startAppUpdate(appUrl: string): Promise<void> {
     checking: false,
     running: true,
     installable: false,
+    localChanges: false,
     message: "Sentinel will quit, update, and reopen"
   };
   refreshUpdateMenus(appUrl);
@@ -690,6 +704,7 @@ async function startAppUpdate(appUrl: string): Promise<void> {
       checking: false,
       running: false,
       installable: false,
+      localChanges: false,
       message: errorMessage(error)
     };
     refreshUpdateMenus(appUrl);
@@ -798,7 +813,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function isInstallableAppUpdate(status: Record<string, unknown> | null): boolean {
-  if (!status || status.ok !== true || status.supported === false || status.running || status.dirty || status.remoteCheckOk === false) return false;
+  if (!status || status.ok !== true || status.supported === false || status.running || (!status.dirty && status.remoteCheckOk === false)) return false;
   return Boolean(status.updateAvailable || status.appBundleOutdated || Number(status.behind || 0) > 0);
 }
 

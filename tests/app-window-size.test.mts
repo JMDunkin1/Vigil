@@ -7,8 +7,8 @@ const mainSource = await readFile(join(root, "app", "main.ts"), "utf8");
 
 assert.match(
   mainSource,
-  /const DEFAULT_WINDOW_WIDTH = 980;\s*const DEFAULT_WINDOW_HEIGHT = 680;\s*const MIN_WINDOW_WIDTH = 680;\s*const MIN_WINDOW_HEIGHT = 520;/,
-  "the desktop window should define a landscape default and a compact independent minimum size"
+  /const DEFAULT_WINDOW_WIDTH = 750;\s*const DEFAULT_WINDOW_HEIGHT = 550;\s*const MIN_WINDOW_WIDTH = 680;\s*const MIN_WINDOW_HEIGHT = 520;/,
+  "the desktop window should define the preferred compact landscape default and an independent minimum size"
 );
 
 assert.match(

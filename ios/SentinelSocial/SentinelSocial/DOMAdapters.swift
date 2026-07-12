@@ -1,6 +1,31 @@
 import Foundation
 
 enum DOMAdapters {
+    static let contentFilterBootstrap = #"""
+    (() => {
+      if (window.__sentinelContentBootstrapInstalled) return;
+      window.__sentinelContentBootstrapInstalled = true;
+      const style = document.createElement('style');
+      style.id = 'sentinel-content-safety-style';
+      style.textContent = `
+        img, video {
+          filter: blur(32px) !important;
+        }
+        [data-sentinel-media-verdict="safe"] { filter: none !important; }
+        [data-sentinel-media-verdict="sensitive"] {
+          filter: blur(48px) !important;
+          visibility: hidden !important;
+        }
+        html[data-sentinel-page-verdict="sensitive"] body,
+        html[data-sentinel-page-verdict="unknown"] body {
+          visibility: hidden !important;
+        }
+      `;
+      (document.head || document.documentElement).appendChild(style);
+      document.documentElement.dataset.sentinelPageVerdict = 'unknown';
+    })();
+    """#
+
     static func preflightScript(for service: SocialService) -> String? {
         guard service == .snapchat else { return nil }
         return #"""
@@ -55,6 +80,155 @@ enum DOMAdapters {
             window.__sentinelPauseAllMedia = () => {
               document.querySelectorAll('video, audio').forEach((media) => media.pause());
             };
+
+            const mediaElements = new Map();
+            let nextMediaID = 1;
+            let nextMediaToken = 1;
+            const maximumImageBytes = 4 * 1024 * 1024;
+            const captureImage = (element) => {
+              try {
+                const width = Math.max(1, Math.min(1024, element.naturalWidth || element.videoWidth || element.clientWidth || 1));
+                const height = Math.max(1, Math.min(1024, element.naturalHeight || element.videoHeight || element.clientHeight || 1));
+                if (width < 32 || height < 32) return null;
+                const scale = Math.min(1, 1024 / Math.max(width, height));
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(width * scale));
+                canvas.height = Math.max(1, Math.round(height * scale));
+                canvas.getContext('2d', { alpha: false })?.drawImage(element, 0, 0, canvas.width, canvas.height);
+                const dataURL = canvas.toDataURL('image/jpeg', 0.82);
+                return dataURL.length <= maximumImageBytes * 1.38 ? dataURL : null;
+              } catch (_) { return null; }
+            };
+
+            const submitMedia = (element) => {
+              if (!(element instanceof HTMLImageElement || element instanceof HTMLVideoElement)) return;
+              const fingerprint = element instanceof HTMLVideoElement
+                ? String(element.currentSrc || element.poster || '')
+                : String(element.currentSrc || element.src || '');
+              let id = element.dataset.sentinelMediaId;
+              if (!id) {
+                id = String(nextMediaID++);
+                element.dataset.sentinelMediaId = id;
+                element.dataset.sentinelMediaVerdict = 'unknown';
+                mediaElements.set(id, element);
+              }
+              if (element instanceof HTMLImageElement && element.dataset.sentinelMediaFingerprint === fingerprint) return;
+              if (element.dataset.sentinelMediaFingerprint !== fingerprint) {
+                element.dataset.sentinelMediaFingerprint = fingerprint;
+                element.dataset.sentinelMediaVerdict = 'unknown';
+              }
+              const token = String(nextMediaToken++);
+              element.dataset.sentinelMediaToken = token;
+              const dataURL = captureImage(element);
+              bridge({
+                type: 'mediaCandidate',
+                id,
+                token,
+                kind: element instanceof HTMLVideoElement ? 'videoFrame' : 'image',
+                sourceURL: element instanceof HTMLVideoElement
+                  ? String(element.poster || '')
+                  : String(element.currentSrc || element.src || ''),
+                dataURL: dataURL || '',
+                captureFailed: !dataURL
+              });
+            };
+
+            window.__sentinelResolveMedia = (id, token, verdict) => {
+              const element = mediaElements.get(String(id));
+              if (!element || element.dataset.sentinelMediaToken !== String(token)
+                  || !['safe', 'sensitive', 'unknown'].includes(verdict)) return;
+              // A sensitive result is sticky. Unknown stays blurred until a later
+              // sample for the same media is explicitly classified as safe.
+              if (element.dataset.sentinelMediaVerdict === 'sensitive') return;
+              if (verdict === 'sensitive') element.dataset.sentinelMediaVerdict = 'sensitive';
+              else element.dataset.sentinelMediaVerdict = 'unknown';
+              if (verdict === 'safe') element.dataset.sentinelMediaVerdict = 'safe';
+            };
+
+            let textRevision = 0;
+            let inspectionScheduled = false;
+            const extractPageText = (limit) => {
+              if (!document.body) return { text: '', wasTruncated: false };
+              const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+                acceptNode: (node) => {
+                  const parent = node.parentElement;
+                  if (!parent || ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(parent.tagName)) {
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                  return NodeFilter.FILTER_ACCEPT;
+                }
+              });
+              const pieces = [];
+              let length = 0;
+              let wasTruncated = false;
+              for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                const value = String(node.nodeValue || '').replace(/\s+/g, ' ').trim();
+                if (!value) continue;
+                if (length + value.length + 1 > limit) {
+                  pieces.push(value.slice(0, Math.max(0, limit - length)));
+                  wasTruncated = true;
+                  break;
+                }
+                pieces.push(value);
+                length += value.length + 1;
+              }
+              return { text: pieces.join('\n'), wasTruncated };
+            };
+            const inspectDocument = () => {
+              inspectionScheduled = false;
+              document.querySelectorAll('img, video').forEach((element) => {
+                if (element instanceof HTMLImageElement && !element.complete) {
+                  element.addEventListener('load', () => submitMedia(element), { once: true });
+                } else if (element instanceof HTMLVideoElement && element.readyState < 2) {
+                  element.addEventListener('loadeddata', () => submitMedia(element), { once: true });
+                } else submitMedia(element);
+              });
+
+              const maximumTextLength = 512000;
+              const chunkLength = 24000;
+              const extracted = extractPageText(maximumTextLength);
+              const wasTruncated = extracted.wasTruncated;
+              const text = extracted.text;
+              const revision = String(++textRevision);
+              const total = Math.max(1, Math.ceil(text.length / chunkLength));
+              for (let index = 0; index < total; index += 1) {
+                bridge({
+                  type: 'pageText', revision, index, total, wasTruncated,
+                  text: text.slice(index * chunkLength, (index + 1) * chunkLength)
+                });
+              }
+            };
+
+            window.__sentinelResolvePageText = (revision, verdict) => {
+              if (String(revision) !== String(textRevision)) return;
+              if (['safe', 'sensitive', 'unknown'].includes(verdict)) {
+                document.documentElement.dataset.sentinelPageVerdict = verdict;
+              }
+            };
+
+            const scheduleInspection = () => {
+              document.documentElement.dataset.sentinelPageVerdict = 'unknown';
+              if (inspectionScheduled) return;
+              inspectionScheduled = true;
+              setTimeout(inspectDocument, 120);
+            };
+            new MutationObserver(scheduleInspection).observe(document.documentElement, {
+              childList: true, subtree: true, characterData: true,
+              attributes: true, attributeFilter: ['src', 'srcset', 'poster']
+            });
+            document.addEventListener('loadeddata', scheduleInspection, true);
+            scheduleInspection();
+
+            // Re-check moving media. Frames that cannot be captured remain blurred.
+            setInterval(() => {
+              document.querySelectorAll('video, img').forEach((media) => {
+                if (media instanceof HTMLVideoElement && !media.paused && media.readyState >= 2) submitMedia(media);
+                else if (media instanceof HTMLImageElement && media.complete && /\.(gif|webp)(?:$|[?#])/i.test(media.currentSrc || media.src || '')) {
+                  delete media.dataset.sentinelMediaFingerprint;
+                  submitMedia(media);
+                }
+              });
+            }, 2000);
 
             let audioRefreshScheduled = false;
             const scheduleAudioRefresh = () => {
