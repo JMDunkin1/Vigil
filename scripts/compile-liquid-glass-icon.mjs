@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { cp, mkdir, rm } from "node:fs/promises";
+import { access, cp, mkdir, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,11 +37,27 @@ export async function compileLiquidGlassIcon(targetAppPath) {
     "--output-partial-info-plist", join(compiled, "asset-info.plist")
   ]);
 
-  await cp(join(compiled, "Assets.car"), join(resources, "Assets.car"));
-  await cp(join(compiled, "Vigil.icns"), join(resources, "Vigil.icns"));
+  const compiledAssets = join(compiled, "Assets.car");
+  const compiledIcon = join(compiled, "Vigil.icns");
+  if (!await pathsExist([compiledAssets, compiledIcon])) {
+    console.warn("actool did not produce a complete icon set; keeping the packaged fallback Vigil.icns icon.");
+    return;
+  }
+
+  await cp(compiledAssets, join(resources, "Assets.car"));
+  await cp(compiledIcon, join(resources, "Vigil.icns"));
   const plist = join(targetAppPath, "Contents", "Info.plist");
   await run("/usr/libexec/PlistBuddy", ["-c", "Set :CFBundleIconFile Vigil", plist]);
   await run("/usr/libexec/PlistBuddy", ["-c", "Add :CFBundleIconName string Vigil", plist]);
+}
+
+async function pathsExist(paths) {
+  try {
+    await Promise.all(paths.map((path) => access(path)));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function commandSucceeds(command, args) {
