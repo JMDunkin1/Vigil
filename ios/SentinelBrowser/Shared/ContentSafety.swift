@@ -16,10 +16,6 @@ protocol PageTextSafetyClassifying: Sendable {
     func classify(pageText: String, wasTruncated: Bool) async -> ContentSafetyVerdict
 }
 
-protocol MediaDataLoading: Sendable {
-    func loadImage(from url: URL, maximumBytes: Int) async -> Data?
-}
-
 final class AppleSensitiveMediaClassifier: MediaSafetyClassifying, @unchecked Sendable {
     private let analyzer: SCSensitivityAnalyzer
 
@@ -54,50 +50,6 @@ struct ConservativePageTextClassifier: PageTextSafetyClassifying {
     }
 }
 
-struct EphemeralMediaDataLoader: MediaDataLoading {
-    func loadImage(from url: URL, maximumBytes: Int) async -> Data? {
-        guard Self.allows(url) else { return nil }
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpCookieAcceptPolicy = .never
-        configuration.httpShouldSetCookies = false
-        configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 12
-        let session = URLSession(configuration: configuration)
-        var request = URLRequest(url: url)
-        request.setValue("image/avif,image/webp,image/*", forHTTPHeaderField: "Accept")
-        do {
-            let (bytes, response) = try await session.bytes(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  (200..<300).contains(http.statusCode),
-                  let finalURL = http.url, Self.allows(finalURL),
-                  http.mimeType?.lowercased().hasPrefix("image/") == true,
-                  response.expectedContentLength <= Int64(maximumBytes) else { return nil }
-            var data = Data()
-            data.reserveCapacity(min(maximumBytes, max(0, Int(response.expectedContentLength))))
-            for try await byte in bytes {
-                guard data.count < maximumBytes else { return nil }
-                data.append(byte)
-            }
-            return data.isEmpty ? nil : data
-        } catch {
-            return nil
-        }
-    }
-
-    private static func allows(_ url: URL) -> Bool {
-        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased(),
-              !host.isEmpty, host != "localhost", !host.hasSuffix(".local") else { return false }
-        if host == "::1" || host.hasPrefix("fe80:") || host.hasPrefix("fc") || host.hasPrefix("fd") { return false }
-        let octets = host.split(separator: ".").compactMap { Int($0) }
-        guard octets.count == 4 else { return true }
-        return !(octets[0] == 10 || octets[0] == 127
-            || (octets[0] == 169 && octets[1] == 254)
-            || (octets[0] == 172 && (16...31).contains(octets[1]))
-            || (octets[0] == 192 && octets[1] == 168))
-    }
-}
-
 enum ContentSafetyPayload {
     static let maximumMediaBytes = 4 * 1024 * 1024
 
@@ -110,9 +62,6 @@ enum ContentSafetyPayload {
         return data
     }
 
-    static func sourceURL(from body: [String: Any]) -> URL? {
-        (body["sourceURL"] as? String).flatMap(URL.init(string:))
-    }
 }
 
 enum ContentSafetyScript {

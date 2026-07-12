@@ -6,13 +6,15 @@ final class SentinelSocialTests: XCTestCase {
         let bootstrap = DOMAdapters.contentFilterBootstrap
         let script = DOMAdapters.script(for: .instagram, audioEnabled: true)
         XCTAssertTrue(bootstrap.contains("filter: blur"))
-        XCTAssertFalse(bootstrap.contains("background-image"))
+        XCTAssertTrue(bootstrap.contains("background-image: none"))
+        XCTAssertTrue(bootstrap.contains("canvas, svg"))
         XCTAssertTrue(bootstrap.contains("sentinelPageVerdict = 'unknown'"))
         XCTAssertTrue(script.contains("mediaCandidate"))
         XCTAssertTrue(script.contains("pageText"))
         XCTAssertTrue(script.contains("MutationObserver"))
         XCTAssertTrue(script.contains("videoFrame"))
         XCTAssertTrue(script.contains("__sentinelResolveMedia"))
+        XCTAssertFalse(script.contains("sourceURL"))
     }
 
     func testConservativeTextClassifierStillChecksBoundedTextWhenPageIsLong() async {
@@ -31,13 +33,6 @@ final class SentinelSocialTests: XCTestCase {
         XCTAssertEqual(verdict, .sensitive)
     }
 
-    func testMediaLoaderRejectsLocalAndInsecureURLs() async throws {
-        let loader = EphemeralMediaDataLoader()
-        let insecure = await loader.loadImage(from: try XCTUnwrap(URL(string: "http://example.com/a.jpg")), maximumBytes: 10)
-        let local = await loader.loadImage(from: try XCTUnwrap(URL(string: "https://127.0.0.1/a.jpg")), maximumBytes: 10)
-        XCTAssertNil(insecure)
-        XCTAssertNil(local)
-    }
     func testDeepLinksResolveServices() throws {
         XCTAssertEqual(SocialService.resolve(try XCTUnwrap(URL(string: "sentinelsocial://open/youtube"))), .youtube)
         XCTAssertEqual(SocialService.resolve(try XCTUnwrap(URL(string: "https://www.instagram.com/direct/inbox/"))), .instagram)

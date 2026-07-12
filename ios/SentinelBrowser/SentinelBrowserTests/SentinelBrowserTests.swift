@@ -11,6 +11,9 @@ final class SentinelBrowserTests: XCTestCase {
         XCTAssertTrue(script.contains("classifyText"))
         XCTAssertTrue(script.contains("sentinelMediaToken"))
         XCTAssertTrue(script.contains("videoFrame"))
+        XCTAssertTrue(script.contains("canvas, svg"))
+        XCTAssertTrue(script.contains("background-image: none"))
+        XCTAssertFalse(script.contains("sourceURL"))
     }
 
     func testBoundedTextClassifierFindsExplicitPhraseOnLongPage() async {

@@ -9,7 +9,16 @@
   const style = document.createElement("style");
   style.id = "sentinel-content-safety-style";
   style.textContent = `
-    img, video, [style*="background-image"] { filter: blur(32px) !important; }
+    img, video { filter: blur(32px) !important; }
+    canvas, svg, object, embed, input[type="image"] { visibility: hidden !important; }
+    *, *::before, *::after {
+      background-image: none !important;
+      border-image-source: none !important;
+      list-style-image: none !important;
+      -webkit-mask-image: none !important;
+      mask-image: none !important;
+      content: normal !important;
+    }
     [data-sentinel-media-verdict="safe"] { filter: none !important; }
     [data-sentinel-media-verdict="sensitive"] { filter: blur(48px) !important; visibility: hidden !important; }
     html[data-sentinel-page-verdict="sensitive"] body,
@@ -78,7 +87,6 @@
       type: "classifyMedia", id, token,
       kind: element instanceof HTMLVideoElement ? "videoFrame" : "image",
       // Never reveal a moving video based only on its poster.
-      sourceURL: element instanceof HTMLImageElement ? String(element.currentSrc || element.src || "") : "",
       dataURL: dataURL || ""
     };
     sendNative(payload).then(response => {
