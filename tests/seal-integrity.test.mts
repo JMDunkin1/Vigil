@@ -165,6 +165,14 @@ assert.equal(
     assert.equal(vigilBrandingVerification.ok, true);
     assert.equal(vigilBrandingVerification.status, "trusted-migration");
 
+    const previousBrandingState = structuredClone(state);
+    previousBrandingState.settings.focusShortcutOnName = "Vigil Focus On";
+    previousBrandingState.settings.focusShortcutOffName = "Vigil Focus Off";
+    await writeStateTextSeal(`${JSON.stringify(previousBrandingState, null, 2)}\n`, { keyPath, sealPath, scope: "state" }, now.toISOString());
+    const vigilBrandingVerification = await verifyStateTextSeal(`${JSON.stringify(vigilBrandingState, null, 2)}\n`, { keyPath, sealPath });
+    assert.equal(vigilBrandingVerification.ok, true);
+    assert.equal(vigilBrandingVerification.status, "trusted-migration");
+
     const preIntentionalUseState = structuredClone(state);
     delete (preIntentionalUseState as Partial<typeof preIntentionalUseState>).intentionalUse;
     delete (preIntentionalUseState.settings as Partial<typeof preIntentionalUseState.settings>).intentionalUseEnabled;

@@ -10,6 +10,7 @@ const STATE_PROTECTION_VERSION = 1;
 const BOOKKEEPING_MISMATCH_STATUS = "bookkeeping-mismatch";
 const TRUSTED_MIGRATION_STATUS = "trusted-migration";
 const LEGACY_APP_NAME = "Vigil";
+const PREVIOUS_APP_NAME = "Vigil";
 const CURRENT_APP_NAME = "Vigil";
 export const PROTECTED_SETTINGS = [
   "pollIntervalMs",
@@ -256,11 +257,10 @@ function protectedSnapshotDigestMatches(snapshot: ProtectedSnapshot, expected: s
 
 function trustedProtectedStateMigrationVariants(snapshot: ProtectedSnapshot): Array<{ snapshot: ProtectedSnapshot; detail: string }> {
   const variants: Array<{ snapshot: ProtectedSnapshot; detail: string }> = [];
-  const legacyBranding = legacyBrandingVariant(snapshot);
-  if (legacyBranding) {
+  for (const legacyBranding of legacyBrandingVariants(snapshot)) {
     variants.push({
-      snapshot: legacyBranding,
-      detail: "State file changed only by the trusted Vigil to Vigil branding migration; the seal can be refreshed without entering lockdown."
+      snapshot: legacyBranding.snapshot,
+      detail: `State file changed only by the trusted ${legacyBranding.previousName} to Vigil branding migration; the seal can be refreshed without entering lockdown.`
     });
   }
   for (const intentionalUseSchema of intentionalUseSchemaVariants(snapshot)) {
@@ -361,21 +361,19 @@ function iosEnforcementStateSchemaVariant(snapshot: ProtectedSnapshot): Protecte
   return variant;
 }
 
-function legacyBrandingVariant(snapshot: ProtectedSnapshot): ProtectedSnapshot | null {
+function legacyBrandingVariants(snapshot: ProtectedSnapshot): Array<{ snapshot: ProtectedSnapshot; previousName: string }> {
   const settings = asRecord(snapshot.settings);
   const onName = `${CURRENT_APP_NAME} Focus On`;
   const offName = `${CURRENT_APP_NAME} Focus Off`;
-  if (settings.focusShortcutOnName !== onName && settings.focusShortcutOffName !== offName) return null;
+  if (settings.focusShortcutOnName !== onName && settings.focusShortcutOffName !== offName) return [];
 
-  const variant = structuredClone(snapshot);
-  const variantSettings = asRecord(variant.settings);
-  if (variantSettings.focusShortcutOnName === onName) {
-    variantSettings.focusShortcutOnName = `${LEGACY_APP_NAME} Focus On`;
-  }
-  if (variantSettings.focusShortcutOffName === offName) {
-    variantSettings.focusShortcutOffName = `${LEGACY_APP_NAME} Focus Off`;
-  }
-  return variant;
+  return [PREVIOUS_APP_NAME, LEGACY_APP_NAME].map((previousName) => {
+    const variant = structuredClone(snapshot);
+    const variantSettings = asRecord(variant.settings);
+    if (variantSettings.focusShortcutOnName === onName) variantSettings.focusShortcutOnName = `${previousName} Focus On`;
+    if (variantSettings.focusShortcutOffName === offName) variantSettings.focusShortcutOffName = `${previousName} Focus Off`;
+    return { snapshot: variant, previousName };
+  });
 }
 
 function intentionalUseSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
