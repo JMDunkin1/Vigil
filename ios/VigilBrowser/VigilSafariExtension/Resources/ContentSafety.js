@@ -5,6 +5,7 @@
 
   const nativeApplication = "tech.caseline.vigil.browser";
   const isWebKitBrowser = Boolean(globalThis.webkit?.messageHandlers?.vigilContentSafety);
+  const frameID = globalThis.crypto.randomUUID();
   const style = document.createElement("style");
   style.id = "vigil-content-safety-style";
   style.textContent = `
@@ -25,7 +26,7 @@
 
   const sendNative = payload => {
     if (isWebKitBrowser) {
-      globalThis.webkit.messageHandlers.vigilContentSafety.postMessage(payload);
+      globalThis.webkit.messageHandlers.vigilContentSafety.postMessage({ ...payload, frameID });
       return Promise.resolve(null);
     }
     return browser.runtime.sendNativeMessage(nativeApplication, payload);
@@ -43,7 +44,7 @@
       canvas.getContext("2d", { alpha: false })?.drawImage(element, 0, 0, canvas.width, canvas.height);
       const dataURL = canvas.toDataURL("image/jpeg", 0.82);
       return dataURL.length <= 4 * 1024 * 1024 * 1.38 ? dataURL : null;
-    } catch (_) { return null; }
+    } catch { return null; }
   };
 
   globalThis.__vigilResolveMedia = (id, token, verdict) => {
