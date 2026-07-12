@@ -57,6 +57,7 @@ let trayRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let currentAppUrl: string | null = null;
 let instanceSecretPromise: Promise<string> | null = null;
 let appUpdateController: VigilAppUpdateController | null = null;
+let appUpdateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let quitForUpdate = false;
 let selectedIconTheme: IconTheme = DEFAULT_ICON_THEME;
 let appUpdateActionState: AppUpdateActionState = {
@@ -138,9 +139,16 @@ function showVigilWindow(appUrl: string): void {
   if (!mainWindow) createWindow(appUrl);
   if (!mainWindow) return;
   if (shouldStayResident()) app.show();
+  restoreNativeWindowControls(mainWindow);
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+}
+
+function restoreNativeWindowControls(window: BrowserWindow): void {
+  if (process.platform !== "darwin") return;
+  if (window.isFullScreen()) window.setFullScreen(false);
+  window.setWindowButtonVisibility(true);
 }
 
 function hideVigilWindow(): void {
@@ -164,7 +172,10 @@ function createWindow(appUrl: string): void {
     trafficLightPosition: { x: 18, y: 19 },
     backgroundColor: "#14191c",
     alwaysOnTop: false,
-    fullscreenable: true,
+    // Native macOS fullscreen removes the traffic lights by design. Keep the
+    // green control in zoom/maximize mode so red, yellow, and green remain
+    // reachable whenever Vigil is open.
+    fullscreenable: false,
     webPreferences: {
       contextIsolation: true,
       devTools: !app.isPackaged,
@@ -177,6 +188,7 @@ function createWindow(appUrl: string): void {
 
   vigilWindow.setAlwaysOnTop(false);
   vigilWindow.setVisibleOnAllWorkspaces(false);
+  vigilWindow.on("ready-to-show", () => restoreNativeWindowControls(vigilWindow));
 
   void vigilWindow.loadURL(appUrl);
   vigilWindow.webContents.on("will-navigate", (event, url) => {
@@ -369,9 +381,7 @@ function installMenu(appUrl: string): void {
     { type: "separator" },
     { role: "resetZoom" },
     { role: "zoomIn" },
-    { role: "zoomOut" },
-    { type: "separator" },
-    { role: "togglefullscreen" }
+    { role: "zoomOut" }
   );
 
   const template: MenuItemConstructorOptions[] = [
@@ -665,7 +675,7 @@ async function checkAppUpdate(appUrl: string): Promise<void> {
       checking: false,
       running,
       installable,
-      localChanges: Boolean(status?.dirty),
+      localChanges: Boolean(status?.localChanges),
       message: nonEmptyString(status?.message) || (installable ? "Update available" : "Vigil is current")
     };
   } catch (error) {
@@ -679,6 +689,7 @@ async function checkAppUpdate(appUrl: string): Promise<void> {
     };
   }
   refreshUpdateMenus(appUrl);
+  scheduleAppUpdateRefresh(appUrl);
 }
 
 async function startAppUpdate(appUrl: string): Promise<void> {
@@ -692,7 +703,17 @@ async function startAppUpdate(appUrl: string): Promise<void> {
   };
   refreshUpdateMenus(appUrl);
   try {
-    await requestAppUpdate();
+    const result = asRecord(await requestAppUpdate());
+    appUpdateActionState = {
+      checked: true,
+      checking: false,
+      running: result?.running !== false,
+      installable: false,
+      localChanges: Boolean(result?.localChanges),
+      message: nonEmptyString(result?.message) || "Vigil will quit, update, and reopen"
+    };
+    refreshUpdateMenus(appUrl);
+    scheduleAppUpdateRefresh(appUrl);
   } catch (error) {
     appUpdateActionState = {
       checked: true,
@@ -704,6 +725,44 @@ async function startAppUpdate(appUrl: string): Promise<void> {
     };
     refreshUpdateMenus(appUrl);
   }
+}
+
+function scheduleAppUpdateRefresh(appUrl: string): void {
+  if (appUpdateRefreshTimer) {
+    clearTimeout(appUpdateRefreshTimer);
+    appUpdateRefreshTimer = null;
+  }
+  if (!appUpdateActionState.running) return;
+  appUpdateRefreshTimer = setTimeout(() => {
+    appUpdateRefreshTimer = null;
+    void refreshRunningAppUpdate(appUrl);
+  }, 1_000);
+}
+
+async function refreshRunningAppUpdate(appUrl: string): Promise<void> {
+  try {
+    const status = asRecord(await requestAppUpdateStatus({ checkRemote: false }));
+    const installable = isInstallableAppUpdate(status);
+    appUpdateActionState = {
+      checked: true,
+      checking: false,
+      running: Boolean(status?.running),
+      installable,
+      localChanges: Boolean(status?.localChanges),
+      message: nonEmptyString(status?.message) || (installable ? "Update available" : "Vigil is current")
+    };
+  } catch (error) {
+    appUpdateActionState = {
+      checked: true,
+      checking: false,
+      running: false,
+      installable: false,
+      localChanges: false,
+      message: errorMessage(error)
+    };
+  }
+  refreshUpdateMenus(appUrl);
+  scheduleAppUpdateRefresh(appUrl);
 }
 
 async function requestPanicLock(appUrl: string): Promise<unknown> {
@@ -808,8 +867,8 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function isInstallableAppUpdate(status: Record<string, unknown> | null): boolean {
-  if (!status || status.ok !== true || status.supported === false || status.running || (!status.dirty && status.remoteCheckOk === false)) return false;
-  return Boolean(status.updateAvailable || status.appBundleOutdated || Number(status.behind || 0) > 0);
+  if (!status || status.ok !== true || status.supported === false || status.running || (!status.localChanges && status.remoteCheckOk === false)) return false;
+  return status.updateAvailable === true;
 }
 
 function sessionTitle(session: Record<string, unknown>): string {

@@ -102,6 +102,7 @@ assert.match(styles, /#view-home \.emergency-drawer\s*\{[\s\S]*?position:\s*abso
 assert.match(styles, /#view-home \.emergency-drawer\s*\{[\s\S]*?top:\s*12px;[\s\S]*?width:\s*min\(420px,[\s\S]*?border-radius:\s*13px;/, "the integrity notice must float independently near the top of the home view");
 assert.match(styles, /\.electron-shell \.app-chrome::before\s*\{\s*content:\s*none;/, "the title-bar drag layer must not cover the emergency drawer");
 assert.match(styles, /\.electron-shell \.app-chrome\s*\{\s*-webkit-app-region:\s*drag;/, "the sidebar must remain available for window dragging");
+assert.match(styles, /\.electron-shell \.sidebar-toggle\s*\{[\s\S]*?top:\s*50px;[\s\S]*?-webkit-app-region:\s*no-drag;/, "the sidebar toggle must sit below the native title-bar hit region");
 
 assert.match(html, /id="saintStageButton"[^>]*aria-controls="saintInfoPopover"[^>]*aria-expanded="false"/, "saint artwork must expose its details popover");
 assert.match(html, /id="saintStageButton"[^>]*title="[^"]*Two-finger click for details\./, "saint details must advertise the trackpad gesture");

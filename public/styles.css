@@ -2083,6 +2083,12 @@ body[data-active-view="tracking"] #view-journal {
   -webkit-app-region: drag;
 }
 
+.electron-shell .sidebar-toggle {
+  /* Keep this web control below the hidden native title-bar hit region. */
+  top: 50px;
+  -webkit-app-region: no-drag;
+}
+
 .electron-shell button,
 .electron-shell input,
 .electron-shell select,
@@ -6111,14 +6117,15 @@ h3,
 .protection-level-control[data-level="4"] { --level-color: #ff7b81; }
 
 .protection-level-control:not(.is-open) .protection-level-choice:hover {
+  z-index: 6;
   border-color: color-mix(in srgb, var(--level-color) 88%, white);
   box-shadow:
-    inset 0 0 0 5px color-mix(in srgb, var(--level-color) 24%, transparent),
-    0 0 0 2px color-mix(in srgb, var(--level-color) 36%, transparent),
-    0 0 22px color-mix(in srgb, var(--level-color) 58%, transparent),
-    0 0 48px color-mix(in srgb, var(--level-color) 34%, transparent),
-    0 14px 30px rgba(0, 0, 0, 0.28);
-  transform: translate(-50%, -50%) scale(1.07);
+    inset 0 0 0 6px color-mix(in srgb, var(--level-color) 34%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--level-color) 48%, transparent),
+    0 0 32px color-mix(in srgb, var(--level-color) 78%, transparent),
+    0 0 72px color-mix(in srgb, var(--level-color) 48%, transparent),
+    0 18px 38px rgba(0, 0, 0, 0.34);
+  transform: translate(-50%, -50%) scale(1.2);
 }
 
 .protection-level-readout {
@@ -6219,6 +6226,25 @@ h3,
   opacity: 0.72;
 }
 
+.protection-level-choice::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -54px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--choice-color) 46%, transparent) 0%,
+    color-mix(in srgb, var(--choice-color) 22%, transparent) 30%,
+    transparent 70%
+  );
+  opacity: 0;
+  filter: blur(7px);
+  transform: scale(0.58);
+  transition: opacity 220ms ease, transform 420ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 .protection-level-choice span {
   position: relative;
   font-family: var(--font-mono);
@@ -6242,6 +6268,11 @@ h3,
 .protection-level-choice:hover span {
   color: white;
   text-shadow: 0 0 12px color-mix(in srgb, var(--choice-color) 88%, transparent);
+}
+
+.protection-level-choice:hover::after {
+  opacity: 1;
+  transform: scale(1.18);
 }
 
 .protection-level-choice[data-protection-level-choice="1"] { --level-offset: -117px; --choice-color: #e2ad72; }
@@ -6283,8 +6314,30 @@ h3,
 
 .protection-level-control.is-open:not(.is-settling) .protection-level-choice:hover,
 .protection-level-control.is-scrolling:not(.is-settling) .protection-level-choice:hover {
+  z-index: 6;
   opacity: 1;
-  transform: translate(calc(-50% + var(--level-offset)), -50%) scale(1.05);
+  border-color: color-mix(in srgb, var(--choice-color) 92%, white);
+  box-shadow:
+    inset 0 0 0 6px color-mix(in srgb, var(--choice-color) 34%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--choice-color) 48%, transparent),
+    0 0 34px color-mix(in srgb, var(--choice-color) 82%, transparent),
+    0 0 76px color-mix(in srgb, var(--choice-color) 46%, transparent),
+    0 18px 38px rgba(0, 0, 0, 0.34);
+  transform: translate(calc(-50% + var(--level-offset)), -50%) scale(1.2);
+}
+
+.protection-level-control.is-open:not(.is-settling) .protection-level-bloom:has(.protection-level-choice:hover) .protection-level-choice:not(:hover),
+.protection-level-control.is-scrolling:not(.is-settling) .protection-level-bloom:has(.protection-level-choice:hover) .protection-level-choice:not(:hover) {
+  opacity: 0.28;
+}
+
+.protection-level-control.is-open:not(.is-settling) .protection-level-bloom:has(.protection-level-choice:hover) .protection-level-trace,
+.protection-level-control.is-scrolling:not(.is-settling) .protection-level-bloom:has(.protection-level-choice:hover) .protection-level-trace {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--level-color) 78%, white) 18% 82%, transparent);
+  box-shadow:
+    0 0 16px color-mix(in srgb, var(--level-color) 62%, transparent),
+    0 0 34px color-mix(in srgb, var(--level-color) 34%, transparent);
 }
 
 .protection-level-control[data-level="1"].is-open:not(.is-settling) .protection-level-choice[data-protection-level-choice="1"],
@@ -6619,5 +6672,44 @@ body[data-active-view="tracking"] .habit-pulse-day {
   body[data-active-view="tracking"] .habit-quick-row.habit-visual-card {
     grid-template-columns: 1fr auto;
     padding-inline: 14px;
+  }
+}
+
+/* Home composition: keep status copy off the level control and give that room
+   back to the patron artwork. The readout remains available to screen readers. */
+#view-home .protection-level-readout {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+#view-home .saint-artifact,
+#view-home .saint-stage[data-saint] .saint-artifact {
+  width: min(450px, 90vw);
+  min-height: min(422px, 52vh);
+}
+
+#view-home .saint-artwork {
+  width: min(372px, 82vw);
+  height: min(372px, 47vh);
+}
+
+@media (max-width: 720px) {
+  #view-home .saint-artifact,
+  #view-home .saint-stage[data-saint] .saint-artifact {
+    width: min(390px, 96vw);
+    min-height: min(358px, 50vh);
+  }
+
+  #view-home .saint-artwork {
+    width: min(316px, 84vw);
+    height: min(316px, 44vh);
   }
 }

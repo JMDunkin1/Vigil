@@ -7,6 +7,7 @@ import { link, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/prom
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { plistStringForKey } from "../src/plist.js";
+import { sourceFingerprint } from "../scripts/source-fingerprint.mjs";
 
 const UPDATE_STATUS_FILENAME = "update-status.json";
 const UPDATE_LOG_FILENAME = "update.log";
@@ -37,6 +38,7 @@ interface BuildInfo {
   branch?: string;
   dirty?: boolean;
   sourceRoot?: string;
+  sourceFingerprint?: string;
 }
 
 interface LastUpdateStatus {
@@ -89,8 +91,9 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
   ): Promise<Record<string, unknown>> {
     await mkdir(updateDir, { recursive: true });
     const remoteCheck = checkRemote ? await execGit(repoRoot, ["fetch", "--prune"]) : null;
-    const [repo, runtimeBuild, appBuild, appStat, lastUpdate, activeLock] = await Promise.all([
+    const [repo, currentSourceFingerprint, runtimeBuild, appBuild, appStat, lastUpdate, activeLock] = await Promise.all([
       readRepoInfo(repoRoot),
+      sourceFingerprint(repoRoot),
       readBuildInfo(join(repoRoot, "dist", "runtime", "build-info.json")),
       readFirstBuildInfo([
         join(appPath, "Contents", "Resources", "app.asar", "dist", "runtime", "build-info.json"),
@@ -104,10 +107,17 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
     const appCommit = appBuild?.commit || null;
     const currentCommit = repo.ok ? repo.head : runtimeBuild?.commit || "";
     const appBundleOutdated = repo.ok && (Boolean(currentCommit && appCommit && appCommit !== currentCommit) || Boolean(currentCommit && !appCommit));
+    const localChanges = Boolean(repo.dirty && (
+      !currentSourceFingerprint
+      || !appBuild?.sourceFingerprint
+      || currentSourceFingerprint !== appBuild.sourceFingerprint
+    ));
     const remoteCheckOk = remoteCheck ? remoteCheck.ok : null;
-    const checkOk = repo.ok && (repo.dirty || remoteCheckOk !== false);
+    const checkOk = repo.ok && (localChanges || remoteCheckOk !== false);
     const supported = repo.ok && Boolean(scriptPath);
-    const updateAvailable = Boolean(checkOk && supported && (repo.dirty || repo.behind > 0 || appBundleOutdated));
+    const updateAvailable = Boolean(checkOk && supported && (
+      localChanges || (!repo.dirty && (repo.behind > 0 || appBundleOutdated))
+    ));
     return {
       ok: checkOk,
       supported,
@@ -122,6 +132,7 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       ahead: repo.ahead,
       behind: repo.behind,
       dirty: repo.dirty,
+      localChanges,
       repoError: repo.error,
       runtimeBuiltAt: runtimeBuild?.builtAt || null,
       appBuiltAt: appBuild?.builtAt || null,
@@ -131,7 +142,7 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       remoteCheckError: remoteCheck && !remoteCheck.ok ? "Remote check failed" : null,
       logPath,
       lastUpdate,
-      message: updateMessage({ repo, appBundleOutdated, running, remoteCheckError: remoteCheck && !remoteCheck.ok })
+      message: updateMessage({ repo, appBundleOutdated, localChanges, running, remoteCheckError: remoteCheck && !remoteCheck.ok })
     };
   }
 
@@ -172,7 +183,7 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       if (currentStatus.supported !== true || !scriptPath) {
         return { ok: false, supported: false, error: "Updater script is missing from this Vigil build." };
       }
-      if (currentStatus.dirty) {
+      if (currentStatus.localChanges) {
         const result = await launchLocalChanges(currentStatus, updateLock);
         if (result.ok === true) handedOff = true;
         return result;
@@ -275,12 +286,26 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       "--parent-pid", String(process.pid),
       "--npm-path", npmPath
     ], { detached: true, stdio: "ignore", cwd: repoRoot, env: process.env });
-    await childStarted(child);
-    if (!child.pid) throw new Error("The local launcher did not report a process ID.");
+    const requestQuit = () => quitForUpdate();
+    process.once("SIGUSR2", requestQuit);
+    try {
+      await childStarted(child);
+      if (!child.pid) throw new Error("The local launcher did not report a process ID.");
+    } catch (error) {
+      process.off("SIGUSR2", requestQuit);
+      throw error;
+    }
+    child.once("exit", () => process.off("SIGUSR2", requestQuit));
     await updateLock.transferTo(child.pid);
     child.unref();
-    setTimeout(quitForUpdate, 200);
-    return { ok: true, supported: true, phase: "starting", message: "Vigil will reopen with local changes." };
+    return {
+      ...currentStatus,
+      ok: true,
+      supported: true,
+      running: true,
+      phase: "building",
+      message: "Building local changes; Vigil will restart when ready."
+    };
   }
 }
 
@@ -460,13 +485,14 @@ async function optionalStat(path: string) {
 }
 
 function updateMessage(
-  { repo, appBundleOutdated, running, remoteCheckError }:
-  { repo: RepoInfo; appBundleOutdated: boolean; running: boolean; remoteCheckError?: boolean | null }
+  { repo, appBundleOutdated, localChanges, running, remoteCheckError }:
+  { repo: RepoInfo; appBundleOutdated: boolean; localChanges: boolean; running: boolean; remoteCheckError?: boolean | null }
 ): string {
   if (running) return "Update in progress";
   if (!repo.ok) return "Vigil could not verify its source repository";
-  if (repo.dirty) return "Local changes ready to run";
+  if (localChanges) return "Local changes ready to run";
   if (remoteCheckError) return "Could not verify remote updates";
+  if (repo.dirty) return "Local changes are running";
   if (repo.behind > 0) return `${repo.behind} remote commit${repo.behind === 1 ? "" : "s"} ready`;
   if (appBundleOutdated) return "Installed app is behind this checkout";
   return "Vigil is current";

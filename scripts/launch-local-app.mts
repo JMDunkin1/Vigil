@@ -25,16 +25,8 @@ async function main(): Promise<void> {
   await mkdir(dirname(options.logPath), { recursive: true });
   const log = createWriteStream(options.logPath, { flags: "a" });
   await waitForLogOpen(log);
-  log.write(`\n[${new Date().toISOString()}] Waiting for installed Vigil process ${options.parentPid} to quit.\n`);
+  log.write(`\n[${new Date().toISOString()}] Building local changes while Vigil process ${options.parentPid} keeps running.\n`);
   try {
-    try {
-      await waitForExit(options.parentPid, 45_000);
-    } catch (error) {
-      log.write(`[${new Date().toISOString()}] ${errorMessage(error)} Reopening ${options.appPath}.\n`);
-      await reopenInstalledApp(options.appPath, log);
-      process.exitCode = 1;
-      return;
-    }
     log.write(`[${new Date().toISOString()}] Building packaged Vigil from ${options.repoRoot}\n`);
     let exitCode: number | null = 1;
     try {
@@ -43,9 +35,18 @@ async function main(): Promise<void> {
       log.write(`[${new Date().toISOString()}] Local Vigil could not be built: ${errorMessage(error)}\n`);
     }
     if (exitCode !== 0) {
-      log.write(`[${new Date().toISOString()}] Local Vigil build exited with status ${exitCode}. Reopening ${options.appPath}.\n`);
-      await reopenInstalledApp(options.appPath, log);
+      log.write(`[${new Date().toISOString()}] Local Vigil build exited with status ${exitCode}. The running app was left in place.\n`);
       process.exitCode = exitCode ?? 1;
+      return;
+    }
+
+    log.write(`[${new Date().toISOString()}] Local build is ready. Asking Vigil to quit for replacement.\n`);
+    process.kill(options.parentPid, "SIGUSR2");
+    try {
+      await waitForExit(options.parentPid, 45_000);
+    } catch (error) {
+      log.write(`[${new Date().toISOString()}] ${errorMessage(error)} The built app was not installed.\n`);
+      process.exitCode = 1;
       return;
     }
 

@@ -24,6 +24,7 @@ interface VigilAppUpdateWindow extends Window {
 export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppUpdatePanelContext) {
   let cached: UnknownRecord | null = null;
   let checking = false;
+  let runningRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   return {
     bind() {
@@ -56,6 +57,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     } finally {
       checking = false;
       renderStatus(cached);
+      scheduleRunningRefresh();
     }
   }
 
@@ -67,6 +69,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     try {
       cached = await requestStart();
       renderStatus(cached);
+      scheduleRunningRefresh();
       toast("Vigil update started");
     } catch (error) {
       const message = errorMessage(error);
@@ -74,6 +77,18 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
       toast(message);
       renderStatus(cached);
     }
+  }
+
+  function scheduleRunningRefresh(): void {
+    if (runningRefreshTimer) {
+      clearTimeout(runningRefreshTimer);
+      runningRefreshTimer = null;
+    }
+    if (!cached?.running) return;
+    runningRefreshTimer = setTimeout(() => {
+      runningRefreshTimer = null;
+      void refreshStatus(false);
+    }, 1_000);
   }
 
   async function requestStatus(checkRemote: boolean): Promise<UnknownRecord> {
@@ -106,6 +121,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     const supported = status.supported !== false;
     const running = Boolean(status.running);
     const dirty = Boolean(status.dirty);
+    const localChanges = Boolean(status.localChanges);
     const behind = Number(status.behind || 0);
     const appBundleOutdated = Boolean(status.appBundleOutdated);
     const currentCommit = shortCommit(status.currentCommit);
@@ -120,7 +136,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
       status.appBuiltAt ? `built ${formatDate(status.appBuiltAt)}` : ""
     ].filter(Boolean).join(" | ") || "--";
     const installable = canInstall(status);
-    button.textContent = installable ? (dirty ? "Run Local Changes" : "Install Update") : "Check for Updates";
+    button.textContent = installable ? (localChanges ? "Run Local Changes" : "Install Update") : "Check for Updates";
     button.disabled = !supported || running;
     button.classList.toggle("primary", installable);
     button.classList.toggle("secondary", !installable);
@@ -128,8 +144,8 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
 }
 
 function canInstall(status: UnknownRecord | null): boolean {
-  if (!status || status.ok !== true || status.supported === false || status.running || (!status.dirty && status.remoteCheckOk === false)) return false;
-  return Boolean(status.updateAvailable || status.appBundleOutdated || Number(status.behind || 0) > 0);
+  if (!status || status.ok !== true || status.supported === false || status.running || (!status.localChanges && status.remoteCheckOk === false)) return false;
+  return status.updateAvailable === true;
 }
 
 function appUpdateBridge(): VigilAppUpdateBridge | null {

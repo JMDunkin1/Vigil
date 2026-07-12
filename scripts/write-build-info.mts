@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { sourceFingerprint } from "./source-fingerprint.mjs";
 
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const projectRoot = dirname(dirname(runtimeRoot));
@@ -12,6 +13,7 @@ const info = {
   commit: (await git(["rev-parse", "HEAD"])).trim() || null,
   branch: (await git(["rev-parse", "--abbrev-ref", "HEAD"])).trim() || null,
   dirty: Boolean((await git(["status", "--porcelain=v1"])).trim()),
+  sourceFingerprint: await sourceFingerprint(projectRoot),
   sourceRoot: resolve(process.env.VIGIL_BUILD_SOURCE_ROOT || projectRoot)
 };
 

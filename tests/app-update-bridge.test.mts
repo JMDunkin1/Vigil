@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import vm from "node:vm";
 import { createAppUpdatePanel } from "../public/app-update.js";
-import type { ControlElement } from "../public/app-model.js";
+import type { ControlElement, UnknownRecord } from "../public/app-model.js";
 import { atomicInstallBuiltApp } from "../scripts/update-packaged-app.mjs";
 
 interface Bridge {
@@ -125,23 +125,30 @@ let postCalls = 0;
 let statusCalls = 0;
 let startCalls = 0;
 let checkedRemote: boolean | undefined;
+let rendererStatus: UnknownRecord = {
+  ok: true,
+  supported: true,
+  updateAvailable: true,
+  appBundleOutdated: true,
+  dirty: false,
+  behind: 0,
+  message: "Installed app is behind this checkout"
+};
+let rendererStartResult: UnknownRecord = {
+  ok: true,
+  supported: true,
+  phase: "starting",
+  message: "Vigil will reopen"
+};
 const rendererBridge = {
   async status(options: { checkRemote?: boolean } = {}) {
     statusCalls += 1;
     checkedRemote = options.checkRemote;
-    return {
-      ok: true,
-      supported: true,
-      updateAvailable: true,
-      appBundleOutdated: true,
-      dirty: false,
-      behind: 0,
-      message: "Installed app is behind this checkout"
-    };
+    return rendererStatus;
   },
   async start() {
     startCalls += 1;
-    return { ok: true, supported: true, phase: "starting", message: "Vigil will reopen" };
+    return rendererStartResult;
   }
 };
 
@@ -186,6 +193,48 @@ try {
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
   assert.equal(startCalls, 1);
   assert.equal(postCalls, 0);
+
+  rendererStatus = {
+    ok: true,
+    supported: true,
+    updateAvailable: false,
+    appBundleOutdated: false,
+    dirty: true,
+    localChanges: false,
+    behind: 1,
+    remoteCheckOk: true,
+    message: "Local changes are running"
+  };
+  await panel.refreshStatus(true);
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Check for Updates");
+  click();
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(startCalls, 1, "a dirty checkout already represented by the app must not offer a rejected remote update");
+
+  rendererStatus = {
+    ok: true,
+    supported: true,
+    updateAvailable: true,
+    dirty: true,
+    localChanges: true,
+    behind: 0,
+    message: "Local changes ready to run"
+  };
+  await panel.refreshStatus(false);
+  rendererStartResult = {
+    ...rendererStatus,
+    running: true,
+    updateAvailable: false,
+    phase: "building",
+    message: "Building local changes"
+  };
+  click();
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(startCalls, 2);
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 1_100));
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, false, "a completed or failed local build must refresh the cached running state");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Run Local Changes");
 } finally {
   Object.defineProperty(globalThis, "window", {
     configurable: true,

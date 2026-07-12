@@ -10,6 +10,7 @@ import type { AtomicInstallOperations } from "../scripts/update-packaged-app.mjs
 const sourceRoot = existsSync(join(process.cwd(), "app", "updater.ts"))
   ? process.cwd()
   : resolve(process.cwd(), "..", "..");
+const mainSource = await readFile(join(sourceRoot, "app", "main.ts"), "utf8");
 const updaterSource = await readFile(join(sourceRoot, "app", "updater.ts"), "utf8");
 const updateScriptSource = await readFile(join(sourceRoot, "scripts", "update-packaged-app.mts"), "utf8");
 const localLauncherSource = await readFile(join(sourceRoot, "scripts", "launch-local-app.mts"), "utf8");
@@ -26,11 +27,18 @@ assert.match(
 assert.match(updateScriptSource, /\["worktree", "add", "--detach"/u);
 assert.match(updaterSource, /packagedBuildRepoRoot\(app\)/u, "the installed app must retain its source checkout pointer");
 assert.match(updateScriptSource, /VIGIL_BUILD_SOURCE_ROOT: options\.repoRoot/u, "staged update builds must preserve the real checkout pointer");
-assert.match(updaterSource, /repo\.dirty \|\| remoteCheckOk !== false/u, "local changes must remain runnable without a remote fetch");
+assert.match(updaterSource, /localChanges \|\| remoteCheckOk !== false/u, "new local changes must remain runnable without a remote fetch");
+assert.match(updaterSource, /currentSourceFingerprint !== appBuild\.sourceFingerprint/u, "local changes must be compared with the source built into the installed app");
+assert.match(mainSource, /return status\.updateAvailable === true/u, "the tray must honor the updater controller's installability decision");
+assert.match(mainSource, /scheduleAppUpdateRefresh\(appUrl\)/u, "the tray must refresh a local build that leaves Vigil running");
 assert.match(updaterSource, /launchLocalChanges\(currentStatus, updateLock\)/u, "dirty source must use the local app launcher");
 assert.match(updaterSource, /"--app-path", appPath/u, "the local launcher must receive the installed app path for recovery");
 assert.match(localLauncherSource, /exitCode = await buildLocalApp\(options, log\)/u, "the local launcher must remain alive through the packaged local build");
 assert.match(localLauncherSource, /\["run", "build:mac"\]/u, "local changes must rebuild the Vigil app bundle instead of launching a second Electron app identity");
+assert.ok(
+  localLauncherSource.indexOf("exitCode = await buildLocalApp(options, log)") < localLauncherSource.indexOf('process.kill(options.parentPid, "SIGUSR2")'),
+  "local changes must finish building before the running app is asked to quit"
+);
 assert.match(localLauncherSource, /atomicInstallBuiltApp\(builtAppPath, options\.appPath, ""\)/u, "local changes must replace Vigil at the same installed app path");
 assert.match(localLauncherSource, /await verifyReplacement\(options\.appPath\);[\s\S]*?await installation\.finalize\(\)/u, "the previous installed app must remain recoverable until the replacement stays healthy");
 assert.match(localLauncherSource, /await terminateInstalledApp\(options\.appPath\);[\s\S]*?await installation\.rollback\(\)/u, "a failed replacement must stop before restoring and reopening the previous app");
@@ -40,11 +48,7 @@ assert.ok(
   "the local launcher must create its log before waiting for the installed app to quit"
 );
 assert.match(localLauncherSource, /await waitForLogOpen\(log\)/u, "the local launcher must wait for its log descriptor before passing it to child processes");
-assert.match(
-  localLauncherSource,
-  /catch \(error\) \{[\s\S]*?Reopening \$\{options\.appPath\}[\s\S]*?await reopenInstalledApp\(options\.appPath, log\)/u,
-  "a stalled installed-app shutdown must be logged and recovered"
-);
+assert.match(localLauncherSource, /The built app was not installed/u, "a stalled installed-app shutdown must leave the installed app untouched");
 assert.match(localLauncherSource, /"Library", "Logs", "Vigil", "local-launch\.log"/u, "local launch output must remain available in a durable log");
 assert.match(updateScriptSource, /await openAndVerifyReplacement\(/u);
 assert.match(updateScriptSource, /launchAgentRuntimePath\(\)/u);

@@ -69,8 +69,15 @@ assert.match(
 assert.doesNotMatch(
   mainSource,
   /setWindowButtonVisibility\(false\)/,
-  "native macOS window controls must remain available in fullscreen"
+  "native macOS window controls must never be explicitly hidden"
 );
+assert.match(mainSource, /fullscreenable:\s*false/, "Vigil must use macOS zoom instead of fullscreen so the traffic lights remain visible");
+assert.match(
+  mainSource,
+  /function restoreNativeWindowControls\(window: BrowserWindow\): void \{[\s\S]*?window\.setWindowButtonVisibility\(true\);/,
+  "showing Vigil must restore the native red, yellow, and green controls"
+);
+assert.doesNotMatch(mainSource, /role:\s*"togglefullscreen"/, "the View menu must not put Vigil into a traffic-light-free fullscreen state");
 
 async function sourceRoot(): Promise<string> {
   for (const candidate of [process.cwd(), resolve(process.cwd(), "..", "..")]) {
