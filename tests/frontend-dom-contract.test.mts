@@ -3,6 +3,11 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const html = await readFile("public/index.html", "utf8");
+
+assert.match(html, />Combined today</u);
+assert.match(html, /id="combinedDevicesToday">Mac \+ iPhone</u);
+assert.match(html, /Combined Mac and iPhone screen time by day/u);
+assert.doesNotMatch(html, />iPhone today</u);
 const ids = [...html.matchAll(/\bid="([A-Za-z][\w:-]*)"/g)].map((match) => match[1]);
 const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
 assert.deepEqual([...new Set(duplicateIds)], [], "dashboard HTML must not contain duplicate IDs");
@@ -36,22 +41,49 @@ assert.match(html, /<svg class="settings-icon"[^>]*aria-hidden="true"/, "setting
 assert.match(html, /name="appIconTheme" value="jerusalem-cross"/, "settings must offer the Jerusalem Cross icon");
 assert.match(html, /name="appIconTheme" value="sacred-heart"/, "settings must offer the Sacred Heart icon");
 assert.match(html, /name="appIconTheme" value="saint-michael"/, "settings must offer the Saint Michael icon");
+const settingsMarkup = html.match(/<section id="view-rules"[\s\S]*?<section id="view-devices"/)?.[0] || "";
+const firstSettingsDisclosure = settingsMarkup.match(/<details class="settings-disclosure[^>]*>[\s\S]*?<\/summary>/)?.[0] || "";
+assert.match(firstSettingsDisclosure, />App icon</, "app icon must be the first settings disclosure");
+assert.doesNotMatch(firstSettingsDisclosure, /<details[^>]*\sopen(?:\s|>)/, "app icon must start collapsed like the other settings disclosures");
 assert.match(html, /id="accountButton"[^>]*aria-expanded="false"/, "the account button must expose its toggle state");
 const sidebarMarkup = html.match(/<aside class="app-chrome"[\s\S]*?<\/aside>/)?.[0] || "";
 assert.doesNotMatch(sidebarMarkup, /&#(?:8962|10016|10003|9835|10070|9881);/, "font-glyph sidebar icons must not return");
 assert.doesNotMatch(html, /sidebarToggle|sidebar-toggle|data-sidebar-open|>Menu<\//, "the sidebar must never collapse into a top menu");
 
 const styles = await readFile("public/styles.css", "utf8");
+assert.match(styles, /\.settings-disclosure \+ \.settings-disclosure\s*\{[\s\S]*?margin-top:\s*16px;/, "adjacent settings disclosures must use the shared row spacing");
 assert.doesNotMatch(styles, /data-sidebar-open|\.sidebar-toggle/, "responsive styles must not restore the collapsible top menu");
 assert.doesNotMatch(styles, /@media \(max-width: 900px\)\s*\{\s*body\s*\{\s*display:\s*block/, "narrow windows must retain the sidebar grid");
 
+const trackingMarkup = html.match(/<section id="view-journal"[\s\S]*?<div class="journal-page journal-only"/)?.[0] || "";
+assert.match(trackingMarkup, /id="dailyCheckInMeterBar"/, "daily tracking must expose a visible completion meter");
+assert.match(trackingMarkup, /id="habitMonthPulse"/, "monthly tracking must expose the compact rhythm visualization");
+assert.match(trackingMarkup, /<details id="habitCalendarDetails" class="habit-calendar-details">/, "the dense habit grid must start collapsed behind optional detail");
+assert.doesNotMatch(trackingMarkup, /<details id="habitCalendarDetails"[^>]*\sopen(?:\s|>)/, "the dense monthly grid must not dominate the initial tracking view");
+const trackingSource = await readFile("public/tracking-view.js", "utf8");
+assert.match(trackingSource, /status === "success" \? "unreported" : "success"/, "selecting an active habit result again must clear it without a third row button");
+
 const protectionMarkup = html.match(/<div id="protectionLevelControl"[\s\S]*?<div[^>]*class="home-runtime-status"/)?.[0] || "";
+assert.match(protectionMarkup, /id="protectionLevelControl"[^>]*aria-expanded="false"/, "the protection selector must start collapsed");
 assert.equal(
   [...protectionMarkup.matchAll(/data-protection-level-choice="[1-4]"/g)].length,
   4,
   "the protection selector bloom must expose all four levels"
 );
-assert.match(protectionMarkup, /class="protection-level-scroll-hint">Scroll to choose</, "the expanded selector should explain wheel interaction");
+assert.doesNotMatch(protectionMarkup, /Scroll to choose|protection-level-scroll-hint/i, "the protection selector must not show a scroll instruction");
+assert.doesNotMatch(styles, /\.protection-level-control:hover:not\(\.is-settling\) \.protection-level-choice/, "hovering must not expand the protection selector");
+assert.match(styles, /\.protection-level-control\.is-open:not\(\.is-settling\) \.protection-level-choice/, "the protection selector must expand only in its explicit open state");
+const appEventsSource = await readFile("public/app-events.js", "utf8");
+assert.match(appEventsSource, /classList\.contains\(["']is-open["']\)/, "clicking the collapsed protection orb must open the selector before changing levels");
+
+const appSource = await readFile("public/app.js", "utf8");
+assert.match(appSource, /!hasRuntimeStatus/, "the idle home screen must hide the redundant Ready and dash status row");
+
+const journalGateMarkup = html.match(/<section id="journalUnlockGate"[\s\S]*?<\/section>/)?.[0] || "";
+assert.doesNotMatch(journalGateMarkup, /\bpanel\b/, "journal access must not regress to the oversized generic panel");
+assert.match(journalGateMarkup, /class="journal-gate-copy"/, "journal access must keep a minimal copy block");
+assert.match(journalGateMarkup, /class="journal-unlock-actions"/, "journal credentials must remain one focused action row");
+assert.match(styles, /\.journal-unlock-gate\s*\{[\s\S]*?width:\s*min\(620px, 100%\)/, "journal access must remain compact within the writing surface");
 
 const emergencyMarkup = html.match(/<details id="emergencyPanel"[\s\S]*?<\/details>/)?.[0] || "";
 assert.match(emergencyMarkup, /<summary class="emergency-summary">/, "emergency UI must be a collapsible top drawer");

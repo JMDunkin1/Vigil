@@ -36,6 +36,7 @@ interface BuildInfo {
   commit?: string;
   branch?: string;
   dirty?: boolean;
+  sourceRoot?: string;
 }
 
 interface LastUpdateStatus {
@@ -104,9 +105,9 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
     const currentCommit = repo.ok ? repo.head : runtimeBuild?.commit || "";
     const appBundleOutdated = repo.ok && (Boolean(currentCommit && appCommit && appCommit !== currentCommit) || Boolean(currentCommit && !appCommit));
     const remoteCheckOk = remoteCheck ? remoteCheck.ok : null;
-    const checkOk = repo.ok && remoteCheckOk !== false;
+    const checkOk = repo.ok && (repo.dirty || remoteCheckOk !== false);
     const supported = repo.ok && Boolean(scriptPath);
-    const updateAvailable = Boolean(checkOk && supported && !repo.dirty && (repo.behind > 0 || appBundleOutdated));
+    const updateAvailable = Boolean(checkOk && supported && (repo.dirty || repo.behind > 0 || appBundleOutdated));
     return {
       ok: checkOk,
       supported,
@@ -168,11 +169,13 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       if (currentStatus.ok !== true) {
         return { ...currentStatus, ok: false, error: "The Vigil source repository could not be verified." };
       }
-      if (currentStatus.dirty) {
-        return { ...currentStatus, ok: false, error: "Commit or stash local changes before installing a Vigil update." };
-      }
       if (currentStatus.supported !== true || !scriptPath) {
         return { ok: false, supported: false, error: "Updater script is missing from this Vigil build." };
+      }
+      if (currentStatus.dirty) {
+        const result = await launchLocalChanges(currentStatus, updateLock);
+        if (result.ok === true) handedOff = true;
+        return result;
       }
       currentStatus = await readStatusPayload({ checkRemote: true, ownedLockToken: updateLock.token });
       if (currentStatus.ok !== true || currentStatus.remoteCheckOk !== true) {
@@ -256,12 +259,36 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       if (!handedOff) await updateLock.release();
     }
   }
+
+  async function launchLocalChanges(currentStatus: Record<string, unknown>, updateLock: UpdaterLock): Promise<Record<string, unknown>> {
+    const [nodePath, npmPath] = await Promise.all([findExecutable(repoRoot, "node"), findExecutable(repoRoot, "npm")]);
+    const launcherPath = localLauncherPath(repoRoot);
+    if (!nodePath || !npmPath || !launcherPath) {
+      return { ...currentStatus, ok: false, error: "Node.js, npm, and the local launcher are required to run Vigil changes." };
+    }
+    const syntax = await execFile(nodePath, ["--check", launcherPath], { cwd: repoRoot, timeoutMs: EXEC_TIMEOUT_MS });
+    if (!syntax.ok) return { ...currentStatus, ok: false, error: "The Vigil local launcher failed its preflight check." };
+    const child = spawn(nodePath, [
+      launcherPath,
+      "--repo-root", repoRoot,
+      "--app-path", appPath,
+      "--parent-pid", String(process.pid),
+      "--npm-path", npmPath
+    ], { detached: true, stdio: "ignore", cwd: repoRoot, env: process.env });
+    await childStarted(child);
+    if (!child.pid) throw new Error("The local launcher did not report a process ID.");
+    await updateLock.transferTo(child.pid);
+    child.unref();
+    setTimeout(quitForUpdate, 200);
+    return { ok: true, supported: true, phase: "starting", message: "Vigil will reopen with local changes." };
+  }
 }
 
 function findRepoRoot(app: App): string {
   const candidates = [
     process.env.VIGIL_SOURCE_ROOT || "",
     launchAgentRepoRoot(app),
+    packagedBuildRepoRoot(app),
     process.cwd(),
     app.isPackaged ? resolve(process.resourcesPath, "../../../../../..") : "",
     app.isPackaged ? resolve(process.resourcesPath, "../../../../..") : "",
@@ -271,6 +298,22 @@ function findRepoRoot(app: App): string {
     if (isRepoRoot(candidate)) return candidate;
   }
   return process.cwd();
+}
+
+function packagedBuildRepoRoot(app: App): string {
+  if (!app.isPackaged) return "";
+  for (const path of [
+    join(process.resourcesPath, "app.asar.unpacked", "dist", "runtime", "build-info.json"),
+    join(process.resourcesPath, "app.asar", "dist", "runtime", "build-info.json")
+  ]) {
+    try {
+      const info = JSON.parse(readFileSync(path, "utf8")) as BuildInfo;
+      if (typeof info.sourceRoot === "string") return info.sourceRoot;
+    } catch {
+      // Try the next packaged build metadata location.
+    }
+  }
+  return "";
 }
 
 function launchAgentRepoRoot(app: App): string {
@@ -303,6 +346,14 @@ function updateScriptPath(repoRoot: string): string | null {
   const candidates = [
     join(process.resourcesPath || "", "app.asar.unpacked", "dist", "runtime", "scripts", "update-packaged-app.mjs"),
     join(repoRoot, "dist", "runtime", "scripts", "update-packaged-app.mjs")
+  ];
+  return candidates.find((candidate) => candidate && existsSync(candidate)) || null;
+}
+
+function localLauncherPath(repoRoot: string): string | null {
+  const candidates = [
+    join(process.resourcesPath || "", "app.asar.unpacked", "dist", "runtime", "scripts", "launch-local-app.mjs"),
+    join(repoRoot, "dist", "runtime", "scripts", "launch-local-app.mjs")
   ];
   return candidates.find((candidate) => candidate && existsSync(candidate)) || null;
 }
@@ -414,8 +465,8 @@ function updateMessage(
 ): string {
   if (running) return "Update in progress";
   if (!repo.ok) return "Vigil could not verify its source repository";
+  if (repo.dirty) return "Local changes ready to run";
   if (remoteCheckError) return "Could not verify remote updates";
-  if (repo.dirty) return "Commit or stash local changes before updating";
   if (repo.behind > 0) return `${repo.behind} remote commit${repo.behind === 1 ? "" : "s"} ready`;
   if (appBundleOutdated) return "Installed app is behind this checkout";
   return "Vigil is current";

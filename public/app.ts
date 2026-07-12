@@ -335,8 +335,8 @@ function renderJournalGate(data: DashboardData): void {
   gate.hidden = !locked;
   $("#journalUnlockTitle").textContent = vault.configured ? "Journal locked." : "Set journal access.";
   $("#journalUnlockCopy").textContent = vault.configured
-    ? "Authenticate with Touch ID or your journal password. The journal locks again automatically."
-    : "Set a password to restrict access in Vigil. Entries are stored locally and are not encrypted.";
+    ? "Enter your password to continue."
+    : "Create a password before writing your first entry. Entries stay on this Mac and are not encrypted.";
   const password = $("#journalPassword");
   password.placeholder = vault.configured ? "Journal password" : "Create a journal password";
   password.setAttribute("autocomplete", vault.configured ? "current-password" : "new-password");
@@ -487,7 +487,8 @@ function renderHeader(appState: DashboardState, activeBlocks: UnknownRecord[] = 
   const active = appState.activePolicy;
   const session = appState.activeSession;
   const phase = active?.phase || appState.sessionPhase;
-  $("#homeRuntimeStatus").classList.toggle("hidden", active?.kind === "integrity");
+  const hasRuntimeStatus = Boolean(active || session || activeBlocks.length);
+  $("#homeRuntimeStatus").classList.toggle("hidden", active?.kind === "integrity" || !hasRuntimeStatus);
   let orbState = "idle";
   if (active?.kind === "integrity") {
     $("#sessionTitle").textContent = active.session.title;

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -11,7 +11,8 @@ const info = {
   builtAt: new Date().toISOString(),
   commit: (await git(["rev-parse", "HEAD"])).trim() || null,
   branch: (await git(["rev-parse", "--abbrev-ref", "HEAD"])).trim() || null,
-  dirty: Boolean((await git(["status", "--porcelain=v1"])).trim())
+  dirty: Boolean((await git(["status", "--porcelain=v1"])).trim()),
+  sourceRoot: resolve(process.env.VIGIL_BUILD_SOURCE_ROOT || projectRoot)
 };
 
 const outputPath = join(runtimeRoot, "build-info.json");

@@ -11,15 +11,22 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     let fixedService: SocialService
     private let defaults: UserDefaults
     private let loadInitialPages: Bool
+    private let mediaClassifier: any MediaSafetyClassifying
+    private let textClassifier: any PageTextSafetyClassifying
+    private let mediaLoader: any MediaDataLoading
     private var webViews: [SocialService: WKWebView] = [:]
     private var serviceByWebView: [ObjectIdentifier: SocialService] = [:]
     private var messageBridges: [SocialService: ScriptMessageBridge] = [:]
+    private var textInspections: [SocialService: [String: TextInspection]] = [:]
 
     init(
         defaults: UserDefaults = .standard,
         fixedService: SocialService? = nil,
         bundle: Bundle = .main,
-        loadInitialPages: Bool = true
+        loadInitialPages: Bool = true,
+        mediaClassifier: any MediaSafetyClassifying = AppleSensitiveMediaClassifier(),
+        textClassifier: any PageTextSafetyClassifying = ConservativePageTextClassifier(),
+        mediaLoader: any MediaDataLoading = EphemeralMediaDataLoader()
     ) {
         let configured = fixedService
             ?? (bundle.object(forInfoDictionaryKey: "VigilService") as? String).flatMap(SocialService.init(rawValue:))
@@ -28,6 +35,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.selectedService = configured
         self.defaults = defaults
         self.loadInitialPages = loadInitialPages
+        self.mediaClassifier = mediaClassifier
+        self.textClassifier = textClassifier
+        self.mediaLoader = mediaLoader
         super.init()
         for service in SocialService.allCases {
             let key = audioPreferenceKey(service)
@@ -57,6 +67,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             Task { @MainActor in self?.handle(message, service: service) }
         }
         controller.add(bridge, name: "vigil")
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.contentFilterBootstrap,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
         if let preflight = DOMAdapters.preflightScript(for: service) {
             controller.addUserScript(WKUserScript(
                 source: preflight,
@@ -163,8 +178,67 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             guard position > 1 else { return }
             let encodedKey = javascriptString(key)
             webViews[service]?.evaluateJavaScript("window.__vigilRestorePlayback?.(\(encodedKey), \(position));")
+        case "mediaCandidate":
+            handleMediaCandidate(body, service: service)
+        case "pageText":
+            handlePageText(body, service: service)
         default:
             break
+        }
+    }
+
+    private func handleMediaCandidate(_ body: [String: Any], service: SocialService) {
+        guard let id = body["id"] as? String, !id.isEmpty,
+              let token = body["token"] as? String, !token.isEmpty else { return }
+        let inlineData: Data? = {
+            guard let dataURL = body["dataURL"] as? String,
+                  let comma = dataURL.firstIndex(of: ","),
+                  dataURL.prefix(upTo: comma).contains(";base64"),
+                  let data = Data(base64Encoded: String(dataURL[dataURL.index(after: comma)...])),
+                  data.count <= 4 * 1024 * 1024 else { return nil }
+            return data
+        }()
+        let sourceURL = (body["sourceURL"] as? String).flatMap(URL.init(string:))
+        Task { [weak self] in
+            guard let self else { return }
+            let data: Data?
+            if let inlineData { data = inlineData }
+            else if let sourceURL { data = await self.mediaLoader.loadImage(from: sourceURL, maximumBytes: 4 * 1024 * 1024) }
+            else { data = nil }
+            guard let data else {
+                self.resolveMedia(id: id, token: token, verdict: .unknown, service: service)
+                return
+            }
+            let verdict = await self.mediaClassifier.classify(imageData: data)
+            self.resolveMedia(id: id, token: token, verdict: verdict, service: service)
+        }
+    }
+
+    private func resolveMedia(id: String, token: String, verdict: ContentSafetyVerdict, service: SocialService) {
+        let encodedID = javascriptString(id)
+        let encodedToken = javascriptString(token)
+        webViews[service]?.evaluateJavaScript("window.__vigilResolveMedia?.(\(encodedID), \(encodedToken), '\(verdict.rawValue)');")
+    }
+
+    private func handlePageText(_ body: [String: Any], service: SocialService) {
+        guard let revision = body["revision"] as? String,
+              let index = body["index"] as? Int,
+              let total = body["total"] as? Int,
+              let text = body["text"] as? String,
+              total > 0, total <= 32, index >= 0, index < total else { return }
+        let truncated = body["wasTruncated"] as? Bool ?? true
+        var inspection = textInspections[service]?[revision]
+            ?? TextInspection(chunks: [:], total: total, wasTruncated: truncated)
+        guard inspection.total == total else { return }
+        inspection.chunks[index] = text
+        textInspections[service] = [revision: inspection]
+        guard inspection.chunks.count == total else { return }
+        let completeText = (0..<total).compactMap { inspection.chunks[$0] }.joined()
+        Task { [weak self] in
+            guard let self else { return }
+            let verdict = await self.textClassifier.classify(pageText: completeText, wasTruncated: inspection.wasTruncated)
+            let encodedRevision = self.javascriptString(revision)
+            self.webViews[service]?.evaluateJavaScript("window.__vigilResolvePageText?.(\(encodedRevision), '\(verdict.rawValue)');")
         }
     }
 
@@ -185,6 +259,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
               let array = String(data: data, encoding: .utf8) else { return "\"\"" }
         return String(array.dropFirst().dropLast())
     }
+}
+
+private struct TextInspection {
+    var chunks: [Int: String]
+    let total: Int
+    let wasTruncated: Bool
 }
 
 extension SocialWebViewStore: WKNavigationDelegate {

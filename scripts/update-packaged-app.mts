@@ -200,7 +200,10 @@ async function buildInIsolatedWorktree(): Promise<StagedBuild> {
     await run(npmExecutable(), ["ci"], { cwd: repoRoot });
 
     await status("building", "Building the Vigil runtime in the staged checkout");
-    await run(npmExecutable(), ["run", "build"], { cwd: repoRoot });
+    await run(npmExecutable(), ["run", "build"], {
+      cwd: repoRoot,
+      env: { ...process.env, VIGIL_BUILD_SOURCE_ROOT: options.repoRoot }
+    });
     await verifyBuildInfo(
       join(repoRoot, "dist", "runtime", "build-info.json"),
       expectedCommit,

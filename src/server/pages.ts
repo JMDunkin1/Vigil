@@ -38,7 +38,69 @@ interface PausePageData {
   waitSeconds?: number;
 }
 
-export function blockedPage({ url, state, port = PORT }: PageInput): string {
+export function blockedPage({ url }: PageInput): string {
+  const site = escapeHtml(url.searchParams.get("site") || "This target");
+  const backUrl = safePageNavigationUrl(url.searchParams.get("back"));
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Blocked</title>
+  <style>
+    :root { color-scheme: light; --paper: #eee8dc; --paper-2: #e2d8c6; --ink: #261f1a; --primary: #385b68; --primary-strong: #243f4a; --focus: rgba(181, 139, 60, .25); }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; color: var(--ink); background: radial-gradient(circle at 78% -8%, rgba(181, 139, 60, .16), transparent 32rem), linear-gradient(180deg, var(--paper), var(--paper-2)); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(560px, 100%); }
+    h1 { max-width: 12ch; margin: 0; font: 700 clamp(2.75rem, 8vw, 5rem)/.98 Georgia, "Times New Roman", serif; letter-spacing: -.04em; text-wrap: balance; }
+    .escape-actions { margin-top: 32px; }
+    .escape-actions a { min-height: 48px; display: inline-grid; place-items: center; padding: 0 22px; border-radius: 7px; color: #fffdf7; background: var(--primary); text-decoration: none; font-weight: 700; transition: background .15s ease, transform .15s ease; }
+    .escape-actions a:hover { background: var(--primary-strong); }
+    .escape-actions a:active { transform: translateY(1px); }
+    .escape-actions a:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    @media (max-width: 520px) { body { place-items: start; padding: 64px 24px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>${site} is blocked.</h1>
+    <div class="escape-actions">
+      <a id="leaveBlockedPage" href="${escapeHtml(backUrl || "#")}">Go back</a>
+    </div>
+  </main>
+  <script>
+    const explicitBackUrl = ${safeScriptJson(backUrl)};
+    const leaveBlockedPage = document.querySelector("#leaveBlockedPage");
+    const escapeTarget = blockedEscapeTarget();
+    if (leaveBlockedPage) {
+      if (escapeTarget) leaveBlockedPage.href = escapeTarget;
+      leaveBlockedPage.addEventListener("click", (event) => {
+        event.preventDefault();
+        if (escapeTarget) location.replace(escapeTarget);
+        else history.go(-2);
+      });
+    }
+
+    function blockedEscapeTarget() {
+      return safeNavigationUrl(explicitBackUrl) || safeNavigationUrl(document.referrer);
+    }
+
+    function safeNavigationUrl(value) {
+      try {
+        const candidate = new URL(String(value || ""), location.href);
+        if (!["http:", "https:"].includes(candidate.protocol)) return "";
+        if (["127.0.0.1", "localhost", "::1"].includes(candidate.hostname)) return "";
+        return candidate.toString();
+      } catch {
+        return "";
+      }
+    }
+  </script>
+</body>
+</html>`;
+}
+
+function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
   const policy = activePolicy(state);
   const site = escapeHtml(url.searchParams.get("site") || "This target");
   const mode = escapeHtml(url.searchParams.get("mode") || "focus");
@@ -341,6 +403,8 @@ export function blockedPage({ url, state, port = PORT }: PageInput): string {
 </body>
 </html>`;
 }
+
+void legacyBlockedPage;
 
 export function pausePage({ url, state, port = PORT }: PageInput): string {
   const requestId = url.searchParams.get("requestId") || "";
