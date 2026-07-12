@@ -10,9 +10,7 @@ const seededIds = state.intentionalUse.behaviors.map((behavior) => behavior.id);
 assert.deepEqual(seededIds, [
   "habit-chastity",
   "habit-rosary",
-  "habit-morning-offering",
-  "habit-scripture",
-  "habit-examen",
+  "habit-reading",
   "habit-exercise"
 ]);
 assert.equal(state.intentionalUse.behaviors.every((behavior) => behavior.unit === "yes-no"), true);

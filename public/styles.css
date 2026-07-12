@@ -132,6 +132,61 @@ body {
   color: var(--ink);
 }
 
+body.sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.sidebar-collapsed .app-chrome {
+  display: none;
+}
+
+body.sidebar-collapsed .shell {
+  grid-column: 1;
+}
+
+.sidebar-toggle {
+  position: fixed;
+  z-index: 80;
+  top: 16px;
+  left: 220px;
+  width: 27px;
+  min-width: 27px;
+  height: 27px;
+  min-height: 27px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(244, 234, 213, 0.62);
+  box-shadow: none;
+  transition: left 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.sidebar-toggle svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+}
+
+.sidebar-toggle:hover:not(:disabled) {
+  transform: none;
+  color: #f4ead5;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+body.sidebar-collapsed .sidebar-toggle {
+  left: 14px;
+  color: color-mix(in srgb, var(--ink) 62%, transparent);
+}
+
+body.sidebar-collapsed .sidebar-toggle svg {
+  transform: scaleX(-1);
+}
+
 button,
 input,
 select,
@@ -4392,6 +4447,14 @@ body[data-active-view="journal"] .view-head,
     align-items: stretch;
   }
 
+  .sidebar-toggle {
+    left: 187px;
+  }
+
+  body.sidebar-collapsed .sidebar-toggle {
+    left: 14px;
+  }
+
   .shell {
     padding-inline: 24px;
   }
@@ -6407,88 +6470,6 @@ h3,
   }
 }
 
-/* Compact in-app rail. Home intentionally keeps its full-size presentation. */
-@media (max-width: 1120px) {
-  body:not([data-active-view="home"]) {
-    grid-template-columns: 88px minmax(0, 1fr);
-  }
-
-  body:not([data-active-view="home"]) .app-chrome {
-    width: 88px;
-    gap: 14px;
-    overflow-x: hidden;
-    padding: 24px 10px 16px;
-  }
-
-  body:not([data-active-view="home"]) .brand-lockup {
-    min-height: 54px;
-    justify-content: center;
-    padding: 0 0 14px;
-  }
-
-  body:not([data-active-view="home"]) .brand-lockup h1 {
-    width: 42px;
-    height: 42px;
-    display: grid;
-    place-items: center;
-    overflow: hidden;
-    border: 1px solid rgba(216, 182, 92, 0.36);
-    border-radius: 50%;
-    background: rgba(181, 139, 60, 0.1);
-    color: transparent;
-    font-size: 0;
-  }
-
-  body:not([data-active-view="home"]) .brand-lockup h1::after {
-    content: "S";
-    color: #f4ead5;
-    font: 700 1.5rem/1 Georgia, "Times New Roman", serif;
-  }
-
-  body:not([data-active-view="home"]) .app-nav {
-    gap: 6px;
-  }
-
-  body:not([data-active-view="home"]) .nav-tab {
-    min-height: 52px;
-    justify-content: center;
-    gap: 0;
-    padding: 0;
-  }
-
-  body:not([data-active-view="home"]) .nav-tab .nav-label,
-  body:not([data-active-view="home"]) .account-identity {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  body:not([data-active-view="home"]) .sidebar-account {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    gap: 6px;
-    padding-top: 12px;
-  }
-
-  body:not([data-active-view="home"]) .account-button,
-  body:not([data-active-view="home"]) .settings-gear {
-    width: 52px;
-    min-width: 52px;
-    height: 48px;
-    min-height: 48px;
-    justify-content: center;
-    padding: 0;
-  }
-
-  body:not([data-active-view="home"]) .settings-gear {
-    border-radius: 8px;
-  }
-}
-
 @media (max-width: 900px) {
   .ranking-titlebar,
   .ranking-section-head,
@@ -6530,22 +6511,6 @@ h3,
 }
 
 @media (max-width: 720px) {
-  body:not([data-active-view="home"]) {
-    grid-template-columns: 76px minmax(0, 1fr);
-  }
-
-  body:not([data-active-view="home"]) .app-chrome {
-    width: 76px;
-    padding-inline: 8px;
-  }
-
-  body:not([data-active-view="home"]) .nav-tab,
-  body:not([data-active-view="home"]) .account-button,
-  body:not([data-active-view="home"]) .settings-gear {
-    width: 50px;
-    min-width: 50px;
-  }
-
   .ranking-titlebar,
   .ranking-section-head,
   .audio-library-head,

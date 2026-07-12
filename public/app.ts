@@ -17,7 +17,7 @@ import { createSaintStage } from "./saint-stage.js";
 import { renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
 import { createTrackingView } from "./tracking-view.js";
-import { $, $$, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
+import { $, $$, bindSidebarToggle, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
 import type { ActivePolicy, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, JournalVaultSummary, ProgressSummary, Schedule, SessionStartResponse, UiState, UnknownRecord } from "./app-model.js";
 
 interface JournalUnlockResponse extends UnknownRecord {
@@ -120,6 +120,7 @@ function boot() {
   renderAppLockDays();
   renderIntentionalDays();
   bindViewNavigation(setView);
+  bindSidebarToggle();
   renderActiveView(state.activeView);
   saintStage.bind();
   trackingView.bind();

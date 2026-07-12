@@ -48,11 +48,16 @@ assert.doesNotMatch(firstSettingsDisclosure, /<details[^>]*\sopen(?:\s|>)/, "app
 assert.match(html, /id="accountButton"[^>]*aria-expanded="false"/, "the account button must expose its toggle state");
 const sidebarMarkup = html.match(/<aside class="app-chrome"[\s\S]*?<\/aside>/)?.[0] || "";
 assert.doesNotMatch(sidebarMarkup, /&#(?:8962|10016|10003|9835|10070|9881);/, "font-glyph sidebar icons must not return");
-assert.doesNotMatch(html, /sidebarToggle|sidebar-toggle|data-sidebar-open|>Menu<\//, "the sidebar must never collapse into a top menu");
+assert.match(html, /id="sidebarToggle"[^>]*aria-controls="primarySidebar"[^>]*aria-expanded="true"/, "the sidebar must expose an explicit full-hide toggle");
+assert.match(sidebarMarkup, /id="primarySidebar"/, "the sidebar toggle must control the navigation sidebar");
 
 const styles = await readFile("public/styles.css", "utf8");
 assert.match(styles, /\.settings-disclosure \+ \.settings-disclosure\s*\{[\s\S]*?margin-top:\s*16px;/, "adjacent settings disclosures must use the shared row spacing");
-assert.doesNotMatch(styles, /data-sidebar-open|\.sidebar-toggle/, "responsive styles must not restore the collapsible top menu");
+assert.match(styles, /body\.sidebar-collapsed \.app-chrome\s*\{\s*display:\s*none;/, "collapsing must fully hide the sidebar instead of leaving an icon rail");
+assert.match(styles, /body\.sidebar-collapsed \.shell\s*\{\s*grid-column:\s*1;/, "collapsed content must occupy the first grid column without widening the viewport");
+assert.doesNotMatch(styles, /body:not\(\[data-active-view="home"\]\) \.app-chrome/, "navigation must not automatically compact the sidebar away from Home");
+const uiShellSource = await readFile("public/ui-shell.js", "utf8");
+assert.match(uiShellSource, /localStorage\.setItem\("vigil-sidebar-collapsed"/, "the explicit sidebar choice must persist");
 assert.doesNotMatch(styles, /@media \(max-width: 900px\)\s*\{\s*body\s*\{\s*display:\s*block/, "narrow windows must retain the sidebar grid");
 
 const trackingMarkup = html.match(/<section id="view-journal"[\s\S]*?<div class="journal-page journal-only"/)?.[0] || "";

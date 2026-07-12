@@ -46,11 +46,6 @@ assert.match(
   "normal quit attempts must hide the window and leave the packaged menu-bar companion running"
 );
 assert.match(
-  beforeQuitSource,
-  /Promise\.race\([\s\S]*?server\.stop\(\)[\s\S]*?APP_QUIT_CLEANUP_TIMEOUT_MS[\s\S]*?app\.exit\(0\)/,
-  "an update handoff must force the Electron process to exit if server cleanup stalls"
-);
-assert.match(
   mainSource,
   /function hideVigilWindow\(\): void \{\s*mainWindow\?\.hide\(\);\s*if \(shouldStayResident\(\)\) \{\s*app\.hide\(\);\s*enforceMenuBarOnlyPresentation\(\);\s*\}\s*\}/,
   "hiding Vigil must hide the visual app and restore its menu-bar-only presentation"
@@ -68,8 +63,8 @@ assert.match(
 assert.doesNotMatch(mainSource, /label: "Quit Vigil"/, "the menu-bar menu must not offer a misleading true-quit action");
 assert.match(
   mainSource,
-  /quitForUpdate: \(\) => \{\s*quitForUpdate = true;\s*app\.quit\(\);\s*\}/,
-  "an app update must still be able to perform the intentional full quit needed to replace the app"
+  /quitForUpdate: \(\) => \{\s*quitForUpdate = true;\s*app\.exit\(0\);\s*\}/,
+  "an app update must exit immediately so the replacement never overlaps the installed app"
 );
 assert.doesNotMatch(
   mainSource,

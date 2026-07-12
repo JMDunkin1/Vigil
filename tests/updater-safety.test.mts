@@ -29,12 +29,17 @@ assert.match(updateScriptSource, /VIGIL_BUILD_SOURCE_ROOT: options\.repoRoot/u, 
 assert.match(updaterSource, /repo\.dirty \|\| remoteCheckOk !== false/u, "local changes must remain runnable without a remote fetch");
 assert.match(updaterSource, /launchLocalChanges\(currentStatus, updateLock\)/u, "dirty source must use the local app launcher");
 assert.match(updaterSource, /"--app-path", appPath/u, "the local launcher must receive the installed app path for recovery");
-assert.match(localLauncherSource, /exitCode = await runLocalApp\(options, log\)/u, "the local launcher must remain alive through the build and app run");
+assert.match(localLauncherSource, /exitCode = await buildLocalApp\(options, log\)/u, "the local launcher must remain alive through the packaged local build");
+assert.match(localLauncherSource, /\["run", "build:mac"\]/u, "local changes must rebuild the Vigil app bundle instead of launching a second Electron app identity");
+assert.match(localLauncherSource, /atomicInstallBuiltApp\(builtAppPath, options\.appPath, ""\)/u, "local changes must replace Vigil at the same installed app path");
+assert.match(localLauncherSource, /await verifyReplacement\(options\.appPath\);[\s\S]*?await installation\.finalize\(\)/u, "the previous installed app must remain recoverable until the replacement stays healthy");
+assert.match(localLauncherSource, /await terminateInstalledApp\(options\.appPath\);[\s\S]*?await installation\.rollback\(\)/u, "a failed replacement must stop before restoring and reopening the previous app");
 assert.match(localLauncherSource, /await reopenInstalledApp\(options\.appPath, log\)/u, "a failed local launch must reopen the installed app");
 assert.ok(
   localLauncherSource.indexOf("createWriteStream(options.logPath") < localLauncherSource.indexOf("await waitForExit(options.parentPid"),
   "the local launcher must create its log before waiting for the installed app to quit"
 );
+assert.match(localLauncherSource, /await waitForLogOpen\(log\)/u, "the local launcher must wait for its log descriptor before passing it to child processes");
 assert.match(
   localLauncherSource,
   /catch \(error\) \{[\s\S]*?Reopening \$\{options\.appPath\}[\s\S]*?await reopenInstalledApp\(options\.appPath, log\)/u,

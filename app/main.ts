@@ -19,7 +19,6 @@ const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const TRAY_STATUS_CHECK_TIMEOUT_MS = 2000;
 const TRAY_ACTION_TIMEOUT_MS = 5000;
 const TRAY_STATUS_POLL_INTERVAL_MS = 30_000;
-const APP_QUIT_CLEANUP_TIMEOUT_MS = 5000;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
 const DEFAULT_WINDOW_WIDTH = 750;
 const DEFAULT_WINDOW_HEIGHT = 550;
@@ -59,7 +58,6 @@ let currentAppUrl: string | null = null;
 let instanceSecretPromise: Promise<string> | null = null;
 let appUpdateController: VigilAppUpdateController | null = null;
 let quitForUpdate = false;
-let quitCleanupInFlight = false;
 let selectedIconTheme: IconTheme = DEFAULT_ICON_THEME;
 let appUpdateActionState: AppUpdateActionState = {
   checked: false,
@@ -105,7 +103,7 @@ void app.whenReady().then(async () => {
     app,
     quitForUpdate: () => {
       quitForUpdate = true;
-      app.quit();
+      app.exit(0);
     }
   });
   const appUrl = await ensureVigilServer(appUpdateController);
@@ -126,18 +124,10 @@ app.on("before-quit", async (event) => {
   stopTrayRefresh();
   if (!ownedServer) return;
   event.preventDefault();
-  if (quitCleanupInFlight) return;
-  quitCleanupInFlight = true;
   const server = ownedServer;
   ownedServer = null;
-  try {
-    await Promise.race([
-      server.stop(),
-      new Promise<void>((resolveTimeout) => setTimeout(resolveTimeout, APP_QUIT_CLEANUP_TIMEOUT_MS))
-    ]);
-  } finally {
-    app.exit(0);
-  }
+  await server.stop();
+  app.quit();
 });
 
 app.on("window-all-closed", () => {

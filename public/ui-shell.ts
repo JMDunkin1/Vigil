@@ -46,6 +46,30 @@ export function bindViewNavigation(onNavigate: (view?: string) => void): void {
   }
 }
 
+export function bindSidebarToggle(): void {
+  const button = $("#sidebarToggle");
+  const setCollapsed = (collapsed: boolean) => {
+    document.body.classList.toggle("sidebar-collapsed", collapsed);
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.setAttribute("aria-label", collapsed ? "Show sidebar" : "Hide sidebar");
+    button.setAttribute("title", collapsed ? "Show sidebar" : "Hide sidebar");
+  };
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem("vigil-sidebar-collapsed") === "true";
+  } catch {
+  }
+  setCollapsed(collapsed);
+  button.addEventListener("click", () => {
+    const next = !document.body.classList.contains("sidebar-collapsed");
+    setCollapsed(next);
+    try {
+      localStorage.setItem("vigil-sidebar-collapsed", String(next));
+    } catch {
+    }
+  });
+}
+
 export function renderActiveView(activeView: string): void {
   document.body.dataset.activeView = activeView;
   for (const panel of $$("[data-view]")) {
