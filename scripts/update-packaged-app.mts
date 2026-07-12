@@ -436,8 +436,6 @@ function launchAgentRuntimePath(): string {
 
 async function backendHealthContext(plist: string): Promise<BackendHealthContext> {
   const configuredPort = process.env.VIGIL_PORT
-    || process.env.VIGIL_PORT
-    || plistStringForKey(plist, "VIGIL_PORT")
     || plistStringForKey(plist, "VIGIL_PORT")
     || "8787";
   const port = validPort(configuredPort);
@@ -451,7 +449,7 @@ async function defaultBackendHealthContext(): Promise<BackendHealthContext> {
   const dataDir = process.env.VIGIL_DATA_DIR || (home ? join(home, "Library", "Application Support", "Vigil") : "");
   if (!dataDir) throw new Error("Vigil could not identify its data directory for the replacement health check.");
   return {
-    port: validPort(process.env.VIGIL_PORT || process.env.VIGIL_PORT || "8787"),
+    port: validPort(process.env.VIGIL_PORT || "8787"),
     instanceSecret: await getInstanceSecret(dataDir)
   };
 }

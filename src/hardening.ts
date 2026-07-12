@@ -12,14 +12,8 @@ import type { Profile, VigilState, UnknownRecord } from "./types.js";
 
 export const HOSTS_BEGIN = "# BEGIN VIGIL";
 export const HOSTS_END = "# END VIGIL";
-export const LEGACY_HOSTS_BEGIN = "# BEGIN VIGIL";
-export const LEGACY_HOSTS_END = "# END VIGIL";
 export const LAUNCH_AGENT_LABEL = "com.vigil.agent";
-export const LEGACY_LAUNCH_AGENT_LABEL = "tech.caseline.vigil.agent";
-const HOSTS_MARKER_PAIRS = [
-  [HOSTS_BEGIN, HOSTS_END],
-  [LEGACY_HOSTS_BEGIN, LEGACY_HOSTS_END]
-] as const;
+const HOSTS_MARKER_PAIRS = [[HOSTS_BEGIN, HOSTS_END]] as const;
 const execFileAsync = promisify(execFile);
 
 interface LaunchAgentPrintStatus {
@@ -52,13 +46,11 @@ export async function hostsStatus(state: VigilState | null = null, now = new Dat
     const currentBlock = extractHostsBlock(hosts);
     const expectedBlock = state ? buildHostsBlock(state, now) : "";
     const installed = Boolean(currentBlock);
-    const legacyInstalled = hasCompleteManagedHostsBlock(hosts, LEGACY_HOSTS_BEGIN, LEGACY_HOSTS_END);
     const duplicate = countCompleteManagedHostsBlocks(hosts) > 1;
-    const stale = Boolean(state && installed && (!hostsBlockMatches(currentBlock, expectedBlock) || legacyInstalled || duplicate));
+    const stale = Boolean(state && installed && (!hostsBlockMatches(currentBlock, expectedBlock) || duplicate));
     return {
       installed,
       partial: hasPartialHostsBlock(hosts),
-      legacyInstalled,
       duplicate,
       stale,
       current: Boolean(installed && !stale),
@@ -75,22 +67,13 @@ export function launchAgentPath() {
   return `${process.env.HOME}/Library/LaunchAgents/${LAUNCH_AGENT_LABEL}.plist`;
 }
 
-export function legacyLaunchAgentPath() {
-  return `${process.env.HOME}/Library/LaunchAgents/${LEGACY_LAUNCH_AGENT_LABEL}.plist`;
-}
-
 export async function launchAgentStatus() {
   const path = launchAgentPath();
-  const legacyPath = legacyLaunchAgentPath();
   const installed = await fileExists(path);
-  const legacyInstalled = await fileExists(legacyPath);
   const base = {
     installed,
     path,
     label: LAUNCH_AGENT_LABEL,
-    legacyInstalled,
-    legacyPath,
-    legacyLabel: LEGACY_LAUNCH_AGENT_LABEL,
     loaded: false,
     running: false,
     pid: null,
@@ -202,12 +185,6 @@ export function parseLaunchAgentPrint(output = ""): LaunchAgentPrintStatus {
 
 function hasPartialHostsBlock(hosts: string): boolean {
   return HOSTS_MARKER_PAIRS.some(([begin, end]) => hosts.includes(begin) !== hosts.includes(end));
-}
-
-function hasCompleteManagedHostsBlock(hosts: string, begin: string, endMarker: string): boolean {
-  const start = hosts.indexOf(begin);
-  const end = hosts.indexOf(endMarker, start + begin.length);
-  return start >= 0 && end > start;
 }
 
 function countCompleteManagedHostsBlocks(hosts: string): number {

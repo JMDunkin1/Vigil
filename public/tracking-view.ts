@@ -28,6 +28,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     required<HTMLButtonElement>("#habitCurrentMonth").addEventListener("click", () => {
       selectedMonth = monthStart(new Date());
       renderCalendar();
+      renderQuickCheckIn();
     });
     required<HTMLButtonElement>("#habitSelectedPrevious").addEventListener("click", () => changeSelectedDay(-1));
     required<HTMLButtonElement>("#habitSelectedNext").addEventListener("click", () => changeSelectedDay(1));
@@ -59,6 +60,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
   function changeMonth(amount: number): void {
     selectedMonth = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + amount, 1);
     renderCalendar();
+    renderQuickCheckIn();
   }
 
   function renderCalendar(): void {
@@ -67,7 +69,14 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const pulseRoot = required<HTMLElement>("#habitMonthPulse");
     const monthRate = required<HTMLElement>("#habitMonthRate");
     const monthSummary = required<HTMLElement>("#habitMonthSummary");
+    const monthCompleted = required<HTMLElement>("#habitMonthCompleted");
+    const monthRecorded = required<HTMLElement>("#habitMonthRecorded");
+    const monthDayCount = required<HTMLElement>("#habitMonthDayCount");
+    const monthTrend = required<SVGSVGElement>("#habitMonthTrend");
     pulseRoot.replaceChildren();
+    monthTrend.replaceChildren();
+    const dates = datesInMonth(selectedMonth);
+    monthDayCount.textContent = `${dates.length} days`;
     const lifeLog = data?.intentionalUse?.lifeLog;
     const behaviors = (lifeLog?.behaviors || []).filter((behavior) => behavior.active !== false);
     const checkIns = lifeLog?.calendar?.checkIns?.length
@@ -86,11 +95,12 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       root.append(empty);
       monthRate.textContent = "—";
       monthSummary.textContent = "Add a habit to begin your rhythm";
+      monthCompleted.textContent = "—";
+      monthRecorded.textContent = "No active habits";
       statusLabel.textContent = "Create a habit to begin tracking.";
       return;
     }
 
-    const dates = datesInMonth(selectedMonth);
     const values = checkInMap(checkIns);
     renderMonthPulse(pulseRoot, dates, behaviors, values);
     const today = dayStart(new Date()).getTime();
@@ -102,6 +112,11 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     monthSummary.textContent = reported.length
       ? `${completed} of ${reported.length} check-ins completed`
       : "Your rhythm will appear here";
+    monthCompleted.textContent = String(completed);
+    monthRecorded.textContent = reported.length
+      ? `${reported.length} check-in${reported.length === 1 ? "" : "s"} recorded`
+      : "No check-ins yet";
+    renderTrend(monthTrend, visibleDates, behaviors, values);
     const table = document.createElement("table");
     table.className = "habit-calendar-table";
     const head = document.createElement("thead");
@@ -161,6 +176,33 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       button.addEventListener("click", () => selectDate(date));
       pulseRoot.append(button);
     }
+  }
+
+  function renderTrend(
+    svg: SVGSVGElement,
+    dates: Date[],
+    behaviors: DashboardItem[],
+    values: Map<string, HabitCalendarCheckIn>
+  ): void {
+    const width = 420;
+    const baseline = 91;
+    const points = dates.map((date, index) => {
+      const statuses = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${localDateKey(date)}`)));
+      const reported = statuses.filter((status) => status !== "unreported");
+      const completion = reported.length ? reported.filter((status) => status === "success").length / reported.length : 0;
+      const x = dates.length <= 1 ? 0 : (index / (dates.length - 1)) * width;
+      const y = baseline - completion * 72;
+      return { x, y };
+    });
+    if (!points.length) return;
+    const line = points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+    const area = `${line} L${points.at(-1)?.x.toFixed(1)},${baseline} L0,${baseline} Z`;
+    svg.append(
+      svgNode("path", { class: "tracking-trend-area", d: area }),
+      svgNode("path", { class: "tracking-trend-line", d: line })
+    );
+    const last = points.at(-1);
+    if (last) svg.append(svgNode("circle", { class: "tracking-trend-point", cx: last.x, cy: last.y, r: 5 }));
   }
 
   function habitRow(behavior: DashboardItem, dates: Date[], values: Map<string, HabitCalendarCheckIn>): HTMLTableRowElement {
@@ -249,13 +291,56 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     finish.disabled = saving || recorded === behaviors.length;
     clear.disabled = saving || recorded === 0;
 
+    const monthDates = datesInMonth(selectedMonth).filter((date) => date.getTime() <= dayStart(new Date()).getTime());
+    const weekDates = datesInWeek(selectedDate);
     behaviors.forEach((behavior, index) => {
       const status = statuses[index];
       const row = document.createElement("div");
-      row.className = `habit-quick-row ${status}`;
+      row.className = `habit-quick-row habit-visual-card ${status}`;
+      const heading = document.createElement("div");
+      heading.className = "habit-card-heading";
       const name = document.createElement("span");
       name.className = "habit-quick-name";
       name.textContent = behavior.name || "Habit";
+      const direction = document.createElement("span");
+      direction.className = "habit-card-direction";
+      direction.textContent = behavior.direction === "reduce" ? "Reduce" : behavior.direction === "notice" ? "Notice" : "Build";
+      heading.append(name, direction);
+
+      const behaviorStatuses = monthDates.map((date) => statusFor(values.get(`${behavior.id}:${localDateKey(date)}`)));
+      const behaviorDone = behaviorStatuses.filter((value) => value === "success").length;
+      const behaviorRate = monthDates.length ? Math.round((behaviorDone / monthDates.length) * 100) : 0;
+      const metric = document.createElement("div");
+      metric.className = "habit-card-metric";
+      const metricTotal = document.createElement("strong");
+      metricTotal.textContent = String(behaviorDone);
+      const metricDays = document.createElement("small");
+      metricDays.textContent = ` / ${monthDates.length}`;
+      metricTotal.append(metricDays);
+      const metricRate = document.createElement("span");
+      metricRate.textContent = `${behaviorRate}%`;
+      metric.append(metricTotal, metricRate);
+
+      const week = document.createElement("div");
+      week.className = "habit-week-grid";
+      for (const date of weekDates) {
+        const dayStatus = statusFor(values.get(`${behavior.id}:${localDateKey(date)}`));
+        const future = date.getTime() > dayStart(new Date()).getTime();
+        const day = document.createElement("button");
+        day.type = "button";
+        day.className = `habit-week-day ${dayStatus}${isSameDay(date, selectedDate) ? " is-selected" : ""}`;
+        day.disabled = future || saving;
+        day.setAttribute("aria-label", `${behavior.name || "Habit"}, ${date.toLocaleDateString()}, ${statusLabelFor(dayStatus)}`);
+        day.title = future ? "Future date" : "Select this day";
+        const letter = document.createElement("span");
+        letter.textContent = date.toLocaleDateString([], { weekday: "narrow" });
+        const mark = document.createElement("i");
+        mark.textContent = dayStatus === "success" ? "✓" : dayStatus === "missed" ? "×" : "";
+        day.append(letter, mark);
+        day.addEventListener("click", () => selectDate(date));
+        week.append(day);
+      }
+
       const controls = document.createElement("div");
       controls.className = "habit-status-control";
       controls.setAttribute("role", "group");
@@ -264,7 +349,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
         statusButton("Done", "success", status, () => saveHabitStatus(behavior.id, dateKey, status === "success" ? "unreported" : "success")),
         statusButton("Missed", "missed", status, () => saveHabitStatus(behavior.id, dateKey, status === "missed" ? "unreported" : "missed"))
       );
-      row.append(name, controls);
+      row.append(heading, metric, week, controls);
       quickRoot.append(row);
     });
 
@@ -395,6 +480,19 @@ function datesInMonth(value: Date): Date[] {
   const month = value.getMonth();
   const count = new Date(year, month + 1, 0).getDate();
   return Array.from({ length: count }, (_, index) => new Date(year, month, index + 1));
+}
+
+function datesInWeek(value: Date): Date[] {
+  const start = dayStart(value);
+  const mondayOffset = (start.getDay() + 6) % 7;
+  start.setDate(start.getDate() - mondayOffset);
+  return Array.from({ length: 7 }, (_, index) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + index));
+}
+
+function svgNode(tag: string, attributes: Record<string, string | number>): SVGElement {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
+  return node;
 }
 
 function monthStart(value: Date): Date {

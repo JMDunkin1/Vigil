@@ -9,7 +9,7 @@ import { resolveDefaultDataDir } from "../src/dataPaths.js";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const serverPath = join(root, "src", "server.js");
-const port = Number(process.env.VIGIL_PORT || process.env.VIGIL_PORT || 8787);
+const port = Number(process.env.VIGIL_PORT || 8787);
 const healthUrl = `http://127.0.0.1:${port}/api/health`;
 const instanceSecret = await getInstanceSecret(process.env.VIGIL_DATA_DIR || resolveDefaultDataDir(root));
 

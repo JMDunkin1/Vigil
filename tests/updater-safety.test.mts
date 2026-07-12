@@ -31,6 +31,15 @@ assert.match(updaterSource, /launchLocalChanges\(currentStatus, updateLock\)/u, 
 assert.match(updaterSource, /"--app-path", appPath/u, "the local launcher must receive the installed app path for recovery");
 assert.match(localLauncherSource, /exitCode = await runLocalApp\(options, log\)/u, "the local launcher must remain alive through the build and app run");
 assert.match(localLauncherSource, /await reopenInstalledApp\(options\.appPath, log\)/u, "a failed local launch must reopen the installed app");
+assert.ok(
+  localLauncherSource.indexOf("createWriteStream(options.logPath") < localLauncherSource.indexOf("await waitForExit(options.parentPid"),
+  "the local launcher must create its log before waiting for the installed app to quit"
+);
+assert.match(
+  localLauncherSource,
+  /catch \(error\) \{[\s\S]*?Reopening \$\{options\.appPath\}[\s\S]*?await reopenInstalledApp\(options\.appPath, log\)/u,
+  "a stalled installed-app shutdown must be logged and recovered"
+);
 assert.match(localLauncherSource, /"Library", "Logs", "Vigil", "local-launch\.log"/u, "local launch output must remain available in a durable log");
 assert.match(updateScriptSource, /await openAndVerifyReplacement\(/u);
 assert.match(updateScriptSource, /launchAgentRuntimePath\(\)/u);

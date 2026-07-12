@@ -293,7 +293,6 @@ export interface HardeningCheck extends UnknownRecord {
   generated?: boolean;
   installed?: boolean;
   isAdmin?: boolean;
-  legacyInstalled?: boolean;
   loaded?: boolean;
   ok?: boolean;
   pathUrlCount?: number;

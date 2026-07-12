@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultState } from "../src/defaults.js";
 import { buildFirewallBlock, buildPfConfBlock, extractManagedFirewallBlock, extractManagedPfConfBlock, firewallDomainSignature, firewallStatus, replaceManagedPfConfBlock } from "../src/firewall.js";
-import { buildHostsBlock, extractHostsBlock, hostsBlockMatches, LEGACY_HOSTS_BEGIN, LEGACY_HOSTS_END, parseLaunchAgentPrint, replaceManagedHostsBlock } from "../src/hardening.js";
+import { buildHostsBlock, extractHostsBlock, hostsBlockMatches, parseLaunchAgentPrint, replaceManagedHostsBlock } from "../src/hardening.js";
 import { applyNetworkBlock } from "../scripts/apply-hosts.mjs";
 import { now } from "./test-helpers.mjs";
 
@@ -16,17 +16,8 @@ import { now } from "./test-helpers.mjs";
   assert.match(block, /0\.0\.0\.0 pornhub\.com/);
   assert.doesNotMatch(block, /0\.0\.0\.0 youtube\.com/);
   assert.equal(hostsBlockMatches(extractHostsBlock(hosts).replace("pornhub.com", "example.com"), block), false);
-  const legacyBlock = block
-    .replace("# BEGIN VIGIL", LEGACY_HOSTS_BEGIN)
-    .replace("# END VIGIL", LEGACY_HOSTS_END);
-  const legacyHosts = `127.0.0.1 localhost\n\n${legacyBlock}\n\n255.255.255.255 broadcasthost\n`;
-  assert.equal(extractHostsBlock(legacyHosts), legacyBlock);
-  const migratedHosts = replaceManagedHostsBlock(legacyHosts, block);
-  assert.equal(migratedHosts.includes(LEGACY_HOSTS_BEGIN), false);
-  assert.equal(hostsBlockMatches(extractHostsBlock(migratedHosts), block), true);
-  const duplicateHosts = replaceManagedHostsBlock(`${legacyHosts}\n${block}\n`, block);
+  const duplicateHosts = replaceManagedHostsBlock(`${hosts}\n${block}\n`, block);
   assert.equal((duplicateHosts.match(/# BEGIN VIGIL/g) || []).length, 1);
-  assert.equal(duplicateHosts.includes(LEGACY_HOSTS_BEGIN), false);
   const orphanBeginHosts = replaceManagedHostsBlock(`127.0.0.1 localhost\n\n# BEGIN VIGIL\n0.0.0.0 stale.example\n\n255.255.255.255 broadcasthost\n`, block);
   assert.equal(hostsBlockMatches(extractHostsBlock(orphanBeginHosts), block), true);
   assert.equal(orphanBeginHosts.includes("stale.example"), false);

@@ -338,10 +338,6 @@ function configuredExtensionOrigins(): Set<string> {
   const origins = [
     ...csvEnv("VIGIL_EXTENSION_ORIGINS"),
     ...csvEnv("VIGIL_EXTENSION_ORIGIN"),
-    ...csvEnv("VIGIL_EXTENSION_ORIGINS"),
-    ...csvEnv("VIGIL_EXTENSION_ORIGIN"),
-    ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_IDS")),
-    ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_ID")),
     ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_IDS")),
     ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_ID"))
   ];
@@ -361,7 +357,7 @@ function extensionIdOrigins(ids: string[]): string[] {
 }
 
 function configuredExtensionToken(): string {
-  return String(process.env.VIGIL_EXTENSION_TOKEN || process.env.VIGIL_EXTENSION_TOKEN || "");
+  return String(process.env.VIGIL_EXTENSION_TOKEN || "");
 }
 
 function extensionTokenMatches(value: unknown): boolean {

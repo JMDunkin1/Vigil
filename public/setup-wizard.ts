@@ -56,7 +56,7 @@ function setupItems(data: DashboardData): SetupItem[] {
     {
       id: "launch-agent",
       label: "LaunchAgent",
-      ok: Boolean(launchAgent.loaded && launchAgent.running && !launchAgent.legacyInstalled),
+      ok: Boolean(launchAgent.loaded && launchAgent.running),
       detail: launchAgent.running ? "Login agent is loaded and running." : "Install the login agent so Vigil restarts after login.",
       action: "Install Login Agent"
     },

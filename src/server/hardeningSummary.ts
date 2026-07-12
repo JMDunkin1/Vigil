@@ -28,7 +28,6 @@ interface SummaryRecord extends UnknownRecord {
   appleCurrent?: boolean;
   appleContentFilter?: SummaryRecord;
   duplicate?: boolean;
-  legacyInstalled?: boolean;
   loaded?: boolean;
   running?: boolean;
   pid?: number | null;
@@ -246,7 +245,7 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, externalN
     {
       id: "launch-agent",
       label: "LaunchAgent",
-      ok: Boolean(agent.loaded && agent.running && !agent.legacyInstalled),
+      ok: Boolean(agent.loaded && agent.running),
       detail: launchAgentDetail(agent)
     },
     {
@@ -365,7 +364,6 @@ export function foolproofDetail(foolproof: SummaryRecord): string {
 }
 
 export function launchAgentDetail(agent: SummaryRecord): string {
-  if (agent.legacyInstalled) return "Legacy Vigil login agent is still installed; reinstall the login agent to clean it up.";
   if (!agent.installed) return "Login persistence is not installed.";
   if (agent.running) return `Login persistence is running${agent.pid ? ` as PID ${agent.pid}` : ""}.`;
   if (agent.loaded) return "Login persistence is loaded but not currently running.";
@@ -374,7 +372,6 @@ export function launchAgentDetail(agent: SummaryRecord): string {
 
 export function hostsDetail(hosts: SummaryRecord): string {
   if (hosts.partial) return "Hosts block markers are incomplete; re-apply the network block.";
-  if (hosts.legacyInstalled) return "Legacy Vigil hosts block is still installed; re-apply the network block to migrate it.";
   if (hosts.duplicate) return "Multiple managed hosts blocks are installed; re-apply the network block to consolidate them.";
   if (!hosts.installed) return "Hosts-file site block is not installed.";
   if (hosts.stale) return `Hosts block is stale (${hosts.installedEntries}/${hosts.expectedEntries} entries).`;

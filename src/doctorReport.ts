@@ -30,13 +30,11 @@ interface SummaryRecord extends UnknownRecord {
   appleContentFilter?: SummaryRecord;
   pathUrlCount?: number;
   duplicate?: boolean;
-  legacyInstalled?: boolean;
   loaded?: boolean;
   running?: boolean;
   pid?: number | null;
   error?: string;
   path?: string;
-  legacyPath?: string;
   installedEntries?: number;
   expectedEntries?: number;
   expectedUrls?: number;
@@ -105,7 +103,7 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
     row("runtime-watchdog", "Runtime watchdog", runtime.ok, runtime.detail),
     row("watcher-heartbeat", "Watcher heartbeat", monitor.ok, monitor.detail || "Watcher heartbeat is current."),
     row("idle-usage", "AFK-aware usage", idleUsageOk(settings, monitor), idleUsageDetail(settings, monitor)),
-    row("launch-agent", "LaunchAgent", Boolean(agent.loaded && agent.running && !agent.legacyInstalled), launchAgentDetail(agent)),
+    row("launch-agent", "LaunchAgent", Boolean(agent.loaded && agent.running), launchAgentDetail(agent)),
     row("mac-account", "Mac account", Boolean(account.username && !account.isAdmin), accountDetail(account)),
     row("hosts", "Hosts block", Boolean(hosts.installed && !hosts.partial && !hosts.stale), hostsDetail(hosts)),
     row("firewall", "PF firewall", Boolean(firewall.installed && !firewall.partial && !firewall.stale), firewallDetail(firewall)),
@@ -246,7 +244,6 @@ function distanceKeyDetail(distanceKey: SummaryRecord): string {
 }
 
 function launchAgentDetail(agent: SummaryRecord): string {
-  if (agent.legacyInstalled) return `legacy agent still installed (${agent.legacyPath || "old plist"})`;
   if (!agent.installed) return `not installed (${agent.path || "LaunchAgent plist missing"})`;
   if (agent.running) return `running${agent.pid ? ` as PID ${agent.pid}` : ""}`;
   if (agent.loaded) return "loaded but not currently running";
@@ -255,7 +252,6 @@ function launchAgentDetail(agent: SummaryRecord): string {
 
 function hostsDetail(hosts: SummaryRecord): string {
   if (hosts.partial) return "markers are incomplete; run npm run network:apply";
-  if (hosts.legacyInstalled) return "legacy hosts block is still installed; run npm run network:apply";
   if (hosts.duplicate) return "multiple managed hosts blocks are installed; run npm run network:apply";
   if (!hosts.installed) return "not installed; run npm run network:apply";
   if (hosts.stale) return `stale (${hosts.installedEntries}/${hosts.expectedEntries} entries); run npm run network:apply`;

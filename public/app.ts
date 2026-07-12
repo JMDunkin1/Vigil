@@ -395,13 +395,11 @@ async function setProtectionLevel(requestedLevel: number): Promise<void> {
   try {
     if (level === 4) {
       await post<SessionStartResponse>("/api/panic/start", { durationMinutes: 3 });
-      toast("Panic locked for 3 minutes");
     } else {
       await post("/api/protection/level", {
         level,
         deviceTargets: selectedDeviceTargets()
       });
-      toast(level === 1 ? "Level 1 active" : `Level ${level} active`);
     }
   } catch (error) {
     toast(errorMessage(error));

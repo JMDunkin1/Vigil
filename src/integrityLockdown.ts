@@ -27,7 +27,6 @@ interface HardeningCheck {
   stale?: boolean;
   loaded?: boolean;
   running?: boolean;
-  legacyInstalled?: boolean;
   accessibilityLikelyMissing?: boolean;
   [key: string]: unknown;
 }
@@ -458,11 +457,6 @@ function hardeningIssues(checks: HardeningChecks): HardeningIssue[] {
       detail: agent.installed
         ? "LaunchAgent is not loaded and running."
         : "LaunchAgent is not installed."
-    });
-  } else if (agent?.legacyInstalled) {
-    issues.push({
-      id: "launch-agent",
-      detail: "Legacy Vigil LaunchAgent is still installed."
     });
   }
 

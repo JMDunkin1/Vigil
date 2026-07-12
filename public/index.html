@@ -758,12 +758,15 @@
     </section>
 
     <section id="view-journal" class="view" data-view="tracking journal" hidden>
-      <div class="view-head tracking-only">
+      <div class="view-head tracking-only tracking-titlebar">
         <div>
-          <p class="eyebrow">Daily Rule</p>
+          <p class="eyebrow">Your rhythm</p>
           <h2>Tracking</h2>
         </div>
-        <span id="lifeLogStatus" class="pill neutral">Ready</span>
+        <div class="tracking-title-actions">
+          <span id="lifeLogStatus" class="pill neutral">Ready</span>
+          <button id="habitManage" class="secondary compact" type="button">Manage habits</button>
+        </div>
       </div>
 
       <div class="view-head journal-only">
@@ -788,54 +791,61 @@
         <span id="journalUnlockStatus" class="tiny-status">Authentication required</span>
       </section>
 
-      <section class="daily-checkin tracking-only panel" aria-labelledby="dailyCheckInTitle">
-        <header class="daily-checkin-head">
+      <section class="tracking-overview tracking-only" aria-labelledby="habitCalendarTitle">
+        <div class="tracking-period-bar" aria-label="Choose a month">
+          <button id="habitPreviousMonth" class="habit-nav-arrow compact" type="button" aria-label="Previous month">&#8592;</button>
+          <strong id="habitCalendarMonth">This month</strong>
+          <button id="habitNextMonth" class="habit-nav-arrow compact" type="button" aria-label="Next month">&#8594;</button>
+          <button id="habitCurrentMonth" class="habit-text-action compact" type="button">This month</button>
+        </div>
+        <header class="tracking-section-heading">
           <div>
-            <p class="eyebrow">Daily ritual</p>
+            <p class="eyebrow">Overview</p>
+            <h2 id="habitCalendarTitle">At a glance</h2>
+          </div>
+        </header>
+        <div class="tracking-metric-grid">
+          <article class="tracking-metric-card tracking-metric-primary">
+            <div class="tracking-card-kicker"><span>Monthly completion</span><i aria-hidden="true">&#8599;</i></div>
+            <div class="tracking-metric-value"><strong id="habitMonthRate">—</strong><small>completed</small></div>
+            <p id="habitMonthSummary">Your rhythm will appear here</p>
+            <svg id="habitMonthTrend" class="tracking-trend" viewBox="0 0 420 104" preserveAspectRatio="none" role="img" aria-label="Completion trend for this month"></svg>
+          </article>
+          <article class="tracking-metric-card tracking-metric-rhythm">
+            <div class="tracking-card-kicker"><span>Daily rhythm</span><i id="habitMonthDayCount" aria-hidden="true">31 days</i></div>
+            <div class="tracking-rhythm-copy">
+              <strong id="habitMonthCompleted">—</strong>
+              <span id="habitMonthRecorded">No check-ins yet</span>
+            </div>
+            <div id="habitMonthPulse" class="habit-month-pulse" aria-label="Daily completion for this month"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="daily-checkin tracking-only" aria-labelledby="dailyCheckInTitle">
+        <header class="tracking-section-heading daily-checkin-head">
+          <div>
+            <p class="eyebrow">Habits</p>
             <h2 id="dailyCheckInTitle">Today</h2>
             <p id="dailyCheckInProgress" class="daily-checkin-progress">Nothing recorded yet</p>
           </div>
           <div class="daily-checkin-datebar" aria-label="Choose a day to check in">
-            <button id="habitSelectedPrevious" class="ghost compact" type="button" aria-label="Previous day">&#8592;</button>
+            <button id="habitSelectedPrevious" class="habit-nav-arrow compact" type="button" aria-label="Previous day">&#8592;</button>
             <input id="habitSelectedDate" type="date" aria-label="Check-in date">
-            <button id="habitSelectedNext" class="ghost compact" type="button" aria-label="Next day">&#8594;</button>
-            <button id="habitSelectedToday" class="secondary compact" type="button">Today</button>
+            <button id="habitSelectedNext" class="habit-nav-arrow compact" type="button" aria-label="Next day">&#8594;</button>
+            <button id="habitSelectedToday" class="habit-text-action compact" type="button">Today</button>
           </div>
         </header>
-        <div class="daily-checkin-meter" aria-hidden="true">
-          <span id="dailyCheckInMeterBar"></span>
-        </div>
+        <div class="daily-checkin-meter" aria-hidden="true"><span id="dailyCheckInMeterBar"></span></div>
+        <div id="habitQuickCheckIn" class="habit-quick-checkin" aria-live="polite"></div>
         <div class="daily-checkin-toolbar">
-          <span>How did you show up?</span>
+          <span>Tap a result to update the selected day.</span>
           <div>
             <button id="habitMarkRemainingDone" class="secondary compact" type="button">Complete the rest</button>
             <button id="habitClearSelectedDay" class="habit-text-action compact" type="button">Reset day</button>
-            <button id="habitManage" class="habit-text-action compact" type="button">Manage habits</button>
           </div>
         </div>
-        <div id="habitQuickCheckIn" class="habit-quick-checkin" aria-live="polite"></div>
-      </section>
 
-      <section class="habit-calendar-panel tracking-only" aria-labelledby="habitCalendarTitle">
-        <header class="habit-month-head">
-          <div>
-            <p class="eyebrow">Monthly rhythm</p>
-            <h2 id="habitCalendarTitle">Your month at a glance</h2>
-          </div>
-          <div class="habit-calendar-nav">
-            <button id="habitPreviousMonth" class="habit-nav-arrow compact" type="button" aria-label="Previous month">&#8592;</button>
-            <strong id="habitCalendarMonth">This month</strong>
-            <button id="habitNextMonth" class="habit-nav-arrow compact" type="button" aria-label="Next month">&#8594;</button>
-            <button id="habitCurrentMonth" class="habit-text-action compact" type="button">Today</button>
-          </div>
-        </header>
-        <div class="habit-month-overview">
-          <div class="habit-month-score">
-            <strong id="habitMonthRate">—</strong>
-            <span id="habitMonthSummary">Your rhythm will appear here</span>
-          </div>
-          <div id="habitMonthPulse" class="habit-month-pulse" aria-label="Daily completion for this month"></div>
-        </div>
         <details id="habitCalendarDetails" class="habit-calendar-details">
           <summary>
             <span>Detailed habit grid</span>

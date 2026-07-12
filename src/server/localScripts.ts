@@ -78,7 +78,6 @@ export function createLocalScriptRunner({ root, launchAgentStatus, processObject
     if (isElectronRuntime()) overrides.ELECTRON_RUN_AS_NODE = "1";
     if (processObject.env.VIGIL_DATA_DIR) overrides.VIGIL_DATA_DIR = processObject.env.VIGIL_DATA_DIR;
     if (processObject.env.VIGIL_PORT) overrides.VIGIL_PORT = processObject.env.VIGIL_PORT;
-    if (processObject.env.VIGIL_PORT) overrides.VIGIL_PORT = processObject.env.VIGIL_PORT;
     return overrides;
   }
 

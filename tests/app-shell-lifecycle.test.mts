@@ -10,20 +10,30 @@ assert.notEqual(beforeQuitStart, -1, "the app must retain a before-quit cleanup 
 assert.notEqual(beforeQuitEnd, -1, "the before-quit cleanup hook must be complete");
 const beforeQuitSource = mainSource.slice(beforeQuitStart, beforeQuitEnd + 4);
 
-assert.match(
+assert.doesNotMatch(
   mainSource,
-  /app\.on\("activate", \(\) => \{\s*if \(!currentAppUrl\) return;\s*showVigilWindow\(currentAppUrl\);\s*\}\);/,
-  "activating the resident macOS app from Spotlight must create or reveal its window"
+  /app\.on\("activate", \(\) => \{[^}]*showVigilWindow/,
+  "activating the packaged app from Finder or Spotlight must leave its window hidden"
+);
+assert.doesNotMatch(
+  mainSource,
+  /app\.on\("second-instance", \(\) => \{[^}]*showVigilWindow/,
+  "opening an already resident app must leave its window hidden"
 );
 assert.match(
   mainSource,
-  /app\.on\("second-instance", \(_event, commandLine\) => \{\s*if \(commandLine\.includes\(BACKGROUND_LAUNCH_ARG\)\) return;/,
-  "background verification launches must not reveal the running app"
+  /function shouldShowWindowOnLaunch\(\): boolean \{\s*if \(process\.argv\.includes\(BACKGROUND_LAUNCH_ARG\)\) return false;\s*return !shouldStayResident\(\);\s*\}/,
+  "every fresh packaged launch must remain windowless"
 );
 assert.match(
   mainSource,
-  /if \(process\.argv\.includes\(BACKGROUND_LAUNCH_ARG\)\) return false;/,
-  "a fresh background verification launch must remain windowless"
+  /label: "Open Vigil",\s*click: \(\) => \{\s*showVigilWindow\(appUrl\);\s*\}/,
+  "the menu-bar Open Vigil action must remain the explicit way to reveal the window"
+);
+assert.match(
+  mainSource,
+  /function showVigilWindow\(appUrl: string\): void \{[\s\S]*?if \(shouldStayResident\(\)\) app\.show\(\);[\s\S]*?mainWindow\.show\(\);/,
+  "opening the resident app must reverse the application-wide hidden state before showing its window"
 );
 assert.match(
   mainSource,
@@ -36,6 +46,21 @@ assert.match(
   "normal quit attempts must hide the window and leave the packaged menu-bar companion running"
 );
 assert.match(
+  beforeQuitSource,
+  /Promise\.race\([\s\S]*?server\.stop\(\)[\s\S]*?APP_QUIT_CLEANUP_TIMEOUT_MS[\s\S]*?app\.exit\(0\)/,
+  "an update handoff must force the Electron process to exit if server cleanup stalls"
+);
+assert.match(
+  mainSource,
+  /function hideVigilWindow\(\): void \{\s*mainWindow\?\.hide\(\);\s*if \(shouldStayResident\(\)\) \{\s*app\.hide\(\);\s*enforceMenuBarOnlyPresentation\(\);\s*\}\s*\}/,
+  "hiding Vigil must hide the visual app and restore its menu-bar-only presentation"
+);
+assert.match(
+  mainSource,
+  /function enforceMenuBarOnlyPresentation\(\): void \{\s*app\.setActivationPolicy\("accessory"\);\s*app\.dock\?\.hide\(\);\s*\}/,
+  "the resident macOS app must use accessory activation policy and remain absent from the Dock"
+);
+assert.match(
   mainSource,
   /label: "Hide Vigil Window",\s*accelerator: "CommandOrControl\+Q"/,
   "Command-Q must hide the Vigil window without terminating its background companion"
@@ -46,15 +71,10 @@ assert.match(
   /quitForUpdate: \(\) => \{\s*quitForUpdate = true;\s*app\.quit\(\);\s*\}/,
   "an app update must still be able to perform the intentional full quit needed to replace the app"
 );
-assert.match(
+assert.doesNotMatch(
   mainSource,
-  /\.on\("enter-full-screen", \(\) => \{\s*vigilWindow\.setWindowButtonVisibility\(false\);\s*\}\);/,
-  "native macOS window controls must be hidden while the custom-titlebar window is fullscreen"
-);
-assert.match(
-  mainSource,
-  /\.on\("leave-full-screen", \(\) => \{\s*vigilWindow\.setWindowButtonVisibility\(true\);\s*\}\);/,
-  "native macOS window controls must be restored after leaving fullscreen"
+  /setWindowButtonVisibility\(false\)/,
+  "native macOS window controls must remain available in fullscreen"
 );
 
 async function sourceRoot(): Promise<string> {

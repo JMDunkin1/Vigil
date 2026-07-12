@@ -200,7 +200,6 @@ function launchAgentEnvironment(): string {
   };
   if (process.versions.electron) values.ELECTRON_RUN_AS_NODE = "1";
   if (process.env.VIGIL_PORT) values.VIGIL_PORT = process.env.VIGIL_PORT;
-  if (process.env.VIGIL_PORT) values.VIGIL_PORT = process.env.VIGIL_PORT;
 
   const entries = Object.entries(values);
   if (!entries.length) return "";

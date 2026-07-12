@@ -13,12 +13,13 @@ import { createVigilAppUpdateController } from "./updater.js";
 import type { VigilAppUpdateController } from "./updater.js";
 
 const HOST = "127.0.0.1";
-const PORT = Number(process.env.VIGIL_PORT || process.env.VIGIL_PORT || 8787);
+const PORT = Number(process.env.VIGIL_PORT || 8787);
 const BASE_URL = `http://${HOST}:${PORT}`;
 const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const TRAY_STATUS_CHECK_TIMEOUT_MS = 2000;
 const TRAY_ACTION_TIMEOUT_MS = 5000;
 const TRAY_STATUS_POLL_INTERVAL_MS = 30_000;
+const APP_QUIT_CLEANUP_TIMEOUT_MS = 5000;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
 const DEFAULT_WINDOW_WIDTH = 750;
 const DEFAULT_WINDOW_HEIGHT = 550;
@@ -58,6 +59,7 @@ let currentAppUrl: string | null = null;
 let instanceSecretPromise: Promise<string> | null = null;
 let appUpdateController: VigilAppUpdateController | null = null;
 let quitForUpdate = false;
+let quitCleanupInFlight = false;
 let selectedIconTheme: IconTheme = DEFAULT_ICON_THEME;
 let appUpdateActionState: AppUpdateActionState = {
   checked: false,
@@ -85,21 +87,14 @@ if (app.isPackaged && !process.env.VIGIL_DATA_DIR) {
   process.env.VIGIL_DATA_DIR = configuredLaunchAgentDataDir() || app.getPath("userData");
 }
 
-app.on("second-instance", (_event, commandLine) => {
-  if (commandLine.includes(BACKGROUND_LAUNCH_ARG)) return;
-  if (!mainWindow && currentAppUrl) {
-    showVigilWindow(currentAppUrl);
-    return;
-  }
-  if (!mainWindow) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+app.on("second-instance", () => {
+  // Opening Vigil again should leave its UI in the menu bar. The user reveals
+  // the window explicitly with the menu-bar companion's Open Vigil action.
 });
 
 app.on("activate", () => {
-  if (!currentAppUrl) return;
-  showVigilWindow(currentAppUrl);
+  // LSUIElement apps can receive activate when opened from Finder or Spotlight.
+  // Keep that launch background-only so it behaves like every other relaunch.
 });
 
 void app.whenReady().then(async () => {
@@ -131,10 +126,18 @@ app.on("before-quit", async (event) => {
   stopTrayRefresh();
   if (!ownedServer) return;
   event.preventDefault();
+  if (quitCleanupInFlight) return;
+  quitCleanupInFlight = true;
   const server = ownedServer;
   ownedServer = null;
-  await server.stop();
-  app.quit();
+  try {
+    await Promise.race([
+      server.stop(),
+      new Promise<void>((resolveTimeout) => setTimeout(resolveTimeout, APP_QUIT_CLEANUP_TIMEOUT_MS))
+    ]);
+  } finally {
+    app.exit(0);
+  }
 });
 
 app.on("window-all-closed", () => {
@@ -144,14 +147,18 @@ app.on("window-all-closed", () => {
 function showVigilWindow(appUrl: string): void {
   if (!mainWindow) createWindow(appUrl);
   if (!mainWindow) return;
+  if (shouldStayResident()) app.show();
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
 }
 
 function hideVigilWindow(): void {
-  if (!mainWindow) return;
-  mainWindow.hide();
+  mainWindow?.hide();
+  if (shouldStayResident()) {
+    app.hide();
+    enforceMenuBarOnlyPresentation();
+  }
 }
 
 function createWindow(appUrl: string): void {
@@ -180,12 +187,6 @@ function createWindow(appUrl: string): void {
 
   vigilWindow.setAlwaysOnTop(false);
   vigilWindow.setVisibleOnAllWorkspaces(false);
-  vigilWindow.on("enter-full-screen", () => {
-    vigilWindow.setWindowButtonVisibility(false);
-  });
-  vigilWindow.on("leave-full-screen", () => {
-    vigilWindow.setWindowButtonVisibility(true);
-  });
 
   void vigilWindow.loadURL(appUrl);
   vigilWindow.webContents.on("will-navigate", (event, url) => {
@@ -290,17 +291,21 @@ function rejectedAppUpdateRequest(): Record<string, unknown> {
 
 function configureMenuBarResidency(): void {
   if (!shouldStayResident()) return;
-  app.dock?.hide();
+  enforceMenuBarOnlyPresentation();
   app.setLoginItemSettings({
     openAtLogin: true,
     openAsHidden: true
   });
 }
 
+function enforceMenuBarOnlyPresentation(): void {
+  app.setActivationPolicy("accessory");
+  app.dock?.hide();
+}
+
 function shouldShowWindowOnLaunch(): boolean {
   if (process.argv.includes(BACKGROUND_LAUNCH_ARG)) return false;
-  if (!shouldStayResident()) return true;
-  return !app.getLoginItemSettings().wasOpenedAtLogin;
+  return !shouldStayResident();
 }
 
 function shouldStayResident(): boolean {

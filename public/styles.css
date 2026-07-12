@@ -1314,6 +1314,459 @@ button:focus-visible {
   }
 }
 
+/* Tracking — compact visual dashboard */
+body[data-active-view="tracking"] #view-journal {
+  --habit-done: var(--primary);
+  --habit-done-strong: color-mix(in srgb, var(--primary) 72%, white);
+  width: min(1120px, 100%);
+  margin-inline: auto;
+}
+
+.tracking-titlebar {
+  margin-bottom: 16px;
+}
+
+.tracking-titlebar h2 {
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  letter-spacing: -0.055em;
+}
+
+.tracking-title-actions,
+.tracking-period-bar,
+.tracking-card-kicker,
+.habit-card-heading,
+.habit-card-metric {
+  display: flex;
+  align-items: center;
+}
+
+.tracking-title-actions {
+  gap: 10px;
+}
+
+.tracking-title-actions .secondary {
+  border-color: var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 86%, transparent);
+}
+
+.tracking-period-bar {
+  width: fit-content;
+  gap: 2px;
+  margin: 0 0 30px;
+  padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--line) 86%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 72%, transparent);
+  box-shadow: 0 8px 28px rgba(21, 34, 38, 0.05);
+}
+
+.tracking-period-bar strong {
+  min-width: 135px;
+  padding-inline: 12px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.tracking-period-bar .habit-nav-arrow,
+.tracking-period-bar .habit-text-action {
+  min-height: 32px;
+  border-radius: 999px;
+}
+
+.tracking-period-bar .habit-text-action {
+  padding-inline: 13px;
+  background: var(--surface-strong);
+  color: var(--primary);
+}
+
+.tracking-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 14px;
+}
+
+.tracking-section-heading h2 {
+  margin: 2px 0 0;
+  font-size: clamp(1.35rem, 2.2vw, 1.8rem);
+  letter-spacing: -0.035em;
+}
+
+.tracking-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.tracking-metric-card,
+.habit-visual-card {
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 92% 8%, color-mix(in srgb, var(--primary) 7%, transparent), transparent 12rem),
+    color-mix(in srgb, var(--surface-strong) 91%, transparent);
+  box-shadow: 0 15px 42px rgba(21, 34, 38, 0.07);
+}
+
+.tracking-metric-card {
+  min-height: 250px;
+  padding: 22px 24px 18px;
+  overflow: hidden;
+}
+
+.tracking-card-kicker {
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.tracking-card-kicker i {
+  color: var(--primary);
+  font-style: normal;
+  font-size: 0.68rem;
+}
+
+.tracking-metric-value {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-top: 19px;
+}
+
+.tracking-metric-value strong {
+  font-size: clamp(2.6rem, 5vw, 4.15rem);
+  font-weight: 720;
+  line-height: 0.95;
+  letter-spacing: -0.075em;
+}
+
+.tracking-metric-value small,
+.tracking-metric-card > p,
+.tracking-rhythm-copy span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 680;
+}
+
+.tracking-metric-card > p {
+  margin: 8px 0 0;
+}
+
+.tracking-trend {
+  width: calc(100% + 4px);
+  height: 92px;
+  display: block;
+  margin: 8px -2px -8px;
+  overflow: visible;
+}
+
+.tracking-trend-area {
+  fill: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.tracking-trend-line {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+.tracking-trend-point {
+  fill: var(--surface-strong);
+  stroke: var(--primary);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+}
+
+.tracking-rhythm-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin: 18px 0 17px;
+}
+
+.tracking-rhythm-copy strong {
+  font-size: 2.5rem;
+  line-height: 1;
+  letter-spacing: -0.06em;
+}
+
+.tracking-metric-rhythm .habit-month-pulse {
+  height: 118px;
+  gap: clamp(2px, 0.3vw, 5px);
+}
+
+.tracking-metric-rhythm .habit-pulse-day {
+  min-height: 118px;
+}
+
+.tracking-metric-rhythm .habit-pulse-day i {
+  max-height: 76px;
+  background: linear-gradient(to top, var(--habit-done-strong) 0 calc(var(--completed) * 100%), color-mix(in srgb, var(--red) 76%, var(--surface-strong)) calc(var(--completed) * 100%) 100%);
+}
+
+.daily-checkin {
+  margin: 34px 0 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: none;
+}
+
+.daily-checkin::after {
+  display: none;
+}
+
+.daily-checkin-head {
+  padding-bottom: 0;
+}
+
+.daily-checkin-progress {
+  margin-top: 5px;
+}
+
+.daily-checkin-datebar {
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 74%, transparent);
+}
+
+.daily-checkin-datebar input[type="date"] {
+  min-height: 30px;
+  border: 0;
+  background: transparent;
+}
+
+.daily-checkin-meter {
+  height: 2px;
+  margin: 0 0 14px;
+  background: color-mix(in srgb, var(--line) 48%, transparent);
+}
+
+.daily-checkin-meter span {
+  background: var(--primary);
+  box-shadow: none;
+}
+
+.habit-quick-checkin {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+.habit-visual-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 13px 18px;
+  min-height: 0;
+  padding: 19px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+}
+
+.habit-visual-card.success {
+  border-color: color-mix(in srgb, var(--habit-done) 35%, var(--line));
+}
+
+.habit-card-heading {
+  min-width: 0;
+  justify-content: space-between;
+  gap: 12px;
+  grid-column: 1 / -1;
+}
+
+.habit-quick-name {
+  font-size: 0.88rem;
+  font-weight: 790;
+}
+
+.habit-card-direction {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.61rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+
+.habit-card-metric {
+  align-items: baseline;
+  gap: 10px;
+  grid-column: 1 / -1;
+}
+
+.habit-card-metric strong {
+  color: var(--ink);
+  font-size: 2rem;
+  line-height: 1;
+  letter-spacing: -0.055em;
+}
+
+.habit-card-metric strong small {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.habit-card-metric > span {
+  margin-left: auto;
+  color: var(--primary);
+  font-size: 0.8rem;
+  font-weight: 850;
+}
+
+.habit-week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(28px, 1fr));
+  gap: 6px;
+  grid-column: 1 / -1;
+}
+
+.habit-week-day {
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  place-items: center;
+  gap: 6px;
+  padding: 7px 3px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.habit-week-day span {
+  font-size: 0.6rem;
+  font-weight: 780;
+}
+
+.habit-week-day i {
+  width: 100%;
+  max-width: 34px;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: white;
+  font-style: normal;
+  font-size: 0.76rem;
+}
+
+.habit-week-day.success i {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.habit-week-day.missed i {
+  border-color: color-mix(in srgb, var(--red) 65%, var(--line));
+  background: color-mix(in srgb, var(--red) 14%, var(--surface-strong));
+  color: var(--red);
+}
+
+.habit-week-day.is-selected {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  color: var(--ink);
+}
+
+.habit-week-day:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  transform: none;
+}
+
+.habit-visual-card .habit-status-control {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.habit-visual-card .habit-status-option {
+  width: 100%;
+  min-height: 34px;
+}
+
+.daily-checkin-toolbar {
+  min-height: 48px;
+  padding: 12px 2px 0;
+}
+
+.habit-calendar-details {
+  margin-top: 18px;
+}
+
+.habit-calendar-details > summary {
+  padding-inline: 2px;
+}
+
+@media (max-width: 800px) {
+  .tracking-metric-grid,
+  .habit-quick-checkin {
+    grid-template-columns: 1fr;
+  }
+
+  .tracking-metric-card {
+    min-height: 225px;
+  }
+}
+
+@media (max-width: 560px) {
+  .tracking-titlebar,
+  .tracking-section-heading,
+  .daily-checkin-head,
+  .daily-checkin-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .tracking-title-actions,
+  .daily-checkin-datebar {
+    width: 100%;
+  }
+
+  .tracking-title-actions .secondary {
+    margin-left: auto;
+  }
+
+  .tracking-period-bar {
+    width: 100%;
+  }
+
+  .tracking-period-bar strong {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .tracking-metric-card {
+    padding-inline: 18px;
+  }
+
+  .habit-visual-card {
+    padding-inline: 14px;
+  }
+
+  .habit-week-grid {
+    gap: 3px;
+  }
+
+  .habit-week-day {
+    min-height: 53px;
+    padding-inline: 1px;
+  }
+
+  .daily-checkin-toolbar > div {
+    width: 100%;
+  }
+}
+
 /* Simplified Home: one animated patron and one four-position protection control. */
 #view-home .home-stage {
   min-height: calc(100vh - 72px);
@@ -5594,14 +6047,15 @@ h3,
 .protection-level-control[data-level="3"] { --level-color: #bc624b; }
 .protection-level-control[data-level="4"] { --level-color: #ff7b81; }
 
-.protection-level-control:not(.is-open):hover .protection-level-choice {
+.protection-level-control:not(.is-open) .protection-level-choice:hover {
   border-color: color-mix(in srgb, var(--level-color) 88%, white);
   box-shadow:
-    inset 0 0 0 5px color-mix(in srgb, var(--level-color) 19%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--level-color) 24%, transparent),
-    0 0 38px color-mix(in srgb, var(--level-color) 40%, transparent),
+    inset 0 0 0 5px color-mix(in srgb, var(--level-color) 24%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--level-color) 36%, transparent),
+    0 0 22px color-mix(in srgb, var(--level-color) 58%, transparent),
+    0 0 48px color-mix(in srgb, var(--level-color) 34%, transparent),
     0 14px 30px rgba(0, 0, 0, 0.28);
-  transform: translate(-50%, -50%) scale(1.045);
+  transform: translate(-50%, -50%) scale(1.07);
 }
 
 .protection-level-readout {
@@ -5708,6 +6162,23 @@ h3,
   font-size: 0.78rem;
   font-weight: 800;
   line-height: 1;
+  transition: color 180ms ease, text-shadow 180ms ease;
+}
+
+.protection-level-choice:hover {
+  cursor: pointer;
+  border-color: color-mix(in srgb, var(--choice-color) 88%, white);
+  box-shadow:
+    inset 0 0 0 5px color-mix(in srgb, var(--choice-color) 22%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--choice-color) 32%, transparent),
+    0 0 24px color-mix(in srgb, var(--choice-color) 52%, transparent),
+    0 0 46px color-mix(in srgb, var(--choice-color) 30%, transparent),
+    0 14px 30px rgba(0, 0, 0, 0.28);
+}
+
+.protection-level-choice:hover span {
+  color: white;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--choice-color) 88%, transparent);
 }
 
 .protection-level-choice[data-protection-level-choice="1"] { --level-offset: -117px; --choice-color: #e2ad72; }
@@ -6118,5 +6589,70 @@ h3,
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+}
+
+/* Keep the tracking dashboard authoritative over the legacy tracking rules above. */
+body[data-active-view="tracking"] .daily-checkin {
+  margin: 34px 0 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: none;
+}
+
+body[data-active-view="tracking"] .daily-checkin::after {
+  display: none;
+}
+
+body[data-active-view="tracking"] .daily-checkin-head {
+  padding-bottom: 0;
+}
+
+body[data-active-view="tracking"] .habit-quick-checkin {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+}
+
+body[data-active-view="tracking"] .habit-quick-row.habit-visual-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 13px 18px;
+  min-height: 0;
+  padding: 19px;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 18px;
+}
+
+body[data-active-view="tracking"] .habit-visual-card .habit-status-control {
+  width: auto;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+body[data-active-view="tracking"] .habit-month-pulse {
+  height: 118px;
+}
+
+body[data-active-view="tracking"] .habit-pulse-day {
+  min-height: 118px;
+}
+
+@media (max-width: 800px) {
+  body[data-active-view="tracking"] .habit-quick-checkin {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  body[data-active-view="tracking"] .daily-checkin-head,
+  body[data-active-view="tracking"] .daily-checkin-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  body[data-active-view="tracking"] .habit-quick-row.habit-visual-card {
+    grid-template-columns: 1fr auto;
+    padding-inline: 14px;
   }
 }
