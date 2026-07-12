@@ -11,6 +11,15 @@ enum DOMAdapters {
         img, video {
           filter: blur(32px) !important;
         }
+        canvas, svg, object, embed, input[type="image"] { visibility: hidden !important; }
+        *, *::before, *::after {
+          background-image: none !important;
+          border-image-source: none !important;
+          list-style-image: none !important;
+          -webkit-mask-image: none !important;
+          mask-image: none !important;
+          content: normal !important;
+        }
         [data-vigil-media-verdict="safe"] { filter: none !important; }
         [data-vigil-media-verdict="sensitive"] {
           filter: blur(48px) !important;
@@ -125,9 +134,6 @@ enum DOMAdapters {
                 id,
                 token,
                 kind: element instanceof HTMLVideoElement ? 'videoFrame' : 'image',
-                sourceURL: element instanceof HTMLVideoElement
-                  ? String(element.poster || '')
-                  : String(element.currentSrc || element.src || ''),
                 dataURL: dataURL || '',
                 captureFailed: !dataURL
               });

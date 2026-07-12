@@ -77,7 +77,15 @@
   addEventListener("submit", event => {
     const form = event.target;
     if (!(form instanceof HTMLFormElement)) return;
-    const result = decision(new URL(form.action || location.href, location.href).href);
+    const submitter = event.submitter;
+    const target = new URL(submitter?.formAction || form.action || location.href, location.href);
+    const method = (submitter?.formMethod || form.method || "get").toLowerCase();
+    if (method === "get") {
+      target.search = "";
+      const fields = submitter ? new FormData(form, submitter) : new FormData(form);
+      for (const [name, value] of fields) target.searchParams.append(name, typeof value === "string" ? value : value.name);
+    }
+    const result = decision(target.href);
     if (!result.allowed) { event.preventDefault(); event.stopImmediatePropagation(); cover(result.reason); }
     else if (result.redirect) { event.preventDefault(); location.assign(result.redirect); }
   }, true);

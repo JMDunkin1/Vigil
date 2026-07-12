@@ -13,7 +13,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private let loadInitialPages: Bool
     private let mediaClassifier: any MediaSafetyClassifying
     private let textClassifier: any PageTextSafetyClassifying
-    private let mediaLoader: any MediaDataLoading
     private var webViews: [SocialService: WKWebView] = [:]
     private var serviceByWebView: [ObjectIdentifier: SocialService] = [:]
     private var messageBridges: [SocialService: ScriptMessageBridge] = [:]
@@ -25,8 +24,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         bundle: Bundle = .main,
         loadInitialPages: Bool = true,
         mediaClassifier: any MediaSafetyClassifying = AppleSensitiveMediaClassifier(),
-        textClassifier: any PageTextSafetyClassifying = ConservativePageTextClassifier(),
-        mediaLoader: any MediaDataLoading = EphemeralMediaDataLoader()
+        textClassifier: any PageTextSafetyClassifying = ConservativePageTextClassifier()
     ) {
         let configured = fixedService
             ?? (bundle.object(forInfoDictionaryKey: "VigilService") as? String).flatMap(SocialService.init(rawValue:))
@@ -37,7 +35,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.loadInitialPages = loadInitialPages
         self.mediaClassifier = mediaClassifier
         self.textClassifier = textClassifier
-        self.mediaLoader = mediaLoader
         super.init()
         for service in SocialService.allCases {
             let key = audioPreferenceKey(service)
@@ -198,18 +195,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                   data.count <= 4 * 1024 * 1024 else { return nil }
             return data
         }()
-        let sourceURL = (body["sourceURL"] as? String).flatMap(URL.init(string:))
         Task { [weak self] in
             guard let self else { return }
-            let data: Data?
-            if let inlineData { data = inlineData }
-            else if let sourceURL { data = await self.mediaLoader.loadImage(from: sourceURL, maximumBytes: 4 * 1024 * 1024) }
-            else { data = nil }
-            guard let data else {
+            guard let inlineData else {
                 self.resolveMedia(id: id, token: token, verdict: .unknown, service: service)
                 return
             }
-            let verdict = await self.mediaClassifier.classify(imageData: data)
+            let verdict = await self.mediaClassifier.classify(imageData: inlineData)
             self.resolveMedia(id: id, token: token, verdict: verdict, service: service)
         }
     }
@@ -238,7 +230,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             guard let self else { return }
             let verdict = await self.textClassifier.classify(pageText: completeText, wasTruncated: inspection.wasTruncated)
             let encodedRevision = self.javascriptString(revision)
-            self.webViews[service]?.evaluateJavaScript("window.__vigilResolvePageText?.(\(encodedRevision), '\(verdict.rawValue)');")
+            _ = try? await self.webViews[service]?.evaluateJavaScript(
+                "window.__vigilResolvePageText?.(\(encodedRevision), '\(verdict.rawValue)');"
+            )
         }
     }
 

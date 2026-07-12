@@ -6,7 +6,6 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     }
     private static let mediaClassifier: any MediaSafetyClassifying = AppleSensitiveMediaClassifier()
     private static let textClassifier: any PageTextSafetyClassifying = ConservativePageTextClassifier()
-    private static let mediaLoader: any MediaDataLoading = EphemeralMediaDataLoader()
 
     func beginRequest(with context: NSExtensionContext) {
         guard let item = context.inputItems.first as? NSExtensionItem,
@@ -48,14 +47,9 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
 
         if type == "classifyMedia" {
             let inlineData = ContentSafetyPayload.inlineMedia(from: message)
-            let sourceURL = ContentSafetyPayload.sourceURL(from: message)
             Task {
-                let data: Data?
-                if let inlineData { data = inlineData }
-                else if let sourceURL { data = await Self.mediaLoader.loadImage(from: sourceURL, maximumBytes: ContentSafetyPayload.maximumMediaBytes) }
-                else { data = nil }
                 let verdict: ContentSafetyVerdict
-                if let data { verdict = await Self.mediaClassifier.classify(imageData: data) }
+                if let inlineData { verdict = await Self.mediaClassifier.classify(imageData: inlineData) }
                 else { verdict = .unknown }
                 Self.complete(context, response: ["verdict": verdict.rawValue])
             }

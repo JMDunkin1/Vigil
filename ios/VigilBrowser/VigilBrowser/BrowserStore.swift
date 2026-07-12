@@ -18,7 +18,6 @@ final class BrowserStore: NSObject, ObservableObject {
     private let rulesProvider: any FilterRulesProviding
     private let mediaClassifier: any MediaSafetyClassifying
     private let textClassifier: any PageTextSafetyClassifying
-    private let mediaLoader: any MediaDataLoading
     private var observations: [NSKeyValueObservation] = []
     private var contentSafetyBridge: BrowserScriptMessageBridge?
     private var textInspections: [String: BrowserTextInspection] = [:]
@@ -29,13 +28,11 @@ final class BrowserStore: NSObject, ObservableObject {
     init(
         rulesProvider: any FilterRulesProviding,
         mediaClassifier: any MediaSafetyClassifying = AppleSensitiveMediaClassifier(),
-        textClassifier: any PageTextSafetyClassifying = ConservativePageTextClassifier(),
-        mediaLoader: any MediaDataLoading = EphemeralMediaDataLoader()
+        textClassifier: any PageTextSafetyClassifying = ConservativePageTextClassifier()
     ) {
         self.rulesProvider = rulesProvider
         self.mediaClassifier = mediaClassifier
         self.textClassifier = textClassifier
-        self.mediaLoader = mediaLoader
         rules = rulesProvider.currentRules()
         do { blocklist = try rulesProvider.currentBlocklist() }
         catch { blocklist = nil; blocklistIntegrityValid = false }
@@ -170,15 +167,10 @@ final class BrowserStore: NSObject, ObservableObject {
         guard let id = body["id"] as? String, !id.isEmpty,
               let token = body["token"] as? String, !token.isEmpty else { return }
         let inlineData = ContentSafetyPayload.inlineMedia(from: body)
-        let sourceURL = ContentSafetyPayload.sourceURL(from: body)
         Task { [weak self] in
             guard let self else { return }
-            let data: Data?
-            if let inlineData { data = inlineData }
-            else if let sourceURL { data = await self.mediaLoader.loadImage(from: sourceURL, maximumBytes: ContentSafetyPayload.maximumMediaBytes) }
-            else { data = nil }
             let verdict: ContentSafetyVerdict
-            if let data { verdict = await self.mediaClassifier.classify(imageData: data) }
+            if let inlineData { verdict = await self.mediaClassifier.classify(imageData: inlineData) }
             else { verdict = .unknown }
             self.resolveContentSafety(
                 "globalThis.__vigilResolveMedia?.(id, token, verdict)",
