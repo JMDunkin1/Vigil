@@ -13,6 +13,7 @@ assert.doesNotMatch(html, />This week|>Your path|>Combined today|>Daily focus|>C
 assert.doesNotMatch(html, /rankJourney|usageWave|journeyKnight/u, "ranking should use one combined weekly comparison instead of two competing charts");
 assert.doesNotMatch(html, />Devices included</u, "ranking should show only the three decision-useful headline statistics");
 assert.doesNotMatch(html, />iPhone today</u);
+assert.doesNotMatch(html, /knightState|clean days?/u, "ranking should not spend header space repeating the clean-day count");
 const ids = [...html.matchAll(/\bid="([A-Za-z][\w:-]*)"/g)].map((match) => match[1]);
 const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
 assert.deepEqual([...new Set(duplicateIds)], [], "dashboard HTML must not contain duplicate IDs");
@@ -52,11 +53,15 @@ assert.match(firstSettingsDisclosure, />App icon</, "app icon must be the first 
 assert.doesNotMatch(firstSettingsDisclosure, /<details[^>]*\sopen(?:\s|>)/, "app icon must start collapsed like the other settings disclosures");
 assert.match(settingsMarkup, /id="settingsSearch"[^>]*type="search"[^>]*placeholder="Find a setting"/, "settings must expose one compact search control");
 const settingsUiSource = await readFile("public/settings-ui.js", "utf8");
+const settingsAppSource = await readFile("public/app.js", "utf8");
 assert.match(settingsUiSource, /wrapSettingsPanels\(\)/, "settings must turn large panels into focused subsections");
 assert.match(settingsUiSource, /form\.getAttribute\("id"\)/, "editor routing must use the form attribute instead of a shadowing named control");
 assert.match(settingsUiSource, /if \(sibling !== disclosure\)\s+sibling\.open = false/, "opening a settings category must close competing categories");
 assert.match(settingsUiSource, /data-editor-for|dataset\.editorFor/, "New and Edit actions must target a single settings editor");
 assert.doesNotMatch(settingsUiSource, /addEventListener\("submit"/, "settings editors must not close before an asynchronous save succeeds");
+assert.match(settingsUiSource, /resetSettingsUi[\s\S]*querySelectorAll\("details"\)[\s\S]*disclosure\.open = false/, "leaving settings must collapse every expanded setting");
+assert.match(settingsUiSource, /resetSettingsUi[\s\S]*search\.value = ""/, "leaving settings must clear the settings search");
+assert.match(settingsAppSource, /previousView === "settings" && state\.activeView !== "settings"[\s\S]*resetSettingsUi\(\)/, "the settings reset must run only after navigating away");
 const dayControlsSource = await readFile("public/day-controls.js", "utf8");
 for (const preset of ["Every day", "Weekdays", "Weekends", "Custom days"]) {
   assert.match(dayControlsSource, new RegExp(preset), `day controls must offer the ${preset} preset`);
@@ -126,6 +131,7 @@ assert.match(rankingSource, /textEl\("strong", duration, \{ className: "ranking-
 assert.match(styles, /\.ranking-dashboard\s*\{[^}]*container:\s*ranking \/ inline-size;/, "ranking must respond to its usable panel width rather than only the window width");
 assert.match(styles, /@container ranking \(max-width: 760px\)\s*\{[\s\S]*?\.ranking-vitals\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/, "ranking vitals must remain in one compact row at the minimum window size");
 assert.match(styles, /@container ranking \(max-width: 520px\)\s*\{[\s\S]*?\.ranking-vitals\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/, "the narrowest ranking layout must preserve the three-card strip above the chart");
+assert.match(styles, /@media \(max-height: 560px\)\s*\{[\s\S]*?\.ranking-card\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?\.ranking-week\s*\{[\s\S]*?height:\s*200px;/, "the minimum-height window must shrink the weekly chart enough to keep its bottom visible");
 
 const journalGateMarkup = html.match(/<section id="journalUnlockGate"[\s\S]*?<\/section>/)?.[0] || "";
 const journalPageMarkup = html.match(/<div class="journal-page journal-only"[\s\S]*?<div class="workspace two-column split-surface">/)?.[0] || "";
@@ -156,6 +162,8 @@ assert.match(styles, /#view-home \.emergency-drawer\s*\{[\s\S]*?position:\s*abso
 assert.match(styles, /#view-home \.emergency-drawer\s*\{[\s\S]*?top:\s*12px;[\s\S]*?width:\s*min\(420px,[\s\S]*?border-radius:\s*13px;/, "the integrity notice must float independently near the top of the home view");
 assert.match(styles, /\.electron-shell \.app-chrome::before\s*\{[\s\S]*?height:\s*38px;[\s\S]*?-webkit-app-region:\s*drag;/, "Electron window dragging must use a dedicated top strip that cannot cover the sidebar toggle");
 assert.match(styles, /\.electron-shell \.app-chrome\s*\{\s*-webkit-app-region:\s*no-drag;/, "the full sidebar must never swallow real clicks as a native drag region");
+assert.match(styles, /\.window-resize-s\s*\{[\s\S]*?height:\s*14px;[\s\S]*?cursor:\s*ns-resize;/, "the bottom window edge must provide a forgiving resize target");
+assert.match(styles, /\.window-resize-se,[\s\S]*?\.window-resize-sw\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;/, "both bottom corners must provide large resize targets");
 assert.match(styles, /\.sidebar-toggle\s*\{[\s\S]*?top:\s*50px;[\s\S]*?-webkit-app-region:\s*no-drag;/, "the sidebar toggle must always sit below the native title bar and remain clickable");
 
 assert.match(html, /id="saintStageButton"[^>]*aria-controls="saintInfoPopover"[^>]*aria-expanded="false"/, "saint artwork must expose its details popover");
@@ -177,9 +185,13 @@ assert.match(saintStageSource, /addEventListener\(["']contextmenu["']/, "two-fin
 assert.doesNotMatch(saintStageSource, /event\.detail|clickTimer|setTimeout/, "every rapid left click must advance the saint immediately");
 assert.match(saintStageSource, /select\(previousSaintId\(selectedId\), true, true\)/, "the open saint card must browse backward without closing");
 assert.match(saintStageSource, /select\(nextSaintId\(selectedId\), true, true\)/, "the open saint card must browse forward without closing");
+assert.match(html, /class="saint-ambient"[\s\S]*?class="saint-geometry"[\s\S]*?class="saint-particles"/, "the patron stage must expose layered ambient geometry");
+assert.match(saintStageSource, /--saint-pointer-x[\s\S]*--saint-pointer-y[\s\S]*--saint-pointer-distance/, "the patron scene must track cursor position across the full stage");
+assert.match(styles, /#view-home \.saint-artifact,[\s\S]*?#view-home \.saint-stage\[data-saint\] \.saint-artifact\s*\{[\s\S]*?width:\s*min\(720px, 100%\);/, "the patron composition must size from the usable stage instead of the full viewport");
 assert.match(styles, /\.saint-artifact:focus-visible\s*\{\s*outline:\s*none;/, "the saint button must not draw a rectangular focus artifact");
 assert.match(styles, /\.audio-desk\s*\{[\s\S]*?container:\s*audio-desk \/ inline-size;/, "the audio player must respond to its usable panel width");
-assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?\.audio-player\s*\{[\s\S]*?display:\s*block;/, "the audio player must stack before its fixed columns overflow");
+assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?\.audio-player\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"status status"[\s\S]*?"title wave"[\s\S]*?"control control";/, "the compact audio player must keep the waveform beside the current sound title");
+assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?\.audio-wave\s*\{[\s\S]*?height:\s*54px;/, "the compact waveform must remain visible without using the full-size player height");
 
 const audioMarkup = html.match(/<section id="view-audio"[\s\S]*?<div class="audio-control-bridge"/)?.[0] || "";
 assert.doesNotMatch(audioMarkup, /audio-settings-disclosure|audio-volume-line/, "playback should not expose redundant session or volume controls");

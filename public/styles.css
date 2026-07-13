@@ -1850,7 +1850,17 @@ body[data-active-view="tracking"] #view-journal {
   }
 
   .tracking-metric-card {
-    min-height: 225px;
+    min-height: 0;
+  }
+
+  .tracking-metric-primary {
+    border-right: 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
+  }
+
+  .tracking-trend {
+    height: 46px;
+    margin-top: 4px;
   }
 }
 
@@ -3053,15 +3063,14 @@ body[data-lock-state="integrity"] .saint-halo {
 
 .ranking-standing {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 0;
   text-align: right;
   white-space: nowrap;
 }
 
 .ranking-standing span,
-.ranking-standing strong,
-.ranking-standing em {
+.ranking-standing strong {
   display: block;
   padding: 0 18px;
   font-family: var(--font-body);
@@ -3080,11 +3089,6 @@ body[data-lock-state="integrity"] .saint-halo {
   color: var(--ink);
   font-size: 1rem;
   font-weight: 760;
-}
-
-.ranking-standing em {
-  padding-right: 0;
-  color: var(--muted);
 }
 
 .ranking-vitals {
@@ -3339,19 +3343,19 @@ body[data-lock-state="integrity"] .saint-halo {
 
 @container ranking (max-width: 760px) {
   .ranking-titlebar {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 14px;
+    align-items: center;
+    gap: 18px;
   }
 
   .ranking-standing {
-    align-items: flex-start;
-    flex-wrap: wrap;
-    text-align: left;
+    align-items: baseline;
+    flex: 0 0 auto;
+    margin-left: auto;
+    text-align: right;
   }
 
   .ranking-standing span {
-    padding-left: 0;
+    padding-left: 10px;
   }
 
   .ranking-vitals {
@@ -3417,11 +3421,6 @@ body[data-lock-state="integrity"] .saint-halo {
     border-right: 0;
   }
 
-  .ranking-standing em {
-    width: 100%;
-    padding: 8px 0 0;
-  }
-
   .ranking-week {
     height: 330px;
   }
@@ -3438,6 +3437,28 @@ body[data-lock-state="integrity"] .saint-halo {
     font-size: 0.6rem;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+}
+
+/* Keep the complete weekly chart visible when the desktop window is at its
+   minimum height without changing its more spacious normal-size layout. */
+@media (max-height: 560px) {
+  .ranking-card {
+    min-height: 0;
+  }
+
+  .ranking-week-section {
+    padding-block: 16px 14px;
+  }
+
+  .ranking-week {
+    height: 200px;
+    margin-top: 12px;
+  }
+
+  .ranking-week-day {
+    grid-template-rows: 38px 20px minmax(0, 1fr) 22px;
+    gap: 4px;
   }
 }
 
@@ -5492,15 +5513,27 @@ details[open] > summary .audio-disclosure-chevron {
 
 @container audio-desk (max-width: 760px) {
   .audio-player {
-    display: block;
+    grid-template-columns: minmax(0, 1fr) clamp(94px, 24cqi, 150px);
+    grid-template-areas:
+      "status status"
+      "category category"
+      "title wave"
+      "description description"
+      "attribution attribution"
+      "control control";
+    column-gap: clamp(14px, 3cqi, 26px);
     padding: 20px 22px 22px;
   }
 
   .audio-wave {
-    display: none;
+    height: 54px;
+    gap: 3px;
+    padding-block: 5px;
+    align-self: center;
   }
 
   .audio-player h2 {
+    max-width: none;
     margin-top: 4px;
     font-size: clamp(1.8rem, 7vw, 2.5rem);
   }
@@ -6797,6 +6830,14 @@ body[data-active-view="tracking"] .habit-pulse-day {
   body[data-active-view="tracking"] .habit-quick-checkin {
     grid-template-columns: 1fr;
   }
+
+  body[data-active-view="tracking"] .habit-month-pulse {
+    height: 58px;
+  }
+
+  body[data-active-view="tracking"] .habit-pulse-day {
+    min-height: 58px;
+  }
 }
 
 @media (max-width: 560px) {
@@ -7338,4 +7379,662 @@ body[data-active-view="settings"] .settings-disclosure-body > .workspace.two-col
   }
 
   #view-home .saint-info-navigation { grid-row: 4; }
+}
+
+/* Patron presence system: quiet at rest, saint-specific under the cursor. */
+#view-home .saint-stage {
+  --saint-pointer-x: 50%;
+  --saint-pointer-y: 50%;
+  --saint-pointer-distance: 0;
+  --saint-scene-rgb: 191, 146, 77;
+  width: min(860px, 100%);
+  perspective: 1000px;
+  transform: translateY(-1px);
+}
+
+#view-home .saint-artifact,
+#view-home .saint-stage[data-saint] .saint-artifact {
+  width: min(720px, 100%);
+  transform-style: preserve-3d;
+  transition:
+    transform 540ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 480ms ease;
+}
+
+#view-home .saint-stage.is-pointer-active .saint-artifact,
+#view-home .saint-stage.is-pointer-active .saint-artifact:hover:not(:disabled),
+#view-home .saint-artifact:focus-visible {
+  filter: drop-shadow(0 24px 38px rgba(0, 0, 0, 0.16));
+  transform:
+    perspective(900px)
+    rotateX(calc(var(--saint-look-y) * -2.2deg))
+    rotateY(calc(var(--saint-look-x) * 3.2deg))
+    translateY(-7px)
+    scale(1.012);
+}
+
+#view-home .saint-artwork {
+  transition:
+    transform 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 420ms ease;
+}
+
+#view-home .saint-stage.is-pointer-active .saint-artwork,
+#view-home .saint-artifact:focus-visible .saint-artwork {
+  filter:
+    drop-shadow(calc(var(--saint-look-x) * -10px) 20px 4px rgba(7, 9, 9, 0.42))
+    brightness(1.075)
+    saturate(1.06);
+  transform:
+    translateX(calc(-50% + var(--saint-look-x) * 18px))
+    translateY(calc(var(--saint-look-y) * 10px - 5px))
+    scale(1.025);
+}
+
+#view-home .saint-halo {
+  transition:
+    width 700ms cubic-bezier(0.16, 1, 0.3, 1),
+    height 700ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 500ms ease,
+    filter 500ms ease,
+    transform 360ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 500ms ease;
+}
+
+#view-home .saint-stage.is-pointer-active .saint-halo,
+#view-home .saint-artifact:focus-visible .saint-halo {
+  width: 132px;
+  height: 132px;
+  opacity: 0.94;
+  filter: brightness(1.18);
+  box-shadow:
+    0 0 34px rgba(var(--saint-scene-rgb), 0.28),
+    0 0 92px rgba(var(--saint-scene-rgb), 0.16);
+  transform:
+    translateX(calc(-50% + var(--saint-look-x) * -8px))
+    translateY(calc(var(--saint-look-y) * -5px))
+    rotate(calc(var(--saint-look-x) * 4deg));
+}
+
+.saint-ambient,
+.saint-cursor-aura,
+.saint-geometry,
+.saint-orbit,
+.saint-particles {
+  position: absolute;
+  pointer-events: none;
+}
+
+.saint-ambient {
+  z-index: 0;
+  inset: -32px -48px -20px;
+  overflow: visible;
+  transform: translateZ(-24px);
+}
+
+.saint-cursor-aura {
+  z-index: 0;
+  inset: 0;
+  border-radius: 46%;
+  background:
+    radial-gradient(circle 150px at var(--saint-pointer-x) var(--saint-pointer-y), rgba(var(--saint-scene-rgb), 0.22), transparent 72%),
+    radial-gradient(ellipse 42% 54% at 50% 44%, rgba(var(--saint-scene-rgb), 0.08), transparent 76%);
+  opacity: 0.18;
+  filter: blur(8px);
+  transform: scale(0.94);
+  transition: opacity 520ms ease, transform 800ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.saint-stage.is-pointer-active .saint-cursor-aura,
+.saint-artifact:focus-visible .saint-cursor-aura {
+  opacity: 1;
+  transform: scale(1.04);
+}
+
+.saint-geometry {
+  z-index: 1;
+  inset: 7% 8% 8%;
+  opacity: 0.08;
+  transition:
+    opacity 520ms ease,
+    transform 720ms cubic-bezier(0.16, 1, 0.3, 1),
+    filter 520ms ease;
+}
+
+.saint-stage.is-pointer-active .saint-geometry,
+.saint-artifact:focus-visible .saint-geometry {
+  opacity: 0.58;
+  filter: drop-shadow(0 0 13px rgba(var(--saint-scene-rgb), 0.2));
+  transform: translate(calc(var(--saint-look-x) * 9px), calc(var(--saint-look-y) * 6px)) scale(1.025);
+}
+
+.saint-orbit {
+  z-index: 2;
+  top: 50%;
+  left: 50%;
+  border: 1px solid rgba(var(--saint-scene-rgb), 0.18);
+  border-radius: 50%;
+  opacity: 0.2;
+  transition:
+    opacity 500ms ease,
+    border-color 500ms ease,
+    box-shadow 500ms ease;
+}
+
+.saint-orbit::before,
+.saint-orbit::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border: 1px solid rgba(var(--saint-scene-rgb), 0.72);
+  background: color-mix(in srgb, rgb(var(--saint-scene-rgb)) 24%, var(--night));
+  box-shadow: 0 0 11px rgba(var(--saint-scene-rgb), 0.4);
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.saint-orbit::before { left: -3px; }
+.saint-orbit::after { right: -3px; }
+
+.saint-stage.is-pointer-active .saint-orbit,
+.saint-artifact:focus-visible .saint-orbit {
+  border-color: rgba(var(--saint-scene-rgb), 0.42);
+  opacity: 0.86;
+  box-shadow: inset 0 0 24px rgba(var(--saint-scene-rgb), 0.035);
+}
+
+.saint-particles {
+  z-index: 4;
+  inset: 0;
+}
+
+.saint-particles i {
+  --particle-delay: 0s;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border: 1px solid rgba(var(--saint-scene-rgb), 0.55);
+  background: rgba(var(--saint-scene-rgb), 0.14);
+  box-shadow: 0 0 9px rgba(var(--saint-scene-rgb), 0.28);
+  opacity: 0.16;
+  transform: translate(-50%, -50%) rotate(45deg) scale(0.72);
+  transition: opacity 420ms ease, box-shadow 420ms ease;
+  animation: saintParticleDrift 5.8s ease-in-out var(--particle-delay) infinite;
+}
+
+.saint-particles i:nth-child(2) { --particle-delay: -0.8s; }
+.saint-particles i:nth-child(3) { --particle-delay: -1.6s; }
+.saint-particles i:nth-child(4) { --particle-delay: -2.4s; }
+.saint-particles i:nth-child(5) { --particle-delay: -3.2s; }
+.saint-particles i:nth-child(6) { --particle-delay: -4s; }
+.saint-particles i:nth-child(7) { --particle-delay: -4.8s; }
+
+.saint-stage.is-pointer-active .saint-particles i,
+.saint-artifact:focus-visible .saint-particles i {
+  opacity: 0.82;
+  box-shadow: 0 0 15px rgba(var(--saint-scene-rgb), 0.5);
+}
+
+#view-home .saint-symbol {
+  opacity: 0.2;
+  filter: saturate(0.7);
+  transition:
+    opacity 440ms ease,
+    filter 440ms ease,
+    text-shadow 440ms ease;
+}
+
+#view-home .saint-stage.is-pointer-active .saint-symbol,
+#view-home .saint-artifact:focus-visible .saint-symbol {
+  opacity: 0.94;
+  filter: saturate(1.1);
+  text-shadow:
+    0 0 10px rgba(var(--saint-scene-rgb), 0.55),
+    0 2px 10px rgba(0, 0, 0, 0.44);
+}
+
+.saint-stage.is-switching-saint {
+  animation: saintSceneArrive 720ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Michael: a cool defensive field with crossed blade geometry. */
+.saint-stage[data-saint="michael"] { --saint-scene-rgb: 100, 169, 198; }
+
+.saint-stage[data-saint="michael"] .saint-geometry {
+  background:
+    linear-gradient(58deg, transparent 49.65%, rgba(var(--saint-scene-rgb), 0.46) 49.8% 50.2%, transparent 50.35%),
+    linear-gradient(-58deg, transparent 49.65%, rgba(var(--saint-scene-rgb), 0.46) 49.8% 50.2%, transparent 50.35%),
+    repeating-conic-gradient(from 22.5deg at 50% 48%, rgba(var(--saint-scene-rgb), 0.18) 0 0.6deg, transparent 0.6deg 22.5deg);
+  clip-path: polygon(50% 2%, 87% 18%, 94% 62%, 50% 98%, 6% 62%, 13% 18%);
+}
+
+.saint-stage[data-saint="michael"] .saint-orbit-primary {
+  width: 430px;
+  height: 265px;
+  transform: translate(-50%, -50%) rotate(-12deg);
+  animation: michaelFieldOrbit 13s linear infinite;
+}
+
+.saint-stage[data-saint="michael"] .saint-orbit-secondary {
+  width: 310px;
+  height: 350px;
+  border-radius: 44% 56% 48% 52%;
+  transform: translate(-50%, -50%) rotate(18deg);
+  animation: michaelFieldOrbitReverse 17s linear infinite;
+}
+
+.saint-stage[data-saint="michael"] .saint-particles i:nth-child(1) { left: 18%; top: 31%; }
+.saint-stage[data-saint="michael"] .saint-particles i:nth-child(2) { left: 27%; top: 66%; }
+.saint-stage[data-saint="michael"] .saint-particles i:nth-child(3) { left: 38%; top: 20%; }
+.saint-stage[data-saint="michael"] .saint-particles i:nth-child(4) { left: 64%; top: 17%; }
+.saint-stage[data-saint="michael"] .saint-particles i:nth-child(5) { left: 76%; top: 36%; }
+.saint-stage[data-saint="michael"] .saint-particles i:nth-child(6) { left: 70%; top: 72%; }
+.saint-stage[data-saint="michael"] .saint-particles i:nth-child(7) { left: 42%; top: 82%; }
+.saint-stage[data-saint="michael"] .saint-symbol-one { left: 14%; top: 58%; }
+.saint-stage[data-saint="michael"] .saint-symbol-two { right: 15%; top: 24%; }
+
+/* Augustine: restless concentric lines resolving into a warm center. */
+.saint-stage[data-saint="augustine"] { --saint-scene-rgb: 205, 105, 77; }
+
+.saint-stage[data-saint="augustine"] .saint-geometry {
+  border-radius: 48%;
+  background:
+    radial-gradient(circle at 50% 46%, transparent 0 10%, rgba(var(--saint-scene-rgb), 0.44) 10.2% 10.7%, transparent 11% 18%, rgba(var(--saint-scene-rgb), 0.3) 18.2% 18.7%, transparent 19% 29%, rgba(var(--saint-scene-rgb), 0.22) 29.2% 29.7%, transparent 30%),
+    repeating-linear-gradient(8deg, transparent 0 19px, rgba(var(--saint-scene-rgb), 0.14) 20px, transparent 21px 31px);
+  mask-image: radial-gradient(ellipse at 50% 46%, black 8%, transparent 68%);
+  animation: augustineRestlessField 8s ease-in-out infinite;
+}
+
+.saint-stage[data-saint="augustine"] .saint-orbit-primary {
+  width: 390px;
+  height: 285px;
+  border-radius: 52% 48% 42% 58%;
+  transform: translate(-50%, -50%) rotate(9deg);
+  animation: augustineOrbit 10s ease-in-out infinite;
+}
+
+.saint-stage[data-saint="augustine"] .saint-orbit-secondary {
+  width: 245px;
+  height: 330px;
+  border-style: dashed;
+  transform: translate(-50%, -50%) rotate(-14deg);
+  animation: augustineOrbit 12s ease-in-out -4s infinite reverse;
+}
+
+.saint-stage[data-saint="augustine"] .saint-particles i { border-radius: 50% 50% 50% 0; }
+.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(1) { left: 21%; top: 72%; }
+.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(2) { left: 28%; top: 48%; }
+.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(3) { left: 35%; top: 29%; }
+.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(4) { left: 51%; top: 18%; }
+.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(5) { left: 69%; top: 31%; }
+.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(6) { left: 77%; top: 57%; }
+.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(7) { left: 62%; top: 78%; }
+.saint-stage[data-saint="augustine"] .saint-symbol-one { left: 20%; top: 36%; }
+.saint-stage[data-saint="augustine"] .saint-symbol-two { right: 12%; top: 64%; }
+
+/* Mary: a sparse celestial canopy and slow elliptical star paths. */
+.saint-stage[data-saint="mary"] { --saint-scene-rgb: 115, 172, 222; }
+
+.saint-stage[data-saint="mary"] .saint-geometry {
+  inset: 2% 6% 16%;
+  background:
+    linear-gradient(24deg, transparent 49.7%, rgba(var(--saint-scene-rgb), 0.2) 49.9% 50.1%, transparent 50.3%),
+    linear-gradient(-19deg, transparent 49.7%, rgba(var(--saint-scene-rgb), 0.18) 49.9% 50.1%, transparent 50.3%),
+    radial-gradient(circle at 50% 54%, transparent 0 21%, rgba(var(--saint-scene-rgb), 0.3) 21.2% 21.6%, transparent 22% 36%, rgba(var(--saint-scene-rgb), 0.18) 36.2% 36.6%, transparent 37%);
+  clip-path: polygon(4% 8%, 96% 8%, 86% 72%, 50% 100%, 14% 72%);
+}
+
+.saint-stage[data-saint="mary"] .saint-orbit-primary {
+  width: 470px;
+  height: 190px;
+  top: 36%;
+  transform: translate(-50%, -50%) rotate(-5deg);
+  animation: marySkyOrbit 18s linear infinite;
+}
+
+.saint-stage[data-saint="mary"] .saint-orbit-secondary {
+  width: 310px;
+  height: 245px;
+  top: 39%;
+  border-style: dotted;
+  transform: translate(-50%, -50%) rotate(11deg);
+  animation: marySkyOrbit 22s linear infinite reverse;
+}
+
+.saint-stage[data-saint="mary"] .saint-particles i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  animation-name: maryStarDrift;
+}
+.saint-stage[data-saint="mary"] .saint-particles i:nth-child(1) { left: 15%; top: 22%; }
+.saint-stage[data-saint="mary"] .saint-particles i:nth-child(2) { left: 29%; top: 13%; }
+.saint-stage[data-saint="mary"] .saint-particles i:nth-child(3) { left: 43%; top: 29%; }
+.saint-stage[data-saint="mary"] .saint-particles i:nth-child(4) { left: 55%; top: 10%; }
+.saint-stage[data-saint="mary"] .saint-particles i:nth-child(5) { left: 70%; top: 24%; }
+.saint-stage[data-saint="mary"] .saint-particles i:nth-child(6) { left: 83%; top: 15%; }
+.saint-stage[data-saint="mary"] .saint-particles i:nth-child(7) { left: 76%; top: 43%; }
+.saint-stage[data-saint="mary"] .saint-symbol-one { left: 10%; top: 25%; }
+.saint-stage[data-saint="mary"] .saint-symbol-two { right: 11%; top: 46%; }
+
+/* Joseph: measured carpenter lines, square joints, and grounded movement. */
+.saint-stage[data-saint="joseph"] { --saint-scene-rgb: 173, 157, 96; }
+
+.saint-stage[data-saint="joseph"] .saint-geometry {
+  inset: 12% 9% 7%;
+  background:
+    linear-gradient(90deg, transparent 49.8%, rgba(var(--saint-scene-rgb), 0.35) 49.9% 50.1%, transparent 50.2%),
+    linear-gradient(0deg, transparent 49.8%, rgba(var(--saint-scene-rgb), 0.3) 49.9% 50.1%, transparent 50.2%),
+    repeating-linear-gradient(90deg, transparent 0 53px, rgba(var(--saint-scene-rgb), 0.15) 54px, transparent 55px),
+    repeating-linear-gradient(0deg, transparent 0 43px, rgba(var(--saint-scene-rgb), 0.12) 44px, transparent 45px);
+  clip-path: polygon(8% 10%, 92% 10%, 92% 90%, 8% 90%);
+}
+
+.saint-stage[data-saint="joseph"] .saint-orbit-primary {
+  width: 390px;
+  height: 300px;
+  border-radius: 8px;
+  transform: translate(-50%, -50%) rotate(2deg);
+  animation: josephMeasuredFrame 9s steps(1, end) infinite;
+}
+
+.saint-stage[data-saint="joseph"] .saint-orbit-secondary {
+  width: 280px;
+  height: 350px;
+  border-radius: 5px;
+  transform: translate(-50%, -50%) rotate(-4deg);
+  animation: josephMeasuredFrame 11s steps(1, end) -3s infinite reverse;
+}
+
+.saint-stage[data-saint="joseph"] .saint-particles i { border-radius: 1px; }
+.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(1) { left: 17%; top: 69%; }
+.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(2) { left: 27%; top: 79%; }
+.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(3) { left: 38%; top: 72%; }
+.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(4) { left: 57%; top: 82%; }
+.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(5) { left: 72%; top: 70%; }
+.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(6) { left: 82%; top: 76%; }
+.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(7) { left: 76%; top: 56%; }
+.saint-stage[data-saint="joseph"] .saint-symbol-one { left: 13%; top: 32%; }
+.saint-stage[data-saint="joseph"] .saint-symbol-two { right: 15%; top: 68%; }
+
+/* Thomas: a precise scholastic diagram with rotating proofs. */
+.saint-stage[data-saint="thomas"] { --saint-scene-rgb: 207, 164, 83; }
+
+.saint-stage[data-saint="thomas"] .saint-geometry {
+  inset: 5% 7%;
+  border-radius: 50%;
+  background:
+    repeating-conic-gradient(from 0deg at 50% 48%, rgba(var(--saint-scene-rgb), 0.28) 0 0.45deg, transparent 0.45deg 30deg),
+    radial-gradient(circle at 50% 48%, transparent 0 16%, rgba(var(--saint-scene-rgb), 0.35) 16.2% 16.6%, transparent 17% 30%, rgba(var(--saint-scene-rgb), 0.25) 30.2% 30.6%, transparent 31% 44%, rgba(var(--saint-scene-rgb), 0.14) 44.2% 44.6%, transparent 45%);
+  animation: thomasDiagram 24s linear infinite;
+}
+
+.saint-stage[data-saint="thomas"] .saint-orbit-primary {
+  width: 410px;
+  height: 315px;
+  border-radius: 50% 12% 50% 12%;
+  transform: translate(-50%, -50%) rotate(45deg);
+  animation: thomasProofOrbit 16s linear infinite;
+}
+
+.saint-stage[data-saint="thomas"] .saint-orbit-secondary {
+  width: 285px;
+  height: 285px;
+  border-style: dashed;
+  transform: translate(-50%, -50%);
+  animation: thomasProofOrbit 12s linear infinite reverse;
+}
+
+.saint-stage[data-saint="thomas"] .saint-particles i { border-radius: 50%; }
+.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(1) { left: 50%; top: 8%; }
+.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(2) { left: 25%; top: 22%; }
+.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(3) { left: 18%; top: 54%; }
+.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(4) { left: 35%; top: 84%; }
+.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(5) { left: 67%; top: 84%; }
+.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(6) { left: 82%; top: 55%; }
+.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(7) { left: 75%; top: 22%; }
+.saint-stage[data-saint="thomas"] .saint-symbol-one { left: 12%; top: 50%; }
+.saint-stage[data-saint="thomas"] .saint-symbol-two { right: 13%; top: 19%; }
+
+/* Benedict: a restrained medal seal with radial monastic order. */
+.saint-stage[data-saint="benedict"] { --saint-scene-rgb: 165, 150, 119; }
+
+.saint-stage[data-saint="benedict"] .saint-geometry {
+  inset: 8% 17%;
+  border-radius: 50%;
+  background:
+    linear-gradient(90deg, transparent 49.6%, rgba(var(--saint-scene-rgb), 0.38) 49.8% 50.2%, transparent 50.4%),
+    linear-gradient(0deg, transparent 49.6%, rgba(var(--saint-scene-rgb), 0.38) 49.8% 50.2%, transparent 50.4%),
+    repeating-conic-gradient(from 0deg, rgba(var(--saint-scene-rgb), 0.24) 0 0.5deg, transparent 0.5deg 15deg),
+    radial-gradient(circle, transparent 0 25%, rgba(var(--saint-scene-rgb), 0.3) 25.2% 25.7%, transparent 26% 43%, rgba(var(--saint-scene-rgb), 0.18) 43.2% 43.7%, transparent 44%);
+  animation: benedictSeal 30s linear infinite;
+}
+
+.saint-stage[data-saint="benedict"] .saint-orbit-primary {
+  width: 335px;
+  height: 335px;
+  border-width: 2px;
+  transform: translate(-50%, -50%);
+  animation: benedictSealOrbit 20s linear infinite;
+}
+
+.saint-stage[data-saint="benedict"] .saint-orbit-secondary {
+  width: 425px;
+  height: 270px;
+  border-style: dotted;
+  transform: translate(-50%, -50%);
+  animation: benedictSealOrbit 28s linear infinite reverse;
+}
+
+.saint-stage[data-saint="benedict"] .saint-particles i { border-radius: 50%; }
+.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(1) { left: 50%; top: 12%; }
+.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(2) { left: 28%; top: 22%; }
+.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(3) { left: 21%; top: 50%; }
+.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(4) { left: 31%; top: 76%; }
+.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(5) { left: 68%; top: 76%; }
+.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(6) { left: 79%; top: 49%; }
+.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(7) { left: 71%; top: 22%; }
+.saint-stage[data-saint="benedict"] .saint-symbol-one { left: 17%; top: 20%; }
+.saint-stage[data-saint="benedict"] .saint-symbol-two { right: 18%; top: 61%; }
+
+/* Pio: rosary beads and an asymmetrical, incense-like current. */
+.saint-stage[data-saint="pio"] { --saint-scene-rgb: 187, 133, 87; }
+
+.saint-stage[data-saint="pio"] .saint-geometry {
+  inset: 4% 7% 6%;
+  border-radius: 48%;
+  background:
+    radial-gradient(ellipse at 57% 50%, transparent 0 24%, rgba(var(--saint-scene-rgb), 0.3) 24.2% 24.7%, transparent 25% 36%, rgba(var(--saint-scene-rgb), 0.2) 36.2% 36.7%, transparent 37%),
+    repeating-radial-gradient(ellipse at 42% 84%, transparent 0 29px, rgba(var(--saint-scene-rgb), 0.13) 30px, transparent 31px 49px);
+  mask-image: linear-gradient(118deg, transparent 3%, black 29% 82%, transparent 97%);
+  animation: pioIncenseField 11s ease-in-out infinite;
+}
+
+.saint-stage[data-saint="pio"] .saint-orbit-primary {
+  width: 360px;
+  height: 330px;
+  left: 57%;
+  border-style: dotted;
+  border-width: 2px;
+  transform: translate(-50%, -50%) rotate(-13deg);
+  animation: pioRosaryOrbit 19s linear infinite;
+}
+
+.saint-stage[data-saint="pio"] .saint-orbit-secondary {
+  width: 440px;
+  height: 225px;
+  left: 45%;
+  border-radius: 58% 42% 60% 40%;
+  transform: translate(-50%, -50%) rotate(16deg);
+  animation: pioIncenseOrbit 14s ease-in-out infinite;
+}
+
+.saint-stage[data-saint="pio"] .saint-particles i { border-radius: 50%; }
+.saint-stage[data-saint="pio"] .saint-particles i:nth-child(1) { left: 25%; top: 74%; }
+.saint-stage[data-saint="pio"] .saint-particles i:nth-child(2) { left: 22%; top: 52%; }
+.saint-stage[data-saint="pio"] .saint-particles i:nth-child(3) { left: 32%; top: 31%; }
+.saint-stage[data-saint="pio"] .saint-particles i:nth-child(4) { left: 48%; top: 18%; }
+.saint-stage[data-saint="pio"] .saint-particles i:nth-child(5) { left: 67%; top: 26%; }
+.saint-stage[data-saint="pio"] .saint-particles i:nth-child(6) { left: 78%; top: 45%; }
+.saint-stage[data-saint="pio"] .saint-particles i:nth-child(7) { left: 71%; top: 72%; }
+.saint-stage[data-saint="pio"] .saint-symbol-one { left: 15%; top: 63%; }
+.saint-stage[data-saint="pio"] .saint-symbol-two { right: 12%; top: 33%; }
+
+@keyframes saintSceneArrive {
+  0% { opacity: 0.18; filter: blur(7px); transform: translateY(8px) scale(0.975); }
+  58% { opacity: 1; filter: blur(0); transform: translateY(-3px) scale(1.008); }
+  100% { opacity: 1; filter: none; transform: translateY(-1px) scale(1); }
+}
+
+@keyframes saintParticleDrift {
+  0%, 100% { transform: translate(-50%, -50%) rotate(45deg) scale(0.72); }
+  50% { transform: translate(calc(-50% + 4px), calc(-50% - 9px)) rotate(95deg) scale(1.08); }
+}
+
+@keyframes michaelFieldOrbit {
+  to { transform: translate(-50%, -50%) rotate(348deg); }
+}
+
+@keyframes michaelFieldOrbitReverse {
+  to { transform: translate(-50%, -50%) rotate(-342deg); }
+}
+
+@keyframes augustineRestlessField {
+  0%, 100% { transform: rotate(-1deg) scale(0.985); }
+  50% { transform: rotate(2deg) scale(1.025); }
+}
+
+@keyframes augustineOrbit {
+  0%, 100% { transform: translate(-50%, -50%) rotate(4deg) scale(0.98); }
+  50% { transform: translate(-50%, -50%) rotate(13deg) scale(1.035); }
+}
+
+@keyframes marySkyOrbit {
+  to { transform: translate(-50%, -50%) rotate(355deg); }
+}
+
+@keyframes maryStarDrift {
+  0%, 100% { opacity: 0.22; transform: translate(-50%, -50%) scale(0.65); }
+  50% { opacity: 0.9; transform: translate(calc(-50% + 3px), calc(-50% - 7px)) scale(1.35); }
+}
+
+@keyframes josephMeasuredFrame {
+  0%, 100% { transform: translate(-50%, -50%) rotate(2deg); }
+  50% { transform: translate(-50%, -50%) rotate(-2deg); }
+}
+
+@keyframes thomasDiagram {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes thomasProofOrbit {
+  to { transform: translate(-50%, -50%) rotate(405deg); }
+}
+
+@keyframes benedictSeal {
+  to { transform: rotate(-360deg); }
+}
+
+@keyframes benedictSealOrbit {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes pioIncenseField {
+  0%, 100% { transform: skewX(-1deg) translateY(2px); }
+  50% { transform: skewX(3deg) translateY(-7px); }
+}
+
+@keyframes pioRosaryOrbit {
+  to { transform: translate(-50%, -50%) rotate(347deg); }
+}
+
+@keyframes pioIncenseOrbit {
+  0%, 100% { transform: translate(-50%, -50%) rotate(12deg) scale(0.97); }
+  50% { transform: translate(-50%, -50%) rotate(20deg) scale(1.04); }
+}
+
+@media (max-width: 720px) {
+  #view-home .saint-stage {
+    width: min(520px, 100%);
+  }
+
+  #view-home .saint-artifact,
+  #view-home .saint-stage[data-saint] .saint-artifact {
+    width: 100%;
+  }
+
+  .saint-ambient {
+    inset-inline: 0;
+    overflow: hidden;
+    border-radius: 42%;
+    transform: scale(0.82) translateZ(-24px);
+  }
+}
+
+@media (hover: none), (pointer: coarse), (prefers-reduced-motion: reduce) {
+  #view-home .saint-stage.is-pointer-active .saint-artifact,
+  #view-home .saint-artifact:focus-visible {
+    transform: none;
+  }
+
+  #view-home .saint-stage.is-pointer-active .saint-artwork,
+  #view-home .saint-artifact:focus-visible .saint-artwork {
+    transform: translateX(-50%);
+  }
+
+  .saint-cursor-aura {
+    display: none;
+  }
+}
+
+/* Generous in-window targets replace the hairline native macOS resize edge. */
+.window-resize-handle {
+  position: fixed;
+  z-index: 1000;
+  display: none;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+}
+
+.electron-shell .window-resize-handle {
+  display: block;
+}
+
+.window-resize-s {
+  right: 28px;
+  bottom: 0;
+  left: 28px;
+  height: 14px;
+  cursor: ns-resize;
+}
+
+.window-resize-e,
+.window-resize-w {
+  top: 38px;
+  bottom: 28px;
+  width: 12px;
+  cursor: ew-resize;
+}
+
+.window-resize-e { right: 0; }
+.window-resize-w { left: 0; }
+
+.window-resize-se,
+.window-resize-sw {
+  bottom: 0;
+  width: 32px;
+  height: 32px;
+}
+
+.window-resize-se {
+  right: 0;
+  cursor: nwse-resize;
+}
+
+.window-resize-sw {
+  left: 0;
+  cursor: nesw-resize;
 }

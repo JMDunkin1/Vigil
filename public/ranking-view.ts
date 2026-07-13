@@ -20,7 +20,6 @@ const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as cons
 export function createRankingView() {
   const standing = required<HTMLElement>("#knightStanding");
   const rank = required<HTMLElement>("#knightRank");
-  const state = required<HTMLElement>("#knightState");
   const totalUsage = required<HTMLElement>("#totalUsageToday");
   const focusScore = required<HTMLElement>("#focusScore");
   const focusScoreLabel = required<HTMLElement>("#focusScoreLabel");
@@ -33,11 +32,9 @@ export function createRankingView() {
     const score = clampPercent(data.usage?.focusScore);
     const brainHealth = Number(progression?.brainHealth ?? score);
     const tier = tierFor(brainHealth);
-    const cleanDays = Number(progression?.cleanDays || 0);
 
     standing.textContent = tier.title;
     rank.textContent = progression ? `Rank ${progression.level}` : "Rank --";
-    state.textContent = `${cleanDays} clean day${cleanDays === 1 ? "" : "s"}`;
     totalUsage.textContent = formatDuration(Number(data.usage?.totalSeconds || 0));
     focusScore.textContent = String(score);
     focusScoreLabel.textContent = focusLabel(score, Number(data.usage?.totalSeconds || 0) > 0);

@@ -2,7 +2,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, systemPreferences, Tray } from "electron";
-import type { IpcMainInvokeEvent, MenuItemConstructorOptions } from "electron";
+import type { IpcMainEvent, IpcMainInvokeEvent, MenuItemConstructorOptions, Rectangle } from "electron";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../src/apiSecurity.js";
 import { resolveDefaultDataDir } from "../src/dataPaths.js";
 import { plistStringForKey } from "../src/plist.js";
@@ -49,6 +49,16 @@ interface AppUpdateActionState {
   message: string;
 }
 
+type WindowResizeEdge = "s" | "e" | "w" | "se" | "sw";
+
+interface WindowResizeSession {
+  senderId: number;
+  edge: WindowResizeEdge;
+  startX: number;
+  startY: number;
+  bounds: Rectangle;
+}
+
 let mainWindow: BrowserWindow | null = null;
 let ownedServer: VigilServerHandle | null = null;
 let tray: Tray | null = null;
@@ -68,12 +78,16 @@ let appUpdateActionState: AppUpdateActionState = {
   localChanges: false,
   message: ""
 };
+let windowResizeSession: WindowResizeSession | null = null;
 
 ipcMain.handle("vigil:journal-touch-id", handleJournalTouchId);
 ipcMain.handle("vigil:app-update-status", handleAppUpdateStatus);
 ipcMain.handle("vigil:app-update-start", handleAppUpdateStart);
 ipcMain.handle("vigil:icon-theme-get", handleIconThemeGet);
 ipcMain.handle("vigil:icon-theme-set", handleIconThemeSet);
+ipcMain.on("vigil:window-resize-begin", handleWindowResizeBegin);
+ipcMain.on("vigil:window-resize-move", handleWindowResizeMove);
+ipcMain.on("vigil:window-resize-end", handleWindowResizeEnd);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -213,8 +227,66 @@ function createWindow(appUrl: string): void {
     return { action: "deny" };
   });
   vigilWindow.on("closed", () => {
+    windowResizeSession = null;
     if (mainWindow === vigilWindow) mainWindow = null;
   });
+}
+
+function handleWindowResizeBegin(event: IpcMainEvent, value: unknown): void {
+  const window = trustedResizeWindow(event);
+  const input = resizePointerInput(value);
+  if (!window || !input || !isWindowResizeEdge(input.edge)) return;
+  if (!window.isResizable() || window.isFullScreen() || window.isMaximized()) return;
+  windowResizeSession = {
+    senderId: event.sender.id,
+    edge: input.edge,
+    startX: input.screenX,
+    startY: input.screenY,
+    bounds: window.getBounds()
+  };
+}
+
+function handleWindowResizeMove(event: IpcMainEvent, value: unknown): void {
+  const window = trustedResizeWindow(event);
+  const input = resizePointerInput(value);
+  const session = windowResizeSession;
+  if (!window || !input || !session || session.senderId !== event.sender.id) return;
+  if (window.isFullScreen() || window.isMaximized()) {
+    windowResizeSession = null;
+    return;
+  }
+
+  const deltaX = input.screenX - session.startX;
+  const deltaY = input.screenY - session.startY;
+  const next = { ...session.bounds };
+  if (session.edge.includes("s")) next.height = Math.max(MIN_WINDOW_HEIGHT, session.bounds.height + deltaY);
+  if (session.edge.includes("e")) next.width = Math.max(MIN_WINDOW_WIDTH, session.bounds.width + deltaX);
+  if (session.edge.includes("w")) {
+    next.width = Math.max(MIN_WINDOW_WIDTH, session.bounds.width - deltaX);
+    next.x = session.bounds.x + session.bounds.width - next.width;
+  }
+  window.setBounds(next, false);
+}
+
+function handleWindowResizeEnd(event: IpcMainEvent): void {
+  if (windowResizeSession?.senderId === event.sender.id) windowResizeSession = null;
+}
+
+function trustedResizeWindow(event: IpcMainEvent): BrowserWindow | null {
+  if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
+  const window = BrowserWindow.fromWebContents(event.sender);
+  return window && window === mainWindow && !window.isDestroyed() ? window : null;
+}
+
+function resizePointerInput(value: unknown): { edge?: unknown; screenX: number; screenY: number } | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as Record<string, unknown>;
+  if (!Number.isFinite(input.screenX) || !Number.isFinite(input.screenY)) return null;
+  return { edge: input.edge, screenX: Number(input.screenX), screenY: Number(input.screenY) };
+}
+
+function isWindowResizeEdge(value: unknown): value is WindowResizeEdge {
+  return value === "s" || value === "e" || value === "w" || value === "se" || value === "sw";
 }
 
 async function handleJournalTouchId(event: IpcMainInvokeEvent): Promise<unknown> {

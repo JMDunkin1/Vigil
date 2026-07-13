@@ -19,6 +19,10 @@ assert.match(
 
 assert.doesNotMatch(mainSource, /setAspectRatio\(/, "manual resizing must allow width and height to change independently");
 
+assert.match(mainSource, /ipcMain\.on\("vigil:window-resize-begin", handleWindowResizeBegin\)/, "the desktop app must accept resizing from the larger in-window handles");
+assert.match(mainSource, /Math\.max\(MIN_WINDOW_HEIGHT, session\.bounds\.height \+ deltaY\)/, "bottom-edge dragging must resize the window while honoring its minimum height");
+assert.match(mainSource, /window\.setBounds\(next, false\)/, "custom resize dragging must update the real native window bounds");
+
 async function sourceRoot(): Promise<string> {
   for (const candidate of [process.cwd(), resolve(process.cwd(), "..", "..")]) {
     try {

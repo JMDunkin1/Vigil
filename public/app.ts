@@ -17,9 +17,10 @@ import { createRankingView } from "./ranking-view.js";
 import { createSaintStage } from "./saint-stage.js";
 import { renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
-import { enhanceSettingsUi } from "./settings-ui.js";
+import { enhanceSettingsUi, resetSettingsUi } from "./settings-ui.js";
 import { createTrackingView } from "./tracking-view.js";
 import { $, $$, bindSidebarToggle, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
+import { bindWindowResizeHandles } from "./window-resize.js";
 import type { ActivePolicy, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, JournalVaultSummary, ProgressSummary, Schedule, SessionStartResponse, UiState, UnknownRecord } from "./app-model.js";
 
 interface JournalUnlockResponse extends UnknownRecord {
@@ -116,6 +117,7 @@ boot();
 
 function boot() {
   initTheme();
+  bindWindowResizeHandles();
   renderScheduleDays();
   renderGrayscaleScheduleDays();
   renderLimitDays();
@@ -236,6 +238,7 @@ function setView(view?: string) {
     state.activeView = nextView;
     viewBeforeSettings = nextView;
   }
+  if (previousView === "settings" && state.activeView !== "settings") resetSettingsUi();
   if (lockOnExit) lockJournalForViewExit();
   renderActiveView(state.activeView);
 }

@@ -69,6 +69,15 @@
         </aside>
         <div id="saintStage" class="saint-stage" data-saint="michael">
           <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next patron saint" aria-haspopup="dialog" aria-controls="saintInfoPopover" aria-expanded="false" title="Click for the next saint. Two-finger click for details.">
+            <span class="saint-ambient" aria-hidden="true">
+              <span class="saint-cursor-aura"></span>
+              <span class="saint-geometry"></span>
+              <span class="saint-orbit saint-orbit-primary"></span>
+              <span class="saint-orbit saint-orbit-secondary"></span>
+              <span class="saint-particles">
+                <i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+              </span>
+            </span>
             <span class="saint-halo" aria-hidden="true"></span>
             <span class="saint-symbol saint-symbol-one" aria-hidden="true"></span>
             <span class="saint-symbol saint-symbol-two" aria-hidden="true"></span>
@@ -139,7 +148,6 @@
         <div class="ranking-standing" aria-label="Current standing">
           <span id="knightStanding">Pilgrim</span>
           <strong id="knightRank">Rank --</strong>
-          <em id="knightState">No clean days yet</em>
         </div>
       </header>
 

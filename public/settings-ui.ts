@@ -58,6 +58,19 @@ export function enhanceSettingsUi(): void {
   bindSettingsSearch();
 }
 
+export function resetSettingsUi(): void {
+  const settingsRoot = document.querySelector<HTMLElement>("#view-rules");
+  if (!settingsRoot) return;
+
+  for (const disclosure of settingsRoot.querySelectorAll<HTMLDetailsElement>("details")) {
+    disclosure.open = false;
+    disclosure.hidden = false;
+  }
+
+  const search = settingsRoot.querySelector<HTMLInputElement>("#settingsSearch");
+  if (search) search.value = "";
+}
+
 function wrapSettingsPanels(): void {
   const panels = [...document.querySelectorAll<HTMLElement>("[data-view~='settings'] .settings-disclosure-body .panel")];
   for (const panel of panels) {

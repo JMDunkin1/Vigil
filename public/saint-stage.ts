@@ -139,8 +139,13 @@ export function createSaintStage() {
     });
 
     if (!motionAllowed()) return;
+    stage.addEventListener("pointerenter", (event) => {
+      if (event.pointerType === "touch") return;
+      stage.classList.add("is-pointer-active");
+    });
     stage.addEventListener("pointermove", (event) => {
       if (event.pointerType === "touch") return;
+      stage.classList.add("is-pointer-active");
       if (pointerFrame !== null) cancelAnimationFrame(pointerFrame);
       pointerFrame = requestAnimationFrame(() => {
         pointerFrame = null;
@@ -149,15 +154,26 @@ export function createSaintStage() {
         const y = ((event.clientY - bounds.top) / Math.max(1, bounds.height) - 0.5) * 2;
         stage.style.setProperty("--saint-look-x", x.toFixed(3));
         stage.style.setProperty("--saint-look-y", y.toFixed(3));
+        stage.style.setProperty("--saint-pointer-x", `${((x + 1) * 50).toFixed(1)}%`);
+        stage.style.setProperty("--saint-pointer-y", `${((y + 1) * 50).toFixed(1)}%`);
+        stage.style.setProperty("--saint-pointer-distance", Math.min(1, Math.hypot(x, y)).toFixed(3));
       });
     });
     stage.addEventListener("pointerleave", resetPointer);
+    stage.addEventListener("animationend", (event) => {
+      if (event.target === stage && event.animationName === "saintSceneArrive") {
+        stage.classList.remove("is-switching-saint");
+      }
+    });
   }
 
   function select(id: SaintPatron["id"], persist = true, keepInfoOpen = false): void {
     const saint = SAINT_PATRONS.find((item) => item.id === id) || SAINT_PATRONS[0];
     if (!keepInfoOpen) closeInfo();
     selectedId = saint.id;
+    stage.classList.remove("is-switching-saint");
+    void stage.offsetWidth;
+    stage.classList.add("is-switching-saint");
     stage.dataset.saint = saint.id;
     stage.dataset.artMissing = "false";
     artwork.src = `/art/saints/${saint.id}.png`;
@@ -195,8 +211,16 @@ export function createSaintStage() {
   }
 
   function resetPointer(): void {
+    if (pointerFrame !== null) {
+      cancelAnimationFrame(pointerFrame);
+      pointerFrame = null;
+    }
+    stage.classList.remove("is-pointer-active");
     stage.style.setProperty("--saint-look-x", "0");
     stage.style.setProperty("--saint-look-y", "0");
+    stage.style.setProperty("--saint-pointer-x", "50%");
+    stage.style.setProperty("--saint-pointer-y", "50%");
+    stage.style.setProperty("--saint-pointer-distance", "0");
   }
 
   return { bind, select };
