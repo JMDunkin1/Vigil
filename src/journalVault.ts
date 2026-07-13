@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,10 +8,7 @@ import { clampNumber } from "./time.js";
 import { getTouchIdSecret } from "./touchIdAuth.js";
 import type { JournalVaultState, VigilState, UnknownRecord } from "./types.js";
 
-const PASSWORD_MIN_LENGTH = 6;
-const PASSWORD_MAX_LENGTH = 256;
 const SESSION_TOKEN_BYTES = 32;
-const HASH_BYTES = 32;
 const TOUCH_ID_SECRET_HEADER = "x-vigil-touch-id-secret";
 const DEFAULT_DATA_DIR = process.env.VIGIL_DATA_DIR || resolveDefaultDataDir(dirname(dirname(fileURLToPath(import.meta.url))));
 
@@ -19,7 +16,7 @@ interface JournalVaultSession {
   token: string;
   createdAt: string;
   expiresAt: string;
-  method: "password" | "touch-id";
+  method: "touch-id";
 }
 
 const sessions = new Map<string, JournalVaultSession>();
@@ -48,48 +45,21 @@ export function normalizeJournalVaultState(
 export function journalVaultSummary(state: VigilState) {
   const vault = normalizeJournalVaultState(state.intentionalUse?.journalVault || {});
   return {
-    configured: journalVaultConfigured(vault),
-    passwordSetAt: vault.passwordSetAt,
+    configured: true,
     autoLockMinutes: vault.autoLockMinutes,
     touchIdAvailable: process.platform === "darwin",
     entries: state.intentionalUse?.journalEntries?.length || 0
   };
 }
 
-export function journalVaultConfigured(vault: Partial<JournalVaultState> | undefined): boolean {
-  return Boolean(vault?.passwordSalt && vault?.passwordHash);
-}
-
-export function setJournalVaultPassword(state: VigilState, body: UnknownRecord = {}, now = new Date()) {
+export function setJournalVaultAutoLockMinutes(state: VigilState, body: UnknownRecord = {}) {
   const vault = normalizeJournalVaultState(state.intentionalUse.journalVault || {});
-  const nextPassword = normalizePassword(body.password);
-  if (journalVaultConfigured(vault)) {
-    const currentPassword = String(body.currentPassword || "");
-    if (!verifyJournalVaultPassword(vault, currentPassword)) {
-      throw new JournalVaultError("Current journal password is incorrect.", 401);
-    }
-  }
-
-  const salt = randomBytes(16).toString("hex");
   state.intentionalUse.journalVault = {
-    passwordSalt: salt,
-    passwordHash: passwordHash(nextPassword, salt),
-    passwordSetAt: now.toISOString(),
+    ...vault,
     autoLockMinutes: clampNumber(body.autoLockMinutes, 1, 120, vault.autoLockMinutes || 15)
   };
   revokeAllJournalVaultSessions();
   return journalVaultSummary(state);
-}
-
-export function unlockJournalVaultWithPassword(state: VigilState, body: UnknownRecord = {}, now = new Date()) {
-  const vault = normalizeJournalVaultState(state.intentionalUse.journalVault || {});
-  if (!journalVaultConfigured(vault)) {
-    throw new JournalVaultError("Set a journal password before unlocking the journal.", 409);
-  }
-  if (!verifyJournalVaultPassword(vault, String(body.password || ""))) {
-    throw new JournalVaultError("Journal password is incorrect.", 401);
-  }
-  return createJournalVaultSession(vault, "password", now);
 }
 
 export async function unlockJournalVaultWithTouchId(
@@ -99,9 +69,6 @@ export async function unlockJournalVaultWithTouchId(
   dataDir = DEFAULT_DATA_DIR
 ) {
   const vault = normalizeJournalVaultState(state.intentionalUse.journalVault || {});
-  if (!journalVaultConfigured(vault)) {
-    throw new JournalVaultError("Set a journal password before enabling Touch ID fallback.", 409);
-  }
   if (!await validTouchIdSecret(headers, dataDir)) {
     throw new JournalVaultError("Touch ID proof was not accepted.", 403);
   }
@@ -109,12 +76,10 @@ export async function unlockJournalVaultWithTouchId(
 }
 
 export function requireJournalVaultSession(
-  state: VigilState,
+  _state: VigilState,
   headers: IncomingHttpHeaders,
   now = new Date()
 ): JournalVaultSession | null {
-  const vault = normalizeJournalVaultState(state.intentionalUse.journalVault || {});
-  if (!journalVaultConfigured(vault)) return null;
   cleanupSessions(now);
   const token = headerValue(headers["x-vigil-journal-token"]);
   const session = token ? sessions.get(token) || null : null;
@@ -132,14 +97,6 @@ export function revokeJournalVaultSession(headers: IncomingHttpHeaders): boolean
 
 export function revokeAllJournalVaultSessions(): void {
   sessions.clear();
-}
-
-export function verifyJournalVaultPassword(vault: Partial<JournalVaultState>, password: string): boolean {
-  if (!journalVaultConfigured(vault) || !password) return false;
-  const actual = passwordHash(password, String(vault.passwordSalt));
-  const expectedBuffer = Buffer.from(String(vault.passwordHash), "hex");
-  const actualBuffer = Buffer.from(actual, "hex");
-  return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
 }
 
 function createJournalVaultSession(
@@ -164,21 +121,6 @@ function cleanupSessions(now: Date): void {
   for (const [token, session] of sessions) {
     if (Date.parse(session.expiresAt) <= now.getTime()) sessions.delete(token);
   }
-}
-
-function normalizePassword(value: unknown): string {
-  const password = String(value || "");
-  if (password.length < PASSWORD_MIN_LENGTH) {
-    throw new JournalVaultError(`Journal password must be at least ${PASSWORD_MIN_LENGTH} characters.`);
-  }
-  if (password.length > PASSWORD_MAX_LENGTH) {
-    throw new JournalVaultError(`Journal password must be at most ${PASSWORD_MAX_LENGTH} characters.`);
-  }
-  return password;
-}
-
-function passwordHash(password: string, salt: string): string {
-  return scryptSync(password, salt, HASH_BYTES).toString("hex");
 }
 
 async function validTouchIdSecret(headers: IncomingHttpHeaders, dataDir: string): Promise<boolean> {

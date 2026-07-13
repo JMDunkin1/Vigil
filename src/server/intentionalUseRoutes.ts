@@ -25,8 +25,7 @@ import {
   journalVaultSummary,
   requireJournalVaultSession,
   revokeJournalVaultSession,
-  setJournalVaultPassword,
-  unlockJournalVaultWithPassword,
+  setJournalVaultAutoLockMinutes,
   unlockJournalVaultWithTouchId
 } from "../journalVault.js";
 import { assertProtectedEditAllowed } from "../protection.js";
@@ -55,26 +54,14 @@ export async function handleIntentionalUseApiRoute(
     return true;
   }
 
-  if (method === "POST" && path === "/api/intentional-use/journal/password") {
+  if (method === "POST" && path === "/api/intentional-use/journal/security") {
     try {
       const body = await readBody(request);
       assertProtectedEditAllowed(state, { kind: "settings" });
-      const journalVault = setJournalVaultPassword(state, body);
-      addEvent(state, "intentional_journal_password_set", { autoLockMinutes: journalVault.autoLockMinutes });
+      const journalVault = setJournalVaultAutoLockMinutes(state, body);
+      addEvent(state, "intentional_journal_security_saved", { autoLockMinutes: journalVault.autoLockMinutes });
       await saveState(state);
       sendJson(response, 200, { ok: true, journalVault });
-    } catch (error) {
-      sendJson(response, errorStatus(error), serializeError(error));
-    }
-    return true;
-  }
-
-  if (method === "POST" && path === "/api/intentional-use/journal/unlock") {
-    try {
-      const body = await readBody(request);
-      const session = unlockJournalVaultWithPassword(state, body);
-      addEvent(state, "intentional_journal_unlocked", { method: session.method });
-      sendJson(response, 200, { ok: true, session });
     } catch (error) {
       sendJson(response, errorStatus(error), serializeError(error));
     }

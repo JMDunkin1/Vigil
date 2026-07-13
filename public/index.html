@@ -158,11 +158,6 @@
           <strong id="distractionTrend">--</strong>
           <em>distraction time</em>
         </div>
-        <div class="ranking-vital">
-          <span>Devices included</span>
-          <strong id="combinedDevicesToday">Mac + iPhone</strong>
-          <em id="combinedDevicesStatus">checking sync</em>
-        </div>
       </div>
 
       <section class="journey-section" aria-labelledby="rankTimelineTitle">
@@ -181,12 +176,38 @@
           <div id="rankJourneyDays" class="journey-days" aria-hidden="true"></div>
           <div id="journeyKnight" class="journey-knight" aria-hidden="true">
             <div id="knightAvatar" class="knight-avatar" data-rank-tier="pilgrim">
-              <span class="knight-banner"></span>
-              <span class="knight-plume"></span>
-              <span class="knight-helm"></span>
-              <span class="knight-body"></span>
-              <span class="knight-shield"></span>
-              <span class="knight-sword"></span>
+              <svg viewBox="0 0 120 168" role="presentation" focusable="false">
+                <defs>
+                  <linearGradient id="knightArmor" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stop-color="var(--armor-shadow)"/>
+                    <stop offset="0.48" stop-color="var(--armor-light)"/>
+                    <stop offset="1" stop-color="var(--armor)"/>
+                  </linearGradient>
+                  <linearGradient id="knightBlade" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0" stop-color="#706f69"/>
+                    <stop offset="0.52" stop-color="#f1eee4"/>
+                    <stop offset="1" stop-color="#85837b"/>
+                  </linearGradient>
+                </defs>
+                <path class="knight-cape" d="M50 74c-13 7-23 26-22 58l13 21 22-13 9-58Z"/>
+                <path class="knight-sword" d="m92 48 7 2-14 82-7-1Z" fill="url(#knightBlade)"/>
+                <path class="knight-sword-edge" d="m95.5 50.5-14 80"/>
+                <path class="knight-sword-guard" d="m72 126 22 4"/>
+                <path class="knight-leg" d="m48 132-3 25h14l4-25m14 0 5 25h14l-4-30"/>
+                <path class="knight-boot" d="M44 155h17v8H39c0-4 2-7 5-8Zm37 0h17l5 8H81Z"/>
+                <path class="knight-tunic" d="M43 77c7-7 28-10 42 1l10 57-23 9-34-8Z" fill="url(#knightArmor)"/>
+                <path class="knight-surcoat" d="M53 91h27l5 45-13 8-24-7Z"/>
+                <path class="knight-belt" d="m44 118 47 2"/>
+                <path class="knight-arm" d="M44 84c-11 8-13 23-15 36m55-37c9 6 10 17 8 28"/>
+                <path class="knight-helm" d="M43 35c2-17 13-27 27-27s25 11 26 29l-4 35-20 10-24-9Z" fill="url(#knightArmor)"/>
+                <path class="knight-helm-ridge" d="M69 9v65"/>
+                <path class="knight-visor" d="m45 44 49-2-2 19-45 2Z"/>
+                <path class="knight-visor-slits" d="m52 51 5-1m5 0 5-1m5 0 5-1m5 0 5-1"/>
+                <path class="knight-plume" d="M68 9C52 4 45 9 38 18c13-3 22 2 31 9Z"/>
+                <path class="knight-shield" d="M19 90c12-7 26-7 38 0l-3 43c-3 12-10 20-17 25-9-6-16-14-18-25Z"/>
+                <path class="knight-shield-rim" d="M24 94c9-5 19-5 28 0l-3 37c-2 8-6 14-12 19-6-5-11-11-13-19Z"/>
+                <path class="knight-cross" d="M34 105h8v13h10v8H42v18h-8v-18H24v-8h10Z"/>
+              </svg>
             </div>
           </div>
         </div>
@@ -266,7 +287,7 @@
           <div class="audio-library-grid">
             <details class="audio-library-group audio-library-group-wide" aria-labelledby="sacredSoundsTitle">
               <summary class="audio-group-title">
-                <span><strong id="sacredSoundsTitle">Sacred</strong><small data-audio-group-current data-default-summary="12 sounds">12 sounds</small></span>
+                <span><strong id="sacredSoundsTitle">Church</strong><small data-audio-group-current data-default-summary="12 sounds">12 sounds</small></span>
                 <span class="audio-disclosure-chevron" aria-hidden="true"></span>
               </summary>
               <div class="audio-track-list audio-track-list-columns">
@@ -782,16 +803,20 @@
 
       <section id="journalUnlockGate" class="journal-unlock-gate journal-only" hidden aria-labelledby="journalUnlockTitle">
         <div class="journal-gate-copy">
-          <p class="eyebrow">Journal access</p>
-          <h2 id="journalUnlockTitle">Journal locked.</h2>
-          <p id="journalUnlockCopy">Enter your password to continue.</p>
+          <h2 id="journalUnlockTitle">Unlock it</h2>
         </div>
-        <div class="journal-unlock-actions">
-          <input id="journalPassword" type="password" autocomplete="current-password" aria-label="Journal password" placeholder="Journal password">
-          <button id="journalPasswordUnlock" class="primary" type="button" data-journal-unlock-method="password">Unlock</button>
-        </div>
-        <button id="journalTouchIdUnlock" class="journal-touch-id" type="button" data-journal-unlock-method="biometric">Use Touch ID</button>
-        <span id="journalUnlockStatus" class="tiny-status">Authentication required</span>
+        <button id="journalTouchIdUnlock" class="journal-touch-id" type="button" aria-label="Unlock journal with Touch ID" title="Unlock with Touch ID">
+          <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+            <path d="M14 29c0-10 8-18 18-18s18 8 18 18"/>
+            <path d="M9 29C9 16 19 6 32 6s23 10 23 23c0 15-5 24-10 30"/>
+            <path d="M19 30c0-7 6-13 13-13s13 6 13 13c0 13-3 21-8 29"/>
+            <path d="M24 31c0-5 3-8 8-8s8 3 8 8c0 12-3 20-7 27"/>
+            <path d="M14 36c0 10-2 15-5 20"/>
+            <path d="M19 37c0 10-2 17-6 23"/>
+            <path d="M25 36c0 10-2 19-7 26"/>
+          </svg>
+        </button>
+        <span id="journalUnlockStatus" class="tiny-status" aria-live="polite"></span>
       </section>
 
       <section class="tracking-overview tracking-only" aria-labelledby="habitCalendarTitle">
@@ -970,7 +995,7 @@
 
     <section id="view-settings" class="view settings-segment" data-view="settings" hidden>
       <details class="settings-disclosure journal-security-settings">
-        <summary><span>Journal access</span><em>Password, Touch ID, and automatic locking</em></summary>
+        <summary><span>Journal access</span><em>Touch ID and automatic locking</em></summary>
         <div class="settings-disclosure-body">
           <section class="journal-security-panel panel" aria-labelledby="journalSecurityTitle">
             <div class="section-head">
@@ -978,19 +1003,11 @@
                 <p class="eyebrow">Access Control</p>
                 <h2 id="journalSecurityTitle">Journal security</h2>
               </div>
-              <span id="journalSecurityStatus" class="pill neutral">Not configured</span>
+              <span id="journalSecurityStatus" class="pill neutral">Locked</span>
             </div>
             <form id="journalSecurityForm" class="profile-form">
-              <p class="field-note">The unlock token lasts only for this app session and is never stored in local storage.</p>
-              <label id="journalCurrentPasswordField" hidden>
-                Current password
-                <input id="journalCurrentPassword" name="currentPassword" type="password" autocomplete="current-password">
-              </label>
+              <p class="field-note">Only Touch ID can unlock the journal. The temporary unlock token stays in this app session.</p>
               <div class="form-row">
-                <label>
-                  <span id="journalNewPasswordLabel">New password</span>
-                  <input id="journalNewPassword" name="password" type="password" minlength="6" autocomplete="new-password" required>
-                </label>
                 <label>
                   Lock after
                   <select id="journalAutoLockMinutes" name="autoLockMinutes">
@@ -1003,7 +1020,7 @@
                 </label>
               </div>
               <div class="form-actions">
-                <button id="saveJournalSecurity" class="primary" type="submit">Set journal password</button>
+                <button id="saveJournalSecurity" class="primary" type="submit">Save lock timing</button>
                 <button id="lockJournalNow" class="secondary" type="button">Lock now</button>
               </div>
             </form>

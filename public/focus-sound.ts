@@ -506,7 +506,7 @@ function presetUiDetails(preset: FocusPreset): { title: string; category: string
   if (sacred) {
     return {
       title: sacred.title,
-      category: "Sacred",
+      category: "Church",
       description: `${sacred.performer} · Real recording`
     };
   }

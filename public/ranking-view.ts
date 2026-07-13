@@ -30,7 +30,6 @@ export function createRankingView() {
   const totalUsage = required<HTMLElement>("#totalUsageToday");
   const focusScore = required<HTMLElement>("#focusScore");
   const distractionTrend = required<HTMLElement>("#distractionTrend");
-  const combinedDevicesStatus = required<HTMLElement>("#combinedDevicesStatus");
   const waveLine = required<SVGPathElement>("#usageWaveLine");
   const waveArea = required<SVGPathElement>("#usageWaveArea");
   const wavePoints = required<SVGGElement>("#usageWavePoints");
@@ -51,14 +50,6 @@ export function createRankingView() {
     totalUsage.textContent = formatDuration(Number(data.usage?.totalSeconds || 0));
     focusScore.textContent = String(clampPercent(data.usage?.focusScore));
     distractionTrend.textContent = signedPercent(data.report?.comparison?.distractingPercentDelta);
-    const devices = data.usage?.devices || {};
-    const computerSynced = Boolean(devices.computer);
-    const phoneSynced = Boolean(devices.phone);
-    combinedDevicesStatus.textContent = phoneSynced && computerSynced
-      ? "both devices synced"
-      : phoneSynced
-        ? "Mac activity pending"
-        : "iPhone sync pending";
     const days = data.report?.currentWeek?.days || [];
     renderJourney(days);
     renderWave(days);

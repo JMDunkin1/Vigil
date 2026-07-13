@@ -14,7 +14,7 @@ export async function post<T = unknown>(path: string, body: unknown): Promise<T>
     body: JSON.stringify(body)
   }, 120_000);
   const result = await parseResponse<T>(response, path);
-  if (path === "/api/intentional-use/journal/lock" || path === "/api/intentional-use/journal/password") {
+  if (path === "/api/intentional-use/journal/lock" || path === "/api/intentional-use/journal/security") {
     clearJournalSession();
   }
   return result;

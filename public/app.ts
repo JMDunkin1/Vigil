@@ -222,14 +222,8 @@ function setView(view?: string) {
 }
 
 function bindJournalUnlockGate(): void {
-  const password = document.querySelector<HTMLInputElement>("#journalPassword");
-  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-journal-unlock-method]")) {
-    button.addEventListener("click", () => {
-      void unlockJournal(button.dataset.journalUnlockMethod || "password", password?.value || "");
-    });
-  }
-  password?.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") $("#journalPasswordUnlock").click();
+  $("#journalTouchIdUnlock").addEventListener("click", () => {
+    void unlockJournal();
   });
 }
 
@@ -243,36 +237,19 @@ function bindJournalSecuritySettings(): void {
   });
 }
 
-async function unlockJournal(method: string, password: string): Promise<void> {
+async function unlockJournal(): Promise<void> {
   const status = $("#journalUnlockStatus");
-  const passwordButton = $("#journalPasswordUnlock");
   const touchIdButton = $("#journalTouchIdUnlock");
-  passwordButton.disabled = true;
   touchIdButton.disabled = true;
-  status.textContent = method === "biometric" ? "Waiting for Touch ID…" : "Checking password…";
+  status.textContent = "Waiting for Touch ID…";
   try {
-    const vault = journalVault(state.data);
-    if (!vault.configured && method === "password") {
-      status.textContent = "Protecting the journal…";
-      await post("/api/intentional-use/journal/password", {
-        password,
-        autoLockMinutes: Number(vault.autoLockMinutes || 15)
-      });
-    }
-
-    let response: JournalUnlockResponse;
-    if (method === "biometric") {
-      const bridge = (window as VigilJournalWindow).vigilJournal;
-      if (!bridge?.promptTouchId) throw new Error("Touch ID is available in the Vigil Mac app.");
-      response = normalizeJournalUnlockResponse(await bridge.promptTouchId());
-    } else {
-      response = await post<JournalUnlockResponse>("/api/intentional-use/journal/unlock", { password });
-    }
+    const bridge = (window as VigilJournalWindow).vigilJournal;
+    if (!bridge?.promptTouchId) throw new Error("Touch ID is available in the Vigil Mac app.");
+    const response = normalizeJournalUnlockResponse(await bridge.promptTouchId());
     if (response.ok === false || !response.session?.token) {
       throw new Error(response.error || "Journal authentication was not accepted.");
     }
     storeJournalSession(response.session);
-    $("#journalPassword").value = "";
     status.textContent = response.session.expiresAt
       ? `Unlocked until ${new Date(response.session.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
       : "Unlocked";
@@ -283,7 +260,6 @@ async function unlockJournal(method: string, password: string): Promise<void> {
     status.textContent = errorMessage(error);
     toast(errorMessage(error));
   } finally {
-    passwordButton.disabled = false;
     touchIdButton.disabled = false;
   }
 }
@@ -294,13 +270,9 @@ async function saveJournalSecurity(): Promise<void> {
   save.disabled = true;
   status.textContent = "Saving journal security…";
   try {
-    await post("/api/intentional-use/journal/password", {
-      currentPassword: $("#journalCurrentPassword").value,
-      password: $("#journalNewPassword").value,
+    await post("/api/intentional-use/journal/security", {
       autoLockMinutes: Number($("#journalAutoLockMinutes").value || 15)
     });
-    $("#journalCurrentPassword").value = "";
-    $("#journalNewPassword").value = "";
     status.textContent = "Saved. Unlock the journal again to continue.";
     toast("Journal security saved");
     await refresh();
@@ -331,20 +303,13 @@ async function lockJournalNow(): Promise<void> {
 
 function renderJournalGate(data: DashboardData): void {
   const vault = journalVault(data);
-  const locked = !vault.configured || !journalSessionActive();
+  const locked = !journalSessionActive();
   const gate = $("#journalUnlockGate");
   gate.hidden = !locked;
-  $("#journalUnlockTitle").textContent = vault.configured ? "Journal locked." : "Set journal access.";
-  $("#journalUnlockCopy").textContent = vault.configured
-    ? "Enter your password to continue."
-    : "Create a password before writing your first entry. Entries stay on this Mac and are not encrypted.";
-  const password = $("#journalPassword");
-  password.placeholder = vault.configured ? "Journal password" : "Create a journal password";
-  password.setAttribute("autocomplete", vault.configured ? "current-password" : "new-password");
-  $("#journalPasswordUnlock").textContent = vault.configured ? "Unlock" : "Set password";
+  $("#journalUnlockTitle").textContent = "Unlock it";
   const bridgeAvailable = Boolean((window as VigilJournalWindow).vigilJournal?.promptTouchId);
-  $("#journalTouchIdUnlock").hidden = !vault.configured || vault.touchIdAvailable === false || !bridgeAvailable;
-  $("#journalUnlockStatus").textContent = vault.error || (vault.configured ? "Authentication required" : "A protected settings window may be required for setup");
+  $("#journalTouchIdUnlock").disabled = vault.touchIdAvailable === false || !bridgeAvailable;
+  $("#journalUnlockStatus").textContent = vault.error || (bridgeAvailable ? "" : "Open Vigil on a Mac with Touch ID");
   if (locked) forms.resetJournalForm();
   for (const content of $$<HTMLElement>("[data-journal-content]")) {
     content.hidden = locked;
@@ -354,13 +319,8 @@ function renderJournalGate(data: DashboardData): void {
 
 function renderJournalSecurity(data: DashboardData): void {
   const vault = journalVault(data);
-  $("#journalCurrentPasswordField").hidden = !vault.configured;
-  $("#journalNewPasswordLabel").textContent = vault.configured ? "New password" : "Journal password";
-  $("#saveJournalSecurity").textContent = vault.configured ? "Change password" : "Set journal password";
-  $("#journalSecurityStatus").textContent = vault.configured
-    ? (journalSessionActive() ? "Unlocked" : "Locked")
-    : "Not configured";
-  $("#journalSecurityStatus").className = vault.configured && journalSessionActive() ? "pill good" : "pill neutral";
+  $("#journalSecurityStatus").textContent = journalSessionActive() ? "Unlocked" : "Locked";
+  $("#journalSecurityStatus").className = journalSessionActive() ? "pill good" : "pill neutral";
   $("#lockJournalNow").disabled = !journalSessionActive();
   if (document.activeElement !== $("#journalAutoLockMinutes")) {
     $("#journalAutoLockMinutes").value = String(vault.autoLockMinutes || 15);
@@ -415,7 +375,7 @@ async function hydrateJournalEntries(data: DashboardData): Promise<void> {
   const lifeLog = data.intentionalUse?.lifeLog;
   if (!lifeLog) return;
   const vault = journalVault(data);
-  if (!vault.configured || !journalSessionActive()) {
+  if (!journalSessionActive()) {
     lifeLog.entries = [];
     lifeLog.entriesLocked = true;
     return;

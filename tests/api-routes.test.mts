@@ -29,8 +29,9 @@ assert.equal(matchApiRoute("DELETE", "/api/profile/custom")?.id, "profileDelete"
 assert.equal(matchApiRoute("DELETE", "/api/schedule/work")?.id, "scheduleDelete");
 assert.equal(matchApiRoute("DELETE", "/api/intentional-use/rule/pause")?.id, "intentionalRuleDelete");
 assert.equal(matchApiRoute("GET", "/api/intentional-use/journal/security")?.id, "intentionalJournalSecurity");
-assert.equal(matchApiRoute("POST", "/api/intentional-use/journal/password")?.id, "intentionalJournalPassword");
-assert.equal(matchApiRoute("POST", "/api/intentional-use/journal/unlock")?.id, "intentionalJournalUnlock");
+assert.equal(matchApiRoute("POST", "/api/intentional-use/journal/security")?.id, "intentionalJournalSecurity");
+assert.equal(matchApiRoute("POST", "/api/intentional-use/journal/password"), null);
+assert.equal(matchApiRoute("POST", "/api/intentional-use/journal/unlock"), null);
 assert.equal(matchApiRoute("POST", "/api/intentional-use/journal/unlock-touch-id")?.id, "intentionalJournalTouchId");
 assert.equal(matchApiRoute("POST", "/api/intentional-use/journal/lock")?.id, "intentionalJournalLock");
 assert.equal(matchApiRoute("GET", "/api/intentional-use/journal/entries")?.id, "intentionalJournalEntries");
@@ -65,5 +66,5 @@ assert.equal(domains.get("devices"), 10);
 assert.equal(domains.get("grayscale"), 3);
 assert.equal(domains.get("extension"), 6);
 assert.equal(domains.get("profiles"), 2);
-assert.equal(domains.get("intentionalUse"), 26);
+assert.equal(domains.get("intentionalUse"), 24);
 assert.ok(domains.get("hardening") >= 3);

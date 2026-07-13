@@ -5,7 +5,8 @@ import { join } from "node:path";
 const html = await readFile("public/index.html", "utf8");
 
 assert.match(html, />Combined today</u);
-assert.match(html, /id="combinedDevicesToday">Mac \+ iPhone</u);
+assert.doesNotMatch(html, />Devices included</u, "ranking should show only the three decision-useful headline statistics");
+assert.match(html, /<svg viewBox="0 0 120 168"[^>]*>[\s\S]*class="knight-shield"/, "ranking journey should use the detailed vector knight artwork");
 assert.match(html, /Combined Mac and iPhone screen time by day/u);
 assert.doesNotMatch(html, />iPhone today</u);
 const ids = [...html.matchAll(/\bid="([A-Za-z][\w:-]*)"/g)].map((match) => match[1]);
@@ -49,12 +50,16 @@ assert.match(html, /id="accountButton"[^>]*aria-expanded="false"/, "the account 
 const sidebarMarkup = html.match(/<aside class="app-chrome"[\s\S]*?<\/aside>/)?.[0] || "";
 assert.doesNotMatch(sidebarMarkup, /&#(?:8962|10016|10003|9835|10070|9881);/, "font-glyph sidebar icons must not return");
 assert.match(html, /id="sidebarToggle"[^>]*aria-controls="primarySidebar"[^>]*aria-expanded="true"/, "the sidebar must expose an explicit full-hide toggle");
+assert.doesNotMatch(html, /maximizedWindowControls|data-window-action/, "web content must never imitate macOS traffic lights");
 assert.match(sidebarMarkup, /id="primarySidebar"/, "the sidebar toggle must control the navigation sidebar");
 
 const styles = await readFile("public/styles.css", "utf8");
 assert.match(styles, /\.settings-disclosure \+ \.settings-disclosure\s*\{[\s\S]*?margin-top:\s*16px;/, "adjacent settings disclosures must use the shared row spacing");
+assert.match(styles, /\.settings-disclosure\s*\{[\s\S]*?container-type:\s*inline-size;/, "settings disclosures must respond to their own available width");
+assert.match(styles, /grid-template-columns:\s*minmax\(min-content, max-content\) minmax\(0, 1fr\) auto;/, "settings titles must keep a readable intrinsic column before descriptions flex");
 assert.match(styles, /body\.sidebar-collapsed \.app-chrome\s*\{\s*display:\s*none;/, "collapsing must fully hide the sidebar instead of leaving an icon rail");
 assert.match(styles, /body\.sidebar-collapsed \.shell\s*\{\s*grid-column:\s*1;/, "collapsed content must occupy the first grid column without widening the viewport");
+assert.doesNotMatch(styles, /maximized-window-controls/, "styles must not contain fake window controls");
 assert.doesNotMatch(styles, /body:not\(\[data-active-view="home"\]\) \.app-chrome/, "navigation must not automatically compact the sidebar away from Home");
 const uiShellSource = await readFile("public/ui-shell.js", "utf8");
 assert.match(uiShellSource, /localStorage\.setItem\("vigil-sidebar-collapsed"/, "the explicit sidebar choice must persist");
@@ -68,6 +73,8 @@ assert.match(trackingMarkup, /<details id="habitCalendarDetails" class="habit-ca
 assert.doesNotMatch(trackingMarkup, /<details id="habitCalendarDetails"[^>]*\sopen(?:\s|>)/, "the dense monthly grid must not dominate the initial tracking view");
 const trackingSource = await readFile("public/tracking-view.js", "utf8");
 assert.match(trackingSource, /status === "success" \? "unreported" : "success"/, "selecting an active habit result again must clear it without a third row button");
+assert.match(trackingSource, /className = "habit-quick-select"/, "daily tracking must use one selectable habit card instead of rendering every card at once");
+assert.match(trackingSource, /behaviorAfterCheckIn/, "submitting a daily result must advance the compact card to another habit");
 assert.match(trackingSource, /monthDayCount\.textContent = `\$\{dates\.length\} days`/, "the selected month must control the displayed day count");
 
 const protectionMarkup = html.match(/<div id="protectionLevelControl"[\s\S]*?<div[^>]*class="home-runtime-status"/)?.[0] || "";
@@ -91,7 +98,9 @@ assert.match(appSource, /!hasRuntimeStatus/, "the idle home screen must hide the
 const journalGateMarkup = html.match(/<section id="journalUnlockGate"[\s\S]*?<\/section>/)?.[0] || "";
 assert.doesNotMatch(journalGateMarkup, /\bpanel\b/, "journal access must not regress to the oversized generic panel");
 assert.match(journalGateMarkup, /class="journal-gate-copy"/, "journal access must keep a minimal copy block");
-assert.match(journalGateMarkup, /class="journal-unlock-actions"/, "journal credentials must remain one focused action row");
+assert.match(journalGateMarkup, />Unlock it</, "journal access must use the requested minimal unlock instruction");
+assert.match(journalGateMarkup, /id="journalTouchIdUnlock"[\s\S]*?<svg/, "journal access must expose a clickable fingerprint control");
+assert.doesNotMatch(journalGateMarkup, /type="password"|data-journal-unlock-method="password"/, "journal access must not expose a password fallback");
 assert.match(styles, /\.journal-unlock-gate\s*\{[\s\S]*?width:\s*min\(620px, 100%\)/, "journal access must remain compact within the writing surface");
 
 const emergencyMarkup = html.match(/<details id="emergencyPanel"[\s\S]*?<\/details>/)?.[0] || "";
@@ -102,7 +111,7 @@ assert.match(styles, /#view-home \.emergency-drawer\s*\{[\s\S]*?position:\s*abso
 assert.match(styles, /#view-home \.emergency-drawer\s*\{[\s\S]*?top:\s*12px;[\s\S]*?width:\s*min\(420px,[\s\S]*?border-radius:\s*13px;/, "the integrity notice must float independently near the top of the home view");
 assert.match(styles, /\.electron-shell \.app-chrome::before\s*\{\s*content:\s*none;/, "the title-bar drag layer must not cover the emergency drawer");
 assert.match(styles, /\.electron-shell \.app-chrome\s*\{\s*-webkit-app-region:\s*drag;/, "the sidebar must remain available for window dragging");
-assert.match(styles, /\.electron-shell \.sidebar-toggle\s*\{[\s\S]*?top:\s*50px;[\s\S]*?-webkit-app-region:\s*no-drag;/, "the sidebar toggle must sit below the native title-bar hit region");
+assert.match(styles, /\.sidebar-toggle\s*\{[\s\S]*?top:\s*50px;[\s\S]*?-webkit-app-region:\s*no-drag;/, "the sidebar toggle must always sit below the native title bar and remain clickable");
 
 assert.match(html, /id="saintStageButton"[^>]*aria-controls="saintInfoPopover"[^>]*aria-expanded="false"/, "saint artwork must expose its details popover");
 assert.match(html, /id="saintStageButton"[^>]*title="[^"]*Two-finger click for details\./, "saint details must advertise the trackpad gesture");

@@ -136,7 +136,6 @@ export interface HabitCalendarCheckIn extends DashboardItem {
 
 export interface JournalVaultSummary extends UnknownRecord {
   configured?: boolean;
-  passwordSetAt?: string | null;
   autoLockMinutes?: number;
   touchIdAvailable?: boolean;
   entries?: number;
