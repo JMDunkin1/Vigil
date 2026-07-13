@@ -32,8 +32,8 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function showVigilWindow\(appUrl: string\): void \{[\s\S]*?if \(shouldStayResident\(\)\) app\.show\(\);[\s\S]*?mainWindow\.show\(\);/,
-  "opening the resident app must reverse the application-wide hidden state before showing its window"
+  /function showVigilWindow\(appUrl: string\): void \{[\s\S]*?if \(shouldStayResident\(\)\) \{[\s\S]*?app\.setActivationPolicy\("regular"\);[\s\S]*?app\.dock\?\.hide\(\);[\s\S]*?app\.show\(\);[\s\S]*?mainWindow\.show\(\);/,
+  "an open resident window must use regular macOS presentation so native fullscreen chrome can appear"
 );
 assert.match(
   mainSource,
@@ -72,19 +72,19 @@ assert.doesNotMatch(
   "native macOS window controls must never be explicitly hidden"
 );
 assert.match(mainSource, /fullscreenable:\s*true/, "Vigil must use the standard native macOS fullscreen path");
-assert.match(mainSource, /titleBarStyle:\s*"hiddenInset"/, "Vigil must leave the normal-size integrated title bar unchanged");
+assert.match(mainSource, /titleBarStyle:\s*"hidden"/, "Vigil must use Electron's standard barless macOS title bar with native traffic lights");
 assert.match(mainSource, /trafficLightPosition:\s*\{ x:\s*18, y:\s*19 \}/, "integrated traffic lights must retain their intended position");
 assert.match(
   mainSource,
-  /function restoreNativeWindowControls\(window: BrowserWindow\): void \{[\s\S]*?window\.setWindowButtonVisibility\(true\);/,
-  "showing Vigil must restore the native red, yellow, and green controls"
+  /function restoreNativeWindowControls\(window: BrowserWindow\): void \{[\s\S]*?window\.setMinimizable\(true\);[\s\S]*?window\.setMaximizable\(true\);[\s\S]*?window\.setWindowButtonPosition\(\{ x: 18, y: 19 \}\);[\s\S]*?window\.setWindowButtonVisibility\(true\);/,
+  "showing or maximizing Vigil must re-enable and reattach the native red, yellow, and green controls"
 );
 assert.match(
   mainSource,
   /mainWindow\.show\(\);\s*\/\/[\s\S]*?restoreNativeWindowControls\(mainWindow\);/,
   "native controls must be restored after the formerly hidden window becomes visible"
 );
-for (const event of ["show", "focus"]) {
+for (const event of ["show", "focus", "maximize", "unmaximize"]) {
   assert.match(
     mainSource,
     new RegExp(`vigilWindow\\.on\\("${event}",[\\s\\S]*?restoreNativeWindowControls\\(vigilWindow\\)`),

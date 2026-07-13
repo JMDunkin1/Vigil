@@ -53,8 +53,6 @@ let log: ReturnType<typeof createWriteStream>;
 let activeChild: ChildProcess | null = null;
 let interrupted = false;
 
-if (isDirectRun(import.meta.url)) await runUpdate();
-
 async function runUpdate(): Promise<void> {
   let stagedBuild: StagedBuild | null = null;
   let appInstallation: AppInstallation | null = null;
@@ -823,3 +821,8 @@ function required(optionsMap: Map<string, string>, key: string): string {
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+// Run only after every module-level dependency (including the default atomic
+// install operations) has been initialized. Starting above those declarations
+// leaves them in the temporal dead zone during a real packaged update.
+if (isDirectRun(import.meta.url)) await runUpdate();

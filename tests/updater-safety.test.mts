@@ -34,6 +34,10 @@ assert.match(
 assert.match(updateScriptSource, /\["worktree", "add", "--detach"/u);
 assert.match(updaterSource, /packagedBuildRepoRoot\(app\)/u, "the installed app must retain its source checkout pointer");
 assert.match(updateScriptSource, /VIGIL_BUILD_SOURCE_ROOT: options\.repoRoot/u, "staged update builds must preserve the real checkout pointer");
+assert.ok(
+  updateScriptSource.indexOf("const defaultInstallOperations") < updateScriptSource.lastIndexOf("if (isDirectRun(import.meta.url)) await runUpdate()"),
+  "the direct updater must start only after its default atomic install operations are initialized"
+);
 assert.match(updaterSource, /localChanges \|\| remoteCheckOk !== false/u, "new local changes must remain runnable without a remote fetch");
 assert.match(updaterSource, /currentSourceFingerprint !== appBuild\.sourceFingerprint/u, "local changes must be compared with the source built into the installed app");
 assert.match(mainSource, /return status\.updateAvailable === true/u, "the tray must honor the updater controller's installability decision");
