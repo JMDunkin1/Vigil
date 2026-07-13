@@ -136,15 +136,29 @@ app.on("window-all-closed", () => {
 });
 
 function showVigilWindow(appUrl: string): void {
-  if (!mainWindow) createWindow(appUrl);
-  if (!mainWindow) return;
+  // A packaged Vigil starts as an accessory app so it can live only in the
+  // menu bar. Promote it before creating or revealing the native window.
+  // Creating a hidden-title-bar BrowserWindow while AppKit still considers
+  // the process an accessory app can leave the window without traffic lights.
   if (shouldStayResident()) {
     app.setActivationPolicy("regular");
     app.show();
   }
+  if (!mainWindow) createWindow(appUrl);
+  if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
+  restoreNativeWindowControls(mainWindow);
   mainWindow.focus();
+  setImmediate(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) restoreNativeWindowControls(mainWindow);
+  });
+}
+
+function restoreNativeWindowControls(window: BrowserWindow): void {
+  if (process.platform !== "darwin" || window.isDestroyed()) return;
+  window.setWindowButtonPosition({ x: 18, y: 19 });
+  window.setWindowButtonVisibility(true);
 }
 
 function hideVigilWindow(): void {
@@ -182,6 +196,8 @@ function createWindow(appUrl: string): void {
 
   vigilWindow.setAlwaysOnTop(false);
   vigilWindow.setVisibleOnAllWorkspaces(false);
+  vigilWindow.on("ready-to-show", () => restoreNativeWindowControls(vigilWindow));
+  vigilWindow.on("show", () => restoreNativeWindowControls(vigilWindow));
 
   void vigilWindow.loadURL(appUrl);
   vigilWindow.webContents.on("will-navigate", (event, url) => {

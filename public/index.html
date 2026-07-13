@@ -54,20 +54,20 @@
     <section id="view-home" class="view is-active" data-view="home">
       <div class="home-stage">
         <div id="vigilOrb" class="vigil-orb idle" aria-hidden="true"></div>
+        <aside id="saintInfoPopover" class="saint-info-popover" role="dialog" aria-labelledby="saintInfoName" tabindex="-1" hidden>
+          <button id="saintInfoClose" class="saint-info-close" type="button" aria-label="Close saint details">&times;</button>
+          <p id="saintInfoEpithet" class="saint-info-eyebrow"></p>
+          <h2 id="saintInfoName"></h2>
+          <blockquote>
+            <p id="saintInfoQuote"></p>
+            <cite id="saintInfoSource"></cite>
+          </blockquote>
+          <nav class="saint-info-navigation" aria-label="Browse patron saints">
+            <button id="saintInfoPrevious" class="saint-info-navigation-button" type="button" aria-label="Show previous saint details" title="Previous saint">&larr;</button>
+            <button id="saintInfoNext" class="saint-info-navigation-button" type="button" aria-label="Show next saint details" title="Next saint">&rarr;</button>
+          </nav>
+        </aside>
         <div id="saintStage" class="saint-stage" data-saint="michael">
-          <aside id="saintInfoPopover" class="saint-info-popover" role="dialog" aria-labelledby="saintInfoName" tabindex="-1" hidden>
-            <button id="saintInfoClose" class="saint-info-close" type="button" aria-label="Close saint details">&times;</button>
-            <p id="saintInfoEpithet" class="saint-info-eyebrow"></p>
-            <h2 id="saintInfoName"></h2>
-            <blockquote>
-              <p id="saintInfoQuote"></p>
-              <cite id="saintInfoSource"></cite>
-            </blockquote>
-            <nav class="saint-info-navigation" aria-label="Browse patron saints">
-              <button id="saintInfoPrevious" class="saint-info-navigation-button" type="button" aria-label="Show previous saint details" title="Previous saint">&larr;</button>
-              <button id="saintInfoNext" class="saint-info-navigation-button" type="button" aria-label="Show next saint details" title="Next saint">&rarr;</button>
-            </nav>
-          </aside>
           <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next patron saint" aria-haspopup="dialog" aria-controls="saintInfoPopover" aria-expanded="false" title="Click for the next saint. Two-finger click for details.">
             <span class="saint-halo" aria-hidden="true"></span>
             <span class="saint-symbol saint-symbol-one" aria-hidden="true"></span>
@@ -714,13 +714,6 @@
         </div>
       </div>
 
-      <div class="view-head journal-only">
-        <div>
-          <p class="eyebrow">Reflection</p>
-          <h2>Journal</h2>
-        </div>
-      </div>
-
       <section id="journalUnlockGate" class="journal-unlock-gate journal-only" hidden aria-labelledby="journalUnlockTitle">
         <div class="journal-gate-copy">
           <h2 id="journalUnlockTitle">Unlock it</h2>
@@ -782,7 +775,7 @@
         </header>
         <div class="daily-checkin-meter" aria-hidden="true"><span id="dailyCheckInMeterBar"></span></div>
         <div id="habitQuickCheckIn" class="habit-quick-checkin" aria-live="polite"></div>
-        <div class="daily-checkin-toolbar">
+        <div id="dailyCheckInToolbar" class="daily-checkin-toolbar">
           <div>
             <button id="habitMarkRemainingDone" class="secondary compact" type="button">Complete the rest</button>
             <button id="habitClearSelectedDay" class="habit-text-action compact" type="button">Reset day</button>
@@ -806,14 +799,7 @@
       </section>
 
       <div class="journal-page journal-only" data-journal-content>
-        <section class="journal-composer" aria-labelledby="journalComposerTitle">
-          <header class="journal-section-head">
-            <div>
-              <p class="eyebrow">New Entry</p>
-              <h2 id="journalComposerTitle">Write it down.</h2>
-            </div>
-            <p>Stored locally with access controls. Entries are not encrypted.</p>
-          </header>
+        <section class="journal-composer" aria-label="Journal entry">
           <form id="journalEntryForm" class="journal-form">
             <input name="id" type="hidden">
             <label class="journal-title-field">
@@ -825,7 +811,7 @@
               <textarea name="body" rows="10" maxlength="8000" placeholder="Start writing…" required></textarea>
             </label>
             <div class="journal-form-actions">
-              <button class="primary" type="submit">Save Entry</button>
+              <button class="primary" type="submit">Save</button>
             </div>
           </form>
         </section>
@@ -833,8 +819,7 @@
         <section class="journal-archive" aria-labelledby="journalArchiveTitle">
           <header class="journal-section-head">
             <div>
-              <p class="eyebrow">Local Archive</p>
-              <h2 id="journalArchiveTitle">Past entries</h2>
+              <h2 id="journalArchiveTitle">Archives</h2>
             </div>
           </header>
           <div id="journalEntryList" class="journal-entry-list"></div>

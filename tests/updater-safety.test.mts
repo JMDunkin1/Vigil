@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readFile, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { acquireUpdaterLock } from "../app/updater.js";
 import { macSigningTimestamp } from "../scripts/mac-signing-identity.mjs";
-import { atomicInstallBuiltApp } from "../scripts/update-packaged-app.mjs";
+import { atomicInstallBuiltApp, snapshotUpdateState } from "../scripts/update-packaged-app.mjs";
 import type { AtomicInstallOperations } from "../scripts/update-packaged-app.mjs";
 
 const sourceRoot = existsSync(join(process.cwd(), "app", "updater.ts"))
@@ -71,7 +71,7 @@ assert.match(updateScriptSource, /await openAndVerifyReplacement\(/u);
 assert.match(updateScriptSource, /launchAgentRuntimePath\(\)/u);
 assert.ok(
   updateScriptSource.indexOf("agentRuntimeInstallation = await atomicInstallBuiltApp(")
-    < updateScriptSource.indexOf("const backend = launchAgentWasPresent ? await restartLaunchAgent()"),
+    < updateScriptSource.indexOf("await startLaunchAgentAfterStateTransition(launchAgentTransition)"),
   "the updater must replace the installed LaunchAgent runtime before restarting it"
 );
 assert.match(
@@ -83,6 +83,20 @@ assert.ok(
   updateScriptSource.indexOf("await openAndVerifyReplacement(")
     < updateScriptSource.indexOf("await run(\"git\", [\"merge\", \"--ff-only\", stagedBuild.expectedCommit]"),
   "the replacement must be healthy before the source checkout is fast-forwarded"
+);
+assert.ok(
+  updateScriptSource.indexOf("launchAgentTransition = launchAgentWasPresent ? await stopLaunchAgentForStateTransition()")
+    < updateScriptSource.indexOf("stateSnapshot = await snapshotUpdateState(")
+    && updateScriptSource.indexOf("stateSnapshot = await snapshotUpdateState(")
+      < updateScriptSource.indexOf("await startLaunchAgentAfterStateTransition(launchAgentTransition)"),
+  "the updater must stop the old backend, preserve pre-migration state, and only then start the replacement backend"
+);
+const recoveryStopIndex = updateScriptSource.indexOf("stoppedLaunchAgent = await stopLaunchAgentForStateTransition()");
+const stateRollbackIndex = updateScriptSource.indexOf("await stateSnapshot.rollback()", recoveryStopIndex);
+const recoveryStartIndex = updateScriptSource.indexOf("startLaunchAgentAfterStateTransition(stoppedLaunchAgent)", stateRollbackIndex);
+assert.ok(
+  recoveryStopIndex >= 0 && stateRollbackIndex > recoveryStopIndex && recoveryStartIndex > stateRollbackIndex,
+  "failed updates must stop the replacement backend, restore data, and only then restart the previous backend"
 );
 
 const lockRoot = await mkdtemp(join(tmpdir(), "vigil-updater-lock-"));
@@ -113,6 +127,9 @@ try {
 
 await verifyOriginalSurvivesMoveFailure("backup", (source, installedApp) => source === installedApp);
 await verifyOriginalSurvivesMoveFailure("replacement", (source) => source.endsWith(".vigil-next"));
+await verifyUpdateStateRollback(false);
+await verifyUpdateStateRollback(true);
+await verifyUpdateStateFinalize();
 
 const symlinkRoot = await mkdtemp(join(tmpdir(), "vigil-updater-symlinks-"));
 try {
@@ -177,5 +194,59 @@ async function verifyOriginalSurvivesMoveFailure(
         await rm(path, { recursive: true, force: true });
       }
     };
+  }
+}
+
+async function verifyUpdateStateRollback(preexistingJournalKey: boolean): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "vigil-update-state-rollback-"));
+  const dataDir = join(root, "data");
+  const snapshotParent = join(root, "snapshots");
+  try {
+    await mkdir(dataDir, { recursive: true });
+    await mkdir(snapshotParent, { recursive: true });
+    await writeFile(join(dataDir, "state.json"), "plaintext state before update");
+    await writeFile(join(dataDir, "state.seal.json"), "seal before update");
+    if (preexistingJournalKey) {
+      await writeFile(join(dataDir, "state-seal.key"), "original seal key");
+      await writeFile(join(dataDir, "journal-encryption.key"), "original journal key");
+    }
+
+    const snapshot = await snapshotUpdateState(dataDir, snapshotParent);
+    await writeFile(join(dataDir, "state.json"), "encrypted state from replacement");
+    await writeFile(join(dataDir, "state.seal.json"), "replacement seal");
+    await writeFile(join(dataDir, "state-seal.key"), "replacement seal key");
+    await writeFile(join(dataDir, "journal-encryption.key"), "replacement journal key");
+    await snapshot.rollback();
+
+    assert.equal(await readFile(join(dataDir, "state.json"), "utf8"), "plaintext state before update");
+    assert.equal(await readFile(join(dataDir, "state.seal.json"), "utf8"), "seal before update");
+    if (preexistingJournalKey) {
+      assert.equal(await readFile(join(dataDir, "state-seal.key"), "utf8"), "original seal key");
+      assert.equal(await readFile(join(dataDir, "journal-encryption.key"), "utf8"), "original journal key");
+    } else {
+      assert.equal(existsSync(join(dataDir, "state-seal.key")), false, "rollback must remove a seal key created only by the failed update");
+      assert.equal(existsSync(join(dataDir, "journal-encryption.key")), false, "rollback must remove a key created only by the failed update");
+    }
+    assert.deepEqual(await readdir(snapshotParent), [], "rollback must remove its temporary data snapshot");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function verifyUpdateStateFinalize(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "vigil-update-state-finalize-"));
+  const dataDir = join(root, "data");
+  const snapshotParent = join(root, "snapshots");
+  try {
+    await mkdir(dataDir, { recursive: true });
+    await mkdir(snapshotParent, { recursive: true });
+    await writeFile(join(dataDir, "state.json"), "state before update");
+    const snapshot = await snapshotUpdateState(dataDir, snapshotParent);
+    await writeFile(join(dataDir, "state.json"), "verified replacement state");
+    await snapshot.finalize();
+    assert.equal(await readFile(join(dataDir, "state.json"), "utf8"), "verified replacement state");
+    assert.deepEqual(await readdir(snapshotParent), [], "a successful update must remove its temporary data snapshot");
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 }

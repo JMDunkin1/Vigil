@@ -93,6 +93,10 @@ const trackingSource = await readFile("public/tracking-view.js", "utf8");
 assert.match(trackingSource, /status === "success" \? "unreported" : "success"/, "selecting an active habit result again must clear it without a third row button");
 assert.match(trackingSource, /className = "habit-quick-select"/, "daily tracking must use one selectable habit card instead of rendering every card at once");
 assert.match(trackingSource, /behaviorAfterCheckIn/, "submitting a daily result must advance the compact card to another habit");
+assert.match(trackingSource, /if \(locked\) \{[\s\S]*?completedDayCard/, "a fully recorded day must replace editable habit controls with a completion screen");
+assert.match(trackingSource, /dateIsComplete\(dateKey, behaviors, values\)[\s\S]*?button\.disabled = future \|\| saving \|\| locked/, "completed days must lock detailed-grid buttons against accidental changes");
+assert.match(trackingSource, /All \$\{total\} item/, "the completion screen must derive its summary from any number of active habits");
+assert.match(trackingSource, /editableCompletedDateKey = dateKey/, "editing a completed day must require a deliberate unlock action");
 assert.match(trackingSource, /monthDayCount\.textContent = `\$\{dates\.length\} days`/, "the selected month must control the displayed day count");
 
 const protectionMarkup = html.match(/<div id="protectionLevelControl"[\s\S]*?<div[^>]*class="home-runtime-status"/)?.[0] || "";
@@ -119,12 +123,17 @@ assert.match(styles, /\.ranking-dashboard\s*\{[^}]*container:\s*ranking \/ inlin
 assert.match(styles, /@container ranking \(max-width: 760px\)\s*\{[\s\S]*?\.ranking-vitals\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/, "ranking vitals must recompose before their values can overflow narrow cards");
 
 const journalGateMarkup = html.match(/<section id="journalUnlockGate"[\s\S]*?<\/section>/)?.[0] || "";
+const journalPageMarkup = html.match(/<div class="journal-page journal-only"[\s\S]*?<div class="workspace two-column split-surface">/)?.[0] || "";
 assert.doesNotMatch(journalGateMarkup, /\bpanel\b/, "journal access must not regress to the oversized generic panel");
 assert.match(journalGateMarkup, /class="journal-gate-copy"/, "journal access must keep a minimal copy block");
 assert.match(journalGateMarkup, />Unlock it</, "journal access must use the requested minimal unlock instruction");
 assert.match(journalGateMarkup, /id="journalTouchIdUnlock"[\s\S]*?<svg/, "journal access must expose a clickable fingerprint control");
 assert.doesNotMatch(journalGateMarkup, /type="password"|data-journal-unlock-method="password"/, "journal access must not expose a password fallback");
 assert.doesNotMatch(html, /<span class="pill neutral">Local<\/span>/, "the journal header must not show a redundant Local badge");
+assert.doesNotMatch(html, /<p class="eyebrow">Reflection<\/p>[\s\S]*?<h2>Journal<\/h2>/, "the journal must not repeat Reflection and Journal above the writing area");
+assert.doesNotMatch(journalPageMarkup, /Write it down|New Entry|Stored locally with access controls|Entries are not encrypted|Local Archive|Past entries/, "the journal must not include redundant headings or storage commentary");
+assert.match(journalPageMarkup, /name="title"[\s\S]*?name="body"[\s\S]*?>Save<\//, "the journal composer must contain Title, Entry, and Save in that order");
+assert.match(journalPageMarkup, /id="journalArchiveTitle">Archives<\//, "saved journal entries must appear under Archives");
 assert.match(styles, /\.journal-unlock-gate\s*\{[\s\S]*?width:\s*min\(620px, 100%\)/, "journal access must remain compact within the writing surface");
 assert.doesNotMatch(styles, /\.journal-unlock-gate\s*\{[^}]*border-block:/, "the journal unlock prompt must not be boxed in by divider lines");
 assert.match(styles, /\.journal-unlock-gate\s*\{[^}]*--journal-unlock-size:\s*clamp\(84px,[^;]*116px\);/, "the fingerprint control must grow with wider journal layouts");
@@ -149,8 +158,10 @@ for (const id of ["saintInfoName", "saintInfoEpithet", "saintInfoQuote", "saintI
   assert.ok(idSet.has(id), `saint details are missing #${id}`);
 }
 assert.match(html, /class="saint-info-navigation" aria-label="Browse patron saints"/, "saint details must expose in-card previous and next navigation");
-assert.match(styles, /#view-home \.saint-info-popover\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?width:\s*min\(360px,[\s\S]*?max-height:\s*min\(320px,[\s\S]*?overflow:\s*hidden;/, "saint details must overlay the artwork without resizing the home stage");
-assert.match(styles, /#view-home \.saint-info-popover blockquote\s*\{[\s\S]*?overflow-y:\s*auto;/, "long saint details must scroll inside the bounded card");
+assert.ok(html.indexOf('id="saintInfoPopover"') < html.indexOf('id="saintStage"'), "saint details must sit above rather than inside the artwork stage");
+assert.match(styles, /#view-home \.home-stage:has\(> \.saint-info-popover:not\(\[hidden\]\)\)\s*\{[\s\S]*?justify-content:\s*flex-start;/, "opening saint details must align the composition from the top");
+assert.match(styles, /#view-home \.saint-info-popover\s*\{[\s\S]*?position:\s*relative;[\s\S]*?width:\s*min\(720px,[\s\S]*?max-height:\s*min\(190px,[\s\S]*?overflow:\s*hidden;/, "saint details must use a wide bounded card above the artwork");
+assert.match(styles, /#view-home \.saint-info-popover blockquote\s*\{[\s\S]*?max-height:\s*92px;[\s\S]*?overflow-y:\s*auto;[\s\S]*?scrollbar-width:\s*thin;/, "long saint details must use a subtle scrollbar inside the bounded card");
 assert.doesNotMatch(styles, /saint-stage:has\(\.saint-info-popover:not\(\[hidden\]\)\)/, "opening saint details must not resize the saint stage");
 const saintStageSource = await readFile("public/saint-stage.js", "utf8");
 assert.doesNotMatch(saintStageSource, /addEventListener\(["']dblclick["']/, "double-click must not open saint details");

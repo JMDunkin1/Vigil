@@ -1,5 +1,5 @@
 export interface SaintPatron {
-  id: "michael" | "augustine" | "mary" | "joseph" | "thomas" | "benedict";
+  id: "michael" | "augustine" | "mary" | "joseph" | "thomas" | "benedict" | "pio";
   shortName: string;
   name: string;
   epithet: string;
@@ -62,6 +62,15 @@ export const SAINT_PATRONS: readonly SaintPatron[] = [
     quote: "Prefer nothing whatever to Christ.",
     source: "Rule of Saint Benedict, 72",
     fallback: "B"
+  },
+  {
+    id: "pio",
+    shortName: "Padre Pio",
+    name: "Saint Padre Pio of Pietrelcina",
+    epithet: "Capuchin priest and spiritual father",
+    quote: "Pray, hope, and don't worry.",
+    source: "Traditional saying attributed to Saint Padre Pio",
+    fallback: "P"
   }
 ] as const;
 

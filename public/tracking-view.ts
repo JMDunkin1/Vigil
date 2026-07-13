@@ -21,6 +21,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
   let selectedMonth = monthStart(trackingDay());
   let selectedDate = trackingDay();
   let selectedBehaviorId: string | null = null;
+  let editableCompletedDateKey: string | null = null;
   let data: DashboardData | null = null;
   let saving = false;
 
@@ -141,7 +142,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     table.append(head);
 
     const body = document.createElement("tbody");
-    for (const behavior of behaviors) body.append(habitRow(behavior, dates, values));
+    for (const behavior of behaviors) body.append(habitRow(behavior, dates, behaviors, values));
     table.append(body);
     root.append(table);
 
@@ -210,7 +211,12 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     if (last) svg.append(svgNode("circle", { class: "tracking-trend-point", cx: last.x, cy: last.y, r: 5 }));
   }
 
-  function habitRow(behavior: DashboardItem, dates: Date[], values: Map<string, HabitCalendarCheckIn>): HTMLTableRowElement {
+  function habitRow(
+    behavior: DashboardItem,
+    dates: Date[],
+    behaviors: DashboardItem[],
+    values: Map<string, HabitCalendarCheckIn>
+  ): HTMLTableRowElement {
     const row = document.createElement("tr");
     const label = document.createElement("th");
     label.scope = "row";
@@ -227,15 +233,16 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       const effectiveToday = trackingDay();
       const today = isSameDay(date, effectiveToday);
       const future = date.getTime() > effectiveToday.getTime();
+      const locked = dateIsComplete(dateKey, behaviors, values) && editableCompletedDateKey !== dateKey;
       button.type = "button";
-      button.className = `habit-day ${habitStatus}${today ? " is-today" : ""}${future ? " is-future" : ""}`;
+      button.className = `habit-day ${habitStatus}${today ? " is-today" : ""}${future ? " is-future" : ""}${locked ? " is-locked" : ""}`;
       button.dataset.behaviorId = behavior.id;
       button.dataset.dateKey = dateKey;
       button.dataset.status = habitStatus;
       button.textContent = habitStatus === "success" ? "✓" : habitStatus === "missed" ? "×" : "";
-      button.disabled = future || saving;
-      button.setAttribute("aria-label", `${behavior.name || "Habit"}, ${date.toLocaleDateString()}, ${statusLabelFor(habitStatus)}${future ? ". Future dates cannot be recorded." : ". Select to change this result."}`);
-      button.title = future ? "Future date" : "Change this result";
+      button.disabled = future || saving || locked;
+      button.setAttribute("aria-label", `${behavior.name || "Habit"}, ${date.toLocaleDateString()}, ${statusLabelFor(habitStatus)}${future ? ". Future dates cannot be recorded." : locked ? ". This completed day is locked against accidental changes." : ". Select to change this result."}`);
+      button.title = future ? "Future date" : locked ? "Completed day locked" : "Change this result";
       button.addEventListener("click", () => {
         selectedDate = dayStart(date);
         void recordDate(behavior.id, dateKey, habitStatus);
@@ -266,6 +273,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const next = required<HTMLButtonElement>("#habitSelectedNext");
     const finish = required<HTMLButtonElement>("#habitMarkRemainingDone");
     const clear = required<HTMLButtonElement>("#habitClearSelectedDay");
+    const toolbar = required<HTMLElement>("#dailyCheckInToolbar");
     const meter = required<HTMLElement>("#dailyCheckInMeterBar");
 
     title.textContent = today
@@ -274,6 +282,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     dateInput.value = dateKey;
     next.disabled = today || saving;
     quickRoot.replaceChildren();
+    toolbar.hidden = false;
 
     if (!behaviors.length) {
       progress.textContent = "No active habits";
@@ -290,13 +299,27 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const statuses = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${dateKey}`)));
     const recorded = statuses.filter((status) => status !== "unreported").length;
     const done = statuses.filter((status) => status === "success").length;
+    const complete = recorded === behaviors.length;
+    const locked = complete && editableCompletedDateKey !== dateKey;
     meter.style.width = `${Math.round((recorded / behaviors.length) * 100)}%`;
-    meter.parentElement?.classList.toggle("is-complete", recorded === behaviors.length);
-    progress.textContent = recorded === behaviors.length
+    meter.parentElement?.classList.toggle("is-complete", complete);
+    progress.textContent = complete
       ? `${done} done · ${behaviors.length - done} missed · complete`
       : `${recorded} of ${behaviors.length} recorded`;
-    finish.disabled = saving || recorded === behaviors.length;
+    finish.disabled = saving || complete;
     clear.disabled = saving || recorded === 0;
+
+    if (locked) {
+      toolbar.hidden = true;
+      selectedBehaviorId = null;
+      quickRoot.append(completedDayCard(today, behaviors.length, done, () => {
+        editableCompletedDateKey = dateKey;
+        renderCalendar();
+        renderQuickCheckIn();
+      }));
+      updateTodayStatus(behaviors, values, effectiveToday);
+      return;
+    }
 
     if (!selectedBehaviorId || !behaviors.some((behavior) => behavior.id === selectedBehaviorId)) {
       selectedBehaviorId = behaviors.find((_, index) => statuses[index] === "unreported")?.id || behaviors[0].id;
@@ -374,12 +397,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     row.append(heading, metric, week, controls);
     quickRoot.append(row);
 
-    const todayValues = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${localDateKey(effectiveToday)}`)));
-    const todayRecorded = todayValues.filter((status) => status !== "unreported").length;
-    const todayDone = todayValues.filter((status) => status === "success").length;
-    const lifeLogStatus = required<HTMLElement>("#lifeLogStatus");
-    lifeLogStatus.textContent = `${todayRecorded}/${behaviors.length} today`;
-    lifeLogStatus.className = todayRecorded === behaviors.length ? "pill good" : todayDone ? "pill neutral" : "pill neutral";
+    updateTodayStatus(behaviors, values, effectiveToday);
   }
 
   function statusButton(label: string, value: HabitStatus, current: HabitStatus, onClick: () => Promise<void>): HTMLButtonElement {
@@ -411,6 +429,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
         ...(next === "unreported" ? { clear: true } : { value: next === "success" }),
         note: "Habit calendar"
       });
+      editableCompletedDateKey = null;
       if (nextBehaviorId) selectedBehaviorId = nextBehaviorId;
       toast(next === "success" ? "Marked done" : next === "missed" ? "Marked missed" : "Check-in cleared");
       await refresh();
@@ -472,6 +491,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     selectedDate = dayStart(date);
     selectedMonth = monthStart(date);
     selectedBehaviorId = null;
+    editableCompletedDateKey = null;
     renderCalendar();
     renderQuickCheckIn();
   }
@@ -509,6 +529,62 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
   }
 
   return { bind, render };
+}
+
+function completedDayCard(
+  today: boolean,
+  total: number,
+  done: number,
+  edit: () => void
+): HTMLElement {
+  const card = document.createElement("section");
+  card.className = "habit-checkin-complete";
+  card.setAttribute("role", "status");
+
+  const mark = document.createElement("span");
+  mark.className = "habit-checkin-complete-mark";
+  mark.setAttribute("aria-hidden", "true");
+  mark.textContent = "✓";
+
+  const copy = document.createElement("div");
+  const heading = document.createElement("strong");
+  heading.textContent = today
+    ? "You're done filling out your info for today."
+    : "You're done filling out your info for this day.";
+  const summary = document.createElement("p");
+  summary.textContent = `All ${total} item${total === 1 ? " is" : "s are"} filled out: ${done} done and ${total - done} missed. Your answers are locked to prevent accidental changes.`;
+  copy.append(heading, summary);
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "habit-text-action compact";
+  button.textContent = today ? "Edit today's answers" : "Edit this day's answers";
+  button.addEventListener("click", edit);
+
+  card.append(mark, copy, button);
+  return card;
+}
+
+function dateIsComplete(
+  dateKey: string,
+  behaviors: DashboardItem[],
+  values: Map<string, HabitCalendarCheckIn>
+): boolean {
+  return behaviors.length > 0
+    && behaviors.every((behavior) => statusFor(values.get(`${behavior.id}:${dateKey}`)) !== "unreported");
+}
+
+function updateTodayStatus(
+  behaviors: DashboardItem[],
+  values: Map<string, HabitCalendarCheckIn>,
+  effectiveToday: Date
+): void {
+  const todayValues = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${localDateKey(effectiveToday)}`)));
+  const todayRecorded = todayValues.filter((status) => status !== "unreported").length;
+  const todayDone = todayValues.filter((status) => status === "success").length;
+  const lifeLogStatus = required<HTMLElement>("#lifeLogStatus");
+  lifeLogStatus.textContent = `${todayRecorded}/${behaviors.length} today`;
+  lifeLogStatus.className = todayRecorded === behaviors.length ? "pill good" : todayDone ? "pill neutral" : "pill neutral";
 }
 
 function checkInMap(checkIns: HabitCalendarCheckIn[]): Map<string, HabitCalendarCheckIn> {

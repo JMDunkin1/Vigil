@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { SAINT_PATRONS } from "../public/saint-stage.js";
 
+assert.deepEqual(
+  SAINT_PATRONS.map((saint) => saint.id),
+  ["michael", "augustine", "mary", "joseph", "thomas", "benedict", "pio"],
+  "the home stage must rotate through the complete patron-saint set"
+);
 assert.equal(new Set(SAINT_PATRONS.map((saint) => saint.id)).size, SAINT_PATRONS.length, "saint scene IDs must be unique");
 for (const saint of SAINT_PATRONS) {
   assert.ok(saint.name.trim(), `${saint.id} must have a display name`);

@@ -2811,6 +2811,19 @@ summary:focus-visible {
 .saint-stage[data-saint="benedict"] .saint-symbol-one { animation: benedictMedal 6s linear infinite; }
 .saint-stage[data-saint="benedict"] .saint-symbol-two { animation: benedictRaven 4.2s ease-in-out infinite; }
 
+.saint-stage[data-saint="pio"] {
+  --saint-accent: #604637;
+}
+
+.saint-stage[data-saint="pio"] .saint-artifact {
+  background: radial-gradient(circle at 50% 24%, rgba(226, 194, 132, 0.34), transparent 21%), linear-gradient(155deg, #725543, #3d2d25 48%, #1b1512);
+}
+
+.saint-stage[data-saint="pio"] .saint-symbol-one::before { content: "✠"; }
+.saint-stage[data-saint="pio"] .saint-symbol-two::before { content: "◌"; }
+.saint-stage[data-saint="pio"] .saint-symbol-one { animation: pioCross 4.6s ease-in-out infinite; }
+.saint-stage[data-saint="pio"] .saint-symbol-two { animation: pioRosary 5.4s ease-in-out infinite; }
+
 body[data-lock-state="locked"] .saint-halo,
 body[data-lock-state="limit"] .saint-halo,
 body[data-lock-state="integrity"] .saint-halo {
@@ -3611,6 +3624,52 @@ body[data-active-view="journal"] .split-surface {
   color: var(--muted);
 }
 
+.habit-checkin-complete {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 132px;
+  padding: 20px 4px 12px;
+}
+
+.habit-checkin-complete-mark {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--habit-done) 20%, var(--surface-strong));
+  color: var(--habit-done-strong);
+  font-size: 1.25rem;
+  font-weight: 850;
+}
+
+.habit-checkin-complete strong {
+  display: block;
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.habit-checkin-complete p {
+  max-width: 680px;
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+@media (max-width: 560px) {
+  .habit-checkin-complete {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .habit-checkin-complete > button {
+    grid-column: 2;
+    justify-self: start;
+  }
+}
+
 .habit-calendar-panel {
   margin: 0 0 32px;
   padding: 0 2px;
@@ -4022,7 +4081,6 @@ body[data-active-view="journal"] .split-surface {
 }
 
 /* Journal writing surface */
-body[data-active-view="journal"] .view-head,
 .journal-page {
   width: min(900px, 100%);
   margin-inline: auto;
@@ -4038,18 +4096,12 @@ body[data-active-view="journal"] .view-head,
 }
 
 .journal-composer {
-  padding: 24px 0 52px;
+  padding: 18px 0 42px;
   border-bottom: 1px solid var(--line);
 }
 
 .journal-composer::before {
-  content: "";
-  position: absolute;
-  top: 24px;
-  bottom: 52px;
-  left: -22px;
-  width: 2px;
-  background: linear-gradient(180deg, var(--gold), color-mix(in srgb, var(--gold) 12%, transparent));
+  content: none;
 }
 
 .journal-section-head {
@@ -4124,7 +4176,7 @@ body[data-active-view="journal"] .view-head,
 }
 
 .journal-form .journal-body-field textarea {
-  min-height: 310px;
+  min-height: 260px;
   padding-block: 16px 22px;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1.05rem;
@@ -4164,7 +4216,7 @@ body[data-active-view="journal"] .view-head,
 }
 
 .journal-archive {
-  padding-top: 48px;
+  padding-top: 36px;
 }
 
 .journal-archive .journal-section-head {
@@ -4470,6 +4522,16 @@ body[data-active-view="journal"] .view-head,
   52% { transform: translate(-9px, 1px); }
 }
 
+@keyframes pioCross {
+  0%, 100% { opacity: 0.58; transform: translateY(1px) scale(0.92); }
+  50% { opacity: 1; transform: translateY(-4px) scale(1.06); }
+}
+
+@keyframes pioRosary {
+  0%, 100% { transform: rotate(-8deg); }
+  50% { transform: rotate(8deg) translateY(-3px); }
+}
+
 @keyframes bannerLift {
   0%, 100% { transform: rotate(2deg) skewY(0); }
   50% { transform: rotate(4deg) skewY(-3deg); }
@@ -4757,6 +4819,10 @@ body[data-active-view="journal"] .view-head,
 
 .saint-stage[data-saint="benedict"] .saint-artifact {
   background: linear-gradient(180deg, transparent 0 68%, rgba(20, 20, 19, 0.38) 68% 70%, rgba(46, 43, 36, 0.74) 70%), radial-gradient(circle at 50% 35%, rgba(225, 203, 147, 0.25), transparent 25%), linear-gradient(155deg, #5e5a50, #34322e 54%, #171716);
+}
+
+.saint-stage[data-saint="pio"] .saint-artifact {
+  background: linear-gradient(180deg, transparent 0 68%, rgba(24, 18, 15, 0.38) 68% 70%, rgba(53, 39, 31, 0.74) 70%), radial-gradient(circle at 50% 35%, rgba(226, 194, 132, 0.25), transparent 25%), linear-gradient(155deg, #725543, #3d2d25 54%, #1b1512);
 }
 
 @media (max-width: 720px) {
@@ -7076,19 +7142,23 @@ body[data-active-view="settings"] .settings-disclosure-body > .workspace.two-col
   }
 }
 
+#view-home .home-stage:has(> .saint-info-popover:not([hidden])) {
+  justify-content: flex-start;
+}
+
 #view-home .saint-info-popover {
-  position: absolute;
-  top: 14px;
-  left: 50%;
+  position: relative;
   z-index: 20;
-  width: min(360px, calc(100% - 28px));
-  max-height: min(320px, calc(100% - 28px));
+  flex: 0 0 auto;
+  width: min(720px, calc(100% - 32px));
+  max-height: min(190px, calc(100vh - 48px));
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(190px, 0.8fr) minmax(280px, 1.35fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  column-gap: clamp(22px, 4vw, 42px);
   align-items: start;
   overflow: hidden;
-  padding: 17px 18px 14px;
-  transform: translateX(-50%);
+  padding: 18px 20px 14px;
 }
 
 #view-home .saint-info-popover[hidden] {
@@ -7096,21 +7166,31 @@ body[data-active-view="settings"] .settings-disclosure-body > .workspace.two-col
 }
 
 #view-home .saint-info-popover h2 {
-  margin: 4px 30px 12px 0;
+  grid-column: 1;
+  grid-row: 2;
+  margin: 4px 0 0;
 }
 
 #view-home .saint-info-eyebrow {
-  padding-right: 30px;
+  grid-column: 1;
+  grid-row: 1;
+  padding-right: 0;
 }
 
 #view-home .saint-info-popover blockquote {
+  grid-column: 2;
+  grid-row: 1 / span 2;
   min-width: 0;
   min-height: 0;
+  max-height: 92px;
   margin: 0;
-  padding: 12px 4px 0 0;
+  padding: 0 8px 0 18px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  border-top: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-top: 0;
+  border-left: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  scrollbar-color: color-mix(in srgb, var(--accent-bright) 62%, transparent) transparent;
+  scrollbar-width: thin;
   scrollbar-gutter: stable;
 }
 
@@ -7118,7 +7198,22 @@ body[data-active-view="settings"] .settings-disclosure-body > .workspace.two-col
   margin-right: 6px;
 }
 
+#view-home .saint-info-popover blockquote::-webkit-scrollbar {
+  width: 5px;
+}
+
+#view-home .saint-info-popover blockquote::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-bright) 62%, transparent);
+}
+
+#view-home .saint-info-popover blockquote::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .saint-info-navigation {
+  grid-column: 1 / -1;
+  grid-row: 3;
   display: flex;
   justify-content: flex-end;
   gap: 7px;
@@ -7150,9 +7245,32 @@ body[data-active-view="settings"] .settings-disclosure-body > .workspace.two-col
 
 @media (max-width: 720px) {
   #view-home .saint-info-popover {
-    top: 10px;
-    width: min(340px, calc(100% - 20px));
-    max-height: min(300px, calc(100% - 20px));
+    width: min(520px, calc(100% - 20px));
+    max-height: min(220px, calc(100vh - 32px));
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    row-gap: 3px;
     padding: 15px 16px 12px;
   }
+
+  #view-home .saint-info-eyebrow,
+  #view-home .saint-info-popover h2,
+  #view-home .saint-info-popover blockquote,
+  #view-home .saint-info-navigation {
+    grid-column: 1;
+  }
+
+  #view-home .saint-info-eyebrow { grid-row: 1; }
+  #view-home .saint-info-popover h2 { grid-row: 2; }
+
+  #view-home .saint-info-popover blockquote {
+    grid-row: 3;
+    max-height: 86px;
+    margin-top: 7px;
+    padding: 9px 4px 0 0;
+    border-top: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+    border-left: 0;
+  }
+
+  #view-home .saint-info-navigation { grid-row: 4; }
 }

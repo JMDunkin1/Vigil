@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { preserveCorruptStateEvidence } from "./corruptStateEvidence.js";
 import { BRICK_MODE_PROFILE_ID, DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID, DEFAULT_ALLOWED_APPS, DEFAULT_ALLOWED_SITES, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_BLOCKED_SITES, DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, FULL_BRICK_BLOCKED_APPS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { normalizeIntentionalUse } from "./intentionalUse.js";
+import { decryptJournalEntries, encryptJournalEntries, hasEncryptedJournalEntries } from "./journalEncryption.js";
 import { resolveDefaultDataDir } from "./dataPaths.js";
 import { normalizeWeekdays } from "./normalizers.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
@@ -72,14 +73,16 @@ export async function loadState(): Promise<VigilState> {
       verification = retryVerification;
     }
   }
-  let state: VigilState;
+  let parsed: RawState;
   try {
-    state = migrateState(JSON.parse(raw) as RawState);
+    parsed = JSON.parse(raw) as RawState;
   } catch (error) {
     return await recoverMalformedState(rawBytes, error);
   }
+  const migratedPlaintextJournal = await restoreJournalEntries(parsed);
+  const state = migrateState(parsed);
   applySealVerificationToState(state, verification);
-  if (verification.status === "missing") await saveState(state);
+  if (verification.status === "missing" || migratedPlaintextJournal) await saveState(state);
   return state;
 }
 
@@ -484,8 +487,25 @@ function clampInteger(value: unknown, min: number, max: number, fallback: number
 }
 
 async function writeStateAndSeal(state: VigilState, sealedAt: string): Promise<void> {
-  const text = await writeJson(STATE_PATH, state);
+  const storedState = state as unknown as RawState;
+  const intentionalUse = storedState.intentionalUse as unknown as UnknownRecord | undefined;
+  if (intentionalUse) {
+    intentionalUse.journalEntriesEncrypted = await encryptJournalEntries(intentionalUse.journalEntries, DATA_DIR);
+    delete intentionalUse.journalEntries;
+  }
+  const text = await writeJson(STATE_PATH, storedState);
   await writeStateTextSeal(text, { keyPath: STATE_SEAL_KEY_PATH, sealPath: STATE_SEAL_PATH, scope: "state" }, sealedAt);
+}
+
+async function restoreJournalEntries(state: RawState): Promise<boolean> {
+  const intentionalUse = state.intentionalUse as unknown as UnknownRecord | undefined;
+  if (!intentionalUse) return false;
+  if (hasEncryptedJournalEntries(intentionalUse)) {
+    intentionalUse.journalEntries = await decryptJournalEntries(intentionalUse.journalEntriesEncrypted, DATA_DIR);
+    delete intentionalUse.journalEntriesEncrypted;
+    return false;
+  }
+  return Array.isArray(intentionalUse.journalEntries);
 }
 
 async function writeUsageSnapshot(usage: UsageState): Promise<void> {

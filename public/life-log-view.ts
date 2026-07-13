@@ -78,14 +78,14 @@ export function createLifeLogView(context: LifeLogViewContext) {
     const list = $("#journalEntryList");
     list.replaceChildren();
     if (!entries.length) {
-      list.append(empty("No reflections saved"));
+      list.append(empty("No entries yet"));
       return;
     }
 
     for (const entry of entries.slice(0, 12)) {
       const article = document.createElement("article");
       article.className = "journal-entry";
-      const head = el("div", { className: "journal-entry-head" }, textEl("strong", entry.title || "Reflection"));
+      const head = el("div", { className: "journal-entry-head" }, textEl("strong", entry.title || "Untitled"));
       const body = textEl("p", entry.body || "", { className: "journal-entry-body" });
       const actions = el("div", { className: "journal-entry-actions" });
 
@@ -101,7 +101,7 @@ export function createLifeLogView(context: LifeLogViewContext) {
       remove.textContent = "Delete";
       remove.addEventListener("click", async () => {
         await del(`/api/intentional-use/journal/${encodeURIComponent(entry.id)}`);
-        toast("Reflection deleted");
+        toast("Entry deleted");
         await refresh();
       });
 
