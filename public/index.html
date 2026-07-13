@@ -59,7 +59,7 @@
             <span class="saint-halo" aria-hidden="true"></span>
             <span class="saint-symbol saint-symbol-one" aria-hidden="true"></span>
             <span class="saint-symbol saint-symbol-two" aria-hidden="true"></span>
-            <img id="saintArtwork" class="saint-artwork" src="/art/saints/michael.png" alt="Saint Michael the Archangel">
+            <img id="saintArtwork" class="saint-artwork" src="/art/saints/michael.png" alt="Saint Michael the Archangel" draggable="false">
             <span id="saintFallback" class="saint-fallback" aria-hidden="true">M</span>
           </button>
           <aside id="saintInfoPopover" class="saint-info-popover" role="dialog" aria-labelledby="saintInfoName" tabindex="-1" hidden>
@@ -131,111 +131,43 @@
 
     <section id="view-ranking" class="view ranking-dashboard" data-view="ranking" hidden>
       <header class="ranking-titlebar">
-        <div>
-          <p class="eyebrow">This week</p>
-          <h2>Your path</h2>
-        </div>
+        <h2>Ranking</h2>
         <div class="ranking-standing" aria-label="Current standing">
           <span id="knightStanding">Pilgrim</span>
           <strong id="knightRank">Rank --</strong>
-          <em id="knightState">Awaiting the first watch</em>
+          <em id="knightState">No clean days yet</em>
         </div>
       </header>
 
       <div class="ranking-vitals" aria-label="Today's key statistics">
         <div class="ranking-vital ranking-vital-primary">
-          <span>Combined today</span>
+          <span>Screen time</span>
           <strong id="totalUsageToday">--</strong>
-          <em>Mac + iPhone usage</em>
+          <em>Mac + iPhone</em>
         </div>
         <div class="ranking-vital">
-          <span>Focus quality</span>
+          <span>Focus score</span>
           <strong id="focusScore">--</strong>
-          <em>out of 100</em>
+          <em id="focusScoreLabel">No score yet</em>
         </div>
         <div class="ranking-vital">
-          <span>Vs last week</span>
+          <span>From last week</span>
           <strong id="distractionTrend">--</strong>
           <em>distraction time</em>
         </div>
       </div>
 
-      <section class="journey-section" aria-labelledby="rankTimelineTitle">
-        <div class="ranking-section-head">
-          <div>
-            <p class="eyebrow">Daily focus</p>
-            <h3 id="rankTimelineTitle">The week's ascent</h3>
-          </div>
-          <span id="rankTimelineStatus">Waiting for usage</span>
-        </div>
-        <div id="rankTimeline" class="rank-journey" role="img" aria-label="Focus score path for the week">
-          <svg id="rankJourneySvg" viewBox="0 0 700 220" preserveAspectRatio="none" aria-hidden="true">
-            <path class="journey-ground" d=""></path>
-            <path id="rankJourneyPath" class="journey-path" d=""></path>
-          </svg>
-          <div id="rankJourneyDays" class="journey-days" aria-hidden="true"></div>
-          <div id="journeyKnight" class="journey-knight" aria-hidden="true">
-            <div id="knightAvatar" class="knight-avatar" data-rank-tier="pilgrim">
-              <svg viewBox="0 0 120 168" role="presentation" focusable="false">
-                <defs>
-                  <linearGradient id="knightArmor" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0" stop-color="var(--armor-shadow)"/>
-                    <stop offset="0.48" stop-color="var(--armor-light)"/>
-                    <stop offset="1" stop-color="var(--armor)"/>
-                  </linearGradient>
-                  <linearGradient id="knightBlade" x1="0" y1="0" x2="1" y2="0">
-                    <stop offset="0" stop-color="#706f69"/>
-                    <stop offset="0.52" stop-color="#f1eee4"/>
-                    <stop offset="1" stop-color="#85837b"/>
-                  </linearGradient>
-                </defs>
-                <path class="knight-cape" d="M50 74c-13 7-23 26-22 58l13 21 22-13 9-58Z"/>
-                <path class="knight-sword" d="m92 48 7 2-14 82-7-1Z" fill="url(#knightBlade)"/>
-                <path class="knight-sword-edge" d="m95.5 50.5-14 80"/>
-                <path class="knight-sword-guard" d="m72 126 22 4"/>
-                <path class="knight-leg" d="m48 132-3 25h14l4-25m14 0 5 25h14l-4-30"/>
-                <path class="knight-boot" d="M44 155h17v8H39c0-4 2-7 5-8Zm37 0h17l5 8H81Z"/>
-                <path class="knight-tunic" d="M43 77c7-7 28-10 42 1l10 57-23 9-34-8Z" fill="url(#knightArmor)"/>
-                <path class="knight-surcoat" d="M53 91h27l5 45-13 8-24-7Z"/>
-                <path class="knight-belt" d="m44 118 47 2"/>
-                <path class="knight-arm" d="M44 84c-11 8-13 23-15 36m55-37c9 6 10 17 8 28"/>
-                <path class="knight-helm" d="M43 35c2-17 13-27 27-27s25 11 26 29l-4 35-20 10-24-9Z" fill="url(#knightArmor)"/>
-                <path class="knight-helm-ridge" d="M69 9v65"/>
-                <path class="knight-visor" d="m45 44 49-2-2 19-45 2Z"/>
-                <path class="knight-visor-slits" d="m52 51 5-1m5 0 5-1m5 0 5-1m5 0 5-1"/>
-                <path class="knight-plume" d="M68 9C52 4 45 9 38 18c13-3 22 2 31 9Z"/>
-                <path class="knight-shield" d="M19 90c12-7 26-7 38 0l-3 43c-3 12-10 20-17 25-9-6-16-14-18-25Z"/>
-                <path class="knight-shield-rim" d="M24 94c9-5 19-5 28 0l-3 37c-2 8-6 14-12 19-6-5-11-11-13-19Z"/>
-                <path class="knight-cross" d="M34 105h8v13h10v8H42v18h-8v-18H24v-8h10Z"/>
-              </svg>
-            </div>
-          </div>
-        </div>
-        <div class="journey-progress" aria-hidden="true"><span id="knightProgressFill"></span></div>
-      </section>
-
       <div class="ranking-lower">
-        <section class="usage-wave-section" aria-labelledby="usageWaveTitle">
+        <section class="ranking-card ranking-week-section" aria-labelledby="rankingWeekTitle">
           <div class="ranking-section-head">
-            <div>
-              <p class="eyebrow">Combined screen time</p>
-              <h3 id="usageWaveTitle">Seven-day wave</h3>
-            </div>
-            <span id="usageWaveAverage">-- daily</span>
+            <h3 id="rankingWeekTitle">Focus &amp; screen time</h3>
           </div>
-          <svg id="usageWave" class="usage-wave" viewBox="0 0 700 220" preserveAspectRatio="none" role="img" aria-label="Combined Mac and iPhone screen time by day">
-            <path id="usageWaveArea" class="usage-wave-area" d=""></path>
-            <path id="usageWaveLine" class="usage-wave-line" d=""></path>
-            <g id="usageWavePoints"></g>
-          </svg>
+          <div id="rankingWeek" class="ranking-week" role="img" aria-label="Daily focus score and combined Mac and iPhone screen time for this week"></div>
         </section>
 
-        <section class="today-apps-section" aria-labelledby="todayAppsTitle">
+        <section class="ranking-card today-apps-section" aria-labelledby="todayAppsTitle">
           <div class="ranking-section-head">
-            <div>
-              <p class="eyebrow">Combined today</p>
-              <h3 id="todayAppsTitle">Time by app</h3>
-            </div>
+            <h3 id="todayAppsTitle">Time by app</h3>
           </div>
           <div id="rankingAppUsage" class="ranking-app-usage"></div>
         </section>
@@ -245,11 +177,7 @@
 
     <section id="view-audio" class="view" data-view="audio" hidden>
       <div class="view-head">
-        <div>
-          <p class="eyebrow">Listening Room</p>
-          <h2>Sound</h2>
-        </div>
-        <p class="view-intro">Choose anything once. It begins immediately.</p>
+        <h2>Sound</h2>
       </div>
 
       <div class="audio-desk">
@@ -275,15 +203,7 @@
           </button>
         </section>
 
-        <section id="audioSoundLibrary" class="audio-library" aria-labelledby="audioLibraryTitle">
-          <header class="audio-library-head">
-            <div>
-              <p class="eyebrow">Library</p>
-              <h3 id="audioLibraryTitle">Choose a sound</h3>
-            </div>
-            <p>One click changes the room.</p>
-          </header>
-
+        <section id="audioSoundLibrary" class="audio-library" aria-label="Sounds">
           <div class="audio-library-grid">
             <details class="audio-library-group audio-library-group-wide" aria-labelledby="sacredSoundsTitle">
               <summary class="audio-group-title">
@@ -372,12 +292,12 @@
     </section>
 
     <section id="view-rules" class="view settings-root" data-view="settings" hidden>
-      <div class="view-head">
-        <div>
-          <p class="eyebrow">Quiet by default</p>
-          <h2>Settings</h2>
-        </div>
-        <p class="view-intro">The everyday controls stay in Ranking. Configuration lives here when you need it.</p>
+      <div class="view-head settings-titlebar">
+        <h2>Settings</h2>
+        <label class="settings-search">
+          <span class="sr-only">Find a setting</span>
+          <input id="settingsSearch" type="search" placeholder="Find a setting" autocomplete="off">
+        </label>
       </div>
 
       <details class="settings-disclosure icon-theme-settings">
@@ -783,12 +703,9 @@
 
     <section id="view-journal" class="view" data-view="tracking journal" hidden>
       <div class="view-head tracking-only tracking-titlebar">
-        <div>
-          <p class="eyebrow">Your rhythm</p>
-          <h2>Tracking</h2>
-        </div>
+        <h2>Tracking</h2>
         <div class="tracking-title-actions">
-          <span id="lifeLogStatus" class="pill neutral">Ready</span>
+          <span id="lifeLogStatus" hidden>Ready</span>
           <button id="habitManage" class="secondary compact" type="button">Manage habits</button>
         </div>
       </div>
@@ -798,7 +715,6 @@
           <p class="eyebrow">Reflection</p>
           <h2>Journal</h2>
         </div>
-        <span class="pill neutral">Local</span>
       </div>
 
       <section id="journalUnlockGate" class="journal-unlock-gate journal-only" hidden aria-labelledby="journalUnlockTitle">
@@ -819,28 +735,25 @@
         <span id="journalUnlockStatus" class="tiny-status" aria-live="polite"></span>
       </section>
 
-      <section class="tracking-overview tracking-only" aria-labelledby="habitCalendarTitle">
-        <div class="tracking-period-bar" aria-label="Choose a month">
-          <button id="habitPreviousMonth" class="habit-nav-arrow compact" type="button" aria-label="Previous month">&#8592;</button>
+      <section class="tracking-overview tracking-only" aria-label="Monthly habit summary">
+        <header class="tracking-overview-head">
           <strong id="habitCalendarMonth">This month</strong>
-          <button id="habitNextMonth" class="habit-nav-arrow compact" type="button" aria-label="Next month">&#8594;</button>
-          <button id="habitCurrentMonth" class="habit-text-action compact" type="button">This month</button>
-        </div>
-        <header class="tracking-section-heading">
-          <div>
-            <p class="eyebrow">Overview</p>
-            <h2 id="habitCalendarTitle">At a glance</h2>
+          <div class="tracking-period-bar" aria-label="Choose a month">
+            <button id="habitPreviousMonth" class="habit-nav-arrow compact" type="button" aria-label="Previous month">&#8592;</button>
+            <button id="habitCurrentMonth" class="habit-text-action compact" type="button">This month</button>
+            <button id="habitNextMonth" class="habit-nav-arrow compact" type="button" aria-label="Next month">&#8594;</button>
           </div>
         </header>
         <div class="tracking-metric-grid">
           <article class="tracking-metric-card tracking-metric-primary">
-            <div class="tracking-card-kicker"><span>Monthly completion</span><i aria-hidden="true">&#8599;</i></div>
+            <div class="tracking-card-kicker">Completion</div>
             <div class="tracking-metric-value"><strong id="habitMonthRate">—</strong><small>completed</small></div>
-            <p id="habitMonthSummary">Your rhythm will appear here</p>
+            <p id="habitMonthSummary"></p>
             <svg id="habitMonthTrend" class="tracking-trend" viewBox="0 0 420 104" preserveAspectRatio="none" role="img" aria-label="Completion trend for this month"></svg>
           </article>
           <article class="tracking-metric-card tracking-metric-rhythm">
-            <div class="tracking-card-kicker"><span>Daily rhythm</span><i id="habitMonthDayCount" aria-hidden="true">31 days</i></div>
+            <div class="tracking-card-kicker">Check-ins</div>
+            <span id="habitMonthDayCount" hidden>31 days</span>
             <div class="tracking-rhythm-copy">
               <strong id="habitMonthCompleted">—</strong>
               <span id="habitMonthRecorded">No check-ins yet</span>
@@ -853,7 +766,6 @@
       <section class="daily-checkin tracking-only" aria-labelledby="dailyCheckInTitle">
         <header class="tracking-section-heading daily-checkin-head">
           <div>
-            <p class="eyebrow">Habits</p>
             <h2 id="dailyCheckInTitle">Today</h2>
             <p id="dailyCheckInProgress" class="daily-checkin-progress">Nothing recorded yet</p>
           </div>
@@ -867,7 +779,6 @@
         <div class="daily-checkin-meter" aria-hidden="true"><span id="dailyCheckInMeterBar"></span></div>
         <div id="habitQuickCheckIn" class="habit-quick-checkin" aria-live="polite"></div>
         <div class="daily-checkin-toolbar">
-          <span>Tap a result to update the selected day.</span>
           <div>
             <button id="habitMarkRemainingDone" class="secondary compact" type="button">Complete the rest</button>
             <button id="habitClearSelectedDay" class="habit-text-action compact" type="button">Reset day</button>
@@ -877,7 +788,6 @@
         <details id="habitCalendarDetails" class="habit-calendar-details">
           <summary>
             <span>Detailed habit grid</span>
-            <small>Review or edit any day</small>
           </summary>
           <div class="habit-calendar-detail-body">
             <div class="habit-calendar-legend" aria-label="Habit calendar legend">

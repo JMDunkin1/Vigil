@@ -32,9 +32,13 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function showVigilWindow\(appUrl: string\): void \{[\s\S]*?if \(shouldStayResident\(\)\) \{[\s\S]*?app\.setActivationPolicy\("regular"\);[\s\S]*?app\.dock\?\.hide\(\);[\s\S]*?app\.show\(\);[\s\S]*?mainWindow\.show\(\);/,
+  /function showVigilWindow\(appUrl: string\): void \{[\s\S]*?if \(shouldStayResident\(\)\) \{[\s\S]*?app\.setActivationPolicy\("regular"\);[\s\S]*?app\.show\(\);[\s\S]*?mainWindow\.show\(\);/,
   "an open resident window must use regular macOS presentation so native fullscreen chrome can appear"
 );
+const showWindowStart = mainSource.indexOf("function showVigilWindow");
+const showWindowEnd = mainSource.indexOf("\n}", showWindowStart);
+const showWindowSource = mainSource.slice(showWindowStart, showWindowEnd + 2);
+assert.doesNotMatch(showWindowSource, /app\.dock\?\.hide\(\)/, "opening Vigil must not demote the regular app back to accessory presentation");
 assert.match(
   mainSource,
   /app\.on\("window-all-closed", \(\) => \{\s*if \(!shouldStayResident\(\)\) app\.quit\(\);/,
@@ -68,29 +72,14 @@ assert.match(
 );
 assert.doesNotMatch(
   mainSource,
-  /setWindowButtonVisibility\(false\)/,
-  "native macOS window controls must never be explicitly hidden"
+  /setWindowButtonVisibility|setWindowButtonPosition|setClosable|setMinimizable|setMaximizable|setFullScreenable/,
+  "Vigil must leave native window chrome under AppKit control during focus and fullscreen transitions"
 );
 assert.match(mainSource, /fullscreenable:\s*true/, "Vigil must use the standard native macOS fullscreen path");
-assert.match(mainSource, /titleBarStyle:\s*"hidden"/, "Vigil must use Electron's standard barless macOS title bar with native traffic lights");
+assert.match(mainSource, /titleBarStyle:\s*"hiddenInset"/, "Vigil must use the stable inset macOS title bar with native traffic lights");
 assert.match(mainSource, /trafficLightPosition:\s*\{ x:\s*18, y:\s*19 \}/, "integrated traffic lights must retain their intended position");
-assert.match(
-  mainSource,
-  /function restoreNativeWindowControls\(window: BrowserWindow\): void \{[\s\S]*?window\.setMinimizable\(true\);[\s\S]*?window\.setMaximizable\(true\);[\s\S]*?window\.setWindowButtonPosition\(\{ x: 18, y: 19 \}\);[\s\S]*?window\.setWindowButtonVisibility\(true\);/,
-  "showing or maximizing Vigil must re-enable and reattach the native red, yellow, and green controls"
-);
-assert.match(
-  mainSource,
-  /mainWindow\.show\(\);\s*\/\/[\s\S]*?restoreNativeWindowControls\(mainWindow\);/,
-  "native controls must be restored after the formerly hidden window becomes visible"
-);
-for (const event of ["show", "focus", "maximize", "unmaximize"]) {
-  assert.match(
-    mainSource,
-    new RegExp(`vigilWindow\\.on\\("${event}",[\\s\\S]*?restoreNativeWindowControls\\(vigilWindow\\)`),
-    `${event} must repair native controls if AppKit resets the hidden title bar`
-  );
-}
+assert.match(mainSource, /acceptFirstMouse:\s*true/, "the first click after Mission Control must reach Vigil's controls");
+assert.doesNotMatch(mainSource, /vigilWindow\.on\("(?:focus|maximize|unmaximize|enter-full-screen|leave-full-screen)"/, "native transitions must not rewrite the window while AppKit is animating it");
 assert.doesNotMatch(mainSource, /vigil:window-action|maximizedWindowControls/, "Vigil must not imitate native window controls in web content");
 assert.match(mainSource, /role:\s*"togglefullscreen"/, "the View menu must expose the standard native macOS fullscreen action");
 

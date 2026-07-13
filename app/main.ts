@@ -140,28 +140,11 @@ function showVigilWindow(appUrl: string): void {
   if (!mainWindow) return;
   if (shouldStayResident()) {
     app.setActivationPolicy("regular");
-    app.dock?.hide();
     app.show();
   }
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
-  // AppKit can discard hidden-title-bar button visibility while the accessory
-  // app or its window is hidden. Restore it only after the window is visible.
-  restoreNativeWindowControls(mainWindow);
   mainWindow.focus();
-  setImmediate(() => {
-    if (mainWindow && !mainWindow.isDestroyed()) restoreNativeWindowControls(mainWindow);
-  });
-}
-
-function restoreNativeWindowControls(window: BrowserWindow): void {
-  if (process.platform !== "darwin") return;
-  window.setClosable(true);
-  window.setMinimizable(true);
-  window.setMaximizable(true);
-  window.setFullScreenable(true);
-  window.setWindowButtonPosition({ x: 18, y: 19 });
-  window.setWindowButtonVisibility(true);
 }
 
 function hideVigilWindow(): void {
@@ -181,11 +164,12 @@ function createWindow(appUrl: string): void {
     center: true,
     title: "Vigil",
     icon: iconAssetPath(`${selectedIconTheme}.png`),
-    titleBarStyle: "hidden",
+    titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 18, y: 19 },
     backgroundColor: "#14191c",
     alwaysOnTop: false,
     fullscreenable: true,
+    acceptFirstMouse: true,
     webPreferences: {
       contextIsolation: true,
       devTools: !app.isPackaged,
@@ -198,13 +182,6 @@ function createWindow(appUrl: string): void {
 
   vigilWindow.setAlwaysOnTop(false);
   vigilWindow.setVisibleOnAllWorkspaces(false);
-  vigilWindow.on("ready-to-show", () => restoreNativeWindowControls(vigilWindow));
-  vigilWindow.on("show", () => restoreNativeWindowControls(vigilWindow));
-  vigilWindow.on("focus", () => restoreNativeWindowControls(vigilWindow));
-  vigilWindow.on("maximize", () => restoreNativeWindowControls(vigilWindow));
-  vigilWindow.on("unmaximize", () => restoreNativeWindowControls(vigilWindow));
-  vigilWindow.on("enter-full-screen", () => restoreNativeWindowControls(vigilWindow));
-  vigilWindow.on("leave-full-screen", () => restoreNativeWindowControls(vigilWindow));
 
   void vigilWindow.loadURL(appUrl);
   vigilWindow.webContents.on("will-navigate", (event, url) => {

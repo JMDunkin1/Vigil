@@ -1,4 +1,5 @@
 import type { ControlElement, DashboardItem, GrayscaleSchedule, Schedule } from "./app-model.js";
+import { syncDayControl } from "./day-controls.js";
 
 type QueryElement = (selector: string) => ControlElement;
 type QueryElements = <T extends Element = ControlElement>(selector: string) => NodeListOf<T>;
@@ -23,6 +24,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     for (const input of $$("#scheduleDays input")) {
       input.checked = schedule.days.includes(Number(input.value));
     }
+    syncDayControl("#scheduleDays");
   }
 
   function loadGrayscaleSchedule(schedule: GrayscaleSchedule): void {
@@ -35,6 +37,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     for (const input of $$("#grayscaleScheduleDays input")) {
       input.checked = schedule.days.includes(Number(input.value));
     }
+    syncDayControl("#grayscaleScheduleDays");
     const targets = new Set(schedule.deviceTargets || ["computer", "phone"]);
     for (const input of $$<HTMLInputElement>("#grayscaleScheduleForm input[name='deviceTargets']")) {
       input.checked = targets.has(input.value as "computer" | "phone");
@@ -55,6 +58,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     for (const input of $$("#appLockDays input")) {
       input.checked = (rule.days || []).includes(Number(input.value));
     }
+    syncDayControl("#appLockDays");
   }
 
   function resetAppLockForm(): void {
@@ -70,6 +74,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     for (const input of $$("#appLockDays input")) {
       input.checked = true;
     }
+    syncDayControl("#appLockDays");
   }
 
   function loadIntentionalRule(rule: DashboardItem): void {
@@ -89,6 +94,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     for (const input of $$("#intentionalDays input")) {
       input.checked = (rule.days || []).includes(Number(input.value));
     }
+    syncDayControl("#intentionalDays");
   }
 
   function resetIntentionalRuleForm(): void {
@@ -107,6 +113,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     for (const input of $$("#intentionalDays input")) {
       input.checked = true;
     }
+    syncDayControl("#intentionalDays");
   }
 
   function loadBehavior(behavior: DashboardItem): void {
@@ -167,6 +174,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     for (const input of $$("#limitDays input")) {
       input.checked = (rule.days || []).includes(Number(input.value));
     }
+    syncDayControl("#limitDays");
   }
 
   function resetLimitForm(): void {
@@ -185,6 +193,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     for (const input of $$("#limitDays input")) {
       input.checked = true;
     }
+    syncDayControl("#limitDays");
   }
 
   function resetScheduleForm(): void {
@@ -201,6 +210,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     for (const input of $$("#scheduleDays input")) {
       input.checked = !["0", "6"].includes(input.value);
     }
+    syncDayControl("#scheduleDays");
   }
 
   function resetGrayscaleScheduleForm(): void {
@@ -214,6 +224,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     for (const input of $$("#grayscaleScheduleDays input")) {
       input.checked = true;
     }
+    syncDayControl("#grayscaleScheduleDays");
     for (const input of $$<HTMLInputElement>("#grayscaleScheduleForm input[name='deviceTargets']")) {
       input.checked = true;
     }

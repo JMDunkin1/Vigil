@@ -47,6 +47,7 @@
     "ios:mdm:configure": "npm run build && node dist/runtime/scripts/configure-ios-mdm.mjs",
     "seal:source": "npm run build && node dist/runtime/scripts/seal-source.mjs",
     "doctor": "npm run build && node dist/runtime/scripts/doctor.mjs",
+    "agent": "node scripts/vigil-agent.mjs",
     "install:agent": "npm run build && node dist/runtime/scripts/install-launch-agent.mjs",
     "uninstall:agent": "npm run build && node dist/runtime/scripts/uninstall-launch-agent.mjs"
   },

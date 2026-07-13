@@ -112,7 +112,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     monthRate.textContent = reported.length ? `${Math.round((completed / reported.length) * 100)}%` : "—";
     monthSummary.textContent = reported.length
       ? `${completed} of ${reported.length} check-ins completed`
-      : "Your rhythm will appear here";
+      : "";
     monthCompleted.textContent = String(completed);
     monthRecorded.textContent = reported.length
       ? `${reported.length} check-in${reported.length === 1 ? "" : "s"} recorded`
@@ -298,11 +298,6 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const selectedIndex = Math.max(0, behaviors.findIndex((behavior) => behavior.id === selectedBehaviorId));
     const behavior = behaviors[selectedIndex];
     const status = statuses[selectedIndex];
-    const picker = document.createElement("div");
-    picker.className = "habit-quick-picker";
-    const pickerLabel = document.createElement("label");
-    pickerLabel.className = "habit-quick-picker-label";
-    pickerLabel.textContent = "Current habit";
     const pickerSelect = document.createElement("select");
     pickerSelect.className = "habit-quick-select";
     pickerSelect.setAttribute("aria-label", "Choose a habit to check in");
@@ -319,11 +314,6 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       selectedBehaviorId = pickerSelect.value;
       renderQuickCheckIn();
     });
-    const pickerPosition = document.createElement("span");
-    pickerPosition.className = "habit-quick-position";
-    pickerPosition.textContent = `Habit ${selectedIndex + 1} of ${behaviors.length}`;
-    pickerLabel.append(pickerSelect);
-    picker.append(pickerLabel, pickerPosition);
 
     const monthDates = datesInMonth(selectedMonth).filter((date) => date.getTime() <= dayStart(new Date()).getTime());
     const weekDates = datesInWeek(selectedDate);
@@ -331,13 +321,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     row.className = `habit-quick-row habit-visual-card ${status}`;
     const heading = document.createElement("div");
     heading.className = "habit-card-heading";
-    const name = document.createElement("span");
-    name.className = "habit-quick-name";
-    name.textContent = behavior.name || "Habit";
-    const direction = document.createElement("span");
-    direction.className = "habit-card-direction";
-    direction.textContent = behavior.direction === "reduce" ? "Reduce" : behavior.direction === "notice" ? "Notice" : "Build";
-    heading.append(name, direction);
+    heading.append(pickerSelect);
 
     const behaviorStatuses = monthDates.map((date) => statusFor(values.get(`${behavior.id}:${localDateKey(date)}`)));
     const behaviorDone = behaviorStatuses.filter((value) => value === "success").length;
@@ -382,7 +366,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       statusButton("Missed", "missed", status, () => saveHabitStatus(behavior.id, dateKey, status === "missed" ? "unreported" : "missed", status !== "missed"))
     );
     row.append(heading, metric, week, controls);
-    quickRoot.append(picker, row);
+    quickRoot.append(row);
 
     const todayValues = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${localDateKey(new Date())}`)));
     const todayRecorded = todayValues.filter((status) => status !== "unreported").length;

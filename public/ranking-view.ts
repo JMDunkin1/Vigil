@@ -15,111 +15,67 @@ const KNIGHT_TIERS: readonly KnightTier[] = [
   { id: "banneret", title: "Knight Banneret" }
 ] as const;
 
+const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+
 export function createRankingView() {
-  const avatar = required<HTMLElement>("#knightAvatar");
   const standing = required<HTMLElement>("#knightStanding");
   const rank = required<HTMLElement>("#knightRank");
   const state = required<HTMLElement>("#knightState");
-  const progress = required<HTMLElement>("#knightProgressFill");
-  const timeline = required<HTMLElement>("#rankTimeline");
-  const journeyPath = required<SVGPathElement>("#rankJourneyPath");
-  const journeyGround = required<SVGPathElement>("#rankJourneySvg .journey-ground");
-  const journeyDays = required<HTMLElement>("#rankJourneyDays");
-  const journeyKnight = required<HTMLElement>("#journeyKnight");
-  const timelineStatus = required<HTMLElement>("#rankTimelineStatus");
   const totalUsage = required<HTMLElement>("#totalUsageToday");
   const focusScore = required<HTMLElement>("#focusScore");
+  const focusScoreLabel = required<HTMLElement>("#focusScoreLabel");
   const distractionTrend = required<HTMLElement>("#distractionTrend");
-  const waveLine = required<SVGPathElement>("#usageWaveLine");
-  const waveArea = required<SVGPathElement>("#usageWaveArea");
-  const wavePoints = required<SVGGElement>("#usageWavePoints");
-  const waveAverage = required<HTMLElement>("#usageWaveAverage");
+  const week = required<HTMLElement>("#rankingWeek");
   const appUsage = required<HTMLElement>("#rankingAppUsage");
 
   function render(data: DashboardData): void {
     const progression = data.report?.progression;
-    const brainHealth = Number(progression?.brainHealth ?? data.usage?.focusScore ?? 0);
+    const score = clampPercent(data.usage?.focusScore);
+    const brainHealth = Number(progression?.brainHealth ?? score);
     const tier = tierFor(brainHealth);
-    avatar.dataset.rankTier = tier.id;
+    const cleanDays = Number(progression?.cleanDays || 0);
+
     standing.textContent = tier.title;
     rank.textContent = progression ? `Rank ${progression.level}` : "Rank --";
-    state.textContent = progression
-      ? `${progression.brainState} · ${progression.cleanDays} clean day${progression.cleanDays === 1 ? "" : "s"}`
-      : "Awaiting the first watch";
-    progress.style.width = `${clampPercent(progression?.levelProgressPercent)}%`;
+    state.textContent = `${cleanDays} clean day${cleanDays === 1 ? "" : "s"}`;
     totalUsage.textContent = formatDuration(Number(data.usage?.totalSeconds || 0));
-    focusScore.textContent = String(clampPercent(data.usage?.focusScore));
+    focusScore.textContent = String(score);
+    focusScoreLabel.textContent = focusLabel(score, Number(data.usage?.totalSeconds || 0) > 0);
     distractionTrend.textContent = signedPercent(data.report?.comparison?.distractingPercentDelta);
-    const days = data.report?.currentWeek?.days || [];
-    renderJourney(days);
-    renderWave(days);
+
+    renderWeek(data.report?.currentWeek?.days || []);
     renderApps(data.usage?.topApps || []);
   }
 
-  function renderJourney(days: WeekDaySummary[]): void {
-    const tracked = days.filter((day) => day.tracked);
-    timelineStatus.textContent = tracked.length
-      ? `${tracked.length} of 7 days tracked`
-      : "Waiting for usage";
+  function renderWeek(days: WeekDaySummary[]): void {
+    const normalizedDays = WEEKDAY_LABELS.map((label, index) => days[index] || ({ label } as WeekDaySummary));
+    const trackedDays = normalizedDays.filter((day) => day.tracked);
+    const maxSeconds = Math.max(...trackedDays.map((day) => Number(day.totalSeconds || 0)), 1);
 
-    let carriedScore: number | null = null;
-    const points = chartPoints(days, (day) => {
-      if (day.tracked) carriedScore = clampPercent(day.focusScore);
-      return carriedScore;
-    }, 700, 220, 42, 45, 154);
-    const activeIndex = Math.max(0, days.reduce((latest, day, index) => day.tracked ? index : latest, -1));
-    const activePoints = points.slice(0, activeIndex + 1);
-    const path = smoothPath(activePoints.map((point) => ({ x: point.x, y: point.y })));
-    journeyPath.setAttribute("d", path);
-    journeyGround.setAttribute("d", path ? `${path} L ${activePoints.at(-1)?.x || 42} 198 L 0 198 Z` : "");
-    journeyDays.replaceChildren();
-
-    points.forEach((point, index) => {
-      const day = days[index];
-      const marker = el("div", { className: `journey-day${day?.tracked ? " is-tracked" : ""}` },
-        textEl("strong", day?.tracked ? String(clampPercent(day.focusScore)) : "·"),
-        textEl("span", day?.label || "--")
-      );
-      marker.style.left = `${(point.x / 700) * 100}%`;
-      marker.style.top = `${(point.y / 220) * 100}%`;
-      journeyDays.append(marker);
+    week.replaceChildren();
+    normalizedDays.forEach((day, index) => {
+      const tracked = Boolean(day.tracked);
+      const seconds = Number(day.totalSeconds || 0);
+      const height = tracked ? Math.max(5, (seconds / maxSeconds) * 100) : 0;
+      const score = tracked ? String(clampPercent(day.focusScore)) : "–";
+      const duration = tracked ? formatDuration(seconds) : "";
+      const bar = el("i", { className: "ranking-week-bar" });
+      week.append(el("div", {
+        className: `ranking-week-day${tracked ? " is-tracked" : ""}`,
+        attrs: { style: `--bar-height:${height}%` }
+      },
+        textEl("span", score, { className: "ranking-week-score" }),
+        el("div", { className: "ranking-week-bar-stage" },
+          textEl("strong", duration, { className: "ranking-week-duration" }),
+          bar
+        ),
+        textEl("span", day.label || WEEKDAY_LABELS[index], { className: "ranking-week-label" })
+      ));
     });
 
-    const activePoint = points[activeIndex] || { x: 42, y: 154 };
-    journeyKnight.style.left = `${(activePoint.x / 700) * 100}%`;
-    journeyKnight.style.top = `${(activePoint.y / 220) * 100}%`;
-    timeline.setAttribute("aria-label", tracked.length
-      ? `Weekly focus path. Latest score ${clampPercent(days[activeIndex]?.focusScore)} on ${days[activeIndex]?.label}.`
-      : "Weekly focus path. No tracked days yet.");
-  }
-
-  function renderWave(days: WeekDaySummary[]): void {
-    const tracked = days.filter((day) => day.tracked);
-    const average = tracked.length
-      ? tracked.reduce((sum, day) => sum + Number(day.totalSeconds || 0), 0) / tracked.length
-      : 0;
-    waveAverage.textContent = tracked.length ? `${formatDuration(average)} daily` : "No usage yet";
-
-    const values = days.map((day) => day.tracked ? Number(day.totalSeconds || 0) : 0);
-    const max = Math.max(...values, 1);
-    const points = chartPoints(days, (day) => day.tracked ? (Number(day.totalSeconds || 0) / max) * 100 : null, 700, 220, 30, 38, 155);
-    const activeIndex = days.reduce((latest, day, index) => day.tracked ? index : latest, -1);
-    const activePoints = activeIndex >= 0 ? points.slice(0, activeIndex + 1) : [];
-    const line = smoothPath(activePoints.map((point) => ({ x: point.x, y: point.y })));
-    waveLine.setAttribute("d", line);
-    waveArea.setAttribute("d", line ? `${line} L ${activePoints.at(-1)?.x || 30} 178 L 30 178 Z` : "");
-    wavePoints.replaceChildren();
-
-    points.forEach((point, index) => {
-      const day = days[index];
-      const group = svgEl("g", { class: day?.tracked ? "usage-wave-point is-tracked" : "usage-wave-point" });
-      group.append(
-        svgEl("circle", { cx: point.x, cy: point.y, r: day?.tracked ? 5 : 3 }),
-        svgText(point.x, 202, day?.label || "--", "usage-wave-day"),
-        svgText(point.x, Math.max(18, point.y - 14), day?.tracked ? formatDuration(day.totalSeconds || 0) : "", "usage-wave-value")
-      );
-      wavePoints.append(group);
-    });
+    week.setAttribute("aria-label", trackedDays.length
+      ? `Weekly activity. ${trackedDays.map((day) => `${day.label}: ${formatDuration(day.totalSeconds || 0)} screen time, focus score ${clampPercent(day.focusScore)}`).join(". ")}.`
+      : "Weekly activity. No usage recorded yet.");
   }
 
   function renderApps(entries: BarEntry[]): void {
@@ -148,47 +104,12 @@ export function createRankingView() {
   return { render };
 }
 
-interface ChartPoint { x: number; y: number }
-
-function chartPoints(
-  days: WeekDaySummary[],
-  valueFor: (day: WeekDaySummary) => number | null,
-  width: number,
-  _height: number,
-  side: number,
-  top: number,
-  bottom: number
-): ChartPoint[] {
-  const source = days.length ? days.slice(0, 7) : Array.from({ length: 7 }, () => ({ label: "--" }));
-  while (source.length < 7) source.push({ label: "--" });
-  return source.map((day, index) => {
-    const value = valueFor(day);
-    return {
-      x: side + index * ((width - side * 2) / 6),
-      y: value === null ? bottom : bottom - (clampPercent(value) / 100) * (bottom - top)
-    };
-  });
-}
-
-function smoothPath(points: ChartPoint[]): string {
-  if (!points.length) return "";
-  return points.slice(1).reduce((path, point, index) => {
-    const previous = points[index];
-    const midpoint = (previous.x + point.x) / 2;
-    return `${path} C ${midpoint} ${previous.y}, ${midpoint} ${point.y}, ${point.x} ${point.y}`;
-  }, `M ${points[0].x} ${points[0].y}`);
-}
-
-function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attributes: Record<string, string | number>): SVGElementTagNameMap[K] {
-  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
-  return node;
-}
-
-function svgText(x: number, y: number, value: string, className: string): SVGTextElement {
-  const node = svgEl("text", { x, y, class: className, "text-anchor": "middle" });
-  node.textContent = value;
-  return node;
+function focusLabel(score: number, hasUsage: boolean): string {
+  if (!hasUsage) return "No score yet";
+  if (score >= 90) return "Excellent";
+  if (score >= 75) return "Strong";
+  if (score >= 50) return "Mixed";
+  return "Needs work";
 }
 
 function tierFor(value: number): KnightTier {

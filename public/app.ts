@@ -16,6 +16,7 @@ import { createRankingView } from "./ranking-view.js";
 import { createSaintStage } from "./saint-stage.js";
 import { renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
+import { enhanceSettingsUi } from "./settings-ui.js";
 import { createTrackingView } from "./tracking-view.js";
 import { $, $$, bindSidebarToggle, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
 import type { ActivePolicy, ChallengeSummary, ControlElement, DashboardData, DashboardItem, DashboardState, GrayscaleSchedule, IntentionalUseSummary, JournalVaultSummary, ProgressSummary, Schedule, SessionStartResponse, UiState, UnknownRecord } from "./app-model.js";
@@ -119,6 +120,7 @@ function boot() {
   renderLimitDays();
   renderAppLockDays();
   renderIntentionalDays();
+  enhanceSettingsUi();
   bindViewNavigation(setView);
   bindSidebarToggle();
   renderActiveView(state.activeView);

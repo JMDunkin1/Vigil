@@ -4,10 +4,14 @@ import { join } from "node:path";
 
 const html = await readFile("public/index.html", "utf8");
 
-assert.match(html, />Combined today</u);
+assert.match(html, /<h2>Ranking<\/h2>/u);
+assert.match(html, />Screen time</u);
+assert.match(html, />Focus score</u);
+assert.match(html, />From last week</u);
+assert.match(html, /Daily focus score and combined Mac and iPhone screen time for this week/u);
+assert.doesNotMatch(html, />This week|>Your path|>Combined today|>Daily focus|>Combined screen time|>Seven-day wave|>The week's ascent/u, "ranking should not repeat explanatory labels around the same data");
+assert.doesNotMatch(html, /rankJourney|usageWave|journeyKnight/u, "ranking should use one combined weekly comparison instead of two competing charts");
 assert.doesNotMatch(html, />Devices included</u, "ranking should show only the three decision-useful headline statistics");
-assert.match(html, /<svg viewBox="0 0 120 168"[^>]*>[\s\S]*class="knight-shield"/, "ranking journey should use the detailed vector knight artwork");
-assert.match(html, /Combined Mac and iPhone screen time by day/u);
 assert.doesNotMatch(html, />iPhone today</u);
 const ids = [...html.matchAll(/\bid="([A-Za-z][\w:-]*)"/g)].map((match) => match[1]);
 const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
@@ -46,6 +50,18 @@ const settingsMarkup = html.match(/<section id="view-rules"[\s\S]*?<section id="
 const firstSettingsDisclosure = settingsMarkup.match(/<details class="settings-disclosure[^>]*>[\s\S]*?<\/summary>/)?.[0] || "";
 assert.match(firstSettingsDisclosure, />App icon</, "app icon must be the first settings disclosure");
 assert.doesNotMatch(firstSettingsDisclosure, /<details[^>]*\sopen(?:\s|>)/, "app icon must start collapsed like the other settings disclosures");
+assert.match(settingsMarkup, /id="settingsSearch"[^>]*type="search"[^>]*placeholder="Find a setting"/, "settings must expose one compact search control");
+const settingsUiSource = await readFile("public/settings-ui.js", "utf8");
+assert.match(settingsUiSource, /wrapSettingsPanels\(\)/, "settings must turn large panels into focused subsections");
+assert.match(settingsUiSource, /form\.getAttribute\("id"\)/, "editor routing must use the form attribute instead of a shadowing named control");
+assert.match(settingsUiSource, /if \(sibling !== disclosure\)\s+sibling\.open = false/, "opening a settings category must close competing categories");
+assert.match(settingsUiSource, /data-editor-for|dataset\.editorFor/, "New and Edit actions must target a single settings editor");
+assert.doesNotMatch(settingsUiSource, /addEventListener\("submit"/, "settings editors must not close before an asynchronous save succeeds");
+const dayControlsSource = await readFile("public/day-controls.js", "utf8");
+for (const preset of ["Every day", "Weekdays", "Weekends", "Custom days"]) {
+  assert.match(dayControlsSource, new RegExp(preset), `day controls must offer the ${preset} preset`);
+}
+assert.match(dayControlsSource, /custom\.hidden = select\.value !== "custom"/, "the seven-day grid must stay hidden until Custom days is selected");
 assert.match(html, /id="accountButton"[^>]*aria-expanded="false"/, "the account button must expose its toggle state");
 const sidebarMarkup = html.match(/<aside class="app-chrome"[\s\S]*?<\/aside>/)?.[0] || "";
 assert.doesNotMatch(sidebarMarkup, /&#(?:8962|10016|10003|9835|10070|9881);/, "font-glyph sidebar icons must not return");
@@ -57,6 +73,8 @@ const styles = await readFile("public/styles.css", "utf8");
 assert.match(styles, /\.settings-disclosure \+ \.settings-disclosure\s*\{[\s\S]*?margin-top:\s*16px;/, "adjacent settings disclosures must use the shared row spacing");
 assert.match(styles, /\.settings-disclosure\s*\{[\s\S]*?container-type:\s*inline-size;/, "settings disclosures must respond to their own available width");
 assert.match(styles, /grid-template-columns:\s*minmax\(min-content, max-content\) minmax\(0, 1fr\) auto;/, "settings titles must keep a readable intrinsic column before descriptions flex");
+assert.match(styles, /\.settings-subsection-body > \.list[\s\S]*?margin:\s*10px 0 0;/, "saved settings must appear as a compact list before their editor");
+assert.match(styles, /\.day-custom-grid\[hidden\]\s*\{\s*display:\s*none;/, "custom weekday buttons must not consume space for preset schedules");
 assert.match(styles, /body\.sidebar-collapsed \.app-chrome\s*\{\s*display:\s*none;/, "collapsing must fully hide the sidebar instead of leaving an icon rail");
 assert.match(styles, /body\.sidebar-collapsed \.shell\s*\{\s*grid-column:\s*1;/, "collapsed content must occupy the first grid column without widening the viewport");
 assert.doesNotMatch(styles, /maximized-window-controls/, "styles must not contain fake window controls");
@@ -94,6 +112,8 @@ assert.match(appEventsSource, /classList\.contains\(["']is-open["']\)/, "clickin
 
 const appSource = await readFile("public/app.js", "utf8");
 assert.match(appSource, /!hasRuntimeStatus/, "the idle home screen must hide the redundant Ready and dash status row");
+const rankingSource = await readFile("public/ranking-view.js", "utf8");
+assert.match(rankingSource, /Number\(data\.usage\?\.totalSeconds \|\| 0\) > 0/, "focus labels must require recorded usage instead of treating an empty usage object as activity");
 
 const journalGateMarkup = html.match(/<section id="journalUnlockGate"[\s\S]*?<\/section>/)?.[0] || "";
 assert.doesNotMatch(journalGateMarkup, /\bpanel\b/, "journal access must not regress to the oversized generic panel");
@@ -101,7 +121,10 @@ assert.match(journalGateMarkup, /class="journal-gate-copy"/, "journal access mus
 assert.match(journalGateMarkup, />Unlock it</, "journal access must use the requested minimal unlock instruction");
 assert.match(journalGateMarkup, /id="journalTouchIdUnlock"[\s\S]*?<svg/, "journal access must expose a clickable fingerprint control");
 assert.doesNotMatch(journalGateMarkup, /type="password"|data-journal-unlock-method="password"/, "journal access must not expose a password fallback");
+assert.doesNotMatch(html, /<span class="pill neutral">Local<\/span>/, "the journal header must not show a redundant Local badge");
 assert.match(styles, /\.journal-unlock-gate\s*\{[\s\S]*?width:\s*min\(620px, 100%\)/, "journal access must remain compact within the writing surface");
+assert.doesNotMatch(styles, /\.journal-unlock-gate\s*\{[^}]*border-block:/, "the journal unlock prompt must not be boxed in by divider lines");
+assert.match(styles, /\.journal-gate-copy > h2\s*\{[^}]*font-size:\s*1\.85rem;/, "the minimal unlock instruction must remain prominent");
 
 const emergencyMarkup = html.match(/<details id="emergencyPanel"[\s\S]*?<\/details>/)?.[0] || "";
 assert.match(emergencyMarkup, /<summary class="emergency-summary">/, "emergency UI must be a collapsible top drawer");
@@ -115,6 +138,7 @@ assert.match(styles, /\.sidebar-toggle\s*\{[\s\S]*?top:\s*50px;[\s\S]*?-webkit-a
 
 assert.match(html, /id="saintStageButton"[^>]*aria-controls="saintInfoPopover"[^>]*aria-expanded="false"/, "saint artwork must expose its details popover");
 assert.match(html, /id="saintStageButton"[^>]*title="[^"]*Two-finger click for details\./, "saint details must advertise the trackpad gesture");
+assert.match(html, /id="saintArtwork"[^>]*draggable="false"/, "saint artwork must not expose the source image through native dragging");
 assert.match(html, /id="saintInfoPopover"[^>]*role="dialog"[^>]*aria-labelledby="saintInfoName"[^>]*hidden/, "saint details must start closed and have an accessible name");
 for (const id of ["saintInfoName", "saintInfoEpithet", "saintInfoQuote", "saintInfoSource", "saintInfoClose"]) {
   assert.ok(idSet.has(id), `saint details are missing #${id}`);
