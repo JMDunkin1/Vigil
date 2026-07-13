@@ -66,8 +66,10 @@ assert.match(html, /id="accountButton"[^>]*aria-expanded="false"/, "the account 
 const sidebarMarkup = html.match(/<aside class="app-chrome"[\s\S]*?<\/aside>/)?.[0] || "";
 assert.doesNotMatch(sidebarMarkup, /&#(?:8962|10016|10003|9835|10070|9881);/, "font-glyph sidebar icons must not return");
 assert.match(html, /id="sidebarToggle"[^>]*aria-controls="primarySidebar"[^>]*aria-expanded="true"/, "the sidebar must expose an explicit full-hide toggle");
+assert.ok(html.indexOf('id="sidebarToggle"') < html.indexOf('<aside class="app-chrome"'), "the sidebar toggle must live outside the sidebar it hides");
 assert.doesNotMatch(html, /maximizedWindowControls|data-window-action/, "web content must never imitate macOS traffic lights");
 assert.match(sidebarMarkup, /id="primarySidebar"/, "the sidebar toggle must control the navigation sidebar");
+assert.match(sidebarMarkup, /id="brandHomeButton"[^>]*data-view-target="home"[^>]*aria-label="Go to Home"/, "the Vigil wordmark must provide a keyboard-accessible route back Home");
 
 const styles = await readFile("public/styles.css", "utf8");
 assert.match(styles, /\.settings-disclosure \+ \.settings-disclosure\s*\{[\s\S]*?margin-top:\s*16px;/, "adjacent settings disclosures must use the shared row spacing");
@@ -77,8 +79,10 @@ assert.match(styles, /\.settings-subsection-body > \.list[\s\S]*?margin:\s*10px 
 assert.match(styles, /\.day-custom-grid\[hidden\]\s*\{\s*display:\s*none;/, "custom weekday buttons must not consume space for preset schedules");
 assert.match(styles, /body\.sidebar-collapsed \.app-chrome\s*\{\s*display:\s*none;/, "collapsing must fully hide the sidebar instead of leaving an icon rail");
 assert.match(styles, /body\.sidebar-collapsed \.shell\s*\{\s*grid-column:\s*1;/, "collapsed content must occupy the first grid column without widening the viewport");
+assert.match(styles, /body\.sidebar-collapsed \.sidebar-toggle\s*\{[\s\S]*?visibility:\s*visible;[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;/, "the full-hide toggle must remain visible and clickable after the sidebar disappears");
 assert.doesNotMatch(styles, /maximized-window-controls/, "styles must not contain fake window controls");
 assert.doesNotMatch(styles, /body:not\(\[data-active-view="home"\]\) \.app-chrome/, "navigation must not automatically compact the sidebar away from Home");
+assert.match(styles, /\.brand-home\s*\{[^}]*background:\s*transparent;[^}]*font:\s*inherit;/, "the Home button must preserve the Vigil wordmark styling");
 const uiShellSource = await readFile("public/ui-shell.js", "utf8");
 assert.match(uiShellSource, /localStorage\.setItem\("vigil-sidebar-collapsed"/, "the explicit sidebar choice must persist");
 assert.doesNotMatch(styles, /@media \(max-width: 900px\)\s*\{\s*body\s*\{\s*display:\s*block/, "narrow windows must retain the sidebar grid");
@@ -120,7 +124,8 @@ const rankingSource = await readFile("public/ranking-view.js", "utf8");
 assert.match(rankingSource, /Number\(data\.usage\?\.totalSeconds \|\| 0\) > 0/, "focus labels must require recorded usage instead of treating an empty usage object as activity");
 assert.match(rankingSource, /textEl\("strong", duration, \{ className: "ranking-week-duration" \}\),\s*el\("div", \{ className: "ranking-week-bar-stage" \}, bar\)/, "weekly duration labels must stay outside the variable-height bars");
 assert.match(styles, /\.ranking-dashboard\s*\{[^}]*container:\s*ranking \/ inline-size;/, "ranking must respond to its usable panel width rather than only the window width");
-assert.match(styles, /@container ranking \(max-width: 760px\)\s*\{[\s\S]*?\.ranking-vitals\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/, "ranking vitals must recompose before their values can overflow narrow cards");
+assert.match(styles, /@container ranking \(max-width: 760px\)\s*\{[\s\S]*?\.ranking-vitals\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/, "ranking vitals must remain in one compact row at the minimum window size");
+assert.match(styles, /@container ranking \(max-width: 520px\)\s*\{[\s\S]*?\.ranking-vitals\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/, "the narrowest ranking layout must preserve the three-card strip above the chart");
 
 const journalGateMarkup = html.match(/<section id="journalUnlockGate"[\s\S]*?<\/section>/)?.[0] || "";
 const journalPageMarkup = html.match(/<div class="journal-page journal-only"[\s\S]*?<div class="workspace two-column split-surface">/)?.[0] || "";
@@ -136,6 +141,9 @@ assert.match(journalPageMarkup, /name="title"[\s\S]*?name="body"[\s\S]*?>Save<\/
 assert.match(journalPageMarkup, /id="journalArchiveTitle">Archives<\//, "saved journal entries must appear under Archives");
 assert.match(styles, /\.journal-unlock-gate\s*\{[\s\S]*?width:\s*min\(620px, 100%\)/, "journal access must remain compact within the writing surface");
 assert.doesNotMatch(styles, /\.journal-unlock-gate\s*\{[^}]*border-block:/, "the journal unlock prompt must not be boxed in by divider lines");
+assert.match(styles, /body\[data-active-view="journal"\]:has\(#journalUnlockGate:not\(\[hidden\]\)\) \.shell\s*\{[^}]*padding-block:\s*0;/, "the locked journal must use the full height of its right-hand panel");
+assert.match(styles, /body\[data-active-view="journal"\]:has\(#journalUnlockGate:not\(\[hidden\]\)\) #view-journal\s*\{[^}]*min-height:\s*100vh;[^}]*place-items:\s*center;/, "the journal unlock prompt must stay centered within the right-hand panel");
+assert.match(styles, /body\[data-active-view="journal"\]:has\(#journalUnlockGate:not\(\[hidden\]\)\) #view-journal > :not\(#journalUnlockGate\)\s*\{[^}]*display:\s*none !important;/, "hidden tracking wrappers must not pull the journal unlock prompt above center");
 assert.match(styles, /\.journal-unlock-gate\s*\{[^}]*--journal-unlock-size:\s*clamp\(84px,[^;]*116px\);/, "the fingerprint control must grow with wider journal layouts");
 assert.match(styles, /\.journal-touch-id\s*\{[^}]*width:\s*var\(--journal-unlock-size\);[^}]*height:\s*var\(--journal-unlock-size\);/, "the fingerprint control must use its responsive size for both dimensions");
 assert.match(styles, /\.journal-gate-copy > h2\s*\{[^}]*font-size:\s*clamp\(1\.85rem,[^;]*2\.45rem\);/, "the minimal unlock instruction must scale with the fingerprint control");
@@ -146,8 +154,8 @@ assert.match(emergencyMarkup, /id="emergencyExplanation"/, "integrity lockdowns 
 assert.doesNotMatch(emergencyMarkup, /emergency-indicator/, "the floating integrity notice must not include a misaligned status dot");
 assert.match(styles, /#view-home \.emergency-drawer\s*\{[\s\S]*?position:\s*absolute;/, "the emergency drawer must overlay the home view instead of stretching it");
 assert.match(styles, /#view-home \.emergency-drawer\s*\{[\s\S]*?top:\s*12px;[\s\S]*?width:\s*min\(420px,[\s\S]*?border-radius:\s*13px;/, "the integrity notice must float independently near the top of the home view");
-assert.match(styles, /\.electron-shell \.app-chrome::before\s*\{\s*content:\s*none;/, "the title-bar drag layer must not cover the emergency drawer");
-assert.match(styles, /\.electron-shell \.app-chrome\s*\{\s*-webkit-app-region:\s*drag;/, "the sidebar must remain available for window dragging");
+assert.match(styles, /\.electron-shell \.app-chrome::before\s*\{[\s\S]*?height:\s*38px;[\s\S]*?-webkit-app-region:\s*drag;/, "Electron window dragging must use a dedicated top strip that cannot cover the sidebar toggle");
+assert.match(styles, /\.electron-shell \.app-chrome\s*\{\s*-webkit-app-region:\s*no-drag;/, "the full sidebar must never swallow real clicks as a native drag region");
 assert.match(styles, /\.sidebar-toggle\s*\{[\s\S]*?top:\s*50px;[\s\S]*?-webkit-app-region:\s*no-drag;/, "the sidebar toggle must always sit below the native title bar and remain clickable");
 
 assert.match(html, /id="saintStageButton"[^>]*aria-controls="saintInfoPopover"[^>]*aria-expanded="false"/, "saint artwork must expose its details popover");

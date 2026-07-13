@@ -198,6 +198,11 @@ function createWindow(appUrl: string): void {
   vigilWindow.setVisibleOnAllWorkspaces(false);
   vigilWindow.on("ready-to-show", () => restoreNativeWindowControls(vigilWindow));
   vigilWindow.on("show", () => restoreNativeWindowControls(vigilWindow));
+  vigilWindow.on("enter-full-screen", () => {
+    restoreNativeWindowControls(vigilWindow);
+    setTimeout(() => restoreNativeWindowControls(vigilWindow), 250);
+  });
+  vigilWindow.on("leave-full-screen", () => restoreNativeWindowControls(vigilWindow));
 
   void vigilWindow.loadURL(appUrl);
   vigilWindow.webContents.on("will-navigate", (event, url) => {

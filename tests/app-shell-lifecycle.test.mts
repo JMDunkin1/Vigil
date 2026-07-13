@@ -74,30 +74,31 @@ assert.match(
   /quitForUpdate: \(\) => \{\s*quitForUpdate = true;\s*app\.exit\(0\);\s*\}/,
   "an app update must exit immediately so the replacement never overlaps the installed app"
 );
-assert.match(mainSource, /fullscreenable:\s*true/, "Vigil must use the standard native macOS fullscreen path");
+assert.match(mainSource, /fullscreenable:\s*true/, "Vigil must support true native macOS fullscreen");
 assert.match(mainSource, /titleBarStyle:\s*"hiddenInset"/, "Vigil must use the stable inset macOS title bar with native traffic lights");
 assert.match(mainSource, /trafficLightPosition:\s*\{ x:\s*18, y:\s*19 \}/, "integrated traffic lights must retain their intended position");
 assert.match(mainSource, /acceptFirstMouse:\s*true/, "the first click after Mission Control must reach Vigil's controls");
 assert.match(
   mainSource,
   /function restoreNativeWindowControls\(window: BrowserWindow\): void \{[\s\S]*?window\.setWindowButtonPosition\(\{ x: 18, y: 19 \}\);[\s\S]*?window\.setWindowButtonVisibility\(true\);/,
-  "showing Vigil must reapply the supported native traffic-light geometry and visibility APIs"
+  "showing Vigil must restore its native traffic-light controls"
 );
 assert.match(
   showWindowSource,
   /mainWindow\.show\(\);[\s\S]*?restoreNativeWindowControls\(mainWindow\);[\s\S]*?mainWindow\.focus\(\);/,
   "native controls must be restored after the formerly hidden window becomes visible"
 );
-for (const event of ["ready-to-show", "show"]) {
+for (const event of ["ready-to-show", "show", "enter-full-screen", "leave-full-screen"]) {
   assert.match(
     mainSource,
     new RegExp(`vigilWindow\\.on\\("${event}",[\\s\\S]*?restoreNativeWindowControls\\(vigilWindow\\)`),
-    `${event} must repair native controls without rewriting AppKit fullscreen or focus transitions`
+    `${event} must restore Vigil's native traffic lights`
   );
 }
-assert.doesNotMatch(mainSource, /vigilWindow\.on\("(?:focus|maximize|unmaximize|enter-full-screen|leave-full-screen)"/, "native transitions must not rewrite the window while AppKit is animating it");
+assert.doesNotMatch(mainSource, /vigilWindow\.on\("(?:focus|maximize|unmaximize)"/, "ordinary native transitions must not rewrite the window while AppKit is animating it");
+assert.doesNotMatch(mainSource, /setFullScreenable\(false\)|setFullScreen\(false\)/, "Vigil must never replace true fullscreen with macOS Zoom");
 assert.doesNotMatch(mainSource, /vigil:window-action|maximizedWindowControls/, "Vigil must not imitate native window controls in web content");
-assert.match(mainSource, /role:\s*"togglefullscreen"/, "the View menu must expose the standard native macOS fullscreen action");
+assert.match(mainSource, /role:\s*"togglefullscreen"/, "the View menu must expose true native macOS fullscreen");
 
 async function sourceRoot(): Promise<string> {
   for (const candidate of [process.cwd(), resolve(process.cwd(), "..", "..")]) {

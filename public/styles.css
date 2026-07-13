@@ -183,7 +183,13 @@ body.sidebar-collapsed .shell {
 
 body.sidebar-collapsed .sidebar-toggle {
   left: 14px;
-  color: color-mix(in srgb, var(--ink) 62%, transparent);
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+  color: color-mix(in srgb, var(--ink) 82%, white);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
+  background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.3);
 }
 
 body.sidebar-collapsed .sidebar-toggle svg {
@@ -288,6 +294,22 @@ button.compact {
 .brand-lockup h1 {
   font-size: clamp(1.45rem, 2vw, 2rem);
   line-height: 1;
+}
+
+.brand-home {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+.brand-home:hover:not(:disabled) {
+  transform: none;
 }
 
 .app-nav {
@@ -1890,7 +1912,8 @@ body[data-active-view="tracking"] #view-journal {
   align-items: center;
   justify-content: center;
   gap: clamp(10px, 2vh, 22px);
-  overflow: hidden;
+  overflow: visible;
+  border-bottom: 0;
   padding: clamp(20px, 4vh, 48px) 20px;
 }
 
@@ -2138,11 +2161,15 @@ body[data-active-view="tracking"] #view-journal {
 }
 
 .electron-shell .app-chrome::before {
-  content: none;
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 38px;
+  -webkit-app-region: drag;
 }
 
 .electron-shell .app-chrome {
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 .electron-shell .sidebar-toggle {
@@ -3328,22 +3355,31 @@ body[data-lock-state="integrity"] .saint-halo {
   }
 
   .ranking-vitals {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
   }
 
   .ranking-vital-primary {
-    grid-column: 1 / -1;
+    grid-column: auto;
   }
 
   .ranking-vital {
-    min-height: 132px;
-    padding: 18px;
+    min-height: 104px;
+    gap: 6px;
+    padding: 14px;
+  }
+
+  .ranking-vital span {
+    font-size: 0.72rem;
+  }
+
+  .ranking-vital em {
+    font-size: 0.68rem;
   }
 
   .ranking-vital strong,
   .ranking-vital-primary strong {
-    font-size: clamp(2.15rem, 9cqi, 3rem);
+    font-size: clamp(1.55rem, 6cqi, 2.25rem);
     overflow-wrap: normal;
   }
 
@@ -3354,15 +3390,27 @@ body[data-lock-state="integrity"] .saint-halo {
 
 @container ranking (max-width: 520px) {
   .ranking-vitals {
-    grid-template-columns: 1fr;
-  }
-
-  .ranking-vital-primary {
-    grid-column: auto;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
   }
 
   .ranking-vital {
-    min-height: 122px;
+    min-height: 94px;
+    gap: 5px;
+    padding: 11px;
+  }
+
+  .ranking-vital span {
+    font-size: 0.66rem;
+  }
+
+  .ranking-vital em {
+    font-size: 0.61rem;
+  }
+
+  .ranking-vital strong,
+  .ranking-vital-primary strong {
+    font-size: clamp(1.35rem, 6.2cqi, 1.8rem);
   }
 
   .ranking-standing strong {
@@ -4025,8 +4073,23 @@ body[data-active-view="journal"] .split-surface {
   display: grid;
   justify-items: center;
   gap: clamp(18px, calc(13px + 0.55vw), 24px);
-  margin: clamp(64px, 7vh, 90px) auto 0;
-  padding: clamp(30px, 3.5vh, 44px) 0;
+  margin: 0 auto;
+}
+
+/* The locked prompt belongs to the Journal panel, so center it against that
+   panel's full viewport instead of offsetting it from the top of the page. */
+body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) .shell {
+  padding-block: 0;
+}
+
+body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-journal {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-journal > :not(#journalUnlockGate) {
+  display: none !important;
 }
 
 .journal-gate-copy > p,
@@ -4689,11 +4752,6 @@ body[data-active-view="journal"] .split-surface {
 
   .habit-month-score span {
     max-width: none;
-  }
-
-  .journal-unlock-gate {
-    margin-top: 36px;
-    padding: 26px 0;
   }
 
   .journal-unlock-actions {
@@ -6180,7 +6238,7 @@ h3,
 /* Protection bloom: one calm orb that opens into a four-step constellation. */
 .protection-level-control {
   --level-color: var(--accent-bright);
-  --protection-bloom-scale: 0.8;
+  --protection-orb-size: clamp(66px, min(7vw, 10vh), 76px);
   width: min(430px, 92vw);
   gap: 4px;
   isolation: isolate;
@@ -6241,8 +6299,6 @@ h3,
   height: 86px;
   margin: 0 auto;
   touch-action: none;
-  transform: scale(var(--protection-bloom-scale));
-  transform-origin: center;
 }
 
 .protection-level-trace {
@@ -6269,8 +6325,8 @@ h3,
   z-index: 2;
   top: 50%;
   left: 50%;
-  width: 58px;
-  min-height: 58px;
+  width: var(--protection-orb-size);
+  min-height: var(--protection-orb-size);
   display: grid;
   place-items: center;
   padding: 0;
@@ -6326,7 +6382,7 @@ h3,
 .protection-level-choice span {
   position: relative;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: clamp(0.86rem, 1.8vw, 1rem);
   font-weight: 800;
   line-height: 1;
   transition: color 277ms ease, text-shadow 277ms ease;
@@ -6354,10 +6410,10 @@ h3,
   transition-duration: 492ms, 1000ms;
 }
 
-.protection-level-choice[data-protection-level-choice="1"] { --level-offset: -117px; --choice-color: #e2ad72; }
-.protection-level-choice[data-protection-level-choice="2"] { --level-offset: -39px; --choice-color: #c98a57; }
-.protection-level-choice[data-protection-level-choice="3"] { --level-offset: 39px; --choice-color: #bc624b; }
-.protection-level-choice[data-protection-level-choice="4"] { --level-offset: 117px; --choice-color: #ff7b81; }
+.protection-level-choice[data-protection-level-choice="1"] { --level-offset: -132px; --choice-color: #e2ad72; }
+.protection-level-choice[data-protection-level-choice="2"] { --level-offset: -44px; --choice-color: #c98a57; }
+.protection-level-choice[data-protection-level-choice="3"] { --level-offset: 44px; --choice-color: #bc624b; }
+.protection-level-choice[data-protection-level-choice="4"] { --level-offset: 132px; --choice-color: #ff7b81; }
 
 .protection-level-control[data-level="1"] .protection-level-choice[data-protection-level-choice="1"],
 .protection-level-control[data-level="2"] .protection-level-choice[data-protection-level-choice="2"],
@@ -6379,7 +6435,7 @@ h3,
 
 .protection-level-control.is-open:not(.is-settling) .protection-level-trace,
 .protection-level-control.is-scrolling:not(.is-settling) .protection-level-trace {
-  width: 290px;
+  width: 324px;
   opacity: 1;
 }
 
@@ -6449,14 +6505,14 @@ h3,
 }
 
 @media (max-width: 520px) {
-  .protection-level-choice[data-protection-level-choice="1"] { --level-offset: -99px; }
-  .protection-level-choice[data-protection-level-choice="2"] { --level-offset: -33px; }
-  .protection-level-choice[data-protection-level-choice="3"] { --level-offset: 33px; }
-  .protection-level-choice[data-protection-level-choice="4"] { --level-offset: 99px; }
+  .protection-level-choice[data-protection-level-choice="1"] { --level-offset: -108px; }
+  .protection-level-choice[data-protection-level-choice="2"] { --level-offset: -36px; }
+  .protection-level-choice[data-protection-level-choice="3"] { --level-offset: 36px; }
+  .protection-level-choice[data-protection-level-choice="4"] { --level-offset: 108px; }
 
   .protection-level-control.is-open:not(.is-settling) .protection-level-trace,
   .protection-level-control.is-scrolling:not(.is-settling) .protection-level-trace {
-    width: 238px;
+    width: 252px;
   }
 }
 
@@ -6771,27 +6827,36 @@ body[data-active-view="tracking"] .habit-pulse-day {
   white-space: nowrap;
 }
 
+#view-home .saint-stage {
+  --saint-art-size: clamp(304px, min(40vw, 55vh), 456px);
+  transform: translateY(-1px);
+}
+
+#view-home .protection-level-control {
+  transform: translateY(-8px);
+}
+
 #view-home .saint-artifact,
 #view-home .saint-stage[data-saint] .saint-artifact {
-  width: min(450px, 90vw);
-  min-height: min(422px, 52vh);
+  width: min(calc(var(--saint-art-size) + 74px), 90vw);
+  min-height: calc(var(--saint-art-size) + 48px);
 }
 
 #view-home .saint-artwork {
-  width: min(372px, 82vw);
-  height: min(372px, 47vh);
+  width: var(--saint-art-size);
+  height: var(--saint-art-size);
 }
 
 @media (max-width: 720px) {
   #view-home .saint-artifact,
   #view-home .saint-stage[data-saint] .saint-artifact {
-    width: min(390px, 96vw);
-    min-height: min(358px, 50vh);
+    width: min(370px, 96vw);
+    min-height: min(340px, 48vh);
   }
 
   #view-home .saint-artwork {
-    width: min(316px, 84vw);
-    height: min(316px, 44vh);
+    width: min(300px, 84vw);
+    height: min(300px, 42vh);
   }
 }
 

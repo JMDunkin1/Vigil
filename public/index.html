@@ -12,7 +12,7 @@
   </button>
   <aside class="app-chrome" id="primarySidebar" aria-label="Vigil navigation">
     <div class="brand-lockup">
-      <h1>Vigil</h1>
+      <h1><button id="brandHomeButton" class="brand-home" type="button" data-view-target="home" aria-label="Go to Home" title="Home">Vigil</button></h1>
     </div>
     <nav id="primaryNavigation" class="app-nav" aria-label="Primary">
       <button class="nav-tab is-active" type="button" data-view-target="home" aria-selected="true">
@@ -743,13 +743,11 @@
         </header>
         <div class="tracking-metric-grid">
           <article class="tracking-metric-card tracking-metric-primary">
-            <div class="tracking-card-kicker">Completion</div>
             <div class="tracking-metric-value"><strong id="habitMonthRate">—</strong><small>completed</small></div>
             <p id="habitMonthSummary"></p>
             <svg id="habitMonthTrend" class="tracking-trend" viewBox="0 0 420 104" preserveAspectRatio="none" role="img" aria-label="Completion trend for this month"></svg>
           </article>
           <article class="tracking-metric-card tracking-metric-rhythm">
-            <div class="tracking-card-kicker">Check-ins</div>
             <span id="habitMonthDayCount" hidden>31 days</span>
             <div class="tracking-rhythm-copy">
               <strong id="habitMonthCompleted">—</strong>
