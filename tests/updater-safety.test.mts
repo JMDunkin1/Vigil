@@ -4,6 +4,7 @@ import { cp, lstat, mkdir, mkdtemp, readFile, readlink, rename, rm, symlink, wri
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { acquireUpdaterLock } from "../app/updater.js";
+import { macSigningTimestamp } from "../scripts/mac-signing-identity.mjs";
 import { atomicInstallBuiltApp } from "../scripts/update-packaged-app.mjs";
 import type { AtomicInstallOperations } from "../scripts/update-packaged-app.mjs";
 
@@ -14,6 +15,12 @@ const mainSource = await readFile(join(sourceRoot, "app", "main.ts"), "utf8");
 const updaterSource = await readFile(join(sourceRoot, "app", "updater.ts"), "utf8");
 const updateScriptSource = await readFile(join(sourceRoot, "scripts", "update-packaged-app.mts"), "utf8");
 const localLauncherSource = await readFile(join(sourceRoot, "scripts", "launch-local-app.mts"), "utf8");
+const packageMacSource = await readFile(join(sourceRoot, "scripts", "package-mac.mjs"), "utf8");
+
+assert.equal(macSigningTimestamp("Vigil Local Code Signing"), "none", "local self-signing must not depend on Apple's timestamp service");
+assert.equal(macSigningTimestamp("Apple Development: Example"), undefined, "Apple Development signing must keep its normal timestamp behavior");
+assert.match(packageMacSource, /-c\.mac\.timestamp=\$\{timestamp\}/u, "local app builds must pass the safe timestamp policy to electron-builder");
+assert.match(updateScriptSource, /-c\.mac\.timestamp=\$\{signingTimestamp\}/u, "isolated updater builds must use the same timestamp policy");
 
 const preflightIndex = updaterSource.indexOf("await assertLocallyRebuildableApp(appPath)");
 const quitIndex = updaterSource.indexOf("setTimeout(quitForUpdate");

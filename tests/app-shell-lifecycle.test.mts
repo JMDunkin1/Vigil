@@ -71,13 +71,28 @@ assert.doesNotMatch(
   /setWindowButtonVisibility\(false\)/,
   "native macOS window controls must never be explicitly hidden"
 );
-assert.match(mainSource, /fullscreenable:\s*false/, "Vigil must use macOS zoom instead of fullscreen so the traffic lights remain visible");
+assert.match(mainSource, /fullscreenable:\s*true/, "Vigil must use the standard native macOS fullscreen path");
+assert.match(mainSource, /titleBarStyle:\s*"hiddenInset"/, "Vigil must leave the normal-size integrated title bar unchanged");
+assert.match(mainSource, /trafficLightPosition:\s*\{ x:\s*18, y:\s*19 \}/, "integrated traffic lights must retain their intended position");
 assert.match(
   mainSource,
   /function restoreNativeWindowControls\(window: BrowserWindow\): void \{[\s\S]*?window\.setWindowButtonVisibility\(true\);/,
   "showing Vigil must restore the native red, yellow, and green controls"
 );
-assert.doesNotMatch(mainSource, /role:\s*"togglefullscreen"/, "the View menu must not put Vigil into a traffic-light-free fullscreen state");
+assert.match(
+  mainSource,
+  /mainWindow\.show\(\);\s*\/\/[\s\S]*?restoreNativeWindowControls\(mainWindow\);/,
+  "native controls must be restored after the formerly hidden window becomes visible"
+);
+for (const event of ["show", "focus"]) {
+  assert.match(
+    mainSource,
+    new RegExp(`vigilWindow\\.on\\("${event}",[\\s\\S]*?restoreNativeWindowControls\\(vigilWindow\\)`),
+    `${event} must repair native controls if AppKit resets the hidden title bar`
+  );
+}
+assert.doesNotMatch(mainSource, /vigil:window-action|maximizedWindowControls/, "Vigil must not imitate native window controls in web content");
+assert.match(mainSource, /role:\s*"togglefullscreen"/, "the View menu must expose the standard native macOS fullscreen action");
 
 async function sourceRoot(): Promise<string> {
   for (const candidate of [process.cwd(), resolve(process.cwd(), "..", "..")]) {

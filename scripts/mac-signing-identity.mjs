@@ -25,3 +25,10 @@ export function isLocallyRebuildableSignature(detail) {
     || /^Authority=Apple Development:/mu.test(detail)
     || new RegExp(`^Authority=${LOCAL_SIGNING_IDENTITY}$`, "mu").test(detail);
 }
+
+export function macSigningTimestamp(identity) {
+  // This self-issued identity is only used for stable local macOS permissions.
+  // Asking Apple's timestamp service to timestamp it can reject otherwise
+  // valid builds when bundled resource mtimes are a few minutes ahead.
+  return identity === LOCAL_SIGNING_IDENTITY ? "none" : undefined;
+}

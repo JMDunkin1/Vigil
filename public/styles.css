@@ -147,7 +147,9 @@ body.sidebar-collapsed .shell {
 .sidebar-toggle {
   position: fixed;
   z-index: 80;
-  top: 16px;
+  /* Always clear the native macOS title bar. This must not depend on the
+     preload marker arriving before the stylesheet is evaluated. */
+  top: 50px;
   left: 220px;
   width: 27px;
   min-width: 27px;
@@ -161,6 +163,7 @@ body.sidebar-collapsed .shell {
   background: transparent;
   color: rgba(244, 234, 213, 0.62);
   box-shadow: none;
+  -webkit-app-region: no-drag;
   transition: left 160ms ease, color 160ms ease, background 160ms ease;
 }
 
@@ -2084,8 +2087,7 @@ body[data-active-view="tracking"] #view-journal {
 }
 
 .electron-shell .sidebar-toggle {
-  /* Keep this web control below the hidden native title-bar hit region. */
-  top: 50px;
+  /* Explicitly preserve the click target inside Electron drag layouts. */
   -webkit-app-region: no-drag;
 }
 

@@ -7,7 +7,7 @@ import { getInstanceSecret } from "../src/instanceIdentity.js";
 import { fetchVigilStateHealth } from "../src/vigilHealth.js";
 import { isDirectRun } from "../src/directRun.js";
 import { plistStringForKey } from "../src/plist.js";
-import { isLocallyRebuildableSignature, resolveMacSigningIdentity } from "./mac-signing-identity.mjs";
+import { isLocallyRebuildableSignature, macSigningTimestamp, resolveMacSigningIdentity } from "./mac-signing-identity.mjs";
 
 interface Options {
   repoRoot: string;
@@ -214,9 +214,11 @@ async function buildInIsolatedWorktree(): Promise<StagedBuild> {
     await rm(outputPath, { recursive: true, force: true });
     await status("packaging", "Packaging a staged Vigil app");
     const signingIdentity = await resolveMacSigningIdentity();
+    const signingTimestamp = macSigningTimestamp(signingIdentity);
     await run(npmExecutable(), [
       "exec", "--", "electron-builder", "--mac", "dir",
       `-c.mac.identity=${signingIdentity}`,
+      ...(signingTimestamp ? [`-c.mac.timestamp=${signingTimestamp}`] : []),
       "-c.asarUnpack=dist.nosync/runtime/**/*",
       "-c.directories.output=dist/update-mac.noindex"
     ], { cwd: repoRoot });

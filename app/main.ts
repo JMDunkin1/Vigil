@@ -139,15 +139,19 @@ function showVigilWindow(appUrl: string): void {
   if (!mainWindow) createWindow(appUrl);
   if (!mainWindow) return;
   if (shouldStayResident()) app.show();
-  restoreNativeWindowControls(mainWindow);
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
+  // AppKit can discard hidden-title-bar button visibility while the accessory
+  // app or its window is hidden. Restore it only after the window is visible.
+  restoreNativeWindowControls(mainWindow);
   mainWindow.focus();
+  setImmediate(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) restoreNativeWindowControls(mainWindow);
+  });
 }
 
 function restoreNativeWindowControls(window: BrowserWindow): void {
   if (process.platform !== "darwin") return;
-  if (window.isFullScreen()) window.setFullScreen(false);
   window.setWindowButtonVisibility(true);
 }
 
@@ -172,10 +176,7 @@ function createWindow(appUrl: string): void {
     trafficLightPosition: { x: 18, y: 19 },
     backgroundColor: "#14191c",
     alwaysOnTop: false,
-    // Native macOS fullscreen removes the traffic lights by design. Keep the
-    // green control in zoom/maximize mode so red, yellow, and green remain
-    // reachable whenever Vigil is open.
-    fullscreenable: false,
+    fullscreenable: true,
     webPreferences: {
       contextIsolation: true,
       devTools: !app.isPackaged,
@@ -189,6 +190,10 @@ function createWindow(appUrl: string): void {
   vigilWindow.setAlwaysOnTop(false);
   vigilWindow.setVisibleOnAllWorkspaces(false);
   vigilWindow.on("ready-to-show", () => restoreNativeWindowControls(vigilWindow));
+  vigilWindow.on("show", () => restoreNativeWindowControls(vigilWindow));
+  vigilWindow.on("focus", () => restoreNativeWindowControls(vigilWindow));
+  vigilWindow.on("enter-full-screen", () => restoreNativeWindowControls(vigilWindow));
+  vigilWindow.on("leave-full-screen", () => restoreNativeWindowControls(vigilWindow));
 
   void vigilWindow.loadURL(appUrl);
   vigilWindow.webContents.on("will-navigate", (event, url) => {
@@ -381,7 +386,9 @@ function installMenu(appUrl: string): void {
     { type: "separator" },
     { role: "resetZoom" },
     { role: "zoomIn" },
-    { role: "zoomOut" }
+    { role: "zoomOut" },
+    { type: "separator" },
+    { role: "togglefullscreen" }
   );
 
   const template: MenuItemConstructorOptions[] = [
