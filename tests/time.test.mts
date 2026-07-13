@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { isClock, normalizeClock, parseClock } from "../src/time.js";
+import { isClock, normalizeClock, parseClock, trackingDateKey, trackingDay } from "../src/time.js";
 
 assert.equal(isClock("00:00"), true);
 assert.equal(isClock("23:59"), true);
@@ -10,3 +10,7 @@ assert.equal(isClock("99:99"), false);
 assert.equal(normalizeClock("99:99", "09:00"), "09:00");
 assert.equal(parseClock("99:99"), 0);
 assert.equal(parseClock("17:45"), 17 * 60 + 45);
+
+assert.equal(trackingDateKey(new Date(2026, 6, 13, 2, 59, 59)), "2026-07-12");
+assert.equal(trackingDateKey(new Date(2026, 6, 13, 3, 0, 0)), "2026-07-13");
+assert.equal(trackingDay(new Date(2026, 6, 13, 1, 42, 0)).getHours(), 0);

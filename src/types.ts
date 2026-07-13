@@ -455,6 +455,7 @@ export interface JournalVaultState {
   passwordHash: string;
   passwordSetAt: string | null;
   autoLockMinutes: number;
+  autoLockVersion: number;
 }
 
 export type IntentionalPlanListKind = "todo" | "watch" | "read" | "custom";

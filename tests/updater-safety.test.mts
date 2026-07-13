@@ -16,6 +16,7 @@ const updaterSource = await readFile(join(sourceRoot, "app", "updater.ts"), "utf
 const updateScriptSource = await readFile(join(sourceRoot, "scripts", "update-packaged-app.mts"), "utf8");
 const localLauncherSource = await readFile(join(sourceRoot, "scripts", "launch-local-app.mts"), "utf8");
 const packageMacSource = await readFile(join(sourceRoot, "scripts", "package-mac.mjs"), "utf8");
+const writeBuildInfoSource = await readFile(join(sourceRoot, "scripts", "write-build-info.mts"), "utf8");
 
 assert.equal(macSigningTimestamp("Vigil Local Code Signing"), "none", "local self-signing must not depend on Apple's timestamp service");
 assert.equal(macSigningTimestamp("Apple Development: Example"), undefined, "Apple Development signing must keep its normal timestamp behavior");
@@ -34,6 +35,11 @@ assert.match(
 assert.match(updateScriptSource, /\["worktree", "add", "--detach"/u);
 assert.match(updaterSource, /packagedBuildRepoRoot\(app\)/u, "the installed app must retain its source checkout pointer");
 assert.match(updateScriptSource, /VIGIL_BUILD_SOURCE_ROOT: options\.repoRoot/u, "staged update builds must preserve the real checkout pointer");
+assert.match(
+  writeBuildInfoSource,
+  /rev-parse", "--path-format=absolute", "--git-common-dir/u,
+  "manual builds from temporary worktrees must retain the durable primary checkout pointer"
+);
 assert.ok(
   updateScriptSource.indexOf("const defaultInstallOperations") < updateScriptSource.lastIndexOf("if (isDirectRun(import.meta.url)) await runUpdate()"),
   "the direct updater must start only after its default atomic install operations are initialized"

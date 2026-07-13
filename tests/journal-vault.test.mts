@@ -7,6 +7,7 @@ import { defaultState } from "../src/defaults.js";
 import { addIntentionalJournalEntry, intentionalUseSummary } from "../src/intentionalUse.js";
 import {
   journalVaultSummary,
+  normalizeJournalVaultState,
   requireJournalVaultSession,
   revokeJournalVaultSession,
   setJournalVaultAutoLockMinutes,
@@ -25,6 +26,14 @@ const publicSummary = intentionalUseSummary(state, {}, now);
 assert.deepEqual(publicSummary.lifeLog.entries, []);
 assert.equal(publicSummary.lifeLog.stats.totalEntries, 1);
 assert.equal(journalVaultSummary(state).configured, true);
+assert.equal(journalVaultSummary(state).autoLockMinutes, 0);
+assert.equal(normalizeJournalVaultState({ autoLockMinutes: 15 }).autoLockMinutes, 0);
+assert.equal(normalizeJournalVaultState({ autoLockMinutes: 15, autoLockVersion: 1 }).autoLockMinutes, 15);
+
+const immediate = setJournalVaultAutoLockMinutes(state, {
+  autoLockMinutes: 0
+});
+assert.equal(immediate.autoLockMinutes, 0);
 
 const configured = setJournalVaultAutoLockMinutes(state, {
   autoLockMinutes: 10
@@ -40,6 +49,14 @@ try {
   assert.equal(firstSecret, secondSecret);
   assert.equal((await readFile(touchIdSecretPath(tempDataDir), "utf8")).trim(), firstSecret);
   assert.equal((await stat(touchIdSecretPath(tempDataDir))).mode & 0o777, 0o600);
+  const immediateState = defaultState();
+  const immediateSession = await unlockJournalVaultWithTouchId(immediateState, {
+    "x-vigil-touch-id-secret": firstSecret
+  }, now, tempDataDir);
+  assert.equal(requireJournalVaultSession(immediateState, {
+    "x-vigil-journal-token": immediateSession.token
+  }, new Date(now.getTime() + 60_000))?.method, "touch-id");
+  assert.equal(revokeJournalVaultSession({ "x-vigil-journal-token": immediateSession.token }), true);
   const touchSession = await unlockJournalVaultWithTouchId(state, {
     "x-vigil-touch-id-secret": firstSecret
   }, now, tempDataDir);

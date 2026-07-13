@@ -12,7 +12,7 @@ import {
   normalizeLockLevel
 } from "./policy.js";
 import { normalizeTextList as normalizeTargets, normalizeWeekdays as normalizeDays } from "./normalizers.js";
-import { clampNumber, dateKey, normalizeClock, parseClock, weekKey } from "./time.js";
+import { clampNumber, dateKey, normalizeClock, parseClock, trackingDateKey, trackingDay, weekKey } from "./time.js";
 import { behaviorSummary, journalEntriesForWeek, plannerSummary, recoverySummary, reflectionStreakDays, sosPlan } from "./intentionalUseSummary.js";
 import { journalVaultSummary, normalizeJournalVaultState } from "./journalVault.js";
 import type {
@@ -332,7 +332,8 @@ export function recordIntentionalBehaviorCheckIn(state: VigilState, body: Intent
     return null;
   }
   const value = behavior.unit === "yes-no" ? (truthy(body.value) ? 1 : 0) : clampNumber(body.value, 0, 100000, 1);
-  const checkInDate = checkInDateKey === dateKey(now) ? now : new Date(`${checkInDateKey}T12:00:00`);
+  const logicalCheckInDate = new Date(`${checkInDateKey}T12:00:00`);
+  const checkInDate = checkInDateKey === trackingDateKey(now) ? now : logicalCheckInDate;
   const checkIn: IntentionalBehaviorCheckIn = {
     id: existingIndex >= 0 ? state.intentionalUse.behaviorCheckIns[existingIndex].id : randomUUID(),
     behaviorId: behavior.id,
@@ -341,7 +342,7 @@ export function recordIntentionalBehaviorCheckIn(state: VigilState, body: Intent
     note: String(body.note || "").trim().slice(0, 500),
     at: checkInDate.toISOString(),
     dateKey: checkInDateKey,
-    weekKey: weekKey(checkInDate)
+    weekKey: weekKey(logicalCheckInDate)
   };
   const journalEntryId = String(body.journalEntryId || "");
   if (journalEntryId) checkIn.journalEntryId = journalEntryId;
@@ -456,7 +457,7 @@ export function intentionalUseSummary(state: VigilState, usage: UnknownRecord = 
   ensureIntentionalUse(state);
   cleanupIntentionalUse(state, now);
   const day = dateKey(now);
-  const week = weekKey(now);
+  const week = weekKey(trackingDay(now));
   const rules = state.intentionalUse.rules.map((rule) => ruleSummary(state, rule, now));
   const behaviorSummaries = state.intentionalUse.behaviors.map((behavior) => behaviorSummary(state, behavior, week));
   const journalThisWeek = journalEntriesForWeek(state, week);
@@ -744,7 +745,7 @@ function mergeSeededBehaviors(seedBehaviors: unknown, currentBehaviors: unknown)
 
 function normalizeBehaviorDateKey(value: unknown, now: Date): string {
   const requested = String(value || "").trim();
-  if (!requested) return dateKey(now);
+  if (!requested) return trackingDateKey(now);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(requested)) {
     throw new IntentionalUseError("Behavior date must use YYYY-MM-DD.");
   }
@@ -752,7 +753,7 @@ function normalizeBehaviorDateKey(value: unknown, now: Date): string {
   if (!Number.isFinite(parsed.getTime()) || dateKey(parsed) !== requested) {
     throw new IntentionalUseError("Behavior date is invalid.");
   }
-  const today = new Date(`${dateKey(now)}T12:00:00`);
+  const today = new Date(`${trackingDateKey(now)}T12:00:00`);
   const ageDays = Math.round((today.getTime() - parsed.getTime()) / 86_400_000);
   if (ageDays < 0) throw new IntentionalUseError("Future behavior check-ins are not allowed.");
   if (ageDays > 400) throw new IntentionalUseError("Behavior check-ins can be backdated up to 400 days.");

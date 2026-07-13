@@ -114,6 +114,9 @@ const appSource = await readFile("public/app.js", "utf8");
 assert.match(appSource, /!hasRuntimeStatus/, "the idle home screen must hide the redundant Ready and dash status row");
 const rankingSource = await readFile("public/ranking-view.js", "utf8");
 assert.match(rankingSource, /Number\(data\.usage\?\.totalSeconds \|\| 0\) > 0/, "focus labels must require recorded usage instead of treating an empty usage object as activity");
+assert.match(rankingSource, /textEl\("strong", duration, \{ className: "ranking-week-duration" \}\),\s*el\("div", \{ className: "ranking-week-bar-stage" \}, bar\)/, "weekly duration labels must stay outside the variable-height bars");
+assert.match(styles, /\.ranking-dashboard\s*\{[^}]*container:\s*ranking \/ inline-size;/, "ranking must respond to its usable panel width rather than only the window width");
+assert.match(styles, /@container ranking \(max-width: 760px\)\s*\{[\s\S]*?\.ranking-vitals\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\);/, "ranking vitals must recompose before their values can overflow narrow cards");
 
 const journalGateMarkup = html.match(/<section id="journalUnlockGate"[\s\S]*?<\/section>/)?.[0] || "";
 assert.doesNotMatch(journalGateMarkup, /\bpanel\b/, "journal access must not regress to the oversized generic panel");
@@ -124,7 +127,9 @@ assert.doesNotMatch(journalGateMarkup, /type="password"|data-journal-unlock-meth
 assert.doesNotMatch(html, /<span class="pill neutral">Local<\/span>/, "the journal header must not show a redundant Local badge");
 assert.match(styles, /\.journal-unlock-gate\s*\{[\s\S]*?width:\s*min\(620px, 100%\)/, "journal access must remain compact within the writing surface");
 assert.doesNotMatch(styles, /\.journal-unlock-gate\s*\{[^}]*border-block:/, "the journal unlock prompt must not be boxed in by divider lines");
-assert.match(styles, /\.journal-gate-copy > h2\s*\{[^}]*font-size:\s*1\.85rem;/, "the minimal unlock instruction must remain prominent");
+assert.match(styles, /\.journal-unlock-gate\s*\{[^}]*--journal-unlock-size:\s*clamp\(84px,[^;]*116px\);/, "the fingerprint control must grow with wider journal layouts");
+assert.match(styles, /\.journal-touch-id\s*\{[^}]*width:\s*var\(--journal-unlock-size\);[^}]*height:\s*var\(--journal-unlock-size\);/, "the fingerprint control must use its responsive size for both dimensions");
+assert.match(styles, /\.journal-gate-copy > h2\s*\{[^}]*font-size:\s*clamp\(1\.85rem,[^;]*2\.45rem\);/, "the minimal unlock instruction must scale with the fingerprint control");
 
 const emergencyMarkup = html.match(/<details id="emergencyPanel"[\s\S]*?<\/details>/)?.[0] || "";
 assert.match(emergencyMarkup, /<summary class="emergency-summary">/, "emergency UI must be a collapsible top drawer");
@@ -140,14 +145,22 @@ assert.match(html, /id="saintStageButton"[^>]*aria-controls="saintInfoPopover"[^
 assert.match(html, /id="saintStageButton"[^>]*title="[^"]*Two-finger click for details\./, "saint details must advertise the trackpad gesture");
 assert.match(html, /id="saintArtwork"[^>]*draggable="false"/, "saint artwork must not expose the source image through native dragging");
 assert.match(html, /id="saintInfoPopover"[^>]*role="dialog"[^>]*aria-labelledby="saintInfoName"[^>]*hidden/, "saint details must start closed and have an accessible name");
-for (const id of ["saintInfoName", "saintInfoEpithet", "saintInfoQuote", "saintInfoSource", "saintInfoClose"]) {
+for (const id of ["saintInfoName", "saintInfoEpithet", "saintInfoQuote", "saintInfoSource", "saintInfoClose", "saintInfoPrevious", "saintInfoNext"]) {
   assert.ok(idSet.has(id), `saint details are missing #${id}`);
 }
+assert.match(html, /class="saint-info-navigation" aria-label="Browse patron saints"/, "saint details must expose in-card previous and next navigation");
+assert.match(styles, /#view-home \.saint-info-popover\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?width:\s*min\(360px,[\s\S]*?max-height:\s*min\(320px,[\s\S]*?overflow:\s*hidden;/, "saint details must overlay the artwork without resizing the home stage");
+assert.match(styles, /#view-home \.saint-info-popover blockquote\s*\{[\s\S]*?overflow-y:\s*auto;/, "long saint details must scroll inside the bounded card");
+assert.doesNotMatch(styles, /saint-stage:has\(\.saint-info-popover:not\(\[hidden\]\)\)/, "opening saint details must not resize the saint stage");
 const saintStageSource = await readFile("public/saint-stage.js", "utf8");
 assert.doesNotMatch(saintStageSource, /addEventListener\(["']dblclick["']/, "double-click must not open saint details");
 assert.match(saintStageSource, /addEventListener\(["']contextmenu["']/, "two-finger and right-click must open saint details");
 assert.doesNotMatch(saintStageSource, /event\.detail|clickTimer|setTimeout/, "every rapid left click must advance the saint immediately");
+assert.match(saintStageSource, /select\(previousSaintId\(selectedId\), true, true\)/, "the open saint card must browse backward without closing");
+assert.match(saintStageSource, /select\(nextSaintId\(selectedId\), true, true\)/, "the open saint card must browse forward without closing");
 assert.match(styles, /\.saint-artifact:focus-visible\s*\{\s*outline:\s*none;/, "the saint button must not draw a rectangular focus artifact");
+assert.match(styles, /\.audio-desk\s*\{[\s\S]*?container:\s*audio-desk \/ inline-size;/, "the audio player must respond to its usable panel width");
+assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?\.audio-player\s*\{[\s\S]*?display:\s*block;/, "the audio player must stack before its fixed columns overflow");
 
 const audioMarkup = html.match(/<section id="view-audio"[\s\S]*?<div class="audio-control-bridge"/)?.[0] || "";
 assert.doesNotMatch(audioMarkup, /audio-settings-disclosure|audio-volume-line/, "playback should not expose redundant session or volume controls");

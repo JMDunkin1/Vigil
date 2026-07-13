@@ -75,6 +75,21 @@ assert.throws(() => recordIntentionalBehaviorCheckIn(state, {
   value: true
 }, now), /invalid/);
 
+const afterMidnight = new Date(2026, 6, 13, 1, 42, 0);
+const afterMidnightState = defaultState();
+const lateNight = recordIntentionalBehaviorCheckIn(afterMidnightState, {
+  behaviorId: "habit-reading",
+  value: true
+}, afterMidnight);
+assert.ok(lateNight);
+assert.equal(lateNight.dateKey, "2026-07-12");
+assert.equal(lateNight.weekKey, "2026-W28");
+assert.throws(() => recordIntentionalBehaviorCheckIn(afterMidnightState, {
+  behaviorId: "habit-reading",
+  dateKey: "2026-07-13",
+  value: true
+}, afterMidnight), /Future behavior check-ins/);
+
 const summary = intentionalUseSummary(state, {}, now);
 assert.equal(summary.lifeLog.habitCheckIns.length, 1);
 assert.equal(summary.lifeLog.habitCheckIns[0].dateKey, "2026-07-09");

@@ -11,6 +11,7 @@ import { daysText, formatDuration, lines, phaseTitle, progressText } from "./for
 import { formHasUnsavedChanges, markFormSaved } from "./form-state.js";
 import { createFormController } from "./forms.js";
 import { createHardeningPanel } from "./hardening-panel.js";
+import { shouldConfirmJournalDraftOnViewExit, shouldLockJournalOnViewExit } from "./journal-lock.js";
 import { createLifeLogView } from "./life-log-view.js";
 import { createRankingView } from "./ranking-view.js";
 import { createSaintStage } from "./saint-stage.js";
@@ -208,7 +209,22 @@ async function pollState(): Promise<void> {
 }
 
 function setView(view?: string) {
+  const previousView = state.activeView;
   const nextView = view || "home";
+  const resolvedView = nextView === "settings" && previousView === "settings"
+    ? viewBeforeSettings
+    : nextView;
+  const lockOnExit = shouldLockJournalOnViewExit(
+    previousView,
+    resolvedView,
+    journalVault(state.data).autoLockMinutes,
+    journalSessionActive()
+  );
+  const journalForm = $("#journalEntryForm") as unknown as HTMLFormElement;
+  if (shouldConfirmJournalDraftOnViewExit(lockOnExit, formHasUnsavedChanges(journalForm))
+    && !window.confirm("Leave Journal and discard your unsaved entry?")) {
+    return;
+  }
   if (nextView === "settings") {
     if (state.activeView === "settings") {
       state.activeView = viewBeforeSettings;
@@ -220,6 +236,7 @@ function setView(view?: string) {
     state.activeView = nextView;
     viewBeforeSettings = nextView;
   }
+  if (lockOnExit) lockJournalForViewExit();
   renderActiveView(state.activeView);
 }
 
@@ -252,7 +269,9 @@ async function unlockJournal(): Promise<void> {
       throw new Error(response.error || "Journal authentication was not accepted.");
     }
     storeJournalSession(response.session);
-    status.textContent = response.session.expiresAt
+    status.textContent = journalVault(state.data).autoLockMinutes === 0
+      ? "Unlocked until you leave Journal"
+      : response.session.expiresAt
       ? `Unlocked until ${new Date(response.session.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
       : "Unlocked";
     toast("Journal unlocked");
@@ -273,7 +292,7 @@ async function saveJournalSecurity(): Promise<void> {
   status.textContent = "Saving journal security…";
   try {
     await post("/api/intentional-use/journal/security", {
-      autoLockMinutes: Number($("#journalAutoLockMinutes").value || 15)
+      autoLockMinutes: Number($("#journalAutoLockMinutes").value || 0)
     });
     status.textContent = "Saved. Unlock the journal again to continue.";
     toast("Journal security saved");
@@ -284,6 +303,18 @@ async function saveJournalSecurity(): Promise<void> {
   } finally {
     save.disabled = false;
   }
+}
+
+function lockJournalForViewExit(): void {
+  const lockRequest = post("/api/intentional-use/journal/lock", {});
+  clearJournalSession();
+  if (state.data) {
+    renderJournalGate(state.data);
+    renderJournalSecurity(state.data);
+  }
+  void lockRequest
+    .catch(() => {})
+    .finally(() => refresh());
 }
 
 async function lockJournalNow(): Promise<void> {
@@ -325,7 +356,7 @@ function renderJournalSecurity(data: DashboardData): void {
   $("#journalSecurityStatus").className = journalSessionActive() ? "pill good" : "pill neutral";
   $("#lockJournalNow").disabled = !journalSessionActive();
   if (document.activeElement !== $("#journalAutoLockMinutes")) {
-    $("#journalAutoLockMinutes").value = String(vault.autoLockMinutes || 15);
+    $("#journalAutoLockMinutes").value = String(vault.autoLockMinutes ?? 0);
   }
 }
 

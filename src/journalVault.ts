@@ -9,6 +9,9 @@ import { getTouchIdSecret } from "./touchIdAuth.js";
 import type { JournalVaultState, VigilState, UnknownRecord } from "./types.js";
 
 const SESSION_TOKEN_BYTES = 32;
+const DEFAULT_AUTO_LOCK_MINUTES = 0;
+const AUTO_LOCK_VERSION = 1;
+const IMMEDIATE_MODE_SESSION_MAX_MINUTES = 24 * 60;
 const TOUCH_ID_SECRET_HEADER = "x-vigil-touch-id-secret";
 const DEFAULT_DATA_DIR = process.env.VIGIL_DATA_DIR || resolveDefaultDataDir(dirname(dirname(fileURLToPath(import.meta.url))));
 
@@ -34,11 +37,20 @@ export function normalizeJournalVaultState(
   current: Partial<JournalVaultState> = {},
   fresh: Partial<JournalVaultState> = {}
 ): JournalVaultState {
+  const autoLockVersion = clampNumber(current.autoLockVersion, 0, AUTO_LOCK_VERSION, 0);
   return {
     passwordSalt: String(current.passwordSalt || fresh.passwordSalt || ""),
     passwordHash: String(current.passwordHash || fresh.passwordHash || ""),
     passwordSetAt: current.passwordSetAt || fresh.passwordSetAt || null,
-    autoLockMinutes: clampNumber(current.autoLockMinutes ?? fresh.autoLockMinutes, 1, 120, 15)
+    autoLockMinutes: autoLockVersion < AUTO_LOCK_VERSION
+      ? DEFAULT_AUTO_LOCK_MINUTES
+      : clampNumber(
+        current.autoLockMinutes ?? fresh.autoLockMinutes,
+        0,
+        120,
+        DEFAULT_AUTO_LOCK_MINUTES
+      ),
+    autoLockVersion: AUTO_LOCK_VERSION
   };
 }
 
@@ -56,7 +68,7 @@ export function setJournalVaultAutoLockMinutes(state: VigilState, body: UnknownR
   const vault = normalizeJournalVaultState(state.intentionalUse.journalVault || {});
   state.intentionalUse.journalVault = {
     ...vault,
-    autoLockMinutes: clampNumber(body.autoLockMinutes, 1, 120, vault.autoLockMinutes || 15)
+    autoLockMinutes: clampNumber(body.autoLockMinutes, 0, 120, vault.autoLockMinutes)
   };
   revokeAllJournalVaultSessions();
   return journalVaultSummary(state);
@@ -106,7 +118,10 @@ function createJournalVaultSession(
 ) {
   cleanupSessions(now);
   const token = randomBytes(SESSION_TOKEN_BYTES).toString("base64url");
-  const expiresAt = new Date(now.getTime() + vault.autoLockMinutes * 60_000).toISOString();
+  const sessionMinutes = vault.autoLockMinutes === 0
+    ? IMMEDIATE_MODE_SESSION_MAX_MINUTES
+    : vault.autoLockMinutes;
+  const expiresAt = new Date(now.getTime() + sessionMinutes * 60_000).toISOString();
   const session: JournalVaultSession = {
     token,
     createdAt: now.toISOString(),

@@ -48,6 +48,7 @@ export function bindAppEvents(context: AppEventsContext) {
   hardeningPanel.bind();
   const profileForm = $("#profileForm") as unknown as HTMLFormElement;
   trackFormChanges(profileForm);
+  trackFormChanges($("#journalEntryForm") as unknown as HTMLFormElement);
 
   $$("[data-scan-distance-key]").forEach((button) => {
     button.addEventListener("click", () => distanceKeyUi.openScanner(button.dataset.scanDistanceKey));
@@ -80,7 +81,7 @@ export function bindAppEvents(context: AppEventsContext) {
   const settleProtectionLevel = (level: number) => {
     protectionLevelControl.classList.add("is-settling");
     if (protectionLevelSettleTimer) clearTimeout(protectionLevelSettleTimer);
-    protectionLevelSettleTimer = setTimeout(releaseProtectionLevelSettle, 620);
+    protectionLevelSettleTimer = setTimeout(releaseProtectionLevelSettle, 954);
     void setProtectionLevel(level);
   };
   protectionLevelControl.addEventListener("pointerleave", releaseProtectionLevelSettle);

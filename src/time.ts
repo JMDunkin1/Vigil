@@ -5,6 +5,19 @@ export function dateKey(date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+export const TRACKING_DAY_ROLLOVER_HOUR = 3;
+
+export function trackingDay(date = new Date()): Date {
+  const day = new Date(date);
+  if (day.getHours() < TRACKING_DAY_ROLLOVER_HOUR) day.setDate(day.getDate() - 1);
+  day.setHours(0, 0, 0, 0);
+  return day;
+}
+
+export function trackingDateKey(date = new Date()): string {
+  return dateKey(trackingDay(date));
+}
+
 export function weekKey(date = new Date()): string {
   const copy = new Date(date);
   copy.setHours(0, 0, 0, 0);

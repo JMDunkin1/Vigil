@@ -734,7 +734,8 @@ export function defaultState(): VigilState {
         passwordSalt: "",
         passwordHash: "",
         passwordSetAt: null,
-        autoLockMinutes: 15
+        autoLockMinutes: 0,
+        autoLockVersion: 1
       },
       planLists: [
         {

@@ -74,6 +74,8 @@ export function createSaintStage() {
   const fallback = required<HTMLElement>("#saintFallback");
   const infoPopover = required<HTMLElement>("#saintInfoPopover");
   const infoClose = required<HTMLButtonElement>("#saintInfoClose");
+  const infoPrevious = required<HTMLButtonElement>("#saintInfoPrevious");
+  const infoNext = required<HTMLButtonElement>("#saintInfoNext");
   const infoName = required<HTMLElement>("#saintInfoName");
   const infoEpithet = required<HTMLElement>("#saintInfoEpithet");
   const infoQuote = required<HTMLElement>("#saintInfoQuote");
@@ -88,7 +90,7 @@ export function createSaintStage() {
     });
     stageButton.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      openInfo(event.clientX, event.clientY);
+      openInfo();
     });
     stageButton.addEventListener("keydown", (event) => {
       if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
@@ -96,6 +98,8 @@ export function createSaintStage() {
       openInfo();
     });
     infoClose.addEventListener("click", () => closeInfo());
+    infoPrevious.addEventListener("click", () => select(previousSaintId(selectedId), true, true));
+    infoNext.addEventListener("click", () => select(nextSaintId(selectedId), true, true));
     document.addEventListener("pointerdown", (event) => {
       if (infoPopover.hidden) return;
       const target = event.target;
@@ -103,7 +107,20 @@ export function createSaintStage() {
       closeInfo();
     });
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !infoPopover.hidden) closeInfo(true);
+      if (infoPopover.hidden) return;
+      if (event.key === "Escape") {
+        closeInfo(true);
+        return;
+      }
+      const target = event.target;
+      if (!(target instanceof Node) || !infoPopover.contains(target)) return;
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        select(previousSaintId(selectedId), true, true);
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        select(nextSaintId(selectedId), true, true);
+      }
     });
     artwork.addEventListener("load", () => {
       stage.dataset.artMissing = "false";
@@ -128,9 +145,9 @@ export function createSaintStage() {
     stage.addEventListener("pointerleave", resetPointer);
   }
 
-  function select(id: SaintPatron["id"], persist = true): void {
+  function select(id: SaintPatron["id"], persist = true, keepInfoOpen = false): void {
     const saint = SAINT_PATRONS.find((item) => item.id === id) || SAINT_PATRONS[0];
-    closeInfo();
+    if (!keepInfoOpen) closeInfo();
     selectedId = saint.id;
     stage.dataset.saint = saint.id;
     stage.dataset.artMissing = "false";
@@ -139,32 +156,26 @@ export function createSaintStage() {
     fallback.textContent = saint.fallback;
     stageButton.setAttribute("aria-label", `${saint.name}. Show the next patron saint.`);
     if (persist) storeSaintId(saint.id);
+    if (keepInfoOpen) renderInfo();
   }
 
-  function openInfo(clientX?: number, clientY?: number): void {
+  function openInfo(): void {
+    renderInfo();
+    infoPopover.hidden = false;
+    stageButton.setAttribute("aria-expanded", "true");
+    infoPopover.focus({ preventScroll: true });
+  }
+
+  function renderInfo(): void {
     const saint = SAINT_PATRONS.find((item) => item.id === selectedId) || SAINT_PATRONS[0];
     infoName.textContent = saint.name;
     infoEpithet.textContent = saint.epithet;
     infoQuote.textContent = `\u201c${saint.quote}\u201d`;
     infoSource.textContent = saint.source;
-    infoPopover.hidden = false;
-    stageButton.setAttribute("aria-expanded", "true");
-
-    const stageBounds = stage.getBoundingClientRect();
-    const anchorX = clientX === undefined ? stageBounds.width / 2 : clientX - stageBounds.left;
-    const anchorY = clientY === undefined ? stageBounds.height / 2 : clientY - stageBounds.top;
-    const inset = 12;
-    const left = Math.min(
-      Math.max(inset, anchorX + 14),
-      Math.max(inset, stage.clientWidth - infoPopover.offsetWidth - inset)
-    );
-    const preferredTop = anchorY + 14;
-    const top = preferredTop + infoPopover.offsetHeight <= stage.clientHeight - inset
-      ? preferredTop
-      : Math.max(inset, anchorY - infoPopover.offsetHeight - 14);
-    infoPopover.style.left = `${left}px`;
-    infoPopover.style.top = `${top}px`;
-    infoPopover.focus({ preventScroll: true });
+    const previous = patron(previousSaintId(selectedId));
+    const next = patron(nextSaintId(selectedId));
+    infoPrevious.setAttribute("aria-label", `Show ${previous.name}`);
+    infoNext.setAttribute("aria-label", `Show ${next.name}`);
   }
 
   function closeInfo(restoreFocus = false): void {
@@ -185,6 +196,15 @@ export function createSaintStage() {
 function nextSaintId(id: SaintPatron["id"]): SaintPatron["id"] {
   const index = SAINT_PATRONS.findIndex((saint) => saint.id === id);
   return SAINT_PATRONS[(index + 1) % SAINT_PATRONS.length].id;
+}
+
+function previousSaintId(id: SaintPatron["id"]): SaintPatron["id"] {
+  const index = SAINT_PATRONS.findIndex((saint) => saint.id === id);
+  return SAINT_PATRONS[(index - 1 + SAINT_PATRONS.length) % SAINT_PATRONS.length].id;
+}
+
+function patron(id: SaintPatron["id"]): SaintPatron {
+  return SAINT_PATRONS.find((saint) => saint.id === id) || SAINT_PATRONS[0];
 }
 
 function storedSaintId(): SaintPatron["id"] {

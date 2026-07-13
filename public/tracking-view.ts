@@ -1,4 +1,5 @@
 import type { DashboardData, DashboardItem, HabitCalendarCheckIn } from "./app-model.js";
+import { millisecondsUntilTrackingDayRollover, trackingDay } from "./tracking-day.js";
 
 type PostRequest = <T = unknown>(path: string, body: unknown) => Promise<T>;
 
@@ -17,8 +18,8 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
   const statusLabel = required<HTMLElement>("#habitCalendarStatus");
   const dateInput = required<HTMLInputElement>("#habitSelectedDate");
   const dialog = required<HTMLDialogElement>("#habitManagerDialog");
-  let selectedMonth = monthStart(new Date());
-  let selectedDate = dayStart(new Date());
+  let selectedMonth = monthStart(trackingDay());
+  let selectedDate = trackingDay();
   let selectedBehaviorId: string | null = null;
   let data: DashboardData | null = null;
   let saving = false;
@@ -27,14 +28,14 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     required<HTMLButtonElement>("#habitPreviousMonth").addEventListener("click", () => changeMonth(-1));
     required<HTMLButtonElement>("#habitNextMonth").addEventListener("click", () => changeMonth(1));
     required<HTMLButtonElement>("#habitCurrentMonth").addEventListener("click", () => {
-      selectedMonth = monthStart(new Date());
+      selectedMonth = monthStart(trackingDay());
       renderCalendar();
       renderQuickCheckIn();
     });
     required<HTMLButtonElement>("#habitSelectedPrevious").addEventListener("click", () => changeSelectedDay(-1));
     required<HTMLButtonElement>("#habitSelectedNext").addEventListener("click", () => changeSelectedDay(1));
-    required<HTMLButtonElement>("#habitSelectedToday").addEventListener("click", () => selectDate(dayStart(new Date())));
-    dateInput.max = localDateKey(new Date());
+    required<HTMLButtonElement>("#habitSelectedToday").addEventListener("click", () => selectDate(trackingDay()));
+    dateInput.max = localDateKey(trackingDay());
     dateInput.addEventListener("change", () => {
       const date = dateFromKey(dateInput.value);
       if (date) selectDate(date);
@@ -50,6 +51,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) dialog.close();
     });
+    scheduleTrackingDayRollover();
   }
 
   function render(next: DashboardData): void {
@@ -104,7 +106,8 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
 
     const values = checkInMap(checkIns);
     renderMonthPulse(pulseRoot, dates, behaviors, values);
-    const today = dayStart(new Date()).getTime();
+    const effectiveToday = trackingDay();
+    const today = effectiveToday.getTime();
     const visibleDates = dates.filter((date) => date.getTime() <= today);
     const monthStatuses = visibleDates.flatMap((date) => behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${localDateKey(date)}`))));
     const reported = monthStatuses.filter((status) => status !== "unreported");
@@ -129,7 +132,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     for (const date of dates) {
       const heading = document.createElement("th");
       heading.scope = "col";
-      heading.className = isSameDay(date, new Date()) ? "is-today" : "";
+      heading.className = isSameDay(date, effectiveToday) ? "is-today" : "";
       heading.textContent = String(date.getDate());
       heading.title = date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
       headRow.append(heading);
@@ -154,7 +157,8 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     behaviors: DashboardItem[],
     values: Map<string, HabitCalendarCheckIn>
   ): void {
-    const today = dayStart(new Date()).getTime();
+    const effectiveToday = trackingDay();
+    const today = effectiveToday.getTime();
     for (const date of dates) {
       const key = localDateKey(date);
       const statuses = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${key}`)));
@@ -163,7 +167,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       const future = date.getTime() > today;
       const button = document.createElement("button");
       button.type = "button";
-      button.className = `habit-pulse-day${isSameDay(date, new Date()) ? " is-today" : ""}${future ? " is-future" : ""}${reported ? " has-data" : ""}`;
+      button.className = `habit-pulse-day${isSameDay(date, effectiveToday) ? " is-today" : ""}${future ? " is-future" : ""}${reported ? " has-data" : ""}`;
       button.disabled = future;
       button.style.setProperty("--reported", String(reported / behaviors.length));
       button.style.setProperty("--completed", String(reported ? done / reported : 0));
@@ -220,8 +224,9 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       const habitStatus = statusFor(checkIn);
       const cell = document.createElement("td");
       const button = document.createElement("button");
-      const today = isSameDay(date, new Date());
-      const future = date.getTime() > dayStart(new Date()).getTime();
+      const effectiveToday = trackingDay();
+      const today = isSameDay(date, effectiveToday);
+      const future = date.getTime() > effectiveToday.getTime();
       button.type = "button";
       button.className = `habit-day ${habitStatus}${today ? " is-today" : ""}${future ? " is-future" : ""}`;
       button.dataset.behaviorId = behavior.id;
@@ -254,7 +259,8 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
         ? lifeLog.habitCheckIns
         : (lifeLog?.recentCheckIns || []));
     const dateKey = localDateKey(selectedDate);
-    const today = isSameDay(selectedDate, new Date());
+    const effectiveToday = trackingDay();
+    const today = isSameDay(selectedDate, effectiveToday);
     const title = required<HTMLElement>("#dailyCheckInTitle");
     const progress = required<HTMLElement>("#dailyCheckInProgress");
     const next = required<HTMLButtonElement>("#habitSelectedNext");
@@ -315,7 +321,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       renderQuickCheckIn();
     });
 
-    const monthDates = datesInMonth(selectedMonth).filter((date) => date.getTime() <= dayStart(new Date()).getTime());
+    const monthDates = datesInMonth(selectedMonth).filter((date) => date.getTime() <= effectiveToday.getTime());
     const weekDates = datesInWeek(selectedDate);
     const row = document.createElement("div");
     row.className = `habit-quick-row habit-visual-card ${status}`;
@@ -341,7 +347,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     week.className = "habit-week-grid";
     for (const date of weekDates) {
       const dayStatus = statusFor(values.get(`${behavior.id}:${localDateKey(date)}`));
-      const future = date.getTime() > dayStart(new Date()).getTime();
+      const future = date.getTime() > effectiveToday.getTime();
       const day = document.createElement("button");
       day.type = "button";
       day.className = `habit-week-day ${dayStatus}${isSameDay(date, selectedDate) ? " is-selected" : ""}`;
@@ -368,7 +374,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     row.append(heading, metric, week, controls);
     quickRoot.append(row);
 
-    const todayValues = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${localDateKey(new Date())}`)));
+    const todayValues = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${localDateKey(effectiveToday)}`)));
     const todayRecorded = todayValues.filter((status) => status !== "unreported").length;
     const todayDone = todayValues.filter((status) => status === "success").length;
     const lifeLogStatus = required<HTMLElement>("#lifeLogStatus");
@@ -458,7 +464,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
 
   function changeSelectedDay(amount: number): void {
     const next = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate() + amount);
-    if (next.getTime() > dayStart(new Date()).getTime()) return;
+    if (next.getTime() > trackingDay().getTime()) return;
     selectDate(next);
   }
 
@@ -468,6 +474,21 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     selectedBehaviorId = null;
     renderCalendar();
     renderQuickCheckIn();
+  }
+
+  function scheduleTrackingDayRollover(): void {
+    const previousToday = trackingDay();
+    window.setTimeout(() => {
+      const wasShowingToday = isSameDay(selectedDate, previousToday);
+      const nextToday = trackingDay();
+      dateInput.max = localDateKey(nextToday);
+      if (wasShowingToday) selectDate(nextToday);
+      else {
+        renderCalendar();
+        renderQuickCheckIn();
+      }
+      scheduleTrackingDayRollover();
+    }, millisecondsUntilTrackingDayRollover());
   }
 
   function behaviorAfterCheckIn(behaviorId: string, dateKey: string): string | null {

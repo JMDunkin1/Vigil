@@ -65,10 +65,8 @@ export function createRankingView() {
         attrs: { style: `--bar-height:${height}%` }
       },
         textEl("span", score, { className: "ranking-week-score" }),
-        el("div", { className: "ranking-week-bar-stage" },
-          textEl("strong", duration, { className: "ranking-week-duration" }),
-          bar
-        ),
+        textEl("strong", duration, { className: "ranking-week-duration" }),
+        el("div", { className: "ranking-week-bar-stage" }, bar),
         textEl("span", day.label || WEEKDAY_LABELS[index], { className: "ranking-week-label" })
       ));
     });
