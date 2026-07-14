@@ -4,7 +4,7 @@ import { dirname, extname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SOURCE_SEAL_PATH, STATE_SEAL_KEY_PATH } from "./store.js";
 import { packageableRuntimePath } from "./runtimePackaging.js";
-import { verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
+import { LOCAL_SEAL_THREAT_MODEL, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
 import type { UnknownRecord } from "./types.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -75,6 +75,7 @@ export async function writeSourceSeal(options: SourceSealOptions = {}) {
     ok: true,
     status: "sealed",
     detail: `Source files sealed (${manifest.files.length} files).`,
+    threatModel: LOCAL_SEAL_THREAT_MODEL,
     sealedAt: seal.sealedAt,
     checkedAt: new Date().toISOString(),
     fileCount: manifest.files.length
@@ -106,6 +107,7 @@ function sourceSealSummary(verification: SourceSealVerification, fileCount: numb
       ok: true,
       status: "sealed",
       detail: `Source files match integrity seal (${fileCount} files).`,
+      threatModel: LOCAL_SEAL_THREAT_MODEL,
       sealedAt: verification.sealedAt || null,
       checkedAt: verification.checkedAt,
       fileCount
@@ -117,6 +119,7 @@ function sourceSealSummary(verification: SourceSealVerification, fileCount: numb
     ok: false,
     status: verification.status,
     detail,
+    threatModel: LOCAL_SEAL_THREAT_MODEL,
     sealedAt: verification.sealedAt || null,
     checkedAt: verification.checkedAt,
     fileCount

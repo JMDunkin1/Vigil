@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { readFileSync } from "node:fs";
-import { readdir, rm, stat } from "node:fs/promises";
+import { access, readdir, rm, stat } from "node:fs/promises";
 import type { IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
@@ -17,7 +17,7 @@ import {
   DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
   DEFAULT_EXPLICIT_BLOCKED_SITES
 } from "./defaults.js";
-import { DATA_DIR } from "./store.js";
+import { DATA_DIR, registerPersistenceRollback } from "./store.js";
 import { writeFileAtomically } from "./snapshotFiles.js";
 import type { AdultBlocklistSourceSnapshot, VigilState, UnknownRecord } from "./types.js";
 
@@ -184,7 +184,14 @@ export async function refreshAdultBlocklist(state: VigilState, now = new Date())
       domains
     };
     const snapshotPath = adultBlocklistSnapshotPath(snapshot);
+    const snapshotExisted = await access(snapshotPath).then(() => true, () => false);
     await writeAdultBlocklistSnapshot(snapshot, snapshotPath);
+    if (!snapshotExisted) {
+      registerPersistenceRollback(async () => {
+        await rm(snapshotPath, { force: true });
+        clearAdultBlocklistCache();
+      });
+    }
     setRuntimeSnapshot(snapshot, snapshotPath);
     state.adultBlocklist.domainCount = domains.length;
     state.adultBlocklist.activeDomainCount = activeDomainCount(state, domains);

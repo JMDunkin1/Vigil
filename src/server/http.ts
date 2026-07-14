@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { stripTypeScriptTypes } from "node:module";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
@@ -180,13 +181,32 @@ export function mdmHeaders(): ResponseHeaders {
 }
 
 export function sendHtml(response: ServerResponse, body: string): void {
-  response.writeHead(200, { ...securityHeaders(), "Content-Type": "text/html; charset=utf-8" });
-  response.end(body);
+  const nonce = randomBytes(18).toString("base64");
+  const nonceBody = body
+    .replace(/<script(?![^>]*\bsrc=)([^>]*)>/giu, `<script nonce="${nonce}"$1>`)
+    .replace(/<style([^>]*)>/giu, `<style nonce="${nonce}"$1>`);
+  response.writeHead(200, { ...securityHeaders(nonce), "Content-Type": "text/html; charset=utf-8" });
+  response.end(nonceBody);
 }
 
-export function securityHeaders(): ResponseHeaders {
+export function securityHeaders(nonce = ""): ResponseHeaders {
   return {
-    "Content-Security-Policy": "frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+    "Content-Security-Policy": [
+      "default-src 'none'",
+      "base-uri 'self'",
+      "connect-src 'self'",
+      "font-src 'self'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      "frame-src 'none'",
+      "img-src 'self' data:",
+      "manifest-src 'self'",
+      "media-src 'self'",
+      "object-src 'none'",
+      `script-src 'self'${nonce ? ` 'nonce-${nonce}'` : ""}`,
+      `style-src 'self'${nonce ? ` 'nonce-${nonce}'` : ""}`,
+      "worker-src 'none'"
+    ].join("; "),
     "Cross-Origin-Resource-Policy": "same-origin",
     "Referrer-Policy": "same-origin",
     "X-Content-Type-Options": "nosniff",

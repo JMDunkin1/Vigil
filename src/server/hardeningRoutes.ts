@@ -17,6 +17,7 @@ interface HardeningApiContext {
   path: string;
   state: VigilState;
   localScripts: LocalScriptRunner;
+  recordExternalResult?: (type: string, detail: Record<string, unknown>) => Promise<boolean>;
 }
 
 export async function handleHardeningApiRoute(response: ServerResponse, context: HardeningApiContext): Promise<boolean> {
@@ -29,11 +30,10 @@ export async function handleHardeningApiRoute(response: ServerResponse, context:
     }
     try {
       const result = await localScripts.runLocalScript("install-launch-agent.mjs");
-      addEvent(state, "launch_agent_installed", { ok: true });
-      await saveState(state);
       const launchAgent = await localScripts.waitForLaunchAgentRunning();
+      const recorded = await context.recordExternalResult?.("launch_agent_installed", { ok: true }) ?? false;
       invalidateStateDiagnostics();
-      sendJson(response, 200, { ok: true, result, launchAgent });
+      sendJson(response, recorded ? 200 : 500, externalResultBody({ result, launchAgent }, recorded));
     } catch (error) {
       sendJson(response, 500, serializeError(error));
     }
@@ -45,14 +45,15 @@ export async function handleHardeningApiRoute(response: ServerResponse, context:
       const result = await localScripts.runPrivilegedHostsApply();
       const hosts = await hostsStatus(state);
       const firewall = await firewallStatus(state);
-      addEvent(state, "network_block_applied", {
-        ok: hosts.installed && !hosts.stale && firewall.installed && !firewall.stale,
+      const detail = {
+        ok: Boolean(hosts.current && firewall.current),
+        current: Boolean(hosts.current && firewall.current),
         hostsEntries: hosts.installedEntries || 0,
         firewallEntries: firewall.installedEntries || 0
-      });
-      await saveState(state);
+      };
+      const recorded = await context.recordExternalResult?.("network_block_applied", detail) ?? false;
       invalidateStateDiagnostics();
-      sendJson(response, 200, { ok: true, result, hosts, firewall });
+      sendJson(response, hardeningResultHttpStatus(recorded, detail.ok), externalResultBody({ result, hosts, firewall }, recorded, detail.ok));
     } catch (error) {
       sendJson(response, 500, serializeError(error));
     }
@@ -63,17 +64,17 @@ export async function handleHardeningApiRoute(response: ServerResponse, context:
     try {
       const result = await localScripts.runLocalScript("apply-safari-filter.mjs");
       const safariFilter = await safariFilterStatus(state);
-      addEvent(state, "safari_url_filter_opened", {
-        ok: true,
-        current: safariFilter.current,
+      const detail = {
+        ok: Boolean(safariFilter.current),
+        current: Boolean(safariFilter.current),
         installed: safariFilter.installed,
         stale: safariFilter.stale,
         urlCount: safariFilter.urlCount || 0,
         pathUrlCount: safariFilter.pathUrlCount || 0
-      });
-      await saveState(state);
+      };
+      const recorded = await context.recordExternalResult?.("safari_url_filter_opened", detail) ?? false;
       invalidateStateDiagnostics();
-      sendJson(response, 200, { ok: true, result, safariFilter });
+      sendJson(response, hardeningResultHttpStatus(recorded, detail.ok), externalResultBody({ result, safariFilter }, recorded, detail.ok));
     } catch (error) {
       sendJson(response, 500, serializeError(error));
     }
@@ -94,4 +95,22 @@ export async function handleHardeningApiRoute(response: ServerResponse, context:
   }
 
   return false;
+}
+
+export function hardeningResultHttpStatus(recorded: boolean, effective: boolean): number {
+  return !recorded ? 500 : effective ? 200 : 409;
+}
+
+function externalResultBody(result: Record<string, unknown>, recorded: boolean, effective = true): Record<string, unknown> {
+  return {
+    ok: recorded && effective,
+    ...result,
+    externalEffectSucceeded: effective,
+    stateRecord: recorded ? "committed" : "failed",
+    ...(!recorded
+      ? { error: "The macOS change succeeded, but Vigil could not durably record its audit result. Verify the change before retrying." }
+      : !effective
+      ? { error: "The command completed, but the verified effective state is still degraded." }
+      : {})
+  };
 }

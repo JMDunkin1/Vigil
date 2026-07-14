@@ -120,16 +120,11 @@ export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: Distanc
     }
     const doc = page.document;
     doc.title = "Distance Key";
-    const style = doc.createElement("style");
-    style.textContent = `
-      body { font-family: system-ui, sans-serif; margin: 32px; color: #16201d; }
-      main { width: min(420px, 100%); }
-      h1 { font-size: 24px; margin: 0 0 12px; }
-      p { color: #53605b; line-height: 1.4; }
-      code { display: block; margin-top: 12px; font-size: 22px; font-weight: 800; letter-spacing: 2px; }
-      svg { width: 260px; height: 260px; margin-top: 18px; border: 1px solid #d9d2c4; }
-    `;
+    const stylesheet = doc.createElement("link");
+    stylesheet.rel = "stylesheet";
+    stylesheet.href = "/styles.css";
     const main = doc.createElement("main");
+    doc.body.className = "distance-key-print";
     const title = doc.createElement("h1");
     title.textContent = "Vigil Distance Key";
     const note = doc.createElement("p");
@@ -137,7 +132,7 @@ export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: Distanc
     const code = doc.createElement("code");
     code.textContent = token;
     main.append(title, note, createDistanceKeyQrSvg(token, 10, doc), code);
-    doc.head.replaceChildren(style);
+    doc.head.replaceChildren(stylesheet);
     doc.body.replaceChildren(main);
     page.focus();
     page.print();

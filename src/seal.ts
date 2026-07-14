@@ -206,11 +206,14 @@ export function stateSealSummary(state: Partial<VigilState> | null | undefined, 
     ok: status === "sealed" || status === BOOKKEEPING_MISMATCH_STATUS || status === TRUSTED_MIGRATION_STATUS,
     status,
     detail,
+    threatModel: LOCAL_SEAL_THREAT_MODEL,
     tamperDetectedAt: seal.tamperDetectedAt || null,
     lastCheckedAt: liveVerification?.checkedAt || seal.lastCheckedAt || null,
     lastSealedAt: liveVerification?.sealedAt || seal.lastSealedAt || null
   };
 }
+
+export const LOCAL_SEAL_THREAT_MODEL = "Local integrity evidence detects corruption and uncoordinated edits; it is not a security boundary against a user who can modify both Vigil data and its local HMAC key.";
 
 export function stateDigest(text: string, key: string): string {
   return createHmac("sha256", key).update(String(text || ""), "utf8").digest("hex");

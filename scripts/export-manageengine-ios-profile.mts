@@ -53,6 +53,8 @@ console.log([
   ...(result.mirroredOutPath ? [`Mirrored handoff profile: ${result.mirroredOutPath}`] : []),
   `Summary: ${result.summaryPath}`,
   `Launcher summary: ${result.launcherSummaryPath}`,
+  `Immutable generation: ${result.generationPath}`,
+  `Generation manifest: ${result.generationManifestPath}`,
   ...(result.mirroredSummaryPath ? [`Mirrored handoff summary: ${result.mirroredSummaryPath}`] : []),
   ...(result.mirroredLauncherOutPath ? [`Mirrored launcher profile: ${result.mirroredLauncherOutPath}`] : []),
   ...(result.mirroredLauncherSummaryPath ? [`Mirrored launcher summary: ${result.mirroredLauncherSummaryPath}`] : []),

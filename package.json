@@ -19,6 +19,7 @@
     "package:mac:dmg": "node scripts/prepare-mac-output.mjs && node scripts/package-mac.mjs dmg && node scripts/hide-mac-build.mjs",
     "build:mac:signed": "npm run build && node scripts/prepare-mac-output.mjs && electron-builder --mac dir && node scripts/hide-mac-build.mjs",
     "dist:mac:signed": "npm run build && node scripts/prepare-mac-output.mjs && electron-builder --mac dmg && node scripts/hide-mac-build.mjs",
+    "release:mac": "npm run build && node scripts/prepare-mac-output.mjs && node scripts/release-mac.mjs",
     "start": "npm run build && node dist/runtime/src/server.js",
     "dev": "node --watch --watch-preserve-output --watch-path=app --watch-path=src --watch-path=public --watch-path=extension --watch-path=scripts --watch-path=tsconfig.json --watch-path=package.json scripts/dev.mjs",
     "test": "npm run build && npm run test:runtime",

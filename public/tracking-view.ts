@@ -170,11 +170,13 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       button.type = "button";
       button.className = `habit-pulse-day${isSameDay(date, effectiveToday) ? " is-today" : ""}${future ? " is-future" : ""}${reported ? " has-data" : ""}`;
       button.disabled = future;
-      button.style.setProperty("--reported", String(reported / behaviors.length));
-      button.style.setProperty("--completed", String(reported ? done / reported : 0));
+      button.dataset.reported = reported ? "true" : "false";
       button.setAttribute("aria-label", `${date.toLocaleDateString([], { month: "long", day: "numeric" })}: ${done} done, ${reported - done} missed, ${behaviors.length - reported} not recorded`);
       button.title = future ? "Future date" : `${done} done · ${reported - done} missed`;
-      const bar = document.createElement("i");
+      const bar = document.createElement("progress");
+      bar.max = behaviors.length;
+      bar.value = reported;
+      bar.dataset.completed = String(done);
       bar.setAttribute("aria-hidden", "true");
       const label = document.createElement("span");
       label.textContent = String(date.getDate());
@@ -274,7 +276,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const finish = required<HTMLButtonElement>("#habitMarkRemainingDone");
     const clear = required<HTMLButtonElement>("#habitClearSelectedDay");
     const toolbar = required<HTMLElement>("#dailyCheckInToolbar");
-    const meter = required<HTMLElement>("#dailyCheckInMeterBar");
+    const meter = required<HTMLProgressElement>("#dailyCheckInMeterBar");
 
     title.textContent = today
       ? "Today"
@@ -286,7 +288,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
 
     if (!behaviors.length) {
       progress.textContent = "No active habits";
-      meter.style.width = "0%";
+      meter.value = 0;
       finish.disabled = true;
       clear.disabled = true;
       const empty = document.createElement("p");
@@ -301,7 +303,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const done = statuses.filter((status) => status === "success").length;
     const complete = recorded === behaviors.length;
     const locked = complete && editableCompletedDateKey !== dateKey;
-    meter.style.width = `${Math.round((recorded / behaviors.length) * 100)}%`;
+    meter.value = Math.round((recorded / behaviors.length) * 100);
     meter.parentElement?.classList.toggle("is-complete", complete);
     progress.textContent = complete
       ? `${done} done · ${behaviors.length - done} missed · complete`
