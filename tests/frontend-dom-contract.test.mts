@@ -139,8 +139,8 @@ assert.match(trackingSource, /dateIsComplete\(dateKey, behaviors, values\)[\s\S]
 assert.doesNotMatch(trackingSource, /Your answers are locked|All \$\{total\} item/, "the completion screen must not repeat results already shown in the tracking graphs");
 assert.match(trackingSource, /editableCompletedDateKey = dateKey/, "editing a completed day must require a deliberate unlock action");
 assert.match(trackingSource, /monthDayCount\.textContent = `\$\{dates\.length\} days`/, "the selected month must control the displayed day count");
-assert.match(styles, /@media \(max-width: 800px\)[\s\S]*?\.tracking-trend\s*\{[\s\S]*?height:\s*clamp\(88px, 17vh, 108px\);/, "the stacked monthly trend must expand vertically at the default desktop aspect ratio");
-assert.match(styles, /@media \(max-width: 800px\)[\s\S]*?body\[data-active-view="tracking"\] \.habit-month-pulse\s*\{[\s\S]*?height:\s*clamp\(98px, 19vh, 122px\);/, "the stacked monthly pulse must use the space freed by redundant summary copy");
+assert.match(styles, /@media \(max-width: 800px\)[\s\S]*?\.tracking-trend\s*\{[\s\S]*?height:\s*clamp\(118px, 23\.5vh, 144px\);/, "the stacked monthly trend must expand vertically at the default desktop aspect ratio");
+assert.match(styles, /@media \(max-width: 800px\)[\s\S]*?body\[data-active-view="tracking"\] \.habit-month-pulse\s*\{[\s\S]*?height:\s*clamp\(136px, 28vh, 172px\);/, "the stacked monthly pulse must use the space freed by redundant summary copy");
 
 const protectionMarkup = html.match(/<div id="protectionLevelControl"[\s\S]*?<div[^>]*class="home-runtime-status"/)?.[0] || "";
 assert.match(protectionMarkup, /id="protectionLevelControl"[^>]*aria-expanded="false"/, "the protection selector must start collapsed");

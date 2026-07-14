@@ -1856,7 +1856,7 @@ body[data-active-view="tracking"] #view-journal {
   }
 
   .tracking-trend {
-    height: clamp(88px, 17vh, 108px);
+    height: clamp(118px, 23.5vh, 144px);
     margin-top: 8px;
   }
 }
@@ -6737,16 +6737,16 @@ body[data-active-view="tracking"] .habit-pulse-day {
   }
 
   body[data-active-view="tracking"] .habit-month-pulse {
-    height: clamp(98px, 19vh, 122px);
+    height: clamp(136px, 28vh, 172px);
   }
 
   body[data-active-view="tracking"] .habit-pulse-day {
-    min-height: clamp(98px, 19vh, 122px);
+    min-height: clamp(136px, 28vh, 172px);
   }
 
   body[data-active-view="tracking"] .habit-pulse-day i {
-    height: calc(7px + (var(--reported) * 72px));
-    max-height: 79px;
+    height: calc(7px + (var(--reported) * 108px));
+    max-height: 115px;
   }
 }
 
