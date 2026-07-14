@@ -59,12 +59,13 @@ function bindHardeningActions(context: HardeningPanelContext): void {
 
   $("#installLaunchAgent").addEventListener("click", async () => {
     const status = $("#hardeningActionStatus");
-    status.textContent = "Installing login agent...";
+    const repairingRestartProtection = getData()?.hardening.launchAgent?.embedded === true;
+    status.textContent = repairingRestartProtection ? "Repairing restart protection..." : "Installing login agent...";
     $("#installLaunchAgent").disabled = true;
     try {
       await post("/api/hardening/launch-agent/install", {});
-      status.textContent = "Login agent installed";
-      toast("Login agent installed");
+      status.textContent = repairingRestartProtection ? "Restart protection repaired" : "Login agent installed";
+      toast(repairingRestartProtection ? "Restart protection repaired" : "Login agent installed");
     } catch (error) {
       status.textContent = errorMessage(error);
       toast(errorMessage(error));
@@ -360,7 +361,11 @@ function renderHardeningActions(hardening: DashboardData["hardening"], $: QueryE
   const networkCurrent = hosts.installed && !hosts.partial && !hosts.stale && firewall.installed && !firewall.partial && !firewall.stale;
   const safariCurrent = safariFilter.installed && !safariFilter.stale;
   const tamperActive = Boolean(hardening.stateSeal?.tamperDetectedAt || hardening.stateSeal?.status === "tamper-detected");
-  $("#installLaunchAgent").textContent = agent.installed ? "Reinstall Login Agent" : "Install Login Agent";
+  const restartProtectionNeedsRepair = agent.embedded === true && agent.restartHardened !== true;
+  $("#installLaunchAgent").textContent = agent.embedded
+    ? (restartProtectionNeedsRepair ? "Repair Restart Protection" : "Restart Protection Active")
+    : (agent.installed ? "Reinstall Login Agent" : "Install Login Agent");
+  $("#installLaunchAgent").disabled = agent.embedded === true && !restartProtectionNeedsRepair;
   $("#applyHostsBlock").textContent = networkCurrent ? "Reapply Network Block" : "Apply Network Block";
   $("#applySafariFilter").textContent = safariCurrent ? "Reapply Safari Filter" : "Apply Safari Filter";
   $("#clearTamperAlarm").hidden = !tamperActive;

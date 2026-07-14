@@ -38,6 +38,33 @@ interface PausePageData {
   waitSeconds?: number;
 }
 
+export function companionPage(): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Open Vigil</title>
+  <style>
+    :root { color-scheme: dark; --ink: #f1eee4; --muted: #aeb3af; --gold: #d1a94d; --line: #5f4b2d; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; color: var(--ink); background: radial-gradient(circle at 50% 18%, #18345b 0, #0a111d 44%, #05080e 100%); font-family: Georgia, "Times New Roman", serif; }
+    main { width: min(560px, 100%); padding: 34px; border: 1px solid var(--line); border-radius: 6px; background: linear-gradient(145deg, #142238f7, #0b121df7); box-shadow: 0 24px 80px #000b, inset 0 0 0 3px #080d15, inset 0 0 0 4px #6f5529; }
+    .eyebrow { margin: 0 0 8px; color: var(--gold); font: 900 .72rem ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .14em; }
+    h1 { margin: 0 0 14px; font-size: clamp(2.25rem, 7vw, 3.75rem); line-height: .98; letter-spacing: -.035em; }
+    p { margin: 0; color: var(--muted); font-family: ui-sans-serif, system-ui, sans-serif; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">Vigil</p>
+    <h1>Open Vigil from the menu bar.</h1>
+    <p>Choose the Vigil icon in your Mac menu bar, then choose <strong>Open Vigil</strong>.</p>
+  </main>
+</body>
+</html>`;
+}
+
 export function blockedPage({ url }: PageInput): string {
   const site = escapeHtml(url.searchParams.get("site") || "This target");
   const backUrl = safePageNavigationUrl(url.searchParams.get("back"));

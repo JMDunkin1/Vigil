@@ -288,6 +288,7 @@ export interface IntentionalUseSummary extends UnknownRecord {
 export interface HardeningCheck extends UnknownRecord {
   detail?: string;
   current?: boolean;
+  embedded?: boolean;
   enabled?: boolean;
   generated?: boolean;
   installed?: boolean;
@@ -297,6 +298,7 @@ export interface HardeningCheck extends UnknownRecord {
   pathUrlCount?: number;
   partial?: boolean;
   required?: boolean;
+  restartHardened?: boolean;
   running?: boolean;
   stale?: boolean;
   status?: string;

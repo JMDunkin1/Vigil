@@ -15,6 +15,7 @@ const mainSource = await readFile(join(sourceRoot, "app", "main.ts"), "utf8");
 const updaterSource = await readFile(join(sourceRoot, "app", "updater.ts"), "utf8");
 const updateScriptSource = await readFile(join(sourceRoot, "scripts", "update-packaged-app.mts"), "utf8");
 const localLauncherSource = await readFile(join(sourceRoot, "scripts", "launch-local-app.mts"), "utf8");
+const embeddedSupervisorSource = await readFile(join(sourceRoot, "src", "embeddedSupervisor.ts"), "utf8");
 const packageMacSource = await readFile(join(sourceRoot, "scripts", "package-mac.mjs"), "utf8");
 const writeBuildInfoSource = await readFile(join(sourceRoot, "scripts", "write-build-info.mts"), "utf8");
 
@@ -24,8 +25,8 @@ assert.match(packageMacSource, /-c\.mac\.timestamp=\$\{timestamp\}/u, "local app
 assert.match(updateScriptSource, /-c\.mac\.timestamp=\$\{signingTimestamp\}/u, "isolated updater builds must use the same timestamp policy");
 
 const preflightIndex = updaterSource.indexOf("await assertLocallyRebuildableApp(appPath)");
-const quitIndex = updaterSource.indexOf("setTimeout(quitForUpdate");
-assert.ok(preflightIndex >= 0 && quitIndex > preflightIndex, "signature preflight must finish before the app is told to quit");
+const remoteQuitHandlerIndex = updaterSource.indexOf('process.once("SIGUSR2", requestQuit)');
+assert.ok(preflightIndex >= 0 && remoteQuitHandlerIndex > preflightIndex, "signature preflight must finish before the updater can ask the app to quit");
 assert.match(updaterSource, /let startInFlight: Promise<unknown> \| null = null/u);
 assert.match(
   updaterSource,
@@ -56,18 +57,124 @@ assert.ok(
   localLauncherSource.indexOf("exitCode = await buildLocalApp(options, log)") < localLauncherSource.indexOf('process.kill(options.parentPid, "SIGUSR2")'),
   "local changes must finish building before the running app is asked to quit"
 );
+assert.ok(
+  updateScriptSource.indexOf("stagedBuild = await buildInIsolatedWorktree()")
+    < updateScriptSource.indexOf('process.kill(options.parentPid, "SIGUSR2")'),
+  "remote updates must finish staging before the running app is asked to quit"
+);
+assert.ok(
+  updateScriptSource.indexOf('process.kill(options.parentPid, "SIGUSR2")')
+    < updateScriptSource.indexOf('await status("installing-runtime"'),
+  "remote updates must wait for graceful shutdown before replacing the runtime or app"
+);
+assert.match(
+  updateScriptSource,
+  /catch \(error\) \{\s*await resumeEmbeddedRuntimeSupervisor\(options\.userDataDir\);\s*throw error;\s*\}/u,
+  "a timed-out remote update shutdown must restore restart supervision"
+);
 assert.match(localLauncherSource, /atomicInstallBuiltApp\(builtAppPath, options\.appPath, ""\)/u, "local changes must replace Vigil at the same installed app path");
+const localInstallFailureStart = localLauncherSource.indexOf("} catch (error) {", localLauncherSource.indexOf("installation = await atomicInstallBuiltApp"));
+const localInstallFailureEnd = localLauncherSource.indexOf("\n    try {\n      log.write", localInstallFailureStart + 1);
+const localInstallFailureSource = localLauncherSource.slice(localInstallFailureStart, localInstallFailureEnd);
+assert.ok(
+  localInstallFailureSource.indexOf("await resumeEmbeddedRuntimeSupervisor(options.userDataDir)")
+    < localInstallFailureSource.indexOf("await reopenInstalledApp(options.appPath, log)"),
+  "a failed local install must restore persistent supervision before trying to reopen the previous app"
+);
+assert.match(
+  localInstallFailureSource,
+  /catch \(supervisorError\) \{[\s\S]*?await restoreLegacyLaunchAgent\(legacyAgent\)/u,
+  "a failed supervisor-marker restore must fall back to the captured legacy background service"
+);
+assert.match(
+  localInstallFailureSource,
+  /try \{\s*await reopenInstalledApp\(options\.appPath, log\);\s*\} catch \(reopenError\)/u,
+  "a failed reopen after an install error must leave the persistent recovery path in control"
+);
 assert.match(localLauncherSource, /await verifyReplacement\(options\.appPath\);[\s\S]*?await installation\.finalize\(\)/u, "the previous installed app must remain recoverable until the replacement stays healthy");
 assert.match(localLauncherSource, /await terminateInstalledApp\(options\.appPath\);[\s\S]*?await installation\.rollback\(\)/u, "a failed replacement must stop before restoring and reopening the previous app");
+assert.ok(
+  localLauncherSource.indexOf("legacyAgent = await captureLegacyLaunchAgentRecovery()")
+    < localLauncherSource.indexOf('process.kill(options.parentPid, "SIGUSR2")'),
+  "local replacement must capture the legacy LaunchAgent before the candidate app can retire it"
+);
+assert.match(
+  localLauncherSource,
+  /interface LegacyAgentRecovery \{[\s\S]*?plist: string;[\s\S]*?plistMode: number;[\s\S]*?plistPath: string;/u,
+  "local rollback must preserve the legacy LaunchAgent plist and permissions"
+);
+assert.match(
+  localLauncherSource,
+  /async function restoreLegacyLaunchAgent[\s\S]*?writeFile\(recovery\.plistPath, recovery\.plist, \{ mode: recovery\.plistMode \}\)[\s\S]*?\["enable", `gui\/\$\{recovery\.uid\}\/com\.vigil\.agent`\][\s\S]*?\["bootstrap", `gui\/\$\{recovery\.uid\}`, recovery\.plistPath\][\s\S]*?\["kickstart", "-k", `gui\/\$\{recovery\.uid\}\/com\.vigil\.agent`\][\s\S]*?waitForLegacyLaunchAgent/u,
+  "local rollback must recreate, enable, bootstrap, kickstart, and verify the legacy LaunchAgent"
+);
+const localRollbackIndex = localLauncherSource.indexOf("await installation.rollback()");
+assert.ok(
+  localRollbackIndex >= 0
+    && localLauncherSource.indexOf("await restoreLegacyLaunchAgent(legacyAgent)", localRollbackIndex) > localRollbackIndex,
+  "local rollback must restore the old bundle before restarting its legacy background service"
+);
+const localRollbackSource = localLauncherSource.slice(localRollbackIndex, localLauncherSource.indexOf("} catch (recoveryError)", localRollbackIndex));
+assert.match(
+  localRollbackSource,
+  /if \(legacyAgent\) \{\s*await restoreLegacyLaunchAgent\(legacyAgent\);\s*\} else \{\s*await resumeEmbeddedRuntimeSupervisor\(options\.userDataDir\);\s*\}\s*await reopenInstalledApp\(options\.appPath, log\)/u,
+  "local rollback must resume embedded supervision before reopening when no legacy service can be restored"
+);
+assert.ok(
+  localLauncherSource.indexOf("await suspendEmbeddedRuntimeSupervisor(options.userDataDir)")
+    < localLauncherSource.indexOf("await terminateInstalledApp(options.appPath)"),
+  "local rollback must suspend the embedded restart supervisor before terminating the rebuilt app"
+);
 assert.match(localLauncherSource, /await reopenInstalledApp\(options\.appPath, log\)/u, "a failed local launch must reopen the installed app");
+assert.match(
+  localLauncherSource,
+  /spawn\("\/usr\/bin\/open", \["-g", appPath, "--args", BACKGROUND_LAUNCH_ARG\]/u,
+  "local rebuilds and rollback recovery must relaunch Vigil without activating it or opening a window"
+);
 assert.ok(
   localLauncherSource.indexOf("createWriteStream(options.logPath") < localLauncherSource.indexOf("await waitForExit(options.parentPid"),
   "the local launcher must create its log before waiting for the installed app to quit"
 );
 assert.match(localLauncherSource, /await waitForLogOpen\(log\)/u, "the local launcher must wait for its log descriptor before passing it to child processes");
 assert.match(localLauncherSource, /The built app was not installed/u, "a stalled installed-app shutdown must leave the installed app untouched");
+assert.match(
+  localLauncherSource,
+  /catch \(error\) \{\s*await resumeEmbeddedRuntimeSupervisor\(options\.userDataDir\);\s*log\.write/u,
+  "a timed-out local update shutdown must restore restart supervision"
+);
 assert.match(localLauncherSource, /"Library", "Logs", "Vigil", "local-launch\.log"/u, "local launch output must remain available in a durable log");
 assert.match(updateScriptSource, /await openAndVerifyReplacement\(/u);
+const updaterSupervisorStopIndex = updateScriptSource.indexOf("await suspendEmbeddedRuntimeSupervisor(options.userDataDir)");
+const updaterAppStopIndex = updateScriptSource.indexOf("await terminateInstalledApp()", updaterSupervisorStopIndex);
+const updaterAppRollbackIndex = updateScriptSource.indexOf("appInstallation.rollback()", updaterAppStopIndex);
+assert.ok(
+  updaterSupervisorStopIndex >= 0 && updaterAppStopIndex > updaterSupervisorStopIndex && updaterAppRollbackIndex > updaterAppStopIndex,
+  "failed packaged updates must suspend the embedded restart supervisor before terminating and restoring the app"
+);
+assert.match(updaterSource, /"--user-data-dir", userDataDir/u, "both replacement launchers must receive Electron's exact supervisor marker directory");
+assert.ok(
+  embeddedSupervisorSource.indexOf('rm(join(userDataDir, "supervisor", "enabled")')
+    < embeddedSupervisorSource.indexOf('["bootout", `gui/${uid}/${EMBEDDED_SUPERVISOR_LABEL}`]'),
+  "supervisor suspension must remove the reopen marker before booting out the launchd job"
+);
+assert.match(
+  embeddedSupervisorSource,
+  /\["print", `gui\/\$\{uid\}\/\$\{EMBEDDED_SUPERVISOR_LABEL\}`\][\s\S]*?restart supervisor remained loaded/u,
+  "supervisor suspension must verify launchd no longer owns the restart job"
+);
+assert.match(
+  embeddedSupervisorSource,
+  /async function resumeEmbeddedRuntimeSupervisor[\s\S]*?\["enable", `gui\/\$\{uid\}\/\$\{EMBEDDED_SUPERVISOR_LABEL\}`\][\s\S]*?\["bootstrap", `gui\/\$\{uid\}`, plistPath\][\s\S]*?\["kickstart", "-k", `gui\/\$\{uid\}\/\$\{EMBEDDED_SUPERVISOR_LABEL\}`\][\s\S]*?waitForLaunchctlServiceRunning\(uid\)/u,
+  "restoring supervision must bootstrap and verify launchd instead of only recreating its marker"
+);
+const failedUpdateRecoveryStart = updateScriptSource.indexOf("async function recoverFailedUpdate");
+const failedUpdateRecoveryEnd = updateScriptSource.indexOf("\nasync function collectRecoveryError", failedUpdateRecoveryStart);
+const failedUpdateRecoverySource = updateScriptSource.slice(failedUpdateRecoveryStart, failedUpdateRecoveryEnd);
+assert.match(
+  failedUpdateRecoverySource,
+  /if \(launchAgentWasLoaded\) \{\s*await openAppInBackground\(\);\s*\} else \{\s*await resumeEmbeddedRuntimeSupervisor\(options\.userDataDir\)[\s\S]*?await openAndVerifyRecoveredApp\(dataDir\)/u,
+  "failed-update recovery must preserve legacy supervision or restore embedded supervision before reopening"
+);
 assert.match(updateScriptSource, /launchAgentRuntimePath\(\)/u);
 assert.ok(
   updateScriptSource.indexOf("agentRuntimeInstallation = await atomicInstallBuiltApp(")
@@ -85,18 +192,62 @@ assert.ok(
   "the replacement must be healthy before the source checkout is fast-forwarded"
 );
 assert.ok(
-  updateScriptSource.indexOf("launchAgentTransition = launchAgentWasPresent ? await stopLaunchAgentForStateTransition()")
+  updateScriptSource.indexOf("launchAgentTransition = await stopLaunchAgentForStateTransition(launchAgentTransition)")
     < updateScriptSource.indexOf("stateSnapshot = await snapshotUpdateState(")
     && updateScriptSource.indexOf("stateSnapshot = await snapshotUpdateState(")
       < updateScriptSource.indexOf("await startLaunchAgentAfterStateTransition(launchAgentTransition)"),
   "the updater must stop the old backend, preserve pre-migration state, and only then start the replacement backend"
 );
-const recoveryStopIndex = updateScriptSource.indexOf("stoppedLaunchAgent = await stopLaunchAgentForStateTransition()");
+const recoveryStopIndex = updateScriptSource.indexOf("stoppedLaunchAgent = await stopLaunchAgentForStateTransition(launchAgentTransition)");
 const stateRollbackIndex = updateScriptSource.indexOf("await stateSnapshot.rollback()", recoveryStopIndex);
 const recoveryStartIndex = updateScriptSource.indexOf("startLaunchAgentAfterStateTransition(stoppedLaunchAgent)", stateRollbackIndex);
 assert.ok(
   recoveryStopIndex >= 0 && stateRollbackIndex > recoveryStopIndex && recoveryStartIndex > stateRollbackIndex,
   "failed updates must stop the replacement backend, restore data, and only then restart the previous backend"
+);
+assert.match(
+  updateScriptSource,
+  /interface LaunchAgentRecovery \{[\s\S]*?plist: string;[\s\S]*?plistMode: number;[\s\S]*?plistPath: string;/u,
+  "the updater must retain the original LaunchAgent plist and permissions for rollback"
+);
+assert.ok(
+  updateScriptSource.indexOf("launchAgentTransition = await captureLoadedLaunchAgentRecovery()")
+    < updateScriptSource.indexOf('process.kill(options.parentPid, "SIGUSR2")')
+    && updateScriptSource.indexOf('process.kill(options.parentPid, "SIGUSR2")')
+      < updateScriptSource.indexOf("launchAgentTransition = await stopLaunchAgentForStateTransition(launchAgentTransition)")
+    && updateScriptSource.indexOf("launchAgentTransition = await stopLaunchAgentForStateTransition(launchAgentTransition)")
+      < updateScriptSource.indexOf("await openAndVerifyReplacement(replacementDataDirectory)"),
+  "LaunchAgent rollback metadata must be captured before the running app can retire the legacy service"
+);
+assert.match(
+  updateScriptSource,
+  /async function captureLoadedLaunchAgentRecovery[\s\S]*?\["print", `gui\/\$\{uid\}\/com\.vigil\.agent`\][\s\S]*?if \(!loaded\.ok\) return null;[\s\S]*?captureLaunchAgentRecovery\(\)/u,
+  "a preserved plist must count as legacy supervision only when launchd still has the service loaded"
+);
+assert.doesNotMatch(
+  updateScriptSource,
+  /async function restartLaunchAgent/u,
+  "early updater rollback must use the captured plist to bootstrap an unloaded legacy service instead of only kickstarting its label"
+);
+assert.ok(
+  updateScriptSource.indexOf('await run("git", ["merge", "--ff-only", stagedBuild.expectedCommit]')
+    < updateScriptSource.indexOf("await finalizeLegacyLaunchAgentRetirement(launchAgentTransition)"),
+  "the updater must preserve the legacy plist until replacement verification and source acceptance both succeed"
+);
+assert.match(
+  updateScriptSource,
+  /async function finalizeLegacyLaunchAgentRetirement[\s\S]*?await rm\(recovery\.plistPath, \{ force: true \}\)/u,
+  "only the successful external updater may retire the legacy rollback plist"
+);
+assert.match(
+  updateScriptSource,
+  /async function startLaunchAgentAfterStateTransition[\s\S]*?writeFile\(recovery\.plistPath, recovery\.plist, \{ mode: recovery\.plistMode \}\)[\s\S]*?\["bootstrap", `gui\/\$\{recovery\.uid\}`, recovery\.plistPath\]/u,
+  "rollback must recreate the preserved LaunchAgent plist before bootstrapping the old service"
+);
+assert.match(
+  updateScriptSource,
+  /async function startLaunchAgentAfterStateTransition[\s\S]*?\["enable", `gui\/\$\{recovery\.uid\}\/com\.vigil\.agent`\][\s\S]*?\["bootstrap", `gui\/\$\{recovery\.uid\}`, recovery\.plistPath\]/u,
+  "updater recovery must enable a previously disabled legacy LaunchAgent before bootstrapping it"
 );
 
 const lockRoot = await mkdtemp(join(tmpdir(), "vigil-updater-lock-"));

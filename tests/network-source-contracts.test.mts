@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultState } from "../src/defaults.js";
 import { buildFirewallBlock, buildPfConfBlock, extractManagedFirewallBlock, extractManagedPfConfBlock, firewallDomainSignature, firewallStatus, replaceManagedPfConfBlock } from "../src/firewall.js";
-import { buildHostsBlock, extractHostsBlock, hostsBlockMatches, parseLaunchAgentPrint, replaceManagedHostsBlock } from "../src/hardening.js";
+import { buildHostsBlock, embeddedSupervisorExpectedScript, embeddedSupervisorMarkerPath, embeddedSupervisorPlistRestartHardened, embeddedSupervisorRestartHardened, extractHostsBlock, hostsBlockMatches, parseLaunchAgentPrint, replaceManagedHostsBlock } from "../src/hardening.js";
 import { applyNetworkBlock } from "../scripts/apply-hosts.mjs";
 import { now } from "./test-helpers.mjs";
 
@@ -35,6 +35,54 @@ last exit code = 0
   assert.equal(launch.pid, 12345);
   assert.equal(launch.lastExitStatus, 0);
 }
+
+const embeddedSupervisorExpectation = {
+  homeDir: "/Users/test",
+  userDataDir: "/Users/test/Library/Application Support/Vigil",
+  dataDir: "/Users/test/Library/Application Support/Vigil",
+  executablePath: "/Applications/Vigil.app/Contents/MacOS/Vigil"
+};
+const embeddedSupervisorPlist = `
+  <?xml version="1.0" encoding="UTF-8"?>
+  <plist version="1.0"><dict>
+    <key>Label</key><string>tech.caseline.vigil.supervisor</string>
+    <key>ProgramArguments</key><array><string>/Users/test/Library/Application Support/Vigil/supervisor/vigil-supervisor.zsh</string></array>
+    <key>EnvironmentVariables</key><dict>
+      <key>VIGIL_DATA_DIR</key><string>/Users/test/Library/Application Support/Vigil</string>
+      <key>VIGIL_EMBEDDED_RUNTIME</key><string>1</string>
+      <key>VIGIL_RESTART_SUPERVISED</key><string>1</string>
+    </dict>
+    <key>RunAtLoad</key><true/>
+    <key>KeepAlive</key><dict><key>PathState</key><dict><key>/Users/test/Library/Application Support/Vigil/supervisor/enabled</key><true/></dict></dict>
+    <key>ThrottleInterval</key><integer>5</integer>
+    <key>ProcessType</key><string>Interactive</string>
+    <key>StandardOutPath</key><string>/Users/test/Library/Application Support/Vigil/logs/supervisor.log</string>
+    <key>StandardErrorPath</key><string>/Users/test/Library/Application Support/Vigil/logs/supervisor.log</string>
+  </dict></plist>
+  `;
+const embeddedSupervisorScript = embeddedSupervisorExpectedScript(embeddedSupervisorExpectation);
+const healthyEmbeddedSupervisor = {
+  markerActive: true,
+  script: embeddedSupervisorScript,
+  scriptExecutable: true,
+  supervisorRunning: true
+};
+assert.equal(
+  embeddedSupervisorPlistRestartHardened(embeddedSupervisorPlist, embeddedSupervisorExpectation),
+  true,
+  "the exact generated launchd configuration must pass restart-hardening diagnostics"
+);
+assert.equal(embeddedSupervisorMarkerPath(embeddedSupervisorPlist), "/Users/test/Library/Application Support/Vigil/supervisor/enabled", "restart diagnostics must read the active PathState marker path from the plist");
+assert.equal(embeddedSupervisorRestartHardened(embeddedSupervisorPlist, embeddedSupervisorExpectation, { ...healthyEmbeddedSupervisor, markerActive: false }), false, "a missing PathState marker must disable restart hardening");
+assert.equal(embeddedSupervisorRestartHardened(embeddedSupervisorPlist, embeddedSupervisorExpectation, { ...healthyEmbeddedSupervisor, supervisorRunning: false }), false, "an inactive supervisor process must disable restart hardening");
+assert.equal(embeddedSupervisorRestartHardened(embeddedSupervisorPlist, embeddedSupervisorExpectation, { ...healthyEmbeddedSupervisor, scriptExecutable: false }), false, "a non-executable supervisor script must disable restart hardening");
+assert.equal(embeddedSupervisorRestartHardened(embeddedSupervisorPlist, embeddedSupervisorExpectation, { ...healthyEmbeddedSupervisor, script: "#!/bin/zsh\n/bin/sleep 30\n" }), false, "tampered supervisor script contents must disable restart hardening");
+assert.equal(embeddedSupervisorRestartHardened(embeddedSupervisorPlist, embeddedSupervisorExpectation, healthyEmbeddedSupervisor), true, "restart hardening requires the exact plist and script, active marker, executable mode, and running supervisor");
+assert.equal(
+  embeddedSupervisorPlistRestartHardened(`<plist version="1.0"><dict><key>ProgramArguments</key><array><string>/bin/sleep</string><string>30</string></array><key>KeepAlive</key><dict><key>PathState</key><dict><key>/tmp/unrelated</key><true/></dict></dict></dict></plist>`, embeddedSupervisorExpectation),
+  false,
+  "an unrelated running launchd job must not pass restart-hardening diagnostics"
+);
 
 {
   const domains = ["example.com", "news.example"];

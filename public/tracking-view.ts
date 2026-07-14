@@ -312,7 +312,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     if (locked) {
       toolbar.hidden = true;
       selectedBehaviorId = null;
-      quickRoot.append(completedDayCard(today, behaviors.length, done, () => {
+      quickRoot.append(completedDayCard(today, () => {
         editableCompletedDateKey = dateKey;
         renderCalendar();
         renderQuickCheckIn();
@@ -533,27 +533,16 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
 
 function completedDayCard(
   today: boolean,
-  total: number,
-  done: number,
   edit: () => void
 ): HTMLElement {
   const card = document.createElement("section");
   card.className = "habit-checkin-complete";
   card.setAttribute("role", "status");
 
-  const mark = document.createElement("span");
-  mark.className = "habit-checkin-complete-mark";
-  mark.setAttribute("aria-hidden", "true");
-  mark.textContent = "✓";
-
-  const copy = document.createElement("div");
   const heading = document.createElement("strong");
   heading.textContent = today
     ? "You're done filling out your info for today."
     : "You're done filling out your info for this day.";
-  const summary = document.createElement("p");
-  summary.textContent = `All ${total} item${total === 1 ? " is" : "s are"} filled out: ${done} done and ${total - done} missed. Your answers are locked to prevent accidental changes.`;
-  copy.append(heading, summary);
 
   const button = document.createElement("button");
   button.type = "button";
@@ -561,7 +550,7 @@ function completedDayCard(
   button.textContent = today ? "Edit today's answers" : "Edit this day's answers";
   button.addEventListener("click", edit);
 
-  card.append(mark, copy, button);
+  card.append(heading, button);
   return card;
 }
 

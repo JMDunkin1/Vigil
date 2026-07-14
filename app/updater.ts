@@ -79,7 +79,8 @@ const moduleDir = dirname(fileURLToPath(import.meta.url));
 export function createVigilAppUpdateController({ app, quitForUpdate }: ControllerOptions): VigilAppUpdateController {
   const repoRoot = findRepoRoot(app);
   const appPath = packagedAppPath(repoRoot);
-  const updateDir = join(app.getPath("userData"), "updater");
+  const userDataDir = app.getPath("userData");
+  const updateDir = join(userDataDir, "updater");
   const statusPath = join(updateDir, UPDATE_STATUS_FILENAME);
   const logPath = join(updateDir, UPDATE_LOG_FILENAME);
   const lockPath = join(updateDir, UPDATE_LOCK_FILENAME);
@@ -223,33 +224,42 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
         "--repo-root", repoRoot,
         "--app-path", appPath,
         "--parent-pid", String(process.pid),
+        "--user-data-dir", userDataDir,
         "--status-path", statusPath,
         "--log-path", logPath,
         "--lock-path", lockPath,
         "--lock-token", updateLock.token,
         "--restart"
       ];
-      updaterChild = spawn(nodePath, command, {
-        detached: true,
-        stdio: "ignore",
-        cwd: repoRoot,
-        env: {
-          ...process.env,
-          VIGIL_UPDATE_LAUNCHED_BY: "vigil-app",
-          VIGIL_UPDATE_NPM_PATH: npmPath
-        }
-      });
-      await childStarted(updaterChild);
-      if (!updaterChild.pid) throw new Error("The updater process did not report a process ID.");
+      const requestQuit = () => quitForUpdate();
+      process.once("SIGUSR2", requestQuit);
+      try {
+        updaterChild = spawn(nodePath, command, {
+          detached: true,
+          stdio: "ignore",
+          cwd: repoRoot,
+          env: {
+            ...process.env,
+            VIGIL_UPDATE_LAUNCHED_BY: "vigil-app",
+            VIGIL_UPDATE_NPM_PATH: npmPath
+          }
+        });
+        await childStarted(updaterChild);
+        if (!updaterChild.pid) throw new Error("The updater process did not report a process ID.");
+      } catch (error) {
+        process.off("SIGUSR2", requestQuit);
+        throw error;
+      }
+      updaterChild.once("exit", () => process.off("SIGUSR2", requestQuit));
       await updateLock.transferTo(updaterChild.pid);
       handedOff = true;
       updaterChild.unref();
-      setTimeout(quitForUpdate, 200);
       return {
         ok: true,
         supported: true,
-        phase: "starting",
-        message: "Vigil will quit, update, and reopen.",
+        running: true,
+        phase: "building",
+        message: "Building the Vigil update; Vigil will restart when ready.",
         logPath
       };
     } catch (error) {
@@ -284,6 +294,7 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       "--repo-root", repoRoot,
       "--app-path", appPath,
       "--parent-pid", String(process.pid),
+      "--user-data-dir", userDataDir,
       "--npm-path", npmPath
     ], { detached: true, stdio: "ignore", cwd: repoRoot, env: process.env });
     const requestQuit = () => quitForUpdate();

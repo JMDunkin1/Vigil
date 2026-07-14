@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { BRICK_MODE_PROFILE_ID, defaultState } from "../src/defaults.js";
 import { buildDiagnosticExport, diagnosticExportFilename } from "../src/server/diagnosticExportRoutes.js";
 import { externalNetworkBlockSummary } from "../src/externalNetworkBlock.js";
-import { hardeningActions, hostsDetail, launchAgentDetail } from "../src/server/hardeningSummary.js";
+import { hardeningActions, hardeningAudit, hostsDetail, launchAgentDetail } from "../src/server/hardeningSummary.js";
 import { contentType, resolvePublicPath, securityHeaders, transpilePublicTypescript } from "../src/server/http.js";
 import { resolvePublicAssets } from "../src/publicAssets.js";
 import { createLocalScriptRunner, shellQuote, appleScriptString } from "../src/server/localScripts.js";
@@ -499,6 +499,29 @@ assert.equal(commitmentLockError(panicPolicy), "Panic lockout cannot be ended ea
 assert.match(hostsDetail({ partial: true }), /markers are incomplete/);
 assert.match(hostsDetail({ installed: true, installedEntries: 10, expectedEntries: 10 }), /current \(10 entries\)/);
 assert.match(launchAgentDetail({ installed: true, loaded: true, running: true, pid: 42 }), /PID 42/);
+assert.match(
+  launchAgentDetail({ installed: true, loaded: false, running: true, embedded: true, restartHardened: false }),
+  /does not restart it after a crash or Force Quit/,
+  "an embedded runtime without independent supervision must not be reported as restart-hardened"
+);
+const embeddedLaunchAgentAudit = hardeningAudit({
+  state: defaultState(),
+  hosts: {},
+  firewall: {},
+  safariFilter: {},
+  agent: { installed: true, loaded: true, running: true, embedded: true, restartHardened: false },
+  account: {},
+  protection: {},
+  monitor: {},
+  foolproof: {},
+  stateSeal: {},
+  sourceSeal: {}
+});
+assert.equal(
+  embeddedLaunchAgentAudit.find((row) => row.id === "launch-agent")?.ok,
+  false,
+  "the hardening audit must fail when the embedded supervisor is unhealthy"
+);
 
 const actions = hardeningActions({
   localScriptCommand(name, options = {}) {

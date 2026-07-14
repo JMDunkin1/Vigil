@@ -8,6 +8,15 @@ contextBridge.exposeInMainWorld("vigilJournal", {
   promptTouchId: () => ipcRenderer.invoke("vigil:journal-touch-id")
 });
 
+contextBridge.exposeInMainWorld("vigilApi", {
+  request: (path, options = {}) => ipcRenderer.invoke("vigil:api-request", {
+    path: String(path || ""),
+    method: String(options?.method || "GET"),
+    headers: options?.headers && typeof options.headers === "object" ? options.headers : {},
+    body: typeof options?.body === "string" ? options.body : ""
+  })
+});
+
 contextBridge.exposeInMainWorld("vigilAppUpdate", {
   status: (options = {}) => ipcRenderer.invoke("vigil:app-update-status", {
     checkRemote: options?.checkRemote === true

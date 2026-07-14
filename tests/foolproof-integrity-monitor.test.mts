@@ -87,13 +87,17 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     hosts: { installed: true, partial: false, stale: false },
     firewall: readyFirewall,
     safariFilter: { required: true, installed: true, current: true, stale: false, appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." } },
-    agent: { loaded: true, running: true },
+    agent: { loaded: true, running: true, restartHardened: true },
     account: accountStatusFromGroups("focus", "staff everyone"),
     monitor: { ok: true, accessibilityLikelyMissing: false },
     stateSeal: { ok: true, status: "sealed", detail: "State file matches its integrity seal." },
     sourceSeal: { ok: true, status: "sealed", detail: "Source files match integrity seal.", fileCount: 42 }
   };
   assert.deepEqual(foolproofBlockers(state, readyContext, now), []);
+  assert.equal(foolproofBlockers(state, {
+    ...readyContext,
+    agent: { loaded: true, running: true, restartHardened: false }
+  }, now).some((item) => item.id === "launch-agent"), true);
   assert.deepEqual(foolproofBlockers(state, {
     ...readyContext,
     safariFilter: {
@@ -144,7 +148,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     hosts: { installed: true, partial: false, stale: false },
     firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
     safariFilter: { required: true, installed: true, current: true, stale: false, appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." } },
-    agent: { loaded: true, running: true },
+    agent: { loaded: true, running: true, restartHardened: true },
     account: accountStatusFromGroups("focus", "staff everyone"),
     monitor: { ok: true, accessibilityLikelyMissing: false },
     stateSeal: { ok: true, status: "sealed", detail: "State file matches its integrity seal." },
@@ -220,7 +224,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     hosts: { installed: true, partial: false, stale: false, installedEntries: 20, expectedEntries: 20 },
     firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
     safariFilter: { required: true, installed: true, current: true, stale: false, appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." } },
-    agent: { installed: true, loaded: true, running: true, pid: 12345 },
+    agent: { installed: true, loaded: true, running: true, restartHardened: true, pid: 12345 },
     account: accountStatusFromGroups("focus", "staff everyone")
   }, now);
   const byId = new Map(rows.map((item) => [item.id, item]));
@@ -233,13 +237,26 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   assert.equal(must(byId.get("keyholder"), "keyholder row").ok, true);
   assert.match(formatDoctorRows(rows), /OK\s+Foolproof readiness/);
 
+  const embeddedSupervisorRows = doctorRows(state, {
+    seal: { ok: true },
+    sourceSeal: { ok: true },
+    hosts: { installed: true, partial: false, stale: false },
+    firewall: { installed: true, partial: false, stale: false },
+    safariFilter: { required: false },
+    agent: { installed: true, loaded: true, running: true, embedded: true, restartHardened: false },
+    account: accountStatusFromGroups("focus", "staff everyone")
+  }, now);
+  const embeddedSupervisorRow = must(embeddedSupervisorRows.find((item) => item.id === "launch-agent"), "embedded launch-agent row");
+  assert.equal(embeddedSupervisorRow.ok, false, "doctor must fail when the embedded supervisor is unhealthy");
+  assert.match(embeddedSupervisorRow.detail, /not restarted after a crash or Force Quit/);
+
   state.extension.dynamicRules.syncedAt = new Date(now.getTime() - 3 * 60 * 1000).toISOString();
   const staleRows = doctorRows(state, {
     seal: { ok: true, status: "sealed", detail: "State file matches its integrity seal.", lastSealedAt: now.toISOString() },
     sourceSeal: { ok: true, status: "sealed", detail: "Source files match integrity seal.", sealedAt: now.toISOString(), fileCount: 42 },
     hosts: { installed: true, partial: false, stale: false, installedEntries: 20, expectedEntries: 20 },
     firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
-    agent: { installed: true, loaded: true, running: true, pid: 12345 },
+    agent: { installed: true, loaded: true, running: true, restartHardened: true, pid: 12345 },
     account: accountStatusFromGroups("focus", "staff everyone")
   }, now);
   assert.equal(must(staleRows.find((item) => item.id === "extension-rules"), "stale extension-rules row").ok, false);

@@ -54,6 +54,7 @@ interface SummaryRecord extends UnknownRecord {
   pathUrlCount?: number;
   loaded?: boolean;
   running?: boolean;
+  restartHardened?: boolean;
   accessibilityLikelyMissing?: boolean;
 }
 
@@ -129,7 +130,11 @@ export function foolproofBlockers(state: VigilState, context: FoolproofContext =
     else if (!extensionVersion.ok) blockers.push(blocker("browser-extension-version", extensionVersion.detail));
     if (!dynamicRules.ok) blockers.push(blocker("extension-rules", dynamicRules.detail));
   }
-  if (!agent.loaded || !agent.running) blockers.push(blocker("launch-agent", "LaunchAgent must be loaded and running."));
+  if (!agent.loaded || !agent.running) {
+    blockers.push(blocker("launch-agent", "LaunchAgent must be loaded and running."));
+  } else if (agent.restartHardened !== true) {
+    blockers.push(blocker("launch-agent", "Background enforcement must be restarted automatically after a crash or Force Quit."));
+  }
   if (!hosts.installed || hosts.partial || hosts.stale) blockers.push(blocker("hosts", "Hosts block must be installed and current."));
   if (!firewall.installed || firewall.partial || firewall.stale) blockers.push(blocker("firewall", "PF firewall block must be installed and current."));
 
