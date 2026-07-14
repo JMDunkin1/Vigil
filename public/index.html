@@ -156,7 +156,7 @@
         <div class="ranking-vital ranking-vital-primary">
           <span>Screen time</span>
           <strong id="totalUsageToday">--</strong>
-          <em>Mac + iPhone</em>
+          <em id="totalUsageDevices">Mac</em>
         </div>
         <div class="ranking-vital">
           <span>Focus score</span>
@@ -197,13 +197,7 @@
         <section id="audioPlayer" class="audio-player" aria-labelledby="focusSoundNowPlaying" data-playing="false">
           <h2 id="focusSoundNowPlaying">Brown noise</h2>
 
-          <p id="focusSoundAttribution" class="audio-attribution" hidden>
-            <span id="focusSoundAttributionText"></span>
-            <a id="focusSoundSourceLink" href="https://commons.wikimedia.org/" target="_blank" rel="noopener noreferrer">Source</a>
-            <a id="focusSoundLicenseLink" href="https://creativecommons.org/" target="_blank" rel="noopener noreferrer">License</a>
-          </p>
-
-          <div class="audio-wave" aria-hidden="true">
+          <div id="focusSoundWave" class="audio-wave" aria-hidden="true">
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
           </div>
@@ -279,6 +273,12 @@
               </div>
             </details>
           </div>
+
+          <p id="focusSoundAttribution" class="audio-attribution" hidden>
+            <span id="focusSoundAttributionText"></span>
+            <a id="focusSoundSourceLink" href="https://commons.wikimedia.org/" target="_blank" rel="noopener noreferrer">Source</a>
+            <a id="focusSoundLicenseLink" href="https://creativecommons.org/" target="_blank" rel="noopener noreferrer">License</a>
+          </p>
         </section>
       </div>
 
@@ -751,15 +751,10 @@
         <div class="tracking-metric-grid">
           <article class="tracking-metric-card tracking-metric-primary">
             <div class="tracking-metric-value"><strong id="habitMonthRate">—</strong><small>completed</small></div>
-            <p id="habitMonthSummary"></p>
             <svg id="habitMonthTrend" class="tracking-trend" viewBox="0 0 420 104" preserveAspectRatio="none" role="img" aria-label="Completion trend for this month"></svg>
           </article>
           <article class="tracking-metric-card tracking-metric-rhythm">
             <span id="habitMonthDayCount" hidden>31 days</span>
-            <div class="tracking-rhythm-copy">
-              <strong id="habitMonthCompleted">—</strong>
-              <span id="habitMonthRecorded">No check-ins yet</span>
-            </div>
             <div id="habitMonthPulse" class="habit-month-pulse" aria-label="Daily completion for this month"></div>
           </article>
         </div>
@@ -1133,7 +1128,7 @@
 
     <section id="view-devices" class="view settings-segment" data-view="settings" hidden>
       <details class="settings-disclosure">
-        <summary><span>Devices and iPhone</span><em>Apple companion control and advanced delivery</em><span class="pill good">Apple only</span></summary>
+        <summary><span>Devices and iPhone</span><em>Vigil content filtering and advanced delivery</em><span class="pill good">Apple only</span></summary>
         <div class="settings-disclosure-body">
 
       <section class="panel">
@@ -1142,23 +1137,24 @@
             <form id="iosForm" class="device-form ios-form">
               <div class="device-form-head">
                 <div>
-                  <p class="eyebrow">iPhone</p>
-                  <strong id="iosStatusTitle">Supervised profile</strong>
-                  <span id="iosStatusText">Apple-only iPhone blocking needs a supervised device policy.</span>
+                  <p class="eyebrow">Vigil Content Filter</p>
+                  <strong id="iosStatusTitle">Native iPhone content filter</strong>
+                  <span id="iosStatusText">Vigil's iPhone content filter needs a supervised device policy.</span>
                 </div>
                 <span id="iosStatus" class="pill neutral">Ready</span>
               </div>
-              <label class="checkline"><input id="iosEnabled" name="enabled" type="checkbox"> iPhone supervised blocking</label>
+              <label class="checkline"><input id="iosEnabled" name="enabled" type="checkbox"> Enable Vigil content filter</label>
+              <p class="device-safety-note">Uses Vigil's own adult blocklist, explicit-search rules, SafeSearch enforcement, and on-device sensitive-media analysis. Blocking unfiltered browser and social apps only closes filter escape routes; Vigil's distraction schedules remain separate.</p>
               <div class="form-row">
                 <label>
-                  App policy
+                  Unfiltered app policy
                   <select id="iosMode" name="mode">
                     <option value="denylist">Block listed apps</option>
                     <option value="allowlist">Only allow listed apps</option>
                   </select>
                 </label>
                 <label>
-                  Web policy
+                  Content policy
                   <select id="iosWebMode" name="webMode">
                     <option value="denylist">Block listed sites</option>
                     <option value="allowlist">Only allow listed sites</option>
@@ -1166,8 +1162,8 @@
                 </label>
               </div>
               <div class="toggle-grid">
-                <label class="checkline"><input id="iosBlockApps" name="blockApps" type="checkbox"> MDM app removal</label>
-                <label class="checkline"><input id="iosBlockWeb" name="blockWeb" type="checkbox"> Web</label>
+                <label class="checkline"><input id="iosBlockApps" name="blockApps" type="checkbox"> Close browser and social escape routes</label>
+                <label class="checkline"><input id="iosBlockWeb" name="blockWeb" type="checkbox"> Filter adult websites and searches</label>
                 <label class="checkline"><input id="iosHardenRemoval" name="hardenRemoval" type="checkbox"> Removal passcode</label>
                 <label class="checkline"><input id="iosRestrictInstallErase" name="restrictInstallAndErase" type="checkbox"> Lock escapes</label>
                 <label class="checkline"><input id="iosAllowSafariHistoryClearing" name="allowSafariHistoryClearing" type="checkbox"> Safari history</label>
@@ -1175,8 +1171,8 @@
               <div class="focused-social-panel">
                 <div class="focused-social-head">
                   <div>
-                    <p class="eyebrow">Focused Social</p>
-                    <strong>Short-form and discovery controls</strong>
+                    <p class="eyebrow">Filtered Social</p>
+                    <strong>Sensitive-content and discovery controls</strong>
                   </div>
                   <div class="focused-social-master">
                     <label class="checkline"><input id="iosFocusedSocialEnabled" type="checkbox"> On</label>

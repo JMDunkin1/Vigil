@@ -12,7 +12,7 @@
   },
   "scripts": {
     "app": "npm run build && electron .",
-    "build": "node scripts/prepare-build-dir.mjs && rm -rf dist/runtime && tsc -p tsconfig.json && node dist/runtime/scripts/copy-assets.mjs && node dist/runtime/scripts/write-build-info.mjs",
+    "build": "node scripts/prepare-build-dir.mjs && rm -rf dist/runtime && tsc -p tsconfig.json && node scripts/build-human-idle-helper.mjs && node dist/runtime/scripts/copy-assets.mjs && node dist/runtime/scripts/write-build-info.mjs",
     "build:mac": "npm run build && npm run package:mac",
     "package:mac": "node scripts/prepare-mac-output.mjs && node scripts/package-mac.mjs dir && node scripts/hide-mac-build.mjs",
     "dist:mac": "npm run build && npm run package:mac:dmg",
@@ -86,7 +86,8 @@
       "dist.nosync/runtime/public/**/*",
       "dist.nosync/runtime/src/**/*",
       "dist.nosync/runtime/scripts/**/*",
-      "dist.nosync/runtime/extension/**/*"
+      "dist.nosync/runtime/extension/**/*",
+      "dist.nosync/runtime/bin/**/*"
     ],
     "mac": {
       "category": "public.app-category.productivity",

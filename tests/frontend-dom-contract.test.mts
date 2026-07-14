@@ -12,6 +12,7 @@ assert.match(html, /Daily focus score and combined Mac and iPhone screen time fo
 assert.doesNotMatch(html, />This week|>Your path|>Combined today|>Daily focus|>Combined screen time|>Seven-day wave|>The week's ascent/u, "ranking should not repeat explanatory labels around the same data");
 assert.doesNotMatch(html, /rankJourney|usageWave|journeyKnight/u, "ranking should use one combined weekly comparison instead of two competing charts");
 assert.doesNotMatch(html, />Devices included</u, "ranking should show only the three decision-useful headline statistics");
+assert.match(html, /id="totalUsageDevices">Mac</u, "screen time should name only devices that actually contributed usage");
 assert.doesNotMatch(html, />iPhone today</u);
 assert.doesNotMatch(html, /knightState|clean days?/u, "ranking should not spend header space repeating the clean-day count");
 const ids = [...html.matchAll(/\bid="([A-Za-z][\w:-]*)"/g)].map((match) => match[1]);
@@ -126,6 +127,7 @@ const trackingMarkup = html.match(/<section id="view-journal"[\s\S]*?<div class=
 assert.match(trackingMarkup, /id="dailyCheckInMeterBar"/, "daily tracking must expose a visible completion meter");
 assert.match(trackingMarkup, /id="habitMonthPulse"/, "monthly tracking must expose the compact rhythm visualization");
 assert.match(trackingMarkup, /id="habitMonthDayCount"/, "monthly tracking must expose a dynamic day count");
+assert.doesNotMatch(trackingMarkup, /habitMonthSummary|habitMonthCompleted|habitMonthRecorded/, "monthly tracking must keep only the completion percentage above its visual graphs");
 assert.match(trackingMarkup, /<details id="habitCalendarDetails" class="habit-calendar-details">/, "the dense habit grid must start collapsed behind optional detail");
 assert.doesNotMatch(trackingMarkup, /<details id="habitCalendarDetails"[^>]*\sopen(?:\s|>)/, "the dense monthly grid must not dominate the initial tracking view");
 const trackingSource = await readFile("public/tracking-view.js", "utf8");
@@ -137,6 +139,8 @@ assert.match(trackingSource, /dateIsComplete\(dateKey, behaviors, values\)[\s\S]
 assert.doesNotMatch(trackingSource, /Your answers are locked|All \$\{total\} item/, "the completion screen must not repeat results already shown in the tracking graphs");
 assert.match(trackingSource, /editableCompletedDateKey = dateKey/, "editing a completed day must require a deliberate unlock action");
 assert.match(trackingSource, /monthDayCount\.textContent = `\$\{dates\.length\} days`/, "the selected month must control the displayed day count");
+assert.match(styles, /@media \(max-width: 800px\)[\s\S]*?\.tracking-trend\s*\{[\s\S]*?height:\s*clamp\(88px, 17vh, 108px\);/, "the stacked monthly trend must expand vertically at the default desktop aspect ratio");
+assert.match(styles, /@media \(max-width: 800px\)[\s\S]*?body\[data-active-view="tracking"\] \.habit-month-pulse\s*\{[\s\S]*?height:\s*clamp\(98px, 19vh, 122px\);/, "the stacked monthly pulse must use the space freed by redundant summary copy");
 
 const protectionMarkup = html.match(/<div id="protectionLevelControl"[\s\S]*?<div[^>]*class="home-runtime-status"/)?.[0] || "";
 assert.match(protectionMarkup, /id="protectionLevelControl"[^>]*aria-expanded="false"/, "the protection selector must start collapsed");
@@ -254,6 +258,13 @@ assert.equal(
 assert.doesNotMatch(audioMarkup, /<details class="audio-library-group[^>]*\sopen(?:\s|>)/, "the sound library should start collapsed");
 assert.match(audioMarkup, /id="focusSoundPlayButton"/, "play and pause must remain outside the collapsed settings");
 assert.doesNotMatch(audioMarkup, /focusSoundStatus|focusSoundCategory|focusSoundDescription/, "the player should omit redundant status and description copy");
-assert.match(audioMarkup, /id="focusSoundAttribution"[^>]*hidden/, "licensed recordings must retain an attribution surface without adding copy for generated sounds");
-assert.match(audioMarkup, /class="audio-wave"/, "the player should keep the compact animated waveform");
-assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"title wave"[\s\S]*?"control control"[\s\S]*?"attribution attribution";/, "the compact waveform must stay at the top right above the full-width playback control and attribution");
+const audioPlayerMarkup = audioMarkup.match(/<section id="audioPlayer"[\s\S]*?<\/section>/)?.[0] || "";
+assert.doesNotMatch(audioPlayerMarkup, /focusSoundAttribution/, "the large player card must end at the Listen control");
+assert.match(audioMarkup, /id="audioSoundLibrary"[\s\S]*?id="focusSoundAttribution"[^>]*hidden/, "recording details must live with the expandable sound library");
+assert.match(audioMarkup, /id="focusSoundWave" class="audio-wave"/, "the player should keep the compact live waveform");
+const focusSoundSource = await readFile("public/focus-sound.js", "utf8");
+assert.match(focusSoundSource, /createAnalyser\(\)/, "the waveform must measure the playback signal instead of inventing motion");
+assert.match(focusSoundSource, /getFloatTimeDomainData/, "quiet passages must reduce the waveform using the signal's real loudness");
+assert.match(focusSoundSource, /getByteFrequencyData/, "each waveform bar must reflect the signal's real frequency shape");
+assert.doesNotMatch(styles, /@keyframes listeningWave|animation:\s*listeningWave/, "the waveform must not regress to a decorative loop");
+assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"title wave"[\s\S]*?"control control";/, "the compact waveform must stay at the top right above the full-width playback control");

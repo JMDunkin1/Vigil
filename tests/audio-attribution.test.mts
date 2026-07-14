@@ -20,8 +20,10 @@ for (const expected of [
 }
 
 for (const id of ["focusSoundAttribution", "focusSoundAttributionText", "focusSoundSourceLink", "focusSoundLicenseLink"]) {
-  assert.match(html, new RegExp(`id="${id}"`), `missing visible audio attribution surface: ${id}`);
+  assert.match(html, new RegExp(`id="${id}"`), `missing sound-library attribution surface: ${id}`);
 }
+assert.match(html, /id="audioSoundLibrary"[\s\S]*?id="focusSoundAttribution"/, "recording attribution must stay in the expandable sound library");
+assert.match(source, /closest\("\.audio-library-group"\)\?\.append\(attribution\)/, "recording attribution must follow the active track into its dropdown");
 assert.match(source, /attribution\.hidden = !track/);
 assert.match(source, /attributionText\.textContent = track\.attribution/);
 assert.match(source, /sourceLink\.href = track\.sourcePage/);

@@ -46,11 +46,13 @@ type NoiseColor = "brown" | "pink" | "white";
 interface FocusAudioState {
   context: AudioContext | null;
   gain: GainNode | null;
+  analyser: AnalyserNode | null;
   nodes: AudioNode[];
   preset: FocusPreset | "";
   signature: string;
   playing: boolean;
   blocked: boolean;
+  visualizerFrame: number | null;
 }
 
 interface SyncOptions {
@@ -97,20 +99,36 @@ interface RealAudioTrack {
 }
 
 const audioBufferCache = new Map<string, Promise<AudioBuffer>>();
+const spectrumMinimumFrequency = 45;
+const spectrumMaximumFrequency = 16_000;
+const waveformIdleScale = 0.06;
 
 export function createFocusSoundController({ $, post, toast }: { $: QueryElement; post: PostRequest; toast: Toast }) {
   let audioStartGeneration = 0;
   let renderGeneration = 0;
   let renderedOptions: SyncOptions | null = null;
+  let soundViewActive = false;
+  const reducedMotionQuery = typeof window.matchMedia === "function"
+    ? window.matchMedia("(prefers-reduced-motion: reduce)")
+    : null;
   const focusAudio: FocusAudioState = {
     context: null,
     gain: null,
+    analyser: null,
     nodes: [],
     preset: "",
     signature: "",
     playing: false,
-    blocked: false
+    blocked: false,
+    visualizerFrame: null
   };
+  reducedMotionQuery?.addEventListener("change", () => {
+    if (reducedMotionQuery.matches) {
+      stopSpectrumVisualization();
+    } else if (soundViewActive && focusAudio.analyser && focusAudio.playing) {
+      startSpectrumVisualization(focusAudio.analyser);
+    }
+  });
 
   function render(data: FocusSoundData) {
     const generation = ++renderGeneration;
@@ -205,15 +223,23 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
     if (!context) return;
     const generation = ++audioStartGeneration;
 
+    const mix = context.createGain();
+    const analyser = context.createAnalyser();
     const master = context.createGain();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.68;
+    analyser.minDecibels = -90;
+    analyser.maxDecibels = -18;
     master.gain.value = volumeToGain(options.volume, modeVolumeMultiplier(options.mode));
+    mix.connect(analyser).connect(master);
     master.connect(context.destination);
-    const nodes: AudioNode[] = [master];
+    const nodes: AudioNode[] = [mix, analyser, master];
     const preset = phase === "break" ? "ocean" : options.preset;
     const audio = realAudioTrack(preset);
     const profile = audio ? null : soundProfile(options, phase);
     Object.assign(focusAudio, {
       gain: master,
+      analyser,
       nodes,
       preset,
       signature,
@@ -228,9 +254,9 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
           stopAudioNodes(nodes);
           return;
         }
-        connectRealAudioSource(source, master, nodes);
+        connectRealAudioSource(source, mix, nodes);
       } else if (profile) {
-        connectSoundProfile(context, profile, master, nodes);
+        connectSoundProfile(context, profile, mix, nodes);
       }
     } catch (error) {
       stopAudioNodes(nodes);
@@ -243,7 +269,9 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
 
     if (!isCurrentStart(nodes, generation, signature)) {
       stopAudioNodes(nodes);
+      return;
     }
+    startSpectrumVisualization(analyser);
   }
 
   function isCurrentStart(nodes: AudioNode[], generation: number, signature: string): boolean {
@@ -252,8 +280,49 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
 
   function stop() {
     audioStartGeneration += 1;
+    stopSpectrumVisualization();
     stopAudioNodes(focusAudio.nodes || []);
     clearFocusAudioState();
+  }
+
+  function startSpectrumVisualization(analyser: AnalyserNode) {
+    stopSpectrumVisualization();
+    const wave = document.querySelector<HTMLElement>("#focusSoundWave");
+    const bars = wave ? Array.from(wave.querySelectorAll<HTMLElement>("span")) : [];
+    if (!soundViewActive || reducedMotionQuery?.matches || !bars.length || typeof window.requestAnimationFrame !== "function") return;
+
+    const frequencyData = new Uint8Array(analyser.frequencyBinCount);
+    const timeData = new Float32Array(analyser.fftSize);
+    const displayedLevels = bars.map(() => waveformIdleScale);
+
+    const draw = () => {
+      if (!soundViewActive || reducedMotionQuery?.matches || focusAudio.analyser !== analyser || !focusAudio.playing) return;
+      analyser.getByteFrequencyData(frequencyData);
+      analyser.getFloatTimeDomainData(timeData);
+      const loudness = signalLoudness(timeData);
+
+      for (const [index, bar] of bars.entries()) {
+        const band = spectrumBandLevel(analyser, frequencyData, index, bars.length);
+        const target = waveformIdleScale + (1 - waveformIdleScale) * loudness * Math.pow(band, 0.86);
+        const response = target > displayedLevels[index] ? 0.52 : 0.2;
+        displayedLevels[index] += (target - displayedLevels[index]) * response;
+        bar.style.setProperty("--wave-level", displayedLevels[index].toFixed(3));
+      }
+
+      focusAudio.visualizerFrame = window.requestAnimationFrame(draw);
+    };
+
+    focusAudio.visualizerFrame = window.requestAnimationFrame(draw);
+  }
+
+  function stopSpectrumVisualization() {
+    if (focusAudio.visualizerFrame !== null && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(focusAudio.visualizerFrame);
+    }
+    focusAudio.visualizerFrame = null;
+    for (const bar of document.querySelectorAll<HTMLElement>("#focusSoundWave span")) {
+      bar.style.removeProperty("--wave-level");
+    }
   }
 
   function stopAudioNodes(nodes: AudioNode[]) {
@@ -269,6 +338,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
 
   function clearFocusAudioState() {
     focusAudio.gain = null;
+    focusAudio.analyser = null;
     focusAudio.nodes = [];
     focusAudio.playing = false;
     focusAudio.preset = "";
@@ -294,6 +364,14 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
     restartTimer() {
       resetTimer();
     },
+    setViewActive(active: boolean) {
+      soundViewActive = active;
+      if (!active) {
+        stopSpectrumVisualization();
+      } else if (focusAudio.analyser && focusAudio.playing) {
+        startSpectrumVisualization(focusAudio.analyser);
+      }
+    },
     isPlaying() {
       return focusAudio.playing;
     },
@@ -306,6 +384,31 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
     const field = $(selector);
     if (document.activeElement !== field) field.value = value;
   }
+}
+
+function signalLoudness(samples: Float32Array): number {
+  let sumOfSquares = 0;
+  for (const sample of samples) sumOfSquares += sample * sample;
+  const rms = Math.sqrt(sumOfSquares / samples.length);
+  const decibels = 20 * Math.log10(Math.max(rms, 0.000_001));
+  return Math.pow(clamp((decibels + 58) / 46, 0, 1), 1.15);
+}
+
+function spectrumBandLevel(analyser: AnalyserNode, data: Uint8Array, index: number, count: number): number {
+  const nyquist = analyser.context.sampleRate / 2;
+  const maximum = Math.min(spectrumMaximumFrequency, nyquist);
+  const ratio = maximum / spectrumMinimumFrequency;
+  const lowerFrequency = spectrumMinimumFrequency * Math.pow(ratio, index / count);
+  const upperFrequency = spectrumMinimumFrequency * Math.pow(ratio, (index + 1) / count);
+  const binWidth = analyser.context.sampleRate / analyser.fftSize;
+  const start = clamp(Math.floor(lowerFrequency / binWidth), 0, data.length - 1);
+  const end = clamp(Math.ceil(upperFrequency / binWidth), start + 1, data.length);
+  let sumOfSquares = 0;
+  for (let bin = start; bin < end; bin += 1) {
+    const magnitude = data[bin] / 255;
+    sumOfSquares += magnitude * magnitude;
+  }
+  return Math.sqrt(sumOfSquares / (end - start));
 }
 
 function focusPlaybackErrorMessage(error: unknown): string {
@@ -481,7 +584,9 @@ function renderFocusStudio(options: SyncOptions, audioState: FocusAudioState): v
   if (title) title.textContent = titleText;
   const track = realAudioTrack(activePreset);
   if (attribution) attribution.hidden = !track;
-  if (track && attributionText && sourceLink && licenseLink) {
+  if (track && attribution && attributionText && sourceLink && licenseLink) {
+    const activeTrackButton = document.querySelector<HTMLButtonElement>(`[data-focus-preset="${activePreset}"]`);
+    activeTrackButton?.closest<HTMLDetailsElement>(".audio-library-group")?.append(attribution);
     attributionText.textContent = track.attribution;
     sourceLink.href = track.sourcePage;
     licenseLink.href = track.licenseUrl;

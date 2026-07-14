@@ -21,6 +21,7 @@ export function createRankingView() {
   const standing = required<HTMLElement>("#knightStanding");
   const rank = required<HTMLElement>("#knightRank");
   const totalUsage = required<HTMLElement>("#totalUsageToday");
+  const totalUsageDevices = required<HTMLElement>("#totalUsageDevices");
   const focusScore = required<HTMLElement>("#focusScore");
   const focusScoreLabel = required<HTMLElement>("#focusScoreLabel");
   const distractionTrend = required<HTMLElement>("#distractionTrend");
@@ -36,6 +37,7 @@ export function createRankingView() {
     standing.textContent = tier.title;
     rank.textContent = progression ? `Rank ${progression.level}` : "Rank --";
     totalUsage.textContent = formatDuration(Number(data.usage?.totalSeconds || 0));
+    totalUsageDevices.textContent = usageDevicesLabel(data.usage?.devices);
     focusScore.textContent = String(score);
     focusScoreLabel.textContent = focusLabel(score, Number(data.usage?.totalSeconds || 0) > 0);
     distractionTrend.textContent = signedPercent(data.report?.comparison?.distractingPercentDelta);
@@ -97,6 +99,14 @@ export function createRankingView() {
   }
 
   return { render };
+}
+
+function usageDevicesLabel(devices: DashboardData["usage"]["devices"]): string {
+  const hasMac = Number(devices?.computer?.totalSeconds || 0) > 0;
+  const hasPhone = Number(devices?.phone?.totalSeconds || 0) > 0;
+  if (hasMac && hasPhone) return "Mac + iPhone";
+  if (hasPhone) return "iPhone";
+  return "Mac";
 }
 
 function focusLabel(score: number, hasUsage: boolean): string {

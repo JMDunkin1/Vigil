@@ -42,6 +42,467 @@ import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-
     name: "Default focus",
     mode: "blocklist",
     blockedApps: ["Instagram"],
+    blockedSites: [],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  state.settings.activeProfileId = "default";
+  const usage: UsageState = usageFixture({
+    "2026-05-26": {
+      totalSeconds: 30 * 60,
+      apps: { Instagram: 30 * 60 },
+      sites: {},
+      opens: { apps: { Instagram: 2 }, sites: {} },
+      devices: {
+        phone: {
+          totalSeconds: 30 * 60,
+          apps: { Instagram: 30 * 60 },
+          sites: {},
+          opens: { apps: { Instagram: 2 }, sites: {} }
+        }
+      },
+      deviceTotalsMode: "by-device"
+    },
+    "2026-05-27": {
+      totalSeconds: 10 * 60 * 60,
+      apps: { Codex: 10 * 60 * 60 },
+      sites: {},
+      opens: { apps: {}, sites: {} }
+    }
+  });
+  recordUsage(usage, { app: "Codex" }, 5 * 60 * 60, new Date("2026-05-28T12:00:00-04:00"));
+  recordOpen(usage, { app: "Codex" }, null, new Date("2026-05-28T12:00:00-04:00"));
+  recordUsage(usage, { app: "Codex" }, 60 * 60, new Date("2026-05-28T14:00:00-04:00"), {
+    segment: {
+      startedAt: new Date("2026-05-28T13:00:00-04:00"),
+      endedAt: new Date("2026-05-28T14:00:00-04:00")
+    }
+  });
+  syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    updatedAt: "2026-05-28T14:00:00-04:00",
+    totalSeconds: 30 * 60,
+    apps: { Instagram: 30 * 60 },
+    opens: { apps: { Instagram: 2 }, sites: {} },
+    segments: [{
+      startedAt: "2026-05-28T13:30:00-04:00",
+      endedAt: "2026-05-28T14:00:00-04:00",
+      app: "Instagram"
+    }]
+  }, now);
+
+  const summary = usageSummary(usage, state, now);
+  assert.equal(summary.totalSeconds, 60 * 60, "background history must be hidden and overlapping devices must count once");
+  assert.equal(summary.distractingSeconds, 30 * 60, "the foreground phone activity should own the overlap");
+  assert.equal(summary.focusScore, 50, "background Codex time must not inflate the focus score denominator");
+  assert.deepEqual(summary.topApps, [
+    { name: "Codex", seconds: 30 * 60 },
+    { name: "Instagram", seconds: 30 * 60 }
+  ]);
+  assert.equal(summary.devices.computer.totalSeconds, 60 * 60, "only active Codex use remains Mac screen time");
+  assert.equal(summary.devices.phone.totalSeconds, 30 * 60);
+  assert.equal(summary.devices.computer.appOpenCount, 1, "timed device summaries must retain recorded opens");
+  assert.equal(summary.devices.phone.appOpenCount, 2);
+  assert.equal(summary.openPressure, 3, "timed days must retain open pressure from trusted and legacy counters");
+  const report = focusReport(usage, state, now);
+  assert.equal(report.currentWeek.days.find((day) => day.key === "2026-05-28")?.openCount, 3);
+  assert.equal(report.currentWeek.totals.averageDailyOpens, 3);
+  const phoneOnlyDay = report.currentWeek.days.find((day) => day.key === "2026-05-26");
+  assert.equal(phoneOnlyDay?.tracked, true, "trusted Mac timelines must not erase segmentless phone-only days");
+  assert.equal(phoneOnlyDay?.totalSeconds, 30 * 60);
+  assert.equal(phoneOnlyDay?.devices.computerSeconds, null);
+  assert.equal(phoneOnlyDay?.devices.phoneSeconds, 30 * 60);
+  assert.equal(report.currentWeek.days.find((day) => day.key === "2026-05-27")?.tracked, false, "legacy background-contaminated days must not remain visible after trusted tracking starts");
+}
+
+{
+  const state = defaultState();
+  const segmentStart = new Date("2026-05-28T09:00:00-04:00").getTime();
+  const segments = Array.from({ length: 5_000 }, (_, index) => ({
+    startedAt: new Date(segmentStart + index * 3_000).toISOString(),
+    endedAt: new Date(segmentStart + (index + 1) * 3_000).toISOString(),
+    app: index % 2 ? "Safari" : "Codex"
+  }));
+  const usage: UsageState = usageFixture({
+    "2026-05-28": {
+      totalSeconds: 15_000,
+      apps: { Codex: 7_500, Safari: 7_500 },
+      sites: {},
+      opens: { apps: {}, sites: {} },
+      devices: {
+        computer: {
+          totalSeconds: 15_000,
+          apps: { Codex: 7_500, Safari: 7_500 },
+          sites: {},
+          opens: { apps: {}, sites: {} },
+          segments,
+          segmentTimelineComplete: true
+        }
+      },
+      deviceTotalsMode: "by-device"
+    }
+  });
+
+  recordUsage(usage, { app: "Codex" }, 3, new Date(segmentStart + 15_003_000), {
+    segment: {
+      startedAt: new Date(segmentStart + 15_000_000),
+      endedAt: new Date(segmentStart + 15_003_000)
+    }
+  });
+  assert.equal(usageSummary(usage, state, new Date(segmentStart + 15_003_000)).totalSeconds, 15_003, "trimming a timeline prefix must fall back to complete counters");
+  assert.equal(usage["2026-05-28"].devices.computer.segmentTimelineComplete, undefined);
+
+  recordUsage(usage, { app: "Safari" }, 3, new Date(segmentStart + 15_006_000), {
+    segment: {
+      startedAt: new Date(segmentStart + 15_003_000),
+      endedAt: new Date(segmentStart + 15_006_000)
+    }
+  });
+  assert.equal(usageSummary(usage, state, new Date(segmentStart + 15_006_000)).totalSeconds, 15_006, "later segments must not restore completeness after a prefix was trimmed");
+}
+
+{
+  const state = defaultState();
+  const segmentStart = new Date("2026-05-28T00:00:00-04:00").getTime();
+  const segments = Array.from({ length: 5_001 }, (_, index) => ({
+    startedAt: new Date(segmentStart + index * 1_000).toISOString(),
+    endedAt: new Date(segmentStart + (index + 1) * 1_000).toISOString(),
+    app: "Codex"
+  }));
+  const usage: UsageState = {};
+  syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    updatedAt: "2026-05-28T02:00:00-04:00",
+    totalSeconds: 8_600,
+    apps: { Codex: 8_600 },
+    segments,
+    segmentTimelineComplete: true
+  }, now);
+  assert.equal(usage["2026-05-28"].devices.phone.segmentTimelineComplete, undefined);
+  assert.equal(usageSummary(usage, state, now).devices.phone.totalSeconds, 8_600, "a first truncated sync must use complete counters");
+
+  const filteredUsage: UsageState = {};
+  syncDeviceUsageSnapshot(filteredUsage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 120,
+    apps: { Codex: 120 },
+    segments: [segments[0], { startedAt: "invalid", endedAt: "invalid", app: "Codex" }],
+    segmentTimelineComplete: true
+  }, now);
+  assert.equal(filteredUsage["2026-05-28"].devices.phone.segmentTimelineComplete, undefined, "filtering an invalid segment must clear completeness");
+
+  const clippedUsage: UsageState = {};
+  syncDeviceUsageSnapshot(clippedUsage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 120,
+    apps: { Codex: 120 },
+    segments: [{
+      startedAt: "2026-05-27T23:59:00-04:00",
+      endedAt: "2026-05-28T00:01:00-04:00",
+      app: "Codex"
+    }],
+    segmentTimelineComplete: true
+  }, now);
+  assert.equal(clippedUsage["2026-05-28"].devices.phone.segmentTimelineComplete, undefined, "day clipping must clear completeness");
+}
+
+{
+  const state = defaultState();
+  const segmentStart = new Date("2026-05-28T09:00:00-04:00").getTime();
+  const segments = Array.from({ length: 5_002 }, (_, index) => ({
+    startedAt: new Date(segmentStart + index * 3_000).toISOString(),
+    endedAt: new Date(segmentStart + (index + 1) * 3_000).toISOString(),
+    app: index % 2 ? "Safari" : "Codex"
+  }));
+  const usage: UsageState = {};
+  syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    updatedAt: new Date(segmentStart + 15_000_000).toISOString(),
+    totalSeconds: 15_000,
+    apps: { Codex: 7_500, Safari: 7_500 },
+    segments: segments.slice(0, 5_000),
+    segmentTimelineComplete: true
+  }, now);
+
+  const firstRollover = syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    updatedAt: new Date(segmentStart + 15_003_000).toISOString(),
+    totalSeconds: 15_003,
+    apps: { Codex: 7_503, Safari: 7_500 },
+    segments: segments.slice(0, 5_001),
+    segmentTimelineComplete: true
+  }, now);
+  assert.equal(firstRollover.stale, false, "the first capped phone timeline rollover must remain monotonic");
+  assert.equal(firstRollover.deviceTotalSeconds, 15_003);
+  assert.equal(usage["2026-05-28"].devices.phone.segments?.length, 5_000);
+  assert.equal(usage["2026-05-28"].devices.phone.segmentTimelineComplete, undefined, "a trimmed timeline must fall back to complete counters");
+  assert.equal(usageSummary(usage, state, now).devices.phone.totalSeconds, 15_003);
+
+  const nextRollover = syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    updatedAt: new Date(segmentStart + 15_006_000).toISOString(),
+    totalSeconds: 15_006,
+    apps: { Codex: 7_503, Safari: 7_503 },
+    segments,
+    segmentTimelineComplete: true
+  }, now);
+  assert.equal(nextRollover.stale, false, "subsequent capped phone snapshots must continue advancing");
+  assert.equal(nextRollover.deviceTotalSeconds, 15_006);
+  assert.equal(usageSummary(usage, state, now).devices.phone.totalSeconds, 15_006);
+}
+
+{
+  const state = defaultState();
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: ["Instagram"],
+    blockedSites: [],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  state.settings.activeProfileId = "default";
+  const usage: UsageState = {};
+  recordUsage(usage, { app: "Codex" }, 2 * 60 * 60, now);
+  recordUsage(usage, { app: "Codex" }, 60 * 60, now, {
+    segment: {
+      startedAt: new Date("2026-05-28T13:00:00-04:00"),
+      endedAt: new Date("2026-05-28T14:00:00-04:00")
+    }
+  });
+  syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 30 * 60,
+    apps: { Instagram: 30 * 60 },
+    opens: { apps: { Instagram: 2 }, sites: {} }
+  }, now);
+
+  const summary = usageSummary(usage, state, now);
+  assert.equal(summary.totalSeconds, 90 * 60, "snapshot-only phone time must remain alongside timed Mac use");
+  assert.equal(summary.distractingSeconds, 30 * 60);
+  assert.equal(summary.devices.computer.totalSeconds, 60 * 60);
+  assert.equal(summary.devices.phone.totalSeconds, 30 * 60);
+  assert.deepEqual(summary.topApps, [
+    { name: "Codex", seconds: 60 * 60 },
+    { name: "Instagram", seconds: 30 * 60 }
+  ]);
+  const reportDay = focusReport(usage, state, now).currentWeek.days.find((day) => day.key === "2026-05-28");
+  assert.equal(reportDay?.devices.computerSeconds, 60 * 60);
+  assert.equal(reportDay?.devices.phoneSeconds, 30 * 60);
+}
+
+{
+  const state = defaultState();
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: ["Safari"],
+    blockedSites: ["reddit.com"],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  state.settings.activeProfileId = "default";
+  const usage: UsageState = {};
+  recordUsage(usage, { app: "Codex" }, 5 * 60, now, {
+    segment: {
+      startedAt: new Date("2026-05-28T13:55:00-04:00"),
+      endedAt: new Date("2026-05-28T14:00:00-04:00")
+    }
+  });
+  syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 5 * 60,
+    apps: { Safari: 5 * 60 },
+    sites: { "reddit.com": 5 * 60 },
+    opens: { apps: {}, sites: {} }
+  }, now);
+
+  const summary = usageSummary(usage, state, now);
+  assert.equal(summary.totalSeconds, 10 * 60);
+  assert.equal(summary.distractingSeconds, 5 * 60, "segmentless device attribution must not consume allowed time from another device");
+  assert.equal(summary.focusScore, 50);
+  assert.equal(summary.devices.computer.distractingSeconds, 0);
+  assert.equal(summary.devices.phone.distractingSeconds, 5 * 60);
+  const reportDay = focusReport(usage, state, now).currentWeek.days.find((day) => day.key === "2026-05-28");
+  assert.equal(reportDay?.distractingSeconds, 5 * 60);
+  assert.equal(reportDay?.focusScore, 50);
+}
+
+{
+  const state = defaultState();
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: [],
+    blockedSites: ["reddit.com"],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  state.settings.activeProfileId = "default";
+  const usage: UsageState = {};
+  recordUsage(usage, { app: "Browser Extension", hostname: "reddit.com" }, 60, now);
+  recordUsage(usage, { app: "Google Chrome" }, 60, now, {
+    segment: {
+      startedAt: new Date("2026-05-28T13:59:00-04:00"),
+      endedAt: new Date("2026-05-28T14:00:00-04:00")
+    }
+  });
+
+  const summary = usageSummary(usage, state, now);
+  assert.equal(summary.totalSeconds, 60, "extension heartbeats must not double-count trusted browser duration");
+  assert.deepEqual(summary.topApps, [{ name: "Google Chrome", seconds: 60 }]);
+  assert.deepEqual(summary.topSites, [{ name: "reddit.com", seconds: 60 }], "extension hostnames must enrich trusted browser segments");
+  assert.equal(summary.distractingSeconds, 60);
+  assert.equal(summary.focusScore, 0);
+}
+
+{
+  const state = defaultState();
+  const usage: UsageState = usageFixture({
+    "2026-05-27": {
+      totalSeconds: 60 * 60,
+      apps: { Codex: 60 * 60 },
+      sites: {},
+      opens: { apps: { Codex: 1 }, sites: {} }
+    }
+  });
+  syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 5 * 60,
+    apps: { Messages: 5 * 60 },
+    segments: [{
+      startedAt: "2026-05-28T13:55:00-04:00",
+      endedAt: "2026-05-28T14:00:00-04:00",
+      app: "Messages"
+    }]
+  }, now);
+
+  const report = focusReport(usage, state, now);
+  const historicalMacDay = report.currentWeek.days.find((day) => day.key === "2026-05-27");
+  assert.equal(historicalMacDay?.tracked, true, "phone timelines must not hide historical Mac-only reports");
+  assert.equal(historicalMacDay?.totalSeconds, 60 * 60);
+}
+
+{
+  const state = defaultState();
+  const usage: UsageState = usageFixture({
+    "2026-05-27": {
+      totalSeconds: 10 * 60 * 60 + 30 * 60,
+      apps: { Codex: 10 * 60 * 60, Messages: 30 * 60 },
+      sites: {},
+      opens: { apps: {}, sites: {} },
+      devices: {
+        computer: {
+          totalSeconds: 10 * 60 * 60,
+          apps: { Codex: 10 * 60 * 60 },
+          sites: {},
+          opens: { apps: {}, sites: {} }
+        },
+        phone: {
+          totalSeconds: 30 * 60,
+          apps: { Messages: 30 * 60 },
+          sites: {},
+          opens: { apps: {}, sites: {} },
+          segments: [{
+            startedAt: "2026-05-27T13:30:00-04:00",
+            endedAt: "2026-05-27T14:00:00-04:00",
+            app: "Messages"
+          }]
+        }
+      },
+      deviceTotalsMode: "by-device"
+    },
+    "2026-05-28": {
+      totalSeconds: 5 * 60,
+      apps: { Codex: 5 * 60 },
+      sites: {},
+      opens: { apps: {}, sites: {} },
+      devices: {
+        computer: {
+          totalSeconds: 5 * 60,
+          apps: { Codex: 5 * 60 },
+          sites: {},
+          opens: { apps: {}, sites: {} },
+          segments: [{
+            startedAt: "2026-05-28T13:55:00-04:00",
+            endedAt: "2026-05-28T14:00:00-04:00",
+            app: "Codex"
+          }]
+        }
+      },
+      deviceTotalsMode: "by-device"
+    }
+  });
+
+  const historicalDay = focusReport(usage, state, now).currentWeek.days.find((day) => day.key === "2026-05-27");
+  assert.equal(historicalDay?.totalSeconds, 30 * 60, "phone segments must not preserve legacy background-inflated Mac totals");
+  assert.equal(historicalDay?.devices.computerSeconds, null);
+  assert.equal(historicalDay?.devices.phoneSeconds, 30 * 60);
+}
+
+{
+  const state = defaultState();
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: ["Safari"],
+    blockedSites: ["reddit.com"],
+    blockedUrlPatterns: [],
+    allowedApps: [],
+    allowedSites: []
+  }];
+  state.settings.activeProfileId = "default";
+  const usage: UsageState = {};
+  syncDeviceUsageSnapshot(usage, {
+    device: "phone",
+    date: "2026-05-28",
+    totalSeconds: 10 * 60,
+    apps: { Safari: 5 * 60, Codex: 5 * 60 },
+    sites: { "reddit.com": 5 * 60 },
+    opens: { apps: {}, sites: {} },
+    segments: [{
+      startedAt: "2026-05-28T13:50:00-04:00",
+      endedAt: "2026-05-28T13:55:00-04:00",
+      app: "Safari",
+      hostname: "reddit.com"
+    }, {
+      startedAt: "2026-05-28T13:55:00-04:00",
+      endedAt: "2026-05-28T14:00:00-04:00",
+      app: "Codex"
+    }]
+  }, now);
+
+  const summary = usageSummary(usage, state, now);
+  assert.equal(summary.distractingSeconds, 5 * 60, "segment contexts must prevent blocked app and site overlap from counting twice");
+  const reportDay = focusReport(usage, state, now).currentWeek.days.find((day) => day.key === "2026-05-28");
+  assert.equal(reportDay?.distractingSeconds, 5 * 60);
+}
+
+{
+  const state = defaultState();
+  state.profiles = [{
+    id: "default",
+    name: "Default focus",
+    mode: "blocklist",
+    blockedApps: ["Instagram"],
     blockedSites: ["reddit.com"],
     blockedUrlPatterns: [],
     allowedApps: [],
@@ -109,6 +570,54 @@ import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-
   }, now);
   assert.equal(regressive.stale, true);
   assert.equal(usageSummary(usage, state, now).devices.phone.totalSeconds, 1200);
+
+  const segmentedUsage: UsageState = {};
+  syncDeviceUsageSnapshot(segmentedUsage, {
+    device: "phone",
+    date: "2026-05-28",
+    updatedAt: "2026-05-28T12:05:00-04:00",
+    totalSeconds: 300,
+    apps: { Messages: 300 },
+    segments: [{
+      startedAt: "2026-05-28T12:00:00-04:00",
+      endedAt: "2026-05-28T12:05:00-04:00",
+      app: "Messages"
+    }]
+  }, now);
+  const incompleteTimeline = syncDeviceUsageSnapshot(segmentedUsage, {
+    device: "phone",
+    date: "2026-05-28",
+    updatedAt: "2026-05-28T12:10:00-04:00",
+    totalSeconds: 600,
+    apps: { Messages: 300, Safari: 300 },
+    segments: [{
+      startedAt: "2026-05-28T12:05:00-04:00",
+      endedAt: "2026-05-28T12:10:00-04:00",
+      app: "Safari"
+    }]
+  }, now);
+  assert.equal(incompleteTimeline.stale, true, "a newer snapshot must not replace earlier timeline coverage with only its latest segment");
+  assert.equal(incompleteTimeline.deviceTotalSeconds, 300, "the sync response must reflect the retained complete timeline");
+  assert.equal(usageSummary(segmentedUsage, state, now).devices.phone.totalSeconds, 300, "rejecting incomplete segment coverage must keep recorded screen time stable");
+
+  const firstPartialTimeline: UsageState = {};
+  syncDeviceUsageSnapshot(firstPartialTimeline, {
+    device: "phone",
+    date: "2026-05-28",
+    updatedAt: "2026-05-28T13:00:00-04:00",
+    totalSeconds: 60 * 60,
+    apps: { Messages: 60 * 60 },
+    segments: [{
+      startedAt: "2026-05-28T12:59:00-04:00",
+      endedAt: "2026-05-28T13:00:00-04:00",
+      app: "Messages"
+    }]
+  }, now);
+  assert.equal(
+    usageSummary(firstPartialTimeline, state, now).devices.phone.totalSeconds,
+    60 * 60,
+    "a first snapshot's partial timeline must not replace its complete counters"
+  );
 
   const boundedUsage: UsageState = {};
   syncDeviceUsageSnapshot(boundedUsage, {

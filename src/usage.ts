@@ -1,7 +1,7 @@
 import { dateKey, parseClock } from "./time.js";
-import { DEVICE_TARGETS } from "./defaults.js";
+import { BROWSERS, DEVICE_TARGETS } from "./defaults.js";
 import { appMatchesAppTargets, hostMatchesSiteTargets, normalizeList } from "./policy.js";
-import type { DeviceTarget, Schedule, VigilState, Session, UsageBucket, UsageDay, UsageSample, UsageState } from "./types.js";
+import type { DeviceTarget, Schedule, VigilState, Session, UsageBucket, UsageDay, UsageSample, UsageSegment, UsageState } from "./types.js";
 
 const BLOCK_EVENT_TYPES = new Set([
   "blocked_app",
@@ -13,6 +13,7 @@ const BLOCK_EVENT_TYPES = new Set([
 ]);
 
 const USAGE_TOTALS_MODE = "by-device";
+const BROWSER_EXTENSION_APP = "Browser Extension";
 type SessionRecord = Partial<Session> & { id: string; active?: boolean };
 type RawUsageBucket = Partial<UsageBucket> & {
   appOpens?: Record<string, unknown>;
@@ -20,7 +21,24 @@ type RawUsageBucket = Partial<UsageBucket> & {
   seconds?: unknown;
   durationSeconds?: unknown;
   recordedAt?: unknown;
+  segments?: unknown;
 };
+
+interface UsageRecordingOptions {
+  device?: string;
+  segment?: { startedAt: Date; endedAt: Date };
+}
+
+interface TimedUsageSegment extends UsageSegment {
+  device: DeviceTarget;
+  startMs: number;
+  endMs: number;
+}
+
+interface UsageSegmentEvents {
+  starts: TimedUsageSegment[];
+  ends: TimedUsageSegment[];
+}
 
 export class UsageSnapshotError extends Error {
   status: number;
@@ -37,12 +55,13 @@ export function recordUsage(
   sample: UsageSample | null | undefined,
   seconds: number,
   now = new Date(),
-  options: { device?: string } = {}
+  options: UsageRecordingOptions = {}
 ): void {
   if (!sample?.app || !seconds || seconds < 0.25) return;
   const day = ensureDay(usage, dateKey(now));
   const device = ensureDeviceDay(day, normalizeUsageDevice(options.device || sample.device));
   incrementUsage(device, sample, seconds);
+  if (options.segment) recordUsageSegment(device, sample, options.segment);
   recomputeDayTotals(day);
 }
 
@@ -71,7 +90,7 @@ export function syncDeviceUsageSnapshot(
   const dayKey = usageSnapshotDayKey(input, now);
   const day = ensureDay(usage, dayKey);
   const previous = ensureDeviceDay(day, device);
-  const incoming = boundedUsageSnapshot(normalizeUsageBucket(input, now));
+  const incoming = boundedUsageSnapshot(normalizeUsageBucket(input, now), dayKey);
   if (incoming.contextVersion !== 1 || incoming.openContextVersion !== 1) {
     incoming.legacyTargetAggregation = "sum";
   }
@@ -79,10 +98,16 @@ export function syncDeviceUsageSnapshot(
   if (incomingTimestamp > now.getTime() + 5 * 60 * 1000) {
     throw new UsageSnapshotError("Usage snapshot timestamp is too far in the future.");
   }
+  if ((incoming.segments || []).some((segment) => Date.parse(segment.endedAt) > now.getTime() + 5 * 60 * 1000)) {
+    throw new UsageSnapshotError("Usage snapshot contains activity too far in the future.");
+  }
+  const segmentTimelineRolledOver = usageSegmentTimelineRolledOver(previous.segments, incoming.segments);
+  if (segmentTimelineRolledOver) delete incoming.segmentTimelineComplete;
   const stale = hasUsageData(previous) && (
     incomingTimestamp < snapshotTimestamp(previous.updatedAt)
     || incoming.totalSeconds < previous.totalSeconds
     || usageCountersRegressed(previous, incoming)
+    || (!segmentTimelineRolledOver && usageSegmentsRegressed(previous.segments, incoming.segments))
   );
   day.devices[device] = stale ? previous : incoming;
   recomputeDayTotals(day);
@@ -109,8 +134,10 @@ const MAX_USAGE_SECONDS_PER_DAY = 24 * 60 * 60;
 const MAX_USAGE_ENTRIES_PER_BUCKET = 500;
 const MAX_USAGE_ENTRY_NAME_LENGTH = 200;
 const MAX_OPEN_COUNT_PER_ENTRY = 100_000;
+const MAX_USAGE_SEGMENTS_PER_BUCKET = 5_000;
 
-function boundedUsageSnapshot(bucket: UsageBucket): UsageBucket {
+function boundedUsageSnapshot(bucket: UsageBucket, dayKey: string): UsageBucket {
+  const boundedSegments = boundedUsageSegments(bucket.segments, dayKey);
   const bounded: UsageBucket = {
     ...bucket,
     totalSeconds: boundedNumber(bucket.totalSeconds, MAX_USAGE_SECONDS_PER_DAY),
@@ -121,7 +148,9 @@ function boundedUsageSnapshot(bucket: UsageBucket): UsageBucket {
     opens: {
       apps: boundedUsageMap(bucket.opens.apps, MAX_OPEN_COUNT_PER_ENTRY, true),
       sites: boundedUsageMap(bucket.opens.sites, MAX_OPEN_COUNT_PER_ENTRY, true)
-    }
+    },
+    segments: boundedSegments.segments,
+    segmentTimelineComplete: bucket.segmentTimelineComplete === true && boundedSegments.complete ? true : undefined
   };
   bounded.contextVersion = bucket.contextVersion === 1 && usageContextsComplete(bounded.contexts || {}, bounded.apps, bounded.sites)
     ? 1
@@ -158,7 +187,7 @@ export function normalizeUsageDay(day: Partial<UsageDay> = {}): UsageDay {
   const devices = normalizeDeviceBuckets(day.devices);
   if ((day.deviceTotalsMode === USAGE_TOTALS_MODE || !hasUsageData(day)) && Object.keys(devices).length) {
     return {
-      ...aggregateBuckets(Object.values(devices)),
+      ...aggregateDeviceBuckets(devices),
       devices,
       updatedAt: day.updatedAt || null
     };
@@ -185,6 +214,16 @@ export function normalizeUsageDay(day: Partial<UsageDay> = {}): UsageDay {
 export function normalizeUsageDevice(value: unknown = "computer"): DeviceTarget {
   const normalized = String(value || "computer").trim().toLowerCase();
   return DEVICE_TARGETS.includes(normalized as DeviceTarget) ? normalized as DeviceTarget : "computer";
+}
+
+export function usageDeviceScreenTimeSeconds(day: Partial<UsageDay>, device: DeviceTarget): number | null {
+  const devices = normalizeDeviceBuckets(day.devices);
+  const bucket = devices[device];
+  if (!bucket) return null;
+  const timedSegments = completeTimedUsageSegments(bucket, device);
+  return Math.round(timedSegments.length
+    ? aggregateTimedSegments(timedSegments).totalSeconds
+    : bucket.totalSeconds || 0);
 }
 
 function normalizeUsageSyncDevice(value: unknown, allowedDevices: readonly string[] = DEVICE_TARGETS): DeviceTarget {
@@ -225,6 +264,39 @@ function incrementUsage(bucket: UsageBucket, sample: UsageSample, seconds: numbe
 
   bucket.totalSeconds = round((bucket.totalSeconds || 0) + seconds);
   bucket.updatedAt = new Date().toISOString();
+}
+
+function recordUsageSegment(
+  bucket: UsageBucket,
+  sample: UsageSample,
+  interval: { startedAt: Date; endedAt: Date }
+): void {
+  const startMs = interval.startedAt.getTime();
+  const endMs = interval.endedAt.getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs || !sample.app) return;
+  const segment: UsageSegment = {
+    startedAt: new Date(startMs).toISOString(),
+    endedAt: new Date(endMs).toISOString(),
+    app: String(sample.app).slice(0, MAX_USAGE_ENTRY_NAME_LENGTH),
+    ...(sample.hostname ? { hostname: String(sample.hostname).slice(0, MAX_USAGE_ENTRY_NAME_LENGTH) } : {})
+  };
+  bucket.segments ||= [];
+  if (!bucket.segments.length) bucket.segmentTimelineComplete = true;
+  const previous = bucket.segments.at(-1);
+  const previousEnd = Date.parse(previous?.endedAt || "");
+  if (previous
+    && previous.app === segment.app
+    && String(previous.hostname || "") === String(segment.hostname || "")
+    && Number.isFinite(previousEnd)
+    && startMs <= previousEnd + 5_000) {
+    previous.endedAt = new Date(Math.max(previousEnd, endMs)).toISOString();
+    return;
+  }
+  bucket.segments.push(segment);
+  if (bucket.segments.length > MAX_USAGE_SEGMENTS_PER_BUCKET) {
+    bucket.segments.splice(0, bucket.segments.length - MAX_USAGE_SEGMENTS_PER_BUCKET);
+    delete bucket.segmentTimelineComplete;
+  }
 }
 
 function recordOpenForBucket(bucket: UsageBucket, sample: UsageSample, previousSample: UsageSample | null | undefined): void {
@@ -319,7 +391,7 @@ function ensureDeviceDay(day: UsageDay, device: DeviceTarget): UsageBucket {
 }
 
 function recomputeDayTotals(day: UsageDay): void {
-  const aggregate = aggregateBuckets(Object.values(normalizeDeviceBuckets(day.devices)));
+  const aggregate = aggregateDeviceBuckets(normalizeDeviceBuckets(day.devices));
   day.totalSeconds = aggregate.totalSeconds;
   day.apps = aggregate.apps;
   day.sites = aggregate.sites;
@@ -342,6 +414,7 @@ function normalizeDeviceBuckets(devices: Record<string, Partial<UsageBucket>> = 
 }
 
 function normalizeUsageBucket(bucket: RawUsageBucket = {}, now = new Date()): UsageBucket {
+  const normalizedSegments = normalizeUsageSegments(bucket.segments);
   const apps = secondsMap(bucket.apps);
   const sites = secondsMap(bucket.sites);
   const contexts = contextMap(bucket.contexts);
@@ -363,27 +436,179 @@ function normalizeUsageBucket(bucket: RawUsageBucket = {}, now = new Date()): Us
     openContextVersion: bucket.openContextVersion === 1 && openContextsComplete(openContexts, opens) ? 1 : undefined,
     legacyTargetAggregation: bucket.legacyTargetAggregation === "sum" ? "sum" : undefined,
     opens,
+    segments: normalizedSegments.segments,
+    segmentTimelineComplete: bucket.segmentTimelineComplete === true && normalizedSegments.complete ? true : undefined,
     updatedAt: String(bucket.updatedAt || bucket.recordedAt || now.toISOString())
   };
 }
 
-function aggregateBuckets(buckets: UsageBucket[]): UsageBucket {
+function aggregateDeviceBuckets(devices: Record<string, UsageBucket>): UsageBucket {
+  const buckets = Object.values(devices);
   const aggregate = emptyUsageBucket(
     buckets.every((bucket) => bucket.contextVersion === 1),
     buckets.every((bucket) => bucket.openContextVersion === 1)
   );
 
-  for (const bucket of buckets) {
-    aggregate.totalSeconds = round(aggregate.totalSeconds + Number(bucket.totalSeconds || 0));
-    mergeNumberMap(aggregate.apps, bucket.apps);
-    mergeNumberMap(aggregate.sites, bucket.sites);
-    mergeNumberMap(aggregate.contexts, bucket.contexts);
+  const timedSegments: TimedUsageSegment[] = [];
+
+  for (const [device, bucket] of Object.entries(devices)) {
+    const deviceSegments = completeTimedUsageSegments(bucket, normalizeUsageDevice(device));
+    if (deviceSegments.length) {
+      timedSegments.push(...deviceSegments);
+    } else {
+      aggregate.totalSeconds = round(aggregate.totalSeconds + Number(bucket.totalSeconds || 0));
+      mergeNumberMap(aggregate.apps, bucket.apps);
+      mergeNumberMap(aggregate.sites, bucket.sites);
+      mergeNumberMap(aggregate.contexts, bucket.contexts);
+    }
     mergeNumberMap(aggregate.openContexts, bucket.openContexts);
     mergeNumberMap(aggregate.opens.apps, bucket.opens?.apps);
     mergeNumberMap(aggregate.opens.sites, bucket.opens?.sites);
   }
 
+  const deduplicated = aggregateTimedSegments(timedSegments);
+  aggregate.totalSeconds = round(aggregate.totalSeconds + deduplicated.totalSeconds);
+  mergeNumberMap(aggregate.apps, deduplicated.apps);
+  mergeNumberMap(aggregate.sites, deduplicated.sites);
+  mergeNumberMap(aggregate.contexts, deduplicated.contexts);
+  aggregate.segments = deduplicated.segments;
+  aggregate.contextVersion = usageContextsComplete(aggregate.contexts, aggregate.apps, aggregate.sites)
+    ? 1
+    : undefined;
+
   return aggregate;
+}
+
+function aggregateTimedSegments(segments: TimedUsageSegment[]): UsageBucket {
+  const aggregate = emptyUsageBucket(true);
+  if (!segments.length) return aggregate;
+  const events = new Map<number, UsageSegmentEvents>();
+  for (const segment of segments) {
+    const startEvents = events.get(segment.startMs) || { starts: [], ends: [] };
+    startEvents.starts.push(segment);
+    events.set(segment.startMs, startEvents);
+    const endEvents = events.get(segment.endMs) || { starts: [], ends: [] };
+    endEvents.ends.push(segment);
+    events.set(segment.endMs, endEvents);
+  }
+  const boundaries = [...events.keys()].sort((a, b) => a - b);
+  const active = new Set<TimedUsageSegment>();
+  const attributed: UsageSegment[] = [];
+  for (let index = 0; index < boundaries.length - 1; index += 1) {
+    const startMs = boundaries[index];
+    const endMs = boundaries[index + 1];
+    if (endMs <= startMs) continue;
+    const boundaryEvents = events.get(startMs);
+    for (const segment of boundaryEvents?.ends || []) active.delete(segment);
+    for (const segment of boundaryEvents?.starts || []) active.add(segment);
+    const winner = [...active].sort((left, right) => usageSegmentPriority(right) - usageSegmentPriority(left))[0];
+    if (!winner) continue;
+    const seconds = (endMs - startMs) / 1000;
+    incrementTimedUsage(aggregate, winner, seconds);
+    appendAttributedSegment(attributed, winner, startMs, endMs);
+  }
+  aggregate.segments = attributed;
+  return aggregate;
+}
+
+function usageSegmentPriority(segment: TimedUsageSegment): number {
+  return segment.device === "phone" ? 2 : 1;
+}
+
+function incrementTimedUsage(bucket: UsageBucket, segment: TimedUsageSegment, seconds: number): void {
+  bucket.totalSeconds = round(bucket.totalSeconds + seconds);
+  bucket.apps[segment.app] = round((bucket.apps[segment.app] || 0) + seconds);
+  if (segment.hostname) bucket.sites[segment.hostname] = round((bucket.sites[segment.hostname] || 0) + seconds);
+  bucket.contexts ||= {};
+  const context = usageContextKey(segment);
+  bucket.contexts[context] = round((bucket.contexts[context] || 0) + seconds);
+}
+
+function appendAttributedSegment(target: UsageSegment[], segment: TimedUsageSegment, startMs: number, endMs: number): void {
+  const previous = target.at(-1);
+  if (previous
+    && previous.app === segment.app
+    && String(previous.hostname || "") === String(segment.hostname || "")
+    && Date.parse(previous.endedAt) === startMs) {
+    previous.endedAt = new Date(endMs).toISOString();
+    return;
+  }
+  target.push({
+    startedAt: new Date(startMs).toISOString(),
+    endedAt: new Date(endMs).toISOString(),
+    app: segment.app,
+    ...(segment.hostname ? { hostname: segment.hostname } : {})
+  });
+}
+
+function timedUsageSegments(segments: UsageSegment[] | undefined, device: DeviceTarget): TimedUsageSegment[] {
+  return (segments || []).flatMap((segment) => {
+    const startMs = Date.parse(segment.startedAt);
+    const endMs = Date.parse(segment.endedAt);
+    return Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs && segment.app
+      ? [{ ...segment, device, startMs, endMs }]
+      : [];
+  });
+}
+
+function completeTimedUsageSegments(bucket: UsageBucket, device: DeviceTarget): TimedUsageSegment[] {
+  const segments = timedUsageSegments(bucket.segments, device);
+  if (!segments.length) return [];
+  if (bucket.segmentTimelineComplete === true) return attributeBrowserExtensionSites(segments, bucket);
+  const coveredSeconds = aggregateTimedSegments(segments).totalSeconds;
+  return coveredSeconds + 0.1 >= Number(bucket.totalSeconds || 0)
+    ? attributeBrowserExtensionSites(segments, bucket)
+    : [];
+}
+
+function attributeBrowserExtensionSites(segments: TimedUsageSegment[], bucket: UsageBucket): TimedUsageSegment[] {
+  const extensionSites: Record<string, number> = {};
+  for (const [context, seconds] of Object.entries(bucket.contexts || {})) {
+    const sample = usageContextSample(context);
+    if (sample?.app === BROWSER_EXTENSION_APP && sample.hostname) {
+      extensionSites[sample.hostname] = round((extensionSites[sample.hostname] || 0) + seconds);
+    }
+  }
+  if (!Object.keys(extensionSites).length) return segments;
+
+  const timedSites = aggregateTimedSegments(segments).sites;
+  const pendingSites = Object.entries(extensionSites).flatMap(([hostname, seconds]) => {
+    const remaining = round(Math.max(0, seconds - Number(timedSites[hostname] || 0)));
+    return remaining > 0 ? [{ hostname, seconds: remaining }] : [];
+  });
+  if (!pendingSites.length) return segments;
+
+  let siteIndex = 0;
+  return segments.flatMap((segment) => {
+    if (segment.hostname || !BROWSERS.has(segment.app) || siteIndex >= pendingSites.length) return [segment];
+    const attributed: TimedUsageSegment[] = [];
+    let startMs = segment.startMs;
+    while (startMs < segment.endMs && siteIndex < pendingSites.length) {
+      const pending = pendingSites[siteIndex];
+      const availableSeconds = (segment.endMs - startMs) / 1000;
+      const attributedSeconds = Math.min(availableSeconds, pending.seconds);
+      const endMs = startMs + attributedSeconds * 1000;
+      attributed.push({
+        ...segment,
+        hostname: pending.hostname,
+        startMs,
+        endMs,
+        startedAt: new Date(startMs).toISOString(),
+        endedAt: new Date(endMs).toISOString()
+      });
+      pending.seconds = round(pending.seconds - attributedSeconds);
+      startMs = endMs;
+      if (pending.seconds <= 0.01) siteIndex += 1;
+    }
+    if (startMs < segment.endMs) {
+      attributed.push({
+        ...segment,
+        startMs,
+        startedAt: new Date(startMs).toISOString()
+      });
+    }
+    return attributed;
+  });
 }
 
 function emptyUsageBucket(contextsComplete = false, openContextsAreComplete = contextsComplete): UsageBucket & {
@@ -400,6 +625,61 @@ function emptyUsageBucket(contextsComplete = false, openContextsAreComplete = co
     openContextVersion: openContextsAreComplete ? 1 : undefined,
     opens: { apps: {}, sites: {} }
   };
+}
+
+function normalizeUsageSegments(value: unknown): { segments: UsageSegment[]; complete: boolean } {
+  if (!Array.isArray(value)) return { segments: [], complete: false };
+  let complete = value.length <= MAX_USAGE_SEGMENTS_PER_BUCKET;
+  const segments = value.slice(-MAX_USAGE_SEGMENTS_PER_BUCKET).flatMap((item) => {
+    if (!item || typeof item !== "object") {
+      complete = false;
+      return [];
+    }
+    const record = item as Record<string, unknown>;
+    const startedAt = new Date(String(record.startedAt || record.start || ""));
+    const endedAt = new Date(String(record.endedAt || record.end || ""));
+    const rawApp = String(record.app || record.name || "").trim();
+    const rawHostname = String(record.hostname || record.site || record.host || "").trim();
+    const app = rawApp.slice(0, MAX_USAGE_ENTRY_NAME_LENGTH);
+    const hostname = rawHostname.slice(0, MAX_USAGE_ENTRY_NAME_LENGTH);
+    if (rawApp.length !== app.length || rawHostname.length !== hostname.length) complete = false;
+    if (!app || Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime()) || endedAt <= startedAt) {
+      complete = false;
+      return [];
+    }
+    return [{
+      startedAt: startedAt.toISOString(),
+      endedAt: endedAt.toISOString(),
+      app,
+      ...(hostname ? { hostname } : {})
+    }];
+  });
+  return { segments, complete };
+}
+
+function boundedUsageSegments(
+  segments: UsageSegment[] | undefined,
+  dayKey: string
+): { segments: UsageSegment[]; complete: boolean } {
+  const dayStartDate = new Date(`${dayKey}T00:00:00`);
+  const dayEndDate = new Date(dayStartDate);
+  dayEndDate.setDate(dayEndDate.getDate() + 1);
+  const dayStart = dayStartDate.getTime();
+  const dayEnd = dayEndDate.getTime();
+  let complete = true;
+  const bounded = (segments || []).flatMap((segment) => {
+    const originalStartMs = Date.parse(segment.startedAt);
+    const originalEndMs = Date.parse(segment.endedAt);
+    const startMs = Math.max(dayStart, originalStartMs);
+    const endMs = Math.min(dayEnd, originalEndMs);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+      complete = false;
+      return [];
+    }
+    if (startMs !== originalStartMs || endMs !== originalEndMs) complete = false;
+    return [{ ...segment, startedAt: new Date(startMs).toISOString(), endedAt: new Date(endMs).toISOString() }];
+  });
+  return { segments: bounded, complete };
 }
 
 function usageContextsComplete(
@@ -549,6 +829,63 @@ function usageCountersRegressed(previous: UsageBucket, incoming: UsageBucket): b
     || numberMapRegressed(previous.openContexts, incoming.openContexts);
 }
 
+function usageSegmentsRegressed(previous: UsageSegment[] | undefined, incoming: UsageSegment[] | undefined): boolean {
+  const previousRanges = usageSegmentRanges(previous);
+  if (!previousRanges.length) return false;
+  const incomingRanges = usageSegmentRanges(incoming);
+  if (!incomingRanges.length) return true;
+
+  return usageRangesRegressed(previousRanges, incomingRanges);
+}
+
+function usageSegmentTimelineRolledOver(
+  previous: UsageSegment[] | undefined,
+  incoming: UsageSegment[] | undefined
+): boolean {
+  if (previous?.length !== MAX_USAGE_SEGMENTS_PER_BUCKET || incoming?.length !== MAX_USAGE_SEGMENTS_PER_BUCKET) {
+    return false;
+  }
+  const previousRanges = usageSegmentRanges(previous);
+  const incomingRanges = usageSegmentRanges(incoming);
+  const previousStart = previousRanges[0]?.start;
+  const previousEnd = previousRanges.at(-1)?.end;
+  const incomingStart = incomingRanges[0]?.start;
+  const incomingEnd = incomingRanges.at(-1)?.end;
+  if (previousStart === undefined || previousEnd === undefined || incomingStart === undefined || incomingEnd === undefined) {
+    return false;
+  }
+  if (incomingStart <= previousStart || incomingEnd <= previousEnd) return false;
+
+  const retainedPreviousRanges = previousRanges.flatMap(({ start, end }) => end > incomingStart
+    ? [{ start: Math.max(start, incomingStart), end }]
+    : []);
+  return !usageRangesRegressed(retainedPreviousRanges, incomingRanges);
+}
+
+function usageRangesRegressed(
+  previousRanges: Array<{ start: number; end: number }>,
+  incomingRanges: Array<{ start: number; end: number }>
+): boolean {
+  return previousRanges.some(({ start, end }) => {
+    let coveredThrough = start;
+    for (const range of incomingRanges) {
+      if (range.end <= coveredThrough) continue;
+      if (range.start > coveredThrough) return true;
+      coveredThrough = Math.max(coveredThrough, range.end);
+      if (coveredThrough >= end) return false;
+    }
+    return true;
+  });
+}
+
+function usageSegmentRanges(segments: UsageSegment[] | undefined): Array<{ start: number; end: number }> {
+  return (segments || []).flatMap((segment) => {
+    const start = Date.parse(segment.startedAt);
+    const end = Date.parse(segment.endedAt);
+    return Number.isFinite(start) && Number.isFinite(end) && end > start ? [{ start, end }] : [];
+  }).sort((left, right) => left.start - right.start || left.end - right.end);
+}
+
 function numberMapRegressed(previous: Record<string, number> | undefined, incoming: Record<string, number> | undefined): boolean {
   return Object.entries(previous || {}).some(([key, value]) => Number(incoming?.[key] || 0) < Number(value || 0));
 }
@@ -564,14 +901,18 @@ function hasUsageData(bucket: Partial<UsageBucket> = {}): boolean {
 }
 
 function deviceSummaries(devices: Record<string, UsageBucket> = {}, state: VigilState) {
-  return Object.fromEntries(Object.entries(devices || {}).map(([device, bucket]) => [device, {
-    totalSeconds: Math.round(bucket.totalSeconds || 0),
-    distractingSeconds: usageBlockedSeconds(bucket, state),
-    appOpenCount: sumValues(bucket.opens?.apps),
-    siteOpenCount: sumValues(bucket.opens?.sites),
-    topApps: topEntries(bucket.apps),
-    topSites: topEntries(bucket.sites)
-  }]));
+  return Object.fromEntries(Object.entries(devices || {}).map(([device, rawBucket]) => {
+    const timedSegments = completeTimedUsageSegments(rawBucket, normalizeUsageDevice(device));
+    const bucket = timedSegments.length ? aggregateTimedSegments(timedSegments) : rawBucket;
+    return [device, {
+      totalSeconds: Math.round(bucket.totalSeconds || 0),
+      distractingSeconds: usageBlockedSeconds(bucket, state),
+      appOpenCount: sumValues(rawBucket.opens?.apps),
+      siteOpenCount: sumValues(rawBucket.opens?.sites),
+      topApps: topEntries(bucket.apps),
+      topSites: topEntries(bucket.sites)
+    }];
+  }));
 }
 
 function topEntries(values: Record<string, number> = {}) {
@@ -593,8 +934,18 @@ function sumValues(values: Record<string, number> | undefined): number {
 }
 
 export function usageBlockedSeconds(day: UsageBucket, state: VigilState): number {
-  const devices = Object.values((day as Partial<UsageDay>).devices || {});
-  if (devices.length) return Math.round(devices.reduce((total, bucket) => total + usageBlockedSeconds(bucket, state), 0));
+  const devices = Object.entries((day as Partial<UsageDay>).devices || {});
+  if (devices.length) {
+    const timedSegments: TimedUsageSegment[] = [];
+    let total = 0;
+    for (const [device, bucket] of devices) {
+      const deviceSegments = completeTimedUsageSegments(bucket, normalizeUsageDevice(device));
+      if (deviceSegments.length) timedSegments.push(...deviceSegments);
+      else total += usageBlockedSeconds(bucket, state);
+    }
+    if (timedSegments.length) total += usageBlockedSeconds(aggregateTimedSegments(timedSegments), state);
+    return Math.round(total);
+  }
   return Math.min(Math.round(day.totalSeconds || 0), rawBlockedSeconds(day, state));
 }
 

@@ -1,8 +1,8 @@
 import { dateKey, weekKey } from "./time.js";
 import { appMatchesAppTargets, hostMatchesSiteTargets } from "./policy.js";
 import { intentionalUseSummary } from "./intentionalUse.js";
-import { normalizeUsageDay, usageBlockedSeconds, usageOpenCount } from "./usage.js";
-import type { VigilState, UsageBucket, UsageState } from "./types.js";
+import { normalizeUsageDay, usageBlockedSeconds, usageDeviceScreenTimeSeconds, usageOpenCount } from "./usage.js";
+import type { VigilState, UsageBucket, UsageDay, UsageState } from "./types.js";
 
 interface DayReport {
   key: string;
@@ -90,11 +90,12 @@ export function focusReport(usage: UsageState, state: VigilState, now = new Date
   const previousWeekEnd = addDays(weekStart, -1);
   const baselineSeconds = (state.settings.baselineDailyMinutes || 300) * 60;
   const focusScoreGoal = state.settings.focusScoreGoal || 80;
-  const currentDays = rangeDays(weekStart, 7).map((date) => dayReport(usage, state, date));
-  const previousDays = rangeDays(previousWeekStart, 7).map((date) => dayReport(usage, state, date));
+  const trustedTimelineActive = Object.values(usage).some(usageDayHasComputerSegments);
+  const currentDays = rangeDays(weekStart, 7).map((date) => dayReport(usage, state, date, trustedTimelineActive));
+  const previousDays = rangeDays(previousWeekStart, 7).map((date) => dayReport(usage, state, date, trustedTimelineActive));
   const current = aggregateWeek(currentDays);
   const previous = aggregateWeek(previousDays);
-  const allDays = rangeDays(addDays(today, -60), 61).map((date) => dayReport(usage, state, date));
+  const allDays = rangeDays(addDays(today, -60), 61).map((date) => dayReport(usage, state, date, trustedTimelineActive));
   const streak = focusStreak(allDays, focusScoreGoal, today);
   const topCulprits = topCombined(currentDays, state, "sites")
     .concat(topCombined(currentDays, state, "apps"))
@@ -135,9 +136,10 @@ export function focusReport(usage: UsageState, state: VigilState, now = new Date
   };
 }
 
-function dayReport(usage: UsageState, state: VigilState, date: Date): DayReport {
+function dayReport(usage: UsageState, state: VigilState, date: Date, trustedTimelineActive: boolean): DayReport {
   const key = dateKey(date);
-  const day = normalizeUsageDay(usage[key]);
+  const rawDay = usage[key];
+  const day = reportUsageDay(rawDay, trustedTimelineActive);
   const distractingSeconds = usageBlockedSeconds(day, state);
   const totalSeconds = day.totalSeconds || 0;
   const focusScore = totalSeconds ? Math.max(0, Math.round(100 - (distractingSeconds / Math.max(totalSeconds, 1)) * 100)) : 100;
@@ -153,11 +155,21 @@ function dayReport(usage: UsageState, state: VigilState, date: Date): DayReport 
     sites: day.sites,
     opens: day.opens,
     devices: {
-      computerSeconds: day.devices?.computer ? Math.round(day.devices.computer.totalSeconds || 0) : null,
-      phoneSeconds: day.devices?.phone ? Math.round(day.devices.phone.totalSeconds || 0) : null
+      computerSeconds: usageDeviceScreenTimeSeconds(day, "computer"),
+      phoneSeconds: usageDeviceScreenTimeSeconds(day, "phone")
     },
     tracked: totalSeconds > 0
   };
+}
+
+function reportUsageDay(day: UsageDay | undefined, trustedTimelineActive: boolean): UsageDay {
+  if (!trustedTimelineActive || usageDayHasComputerSegments(day)) return normalizeUsageDay(day);
+  const phone = day?.devices?.phone;
+  return normalizeUsageDay(phone ? { devices: { phone } } : {});
+}
+
+function usageDayHasComputerSegments(day: UsageState[string] | undefined): boolean {
+  return Boolean(day?.devices?.computer?.segments?.length);
 }
 
 function aggregateWeek(days: DayReport[]): WeekAggregate {
