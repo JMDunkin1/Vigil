@@ -27,6 +27,7 @@ export function createRankingView() {
   const distractionTrend = required<HTMLElement>("#distractionTrend");
   const week = required<HTMLElement>("#rankingWeek");
   const appUsage = required<HTMLElement>("#rankingAppUsage");
+  const siteUsage = required<HTMLElement>("#rankingSiteUsage");
 
   function render(data: DashboardData): void {
     const progression = data.report?.progression;
@@ -44,6 +45,7 @@ export function createRankingView() {
 
     renderWeek(data.report?.currentWeek?.days || []);
     renderApps(data.usage?.topApps || []);
+    renderSites(data.usage?.topSites || []);
   }
 
   function renderWeek(days: WeekDaySummary[]): void {
@@ -76,9 +78,17 @@ export function createRankingView() {
   }
 
   function renderApps(entries: BarEntry[]): void {
-    appUsage.replaceChildren();
+    renderUsageList(appUsage, entries, "No app activity yet.");
+  }
+
+  function renderSites(entries: BarEntry[]): void {
+    renderUsageList(siteUsage, entries.slice(0, 5), "No website activity yet.");
+  }
+
+  function renderUsageList(container: HTMLElement, entries: BarEntry[], emptyLabel: string): void {
+    container.replaceChildren();
     if (!entries.length) {
-      appUsage.append(textEl("p", "No app activity yet.", { className: "ranking-app-empty" }));
+      container.append(textEl("p", emptyLabel, { className: "ranking-app-empty" }));
       return;
     }
 
@@ -94,7 +104,7 @@ export function createRankingView() {
         ),
         textEl("em", formatDuration(seconds))
       );
-      appUsage.append(row);
+      container.append(row);
     });
   }
 

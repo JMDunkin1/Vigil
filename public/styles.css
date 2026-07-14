@@ -3284,6 +3284,12 @@ body[data-lock-state="integrity"] .saint-halo {
   margin-top: 20px;
 }
 
+.ranking-site-head {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
 .ranking-app-row {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto;

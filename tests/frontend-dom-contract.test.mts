@@ -13,6 +13,8 @@ assert.doesNotMatch(html, />This week|>Your path|>Combined today|>Daily focus|>C
 assert.doesNotMatch(html, /rankJourney|usageWave|journeyKnight/u, "ranking should use one combined weekly comparison instead of two competing charts");
 assert.doesNotMatch(html, />Devices included</u, "ranking should show only the three decision-useful headline statistics");
 assert.match(html, /id="totalUsageDevices">Mac</u, "screen time should name only devices that actually contributed usage");
+assert.match(html, /id="rankingAppUsage"/u, "ranking should show app activity");
+assert.match(html, /id="rankingSiteUsage"/u, "ranking should show website activity such as YouTube separately from its browser");
 assert.doesNotMatch(html, />iPhone today</u);
 assert.doesNotMatch(html, /knightState|clean days?/u, "ranking should not spend header space repeating the clean-day count");
 const ids = [...html.matchAll(/\bid="([A-Za-z][\w:-]*)"/g)].map((match) => match[1]);
@@ -57,7 +59,9 @@ const settingsUiSource = await readFile("public/settings-ui.js", "utf8");
 const settingsAppSource = await readFile("public/app.js", "utf8");
 const setupWizardSource = await readFile("public/setup-wizard.js", "utf8");
 const hardeningPanelSource = await readFile("public/hardening-panel.js", "utf8");
+const rankingViewSource = await readFile("public/ranking-view.js", "utf8");
 const extensionOptionsSource = await readFile("extension/options.js", "utf8");
+assert.match(rankingViewSource, /renderSites\(data\.usage\?\.topSites \|\| \[\]\)/u, "ranking should render tracked website activity instead of hiding it behind the browser app");
 assert.match(settingsUiSource, /wrapSettingsPanels\(\)/, "settings must turn large panels into focused subsections");
 assert.match(settingsUiSource, /form\.getAttribute\("id"\)/, "editor routing must use the form attribute instead of a shadowing named control");
 assert.match(settingsUiSource, /if \(sibling !== disclosure\)\s+sibling\.open = false/, "opening a settings category must close competing categories");
