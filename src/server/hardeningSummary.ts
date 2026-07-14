@@ -245,7 +245,7 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, externalN
     {
       id: "launch-agent",
       label: "LaunchAgent",
-      ok: Boolean(agent.loaded && agent.running),
+      ok: Boolean(agent.loaded && agent.running && (!agent.embedded || agent.restartHardened === true)),
       detail: launchAgentDetail(agent)
     },
     {
@@ -364,6 +364,9 @@ export function foolproofDetail(foolproof: SummaryRecord): string {
 }
 
 export function launchAgentDetail(agent: SummaryRecord): string {
+  if (agent.embedded && agent.restartHardened !== true) {
+    return "Vigil opens at login, but macOS does not restart it after a crash or Force Quit.";
+  }
   if (!agent.installed) return "Login persistence is not installed.";
   if (agent.running) return `Login persistence is running${agent.pid ? ` as PID ${agent.pid}` : ""}.`;
   if (agent.loaded) return "Login persistence is loaded but not currently running.";

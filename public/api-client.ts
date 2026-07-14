@@ -35,13 +35,49 @@ async function request(path: string, init: RequestInit, timeoutMs: number): Prom
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(path, { ...init, signal: controller.signal });
+    const bridge = (window as VigilApiWindow).vigilApi;
+    if (!bridge) return await fetch(path, { ...init, signal: controller.signal });
+    const headers = Object.fromEntries(new Headers(init.headers).entries());
+    const result = await Promise.race([
+      bridge.request(path, {
+        method: init.method || "GET",
+        headers,
+        body: typeof init.body === "string" ? init.body : ""
+      }),
+      abortedRequest(controller.signal)
+    ]);
+    const body = result.status === 204 || result.status === 304 ? null : result.body;
+    return new Response(body, { status: result.status, headers: result.headers });
   } catch (error) {
     if (controller.signal.aborted) throw new Error("Vigil did not respond in time.");
     throw error;
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+interface VigilApiResult {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+interface VigilApiBridge {
+  request(path: string, options: { method: string; headers: Record<string, string>; body: string }): Promise<VigilApiResult>;
+}
+
+interface VigilApiWindow extends Window {
+  vigilApi?: VigilApiBridge;
+}
+
+function abortedRequest(signal: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("The request was aborted.", "AbortError"));
+      return;
+    }
+    signal.addEventListener("abort", () => reject(new DOMException("The request was aborted.", "AbortError")), { once: true });
+  });
 }
 
 const JOURNAL_TOKEN_KEY = "vigil-journal-token";

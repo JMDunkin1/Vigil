@@ -24,12 +24,7 @@ for (const track of sacredAudioCatalog) {
   assert.equal(new URL(track.licenseUrl).protocol, "https:");
 }
 
-const [audioHtml, focusSoundSource] = await Promise.all([
-  readFile(join(process.cwd(), "public", "index.html"), "utf8"),
-  readFile(join(process.cwd(), "public", "focus-sound.js"), "utf8")
-]);
-assert.match(audioHtml, /id="focusSoundAttribution"/);
-assert.match(focusSoundSource, /renderTrackAttribution/);
+const focusSoundSource = await readFile(join(process.cwd(), "public", "focus-sound.js"), "utf8");
 assert.match(focusSoundSource, /track\.licenseUrl/);
 
 assert.equal(sacredAudioCatalog.some((track) => track.id === "rorate-caeli" && track.seasons.some((season) => season === "advent")), true);

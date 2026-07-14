@@ -25,6 +25,8 @@ type DistanceKeyUiController = {
 type FocusSoundController = {
   prime(): Promise<unknown>;
   saveSettings(): Promise<void>;
+  restartTimer(): void;
+  isPlaying(): boolean;
   setVolume(value: number): void;
 };
 
@@ -130,7 +132,6 @@ export function bindAppEvents(context: AppEventsContext) {
     try {
       if (eventTarget(event).checked) await focusSound.prime();
       await focusSound.saveSettings();
-      toast("Focus sound saved");
     } catch (error) {
       toast(errorMessage(error));
     }
@@ -141,7 +142,6 @@ export function bindAppEvents(context: AppEventsContext) {
     $(`#${id}`).addEventListener("change", async () => {
       try {
         await focusSound.saveSettings();
-        toast("Focus sound saved");
       } catch (error) {
         toast(errorMessage(error));
       }
@@ -150,9 +150,10 @@ export function bindAppEvents(context: AppEventsContext) {
   }
 
   $("#focusSoundPlayButton").addEventListener("click", async () => {
-    const enabled = !$("#focusSoundEnabled").checked;
+    const enabled = !focusSound.isPlaying();
+    if (enabled) focusSound.restartTimer();
     $("#focusSoundEnabled").checked = enabled;
-    await persistFocusSound(enabled ? "Sound on" : "Sound paused", enabled);
+    await persistFocusSound(enabled);
   });
 
   $("#audioSoundLibrary").addEventListener("click", async (event: Event) => {
@@ -160,16 +161,16 @@ export function bindAppEvents(context: AppEventsContext) {
     if (!button?.dataset.focusPreset) return;
     $("#focusSoundPreset").value = button.dataset.focusPreset;
     $("#focusSoundEnabled").checked = true;
-    await persistFocusSound(`Playing ${button.querySelector("strong")?.textContent || "sound"}`, true);
+    focusSound.restartTimer();
+    await persistFocusSound(true);
   });
 
-  async function persistFocusSound(message: string, prime = false): Promise<void> {
+  async function persistFocusSound(prime = false): Promise<void> {
     try {
       if (prime) {
         void focusSound.prime().catch((error) => toast(errorMessage(error)));
       }
       await focusSound.saveSettings();
-      toast(message);
     } catch (error) {
       toast(errorMessage(error));
     }

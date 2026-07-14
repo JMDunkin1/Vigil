@@ -85,7 +85,7 @@ const forms = createFormController({
   $$,
   setView
 });
-const focusSound = createFocusSoundController({ $, post });
+const focusSound = createFocusSoundController({ $, post, toast });
 const appUpdatePanel = createAppUpdatePanel({ $, get, post, toast, errorMessage });
 const distanceKeyUi = createDistanceKeyUi({ $, toast, errorMessage, scanner: state.distanceScanner });
 const devicePanel = createDevicePanel({ $, post, lines, toast, errorMessage, refresh });

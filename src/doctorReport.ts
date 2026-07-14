@@ -103,7 +103,7 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
     row("runtime-watchdog", "Runtime watchdog", runtime.ok, runtime.detail),
     row("watcher-heartbeat", "Watcher heartbeat", monitor.ok, monitor.detail || "Watcher heartbeat is current."),
     row("idle-usage", "AFK-aware usage", idleUsageOk(settings, monitor), idleUsageDetail(settings, monitor)),
-    row("launch-agent", "LaunchAgent", Boolean(agent.loaded && agent.running), launchAgentDetail(agent)),
+    row("launch-agent", "LaunchAgent", Boolean(agent.loaded && agent.running && (!agent.embedded || agent.restartHardened === true)), launchAgentDetail(agent)),
     row("mac-account", "Mac account", Boolean(account.username && !account.isAdmin), accountDetail(account)),
     row("hosts", "Hosts block", Boolean(hosts.installed && !hosts.partial && !hosts.stale), hostsDetail(hosts)),
     row("firewall", "PF firewall", Boolean(firewall.installed && !firewall.partial && !firewall.stale), firewallDetail(firewall)),
@@ -244,6 +244,7 @@ function distanceKeyDetail(distanceKey: SummaryRecord): string {
 }
 
 function launchAgentDetail(agent: SummaryRecord): string {
+  if (agent.embedded && agent.restartHardened !== true) return "opens at login but is not restarted after a crash or Force Quit";
   if (!agent.installed) return `not installed (${agent.path || "LaunchAgent plist missing"})`;
   if (agent.running) return `running${agent.pid ? ` as PID ${agent.pid}` : ""}`;
   if (agent.loaded) return "loaded but not currently running";

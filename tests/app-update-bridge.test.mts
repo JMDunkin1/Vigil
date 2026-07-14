@@ -23,6 +23,10 @@ interface AppearanceBridge {
   setIconTheme(theme: string): Promise<unknown>;
 }
 
+interface ApiBridge {
+  request(path: string, options?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<unknown>;
+}
+
 const sourceRoot = existsSync(join(process.cwd(), "app", "main.ts"))
   ? process.cwd()
   : resolve(process.cwd(), "..", "..");
@@ -43,6 +47,7 @@ vm.runInNewContext(preloadSource, {
         }
       },
       ipcRenderer: {
+        send() {},
         async invoke(channel: string, ...args: unknown[]) {
           invocations.push({ channel, args });
           return { ok: true };
@@ -78,10 +83,41 @@ await appearanceBridge.setIconTheme("sacred-heart");
 assert.equal(invocations[2]?.channel, "vigil:icon-theme-get");
 assert.equal(invocations[3]?.channel, "vigil:icon-theme-set");
 assert.deepEqual(invocations[3]?.args, ["sacred-heart"]);
+const apiBridge = exposed.get("vigilApi") as ApiBridge | undefined;
+assert.ok(apiBridge, "preload should expose the private API bridge");
+await apiBridge.request("/api/state", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: "{}"
+});
+assert.equal(invocations[4]?.channel, "vigil:api-request");
+assert.equal(JSON.stringify(invocations[4]?.args), JSON.stringify([{
+  path: "/api/state",
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: "{}"
+}]));
+assert.match(mainSource, /ipcMain\.handle\("vigil:api-request", handlePrivateApiRequest\)/u);
+assert.match(mainSource, /APP_URL = `\$\{APP_SCHEME\}:\/\/\$\{APP_HOST\}\//u);
+assert.match(
+  mainSource,
+  /startVigilCompanionServer\(\{ appUpdate, port: companionServerPort\(\) \}\)/u,
+  "the packaged app must preserve the restricted companion and MDM listener on the migrated port"
+);
+assert.doesNotMatch(mainSource, /startVigilServer\(/u, "the packaged app must not expose the full app server");
+assert.match(mainSource, /!app\.isPackaged && await companionServerIsHealthy\(\)/u, "development may reuse only a verified existing companion listener");
+assert.match(mainSource, /maxAgeSeconds <= 0 \? 1 : Math\.floor\(Date\.now\(\) \/ 1000\) \+ maxAgeSeconds/u, "positive Max-Age cookies must survive an app restart");
+assert.match(
+  mainSource,
+  /Object\.entries\(response\.headers\)\.filter\(\(\[name\]\) => name\.toLowerCase\(\) !== "set-cookie"\)/u,
+  "the private API bridge must not expose session cookies to the renderer"
+);
 assert.match(mainSource, /ipcMain\.handle\("vigil:app-update-status", handleAppUpdateStatus\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:app-update-start", handleAppUpdateStart\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-get", handleIconThemeGet\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-set", handleIconThemeSet\)/u);
+assert.doesNotMatch(mainSource, /cursorAuraWindow|CURSOR_AURA_MARGIN|vigil:cursor-aura-update/u, "the cursor glow must not create an oversized native window around Vigil");
+assert.equal(exposed.has("vigilCursorAura"), false, "the preload must not expose a bridge for a removed native aura window");
 assert.match(mainSource, /ICON_THEMES = \["jerusalem-cross", "sacred-heart", "saint-michael"\]/u);
 assert.match(mainSource, /!event\.senderFrame \|\| !isTrustedAppUrl\(event\.senderFrame\.url\)/u);
 assert.doesNotMatch(mainSource, /\/api\/app-update\/(?:status|start)/u);

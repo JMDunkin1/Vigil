@@ -1,25 +1,35 @@
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, shell, systemPreferences, Tray } from "electron";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, protocol, shell, systemPreferences, Tray } from "electron";
 import type { IpcMainEvent, IpcMainInvokeEvent, MenuItemConstructorOptions, Rectangle } from "electron";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../src/apiSecurity.js";
 import { resolveDefaultDataDir } from "../src/dataPaths.js";
-import { plistStringForKey } from "../src/plist.js";
-import { fetchVigilStateHealth } from "../src/vigilHealth.js";
-import { getTouchIdSecret } from "../src/touchIdAuth.js";
 import { getInstanceSecret } from "../src/instanceIdentity.js";
+import { plistStringForKey } from "../src/plist.js";
+import { getTouchIdSecret } from "../src/touchIdAuth.js";
+import { clearRuntimeReady, markRuntimeReady } from "../src/runtimeReady.js";
+import type { VigilRuntimeHandle } from "../src/server.js";
+import type { InAppRequest, InAppResponse } from "../src/server/inAppTransport.js";
+import { fetchVigilStateHealth } from "../src/vigilHealth.js";
 import { createVigilAppUpdateController } from "./updater.js";
 import type { VigilAppUpdateController } from "./updater.js";
 
-const HOST = "127.0.0.1";
-const PORT = Number(process.env.VIGIL_PORT || 8787);
-const BASE_URL = `http://${HOST}:${PORT}`;
+const APP_SCHEME = "vigil-app";
+const APP_HOST = "app";
+const APP_URL = `${APP_SCHEME}://${APP_HOST}/`;
+const execFileAsync = promisify(execFile);
 const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const TRAY_STATUS_CHECK_TIMEOUT_MS = 2000;
-const TRAY_ACTION_TIMEOUT_MS = 5000;
 const TRAY_STATUS_POLL_INTERVAL_MS = 30_000;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
+const EMBEDDED_SUPERVISOR_LABEL = "tech.caseline.vigil.supervisor";
+const SUPERVISOR_START_TIMEOUT_MS = 5_000;
+const SUPERVISOR_POLL_INTERVAL_MS = 100;
+const LEGACY_RECOVERY_TIMEOUT_MS = 30_000;
+const LEGACY_RECOVERY_POLL_INTERVAL_MS = 500;
+const COMPANION_HEALTH_TIMEOUT_MS = 2_000;
 const DEFAULT_WINDOW_WIDTH = 750;
 const DEFAULT_WINDOW_HEIGHT = 550;
 const MIN_WINDOW_WIDTH = 680;
@@ -27,11 +37,6 @@ const MIN_WINDOW_HEIGHT = 520;
 const ICON_THEMES = ["jerusalem-cross", "sacred-heart", "saint-michael"] as const;
 type IconTheme = typeof ICON_THEMES[number];
 const DEFAULT_ICON_THEME: IconTheme = "jerusalem-cross";
-
-interface VigilServerHandle {
-  url: string;
-  stop(): Promise<void>;
-}
 
 interface TrayStatus {
   label: string;
@@ -59,13 +64,31 @@ interface WindowResizeSession {
   bounds: Rectangle;
 }
 
+interface LegacyAgentRetirement {
+  uid: number;
+  label: string;
+  plistPath: string;
+  recoverable: boolean;
+  attempted: boolean;
+  supervisorRefreshAttempted: boolean;
+  supervisorWasLoaded: boolean;
+  supervisorMarkerBackup: EmbeddedSupervisorFileBackup | null;
+  supervisorPlistBackup: EmbeddedSupervisorFileBackup | null;
+  supervisorScriptBackup: EmbeddedSupervisorFileBackup | null;
+}
+
+interface EmbeddedSupervisorFileBackup {
+  contents: Buffer;
+  mode: number;
+}
+
 let mainWindow: BrowserWindow | null = null;
-let ownedServer: VigilServerHandle | null = null;
+let ownedRuntime: VigilRuntimeHandle | null = null;
 let tray: Tray | null = null;
 let lastTrayStatus: TrayStatus | null = null;
 let trayRefreshTimer: ReturnType<typeof setInterval> | null = null;
 let currentAppUrl: string | null = null;
-let instanceSecretPromise: Promise<string> | null = null;
+let revealWindowWhenReady = false;
 let appUpdateController: VigilAppUpdateController | null = null;
 let appUpdateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 let quitForUpdate = false;
@@ -80,6 +103,18 @@ let appUpdateActionState: AppUpdateActionState = {
 };
 let windowResizeSession: WindowResizeSession | null = null;
 
+protocol.registerSchemesAsPrivileged([{
+  scheme: APP_SCHEME,
+  privileges: {
+    standard: true,
+    secure: true,
+    supportFetchAPI: true,
+    corsEnabled: false,
+    stream: true
+  }
+}]);
+
+ipcMain.handle("vigil:api-request", handlePrivateApiRequest);
 ipcMain.handle("vigil:journal-touch-id", handleJournalTouchId);
 ipcMain.handle("vigil:app-update-status", handleAppUpdateStatus);
 ipcMain.handle("vigil:app-update-start", handleAppUpdateStart);
@@ -97,37 +132,82 @@ app.setName("Vigil");
 
 if (app.isPackaged && !process.env.VIGIL_DATA_DIR) {
   app.setPath("userData", join(app.getPath("appData"), "Vigil"));
-  process.env.VIGIL_DATA_DIR = configuredLaunchAgentDataDir() || app.getPath("userData");
+  process.env.VIGIL_DATA_DIR = configuredLaunchAgentDataDir() || persistedAppDataDir() || app.getPath("userData");
+  const migratedPort = configuredLaunchAgentPort() || persistedAppPort();
+  if (!process.env.VIGIL_PORT && migratedPort) process.env.VIGIL_PORT = migratedPort;
+  persistAppDataDir(process.env.VIGIL_DATA_DIR);
 }
 
-app.on("second-instance", () => {
-  // Opening Vigil again should leave its UI in the menu bar. The user reveals
-  // the window explicitly with the menu-bar companion's Open Vigil action.
+// Diagnostics must derive restart-supervisor expectations from Electron's
+// resolved paths, not from values inherited through a potentially stale plist.
+process.env.VIGIL_HOME_DIR = app.getPath("home");
+process.env.VIGIL_USER_DATA_DIR = app.getPath("userData");
+
+app.on("second-instance", (_event, argv) => {
+  if (argv.includes(BACKGROUND_LAUNCH_ARG)) return;
+  revealVigilWindow();
 });
 
 app.on("activate", () => {
-  // LSUIElement apps can receive activate when opened from Finder or Spotlight.
-  // Keep that launch background-only so it behaves like every other relaunch.
+  revealVigilWindow();
 });
 
 void app.whenReady().then(async () => {
-  selectedIconTheme = loadIconThemePreference();
-  configureMenuBarResidency();
-  configureLiveDevelopmentSource();
-  appUpdateController = createVigilAppUpdateController({
-    app,
-    quitForUpdate: () => {
-      quitForUpdate = true;
-      app.exit(0);
+  const legacyAgent = prepareLegacyLoopbackAgentRetirement();
+  try {
+    selectedIconTheme = loadIconThemePreference();
+    configureMenuBarResidency();
+    configureLiveDevelopmentSource();
+    appUpdateController = createVigilAppUpdateController({
+      app,
+      quitForUpdate: () => {
+        try {
+          suspendEmbeddedRuntimeSupervisor();
+        } catch (error) {
+          console.error("Vigil could not suspend restart supervision, so app replacement was cancelled.", error);
+          return;
+        }
+        quitForUpdate = true;
+        app.quit();
+      }
+    });
+    await ensureEmbeddedRuntimeSupervisor(legacyAgent);
+    await retireLegacyLoopbackAgent(legacyAgent);
+    await ensureVigilRuntime(appUpdateController);
+    installInAppProtocol();
+    const appUrl = APP_URL;
+    currentAppUrl = appUrl;
+    installMenu(appUrl);
+    installMenuBarCompanion(appUrl);
+    applyIconTheme(selectedIconTheme);
+    if (shouldShowWindowOnLaunch() || revealWindowWhenReady) showVigilWindow(appUrl);
+    await markRuntimeReady(appDataDir(), process.execPath);
+  } catch (error) {
+    try {
+      await clearRuntimeReady(appDataDir());
+    } catch (cleanupError) {
+      console.error("Vigil could not clear its failed startup marker.", cleanupError);
     }
-  });
-  const appUrl = await ensureVigilServer(appUpdateController);
-  currentAppUrl = appUrl;
-  installMenu(appUrl);
-  installMenuBarCompanion(appUrl);
-  applyIconTheme(selectedIconTheme);
-  if (shouldShowWindowOnLaunch()) showVigilWindow(appUrl);
-
+    try {
+      await stopOwnedRuntime();
+    } catch (cleanupError) {
+      console.error("Vigil could not fully stop its failed embedded runtime.", cleanupError);
+    }
+    try {
+      await rollbackEmbeddedRuntimeSupervisor(legacyAgent);
+    } catch (rollbackError) {
+      console.error("Vigil could not roll back its new restart supervisor.", rollbackError);
+    }
+    try {
+      await restoreLegacyLoopbackAgent(legacyAgent);
+    } catch (restoreError) {
+      console.error("Vigil startup failed and the legacy background service could not be restored.", error, restoreError);
+      app.exit(1);
+      return;
+    }
+    console.error("Vigil startup failed; the legacy background service was restored.", error);
+    app.exit(1);
+  }
 });
 
 app.on("before-quit", async (event) => {
@@ -137,12 +217,26 @@ app.on("before-quit", async (event) => {
     return;
   }
   stopTrayRefresh();
-  if (!ownedServer) return;
+  if (!ownedRuntime) return;
   event.preventDefault();
-  const server = ownedServer;
-  ownedServer = null;
-  await server.stop();
-  app.quit();
+  let runtimeStopped = false;
+  try {
+    await stopOwnedRuntime();
+    runtimeStopped = true;
+    await clearRuntimeReady(appDataDir());
+    app.quit();
+  } catch (error) {
+    if (quitForUpdate) {
+      resumeEmbeddedRuntimeSupervisor();
+      if (runtimeStopped) {
+        console.error("Vigil stopped its embedded runtime but could not finish shutdown; exiting so restart supervision can restore enforcement.", error);
+        app.exit(1);
+        return;
+      }
+      quitForUpdate = false;
+    }
+    console.error("Vigil could not finish its graceful shutdown.", error);
+  }
 });
 
 app.on("window-all-closed", () => {
@@ -167,6 +261,14 @@ function showVigilWindow(appUrl: string): void {
   setImmediate(() => {
     if (mainWindow && !mainWindow.isDestroyed()) restoreNativeWindowControls(mainWindow);
   });
+}
+
+function revealVigilWindow(): void {
+  if (!currentAppUrl) {
+    revealWindowWhenReady = true;
+    return;
+  }
+  showVigilWindow(currentAppUrl);
 }
 
 function restoreNativeWindowControls(window: BrowserWindow): void {
@@ -301,13 +403,14 @@ async function handleJournalTouchId(event: IpcMainInvokeEvent): Promise<unknown>
     const touchIdSecret = await getTouchIdSecret(
       process.env.VIGIL_DATA_DIR || resolveDefaultDataDir(RUNTIME_ROOT)
     );
-    const appUrl = currentAppUrl || BASE_URL;
+    const appUrl = currentAppUrl || APP_URL;
     const sessionCookies = await event.sender.session.cookies.get({ url: appUrl });
     const cookieHeader = sessionCookies
       .filter((cookie) => cookie.name === "vigil_session")
       .map((cookie) => `${cookie.name}=${cookie.value}`)
       .join("; ");
-    const response = await fetch(`${appUrl}/api/intentional-use/journal/unlock-touch-id`, {
+    const response = await requireRuntime().request({
+      path: "/api/intentional-use/journal/unlock-touch-id",
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -317,10 +420,100 @@ async function handleJournalTouchId(event: IpcMainInvokeEvent): Promise<unknown>
       },
       body: "{}"
     });
-    return await response.json() as unknown;
+    return responseBodyJson(response);
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "Touch ID was not accepted." };
   }
+}
+
+async function handlePrivateApiRequest(event: IpcMainInvokeEvent, value: unknown): Promise<unknown> {
+  if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) {
+    return { status: 403, headers: { "Content-Type": "application/json" }, body: JSON.stringify({ error: "API request origin was rejected." }) };
+  }
+  try {
+    const request = privateApiRequest(value);
+    if (
+      process.env.VIGIL_EMBEDDED_RUNTIME === "1"
+      && request.method === "POST"
+      && request.path === "/api/hardening/launch-agent/install"
+      && request.headers?.[CONTROL_INTENT_HEADER] === CONTROL_INTENT_VALUE
+    ) {
+      await repairEmbeddedRuntimeSupervisor();
+      return {
+        status: 200,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+        body: JSON.stringify({ ok: true, restartProtection: true })
+      };
+    }
+    const cookies = await event.sender.session.cookies.get({ url: APP_URL });
+    const cookieHeader = cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+    if (cookieHeader) request.headers = { ...request.headers, Cookie: cookieHeader };
+    const response = await requireRuntime().request(request);
+    await applyResponseCookie(event, response);
+    return {
+      status: response.status,
+      headers: Object.fromEntries(
+        Object.entries(response.headers).filter(([name]) => name.toLowerCase() !== "set-cookie")
+      ),
+      body: Buffer.from(response.body).toString("utf8")
+    };
+  } catch (error) {
+    return {
+      status: errorStatus(error),
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: JSON.stringify({ error: errorMessage(error) })
+    };
+  }
+}
+
+function privateApiRequest(value: unknown): InAppRequest {
+  const input = asRecord(value);
+  const method = String(input?.method || "GET").toUpperCase();
+  if (!["GET", "POST", "DELETE"].includes(method)) throw Object.assign(new Error("Unsupported in-app API method."), { status: 405 });
+  const path = normalizedApiPath(input?.path);
+  const suppliedHeaders = asRecord(input?.headers) || {};
+  const headers: Record<string, string> = {};
+  for (const name of ["accept", "content-type", CONTROL_INTENT_HEADER, "x-vigil-journal-token"]) {
+    const headerValue = suppliedHeaders[name] ?? suppliedHeaders[headerTitle(name)];
+    if (typeof headerValue === "string" && headerValue) headers[name] = headerValue;
+  }
+  const body = typeof input?.body === "string" ? input.body : "";
+  return { method, path, headers, body };
+}
+
+function normalizedApiPath(value: unknown): string {
+  const url = new URL(String(value || ""), APP_URL);
+  if (!isTrustedAppUrl(url.toString()) || !url.pathname.startsWith("/api/")) {
+    throw Object.assign(new Error("Only Vigil API paths may cross the in-app bridge."), { status: 403 });
+  }
+  return `${url.pathname}${url.search}`;
+}
+
+function headerTitle(value: string): string {
+  return value.split("-").map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`).join("-");
+}
+
+async function applyResponseCookie(event: IpcMainInvokeEvent, response: InAppResponse): Promise<void> {
+  const cookie = Object.entries(response.headers).find(([name]) => name.toLowerCase() === "set-cookie")?.[1];
+  if (!cookie) return;
+  const [pair, ...attributes] = cookie.split(";").map((part) => part.trim());
+  const separator = pair?.indexOf("=") ?? -1;
+  if (!pair || separator < 1) return;
+  const maxAge = attributes.find((part) => part.toLowerCase().startsWith("max-age="))?.slice("max-age=".length);
+  const maxAgeSeconds = maxAge === undefined ? null : Number(maxAge);
+  const expirationDate = maxAgeSeconds !== null && Number.isInteger(maxAgeSeconds)
+    ? (maxAgeSeconds <= 0 ? 1 : Math.floor(Date.now() / 1000) + maxAgeSeconds)
+    : undefined;
+  await event.sender.session.cookies.set({
+    url: APP_URL,
+    name: pair.slice(0, separator),
+    value: pair.slice(separator + 1),
+    path: "/",
+    httpOnly: attributes.some((part) => part.toLowerCase() === "httponly"),
+    secure: true,
+    sameSite: "strict",
+    ...(expirationDate === undefined ? {} : { expirationDate })
+  });
 }
 
 async function handleAppUpdateStatus(event: IpcMainInvokeEvent, options: unknown): Promise<unknown> {
@@ -393,7 +586,9 @@ function enforceMenuBarOnlyPresentation(): void {
 
 function shouldShowWindowOnLaunch(): boolean {
   if (process.argv.includes(BACKGROUND_LAUNCH_ARG)) return false;
-  return !shouldStayResident();
+  if (!shouldStayResident()) return true;
+  const loginItem = app.getLoginItemSettings();
+  return !loginItem.wasOpenedAtLogin && !loginItem.wasOpenedAsHidden;
 }
 
 function shouldStayResident(): boolean {
@@ -413,6 +608,386 @@ function configuredLaunchAgentDataDir(): string {
   }
 }
 
+function configuredLaunchAgentPort(): string {
+  try {
+    const plistPath = join(app.getPath("home"), "Library", "LaunchAgents", "com.vigil.agent.plist");
+    return validPortText(plistStringForKey(readFileSync(plistPath, "utf8"), "VIGIL_PORT"));
+  } catch {
+    return "";
+  }
+}
+
+function persistedAppDataDir(): string {
+  try {
+    const value = JSON.parse(readFileSync(appDataDirPreferencePath(), "utf8")) as { dataDir?: unknown };
+    return typeof value.dataDir === "string" && value.dataDir.trim() ? value.dataDir : "";
+  } catch {
+    return "";
+  }
+}
+
+function persistedAppPort(): string {
+  try {
+    const value = JSON.parse(readFileSync(appDataDirPreferencePath(), "utf8")) as { port?: unknown };
+    return validPortText(value.port);
+  } catch {
+    return "";
+  }
+}
+
+function persistAppDataDir(dataDir: string): void {
+  const path = appDataDirPreferencePath();
+  const temporaryPath = `${path}.tmp`;
+  const port = validPortText(process.env.VIGIL_PORT);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(temporaryPath, `${JSON.stringify({ dataDir, ...(port ? { port } : {}) }, null, 2)}\n`, { mode: 0o600 });
+  renameSync(temporaryPath, path);
+}
+
+function validPortText(value: unknown): string {
+  const port = Number(value);
+  return Number.isInteger(port) && port >= 1 && port <= 65_535 ? String(port) : "";
+}
+
+function appDataDirPreferencePath(): string {
+  return join(app.getPath("userData"), "data-location.json");
+}
+
+function appDataDir(): string {
+  return process.env.VIGIL_DATA_DIR || resolveDefaultDataDir(RUNTIME_ROOT);
+}
+
+function prepareLegacyLoopbackAgentRetirement(): LegacyAgentRetirement | null {
+  process.env.VIGIL_EMBEDDED_RUNTIME = "1";
+  if (!app.isPackaged) return null;
+  const uid = process.getuid?.();
+  if (uid === undefined) return null;
+  const label = "com.vigil.agent";
+  const plistPath = join(app.getPath("home"), "Library", "LaunchAgents", `${label}.plist`);
+  return {
+    uid,
+    label,
+    plistPath,
+    recoverable: existsSync(plistPath),
+    attempted: false,
+    supervisorRefreshAttempted: false,
+    supervisorWasLoaded: false,
+    supervisorMarkerBackup: null,
+    supervisorPlistBackup: null,
+    supervisorScriptBackup: null
+  };
+}
+
+async function ensureEmbeddedRuntimeSupervisor(retirement: LegacyAgentRetirement | null): Promise<void> {
+  if (!retirement) return;
+  const markerPath = embeddedRuntimeSupervisorMarkerPath();
+  const scriptPath = embeddedRuntimeSupervisorScriptPath();
+  const plistPath = embeddedRuntimeSupervisorPlistPath();
+  retirement.supervisorWasLoaded = await launchctlServiceLoaded(retirement.uid, EMBEDDED_SUPERVISOR_LABEL);
+  retirement.supervisorMarkerBackup = backupEmbeddedSupervisorFile(markerPath);
+  retirement.supervisorPlistBackup = backupEmbeddedSupervisorFile(plistPath);
+  retirement.supervisorScriptBackup = backupEmbeddedSupervisorFile(scriptPath);
+  retirement.supervisorRefreshAttempted = true;
+  mkdirSync(dirname(markerPath), { recursive: true });
+  writeFileSync(markerPath, "enabled\n", { mode: 0o600 });
+  writeFileSync(scriptPath, embeddedRuntimeSupervisorScript(markerPath), { mode: 0o700 });
+  chmodSync(scriptPath, 0o700);
+  const temporaryPath = `${plistPath}.tmp`;
+  mkdirSync(dirname(plistPath), { recursive: true });
+  writeFileSync(temporaryPath, embeddedRuntimeSupervisorPlist(markerPath, scriptPath), { mode: 0o644 });
+  renameSync(temporaryPath, plistPath);
+  if (retirement.supervisorWasLoaded) {
+    try {
+      await execFileAsync("/bin/launchctl", ["bootout", `gui/${retirement.uid}/${EMBEDDED_SUPERVISOR_LABEL}`], { timeout: 5_000 });
+    } catch (error) {
+      if (!launchctlServiceMissing(error)) throw error;
+    }
+  }
+  await execFileAsync("/bin/launchctl", ["enable", `gui/${retirement.uid}/${EMBEDDED_SUPERVISOR_LABEL}`], { timeout: 5_000 });
+  await execFileAsync("/bin/launchctl", ["bootstrap", `gui/${retirement.uid}`, plistPath], { timeout: 5_000 });
+  await waitForLaunchctlServiceRunning(retirement.uid, EMBEDDED_SUPERVISOR_LABEL);
+}
+
+async function repairEmbeddedRuntimeSupervisor(): Promise<void> {
+  const repair = prepareLegacyLoopbackAgentRetirement();
+  if (!repair) {
+    throw Object.assign(new Error("Restart protection can only be repaired from the packaged Vigil app."), { status: 409 });
+  }
+  try {
+    await ensureEmbeddedRuntimeSupervisor(repair);
+    const { invalidateStateDiagnostics } = await import("../src/server/statePayload.js");
+    invalidateStateDiagnostics();
+  } catch (error) {
+    try {
+      await rollbackEmbeddedRuntimeSupervisor(repair);
+    } catch (rollbackError) {
+      throw new Error(`${errorMessage(error)} Vigil also could not restore the previous restart supervisor: ${errorMessage(rollbackError)}`);
+    }
+    throw error;
+  }
+}
+
+function embeddedRuntimeSupervisorPlist(markerPath: string, scriptPath: string): string {
+  const logPath = join(app.getPath("userData"), "logs", "supervisor.log");
+  mkdirSync(dirname(logPath), { recursive: true });
+  const environment = [
+    ["VIGIL_DATA_DIR", appDataDir()],
+    ["VIGIL_EMBEDDED_RUNTIME", "1"],
+    ["VIGIL_RESTART_SUPERVISED", "1"],
+    ...(process.env.VIGIL_PORT ? [["VIGIL_PORT", process.env.VIGIL_PORT]] : [])
+  ];
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>${xmlEscape(EMBEDDED_SUPERVISOR_LABEL)}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>${xmlEscape(scriptPath)}</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+${environment.map(([key, value]) => `    <key>${xmlEscape(key)}</key>\n    <string>${xmlEscape(value)}</string>`).join("\n")}
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>PathState</key>
+    <dict>
+      <key>${xmlEscape(markerPath)}</key>
+      <true/>
+    </dict>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>StandardOutPath</key>
+  <string>${xmlEscape(logPath)}</string>
+  <key>StandardErrorPath</key>
+  <string>${xmlEscape(logPath)}</string>
+</dict>
+</plist>
+`;
+}
+
+function embeddedRuntimeSupervisorScript(markerPath: string): string {
+  const readyPath = join(appDataDir(), "runtime-ready.json");
+  const appPath = dirname(dirname(dirname(process.execPath)));
+  const executablePath = process.execPath;
+  return `#!/bin/zsh
+set -u
+marker=${shellSingleQuote(markerPath)}
+ready=${shellSingleQuote(readyPath)}
+app_path=${shellSingleQuote(appPath)}
+executable_path=${shellSingleQuote(executablePath)}
+while [[ -e "$marker" ]]; do
+  pid=""
+  command=""
+  if [[ -f "$ready" ]]; then
+    pid=$(/usr/bin/sed -nE 's/^[[:space:]]*"pid":[[:space:]]*([0-9]+),?$/\\1/p' "$ready" | /usr/bin/head -n 1)
+  fi
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    command=$(/bin/ps -p "$pid" -o command= 2>/dev/null)
+  fi
+  if [[ -z "$pid" ]] || [[ "$command" != "$executable_path" && "$command" != "$executable_path "* ]]; then
+    /bin/rm -f "$ready"
+    if [[ ! -e "$marker" ]]; then
+      break
+    fi
+    /usr/bin/open -g "$app_path" --args ${BACKGROUND_LAUNCH_ARG}
+    /bin/sleep 5
+  else
+    /bin/sleep 2
+  fi
+done
+`;
+}
+
+function suspendEmbeddedRuntimeSupervisor(): void {
+  if (!app.isPackaged) return;
+  const markerPath = embeddedRuntimeSupervisorMarkerPath();
+  rmSync(markerPath, { force: true });
+  if (existsSync(markerPath)) {
+    throw new Error("Vigil could not verify that restart supervision was suspended.");
+  }
+}
+
+function resumeEmbeddedRuntimeSupervisor(): void {
+  if (!app.isPackaged) return;
+  try {
+    const markerPath = embeddedRuntimeSupervisorMarkerPath();
+    mkdirSync(dirname(markerPath), { recursive: true });
+    writeFileSync(markerPath, "enabled\n", { mode: 0o600 });
+  } catch (error) {
+    console.error("Vigil could not restore restart supervision after its update shutdown failed.", error);
+  }
+}
+
+async function rollbackEmbeddedRuntimeSupervisor(retirement: LegacyAgentRetirement | null): Promise<void> {
+  if (!retirement?.supervisorRefreshAttempted) return;
+  rmSync(embeddedRuntimeSupervisorMarkerPath(), { force: true });
+  try {
+    await execFileAsync("/bin/launchctl", ["bootout", `gui/${retirement.uid}/${EMBEDDED_SUPERVISOR_LABEL}`], { timeout: 5_000 });
+  } catch (error) {
+    if (!launchctlServiceMissing(error)) throw error;
+  }
+  restoreEmbeddedSupervisorFile(embeddedRuntimeSupervisorScriptPath(), retirement.supervisorScriptBackup);
+  restoreEmbeddedSupervisorFile(embeddedRuntimeSupervisorPlistPath(), retirement.supervisorPlistBackup);
+  restoreEmbeddedSupervisorFile(embeddedRuntimeSupervisorMarkerPath(), retirement.supervisorMarkerBackup);
+  if (!retirement.supervisorWasLoaded) return;
+  await execFileAsync(
+    "/bin/launchctl",
+    ["bootstrap", `gui/${retirement.uid}`, embeddedRuntimeSupervisorPlistPath()],
+    { timeout: 5_000 }
+  );
+  await waitForLaunchctlServiceRunning(retirement.uid, EMBEDDED_SUPERVISOR_LABEL);
+}
+
+function backupEmbeddedSupervisorFile(path: string): EmbeddedSupervisorFileBackup | null {
+  if (!existsSync(path)) return null;
+  return {
+    contents: readFileSync(path),
+    mode: statSync(path).mode & 0o777
+  };
+}
+
+function restoreEmbeddedSupervisorFile(path: string, backup: EmbeddedSupervisorFileBackup | null): void {
+  if (!backup) {
+    rmSync(path, { force: true });
+    return;
+  }
+  const temporaryPath = `${path}.rollback`;
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(temporaryPath, backup.contents, { mode: backup.mode });
+  chmodSync(temporaryPath, backup.mode);
+  renameSync(temporaryPath, path);
+}
+
+async function launchctlServiceLoaded(uid: number, label: string): Promise<boolean> {
+  try {
+    await execFileAsync("/bin/launchctl", ["print", `gui/${uid}/${label}`], { timeout: 5_000 });
+    return true;
+  } catch (error) {
+    if (launchctlServiceMissing(error)) return false;
+    throw error;
+  }
+}
+
+async function waitForLaunchctlServiceRunning(uid: number, label: string): Promise<number> {
+  const deadline = Date.now() + SUPERVISOR_START_TIMEOUT_MS;
+  let observedPid: number | null = null;
+  do {
+    const pid = await launchctlServiceRunningPid(uid, label);
+    if (pid !== null && pid === observedPid) return pid;
+    observedPid = pid;
+    if (Date.now() >= deadline) break;
+    await new Promise<void>((resolve) => setTimeout(resolve, SUPERVISOR_POLL_INTERVAL_MS));
+  } while (Date.now() < deadline);
+  throw new Error("Vigil could not verify that its restart supervisor has a running process.");
+}
+
+async function launchctlServiceRunningPid(uid: number, label: string): Promise<number | null> {
+  try {
+    const result = await execFileAsync("/bin/launchctl", ["print", `gui/${uid}/${label}`], { timeout: 5_000 });
+    const output = String(result.stdout || "");
+    if (!/^\s*state = running\s*$/mu.test(output)) return null;
+    const pid = Number(output.match(/^\s*pid = ([0-9]+)\s*$/mu)?.[1] || 0);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch (error) {
+    if (launchctlServiceMissing(error)) return null;
+    throw error;
+  }
+}
+
+function embeddedRuntimeSupervisorPlistPath(): string {
+  return join(app.getPath("home"), "Library", "LaunchAgents", `${EMBEDDED_SUPERVISOR_LABEL}.plist`);
+}
+
+function embeddedRuntimeSupervisorMarkerPath(): string {
+  return join(app.getPath("userData"), "supervisor", "enabled");
+}
+
+function embeddedRuntimeSupervisorScriptPath(): string {
+  return join(app.getPath("userData"), "supervisor", "vigil-supervisor.zsh");
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function xmlEscape(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&apos;");
+}
+
+async function retireLegacyLoopbackAgent(retirement: LegacyAgentRetirement | null): Promise<void> {
+  if (!retirement) return;
+  retirement.attempted = true;
+  const { uid, label, plistPath } = retirement;
+  for (const args of [
+    ["bootout", `gui/${uid}/${label}`],
+    ["bootout", `gui/${uid}`, plistPath]
+  ]) {
+    try {
+      await execFileAsync("/bin/launchctl", args, { timeout: 5_000 });
+    } catch {
+      // Missing or already stopped legacy agents are an expected migration state.
+    }
+  }
+  await assertLaunchAgentStopped(uid, label);
+  // Keep the unloaded plist at its original path. The launcher which installed
+  // this build may be an older packaged copy and still needs that exact path to
+  // restore login/crash persistence if external replacement verification fails.
+}
+
+async function restoreLegacyLoopbackAgent(retirement: LegacyAgentRetirement | null): Promise<void> {
+  if (!retirement?.recoverable || !retirement.attempted) return;
+  if (!(await launchctlServiceLoaded(retirement.uid, retirement.label))) {
+    await execFileAsync("/bin/launchctl", ["bootstrap", `gui/${retirement.uid}`, retirement.plistPath], { timeout: 5_000 });
+  }
+  await waitForLegacyLoopbackAgentRecovery(retirement);
+}
+
+async function waitForLegacyLoopbackAgentRecovery(retirement: LegacyAgentRetirement): Promise<void> {
+  const deadline = Date.now() + LEGACY_RECOVERY_TIMEOUT_MS;
+  let observedPid: number | null = null;
+  do {
+    const pid = await launchctlServiceRunningPid(retirement.uid, retirement.label);
+    if (pid !== null && pid === observedPid && await companionServerIsHealthy()) return;
+    observedPid = pid;
+    if (Date.now() >= deadline) break;
+    await new Promise<void>((resolve) => setTimeout(resolve, LEGACY_RECOVERY_POLL_INTERVAL_MS));
+  } while (Date.now() < deadline);
+  throw new Error("Vigil could not verify that the restored legacy service has a stable running process and a signed health response.");
+}
+
+async function assertLaunchAgentStopped(uid: number, label: string): Promise<void> {
+  try {
+    await execFileAsync("/bin/launchctl", ["print", `gui/${uid}/${label}`], { timeout: 5_000 });
+  } catch (error) {
+    if (launchctlServiceMissing(error)) return;
+    throw new Error(`Vigil could not verify that the legacy LaunchAgent stopped: ${commandErrorText(error)}`);
+  }
+  throw new Error("The legacy Vigil LaunchAgent is still loaded. Its plist was preserved and the embedded runtime was not started.");
+}
+
+function launchctlServiceMissing(error: unknown): boolean {
+  return /could not find service|service not found|no such process/i.test(commandErrorText(error));
+}
+
+function commandErrorText(error: unknown): string {
+  if (typeof error !== "object" || error === null) return String(error || "Unknown launchctl error.");
+  const record = error as { stderr?: unknown; message?: unknown };
+  return `${String(record.stderr || "")}\n${String(record.message || "")}`.trim() || "Unknown launchctl error.";
+}
+
 function configureLiveDevelopmentSource(): void {
   try {
     const plistPath = join(app.getPath("home"), "Library", "LaunchAgents", "com.vigil.agent.plist");
@@ -427,22 +1002,37 @@ function configureLiveDevelopmentSource(): void {
   }
 }
 
-async function ensureVigilServer(appUpdate: VigilAppUpdateController): Promise<string> {
-  if (await serverIsHealthy()) return BASE_URL;
-
-  const { startVigilServer } = await import("../src/server.js");
-  ownedServer = await startVigilServer({ host: HOST, port: PORT, appUpdate }) as VigilServerHandle;
-  return ownedServer.url;
+async function ensureVigilRuntime(appUpdate: VigilAppUpdateController): Promise<void> {
+  const [{ startVigilCompanionServer, stopVigilServer }, { createLoopbackRuntimeProxy }] = await Promise.all([
+    import("../src/server.js"),
+    import("../src/server/inAppTransport.js")
+  ]);
+  if (!app.isPackaged && await companionServerIsHealthy()) {
+    ownedRuntime = createLoopbackRuntimeProxy(companionServerPort());
+    return;
+  }
+  try {
+    ownedRuntime = await startVigilCompanionServer({ appUpdate, port: companionServerPort() });
+  } catch (error) {
+    if (!app.isPackaged && errorCode(error) === "EADDRINUSE" && await companionServerIsHealthy()) {
+      await stopVigilServer();
+      ownedRuntime = createLoopbackRuntimeProxy(companionServerPort());
+      return;
+    }
+    await stopVigilServer();
+    throw error;
+  }
 }
 
-async function serverIsHealthy(): Promise<boolean> {
+async function companionServerIsHealthy(): Promise<boolean> {
+  const port = companionServerPort();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2000);
+  const timeout = setTimeout(() => controller.abort(), COMPANION_HEALTH_TIMEOUT_MS);
   try {
-    const health = await fetchVigilStateHealth(`${BASE_URL}/api/health`, {
+    const health = await fetchVigilStateHealth(`http://127.0.0.1:${port}/api/health`, {
       signal: controller.signal,
-      expectedPort: PORT,
-      instanceSecret: await appInstanceSecret()
+      expectedPort: port,
+      instanceSecret: await getInstanceSecret(appDataDir())
     });
     return health.ok;
   } catch {
@@ -450,6 +1040,67 @@ async function serverIsHealthy(): Promise<boolean> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function companionServerPort(): number {
+  return Number(process.env.VIGIL_PORT || 8787);
+}
+
+function errorCode(error: unknown): string {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as { code?: unknown }).code || "")
+    : "";
+}
+
+async function stopOwnedRuntime(): Promise<void> {
+  if (!ownedRuntime) return;
+  const runtime = ownedRuntime;
+  await runtime.stop();
+  if (ownedRuntime === runtime) ownedRuntime = null;
+}
+
+function installInAppProtocol(): void {
+  protocol.handle(APP_SCHEME, async (request) => {
+    try {
+      if (!isTrustedAppUrl(request.url)) return jsonProtocolResponse(403, "In-app resource origin was rejected.");
+      const url = new URL(request.url);
+      const method = request.method.toUpperCase();
+      const body = ["GET", "HEAD"].includes(method)
+        ? undefined
+        : new Uint8Array(await request.arrayBuffer());
+      const response = await requireRuntime().request({
+        method,
+        path: `${url.pathname}${url.search}`,
+        headers: Object.fromEntries(request.headers.entries()),
+        body
+      });
+      return webResponse(response);
+    } catch (error) {
+      return jsonProtocolResponse(errorStatus(error), errorMessage(error));
+    }
+  });
+}
+
+function webResponse(response: InAppResponse): Response {
+  const body = response.status === 204 || response.status === 304
+    ? null
+    : Buffer.from(response.body);
+  return new Response(body, {
+    status: response.status,
+    headers: response.headers
+  });
+}
+
+function jsonProtocolResponse(status: number, error: string): Response {
+  return new Response(`${JSON.stringify({ error })}\n`, {
+    status,
+    headers: { "Content-Type": "application/json; charset=utf-8" }
+  });
+}
+
+function requireRuntime(): VigilRuntimeHandle {
+  if (!ownedRuntime) throw Object.assign(new Error("Vigil's private enforcement runtime is not ready."), { status: 503 });
+  return ownedRuntime;
 }
 
 function installMenu(appUrl: string): void {
@@ -520,7 +1171,8 @@ function installMenu(appUrl: string): void {
 
 function isTrustedAppUrl(value: string): boolean {
   try {
-    return new URL(value).origin === BASE_URL;
+    const url = new URL(value);
+    return url.protocol === `${APP_SCHEME}:` && url.hostname === APP_HOST;
   } catch {
     return false;
   }
@@ -540,7 +1192,7 @@ function installMenuBarCompanion(appUrl: string): void {
   icon.setTemplateImage(true);
   tray = new Tray(icon);
   tray.setToolTip("Vigil");
-  updateTrayMenu(appUrl, checkingTrayStatus(appUrl));
+  updateTrayMenu(appUrl, checkingTrayStatus());
   tray.on("click", () => {
     void refreshTrayStatus(appUrl);
   });
@@ -685,36 +1337,22 @@ async function handleAppUpdateAction(appUrl: string): Promise<void> {
 }
 
 async function refreshTrayStatus(appUrl: string): Promise<void> {
-  updateTrayMenu(appUrl, checkingTrayStatus(appUrl));
-  updateTrayMenu(appUrl, await readTrayStatus(appUrl));
+  updateTrayMenu(appUrl, checkingTrayStatus());
+  updateTrayMenu(appUrl, await readTrayStatus());
 }
 
-async function readTrayStatus(appUrl: string): Promise<TrayStatus> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TRAY_STATUS_CHECK_TIMEOUT_MS);
-  const port = portFromUrl(appUrl);
+async function readTrayStatus(): Promise<TrayStatus> {
   try {
-    const health = await fetchVigilStateHealth(apiUrl(appUrl, "/api/state"), {
-      signal: controller.signal,
-      expectedPort: port,
-      instanceSecret: await appInstanceSecret()
+    const response = await requireRuntime().request({
+      method: "GET",
+      path: "/api/state",
+      headers: { Accept: "application/json" }
     });
-    if (!health.ok) {
-      return offlineTrayStatus(appUrl);
-    }
-    return summarizeTrayStatus(health.body, port);
+    if (response.status !== 200) return offlineTrayStatus();
+    return summarizeTrayStatus(responseBodyJson(response));
   } catch {
-    return offlineTrayStatus(appUrl);
-  } finally {
-    clearTimeout(timeout);
+    return offlineTrayStatus();
   }
-}
-
-function appInstanceSecret(): Promise<string> {
-  instanceSecretPromise ||= getInstanceSecret(
-    process.env.VIGIL_DATA_DIR || resolveDefaultDataDir(RUNTIME_ROOT)
-  );
-  return instanceSecretPromise;
 }
 
 async function startPanicLock(appUrl: string): Promise<void> {
@@ -725,7 +1363,7 @@ async function startPanicLock(appUrl: string): Promise<void> {
     canStartPanicLock: false
   });
   try {
-    const body = await requestPanicLock(appUrl);
+    const body = await requestPanicLock();
     const session = asRecord(asRecord(body)?.session);
     updateTrayMenu(appUrl, {
       label: "Status: Panic Lock - Panic Lockout",
@@ -853,29 +1491,23 @@ async function refreshRunningAppUpdate(appUrl: string): Promise<void> {
   scheduleAppUpdateRefresh(appUrl);
 }
 
-async function requestPanicLock(appUrl: string): Promise<unknown> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TRAY_ACTION_TIMEOUT_MS);
-  try {
-    const response = await fetch(apiUrl(appUrl, "/api/panic/start"), {
-      method: "POST",
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE
-      },
-      body: "{}"
-    });
-    const body = await responseJson(response);
-    const record = asRecord(body);
-    if (!response.ok || record?.ok !== true) {
-      throw new Error(nonEmptyString(record?.error) || `Panic lock failed (${response.status})`);
-    }
-    return body;
-  } finally {
-    clearTimeout(timeout);
+async function requestPanicLock(): Promise<unknown> {
+  const response = await requireRuntime().request({
+    method: "POST",
+    path: "/api/panic/start",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE
+    },
+    body: "{}"
+  });
+  const body = responseBodyJson(response);
+  const record = asRecord(body);
+  if (response.status < 200 || response.status >= 300 || record?.ok !== true) {
+    throw new Error(nonEmptyString(record?.error) || `Panic lock failed (${response.status})`);
   }
+  return body;
 }
 
 async function requestAppUpdate(): Promise<unknown> {
@@ -900,15 +1532,15 @@ async function requestAppUpdateStatus({ checkRemote = false }: { checkRemote?: b
   return result;
 }
 
-async function responseJson(response: Response): Promise<unknown> {
+function responseBodyJson(response: InAppResponse): unknown {
   try {
-    return await response.json();
+    return JSON.parse(Buffer.from(response.body).toString("utf8")) as unknown;
   } catch {
     return null;
   }
 }
 
-function summarizeTrayStatus(body: unknown, port: number): TrayStatus {
+function summarizeTrayStatus(body: unknown): TrayStatus {
   const root = asRecord(body);
   const state = asRecord(root?.state);
   const policy = asRecord(state?.activePolicy);
@@ -918,7 +1550,7 @@ function summarizeTrayStatus(body: unknown, port: number): TrayStatus {
     const kind = nonEmptyString(policy?.kind);
     return {
       label: `Status: ${policyStatus(kind)} - ${shortTrayText(session ? sessionTitle(session) : policyTitle(policy || {}))}`,
-      detail: policyDetail(policy, session, phase) || `Local server online on port ${port}`,
+      detail: policyDetail(policy, session, phase) || "Private in-app enforcement active",
       panicActionLabel: kind === "panic" ? "Panic Lock Active" : "Start Panic Lock",
       canStartPanicLock: kind !== "panic"
     };
@@ -926,25 +1558,25 @@ function summarizeTrayStatus(body: unknown, port: number): TrayStatus {
 
   return {
     label: "Status: Unlocked",
-    detail: `Local server online on port ${port}`,
+    detail: "Private in-app enforcement active",
     panicActionLabel: "Start Panic Lock",
     canStartPanicLock: true
   };
 }
 
-function checkingTrayStatus(appUrl: string): TrayStatus {
+function checkingTrayStatus(): TrayStatus {
   return {
     label: "Status: Checking",
-    detail: `Local server on port ${portFromUrl(appUrl)}`,
+    detail: "Checking private in-app enforcement",
     panicActionLabel: "Start Panic Lock",
     canStartPanicLock: false
   };
 }
 
-function offlineTrayStatus(appUrl: string): TrayStatus {
+function offlineTrayStatus(): TrayStatus {
   return {
     label: "Status: Offline",
-    detail: `No trusted Vigil server on port ${portFromUrl(appUrl)}`,
+    detail: "Private enforcement runtime is unavailable",
     panicActionLabel: "Start Panic Lock",
     canStartPanicLock: false
   };
@@ -1049,18 +1681,12 @@ function shortTrayDetail(value: string): string {
   return value.length <= 72 ? value : `${value.slice(0, 69)}...`;
 }
 
-function apiUrl(appUrl: string, path: string): string {
-  return new URL(path, appUrl).toString();
-}
-
-function portFromUrl(appUrl: string): number {
-  try {
-    return Number(new URL(appUrl).port) || PORT;
-  } catch {
-    return PORT;
-  }
-}
-
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function errorStatus(error: unknown): number {
+  if (!error || typeof error !== "object" || !("status" in error)) return 500;
+  const status = Number(error.status);
+  return Number.isInteger(status) && status >= 400 && status <= 599 ? status : 500;
 }

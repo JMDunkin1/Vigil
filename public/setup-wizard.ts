@@ -7,6 +7,7 @@ interface SetupItem {
   detail: string;
   ok: boolean;
   action: string;
+  actionTarget?: string;
 }
 
 export function renderSetupWizard(data: DashboardData): void {
@@ -42,6 +43,7 @@ function setupItems(data: DashboardData): SetupItem[] {
   const extensionSeen = Boolean(extension.lastSeenAt);
   const extensionRulesReady = dynamicRules.ok !== false && dynamicRules.status !== "missing";
   const iPhoneReady = Boolean(ios.enabled && (manageEngine.preferred || ios.profile));
+  const launchAgentReady = Boolean(launchAgent.loaded && launchAgent.running && (!launchAgent.embedded || launchAgent.restartHardened === true));
 
   return [
     {
@@ -56,9 +58,12 @@ function setupItems(data: DashboardData): SetupItem[] {
     {
       id: "launch-agent",
       label: "LaunchAgent",
-      ok: Boolean(launchAgent.loaded && launchAgent.running),
-      detail: launchAgent.running ? "Login agent is loaded and running." : "Install the login agent so Vigil restarts after login.",
-      action: "Install Login Agent"
+      ok: launchAgentReady,
+      detail: launchAgent.embedded && launchAgent.restartHardened !== true
+        ? "Repair automatic restart protection without leaving Vigil."
+        : (launchAgent.running ? "Login agent is loaded and running." : "Install the login agent so Vigil restarts after login."),
+      action: launchAgent.embedded ? "Repair Restart Protection" : "Install Login Agent",
+      actionTarget: launchAgentReady ? undefined : "installLaunchAgent"
     },
     {
       id: "extension",
@@ -125,6 +130,12 @@ function externalNetworkBlockDetail(externalNetworkBlock: HardeningCheck): strin
 }
 
 function renderSetupItem(item: SetupItem): HTMLElement {
+  const action = item.actionTarget
+    ? textEl("button", item.action, { className: "setup-action", type: "button" })
+    : textEl("span", item.action, { className: "setup-action" });
+  if (item.actionTarget) {
+    action.addEventListener("click", () => document.querySelector<HTMLButtonElement>(`#${item.actionTarget}`)?.click());
+  }
   return el(
     "div",
     { className: `setup-item ${item.ok ? "good" : "warn"}`, dataset: { setupItem: item.id } },
@@ -135,7 +146,7 @@ function renderSetupItem(item: SetupItem): HTMLElement {
       textEl("strong", item.label),
       textEl("em", item.detail)
     ),
-    textEl("span", item.action, { className: "setup-action" })
+    action
   );
 }
 

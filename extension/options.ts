@@ -46,7 +46,7 @@ testButton.addEventListener("click", async () => {
   setStatus("");
 
   try {
-    const response = await fetch(vigilUrl("/api/state", localServer), { headers: { Accept: "application/json" } });
+    const response = await fetch(vigilUrl("/api/health", localServer), { headers: { Accept: "application/json" } });
     const signature = response.headers.get("x-vigil-app") || "";
     if (!response.ok || !signature.startsWith("tech.caseline.vigil;")) {
       setDiagnostic(serverCheck, `No Vigil response at ${localServer}.`);

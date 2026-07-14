@@ -23,6 +23,10 @@ export async function handleHardeningApiRoute(response: ServerResponse, context:
   const { method, path, state, localScripts } = context;
 
   if (method === "POST" && path === "/api/hardening/launch-agent/install") {
+    if (process.env.VIGIL_EMBEDDED_RUNTIME === "1") {
+      sendJson(response, 409, { error: "Vigil's background enforcement is built into the Mac app; no localhost login agent is needed." });
+      return true;
+    }
     try {
       const result = await localScripts.runLocalScript("install-launch-agent.mjs");
       addEvent(state, "launch_agent_installed", { ok: true });

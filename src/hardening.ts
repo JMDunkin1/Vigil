@@ -1,6 +1,7 @@
-import { access, readFile } from "node:fs/promises";
+import { access, lstat, readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { dirname, join } from "node:path";
+import { isDeepStrictEqual, promisify } from "node:util";
 import { STATE_PATH, STATE_SEAL_KEY_PATH, STATE_SEAL_PATH } from "./store.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { persistentAppLockSiteTargets } from "./appLocks.js";
@@ -8,11 +9,13 @@ import { removeCompleteManagedBlocks, removePartialManagedBlockFragments } from 
 import { activePolicy, baselinePolicy, expandSiteTargets, normalizeHost, normalizeUrlPattern } from "./policy.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { applySealVerificationToState, stateSealSummary, verifyStateTextSeal } from "./seal.js";
+import { parsePlist } from "./plist.js";
 import type { Profile, VigilState, UnknownRecord } from "./types.js";
 
 export const HOSTS_BEGIN = "# BEGIN VIGIL";
 export const HOSTS_END = "# END VIGIL";
 export const LAUNCH_AGENT_LABEL = "com.vigil.agent";
+export const EMBEDDED_SUPERVISOR_LABEL = "tech.caseline.vigil.supervisor";
 const HOSTS_MARKER_PAIRS = [[HOSTS_BEGIN, HOSTS_END]] as const;
 const execFileAsync = promisify(execFile);
 
@@ -21,6 +24,21 @@ interface LaunchAgentPrintStatus {
   running: boolean;
   pid: number | null;
   lastExitStatus: number | null;
+}
+
+export interface EmbeddedSupervisorExpectation {
+  homeDir: string;
+  userDataDir: string;
+  dataDir: string;
+  executablePath: string;
+  port?: string;
+}
+
+interface EmbeddedSupervisorIntegrityEvidence {
+  markerActive: boolean;
+  script: string;
+  scriptExecutable: boolean;
+  supervisorRunning: boolean;
 }
 
 export function buildHostsBlock(state: VigilState, now = new Date()): string {
@@ -68,6 +86,72 @@ export function launchAgentPath() {
 }
 
 export async function launchAgentStatus() {
+  if (process.env.VIGIL_EMBEDDED_RUNTIME === "1") {
+    const path = embeddedSupervisorPath();
+    const installed = await fileExists(path);
+    let source = "";
+    let scriptSource = "";
+    let scriptExecutable = false;
+    let supervisionMarkerPath = "";
+    let supervisionMarkerActive = false;
+    const expectation = embeddedSupervisorExpectation();
+    try {
+      source = installed ? await readFile(path, "utf8") : "";
+      supervisionMarkerPath = embeddedSupervisorMarkerPath(source);
+      supervisionMarkerActive = Boolean(supervisionMarkerPath) && await fileExists(supervisionMarkerPath);
+      if (expectation) {
+        const scriptPath = embeddedSupervisorScriptPath(expectation);
+        scriptSource = await readFile(scriptPath, "utf8");
+        const scriptStat = await lstat(scriptPath);
+        scriptExecutable = scriptStat.isFile()
+          && !scriptStat.isSymbolicLink()
+          && (scriptStat.mode & 0o777) === 0o700;
+      }
+    } catch {
+      scriptSource = "";
+      scriptExecutable = false;
+    }
+    const base = {
+      installed,
+      path,
+      label: EMBEDDED_SUPERVISOR_LABEL,
+      loaded: false,
+      running: true,
+      pid: process.pid,
+      lastExitStatus: null,
+      embedded: true,
+      supervisionMarkerPath,
+      supervisionMarkerActive,
+      supervisorRunning: false,
+      supervisorPid: null,
+      restartHardened: false
+    };
+    const uid = process.getuid?.();
+    if (uid === undefined) return { ...base, error: "Current process does not expose a macOS user id." };
+    try {
+      const { stdout } = await execFileAsync("/bin/launchctl", ["print", `gui/${uid}/${EMBEDDED_SUPERVISOR_LABEL}`], {
+        timeout: 3000,
+        maxBuffer: 1024 * 128
+      });
+      const supervisor = parseLaunchAgentPrint(stdout);
+      return {
+        ...base,
+        loaded: true,
+        supervisorRunning: supervisor.running,
+        supervisorPid: supervisor.pid,
+        restartHardened: expectation
+          ? embeddedSupervisorRestartHardened(source, expectation, {
+              markerActive: supervisionMarkerActive,
+              script: scriptSource,
+              scriptExecutable,
+              supervisorRunning: supervisor.running
+            })
+          : false
+      };
+    } catch (error) {
+      return { ...base, error: simplifyError(error) };
+    }
+  }
   const path = launchAgentPath();
   const installed = await fileExists(path);
   const base = {
@@ -76,6 +160,7 @@ export async function launchAgentStatus() {
     label: LAUNCH_AGENT_LABEL,
     loaded: false,
     running: false,
+    restartHardened: true,
     pid: null,
     lastExitStatus: null
   };
@@ -92,6 +177,31 @@ export async function launchAgentStatus() {
   } catch (error) {
     return { ...base, error: simplifyError(error) };
   }
+}
+
+export function embeddedSupervisorPath() {
+  const homeDir = process.env.VIGIL_HOME_DIR || process.env.HOME || "";
+  return join(homeDir, "Library", "LaunchAgents", `${EMBEDDED_SUPERVISOR_LABEL}.plist`);
+}
+
+export function embeddedSupervisorPlistRestartHardened(plist: string, expectation: EmbeddedSupervisorExpectation): boolean {
+  return isDeepStrictEqual(embeddedSupervisorConfiguration(plist).root, embeddedSupervisorExpectedConfiguration(expectation));
+}
+
+export function embeddedSupervisorMarkerPath(plist: string): string {
+  return embeddedSupervisorConfiguration(plist).markerPath;
+}
+
+export function embeddedSupervisorRestartHardened(
+  plist: string,
+  expectation: EmbeddedSupervisorExpectation,
+  evidence: EmbeddedSupervisorIntegrityEvidence
+): boolean {
+  return embeddedSupervisorPlistRestartHardened(plist, expectation)
+    && evidence.scriptExecutable
+    && evidence.script === embeddedSupervisorExpectedScript(expectation)
+    && evidence.markerActive
+    && evidence.supervisorRunning;
 }
 
 export async function stateSealStatus(state: VigilState | null = null) {
@@ -276,6 +386,99 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function embeddedSupervisorExpectation(): EmbeddedSupervisorExpectation | null {
+  const homeDir = String(process.env.VIGIL_HOME_DIR || "").trim();
+  const userDataDir = String(process.env.VIGIL_USER_DATA_DIR || "").trim();
+  const dataDir = String(process.env.VIGIL_DATA_DIR || "").trim();
+  const executablePath = String(process.execPath || "").trim();
+  if (!homeDir || !userDataDir || !dataDir || !executablePath) return null;
+  return {
+    homeDir,
+    userDataDir,
+    dataDir,
+    executablePath,
+    ...(process.env.VIGIL_PORT ? { port: process.env.VIGIL_PORT } : {})
+  };
+}
+
+function embeddedSupervisorScriptPath(expectation: EmbeddedSupervisorExpectation): string {
+  return join(expectation.userDataDir, "supervisor", "vigil-supervisor.zsh");
+}
+
+function embeddedSupervisorConfiguration(plist: string): { root: Record<string, unknown> | null; markerPath: string } {
+  const document = /<plist(?:\s|>)/u.test(plist) ? plist : `<plist><dict>${plist}</dict></plist>`;
+  const root = recordValue(parsePlist(document));
+  const keepAlive = recordValue(root?.KeepAlive);
+  const pathState = recordValue(keepAlive?.PathState);
+  const markerPath = Object.entries(pathState || {}).find(([, enabled]) => enabled === true)?.[0] || "";
+  return { root, markerPath };
+}
+
+function embeddedSupervisorExpectedConfiguration(expectation: EmbeddedSupervisorExpectation): Record<string, unknown> {
+  const markerPath = join(expectation.userDataDir, "supervisor", "enabled");
+  const environment: Record<string, string> = {
+    VIGIL_DATA_DIR: expectation.dataDir,
+    VIGIL_EMBEDDED_RUNTIME: "1",
+    VIGIL_RESTART_SUPERVISED: "1"
+  };
+  if (expectation.port) environment.VIGIL_PORT = expectation.port;
+  const logPath = join(expectation.userDataDir, "logs", "supervisor.log");
+  return {
+    Label: EMBEDDED_SUPERVISOR_LABEL,
+    ProgramArguments: [embeddedSupervisorScriptPath(expectation)],
+    EnvironmentVariables: environment,
+    RunAtLoad: true,
+    KeepAlive: { PathState: { [markerPath]: true } },
+    ThrottleInterval: 5,
+    ProcessType: "Interactive",
+    StandardOutPath: logPath,
+    StandardErrorPath: logPath
+  };
+}
+
+export function embeddedSupervisorExpectedScript(expectation: EmbeddedSupervisorExpectation): string {
+  const markerPath = join(expectation.userDataDir, "supervisor", "enabled");
+  const readyPath = join(expectation.dataDir, "runtime-ready.json");
+  const appPath = dirname(dirname(dirname(expectation.executablePath)));
+  return `#!/bin/zsh
+set -u
+marker=${shellSingleQuote(markerPath)}
+ready=${shellSingleQuote(readyPath)}
+app_path=${shellSingleQuote(appPath)}
+executable_path=${shellSingleQuote(expectation.executablePath)}
+while [[ -e "$marker" ]]; do
+  pid=""
+  command=""
+  if [[ -f "$ready" ]]; then
+    pid=$(/usr/bin/sed -nE 's/^[[:space:]]*"pid":[[:space:]]*([0-9]+),?$/\\1/p' "$ready" | /usr/bin/head -n 1)
+  fi
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    command=$(/bin/ps -p "$pid" -o command= 2>/dev/null)
+  fi
+  if [[ -z "$pid" ]] || [[ "$command" != "$executable_path" && "$command" != "$executable_path "* ]]; then
+    /bin/rm -f "$ready"
+    if [[ ! -e "$marker" ]]; then
+      break
+    fi
+    /usr/bin/open -g "$app_path" --args --vigil-background
+    /bin/sleep 5
+  else
+    /bin/sleep 2
+  fi
+done
+`;
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function numberMatch(value: unknown, pattern: RegExp): number | null {

@@ -5,6 +5,8 @@ import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node
 import { basename, dirname, join, resolve } from "node:path";
 import { getInstanceSecret } from "../src/instanceIdentity.js";
 import { fetchVigilStateHealth } from "../src/vigilHealth.js";
+import { liveRuntimeReady } from "../src/runtimeReady.js";
+import { resumeEmbeddedRuntimeSupervisor, suspendEmbeddedRuntimeSupervisor } from "../src/embeddedSupervisor.js";
 import { isDirectRun } from "../src/directRun.js";
 import { plistStringForKey } from "../src/plist.js";
 import { isLocallyRebuildableSignature, macSigningTimestamp, resolveMacSigningIdentity } from "./mac-signing-identity.mjs";
@@ -13,6 +15,7 @@ interface Options {
   repoRoot: string;
   appPath: string;
   parentPid: number;
+  userDataDir: string;
   statusPath: string;
   logPath: string;
   lockPath: string;
@@ -35,6 +38,8 @@ interface BackendHealthContext {
 
 interface LaunchAgentRecovery {
   context: BackendHealthContext;
+  plist: string;
+  plistMode: number;
   plistPath: string;
   uid: number;
 }
@@ -72,7 +77,7 @@ async function runUpdate(): Promise<void> {
   let launchAgentTransition: LaunchAgentRecovery | null = null;
   let parentExited = false;
   let replacementCommitted = false;
-  let launchAgentWasPresent = false;
+  let launchAgentWasLoaded = false;
 
   try {
     options = parseArgs(process.argv.slice(2));
@@ -82,10 +87,6 @@ async function runUpdate(): Promise<void> {
     installSignalHandlers();
     await assertOwnedUpdaterLock();
     await assertLocallyRebuildableApp();
-
-    await status("waiting", "Waiting for Vigil to quit");
-    await waitForExit(options.parentPid, 45_000);
-    parentExited = true;
 
     const dirty = (await capture("git", ["status", "--porcelain=v1"], { cwd: options.repoRoot })).trim().length > 0;
     if (dirty) throw new Error("Vigil source has uncommitted changes. Commit or stash them before installing an update.");
@@ -99,7 +100,18 @@ async function runUpdate(): Promise<void> {
     });
 
     await assertActiveCheckoutUnchanged(stagedBuild);
-    launchAgentWasPresent = await launchAgentExists();
+    launchAgentTransition = await captureLoadedLaunchAgentRecovery();
+    launchAgentWasLoaded = launchAgentTransition !== null;
+    await status("waiting", "Update ready; waiting for Vigil to quit");
+    process.kill(options.parentPid, "SIGUSR2");
+    try {
+      await waitForExit(options.parentPid, 45_000);
+      parentExited = true;
+    } catch (error) {
+      await resumeEmbeddedRuntimeSupervisor(options.userDataDir);
+      throw error;
+    }
+
     await status("installing-runtime", "Staging the rebuilt Vigil background runtime");
     runtimeInstallation = await atomicInstallBuiltApp(
       join(stagedBuild.repoRoot, "dist", "runtime"),
@@ -111,7 +123,7 @@ async function runUpdate(): Promise<void> {
       stagedBuild.expectedCommit,
       "installed Vigil runtime"
     );
-    if (launchAgentWasPresent) {
+    if (launchAgentWasLoaded) {
       const installedAgentRuntime = launchAgentRuntimePath();
       agentRuntimeInstallation = await atomicInstallBuiltApp(
         join(stagedBuild.repoRoot, "dist", "runtime"),
@@ -129,16 +141,20 @@ async function runUpdate(): Promise<void> {
     appInstallation = await atomicInstallBuiltApp(stagedBuild.builtAppPath, options.appPath, "");
     await verifyInstalledAppBuild(stagedBuild.expectedCommit);
 
-    launchAgentTransition = launchAgentWasPresent ? await stopLaunchAgentForStateTransition() : null;
-    stateSnapshot = await snapshotUpdateState(await replacementDataDir(launchAgentWasPresent), dirname(options.statusPath));
-    let backend: BackendHealthContext | null = null;
+    if (launchAgentTransition) {
+      launchAgentTransition = await stopLaunchAgentForStateTransition(launchAgentTransition);
+    }
+    const replacementDataDirectory = await replacementDataDir(
+      launchAgentWasLoaded,
+      launchAgentTransition?.plist
+    );
+    stateSnapshot = await snapshotUpdateState(replacementDataDirectory, dirname(options.statusPath));
     if (launchAgentTransition) {
       await startLaunchAgentAfterStateTransition(launchAgentTransition);
-      backend = launchAgentTransition.context;
     }
     if (!options.restart) throw new Error("Vigil app replacement verification requires --restart.");
     await status("verifying", "Reopening and verifying the rebuilt Vigil app");
-    await openAndVerifyReplacement(backend || await defaultBackendHealthContext());
+    await openAndVerifyReplacement(replacementDataDirectory);
 
     await assertActiveCheckoutUnchanged(stagedBuild);
     await status("updating-source", "Fast-forwarding Vigil source to the verified build");
@@ -159,6 +175,10 @@ async function runUpdate(): Promise<void> {
     agentRuntimeInstallation = null;
     stateSnapshot = null;
     const cleanupErrors = await finalizeInstallations([appToFinalize, agentRuntimeToFinalize, runtimeToFinalize, stateSnapshotToFinalize]);
+    if (launchAgentTransition && process.env.VIGIL_KEEP_LEGACY_SERVER !== "1") {
+      const legacyAgentCleanupError = await finalizeLegacyLaunchAgentRetirement(launchAgentTransition);
+      if (legacyAgentCleanupError) cleanupErrors.push(legacyAgentCleanupError);
+    }
     const message = cleanupErrors.length
       ? `Vigil update complete. Cleanup warning: ${cleanupErrors.join(" ")}`
       : "Vigil update complete";
@@ -176,7 +196,7 @@ async function runUpdate(): Promise<void> {
         stateSnapshot,
         launchAgentTransition,
         parentExited,
-        launchAgentWasPresent
+        launchAgentWasLoaded
       });
       if (recoveryErrors.length) message = `${message} Recovery also failed: ${recoveryErrors.join(" ")}`;
     }
@@ -395,7 +415,7 @@ async function recoverFailedUpdate({
   stateSnapshot,
   launchAgentTransition,
   parentExited,
-  launchAgentWasPresent
+  launchAgentWasLoaded
 }: {
   appInstallation: AppInstallation | null;
   runtimeInstallation: AppInstallation | null;
@@ -403,22 +423,25 @@ async function recoverFailedUpdate({
   stateSnapshot: UpdateStateSnapshot | null;
   launchAgentTransition: LaunchAgentRecovery | null;
   parentExited: boolean;
-  launchAgentWasPresent: boolean;
+  launchAgentWasLoaded: boolean;
 }): Promise<string[]> {
   const errors: string[] = [];
   let stoppedLaunchAgent: LaunchAgentRecovery | null = null;
   let stateReady = true;
+  let appReady = true;
   if (appInstallation) {
     try {
+      await suspendEmbeddedRuntimeSupervisor(options.userDataDir);
       await terminateInstalledApp();
     } catch (error) {
-      errors.push(`Could not stop the rebuilt app. ${errorMessage(error)}`);
-      if (stateSnapshot) stateReady = false;
+      errors.push(`Could not safely stop the rebuilt app. ${errorMessage(error)}`);
+      appReady = false;
+      stateReady = false;
     }
   }
-  if (stateSnapshot && launchAgentWasPresent) {
+  if (stateSnapshot && launchAgentWasLoaded) {
     try {
-      stoppedLaunchAgent = await stopLaunchAgentForStateTransition();
+      stoppedLaunchAgent = await stopLaunchAgentForStateTransition(launchAgentTransition);
     } catch (error) {
       errors.push(`Could not stop the rebuilt background service before restoring data. ${errorMessage(error)}`);
       stateReady = false;
@@ -426,7 +449,7 @@ async function recoverFailedUpdate({
   } else if (launchAgentTransition) {
     stoppedLaunchAgent = launchAgentTransition;
   }
-  if (appInstallation) await collectRecoveryError(errors, "Could not restore the previous app.", appInstallation.rollback());
+  if (appInstallation && appReady) await collectRecoveryError(errors, "Could not restore the previous app.", appInstallation.rollback());
   if (agentRuntimeInstallation) {
     await collectRecoveryError(errors, "Could not restore the previous LaunchAgent runtime.", agentRuntimeInstallation.rollback());
   }
@@ -439,19 +462,28 @@ async function recoverFailedUpdate({
       stateReady = false;
     }
   }
-  if (launchAgentWasPresent && agentRuntimeInstallation && stateReady) {
-    const restart = stoppedLaunchAgent
-      ? startLaunchAgentAfterStateTransition(stoppedLaunchAgent)
-      : restartLaunchAgent().then(() => undefined);
+  if (launchAgentWasLoaded && agentRuntimeInstallation && stateReady) {
     try {
-      await restart;
+      if (!stoppedLaunchAgent) throw new Error("Vigil lost the captured background service recovery state.");
+      await startLaunchAgentAfterStateTransition(stoppedLaunchAgent);
     } catch (error) {
       errors.push(`Could not restart the previous background service. ${errorMessage(error)}`);
       stateReady = false;
     }
   }
   if (parentExited && options.restart && stateReady) {
-    await collectRecoveryError(errors, "Could not reopen the existing app.", openAppInBackground());
+    try {
+      if (launchAgentWasLoaded) {
+        await openAppInBackground();
+      } else {
+        await resumeEmbeddedRuntimeSupervisor(options.userDataDir);
+        const dataDir = stateSnapshot?.dataDir
+          || await replacementDataDir(false);
+        await openAndVerifyRecoveredApp(dataDir);
+      }
+    } catch (error) {
+      errors.push(`Could not restore the previous app's supervision and runtime. ${errorMessage(error)}`);
+    }
   }
   return errors;
 }
@@ -475,6 +507,15 @@ async function finalizeInstallations(installations: Array<AppInstallation | null
     }
   }
   return errors;
+}
+
+async function finalizeLegacyLaunchAgentRetirement(recovery: LaunchAgentRecovery): Promise<string | null> {
+  try {
+    await rm(recovery.plistPath, { force: true });
+    return null;
+  } catch (error) {
+    return `Could not remove the retired legacy LaunchAgent plist. ${errorMessage(error)}`;
+  }
 }
 
 async function verifyInstalledAppBuild(expectedCommit: string): Promise<void> {
@@ -511,46 +552,62 @@ async function assertLocallyRebuildableApp(): Promise<void> {
   }
 }
 
-async function restartLaunchAgent(): Promise<BackendHealthContext | null> {
-  const home = process.env.HOME;
-  const uid = process.getuid?.();
-  if (!home || uid === undefined) throw new Error("Vigil could not identify the current user to restart its background service.");
-  const plistPath = join(home, "Library", "LaunchAgents", "com.vigil.agent.plist");
-  if (!(await pathExists(plistPath))) return null;
-  const plist = await readFile(plistPath, "utf8");
-  const context = await backendHealthContext(plist);
-
-  const restartedAfter = Date.now();
-  await status("restarting-agent", "Restarting the Vigil background service");
-  await run("/bin/launchctl", ["kickstart", "-k", `gui/${uid}/com.vigil.agent`]);
-  await waitForLaunchAgent(restartedAfter, context);
-  return context;
-}
-
-async function stopLaunchAgentForStateTransition(): Promise<LaunchAgentRecovery> {
-  const home = process.env.HOME;
-  const uid = process.getuid?.();
-  if (!home || uid === undefined) throw new Error("Vigil could not identify the current user to stop its background service.");
-  const plistPath = join(home, "Library", "LaunchAgents", "com.vigil.agent.plist");
-  const plist = await readFile(plistPath, "utf8");
-  const context = await backendHealthContext(plist);
-  await run("/bin/launchctl", ["bootout", `gui/${uid}`, plistPath], {
-    allowFailure: true,
-    capture: true,
-    ignoreInterruption: true
-  });
-  const stillLoaded = await run("/bin/launchctl", ["print", `gui/${uid}/com.vigil.agent`], {
+async function stopLaunchAgentForStateTransition(preserved: LaunchAgentRecovery | null = null): Promise<LaunchAgentRecovery> {
+  const recovery = preserved || await captureLaunchAgentRecovery();
+  for (const args of [
+    ["bootout", `gui/${recovery.uid}/com.vigil.agent`],
+    ["bootout", `gui/${recovery.uid}`, recovery.plistPath]
+  ]) {
+    await run("/bin/launchctl", args, {
+      allowFailure: true,
+      capture: true,
+      ignoreInterruption: true
+    });
+  }
+  const stillLoaded = await run("/bin/launchctl", ["print", `gui/${recovery.uid}/com.vigil.agent`], {
     allowFailure: true,
     capture: true,
     ignoreInterruption: true
   });
   if (stillLoaded.ok) throw new Error("The Vigil background service remained loaded during the state transition.");
-  await waitForBackendStopped(context);
-  return { context, plistPath, uid };
+  await waitForBackendStopped(recovery.context);
+  return recovery;
+}
+
+async function captureLaunchAgentRecovery(): Promise<LaunchAgentRecovery> {
+  const home = process.env.HOME;
+  const uid = process.getuid?.();
+  if (!home || uid === undefined) throw new Error("Vigil could not identify the current user to stop its background service.");
+  const plistPath = join(home, "Library", "LaunchAgents", "com.vigil.agent.plist");
+  const [plist, plistStat] = await Promise.all([
+    readFile(plistPath, "utf8"),
+    lstat(plistPath)
+  ]);
+  const context = await backendHealthContext(plist);
+  return { context, plist, plistMode: plistStat.mode & 0o777, plistPath, uid };
+}
+
+async function captureLoadedLaunchAgentRecovery(): Promise<LaunchAgentRecovery | null> {
+  const home = process.env.HOME;
+  const uid = process.getuid?.();
+  if (!home || uid === undefined) throw new Error("Vigil could not identify the current user's background service.");
+  const plistPath = join(home, "Library", "LaunchAgents", "com.vigil.agent.plist");
+  if (!(await pathExists(plistPath))) return null;
+  const loaded = await run("/bin/launchctl", ["print", `gui/${uid}/com.vigil.agent`], {
+    allowFailure: true,
+    capture: true
+  });
+  if (!loaded.ok) return null;
+  return await captureLaunchAgentRecovery();
 }
 
 async function startLaunchAgentAfterStateTransition(recovery: LaunchAgentRecovery): Promise<void> {
   const restartedAfter = Date.now();
+  await mkdir(dirname(recovery.plistPath), { recursive: true });
+  await writeFile(recovery.plistPath, recovery.plist, { mode: recovery.plistMode });
+  await run("/bin/launchctl", ["enable", `gui/${recovery.uid}/com.vigil.agent`], {
+    ignoreInterruption: true
+  });
   await run("/bin/launchctl", ["bootstrap", `gui/${recovery.uid}`, recovery.plistPath], {
     ignoreInterruption: true
   });
@@ -569,24 +626,20 @@ async function waitForBackendStopped(context: BackendHealthContext): Promise<voi
   throw new Error("The Vigil background service did not stop for the state transition.");
 }
 
-async function launchAgentExists(): Promise<boolean> {
-  const home = process.env.HOME;
-  return Boolean(home && await pathExists(join(home, "Library", "LaunchAgents", "com.vigil.agent.plist")));
-}
-
 function launchAgentRuntimePath(): string {
   const home = process.env.HOME;
   if (!home) throw new Error("Vigil could not identify the current user runtime directory.");
   return join(home, "Library", "Application Support", "Vigil", "agent-runtime");
 }
 
-async function replacementDataDir(launchAgentWasPresent: boolean): Promise<string> {
+async function replacementDataDir(launchAgentWasLoaded: boolean, preservedLaunchAgentPlist = ""): Promise<string> {
   if (process.env.VIGIL_DATA_DIR) return process.env.VIGIL_DATA_DIR;
   const home = process.env.HOME;
   if (!home) throw new Error("Vigil could not identify its data directory for update recovery.");
-  if (!launchAgentWasPresent) return join(home, "Library", "Application Support", "Vigil");
+  if (!launchAgentWasLoaded) return join(home, "Library", "Application Support", "Vigil");
   const plistPath = join(home, "Library", "LaunchAgents", "com.vigil.agent.plist");
-  const dataDir = plistStringForKey(await readFile(plistPath, "utf8"), "VIGIL_DATA_DIR");
+  const plist = preservedLaunchAgentPlist || await readFile(plistPath, "utf8");
+  const dataDir = plistStringForKey(plist, "VIGIL_DATA_DIR");
   if (!dataDir) throw new Error("The Vigil LaunchAgent data directory could not be verified for update recovery.");
   return dataDir;
 }
@@ -599,16 +652,6 @@ async function backendHealthContext(plist: string): Promise<BackendHealthContext
   const dataDir = process.env.VIGIL_DATA_DIR || plistStringForKey(plist, "VIGIL_DATA_DIR");
   if (!dataDir) throw new Error("The Vigil LaunchAgent data directory could not be verified.");
   return { port, instanceSecret: await getInstanceSecret(dataDir) };
-}
-
-async function defaultBackendHealthContext(): Promise<BackendHealthContext> {
-  const home = process.env.HOME;
-  const dataDir = process.env.VIGIL_DATA_DIR || (home ? join(home, "Library", "Application Support", "Vigil") : "");
-  if (!dataDir) throw new Error("Vigil could not identify its data directory for the replacement health check.");
-  return {
-    port: validPort(process.env.VIGIL_PORT || "8787"),
-    instanceSecret: await getInstanceSecret(dataDir)
-  };
 }
 
 function validPort(value: string): number {
@@ -641,16 +684,31 @@ async function waitForLaunchAgent(restartedAfter: number, context: BackendHealth
   throw new Error("The updated Vigil background service did not become healthy in time.");
 }
 
-async function openAndVerifyReplacement(context: BackendHealthContext): Promise<void> {
+async function openAndVerifyReplacement(dataDir: string): Promise<void> {
+  await openAndVerifyInstalledApp(
+    dataDir,
+    "The rebuilt Vigil app or its private enforcement runtime did not remain healthy after launch."
+  );
+}
+
+async function openAndVerifyRecoveredApp(dataDir: string): Promise<void> {
+  await openAndVerifyInstalledApp(
+    dataDir,
+    "The restored Vigil app or its private enforcement runtime did not remain healthy after recovery."
+  );
+}
+
+async function openAndVerifyInstalledApp(dataDir: string, failureMessage: string): Promise<void> {
+  const launchedAfter = Date.now() - 2_000;
   await openAppInBackground();
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   let healthySince = 0;
   while (Date.now() < deadline) {
-    const [pids, backendHealthy] = await Promise.all([
+    const [pids, ready] = await Promise.all([
       installedAppProcessIds(),
-      backendIsHealthy(context)
+      liveRuntimeReady(dataDir, launchedAfter)
     ]);
-    if (pids.length && backendHealthy) {
+    if (ready && ready.transport === "in-app" && pids.includes(ready.pid)) {
       if (!healthySince) healthySince = Date.now();
       if (Date.now() - healthySince >= 1_500) return;
     } else {
@@ -658,7 +716,7 @@ async function openAndVerifyReplacement(context: BackendHealthContext): Promise<
     }
     await delay(500);
   }
-  throw new Error("The rebuilt Vigil app or backend did not remain healthy after launch.");
+  throw new Error(failureMessage);
 }
 
 async function openAppInBackground(): Promise<void> {
@@ -961,6 +1019,7 @@ function parseArgs(args: string[]): Options {
     repoRoot: required(optionsMap, "repo-root"),
     appPath: required(optionsMap, "app-path"),
     parentPid,
+    userDataDir: required(optionsMap, "user-data-dir"),
     statusPath: required(optionsMap, "status-path"),
     logPath: required(optionsMap, "log-path"),
     lockPath: required(optionsMap, "lock-path"),

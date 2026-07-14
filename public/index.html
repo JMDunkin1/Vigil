@@ -55,22 +55,23 @@
       <div class="home-stage">
         <div id="vigilOrb" class="vigil-orb idle" aria-hidden="true"></div>
         <aside id="saintInfoPopover" class="saint-info-popover" role="dialog" aria-labelledby="saintInfoName" tabindex="-1" hidden>
-          <button id="saintInfoClose" class="saint-info-close" type="button" aria-label="Close saint details">&times;</button>
+          <div class="saint-info-actions">
+            <nav class="saint-info-navigation" aria-label="Browse patron saints">
+              <button id="saintInfoPrevious" class="saint-info-navigation-button" type="button" aria-label="Show previous saint details" title="Previous saint">&larr;</button>
+              <button id="saintInfoNext" class="saint-info-navigation-button" type="button" aria-label="Show next saint details" title="Next saint">&rarr;</button>
+            </nav>
+            <button id="saintInfoClose" class="saint-info-close" type="button" aria-label="Close saint details">&times;</button>
+          </div>
           <p id="saintInfoEpithet" class="saint-info-eyebrow"></p>
           <h2 id="saintInfoName"></h2>
           <blockquote>
             <p id="saintInfoQuote"></p>
             <cite id="saintInfoSource"></cite>
           </blockquote>
-          <nav class="saint-info-navigation" aria-label="Browse patron saints">
-            <button id="saintInfoPrevious" class="saint-info-navigation-button" type="button" aria-label="Show previous saint details" title="Previous saint">&larr;</button>
-            <button id="saintInfoNext" class="saint-info-navigation-button" type="button" aria-label="Show next saint details" title="Next saint">&rarr;</button>
-          </nav>
         </aside>
         <div id="saintStage" class="saint-stage" data-saint="michael">
-          <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next patron saint" aria-haspopup="dialog" aria-controls="saintInfoPopover" aria-expanded="false" title="Click for the next saint. Two-finger click for details.">
+          <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next patron saint" aria-haspopup="dialog" aria-controls="saintInfoPopover" aria-expanded="false">
             <span class="saint-ambient" aria-hidden="true">
-              <span class="saint-cursor-aura"></span>
               <span class="saint-geometry"></span>
               <span class="saint-orbit saint-orbit-primary"></span>
               <span class="saint-orbit saint-orbit-secondary"></span>
@@ -194,20 +195,18 @@
 
       <div class="audio-desk">
         <section id="audioPlayer" class="audio-player" aria-labelledby="focusSoundNowPlaying" data-playing="false">
-          <div class="audio-player-status" aria-live="polite">
-            <span class="audio-live-dot" aria-hidden="true"></span>
-            <span id="focusSoundStatus">Off</span>
-          </div>
+          <h2 id="focusSoundNowPlaying">Brown noise</h2>
+
+          <p id="focusSoundAttribution" class="audio-attribution" hidden>
+            <span id="focusSoundAttributionText"></span>
+            <a id="focusSoundSourceLink" href="https://commons.wikimedia.org/" target="_blank" rel="noopener noreferrer">Source</a>
+            <a id="focusSoundLicenseLink" href="https://creativecommons.org/" target="_blank" rel="noopener noreferrer">License</a>
+          </p>
 
           <div class="audio-wave" aria-hidden="true">
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
             <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
           </div>
-
-          <p id="focusSoundCategory" class="audio-track-category">Noise &amp; tones</p>
-          <h2 id="focusSoundNowPlaying">Brown noise</h2>
-          <p id="focusSoundDescription" class="audio-track-description">A low, steady texture for sustained concentration.</p>
-          <p id="focusSoundAttribution" class="audio-track-attribution" hidden></p>
 
           <button id="focusSoundPlayButton" class="audio-master-toggle" type="button" aria-pressed="false" aria-label="Play Brown noise">
             <span class="audio-play-symbol" aria-hidden="true"></span>

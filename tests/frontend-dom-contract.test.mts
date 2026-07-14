@@ -54,6 +54,9 @@ assert.doesNotMatch(firstSettingsDisclosure, /<details[^>]*\sopen(?:\s|>)/, "app
 assert.match(settingsMarkup, /id="settingsSearch"[^>]*type="search"[^>]*placeholder="Find a setting"/, "settings must expose one compact search control");
 const settingsUiSource = await readFile("public/settings-ui.js", "utf8");
 const settingsAppSource = await readFile("public/app.js", "utf8");
+const setupWizardSource = await readFile("public/setup-wizard.js", "utf8");
+const hardeningPanelSource = await readFile("public/hardening-panel.js", "utf8");
+const extensionOptionsSource = await readFile("extension/options.js", "utf8");
 assert.match(settingsUiSource, /wrapSettingsPanels\(\)/, "settings must turn large panels into focused subsections");
 assert.match(settingsUiSource, /form\.getAttribute\("id"\)/, "editor routing must use the form attribute instead of a shadowing named control");
 assert.match(settingsUiSource, /if \(sibling !== disclosure\)\s+sibling\.open = false/, "opening a settings category must close competing categories");
@@ -62,6 +65,33 @@ assert.doesNotMatch(settingsUiSource, /addEventListener\("submit"/, "settings ed
 assert.match(settingsUiSource, /resetSettingsUi[\s\S]*querySelectorAll\("details"\)[\s\S]*disclosure\.open = false/, "leaving settings must collapse every expanded setting");
 assert.match(settingsUiSource, /resetSettingsUi[\s\S]*search\.value = ""/, "leaving settings must clear the settings search");
 assert.match(settingsAppSource, /previousView === "settings" && state\.activeView !== "settings"[\s\S]*resetSettingsUi\(\)/, "the settings reset must run only after navigating away");
+assert.match(
+  setupWizardSource,
+  /launchAgentReady = Boolean\(launchAgent\.loaded && launchAgent\.running && \(!launchAgent\.embedded \|\| launchAgent\.restartHardened === true\)\)/u,
+  "embedded runtime setup must not be ready without verified restart hardening"
+);
+assert.match(
+  setupWizardSource,
+  /detail: launchAgent\.embedded && launchAgent\.restartHardened !== true[\s\S]*?Repair automatic restart protection without leaving Vigil\.[\s\S]*?action: launchAgent\.embedded \? "Repair Restart Protection"[\s\S]*?actionTarget: launchAgentReady \? undefined : "installLaunchAgent"/u,
+  "embedded runtime setup must route its recovery guidance to the working restart-protection control"
+);
+assert.match(
+  setupWizardSource,
+  /action\.addEventListener\("click", \(\) => document\.querySelector\(`#\$\{item\.actionTarget\}`\)\?\.click\(\)\)/u,
+  "setup checklist recovery actions must invoke their matching hardening control"
+);
+assert.match(
+  hardeningPanelSource,
+  /restartProtectionNeedsRepair = agent\.embedded === true && agent\.restartHardened !== true[\s\S]*?Repair Restart Protection[\s\S]*?disabled = agent\.embedded === true && !restartProtectionNeedsRepair/u,
+  "embedded mode must enable a clearly labeled repair control exactly while restart protection is unhealthy"
+);
+assert.match(
+  hardeningPanelSource,
+  /repairingRestartProtection[\s\S]*?\/api\/hardening\/launch-agent\/install[\s\S]*?Restart protection repaired/u,
+  "the embedded repair control must execute the hardening request and report successful recovery"
+);
+assert.match(extensionOptionsSource, /vigilUrl\("\/api\/health", localServer\)/u, "extension connection tests must use the companion-safe health route");
+assert.doesNotMatch(extensionOptionsSource, /vigilUrl\("\/api\/state", localServer\)/u, "extension connection tests must not probe the private app state route");
 const dayControlsSource = await readFile("public/day-controls.js", "utf8");
 for (const preset of ["Every day", "Weekdays", "Weekends", "Custom days"]) {
   assert.match(dayControlsSource, new RegExp(preset), `day controls must offer the ${preset} preset`);
@@ -104,7 +134,7 @@ assert.match(trackingSource, /className = "habit-quick-select"/, "daily tracking
 assert.match(trackingSource, /behaviorAfterCheckIn/, "submitting a daily result must advance the compact card to another habit");
 assert.match(trackingSource, /if \(locked\) \{[\s\S]*?completedDayCard/, "a fully recorded day must replace editable habit controls with a completion screen");
 assert.match(trackingSource, /dateIsComplete\(dateKey, behaviors, values\)[\s\S]*?button\.disabled = future \|\| saving \|\| locked/, "completed days must lock detailed-grid buttons against accidental changes");
-assert.match(trackingSource, /All \$\{total\} item/, "the completion screen must derive its summary from any number of active habits");
+assert.doesNotMatch(trackingSource, /Your answers are locked|All \$\{total\} item/, "the completion screen must not repeat results already shown in the tracking graphs");
 assert.match(trackingSource, /editableCompletedDateKey = dateKey/, "editing a completed day must require a deliberate unlock action");
 assert.match(trackingSource, /monthDayCount\.textContent = `\$\{dates\.length\} days`/, "the selected month must control the displayed day count");
 
@@ -122,6 +152,14 @@ assert.match(styles, /\.protection-level-control:not\(\.is-open\) \.protection-l
 assert.match(styles, /\.protection-level-choice:hover span\s*\{[\s\S]*?text-shadow:/, "hovering a protection number must brighten the number itself");
 const appEventsSource = await readFile("public/app-events.js", "utf8");
 assert.match(appEventsSource, /classList\.contains\(["']is-open["']\)/, "clicking the collapsed protection orb must open the selector before changing levels");
+assert.doesNotMatch(appEventsSource, /Focus sound saved|Sound on|Sound paused|Playing \$\{/, "routine sound controls must not trigger bottom-corner toast popups");
+assert.match(appEventsSource, /const enabled = !focusSound\.isPlaying\(\)/, "Listen must retry silent-but-enabled audio instead of disabling it");
+assert.match(appEventsSource, /if \(enabled\)\s*focusSound\.restartTimer\(\)/, "Listen must restart an expired timer before replaying it");
+assert.match(
+  appEventsSource,
+  /\[data-focus-preset\][\s\S]*?focusSound\.restartTimer\(\)[\s\S]*?persistFocusSound\(true\)/,
+  "choosing a library track must restart an expired finite timer before playback"
+);
 
 const appSource = await readFile("public/app.js", "utf8");
 assert.match(appSource, /!hasRuntimeStatus/, "the idle home screen must hide the redundant Ready and dash status row");
@@ -167,16 +205,20 @@ assert.match(styles, /\.window-resize-se,[\s\S]*?\.window-resize-sw\s*\{[\s\S]*?
 assert.match(styles, /\.sidebar-toggle\s*\{[\s\S]*?top:\s*50px;[\s\S]*?-webkit-app-region:\s*no-drag;/, "the sidebar toggle must always sit below the native title bar and remain clickable");
 
 assert.match(html, /id="saintStageButton"[^>]*aria-controls="saintInfoPopover"[^>]*aria-expanded="false"/, "saint artwork must expose its details popover");
-assert.match(html, /id="saintStageButton"[^>]*title="[^"]*Two-finger click for details\./, "saint details must advertise the trackpad gesture");
+assert.doesNotMatch(html, /id="saintStageButton"[^>]*title=/, "saint artwork must not show an instructional hover tooltip");
 assert.match(html, /id="saintArtwork"[^>]*draggable="false"/, "saint artwork must not expose the source image through native dragging");
 assert.match(html, /id="saintInfoPopover"[^>]*role="dialog"[^>]*aria-labelledby="saintInfoName"[^>]*hidden/, "saint details must start closed and have an accessible name");
 for (const id of ["saintInfoName", "saintInfoEpithet", "saintInfoQuote", "saintInfoSource", "saintInfoClose", "saintInfoPrevious", "saintInfoNext"]) {
   assert.ok(idSet.has(id), `saint details are missing #${id}`);
 }
 assert.match(html, /class="saint-info-navigation" aria-label="Browse patron saints"/, "saint details must expose in-card previous and next navigation");
+assert.match(html, /class="saint-info-actions">[\s\S]*?class="saint-info-navigation"[\s\S]*?id="saintInfoClose"/, "saint navigation and close must share a dedicated visible action area");
 assert.ok(html.indexOf('id="saintInfoPopover"') < html.indexOf('id="saintStage"'), "saint details must sit above rather than inside the artwork stage");
-assert.match(styles, /#view-home \.home-stage:has\(> \.saint-info-popover:not\(\[hidden\]\)\)\s*\{[\s\S]*?justify-content:\s*flex-start;/, "opening saint details must align the composition from the top");
-assert.match(styles, /#view-home \.saint-info-popover\s*\{[\s\S]*?position:\s*relative;[\s\S]*?width:\s*min\(720px,[\s\S]*?max-height:\s*min\(190px,[\s\S]*?overflow:\s*hidden;/, "saint details must use a wide bounded card above the artwork");
+assert.match(styles, /body\[data-active-view="home"\]\s*\{[^}]*height:\s*100vh;[^}]*overflow:\s*hidden;/, "Home must remain a fixed app viewport without page-level scrollbars");
+assert.doesNotMatch(styles, /home-stage:has\(> \.saint-info-popover:not\(\[hidden\]\)\)/, "opening saint details must not reflow the Home composition");
+assert.match(styles, /#view-home \.saint-info-popover\s*\{[\s\S]*?position:\s*absolute;[\s\S]*?top:\s*clamp\(12px, 2\.4vh, 24px\);[\s\S]*?left:\s*50%;[\s\S]*?width:\s*min\(720px,[\s\S]*?max-height:\s*min\(190px,[\s\S]*?overflow:\s*hidden;[\s\S]*?transform:\s*translateX\(-50%\);/, "saint details must float in a wide bounded card above the artwork without moving it");
+assert.match(styles, /#view-home \.saint-info-popover\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 0\.8fr\) minmax\(0, 1\.35fr\);[\s\S]*?"eyebrow actions"[\s\S]*?"name quote";/, "saint details must shrink to the available Home width without clipping its actions");
+assert.match(styles, /#view-home \.saint-info-close\s*\{[\s\S]*?position:\s*static;[\s\S]*?border:\s*1px solid[^;]*;/, "the saint close control must have a dedicated visible button instead of overlaying text");
 assert.match(styles, /#view-home \.saint-info-popover blockquote\s*\{[\s\S]*?max-height:\s*92px;[\s\S]*?overflow-y:\s*auto;[\s\S]*?scrollbar-width:\s*thin;/, "long saint details must use a subtle scrollbar inside the bounded card");
 assert.doesNotMatch(styles, /saint-stage:has\(\.saint-info-popover:not\(\[hidden\]\)\)/, "opening saint details must not resize the saint stage");
 const saintStageSource = await readFile("public/saint-stage.js", "utf8");
@@ -186,12 +228,21 @@ assert.doesNotMatch(saintStageSource, /event\.detail|clickTimer|setTimeout/, "ev
 assert.match(saintStageSource, /select\(previousSaintId\(selectedId\), true, true\)/, "the open saint card must browse backward without closing");
 assert.match(saintStageSource, /select\(nextSaintId\(selectedId\), true, true\)/, "the open saint card must browse forward without closing");
 assert.match(html, /class="saint-ambient"[\s\S]*?class="saint-geometry"[\s\S]*?class="saint-particles"/, "the patron stage must expose layered ambient geometry");
-assert.match(saintStageSource, /--saint-pointer-x[\s\S]*--saint-pointer-y[\s\S]*--saint-pointer-distance/, "the patron scene must track cursor position across the full stage");
+assert.doesNotMatch(html, /saint-cursor-aura/, "the Home screen must not render a glow that follows the cursor");
+assert.doesNotMatch(styles, /saint-cursor-aura|--saint-pointer-(?:x|y|distance)/, "cursor-following glow styles must stay removed");
+assert.match(styles, /#view-home \.home-stage::before\s*\{\s*display:\s*none;/, "the Home background must not retain a stationary oval tint around the cursor glow");
+assert.doesNotMatch(styles, /\.electron-shell \.saint-cursor-aura\s*\{\s*display:\s*none;/, "Electron must keep the cursor glow inside Vigil's real window");
+assert.doesNotMatch(saintStageSource, /vigilCursorAura|screenX|screenY/, "the Home stage must not drive a second native aura window");
+assert.doesNotMatch(styles, /is-pointer-active \.saint-(?:geometry|orbit|particles|symbol)/, "the ambient geometry must keep its calm resting brightness and motion under the cursor");
+assert.match(
+  styles,
+  /@media \(hover: none\), \(pointer: coarse\), \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.home-stage\.is-pointer-active \.saint-artifact,[\s\S]*?\.saint-artifact:hover:not\(:disabled\)[\s\S]*?transform: none;/,
+  "reduced-motion and coarse-pointer users must not receive the saint artwork hover scale"
+);
+assert.match(styles, /#view-home \.saint-artifact:hover:not\(:disabled\),[\s\S]*?#view-home \.saint-artifact:focus-visible\s*\{[\s\S]*?transform:\s*scale\(1\.012\);/, "hovering the saint composition must enlarge it slightly without cursor-driven translation or rotation");
 assert.match(styles, /#view-home \.saint-artifact,[\s\S]*?#view-home \.saint-stage\[data-saint\] \.saint-artifact\s*\{[\s\S]*?width:\s*min\(720px, 100%\);/, "the patron composition must size from the usable stage instead of the full viewport");
 assert.match(styles, /\.saint-artifact:focus-visible\s*\{\s*outline:\s*none;/, "the saint button must not draw a rectangular focus artifact");
 assert.match(styles, /\.audio-desk\s*\{[\s\S]*?container:\s*audio-desk \/ inline-size;/, "the audio player must respond to its usable panel width");
-assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?\.audio-player\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"status status"[\s\S]*?"title wave"[\s\S]*?"control control";/, "the compact audio player must keep the waveform beside the current sound title");
-assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?\.audio-wave\s*\{[\s\S]*?height:\s*54px;/, "the compact waveform must remain visible without using the full-size player height");
 
 const audioMarkup = html.match(/<section id="view-audio"[\s\S]*?<div class="audio-control-bridge"/)?.[0] || "";
 assert.doesNotMatch(audioMarkup, /audio-settings-disclosure|audio-volume-line/, "playback should not expose redundant session or volume controls");
@@ -202,3 +253,7 @@ assert.equal(
 );
 assert.doesNotMatch(audioMarkup, /<details class="audio-library-group[^>]*\sopen(?:\s|>)/, "the sound library should start collapsed");
 assert.match(audioMarkup, /id="focusSoundPlayButton"/, "play and pause must remain outside the collapsed settings");
+assert.doesNotMatch(audioMarkup, /focusSoundStatus|focusSoundCategory|focusSoundDescription/, "the player should omit redundant status and description copy");
+assert.match(audioMarkup, /id="focusSoundAttribution"[^>]*hidden/, "licensed recordings must retain an attribution surface without adding copy for generated sounds");
+assert.match(audioMarkup, /class="audio-wave"/, "the player should keep the compact animated waveform");
+assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"title wave"[\s\S]*?"control control"[\s\S]*?"attribution attribution";/, "the compact waveform must stay at the top right above the full-width playback control and attribution");

@@ -77,6 +77,7 @@ export const SAINT_PATRONS: readonly SaintPatron[] = [
 const STORAGE_KEY = "vigil-patron-saint";
 
 export function createSaintStage() {
+  const homeStage = required<HTMLElement>("#view-home .home-stage");
   const stage = required<HTMLElement>("#saintStage");
   const stageButton = required<HTMLButtonElement>("#saintStageButton");
   const artwork = required<HTMLImageElement>("#saintArtwork");
@@ -139,27 +140,25 @@ export function createSaintStage() {
     });
 
     if (!motionAllowed()) return;
-    stage.addEventListener("pointerenter", (event) => {
+    homeStage.addEventListener("pointerenter", (event) => {
       if (event.pointerType === "touch") return;
-      stage.classList.add("is-pointer-active");
+      homeStage.classList.add("is-pointer-active");
     });
-    stage.addEventListener("pointermove", (event) => {
+    homeStage.addEventListener("pointermove", (event) => {
       if (event.pointerType === "touch") return;
-      stage.classList.add("is-pointer-active");
+      homeStage.classList.add("is-pointer-active");
       if (pointerFrame !== null) cancelAnimationFrame(pointerFrame);
       pointerFrame = requestAnimationFrame(() => {
         pointerFrame = null;
-        const bounds = stage.getBoundingClientRect();
+        const bounds = homeStage.getBoundingClientRect();
         const x = ((event.clientX - bounds.left) / Math.max(1, bounds.width) - 0.5) * 2;
         const y = ((event.clientY - bounds.top) / Math.max(1, bounds.height) - 0.5) * 2;
         stage.style.setProperty("--saint-look-x", x.toFixed(3));
         stage.style.setProperty("--saint-look-y", y.toFixed(3));
-        stage.style.setProperty("--saint-pointer-x", `${((x + 1) * 50).toFixed(1)}%`);
-        stage.style.setProperty("--saint-pointer-y", `${((y + 1) * 50).toFixed(1)}%`);
-        stage.style.setProperty("--saint-pointer-distance", Math.min(1, Math.hypot(x, y)).toFixed(3));
       });
     });
-    stage.addEventListener("pointerleave", resetPointer);
+    homeStage.addEventListener("pointerleave", resetPointer);
+    window.addEventListener("pagehide", resetPointer);
     stage.addEventListener("animationend", (event) => {
       if (event.target === stage && event.animationName === "saintSceneArrive") {
         stage.classList.remove("is-switching-saint");
@@ -215,12 +214,9 @@ export function createSaintStage() {
       cancelAnimationFrame(pointerFrame);
       pointerFrame = null;
     }
-    stage.classList.remove("is-pointer-active");
+    homeStage.classList.remove("is-pointer-active");
     stage.style.setProperty("--saint-look-x", "0");
     stage.style.setProperty("--saint-look-y", "0");
-    stage.style.setProperty("--saint-pointer-x", "50%");
-    stage.style.setProperty("--saint-pointer-y", "50%");
-    stage.style.setProperty("--saint-pointer-distance", "0");
   }
 
   return { bind, select };

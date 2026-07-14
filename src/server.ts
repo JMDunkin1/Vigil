@@ -18,8 +18,8 @@ import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanc
 import { assertKeyholderPasscode, updateKeyholderSettings } from "./keyholder.js";
 import { errorMessage, errorStatus, readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, sendMdmPlist, serializeError, serveStatic, mdmHeaders } from "./server/http.js";
 import { createLocalScriptRunner } from "./server/localScripts.js";
-import { blockedPage, pausePage } from "./server/pages.js";
-import { matchApiRoute } from "./server/apiRoutes.js";
+import { blockedPage, companionPage, pausePage } from "./server/pages.js";
+import { isExtensionApiPath, matchApiRoute } from "./server/apiRoutes.js";
 import { handleAppUpdateApiRoute } from "./server/appUpdateRoutes.js";
 import { handleAccountApiRoute } from "./server/accountRoutes.js";
 import type { AppUpdateController } from "./server/appUpdateRoutes.js";
@@ -35,6 +35,8 @@ import { handleRuleSimulatorApiRoute } from "./server/ruleSimulatorRoutes.js";
 import { handleSettingsApiRoute } from "./server/settingsRoutes.js";
 import { handleSessionApiRoute, sessionIsActive } from "./server/sessionRoutes.js";
 import { buildStatePayload, invalidateStateDiagnostics, strictPreflightStatus } from "./server/statePayload.js";
+import { runInAppRequest } from "./server/inAppTransport.js";
+import type { InAppRequest, InAppResponse, InAppTransport } from "./server/inAppTransport.js";
 import { vigilAppInfo, vigilStateHeaders } from "./vigilHealth.js";
 import { VIGIL_HEALTH_CHALLENGE_HEADER, VIGIL_HEALTH_SIGNATURE_HEADER } from "./vigilHealth.js";
 import { getInstanceSecret, instanceChallengeSignature } from "./instanceIdentity.js";
@@ -52,6 +54,21 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PUBLIC_ASSETS = resolvePublicAssets(ROOT);
 const DEFAULT_HOST = "127.0.0.1";
 const localScripts = createLocalScriptRunner({ root: ROOT, launchAgentStatus });
+const COMPANION_CONFIGURATION_ROUTES = new Set([
+  "/api/settings",
+  "/api/profile",
+  "/api/schedule",
+  "/api/limit",
+  "/api/app-lock",
+  "/api/intentional-use/goal",
+  "/api/intentional-use/rule",
+  "/api/intentional-use/accountability",
+  "/api/grayscale/settings",
+  "/api/grayscale/schedule",
+  "/api/devices/ios/settings",
+  "/api/devices/ios/mdm/settings",
+  "/api/intentional-use/journal/security"
+]);
 
 let startedAt: string | null = null;
 let state: VigilState = defaultState();
@@ -63,6 +80,7 @@ let activePort = PORT;
 let appUpdateController: AppUpdateController | null = null;
 let instanceSecret = "";
 let manageEngineExportScheduled = false;
+let runtimeStarted = false;
 const pendingManageEngineExportReasons = new Set<string>();
 
 interface ServerOptions {
@@ -70,6 +88,8 @@ interface ServerOptions {
   port?: number | string;
   appUpdate?: AppUpdateController | null;
 }
+
+export interface VigilRuntimeHandle extends InAppTransport {}
 
 interface GuardResult {
   ok: boolean;
@@ -79,20 +99,25 @@ interface GuardResult {
 }
 
 export async function startVigilServer(options: ServerOptions = {}) {
+  return await startNetworkServer(options, requestHandler);
+}
+
+export async function startVigilCompanionServer(options: ServerOptions = {}) {
+  return await startNetworkServer(options, companionRequestHandler);
+}
+
+async function startNetworkServer(
+  options: ServerOptions,
+  handler: (request: IncomingMessage, response: ServerResponse) => Promise<void>
+) {
   if (server?.listening) {
     return serverHandle();
   }
 
+  await startVigilRuntime(options);
   activeHost = options.host || DEFAULT_HOST;
   activePort = Number(options.port ?? PORT);
-  appUpdateController = options.appUpdate || null;
-  startedAt = new Date().toISOString();
-  state = await loadState();
-  usage = await loadUsage(state);
-  instanceSecret = await getInstanceSecret(DATA_DIR);
-  invalidateStateDiagnostics();
-  monitor = startMonitor({ state, usage }) as unknown as MonitorHandle;
-  server = createServer(requestHandler);
+  server = createServer(handler);
 
   await new Promise<void>((resolveListen, rejectListen) => {
     const currentServer = requireServer();
@@ -115,6 +140,33 @@ export async function startVigilServer(options: ServerOptions = {}) {
 
   console.log(`${APP_NAME} running at http://${activeHost}:${activePort}`);
   return serverHandle();
+}
+
+export async function startVigilRuntime(options: ServerOptions = {}): Promise<VigilRuntimeHandle> {
+  if (!runtimeStarted) {
+    activeHost = options.host || DEFAULT_HOST;
+    activePort = Number(options.port ?? PORT);
+    appUpdateController = options.appUpdate || null;
+    startedAt = new Date().toISOString();
+    state = await loadState();
+    usage = await loadUsage(state);
+    instanceSecret = await getInstanceSecret(DATA_DIR);
+    invalidateStateDiagnostics();
+    monitor = startMonitor({ state, usage }) as unknown as MonitorHandle;
+    runtimeStarted = true;
+  } else if (options.appUpdate) {
+    appUpdateController = options.appUpdate;
+  }
+  return runtimeHandle();
+}
+
+export async function dispatchVigilRequest(input: InAppRequest): Promise<InAppResponse> {
+  if (!runtimeStarted) throw new Error("Vigil's in-app enforcement runtime is not initialized.");
+  return await runInAppRequest(input, requestHandler);
+}
+
+export async function stopVigilRuntime(): Promise<void> {
+  await shutdown({ exit: false });
 }
 
 export async function stopVigilServer(): Promise<void> {
@@ -171,6 +223,45 @@ async function requestHandler(request: IncomingMessage, response: ServerResponse
   }
 }
 
+async function companionRequestHandler(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  try {
+    const url = new URL(request.url || "/", `http://${request.headers.host || `${activeHost}:${activePort}`}`);
+    const method = String(request.method || "GET").toUpperCase();
+    if (url.pathname === "/" && ["GET", "HEAD"].includes(method)) {
+      sendHtml(response, companionPage());
+      return;
+    }
+    if (!companionNetworkRouteAllowed(method, url.pathname)) {
+      sendJson(response, 404, { error: "Not found" });
+      return;
+    }
+    await requestHandler(request, response);
+  } catch (error) {
+    sendJson(response, errorStatus(error), serializeError(error));
+  }
+}
+
+function companionNetworkRouteAllowed(method: string, path: string): boolean {
+  if (path.startsWith("/mdm/")) return true;
+  if (isExtensionApiPath(path)) return ["GET", "POST", "OPTIONS"].includes(method);
+  if (path === "/api/devices/usage") return method === "POST";
+  if (path === "/api/health") return method === "GET";
+  if (path === "/api/state") return method === "GET";
+  if (path === "/api/account/signup") return method === "POST";
+  if (COMPANION_CONFIGURATION_ROUTES.has(path)) return method === "POST";
+  if (path === "/api/devices/ios/usb-profile-apply") return method === "POST";
+  if (path === "/api/devices/ios/profile.mobileconfig") return method === "GET";
+  if (["/blocked", "/pause", "/favicon.ico"].includes(path)) return ["GET", "HEAD"].includes(method);
+  if ([
+    "/api/emergency/request",
+    "/api/emergency/confirm",
+    "/api/app-lock/unlock/request",
+    "/api/app-lock/unlock/confirm"
+  ].includes(path)) return method === "POST";
+  if (["/api/intentional-use/pause/continue", "/api/intentional-use/pause/skip"].includes(path)) return method === "POST";
+  return false;
+}
+
 function serverHandle() {
   return {
     host: activeHost,
@@ -178,23 +269,51 @@ function serverHandle() {
     url: `http://${activeHost}:${activePort}`,
     server,
     monitor,
+    request: dispatchVigilRequest,
     stop: stopVigilServer
   };
 }
 
+function runtimeHandle(): VigilRuntimeHandle {
+  return {
+    request: dispatchVigilRequest,
+    stop: stopVigilRuntime
+  };
+}
+
 async function shutdown({ exit = true }: { exit?: boolean } = {}): Promise<void> {
+  if (!runtimeStarted && !server) {
+    if (exit) process.exit(0);
+    return;
+  }
   const activeMonitor = monitor;
   const activeServer = server;
-  const serverClosed = closeListeningServer(activeServer);
 
-  await activeMonitor?.stop();
-  await serverClosed;
+  // Persist before disabling enforcement. If a write fails, the caller can
+  // leave this runtime in place instead of keeping a half-stopped process alive.
   await saveUsage(usage);
   await saveState(state);
+  await activeMonitor?.stop();
+  // A tick that was already in flight can update usage or record a failure
+  // while stop() drains it, so persist the frozen runtime state once more.
+  // The pre-stop writes above already established that persistence works. Do
+  // not leave enforcement disabled if either best-effort final write fails.
+  await saveUsage(usage).catch((error) => {
+    console.error("Vigil could not persist its final usage during shutdown.", error);
+  });
+  await saveState(state).catch((error) => {
+    console.error("Vigil could not persist its final state during shutdown.", error);
+  });
+  const serverClosed = closeListeningServer(activeServer);
+  await serverClosed;
   server = null;
   monitor = null;
   state = defaultState();
   usage = {};
+  runtimeStarted = false;
+  startedAt = null;
+  appUpdateController = null;
+  instanceSecret = "";
   if (exit) process.exit(0);
 }
 

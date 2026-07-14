@@ -9,6 +9,7 @@ type ControlElement = HTMLElement & {
 
 type QueryElement = (selector: string) => ControlElement;
 type PostRequest = (path: string, body: unknown) => Promise<unknown>;
+type Toast = (message: string) => void;
 
 interface FocusSoundData {
   state: {
@@ -97,8 +98,10 @@ interface RealAudioTrack {
 
 const audioBufferCache = new Map<string, Promise<AudioBuffer>>();
 
-export function createFocusSoundController({ $, post }: { $: QueryElement; post: PostRequest }) {
+export function createFocusSoundController({ $, post, toast }: { $: QueryElement; post: PostRequest; toast: Toast }) {
   let audioStartGeneration = 0;
+  let renderGeneration = 0;
+  let renderedOptions: SyncOptions | null = null;
   const focusAudio: FocusAudioState = {
     context: null,
     gain: null,
@@ -110,8 +113,10 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
   };
 
   function render(data: FocusSoundData) {
+    const generation = ++renderGeneration;
     const settings = data.state.settings || {};
     const options = focusOptions(settings);
+    renderedOptions = options;
 
     $("#focusSoundEnabled").checked = options.enabled;
     setFieldValue("#focusSoundMode", options.mode);
@@ -123,13 +128,26 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
     setFieldValue("#focusSoundTimerMinutes", String(options.timerMinutes));
     setFieldValue("#focusSoundBreakMinutes", String(options.breakMinutes));
     setFieldValue("#focusSoundVolume", String(options.volume));
-    renderFocusStudio(options);
+    renderFocusStudio(options, focusAudio);
 
-    void sync(options).catch((error) => {
-      focusAudio.blocked = true;
-      stop();
-      $("#focusSoundStatus").textContent = error instanceof Error ? error.message : "Audio blocked";
-    });
+    void sync(options)
+      .then(() => {
+        if (generation === renderGeneration) renderFocusStudio(options, focusAudio);
+      })
+      .catch((error) => {
+        const currentPlaybackFailed = generation === renderGeneration
+          || Boolean(renderedOptions && samePlaybackRequest(options, renderedOptions));
+        if (!currentPlaybackFailed) {
+          if (renderedOptions) renderFocusStudio(renderedOptions, focusAudio);
+          console.error("Focus sound playback failed", error);
+          return;
+        }
+        focusAudio.blocked = true;
+        stop();
+        if (renderedOptions) renderFocusStudio(renderedOptions, focusAudio);
+        toast(focusPlaybackErrorMessage(error));
+        console.error("Focus sound playback failed", error);
+      });
   }
 
   async function saveSettings() {
@@ -148,31 +166,27 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
   }
 
   async function sync(options: SyncOptions) {
-    const status = $("#focusSoundStatus");
     if (!options.enabled) {
       stop();
       resetTimer();
-      status.textContent = "Off";
       return;
     }
 
     const timer = timerState(options);
     if (timer.done) {
       stop();
-      status.textContent = "Timer complete";
       return;
     }
 
     await prime();
     if (focusAudio.context?.state === "suspended") {
-      status.textContent = "Click toggle to start";
+      stop();
       return;
     }
 
     const signature = soundSignature(options, timer.phase);
     if (!focusAudio.playing || focusAudio.signature !== signature) await start(options, timer.phase, signature);
     else setMasterVolume(options.volume, modeVolumeMultiplier(options.mode));
-    status.textContent = statusText(options, timer);
   }
 
   async function prime(): Promise<AudioContext> {
@@ -277,6 +291,12 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
     render,
     saveSettings,
     prime,
+    restartTimer() {
+      resetTimer();
+    },
+    isPlaying() {
+      return focusAudio.playing;
+    },
     setVolume(value: number) {
       setMasterVolume(value, modeVolumeMultiplier(focusMode($("#focusSoundMode").value)));
     }
@@ -286,6 +306,19 @@ export function createFocusSoundController({ $, post }: { $: QueryElement; post:
     const field = $(selector);
     if (document.activeElement !== field) field.value = value;
   }
+}
+
+function focusPlaybackErrorMessage(error: unknown): string {
+  const detail = error instanceof Error ? error.message : "Audio playback failed";
+  return `Could not play this sound: ${detail}`;
+}
+
+function samePlaybackRequest(left: SyncOptions, right: SyncOptions): boolean {
+  return left.enabled === right.enabled
+    && left.mode === right.mode
+    && left.activity === right.activity
+    && left.preset === right.preset
+    && left.intensity === right.intensity;
 }
 
 function connectSoundProfile(context: AudioContext, profile: SoundProfile, master: GainNode, nodes: AudioNode[]): void {
@@ -428,28 +461,36 @@ function focusOptions(settings: FocusSoundData["state"]["settings"] = {}): SyncO
   };
 }
 
-function renderFocusStudio(options: SyncOptions): void {
+function renderFocusStudio(options: SyncOptions, audioState: FocusAudioState): void {
   const player = document.querySelector<HTMLElement>("#audioPlayer");
   if (!player) return;
 
-  const details = presetUiDetails(options.preset);
-  player.dataset.playing = String(options.enabled);
+  const playing = audioState.playing;
+  const activePreset = playing && audioState.preset ? audioState.preset : options.preset;
+  const titleText = presetTitle(activePreset);
+  player.dataset.playing = String(playing);
 
   const title = document.querySelector<HTMLElement>("#focusSoundNowPlaying");
-  const category = document.querySelector<HTMLElement>("#focusSoundCategory");
-  const description = document.querySelector<HTMLElement>("#focusSoundDescription");
   const attribution = document.querySelector<HTMLElement>("#focusSoundAttribution");
+  const attributionText = document.querySelector<HTMLElement>("#focusSoundAttributionText");
+  const sourceLink = document.querySelector<HTMLAnchorElement>("#focusSoundSourceLink");
+  const licenseLink = document.querySelector<HTMLAnchorElement>("#focusSoundLicenseLink");
   const playButton = document.querySelector<HTMLButtonElement>("#focusSoundPlayButton");
   const playLabel = document.querySelector<HTMLElement>("#focusSoundPlayLabel");
 
-  if (title) title.textContent = details.title;
-  if (category) category.textContent = details.category;
-  if (description) description.textContent = details.description;
-  if (attribution) renderTrackAttribution(attribution, options.preset);
-  if (playLabel) playLabel.textContent = options.enabled ? "Pause" : "Listen";
+  if (title) title.textContent = titleText;
+  const track = realAudioTrack(activePreset);
+  if (attribution) attribution.hidden = !track;
+  if (track && attributionText && sourceLink && licenseLink) {
+    attributionText.textContent = track.attribution;
+    sourceLink.href = track.sourcePage;
+    licenseLink.href = track.licenseUrl;
+    licenseLink.textContent = track.license;
+  }
+  if (playLabel) playLabel.textContent = playing ? "Pause" : "Listen";
   if (playButton) {
-    playButton.setAttribute("aria-pressed", String(options.enabled));
-    playButton.setAttribute("aria-label", `${options.enabled ? "Pause" : "Play"} ${details.title}`);
+    playButton.setAttribute("aria-pressed", String(playing));
+    playButton.setAttribute("aria-label", `${playing ? "Pause" : "Play"} ${titleText}`);
   }
 
   for (const button of document.querySelectorAll<HTMLButtonElement>("[data-focus-preset]")) {
@@ -457,7 +498,7 @@ function renderFocusStudio(options: SyncOptions): void {
     button.classList.toggle("is-active", selected);
     button.setAttribute("aria-pressed", String(selected));
     const action = button.querySelector<HTMLElement>("em");
-    if (action) action.textContent = selected ? (options.enabled ? "Playing" : "Ready") : "Play";
+    if (action) action.textContent = selected ? (playing ? "Playing" : "Ready") : "Play";
   }
 
   for (const group of document.querySelectorAll<HTMLDetailsElement>(".audio-library-group")) {
@@ -480,69 +521,9 @@ function renderFocusStudio(options: SyncOptions): void {
   }
 }
 
-function renderTrackAttribution(container: HTMLElement, preset: FocusPreset): void {
-  const track = realAudioTrack(preset);
-  container.replaceChildren();
-  container.hidden = !track;
-  if (!track) return;
-
-  container.append(document.createTextNode(`${track.attribution} `));
-  container.append(attributionLink("Source", track.sourcePage));
-  container.append(document.createTextNode(" · "));
-  container.append(attributionLink(track.license, track.licenseUrl));
-}
-
-function attributionLink(label: string, href: string): HTMLAnchorElement {
-  const anchor = document.createElement("a");
-  anchor.textContent = label;
-  anchor.href = href;
-  anchor.target = "_blank";
-  anchor.rel = "noreferrer noopener";
-  return anchor;
-}
-
-function presetUiDetails(preset: FocusPreset): { title: string; category: string; description: string } {
+function presetTitle(preset: FocusPreset): string {
   const sacred = sacredAudioCatalog.find((track) => track.id === preset);
-  if (sacred) {
-    return {
-      title: sacred.title,
-      category: "Church",
-      description: `${sacred.performer} · Real recording`
-    };
-  }
-
-  if ((["rain", "ocean", "storm", "stream"] as readonly string[]).includes(preset)) {
-    return {
-      title: presetLabel(preset),
-      category: "Nature",
-      description: {
-        rain: "Steady rainfall with a soft, even texture.",
-        ocean: "Rolling ocean waves for an open, unhurried room.",
-        storm: "Rain and distant thunder with a darker atmosphere.",
-        stream: "A real forest creek recording with gentle movement."
-      }[preset as "rain" | "ocean" | "storm" | "stream"]
-    };
-  }
-
-  if ((standardAudioPresetValues as readonly string[]).includes(preset)) {
-    return {
-      title: presetLabel(preset),
-      category: "Baroque",
-      description: "A real harpsichord performance for clear, structured work."
-    };
-  }
-
-  return {
-    title: sentenceCase(presetLabel(preset)),
-    category: "Noise & tones",
-    description: {
-      "brown-noise": "A low, steady texture for sustained concentration.",
-      "pink-noise": "A warm, balanced texture that softens the room.",
-      "white-noise": "A softened, even mask for voices and sudden sounds.",
-      "binaural-beat": "A focused stereo pulse. Headphones work best.",
-      "isochronic-tone": "A steady rhythmic pulse for alert, directed work."
-    }[preset as GeneratedPreset]
-  };
+  return sacred?.title || sentenceCase(presetLabel(preset));
 }
 
 function sentenceCase(value: string): string {
@@ -855,12 +836,6 @@ function resetTimer(): void {
   globalTimerState.signature = "";
 }
 
-function statusText(options: SyncOptions, timer: { phase: "work" | "break"; remainingSeconds: number | null }): string {
-  const base = `${modeLabel(options.mode)} | ${presetLabel(timer.phase === "break" ? "ocean" : options.preset)} | ${intensityLabel(options.intensity)}`;
-  if (timer.remainingSeconds === null) return base;
-  return `${base} | ${timer.phase === "break" ? "Break" : "Timer"} ${formatClock(timer.remainingSeconds)}`;
-}
-
 function soundSignature(options: SyncOptions, phase: "work" | "break"): string {
   return [
     options.mode,
@@ -903,23 +878,6 @@ function presetLabel(value: FocusPreset): string {
   }[value];
 }
 
-function modeLabel(value: FocusMode): string {
-  return {
-    focus: "Focus",
-    relax: "Relax",
-    sleep: "Sleep",
-    meditate: "Meditate"
-  }[value];
-}
-
-function intensityLabel(value: FocusIntensity): string {
-  return {
-    low: "low",
-    medium: "medium",
-    high: "high"
-  }[value];
-}
-
 function modeVolumeMultiplier(mode: FocusMode): number {
   return modeProfiles[mode]?.volumeMultiplier || 1;
 }
@@ -946,11 +904,4 @@ function isGeneratedPreset(value: FocusPreset): value is GeneratedPreset {
 
 function isRealAudioPreset(value: FocusPreset): value is RealAudioPreset {
   return (realAudioPresetValues as readonly string[]).includes(value);
-}
-
-function formatClock(seconds: number): string {
-  const safe = Math.max(0, Math.round(seconds || 0));
-  const minutes = Math.floor(safe / 60);
-  const rest = safe % 60;
-  return `${minutes}:${String(rest).padStart(2, "0")}`;
 }
