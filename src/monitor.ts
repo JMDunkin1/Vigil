@@ -14,7 +14,7 @@ import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMd
 import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
 import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldQuitAppForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
-import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, roundSeconds } from "./monitor/timing.js";
+import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, isInterruptedPollGap, roundSeconds } from "./monitor/timing.js";
 import { safariFilterStatus } from "./safariFilter.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
@@ -283,9 +283,24 @@ export class Monitor implements MonitorHandle {
       return;
     }
 
+    const wallSeconds = Math.max(0, (frame.now - frame.previousWall) / 1000);
+    const elapsedSeconds = Math.max(frame.seconds, wallSeconds);
+    if (isInterruptedPollGap(elapsedSeconds, this.state.settings?.pollIntervalMs)) {
+      this.status.lastIdleAccounting = this.idleAccountingStatus(frame, {
+        countedSeconds: 0,
+        skippedSeconds: elapsedSeconds,
+        reason: "interrupted-poll"
+      });
+      return;
+    }
+
     const accounting = await this.idleAdjustedUsage(frame);
     if (accounting.countedSeconds > 0) {
-      recordUsage(this.usage, this.lastSample, accounting.countedSeconds);
+      const startedAt = new Date(frame.now - frame.seconds * 1000);
+      const endedAt = new Date(startedAt.getTime() + accounting.countedSeconds * 1000);
+      recordUsage(this.usage, this.lastSample, accounting.countedSeconds, new Date(frame.now), {
+        segment: { startedAt, endedAt }
+      });
       recordIntentionalUseTime(this.state, this.lastSample, accounting.countedSeconds);
     }
     this.status.lastIdleAccounting = this.idleAccountingStatus(frame, accounting);

@@ -127,6 +127,7 @@ function boot() {
   bindViewNavigation(setView);
   bindSidebarToggle();
   renderActiveView(state.activeView);
+  focusSound.setViewActive(state.activeView === "audio");
   saintStage.bind();
   trackingView.bind();
   accountUi.bind();
@@ -241,6 +242,7 @@ function setView(view?: string) {
   if (previousView === "settings" && state.activeView !== "settings") resetSettingsUi();
   if (lockOnExit) lockJournalForViewExit();
   renderActiveView(state.activeView);
+  focusSound.setViewActive(state.activeView === "audio");
 }
 
 function bindJournalUnlockGate(): void {
