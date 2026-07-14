@@ -196,14 +196,15 @@ import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-
   assert.equal(filteredUsage["2026-05-28"].devices.phone.segmentTimelineComplete, undefined, "filtering an invalid segment must clear completeness");
 
   const clippedUsage: UsageState = {};
+  const clippedDayStart = new Date("2026-05-28T00:00:00").getTime();
   syncDeviceUsageSnapshot(clippedUsage, {
     device: "phone",
     date: "2026-05-28",
     totalSeconds: 120,
     apps: { Codex: 120 },
     segments: [{
-      startedAt: "2026-05-27T23:59:00-04:00",
-      endedAt: "2026-05-28T00:01:00-04:00",
+      startedAt: new Date(clippedDayStart - 60_000).toISOString(),
+      endedAt: new Date(clippedDayStart + 60_000).toISOString(),
       app: "Codex"
     }],
     segmentTimelineComplete: true
