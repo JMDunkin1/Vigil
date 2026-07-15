@@ -1,10 +1,13 @@
 import { execFile } from "node:child_process";
-import { basename } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { BROWSERS } from "./defaults.js";
 import type { UnknownRecord } from "./types.js";
 
 const execFileAsync = promisify(execFile);
+const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const HUMAN_IDLE_HELPER = runtimeExecutablePath("bin/vigil-human-idle");
 let wifiDevicePromise: Promise<string> | null = null;
 const CHROMIUM_BROWSERS = new Set([
   "Google Chrome",
@@ -418,6 +421,38 @@ export async function getCurrentWifiNetwork() {
 
 export async function getMacIdleTime() {
   try {
+    await verifyHumanIdleHelperIntegrity();
+    const { stdout } = await execFileAsync(HUMAN_IDLE_HELPER, [], {
+      timeout: 2500,
+      maxBuffer: 1024
+    });
+    const idleSeconds = parseHumanIdleSeconds(stdout);
+    if (idleSeconds === null) throw new Error("Human idle helper returned an invalid value");
+    return { ok: true, idleSeconds, source: "CGEventSource:HIDSystemState", error: "" };
+  } catch (humanIdleError) {
+    return getFallbackMacIdleTime(humanIdleError);
+  }
+}
+
+async function verifyHumanIdleHelperIntegrity(): Promise<void> {
+  const appBundle = packagedAppBundleForExecutable(HUMAN_IDLE_HELPER);
+  if (!appBundle) return;
+  await execFileAsync("/usr/bin/codesign", ["--verify", "--deep", "--strict", appBundle], {
+    timeout: 2500,
+    maxBuffer: 1024 * 16
+  });
+}
+
+export function packagedAppBundleForExecutable(path: string): string | null {
+  const marker = "/Contents/Resources/app.asar.unpacked/";
+  const markerIndex = path.indexOf(marker);
+  if (markerIndex < 0) return null;
+  const bundle = path.slice(0, markerIndex);
+  return bundle.endsWith(".app") ? bundle : null;
+}
+
+async function getFallbackMacIdleTime(humanIdleError: unknown) {
+  try {
     const { stdout } = await execFileAsync("/usr/sbin/ioreg", ["-c", "IOHIDSystem", "-r", "-d", "1"], {
       timeout: 750,
       maxBuffer: 1024 * 32
@@ -428,8 +463,18 @@ export async function getMacIdleTime() {
     }
     return { ok: true, idleSeconds, source: "ioreg:HIDIdleTime", error: "" };
   } catch (error) {
-    return { ok: false, idleSeconds: 0, source: "ioreg:HIDIdleTime", error: simplifyError(error) };
+    return {
+      ok: false,
+      idleSeconds: 0,
+      source: "ioreg:HIDIdleTime",
+      error: `${simplifyError(humanIdleError)}; ${simplifyError(error)}`
+    };
   }
+}
+
+export function parseHumanIdleSeconds(output: unknown): number | null {
+  const seconds = Number(String(output || "").trim());
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
 }
 
 export function parseHidIdleSeconds(output: unknown): number | null {
@@ -439,6 +484,11 @@ export function parseHidIdleSeconds(output: unknown): number | null {
   return Number.isFinite(idleNanoseconds) && idleNanoseconds >= 0
     ? idleNanoseconds / 1_000_000_000
     : null;
+}
+
+function runtimeExecutablePath(relativePath: string): string {
+  const path = join(RUNTIME_ROOT, relativePath);
+  return path.includes("app.asar") ? path.replace("app.asar", "app.asar.unpacked") : path;
 }
 
 export function appCanReportUrls(appName: string): boolean {
@@ -462,6 +512,7 @@ function escapeAppleScript(value: unknown): string {
 export function canonicalFrontmostAppName(value: unknown, bundleId: unknown = ""): string {
   const app = String(value || "").trim();
   const id = String(bundleId || "").trim().toLowerCase();
+  if (id === "com.openai.codex") return "Codex";
   if (id === "com.apple.safari") return "Safari";
   if (/^Safari (Web Content|Networking|Graphics and Media|Safe Browsing)$/i.test(app)) return "Safari";
   return app;

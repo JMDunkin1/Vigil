@@ -29,6 +29,34 @@ class FakeGainNode extends FakeAudioNode {
   };
 }
 
+class FakeAnalyserNode extends FakeAudioNode {
+  context: FakeAudioContext;
+  fftSize = 2048;
+  smoothingTimeConstant = 0;
+  minDecibels = -100;
+  maxDecibels = -30;
+  frequencyLevel = 220;
+  signalLevel = 0.12;
+
+  constructor(context: FakeAudioContext) {
+    super();
+    this.context = context;
+    analysers.push(this);
+  }
+
+  get frequencyBinCount(): number {
+    return this.fftSize / 2;
+  }
+
+  getByteFrequencyData(data: Uint8Array): void {
+    data.fill(this.frequencyLevel);
+  }
+
+  getFloatTimeDomainData(data: Float32Array): void {
+    data.fill(this.signalLevel);
+  }
+}
+
 class FakeBufferSourceNode extends FakeAudioNode {
   buffer: AudioBuffer | null = null;
   loop = false;
@@ -45,9 +73,13 @@ class FakeBufferSourceNode extends FakeAudioNode {
 }
 
 const sources: FakeBufferSourceNode[] = [];
+const analysers: FakeAnalyserNode[] = [];
+const animationFrames = new Map<number, FrameRequestCallback>();
+let nextAnimationFrame = 1;
 
 class FakeAudioContext {
   destination = new FakeAudioNode();
+  sampleRate = 48_000;
   state = "running";
 
   constructor() {
@@ -56,6 +88,10 @@ class FakeAudioContext {
 
   createGain(): GainNode {
     return new FakeGainNode() as unknown as GainNode;
+  }
+
+  createAnalyser(): AnalyserNode {
+    return new FakeAnalyserNode(this) as unknown as AnalyserNode;
   }
 
   createBufferSource(): AudioBufferSourceNode {
@@ -109,15 +145,47 @@ const playButton = {
     playButtonAttributes.set(name, value);
   }
 };
+const waveLevels = Array.from({ length: 18 }, () => new Map<string, string>());
+const waveBars = waveLevels.map((properties) => ({
+  style: {
+    setProperty(name: string, value: string) {
+      properties.set(name, value);
+    },
+    removeProperty(name: string) {
+      properties.delete(name);
+    }
+  }
+}));
+const wave = {
+  querySelectorAll: () => waveBars
+};
 const originalWindow = globalValue("window");
 const originalDocument = globalValue("document");
 const originalFetch = globalThis.fetch;
 const originalConsoleError = console.error;
 const originalDateNow = Date.now;
 const toasts: string[] = [];
+const reducedMotionListeners = new Set<(event: MediaQueryListEvent) => void>();
+const reducedMotionQuery = {
+  matches: true,
+  addEventListener(_type: string, listener: (event: MediaQueryListEvent) => void) {
+    reducedMotionListeners.add(listener);
+  }
+};
 
 try {
-  setGlobal("window", { AudioContext: FakeAudioContext });
+  setGlobal("window", {
+    AudioContext: FakeAudioContext,
+    matchMedia: () => reducedMotionQuery,
+    requestAnimationFrame(callback: FrameRequestCallback) {
+      const frame = nextAnimationFrame++;
+      animationFrames.set(frame, callback);
+      return frame;
+    },
+    cancelAnimationFrame(frame: number) {
+      animationFrames.delete(frame);
+    }
+  });
   setGlobal("document", {
     activeElement: null,
     createElement: () => ({ textContent: "", value: "" }),
@@ -129,9 +197,10 @@ try {
       "#focusSoundAttribution": attribution,
       "#focusSoundAttributionText": attributionText,
       "#focusSoundSourceLink": sourceLink,
-      "#focusSoundLicenseLink": licenseLink
+      "#focusSoundLicenseLink": licenseLink,
+      "#focusSoundWave": wave
     }[selector] || controls.get(selector) || null),
-    querySelectorAll: () => []
+    querySelectorAll: (selector: string) => selector === "#focusSoundWave span" ? waveBars : []
   });
   globalThis.fetch = ((input: RequestInfo | URL) => {
     const url = String(input);
@@ -165,6 +234,34 @@ try {
 
   assert.equal(sources[0].starts, 1);
   assert.equal(sources[0].stops, 0);
+  assert.equal(analysers.length, 1);
+  assert.equal(animationFrames.size, 0, "Reduce Motion must prevent the live waveform from scheduling frames");
+
+  focusSound.setViewActive(true);
+  setReducedMotion(false);
+  assert.equal(animationFrames.size, 1, "turning Reduce Motion off during playback must restart the live waveform");
+
+  runAnimationFrame();
+  const playingLevel = Number(waveLevels[0].get("--wave-level"));
+  assert.equal(playingLevel > 0.4, true, "a strong live signal must produce visibly tall spectrum bars");
+
+  analysers[0].signalLevel = 0;
+  analysers[0].frequencyLevel = 0;
+  for (let frame = 0; frame < 12; frame += 1) runAnimationFrame();
+  const silentLevel = Number(waveLevels[0].get("--wave-level"));
+  assert.equal(silentLevel < 0.11, true, "silence must settle the spectrum close to its idle baseline");
+
+  setReducedMotion(true);
+  assert.equal(animationFrames.size, 0, "turning Reduce Motion on must stop an active waveform");
+  assert.equal(waveLevels.every((level) => !level.has("--wave-level")), true, "stopping for Reduce Motion must clear live spectrum values");
+  setReducedMotion(false);
+  assert.equal(animationFrames.size, 1, "turning Reduce Motion off must resume the waveform while audio is still playing");
+
+  focusSound.setViewActive(false);
+  assert.equal(animationFrames.size, 0, "leaving the Sound view must pause the live waveform");
+  assert.equal(waveLevels.every((level) => !level.has("--wave-level")), true, "leaving the Sound view must clear live spectrum values");
+  focusSound.setViewActive(true);
+  assert.equal(animationFrames.size, 1, "returning to the Sound view must resume the live waveform");
 
   focusSound.render(dataForPreset("ocean"));
   await settle();
@@ -208,6 +305,7 @@ try {
   assert.equal(playLabel.textContent, "Listen", "silent audio must not offer a misleading Pause action");
   assert.equal(playButtonAttributes.get("aria-pressed"), "false");
   assert.equal(focusSound.isPlaying(), false, "the play control must be able to distinguish enabled-but-silent audio");
+  assert.equal(waveLevels.every((level) => !level.has("--wave-level")), true, "stopping playback must clear live spectrum values");
 
   contexts[0].state = "running";
   focusSound.render(dataForPreset("stream"));
@@ -277,6 +375,19 @@ try {
   globalThis.fetch = originalFetch;
   console.error = originalConsoleError;
   Date.now = originalDateNow;
+}
+
+function runAnimationFrame(): void {
+  const entry = animationFrames.entries().next().value as [number, FrameRequestCallback] | undefined;
+  assert.ok(entry, "the visualizer should schedule an animation frame");
+  const [frame, callback] = entry;
+  animationFrames.delete(frame);
+  callback(0);
+}
+
+function setReducedMotion(matches: boolean): void {
+  reducedMotionQuery.matches = matches;
+  for (const listener of reducedMotionListeners) listener({ matches } as MediaQueryListEvent);
 }
 
 function dataForPreset(preset: string) {

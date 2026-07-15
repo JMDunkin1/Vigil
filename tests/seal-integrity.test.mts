@@ -23,10 +23,12 @@ assert.equal(
     await mkdir(join(dir, "src"), { recursive: true });
     await mkdir(join(dir, "scripts"), { recursive: true });
     await mkdir(join(dir, "app"), { recursive: true });
+    await mkdir(join(dir, "bin"), { recursive: true });
     await mkdir(join(dir, "ios", "Example"), { recursive: true });
     await mkdir(join(dir, "public", "art"), { recursive: true });
     await writeFile(join(dir, "package.json"), "{\"type\":\"module\"}\n");
     await writeFile(join(dir, "app", "preload.cjs"), "module.exports = {};\n");
+    await writeFile(join(dir, "bin", "vigil-human-idle"), Buffer.from([0xca, 0xfe, 0xba, 0xbe]));
     await writeFile(join(dir, "ios", "Example", "App.swift"), "struct App {}\n");
     await writeFile(join(dir, "public", "art", "icon.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47]));
     await writeFile(join(dir, "src", "server.js"), "console.log('ok');\n");

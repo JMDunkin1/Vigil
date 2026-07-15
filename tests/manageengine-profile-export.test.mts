@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -276,6 +276,27 @@ try {
     assert.equal(recordValue(JSON.parse(await readFile(splitResult.launcherSummaryPath, "utf8")), "split launcher summary").outputPath, paths.launcherOutPath);
   } finally {
     await rm(splitRoot, { recursive: true, force: true });
+  }
+}
+
+{
+  const canonicalRoot = await mkdtemp(join(tmpdir(), "vigil-manageengine-canonical-root-"));
+  const aliasedRoot = `${canonicalRoot}-alias`;
+  try {
+    await symlink(canonicalRoot, aliasedRoot, process.platform === "win32" ? "junction" : "dir");
+    const outPath = join(aliasedRoot, "policy.mobileconfig");
+    const summaryPath = join(aliasedRoot, "policy.summary.json");
+    await exportManageEngineIosProfile(defaultState(), {
+      currentState: true,
+      outPath,
+      summaryPath,
+      saveState: async () => {}
+    });
+    const generation = await resolveManageEngineCurrentGeneration(aliasedRoot);
+    assert.equal(dirname(generation), await realpath(join(aliasedRoot, ".generations")), "a canonical generation must remain valid when its publication root is reached through a path alias");
+  } finally {
+    await rm(aliasedRoot, { force: true });
+    await rm(canonicalRoot, { recursive: true, force: true });
   }
 }
 

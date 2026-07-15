@@ -590,6 +590,12 @@ button:focus-visible {
   gap: 12px;
 }
 
+.device-safety-note {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .form-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -1052,6 +1058,11 @@ button:focus-visible {
   min-width: 0;
   display: grid;
   gap: 5px;
+}
+
+.device-form-head > .pill {
+  flex: 0 0 auto;
+  align-self: flex-start;
 }
 
 .device-form-head strong,
@@ -1552,8 +1563,7 @@ body[data-active-view="tracking"] #view-journal {
 }
 
 .tracking-metric-value small,
-.tracking-metric-card > p,
-.tracking-rhythm-copy span {
+.tracking-metric-card > p {
   color: var(--muted);
   font-size: 0.72rem;
   font-weight: 680;
@@ -1565,7 +1575,7 @@ body[data-active-view="tracking"] #view-journal {
 
 .tracking-trend {
   width: calc(100% + 4px);
-  height: 58px;
+  height: 76px;
   display: block;
   margin: 8px -2px -8px;
   overflow: visible;
@@ -1591,26 +1601,13 @@ body[data-active-view="tracking"] #view-journal {
   vector-effect: non-scaling-stroke;
 }
 
-.tracking-rhythm-copy {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-  margin: 11px 0 8px;
-}
-
-.tracking-rhythm-copy strong {
-  font-size: 2.5rem;
-  line-height: 1;
-  letter-spacing: -0.06em;
-}
-
 .tracking-metric-rhythm .habit-month-pulse {
-  height: 73px;
+  height: 112px;
   gap: clamp(2px, 0.3vw, 5px);
 }
 
 .tracking-metric-rhythm .habit-pulse-day {
-  min-height: 73px;
+  min-height: 112px;
 }
 
 .tracking-metric-rhythm .habit-pulse-day .habit-pulse-bar {
@@ -1861,8 +1858,8 @@ body[data-active-view="tracking"] #view-journal {
   }
 
   .tracking-trend {
-    height: 46px;
-    margin-top: 4px;
+    height: clamp(118px, 23.5vh, 144px);
+    margin-top: 8px;
   }
 }
 
@@ -3287,6 +3284,12 @@ body[data-lock-state="integrity"] .saint-halo {
 .ranking-app-usage {
   display: grid;
   margin-top: 20px;
+}
+
+.ranking-site-head {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
 .ranking-app-row {
@@ -4950,9 +4953,7 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) clamp(110px, 14vw, 170px) minmax(180px, 260px);
-  grid-template-areas:
-    "title wave control"
-    "attribution attribution attribution";
+  grid-template-areas: "title wave control";
   column-gap: clamp(26px, 3vw, 48px);
   align-items: center;
   overflow: hidden;
@@ -4994,12 +4995,13 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
 }
 
 .audio-attribution {
-  grid-area: attribution;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 12px;
-  margin: -6px 0 0;
-  color: rgba(243, 234, 214, 0.68);
+  margin: 0;
+  padding: 14px 18px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
   font-size: 0.72rem;
   line-height: 1.45;
 }
@@ -5054,34 +5056,18 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
   border-radius: 99px;
   background: linear-gradient(180deg, var(--accent-bright), color-mix(in srgb, var(--accent) 56%, #311c14));
   opacity: 0.38;
-  transform: scaleY(var(--wave-idle, 0.08));
+  transform: scaleY(var(--wave-level, var(--wave-idle, 0.08)));
   transform-origin: center;
+  will-change: transform;
 }
 
 .audio-player[data-playing="true"] .audio-wave span {
   opacity: 0.9;
-  animation: listeningWave var(--wave-speed, 1.28s) ease-in-out infinite;
-  animation-delay: var(--wave-delay, 0s);
 }
 
-.audio-wave span:nth-child(1)  { --wave-idle: 0.08; --wave-mid: 0.22; --wave-high: 0.44; --wave-speed: 1.34s; --wave-delay: 0s; }
-.audio-wave span:nth-child(2)  { --wave-idle: 0.10; --wave-mid: 0.31; --wave-high: 0.58; --wave-speed: 1.28s; --wave-delay: -0.08s; }
-.audio-wave span:nth-child(3)  { --wave-idle: 0.13; --wave-mid: 0.43; --wave-high: 0.74; --wave-speed: 1.21s; --wave-delay: -0.16s; }
-.audio-wave span:nth-child(4)  { --wave-idle: 0.16; --wave-mid: 0.55; --wave-high: 0.88; --wave-speed: 1.16s; --wave-delay: -0.24s; }
-.audio-wave span:nth-child(5)  { --wave-idle: 0.12; --wave-mid: 0.47; --wave-high: 0.71; --wave-speed: 1.24s; --wave-delay: -0.32s; }
-.audio-wave span:nth-child(6)  { --wave-idle: 0.09; --wave-mid: 0.34; --wave-high: 0.55; --wave-speed: 1.31s; --wave-delay: -0.40s; }
-.audio-wave span:nth-child(7)  { --wave-idle: 0.14; --wave-mid: 0.51; --wave-high: 0.82; --wave-speed: 1.18s; --wave-delay: -0.48s; }
-.audio-wave span:nth-child(8)  { --wave-idle: 0.18; --wave-mid: 0.61; --wave-high: 0.94; --wave-speed: 1.13s; --wave-delay: -0.56s; }
-.audio-wave span:nth-child(9)  { --wave-idle: 0.13; --wave-mid: 0.46; --wave-high: 0.76; --wave-speed: 1.26s; --wave-delay: -0.64s; }
-.audio-wave span:nth-child(10) { --wave-idle: 0.10; --wave-mid: 0.32; --wave-high: 0.52; --wave-speed: 1.38s; --wave-delay: -0.72s; }
-.audio-wave span:nth-child(11) { --wave-idle: 0.12; --wave-mid: 0.40; --wave-high: 0.68; --wave-speed: 1.29s; --wave-delay: -0.80s; }
-.audio-wave span:nth-child(12) { --wave-idle: 0.16; --wave-mid: 0.57; --wave-high: 0.89; --wave-speed: 1.15s; --wave-delay: -0.88s; }
-.audio-wave span:nth-child(13) { --wave-idle: 0.14; --wave-mid: 0.49; --wave-high: 0.79; --wave-speed: 1.20s; --wave-delay: -0.96s; }
-.audio-wave span:nth-child(14) { --wave-idle: 0.09; --wave-mid: 0.29; --wave-high: 0.49; --wave-speed: 1.36s; --wave-delay: -1.04s; }
-.audio-wave span:nth-child(15) { --wave-idle: 0.11; --wave-mid: 0.37; --wave-high: 0.62; --wave-speed: 1.30s; --wave-delay: -1.12s; }
-.audio-wave span:nth-child(16) { --wave-idle: 0.15; --wave-mid: 0.52; --wave-high: 0.83; --wave-speed: 1.17s; --wave-delay: -1.20s; }
-.audio-wave span:nth-child(17) { --wave-idle: 0.11; --wave-mid: 0.36; --wave-high: 0.64; --wave-speed: 1.27s; --wave-delay: -1.28s; }
-.audio-wave span:nth-child(18) { --wave-idle: 0.08; --wave-mid: 0.24; --wave-high: 0.46; --wave-speed: 1.35s; --wave-delay: -1.36s; }
+.audio-wave span:nth-child(3n + 1) { --wave-idle: 0.06; }
+.audio-wave span:nth-child(3n + 2) { --wave-idle: 0.08; }
+.audio-wave span:nth-child(3n) { --wave-idle: 0.07; }
 
 .audio-master-toggle {
   grid-area: control;
@@ -5463,12 +5449,6 @@ details[open] > summary .audio-disclosure-chevron {
   color: var(--gold);
 }
 
-@keyframes listeningWave {
-  0%, 100% { transform: scaleY(var(--wave-idle, 0.08)); }
-  34% { transform: scaleY(var(--wave-high, 0.8)); }
-  68% { transform: scaleY(var(--wave-mid, 0.42)); }
-}
-
 @media (max-width: 1320px) {
   .audio-player {
     grid-template-columns: minmax(0, 1fr) clamp(100px, 14vw, 150px) minmax(160px, 240px);
@@ -5486,8 +5466,7 @@ details[open] > summary .audio-disclosure-chevron {
     grid-template-columns: minmax(0, 1fr) clamp(94px, 24cqi, 150px);
     grid-template-areas:
       "title wave"
-      "control control"
-      "attribution attribution";
+      "control control";
     gap: 18px;
     padding: 20px 22px 22px;
   }
@@ -6775,11 +6754,11 @@ body[data-active-view="tracking"] .habit-visual-card .habit-status-control {
 }
 
 body[data-active-view="tracking"] .habit-month-pulse {
-  height: 73px;
+  height: 112px;
 }
 
 body[data-active-view="tracking"] .habit-pulse-day {
-  min-height: 73px;
+  min-height: 112px;
 }
 
 @media (max-width: 800px) {
@@ -6788,11 +6767,16 @@ body[data-active-view="tracking"] .habit-pulse-day {
   }
 
   body[data-active-view="tracking"] .habit-month-pulse {
-    height: 58px;
+    height: clamp(136px, 28vh, 172px);
   }
 
   body[data-active-view="tracking"] .habit-pulse-day {
-    min-height: 58px;
+    min-height: clamp(136px, 28vh, 172px);
+  }
+
+  body[data-active-view="tracking"] .habit-pulse-day i {
+    height: calc(7px + (var(--reported) * 108px));
+    max-height: 115px;
   }
 }
 

@@ -160,14 +160,16 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
 
   $("#iosStatus").textContent = ios.enabled ? "Configured" : "Ready";
   $("#iosStatus").className = ios.enabled ? "pill good" : "pill neutral";
-  $("#iosStatusTitle").textContent = ios.enabled ? "Supervised policy configured" : "Supervised profile ready";
-  $("#iosStatusText").textContent = ios.note || "Apple-only iPhone blocking needs a supervised device policy.";
+  $("#iosStatusTitle").textContent = ios.enabled ? "Vigil content filter configured" : "Vigil content filter ready";
+  $("#iosStatusText").textContent = ios.note || "Vigil's iPhone content filter needs a supervised device policy.";
 
   const iosSummary = $("#iosSummary");
   iosSummary.replaceChildren();
   const profile = ios.profile || {};
   const manageEngine = ios.manageEngine || {};
   [
+    ["Content filter", ios.blockWeb ? "adult sites, explicit searches, and SafeSearch" : "off"],
+    ["Sensitive media", "Vigil browser and filtered social clients"],
     ["Delivery", manageEngine.deliveryProvider === "manageengine" ? "ManageEngine" : "Apple devices only"],
     ["Setup", ios.supervisedRequired ? "supervised iPhone required" : "standard"],
     ["Apps", ios.blockApps ? `${profile.appBundleCount || 0} bundle IDs` : "off"],

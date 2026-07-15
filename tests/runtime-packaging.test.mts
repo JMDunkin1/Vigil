@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 
 import { distanceKeyQrMatrix } from "../public/distance-key-qr.js";
 import { launchAgentDataDirFromPlist, launchAgentDataRootsConflict } from "../src/dataPaths.js";
@@ -12,6 +14,8 @@ import { isDirectRun } from "../src/directRun.js";
 import { packageableRuntimePath } from "../src/runtimePackaging.js";
 import { plistStringForKey } from "../src/plist.js";
 import { recordValue, stringArrayValue } from "./test-helpers.mjs";
+
+const execFileAsync = promisify(execFile);
 
 assert.equal(packageableRuntimePath("src/server.js"), true);
 assert.equal(packageableRuntimePath("tests/policy.test.mjs"), false);
@@ -148,6 +152,14 @@ for (const expected of [
   "dist.nosync/runtime/extension/**/*"
 ]) {
   assert.ok(asarUnpack.includes(expected), `${expected} should remain available outside app.asar`);
+}
+if (process.platform === "darwin") {
+  const packagedHelperPath = join(process.cwd(), "bin", "vigil-human-idle");
+  const helperPath = existsSync(packagedHelperPath)
+    ? packagedHelperPath
+    : join(process.cwd(), "dist", "runtime", "bin", "vigil-human-idle");
+  const { stdout: helperLoadCommands } = await execFileAsync("/usr/bin/otool", ["-l", helperPath]);
+  assert.match(helperLoadCommands, /^\s+minos\s+12\.0$/mu, "the packaged idle helper must support macOS 12.0");
 }
 
 const manifest = recordValue(JSON.parse(await readFile("extension/manifest.json", "utf8")), "extension manifest");

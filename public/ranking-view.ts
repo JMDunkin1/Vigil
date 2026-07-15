@@ -21,11 +21,13 @@ export function createRankingView() {
   const standing = required<HTMLElement>("#knightStanding");
   const rank = required<HTMLElement>("#knightRank");
   const totalUsage = required<HTMLElement>("#totalUsageToday");
+  const totalUsageDevices = required<HTMLElement>("#totalUsageDevices");
   const focusScore = required<HTMLElement>("#focusScore");
   const focusScoreLabel = required<HTMLElement>("#focusScoreLabel");
   const distractionTrend = required<HTMLElement>("#distractionTrend");
   const week = required<HTMLElement>("#rankingWeek");
   const appUsage = required<HTMLElement>("#rankingAppUsage");
+  const siteUsage = required<HTMLElement>("#rankingSiteUsage");
 
   function render(data: DashboardData): void {
     const progression = data.report?.progression;
@@ -36,12 +38,14 @@ export function createRankingView() {
     standing.textContent = tier.title;
     rank.textContent = progression ? `Rank ${progression.level}` : "Rank --";
     totalUsage.textContent = formatDuration(Number(data.usage?.totalSeconds || 0));
+    totalUsageDevices.textContent = usageDevicesLabel(data.usage?.devices);
     focusScore.textContent = String(score);
     focusScoreLabel.textContent = focusLabel(score, Number(data.usage?.totalSeconds || 0) > 0);
     distractionTrend.textContent = signedPercent(data.report?.comparison?.distractingPercentDelta);
 
     renderWeek(data.report?.currentWeek?.days || []);
     renderApps(data.usage?.topApps || []);
+    renderSites(data.usage?.topSites || []);
   }
 
   function renderWeek(days: WeekDaySummary[]): void {
@@ -74,9 +78,17 @@ export function createRankingView() {
   }
 
   function renderApps(entries: BarEntry[]): void {
-    appUsage.replaceChildren();
+    renderUsageList(appUsage, entries, "No app activity yet.");
+  }
+
+  function renderSites(entries: BarEntry[]): void {
+    renderUsageList(siteUsage, entries.slice(0, 5), "No website activity yet.");
+  }
+
+  function renderUsageList(container: HTMLElement, entries: BarEntry[], emptyLabel: string): void {
+    container.replaceChildren();
     if (!entries.length) {
-      appUsage.append(textEl("p", "No app activity yet.", { className: "ranking-app-empty" }));
+      container.append(textEl("p", emptyLabel, { className: "ranking-app-empty" }));
       return;
     }
 
@@ -92,11 +104,19 @@ export function createRankingView() {
         ),
         textEl("em", formatDuration(seconds))
       );
-      appUsage.append(row);
+      container.append(row);
     });
   }
 
   return { render };
+}
+
+function usageDevicesLabel(devices: DashboardData["usage"]["devices"]): string {
+  const hasMac = Number(devices?.computer?.totalSeconds || 0) > 0;
+  const hasPhone = Number(devices?.phone?.totalSeconds || 0) > 0;
+  if (hasMac && hasPhone) return "Mac + iPhone";
+  if (hasPhone) return "iPhone";
+  return "Mac";
 }
 
 function focusLabel(score: number, hasUsage: boolean): string {

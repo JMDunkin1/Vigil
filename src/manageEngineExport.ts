@@ -533,8 +533,8 @@ async function publishManageEngineGenerationLocked({
 export async function resolveManageEngineCurrentGeneration(outputDirectory: string): Promise<string> {
   const root = resolve(outputDirectory);
   const generation = await realpath(join(root, "current"));
-  const generationsRoot = `${resolve(root, ".generations")}/`;
-  if (!`${generation}/`.startsWith(generationsRoot)) throw new Error("ManageEngine current generation escapes its publication root.");
+  const generationsRoot = `${await realpath(join(root, ".generations"))}${sep}`;
+  if (!`${generation}${sep}`.startsWith(generationsRoot)) throw new Error("ManageEngine current generation escapes its publication root.");
   return generation;
 }
 

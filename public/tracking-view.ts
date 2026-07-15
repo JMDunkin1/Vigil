@@ -72,9 +72,6 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     root.replaceChildren();
     const pulseRoot = required<HTMLElement>("#habitMonthPulse");
     const monthRate = required<HTMLElement>("#habitMonthRate");
-    const monthSummary = required<HTMLElement>("#habitMonthSummary");
-    const monthCompleted = required<HTMLElement>("#habitMonthCompleted");
-    const monthRecorded = required<HTMLElement>("#habitMonthRecorded");
     const monthDayCount = required<HTMLElement>("#habitMonthDayCount");
     const monthTrend = required<SVGSVGElement>("#habitMonthTrend");
     pulseRoot.replaceChildren();
@@ -98,9 +95,6 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       );
       root.append(empty);
       monthRate.textContent = "—";
-      monthSummary.textContent = "Add a habit to begin your rhythm";
-      monthCompleted.textContent = "—";
-      monthRecorded.textContent = "No active habits";
       statusLabel.textContent = "Create a habit to begin tracking.";
       return;
     }
@@ -114,13 +108,6 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const reported = monthStatuses.filter((status) => status !== "unreported");
     const completed = reported.filter((status) => status === "success").length;
     monthRate.textContent = reported.length ? `${Math.round((completed / reported.length) * 100)}%` : "—";
-    monthSummary.textContent = reported.length
-      ? `${completed} of ${reported.length} check-ins completed`
-      : "";
-    monthCompleted.textContent = String(completed);
-    monthRecorded.textContent = reported.length
-      ? `${reported.length} check-in${reported.length === 1 ? "" : "s"} recorded`
-      : "No check-ins yet";
     renderTrend(monthTrend, visibleDates, behaviors, values);
     const table = document.createElement("table");
     table.className = "habit-calendar-table";

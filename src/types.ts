@@ -819,6 +819,13 @@ export interface UsageSample {
   device?: string;
 }
 
+export interface UsageSegment {
+  startedAt: string;
+  endedAt: string;
+  app: string;
+  hostname?: string;
+}
+
 export interface UsageBucket {
   totalSeconds: number;
   apps: Record<string, number>;
@@ -832,6 +839,8 @@ export interface UsageBucket {
     apps: Record<string, number>;
     sites: Record<string, number>;
   };
+  segments?: UsageSegment[];
+  segmentTimelineComplete?: true;
   updatedAt?: string | null;
 }
 
