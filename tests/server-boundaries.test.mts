@@ -8,6 +8,7 @@ import { BRICK_MODE_PROFILE_ID, defaultState } from "../src/defaults.js";
 import { buildDiagnosticExport, diagnosticExportFilename } from "../src/server/diagnosticExportRoutes.js";
 import { externalNetworkBlockSummary } from "../src/externalNetworkBlock.js";
 import { hardeningActions, hardeningAudit, hostsDetail, launchAgentDetail } from "../src/server/hardeningSummary.js";
+import { hardeningResultHttpStatus } from "../src/server/hardeningRoutes.js";
 import { contentType, resolvePublicPath, securityHeaders, transpilePublicTypescript } from "../src/server/http.js";
 import { resolvePublicAssets } from "../src/publicAssets.js";
 import { createLocalScriptRunner, shellQuote, appleScriptString } from "../src/server/localScripts.js";
@@ -17,6 +18,10 @@ import { activePolicy } from "../src/policy.js";
 import type { ActivePolicy, Session } from "../src/types.js";
 
 const publicDir = join(process.cwd(), "public");
+
+assert.equal(hardeningResultHttpStatus(true, true), 200);
+assert.equal(hardeningResultHttpStatus(true, false), 409, "a durable audit record cannot mask degraded effective state");
+assert.equal(hardeningResultHttpStatus(false, true), 500, "effective state cannot mask a failed durable audit record");
 
 function recordValue(value: unknown, label = "value"): Record<string, unknown> {
   assert.equal(typeof value, "object", `${label} should be an object`);
@@ -42,7 +47,19 @@ assert.equal(contentType("public/audio/baroque/bach-goldberg-aria-harpsichord.og
 assert.equal(contentType("public/audio/nature/rain.ogg"), "audio/ogg");
 assert.equal(contentType("unknown.bin"), "application/octet-stream");
 assert.equal(securityHeaders()["X-Content-Type-Options"], "nosniff");
-assert.match(securityHeaders()["Content-Security-Policy"], /frame-ancestors 'none'/);
+const contentSecurityPolicy = securityHeaders()["Content-Security-Policy"];
+for (const directive of [
+  "default-src 'none'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "frame-src 'none'",
+  "connect-src 'self'",
+  "img-src 'self' data:",
+  "media-src 'self'",
+  "script-src 'self'",
+  "style-src 'self'"
+]) assert.match(contentSecurityPolicy, new RegExp(directive.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+assert.doesNotMatch(contentSecurityPolicy, /unsafe-inline/u);
 
 const liveSourceRoot = await mkdtemp(join(tmpdir(), "vigil-live-source-"));
 try {

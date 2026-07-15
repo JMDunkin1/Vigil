@@ -144,6 +144,9 @@ assert.match(trackingSource, /dateIsComplete\(dateKey, behaviors, values\)[\s\S]
 assert.doesNotMatch(trackingSource, /Your answers are locked|All \$\{total\} item/, "the completion screen must not repeat results already shown in the tracking graphs");
 assert.match(trackingSource, /editableCompletedDateKey = dateKey/, "editing a completed day must require a deliberate unlock action");
 assert.match(trackingSource, /monthDayCount\.textContent = `\$\{dates\.length\} days`/, "the selected month must control the displayed day count");
+assert.match(trackingSource, /class: "habit-pulse-bar"[\s\S]*?viewBox: `0 0 10 \$\{total\}`[\s\S]*?habit-pulse-missed[\s\S]*?y: total - reported[\s\S]*?height: reported - done[\s\S]*?habit-pulse-done[\s\S]*?y: total - done[\s\S]*?height: done/, "monthly rhythm bars must encode reported height with separate done and missed segments");
+assert.match(styles, /\.habit-pulse-missed\s*\{[\s\S]*?fill:[\s\S]*?var\(--red\)/, "monthly rhythm bars must render missed reports distinctly");
+assert.match(styles, /\.habit-pulse-done\s*\{[\s\S]*?fill:\s*var\(--habit-done-strong\)/, "monthly rhythm bars must render completed reports distinctly");
 assert.match(styles, /@media \(max-width: 800px\)[\s\S]*?\.tracking-trend\s*\{[\s\S]*?height:\s*clamp\(118px, 23\.5vh, 144px\);/, "the stacked monthly trend must expand vertically at the default desktop aspect ratio");
 assert.match(styles, /@media \(max-width: 800px\)[\s\S]*?body\[data-active-view="tracking"\] \.habit-month-pulse\s*\{[\s\S]*?height:\s*clamp\(136px, 28vh, 172px\);/, "the stacked monthly pulse must use the space freed by redundant summary copy");
 

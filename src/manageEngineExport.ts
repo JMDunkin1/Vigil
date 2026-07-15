@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
+import { chmod, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 
 import {
   IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER,
@@ -34,6 +37,7 @@ export interface ManageEngineIosExportOptions {
   deploymentObservation?: ManageEngineDeploymentObservation;
   saveState?: (state: VigilState) => Promise<void>;
   summaryPath?: string;
+  afterPublicationBoundary?: (boundary: string) => void | Promise<void>;
 }
 
 export interface ManageEngineDeploymentObservation {
@@ -62,27 +66,51 @@ export interface ManageEngineIosExportResult {
   stateSaved: boolean;
   summary: ReturnType<typeof buildManageEngineIosExportSummary>;
   summaryPath: string;
+  generationPath: string;
+  generationManifestPath: string;
+}
+
+export interface ManageEngineGenerationManifest {
+  version: 1;
+  generation: string;
+  generatedAt: string;
+  artifacts: Array<{ path: string; sha256: string; bytes: number }>;
+}
+
+export interface PinnedManageEngineGeneration {
+  generationPath: string;
+  manifestPath: string;
+  manifest: ManageEngineGenerationManifest;
+  paths: Record<string, { path: string; sha256: string; bytes: number }>;
+  assertValid(): Promise<void>;
+  release(): Promise<void>;
 }
 
 const manageEngineExportLocks = new Map<string, Promise<void>>();
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
+const MANAGEENGINE_LOCK_ACQUIRE_TIMEOUT_MS = 15_000;
+const MANAGEENGINE_LOCK_LEASE_MS = 10_000;
+const MANAGEENGINE_PIN_LEASE_MS = 30_000;
+const MANAGEENGINE_MAX_MANIFEST_BYTES = 1024 * 1024;
+const MANAGEENGINE_MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
+const execFileAsync = promisify(execFile);
 
 export async function exportManageEngineIosProfile(
   savedState: VigilState,
   options: ManageEngineIosExportOptions = {}
 ): Promise<ManageEngineIosExportResult> {
-  const lockKey = resolve(options.outPath || defaultManageEngineOutputPath(Boolean(options.enrollmentWindow)));
+  const lockKey = dirname(resolve(options.outPath || defaultManageEngineOutputPath(Boolean(options.enrollmentWindow))));
   const previous = manageEngineExportLocks.get(lockKey) || Promise.resolve();
-  let release = () => {};
-  const gate = new Promise<void>((resolveGate) => { release = resolveGate; });
+  let releaseLock = () => {};
+  const gate = new Promise<void>((resolveGate) => { releaseLock = resolveGate; });
   const tail = previous.then(() => gate);
   manageEngineExportLocks.set(lockKey, tail);
   await previous;
   try {
     return await exportManageEngineIosProfileUnlocked(savedState, options);
   } finally {
-    release();
+    releaseLock();
     if (manageEngineExportLocks.get(lockKey) === tail) manageEngineExportLocks.delete(lockKey);
   }
 }
@@ -146,22 +174,12 @@ async function exportManageEngineIosProfileUnlocked(
     deployment: launcherDeployment
   };
 
-  for (const directory of new Set([dirname(outPath), dirname(summaryPath), dirname(launcherOutPath), dirname(launcherSummaryPath)])) {
-    await ensurePrivateDirectory(directory);
-  }
-  await writeFileAtomically(outPath, profile);
-  await writeFileAtomically(launcherOutPath, launcherProfile);
-  await writeFileAtomically(launcherSummaryPath, `${JSON.stringify(launcherSummary, null, 2)}\n`);
-  await writeFileAtomically(summaryPath, `${JSON.stringify(summary, null, 2)}\n`);
   const mirror = defaultPolicyHandoffMirrorPaths(outPath, summaryPath);
   const launcherMirror = mirror ? {
     outPath: join(dirname(mirror.outPath), basename(launcherOutPath)),
     summaryPath: join(dirname(mirror.summaryPath), basename(launcherSummaryPath))
   } : null;
-  if (mirror) {
-    await ensurePrivateDirectory(dirname(mirror.outPath));
-    await writeFileAtomically(mirror.outPath, profile);
-    await writeFileAtomically(mirror.summaryPath, `${JSON.stringify({
+  const mirroredSummary = mirror ? `${JSON.stringify({
       ...summary,
       outputPath: mirror.outPath,
       launcherProfile: {
@@ -169,13 +187,26 @@ async function exportManageEngineIosProfileUnlocked(
         outputPath: launcherMirror?.outPath || summary.launcherProfile.outputPath,
         summaryPath: launcherMirror?.summaryPath || summary.launcherProfile.summaryPath
       }
-    }, null, 2)}\n`);
-  }
-  if (launcherMirror) {
-    await ensurePrivateDirectory(dirname(launcherMirror.outPath));
-    await writeFileAtomically(launcherMirror.outPath, launcherProfile);
-    await writeFileAtomically(launcherMirror.summaryPath, `${JSON.stringify({ ...launcherSummary, outputPath: launcherMirror.outPath }, null, 2)}\n`);
-  }
+    }, null, 2)}\n` : null;
+  const mirroredLauncherSummary = launcherMirror
+    ? `${JSON.stringify({ ...launcherSummary, outputPath: launcherMirror.outPath }, null, 2)}\n`
+    : null;
+  const publication = await publishManageEngineGeneration({
+    root: dirname(outPath),
+    artifacts: [
+      { fixedPath: outPath, generationPath: join("main", basename(outPath)), content: profile },
+      { fixedPath: summaryPath, generationPath: join("main", basename(summaryPath)), content: `${JSON.stringify(summary, null, 2)}\n` },
+      { fixedPath: launcherOutPath, generationPath: join("main", basename(launcherOutPath)), content: launcherProfile },
+      { fixedPath: launcherSummaryPath, generationPath: join("main", basename(launcherSummaryPath)), content: `${JSON.stringify(launcherSummary, null, 2)}\n` },
+      ...(mirror && launcherMirror && mirroredSummary && mirroredLauncherSummary ? [
+        { fixedPath: mirror.outPath, generationPath: join("handoff", basename(mirror.outPath)), content: profile },
+        { fixedPath: mirror.summaryPath, generationPath: join("handoff", basename(mirror.summaryPath)), content: mirroredSummary },
+        { fixedPath: launcherMirror.outPath, generationPath: join("handoff", basename(launcherMirror.outPath)), content: launcherProfile },
+        { fixedPath: launcherMirror.summaryPath, generationPath: join("handoff", basename(launcherMirror.summaryPath)), content: mirroredLauncherSummary }
+      ] : [])
+    ],
+    boundary: options.afterPublicationBoundary
+  });
 
   return {
     mode: enrollmentWindow ? "enrollment-window" : "managed-policy",
@@ -194,7 +225,9 @@ async function exportManageEngineIosProfileUnlocked(
     mirroredLauncherSummaryPath: launcherMirror?.summaryPath || null,
     stateSaved,
     summary,
-    summaryPath
+    summaryPath,
+    generationPath: publication.generationPath,
+    generationManifestPath: publication.manifestPath
   };
 }
 
@@ -414,16 +447,532 @@ function defaultPolicyHandoffMirrorPaths(outPath: string, summaryPath: string): 
   };
 }
 
-async function writeFileAtomically(path: string, content: string): Promise<void> {
-  const temporaryPath = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+interface GenerationArtifact {
+  fixedPath: string;
+  generationPath: string;
+  content: string;
+}
+
+async function publishManageEngineGeneration({
+  root,
+  artifacts,
+  boundary
+}: {
+  root: string;
+  artifacts: GenerationArtifact[];
+  boundary?: (name: string) => void | Promise<void>;
+}): Promise<{ generationPath: string; manifestPath: string }> {
+  await ensurePrivateDirectory(root);
+  return await withManageEngineRootLock(root, async (assertOwned) => await publishManageEngineGenerationLocked({ root, artifacts, boundary, assertOwned }));
+}
+
+async function publishManageEngineGenerationLocked({
+  root,
+  artifacts,
+  boundary,
+  assertOwned
+}: {
+  root: string;
+  artifacts: GenerationArtifact[];
+  boundary?: (name: string) => void | Promise<void>;
+  assertOwned: () => Promise<void>;
+}): Promise<{ generationPath: string; manifestPath: string }> {
+  await assertOwned();
+  const generationsRoot = join(root, ".generations");
+  await ensurePrivateDirectory(generationsRoot);
+  await assertOwned();
+  await sweepManageEngineGenerations(root);
+  const generation = `${Date.now()}-${process.pid}-${randomUUID()}`;
+  const generationRoot = join(generationsRoot, generation);
+  await ensurePrivateDirectory(generationRoot);
   try {
-    await writeFile(temporaryPath, content, { flag: "wx", mode: PRIVATE_FILE_MODE });
-    await chmod(temporaryPath, PRIVATE_FILE_MODE);
-    await rename(temporaryPath, path);
-    await chmod(path, PRIVATE_FILE_MODE);
-  } finally {
-    await rm(temporaryPath, { force: true }).catch(() => {});
+    for (const artifact of artifacts) {
+      const path = join(generationRoot, artifact.generationPath);
+      await ensurePrivateDirectory(dirname(path));
+      await writeSyncedFile(path, artifact.content);
+    }
+    const manifest: ManageEngineGenerationManifest = {
+      version: 1,
+      generation,
+      generatedAt: new Date().toISOString(),
+      artifacts: artifacts.map((artifact) => ({
+        path: artifact.generationPath,
+        sha256: createHash("sha256").update(artifact.content).digest("hex"),
+        bytes: Buffer.byteLength(artifact.content)
+      }))
+    };
+    const manifestPath = join(generationRoot, "manifest.json");
+    await writeSyncedFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await syncTreeDirectories(generationRoot, artifacts);
+    await boundary?.("generation-fsynced");
+    await assertOwned();
+
+    const currentPath = join(root, "current");
+    const temporaryCurrent = join(root, `.current.${process.pid}.${randomUUID()}.tmp`);
+    await symlink(join(".generations", generation), temporaryCurrent);
+    await rename(temporaryCurrent, currentPath);
+    await syncDirectory(root);
+    await boundary?.("current-published");
+    await assertOwned();
+
+    // Fixed paths are single-artifact compatibility links. Readers that need
+    // several files must pin once with pinManageEngineCurrentGeneration.
+    for (const artifact of artifacts) {
+      const relativeTarget = relative(dirname(artifact.fixedPath), join(root, "current", artifact.generationPath));
+      await replaceWithSymlink(artifact.fixedPath, relativeTarget);
+      await assertOwned();
+    }
+    await boundary?.("compatibility-published");
+    await assertOwned();
+    await sweepManageEngineGenerations(root);
+    return { generationPath: generationRoot, manifestPath };
+  } catch (error) {
+    const current = await realpath(join(root, "current")).catch(() => "");
+    const publishedGeneration = await realpath(generationRoot).catch(() => "");
+    if (!publishedGeneration || current !== publishedGeneration) await rm(generationRoot, { recursive: true, force: true }).catch(() => {});
+    throw error;
   }
+}
+
+export async function resolveManageEngineCurrentGeneration(outputDirectory: string): Promise<string> {
+  const root = resolve(outputDirectory);
+  const generation = await realpath(join(root, "current"));
+  const generationsRoot = `${await realpath(join(root, ".generations"))}${sep}`;
+  if (!`${generation}${sep}`.startsWith(generationsRoot)) throw new Error("ManageEngine current generation escapes its publication root.");
+  return generation;
+}
+
+export async function pinManageEngineCurrentGeneration(outputDirectory: string): Promise<PinnedManageEngineGeneration> {
+  const root = resolve(outputDirectory);
+  await ensurePrivateDirectory(root);
+  return await withManageEngineRootLock(root, async () => {
+    const generationPath = await resolveManageEngineCurrentGeneration(root);
+    const generation = basename(generationPath);
+    const pinsRoot = join(root, ".pins");
+    await ensurePrivateDirectory(pinsRoot);
+    const pinPath = join(pinsRoot, `${generation}.${process.pid}.${randomUUID()}.pin`);
+    const identity = await currentProcessIdentity(process.pid);
+    const lease = pinLeaseRecord(generation, identity);
+    await writeSyncedFile(pinPath, `${JSON.stringify(lease)}\n`);
+    try {
+      const manifestPath = join(generationPath, "manifest.json");
+      const manifestInfo = await lstat(manifestPath);
+      if (!manifestInfo.isFile() || manifestInfo.isSymbolicLink()) throw new Error("ManageEngine generation manifest must be a regular non-symlink file.");
+      const manifest = parseGenerationManifest(await readBoundedTextFile(manifestPath, MANAGEENGINE_MAX_MANIFEST_BYTES), generation);
+      const paths: PinnedManageEngineGeneration["paths"] = {};
+      const generationRealPath = await realpath(generationPath);
+      for (const artifact of manifest.artifacts) {
+        const path = resolve(generationPath, artifact.path);
+        const artifactInfo = await lstat(path);
+        if (!artifactInfo.isFile() || artifactInfo.isSymbolicLink()) {
+          throw new Error(`ManageEngine artifact must be a regular non-symlink file: ${artifact.path}`);
+        }
+        const artifactRealPath = await realpath(path);
+        if (!pathWithin(generationRealPath, artifactRealPath)) {
+          throw new Error(`ManageEngine manifest path escapes its generation: ${artifact.path}`);
+        }
+        await verifyGenerationArtifact(path, artifact);
+        paths[artifact.path] = { path, sha256: artifact.sha256, bytes: artifact.bytes };
+      }
+      const leaseHandle = startPinLease(pinPath, generation, identity, lease.token);
+      return { generationPath, manifestPath, manifest, paths, ...leaseHandle };
+    } catch (error) {
+      await rm(pinPath, { force: true }).catch(() => {});
+      throw error;
+    }
+  });
+}
+
+function parseGenerationManifest(source: string, expectedGeneration: string): ManageEngineGenerationManifest {
+  const value = JSON.parse(source) as Partial<ManageEngineGenerationManifest>;
+  if (value.version !== 1 || value.generation !== expectedGeneration || !Array.isArray(value.artifacts) || value.artifacts.length > 64) {
+    throw new Error("Invalid ManageEngine generation manifest.");
+  }
+  const normalizedPaths = new Set<string>();
+  for (const artifact of value.artifacts) {
+    if (!artifact || typeof artifact.path !== "string" || !/^[a-f0-9]{64}$/u.test(String(artifact.sha256)) || !Number.isSafeInteger(artifact.bytes) || artifact.bytes < 0) {
+      throw new Error("Invalid ManageEngine generation manifest artifact.");
+    }
+    const normalized = normalize(artifact.path);
+    if (!artifact.path || artifact.path.includes("\0") || isAbsolute(artifact.path) || normalized === "." || normalized === ".."
+      || normalized.startsWith(`..${sep}`) || normalized !== artifact.path) {
+      throw new Error(`Invalid ManageEngine generation manifest path: ${artifact.path}`);
+    }
+    if (normalizedPaths.has(normalized)) throw new Error(`Duplicate ManageEngine generation manifest path: ${artifact.path}`);
+    normalizedPaths.add(normalized);
+    if (artifact.bytes > MANAGEENGINE_MAX_ARTIFACT_BYTES) throw new Error(`ManageEngine artifact exceeds the size limit: ${artifact.path}`);
+  }
+  return value as ManageEngineGenerationManifest;
+}
+
+const MANAGEENGINE_GENERATIONS_TO_RETAIN = 3;
+
+async function sweepManageEngineGenerations(root: string): Promise<void> {
+  const generationsRoot = join(root, ".generations");
+  const current = await realpath(join(root, "current")).catch(() => "");
+  const pinned = await activePinnedGenerations(root);
+  const entries = await readdir(generationsRoot, { withFileTypes: true });
+  const generations = await Promise.all(entries
+    .filter((entry) => entry.isDirectory())
+    .map(async (entry) => ({ name: entry.name, path: join(generationsRoot, entry.name), modifiedAt: (await stat(join(generationsRoot, entry.name))).mtimeMs })));
+  generations.sort((left, right) => right.modifiedAt - left.modifiedAt || right.name.localeCompare(left.name));
+  const retainedHistory = new Set(generations.slice(0, MANAGEENGINE_GENERATIONS_TO_RETAIN).map((entry) => entry.name));
+  for (const entry of generations) {
+    if (entry.path === current || pinned.has(entry.name) || retainedHistory.has(entry.name)) continue;
+    await rm(entry.path, { recursive: true, force: true });
+  }
+}
+
+async function activePinnedGenerations(root: string): Promise<Set<string>> {
+  const pinsRoot = join(root, ".pins");
+  const entries = await readdir(pinsRoot, { withFileTypes: true }).catch(() => []);
+  const pinned = new Set<string>();
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".pin")) continue;
+    const pinPath = join(pinsRoot, entry.name);
+    try {
+      const pin = JSON.parse(await readBoundedTextFile(pinPath, 16 * 1024)) as Partial<LeaseRecord> & { generation?: unknown };
+      const pid = Number(pin.pid);
+      const generation = typeof pin.generation === "string" ? pin.generation : "";
+      if (!generation || basename(generation) !== generation || !Number.isSafeInteger(pid) || pid <= 0
+        || !validLeaseIdentity(pin) || !await leaseOwnerMatches(pin)) {
+        await rm(pinPath, { force: true });
+        continue;
+      }
+      pinned.add(generation);
+    } catch {
+      await rm(pinPath, { force: true });
+    }
+  }
+  return pinned;
+}
+
+interface ProcessIdentity {
+  pid: number;
+  bootId: string;
+  processStart: string;
+}
+
+interface LeaseRecord extends ProcessIdentity {
+  token: string;
+  acquiredAt: string;
+  expiresAt: string;
+}
+
+interface PinLeaseRecord extends LeaseRecord {
+  generation: string;
+}
+
+async function withManageEngineRootLock<T>(root: string, operation: (assertOwned: () => Promise<void>) => Promise<T>): Promise<T> {
+  const lockPath = join(root, ".publication.lock");
+  const token = randomUUID();
+  const identity = await currentProcessIdentity(process.pid);
+  const deadline = Date.now() + MANAGEENGINE_LOCK_ACQUIRE_TIMEOUT_MS;
+  while (true) {
+    try {
+      await mkdir(lockPath, { mode: PRIVATE_DIRECTORY_MODE });
+      await writeSyncedFile(join(lockPath, "owner.json"), `${JSON.stringify(leaseRecord(identity, token, MANAGEENGINE_LOCK_LEASE_MS))}\n`);
+      break;
+    } catch (error) {
+      if (!isNodeErrorCode(error, "EEXIST")) {
+        await rm(lockPath, { recursive: true, force: true }).catch(() => {});
+        throw error;
+      }
+      await recoverStaleRootLock(lockPath);
+      if (Date.now() >= deadline) throw new Error(`Timed out acquiring the ManageEngine publication lock at ${lockPath}.`);
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 25));
+    }
+  }
+
+  let released = false;
+  let renewals = Promise.resolve();
+  let renewalError: Error | null = null;
+  const queueRenewal = () => {
+    const renewal = renewals.then(async () => {
+      if (renewalError) throw renewalError;
+      if (released) return;
+      const owner = await readLease(join(lockPath, "owner.json"));
+      if (owner?.token !== token) throw new Error("ManageEngine publication lock ownership changed while held.");
+      await replacePrivateFile(join(lockPath, "owner.json"), `${JSON.stringify(leaseRecord(identity, token, MANAGEENGINE_LOCK_LEASE_MS))}\n`);
+    });
+    renewals = renewal.catch((error) => {
+      renewalError ||= error instanceof Error ? error : new Error(String(error));
+    });
+    return renewals;
+  };
+  const assertOwned = async () => {
+    await queueRenewal();
+    if (renewalError) throw renewalError;
+    const owner = await readLease(join(lockPath, "owner.json"));
+    if (!owner || !validLeaseIdentity(owner) || owner.token !== token || !await leaseOwnerMatches(owner)) {
+      throw new Error("ManageEngine publication lock ownership changed while held.");
+    }
+  };
+  const timer = setInterval(() => {
+    void queueRenewal();
+  }, Math.floor(MANAGEENGINE_LOCK_LEASE_MS / 3));
+  timer.unref();
+  try {
+    const result = await operation(assertOwned);
+    await assertOwned();
+    return result;
+  } finally {
+    released = true;
+    clearInterval(timer);
+    await renewals;
+    const owner = await readLease(join(lockPath, "owner.json"));
+    if (owner?.token === token) {
+      await rm(lockPath, { recursive: true, force: true });
+      await syncDirectory(root);
+    }
+  }
+}
+
+async function recoverStaleRootLock(lockPath: string): Promise<void> {
+  const owner = await readLease(join(lockPath, "owner.json"));
+  let stale = false;
+  if (owner && validLeaseIdentity(owner)) {
+    stale = !await leaseOwnerMatches(owner);
+  } else {
+    const lockInfo = await stat(lockPath).catch(() => null);
+    stale = Boolean(lockInfo && Date.now() - lockInfo.mtimeMs > MANAGEENGINE_LOCK_LEASE_MS * 2);
+  }
+  if (!stale) return;
+  const current = await readLease(join(lockPath, "owner.json"));
+  if ((owner?.token || "") !== (current?.token || "")) return;
+  const stalePath = `${lockPath}.stale.${process.pid}.${randomUUID()}`;
+  try {
+    await rename(lockPath, stalePath);
+  } catch (error) {
+    if (isNodeErrorCode(error, "ENOENT")) return;
+    throw error;
+  }
+  await rm(stalePath, { recursive: true, force: true });
+}
+
+function leaseRecord(identity: ProcessIdentity, token: string, durationMs: number): LeaseRecord {
+  const now = Date.now();
+  return {
+    ...identity,
+    token,
+    acquiredAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + durationMs).toISOString()
+  };
+}
+
+function pinLeaseRecord(generation: string, identity: ProcessIdentity): PinLeaseRecord {
+  return { generation, ...leaseRecord(identity, randomUUID(), MANAGEENGINE_PIN_LEASE_MS) };
+}
+
+function startPinLease(
+  pinPath: string,
+  generation: string,
+  identity: ProcessIdentity,
+  token: string
+): Pick<PinnedManageEngineGeneration, "assertValid" | "release"> {
+  let released = false;
+  let renewals = Promise.resolve();
+  let renewalError: Error | null = null;
+  const renew = async () => {
+    if (renewalError) throw renewalError;
+    if (released) return;
+    const current = await readLease(pinPath);
+    if (!current || !validLeaseIdentity(current) || current.token !== token || current.pid !== identity.pid || current.bootId !== identity.bootId || current.processStart !== identity.processStart) {
+      throw new Error("ManageEngine generation pin ownership changed while held.");
+    }
+    const renewed: PinLeaseRecord = {
+      generation,
+      ...leaseRecord(identity, current.token, MANAGEENGINE_PIN_LEASE_MS)
+    };
+    await replacePrivateFile(pinPath, `${JSON.stringify(renewed)}\n`);
+  };
+  const queueRenewal = () => {
+    const renewal = renewals.then(renew);
+    renewals = renewal.catch((error) => {
+      renewalError ||= error instanceof Error ? error : new Error(String(error));
+    });
+    return renewals;
+  };
+  const timer = setInterval(() => {
+    void queueRenewal();
+  }, Math.floor(MANAGEENGINE_PIN_LEASE_MS / 3));
+  timer.unref();
+  return {
+    async assertValid() {
+      if (released) throw new Error("ManageEngine generation pin has been released.");
+      await queueRenewal();
+      if (renewalError) throw renewalError;
+    },
+    async release() {
+      if (released) {
+        if (renewalError) throw renewalError;
+        return;
+      }
+      released = true;
+      clearInterval(timer);
+      await renewals;
+      const current = await readLease(pinPath);
+      if (current?.token === token) await rm(pinPath, { force: true });
+      if (renewalError) throw renewalError;
+    }
+  };
+}
+
+function validLeaseIdentity(value: Partial<LeaseRecord>): value is LeaseRecord {
+  return Number.isSafeInteger(value.pid) && Number(value.pid) > 0
+    && typeof value.bootId === "string" && value.bootId.length > 0
+    && typeof value.processStart === "string" && value.processStart.length > 0
+    && typeof value.token === "string" && value.token.length > 0
+    && typeof value.acquiredAt === "string" && Number.isFinite(Date.parse(value.acquiredAt))
+    && typeof value.expiresAt === "string" && Number.isFinite(Date.parse(value.expiresAt));
+}
+
+async function leaseOwnerMatches(value: LeaseRecord): Promise<boolean> {
+  try {
+    const current = await currentProcessIdentity(value.pid);
+    return current.bootId === value.bootId && current.processStart === value.processStart;
+  } catch {
+    return false;
+  }
+}
+
+let bootIdentityPromise: Promise<string> | null = null;
+
+async function currentProcessIdentity(pid: number): Promise<ProcessIdentity> {
+  return {
+    pid,
+    bootId: await bootIdentity(),
+    processStart: await processStartIdentity(pid)
+  };
+}
+
+async function bootIdentity(): Promise<string> {
+  bootIdentityPromise ||= (async () => {
+    try {
+      return (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
+    } catch {
+      const command = process.platform === "darwin" ? "/usr/sbin/sysctl" : "sysctl";
+      const { stdout } = await execFileAsync(command, ["-n", "kern.boottime"]);
+      const value = stdout.trim();
+      if (!value) throw new Error("Operating-system boot identity is unavailable.");
+      return value;
+    }
+  })();
+  return await bootIdentityPromise;
+}
+
+async function processStartIdentity(pid: number): Promise<string> {
+  try {
+    const source = await readFile(`/proc/${pid}/stat`, "utf8");
+    const closing = source.lastIndexOf(")");
+    const fields = closing >= 0 ? source.slice(closing + 2).trim().split(/\s+/u) : [];
+    const startTicks = fields[19];
+    if (!startTicks) throw new Error("Linux process start identity is unavailable.");
+    return startTicks;
+  } catch (error) {
+    if (process.platform === "linux") throw error;
+    const { stdout } = await execFileAsync("/bin/ps", ["-o", "lstart=", "-p", String(pid)]);
+    const value = stdout.trim();
+    if (!value) throw new Error(`Process ${pid} is not running.`);
+    return value;
+  }
+}
+
+async function readLease(path: string): Promise<Partial<LeaseRecord> | null> {
+  try {
+    return JSON.parse(await readBoundedTextFile(path, 16 * 1024)) as Partial<LeaseRecord>;
+  } catch {
+    return null;
+  }
+}
+
+async function verifyGenerationArtifact(path: string, artifact: { path: string; sha256: string; bytes: number }): Promise<void> {
+  const handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
+  try {
+    const before = await handle.stat();
+    if (!before.isFile() || before.size !== artifact.bytes || before.size > MANAGEENGINE_MAX_ARTIFACT_BYTES) {
+      throw new Error(`ManageEngine artifact byte count mismatch: ${artifact.path}`);
+    }
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(64 * 1024);
+    let bytes = 0;
+    while (true) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (!bytesRead) break;
+      bytes += bytesRead;
+      if (bytes > artifact.bytes || bytes > MANAGEENGINE_MAX_ARTIFACT_BYTES) throw new Error(`ManageEngine artifact exceeds its declared size: ${artifact.path}`);
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+    const after = await handle.stat();
+    if (bytes !== artifact.bytes || after.size !== artifact.bytes) throw new Error(`ManageEngine artifact byte count mismatch: ${artifact.path}`);
+    if (hash.digest("hex") !== artifact.sha256) throw new Error(`ManageEngine artifact SHA-256 mismatch: ${artifact.path}`);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function readBoundedTextFile(path: string, maximumBytes: number): Promise<string> {
+  const handle = await open(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0));
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > maximumBytes) throw new Error(`File exceeds the ${maximumBytes}-byte read limit: ${path}`);
+    const buffer = Buffer.allocUnsafe(info.size + 1);
+    let bytes = 0;
+    while (bytes < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, bytes, buffer.length - bytes, bytes);
+      if (!bytesRead) break;
+      bytes += bytesRead;
+      if (bytes > maximumBytes) throw new Error(`File exceeds the ${maximumBytes}-byte read limit: ${path}`);
+    }
+    return buffer.subarray(0, bytes).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+function pathWithin(root: string, candidate: string): boolean {
+  return candidate === root || candidate.startsWith(`${root}${sep}`);
+}
+
+async function replacePrivateFile(path: string, content: string): Promise<void> {
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await writeSyncedFile(temporary, content);
+    await rename(temporary, path);
+    await syncDirectory(dirname(path));
+  } finally {
+    await rm(temporary, { force: true }).catch(() => {});
+  }
+}
+
+async function writeSyncedFile(path: string, content: string): Promise<void> {
+  await writeFile(path, content, { flag: "wx", mode: PRIVATE_FILE_MODE });
+  await chmod(path, PRIVATE_FILE_MODE);
+  const handle = await open(path, "r");
+  try { await handle.sync(); } finally { await handle.close(); }
+}
+
+async function syncTreeDirectories(root: string, artifacts: GenerationArtifact[]): Promise<void> {
+  for (const directory of new Set(artifacts.map((artifact) => dirname(join(root, artifact.generationPath))))) await syncDirectory(directory);
+  await syncDirectory(root);
+  await syncDirectory(dirname(root));
+}
+
+async function replaceWithSymlink(path: string, target: string): Promise<void> {
+  await ensurePrivateDirectory(dirname(path));
+  const temporary = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.link`);
+  try {
+    await symlink(target, temporary);
+    await rename(temporary, path);
+    await syncDirectory(dirname(path));
+  } finally {
+    await rm(temporary, { force: true }).catch(() => {});
+  }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  const handle = await open(path, "r");
+  try { await handle.sync(); } finally { await handle.close(); }
 }
 
 async function ensurePrivateDirectory(path: string): Promise<void> {

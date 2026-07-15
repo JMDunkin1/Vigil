@@ -409,7 +409,8 @@ function embeddedSupervisorScriptPath(expectation: EmbeddedSupervisorExpectation
 
 function embeddedSupervisorConfiguration(plist: string): { root: Record<string, unknown> | null; markerPath: string } {
   const document = /<plist(?:\s|>)/u.test(plist) ? plist : `<plist><dict>${plist}</dict></plist>`;
-  const root = recordValue(parsePlist(document));
+  const parsedRoot = recordValue(parsePlist(document));
+  const root = parsedRoot ? JSON.parse(JSON.stringify(parsedRoot)) as Record<string, unknown> : null;
   const keepAlive = recordValue(root?.KeepAlive);
   const pathState = recordValue(keepAlive?.PathState);
   const markerPath = Object.entries(pathState || {}).find(([, enabled]) => enabled === true)?.[0] || "";

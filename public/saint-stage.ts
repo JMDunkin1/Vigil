@@ -153,8 +153,9 @@ export function createSaintStage() {
         const bounds = homeStage.getBoundingClientRect();
         const x = ((event.clientX - bounds.left) / Math.max(1, bounds.width) - 0.5) * 2;
         const y = ((event.clientY - bounds.top) / Math.max(1, bounds.height) - 0.5) * 2;
-        stage.style.setProperty("--saint-look-x", x.toFixed(3));
-        stage.style.setProperty("--saint-look-y", y.toFixed(3));
+        const horizontal = x < -0.25 ? "left" : x > 0.25 ? "right" : "center";
+        const vertical = y < -0.25 ? "up" : y > 0.25 ? "down" : "center";
+        stage.dataset.look = `${horizontal}-${vertical}`;
       });
     });
     homeStage.addEventListener("pointerleave", resetPointer);
@@ -215,8 +216,7 @@ export function createSaintStage() {
       pointerFrame = null;
     }
     homeStage.classList.remove("is-pointer-active");
-    stage.style.setProperty("--saint-look-x", "0");
-    stage.style.setProperty("--saint-look-y", "0");
+    stage.dataset.look = "center-center";
   }
 
   return { bind, select };

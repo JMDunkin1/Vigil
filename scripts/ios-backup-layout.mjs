@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -408,11 +408,42 @@ function mobileSyncBackupRoot(homeDir) {
 }
 
 async function readPlistValue(path, key) {
-  const { stdout } = await execFileAsync("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", path], {
-    timeout: 5000,
-    maxBuffer: 1024 * 16
-  });
-  return stdout.trim();
+  if (process.platform === "darwin") {
+    const { stdout } = await execFileAsync("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", path], {
+      timeout: 5000,
+      maxBuffer: 1024 * 16
+    });
+    return stdout.trim();
+  }
+
+  // CI and fixture validation also run on hosts without Apple's plutil. Only
+  // accept a bounded XML plist there; binary or malformed production backups
+  // remain unreadable and therefore fail the mutation gate closed.
+  const text = await readFile(path, "utf8");
+  if (text.length > 1024 * 1024 || !/<plist(?:\s|>)/u.test(text)) {
+    throw new Error(`A portable XML plist value could not be read from ${path}`);
+  }
+  const encodedKey = escapeRegExp(escapeXml(key));
+  const match = text.match(new RegExp(`<key>\\s*${encodedKey}\\s*</key>\\s*<(string|date|integer|real)>([\\s\\S]*?)</\\1>`, "u"));
+  if (!match) throw new Error(`Plist key is missing: ${key}`);
+  return decodeXml(match[2]).trim();
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function escapeXml(value) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+function decodeXml(value) {
+  return value
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&quot;", "\"")
+    .replaceAll("&apos;", "'")
+    .replaceAll("&amp;", "&");
 }
 
 async function readBackupDeviceIds(infoPath) {

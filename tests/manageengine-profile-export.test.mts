@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultState } from "../src/defaults.js";
 import { parsePlist } from "../src/plist.js";
-import { detectManageEngineDeploymentState, exportManageEngineIosProfile } from "../src/manageEngineExport.js";
+import { detectManageEngineDeploymentState, exportManageEngineIosProfile, pinManageEngineCurrentGeneration, resolveManageEngineCurrentGeneration } from "../src/manageEngineExport.js";
 import { IOS_SOCIAL_COMPANION_BUNDLE_IDS } from "../src/socialFeatureFilters.js";
 import type { VigilState } from "../src/types.js";
 import { recordValue } from "./test-helpers.mjs";
@@ -257,6 +257,61 @@ try {
 }
 
 {
+  const splitRoot = await mkdtemp(join(tmpdir(), "vigil-manageengine-split-paths-"));
+  try {
+    const paths = {
+      outPath: join(splitRoot, "profile", "policy.mobileconfig"),
+      summaryPath: join(splitRoot, "summary", "policy.summary.json"),
+      launcherOutPath: join(splitRoot, "launcher", "social.mobileconfig"),
+      launcherSummaryPath: join(splitRoot, "launcher-summary", "social.summary.json")
+    };
+    const splitState = defaultState();
+    const splitResult = await exportManageEngineIosProfile(splitState, {
+      currentState: true,
+      ...paths,
+      saveState: async () => {}
+    });
+    assert.ok((await readFile(splitResult.outPath, "utf8")).length > 0);
+    assert.equal(recordValue(JSON.parse(await readFile(splitResult.summaryPath, "utf8")), "split summary").outputPath, paths.outPath);
+    assert.ok((await readFile(splitResult.launcherOutPath, "utf8")).length > 0);
+    assert.equal(recordValue(JSON.parse(await readFile(splitResult.launcherSummaryPath, "utf8")), "split launcher summary").outputPath, paths.launcherOutPath);
+  } finally {
+    await rm(splitRoot, { recursive: true, force: true });
+  }
+}
+
+{
+  const canonicalRoot = await mkdtemp(join(tmpdir(), "vigil-manageengine-canonical-root-"));
+  const aliasedRoot = `${canonicalRoot}-alias`;
+  try {
+    await symlink(canonicalRoot, aliasedRoot, process.platform === "win32" ? "junction" : "dir");
+    const outPath = join(aliasedRoot, "policy.mobileconfig");
+    const summaryPath = join(aliasedRoot, "policy.summary.json");
+    await exportManageEngineIosProfile(defaultState(), {
+      currentState: true,
+      outPath,
+      summaryPath,
+      saveState: async () => {}
+    });
+    const firstGeneration = await resolveManageEngineCurrentGeneration(aliasedRoot);
+    assert.equal(dirname(firstGeneration), await realpath(join(aliasedRoot, ".generations")), "a canonical generation must remain valid when its publication root is reached through a path alias");
+    await assert.rejects(exportManageEngineIosProfile(defaultState(), {
+      currentState: true,
+      outPath,
+      summaryPath,
+      saveState: async () => {},
+      afterPublicationBoundary(boundary) {
+        if (boundary === "current-published") throw new Error("crash after aliased current publication");
+      }
+    }), /crash after aliased current publication/u);
+    assert.notEqual(await resolveManageEngineCurrentGeneration(aliasedRoot), firstGeneration, "crash cleanup must retain a generation published through a path alias");
+  } finally {
+    await rm(aliasedRoot, { force: true });
+    await rm(canonicalRoot, { recursive: true, force: true });
+  }
+}
+
+{
   const overlapDir = await mkdtemp(join(tmpdir(), "vigil-manageengine-overlap-"));
   try {
     const outPath = join(overlapDir, "vigil-manageengine-policy.mobileconfig");
@@ -285,8 +340,12 @@ try {
       exportManageEngineIosProfile(secondState, { currentState: true, outPath, summaryPath })
     ]);
 
-    const profileText = await readFile(outPath, "utf8");
-    const summary = recordValue(JSON.parse(await readFile(summaryPath, "utf8")), "overlap summary");
+    const initialPin = await pinManageEngineCurrentGeneration(overlapDir);
+    const pinnedMainProfile = initialPin.paths[join("main", basename(outPath))];
+    const pinnedMainSummary = initialPin.paths[join("main", basename(summaryPath))];
+    assert.ok(pinnedMainProfile && pinnedMainSummary);
+    const profileText = await readFile(pinnedMainProfile.path, "utf8");
+    const summary = recordValue(JSON.parse(await readFile(pinnedMainSummary.path, "utf8")), "overlap summary");
     assert.equal(summary.artifactHash, createHash("sha256").update(profileText).digest("hex"));
     assert.equal(summary.enforcementActive, false, "the second queued Level 1 export should win as a complete artifact set");
     const profile = recordValue(parsePlist(profileText), "overlap profile");
@@ -301,8 +360,123 @@ try {
     assert.equal(baselineFilter.PayloadType, "com.apple.webcontent-filter");
     assert.ok(Array.isArray(baselineFilter.DenyListURLs));
     const launcherPath = join(overlapDir, "vigil-social-launchers.mobileconfig");
-    const launcherText = await readFile(launcherPath, "utf8");
+    const pinnedLauncher = initialPin.paths[join("main", basename(launcherPath))];
+    assert.ok(pinnedLauncher);
+    const launcherText = await readFile(pinnedLauncher.path, "utf8");
     assert.equal(recordValue(summary.launcherProfile, "overlap launcher summary").artifactHash, createHash("sha256").update(launcherText).digest("hex"));
+    assert.equal(pinnedMainProfile.sha256, createHash("sha256").update(profileText).digest("hex"));
+    await initialPin.release();
+
+    const firstGeneration = await resolveManageEngineCurrentGeneration(overlapDir);
+    await assert.rejects(exportManageEngineIosProfile(firstState, {
+      currentState: true,
+      outPath,
+      summaryPath,
+      afterPublicationBoundary(boundary) {
+        if (boundary === "generation-fsynced") throw new Error("crash before current publication");
+      }
+    }), /crash before current publication/u);
+    assert.equal(await resolveManageEngineCurrentGeneration(overlapDir), firstGeneration, "a pre-publication crash must leave current unchanged");
+
+    await assert.rejects(exportManageEngineIosProfile(firstState, {
+      currentState: true,
+      outPath,
+      summaryPath,
+      afterPublicationBoundary(boundary) {
+        if (boundary === "current-published") throw new Error("crash after current publication");
+      }
+    }), /crash after current publication/u);
+    const publishedGeneration = await resolveManageEngineCurrentGeneration(overlapDir);
+    assert.notEqual(publishedGeneration, firstGeneration, "the atomic current switch is the publication commit point");
+    const pinnedProfile = await readFile(join(publishedGeneration, "main", basename(outPath)), "utf8");
+    const pinnedSummary = recordValue(JSON.parse(await readFile(join(publishedGeneration, "main", basename(summaryPath)), "utf8")), "pinned summary");
+    assert.equal(pinnedSummary.artifactHash, createHash("sha256").update(pinnedProfile).digest("hex"), "a pinned generation must never mix artifacts");
+
+    const corruptManifestPath = join(publishedGeneration, "manifest.json");
+    const corruptManifest = JSON.parse(await readFile(corruptManifestPath, "utf8")) as {
+      artifacts: Array<{ path: string; sha256: string; bytes: number }>;
+    };
+    const corruptArtifactPath = join(publishedGeneration, corruptManifest.artifacts[0]?.path || "missing");
+    const corruptArtifact = await readFile(corruptArtifactPath);
+    corruptArtifact[0] = (corruptArtifact[0] || 0) ^ 0xff;
+    await writeFile(corruptArtifactPath, corruptArtifact);
+    await assert.rejects(pinManageEngineCurrentGeneration(overlapDir), /SHA-256 mismatch/u, "pinning must hash the artifact bytes");
+
+    await exportManageEngineIosProfile(secondState, { currentState: true, outPath, summaryPath });
+    const symlinkGeneration = await resolveManageEngineCurrentGeneration(overlapDir);
+    const symlinkManifest = JSON.parse(await readFile(join(symlinkGeneration, "manifest.json"), "utf8")) as {
+      artifacts: Array<{ path: string; sha256: string; bytes: number }>;
+    };
+    const symlinkArtifact = join(symlinkGeneration, symlinkManifest.artifacts[0]?.path || "missing");
+    await rm(symlinkArtifact);
+    await symlink(join(symlinkGeneration, symlinkManifest.artifacts[1]?.path || "manifest.json"), symlinkArtifact);
+    await assert.rejects(pinManageEngineCurrentGeneration(overlapDir), /regular non-symlink/u, "pinning must reject symlink artifacts");
+
+    for (const invalid of [
+      { name: "duplicate", mutate: (manifest: typeof symlinkManifest) => manifest.artifacts.push({ ...manifest.artifacts[0]! }), pattern: /Duplicate/u },
+      { name: "traversal", mutate: (manifest: typeof symlinkManifest) => { manifest.artifacts[0]!.path = "../outside"; }, pattern: /manifest path/u },
+      { name: "oversize", mutate: (manifest: typeof symlinkManifest) => { manifest.artifacts[0]!.bytes = 17 * 1024 * 1024; }, pattern: /size limit/u }
+    ]) {
+      await exportManageEngineIosProfile(secondState, { currentState: true, outPath, summaryPath });
+      const invalidGeneration = await resolveManageEngineCurrentGeneration(overlapDir);
+      const invalidManifestPath = join(invalidGeneration, "manifest.json");
+      const invalidManifest = JSON.parse(await readFile(invalidManifestPath, "utf8")) as typeof symlinkManifest;
+      invalid.mutate(invalidManifest);
+      await writeFile(invalidManifestPath, `${JSON.stringify(invalidManifest)}\n`);
+      await assert.rejects(pinManageEngineCurrentGeneration(overlapDir), invalid.pattern, `${invalid.name} manifest entries must fail closed`);
+    }
+
+    await exportManageEngineIosProfile(secondState, { currentState: true, outPath, summaryPath });
+
+    const durablePin = await pinManageEngineCurrentGeneration(overlapDir);
+    for (let index = 0; index < 6; index += 1) {
+      await mkdir(join(overlapDir, ".generations", `unreachable-${index}`), { recursive: true });
+    }
+    for (let index = 0; index < 5; index += 1) {
+      await exportManageEngineIosProfile(index % 2 ? firstState : secondState, { currentState: true, outPath, summaryPath });
+    }
+    await stat(durablePin.generationPath);
+    const retainedWithPin = (await readdir(join(overlapDir, ".generations"), { withFileTypes: true })).filter((entry) => entry.isDirectory());
+    assert.ok(retainedWithPin.length <= 4, "orphan sweep must retain only bounded history plus an active pin");
+    await durablePin.release();
+    await exportManageEngineIosProfile(secondState, { currentState: true, outPath, summaryPath });
+    const retainedAfterRelease = (await readdir(join(overlapDir, ".generations"), { withFileTypes: true })).filter((entry) => entry.isDirectory());
+    assert.ok(retainedAfterRelease.length <= 3, "released pins must become eligible for bounded-history cleanup");
+
+    const failedRenewalPin = await pinManageEngineCurrentGeneration(overlapDir);
+    const failedRenewalPath = await pinFileForGeneration(overlapDir, basename(failedRenewalPin.generationPath));
+    const failedRenewalLease = JSON.parse(await readFile(failedRenewalPath, "utf8")) as { token: string };
+    failedRenewalLease.token = "deterministically-replaced-token";
+    await writeFile(failedRenewalPath, `${JSON.stringify(failedRenewalLease)}\n`);
+    await assert.rejects(failedRenewalPin.assertValid(), /ownership changed/u, "pin renewal failure must surface before callers continue using returned paths");
+    await assert.rejects(failedRenewalPin.release(), /ownership changed/u, "the first pin renewal failure must remain visible through release");
+    await rm(failedRenewalPath, { force: true });
+
+    const childPin = await startPinChild(overlapDir);
+    const childDataDirs = await Promise.all([
+      mkdtemp(join(tmpdir(), "vigil-manageengine-child-a-")),
+      mkdtemp(join(tmpdir(), "vigil-manageengine-child-b-"))
+    ]);
+    try {
+      const childPinPath = await pinFileForGeneration(overlapDir, basename(childPin.generationPath));
+      const expiredChildLease = JSON.parse(await readFile(childPinPath, "utf8")) as { expiresAt: string };
+      expiredChildLease.expiresAt = new Date(0).toISOString();
+      await writeFile(childPinPath, `${JSON.stringify(expiredChildLease)}\n`);
+      for (let index = 0; index < 5; index += 1) {
+        await exportManageEngineIosProfile(index % 2 ? firstState : secondState, { currentState: true, outPath, summaryPath });
+      }
+      await stat(childPin.generationPath);
+      const childResults = await Promise.all(childDataDirs.map((childDataDir) => runExporter([
+        "--out", outPath,
+        "--summary", summaryPath,
+        "--current-state"
+      ], childDataDir)));
+      for (const childResult of childResults) assert.equal(childResult.code, 0, childResult.stderr || childResult.stdout);
+      await stat(childPin.generationPath);
+    } finally {
+      await childPin.release();
+      await Promise.all(childDataDirs.map(async (path) => await rm(path, { recursive: true, force: true })));
+    }
   } finally {
     await rm(overlapDir, { recursive: true, force: true });
   }
@@ -332,8 +506,14 @@ function runExporter(args: string[], vigilDataDir: string): Promise<{ code: numb
     const finish = (code: number) => {
       if (settled) return;
       settled = true;
+      clearTimeout(timeout);
       resolve({ code, stdout, stderr });
     };
+    const timeout = setTimeout(() => {
+      stderr += "Exporter child timed out.";
+      child.kill("SIGKILL");
+      finish(1);
+    }, 15_000);
     child.once("error", (error) => {
       stderr += error.message;
       finish(1);
@@ -342,6 +522,84 @@ function runExporter(args: string[], vigilDataDir: string): Promise<{ code: numb
       finish(signal || code === null ? 1 : code);
     });
   });
+}
+
+async function startPinChild(outputDirectory: string): Promise<{ generationPath: string; release(): Promise<void> }> {
+  const moduleUrl = new URL("../src/manageEngineExport.js", import.meta.url).href;
+  const source = `
+    const { pinManageEngineCurrentGeneration } = await import(${JSON.stringify(moduleUrl)});
+    const pin = await pinManageEngineCurrentGeneration(${JSON.stringify(outputDirectory)});
+    process.stdout.write(JSON.stringify({ generationPath: pin.generationPath }) + "\\n");
+    const timeout = setTimeout(async () => { await pin.release(); process.exit(2); }, 30000);
+    process.stdin.once("data", async () => { clearTimeout(timeout); await pin.release(); process.exit(0); });
+    process.stdin.resume();
+  `;
+  const child = spawn(process.execPath, ["--input-type=module", "--eval", source], {
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const generationPath = await new Promise<string>((resolveReady, rejectReady) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      rejectReady(new Error(`Pin child timed out: ${stderr}`));
+    }, 5_000);
+    const inspect = () => {
+      const newline = stdout.indexOf("\n");
+      if (newline < 0) return;
+      clearTimeout(timeout);
+      try {
+        const ready = JSON.parse(stdout.slice(0, newline)) as { generationPath?: unknown };
+        if (typeof ready.generationPath !== "string") throw new Error("Pin child returned no generation path.");
+        resolveReady(ready.generationPath);
+      } catch (error) {
+        child.kill("SIGKILL");
+        rejectReady(error);
+      }
+    };
+    child.stdout.on("data", inspect);
+    child.once("exit", (code) => {
+      if (!stdout.includes("\n")) {
+        clearTimeout(timeout);
+        rejectReady(new Error(`Pin child exited before ready (${code}): ${stderr}`));
+      }
+    });
+  });
+  let released = false;
+  return {
+    generationPath,
+    async release() {
+      if (released) return;
+      released = true;
+      const closed = new Promise<void>((resolveClosed, rejectClosed) => {
+        const timeout = setTimeout(() => {
+          child.kill("SIGKILL");
+          rejectClosed(new Error(`Pin child did not stop: ${stderr}`));
+        }, 5_000);
+        child.once("close", (code) => {
+          clearTimeout(timeout);
+          if (code === 0) resolveClosed();
+          else rejectClosed(new Error(`Pin child failed (${code}): ${stderr}`));
+        });
+      });
+      child.stdin.end("release\n");
+      await closed;
+    }
+  };
+}
+
+async function pinFileForGeneration(outputDirectory: string, generation: string): Promise<string> {
+  const pinsRoot = join(outputDirectory, ".pins");
+  for (const entry of await readdir(pinsRoot)) {
+    const path = join(pinsRoot, entry);
+    const lease = JSON.parse(await readFile(path, "utf8")) as { generation?: unknown };
+    if (lease.generation === generation) return path;
+  }
+  throw new Error(`No pin found for ManageEngine generation ${generation}.`);
 }
 
 function escapeRegExp(value: string): string {

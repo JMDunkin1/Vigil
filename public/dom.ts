@@ -33,8 +33,7 @@ export function detailBlock(title: unknown, detail: unknown): HTMLDivElement {
 }
 
 export function progressBlock(title: unknown, detail: unknown, percent: number): HTMLDivElement {
-  const fill = el("div");
-  fill.style.width = `${percent}%`;
+  const fill = el("progress", { attrs: { max: 100, value: Math.max(0, Math.min(100, percent)) } });
   return el(
     "div",
     {},
