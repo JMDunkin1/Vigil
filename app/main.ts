@@ -1339,6 +1339,12 @@ async function handleAppUpdateAction(appUrl: string): Promise<void> {
 async function refreshTrayStatus(appUrl: string): Promise<void> {
   updateTrayMenu(appUrl, checkingTrayStatus());
   updateTrayMenu(appUrl, await readTrayStatus());
+  // Update checks can briefly overlap a checkout, rebase, or PR branch switch.
+  // Re-read local updater state with the normal tray poll so a transient Git
+  // failure cannot remain cached for the rest of the app process.
+  if (appUpdateActionState.checked && !appUpdateActionState.checking) {
+    await refreshRunningAppUpdate(appUrl);
+  }
 }
 
 async function readTrayStatus(): Promise<TrayStatus> {

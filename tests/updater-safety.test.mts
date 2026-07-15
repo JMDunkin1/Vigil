@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile as execFileCallback } from "node:child_process";
 import { existsSync } from "node:fs";
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { acquireUpdaterLock } from "../app/updater.js";
+import { promisify } from "node:util";
+import { acquireUpdaterLock, readRepoInfoForTest } from "../app/updater.js";
 import { macSigningTimestamp } from "../scripts/mac-signing-identity.mjs";
 import { atomicInstallBuiltApp, snapshotUpdateState } from "../scripts/update-packaged-app.mjs";
 import type { AtomicInstallOperations } from "../scripts/update-packaged-app.mjs";
@@ -18,6 +20,7 @@ const localLauncherSource = await readFile(join(sourceRoot, "scripts", "launch-l
 const embeddedSupervisorSource = await readFile(join(sourceRoot, "src", "embeddedSupervisor.ts"), "utf8");
 const packageMacSource = await readFile(join(sourceRoot, "scripts", "package-mac.mjs"), "utf8");
 const writeBuildInfoSource = await readFile(join(sourceRoot, "scripts", "write-build-info.mts"), "utf8");
+const execFile = promisify(execFileCallback);
 
 assert.equal(macSigningTimestamp("Vigil Local Code Signing"), "none", "local self-signing must not depend on Apple's timestamp service");
 assert.equal(macSigningTimestamp("Apple Development: Example"), undefined, "Apple Development signing must keep its normal timestamp behavior");
@@ -35,6 +38,9 @@ assert.match(
 );
 assert.match(updateScriptSource, /\["worktree", "add", "--detach"/u);
 assert.match(updaterSource, /packagedBuildRepoRoot\(app\)/u, "the installed app must retain its source checkout pointer");
+assert.match(updaterSource, /existsSync\(join\(candidate, "\.git"\)\)/u, "source discovery must reject installed runtime copies that are not Git worktrees");
+assert.match(updaterSource, /const REPO_CHECK_ATTEMPTS = 3/u, "transient repository reads must be retried");
+assert.match(updaterSource, /GIT_EXECUTABLE[\s\S]*?"\/usr\/bin\/git"/u, "the packaged macOS app must use the stable system Git path");
 assert.match(updateScriptSource, /VIGIL_BUILD_SOURCE_ROOT: options\.repoRoot/u, "staged update builds must preserve the real checkout pointer");
 assert.match(
   writeBuildInfoSource,
@@ -45,10 +51,15 @@ assert.ok(
   updateScriptSource.indexOf("const defaultInstallOperations") < updateScriptSource.lastIndexOf("if (isDirectRun(import.meta.url)) await runUpdate()"),
   "the direct updater must start only after its default atomic install operations are initialized"
 );
-assert.match(updaterSource, /localChanges \|\| remoteCheckOk !== false/u, "new local changes must remain runnable without a remote fetch");
+assert.match(updaterSource, /localCheckoutBuild \|\| remoteCheckOk !== false/u, "new local changes must remain runnable without a remote fetch");
 assert.match(updaterSource, /currentSourceFingerprint !== appBuild\.sourceFingerprint/u, "local changes must be compared with the source built into the installed app");
 assert.match(mainSource, /return status\.updateAvailable === true/u, "the tray must honor the updater controller's installability decision");
 assert.match(mainSource, /scheduleAppUpdateRefresh\(appUrl\)/u, "the tray must refresh a local build that leaves Vigil running");
+assert.match(
+  mainSource,
+  /async function refreshTrayStatus[\s\S]*?appUpdateActionState\.checked[\s\S]*?refreshRunningAppUpdate\(appUrl\)/u,
+  "the tray poll must clear cached updater failures after a transient branch or Git transition"
+);
 assert.match(updaterSource, /launchLocalChanges\(currentStatus, updateLock\)/u, "dirty source must use the local app launcher");
 assert.match(updaterSource, /"--app-path", appPath/u, "the local launcher must receive the installed app path for recovery");
 assert.match(localLauncherSource, /exitCode = await buildLocalApp\(options, log\)/u, "the local launcher must remain alive through the packaged local build");
@@ -137,6 +148,23 @@ assert.ok(
 );
 assert.match(localLauncherSource, /await waitForLogOpen\(log\)/u, "the local launcher must wait for its log descriptor before passing it to child processes");
 assert.match(localLauncherSource, /The built app was not installed/u, "a stalled installed-app shutdown must leave the installed app untouched");
+
+const noUpstreamRoot = await mkdtemp(join(tmpdir(), "vigil-updater-no-upstream-"));
+try {
+  await mkdir(join(noUpstreamRoot, "app"), { recursive: true });
+  await writeFile(join(noUpstreamRoot, "package.json"), '{"name":"vigil"}\n');
+  await writeFile(join(noUpstreamRoot, "app", "main.ts"), "export {};\n");
+  await execFile("/usr/bin/git", ["init", "--quiet", noUpstreamRoot]);
+  await execFile("/usr/bin/git", ["-C", noUpstreamRoot, "config", "user.email", "vigil-test@example.invalid"]);
+  await execFile("/usr/bin/git", ["-C", noUpstreamRoot, "config", "user.name", "Vigil Test"]);
+  await execFile("/usr/bin/git", ["-C", noUpstreamRoot, "add", "package.json", "app/main.ts"]);
+  await execFile("/usr/bin/git", ["-C", noUpstreamRoot, "commit", "--quiet", "-m", "fixture"]);
+  const repoWithoutUpstream = await readRepoInfoForTest(noUpstreamRoot);
+  assert.equal(repoWithoutUpstream.ok, true, "a valid local Git checkout must remain verifiable without an upstream branch");
+  assert.equal(repoWithoutUpstream.upstream, null, "missing branch tracking must remain distinct from repository verification");
+} finally {
+  await rm(noUpstreamRoot, { recursive: true, force: true });
+}
 assert.match(
   localLauncherSource,
   /catch \(error\) \{\s*await resumeEmbeddedRuntimeSupervisor\(options\.userDataDir\);\s*log\.write/u,

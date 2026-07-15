@@ -13,6 +13,9 @@ const UPDATE_STATUS_FILENAME = "update-status.json";
 const UPDATE_LOG_FILENAME = "update.log";
 const UPDATE_LOCK_FILENAME = "update.lock";
 const EXEC_TIMEOUT_MS = 5000;
+const REPO_CHECK_ATTEMPTS = 3;
+const REPO_CHECK_RETRY_MS = 150;
+const GIT_EXECUTABLE = process.platform === "darwin" && existsSync("/usr/bin/git") ? "/usr/bin/git" : "git";
 
 interface ExecResult {
   ok: boolean;
@@ -77,19 +80,25 @@ interface ControllerOptions {
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 export function createVigilAppUpdateController({ app, quitForUpdate }: ControllerOptions): VigilAppUpdateController {
-  const repoRoot = findRepoRoot(app);
-  const appPath = packagedAppPath(repoRoot);
+  let repoRoot = findRepoRoot(app);
+  let appPath = packagedAppPath(repoRoot);
   const userDataDir = app.getPath("userData");
   const updateDir = join(userDataDir, "updater");
   const statusPath = join(updateDir, UPDATE_STATUS_FILENAME);
   const logPath = join(updateDir, UPDATE_LOG_FILENAME);
   const lockPath = join(updateDir, UPDATE_LOCK_FILENAME);
-  const scriptPath = updateScriptPath(repoRoot);
+  let scriptPath = updateScriptPath(repoRoot);
   let startInFlight: Promise<unknown> | null = null;
 
   async function readStatusPayload(
     { checkRemote = false, ownedLockToken = "" }: { checkRemote?: boolean; ownedLockToken?: string } = {}
   ): Promise<Record<string, unknown>> {
+    const discoveredRepoRoot = findRepoRoot(app, repoRoot);
+    if (discoveredRepoRoot !== repoRoot) {
+      repoRoot = discoveredRepoRoot;
+      appPath = packagedAppPath(repoRoot);
+      scriptPath = updateScriptPath(repoRoot);
+    }
     await mkdir(updateDir, { recursive: true });
     const remoteCheck = checkRemote ? await execGit(repoRoot, ["fetch", "--prune"]) : null;
     const [repo, currentSourceFingerprint, runtimeBuild, appBuild, appStat, lastUpdate, activeLock] = await Promise.all([
@@ -113,11 +122,15 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       || !appBuild?.sourceFingerprint
       || currentSourceFingerprint !== appBuild.sourceFingerprint
     ));
+    // A clean PR/worktree branch can legitimately have no upstream yet. Its
+    // checked-out commit is still a valid local build source, just not a remote
+    // update target.
+    const localCheckoutBuild = localChanges || Boolean(!repo.upstream && appBundleOutdated);
     const remoteCheckOk = remoteCheck ? remoteCheck.ok : null;
-    const checkOk = repo.ok && (localChanges || remoteCheckOk !== false);
+    const checkOk = repo.ok && (localCheckoutBuild || remoteCheckOk !== false);
     const supported = repo.ok && Boolean(scriptPath);
     const updateAvailable = Boolean(checkOk && supported && (
-      localChanges || (!repo.dirty && (repo.behind > 0 || appBundleOutdated))
+      localCheckoutBuild || (!repo.dirty && Boolean(repo.upstream) && (repo.behind > 0 || appBundleOutdated))
     ));
     return {
       ok: checkOk,
@@ -133,7 +146,7 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       ahead: repo.ahead,
       behind: repo.behind,
       dirty: repo.dirty,
-      localChanges,
+      localChanges: localCheckoutBuild,
       repoError: repo.error,
       runtimeBuiltAt: runtimeBuild?.builtAt || null,
       appBuiltAt: appBuild?.builtAt || null,
@@ -143,7 +156,13 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       remoteCheckError: remoteCheck && !remoteCheck.ok ? "Remote check failed" : null,
       logPath,
       lastUpdate,
-      message: updateMessage({ repo, appBundleOutdated, localChanges, running, remoteCheckError: remoteCheck && !remoteCheck.ok })
+      message: updateMessage({
+        repo,
+        appBundleOutdated,
+        localChanges: localCheckoutBuild,
+        running,
+        remoteCheckError: remoteCheck && !remoteCheck.ok
+      })
     };
   }
 
@@ -320,11 +339,12 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
   }
 }
 
-function findRepoRoot(app: App): string {
+function findRepoRoot(app: App, previousRoot = ""): string {
   const candidates = [
     process.env.VIGIL_SOURCE_ROOT || "",
     launchAgentRepoRoot(app),
     packagedBuildRepoRoot(app),
+    previousRoot,
     process.cwd(),
     app.isPackaged ? resolve(process.resourcesPath, "../../../../../..") : "",
     app.isPackaged ? resolve(process.resourcesPath, "../../../../..") : "",
@@ -365,7 +385,9 @@ function launchAgentRepoRoot(app: App): string {
 function isRepoRoot(candidate: string): boolean {
   try {
     const pkg = JSON.parse(readFileSync(join(candidate, "package.json"), "utf8")) as { name?: string };
-    return pkg.name === "vigil" && existsSync(join(candidate, "app", "main.ts"));
+    return pkg.name === "vigil"
+      && existsSync(join(candidate, "app", "main.ts"))
+      && existsSync(join(candidate, ".git"));
   } catch {
     return false;
   }
@@ -394,19 +416,32 @@ function localLauncherPath(repoRoot: string): string | null {
   return candidates.find((candidate) => candidate && existsSync(candidate)) || null;
 }
 
+export async function readRepoInfoForTest(repoRoot: string): Promise<RepoInfo> {
+  return await readRepoInfo(repoRoot);
+}
+
 async function readRepoInfo(repoRoot: string): Promise<RepoInfo> {
-  const [branch, head, upstream, counts, status] = await Promise.all([
-    execGit(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]),
-    execGit(repoRoot, ["rev-parse", "HEAD"]),
-    execGit(repoRoot, ["rev-parse", "@{u}"]),
-    execGit(repoRoot, ["rev-list", "--left-right", "--count", "HEAD...@{u}"]),
-    execGit(repoRoot, ["status", "--porcelain=v1"])
-  ]);
+  let branch: ExecResult = failedExec("Repository branch was not checked.");
+  let head: ExecResult = failedExec("Repository HEAD was not checked.");
+  let status: ExecResult = failedExec("Repository working tree was not checked.");
+  for (let attempt = 0; attempt < REPO_CHECK_ATTEMPTS; attempt += 1) {
+    [branch, head, status] = await Promise.all([
+      execGit(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]),
+      execGit(repoRoot, ["rev-parse", "HEAD"]),
+      execGit(repoRoot, ["status", "--porcelain=v1"])
+    ]);
+    if (branch.ok && head.ok && status.ok) break;
+    if (attempt + 1 < REPO_CHECK_ATTEMPTS) await delay(REPO_CHECK_RETRY_MS);
+  }
+  const upstream = branch.ok && head.ok
+    ? await execGit(repoRoot, ["rev-parse", "@{u}"])
+    : failedExec("Repository HEAD was not available.");
+  const counts = upstream.ok
+    ? await execGit(repoRoot, ["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+    : failedExec("This branch does not have an upstream.");
   const failedChecks = [
     ["branch", branch],
     ["HEAD", head],
-    ["upstream", upstream],
-    ["ahead/behind", counts],
     ["working tree", status]
   ].filter(([, result]) => !(result as ExecResult).ok).map(([label]) => label as string);
   const ok = failedChecks.length === 0;
@@ -425,7 +460,15 @@ async function readRepoInfo(repoRoot: string): Promise<RepoInfo> {
 }
 
 async function execGit(repoRoot: string, args: string[]): Promise<ExecResult> {
-  return await execFile("git", args, { cwd: repoRoot, timeoutMs: EXEC_TIMEOUT_MS });
+  return await execFile(GIT_EXECUTABLE, args, { cwd: repoRoot, timeoutMs: EXEC_TIMEOUT_MS });
+}
+
+function failedExec(stderr: string): ExecResult {
+  return { ok: false, stdout: "", stderr };
+}
+
+async function delay(milliseconds: number): Promise<void> {
+  await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }
 
 async function execFile(command: string, args: string[], options: { cwd: string; timeoutMs: number }): Promise<ExecResult> {
