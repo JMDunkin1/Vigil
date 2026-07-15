@@ -1,9 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
+import { BUILT_IN_CHROME_EXTENSION_ID } from "./defaults.js";
 import type { UnknownRecord } from "./types.js";
 
 export const CONTROL_INTENT_HEADER = "x-vigil-intent";
 export const CONTROL_INTENT_VALUE = "vigil-app";
+export const EXTENSION_ID_HEADER = "x-vigil-extension-id";
 export const EXTENSION_TOKEN_HEADER = "x-vigil-extension-token";
 
 const EXTENSION_API_PATHS = new Set([
@@ -203,7 +205,7 @@ export function extensionCorsHeaders(headers: HeaderBag = {}, transport: Request
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": `Content-Type, ${EXTENSION_TOKEN_HEADER}`,
+    "Access-Control-Allow-Headers": `Content-Type, ${EXTENSION_ID_HEADER}, ${EXTENSION_TOKEN_HEADER}`,
     "Vary": "Origin"
   };
 }
@@ -217,8 +219,9 @@ export function extensionTrustSummary(headers: HeaderBag = {}, transport: Reques
   const requestOrigin = headerValue(headers, "origin");
   const normalized = requestOrigin ? normalizedOrigin(requestOrigin) : "";
   const trustedOrigin = Boolean(isDirectLoopbackRequest(headers, transport) && requestOrigin && isTrustedExtensionOrigin(requestOrigin));
+  const suppliedExtensionId = headerValue(headers, EXTENSION_ID_HEADER).trim().toLowerCase();
   const trustedToken = extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
-  const extensionId = extensionIdFromOrigin(requestOrigin);
+  const extensionId = extensionIdFromOrigin(requestOrigin) || suppliedExtensionId;
   return {
     trusted: trustedOrigin || trustedToken,
     trustedBy: trustedOrigin ? "origin" : (trustedToken ? "token" : "none"),
@@ -336,6 +339,7 @@ function isTrustedExtensionOrigin(value: string): boolean {
 
 function configuredExtensionOrigins(): Set<string> {
   const origins = [
+    ...extensionIdOrigins([BUILT_IN_CHROME_EXTENSION_ID]),
     ...csvEnv("VIGIL_EXTENSION_ORIGINS"),
     ...csvEnv("VIGIL_EXTENSION_ORIGIN"),
     ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_IDS")),

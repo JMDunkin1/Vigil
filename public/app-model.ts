@@ -350,6 +350,19 @@ export interface IosDeviceSummary extends UnknownRecord {
   };
   note?: string;
   supervisedRequired?: boolean;
+  protection?: UnknownRecord & {
+    knownSitesBlocked?: boolean;
+    knownSiteDomainCount?: number;
+    explicitSearchesBlocked?: boolean;
+    explicitSearchTermCount?: number;
+    safeSearchEnforced?: boolean;
+    sensitiveMediaFiltered?: boolean;
+    requiresManagedSafariExtension?: boolean;
+    appWorkaroundsClosed?: boolean;
+    targetedAppBundleCount?: number;
+    allAppsHidden?: boolean;
+    removalLocked?: boolean;
+  };
   profile?: {
     appBundleCount?: number;
     deniedUrlCount?: number;

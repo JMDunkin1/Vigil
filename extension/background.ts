@@ -1,4 +1,5 @@
 const DEFAULT_LOCAL_SERVER = "http://127.0.0.1:8787";
+const EXTENSION_ID_HEADER = "x-vigil-extension-id";
 const EXTENSION_TOKEN_HEADER = "x-vigil-extension-token";
 const CONNECTION_DEFAULTS = {
   vigilLocalServer: DEFAULT_LOCAL_SERVER,
@@ -14,13 +15,33 @@ const SITE_BLOCK_RULE_START = 10000;
 const CONTENT_BLOCK_RULE_START = 11000;
 const ALLOWLIST_RULE_START = 12000;
 const LOCAL_SERVER_ALLOW_RULE_ID = ALLOWLIST_RULE_START - 1;
+const SITE_EMBEDDED_BLOCK_RULE_START = 13000;
+const CONTENT_EMBEDDED_BLOCK_RULE_START = 14000;
+const ALLOWLIST_EMBEDDED_BLOCK_RULE_START = 15000;
 const SITE_BLOCK_RULE_LIMIT = 300;
 const CONTENT_BLOCK_RULE_LIMIT = 200;
 const ALLOWLIST_RULE_LIMIT = 20;
 const VIGIL_REQUEST_TIMEOUT_MS = 2500;
 const PERSISTENT_RULE_UNTIL = "until the tamper alarm is cleared";
 const NOISE_RESOURCE_TYPES = ["script", "image", "xmlhttprequest", "sub_frame", "stylesheet", "media", "font", "ping", "other"];
-const SITE_BLOCK_RESOURCE_TYPES = ["main_frame"];
+const TOP_LEVEL_RESOURCE_TYPES = ["main_frame"];
+const EMBEDDED_SITE_RESOURCE_TYPES = [
+  "sub_frame",
+  "script",
+  "image",
+  "stylesheet",
+  "object",
+  "xmlhttprequest",
+  "ping",
+  "csp_report",
+  "media",
+  "font",
+  "websocket",
+  "webtransport",
+  "webbundle",
+  "other"
+];
+const EMBEDDED_FRAME_RESOURCE_TYPES = ["sub_frame"];
 const NOISE_BLOCK_DOMAINS = [
   "doubleclick.net",
   "googlesyndication.com",
@@ -61,6 +82,9 @@ const NOISE_RULE_IDS = [
 const SITE_BLOCK_RULE_IDS = Array.from({ length: SITE_BLOCK_RULE_LIMIT }, (_, index) => SITE_BLOCK_RULE_START + index);
 const CONTENT_BLOCK_RULE_IDS = Array.from({ length: CONTENT_BLOCK_RULE_LIMIT }, (_, index) => CONTENT_BLOCK_RULE_START + index);
 const ALLOWLIST_RULE_IDS = Array.from({ length: ALLOWLIST_RULE_LIMIT }, (_, index) => ALLOWLIST_RULE_START + index);
+const SITE_EMBEDDED_BLOCK_RULE_IDS = Array.from({ length: SITE_BLOCK_RULE_LIMIT }, (_, index) => SITE_EMBEDDED_BLOCK_RULE_START + index);
+const CONTENT_EMBEDDED_BLOCK_RULE_IDS = Array.from({ length: CONTENT_BLOCK_RULE_LIMIT }, (_, index) => CONTENT_EMBEDDED_BLOCK_RULE_START + index);
+const ALLOWLIST_EMBEDDED_BLOCK_RULE_IDS = Array.from({ length: ALLOWLIST_RULE_LIMIT }, (_, index) => ALLOWLIST_EMBEDDED_BLOCK_RULE_START + index);
 let noiseRulesEnabled: boolean | null = null;
 let siteRulesSignature = "";
 let siteRuleCount = 0;
@@ -581,11 +605,22 @@ async function syncSiteBlocking(entries: ServerRuleEntry[], contentEntries: Serv
   if (siteRulesSignature === signature) return { ok: true, count, signature };
 
   const ok = await updateDynamicRules({
-    removeRuleIds: [...SITE_BLOCK_RULE_IDS, ...CONTENT_BLOCK_RULE_IDS, LOCAL_SERVER_ALLOW_RULE_ID, ...ALLOWLIST_RULE_IDS],
+    removeRuleIds: [
+      ...SITE_BLOCK_RULE_IDS,
+      ...CONTENT_BLOCK_RULE_IDS,
+      LOCAL_SERVER_ALLOW_RULE_ID,
+      ...ALLOWLIST_RULE_IDS,
+      ...SITE_EMBEDDED_BLOCK_RULE_IDS,
+      ...CONTENT_EMBEDDED_BLOCK_RULE_IDS,
+      ...ALLOWLIST_EMBEDDED_BLOCK_RULE_IDS
+    ],
     addRules: [
       ...siteBlockRules(safeEntries),
+      ...siteEmbeddedBlockRules(safeEntries),
       ...contentBlockRules(safeContentEntries),
-      ...allowlistBlockRules(safeAllowlistEntries)
+      ...contentEmbeddedBlockRules(safeContentEntries),
+      ...allowlistBlockRules(safeAllowlistEntries),
+      ...allowlistEmbeddedBlockRules(safeAllowlistEntries)
     ]
   });
   if (!ok) return { ok: false, count, signature, error: "Dynamic rule update failed" };
@@ -670,7 +705,19 @@ function siteBlockRules(entries: SiteRuleEntry[]): chrome.declarativeNetRequest.
     },
     condition: {
       urlFilter: `||${entry.domain}^`,
-      resourceTypes: SITE_BLOCK_RESOURCE_TYPES
+      resourceTypes: TOP_LEVEL_RESOURCE_TYPES
+    }
+  } as chrome.declarativeNetRequest.Rule));
+}
+
+function siteEmbeddedBlockRules(entries: SiteRuleEntry[]): chrome.declarativeNetRequest.Rule[] {
+  return entries.map((entry, index) => ({
+    id: SITE_EMBEDDED_BLOCK_RULE_START + index,
+    priority: 100,
+    action: { type: "block" },
+    condition: {
+      urlFilter: `||${entry.domain}^`,
+      resourceTypes: EMBEDDED_SITE_RESOURCE_TYPES
     }
   } as chrome.declarativeNetRequest.Rule));
 }
@@ -685,7 +732,19 @@ function contentBlockRules(entries: ContentRuleEntry[]): chrome.declarativeNetRe
     },
     condition: {
       urlFilter: entry.urlFilter,
-      resourceTypes: SITE_BLOCK_RESOURCE_TYPES
+      resourceTypes: TOP_LEVEL_RESOURCE_TYPES
+    }
+  } as chrome.declarativeNetRequest.Rule));
+}
+
+function contentEmbeddedBlockRules(entries: ContentRuleEntry[]): chrome.declarativeNetRequest.Rule[] {
+  return entries.map((entry, index) => ({
+    id: CONTENT_EMBEDDED_BLOCK_RULE_START + index,
+    priority: 90,
+    action: { type: "block" },
+    condition: {
+      urlFilter: entry.urlFilter,
+      resourceTypes: EMBEDDED_FRAME_RESOURCE_TYPES
     }
   } as chrome.declarativeNetRequest.Rule));
 }
@@ -702,9 +761,22 @@ function allowlistBlockRules(entries: AllowlistRuleEntry[]): chrome.declarativeN
     condition: {
       regexFilter: "^https?://",
       excludedRequestDomains: entry.excludedDomains,
-      resourceTypes: SITE_BLOCK_RESOURCE_TYPES
+      resourceTypes: TOP_LEVEL_RESOURCE_TYPES
     }
   } as chrome.declarativeNetRequest.Rule))];
+}
+
+function allowlistEmbeddedBlockRules(entries: AllowlistRuleEntry[]): chrome.declarativeNetRequest.Rule[] {
+  return entries.map((entry, index) => ({
+    id: ALLOWLIST_EMBEDDED_BLOCK_RULE_START + index,
+    priority: 80,
+    action: { type: "block" },
+    condition: {
+      regexFilter: "^https?://",
+      excludedRequestDomains: entry.excludedDomains,
+      resourceTypes: EMBEDDED_FRAME_RESOURCE_TYPES
+    }
+  } as chrome.declarativeNetRequest.Rule));
 }
 
 function localServerAllowRule(): chrome.declarativeNetRequest.Rule {
@@ -715,7 +787,7 @@ function localServerAllowRule(): chrome.declarativeNetRequest.Rule {
     action: { type: "allow" },
     condition: {
       regexFilter: `^${origin}(?:/|$)`,
-      resourceTypes: SITE_BLOCK_RESOURCE_TYPES
+      resourceTypes: TOP_LEVEL_RESOURCE_TYPES
     }
   } as chrome.declarativeNetRequest.Rule;
 }
@@ -812,6 +884,7 @@ function safeContentRedirect(value: unknown): string {
 async function fetchVigil(path: string, options: RequestInit = {}): Promise<Response> {
   const connection = await loadVigilConnection();
   const headers: Record<string, string> = Object.fromEntries(new Headers(options.headers || {}).entries());
+  headers[EXTENSION_ID_HEADER] = chrome.runtime.id;
   if (connection.extensionToken) headers[EXTENSION_TOKEN_HEADER] = connection.extensionToken;
   const controller = new AbortController();
   const sourceSignal = options.signal;

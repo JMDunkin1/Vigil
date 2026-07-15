@@ -284,15 +284,16 @@ function browserRedirectFallbackDetail(enabled: boolean, networkCurrent: boolean
 function safariFilterDetail(safariFilter: SummaryRecord): string {
   if (!safariFilter.enabled) return "Safari URL filtering is disabled.";
   if (!safariFilter.required) return "Safari's Apple content-filter profile is not required right now.";
-  if (appleContentFilterCurrent(safariFilter) && !safariFilter.current) return "Apple Screen Time web content filter is on; Vigil's separate Safari profile is optional.";
-  if (safariFilter.current) return `Safari content-filter profile is current (${safariFilter.expectedUrls || 0} deny URLs, ${safariFilter.pathUrlCount || 0} path URLs).`;
+  if (appleContentFilterCurrent(safariFilter) && safariFilter.current) return `Apple's system web-safety policy is active (${safariFilter.expectedUrls || 0} deny URLs, ${safariFilter.pathUrlCount || 0} path URLs).`;
+  if (appleContentFilterCurrent(safariFilter)) return "Apple Screen Time web content filtering is active, but Vigil's Safari profile needs to be reapplied for the current deny list.";
+  if (safariFilter.current) return "Vigil's Safari profile is installed, but Apple's system web-safety policy is not active; reapply and approve it.";
   if (safariFilter.installed && safariFilter.stale) return "Safari content-filter profile is installed but stale; reapply it.";
   if (safariFilter.generated) return "Safari content-filter profile is generated; approve it in System Settings.";
-  return "Apply the Safari content-filter profile for Apple built-in filtering and Safari deny-list blocking.";
+  return "Apply and approve the Safari content-filter profile so reloading without content blockers cannot bypass web safety.";
 }
 
 function safariWebFilterCurrent(safariFilter: SummaryRecord): boolean {
-  return Boolean(safariFilter.effectiveCurrent || safariFilter.current || appleContentFilterCurrent(safariFilter));
+  return appleContentFilterCurrent(safariFilter);
 }
 
 function appleContentFilterCurrent(safariFilter: SummaryRecord): boolean {

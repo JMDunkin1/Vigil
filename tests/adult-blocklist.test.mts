@@ -16,11 +16,22 @@ import {
   normalizeAdultDomain,
   normalizeAdultDomainList,
   parseAdultBlocklistDomains,
+  refreshAdultBlocklist,
   setAdultBlocklistDomainsForTest,
-  setAdultBlocklistSnapshotCandidatesForTest
+  setAdultBlocklistSnapshotCandidatesForTest,
+  writeAdultBlocklistPhoneArtifact
 } from "../src/adultBlocklist.js";
 import type { AdultBlocklistPinnedResponse } from "../src/adultBlocklist.js";
-import { SOFT_BLOCK_PROFILE_ID, defaultState } from "../src/defaults.js";
+import {
+  decodePhoneBlocklistArtifact,
+  phoneBlocklistMatchesHost
+} from "../src/adultBlocklistPhoneArtifact.js";
+import {
+  DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
+  MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS,
+  SOFT_BLOCK_PROFILE_ID,
+  defaultState
+} from "../src/defaults.js";
 import { evaluateExtensionCheck, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { buildHostsBlock } from "../src/hardening.js";
 import { iosPolicyTargets } from "../src/iosProfiles.js";
@@ -211,13 +222,26 @@ bad_domain
   assert.equal(matchAdultBlocklistHost(state, "media.exampleadult.test"), null);
   assert.equal(matchAdultBlocklistHost(state, "video.exampleexplicit.test")?.domain, "video.exampleexplicit.test");
   assert.equal(adultBlocklistPreloadDomains(state).includes("exampleadult.test"), false);
+
+  const phoneArtifactDir = await mkdtemp(join(tmpdir(), "vigil-adult-phone-artifact-"));
+  try {
+    const phoneArtifactPath = join(phoneArtifactDir, "adult-blocklist.sdi");
+    const metadata = await writeAdultBlocklistPhoneArtifact(state, phoneArtifactPath);
+    const phoneArtifact = decodePhoneBlocklistArtifact(await readFile(phoneArtifactPath));
+    assert.equal(metadata.domainCount, 1);
+    assert.equal(phoneBlocklistMatchesHost(phoneArtifact, "media.exampleadult.test"), "");
+    assert.equal(phoneBlocklistMatchesHost(phoneArtifact, "nested.exampleadult.test"), "");
+    assert.equal(phoneBlocklistMatchesHost(phoneArtifact, "video.exampleexplicit.test"), "video.exampleexplicit.test");
+  } finally {
+    await rm(phoneArtifactDir, { recursive: true, force: true });
+  }
   state.adultBlocklist.allowlist = [];
 
   const summary = adultBlocklistSummary(state);
   assert.equal(summary.ready, true);
   assert.equal(summary.domainCount, 3);
   assert.equal(summary.preloadedDomainCount > 0, true);
-  assert.equal(summary.selectedSourceId, "hagezi-nsfw");
+  assert.equal(summary.selectedSourceId, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID);
   state.adultBlocklist.hash = summary.hash;
   state.adultBlocklist.source = {
     id: testSource.id,
@@ -283,6 +307,46 @@ bad_domain
   assert.equal(state.adultBlocklist.source, null);
 } finally {
   clearAdultBlocklistCacheForTest();
+}
+
+{
+  const state = defaultState();
+  const undersized = Array.from({ length: 1_000 }, (_, index) => `adult-${index}.example`).join("\n");
+  assert.equal(state.settings.adultBlocklistSourceId, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID);
+  assert.equal(MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS, 600_000);
+  await assert.rejects(
+    () => refreshAdultBlocklist(state, now, {
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      request: async () => pinnedResponse(200, [undersized])
+    }),
+    /600000 are required/
+  );
+}
+
+{
+  const state = defaultState();
+  state.settings.adultBlocklistSourceId = "custom";
+  state.settings.adultBlocklistCustomUrl = "https://source.example/custom.txt";
+  state.adultBlocklist.hash = "previous-hash";
+  state.adultBlocklist.snapshotPath = "/previous/adult-blocklist.json";
+  state.adultBlocklist.domainCount = 42;
+  state.adultBlocklist.activeDomainCount = 42;
+  state.adultBlocklist.lastRefreshAt = "2026-06-01T00:00:00.000Z";
+  const candidate = Array.from({ length: 1_000 }, (_, index) => `adult-${index}.example`).join("\n");
+
+  await assert.rejects(
+    () => refreshAdultBlocklist(state, now, {
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      request: async () => pinnedResponse(200, [candidate]),
+      buildPhoneArtifact: () => { throw new Error("Phone blocklist exceeds deliverable limits."); }
+    }),
+    /exceeds deliverable limits/
+  );
+  assert.equal(state.adultBlocklist.hash, "previous-hash");
+  assert.equal(state.adultBlocklist.snapshotPath, "/previous/adult-blocklist.json");
+  assert.equal(state.adultBlocklist.domainCount, 42);
+  assert.equal(state.adultBlocklist.activeDomainCount, 42);
+  assert.equal(state.adultBlocklist.lastRefreshAt, "2026-06-01T00:00:00.000Z");
 }
 
 function pinnedResponse(

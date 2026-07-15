@@ -39,7 +39,7 @@ function setupItems(data: DashboardData): SetupItem[] {
   const mdm = record(ios.mdm);
   const manageEngine = record(ios.manageEngine);
   const networkReady = settings.systemNetworkBlockingEnabled !== false && current(hosts) && current(firewall);
-  const safariReady = Boolean(!safariFilter.required || safariFilter.current);
+  const safariReady = Boolean(!safariFilter.required || safariFilter.appleCurrent);
   const extensionSeen = Boolean(extension.lastSeenAt);
   const extensionRulesReady = dynamicRules.ok !== false && dynamicRules.status !== "missing";
   const iPhoneReady = Boolean(ios.enabled && (manageEngine.preferred || ios.profile));
@@ -79,7 +79,9 @@ function setupItems(data: DashboardData): SetupItem[] {
       label: "Safari filter",
       ok: safariReady,
       detail: safariFilter.required
-        ? (safariFilter.current ? "Safari content-filter profile is current." : "Apply the Safari profile for Apple filtering and deny-list blocks.")
+        ? (safariFilter.appleCurrent
+          ? "Apple's system web-safety policy is active and cannot be bypassed by reloading without content blockers."
+          : "Apply and approve the Safari profile; extension-only blocking can be bypassed by reloading without content blockers.")
         : "No Safari content-filter profile is required for the current rules.",
       action: "Apply Safari Filter"
     },

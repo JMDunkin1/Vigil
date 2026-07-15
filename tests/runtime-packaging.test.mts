@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -9,7 +10,7 @@ import { promisify } from "node:util";
 
 import { distanceKeyQrMatrix } from "../public/distance-key-qr.js";
 import { launchAgentDataDirFromPlist, launchAgentDataRootsConflict } from "../src/dataPaths.js";
-import { REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
+import { BUILT_IN_CHROME_EXTENSION_ID, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
 import { isDirectRun } from "../src/directRun.js";
 import { packageableRuntimePath } from "../src/runtimePackaging.js";
 import { plistStringForKey } from "../src/plist.js";
@@ -164,6 +165,8 @@ if (process.platform === "darwin") {
 
 const manifest = recordValue(JSON.parse(await readFile("extension/manifest.json", "utf8")), "extension manifest");
 assert.equal(manifest.version, REQUIRED_EXTENSION_VERSION);
+const extensionKeyHash = createHash("sha256").update(Buffer.from(String(manifest.key || ""), "base64")).digest().subarray(0, 16).toString("hex");
+assert.equal(extensionKeyHash.replace(/[0-9a-f]/g, (nibble) => String.fromCharCode("a".charCodeAt(0) + Number.parseInt(nibble, 16))), BUILT_IN_CHROME_EXTENSION_ID);
 assert.equal(stringArrayValue(manifest.permissions, "extension permissions").includes("declarativeNetRequest"), true);
 
 for (const path of [

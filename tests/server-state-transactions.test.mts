@@ -107,13 +107,24 @@ function extensionHeaders(): Record<string, string> {
 
 async function withStateWriteFailure(run: () => Promise<void>): Promise<void> {
   const persisted = await readFile(store.STATE_PATH);
-  await rm(store.STATE_PATH, { force: true });
-  await mkdir(store.STATE_PATH);
+  await replaceStateFileWithDirectory();
   try {
     await run();
   } finally {
     await rm(store.STATE_PATH, { recursive: true, force: true });
     await writeFile(store.STATE_PATH, persisted, { mode: 0o600 });
+  }
+}
+
+async function replaceStateFileWithDirectory(): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await rm(store.STATE_PATH, { recursive: true, force: true });
+    try {
+      await mkdir(store.STATE_PATH);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt === 9) throw error;
+    }
   }
 }
 

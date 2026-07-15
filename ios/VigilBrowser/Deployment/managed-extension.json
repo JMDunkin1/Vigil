@@ -9,5 +9,15 @@
   ],
   "requiredAccess": ["http://*/*", "https://*/*"],
   "requiredState": "always-on",
+  "requiredPrivateBrowsingState": "always-on",
+  "minimumManagedOperatingSystem": "iOS 18",
+  "healthChecks": [
+    "host-app-installed",
+    "extension-always-on",
+    "private-browsing-always-on",
+    "all-host-access-granted",
+    "adult-blocklist-present",
+    "sensitive-content-analysis-enabled"
+  ],
   "notes": "Informational metadata for the Vigil MDM exporter. This file is not an installable profile and performs no device mutation. Translate it through the deployed iOS version's documented Safari extension management payload."
 }

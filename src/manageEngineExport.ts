@@ -287,9 +287,11 @@ export function buildManageEngineIosExportSummary(
     }, deploymentObservation),
     warning: windowMode
       ? "Temporary profile for enrolling in ManageEngine. Replace it with the managed-policy profile after enrollment."
+      : !ios.enabled
+      ? "Vigil iPhone protection is disabled; this artifact does not enforce the content-filter contract."
       : summary.profile.enforcementActive
       ? "Active Vigil enforcement profile for ManageEngine assignment and remote delivery."
-        : "Level 1 is active with permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Stories web protection.",
+        : "Always-on explicit-content protection is active with targeted browser/social escape-route blocking.",
     generatedFrom: summary.profile.generatedFrom,
     appBundleCount: summary.profile.appBundleCount,
     managedHelperAppBundleIds: summary.profile.managedHelperAppBundleIds,
@@ -297,6 +299,7 @@ export function buildManageEngineIosExportSummary(
     allowedUrlCount: summary.profile.allowedUrlCount,
     webClipCount: summary.profile.webClipCount,
     enforcementActive: summary.profile.enforcementActive,
+    protection: summary.protection,
     launcherProfile: {
       ...summary.launcherProfile,
       outputPath: launcherArtifact?.outputPath || null,

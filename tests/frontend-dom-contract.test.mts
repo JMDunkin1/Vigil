@@ -61,6 +61,7 @@ const setupWizardSource = await readFile("public/setup-wizard.js", "utf8");
 const hardeningPanelSource = await readFile("public/hardening-panel.js", "utf8");
 const rankingViewSource = await readFile("public/ranking-view.js", "utf8");
 const extensionOptionsSource = await readFile("extension/options.js", "utf8");
+assert.doesNotMatch(extensionOptionsSource, /\nexport \{\};?\s*$/u, "the extension options page must load as a classic script");
 assert.match(rankingViewSource, /renderSites\(data\.usage\?\.topSites \|\| \[\]\)/u, "ranking should render tracked website activity instead of hiding it behind the browser app");
 assert.match(settingsUiSource, /wrapSettingsPanels\(\)/, "settings must turn large panels into focused subsections");
 assert.match(settingsUiSource, /form\.getAttribute\("id"\)/, "editor routing must use the form attribute instead of a shadowing named control");

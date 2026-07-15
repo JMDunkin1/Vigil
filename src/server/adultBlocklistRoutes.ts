@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   adultBlocklistSource,
@@ -7,6 +8,8 @@ import {
   invalidateAdultBlocklistIfSourceChanged,
   normalizeAdultDomainList,
   refreshAdultBlocklist,
+  syncAdultBlocklistPhoneArtifact,
+  writeAdultBlocklistPhoneArtifact,
   type AdultBlocklistRefreshPreparation
 } from "../adultBlocklist.js";
 import { assertProtectedEditAllowed } from "../protection.js";
@@ -18,14 +21,16 @@ import { updateSettings } from "./settingsRoutes.js";
 
 interface AdultBlocklistApiContext {
   state: VigilState;
+  currentState: () => VigilState;
   afterCommit: (effect: () => void | Promise<void>, descriptor?: DurableEffectDescriptor) => void;
   preparedRefresh?: AdultBlocklistRefreshPreparation;
+  recordIosMdmPolicyQueue?: (reason: string) => unknown;
 }
 
 export async function handleAdultBlocklistApiRoute(
   request: IncomingMessage,
   response: ServerResponse,
-  { state, afterCommit, preparedRefresh }: AdultBlocklistApiContext
+  { state, currentState, afterCommit, preparedRefresh, recordIosMdmPolicyQueue }: AdultBlocklistApiContext
 ): Promise<boolean> {
   const method = request.method || "GET";
   const path = new URL(request.url || "/", "http://localhost").pathname;
@@ -36,15 +41,30 @@ export async function handleAdultBlocklistApiRoute(
       assertProtectedEditAllowed(state, { kind: "settings" });
       const previousSource = adultBlocklistSource(state);
       const keys = updateSettings(state.settings, body);
-      if (invalidateAdultBlocklistIfSourceChanged(state, previousSource)) {
-        keys.push("adultBlocklistSnapshot");
-      }
-      if (Object.hasOwn(body, "allowlist")) {
+      const sourceChanged = invalidateAdultBlocklistIfSourceChanged(state, previousSource);
+      if (sourceChanged) keys.push("adultBlocklistSnapshot");
+      const allowlistChanged = Object.hasOwn(body, "allowlist");
+      if (allowlistChanged) {
         state.adultBlocklist.allowlist = normalizeAdultDomainList(body.allowlist);
         keys.push("adultBlocklistAllowlist");
       }
       addEvent(state, "adult_blocklist_settings_updated", { keys });
+      if (keys.length) recordIosMdmPolicyQueue?.("adult-blocklist-settings");
       await saveState(state);
+      if (sourceChanged || allowlistChanged) {
+        const snapshotHash = state.adultBlocklist.hash || "";
+        const snapshotPath = state.adultBlocklist.snapshotPath || "";
+        const allowlistHash = adultBlocklistAllowlistHash(state);
+        const descriptor = {
+          key: `adult-blocklist-phone-sync:${snapshotHash || "empty"}:${adultBlocklistSnapshotPathHash(snapshotPath)}:${allowlistHash}`,
+          kind: "adult-blocklist-phone-sync",
+          payload: { hash: snapshotHash, snapshotPath, allowlistHash }
+        };
+        afterCommit(
+          async () => { await reconcileAdultBlocklistDurableEffect(currentState(), descriptor); },
+          descriptor
+        );
+      }
       sendJson(response, 200, { ok: true, keys, adultBlocklist: adultBlocklistSummary(state) });
     } catch (error) {
       sendJson(response, errorStatus(error), serializeError(error));
@@ -64,14 +84,17 @@ export async function handleAdultBlocklistApiRoute(
         activeDomainCount: summary.activeDomainCount,
         hash: summary.shortHash
       });
+      recordIosMdmPolicyQueue?.("adult-blocklist-refresh");
       await saveState(state);
+      const allowlistHash = adultBlocklistAllowlistHash(state);
+      const descriptor = {
+        key: `adult-blocklist-finalize:${summary.hash}:${adultBlocklistSnapshotPathHash(summary.snapshotPath)}:${allowlistHash}`,
+        kind: "adult-blocklist-finalize",
+        payload: { hash: summary.hash, allowlistHash, snapshotPath: summary.snapshotPath, writePhoneArtifact: true }
+      };
       afterCommit(
-        () => finalizeAdultBlocklistSnapshot(state),
-        {
-          key: `adult-blocklist-finalize:${summary.hash}`,
-          kind: "adult-blocklist-finalize",
-          payload: { hash: summary.hash, snapshotPath: summary.snapshotPath }
-        }
+        async () => { await reconcileAdultBlocklistDurableEffect(currentState(), descriptor); },
+        descriptor
       );
       sendJson(response, 200, { ok: true, adultBlocklist: summary });
     } catch (error) {
@@ -83,4 +106,36 @@ export async function handleAdultBlocklistApiRoute(
   }
 
   return false;
+}
+
+export async function reconcileAdultBlocklistDurableEffect(
+  currentState: VigilState,
+  effect: Pick<DurableEffectDescriptor, "kind" | "payload">
+): Promise<{ ok: true; obsolete?: true }> {
+  const payload = effect.payload || {};
+  const snapshotMatches = String(payload.hash || "") === String(currentState.adultBlocklist.hash || "");
+  const snapshotPathMatches = String(payload.snapshotPath || "") === String(currentState.adultBlocklist.snapshotPath || "");
+  const allowlistMatches = String(payload.allowlistHash || "") === adultBlocklistAllowlistHash(currentState);
+  if (!snapshotMatches || !snapshotPathMatches || !allowlistMatches) return { ok: true, obsolete: true };
+
+  if (effect.kind === "adult-blocklist-finalize") {
+    if (payload.writePhoneArtifact === true) await writeAdultBlocklistPhoneArtifact(currentState);
+    await finalizeAdultBlocklistSnapshot(currentState);
+    return { ok: true };
+  }
+  if (effect.kind === "adult-blocklist-phone-sync") {
+    await syncAdultBlocklistPhoneArtifact(currentState);
+    return { ok: true };
+  }
+  throw new Error(`Unknown adult blocklist durable effect kind: ${effect.kind}`);
+}
+
+function adultBlocklistAllowlistHash(state: VigilState): string {
+  return createHash("sha256")
+    .update(JSON.stringify(normalizeAdultDomainList(state.adultBlocklist.allowlist)))
+    .digest("hex");
+}
+
+function adultBlocklistSnapshotPathHash(snapshotPath: string): string {
+  return createHash("sha256").update(snapshotPath).digest("hex");
 }

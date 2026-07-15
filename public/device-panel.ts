@@ -168,11 +168,13 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
   const profile = ios.profile || {};
   const manageEngine = ios.manageEngine || {};
   [
-    ["Content filter", ios.blockWeb ? "adult sites, explicit searches, and SafeSearch" : "off"],
-    ["Sensitive media", "Vigil browser and filtered social clients"],
+    ["Known adult sites", ios.protection?.knownSitesBlocked ? `${Number(ios.protection.knownSiteDomainCount || 0).toLocaleString()} blocked domains + Apple's adult filter` : "off"],
+    ["Explicit searches", ios.protection?.explicitSearchesBlocked ? `${ios.protection.explicitSearchTermCount || 0} terms blocked before results` : "off"],
+    ["SafeSearch", ios.protection?.safeSearchEnforced ? "forced in Vigil Browser and managed Safari" : "off"],
+    ["Sensitive media", ios.protection?.sensitiveMediaFiltered ? "configured; requires the managed Safari extension" : "off"],
     ["Delivery", manageEngine.deliveryProvider === "manageengine" ? "ManageEngine" : "Apple devices only"],
     ["Setup", ios.supervisedRequired ? "supervised iPhone required" : "standard"],
-    ["Apps", ios.blockApps ? `${profile.appBundleCount || 0} bundle IDs` : "off"],
+    ["App workarounds", ios.protection?.appWorkaroundsClosed ? `${profile.appBundleCount || 0} targeted browser/social apps; other apps stay` : "off"],
     ["Web", ios.blockWeb ? `${profile.deniedUrlCount || 0} denied / ${profile.allowedUrlCount || 0} allowed` : "off"],
     ["Web clips", profile.webClipCount ? `${profile.webClipCount} managed` : "none"],
     ["Focused social", focusedSocialSummaryText(profile.focusedSocial)],
@@ -180,7 +182,7 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
     ["Grayscale", profile.grayscale?.desired ? `${profile.grayscale.label || "on"}${profile.grayscale.settingsGuarded ? " + Settings guard" : ""}` : "normal"],
     ["Native Reels", "not available through public iOS APIs"],
     ["Safari history", ios.allowSafariHistoryClearing !== false ? "clearing allowed" : "clearing blocked"],
-    ["Removal", ios.removalHardened ? "passcode protected" : "device removable"],
+    ["Removal", ios.removalHardened ? "locked; the phone cannot remove this profile" : "not locked"],
     ["Profile", profile.generatedFrom || "saved policy"],
     ["ManageEngine export", manageEngine.exportCommand || "npm run ios:manageengine:export"],
     ["ManageEngine policy", manageEngine.policyPath || "data/manageengine/vigil-manageengine-policy.mobileconfig"],

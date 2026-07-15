@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -9,7 +9,7 @@ process.env.VIGIL_DATA_DIR = dataDir;
 const [
   { startVigilRuntime },
   { loadRuntimeOutbox, loadState, saveRuntimeSnapshot },
-  { adultBlocklistSource, commitAdultBlocklistRefresh },
+  { ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH, adultBlocklistSource, commitAdultBlocklistRefresh },
   { defaultState }
 ] = await Promise.all([
   import("../src/server.js"),
@@ -54,7 +54,7 @@ for (const error of [new Error("obsolete source fetch failed"), null]) {
 const routeSource = await readFile(new URL("../src/server/adultBlocklistRoutes.js", import.meta.url), "utf8");
 assert.match(
   routeSource,
-  /await saveState\(state\);\s*afterCommit\([\s\S]*?kind: "adult-blocklist-finalize"/u,
+  /await saveState\(state\);[\s\S]*?kind: "adult-blocklist-finalize"[\s\S]*?afterCommit\(/u,
   "adult blocklist cleanup must be queued as a recoverable durable effect after the refreshed state commits"
 );
 assert.doesNotMatch(
@@ -65,7 +65,7 @@ assert.doesNotMatch(
 const serverSource = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 assert.match(
   serverSource,
-  /entry\.kind === "adult-blocklist-finalize"[\s\S]*?finalizeAdultBlocklistSnapshot\(state\)/u,
+  /entry\.kind === "adult-blocklist-finalize"[\s\S]*?reconcileAdultBlocklistDurableEffect\(state, entry\)/u,
   "startup recovery must know how to replay adult blocklist cleanup"
 );
 
@@ -85,11 +85,13 @@ try {
   const persistedState = await loadState();
   assertFailureRecorded(persistedState);
 
+  const obsoleteArtifact = Buffer.from("obsolete-finalize-artifact");
+  await writeFile(ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH, obsoleteArtifact);
   await saveRuntimeSnapshot(persistedState, {}, { outbox: [{
     id: "adult-cleanup-recovery",
     key: "adult-blocklist-finalize:recovery-test",
     kind: "adult-blocklist-finalize",
-    payload: { hash: "recovery-test", snapshotPath: "" },
+    payload: { hash: "recovery-test", allowlistHash: "obsolete-allowlist", snapshotPath: "", writePhoneArtifact: true },
     createdAt: new Date().toISOString(),
     attempts: 0,
     lastError: "",
@@ -98,7 +100,12 @@ try {
     nextAttemptAt: null
   }] });
   const recoveredRuntime = await startVigilRuntime();
-  assert.equal((await loadRuntimeOutbox()).length, 0, "startup recovery must complete and acknowledge adult blocklist cleanup");
+  assert.equal((await loadRuntimeOutbox()).length, 0, "obsolete cleanup recovery must complete without retrying after the snapshot is cleared");
+  assert.deepEqual(
+    await readFile(ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH),
+    obsoleteArtifact,
+    "obsolete cleanup recovery must not write a phone artifact for a different snapshot hash"
+  );
   await recoveredRuntime.stop();
 } finally {
   await runtime.stop().catch(() => {});

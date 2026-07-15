@@ -160,7 +160,11 @@ export async function safariFilterStatus(state: VigilState, now = new Date(), op
     required,
     appleContentFilter,
     appleCurrent: appleContentFilter.current,
-    effectiveCurrent: profileCurrent || appleContentFilter.current,
+    // Safari's "Reload Without Content Blockers" can disable extension-level
+    // blockers for a page. Only count the filter as effective when Apple's
+    // system web-content policy is actually active; an installed profile record
+    // by itself is not a fail-closed enforcement signal.
+    effectiveCurrent: appleContentFilter.current,
     installed: installed.installed,
     current: profileCurrent,
     stale,

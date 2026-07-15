@@ -5031,7 +5031,6 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
   justify-self: end;
   gap: 3px;
   padding-block: 5px;
-  border-block: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .audio-wave::before {

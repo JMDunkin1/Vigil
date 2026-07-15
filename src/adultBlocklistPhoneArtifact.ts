@@ -5,7 +5,7 @@ import type { AdultBlocklistSourceSnapshot } from "./types.js";
 
 const MAGIC = Buffer.from("SNTLIDX1", "ascii");
 const HEADER_BYTES = MAGIC.byteLength + 4;
-const MAX_DOMAIN_COUNT = 1_000_000;
+const MAX_DOMAIN_COUNT = 2_000_000;
 export const PHONE_BLOCKLIST_BLOCK_SIZE = 64;
 export const MAX_PHONE_BLOCKLIST_BYTES = 32 * 1024 * 1024;
 export const PHONE_BLOCKLIST_FORMAT_VERSION = 1;
