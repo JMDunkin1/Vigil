@@ -1,4 +1,6 @@
 import { clamp } from "./format.js";
+import { minecraftAudioCatalog } from "./minecraft-audio-catalog.js";
+import type { MinecraftAudioTrackId } from "./minecraft-audio-catalog.js";
 import { sacredAudioCatalog } from "./sacred-audio-catalog.js";
 import type { SacredAudioTrackId } from "./sacred-audio-catalog.js";
 
@@ -32,11 +34,12 @@ type FocusActivity = "deep-work" | "creative-flow" | "learning" | "light-work" |
 const generatedPresetValues = ["brown-noise", "pink-noise", "white-noise", "binaural-beat", "isochronic-tone"] as const;
 const standardAudioPresetValues = ["rain", "ocean", "storm", "stream", "bach-goldberg-aria", "bach-invention-8", "bach-italian-concerto", "handel-harmonious-blacksmith", "scarlatti-sonata-k87", "scarlatti-sonata-k466"] as const;
 const sacredAudioPresetValues = sacredAudioCatalog.map((track) => track.id) as SacredAudioTrackId[];
-const realAudioPresetValues: readonly RealAudioPreset[] = [...standardAudioPresetValues, ...sacredAudioPresetValues];
+const minecraftAudioPresetValues = minecraftAudioCatalog.map((track) => track.id);
+const realAudioPresetValues: readonly RealAudioPreset[] = [...standardAudioPresetValues, ...sacredAudioPresetValues, ...minecraftAudioPresetValues];
 const focusPresetValues: readonly FocusPreset[] = [...generatedPresetValues, ...realAudioPresetValues];
 type GeneratedPreset = typeof generatedPresetValues[number];
 type StandardAudioPreset = typeof standardAudioPresetValues[number];
-type RealAudioPreset = StandardAudioPreset | SacredAudioTrackId;
+type RealAudioPreset = StandardAudioPreset | SacredAudioTrackId | MinecraftAudioTrackId;
 type FocusPreset = GeneratedPreset | RealAudioPreset;
 type FocusIntensity = "low" | "medium" | "high";
 type FocusTimerMode = "infinite" | "timer" | "interval";
@@ -749,7 +752,15 @@ const realAudioTracks: Record<RealAudioPreset, RealAudioTrack> = {
     sourcePage: track.sourcePage,
     license: track.license,
     licenseUrl: track.licenseUrl
-  }])) as Record<SacredAudioTrackId, RealAudioTrack>
+  }])) as Record<SacredAudioTrackId, RealAudioTrack>,
+  ...Object.fromEntries(minecraftAudioCatalog.map((track) => [track.id, {
+    label: track.title,
+    src: track.src,
+    attribution: track.attribution,
+    sourcePage: track.sourcePage,
+    license: track.license,
+    licenseUrl: track.licenseUrl
+  }])) as Record<MinecraftAudioTrackId, RealAudioTrack>
 };
 
 const modeProfiles: Record<FocusMode, {

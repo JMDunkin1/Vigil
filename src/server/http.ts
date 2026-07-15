@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { stripTypeScriptTypes } from "node:module";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, resolve, sep } from "node:path";
+import { readMinecraftAudioAsset } from "../minecraftAudio.js";
 import { toPlist } from "../plist.js";
 import type { UnknownRecord } from "../types.js";
 
@@ -139,6 +140,17 @@ export async function serveStatic(
     typescriptSourceRoot?: string;
   }
 ): Promise<void> {
+  const minecraftAudio = await readMinecraftAudioAsset(pathname);
+  if (minecraftAudio) {
+    response.writeHead(200, {
+      ...securityHeaders(),
+      "Content-Type": "audio/ogg",
+      "Cache-Control": "private, max-age=3600"
+    });
+    response.end(minecraftAudio);
+    return;
+  }
+
   const fullPath = resolvePublicPath(pathname, publicDir);
   if (!fullPath) {
     sendJson(response, 403, { error: "Forbidden" });

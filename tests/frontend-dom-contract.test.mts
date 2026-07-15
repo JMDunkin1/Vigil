@@ -161,8 +161,14 @@ assert.doesNotMatch(styles, /\.protection-level-control:hover:not\(\.is-settling
 assert.match(styles, /\.protection-level-control\.is-open:not\(\.is-settling\) \.protection-level-choice/, "the protection selector must expand only in its explicit open state");
 assert.match(styles, /\.protection-level-control:not\(\.is-open\) \.protection-level-choice:hover/, "the visible protection number must glow only when the orb itself is hovered");
 assert.match(styles, /\.protection-level-choice:hover span\s*\{[\s\S]*?text-shadow:/, "hovering a protection number must brighten the number itself");
+assert.doesNotMatch(styles, /:has\(\.protection-level-choice:hover\) \.protection-level-trace/, "highlighting a protection number must not make the connecting line glow");
 const appEventsSource = await readFile("public/app-events.js", "utf8");
 assert.match(appEventsSource, /classList\.contains\(["']is-open["']\)/, "clicking the collapsed protection orb must open the selector before changing levels");
+assert.match(appEventsSource, /const releaseProtectionLevelSettle = \(\) => \{\s*protectionLevelControl\.classList\.remove\(["']is-settling["']\);\s*\};/, "the protection selector must always leave its settling state even while the selected dot stays hovered or focused");
+assert.match(appEventsSource, /if \(requestedLevel === Number\(protectionLevel\.value \|\| 1\)\)\s*\{\s*setProtectionLevelOpen\(false\);\s*return;\s*\}/, "clicking the selected protection dot again must close without starting a no-op protection request");
+assert.doesNotMatch(appEventsSource, /addEventListener\(["']wheel["']/, "scrolling over the protection selector must never change levels or start Panic mode");
+assert.match(appEventsSource, /const confirmPanicLevel = \(requestedLevel\) => requestedLevel !== 4\s*\|\| window\.confirm\(["']Start Panic mode for three minutes\? It cannot be ended early\.["']\)/, "Panic mode must require an explicit confirmation after its level is selected");
+assert.ok([...appEventsSource.matchAll(/confirmPanicLevel\(requestedLevel\)/g)].length >= 2, "every interactive protection-level path must use the Panic confirmation gate");
 assert.doesNotMatch(appEventsSource, /Focus sound saved|Sound on|Sound paused|Playing \$\{/, "routine sound controls must not trigger bottom-corner toast popups");
 assert.match(appEventsSource, /const enabled = !focusSound\.isPlaying\(\)/, "Listen must retry silent-but-enabled audio instead of disabling it");
 assert.match(appEventsSource, /if \(enabled\)\s*focusSound\.restartTimer\(\)/, "Listen must restart an expired timer before replaying it");
@@ -259,9 +265,10 @@ const audioMarkup = html.match(/<section id="view-audio"[\s\S]*?<div class="audi
 assert.doesNotMatch(audioMarkup, /audio-settings-disclosure|audio-volume-line/, "playback should not expose redundant session or volume controls");
 assert.equal(
   [...audioMarkup.matchAll(/<details class="audio-library-group/g)].length,
-  4,
+  5,
   "each sound category should be a compact disclosure"
 );
+assert.match(audioMarkup, /id="minecraftSoundsTitle">Minecraft<[\s\S]*?id="minecraftAudioTracks"/, "the sound library must include a dedicated Minecraft category");
 assert.doesNotMatch(audioMarkup, /<details class="audio-library-group[^>]*\sopen(?:\s|>)/, "the sound library should start collapsed");
 assert.match(audioMarkup, /id="focusSoundPlayButton"/, "play and pause must remain outside the collapsed settings");
 assert.doesNotMatch(audioMarkup, /focusSoundStatus|focusSoundCategory|focusSoundDescription/, "the player should omit redundant status and description copy");

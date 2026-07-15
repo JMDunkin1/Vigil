@@ -13,6 +13,7 @@ import { createFormController } from "./forms.js";
 import { createHardeningPanel } from "./hardening-panel.js";
 import { shouldConfirmJournalDraftOnViewExit, shouldLockJournalOnViewExit } from "./journal-lock.js";
 import { createLifeLogView } from "./life-log-view.js";
+import { renderMinecraftAudioLibrary } from "./minecraft-audio-ui.js";
 import { createRankingView } from "./ranking-view.js";
 import { createSaintStage } from "./saint-stage.js";
 import { renderSetupWizard } from "./setup-wizard.js";
@@ -117,6 +118,7 @@ boot();
 
 function boot() {
   initTheme();
+  renderMinecraftAudioLibrary();
   bindWindowResizeHandles();
   renderScheduleDays();
   renderGrayscaleScheduleDays();

@@ -60,7 +60,6 @@ export function bindAppEvents(context: AppEventsContext) {
   const protectionLevel = $("#protectionLevel");
   const protectionLevelControl = $("#protectionLevelControl");
   const protectionLevelChoices = $$<HTMLButtonElement>("[data-protection-level-choice]");
-  let protectionLevelWheelTimer: ReturnType<typeof setTimeout> | null = null;
   let protectionLevelSettleTimer: ReturnType<typeof setTimeout> | null = null;
   const setProtectionLevelOpen = (open: boolean) => {
     protectionLevelControl.classList.toggle("is-open", open);
@@ -68,10 +67,10 @@ export function bindAppEvents(context: AppEventsContext) {
     for (const choice of protectionLevelChoices) choice.tabIndex = open ? 0 : -1;
   };
   const releaseProtectionLevelSettle = () => {
-    if (!protectionLevelControl.matches(":hover") && !protectionLevelControl.matches(":focus-within")) {
-      protectionLevelControl.classList.remove("is-settling");
-    }
+    protectionLevelControl.classList.remove("is-settling");
   };
+  const confirmPanicLevel = (requestedLevel: number) => requestedLevel !== 4
+    || window.confirm("Start Panic mode for three minutes? It cannot be ended early.");
   const previewProtectionLevel = (requestedLevel: number) => {
     const level = Math.max(1, Math.min(4, Math.round(requestedLevel || 1)));
     protectionLevel.value = String(level);
@@ -101,7 +100,12 @@ export function bindAppEvents(context: AppEventsContext) {
     previewProtectionLevel(Number(protectionLevel.value || 1));
   });
   protectionLevel.addEventListener("change", () => {
-    settleProtectionLevel(Number(protectionLevel.value || 1));
+    const requestedLevel = Number(protectionLevel.value || 1);
+    if (!confirmPanicLevel(requestedLevel)) {
+      void refresh();
+      return;
+    }
+    settleProtectionLevel(requestedLevel);
   });
   for (const choice of protectionLevelChoices) {
     choice.addEventListener("click", () => {
@@ -110,23 +114,17 @@ export function bindAppEvents(context: AppEventsContext) {
         setProtectionLevelOpen(true);
         return;
       }
-      const level = previewProtectionLevel(Number(choice.dataset.protectionLevelChoice || 1));
+      const requestedLevel = Number(choice.dataset.protectionLevelChoice || 1);
+      if (requestedLevel === Number(protectionLevel.value || 1)) {
+        setProtectionLevelOpen(false);
+        return;
+      }
+      if (!confirmPanicLevel(requestedLevel)) return;
       setProtectionLevelOpen(false);
+      const level = previewProtectionLevel(requestedLevel);
       settleProtectionLevel(level);
     });
   }
-  protectionLevelControl.addEventListener("wheel", (event: WheelEvent) => {
-    if (protectionLevel.disabled || Math.abs(event.deltaY) < 2) return;
-    event.preventDefault();
-    protectionLevelControl.classList.add("is-scrolling");
-    const direction = event.deltaY > 0 ? 1 : -1;
-    const level = previewProtectionLevel(Number(protectionLevel.value || 1) + direction);
-    if (protectionLevelWheelTimer) clearTimeout(protectionLevelWheelTimer);
-    protectionLevelWheelTimer = setTimeout(() => {
-      protectionLevelControl.classList.remove("is-scrolling");
-      settleProtectionLevel(level);
-    }, 360);
-  }, { passive: false });
 
   $("#focusSoundEnabled").addEventListener("change", async (event: Event) => {
     try {

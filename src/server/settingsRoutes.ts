@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { minecraftAudioCatalog } from "../../public/minecraft-audio-catalog.js";
 import { adultBlocklistSource, invalidateAdultBlocklistIfSourceChanged } from "../adultBlocklist.js";
 import { parseBoolean } from "../booleans.js";
 import { assertProtectedEditAllowed } from "../protection.js";
@@ -148,7 +149,8 @@ const SETTING_MUTATIONS = {
     "brown-noise", "pink-noise", "white-noise", "rain", "ocean", "storm", "stream", "binaural-beat", "isochronic-tone",
     "bach-goldberg-aria", "bach-invention-8", "bach-italian-concerto", "handel-harmonious-blacksmith", "scarlatti-sonata-k87", "scarlatti-sonata-k466",
     "rorate-caeli", "o-come-emmanuel", "o-come-all-ye-faithful", "crux-fidelis", "pange-lingua", "victimae-paschali-laudes",
-    "regina-caeli", "ave-maria-gregorian", "salve-regina", "veni-creator-spiritus", "kyrie-xi-orbis-factor", "dies-irae"
+    "regina-caeli", "ave-maria-gregorian", "salve-regina", "veni-creator-spiritus", "kyrie-xi-orbis-factor", "dies-irae",
+    ...minecraftAudioCatalog.map((track) => track.id)
   ]),
   focusSoundIntensity: enumSetting("focusSoundIntensity", ["low", "medium", "high"]),
   focusSoundTimerMode: enumSetting("focusSoundTimerMode", ["infinite", "timer", "interval"]),
