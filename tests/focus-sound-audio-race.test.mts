@@ -165,6 +165,7 @@ const originalFetch = globalThis.fetch;
 const originalConsoleError = console.error;
 const originalDateNow = Date.now;
 const toasts: string[] = [];
+const settingsPosts: Array<{ path: string; body: unknown }> = [];
 const reducedMotionListeners = new Set<(event: MediaQueryListEvent) => void>();
 const reducedMotionQuery = {
   matches: true,
@@ -217,7 +218,10 @@ try {
       assert.ok(control, `${selector} should exist`);
       return control as unknown as HTMLElement & { checked: boolean; value: string };
     },
-    post: async () => ({}),
+    post: async (path, body) => {
+      settingsPosts.push({ path, body });
+      return {};
+    },
     toast: (message: string) => toasts.push(message)
   });
 
@@ -323,6 +327,22 @@ try {
   assert.equal(playButtonAttributes.get("aria-pressed"), "false");
   assert.equal(focusSound.isPlaying(), false, "failed playback must remain retryable without first disabling sound");
   assert.deepEqual(toasts, ["Could not play this sound: Could not load /audio/nature/forest-lawn-creek.ogg"], "the active playback failure must be visible to the user");
+  assert.equal(controls.get("#focusSoundEnabled")?.checked, false, "failed playback must immediately show as disabled");
+  assert.deepEqual(settingsPosts, [{ path: "/api/settings", body: { focusSoundEnabled: false } }], "failed playback must be disabled in persisted settings");
+
+  focusSound.render(dataForPreset("stream"));
+  focusSound.render(dataForPreset("stream"));
+  await settle();
+  assert.equal(requestedFetches.filter((url) => url === "/audio/nature/forest-lawn-creek.ogg").length, 1, "state polls must not retry a failed preset");
+  assert.equal(toasts.length, 1, "state polls must not repeat the failed-preset toast");
+
+  focusSound.restartTimer();
+  focusSound.render(dataForPreset("stream"));
+  await settle();
+  assert.equal(requestedFetches.filter((url) => url === "/audio/nature/forest-lawn-creek.ogg").length, 2, "an explicit Listen retry must clear the failed-preset latch");
+  resolveFetch("/audio/nature/forest-lawn-creek.ogg");
+  await settle();
+  assert.equal(focusSound.isPlaying(), true, "an explicit retry must be able to recover after the asset becomes available");
 
   focusSound.render(dataForPreset("bach-goldberg-aria"));
   await settle();

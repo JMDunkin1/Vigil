@@ -169,6 +169,7 @@ assert.match(appEventsSource, /if \(requestedLevel === Number\(protectionLevel\.
 assert.doesNotMatch(appEventsSource, /addEventListener\(["']wheel["']/, "scrolling over the protection selector must never change levels or start Panic mode");
 assert.match(appEventsSource, /const confirmPanicLevel = \(requestedLevel\) => requestedLevel !== 4\s*\|\| window\.confirm\(["']Start Panic mode for three minutes\? It cannot be ended early\.["']\)/, "Panic mode must require an explicit confirmation after its level is selected");
 assert.ok([...appEventsSource.matchAll(/confirmPanicLevel\(requestedLevel\)/g)].length >= 2, "every interactive protection-level path must use the Panic confirmation gate");
+assert.match(appEventsSource, /if \(!confirmPanicLevel\(requestedLevel\)\) \{\s*showProtectionLevel\(appliedProtectionLevel, false\);/, "rejecting a range-selected Panic level must synchronously restore the applied level");
 assert.doesNotMatch(appEventsSource, /Focus sound saved|Sound on|Sound paused|Playing \$\{/, "routine sound controls must not trigger bottom-corner toast popups");
 assert.match(appEventsSource, /const enabled = !focusSound\.isPlaying\(\)/, "Listen must retry silent-but-enabled audio instead of disabling it");
 assert.match(appEventsSource, /if \(enabled\)\s*focusSound\.restartTimer\(\)/, "Listen must restart an expired timer before replaying it");
