@@ -525,7 +525,8 @@ async function publishManageEngineGenerationLocked({
     return { generationPath: generationRoot, manifestPath };
   } catch (error) {
     const current = await realpath(join(root, "current")).catch(() => "");
-    if (current !== generationRoot) await rm(generationRoot, { recursive: true, force: true }).catch(() => {});
+    const publishedGeneration = await realpath(generationRoot).catch(() => "");
+    if (!publishedGeneration || current !== publishedGeneration) await rm(generationRoot, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
 }

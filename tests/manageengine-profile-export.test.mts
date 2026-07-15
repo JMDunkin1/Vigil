@@ -292,8 +292,18 @@ try {
       summaryPath,
       saveState: async () => {}
     });
-    const generation = await resolveManageEngineCurrentGeneration(aliasedRoot);
-    assert.equal(dirname(generation), await realpath(join(aliasedRoot, ".generations")), "a canonical generation must remain valid when its publication root is reached through a path alias");
+    const firstGeneration = await resolveManageEngineCurrentGeneration(aliasedRoot);
+    assert.equal(dirname(firstGeneration), await realpath(join(aliasedRoot, ".generations")), "a canonical generation must remain valid when its publication root is reached through a path alias");
+    await assert.rejects(exportManageEngineIosProfile(defaultState(), {
+      currentState: true,
+      outPath,
+      summaryPath,
+      saveState: async () => {},
+      afterPublicationBoundary(boundary) {
+        if (boundary === "current-published") throw new Error("crash after aliased current publication");
+      }
+    }), /crash after aliased current publication/u);
+    assert.notEqual(await resolveManageEngineCurrentGeneration(aliasedRoot), firstGeneration, "crash cleanup must retain a generation published through a path alias");
   } finally {
     await rm(aliasedRoot, { force: true });
     await rm(canonicalRoot, { recursive: true, force: true });
