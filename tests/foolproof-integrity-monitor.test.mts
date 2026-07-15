@@ -600,30 +600,72 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
 {
   const state = defaultState();
   state.settings.foolproofModeEnabled = false;
-  const maskedByInstalledProfile = syncAppleContentFilterLockdown(state, {
-    required: state.settings.foolproofModeEnabled,
+  const defaultProtection = syncAppleContentFilterLockdown(state, {
+    required: true,
     current: true,
     effectiveCurrent: true,
     appleCurrent: false,
     appleContentFilter: { current: false }
   }, now);
-  assert.equal(maskedByInstalledProfile.started, false);
+  assert.equal(defaultProtection.started, false);
+  assert.equal(defaultProtection.reason, "not-armed");
   assert.equal(integrityLockdownActive(state), false);
   assert.equal(activePolicy(state, now), null);
+
+  state.integrity.runtime.hardeningDriftDetectedAt = now.toISOString();
+  state.integrity.runtime.hardeningDriftDetail = "Legacy Apple content filter recovery";
+  state.integrity.runtime.hardeningDriftIssues = [{ id: "apple-content-filter", detail: "Legacy uncorroborated alarm" }];
+  const migratedLegacyAlarm = syncAppleContentFilterLockdown(state, {
+    required: true,
+    appleContentFilter: { current: false }
+  }, new Date(now.getTime() + 1000));
+  assert.equal(migratedLegacyAlarm.reason, "uncorroborated-recovery-cleared");
+  assert.equal(integrityLockdownActive(state), false);
 }
 
 {
   const state = defaultState();
   state.settings.foolproofModeEnabled = true;
-  const started = syncAppleContentFilterLockdown(state, {
+  state.activeSession = {
+    id: "filter-bypass-strict",
+    title: "Filter bypass test",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual"
+  };
+
+  const missingAtStart = syncAppleContentFilterLockdown(state, {
     required: true,
     current: false,
     effectiveCurrent: false,
     appleContentFilter: { current: false }
   }, now);
+  assert.equal(missingAtStart.started, false);
+  assert.equal(missingAtStart.reason, "not-armed");
+  assert.equal(integrityLockdownActive(state), false);
+
+  const healthy = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: true,
+    effectiveCurrent: true,
+    appleContentFilter: { current: true }
+  }, new Date(now.getTime() + 1000));
+  assert.equal(healthy.started, false);
+  assert.equal(state.integrity.runtime.appleContentFilterArmedLockId, "filter-bypass-strict");
+
+  const started = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: false,
+    effectiveCurrent: false,
+    appleContentFilter: { current: false }
+  }, new Date(now.getTime() + 2000));
   assert.equal(started.started, true);
   assert.equal(integrityLockdownActive(state), true);
-  const policy = mustPolicy(activePolicy(state, now));
+  const policy = mustPolicy(activePolicy(state, new Date(now.getTime() + 2000)));
   assert.equal(policy.kind, "integrity");
   assert.equal(policy.session.title, "Apple content filter recovery");
   assert.equal(policy.endsAt, "until Apple Screen Time Limit Adult Websites and Content & Privacy Restrictions are turned back on");
@@ -653,8 +695,18 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     current: false,
     effectiveCurrent: false,
     appleContentFilter: { current: false }
-  }, new Date(now.getTime() + 1000));
+  }, new Date(now.getTime() + 3000));
   assert.equal(repeated.started, false);
+  assert.equal(integrityLockdownActive(state), true);
+
+  state.activeSession = null;
+  const persistedAfterLock = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: false,
+    effectiveCurrent: false,
+    appleContentFilter: { current: false }
+  }, new Date(now.getTime() + 4000));
+  assert.equal(persistedAfterLock.active, true);
   assert.equal(integrityLockdownActive(state), true);
 
   const cleared = syncAppleContentFilterLockdown(state, {
@@ -662,7 +714,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     current: false,
     effectiveCurrent: true,
     appleContentFilter: { current: true }
-  }, new Date(now.getTime() + 2000));
+  }, new Date(now.getTime() + 5000));
   assert.equal(cleared.cleared, true);
   assert.equal(integrityLockdownActive(state), false);
   assert.equal(activePolicy(state, now), null);

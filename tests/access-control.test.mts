@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { accountStatusFromGroups, parseGroups } from "../src/account.js";
-import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, EXTENSION_TOKEN_HEADER, extensionCorsHeaders, extensionRequestGuard, extensionTrustSummary, isLoopbackHostHeader, isLoopbackRemoteAddress, isTrustedExtensionRequest, publicHostGuard } from "../src/apiSecurity.js";
+import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, EXTENSION_ID_HEADER, EXTENSION_TOKEN_HEADER, extensionCorsHeaders, extensionRequestGuard, extensionTrustSummary, isLoopbackHostHeader, isLoopbackRemoteAddress, isTrustedExtensionRequest, publicHostGuard } from "../src/apiSecurity.js";
 import { parseBoolean } from "../src/booleans.js";
+import { BUILT_IN_CHROME_EXTENSION_ID } from "../src/defaults.js";
 import { iosMdmReadiness, normalizeIosMdmSettings } from "../src/iosMdm.js";
 import { normalizeLimitRule } from "../src/limits.js";
 
@@ -220,6 +221,29 @@ try {
     }
   }).ok, false);
   assert.equal(isTrustedExtensionRequest({ origin: "chrome-extension://abc" }), false);
+  assert.equal(extensionRequestGuard({
+    method: "POST",
+    ...LOCAL_TRANSPORT,
+    headers: {
+      origin: `chrome-extension://${BUILT_IN_CHROME_EXTENSION_ID}`,
+      "content-type": "application/json"
+    }
+  }).ok, true);
+  assert.equal(extensionRequestGuard({
+    method: "GET",
+    ...LOCAL_TRANSPORT,
+    headers: {
+      [EXTENSION_ID_HEADER]: BUILT_IN_CHROME_EXTENSION_ID
+    }
+  }).ok, true);
+  assert.equal(extensionRequestGuard({
+    method: "GET",
+    remoteAddress: "203.0.113.10",
+    headers: {
+      host: "127.0.0.1:8787",
+      [EXTENSION_ID_HEADER]: BUILT_IN_CHROME_EXTENSION_ID
+    }
+  }).ok, false);
 
   process.env.VIGIL_EXTENSION_ORIGINS = "chrome-extension://abc";
   assert.equal(apiRequestGuard({

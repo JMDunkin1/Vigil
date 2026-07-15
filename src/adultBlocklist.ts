@@ -15,7 +15,8 @@ import {
 import {
   DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT,
   DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
-  DEFAULT_EXPLICIT_BLOCKED_SITES
+  DEFAULT_EXPLICIT_BLOCKED_SITES,
+  MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS
 } from "./defaults.js";
 import { DATA_DIR } from "./store.js";
 import { writeFileAtomically } from "./snapshotFiles.js";
@@ -86,7 +87,15 @@ export interface AdultBlocklistMatch extends UnknownRecord {
 
 export const ADULT_BLOCKLIST_SOURCES: AdultBlocklistSource[] = [
   {
-    id: DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
+    id: "blocklistproject-porn",
+    label: "Vigil 600K+ adult sites",
+    url: "https://blocklistproject.github.io/Lists/porn.txt",
+    homepage: "https://github.com/blocklistproject/Lists",
+    license: "Unlicense",
+    format: "hosts"
+  },
+  {
+    id: "hagezi-nsfw",
     label: "HaGeZi NSFW",
     url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/nsfw-onlydomains.txt",
     homepage: "https://github.com/hagezi/dns-blocklists",
@@ -99,14 +108,6 @@ export const ADULT_BLOCKLIST_SOURCES: AdultBlocklistSource[] = [
     url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn/hosts",
     homepage: "https://github.com/StevenBlack/hosts",
     license: "MIT",
-    format: "hosts"
-  },
-  {
-    id: "blocklistproject-porn",
-    label: "Block List Project porn",
-    url: "https://blocklistproject.github.io/Lists/porn.txt",
-    homepage: "https://github.com/blocklistproject/Lists",
-    license: "Unlicense",
     format: "hosts"
   },
   {
@@ -163,16 +164,23 @@ export function clearAdultBlocklistSnapshotState(state: VigilState): void {
   state.adultBlocklist.source = null;
 }
 
-export async function refreshAdultBlocklist(state: VigilState, now = new Date()) {
+export async function refreshAdultBlocklist(
+  state: VigilState,
+  now = new Date(),
+  hooks: AdultBlocklistFetchTestHooks = {}
+) {
   const source = adultBlocklistSource(state);
   const attemptedAt = now.toISOString();
   state.adultBlocklist.lastAttemptAt = attemptedAt;
   state.adultBlocklist.lastError = "";
   try {
-    const text = await fetchSourceText(source.url);
+    const text = await fetchSourceText(source.url, hooks);
     const domains = parseAdultBlocklistDomains(text);
-    if (domains.length < MIN_REFRESH_DOMAINS) {
-      throw new Error(`Adult blocklist refresh returned only ${domains.length} usable domains.`);
+    const minimumDomains = source.id === DEFAULT_ADULT_BLOCKLIST_SOURCE_ID
+      ? MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS
+      : MIN_REFRESH_DOMAINS;
+    if (domains.length < minimumDomains) {
+      throw new Error(`Adult blocklist refresh returned only ${domains.length} usable domains; ${minimumDomains} are required for ${source.label}.`);
     }
     const hash = domainHash(domains);
     const snapshot = {

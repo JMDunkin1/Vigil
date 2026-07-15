@@ -1,6 +1,9 @@
 #!/bin/sh
 set -eu
-SOURCE="$SRCROOT/../../data/adult-blocklist.sdi"
+SOURCE="${VIGIL_PHONE_BLOCKLIST:-$SRCROOT/../../data/adult-blocklist.sdi}"
+if [ ! -f "$SOURCE" ] && [ -n "${HOME:-}" ]; then
+  SOURCE="$HOME/Library/Application Support/Vigil/adult-blocklist.sdi"
+fi
 if [ -f "$SOURCE" ]; then
   cp "$SOURCE" "$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH/adult-blocklist.sdi"
 elif [ "${CONFIGURATION:-}" = "Release" ]; then

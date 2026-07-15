@@ -3,8 +3,10 @@ import { PERMANENT_SOCIAL_URL_PATTERNS, defaultFocusedSocialSettings } from "./s
 
 export const APP_NAME = "Vigil";
 export const PORT = Number(process.env.VIGIL_PORT || 8787);
-export const REQUIRED_EXTENSION_VERSION = "0.3.3";
-export const DEFAULT_ADULT_BLOCKLIST_SOURCE_ID = "hagezi-nsfw";
+export const REQUIRED_EXTENSION_VERSION = "0.3.5";
+export const BUILT_IN_CHROME_EXTENSION_ID = "pioggnehmhgehdlncoddbhcbcjmmcpge";
+export const DEFAULT_ADULT_BLOCKLIST_SOURCE_ID = "blocklistproject-porn";
+export const MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS = 600_000;
 export const DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT = 100;
 
 export const BROWSERS = new Set([
@@ -237,7 +239,7 @@ export const DEFAULT_EXPLICIT_BLOCKED_SITES = [
   "brazzers.com"
 ];
 
-const DEFAULT_EXPLICIT_SEARCH_TERMS = [
+export const DEFAULT_EXPLICIT_SEARCH_TERMS = [
   "porn",
   "porno",
   "xxx",
@@ -395,6 +397,20 @@ export const BRICK_ALLOWED_SITES = [
 ];
 
 export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
+  // Unfiltered browsers are closed while Safari and Vigil's filtered browser
+  // remain available. This is deliberately a denylist, not an all-app allowlist.
+  "com.google.chrome.ios",
+  "org.mozilla.ios.Firefox",
+  "org.mozilla.ios.Focus",
+  "com.microsoft.msedge",
+  "com.brave.ios.browser",
+  "com.duckduckgo.mobile.ios",
+  "com.opera.OperaTouch",
+  "com.vivaldi.Vivaldi",
+  "company.thebrowser.Browser",
+  "org.torproject.OnionBrowser",
+  // Native social/feed apps remain targeted so they cannot bypass the filtered
+  // Safari, Vigil Browser, and Vigil Social paths.
   "com.google.ios.youtube",
   "com.atebits.Tweetie2",
   "com.burbn.instagram",
@@ -829,6 +845,8 @@ export function defaultState(): VigilState {
       },
       runtime: {
         lastHeartbeatAt: null,
+        appleContentFilterArmedAt: null,
+        appleContentFilterArmedLockId: null,
         downtimeDetectedAt: null,
         downtimeDetail: "",
         lastGapSeconds: 0,

@@ -801,11 +801,7 @@ export class Monitor implements MonitorHandle {
     if (now < this.nextAppleContentFilterRefreshAt) return;
     this.nextAppleContentFilterRefreshAt = now + 5000;
     const safariFilter = await safariFilterStatus(this.state);
-    const recoveryRequired = Boolean(this.state.settings?.foolproofModeEnabled && safariFilter.required);
-    const result = syncAppleContentFilterLockdown(this.state, {
-      ...safariFilter,
-      required: recoveryRequired
-    }, new Date(now));
+    const result = syncAppleContentFilterLockdown(this.state, safariFilter, new Date(now));
     this.status.appleContentFilterLockdown = {
       ...result,
       checkedAt: new Date(now).toISOString(),
@@ -822,6 +818,9 @@ export class Monitor implements MonitorHandle {
     };
     if (result.started) addEvent(this.state, "apple_content_filter_lockdown", result);
     if (result.cleared) addEvent(this.state, "apple_content_filter_restored", result);
+    if (result.reason === "uncorroborated-recovery-cleared") {
+      addEvent(this.state, "apple_content_filter_recovery_discarded", result);
+    }
   }
 
   async refreshHardeningDrift(now: number): Promise<void> {

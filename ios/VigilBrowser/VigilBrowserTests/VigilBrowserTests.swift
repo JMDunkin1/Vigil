@@ -46,6 +46,15 @@ final class VigilBrowserTests: XCTestCase {
         XCTAssertEqual(safe, "active")
     }
 
+    func testExplicitSearchTermsAreBlockedByDefault() throws {
+        let filter = NavigationFilter(rules: .bootstrap)
+        XCTAssertTrue(FilterRules.bootstrap.blockedSearchTerms.contains("porn"))
+        XCTAssertEqual(
+            filter.decide(try XCTUnwrap(URL(string: "https://www.google.com/search?q=porn"))),
+            .block(reason: "That search is blocked by Vigil.")
+        )
+    }
+
     func testBlockedTermsAreCheckedOnlyInSearchParameters() throws {
         var rules = FilterRules.bootstrap
         rules.blockedSearchTerms = ["bad query"]

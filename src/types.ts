@@ -601,6 +601,8 @@ export interface HardeningIssue {
 
 export interface IntegrityRuntimeState {
   lastHeartbeatAt?: string | null;
+  appleContentFilterArmedAt?: string | null;
+  appleContentFilterArmedLockId?: string | null;
   downtimeDetectedAt?: string | null;
   downtimeDetail?: string;
   lastGapSeconds?: number;

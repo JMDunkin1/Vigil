@@ -5,7 +5,8 @@ import {
   finalizeAdultBlocklistSnapshot,
   invalidateAdultBlocklistIfSourceChanged,
   normalizeAdultDomainList,
-  refreshAdultBlocklist
+  refreshAdultBlocklist,
+  writeAdultBlocklistPhoneArtifact
 } from "../adultBlocklist.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { addEvent, saveState } from "../store.js";
@@ -15,12 +16,13 @@ import { updateSettings } from "./settingsRoutes.js";
 
 interface AdultBlocklistApiContext {
   state: VigilState;
+  recordIosMdmPolicyQueue?: (reason: string) => unknown;
 }
 
 export async function handleAdultBlocklistApiRoute(
   request: IncomingMessage,
   response: ServerResponse,
-  { state }: AdultBlocklistApiContext
+  { state, recordIosMdmPolicyQueue }: AdultBlocklistApiContext
 ): Promise<boolean> {
   const method = request.method || "GET";
   const path = new URL(request.url || "/", "http://localhost").pathname;
@@ -39,6 +41,7 @@ export async function handleAdultBlocklistApiRoute(
         keys.push("adultBlocklistAllowlist");
       }
       addEvent(state, "adult_blocklist_settings_updated", { keys });
+      if (keys.length) recordIosMdmPolicyQueue?.("adult-blocklist-settings");
       await saveState(state);
       sendJson(response, 200, { ok: true, keys, adultBlocklist: adultBlocklistSummary(state) });
     } catch (error) {
@@ -58,8 +61,10 @@ export async function handleAdultBlocklistApiRoute(
         hash: summary.shortHash
       });
       await saveState(state);
+      const phoneArtifact = await writeAdultBlocklistPhoneArtifact(state);
       await finalizeAdultBlocklistSnapshot(state);
-      sendJson(response, 200, { ok: true, adultBlocklist: summary });
+      recordIosMdmPolicyQueue?.("adult-blocklist-refresh");
+      sendJson(response, 200, { ok: true, adultBlocklist: summary, phoneArtifact });
     } catch (error) {
       addEvent(state, "adult_blocklist_refresh_failed", { error: error instanceof Error ? error.message : String(error) });
       await saveState(state);

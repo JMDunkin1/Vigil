@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, EXTENSION_TOKEN_HEADER } from "../src/apiSecurity.js";
-import { defaultState, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
+import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, EXTENSION_ID_HEADER, EXTENSION_TOKEN_HEADER } from "../src/apiSecurity.js";
+import { BUILT_IN_CHROME_EXTENSION_ID, defaultState, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
 import { handleExtensionApiRoute } from "../src/server/extensionApi.js";
 import type { UsageState } from "../src/types.js";
 
@@ -99,6 +99,26 @@ await handleExtensionApiRoute(
 );
 
 assert.equal(untrustedResponse.statusCodeValue, 403);
+
+const builtInExtensionResponse = response();
+const builtInExtensionState = defaultState();
+await handleExtensionApiRoute(
+  request("POST", "/api/extension/check", {
+    host: "127.0.0.1:8787",
+    "content-type": "application/json",
+    [EXTENSION_ID_HEADER]: BUILT_IN_CHROME_EXTENSION_ID
+  }, {
+    url: "https://example.com",
+    event: "heartbeat",
+    extensionVersion: REQUIRED_EXTENSION_VERSION
+  }),
+  builtInExtensionResponse,
+  new URL("http://127.0.0.1:8787/api/extension/check"),
+  { state: builtInExtensionState, usage: {} }
+);
+
+assert.equal(builtInExtensionResponse.statusCodeValue, 200);
+assert.equal(builtInExtensionState.extension.lastVersion, REQUIRED_EXTENSION_VERSION);
 
 const previousToken = process.env.VIGIL_EXTENSION_TOKEN;
 try {

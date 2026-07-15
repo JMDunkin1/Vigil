@@ -2,13 +2,14 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   APP_NAME,
   BRICK_MODE_PROFILE_ID,
+  DEFAULT_EXPLICIT_SEARCH_TERMS,
   DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS,
   DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
   SOFT_BLOCK_PROFILE_ID,
   defaultState
 } from "./defaults.js";
 import { parseBoolean } from "./booleans.js";
-import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
+import { adultBlocklistPreloadDomains, adultBlocklistSummary } from "./adultBlocklist.js";
 import { grayscaleDecision, IOS_GRAYSCALE_GUARD_BUNDLE_IDS } from "./grayscale.js";
 import { activeLimitBlocks } from "./limits.js";
 import { plistData, toPlist } from "./plist.js";
@@ -39,6 +40,7 @@ interface IosPolicyTargets {
   appMode: string;
   webMode: string;
   enforcementActive: boolean;
+  protectionActive: boolean;
   focusedSocialEnforcementActive: boolean;
   appBundleIds: string[];
   deniedUrls: string[];
@@ -77,7 +79,10 @@ export function normalizeIosSettings(body: UnknownRecord = {}, existing: Partial
     hardenRemoval: body.hardenRemoval === undefined ? current.hardenRemoval !== false : parseBoolean(body.hardenRemoval, true),
     restrictInstallAndErase: body.restrictInstallAndErase === undefined ? current.restrictInstallAndErase !== false : parseBoolean(body.restrictInstallAndErase, true),
     allowSafariHistoryClearing: body.allowSafariHistoryClearing === undefined ? current.allowSafariHistoryClearing !== false : parseBoolean(body.allowSafariHistoryClearing, true),
-    blockedAppBundleIds: normalizeBundleIds(body.blockedAppBundleIds ?? body.blockedApps ?? current.blockedAppBundleIds ?? DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS),
+    blockedAppBundleIds: normalizeBundleIds([
+      ...DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
+      ...normalizeBundleIds(body.blockedAppBundleIds ?? body.blockedApps ?? current.blockedAppBundleIds ?? [])
+    ]),
     allowedAppBundleIds: normalizeBundleIds(body.allowedAppBundleIds ?? body.allowedApps ?? current.allowedAppBundleIds ?? DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS),
     deniedUrls: normalizeUrlList(body.deniedUrls ?? current.deniedUrls ?? []),
     allowedUrls: normalizeUrlList(body.allowedUrls ?? current.allowedUrls ?? []),
@@ -96,7 +101,6 @@ export function iosProfileSummary(state: VigilState, now = new Date()) {
   const targets = active ? iosPolicyTargets(state, now) : disabledPolicyTargets(settings);
   const launcherClips = focusedSocialLauncherWebClips();
   const appListRestrictionEmitted = Boolean(active
-    && targets.enforcementActive
     && (settings.blockApps || targets.grayscale.settingsGuarded)
     && targets.appBundleIds.length);
   const appStoreVisibleByAppList = !appListRestrictionEmitted
@@ -104,17 +108,19 @@ export function iosProfileSummary(state: VigilState, now = new Date()) {
       ? includesBundleId(targets.appBundleIds, IOS_APP_STORE_BUNDLE_ID)
       : !includesBundleId(targets.appBundleIds, IOS_APP_STORE_BUNDLE_ID));
   const appStoreInstallAllowed = Boolean(!active || !targets.enforcementActive || !settings.restrictInstallAndErase);
+  const removalHardened = Boolean(active && settings.hardenRemoval && settings.removalPassword);
+  const adultSites = adultBlocklistSummary(state);
   return {
     enabled: active,
     supported: true,
-    status: active && targets.enforcementActive ? "supervised-policy-enabled" : "ready",
+    status: active ? "supervised-protection-configured" : "ready",
     note: active
       ? targets.enforcementActive
-        ? "Desktop-generated supervised iPhone enforcement profile is ready to install."
-        : "Level 1 keeps permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Stories web protection active."
+        ? "Always-on content protection plus the current timed iPhone policy are ready for managed delivery."
+        : "Always-on explicit-content protection is ready for managed delivery; ordinary apps and the App Store remain available."
       : "Enable this to generate a supervised iPhone policy profile.",
     supervisedRequired: true,
-    removalHardened: Boolean(active && targets.enforcementActive && settings.hardenRemoval && settings.removalPassword),
+    removalHardened,
     restrictInstallAndErase: Boolean(settings.restrictInstallAndErase),
     appStoreAllowedByThisProfile: Boolean(appStoreVisibleByAppList && appStoreInstallAllowed),
     appStoreVisibleByAppList,
@@ -130,6 +136,19 @@ export function iosProfileSummary(state: VigilState, now = new Date()) {
     deniedUrls: settings.deniedUrls,
     allowedUrls: settings.allowedUrls,
     focusedSocial: settings.focusedSocial,
+    protection: {
+      knownSitesBlocked: Boolean(active && settings.blockWeb && targets.deniedUrls.length),
+      knownSiteDomainCount: adultSites.activeDomainCount,
+      explicitSearchesBlocked: Boolean(active && settings.blockWeb),
+      explicitSearchTermCount: DEFAULT_EXPLICIT_SEARCH_TERMS.length,
+      safeSearchEnforced: Boolean(active && settings.blockWeb),
+      sensitiveMediaFiltered: Boolean(active && settings.blockWeb),
+      requiresManagedSafariExtension: true,
+      appWorkaroundsClosed: Boolean(active && settings.blockApps && targets.appBundleIds.length),
+      targetedAppBundleCount: targets.appBundleIds.length,
+      allAppsHidden: false,
+      removalLocked: removalHardened
+    },
     profile: {
       identifier: IOS_PROFILE_IDENTIFIER,
       fileName: "vigil-iphone-lock.mobileconfig",
@@ -140,6 +159,7 @@ export function iosProfileSummary(state: VigilState, now = new Date()) {
       allowedUrlCount: targets.allowedUrls.length,
       webClipCount: 0,
       enforcementActive: targets.enforcementActive,
+      protectionActive: targets.protectionActive,
       focusedSocialEnforcementActive: targets.focusedSocialEnforcementActive,
       managedHelperAppBundleIds: targets.managedHelperAppBundleIds,
       focusedSocial: targets.focusedSocial,
@@ -191,7 +211,7 @@ export function buildIosConfigurationProfile(state: VigilState, now = new Date()
   const webFilter = webContentFilterPayload(settings, targets);
   if (webFilter) payloads.push(webFilter);
 
-  if (enforcementActive && settings.hardenRemoval && settings.removalPassword) {
+  if (active && settings.hardenRemoval && settings.removalPassword) {
     payloads.push(commonPayload("com.apple.profileRemovalPassword", "Profile Removal Password", "removal-password", {
       RemovalPassword: settings.removalPassword
     }));
@@ -200,13 +220,13 @@ export function buildIosConfigurationProfile(state: VigilState, now = new Date()
   const profile = {
     PayloadContent: payloads,
     PayloadDescription: enforcementActive
-      ? "Locks distracting iPhone apps and websites using supervised Apple device-management restrictions generated by Vigil."
-      : "Vigil Level 1 baseline content protection.",
+      ? "Always-on explicit-content protection plus timed app and website restrictions generated by Vigil."
+      : "Always-on explicit-content protection that targets unfiltered browser and social escape routes without hiding every app.",
     PayloadDisplayName: "Vigil iPhone Lock",
     ...autoRemoval,
     PayloadIdentifier: IOS_PROFILE_IDENTIFIER,
     PayloadOrganization: APP_NAME,
-    PayloadRemovalDisallowed: Boolean(enforcementActive && settings.hardenRemoval),
+    PayloadRemovalDisallowed: Boolean(active && settings.hardenRemoval),
     PayloadType: "Configuration",
     PayloadUUID: stableIosPayloadUuid(IOS_PROFILE_IDENTIFIER),
     PayloadVersion: 1
@@ -287,6 +307,7 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
   const webMode = limitOnly ? "denylist" : profile?.mode === "allowlist" ? "allowlist" : settings.webMode;
   const grayscale = grayscaleDecision(state, now, { device: "phone" });
   const enforcementActive = Boolean(activePhonePolicy || limitOnly);
+  const protectionActive = Boolean(settings.enabled && (settings.blockApps || settings.blockWeb));
   const settingsGuarded = Boolean(enforcementActive && grayscale.desired && state.grayscale?.preventManualChanges !== false);
   const phoneAppBlocking = profile?.phoneAppBlocking !== false;
   let appBundleIds = limitOnly ? [] : phoneAppBlocking
@@ -295,6 +316,11 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
       : settings.blockedAppBundleIds
     : [];
   if (!settings.blockApps && !settingsGuarded) appBundleIds = [];
+  if (!enforcementActive && settings.blockApps) {
+    appBundleIds = [...settings.blockedAppBundleIds];
+  } else if (enforcementActive && settings.blockApps && appMode !== "allowlist") {
+    appBundleIds = uniqueStrings([...settings.blockedAppBundleIds, ...appBundleIds]);
+  }
   if (settingsGuarded) {
     appBundleIds = appMode === "allowlist"
       ? appBundleIds.filter((bundleId) => !IOS_GRAYSCALE_GUARD_BUNDLE_IDS.includes(bundleId))
@@ -388,6 +414,7 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     appMode,
     webMode,
     enforcementActive,
+    protectionActive,
     focusedSocialEnforcementActive,
     appBundleIds,
     deniedUrls,
@@ -435,7 +462,7 @@ export function normalizeUrlList(values: unknown): string[] {
 }
 
 function currentIosSettings(state: VigilState): IosSettings {
-  return normalizeIosSettings({
+  const normalized = normalizeIosSettings({
     enabled: state.deviceControls?.ios?.enabled,
     mode: state.deviceControls?.ios?.mode,
     webMode: state.deviceControls?.ios?.webMode,
@@ -450,6 +477,10 @@ function currentIosSettings(state: VigilState): IosSettings {
     allowedUrls: state.deviceControls?.ios?.allowedUrls,
     focusedSocial: state.deviceControls?.ios?.focusedSocial
   }, state.deviceControls?.ios || {});
+  return {
+    ...normalized,
+    removalPassword: state.deviceControls?.ios?.removalPassword || null
+  };
 }
 
 function disabledPolicyTargets(settings: IosSettings): IosPolicyTargets {
@@ -458,6 +489,7 @@ function disabledPolicyTargets(settings: IosSettings): IosPolicyTargets {
     appMode: settings.mode,
     webMode: settings.webMode,
     enforcementActive: false,
+    protectionActive: false,
     focusedSocialEnforcementActive: false,
     appBundleIds: [],
     deniedUrls: [],
@@ -482,16 +514,17 @@ function disabledPolicyTargets(settings: IosSettings): IosPolicyTargets {
 function restrictionsPayload(settings: IosSettings, targets: IosPolicyTargets): MobileConfigPayload | null {
   if (!settings.enabled) return null;
   if (!targets.enforcementActive) {
-    return commonPayload("com.apple.applicationaccess", "Level 1 Application Access", "restrictions", {
+    return commonPayload("com.apple.applicationaccess", "Always-on Content Protection", "restrictions", {
       allowAppInstallation: true,
       allowAppRemoval: true,
       allowEraseContentAndSettings: true,
       allowHostPairing: true,
       allowSafariHistoryClearing: true,
       allowUIAppInstallation: true,
-      allowUIConfigurationProfileInstallation: true,
-      allowVPNCreation: true,
+      allowUIConfigurationProfileInstallation: false,
+      allowVPNCreation: false,
       allowWebDistributionAppInstallation: true,
+      blockedAppBundleIDs: settings.blockApps ? targets.appBundleIds : undefined,
       forceAutomaticDateAndTime: false
     });
   }

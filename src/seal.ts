@@ -579,6 +579,8 @@ function protectedIntegrity(integrity: unknown): UnknownRecord {
       migratedAt: typeof usageSeal.migratedAt === "string" ? usageSeal.migratedAt : null
     },
     runtime: {
+      appleContentFilterArmedAt: typeof runtime.appleContentFilterArmedAt === "string" ? runtime.appleContentFilterArmedAt : null,
+      appleContentFilterArmedLockId: typeof runtime.appleContentFilterArmedLockId === "string" ? runtime.appleContentFilterArmedLockId : null,
       downtimeDetectedAt: runtime.downtimeDetectedAt || null,
       downtimeDetail: runtime.downtimeDetail || "",
       hardeningDriftDetectedAt: runtime.hardeningDriftDetectedAt || null,

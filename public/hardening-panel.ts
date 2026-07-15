@@ -344,7 +344,7 @@ function renderAdultBlocklistSources(adult: NonNullable<DashboardData["hardening
     }
     select.dataset.signature = signature;
   }
-  select.value = selected || String(adult.selectedSourceId || "hagezi-nsfw");
+  select.value = selected || String(adult.selectedSourceId || "blocklistproject-porn");
 }
 
 function shortDate(value: string): string {

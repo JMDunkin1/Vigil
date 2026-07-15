@@ -2,6 +2,12 @@ import Foundation
 
 struct FilterRules: Codable, Equatable, Sendable {
     static let currentSchema = 1
+    static let defaultExplicitSearchTerms = [
+        "porn", "porno", "xxx", "nsfw", "hentai", "rule34", "gonewild",
+        "onlyfans", "fansly", "chaturbate", "stripchat", "cam4", "redtube",
+        "youporn", "spankbang", "xvideos", "xnxx", "xhamster", "18+",
+        "18%2b", "18plus", "18-plus"
+    ]
 
     var schemaVersion: Int
     var revision: Int
@@ -17,7 +23,7 @@ struct FilterRules: Codable, Equatable, Sendable {
         // This array is reserved for small administrator overrides.
         blockedHosts: [],
         blockedURLFragments: [],
-        blockedSearchTerms: [],
+        blockedSearchTerms: defaultExplicitSearchTerms,
         safeSearchEnabled: true
     )
 

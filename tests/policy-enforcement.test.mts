@@ -525,6 +525,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.match(baselineProfileText, /<key>restrictWeb<\/key>\s*<true\/>/);
   assert.match(baselineProfileText, /<key>useContentFilter<\/key>\s*<true\/>/);
   assert.match(baselineProfileText, /com\.apple\.familycontrols\.contentfilter/);
+  assert.match(baselineProfileText, /<key>PayloadRemovalDisallowed<\/key>\s*<true\/>/);
 }
 
 {

@@ -51,19 +51,20 @@ try {
   assert.ok(removalPassword.length >= 16);
 
   const profile = recordValue(parsePlist(await readFile(profilePath, "utf8")), "ManageEngine profile");
-  assert.equal(profile.PayloadRemovalDisallowed, false);
+  assert.equal(profile.PayloadRemovalDisallowed, true);
   assert.ok(Array.isArray(profile.PayloadContent), "profile payload content should be an array");
   const removalPayload = profile.PayloadContent
     .map((item) => recordValue(item, "profile payload"))
     .find((payload) => payload.PayloadType === "com.apple.profileRemovalPassword");
-  assert.equal(removalPayload, undefined, "Level 1 must not emit removal hardening");
+  assert.equal(removalPayload?.RemovalPassword, removalPassword, "always-on protection must carry the saved removal password");
   const restrictionsPayload = profile.PayloadContent
     .map((item) => recordValue(item, "profile payload"))
     .find((payload) => payload.PayloadType === "com.apple.applicationaccess");
   assert.equal(restrictionsPayload?.allowAppInstallation, true);
   assert.equal(restrictionsPayload?.allowAppRemoval, true);
   assert.equal(restrictionsPayload?.allowUIAppInstallation, true);
-  assert.equal(restrictionsPayload?.blockedAppBundleIDs, undefined);
+  assert.ok(Array.isArray(restrictionsPayload?.blockedAppBundleIDs));
+  assert.ok((restrictionsPayload?.blockedAppBundleIDs as unknown[]).includes("com.google.chrome.ios"));
   assert.equal(restrictionsPayload?.allowListedAppBundleIDs, undefined);
   const baselineWebFilter = profile.PayloadContent
     .map((item) => recordValue(item, "profile payload"))
@@ -96,7 +97,7 @@ try {
   assert.equal(summary.stateSaved, true);
   assert.equal(summary.deliveryProvider, "manageengine");
   assert.equal(summary.normalFreeDeliveryPath, true);
-  assert.equal(summary.appBundleCount, 0);
+  assert.equal(summary.appBundleCount, 20);
   assert.ok(Number(summary.deniedUrlCount) > 0);
   assert.equal(summary.enforcementActive, false);
   assert.equal(summary.focusedSocialEnforcementActive, false);
@@ -295,6 +296,7 @@ try {
     assert.equal(releasePayload.PayloadType, "com.apple.applicationaccess");
     assert.equal(releasePayload.allowAppInstallation, true);
     assert.equal(releasePayload.allowAppRemoval, true);
+    assert.ok(Array.isArray(releasePayload.blockedAppBundleIDs));
     const baselineFilter = recordValue(profile.PayloadContent[1], "overlap Level 1 web filter");
     assert.equal(baselineFilter.PayloadType, "com.apple.webcontent-filter");
     assert.ok(Array.isArray(baselineFilter.DenyListURLs));

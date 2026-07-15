@@ -541,7 +541,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse, url
     return;
   }
 
-  if (await handleAdultBlocklistApiRoute(request, response, { state })) {
+  if (await handleAdultBlocklistApiRoute(request, response, { state, recordIosMdmPolicyQueue })) {
     return;
   }
 

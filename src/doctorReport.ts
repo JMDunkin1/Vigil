@@ -135,15 +135,16 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
 function safariFilterDetail(safariFilter: SummaryRecord, required: boolean): string {
   if (safariFilter.enabled === false) return "Safari URL filtering is disabled.";
   if (!required) return "Safari's Apple content-filter profile is not required right now.";
-  if (appleContentFilterCurrent(safariFilter) && !safariFilter.current) return "Apple Screen Time web content filter is on; Vigil's separate Safari profile is optional.";
-  if (safariFilter.current) return `Safari content-filter profile is current (${safariFilter.expectedUrls || 0} deny URLs, ${safariFilter.pathUrlCount || 0} path URLs).`;
+  if (appleContentFilterCurrent(safariFilter) && safariFilter.current) return `Apple's system web-safety policy is active (${safariFilter.expectedUrls || 0} deny URLs, ${safariFilter.pathUrlCount || 0} path URLs).`;
+  if (appleContentFilterCurrent(safariFilter)) return "Apple Screen Time web content filtering is active, but Vigil's Safari profile needs to be reapplied for the current deny list.";
+  if (safariFilter.current) return "Vigil's Safari profile is installed, but Apple's system web-safety policy is not active; reapply and approve it.";
   if (safariFilter.installed && safariFilter.stale) return "Safari content-filter profile is stale.";
   if (safariFilter.generated) return "Safari content-filter profile is generated but still needs approval in System Settings.";
-  return "Safari content-filter profile is not installed.";
+  return "Safari content-filter profile is not installed; extension-only blocking can be bypassed by reloading without content blockers.";
 }
 
 function safariWebFilterCurrent(safariFilter: SummaryRecord): boolean {
-  return Boolean(safariFilter.effectiveCurrent || safariFilter.current || appleContentFilterCurrent(safariFilter));
+  return appleContentFilterCurrent(safariFilter);
 }
 
 function appleContentFilterCurrent(safariFilter: SummaryRecord): boolean {

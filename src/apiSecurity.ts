@@ -1,9 +1,11 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
+import { BUILT_IN_CHROME_EXTENSION_ID } from "./defaults.js";
 import type { UnknownRecord } from "./types.js";
 
 export const CONTROL_INTENT_HEADER = "x-vigil-intent";
 export const CONTROL_INTENT_VALUE = "vigil-app";
+export const EXTENSION_ID_HEADER = "x-vigil-extension-id";
 export const EXTENSION_TOKEN_HEADER = "x-vigil-extension-token";
 
 const EXTENSION_API_PATHS = new Set([
@@ -41,7 +43,7 @@ interface GuardInput extends RequestTransportContext {
 
 export interface ExtensionTrustSummary {
   trusted: boolean;
-  trustedBy: "origin" | "token" | "none";
+  trustedBy: "origin" | "id" | "token" | "none";
   requestOrigin: string | null;
   normalizedOrigin: string | null;
   extensionId: string | null;
@@ -179,13 +181,14 @@ export function extensionRequestGuard({ method = "GET", headers = {}, remoteAddr
   }
 
   const trustedOrigin = Boolean(localTransport && origin && isTrustedExtensionOrigin(origin));
+  const trustedId = Boolean(localTransport && builtInExtensionIdMatches(headerValue(headers, EXTENSION_ID_HEADER)));
   const trustedToken = extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
-  if (!trustedOrigin && !trustedToken) {
+  if (!trustedOrigin && !trustedId && !trustedToken) {
     return deny("Untrusted extension origin blocked.");
   }
 
   const fetchSite = headerValue(headers, "sec-fetch-site").toLowerCase();
-  if (fetchSite === "cross-site" && origin && !trustedOrigin && !trustedToken) {
+  if (fetchSite === "cross-site" && origin && !trustedOrigin && !trustedId && !trustedToken) {
     return deny("Cross-site extension request blocked.");
   }
 
@@ -203,13 +206,14 @@ export function extensionCorsHeaders(headers: HeaderBag = {}, transport: Request
   return {
     "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-    "Access-Control-Allow-Headers": `Content-Type, ${EXTENSION_TOKEN_HEADER}`,
+    "Access-Control-Allow-Headers": `Content-Type, ${EXTENSION_ID_HEADER}, ${EXTENSION_TOKEN_HEADER}`,
     "Vary": "Origin"
   };
 }
 
 export function isTrustedExtensionRequest(headers: HeaderBag = {}, transport: RequestTransportContext = {}): boolean {
   return (isDirectLoopbackRequest(headers, transport) && isTrustedExtensionOrigin(headerValue(headers, "origin")))
+    || (isDirectLoopbackRequest(headers, transport) && builtInExtensionIdMatches(headerValue(headers, EXTENSION_ID_HEADER)))
     || extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
 }
 
@@ -217,11 +221,13 @@ export function extensionTrustSummary(headers: HeaderBag = {}, transport: Reques
   const requestOrigin = headerValue(headers, "origin");
   const normalized = requestOrigin ? normalizedOrigin(requestOrigin) : "";
   const trustedOrigin = Boolean(isDirectLoopbackRequest(headers, transport) && requestOrigin && isTrustedExtensionOrigin(requestOrigin));
+  const suppliedExtensionId = headerValue(headers, EXTENSION_ID_HEADER).trim().toLowerCase();
+  const trustedId = Boolean(isDirectLoopbackRequest(headers, transport) && builtInExtensionIdMatches(suppliedExtensionId));
   const trustedToken = extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
-  const extensionId = extensionIdFromOrigin(requestOrigin);
+  const extensionId = extensionIdFromOrigin(requestOrigin) || suppliedExtensionId;
   return {
-    trusted: trustedOrigin || trustedToken,
-    trustedBy: trustedOrigin ? "origin" : (trustedToken ? "token" : "none"),
+    trusted: trustedOrigin || trustedId || trustedToken,
+    trustedBy: trustedOrigin ? "origin" : (trustedId ? "id" : (trustedToken ? "token" : "none")),
     requestOrigin: requestOrigin || null,
     normalizedOrigin: normalized || null,
     extensionId: extensionId || null,
@@ -336,6 +342,7 @@ function isTrustedExtensionOrigin(value: string): boolean {
 
 function configuredExtensionOrigins(): Set<string> {
   const origins = [
+    ...extensionIdOrigins([BUILT_IN_CHROME_EXTENSION_ID]),
     ...csvEnv("VIGIL_EXTENSION_ORIGINS"),
     ...csvEnv("VIGIL_EXTENSION_ORIGIN"),
     ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_IDS")),
@@ -362,6 +369,10 @@ function configuredExtensionToken(): string {
 
 function extensionTokenMatches(value: unknown): boolean {
   return secretMatches(configuredExtensionToken(), String(value || ""));
+}
+
+function builtInExtensionIdMatches(value: unknown): boolean {
+  return String(value || "").trim().toLowerCase() === BUILT_IN_CHROME_EXTENSION_ID;
 }
 
 function secretMatches(expected: string, supplied: string): boolean {

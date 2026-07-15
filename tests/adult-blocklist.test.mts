@@ -16,11 +16,17 @@ import {
   normalizeAdultDomain,
   normalizeAdultDomainList,
   parseAdultBlocklistDomains,
+  refreshAdultBlocklist,
   setAdultBlocklistDomainsForTest,
   setAdultBlocklistSnapshotCandidatesForTest
 } from "../src/adultBlocklist.js";
 import type { AdultBlocklistPinnedResponse } from "../src/adultBlocklist.js";
-import { SOFT_BLOCK_PROFILE_ID, defaultState } from "../src/defaults.js";
+import {
+  DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
+  MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS,
+  SOFT_BLOCK_PROFILE_ID,
+  defaultState
+} from "../src/defaults.js";
 import { evaluateExtensionCheck, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { buildHostsBlock } from "../src/hardening.js";
 import { iosPolicyTargets } from "../src/iosProfiles.js";
@@ -217,7 +223,7 @@ bad_domain
   assert.equal(summary.ready, true);
   assert.equal(summary.domainCount, 3);
   assert.equal(summary.preloadedDomainCount > 0, true);
-  assert.equal(summary.selectedSourceId, "hagezi-nsfw");
+  assert.equal(summary.selectedSourceId, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID);
   state.adultBlocklist.hash = summary.hash;
   state.adultBlocklist.source = {
     id: testSource.id,
@@ -283,6 +289,20 @@ bad_domain
   assert.equal(state.adultBlocklist.source, null);
 } finally {
   clearAdultBlocklistCacheForTest();
+}
+
+{
+  const state = defaultState();
+  const undersized = Array.from({ length: 1_000 }, (_, index) => `adult-${index}.example`).join("\n");
+  assert.equal(state.settings.adultBlocklistSourceId, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID);
+  assert.equal(MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS, 600_000);
+  await assert.rejects(
+    () => refreshAdultBlocklist(state, now, {
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      request: async () => pinnedResponse(200, [undersized])
+    }),
+    /600000 are required/
+  );
 }
 
 function pinnedResponse(
