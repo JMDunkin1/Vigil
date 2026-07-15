@@ -57,13 +57,15 @@ export function createRankingView() {
     normalizedDays.forEach((day, index) => {
       const tracked = Boolean(day.tracked);
       const seconds = Number(day.totalSeconds || 0);
-      const height = tracked ? Math.max(5, (seconds / maxSeconds) * 100) : 0;
+      const scale = tracked ? Math.max(0.05, seconds / maxSeconds) : 0;
       const score = tracked ? String(clampPercent(day.focusScore)) : "–";
       const duration = tracked ? formatDuration(seconds) : "";
-      const bar = el("i", { className: "ranking-week-bar" });
+      const bar = el("i", {
+        className: "ranking-week-bar",
+        attrs: { style: `transform:translateX(-50%) scaleY(${scale})` }
+      });
       week.append(el("div", {
-        className: `ranking-week-day${tracked ? " is-tracked" : ""}`,
-        attrs: { style: `--bar-height:${height}%` }
+        className: `ranking-week-day${tracked ? " is-tracked" : ""}`
       },
         textEl("span", score, { className: "ranking-week-score" }),
         textEl("strong", duration, { className: "ranking-week-duration" }),
