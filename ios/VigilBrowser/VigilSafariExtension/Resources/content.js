@@ -1,6 +1,7 @@
 (() => {
   "use strict";
   const nativeApplication = "tech.caseline.vigil.browser";
+  const rulesSchemaVersion = 2;
   const rulesCacheKey = `lastKnownRules:${location.hostname.toLowerCase()}`;
   let rules = null;
 
@@ -59,8 +60,11 @@
     browser.runtime.sendNativeMessage(nativeApplication, { type: "rules", hostname: location.hostname }),
     new Promise((_, reject) => setTimeout(() => reject(new Error("native-timeout")), 1500))
   ])
-    .then(value => { if (value && value.schemaVersion === 1) rules = value; })
-    .catch(() => browser.storage.local.get(rulesCacheKey).then(value => { if (value[rulesCacheKey]) rules = value[rulesCacheKey]; }))
+    .then(value => { if (value && value.schemaVersion === rulesSchemaVersion) rules = value; })
+    .catch(() => browser.storage.local.get(rulesCacheKey).then(value => {
+      const cached = value[rulesCacheKey];
+      if (cached && cached.schemaVersion === rulesSchemaVersion) rules = cached;
+    }))
     .finally(() => {
       if (rules) browser.storage.local.set({ [rulesCacheKey]: rules });
       document.documentElement.style.removeProperty("visibility");

@@ -133,11 +133,22 @@ export function clearTrustedSourceSealDrift(state: VigilState, now = new Date())
 
 export function syncAppleContentFilterLockdown(state: VigilState, safariFilter: HardeningCheck = {}, now = new Date()) {
   const runtime = ensureRuntime(state);
-  const current = !safariFilter.required || appleContentFilterCurrent(safariFilter);
+  const current = appleContentFilterCurrent(safariFilter);
   const issues = Array.isArray(runtime.hardeningDriftIssues) ? runtime.hardeningDriftIssues : [];
-  const existingRecovery = Boolean(runtime.hardeningDriftDetectedAt && onlyAppleContentFilterIssue(issues));
+  let existingRecovery = Boolean(runtime.hardeningDriftDetectedAt && onlyAppleContentFilterIssue(issues));
+  const uncorroboratedRecovery = Boolean(
+    existingRecovery
+    && (!runtime.appleContentFilterArmedAt || !appleContentFilterArmedLockIds(runtime).length)
+  );
+  if (uncorroboratedRecovery) {
+    runtime.hardeningDriftDetectedAt = null;
+    runtime.hardeningDriftDetail = "";
+    runtime.hardeningDriftIssues = [];
+    existingRecovery = false;
+  }
 
   if (current) {
+    armAppleContentFilterForProtectedLock(state, now);
     if (!existingRecovery) {
       return { active: false, started: false, cleared: false, current: true };
     }
@@ -153,11 +164,44 @@ export function syncAppleContentFilterLockdown(state: VigilState, safariFilter: 
     };
   }
 
+  if (existingRecovery) {
+    return {
+      active: true,
+      started: false,
+      cleared: false,
+      current: false,
+      detail: runtime.hardeningDriftDetail || "Apple Screen Time web protection was disabled during a protected lock."
+    };
+  }
+
+  const protectedLocks = protectedLockOverlaps(state, now.getTime(), now.getTime() + 1);
+  const protectedLock = protectedLocks.find((lock) => appleContentFilterArmedForLock(runtime, lock));
+  if (
+    !safariFilter.required
+    || !protectedLock
+  ) {
+    if (!protectedLocks.length) clearAppleContentFilterArm(runtime);
+    return {
+      active: false,
+      started: false,
+      cleared: false,
+      current: false,
+      reason: uncorroboratedRecovery
+        ? "uncorroborated-recovery-cleared"
+        : safariFilter.required ? "not-armed" : "not-required",
+      detail: uncorroboratedRecovery
+        ? "A legacy Apple-filter recovery alarm had no verified protected-lock transition, so Vigil cleared it as an uncorroborated setup warning."
+        : safariFilter.required
+        ? "Apple Screen Time web protection is not active. Finish setup before relying on it for a protected lock."
+        : "Apple Screen Time web protection is not required for the current policy."
+    };
+  }
+
   const issue = {
     id: APPLE_CONTENT_FILTER_ISSUE_ID,
-    detail: "Apple Screen Time Limit Adult Websites or Content & Privacy Restrictions are not active."
+    detail: `Apple Screen Time web protection was disabled during ${protectedLock.name}.`
   };
-  if (runtime.hardeningDriftDetectedAt && !existingRecovery) {
+  if (runtime.hardeningDriftDetectedAt) {
     return {
       active: true,
       started: false,
@@ -170,7 +214,7 @@ export function syncAppleContentFilterLockdown(state: VigilState, safariFilter: 
   const started = !existingRecovery;
   runtime.hardeningDriftDetectedAt ||= now.toISOString();
   runtime.hardeningDriftIssues = [issue];
-  runtime.hardeningDriftDetail = "Apple Screen Time Limit Adult Websites or Content & Privacy Restrictions are off; recovery lockdown blocks almost everything until they are turned back on.";
+  runtime.hardeningDriftDetail = `Apple Screen Time web protection was disabled after Vigil verified it during ${protectedLock.name}; recovery lockdown blocks almost everything until it is restored.`;
   return {
     active: true,
     started,
@@ -182,6 +226,24 @@ export function syncAppleContentFilterLockdown(state: VigilState, safariFilter: 
   };
 }
 
+function armAppleContentFilterForProtectedLock(state: VigilState, now: Date): void {
+  const runtime = ensureRuntime(state);
+  const protectedLocks = protectedLockOverlaps(state, now.getTime(), now.getTime() + 1);
+  if (!protectedLocks.length) {
+    clearAppleContentFilterArm(runtime);
+    return;
+  }
+  runtime.appleContentFilterArmedAt = now.toISOString();
+  runtime.appleContentFilterArmedLockId = protectedLocks[0].id;
+  runtime.appleContentFilterArmedLockIds = [...new Set(protectedLocks.map((lock) => lock.id))];
+}
+
+function clearAppleContentFilterArm(runtime: IntegrityRuntimeState): void {
+  runtime.appleContentFilterArmedAt = null;
+  runtime.appleContentFilterArmedLockId = null;
+  runtime.appleContentFilterArmedLockIds = [];
+}
+
 export function detectHardeningDrift(state: VigilState, checks: HardeningChecks = {}, now = new Date()) {
   const runtime = ensureRuntime(state);
   const existingIssues = Array.isArray(runtime.hardeningDriftIssues) ? runtime.hardeningDriftIssues : [];
@@ -190,12 +252,19 @@ export function detectHardeningDrift(state: VigilState, checks: HardeningChecks 
   if (!state.settings?.foolproofModeEnabled) return null;
 
   const current = now.getTime();
-  const overlap = protectedLockOverlap(state, current, current + 1);
-  if (!overlap) return null;
+  const overlaps = protectedLockOverlaps(state, current, current + 1);
+  if (!overlaps.length) return null;
+  const armedAppleContentFilterOverlap = overlaps.find((lock) => appleContentFilterArmedForLock(runtime, lock));
 
-  const issues = hardeningIssues(checks);
+  const issues = hardeningIssues(checks).filter((issue) =>
+    issue.id !== APPLE_CONTENT_FILTER_ISSUE_ID
+    || Boolean(armedAppleContentFilterOverlap)
+  );
   if (!issues.length) return null;
   if (existingAppleContentFilterRecovery && onlyAppleContentFilterIssue(issues)) return null;
+  const overlap = issues.some((issue) => issue.id === APPLE_CONTENT_FILTER_ISSUE_ID)
+    ? armedAppleContentFilterOverlap || overlaps[0]
+    : overlaps[0];
 
   runtime.hardeningDriftDetectedAt = runtime.hardeningDriftDetectedAt || now.toISOString();
   runtime.hardeningDriftIssues = issues;
@@ -207,6 +276,20 @@ export function detectHardeningDrift(state: VigilState, checks: HardeningChecks 
     issues,
     overlap
   };
+}
+
+function appleContentFilterArmedForLock(runtime: IntegrityRuntimeState, lock: ProtectedOverlap): boolean {
+  return Boolean(runtime.appleContentFilterArmedAt && appleContentFilterArmedLockIds(runtime).includes(lock.id));
+}
+
+function appleContentFilterArmedLockIds(runtime: IntegrityRuntimeState): string[] {
+  const ids = Array.isArray(runtime.appleContentFilterArmedLockIds)
+    ? runtime.appleContentFilterArmedLockIds.filter((id): id is string => typeof id === "string" && Boolean(id))
+    : [];
+  if (typeof runtime.appleContentFilterArmedLockId === "string" && runtime.appleContentFilterArmedLockId) {
+    ids.push(runtime.appleContentFilterArmedLockId);
+  }
+  return [...new Set(ids)];
 }
 
 export function detectRuntimeGap(state: VigilState, now = new Date()) {
@@ -547,54 +630,62 @@ function clockTamperLockdownSeconds(state: VigilState): number {
 }
 
 function protectedLockOverlap(state: VigilState, startMs: number, endMs: number): ProtectedOverlap | null {
-  const session = protectedSessionOverlap(state, startMs, endMs);
-  if (session) {
-    return session;
-  }
+  return protectedLockOverlaps(state, startMs, endMs)[0] || null;
+}
+
+function protectedLockOverlaps(state: VigilState, startMs: number, endMs: number): ProtectedOverlap[] {
+  const overlaps = protectedSessionOverlaps(state, startMs, endMs);
 
   for (const block of state.limitBlocks || []) {
     if (block.lockLevel === "deep" && rangesOverlap(startMs, endMs, Date.parse(block.createdAt || ""), Date.parse(block.until || ""))) {
-      return { kind: "limit", id: block.id, name: block.ruleName || "limit block" };
+      overlaps.push({ kind: "limit", id: block.id, name: block.ruleName || "limit block" });
     }
   }
 
   for (const schedule of state.schedules || []) {
     const overlap = strictScheduleOverlap(schedule, startMs, endMs, state.environment?.wifiSsid || "");
-    if (overlap) return overlap;
+    if (overlap) overlaps.push(overlap);
   }
 
   for (const block of state.intentionalUse?.planBlocks || []) {
     if (block.enabled === false || block.completed || block.lockLevel !== "deep") continue;
     if (rangesOverlap(startMs, endMs, Date.parse(block.startsAt || ""), Date.parse(block.endsAt || ""))) {
-      return {
+      overlaps.push({
         kind: "schedule",
         id: block.id,
         name: block.title || "planner block",
         startsAt: block.startsAt,
         endsAt: block.endsAt
-      };
+      });
     }
   }
 
-  return null;
+  return overlaps;
 }
 
-function protectedSessionOverlap(state: VigilState, startMs: number, endMs: number): ProtectedOverlap | null {
+function protectedSessionOverlaps(state: VigilState, startMs: number, endMs: number): ProtectedOverlap[] {
   const sessions = [
     ...Object.values(state.activeSessions || {}),
     state.activeSession
   ];
   const seen = new Set<string>();
+  const overlaps: ProtectedOverlap[] = [];
   for (const session of sessions) {
     if (!session) continue;
     const key = session.id || `${session.startedAt}:${session.endsAt}`;
     if (seen.has(key)) continue;
     seen.add(key);
     if (session.lockLevel === "deep" && rangesOverlap(startMs, endMs, Date.parse(session.startedAt || ""), Date.parse(session.endsAt || ""))) {
-      return { kind: "manual", id: session.id, name: session.title || "strict session" };
+      overlaps.push({
+        kind: "manual",
+        id: session.id,
+        name: session.title || "strict session",
+        startsAt: session.startedAt,
+        endsAt: session.endsAt
+      });
     }
   }
-  return null;
+  return overlaps;
 }
 
 function strictScheduleOverlap(schedule: Schedule, startMs: number, endMs: number, currentWifi = ""): ProtectedOverlap | null {

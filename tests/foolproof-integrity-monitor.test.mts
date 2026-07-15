@@ -536,6 +536,14 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   assert.equal(driftAccessibility.issues[0].id, "accessibility");
   assert.equal(clearIntegrityTamper(state, now), true);
 
+  const armedAppleContentFilter = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: true,
+    appleContentFilter: { current: true }
+  }, now);
+  assert.equal(armedAppleContentFilter.started, false);
+  assert.equal(state.integrity.runtime.appleContentFilterArmedLockId, "drift-strict");
+
   const driftAppleContentFilter = must(detectHardeningDrift(state, {
     hosts: { installed: true, partial: false, stale: false },
     firewall: goodFirewall,
@@ -600,30 +608,83 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
 {
   const state = defaultState();
   state.settings.foolproofModeEnabled = false;
-  const maskedByInstalledProfile = syncAppleContentFilterLockdown(state, {
-    required: state.settings.foolproofModeEnabled,
+  const defaultProtection = syncAppleContentFilterLockdown(state, {
+    required: true,
     current: true,
     effectiveCurrent: true,
     appleCurrent: false,
     appleContentFilter: { current: false }
   }, now);
-  assert.equal(maskedByInstalledProfile.started, false);
+  assert.equal(defaultProtection.started, false);
+  assert.equal(defaultProtection.reason, "not-armed");
   assert.equal(integrityLockdownActive(state), false);
   assert.equal(activePolicy(state, now), null);
+
+  state.integrity.runtime.hardeningDriftDetectedAt = now.toISOString();
+  state.integrity.runtime.hardeningDriftDetail = "Legacy Apple content filter recovery";
+  state.integrity.runtime.hardeningDriftIssues = [{ id: "apple-content-filter", detail: "Legacy uncorroborated alarm" }];
+  const migratedLegacyAlarm = syncAppleContentFilterLockdown(state, {
+    required: true,
+    appleContentFilter: { current: false }
+  }, new Date(now.getTime() + 1000));
+  assert.equal(migratedLegacyAlarm.reason, "uncorroborated-recovery-cleared");
+  assert.equal(integrityLockdownActive(state), false);
 }
 
 {
   const state = defaultState();
   state.settings.foolproofModeEnabled = true;
-  const started = syncAppleContentFilterLockdown(state, {
+  state.activeSession = {
+    id: "filter-bypass-strict",
+    title: "Filter bypass test",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual"
+  };
+
+  const missingAtStart = syncAppleContentFilterLockdown(state, {
     required: true,
     current: false,
     effectiveCurrent: false,
     appleContentFilter: { current: false }
   }, now);
+  assert.equal(missingAtStart.started, false);
+  assert.equal(missingAtStart.reason, "not-armed");
+  assert.equal(integrityLockdownActive(state), false);
+  const unarmedDrift = detectHardeningDrift(state, {
+    hosts: { installed: true, partial: false, stale: false },
+    firewall: { installed: true, partial: false, stale: false },
+    safariFilter: { required: true, current: false, appleContentFilter: { current: false } },
+    extensionRules: { ok: true },
+    sourceSeal: { ok: true },
+    agent: { installed: true, loaded: true, running: true },
+    monitor: { ok: true, accessibilityLikelyMissing: false }
+  }, now);
+  assert.equal(unarmedDrift, null, "generic drift detection must preserve the unarmed Apple-filter safeguard");
+  assert.equal(integrityLockdownActive(state), false);
+
+  const healthy = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: true,
+    effectiveCurrent: true,
+    appleContentFilter: { current: true }
+  }, new Date(now.getTime() + 1000));
+  assert.equal(healthy.started, false);
+  assert.equal(state.integrity.runtime.appleContentFilterArmedLockId, "filter-bypass-strict");
+
+  const started = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: false,
+    effectiveCurrent: false,
+    appleContentFilter: { current: false }
+  }, new Date(now.getTime() + 2000));
   assert.equal(started.started, true);
   assert.equal(integrityLockdownActive(state), true);
-  const policy = mustPolicy(activePolicy(state, now));
+  const policy = mustPolicy(activePolicy(state, new Date(now.getTime() + 2000)));
   assert.equal(policy.kind, "integrity");
   assert.equal(policy.session.title, "Apple content filter recovery");
   assert.equal(policy.endsAt, "until Apple Screen Time Limit Adult Websites and Content & Privacy Restrictions are turned back on");
@@ -653,8 +714,18 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     current: false,
     effectiveCurrent: false,
     appleContentFilter: { current: false }
-  }, new Date(now.getTime() + 1000));
+  }, new Date(now.getTime() + 3000));
   assert.equal(repeated.started, false);
+  assert.equal(integrityLockdownActive(state), true);
+
+  state.activeSession = null;
+  const persistedAfterLock = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: false,
+    effectiveCurrent: false,
+    appleContentFilter: { current: false }
+  }, new Date(now.getTime() + 4000));
+  assert.equal(persistedAfterLock.active, true);
   assert.equal(integrityLockdownActive(state), true);
 
   const cleared = syncAppleContentFilterLockdown(state, {
@@ -662,7 +733,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     current: false,
     effectiveCurrent: true,
     appleContentFilter: { current: true }
-  }, new Date(now.getTime() + 2000));
+  }, new Date(now.getTime() + 5000));
   assert.equal(cleared.cleared, true);
   assert.equal(integrityLockdownActive(state), false);
   assert.equal(activePolicy(state, now), null);
@@ -856,4 +927,107 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   const third = appQuitEscalationDecision(state, second.record, now.getTime() + 11000);
   assert.equal(third.force, true);
   assert.equal(third.record.attempts, 3);
+}
+
+{
+  const state = defaultState();
+  state.settings.foolproofModeEnabled = true;
+  state.activeSessions.computer = {
+    id: "filter-overlap-short",
+    title: "Short overlapping strict lock",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 10 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual"
+  };
+  state.activeSession = {
+    id: "filter-overlap-long",
+    title: "Long overlapping strict lock",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual"
+  };
+
+  syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: true,
+    appleContentFilter: { current: true }
+  }, now);
+  assert.deepEqual(state.integrity.runtime.appleContentFilterArmedLockIds, [
+    "filter-overlap-short",
+    "filter-overlap-long"
+  ]);
+
+  delete state.activeSessions.computer;
+  const drift = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: false,
+    appleContentFilter: { current: false }
+  }, new Date(now.getTime() + 11 * 60 * 1000));
+  assert.equal(drift.started, true);
+  assert.equal(drift.active, true);
+  assert.equal(integrityLockdownActive(state), true);
+}
+
+{
+  const state = defaultState();
+  state.settings.foolproofModeEnabled = true;
+  state.activeSession = {
+    id: "filter-overlap-armed-older",
+    title: "Older armed strict lock",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual"
+  };
+
+  syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: true,
+    appleContentFilter: { current: true }
+  }, now);
+  assert.deepEqual(state.integrity.runtime.appleContentFilterArmedLockIds, ["filter-overlap-armed-older"]);
+  state.activeSessions.computer = {
+    id: "filter-overlap-unarmed-newer",
+    title: "Newer unarmed strict lock",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: new Date(now.getTime() + 1000).toISOString(),
+    endsAt: new Date(now.getTime() + 30 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual"
+  };
+  const disabledAt = new Date(now.getTime() + 2000);
+
+  const drift = syncAppleContentFilterLockdown(state, {
+    required: true,
+    current: false,
+    appleContentFilter: { current: false }
+  }, disabledAt);
+  assert.equal(drift.started, true);
+  assert.match(drift.detail || "", /Older armed strict lock/);
+
+  clearIntegrityTamper(state, disabledAt);
+  const genericDrift = must(detectHardeningDrift(state, {
+    hosts: { installed: true, partial: false, stale: false },
+    firewall: { installed: true, partial: false, stale: false },
+    safariFilter: { required: true, current: false, appleContentFilter: { current: false } },
+    extensionRules: { ok: true },
+    sourceSeal: { ok: true },
+    agent: { installed: true, loaded: true, running: true },
+    monitor: { ok: true, accessibilityLikelyMissing: false }
+  }, disabledAt), "Apple filter drift during an older armed overlap");
+  assert.equal(genericDrift.overlap.id, "filter-overlap-armed-older");
+  assert.deepEqual(genericDrift.issues.map((issue) => issue.id), ["apple-content-filter"]);
 }

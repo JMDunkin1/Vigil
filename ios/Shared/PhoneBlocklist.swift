@@ -94,7 +94,7 @@ public final class PhoneBlocklistIndex: @unchecked Sendable {
               decodedMetadata.encoding == "blocked-reversed-domain-front-coding-v1",
               decodedMetadata.blockSize == Self.supportedBlockSize,
               decodedMetadata.domainCount > 0,
-              decodedMetadata.domainCount <= 1_000_000,
+              decodedMetadata.domainCount <= 2_000_000,
               decodedMetadata.payloadBytes == data.count - payloadOffset,
               decodedMetadata.source.id.isEmpty == false,
               decodedMetadata.source.label.isEmpty == false,

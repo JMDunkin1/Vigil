@@ -98,7 +98,11 @@ try {
       "Content-Type": "application/json",
       "X-Vigil-Intent": "vigil-app"
     },
-    body: JSON.stringify({ browserNoiseBlockingEnabled: true })
+    // The default runtime now fails closed when Apple's system web filter is
+    // absent. Verify companion mutation routing with a non-protection setting;
+    // weakening or changing protected controls correctly requires maintenance
+    // while the recovery policy is active.
+    body: JSON.stringify({ focusSoundVolume: 36 })
   });
   assert.equal(companionSettings.status, 200, "the companion listener must preserve agent configuration mutations");
   process.env.VIGIL_AUTH_ENABLED = "1";

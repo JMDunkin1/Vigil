@@ -1,4 +1,5 @@
 const DEFAULT_LOCAL_SERVER = "http://127.0.0.1:8787";
+const EXTENSION_ID_HEADER = "x-vigil-extension-id";
 const EXTENSION_TOKEN_HEADER = "x-vigil-extension-token";
 const STORAGE_DEFAULTS = {
   vigilLocalServer: DEFAULT_LOCAL_SERVER,
@@ -146,7 +147,7 @@ async function readPairing(localServer: string, extensionToken: string): Promise
 }
 
 function extensionHeaders(extensionToken: string, headers: Record<string, string> = {}): Record<string, string> {
-  const next = { ...headers };
+  const next: Record<string, string> = { ...headers, [EXTENSION_ID_HEADER]: chrome.runtime.id };
   if (extensionToken) next[EXTENSION_TOKEN_HEADER] = extensionToken;
   return next;
 }

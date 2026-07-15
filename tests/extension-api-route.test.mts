@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, EXTENSION_TOKEN_HEADER } from "../src/apiSecurity.js";
-import { defaultState, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
+import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, EXTENSION_ID_HEADER, EXTENSION_TOKEN_HEADER } from "../src/apiSecurity.js";
+import { BUILT_IN_CHROME_EXTENSION_ID, defaultState, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
 import { handleExtensionApiRoute } from "../src/server/extensionApi.js";
 import type { UsageState } from "../src/types.js";
 
@@ -100,6 +100,28 @@ await handleExtensionApiRoute(
 
 assert.equal(untrustedResponse.statusCodeValue, 403);
 
+const spoofedSyncResponse = response();
+const spoofedSyncState = defaultState();
+await handleExtensionApiRoute(
+  request("POST", "/api/extension/rules/sync", {
+    host: "127.0.0.1:8787",
+    origin: "chrome-extension://attacker-extension",
+    "content-type": "application/json",
+    [EXTENSION_ID_HEADER]: BUILT_IN_CHROME_EXTENSION_ID
+  }, {
+    ok: true,
+    count: 0,
+    signature: ""
+  }),
+  spoofedSyncResponse,
+  new URL("http://127.0.0.1:8787/api/extension/rules/sync"),
+  { state: spoofedSyncState, usage: {} }
+);
+
+assert.equal(spoofedSyncResponse.statusCodeValue, 403);
+assert.equal(spoofedSyncState.extension.lastSeenAt, null);
+assert.equal(spoofedSyncState.extension.dynamicRules.status, "missing");
+
 const previousToken = process.env.VIGIL_EXTENSION_TOKEN;
 try {
   process.env.VIGIL_EXTENSION_TOKEN = "test-extension-secret";
@@ -131,6 +153,27 @@ try {
   assert.equal(pauseState.intentionalUse.pauses.length, 1);
   const pauseId = pauseState.intentionalUse.pauses[0].id;
   pauseState.intentionalUse.pauses[0].eligibleAt = new Date(Date.now() - 1000).toISOString();
+
+  const spoofedContinueResponse = response();
+  await handleExtensionApiRoute(
+    request("POST", "/api/extension/pause/continue", {
+      host: "127.0.0.1:8787",
+      origin: "chrome-extension://attacker-extension",
+      "content-type": "application/json",
+      [EXTENSION_ID_HEADER]: BUILT_IN_CHROME_EXTENSION_ID
+    }, {
+      requestId: pauseId,
+      intention: "Bypass the companion",
+      mood: "Impersonating"
+    }),
+    spoofedContinueResponse,
+    new URL("http://127.0.0.1:8787/api/extension/pause/continue"),
+    { state: pauseState, usage: pauseUsage }
+  );
+
+  assert.equal(spoofedContinueResponse.statusCodeValue, 403);
+  assert.equal(pauseState.intentionalUse.grants.length, 0);
+  assert.equal(pauseState.intentionalUse.pauses[0].status, "pending");
 
   const continueResponse = response();
   await handleExtensionApiRoute(

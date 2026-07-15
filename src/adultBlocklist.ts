@@ -15,7 +15,8 @@ import {
 import {
   DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT,
   DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
-  DEFAULT_EXPLICIT_BLOCKED_SITES
+  DEFAULT_EXPLICIT_BLOCKED_SITES,
+  MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS
 } from "./defaults.js";
 import { DATA_DIR, registerPersistenceRollback } from "./store.js";
 import { writeFileAtomically } from "./snapshotFiles.js";
@@ -80,6 +81,7 @@ export interface AdultBlocklistFetchTestHooks {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  buildPhoneArtifact?: typeof buildPhoneBlocklistArtifact;
 }
 
 export interface AdultBlocklistMatch extends UnknownRecord {
@@ -93,7 +95,15 @@ export interface AdultBlocklistMatch extends UnknownRecord {
 
 export const ADULT_BLOCKLIST_SOURCES: AdultBlocklistSource[] = [
   {
-    id: DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
+    id: "blocklistproject-porn",
+    label: "Vigil 600K+ adult sites",
+    url: "https://blocklistproject.github.io/Lists/porn.txt",
+    homepage: "https://github.com/blocklistproject/Lists",
+    license: "Unlicense",
+    format: "hosts"
+  },
+  {
+    id: "hagezi-nsfw",
     label: "HaGeZi NSFW",
     url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/nsfw-onlydomains.txt",
     homepage: "https://github.com/hagezi/dns-blocklists",
@@ -106,14 +116,6 @@ export const ADULT_BLOCKLIST_SOURCES: AdultBlocklistSource[] = [
     url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn/hosts",
     homepage: "https://github.com/StevenBlack/hosts",
     license: "MIT",
-    format: "hosts"
-  },
-  {
-    id: "blocklistproject-porn",
-    label: "Block List Project porn",
-    url: "https://blocklistproject.github.io/Lists/porn.txt",
-    homepage: "https://github.com/blocklistproject/Lists",
-    license: "Unlicense",
     format: "hosts"
   },
   {
@@ -170,18 +172,29 @@ export function clearAdultBlocklistSnapshotState(state: VigilState): void {
   state.adultBlocklist.source = null;
 }
 
-export async function refreshAdultBlocklist(state: VigilState, now = new Date()) {
-  return await commitAdultBlocklistRefresh(state, await prepareAdultBlocklistRefresh(state, now));
+export async function refreshAdultBlocklist(
+  state: VigilState,
+  now = new Date(),
+  hooks: AdultBlocklistFetchTestHooks = {}
+) {
+  return await commitAdultBlocklistRefresh(state, await prepareAdultBlocklistRefresh(state, now, hooks), hooks);
 }
 
-export async function prepareAdultBlocklistRefresh(state: VigilState, now = new Date()): Promise<AdultBlocklistRefreshPreparation> {
+export async function prepareAdultBlocklistRefresh(
+  state: VigilState,
+  now = new Date(),
+  hooks: AdultBlocklistFetchTestHooks = {}
+): Promise<AdultBlocklistRefreshPreparation> {
   const source = adultBlocklistSource(state);
   const attemptedAt = now.toISOString();
   try {
-    const text = await fetchSourceText(source.url);
+    const text = await fetchSourceText(source.url, hooks);
     const domains = parseAdultBlocklistDomains(text);
-    if (domains.length < MIN_REFRESH_DOMAINS) {
-      throw new Error(`Adult blocklist refresh returned only ${domains.length} usable domains.`);
+    const minimumDomains = source.id === DEFAULT_ADULT_BLOCKLIST_SOURCE_ID
+      ? MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS
+      : MIN_REFRESH_DOMAINS;
+    if (domains.length < minimumDomains) {
+      throw new Error(`Adult blocklist refresh returned only ${domains.length} usable domains; ${minimumDomains} are required for ${source.label}.`);
     }
     const hash = domainHash(domains);
     const snapshot: AdultBlocklistSnapshot = {
@@ -203,7 +216,11 @@ export async function prepareAdultBlocklistRefresh(state: VigilState, now = new 
   }
 }
 
-export async function commitAdultBlocklistRefresh(state: VigilState, preparation: AdultBlocklistRefreshPreparation) {
+export async function commitAdultBlocklistRefresh(
+  state: VigilState,
+  preparation: AdultBlocklistRefreshPreparation,
+  hooks: AdultBlocklistFetchTestHooks = {}
+) {
   if (!adultBlocklistSourceMatches(preparation.source, adultBlocklistSource(state))) {
     throw Object.assign(new Error("Adult blocklist source changed while the refresh was in progress."), { status: 409 });
   }
@@ -214,6 +231,12 @@ export async function commitAdultBlocklistRefresh(state: VigilState, preparation
     const snapshot = preparation.snapshot;
     if (!snapshot) throw new Error("Adult blocklist refresh did not produce a snapshot.");
     const snapshotPath = adultBlocklistSnapshotPath(snapshot);
+    (hooks.buildPhoneArtifact || buildPhoneBlocklistArtifact)({
+      domains: activeAdultBlocklistDomains(state, snapshot.domains),
+      snapshotHash: snapshot.hash,
+      generatedAt: snapshot.generatedAt,
+      source: snapshot.source
+    });
     const snapshotExisted = await access(snapshotPath).then(() => true, () => false);
     await writeAdultBlocklistSnapshot(snapshot, snapshotPath);
     if (!snapshotExisted) {
@@ -459,13 +482,25 @@ export async function writeAdultBlocklistPhoneArtifact(
   const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
   if (!snapshot) throw new Error("A current adult blocklist snapshot is required before generating the phone artifact.");
   const artifact = buildPhoneBlocklistArtifact({
-    domains: snapshot.domains,
+    domains: activeAdultBlocklistDomains(state, snapshot.domains),
     snapshotHash: snapshot.hash,
     generatedAt: snapshot.generatedAt,
     source: snapshot.source
   });
   await writePhoneBlocklistArtifactAtomically(path, artifact);
   return artifact.metadata;
+}
+
+export async function syncAdultBlocklistPhoneArtifact(
+  state: VigilState,
+  path = ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH
+): Promise<PhoneBlocklistMetadata | null> {
+  const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
+  if (!snapshot || !activeAdultBlocklistDomains(state, snapshot.domains).length) {
+    await rm(path, { force: true });
+    return null;
+  }
+  return await writeAdultBlocklistPhoneArtifact(state, path);
 }
 
 function clearAdultBlocklistCache(): void {
@@ -496,7 +531,11 @@ function adultBlocklistPreloadLimit(state: VigilState, override?: number): numbe
 }
 
 function activeDomainCount(state: VigilState, domains: string[]): number {
-  return domains.filter((domain) => !adultBlocklistAllowsHost(state, domain)).length;
+  return activeAdultBlocklistDomains(state, domains).length;
+}
+
+function activeAdultBlocklistDomains(state: VigilState, domains: string[]): string[] {
+  return domains.filter((domain) => !adultBlocklistAllowsHost(state, domain));
 }
 
 function adultBlocklistAllowsHost(state: VigilState, hostname: string): boolean {

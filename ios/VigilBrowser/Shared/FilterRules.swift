@@ -1,7 +1,14 @@
 import Foundation
 
 struct FilterRules: Codable, Equatable, Sendable {
-    static let currentSchema = 1
+    static let currentSchema = 2
+    fileprivate static let legacySchema = 1
+    static let defaultExplicitSearchTerms = [
+        "porn", "porno", "xxx", "nsfw", "hentai", "rule34", "gonewild",
+        "onlyfans", "fansly", "chaturbate", "stripchat", "cam4", "redtube",
+        "youporn", "spankbang", "xvideos", "xnxx", "xhamster", "18+",
+        "18%2b", "18plus", "18-plus"
+    ]
 
     var schemaVersion: Int
     var revision: Int
@@ -17,17 +24,17 @@ struct FilterRules: Codable, Equatable, Sendable {
         // This array is reserved for small administrator overrides.
         blockedHosts: [],
         blockedURLFragments: [],
-        blockedSearchTerms: [],
+        blockedSearchTerms: defaultExplicitSearchTerms,
         safeSearchEnabled: true
     )
 
     func normalized() -> FilterRules {
         FilterRules(
-            schemaVersion: schemaVersion,
+            schemaVersion: Self.currentSchema,
             revision: revision,
             blockedHosts: Self.clean(blockedHosts),
             blockedURLFragments: Self.clean(blockedURLFragments),
-            blockedSearchTerms: Self.clean(blockedSearchTerms),
+            blockedSearchTerms: Self.clean(Self.defaultExplicitSearchTerms + blockedSearchTerms),
             safeSearchEnabled: safeSearchEnabled
         )
     }
@@ -46,10 +53,14 @@ enum SharedFilterStore {
         let source = defaults ?? UserDefaults(suiteName: appGroup)
         guard let data = source?.data(forKey: rulesKey),
               let decoded = try? JSONDecoder().decode(FilterRules.self, from: data),
-              decoded.schemaVersion == FilterRules.currentSchema else {
+              decoded.schemaVersion == FilterRules.currentSchema || decoded.schemaVersion == FilterRules.legacySchema else {
             return .bootstrap
         }
-        return decoded.normalized()
+        let normalized = decoded.normalized()
+        if decoded.schemaVersion == FilterRules.legacySchema {
+            _ = write(normalized, defaults: source)
+        }
+        return normalized
     }
 
     @discardableResult

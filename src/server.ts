@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import type { Socket } from "node:net";
 import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { finalizeAdultBlocklistSnapshot, prepareAdultBlocklistRefresh } from "./adultBlocklist.js";
+import { prepareAdultBlocklistRefresh } from "./adultBlocklist.js";
 import type { AdultBlocklistRefreshPreparation } from "./adultBlocklist.js";
 import { apiRequestGuard, publicHostGuard } from "./apiSecurity.js";
 import { hostedAdminRequired, requireHostedAccount } from "./auth.js";
@@ -29,7 +29,7 @@ import { handleAppUpdateApiRoute } from "./server/appUpdateRoutes.js";
 import { handleAccountApiRoute } from "./server/accountRoutes.js";
 import type { AppUpdateController } from "./server/appUpdateRoutes.js";
 import { handleDiagnosticExportApiRoute } from "./server/diagnosticExportRoutes.js";
-import { handleAdultBlocklistApiRoute } from "./server/adultBlocklistRoutes.js";
+import { handleAdultBlocklistApiRoute, reconcileAdultBlocklistDurableEffect } from "./server/adultBlocklistRoutes.js";
 import { handleDeviceApiRoute } from "./server/deviceRoutes.js";
 import type { IosMdmPushResult } from "./server/deviceRoutes.js";
 import { handleExtensionApiRoute } from "./server/extensionApi.js";
@@ -778,8 +778,10 @@ async function handleApi(
 
   if (await handleAdultBlocklistApiRoute(request, response, {
     state: requestState,
+    currentState: () => state,
     afterCommit,
-    preparedRefresh: prepared.adultBlocklistRefresh
+    preparedRefresh: prepared.adultBlocklistRefresh,
+    recordIosMdmPolicyQueue: (reason) => recordIosMdmPolicyQueue(requestState, reason, afterCommit)
   })) {
     return;
   }
@@ -1018,8 +1020,10 @@ async function reconcileDurableEffect(entry: RuntimeOutboxEntry): Promise<unknow
     return await schedulePolicyEnforcement(reason);
   }
   if (entry.kind === "adult-blocklist-finalize") {
-    await finalizeAdultBlocklistSnapshot(state);
-    return { ok: true };
+    return await reconcileAdultBlocklistDurableEffect(state, entry);
+  }
+  if (entry.kind === "adult-blocklist-phone-sync") {
+    return await reconcileAdultBlocklistDurableEffect(state, entry);
   }
   if (entry.kind === "monitor-os") {
     return await requireMonitor().reconcileDurableEffect(String(entry.payload.action || ""), { ...entry.payload, intentKey: entry.key });
