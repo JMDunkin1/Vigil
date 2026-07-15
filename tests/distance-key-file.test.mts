@@ -20,6 +20,7 @@ try {
 
   const existingPath = join(root, "existing.txt");
   await writeFile(existingPath, "keep this content\n", { mode: 0o644 });
+  const existingMode = (await stat(existingPath)).mode & 0o777;
   const stateBeforeConflict = structuredClone(state);
   assert.throws(() => updateDistanceKeySettings(state, {
     enabled: true,
@@ -27,7 +28,7 @@ try {
     writeKeyFile: true
   }), /already exists/i);
   assert.equal(await readFile(existingPath, "utf8"), "keep this content\n");
-  assert.equal((await stat(existingPath)).mode & 0o777, 0o644);
+  assert.equal((await stat(existingPath)).mode & 0o777, existingMode);
   assert.deepEqual(state, stateBeforeConflict, "a failed key-file write must not rotate the saved token");
 
   const symlinkTarget = join(root, "symlink-target.txt");

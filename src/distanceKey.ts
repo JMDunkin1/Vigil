@@ -15,6 +15,7 @@ import {
 import { dirname, join, parse, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parseBoolean, truthy } from "./booleans.js";
+import { registerPersistenceRollback } from "./store.js";
 import type { DistanceKeyState, VigilState, UnknownRecord } from "./types.js";
 
 const KEY_LENGTH = 32;
@@ -70,6 +71,7 @@ export function updateDistanceKeySettings(state: VigilState, body: UnknownRecord
   if (truthy(body.writeKeyFile)) {
     if (!next.keyFilePath) throw new DistanceKeyError("Choose a key-file path before writing the distance key file.", 400);
     writeKeyFile(next.keyFilePath, token);
+    registerPersistenceRollback(() => unlinkSync(next.keyFilePath));
   }
 
   if (next.enabled && (!next.salt || !next.hash)) {

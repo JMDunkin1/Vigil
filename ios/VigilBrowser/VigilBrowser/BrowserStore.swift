@@ -43,7 +43,7 @@ final class BrowserStore: NSObject, ObservableObject {
         configuration.allowsPictureInPictureMediaPlayback = false
         configuration.preferences.isFraudulentWebsiteWarningEnabled = true
         let bridge = BrowserScriptMessageBridge()
-        configuration.userContentController.addScriptMessageHandler(
+        configuration.userContentController.add(
             bridge,
             contentWorld: Self.contentSafetyWorld,
             name: "vigilContentSafety"
@@ -213,7 +213,7 @@ final class BrowserStore: NSObject, ObservableObject {
             script,
             arguments: arguments,
             in: frame,
-            contentWorld: Self.contentSafetyWorld
+            in: Self.contentSafetyWorld
         ) { _ in }
     }
 }

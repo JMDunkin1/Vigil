@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { deviceUsageSyncAuthorization } from "../apiSecurity.js";
 import { DEVICE_TARGETS } from "../defaults.js";
-import { buildIosMdmEnrollmentProfile, iosMdmDeviceUsageCredential, iosMdmDeviceUsageTokens, iosMdmDoctor, iosMdmEnrollmentReadiness, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "../iosMdm.js";
+import { buildIosMdmEnrollmentProfile, iosMdmDeviceUsageCredential, iosMdmDeviceUsageTokens, iosMdmDoctor, iosMdmEnrollmentReadiness, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings } from "../iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "../iosProfiles.js";
 import { activeLimitPolicy } from "../limits.js";
 import { assertProtectedEditAllowed } from "../protection.js";
@@ -151,12 +151,9 @@ export async function handleDeviceApiRoute(
   }
 
   if (method === "POST" && path === "/api/devices/ios/mdm/queue-policy") {
-    const result = queueIosMdmPolicyRefresh(state, "app-refresh");
-    const push = await pushIosMdmQueuedCommands(state, "app-refresh", new Date(), { force: true }) as IosMdmPushResult;
-    addEvent(state, "ios_mdm_policy_queued", result);
-    if (push.pushed || push.failed) addEvent(state, "ios_mdm_push", push);
+    const result = recordIosMdmPolicyQueue("app-refresh");
     await saveState(state);
-    sendJson(response, 200, { ok: Boolean(result.queued || push.pushed), result, push });
+    sendJson(response, 200, { ok: Boolean(result.queued), result, push: { staged: true } });
     return true;
   }
 

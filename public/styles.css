@@ -973,11 +973,14 @@ button:focus-visible {
   margin-top: 9px;
 }
 
-.limit-progress div {
+.limit-progress progress {
   height: 100%;
-  width: 0;
+  width: 100%;
+  border: 0;
   background: linear-gradient(90deg, var(--green), var(--amber), var(--red));
 }
+
+.limit-progress progress::-webkit-progress-value { background: linear-gradient(90deg, var(--green), var(--amber), var(--red)); }
 
 .journal-entry-list {
   display: grid;
@@ -1607,9 +1610,8 @@ body[data-active-view="tracking"] #view-journal {
   min-height: 112px;
 }
 
-.tracking-metric-rhythm .habit-pulse-day i {
-  max-height: 40px;
-  background: linear-gradient(to top, var(--habit-done-strong) 0 calc(var(--completed) * 100%), color-mix(in srgb, var(--red) 76%, var(--surface-strong)) calc(var(--completed) * 100%) 100%);
+.tracking-metric-rhythm .habit-pulse-day .habit-pulse-bar {
+  height: 40px;
 }
 
 .daily-checkin {
@@ -1647,7 +1649,7 @@ body[data-active-view="tracking"] #view-journal {
   background: color-mix(in srgb, var(--line) 48%, transparent);
 }
 
-.daily-checkin-meter span {
+.daily-checkin-meter progress {
   background: var(--primary);
   box-shadow: none;
 }
@@ -3578,17 +3580,21 @@ body[data-active-view="journal"] .split-surface {
   background: color-mix(in srgb, var(--line) 58%, transparent);
 }
 
-.daily-checkin-meter span {
+.daily-checkin-meter progress {
   display: block;
-  width: 0;
+  width: 100%;
   height: 100%;
+  appearance: none;
   border-radius: inherit;
   background: linear-gradient(90deg, var(--gold), var(--habit-done-strong));
   box-shadow: 0 0 15px color-mix(in srgb, var(--habit-done-strong) 44%, transparent);
   transition: width 320ms ease;
 }
 
-.daily-checkin-meter.is-complete span {
+.daily-checkin-meter progress::-webkit-progress-bar { background: transparent; }
+.daily-checkin-meter progress::-webkit-progress-value { background: linear-gradient(90deg, var(--gold), var(--habit-done-strong)); }
+
+.daily-checkin-meter.is-complete progress {
   background: var(--habit-done-strong);
 }
 
@@ -3817,22 +3823,25 @@ body[data-active-view="journal"] .split-surface {
   box-shadow: none;
 }
 
-.habit-pulse-day i {
+.habit-pulse-day .habit-pulse-bar {
   width: 100%;
   min-height: 5px;
-  height: calc(5px + (var(--reported) * 58px));
+  height: 63px;
   display: block;
-  border-radius: 999px;
-  background:
-    linear-gradient(to top, var(--habit-done-strong) 0 calc(var(--completed) * 100%), color-mix(in srgb, var(--red) 75%, #5a3631) calc(var(--completed) * 100%) 100%);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--habit-done) calc(var(--reported) * 26%), transparent);
-  opacity: calc(0.2 + (var(--reported) * 0.8));
+  overflow: visible;
   transition: height 220ms ease, opacity 220ms ease, filter 180ms ease;
 }
 
-.habit-pulse-day:not(.has-data) i {
-  background: color-mix(in srgb, var(--line) 58%, transparent);
-  box-shadow: none;
+.habit-pulse-track {
+  fill: color-mix(in srgb, var(--line) 58%, transparent);
+}
+
+.habit-pulse-missed {
+  fill: color-mix(in srgb, var(--red) 75%, #5a3631);
+}
+
+.habit-pulse-done {
+  fill: var(--habit-done-strong);
 }
 
 .habit-pulse-day span {
@@ -3848,7 +3857,7 @@ body[data-active-view="journal"] .split-surface {
   transform: none;
 }
 
-.habit-pulse-day:hover:not(:disabled) i {
+.habit-pulse-day:hover:not(:disabled) .habit-pulse-bar {
   filter: brightness(1.25);
 }
 
@@ -3856,7 +3865,7 @@ body[data-active-view="journal"] .split-surface {
   color: var(--gold-bright);
 }
 
-.habit-pulse-day.is-today i {
+.habit-pulse-day.is-today .habit-pulse-bar {
   outline: 1px solid var(--gold-bright);
   outline-offset: 2px;
 }
@@ -6697,6 +6706,21 @@ body[data-active-view="tracking"] .daily-checkin {
     color-mix(in srgb, var(--surface-strong) 91%, transparent);
   box-shadow: 0 15px 42px rgba(21, 34, 38, 0.07);
 }
+
+/* CSP-safe state projections: script changes attributes and native values, not inline style. */
+.saint-stage[data-look^="left-"] { --saint-look-x: -1; }
+.saint-stage[data-look^="right-"] { --saint-look-x: 1; }
+.saint-stage[data-look^="center-"] { --saint-look-x: 0; }
+.saint-stage[data-look$="-up"] { --saint-look-y: -1; }
+.saint-stage[data-look$="-down"] { --saint-look-y: 1; }
+.saint-stage[data-look$="-center"] { --saint-look-y: 0; }
+
+.distance-key-print { font-family: system-ui, sans-serif; margin: 32px; color: #16201d; }
+.distance-key-print main { width: min(420px, 100%); }
+.distance-key-print h1 { font-size: 24px; margin: 0 0 12px; }
+.distance-key-print p { color: #53605b; line-height: 1.4; }
+.distance-key-print code { display: block; margin-top: 12px; font-size: 22px; font-weight: 800; letter-spacing: 2px; }
+.distance-key-print svg { width: 260px; height: 260px; margin-top: 18px; border: 1px solid #d9d2c4; }
 
 body[data-active-view="tracking"] .daily-checkin::after {
   display: none;

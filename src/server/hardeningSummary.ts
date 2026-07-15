@@ -395,14 +395,24 @@ export function accountDetail(account: SummaryRecord | null | undefined): string
 
 export function stateSealDetail(stateSeal: SummaryRecord): string {
   if (stateSeal.status === "bookkeeping-mismatch") return stateSeal.detail || "State seal bookkeeping changed only in runtime fields.";
-  if (stateSeal.ok) return stateSeal.lastSealedAt ? `State file is sealed (${stateSeal.lastSealedAt}).` : "State file is sealed.";
+  if (stateSeal.ok) return withSealThreatModel(
+    stateSeal.lastSealedAt ? `State file is sealed (${stateSeal.lastSealedAt}).` : "State file is sealed.",
+    stateSeal
+  );
   if (stateSeal.tamperDetectedAt) return `Tampering was detected at ${stateSeal.tamperDetectedAt}.`;
   return stateSeal.detail || "State file integrity could not be verified.";
 }
 
 export function sourceSealDetail(sourceSeal: SummaryRecord): string {
-  if (sourceSeal.ok) return sourceSeal.sealedAt ? `Source files are sealed (${sourceSeal.fileCount || 0} files, ${sourceSeal.sealedAt}).` : "Source files are sealed.";
+  if (sourceSeal.ok) return withSealThreatModel(
+    sourceSeal.sealedAt ? `Source files are sealed (${sourceSeal.fileCount || 0} files, ${sourceSeal.sealedAt}).` : "Source files are sealed.",
+    sourceSeal
+  );
   return sourceSeal.detail || "Source integrity seal is missing. Run npm run seal:source after reviewing local code.";
+}
+
+function withSealThreatModel(detail: string, seal: SummaryRecord): string {
+  return seal.threatModel ? `${detail} ${seal.threatModel}` : detail;
 }
 
 export function distanceKeyDetail(distanceKey: SummaryRecord): string {

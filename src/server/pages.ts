@@ -176,7 +176,9 @@ function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
     .break-panel h2 { margin: 0; font-size: .86rem; }
     .break-panel input { width: 100%; min-height: 44px; border: 1px solid #554a38; border-radius: 3px; padding: 0 12px; background: #080d15; color: var(--ink); font: 500 .94rem ui-sans-serif, system-ui, sans-serif; }
     .break-panel input:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
-    .challenge { display: none; border: 1px dashed #9d7a37; border-radius: 3px; background: #211a0e; color: var(--gold-soft); padding: 10px 12px; font: 800 .9rem ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .challenge { border: 1px dashed #9d7a37; border-radius: 3px; background: #211a0e; color: var(--gold-soft); padding: 10px 12px; font: 800 .9rem ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .challenge[hidden] { display: none; }
+    .scanner-video { width: 100%; border-radius: 8px; }
     .break-actions, .distance-row { display: flex; gap: 10px; flex-wrap: wrap; }
     .distance-row input { flex: 1 1 220px; }
     button { min-height: 44px; border: 1px solid transparent; border-radius: 3px; padding: 0 16px; font: 800 .82rem ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .05em; cursor: pointer; box-shadow: 3px 3px 0 #04060a; }
@@ -184,6 +186,7 @@ function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
     .primary { color: #100d08; background: var(--gold); border-color: #f0d580; }
     .secondary { color: #e7e5dd; background: #1b2737; border-color: #43536a; }
     .escape-actions { display: none; margin-top: 22px; }
+    .escape-actions.is-visible { display: flex; }
     .escape-actions a { min-height: 44px; border: 1px solid #43536a; border-radius: 3px; padding: 0 16px; display: inline-grid; place-items: center; color: #e7e5dd; background: #1b2737; text-decoration: none; font: 800 .82rem ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
     .status { min-height: 22px; color: #969e9b; font: .88rem ui-sans-serif, system-ui, sans-serif; }
     .intervention { margin-top: 18px; border: 1px solid #3e4653; border-radius: 4px; background: #0a101a; padding: 12px; }
@@ -216,8 +219,8 @@ function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
         <input id="breakDistanceKey" type="password" autocomplete="off" placeholder="Distance key">
         <button id="scanBreakDistanceKey" class="secondary" type="button">Scan</button>
       </div>
-      <code id="breakChallenge" class="challenge"></code>
-      <input id="breakChallengeInput" type="text" autocomplete="off" placeholder="Typing challenge" style="display:none">
+      <code id="breakChallenge" class="challenge" hidden></code>
+      <input id="breakChallengeInput" class="is-hidden" type="text" autocomplete="off" placeholder="Typing challenge" hidden>
       <div class="break-actions">
         <button id="requestBreak" class="primary" type="button"${breakDisabled}>Request Break</button>
         <button id="confirmBreak" class="secondary" type="button" disabled>Confirm</button>
@@ -245,7 +248,7 @@ function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
 
     const escapeTarget = blockedEscapeTarget();
     if (escapeActions && leaveBlockedPage && (escapeTarget || history.length > 1)) {
-      escapeActions.style.display = "flex";
+      escapeActions.classList.add("is-visible");
       if (escapeTarget) leaveBlockedPage.href = escapeTarget;
       leaveBlockedPage.addEventListener("click", (event) => {
         event.preventDefault();
@@ -314,8 +317,7 @@ function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
         video.playsInline = true;
         video.muted = true;
         video.srcObject = scanStream;
-        video.style.width = "100%";
-        video.style.borderRadius = "8px";
+        video.className = "scanner-video";
         document.querySelector(".break-panel").append(video);
         await video.play();
         const detector = new BarcodeDetector({ formats: ["qr_code"] });
@@ -417,12 +419,12 @@ function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
 
     function renderChallenge() {
       if (pending && pending.challenge && pending.challenge.text) {
-        challenge.style.display = "block";
-        challengeInput.style.display = "block";
+        challenge.hidden = false;
+        challengeInput.hidden = false;
         challenge.textContent = "Type: " + pending.challenge.text;
       } else {
-        challenge.style.display = "none";
-        challengeInput.style.display = "none";
+        challenge.hidden = true;
+        challengeInput.hidden = true;
         challenge.textContent = "";
       }
     }

@@ -76,8 +76,10 @@ export async function runInAppRequest(
   };
 
   const response = {
+    statusCode: status,
     writeHead(nextStatus: number, nextHeaders: Record<string, string | number | string[]> = {}) {
       status = nextStatus;
+      response.statusCode = nextStatus;
       headers = normalizeResponseHeaders(nextHeaders);
       return response;
     },

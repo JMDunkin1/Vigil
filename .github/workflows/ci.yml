@@ -40,5 +40,16 @@ jobs:
         # Compile the real Xcode project here; keep simulator execution local.
         run: node dist/runtime/scripts/build-ios-social-app.mjs instagram --unsigned --destination "generic/platform=iOS" --derived-data /tmp/VigilSocialCIDerivedData
 
+      - name: Compile VigilSocial Swift tests
+        run: xcodebuild -project ios/VigilSocial/VigilSocial.xcodeproj -scheme VigilSocial -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/VigilSocialTestsCIDerivedData CODE_SIGNING_ALLOWED=NO build-for-testing
+
+      - name: Build Safari extension host and compile Swift tests
+        # A generic simulator destination compiles the app, embedded Safari web
+        # extension, and test bundle without depending on a bootable CI device.
+        run: xcodebuild -project ios/VigilBrowser/VigilBrowser.xcodeproj -scheme VigilBrowser -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/VigilBrowserCIDerivedData CODE_SIGNING_ALLOWED=NO build-for-testing
+
+      - name: Validate Safari extension deployment assets
+        run: ios/VigilBrowser/validate.sh
+
       - name: Build macOS app
         run: npm run package:mac
