@@ -32,13 +32,16 @@ state.activeSessions = { computer: existing, phone: existing };
 
 const queuedReasons: string[] = [];
 const enforcedSessions: string[] = [];
+const effectOrder: string[] = [];
 const context = {
   state,
   recordIosMdmPolicyQueue(reason: string) {
+    effectOrder.push(`mdm:${reason}`);
     queuedReasons.push(reason);
     return null;
   },
   scheduleImmediateSessionEnforcement(sessionId: string) {
+    effectOrder.push(`enforce:${sessionId}`);
     enforcedSessions.push(sessionId);
   },
   assertStrictLockAllowed: async () => {}
@@ -76,6 +79,7 @@ assert.equal(await handleSessionApiRoute(request("/api/panic/start", { durationM
 assert.equal(panic.statusCodeValue, 200);
 assert.equal(state.activeSessions.computer?.id, underlyingSessionId, "Panic should leave the selected level underneath it");
 assert.ok(state.panicLock);
+assert.deepEqual(effectOrder.slice(-2), [`enforce:${state.panicLock.id}`, "mdm:panic-start"], "panic must register local enforcement before phone work");
 const panicDurationMs = new Date(state.panicLock.endsAt).getTime() - new Date(state.panicLock.startedAt).getTime();
 assert.equal(panicDurationMs, 3 * 60_000);
 
@@ -113,6 +117,7 @@ assert.equal(state.activeSessions.computer?.source, "protection-level");
 assert.ok(new Date(state.activeSessions.computer?.endsAt || 0).getUTCFullYear() >= new Date().getUTCFullYear() + 99);
 assert.equal(queuedReasons.at(-1), "protection-level-2");
 assert.equal(enforcedSessions.at(-1), state.activeSessions.computer?.id);
+assert.deepEqual(effectOrder.slice(-2), [`enforce:${state.activeSessions.computer?.id}`, "mdm:protection-level-2"]);
 
 state.maintenance.windows = [];
 const stickyLevelOne = response();

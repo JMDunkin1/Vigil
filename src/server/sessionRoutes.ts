@@ -124,9 +124,9 @@ export async function handleSessionApiRoute(
       profileSnapshot: snapshotProfile(profile)
     };
     addEvent(state, "panic_lock_started", { ...state.panicLock, durationMinutes });
+    context.scheduleImmediateSessionEnforcement(state.panicLock.id);
     context.recordIosMdmPolicyQueue("panic-start");
     await saveState(state);
-    context.scheduleImmediateSessionEnforcement(state.panicLock.id);
     sendJson(response, 200, { ok: true, session: state.panicLock });
     return true;
   }
@@ -172,9 +172,9 @@ export async function handleSessionApiRoute(
     draft.session.emergencyUnlocksAllowed = !stickySoftLock;
     startDeviceSession(state, deviceTargets, draft.session);
     addEvent(state, "protection_level_changed", { level, deviceTargets, sessionId: draft.session.id });
+    context.scheduleImmediateSessionEnforcement(draft.session.id);
     if (deviceTargets.includes("phone")) context.recordIosMdmPolicyQueue(`protection-level-${level}`);
     await saveState(state);
-    context.scheduleImmediateSessionEnforcement(draft.session.id);
     sendJson(response, 200, { ok: true, level, session: draft.session, activeSessions: state.activeSessions });
     return true;
   }
@@ -198,9 +198,9 @@ export async function handleSessionApiRoute(
     await context.assertStrictLockAllowed(draft.session.lockLevel, draft.profile, { mode: draft.session.mode });
     startDeviceSession(state, draft.deviceTargets, draft.session);
     addEvent(state, "session_started", draft.session);
+    context.scheduleImmediateSessionEnforcement(draft.session.id);
     if (draft.deviceTargets.includes("phone")) context.recordIosMdmPolicyQueue("session-start");
     await saveState(state);
-    context.scheduleImmediateSessionEnforcement(draft.session.id);
     sendJson(response, 200, { ok: true, session: draft.session, activeSessions: state.activeSessions });
     return true;
   }

@@ -7,6 +7,11 @@ import { toPlist } from "../plist.js";
 import type { UnknownRecord } from "../types.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
+const BODY_READ_TIMEOUT_MS = 15_000;
+export const MAX_CONCURRENT_BODY_READS = 32;
+const bodyReads = new WeakMap<IncomingMessage, Promise<string>>();
+const closeAfterResponse = new WeakSet<IncomingMessage>();
+let activeBodyReads = 0;
 
 type ResponseHeaders = Record<string, string>;
 
@@ -27,16 +32,85 @@ export async function readBody(request: IncomingMessage): Promise<UnknownRecord>
   return parsed as UnknownRecord;
 }
 
-export async function readTextBody(request: IncomingMessage): Promise<string> {
+export function readTextBody(
+  request: IncomingMessage,
+  options: { timeoutMs?: number } = {}
+): Promise<string> {
+  const existing = bodyReads.get(request);
+  if (existing) return existing;
+  const reading = readTextBodyOnce(request, options);
+  bodyReads.set(request, reading);
+  return reading;
+}
+
+async function readTextBodyOnce(
+  request: IncomingMessage,
+  options: { timeoutMs?: number }
+): Promise<string> {
+  if (activeBodyReads >= MAX_CONCURRENT_BODY_READS) {
+    discardRequestBody(request);
+    throw requestBodyError(503, "Too many request bodies are being received.");
+  }
+  activeBodyReads += 1;
   const chunks: Buffer[] = [];
   let byteLength = 0;
-  for await (const chunk of request) {
-    const buffer = bodyChunkBuffer(chunk);
-    byteLength += buffer.length;
-    if (byteLength > MAX_BODY_BYTES) throw requestBodyError(413, "Request body too large.");
-    chunks.push(buffer);
+  const timeoutMs = Math.max(1, Number(options.timeoutMs || BODY_READ_TIMEOUT_MS));
+  try {
+    return await new Promise<string>((resolveBody, rejectBody) => {
+      let settled = false;
+      const timer = setTimeout(() => fail(requestBodyError(408, "Request body timed out."), true), timeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer);
+        request.off("data", onData);
+        request.off("end", onEnd);
+        request.off("error", onError);
+        request.off("aborted", onAborted);
+      };
+      const finish = (operation: () => void) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        operation();
+      };
+      const fail = (error: unknown, discard: boolean) => finish(() => {
+        if (discard) discardRequestBody(request);
+        rejectBody(error);
+      });
+      function onData(chunk: unknown): void {
+        try {
+          const buffer = bodyChunkBuffer(chunk);
+          byteLength += buffer.length;
+          if (byteLength > MAX_BODY_BYTES) {
+            fail(requestBodyError(413, "Request body too large."), true);
+            return;
+          }
+          chunks.push(buffer);
+        } catch (error) {
+          fail(error, true);
+        }
+      }
+      function onEnd(): void {
+        finish(() => resolveBody(Buffer.concat(chunks, byteLength).toString("utf8")));
+      }
+      function onError(error: Error): void {
+        fail(error, false);
+      }
+      function onAborted(): void {
+        fail(requestBodyError(400, "Request body was aborted."), false);
+      }
+      request.on("data", onData);
+      request.once("end", onEnd);
+      request.once("error", onError);
+      request.once("aborted", onAborted);
+    });
+  } finally {
+    activeBodyReads -= 1;
   }
-  return Buffer.concat(chunks, byteLength).toString("utf8");
+}
+
+export function discardRequestBody(request: IncomingMessage): void {
+  closeAfterResponse.add(request);
+  request.resume();
 }
 
 function bodyChunkBuffer(chunk: unknown): Buffer {
@@ -149,7 +223,14 @@ export function resolvePublicPath(pathname: string, publicDir: string): string |
 }
 
 export function sendJson(response: ServerResponse, status: number, body: unknown, headers: ResponseHeaders = {}): void {
-  response.writeHead(status, { ...securityHeaders(), "Content-Type": "application/json; charset=utf-8", ...headers });
+  const rejectedBody = Boolean(response.req && closeAfterResponse.has(response.req));
+  if (rejectedBody) response.shouldKeepAlive = false;
+  response.writeHead(status, {
+    ...securityHeaders(),
+    "Content-Type": "application/json; charset=utf-8",
+    ...headers,
+    ...(rejectedBody ? { Connection: "close" } : {})
+  });
   response.end(`${JSON.stringify(body)}\n`);
 }
 

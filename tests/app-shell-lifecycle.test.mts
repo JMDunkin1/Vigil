@@ -138,23 +138,39 @@ const shutdownEnd = serverSource.indexOf("\n}", shutdownStart);
 const shutdownSource = serverSource.slice(shutdownStart, shutdownEnd + 2);
 const monitorStopIndex = shutdownSource.indexOf("await activeMonitor?.stop()");
 const listenerStopIndex = shutdownSource.indexOf("closeListeningServer(activeServer)");
-const admissionStopIndex = shutdownSource.indexOf("mutationCoordinator?.stopAdmission()");
-const coordinatorDrainIndex = shutdownSource.indexOf("mutationCoordinator?.drain()");
-const requestDrainIndex = shutdownSource.indexOf("drainActiveRequests()");
+const admissionStopIndex = shutdownSource.indexOf("activeMutationCoordinator?.stopAdmission()");
+const coordinatorDrainIndex = shutdownSource.indexOf("activeMutationCoordinator?.drain()");
+const requestDrainIndex = shutdownSource.indexOf("drainActiveRequests(");
 const finalSnapshotIndex = shutdownSource.indexOf("await saveRuntimeSnapshot(state, usage,");
 assert.ok(
-  admissionStopIndex >= 0
-    && requestDrainIndex > admissionStopIndex
+  requestDrainIndex >= 0
+    && admissionStopIndex > requestDrainIndex
     && monitorStopIndex > requestDrainIndex
+    && monitorStopIndex > admissionStopIndex
     && coordinatorDrainIndex > monitorStopIndex
     && finalSnapshotIndex > coordinatorDrainIndex
     && listenerStopIndex > finalSnapshotIndex,
   "shutdown must drain admitted work, freeze enforcement, durably snapshot it, and only then close the listener"
 );
 assert.match(
+  serverSource,
+  /function recordIosMdmPolicyQueue[\s\S]*?ensureIosRemovalPassword\(requestState\);[\s\S]*?afterCommit\(/,
+  "a policy export must reserve its removal password in the originating transaction"
+);
+assert.match(
+  serverSource,
+  /effect\.removalPassword && committedPassword && committedPassword !== effect\.removalPassword[\s\S]*?throw new Error/,
+  "a stale export completion must not overwrite a newer removal password"
+);
+assert.match(
   shutdownSource,
-  /catch \(error\) \{\s*mutationCoordinator\?\.resumeAdmission\(\);\s*activeMonitor\?\.start\(\);\s*runtimeStopping = false;\s*throw error;/,
-  "a failed frozen snapshot must reopen mutation admission and restart enforcement"
+  /catch \(error\) \{\s*await resumeListeningServer\(activeServer\);\s*activeMutationCoordinator\?\.resumeAdmission\(\);\s*activeMonitor\?\.start\(\);\s*runtimeStopping = false;\s*throw error;/,
+  "a failed frozen snapshot must restore the listener before reopening mutation admission and restarting enforcement"
+);
+assert.match(
+  serverSource,
+  /function drainActiveRequests[\s\S]*?setTimeout\(\(\) => \{[\s\S]*?activeMutationCoordinator\?\.stopAdmission\(\);[\s\S]*?forcedClose = closeListeningServer\(activeServer, \{ force: true \}\);[\s\S]*?Promise\.race[\s\S]*?await forcedClose/,
+  "the request drain deadline must freeze mutation admission and close the listener before proceeding"
 );
 assert.match(
   mainSource,

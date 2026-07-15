@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { access, lstat, mkdtemp, open, readdir, readFile, readlink, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
+import { verifyEntitlementObject } from "./release-entitlements.mjs";
 
 if (process.platform !== "darwin") throw new Error("Developer ID releases must be built and verified on macOS.");
 for (const name of ["CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER", "APPLE_TEAM_ID"]) {
@@ -67,20 +68,11 @@ console.log(`Verified notarized release: ${dmgPath}`);
 console.log(`SHA-256: ${sha256}`);
 
 async function verifyEntitlements(path) {
-  const source = await readFile(path, "utf8");
-  if (!source.includes("com.apple.security.cs.allow-jit")) throw new Error(`${path} must grant allow-jit.`);
-  for (const forbidden of ["allow-unsigned-executable-memory", "disable-library-validation"]) {
-    if (source.includes(forbidden)) throw new Error(`${path} contains forbidden entitlement ${forbidden}.`);
-  }
+  verifyEntitlementObject(await parsePlist(path), path, { requireJit: true });
 }
 
-function verifyEmittedEntitlements(source, label) {
-  const keys = [...source.matchAll(/<key>([^<]+)<\/key>/gu)].map((match) => match[1]);
-  const unexpected = keys.filter((key) => key !== "com.apple.security.cs.allow-jit");
-  if (unexpected.length) throw new Error(`${label} emitted unexpected entitlement(s): ${unexpected.join(", ")}.`);
-  for (const forbidden of ["allow-unsigned-executable-memory", "disable-library-validation"]) {
-    if (source.includes(forbidden)) throw new Error(`${label} emitted forbidden entitlement ${forbidden}.`);
-  }
+async function verifyEmittedEntitlements(source, label, requireJit) {
+  verifyEntitlementObject(await parsePlist("-", source), label, { requireJit, allowOnlyJit: true });
 }
 
 async function verifySignedPath(path, requireJit) {
@@ -90,9 +82,13 @@ async function verifySignedPath(path, requireJit) {
   const authority = signing.match(/^Authority=(.+)$/mu)?.[1] || "";
   if (signedTeam !== process.env.APPLE_TEAM_ID) throw new Error(`${path} is not signed by the expected Apple team.`);
   if (!authority.startsWith("Developer ID Application:")) throw new Error(`${path} does not have the expected Developer ID Application authority.`);
-  const emittedEntitlements = await runCapture("codesign", ["-d", "--entitlements", ":-", path]);
-  verifyEmittedEntitlements(emittedEntitlements, path);
-  if (requireJit && !emittedEntitlements.includes("com.apple.security.cs.allow-jit")) throw new Error(`${path} is missing its emitted allow-jit entitlement.`);
+  const emittedEntitlements = await runCapture("codesign", ["-d", "--entitlements", ":-", path], { includeStderr: false });
+  await verifyEmittedEntitlements(emittedEntitlements, path, requireJit);
+}
+
+async function parsePlist(path, source) {
+  const output = await runCapture("plutil", ["-convert", "json", "-o", "-", path], { input: source });
+  return JSON.parse(output);
 }
 
 async function discoverSignedCode(appPath) {
@@ -185,16 +181,21 @@ function run(command, args) {
   });
 }
 
-function runCapture(command, args) {
+function runCapture(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     let output = "";
+    let errorOutput = "";
     const child = spawn(command, args, { env: process.env });
     child.stdout.on("data", (chunk) => { output += chunk; });
-    child.stderr.on("data", (chunk) => { output += chunk; });
+    child.stderr.on("data", (chunk) => {
+      errorOutput += chunk;
+      if (options.includeStderr !== false) output += chunk;
+    });
+    if (options.input !== undefined) child.stdin.end(options.input);
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (code === 0 && !signal) resolve(output);
-      else reject(new Error(`${command} failed (${signal || code}). ${output}`));
+      else reject(new Error(`${command} failed (${signal || code}). ${output}${options.includeStderr === false ? errorOutput : ""}`));
     });
   });
 }

@@ -137,6 +137,9 @@ assert.match(trackingSource, /dateIsComplete\(dateKey, behaviors, values\)[\s\S]
 assert.doesNotMatch(trackingSource, /Your answers are locked|All \$\{total\} item/, "the completion screen must not repeat results already shown in the tracking graphs");
 assert.match(trackingSource, /editableCompletedDateKey = dateKey/, "editing a completed day must require a deliberate unlock action");
 assert.match(trackingSource, /monthDayCount\.textContent = `\$\{dates\.length\} days`/, "the selected month must control the displayed day count");
+assert.match(trackingSource, /class: "habit-pulse-bar"[\s\S]*?viewBox: `0 0 10 \$\{total\}`[\s\S]*?habit-pulse-missed[\s\S]*?y: total - reported[\s\S]*?height: reported - done[\s\S]*?habit-pulse-done[\s\S]*?y: total - done[\s\S]*?height: done/, "monthly rhythm bars must encode reported height with separate done and missed segments");
+assert.match(styles, /\.habit-pulse-missed\s*\{[\s\S]*?fill:[\s\S]*?var\(--red\)/, "monthly rhythm bars must render missed reports distinctly");
+assert.match(styles, /\.habit-pulse-done\s*\{[\s\S]*?fill:\s*var\(--habit-done-strong\)/, "monthly rhythm bars must render completed reports distinctly");
 
 const protectionMarkup = html.match(/<div id="protectionLevelControl"[\s\S]*?<div[^>]*class="home-runtime-status"/)?.[0] || "";
 assert.match(protectionMarkup, /id="protectionLevelControl"[^>]*aria-expanded="false"/, "the protection selector must start collapsed");

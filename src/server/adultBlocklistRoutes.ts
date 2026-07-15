@@ -2,25 +2,30 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   adultBlocklistSource,
   adultBlocklistSummary,
+  commitAdultBlocklistRefresh,
   finalizeAdultBlocklistSnapshot,
   invalidateAdultBlocklistIfSourceChanged,
   normalizeAdultDomainList,
-  refreshAdultBlocklist
+  refreshAdultBlocklist,
+  type AdultBlocklistRefreshPreparation
 } from "../adultBlocklist.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { addEvent, saveState } from "../store.js";
 import type { VigilState } from "../types.js";
 import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
+import type { DurableEffectDescriptor } from "./mutationCoordinator.js";
 import { updateSettings } from "./settingsRoutes.js";
 
 interface AdultBlocklistApiContext {
   state: VigilState;
+  afterCommit: (effect: () => void | Promise<void>, descriptor?: DurableEffectDescriptor) => void;
+  preparedRefresh?: AdultBlocklistRefreshPreparation;
 }
 
 export async function handleAdultBlocklistApiRoute(
   request: IncomingMessage,
   response: ServerResponse,
-  { state }: AdultBlocklistApiContext
+  { state, afterCommit, preparedRefresh }: AdultBlocklistApiContext
 ): Promise<boolean> {
   const method = request.method || "GET";
   const path = new URL(request.url || "/", "http://localhost").pathname;
@@ -50,7 +55,9 @@ export async function handleAdultBlocklistApiRoute(
   if (method === "POST" && path === "/api/adult-blocklist/refresh") {
     try {
       assertProtectedEditAllowed(state, { kind: "settings" });
-      const summary = await refreshAdultBlocklist(state);
+      const summary = preparedRefresh
+        ? await commitAdultBlocklistRefresh(state, preparedRefresh)
+        : await refreshAdultBlocklist(state);
       addEvent(state, "adult_blocklist_refreshed", {
         sourceId: summary.selectedSourceId,
         domainCount: summary.domainCount,
@@ -58,7 +65,14 @@ export async function handleAdultBlocklistApiRoute(
         hash: summary.shortHash
       });
       await saveState(state);
-      await finalizeAdultBlocklistSnapshot(state);
+      afterCommit(
+        () => finalizeAdultBlocklistSnapshot(state),
+        {
+          key: `adult-blocklist-finalize:${summary.hash}`,
+          kind: "adult-blocklist-finalize",
+          payload: { hash: summary.hash, snapshotPath: summary.snapshotPath }
+        }
+      );
       sendJson(response, 200, { ok: true, adultBlocklist: summary });
     } catch (error) {
       addEvent(state, "adult_blocklist_refresh_failed", { error: error instanceof Error ? error.message : String(error) });

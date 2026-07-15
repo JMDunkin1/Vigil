@@ -1613,9 +1613,8 @@ body[data-active-view="tracking"] #view-journal {
   min-height: 73px;
 }
 
-.tracking-metric-rhythm .habit-pulse-day progress {
-  max-height: 40px;
-  background: linear-gradient(to top, var(--habit-done-strong) 0 calc(var(--completed) * 100%), color-mix(in srgb, var(--red) 76%, var(--surface-strong)) calc(var(--completed) * 100%) 100%);
+.tracking-metric-rhythm .habit-pulse-day .habit-pulse-bar {
+  height: 40px;
 }
 
 .daily-checkin {
@@ -3821,20 +3820,25 @@ body[data-active-view="journal"] .split-surface {
   box-shadow: none;
 }
 
-.habit-pulse-day progress {
+.habit-pulse-day .habit-pulse-bar {
   width: 100%;
   min-height: 5px;
   height: 63px;
   display: block;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--red) 75%, #5a3631);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--habit-done) 26%, transparent);
+  overflow: visible;
   transition: height 220ms ease, opacity 220ms ease, filter 180ms ease;
 }
 
-.habit-pulse-day:not(.has-data) progress {
-  background: color-mix(in srgb, var(--line) 58%, transparent);
-  box-shadow: none;
+.habit-pulse-track {
+  fill: color-mix(in srgb, var(--line) 58%, transparent);
+}
+
+.habit-pulse-missed {
+  fill: color-mix(in srgb, var(--red) 75%, #5a3631);
+}
+
+.habit-pulse-done {
+  fill: var(--habit-done-strong);
 }
 
 .habit-pulse-day span {
@@ -3850,7 +3854,7 @@ body[data-active-view="journal"] .split-surface {
   transform: none;
 }
 
-.habit-pulse-day:hover:not(:disabled) progress {
+.habit-pulse-day:hover:not(:disabled) .habit-pulse-bar {
   filter: brightness(1.25);
 }
 
@@ -3858,7 +3862,7 @@ body[data-active-view="journal"] .split-surface {
   color: var(--gold-bright);
 }
 
-.habit-pulse-day.is-today progress {
+.habit-pulse-day.is-today .habit-pulse-bar {
   outline: 1px solid var(--gold-bright);
   outline-offset: 2px;
 }

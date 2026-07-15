@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 import type { Socket } from "node:net";
 import { join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { finalizeAdultBlocklistSnapshot, prepareAdultBlocklistRefresh } from "./adultBlocklist.js";
+import type { AdultBlocklistRefreshPreparation } from "./adultBlocklist.js";
 import { apiRequestGuard, publicHostGuard } from "./apiSecurity.js";
 import { hostedAdminRequired, requireHostedAccount } from "./auth.js";
 import { APP_NAME, PORT, defaultState } from "./defaults.js";
@@ -19,7 +21,7 @@ import { exportManageEngineIosProfile } from "./manageEngineExport.js";
 import { parsePlist } from "./plist.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "./protection.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "./keyholder.js";
-import { errorStatus, readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, sendMdmPlist, serializeError, serveStatic, mdmHeaders } from "./server/http.js";
+import { discardRequestBody, errorStatus, readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, sendMdmPlist, serializeError, serveStatic, mdmHeaders } from "./server/http.js";
 import { createLocalScriptRunner } from "./server/localScripts.js";
 import { blockedPage, companionPage, pausePage } from "./server/pages.js";
 import { isExtensionApiPath, matchApiRoute } from "./server/apiRoutes.js";
@@ -107,6 +109,11 @@ interface GuardResult {
   kind?: string;
 }
 
+interface PreparedMutationRequest {
+  mdmBody?: UnknownRecord;
+  adultBlocklistRefresh?: AdultBlocklistRefreshPreparation;
+}
+
 type AfterCommit = <TResult>(
   effect: () => TResult | Promise<TResult>,
   descriptor?: DurableEffectDescriptor,
@@ -185,7 +192,8 @@ export async function startVigilRuntime(options: ServerOptions = {}): Promise<Vi
       runtimeInstanceId: startedAt,
       mutate: async (operation) => await requireMutationCoordinator().run(({ state: draftState, usage: draftUsage, afterCommit }) => operation(draftState, draftUsage, afterCommit))
     }, { start: false }) as unknown as MonitorHandle;
-    mutationCoordinator.setEffectObserver((entry, transition, error) => requireMonitor().observeDurableEffect(entry, transition, error));
+    const effectMonitor = monitor;
+    mutationCoordinator.setEffectObserver((entry, transition, error) => effectMonitor.observeDurableEffect(entry, transition, error));
     await mutationCoordinator.retryPending(reconcileDurableEffect, completeRecoveredDurableEffect, failRecoveredDurableEffect);
     monitor.start();
     runtimeStarted = true;
@@ -215,15 +223,20 @@ async function requestHandler(request: IncomingMessage, response: ServerResponse
   }
   const method = String(request.method || "GET").toUpperCase();
   const path = new URL(request.url || "/", `http://${request.headers.host || `${activeHost}:${activePort}`}`).pathname;
+  const requestMutationCoordinator = mutationCoordinator;
   if (!requestRequiresMutation(method, path)) {
-    await dispatchRequest(request, response, state, usage, (effect) => void effect());
+    await dispatchRequest(request, response, state, usage, (effect) => void effect(), {}, requestMutationCoordinator);
     return;
   }
+  if (!await mutationBodyAdmissionAllowed(request, response, method, path)) return;
+  const preparation = await prepareMutationRequest(request, response, method, path);
+  if (preparation.handled) return;
   const buffered = new BufferedServerResponse(response);
   try {
-    await requireMutationCoordinator().run(async ({ state: draftState, usage: draftUsage, afterCommit }) => {
-      await dispatchRequest(request, buffered.response, draftState, draftUsage, afterCommit);
-      if (!buffered.successful()) throw new RequestRejectedError();
+    if (!requestMutationCoordinator) throw new Error("Vigil's mutation coordinator is not initialized.");
+    await requestMutationCoordinator.run(async ({ state: draftState, usage: draftUsage, afterCommit }) => {
+      await dispatchRequest(request, buffered.response, draftState, draftUsage, afterCommit, preparation.prepared);
+      if (!buffered.successful() && !requestCommitsHandledFailure(method, path, buffered.status())) throw new RequestRejectedError();
     });
     buffered.flush();
   } catch (error) {
@@ -232,12 +245,104 @@ async function requestHandler(request: IncomingMessage, response: ServerResponse
   }
 }
 
+async function mutationBodyAdmissionAllowed(
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: string,
+  path: string
+): Promise<boolean> {
+  const hostGuard = publicHostGuard({ path, headers: request.headers, remoteAddress: request.socket.remoteAddress }) as GuardResult;
+  if (!hostGuard.ok) {
+    sendBodyAdmissionRejection(request, response, hostGuard.status || 403, hostGuard.error || "Forbidden");
+    return false;
+  }
+  if (!path.startsWith("/api/")) return true;
+
+  const apiGuard = apiRequestGuard({ method, path, headers: request.headers, remoteAddress: request.socket.remoteAddress }) as GuardResult;
+  if (!apiGuard.ok) {
+    sendBodyAdmissionRejection(request, response, apiGuard.status || 403, apiGuard.error || "Forbidden");
+    return false;
+  }
+  if (isExtensionApiPath(path) || path === "/api/devices/usage") return true;
+
+  try {
+    await requireHostedAccount(request, { admin: hostedAdminRequired(method, path) });
+    return true;
+  } catch (error) {
+    discardRequestBody(request);
+    sendJson(response, errorStatus(error), serializeError(error), { "Cache-Control": "no-store" });
+    return false;
+  }
+}
+
+function sendBodyAdmissionRejection(
+  request: IncomingMessage,
+  response: ServerResponse,
+  status: number,
+  error: string
+): void {
+  discardRequestBody(request);
+  sendJson(response, status, { error });
+}
+
+async function prepareMutationRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  method: string,
+  path: string
+): Promise<{ handled: boolean; prepared: PreparedMutationRequest }> {
+  if (["PUT", "POST"].includes(method) && ["/mdm/checkin", "/mdm/connect"].includes(path)) {
+    try {
+      return {
+        handled: false,
+        prepared: { mdmBody: parsePlist(await readTextBody(request)) as UnknownRecord }
+      };
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+      return { handled: true, prepared: {} };
+    }
+  }
+
+  if (["POST", "PUT", "PATCH"].includes(method)) {
+    try {
+      // Buffer request bytes before mutation admission. Route handlers parse
+      // the cached text only after their normal authorization checks.
+      await readTextBody(request);
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+      return { handled: true, prepared: {} };
+    }
+  }
+
+  if (method === "POST" && path === "/api/adult-blocklist/refresh") {
+    const hostGuard = publicHostGuard({ path, headers: request.headers, remoteAddress: request.socket.remoteAddress });
+    const apiGuard = apiRequestGuard({ method, path, headers: request.headers, remoteAddress: request.socket.remoteAddress });
+    if (hostGuard.ok && apiGuard.ok) {
+      try {
+        await requireHostedAccount(request, { admin: hostedAdminRequired(method, path) });
+        assertProtectedEditAllowed(state, { kind: "settings" });
+        return {
+          handled: false,
+          prepared: { adultBlocklistRefresh: await prepareAdultBlocklistRefresh(structuredClone(state)) }
+        };
+      } catch {
+        // Dispatch normally so the authoritative transactional checks produce
+        // the same rejection and failure-persistence behavior as before.
+      }
+    }
+  }
+
+  return { handled: false, prepared: {} };
+}
+
 async function dispatchRequest(
   request: IncomingMessage,
   response: ServerResponse,
   requestState: VigilState,
   requestUsage: UsageState,
-  afterCommit: AfterCommit
+  afterCommit: AfterCommit,
+  prepared: PreparedMutationRequest = {},
+  requestMutationCoordinator: RuntimeMutationCoordinator | null = mutationCoordinator
 ): Promise<void> {
   try {
     const url = new URL(request.url || "/", `http://${request.headers.host || `${activeHost}:${activePort}`}`);
@@ -252,12 +357,12 @@ async function dispatchRequest(
     }
 
     if (url.pathname.startsWith("/mdm/")) {
-      await handleMdm(request, response, url, requestState, afterCommit);
+      await handleMdm(request, response, url, requestState, afterCommit, prepared.mdmBody);
       return;
     }
 
     if (url.pathname.startsWith("/api/")) {
-      await handleApi(request, response, url, requestState, requestUsage, afterCommit);
+      await handleApi(request, response, url, requestState, requestUsage, afterCommit, prepared, requestMutationCoordinator);
       return;
     }
 
@@ -299,6 +404,13 @@ function requestRequiresMutation(method: string, path: string): boolean {
   if (path.startsWith("/mdm/")) return true;
   const route = matchApiRoute(method, path);
   return Boolean(route && !READ_ONLY_API_ROUTES.has(route.id));
+}
+
+function requestCommitsHandledFailure(method: string, path: string, status: number): boolean {
+  return method === "POST" && (
+    path === "/api/adult-blocklist/refresh"
+    || (path === "/api/emergency/confirm" && status === 410)
+  );
 }
 
 class RequestRejectedError extends Error {}
@@ -374,15 +486,17 @@ async function performShutdown({ exit = true }: { exit?: boolean } = {}): Promis
   }
   const activeMonitor = monitor;
   const activeServer = server;
+  const activeMutationCoordinator = mutationCoordinator;
   runtimeStopping = true;
-  mutationCoordinator?.stopAdmission();
   try {
-    await drainActiveRequests();
+    await drainActiveRequests(activeServer, activeMutationCoordinator);
+    activeMutationCoordinator?.stopAdmission();
     await activeMonitor?.stop();
-    await mutationCoordinator?.drain();
-    await saveRuntimeSnapshot(state, usage, { outbox: mutationCoordinator?.pendingEffects() || [] });
+    await activeMutationCoordinator?.drain();
+    await saveRuntimeSnapshot(state, usage, { outbox: activeMutationCoordinator?.pendingEffects() || [] });
   } catch (error) {
-    mutationCoordinator?.resumeAdmission();
+    await resumeListeningServer(activeServer);
+    activeMutationCoordinator?.resumeAdmission();
     activeMonitor?.start();
     runtimeStopping = false;
     throw error;
@@ -401,24 +515,50 @@ async function performShutdown({ exit = true }: { exit?: boolean } = {}): Promis
   if (exit) process.exit(0);
 }
 
-async function closeListeningServer(activeServer: Server | null): Promise<void> {
+async function closeListeningServer(activeServer: Server | null, { force = false }: { force?: boolean } = {}): Promise<void> {
   if (!activeServer?.listening) return;
   await new Promise<void>((resolveClose) => {
     let settled = false;
+    let forcedFinishTimer: ReturnType<typeof setTimeout> | null = null;
     const finish = () => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (forcedFinishTimer) clearTimeout(forcedFinishTimer);
       resolveClose();
     };
     activeServer.close(finish);
     activeServer.closeIdleConnections?.();
-    const timer = setTimeout(() => {
+    const forceClose = () => {
+      const closingSockets = [...activeSockets].map((socket) => new Promise<void>((resolveSocket) => {
+        socket.once("close", resolveSocket);
+      }));
       activeServer.closeAllConnections?.();
       for (const socket of activeSockets) socket.destroy();
-      finish();
-    }, SHUTDOWN_GRACE_MS);
+      void Promise.all(closingSockets).then(finish);
+      forcedFinishTimer = setTimeout(finish, 1_000);
+      forcedFinishTimer.unref();
+    };
+    const timer = setTimeout(forceClose, force ? 0 : SHUTDOWN_GRACE_MS);
     timer.unref();
+  });
+}
+
+async function resumeListeningServer(activeServer: Server | null): Promise<void> {
+  if (!activeServer || activeServer.listening) return;
+  const listeningServer = activeServer;
+  await new Promise<void>((resolveListen, rejectListen) => {
+    function onError(error: Error) {
+      listeningServer.off("listening", onListening);
+      rejectListen(error);
+    }
+    function onListening() {
+      listeningServer.off("error", onError);
+      resolveListen();
+    }
+    listeningServer.once("error", onError);
+    listeningServer.once("listening", onListening);
+    listeningServer.listen(activePort, activeHost);
   });
 }
 
@@ -456,8 +596,11 @@ interface IosMdmPushEffect {
 async function scheduleIosMdmPush(reason: string, options: UnknownRecord = {}): Promise<IosMdmPushEffect> {
   const effectState = structuredClone(state);
   const result = await pushIosMdmQueuedCommands(effectState, reason, new Date(), options) as IosMdmPushResult;
-  if (result.failed) throw new Error(`${result.failed} MDM push command(s) failed.`);
-  return { effectState, reason, result };
+  const effect = { effectState, reason, result };
+  if (result.failed) {
+    throw Object.assign(new Error(`${result.failed} MDM push command(s) failed.`), { effect });
+  }
+  return effect;
 }
 
 async function handleMdm(
@@ -465,13 +608,14 @@ async function handleMdm(
   response: ServerResponse,
   url: URL,
   requestState: VigilState,
-  afterCommit: AfterCommit
+  afterCommit: AfterCommit,
+  preparedBody?: UnknownRecord
 ): Promise<void> {
   const method = request.method || "GET";
   const path = url.pathname;
 
   if ((method === "PUT" || method === "POST") && (path === "/mdm/checkin" || path === "/mdm/connect")) {
-    const body = parsePlist(await readTextBody(request)) as UnknownRecord;
+    const body = preparedBody || parsePlist(await readTextBody(request)) as UnknownRecord;
     if (!authorizeIosMdmDeviceRequest(requestState, url, body)) {
       sendEmpty(response, 403);
       return;
@@ -490,8 +634,9 @@ async function handleMdm(
         const payload = { reason: "checkin", force: true, udids: [result.udid] };
         afterCommit(
           () => scheduleIosMdmPush("checkin", payload),
-          durableEffect("mdm-push", payload),
-          (effect, committedState) => completeIosMdmPush(effect, committedState)
+          { ...durableEffect("mdm-push", payload), awaitAttempt: false },
+          (effect, committedState) => completeIosMdmPush(effect, committedState),
+          (error, committedState) => completeFailedIosMdmPush(error, committedState)
         );
       }
       return;
@@ -542,7 +687,9 @@ async function handleApi(
   url: URL,
   requestState: VigilState,
   requestUsage: UsageState,
-  afterCommit: AfterCommit
+  afterCommit: AfterCommit,
+  prepared: PreparedMutationRequest = {},
+  requestMutationCoordinator: RuntimeMutationCoordinator | null = mutationCoordinator
 ): Promise<void> {
   const method = request.method || "GET";
   const path = url.pathname;
@@ -629,7 +776,11 @@ async function handleApi(
     return;
   }
 
-  if (await handleAdultBlocklistApiRoute(request, response, { state: requestState })) {
+  if (await handleAdultBlocklistApiRoute(request, response, {
+    state: requestState,
+    afterCommit,
+    preparedRefresh: prepared.adultBlocklistRefresh
+  })) {
     return;
   }
 
@@ -679,7 +830,7 @@ async function handleApi(
     path,
     state: requestState,
     localScripts,
-    recordExternalResult: recordExternalHardeningResult
+    recordExternalResult: (type, detail) => recordExternalHardeningResult(type, detail, requestMutationCoordinator)
   })) {
     return;
   }
@@ -731,9 +882,14 @@ async function handleApi(
   sendJson(response, 404, { error: "Not found" });
 }
 
-async function recordExternalHardeningResult(type: string, detail: Record<string, unknown>): Promise<boolean> {
+async function recordExternalHardeningResult(
+  type: string,
+  detail: Record<string, unknown>,
+  requestMutationCoordinator: RuntimeMutationCoordinator | null
+): Promise<boolean> {
   try {
-    await requireMutationCoordinator().run(async ({ state: draftState }) => {
+    if (!requestMutationCoordinator) return false;
+    await requestMutationCoordinator.run(async ({ state: draftState }) => {
       addEvent(draftState, type, detail);
       await saveState(draftState);
     });
@@ -816,6 +972,10 @@ function recordIosMdmPolicyQueue(
   reason: string,
   afterCommit: AfterCommit
 ): IosMdmPushResult {
+  // Reserve the credential in the mutation that originates the export. This
+  // keeps concurrent profile downloads and the exported artifact on the same
+  // password while the post-commit filesystem work is in flight.
+  ensureIosRemovalPassword(requestState);
   const result = queueIosMdmPolicyRefresh(requestState, reason) as unknown as IosMdmPushResult;
   afterCommit(
     () => scheduleManageEnginePolicyExport(reason),
@@ -827,7 +987,8 @@ function recordIosMdmPolicyQueue(
     afterCommit(
       () => scheduleIosMdmPush(reason),
       durableEffect("mdm-push", { reason, eventId: requestState.events[0]?.id || "state" }),
-      (effect, committedState) => completeIosMdmPush(effect, committedState)
+      (effect, committedState) => completeIosMdmPush(effect, committedState),
+      (error, committedState) => completeFailedIosMdmPush(error, committedState)
     );
   }
   return result;
@@ -856,6 +1017,10 @@ async function reconcileDurableEffect(entry: RuntimeOutboxEntry): Promise<unknow
   if (entry.kind === "policy-enforcement") {
     return await schedulePolicyEnforcement(reason);
   }
+  if (entry.kind === "adult-blocklist-finalize") {
+    await finalizeAdultBlocklistSnapshot(state);
+    return { ok: true };
+  }
   if (entry.kind === "monitor-os") {
     return await requireMonitor().reconcileDurableEffect(String(entry.payload.action || ""), { ...entry.payload, intentKey: entry.key });
   }
@@ -881,7 +1046,11 @@ async function performManageEnginePolicyExport(reason: string) {
 }
 
 function completeManageEnginePolicyExport(effect: ManageEnginePolicyExportEffect, committedState: VigilState): void {
-  if (effect.removalPassword) committedState.deviceControls.ios.removalPassword = effect.removalPassword;
+  const committedPassword = committedState.deviceControls.ios.removalPassword;
+  if (effect.removalPassword && committedPassword && committedPassword !== effect.removalPassword) {
+    throw new Error("The iOS removal password changed while the ManageEngine profile was exported.");
+  }
+  if (effect.removalPassword && !committedPassword) committedState.deviceControls.ios.removalPassword = effect.removalPassword;
   addEvent(committedState, "ios_manageengine_policy_exported", {
     reasons: [effect.reason],
     bytes: effect.result.profileBytes,
@@ -903,6 +1072,11 @@ function completeIosMdmPush(effect: IosMdmPushEffect, committedState: VigilState
   if (effect.result.pushed) addEvent(committedState, "ios_mdm_push", { reason: effect.reason, ...effect.result });
 }
 
+function completeFailedIosMdmPush(error: Error, committedState: VigilState): void {
+  const effect = (error as Error & { effect?: IosMdmPushEffect }).effect;
+  if (effect) completeIosMdmPush(effect, committedState);
+}
+
 function completeRecoveredDurableEffect(entry: RuntimeOutboxEntry, result: unknown, committedState: VigilState): void {
   if (entry.kind === "mdm-push") completeIosMdmPush(result as IosMdmPushEffect, committedState);
   else if (entry.kind === "manageengine-export") completeManageEnginePolicyExport(result as ManageEnginePolicyExportEffect, committedState);
@@ -914,15 +1088,27 @@ function completeRecoveredDurableEffect(entry: RuntimeOutboxEntry, result: unkno
     if (entry.payload.action === "mdm-push" && effectState && typeof effectState === "object") {
       applyIosMdmPushState(committedState, effectState as VigilState);
     }
+    if (entry.payload.action === "focus-shortcut" && effectState && typeof effectState === "object") {
+      applyFocusShortcutState(committedState, effectState as VigilState);
+    }
     const { effectState: _effectState, ...eventResult } = monitorResult;
     addEvent(committedState, "monitor_os_effect_completed", { kind: entry.payload.action, key: entry.key, payload: entry.payload, result: eventResult });
   }
 }
 
 function failRecoveredDurableEffect(entry: RuntimeOutboxEntry, error: Error, committedState: VigilState): void {
-  if (entry.kind === "monitor-os") {
+  if (entry.kind === "mdm-push") {
+    completeFailedIosMdmPush(error, committedState);
+  } else if (entry.kind === "monitor-os") {
+    const effectState = (error as Error & { effectState?: VigilState }).effectState;
+    if (entry.payload.action === "mdm-push" && effectState) applyIosMdmPushState(committedState, effectState);
+    if (entry.payload.action === "focus-shortcut" && effectState) applyFocusShortcutState(committedState, effectState);
     addEvent(committedState, "monitor_os_effect_failed", { kind: entry.payload.action, key: entry.key, payload: entry.payload, error: error.message });
   }
+}
+
+function applyFocusShortcutState(targetState: VigilState, effectState: VigilState): void {
+  targetState.focusShortcut = structuredClone(effectState.focusShortcut);
 }
 
 function applyIosMdmPushState(targetState: VigilState, effectState: VigilState): void {
@@ -953,8 +1139,31 @@ async function trackRuntimeRequest<T>(operation: () => Promise<T>): Promise<T> {
   return await task;
 }
 
-async function drainActiveRequests(): Promise<void> {
-  while (activeRequestTasks.size) await Promise.all([...activeRequestTasks]);
+async function drainActiveRequests(
+  activeServer: Server | null,
+  activeMutationCoordinator: RuntimeMutationCoordinator | null
+): Promise<void> {
+  if (!activeRequestTasks.size) return;
+  let graceExpired = false;
+  let forcedClose: Promise<void> | null = null;
+  let expireGrace = () => {};
+  const deadline = new Promise<void>((resolve) => { expireGrace = resolve; });
+  const timer = setTimeout(() => {
+    graceExpired = true;
+    activeMutationCoordinator?.stopAdmission();
+    forcedClose = closeListeningServer(activeServer, { force: true });
+    activeRequestTasks.clear();
+    expireGrace();
+  }, SHUTDOWN_GRACE_MS);
+  timer.unref();
+  try {
+    while (activeRequestTasks.size && !graceExpired) {
+      await Promise.race([Promise.all([...activeRequestTasks]), deadline]);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+  await forcedClose;
 }
 
 function requireMutationCoordinator(): RuntimeMutationCoordinator {

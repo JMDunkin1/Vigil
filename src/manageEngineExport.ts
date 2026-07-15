@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import { chmod, lstat, mkdir, open, readFile, readdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -515,9 +515,7 @@ async function publishManageEngineGenerationLocked({
     // Fixed paths are single-artifact compatibility links. Readers that need
     // several files must pin once with pinManageEngineCurrentGeneration.
     for (const artifact of artifacts) {
-      const relativeTarget = artifact.generationPath.startsWith(`handoff${process.platform === "win32" ? "\\" : "/"}`)
-        ? join("..", "current", artifact.generationPath)
-        : join("current", artifact.generationPath);
+      const relativeTarget = relative(dirname(artifact.fixedPath), join(root, "current", artifact.generationPath));
       await replaceWithSymlink(artifact.fixedPath, relativeTarget);
       await assertOwned();
     }

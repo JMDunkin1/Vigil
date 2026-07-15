@@ -4,6 +4,8 @@ import { parsePlist, plistStringForKey } from "../src/plist.js";
 const parsed = parsePlist("<plist version=\"1.0\"><dict><!-- <key>fake</key><string>bad</string> --><key>real</key><string>ok</string></dict></plist>") as Record<string, unknown>;
 assert.equal(Object.getPrototypeOf(parsed), null);
 assert.equal(parsed.real, "ok");
+assert.equal((parsePlist("<dict><key>x</key><string>&amp;#84;okenUpdate</string></dict>") as Record<string, unknown>).x, "&#84;okenUpdate");
+assert.equal((parsePlist("<dict><key>x</key><string>&#84;okenUpdate</string></dict>") as Record<string, unknown>).x, "TokenUpdate");
 assert.throws(() => parsePlist("<dict><key>x</key><string>one</string><key>x</key><string>two</string></dict>"), /Duplicate/u);
 assert.throws(() => plistStringForKey("<dict><key>a</key><dict><key>x</key><string>one</string></dict><key>b</key><dict><key>x</key><string>two</string></dict></dict>", "x"), /Ambiguous/u);
 assert.throws(() => parsePlist("<!DOCTYPE plist [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><plist><dict><key>x</key><string>&xxe;</string></dict></plist>"), /entities/u);

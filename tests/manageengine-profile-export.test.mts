@@ -256,6 +256,30 @@ try {
 }
 
 {
+  const splitRoot = await mkdtemp(join(tmpdir(), "vigil-manageengine-split-paths-"));
+  try {
+    const paths = {
+      outPath: join(splitRoot, "profile", "policy.mobileconfig"),
+      summaryPath: join(splitRoot, "summary", "policy.summary.json"),
+      launcherOutPath: join(splitRoot, "launcher", "social.mobileconfig"),
+      launcherSummaryPath: join(splitRoot, "launcher-summary", "social.summary.json")
+    };
+    const splitState = defaultState();
+    const splitResult = await exportManageEngineIosProfile(splitState, {
+      currentState: true,
+      ...paths,
+      saveState: async () => {}
+    });
+    assert.ok((await readFile(splitResult.outPath, "utf8")).length > 0);
+    assert.equal(recordValue(JSON.parse(await readFile(splitResult.summaryPath, "utf8")), "split summary").outputPath, paths.outPath);
+    assert.ok((await readFile(splitResult.launcherOutPath, "utf8")).length > 0);
+    assert.equal(recordValue(JSON.parse(await readFile(splitResult.launcherSummaryPath, "utf8")), "split launcher summary").outputPath, paths.launcherOutPath);
+  } finally {
+    await rm(splitRoot, { recursive: true, force: true });
+  }
+}
+
+{
   const overlapDir = await mkdtemp(join(tmpdir(), "vigil-manageengine-overlap-"));
   try {
     const outPath = join(overlapDir, "vigil-manageengine-policy.mobileconfig");

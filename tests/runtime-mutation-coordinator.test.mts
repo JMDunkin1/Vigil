@@ -42,6 +42,28 @@ try {
   const storedNext = JSON.parse(await readFile(store.STATE_PATH, "utf8"));
   assert.deepEqual(storedNext.integrity.stateSeal, next.integrity.stateSeal, "the published caller marker must match the committed state file");
 
+  for (const failedBoundary of ["journal-renamed", "journal-published", "state-published"]) {
+    const committed = structuredClone(next);
+    committed.settings.siteRedirectEnabled = !committed.settings.siteRedirectEnabled;
+    const committedUsage = { "2026-07-14": usageDay(failedBoundary === "journal-renamed" ? 29 : failedBoundary === "journal-published" ? 31 : 37) };
+    let boundaryReached = false;
+    await store.saveRuntimeSnapshot(committed, committedUsage, {
+      afterBoundary(boundary) {
+        if (boundary === failedBoundary) {
+          boundaryReached = true;
+          throw new Error(`deterministic ${failedBoundary} replay failure`);
+        }
+      }
+    });
+    assert.equal(boundaryReached, true, `${failedBoundary} failure injection must reach its commit boundary`);
+    const storedState = JSON.parse(await readFile(store.STATE_PATH, "utf8"));
+    const storedUsage = JSON.parse(await readFile(store.USAGE_PATH, "utf8"));
+    assert.equal(storedState.settings.siteRedirectEnabled, committed.settings.siteRedirectEnabled, `${failedBoundary} must still commit the new state generation`);
+    assert.equal(storedUsage["2026-07-14"]?.totalSeconds, committedUsage["2026-07-14"].totalSeconds, `${failedBoundary} must finish the committed WAL replay`);
+    await assert.rejects(readFile(store.RUNTIME_SNAPSHOT_JOURNAL_PATH), { code: "ENOENT" }, `${failedBoundary} replay must remove the completed WAL`);
+    next.settings.siteRedirectEnabled = committed.settings.siteRedirectEnabled;
+  }
+
   const coordinator = new RuntimeMutationCoordinator(liveState, liveUsage);
   let releaseFirst = () => {};
   const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -119,6 +141,53 @@ try {
   });
   assert.equal(liveState.settings.siteRedirectEnabled, true, "post-commit effect failure must not reject or roll back a committed mutation");
   assert.equal(coordinator.pendingEffects().length, 1, "failed post-commit effects remain durably retryable");
+
+  const backgroundCoordinator = new RuntimeMutationCoordinator(defaultState(), {}, [], async () => {});
+  let markBackgroundStarted = () => {};
+  const backgroundStarted = new Promise<void>((resolve) => { markBackgroundStarted = resolve; });
+  let releaseBackground = () => {};
+  const backgroundGate = new Promise<void>((resolve) => { releaseBackground = resolve; });
+  const backgroundCommit = backgroundCoordinator.run(async ({ afterCommit }) => {
+    afterCommit(
+      async () => {
+        markBackgroundStarted();
+        await backgroundGate;
+      },
+      { key: "background-delivery", kind: "test-effect", payload: {}, awaitAttempt: false }
+    );
+  });
+  await withTimeout(backgroundCommit, "background effect commit acknowledgement");
+  await backgroundStarted;
+  assert.equal(backgroundCoordinator.pendingEffects().length, 1, "background delivery intent must remain durable while its attempt is active");
+  releaseBackground();
+  backgroundCoordinator.stopAdmission();
+  await withTimeout(backgroundCoordinator.drain(), "background effect drain");
+  assert.equal(backgroundCoordinator.pendingEffects().length, 0, "background delivery completion must still clear its durable intent");
+
+  const priorityCoordinator = new RuntimeMutationCoordinator(defaultState(), {}, [], async () => {});
+  let markPhoneEffectStarted = () => {};
+  const phoneEffectStarted = new Promise<void>((resolve) => { markPhoneEffectStarted = resolve; });
+  let releasePhoneEffect = () => {};
+  const phoneEffectGate = new Promise<void>((resolve) => { releasePhoneEffect = resolve; });
+  await priorityCoordinator.run(async ({ afterCommit }) => {
+    afterCommit(async () => {
+      markPhoneEffectStarted();
+      await phoneEffectGate;
+    }, { key: "slow-phone-effect", kind: "mdm-push", payload: {}, awaitAttempt: false });
+  });
+  await phoneEffectStarted;
+  let immediateRuns = 0;
+  await withTimeout(priorityCoordinator.run(async ({ afterCommit }) => {
+    afterCommit(() => { immediateRuns += 1; }, {
+      key: "urgent-session-enforcement",
+      kind: "session-enforcement",
+      payload: { sessionId: "urgent" }
+    });
+  }), "immediate enforcement priority lane");
+  assert.equal(immediateRuns, 1, "local session enforcement must not wait for a slow phone/network effect");
+  releasePhoneEffect();
+  priorityCoordinator.stopAdmission();
+  await withTimeout(priorityCoordinator.drain(), "priority effect drain");
 
   let effectRuns = 0;
   let failCompletionAck = true;
@@ -402,12 +471,24 @@ for (const boundary of [
   }
 }
 
+const aggregateJournalDir = await mkdtemp(join(tmpdir(), "vigil-runtime-large-journal-"));
+try {
+  await snapshotChild("save-old", aggregateJournalDir);
+  const crash = await snapshotChild("save-large", aggregateJournalDir, "journal-published", true);
+  assert.equal(crash.signal, "SIGKILL", "large aggregate WAL fixture must crash after publication");
+  const recovered = JSON.parse((await snapshotChild("load-large", aggregateJournalDir)).stdout) as { enabled: boolean; paddingLength: number };
+  assert.equal(recovered.enabled, true, "a valid aggregate WAL larger than one file limit must be replayed");
+  assert.equal(recovered.paddingLength, 17 * 1024 * 1024, "large aggregate WAL recovery must preserve its complete usage payload");
+} finally {
+  await rm(aggregateJournalDir, { recursive: true, force: true });
+}
+
 function usageDay(totalSeconds: number): UsageDay {
   return { totalSeconds, apps: {}, sites: {}, opens: { apps: {}, sites: {} }, devices: {} };
 }
 
 async function snapshotChild(
-  mode: "save-old" | "save-new" | "load",
+  mode: "save-old" | "save-new" | "save-large" | "load" | "load-large",
   directory: string,
   boundary = "",
   allowFailure = false
@@ -418,15 +499,25 @@ async function snapshotChild(
     const store = await import(${JSON.stringify(storeUrl)});
     const { defaultState } = await import(${JSON.stringify(defaultsUrl)});
     const mode = ${JSON.stringify(mode)};
-    if (mode === "load") {
+    if (mode === "load" || mode === "load-large") {
       const state = await store.loadState();
-      const usage = await store.loadUsage(state);
-      process.stdout.write(JSON.stringify({ enabled: state.settings.siteRedirectEnabled, seconds: usage["2026-07-14"]?.totalSeconds || 0 }));
+      if (mode === "load-large") {
+        const { readFile } = await import("node:fs/promises");
+        const usage = JSON.parse(await readFile(store.USAGE_PATH, "utf8"));
+        process.stdout.write(JSON.stringify({ enabled: state.settings.siteRedirectEnabled, paddingLength: usage.padding?.length || 0 }));
+      } else {
+        const usage = await store.loadUsage(state);
+        process.stdout.write(JSON.stringify({ enabled: state.settings.siteRedirectEnabled, seconds: usage["2026-07-14"]?.totalSeconds || 0 }));
+      }
     } else {
       const state = defaultState();
-      state.settings.siteRedirectEnabled = mode === "save-new";
-      const seconds = mode === "save-new" ? 23 : 5;
-      await store.saveRuntimeSnapshot(state, { "2026-07-14": { totalSeconds: seconds, apps: {}, sites: {}, opens: { apps: {}, sites: {} }, devices: {} } });
+      state.settings.siteRedirectEnabled = mode !== "save-old";
+      if (mode === "save-large") {
+        await store.saveRuntimeSnapshot(state, { padding: String.fromCharCode(92).repeat(17 * 1024 * 1024) });
+      } else {
+        const seconds = mode === "save-new" ? 23 : 5;
+        await store.saveRuntimeSnapshot(state, { "2026-07-14": { totalSeconds: seconds, apps: {}, sites: {}, opens: { apps: {}, sites: {} }, devices: {} } });
+      }
     }
   `;
   const result = await new Promise<{ stdout: string; stderr: string; code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {

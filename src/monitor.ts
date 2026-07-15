@@ -117,6 +117,25 @@ interface PollFrame {
   seconds: number;
 }
 
+interface MonitorTransactionSnapshot {
+  lastPollAt: number;
+  lastMonotonicAt: number;
+  lastSample: FrontSample | null;
+  status: MonitorStatus;
+  recentBlocks: Map<string, number>;
+  appBlockHistory: Map<string, AppBlockRecord>;
+  nextEnvironmentRefreshAt: number;
+  nextIntegrityRefreshAt: number;
+  nextAppleContentFilterRefreshAt: number;
+  nextHardeningDriftRefreshAt: number;
+  nextNetworkBlockRefreshAt: number;
+  nextProcessSweepAt: number;
+  nextSystemSleepLockAt: number;
+  nextGrayscaleRefreshAt: number;
+  runtimeGapChecked: boolean;
+  durableEffectProblems: Map<string, { component: string; error: string; pending: boolean }>;
+}
+
 export function startMonitor(context: MonitorContext, options: { start?: boolean } = {}): MonitorHandle {
   const monitor = new Monitor(context);
   if (options.start !== false) monitor.start();
@@ -294,24 +313,38 @@ export class Monitor implements MonitorHandle {
       this.setDurableEffectHealth(key, action, "Recovered durable effect is pending.", true);
       try {
         let result: UnknownRecord;
-        if (action === "session-enforcement") result = await this.runMutation(() => this.runImmediateEnforcement("session-start"));
+        let effectState: VigilState | null = null;
+        if (!this.durableEffectApplicable(action, payload)) result = obsoleteEffectResult(action);
+        else if (action === "session-enforcement") result = await this.runMutation(() => this.runImmediateEnforcement("session-start"));
         else if (action === "policy-enforcement") result = await this.runMutation(() => this.runImmediateEnforcement(String(payload.reason || "recovered-policy-enforcement")));
         else if (action === "lock-screen") result = await lockScreen();
         else if (action === "focus-shortcut") {
           const snapshot = structuredClone(this.state);
-          result = await reconcileFocusShortcut(snapshot, activePolicy(snapshot, new Date()), new Date()) as UnknownRecord;
+          effectState = snapshot;
+          result = {
+            ...await reconcileFocusShortcut(snapshot, activePolicy(snapshot, new Date()), new Date()) as UnknownRecord,
+            effectState: snapshot
+          };
         } else if (action === "grayscale") result = await setMacGrayscaleEnabled(Boolean(payload.desired));
         else if (action === "quit-app") result = await quitApp(String(payload.app || ""), { force: Boolean(payload.force) });
         else if (action === "redirect-browser") result = await redirectActiveBrowserTab(String(payload.app || ""), String(payload.url || ""), { currentUrl: String(payload.currentUrl || "") });
         else if (action === "open-url") result = await openUrl(String(payload.url || ""));
         else if (action === "mdm-push") {
-          const effectState = structuredClone(this.state);
-          result = await pushIosMdmQueuedCommands(effectState, String(payload.reason || "recovered-monitor-mdm-push"), new Date(), payload.options as UnknownRecord || {}) as UnknownRecord;
-          result = { ...result, effectState };
+          if (!this.state.deviceControls.ios.mdm.enabled) {
+            result = { ok: true, pushed: 0, skipped: "disabled" };
+          } else {
+            effectState = structuredClone(this.state);
+            result = await pushIosMdmQueuedCommands(effectState, String(payload.reason || "recovered-monitor-mdm-push"), new Date(), payload.options as UnknownRecord || {}) as UnknownRecord;
+            result = { ...result, effectState };
+          }
         }
         else throw new Error(`Unknown monitor OS effect: ${action}`);
         const failure = monitorEffectFailure(action, result);
-        if (failure) throw new Error(failure);
+        if (failure) {
+          const error = new Error(failure) as Error & { effectState?: VigilState };
+          if (effectState) error.effectState = effectState;
+          throw error;
+        }
         if (!this.coordinatorManagedEffects.has(key)) this.clearDurableEffectHealth(key, action);
         return result;
       } catch (error) {
@@ -326,8 +359,7 @@ export class Monitor implements MonitorHandle {
     transition: "pending" | "running" | "failed" | "completed",
     error: string
   ): void {
-    if (entry.kind !== "monitor-os") return;
-    const action = String(entry.payload.action || "");
+    const action = entry.kind === "monitor-os" ? String(entry.payload.action || "") : entry.kind;
     if (transition === "completed") {
       this.coordinatorManagedEffects.delete(entry.key);
       this.clearDurableEffectHealth(entry.key, action);
@@ -344,36 +376,43 @@ export class Monitor implements MonitorHandle {
   }
 
   async runMutation<T>(operation: () => Promise<T>): Promise<T> {
-    return await this.mutate(async (draftState, draftUsage, afterCommit) => {
-      const previousState = this.state;
-      const previousUsage = this.usage;
-      const previousAfterCommit = this.activeAfterCommit;
-      this.state = draftState;
-      this.usage = draftUsage;
-      this.activeAfterCommit = afterCommit;
-      try {
-        return await operation();
-      } finally {
-        this.state = previousState;
-        this.usage = previousUsage;
-        this.activeAfterCommit = previousAfterCommit;
-      }
-    });
+    let monitorSnapshot: MonitorTransactionSnapshot | null = null;
+    try {
+      return await this.mutate(async (draftState, draftUsage, afterCommit) => {
+        monitorSnapshot = this.captureTransactionSnapshot();
+        const previousState = this.state;
+        const previousUsage = this.usage;
+        const previousAfterCommit = this.activeAfterCommit;
+        this.state = draftState;
+        this.usage = draftUsage;
+        this.activeAfterCommit = afterCommit;
+        try {
+          return await operation();
+        } finally {
+          this.state = previousState;
+          this.usage = previousUsage;
+          this.activeAfterCommit = previousAfterCommit;
+        }
+      });
+    } catch (error) {
+      if (monitorSnapshot) this.restoreTransactionSnapshot(monitorSnapshot);
+      throw error;
+    }
   }
 
   async externalEffect<T extends UnknownRecord>(
     kind: string,
     payload: UnknownRecord,
-    operation: () => Promise<T>,
+    operation: (attempt: number) => Promise<T>,
     commitResult?: (result: T, state: VigilState) => void
   ): Promise<T> {
     if (!this.activeAfterCommit) {
       const key = monitorEffectKey(kind, payload);
       try {
-        const result = await operation();
+        const result = await operation(1);
+        commitResult?.(result, this.state);
         const failure = monitorEffectFailure(kind, result);
         if (failure) throw new Error(failure);
-        commitResult?.(result, this.state);
         if (!this.coordinatorManagedEffects.has(key)) this.clearDurableEffectHealth(key, kind);
         return result;
       } catch (error) {
@@ -385,8 +424,16 @@ export class Monitor implements MonitorHandle {
     const key = monitorEffectKey(kind, payload);
     addEvent(this.state, "monitor_os_effect_intended", { kind, key, payload });
     this.setDurableEffectHealth(key, kind, "Durable macOS effect is pending.", true);
+    let attemptedResult: T | undefined;
+    let attempts = 0;
     this.activeAfterCommit(async () => {
-      const result = await operation();
+      attemptedResult = undefined;
+      attempts += 1;
+      if (attempts > 1 && !this.durableEffectApplicable(kind, payload)) {
+        return obsoleteEffectResult(kind) as T;
+      }
+      const result = await operation(attempts);
+      attemptedResult = result;
       const failure = monitorEffectFailure(kind, result);
       if (failure) throw new Error(failure);
       return result;
@@ -395,10 +442,111 @@ export class Monitor implements MonitorHandle {
       addEvent(committedState, "monitor_os_effect_completed", { kind, key, payload, result });
       if (!this.coordinatorManagedEffects.has(key)) this.clearDurableEffectHealth(key, kind);
     }, (error, committedState) => {
+      if (attemptedResult) commitResult?.(attemptedResult, committedState);
       this.setDurableEffectHealth(key, kind, error.message, false);
       addEvent(committedState, "monitor_os_effect_failed", { kind, key, payload, error: error.message });
     });
     return { ok: false, pending: true, intentKey: key, error: "Durable macOS effect is pending." } as unknown as T;
+  }
+
+  durableEffectApplicable(kind: string, payload: UnknownRecord, now = new Date()): boolean {
+    const state = structuredClone(this.state);
+    if (kind === "grayscale") {
+      return grayscaleDecision(state, now, { device: "computer" }).desired === Boolean(payload.desired);
+    }
+    if (kind === "lock-screen") {
+      const policy = activePolicy(state, now);
+      return Boolean(
+        policy &&
+        shouldLockScreenForPolicy(state, policy) &&
+        (!payload.policyId || payload.policyId === policy.session?.id)
+      );
+    }
+    if (kind === "quit-app") {
+      const app = String(payload.app || "");
+      const grayscale = grayscaleDecision(state, now, { device: "computer" });
+      if (
+        MAC_GRAYSCALE_GUARD_APPS.some((guard) => guard.toLowerCase() === app.toLowerCase()) &&
+        grayscaleGuardEnabled(state, grayscale)
+      ) return true;
+      const sample = effectSample(payload);
+      if (payload.intentionalPauseId && intentionalPauseStillApplies(state, sample, payload, now)) return true;
+      const policy = policyForSample(state, this.usage, sample, now);
+      const lockdown = policy?.kind === "integrity" || isFullLockoutPolicy(policy);
+      return Boolean(
+        policy &&
+        (!payload.policyId || payload.policyId === policy.session?.id) &&
+        (lockdown || state.settings.appQuitEnabled) &&
+        shouldQuitAppForPolicy(state, policy, app)
+      );
+    }
+    if (kind === "redirect-browser") {
+      const sample = effectSample(payload);
+      if (payload.intentionalPauseId && intentionalPauseStillApplies(state, sample, payload, now)) return true;
+      if (!sample.url) return false;
+      const policy = policyForSample(state, this.usage, sample, now);
+      if (!policy || (payload.policyId && payload.policyId !== policy.session?.id)) return false;
+      const lockdown = policy.kind === "integrity" || isFullLockoutPolicy(policy);
+      const contentBlocked = Boolean(policy.contentFilter && (lockdown || contentFilterEnabled(state)));
+      const siteBlocked = Boolean(sample.hostname && shouldBlockSite(policy.profile, sample.hostname));
+      const urlBlocked = Boolean(sample.url && matchBlockedUrlPattern(policy.profile, sample.url));
+      return Boolean(
+        policy.browserControl ||
+        contentBlocked ||
+        ((siteBlocked || urlBlocked) && (lockdown || state.settings.siteRedirectEnabled || systemNetworkBlockingEnabled(state)))
+      );
+    }
+    if (kind === "open-url") {
+      return Boolean(payload.intentionalPauseId && intentionalPauseStillApplies(state, effectSample(payload), payload, now));
+    }
+    if (kind === "focus-shortcut") {
+      const policy = activePolicy(state, now);
+      return String(payload.policyId || "none") === String(policy?.session?.id || "none");
+    }
+    if (kind === "mdm-push") {
+      return state.deviceControls.ios.mdm.enabled;
+    }
+    return true;
+  }
+
+  private captureTransactionSnapshot(): MonitorTransactionSnapshot {
+    return {
+      lastPollAt: this.lastPollAt,
+      lastMonotonicAt: this.lastMonotonicAt,
+      lastSample: structuredClone(this.lastSample),
+      status: structuredClone(this.status),
+      recentBlocks: new Map(this.recentBlocks),
+      appBlockHistory: new Map([...this.appBlockHistory].map(([key, value]) => [key, structuredClone(value)])),
+      nextEnvironmentRefreshAt: this.nextEnvironmentRefreshAt,
+      nextIntegrityRefreshAt: this.nextIntegrityRefreshAt,
+      nextAppleContentFilterRefreshAt: this.nextAppleContentFilterRefreshAt,
+      nextHardeningDriftRefreshAt: this.nextHardeningDriftRefreshAt,
+      nextNetworkBlockRefreshAt: this.nextNetworkBlockRefreshAt,
+      nextProcessSweepAt: this.nextProcessSweepAt,
+      nextSystemSleepLockAt: this.nextSystemSleepLockAt,
+      nextGrayscaleRefreshAt: this.nextGrayscaleRefreshAt,
+      runtimeGapChecked: this.runtimeGapChecked,
+      durableEffectProblems: new Map([...this.durableEffectProblems].map(([key, value]) => [key, structuredClone(value)]))
+    };
+  }
+
+  private restoreTransactionSnapshot(snapshot: MonitorTransactionSnapshot): void {
+    this.lastPollAt = snapshot.lastPollAt;
+    this.lastMonotonicAt = snapshot.lastMonotonicAt;
+    this.lastSample = snapshot.lastSample;
+    this.status = snapshot.status;
+    this.recentBlocks = snapshot.recentBlocks;
+    this.appBlockHistory = snapshot.appBlockHistory;
+    this.nextEnvironmentRefreshAt = snapshot.nextEnvironmentRefreshAt;
+    this.nextIntegrityRefreshAt = snapshot.nextIntegrityRefreshAt;
+    this.nextAppleContentFilterRefreshAt = snapshot.nextAppleContentFilterRefreshAt;
+    this.nextHardeningDriftRefreshAt = snapshot.nextHardeningDriftRefreshAt;
+    this.nextNetworkBlockRefreshAt = snapshot.nextNetworkBlockRefreshAt;
+    this.nextProcessSweepAt = snapshot.nextProcessSweepAt;
+    this.nextSystemSleepLockAt = snapshot.nextSystemSleepLockAt;
+    this.nextGrayscaleRefreshAt = snapshot.nextGrayscaleRefreshAt;
+    this.runtimeGapChecked = snapshot.runtimeGapChecked;
+    this.durableEffectProblems = snapshot.durableEffectProblems;
   }
 
   async runImmediateEnforcement(reason: string): Promise<UnknownRecord> {
@@ -593,8 +741,21 @@ export class Monitor implements MonitorHandle {
 
   async syncFocusShortcut(now: number, _options: { force?: boolean } = {}) {
     const policy = activePolicy(this.state, new Date(now));
-    const snapshot = structuredClone(this.state);
-    const summary = await this.externalEffect("focus-shortcut", { policyId: policy?.session?.id || "none" }, async () => await reconcileFocusShortcut(snapshot, policy, new Date(now)));
+    let effectState = structuredClone(this.state);
+    const summary = await this.externalEffect(
+      "focus-shortcut",
+      { policyId: policy?.session?.id || "none" },
+      async (attempt) => {
+        effectState = structuredClone(this.state);
+        const checkedAt = attempt === 1 ? new Date(now) : new Date();
+        return await reconcileFocusShortcut(effectState, activePolicy(effectState, checkedAt), checkedAt);
+      },
+      (result, committedState) => {
+        if (!("skipped" in result) || result.skipped !== "obsolete") {
+          committedState.focusShortcut = structuredClone(effectState.focusShortcut);
+        }
+      }
+    );
     this.status.lastFocusShortcut = summary;
     if (summary.changed) {
       addEvent(this.state, "focus_shortcut_applied", {
@@ -613,7 +774,8 @@ export class Monitor implements MonitorHandle {
 
     const desired = grayscaleDecision(this.state, new Date(now), { device: "computer" });
     const result = await this.externalEffect("grayscale", { desired: desired.desired }, async () => await setMacGrayscaleEnabled(desired.desired));
-    const blockedApps = desired.desired && grayscaleGuardEnabled(this.state, desired)
+    const guardEnabled = grayscaleGuardEnabled(this.state, desired);
+    const blockedApps = guardEnabled
       ? await this.blockGrayscaleGuardApps(now)
       : [];
 
@@ -637,7 +799,7 @@ export class Monitor implements MonitorHandle {
       addEvent(this.state, "grayscale_reconciled", summary);
     }
     if (!("pending" in result)) this.setComponentHealth("grayscale", result.ok ? "" : summary.error);
-    if (!desired.desired) this.setComponentDisabled("grayscale-guard");
+    if (!guardEnabled) this.setComponentDisabled("grayscale-guard");
     return summary;
   }
 
@@ -649,8 +811,8 @@ export class Monitor implements MonitorHandle {
     }
     const blocked = running.apps.filter((app) => MAC_GRAYSCALE_GUARD_APPS.some((guard) => guard.toLowerCase() === app.toLowerCase()));
     for (const app of blocked) {
-      const result = await this.externalEffect("quit-app", { app, force: true }, async () => await quitApp(app, { force: true }));
-      if (!result.ok) {
+      const result = await this.externalEffect("quit-app", { app, force: true, reason: "grayscale-guard" }, async () => await quitApp(app, { force: true }));
+      if (!result.ok && !("pending" in result && result.pending)) {
         this.setComponentHealth("grayscale-guard", result.error || `Could not close ${app}`);
         return blocked;
       }
@@ -668,8 +830,12 @@ export class Monitor implements MonitorHandle {
   }
 
   async pushIosMdmPolicy(now: number, reason = "monitor-policy-push", options: UnknownRecord = {}) {
+    if (!this.state.deviceControls.ios.mdm.enabled) {
+      this.setComponentDisabled("mdm-push");
+      return { ok: true, pushed: 0, skipped: "disabled" };
+    }
     try {
-      const effectState = structuredClone(this.state);
+      let effectState = structuredClone(this.state);
       const result = await this.externalEffect(
         "mdm-push",
         {
@@ -678,8 +844,13 @@ export class Monitor implements MonitorHandle {
           queuedAt: this.state.deviceControls.ios.mdm.lastCommandQueuedAt || "none",
           options
         },
-        async () => await pushIosMdmQueuedCommands(effectState, reason, new Date(now), options) as UnknownRecord & { pushed?: number | boolean; failed?: number | boolean },
-        (_effectResult, committedState) => applyIosMdmPushState(committedState, effectState)
+        async (attempt) => {
+          effectState = structuredClone(this.state);
+          return await pushIosMdmQueuedCommands(effectState, reason, attempt === 1 ? new Date(now) : new Date(), options) as UnknownRecord & { pushed?: number | boolean; failed?: number | boolean };
+        },
+        (effectResult, committedState) => {
+          if (effectResult.skipped !== "obsolete") applyIosMdmPushState(committedState, effectState);
+        }
       ) as UnknownRecord & { pushed?: number | boolean; failed?: number | boolean };
       if (result.pushed || result.failed) addEvent(this.state, "ios_mdm_push", { reason, ...result });
       if (!result.pending) this.setComponentHealth("mdm-push", result.failed ? `${result.failed} MDM push command(s) failed` : "");
@@ -850,11 +1021,17 @@ export class Monitor implements MonitorHandle {
 
     const browser = Boolean(front.url && front.app && appCanReportUrls(front.app));
     const redirectUrl = String(decision.redirectUrl || "");
+    const effectContext = {
+      app: front.app,
+      hostname: front.hostname,
+      currentUrl: front.url,
+      intentionalPauseId: decision.pause?.id || ""
+    };
     const result = browser
-      ? await this.externalEffect("redirect-browser", { app: front.app, url: redirectUrl }, async () => await redirectActiveBrowserTab(front.app, redirectUrl))
+      ? await this.externalEffect("redirect-browser", { ...effectContext, url: redirectUrl }, async () => await redirectActiveBrowserTab(front.app, redirectUrl))
       : {
-          quit: await this.externalEffect("quit-app", { app: front.app, force: false }, async () => await quitApp(front.app)),
-          open: await this.externalEffect("open-url", { url: redirectUrl }, async () => await openUrl(redirectUrl))
+          quit: await this.externalEffect("quit-app", { ...effectContext, force: false }, async () => await quitApp(front.app)),
+          open: await this.externalEffect("open-url", { ...effectContext, url: redirectUrl }, async () => await openUrl(redirectUrl))
         };
     addEvent(this.state, "intentional_pause_interrupted", {
       app: front.app,
@@ -889,7 +1066,13 @@ export class Monitor implements MonitorHandle {
     target.searchParams.set("until", policy.endsAt);
     target.searchParams.set("mode", policy.session.mode || "focus");
 
-    const result = await this.externalEffect("redirect-browser", { app: front.app, url: target.toString(), currentUrl: front.url }, async () => await redirectActiveBrowserTab(front.app, target.toString(), { currentUrl: front.url }));
+    const result = await this.externalEffect("redirect-browser", {
+      app: front.app,
+      hostname: front.hostname,
+      url: target.toString(),
+      currentUrl: front.url,
+      policyId: policy.session?.id || ""
+    }, async () => await redirectActiveBrowserTab(front.app, target.toString(), { currentUrl: front.url }));
     const detail = {
       site: front.hostname,
       app: front.app,
@@ -916,7 +1099,13 @@ export class Monitor implements MonitorHandle {
     this.appBlockHistory.set(front.app, decision.record);
     this.pruneAppBlockHistory();
 
-    const result = await this.externalEffect("quit-app", { app: front.app, force: decision.force }, async () => await quitApp(front.app, { force: decision.force }));
+    const result = await this.externalEffect("quit-app", {
+      app: front.app,
+      hostname: front.hostname,
+      url: front.url,
+      force: decision.force,
+      policyId: policy.session?.id || ""
+    }, async () => await quitApp(front.app, { force: decision.force }));
     addEvent(this.state, "blocked_app", {
       app: front.app,
       policy: policy.session.title || policy.session.mode,
@@ -1020,6 +1209,10 @@ export class Monitor implements MonitorHandle {
   private refreshDurableEffectComponent(component: string): void {
     const problems = [...this.durableEffectProblems.values()].filter((problem) => problem.component === component);
     if (!problems.length) {
+      if (component === "mdm-push" && !this.state.deviceControls.ios.mdm.enabled) {
+        this.setComponentDisabled(component);
+        return;
+      }
       this.setComponentHealth(component, "", { durableOverride: true });
       return;
     }
@@ -1180,6 +1373,29 @@ function monitorEffectKey(kind: string, payload: UnknownRecord): string {
   return `monitor-os:${kind}:${JSON.stringify(canonicalPayload)}`;
 }
 
+function obsoleteEffectResult(action: string): UnknownRecord {
+  return { ok: true, skipped: "obsolete", action };
+}
+
+function effectSample(payload: UnknownRecord): FrontSample {
+  const url = String(payload.currentUrl || payload.sourceUrl || "");
+  return {
+    app: String(payload.app || ""),
+    hostname: String(payload.hostname || urlHostname(url) || ""),
+    url
+  };
+}
+
+function intentionalPauseStillApplies(
+  state: VigilState,
+  sample: FrontSample,
+  payload: UnknownRecord,
+  now: Date
+): boolean {
+  const decision = intentionalUseDecision(state, sample, { event: "mac-app", returnUrl: sample.url }, now);
+  return Boolean(decision.shouldPause && decision.pause?.id === String(payload.intentionalPauseId || ""));
+}
+
 function applyIosMdmPushState(targetState: VigilState, effectState: VigilState): void {
   const target = targetState.deviceControls.ios.mdm;
   const effect = effectState.deviceControls.ios.mdm;
@@ -1206,11 +1422,13 @@ function monitorEffectComponent(kind: string): string {
   if (kind === "grayscale") return "grayscale";
   if (kind === "mdm-push") return "mdm-push";
   if (kind === "quit-app") return "process-sweep";
-  return "frontmost";
+  if (kind === "redirect-browser" || kind === "open-url") return "frontmost";
+  return kind || "durable-effect";
 }
 
 function monitorEffectFailure(kind: string, result: UnknownRecord): string {
   if (result.pending) return "Durable macOS effect is still pending.";
+  if (kind === "mdm-push" && result.skipped === "disabled") return "";
   if (result.ok === false) return String(result.error || `${kind} failed.`);
   if (kind === "focus-shortcut" && result.enabled && result.lastError) return String(result.lastError);
   const failed = Number(result.failed || 0);

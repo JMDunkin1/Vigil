@@ -22,6 +22,7 @@ export interface DurableEffectDescriptor {
   key: string;
   kind: string;
   payload?: Record<string, unknown>;
+  awaitAttempt?: boolean;
 }
 
 export type DurableEffectCompletion<TResult = unknown> = (
@@ -37,6 +38,7 @@ type DurableEffectObserver = (entry: RuntimeOutboxEntry, transition: DurableEffe
 export class RuntimeMutationCoordinator {
   private mutationTail: Promise<void> = Promise.resolve();
   private effectTail: Promise<void> = Promise.resolve();
+  private immediateEffectTail: Promise<void> = Promise.resolve();
   private accepting = true;
   private recoveryHandler: ((entry: RuntimeOutboxEntry) => unknown | Promise<unknown>) | null = null;
   private recoveryCompletion: ((entry: RuntimeOutboxEntry, result: unknown, state: VigilState, usage: UsageState) => void | Promise<void>) | null = null;
@@ -59,13 +61,13 @@ export class RuntimeMutationCoordinator {
 
   run<T>(operation: (context: MutationContext) => Promise<T>): Promise<T> {
     if (!this.accepting) return Promise.reject(stoppingError());
-    let committedEffects: Array<{ entry: RuntimeOutboxEntry; run: () => unknown | Promise<unknown>; complete?: DurableEffectCompletion; fail?: DurableEffectFailure }> = [];
+    let committedEffects: Array<{ entry: RuntimeOutboxEntry; run: () => unknown | Promise<unknown>; complete?: DurableEffectCompletion; fail?: DurableEffectFailure; awaitAttempt: boolean }> = [];
     const mutation = this.enqueueMutation(async () => {
       if (!this.accepting) throw stoppingError();
       const draftState = structuredClone(this.liveState);
       const draftUsage = structuredClone(this.liveUsage);
       const commitOutbox = structuredClone(this.outbox);
-      const effects: Array<{ entry: RuntimeOutboxEntry; run: () => unknown | Promise<unknown>; complete?: DurableEffectCompletion; fail?: DurableEffectFailure }> = [];
+      const effects: Array<{ entry: RuntimeOutboxEntry; run: () => unknown | Promise<unknown>; complete?: DurableEffectCompletion; fail?: DurableEffectFailure; awaitAttempt: boolean }> = [];
       const staged = await withStagedPersistence(() => operation({
         state: draftState,
         usage: draftUsage,
@@ -87,7 +89,13 @@ export class RuntimeMutationCoordinator {
             };
             commitOutbox.push(entry);
           }
-          effects.push({ entry, run: effect, complete: complete as DurableEffectCompletion | undefined, fail });
+          effects.push({
+            entry,
+            run: effect,
+            complete: complete as DurableEffectCompletion | undefined,
+            fail,
+            awaitAttempt: descriptor?.awaitAttempt !== false
+          });
         }
       }));
       try {
@@ -109,12 +117,24 @@ export class RuntimeMutationCoordinator {
       // The mutation tail is released before any monitor, OS, or other external
       // work is awaited. Callers still observe the historical contract that a
       // committed request resolves successfully after its immediate effects
-      // have had one attempt.
-      const attempts = committedEffects.map(({ entry }) => this.enqueueEffect(entry));
+      // have had one attempt unless a latency-sensitive acknowledgement marks
+      // an effect for background delivery.
+      const attempts = committedEffects.map(({ entry, awaitAttempt }) => ({
+        awaitAttempt,
+        promise: this.enqueueEffect(entry)
+      }));
       // An effect may perform a short follow-up mutation which publishes a
       // second effect. It cannot wait for work queued behind itself on the
       // single-consumer worker, so let the outer worker pick that work up.
-      if (!this.effectContext.getStore()) await Promise.all(attempts);
+      const waitForAttempts = !this.effectContext.getStore();
+      const awaited = attempts.filter((attempt) => waitForAttempts && attempt.awaitAttempt);
+      const background = attempts.filter((attempt) => !waitForAttempts || !attempt.awaitAttempt);
+      for (const attempt of background) {
+        void attempt.promise.catch((error) => {
+          console.error("Vigil background effect worker failed unexpectedly:", error);
+        });
+      }
+      await Promise.all(awaited.map((attempt) => attempt.promise));
       return result;
     });
   }
@@ -132,11 +152,11 @@ export class RuntimeMutationCoordinator {
 
   async drain(): Promise<void> {
     await this.mutationTail;
-    await this.effectTail;
+    await this.drainEffectWorkers();
     if (this.recoveryHandler) {
-      for (const entry of [...this.outbox]) await this.enqueueEffect(entry, { scheduleRetry: false });
+      await Promise.all([...this.outbox].map((entry) => this.enqueueEffect(entry, { scheduleRetry: false })));
     }
-    await this.effectTail;
+    await this.drainEffectWorkers();
     await this.mutationTail;
   }
 
@@ -149,7 +169,7 @@ export class RuntimeMutationCoordinator {
     this.recoveryCompletion = complete || null;
     this.recoveryFailure = fail || null;
     return this.enqueueMutation(async () => structuredClone(this.outbox)).then(async (pending) => {
-      for (const entry of pending) await this.enqueueEffect(entry);
+      await Promise.all(pending.map((entry) => this.enqueueEffect(entry)));
     });
   }
 
@@ -270,9 +290,16 @@ export class RuntimeMutationCoordinator {
   }
 
   private enqueueEffect(entry: RuntimeOutboxEntry, options: { scheduleRetry?: boolean } = {}): Promise<void> {
-    const queued = this.effectTail.then(() => this.effectContext.run(true, () => this.executeEffect(entry, options)));
-    this.effectTail = queued.then(() => {}, () => {});
+    const immediate = immediateRuntimeEffect(entry);
+    const tail = immediate ? this.immediateEffectTail : this.effectTail;
+    const queued = tail.then(() => this.effectContext.run(true, () => this.executeEffect(entry, options)));
+    if (immediate) this.immediateEffectTail = queued.then(() => {}, () => {});
+    else this.effectTail = queued.then(() => {}, () => {});
     return queued;
+  }
+
+  private async drainEffectWorkers(): Promise<void> {
+    await Promise.all([this.immediateEffectTail, this.effectTail]);
   }
 
   private async markRunning(id: string): Promise<RuntimeOutboxEntry | null> {
@@ -301,6 +328,11 @@ export class RuntimeMutationCoordinator {
       }
     });
   }
+}
+
+function immediateRuntimeEffect(entry: RuntimeOutboxEntry): boolean {
+  if (entry.kind === "session-enforcement" || entry.kind === "policy-enforcement") return true;
+  return entry.kind === "monitor-os" && entry.payload.action !== "mdm-push";
 }
 
 function retryDelayMs(attempts: number): number {
@@ -339,6 +371,10 @@ export class BufferedServerResponse {
 
   successful(): boolean {
     return this.ended && this.statusCode >= 200 && this.statusCode < 400;
+  }
+
+  status(): number {
+    return this.statusCode;
   }
 
   flush(): void {

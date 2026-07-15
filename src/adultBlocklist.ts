@@ -51,6 +51,13 @@ interface AdultBlocklistSnapshot {
   domains: string[];
 }
 
+export interface AdultBlocklistRefreshPreparation {
+  attemptedAt: string;
+  source: AdultBlocklistSourceSnapshot;
+  snapshot: AdultBlocklistSnapshot | null;
+  error: Error | null;
+}
+
 export interface AdultBlocklistResolvedAddress {
   address: string;
   family: 4 | 6;
@@ -164,10 +171,12 @@ export function clearAdultBlocklistSnapshotState(state: VigilState): void {
 }
 
 export async function refreshAdultBlocklist(state: VigilState, now = new Date()) {
+  return await commitAdultBlocklistRefresh(state, await prepareAdultBlocklistRefresh(state, now));
+}
+
+export async function prepareAdultBlocklistRefresh(state: VigilState, now = new Date()): Promise<AdultBlocklistRefreshPreparation> {
   const source = adultBlocklistSource(state);
   const attemptedAt = now.toISOString();
-  state.adultBlocklist.lastAttemptAt = attemptedAt;
-  state.adultBlocklist.lastError = "";
   try {
     const text = await fetchSourceText(source.url);
     const domains = parseAdultBlocklistDomains(text);
@@ -175,7 +184,7 @@ export async function refreshAdultBlocklist(state: VigilState, now = new Date())
       throw new Error(`Adult blocklist refresh returned only ${domains.length} usable domains.`);
     }
     const hash = domainHash(domains);
-    const snapshot = {
+    const snapshot: AdultBlocklistSnapshot = {
       version: SNAPSHOT_VERSION,
       generatedAt: attemptedAt,
       domainCount: domains.length,
@@ -183,6 +192,27 @@ export async function refreshAdultBlocklist(state: VigilState, now = new Date())
       source: sourceSnapshot(source),
       domains
     };
+    return { attemptedAt, source: sourceSnapshot(source), snapshot, error: null };
+  } catch (error) {
+    return {
+      attemptedAt,
+      source: sourceSnapshot(source),
+      snapshot: null,
+      error: error instanceof Error ? error : new Error(String(error))
+    };
+  }
+}
+
+export async function commitAdultBlocklistRefresh(state: VigilState, preparation: AdultBlocklistRefreshPreparation) {
+  if (!adultBlocklistSourceMatches(preparation.source, adultBlocklistSource(state))) {
+    throw Object.assign(new Error("Adult blocklist source changed while the refresh was in progress."), { status: 409 });
+  }
+  state.adultBlocklist.lastAttemptAt = preparation.attemptedAt;
+  state.adultBlocklist.lastError = "";
+  try {
+    if (preparation.error) throw preparation.error;
+    const snapshot = preparation.snapshot;
+    if (!snapshot) throw new Error("Adult blocklist refresh did not produce a snapshot.");
     const snapshotPath = adultBlocklistSnapshotPath(snapshot);
     const snapshotExisted = await access(snapshotPath).then(() => true, () => false);
     await writeAdultBlocklistSnapshot(snapshot, snapshotPath);
@@ -193,12 +223,12 @@ export async function refreshAdultBlocklist(state: VigilState, now = new Date())
       });
     }
     setRuntimeSnapshot(snapshot, snapshotPath);
-    state.adultBlocklist.domainCount = domains.length;
-    state.adultBlocklist.activeDomainCount = activeDomainCount(state, domains);
-    state.adultBlocklist.hash = hash;
+    state.adultBlocklist.domainCount = snapshot.domains.length;
+    state.adultBlocklist.activeDomainCount = activeDomainCount(state, snapshot.domains);
+    state.adultBlocklist.hash = snapshot.hash;
     state.adultBlocklist.snapshotPath = snapshotPath;
-    state.adultBlocklist.lastRefreshAt = attemptedAt;
-    state.adultBlocklist.source = sourceSnapshot(source);
+    state.adultBlocklist.lastRefreshAt = preparation.attemptedAt;
+    state.adultBlocklist.source = preparation.source;
     return adultBlocklistSummary(state);
   } catch (error) {
     state.adultBlocklist.lastError = simplifyError(error);

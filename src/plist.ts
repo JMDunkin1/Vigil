@@ -288,7 +288,7 @@ function unescapeXml(value: unknown): string {
     .replace(/&quot;/g, "\"")
     .replace(/&gt;/g, ">")
     .replace(/&lt;/g, "<")
-    .replace(/&amp;/g, "&")
     .replace(/&#(\d+);/gu, (_match, valueText: string) => String.fromCodePoint(Number(valueText)))
-    .replace(/&#x([\da-f]+);/giu, (_match, valueText: string) => String.fromCodePoint(Number.parseInt(valueText, 16)));
+    .replace(/&#x([\da-f]+);/giu, (_match, valueText: string) => String.fromCodePoint(Number.parseInt(valueText, 16)))
+    .replace(/&amp;/g, "&");
 }

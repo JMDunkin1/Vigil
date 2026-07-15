@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { verifyEntitlementObject } from "../scripts/release-entitlements.mjs";
 
 const root = await sourceRoot();
 
@@ -26,6 +27,21 @@ assert.match(script, /APPLE_API_KEY must point to a p8 file/u);
 assert.match(script, /Expected exactly one release app/u);
 assert.match(script, /codesign[\s\S]*spctl[\s\S]*TeamIdentifier/u);
 assert.match(script, /--entitlements[\s\S]*verifyEmittedEntitlements/u);
+assert.match(script, /plutil[\s\S]*-convert[\s\S]*json/u, "release verification must parse entitlement plists");
+assert.doesNotThrow(() => verifyEntitlementObject(
+  { "com.apple.security.cs.allow-jit": true },
+  "true fixture",
+  { requireJit: true }
+));
+assert.throws(
+  () => verifyEntitlementObject(
+    { "com.apple.security.cs.allow-jit": false },
+    "false fixture",
+    { requireJit: true }
+  ),
+  /boolean true value/u,
+  "an allow-jit key with a false value must not pass release verification"
+);
 assert.match(script, /await visit\(appRoot\)[\s\S]*entry\.isDirectory\(\)[\s\S]*isCodeBundle\(path\)[\s\S]*await visit\(path\)/u, "the entire app and every nested code bundle must be traversed");
 assert.match(script, /entry\.isFile\(\) && await isMachO\(path\)/u, "release verification must inspect every Mach-O rather than relying on executable mode bits");
 assert.match(script, /entry\.isSymbolicLink\(\)[\s\S]*verifySafeSymlink/u, "the traversal must inspect symlinks without following them");

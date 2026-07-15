@@ -27,6 +27,9 @@ export const RUNTIME_SNAPSHOT_JOURNAL_PATH = join(DATA_DIR, "runtime-snapshot.wa
 const RUNTIME_SNAPSHOT_VERSION = 1;
 const MAX_RUNTIME_SNAPSHOT_FILE_BYTES = 64 * 1024 * 1024;
 const RUNTIME_SNAPSHOT_FILES = ["state", "stateSeal", "usage", "usageSeal", "outbox"] as const;
+// Embedded JSON text can be escaped to almost twice its original size. Keep
+// recovery's aggregate bound consistent with five individually valid files.
+const MAX_RUNTIME_SNAPSHOT_JOURNAL_BYTES = MAX_RUNTIME_SNAPSHOT_FILE_BYTES * RUNTIME_SNAPSHOT_FILES.length * 2 + 1024 * 1024;
 export const RUNTIME_OUTBOX_PATH = join(DATA_DIR, "runtime-effects.json");
 
 export interface RuntimeOutboxEntry {
@@ -282,8 +285,9 @@ export function saveUsage(usage: UsageState): Promise<void> {
 }
 
 /** Persist state and usage as one recoverable commit. Live objects must only be
- * published after this resolves. If either write fails, the exact prior files
- * (including seals) are restored before the error reaches the coordinator. */
+ * published after this resolves. Before WAL publication, failures leave the
+ * prior files untouched. Once the WAL is published, the mutation is committed;
+ * canonical replay is retried and any remaining WAL is recovered on startup. */
 export async function saveRuntimeSnapshot(
   state: VigilState,
   usage: UsageState,
@@ -329,8 +333,24 @@ export async function saveRuntimeSnapshot(
       usageSeal: jsonText(usageSeal),
       outbox: jsonText(options.outbox || [])
     });
-    await publishRuntimeSnapshotJournal(journal, options.afterBoundary);
-    await applyRuntimeSnapshotJournal(journal, options.afterBoundary);
+    let journalPublished = false;
+    const boundary = async (name: string) => {
+      if (name === "journal-renamed" || name === "journal-published") journalPublished = true;
+      await options.afterBoundary?.(name);
+    };
+    try {
+      await publishRuntimeSnapshotJournal(journal, boundary);
+    } catch (error) {
+      if (!journalPublished) throw error;
+    }
+    try {
+      await applyRuntimeSnapshotJournal(journal, boundary);
+    } catch {
+      // Publishing the WAL is the commit point. Replay is idempotent, so retry
+      // once without diagnostic boundary hooks and leave the WAL for startup
+      // recovery if the canonical filesystem remains unavailable.
+      await applyRuntimeSnapshotJournal(journal).catch(() => {});
+    }
     state.integrity.stateSeal = jsonClone(stateSnapshot.integrity.stateSeal);
   } finally {
     await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
@@ -385,12 +405,18 @@ async function publishRuntimeSnapshotJournal(
   journal: RuntimeSnapshotJournal,
   boundary?: (name: string) => void | Promise<void>
 ): Promise<void> {
+  validateRuntimeSnapshotJournal(journal);
+  const journalText = jsonText(journal);
+  if (Buffer.byteLength(journalText, "utf8") > MAX_RUNTIME_SNAPSHOT_JOURNAL_BYTES) {
+    throw new Error("Runtime snapshot journal exceeds the aggregate size limit.");
+  }
   const temp = `${RUNTIME_SNAPSHOT_JOURNAL_PATH}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(temp, jsonText(journal), { flag: "wx", mode: PRIVATE_FILE_MODE });
+    await writeFile(temp, journalText, { flag: "wx", mode: PRIVATE_FILE_MODE });
     await syncFile(temp);
     await snapshotBoundary("journal-temp-fsynced", boundary);
     await rename(temp, RUNTIME_SNAPSHOT_JOURNAL_PATH);
+    await snapshotBoundary("journal-renamed", boundary);
     await syncDirectory(DATA_DIR);
     await snapshotBoundary("journal-published", boundary);
   } finally {
@@ -429,7 +455,7 @@ async function recoverRuntimeSnapshotJournal(): Promise<void> {
   }
   let journal: RuntimeSnapshotJournal;
   try {
-    if (raw.byteLength > MAX_RUNTIME_SNAPSHOT_FILE_BYTES) throw new Error("Runtime snapshot journal exceeds the size limit.");
+    if (raw.byteLength > MAX_RUNTIME_SNAPSHOT_JOURNAL_BYTES) throw new Error("Runtime snapshot journal exceeds the aggregate size limit.");
     journal = JSON.parse(raw.toString("utf8")) as RuntimeSnapshotJournal;
     validateRuntimeSnapshotJournal(journal);
   } catch (error) {

@@ -173,11 +173,13 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       button.dataset.reported = reported ? "true" : "false";
       button.setAttribute("aria-label", `${date.toLocaleDateString([], { month: "long", day: "numeric" })}: ${done} done, ${reported - done} missed, ${behaviors.length - reported} not recorded`);
       button.title = future ? "Future date" : `${done} done · ${reported - done} missed`;
-      const bar = document.createElement("progress");
-      bar.max = behaviors.length;
-      bar.value = reported;
-      bar.dataset.completed = String(done);
-      bar.setAttribute("aria-hidden", "true");
+      const total = Math.max(behaviors.length, 1);
+      const bar = svgNode("svg", { class: "habit-pulse-bar", viewBox: `0 0 10 ${total}`, preserveAspectRatio: "none", "aria-hidden": "true" });
+      bar.append(
+        svgNode("rect", { class: "habit-pulse-track", x: 0, y: total - 0.15, width: 10, height: 0.15 }),
+        svgNode("rect", { class: "habit-pulse-missed", x: 0, y: total - reported, width: 10, height: reported - done }),
+        svgNode("rect", { class: "habit-pulse-done", x: 0, y: total - done, width: 10, height: done })
+      );
       const label = document.createElement("span");
       label.textContent = String(date.getDate());
       button.append(bar, label);
