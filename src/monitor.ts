@@ -1080,6 +1080,8 @@ export class Monitor implements MonitorHandle {
     target.searchParams.set("site", front.hostname);
     target.searchParams.set("until", policy.endsAt);
     target.searchParams.set("mode", policy.session.mode || "focus");
+    target.searchParams.set("policyId", policy.session.id || "");
+    if (front.url) target.searchParams.set("back", front.url);
 
     const result = await this.externalEffect("redirect-browser", {
       app: front.app,

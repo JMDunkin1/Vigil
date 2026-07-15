@@ -65,7 +65,8 @@ export function companionPage(): string {
 </html>`;
 }
 
-export function blockedPage({ url }: PageInput): string {
+export function blockedPage({ url, state }: PageInput): string {
+  if (staleFocusBlock(url, state)) return releasedBlockPage(url);
   const site = escapeHtml(url.searchParams.get("site") || "This target");
   const backUrl = safePageNavigationUrl(url.searchParams.get("back"));
   return `<!doctype html>
@@ -111,6 +112,59 @@ export function blockedPage({ url }: PageInput): string {
     function blockedEscapeTarget() {
       return safeNavigationUrl(explicitBackUrl) || safeNavigationUrl(document.referrer);
     }
+
+    function safeNavigationUrl(value) {
+      try {
+        const candidate = new URL(String(value || ""), location.href);
+        if (!["http:", "https:"].includes(candidate.protocol)) return "";
+        if (["127.0.0.1", "localhost", "::1"].includes(candidate.hostname)) return "";
+        return candidate.toString();
+      } catch {
+        return "";
+      }
+    }
+  </script>
+</body>
+</html>`;
+}
+
+function staleFocusBlock(url: URL, state: VigilState): boolean {
+  if (url.searchParams.get("mode") !== "focus") return false;
+  const policy = activePolicy(state);
+  if (!policy || policy.session.mode !== "focus") return true;
+  const policyId = url.searchParams.get("policyId");
+  if (policyId && policyId !== policy.session.id) return true;
+  const until = url.searchParams.get("until");
+  return Boolean(until && policy.endsAt && until !== policy.endsAt);
+}
+
+function releasedBlockPage(url: URL): string {
+  const backUrl = safePageNavigationUrl(url.searchParams.get("back"));
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Block ended</title>
+  <style>
+    :root { color-scheme: dark; --paper: #101111; --paper-2: #161717; --ink: #f0ece5; --primary: #d5a16b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; color: var(--ink); background: linear-gradient(180deg, var(--paper), var(--paper-2)); font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    main { width: min(560px, 100%); }
+    h1 { max-width: 13ch; margin: 0 0 16px; font: 700 clamp(2.5rem, 8vw, 4.5rem)/.98 Georgia, "Times New Roman", serif; letter-spacing: -.04em; }
+    a { color: var(--primary); font-weight: 700; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>This block is no longer active.</h1>
+    <a id="leaveReleasedBlock" href="${escapeHtml(backUrl || "#")}">Return to the previous page</a>
+  </main>
+  <script>
+    const explicitBackUrl = ${safeScriptJson(backUrl)};
+    const target = safeNavigationUrl(explicitBackUrl) || safeNavigationUrl(document.referrer);
+    if (target) location.replace(target);
+    else if (history.length > 1) history.go(-2);
 
     function safeNavigationUrl(value) {
       try {

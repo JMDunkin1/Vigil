@@ -518,6 +518,39 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
 
 {
   const state = defaultState();
+  const stale = blockedPage({
+    url: new URL("http://127.0.0.1:8787/blocked?site=youtube.com&mode=focus&until=2026-07-15T07%3A09%3A13.730Z&back=https%3A%2F%2Fyoutube.com%2F"),
+    state
+  });
+  assert.match(stale, /This block is no longer active/);
+  assert.match(stale, /location\.replace\(target\)/);
+  assert.doesNotMatch(stale, /youtube\.com is blocked/);
+
+  const profile = state.profiles[0];
+  const liveNow = new Date();
+  const endsAt = new Date(liveNow.getTime() + 60 * 60 * 1000).toISOString();
+  state.activeSession = {
+    id: "confirmed-focus",
+    title: "Confirmed focus",
+    mode: "focus",
+    profileId: profile.id,
+    lockLevel: "deep",
+    startedAt: liveNow.toISOString(),
+    endsAt,
+    canEndEarly: true,
+    source: "manual",
+    profileSnapshot: profile
+  };
+  const current = blockedPage({
+    url: new URL(`http://127.0.0.1:8787/blocked?site=example.com&mode=focus&until=${encodeURIComponent(endsAt)}&policyId=confirmed-focus`),
+    state
+  });
+  assert.match(current, /example\.com is blocked/);
+  assert.doesNotMatch(current, /This block is no longer active/);
+}
+
+{
+  const state = defaultState();
   const baselineUrls = safariFilterDenyUrls(state, now);
   assert.equal(baselineUrls.includes("https://pornhub.com/"), true);
   assert.equal(baselineUrls.includes("https://www.pornhub.com/"), true);
