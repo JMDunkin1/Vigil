@@ -1,4 +1,6 @@
 import { clamp } from "./format.js";
+import { minecraftAudioCatalog } from "./minecraft-audio-catalog.js";
+import type { MinecraftAudioTrackId } from "./minecraft-audio-catalog.js";
 import { sacredAudioCatalog } from "./sacred-audio-catalog.js";
 import type { SacredAudioTrackId } from "./sacred-audio-catalog.js";
 
@@ -32,11 +34,12 @@ type FocusActivity = "deep-work" | "creative-flow" | "learning" | "light-work" |
 const generatedPresetValues = ["brown-noise", "pink-noise", "white-noise", "binaural-beat", "isochronic-tone"] as const;
 const standardAudioPresetValues = ["rain", "ocean", "storm", "stream", "bach-goldberg-aria", "bach-invention-8", "bach-italian-concerto", "handel-harmonious-blacksmith", "scarlatti-sonata-k87", "scarlatti-sonata-k466"] as const;
 const sacredAudioPresetValues = sacredAudioCatalog.map((track) => track.id) as SacredAudioTrackId[];
-const realAudioPresetValues: readonly RealAudioPreset[] = [...standardAudioPresetValues, ...sacredAudioPresetValues];
+const minecraftAudioPresetValues = minecraftAudioCatalog.map((track) => track.id);
+const realAudioPresetValues: readonly RealAudioPreset[] = [...standardAudioPresetValues, ...sacredAudioPresetValues, ...minecraftAudioPresetValues];
 const focusPresetValues: readonly FocusPreset[] = [...generatedPresetValues, ...realAudioPresetValues];
 type GeneratedPreset = typeof generatedPresetValues[number];
 type StandardAudioPreset = typeof standardAudioPresetValues[number];
-type RealAudioPreset = StandardAudioPreset | SacredAudioTrackId;
+type RealAudioPreset = StandardAudioPreset | SacredAudioTrackId | MinecraftAudioTrackId;
 type FocusPreset = GeneratedPreset | RealAudioPreset;
 type FocusIntensity = "low" | "medium" | "high";
 type FocusTimerMode = "infinite" | "timer" | "interval";
@@ -107,6 +110,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
   let audioStartGeneration = 0;
   let renderGeneration = 0;
   let renderedOptions: SyncOptions | null = null;
+  let blockedPreset: FocusPreset | null = null;
   let soundViewActive = false;
   const reducedMotionQuery = typeof window.matchMedia === "function"
     ? window.matchMedia("(prefers-reduced-motion: reduce)")
@@ -133,7 +137,10 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
   function render(data: FocusSoundData) {
     const generation = ++renderGeneration;
     const settings = data.state.settings || {};
-    const options = focusOptions(settings);
+    const requestedOptions = focusOptions(settings);
+    const options = requestedOptions.enabled && requestedOptions.preset === blockedPreset
+      ? { ...requestedOptions, enabled: false }
+      : requestedOptions;
     renderedOptions = options;
 
     $("#focusSoundEnabled").checked = options.enabled;
@@ -161,10 +168,18 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
           return;
         }
         focusAudio.blocked = true;
+        blockedPreset = options.preset;
         stop();
-        if (renderedOptions) renderFocusStudio(renderedOptions, focusAudio);
+        const disabledOptions = { ...options, enabled: false };
+        renderedOptions = disabledOptions;
+        $("#focusSoundEnabled").checked = false;
+        renderFocusStudio(disabledOptions, focusAudio);
         toast(focusPlaybackErrorMessage(error));
         console.error("Focus sound playback failed", error);
+        void post("/api/settings", { focusSoundEnabled: false }).catch((persistError) => {
+          toast(`Could not turn off failed sound playback: ${focusPlaybackErrorDetail(persistError)}`);
+          console.error("Could not turn off failed sound playback", persistError);
+        });
       });
   }
 
@@ -362,6 +377,8 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
     saveSettings,
     prime,
     restartTimer() {
+      blockedPreset = null;
+      focusAudio.blocked = false;
       resetTimer();
     },
     setViewActive(active: boolean) {
@@ -412,8 +429,11 @@ function spectrumBandLevel(analyser: AnalyserNode, data: Uint8Array, index: numb
 }
 
 function focusPlaybackErrorMessage(error: unknown): string {
-  const detail = error instanceof Error ? error.message : "Audio playback failed";
-  return `Could not play this sound: ${detail}`;
+  return `Could not play this sound: ${focusPlaybackErrorDetail(error)}`;
+}
+
+function focusPlaybackErrorDetail(error: unknown): string {
+  return error instanceof Error ? error.message : "Audio playback failed";
 }
 
 function samePlaybackRequest(left: SyncOptions, right: SyncOptions): boolean {
@@ -749,7 +769,15 @@ const realAudioTracks: Record<RealAudioPreset, RealAudioTrack> = {
     sourcePage: track.sourcePage,
     license: track.license,
     licenseUrl: track.licenseUrl
-  }])) as Record<SacredAudioTrackId, RealAudioTrack>
+  }])) as Record<SacredAudioTrackId, RealAudioTrack>,
+  ...Object.fromEntries(minecraftAudioCatalog.map((track) => [track.id, {
+    label: track.title,
+    src: track.src,
+    attribution: track.attribution,
+    sourcePage: track.sourcePage,
+    license: track.license,
+    licenseUrl: track.licenseUrl
+  }])) as Record<MinecraftAudioTrackId, RealAudioTrack>
 };
 
 const modeProfiles: Record<FocusMode, {

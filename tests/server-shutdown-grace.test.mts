@@ -52,8 +52,7 @@ try {
   await networkStatusStarted;
 
   const persistedState = await readFile(store.STATE_PATH);
-  await rm(store.STATE_PATH, { force: true });
-  await mkdir(store.STATE_PATH);
+  await replaceStateFileWithDirectory();
   const socketClosed = new Promise<boolean>((resolve) => socket.once("close", () => resolve(true)));
   const started = Date.now();
   const originalConsoleError = console.error;
@@ -115,4 +114,16 @@ try {
   socket.destroy();
   await stopVigilServer().catch(() => {});
   await rm(dataDir, { recursive: true, force: true });
+}
+
+async function replaceStateFileWithDirectory(): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await rm(store.STATE_PATH, { recursive: true, force: true });
+    try {
+      await mkdir(store.STATE_PATH);
+      return;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST" || attempt === 9) throw error;
+    }
+  }
 }

@@ -75,13 +75,13 @@ export function blockedPage({ url }: PageInput): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Blocked</title>
   <style>
-    :root { color-scheme: light; --paper: #eee8dc; --paper-2: #e2d8c6; --ink: #261f1a; --primary: #385b68; --primary-strong: #243f4a; --focus: rgba(181, 139, 60, .25); }
+    :root { color-scheme: dark; --paper: #101111; --paper-2: #161717; --ink: #f0ece5; --primary: #b77952; --primary-strong: #d5a16b; --focus: rgba(213, 161, 107, .24); }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; color: var(--ink); background: radial-gradient(circle at 78% -8%, rgba(181, 139, 60, .16), transparent 32rem), linear-gradient(180deg, var(--paper), var(--paper-2)); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; color: var(--ink); background: radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .08), transparent 34rem), radial-gradient(circle at 28% 106%, rgba(157, 124, 88, .04), transparent 30rem), linear-gradient(180deg, var(--paper), var(--paper-2)); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     main { width: min(560px, 100%); }
     h1 { max-width: 12ch; margin: 0; font: 700 clamp(2.75rem, 8vw, 5rem)/.98 Georgia, "Times New Roman", serif; letter-spacing: -.04em; text-wrap: balance; }
     .escape-actions { margin-top: 32px; }
-    .escape-actions a { min-height: 48px; display: inline-grid; place-items: center; padding: 0 22px; border-radius: 7px; color: #fffdf7; background: var(--primary); text-decoration: none; font-weight: 700; transition: background .15s ease, transform .15s ease; }
+    .escape-actions a { min-height: 48px; display: inline-grid; place-items: center; padding: 0 22px; border-radius: 7px; color: #16120f; background: var(--primary); text-decoration: none; font-weight: 700; transition: background .15s ease, transform .15s ease; }
     .escape-actions a:hover { background: var(--primary-strong); }
     .escape-actions a:active { transform: translateY(1px); }
     .escape-actions a:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }

@@ -59,8 +59,10 @@ export function bindAppEvents(context: AppEventsContext) {
 
   const protectionLevel = $("#protectionLevel");
   const protectionLevelControl = $("#protectionLevelControl");
+  const protectionLevelLabel = $("#protectionLevelLabel");
+  const protectionLevelStatusText = $("#protectionLevelStatus");
   const protectionLevelChoices = $$<HTMLButtonElement>("[data-protection-level-choice]");
-  let protectionLevelWheelTimer: ReturnType<typeof setTimeout> | null = null;
+  let appliedProtectionLevel = normalizedProtectionLevel(Number(protectionLevel.value || 1));
   let protectionLevelSettleTimer: ReturnType<typeof setTimeout> | null = null;
   const setProtectionLevelOpen = (open: boolean) => {
     protectionLevelControl.classList.toggle("is-open", open);
@@ -68,19 +70,20 @@ export function bindAppEvents(context: AppEventsContext) {
     for (const choice of protectionLevelChoices) choice.tabIndex = open ? 0 : -1;
   };
   const releaseProtectionLevelSettle = () => {
-    if (!protectionLevelControl.matches(":hover") && !protectionLevelControl.matches(":focus-within")) {
-      protectionLevelControl.classList.remove("is-settling");
-    }
+    protectionLevelControl.classList.remove("is-settling");
   };
-  const previewProtectionLevel = (requestedLevel: number) => {
-    const level = Math.max(1, Math.min(4, Math.round(requestedLevel || 1)));
-    protectionLevel.value = String(level);
-    protectionLevelControl.dataset.level = String(level);
-    $("#protectionLevelLabel").textContent = level === 4 ? "Panic" : `Level ${level}`;
-    $("#protectionLevelStatus").textContent = level === 4 ? "3 min lock" : "Release to apply";
-    return level;
+  const confirmPanicLevel = (requestedLevel: number) => requestedLevel !== 4
+    || window.confirm("Start Panic mode for three minutes? It cannot be ended early.");
+  const showProtectionLevel = (requestedLevel: number, preview: boolean) => {
+    return applyProtectionLevelPresentation(requestedLevel, preview, {
+      input: protectionLevel,
+      control: protectionLevelControl,
+      label: protectionLevelLabel,
+      status: protectionLevelStatusText
+    });
   };
   const settleProtectionLevel = (level: number) => {
+    appliedProtectionLevel = normalizedProtectionLevel(level);
     protectionLevelControl.classList.add("is-settling");
     if (protectionLevelSettleTimer) clearTimeout(protectionLevelSettleTimer);
     protectionLevelSettleTimer = setTimeout(releaseProtectionLevelSettle, 954);
@@ -97,11 +100,20 @@ export function bindAppEvents(context: AppEventsContext) {
       protectionLevel.focus();
     }
   });
+  protectionLevel.addEventListener("focus", () => {
+    appliedProtectionLevel = normalizedProtectionLevel(Number(protectionLevel.value || 1));
+  });
   protectionLevel.addEventListener("input", () => {
-    previewProtectionLevel(Number(protectionLevel.value || 1));
+    showProtectionLevel(Number(protectionLevel.value || 1), true);
   });
   protectionLevel.addEventListener("change", () => {
-    settleProtectionLevel(Number(protectionLevel.value || 1));
+    const requestedLevel = Number(protectionLevel.value || 1);
+    if (!confirmPanicLevel(requestedLevel)) {
+      showProtectionLevel(appliedProtectionLevel, false);
+      void refresh();
+      return;
+    }
+    settleProtectionLevel(requestedLevel);
   });
   for (const choice of protectionLevelChoices) {
     choice.addEventListener("click", () => {
@@ -110,23 +122,17 @@ export function bindAppEvents(context: AppEventsContext) {
         setProtectionLevelOpen(true);
         return;
       }
-      const level = previewProtectionLevel(Number(choice.dataset.protectionLevelChoice || 1));
+      const requestedLevel = Number(choice.dataset.protectionLevelChoice || 1);
+      if (requestedLevel === Number(protectionLevel.value || 1)) {
+        setProtectionLevelOpen(false);
+        return;
+      }
+      if (!confirmPanicLevel(requestedLevel)) return;
       setProtectionLevelOpen(false);
+      const level = showProtectionLevel(requestedLevel, true);
       settleProtectionLevel(level);
     });
   }
-  protectionLevelControl.addEventListener("wheel", (event: WheelEvent) => {
-    if (protectionLevel.disabled || Math.abs(event.deltaY) < 2) return;
-    event.preventDefault();
-    protectionLevelControl.classList.add("is-scrolling");
-    const direction = event.deltaY > 0 ? 1 : -1;
-    const level = previewProtectionLevel(Number(protectionLevel.value || 1) + direction);
-    if (protectionLevelWheelTimer) clearTimeout(protectionLevelWheelTimer);
-    protectionLevelWheelTimer = setTimeout(() => {
-      protectionLevelControl.classList.remove("is-scrolling");
-      settleProtectionLevel(level);
-    }, 360);
-  }, { passive: false });
 
   $("#focusSoundEnabled").addEventListener("change", async (event: Event) => {
     try {
@@ -535,4 +541,36 @@ export function bindAppEvents(context: AppEventsContext) {
   });
 
   $("#printDistanceKey").addEventListener("click", distanceKeyUi.print);
+}
+
+export function normalizedProtectionLevel(requestedLevel: number): number {
+  return Math.max(1, Math.min(4, Math.round(requestedLevel || 1)));
+}
+
+export function protectionLevelStatus(level: number): string {
+  const normalized = normalizedProtectionLevel(level);
+  if (normalized === 1) return "Normal";
+  if (normalized === 2) return "Soft Lock";
+  if (normalized === 3) return "Full Brick";
+  return "3 min lock";
+}
+
+export function applyProtectionLevelPresentation(
+  requestedLevel: number,
+  preview: boolean,
+  elements: {
+    input: { value: string };
+    control: { dataset: DOMStringMap };
+    label: { textContent: string | null };
+    status: { textContent: string | null };
+  }
+): number {
+  const level = normalizedProtectionLevel(requestedLevel);
+  elements.input.value = String(level);
+  elements.control.dataset.level = String(level);
+  elements.label.textContent = level === 4 ? "Panic" : `Level ${level}`;
+  elements.status.textContent = preview
+    ? (level === 4 ? "3 min lock" : "Release to apply")
+    : protectionLevelStatus(level);
+  return level;
 }

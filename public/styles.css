@@ -6264,7 +6264,7 @@ h3,
       calc(var(--protection-level-step) - var(--protection-orb-size)) 100% no-repeat,
     linear-gradient(var(--protection-trace-color), var(--protection-trace-color)) right center /
       calc(var(--protection-level-step) - var(--protection-orb-size)) 100% no-repeat;
-  filter: drop-shadow(0 0 9px color-mix(in srgb, var(--level-color) 24%, transparent));
+  filter: none;
   opacity: 0;
   clip-path: inset(0 50%);
   transform: translate(-50%, -50%);
@@ -6419,15 +6419,6 @@ h3,
 .protection-level-control.is-open:not(.is-settling) .protection-level-bloom:has(.protection-level-choice:hover) .protection-level-choice:not(:hover),
 .protection-level-control.is-scrolling:not(.is-settling) .protection-level-bloom:has(.protection-level-choice:hover) .protection-level-choice:not(:hover) {
   opacity: 0.28;
-}
-
-.protection-level-control.is-open:not(.is-settling) .protection-level-bloom:has(.protection-level-choice:hover) .protection-level-trace,
-.protection-level-control.is-scrolling:not(.is-settling) .protection-level-bloom:has(.protection-level-choice:hover) .protection-level-trace {
-  --protection-trace-color: color-mix(in srgb, var(--level-color) 78%, white);
-  height: 2px;
-  filter:
-    drop-shadow(0 0 8px color-mix(in srgb, var(--level-color) 62%, transparent))
-    drop-shadow(0 0 17px color-mix(in srgb, var(--level-color) 34%, transparent));
 }
 
 .protection-level-control[data-level="1"].is-open:not(.is-settling) .protection-level-choice[data-protection-level-choice="1"],
