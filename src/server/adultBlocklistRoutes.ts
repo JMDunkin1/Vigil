@@ -6,6 +6,7 @@ import {
   invalidateAdultBlocklistIfSourceChanged,
   normalizeAdultDomainList,
   refreshAdultBlocklist,
+  syncAdultBlocklistPhoneArtifact,
   writeAdultBlocklistPhoneArtifact
 } from "../adultBlocklist.js";
 import { assertProtectedEditAllowed } from "../protection.js";
@@ -33,16 +34,19 @@ export async function handleAdultBlocklistApiRoute(
       assertProtectedEditAllowed(state, { kind: "settings" });
       const previousSource = adultBlocklistSource(state);
       const keys = updateSettings(state.settings, body);
-      if (invalidateAdultBlocklistIfSourceChanged(state, previousSource)) {
+      const sourceChanged = invalidateAdultBlocklistIfSourceChanged(state, previousSource);
+      if (sourceChanged) {
         keys.push("adultBlocklistSnapshot");
       }
-      if (Object.hasOwn(body, "allowlist")) {
+      const allowlistChanged = Object.hasOwn(body, "allowlist");
+      if (allowlistChanged) {
         state.adultBlocklist.allowlist = normalizeAdultDomainList(body.allowlist);
         keys.push("adultBlocklistAllowlist");
       }
       addEvent(state, "adult_blocklist_settings_updated", { keys });
       if (keys.length) recordIosMdmPolicyQueue?.("adult-blocklist-settings");
       await saveState(state);
+      if (sourceChanged || allowlistChanged) await syncAdultBlocklistPhoneArtifact(state);
       sendJson(response, 200, { ok: true, keys, adultBlocklist: adultBlocklistSummary(state) });
     } catch (error) {
       sendJson(response, errorStatus(error), serializeError(error));

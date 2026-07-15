@@ -76,6 +76,29 @@ final class VigilBrowserTests: XCTestCase {
         XCTAssertEqual(loaded.blockedHosts.filter { $0 == "example.com" }.count, 1)
     }
 
+    func testLegacyRulesGainAlwaysOnExplicitSearchTerms() throws {
+        let suite = "VigilBrowserTests.legacy.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let legacy = FilterRules(
+            schemaVersion: 1,
+            revision: 7,
+            blockedHosts: ["custom.example"],
+            blockedURLFragments: [],
+            blockedSearchTerms: [],
+            safeSearchEnabled: true
+        )
+        defaults.set(try JSONEncoder().encode(legacy), forKey: SharedFilterStore.rulesKey)
+
+        let loaded = SharedFilterStore.read(defaults: defaults)
+
+        XCTAssertEqual(loaded.schemaVersion, FilterRules.currentSchema)
+        XCTAssertEqual(loaded.revision, 7)
+        XCTAssertTrue(loaded.blockedSearchTerms.contains("porn"))
+        let persisted = try XCTUnwrap(defaults.data(forKey: SharedFilterStore.rulesKey))
+        XCTAssertEqual(try JSONDecoder().decode(FilterRules.self, from: persisted), loaded)
+    }
+
     func testMissingBundledBlocklistIsAValidFallback() {
         final class EmptyBundle: Bundle, @unchecked Sendable {
             override func url(forResource name: String?, withExtension ext: String?) -> URL? { nil }

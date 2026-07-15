@@ -334,9 +334,7 @@ function migrateSettings(settings: AppSettings): AppSettings {
   }
   next.adultBlocklistEnabled = next.adultBlocklistEnabled !== false;
   const adultBlocklistSourceId = String(next.adultBlocklistSourceId || "");
-  next.adultBlocklistSourceId = !adultBlocklistSourceId || adultBlocklistSourceId === "hagezi-nsfw"
-    ? DEFAULT_ADULT_BLOCKLIST_SOURCE_ID
-    : adultBlocklistSourceId;
+  next.adultBlocklistSourceId = adultBlocklistSourceId || DEFAULT_ADULT_BLOCKLIST_SOURCE_ID;
   next.adultBlocklistCustomUrl = String(next.adultBlocklistCustomUrl || "");
   next.adultBlocklistPreloadLimit = clampInteger(next.adultBlocklistPreloadLimit, 0, 250, DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT);
   next.contentFilterEnabled = true;

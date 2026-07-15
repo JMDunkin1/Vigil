@@ -74,6 +74,7 @@ export interface AdultBlocklistFetchTestHooks {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  buildPhoneArtifact?: typeof buildPhoneBlocklistArtifact;
 }
 
 export interface AdultBlocklistMatch extends UnknownRecord {
@@ -192,6 +193,12 @@ export async function refreshAdultBlocklist(
       domains
     };
     const snapshotPath = adultBlocklistSnapshotPath(snapshot);
+    (hooks.buildPhoneArtifact || buildPhoneBlocklistArtifact)({
+      domains: activeAdultBlocklistDomains(state, snapshot.domains),
+      snapshotHash: snapshot.hash,
+      generatedAt: snapshot.generatedAt,
+      source: snapshot.source
+    });
     await writeAdultBlocklistSnapshot(snapshot, snapshotPath);
     setRuntimeSnapshot(snapshot, snapshotPath);
     state.adultBlocklist.domainCount = domains.length;
@@ -430,13 +437,25 @@ export async function writeAdultBlocklistPhoneArtifact(
   const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
   if (!snapshot) throw new Error("A current adult blocklist snapshot is required before generating the phone artifact.");
   const artifact = buildPhoneBlocklistArtifact({
-    domains: snapshot.domains,
+    domains: activeAdultBlocklistDomains(state, snapshot.domains),
     snapshotHash: snapshot.hash,
     generatedAt: snapshot.generatedAt,
     source: snapshot.source
   });
   await writePhoneBlocklistArtifactAtomically(path, artifact);
   return artifact.metadata;
+}
+
+export async function syncAdultBlocklistPhoneArtifact(
+  state: VigilState,
+  path = ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH
+): Promise<PhoneBlocklistMetadata | null> {
+  const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
+  if (!snapshot || !activeAdultBlocklistDomains(state, snapshot.domains).length) {
+    await rm(path, { force: true });
+    return null;
+  }
+  return await writeAdultBlocklistPhoneArtifact(state, path);
 }
 
 function clearAdultBlocklistCache(): void {
@@ -467,7 +486,11 @@ function adultBlocklistPreloadLimit(state: VigilState, override?: number): numbe
 }
 
 function activeDomainCount(state: VigilState, domains: string[]): number {
-  return domains.filter((domain) => !adultBlocklistAllowsHost(state, domain)).length;
+  return activeAdultBlocklistDomains(state, domains).length;
+}
+
+function activeAdultBlocklistDomains(state: VigilState, domains: string[]): string[] {
+  return domains.filter((domain) => !adultBlocklistAllowsHost(state, domain));
 }
 
 function adultBlocklistAllowsHost(state: VigilState, hostname: string): boolean {

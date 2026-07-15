@@ -43,7 +43,7 @@ interface GuardInput extends RequestTransportContext {
 
 export interface ExtensionTrustSummary {
   trusted: boolean;
-  trustedBy: "origin" | "id" | "token" | "none";
+  trustedBy: "origin" | "token" | "none";
   requestOrigin: string | null;
   normalizedOrigin: string | null;
   extensionId: string | null;
@@ -181,14 +181,13 @@ export function extensionRequestGuard({ method = "GET", headers = {}, remoteAddr
   }
 
   const trustedOrigin = Boolean(localTransport && origin && isTrustedExtensionOrigin(origin));
-  const trustedId = Boolean(localTransport && builtInExtensionIdMatches(headerValue(headers, EXTENSION_ID_HEADER)));
   const trustedToken = extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
-  if (!trustedOrigin && !trustedId && !trustedToken) {
+  if (!trustedOrigin && !trustedToken) {
     return deny("Untrusted extension origin blocked.");
   }
 
   const fetchSite = headerValue(headers, "sec-fetch-site").toLowerCase();
-  if (fetchSite === "cross-site" && origin && !trustedOrigin && !trustedId && !trustedToken) {
+  if (fetchSite === "cross-site" && origin && !trustedOrigin && !trustedToken) {
     return deny("Cross-site extension request blocked.");
   }
 
@@ -213,7 +212,6 @@ export function extensionCorsHeaders(headers: HeaderBag = {}, transport: Request
 
 export function isTrustedExtensionRequest(headers: HeaderBag = {}, transport: RequestTransportContext = {}): boolean {
   return (isDirectLoopbackRequest(headers, transport) && isTrustedExtensionOrigin(headerValue(headers, "origin")))
-    || (isDirectLoopbackRequest(headers, transport) && builtInExtensionIdMatches(headerValue(headers, EXTENSION_ID_HEADER)))
     || extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
 }
 
@@ -222,12 +220,11 @@ export function extensionTrustSummary(headers: HeaderBag = {}, transport: Reques
   const normalized = requestOrigin ? normalizedOrigin(requestOrigin) : "";
   const trustedOrigin = Boolean(isDirectLoopbackRequest(headers, transport) && requestOrigin && isTrustedExtensionOrigin(requestOrigin));
   const suppliedExtensionId = headerValue(headers, EXTENSION_ID_HEADER).trim().toLowerCase();
-  const trustedId = Boolean(isDirectLoopbackRequest(headers, transport) && builtInExtensionIdMatches(suppliedExtensionId));
   const trustedToken = extensionTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER));
   const extensionId = extensionIdFromOrigin(requestOrigin) || suppliedExtensionId;
   return {
-    trusted: trustedOrigin || trustedId || trustedToken,
-    trustedBy: trustedOrigin ? "origin" : (trustedId ? "id" : (trustedToken ? "token" : "none")),
+    trusted: trustedOrigin || trustedToken,
+    trustedBy: trustedOrigin ? "origin" : (trustedToken ? "token" : "none"),
     requestOrigin: requestOrigin || null,
     normalizedOrigin: normalized || null,
     extensionId: extensionId || null,
@@ -369,10 +366,6 @@ function configuredExtensionToken(): string {
 
 function extensionTokenMatches(value: unknown): boolean {
   return secretMatches(configuredExtensionToken(), String(value || ""));
-}
-
-function builtInExtensionIdMatches(value: unknown): boolean {
-  return String(value || "").trim().toLowerCase() === BUILT_IN_CHROME_EXTENSION_ID;
 }
 
 function secretMatches(expected: string, supplied: string): boolean {

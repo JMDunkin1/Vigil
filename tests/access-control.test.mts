@@ -235,7 +235,28 @@ try {
     headers: {
       [EXTENSION_ID_HEADER]: BUILT_IN_CHROME_EXTENSION_ID
     }
-  }).ok, true);
+  }).ok, false);
+  assert.equal(isTrustedExtensionRequest({
+    origin: "chrome-extension://attacker-extension",
+    [EXTENSION_ID_HEADER]: BUILT_IN_CHROME_EXTENSION_ID
+  }, LOCAL_TRANSPORT), false);
+  assert.deepEqual(extensionTrustSummary({
+    origin: "chrome-extension://attacker-extension",
+    [EXTENSION_ID_HEADER]: BUILT_IN_CHROME_EXTENSION_ID
+  }, LOCAL_TRANSPORT), {
+    trusted: false,
+    trustedBy: "none",
+    requestOrigin: "chrome-extension://attacker-extension",
+    normalizedOrigin: "chrome-extension://attacker-extension",
+    extensionId: "attacker-extension",
+    tokenConfigured: false,
+    tokenSupplied: false,
+    tokenHeader: EXTENSION_TOKEN_HEADER,
+    configuredOriginCount: 3,
+    suggestedOriginEnv: "VIGIL_EXTENSION_ORIGIN=chrome-extension://attacker-extension",
+    suggestedIdEnv: "VIGIL_EXTENSION_ID=attacker-extension",
+    suggestedTokenEnv: "VIGIL_EXTENSION_TOKEN=<shared-token>"
+  });
   assert.equal(extensionRequestGuard({
     method: "GET",
     remoteAddress: "203.0.113.10",

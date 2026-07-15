@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { ADULT_BLOCKLIST_SOURCES, clearAdultBlocklistCacheForTest, setAdultBlocklistDomainsForTest } from "../src/adultBlocklist.js";
 import { BRICK_MODE_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDeviceUsageCredential, iosMdmDoctor, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
 import { IOS_APP_STORE_BUNDLE_ID, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER, buildIosConfigurationProfile, buildIosSocialLauncherProfile, iosProfileSummary } from "../src/iosProfiles.js";
@@ -115,7 +116,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.match(activePhoneProfile, /blockedAppBundleIDs/);
   assert.match(activePhoneProfile, /com\.google\.ios\.youtube/);
   const activePhoneParsed = recordValue(parsePlist(activePhoneProfile), "active phone profile");
-  assert.equal(activePhoneParsed.DurationUntilRemoval, 3630);
+  assert.equal(activePhoneParsed.DurationUntilRemoval, undefined, "timed restrictions must not auto-remove the always-on protection profile");
   const activePhoneSummary = iosProfileSummary(state, now);
   assert.equal(activePhoneSummary.profile.focusedSocial.nativeAppBundleCount, 0);
 
@@ -213,6 +214,24 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.equal(activeLimitPolicy(state, phoneUsage, { app: "com.google.ios.youtube", hostname: "youtube.com", device: "phone" }, now), null);
   const normalYoutubeProfile = buildIosConfigurationProfile(state, now);
   assert.match(normalYoutubeProfile, /com\.google\.ios\.youtube/);
+}
+
+{
+  const state = defaultState();
+  state.deviceControls.ios.enabled = true;
+  state.settings.adultBlocklistPreloadLimit = 5;
+  const source = ADULT_BLOCKLIST_SOURCES[0];
+  setAdultBlocklistDomainsForTest(
+    Array.from({ length: 300 }, (_, index) => `adult-${index}.example.test`),
+    source
+  );
+  try {
+    const summary = iosProfileSummary(state, now);
+    assert.equal(summary.protection.knownSiteDomainCount, 5, "phone count must describe only adult domains embedded in its profile");
+    assert.notEqual(summary.protection.knownSiteDomainCount, 300, "phone count must not reuse the full desktop blocklist count");
+  } finally {
+    clearAdultBlocklistCacheForTest();
+  }
 }
 
 {

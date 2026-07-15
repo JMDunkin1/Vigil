@@ -581,6 +581,9 @@ function protectedIntegrity(integrity: unknown): UnknownRecord {
     runtime: {
       appleContentFilterArmedAt: typeof runtime.appleContentFilterArmedAt === "string" ? runtime.appleContentFilterArmedAt : null,
       appleContentFilterArmedLockId: typeof runtime.appleContentFilterArmedLockId === "string" ? runtime.appleContentFilterArmedLockId : null,
+      appleContentFilterArmedLockIds: Array.isArray(runtime.appleContentFilterArmedLockIds)
+        ? runtime.appleContentFilterArmedLockIds.filter((id): id is string => typeof id === "string")
+        : [],
       downtimeDetectedAt: runtime.downtimeDetectedAt || null,
       downtimeDetail: runtime.downtimeDetail || "",
       hardeningDriftDetectedAt: runtime.hardeningDriftDetectedAt || null,

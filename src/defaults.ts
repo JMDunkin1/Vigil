@@ -847,6 +847,7 @@ export function defaultState(): VigilState {
         lastHeartbeatAt: null,
         appleContentFilterArmedAt: null,
         appleContentFilterArmedLockId: null,
+        appleContentFilterArmedLockIds: [],
         downtimeDetectedAt: null,
         downtimeDetail: "",
         lastGapSeconds: 0,

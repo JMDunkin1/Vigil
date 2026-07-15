@@ -18,9 +18,14 @@ import {
   parseAdultBlocklistDomains,
   refreshAdultBlocklist,
   setAdultBlocklistDomainsForTest,
-  setAdultBlocklistSnapshotCandidatesForTest
+  setAdultBlocklistSnapshotCandidatesForTest,
+  writeAdultBlocklistPhoneArtifact
 } from "../src/adultBlocklist.js";
 import type { AdultBlocklistPinnedResponse } from "../src/adultBlocklist.js";
+import {
+  decodePhoneBlocklistArtifact,
+  phoneBlocklistMatchesHost
+} from "../src/adultBlocklistPhoneArtifact.js";
 import {
   DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
   MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS,
@@ -217,6 +222,19 @@ bad_domain
   assert.equal(matchAdultBlocklistHost(state, "media.exampleadult.test"), null);
   assert.equal(matchAdultBlocklistHost(state, "video.exampleexplicit.test")?.domain, "video.exampleexplicit.test");
   assert.equal(adultBlocklistPreloadDomains(state).includes("exampleadult.test"), false);
+
+  const phoneArtifactDir = await mkdtemp(join(tmpdir(), "vigil-adult-phone-artifact-"));
+  try {
+    const phoneArtifactPath = join(phoneArtifactDir, "adult-blocklist.sdi");
+    const metadata = await writeAdultBlocklistPhoneArtifact(state, phoneArtifactPath);
+    const phoneArtifact = decodePhoneBlocklistArtifact(await readFile(phoneArtifactPath));
+    assert.equal(metadata.domainCount, 1);
+    assert.equal(phoneBlocklistMatchesHost(phoneArtifact, "media.exampleadult.test"), "");
+    assert.equal(phoneBlocklistMatchesHost(phoneArtifact, "nested.exampleadult.test"), "");
+    assert.equal(phoneBlocklistMatchesHost(phoneArtifact, "video.exampleexplicit.test"), "video.exampleexplicit.test");
+  } finally {
+    await rm(phoneArtifactDir, { recursive: true, force: true });
+  }
   state.adultBlocklist.allowlist = [];
 
   const summary = adultBlocklistSummary(state);
@@ -303,6 +321,32 @@ bad_domain
     }),
     /600000 are required/
   );
+}
+
+{
+  const state = defaultState();
+  state.settings.adultBlocklistSourceId = "custom";
+  state.settings.adultBlocklistCustomUrl = "https://source.example/custom.txt";
+  state.adultBlocklist.hash = "previous-hash";
+  state.adultBlocklist.snapshotPath = "/previous/adult-blocklist.json";
+  state.adultBlocklist.domainCount = 42;
+  state.adultBlocklist.activeDomainCount = 42;
+  state.adultBlocklist.lastRefreshAt = "2026-06-01T00:00:00.000Z";
+  const candidate = Array.from({ length: 1_000 }, (_, index) => `adult-${index}.example`).join("\n");
+
+  await assert.rejects(
+    () => refreshAdultBlocklist(state, now, {
+      resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+      request: async () => pinnedResponse(200, [candidate]),
+      buildPhoneArtifact: () => { throw new Error("Phone blocklist exceeds deliverable limits."); }
+    }),
+    /exceeds deliverable limits/
+  );
+  assert.equal(state.adultBlocklist.hash, "previous-hash");
+  assert.equal(state.adultBlocklist.snapshotPath, "/previous/adult-blocklist.json");
+  assert.equal(state.adultBlocklist.domainCount, 42);
+  assert.equal(state.adultBlocklist.activeDomainCount, 42);
+  assert.equal(state.adultBlocklist.lastRefreshAt, "2026-06-01T00:00:00.000Z");
 }
 
 function pinnedResponse(
