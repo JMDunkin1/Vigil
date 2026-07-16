@@ -4837,6 +4837,17 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
   }
 }
 
+/* Keep the full motion design while Vigil is in use. Removing inactive
+   animations releases their compositor layers; merely pausing them can leave
+   Chromium's GPU process servicing those layers indefinitely. */
+html.app-inactive *,
+html.app-inactive *::before,
+html.app-inactive *::after {
+  animation: none !important;
+  transition: none !important;
+  will-change: auto !important;
+}
+
 /* Final sprite-stage direction: small 16-bit figures in a wide old-world scene. */
 .saint-artifact {
   width: min(620px, 100%);

@@ -50,6 +50,7 @@ interface FocusAudioState {
   context: AudioContext | null;
   gain: GainNode | null;
   analyser: AnalyserNode | null;
+  mediaElement: HTMLAudioElement | null;
   nodes: AudioNode[];
   preset: FocusPreset | "";
   signature: string;
@@ -102,9 +103,11 @@ interface RealAudioTrack {
 }
 
 const audioBufferCache = new Map<string, Promise<AudioBuffer>>();
+const maximumDecodedAudioBuffers = 1;
 const spectrumMinimumFrequency = 45;
 const spectrumMaximumFrequency = 16_000;
 const waveformIdleScale = 0.06;
+const waveformFrameIntervalMs = 1000 / 24;
 
 export function createFocusSoundController({ $, post, toast }: { $: QueryElement; post: PostRequest; toast: Toast }) {
   let audioStartGeneration = 0;
@@ -119,6 +122,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
     context: null,
     gain: null,
     analyser: null,
+    mediaElement: null,
     nodes: [],
     preset: "",
     signature: "",
@@ -255,6 +259,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
     Object.assign(focusAudio, {
       gain: master,
       analyser,
+      mediaElement: null,
       nodes,
       preset,
       signature,
@@ -264,12 +269,19 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
 
     try {
       if (audio) {
-        const source = await createRealAudioSource(context, audio);
+        const streaming = createStreamingAudioSource(context, audio, mix);
+        if (streaming) {
+          focusAudio.mediaElement = streaming.element;
+          nodes.push(streaming.source);
+          await streaming.play();
+        }
+        const source = streaming ? null : await createRealAudioSource(context, audio);
         if (!isCurrentStart(nodes, generation, signature)) {
+          stopMediaElement(streaming?.element || null);
           stopAudioNodes(nodes);
           return;
         }
-        connectRealAudioSource(source, mix, nodes);
+        if (source) connectRealAudioSource(source, mix, nodes);
       } else if (profile) {
         connectSoundProfile(context, profile, mix, nodes);
       }
@@ -296,6 +308,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
   function stop() {
     audioStartGeneration += 1;
     stopSpectrumVisualization();
+    stopMediaElement(focusAudio.mediaElement);
     stopAudioNodes(focusAudio.nodes || []);
     clearFocusAudioState();
   }
@@ -309,19 +322,23 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
     const frequencyData = new Uint8Array(analyser.frequencyBinCount);
     const timeData = new Float32Array(analyser.fftSize);
     const displayedLevels = bars.map(() => waveformIdleScale);
+    let lastDrawAt = Number.NEGATIVE_INFINITY;
 
-    const draw = () => {
+    const draw = (timestamp: number) => {
       if (!soundViewActive || reducedMotionQuery?.matches || focusAudio.analyser !== analyser || !focusAudio.playing) return;
-      analyser.getByteFrequencyData(frequencyData);
-      analyser.getFloatTimeDomainData(timeData);
-      const loudness = signalLoudness(timeData);
+      if (timestamp - lastDrawAt >= waveformFrameIntervalMs) {
+        lastDrawAt = timestamp;
+        analyser.getByteFrequencyData(frequencyData);
+        analyser.getFloatTimeDomainData(timeData);
+        const loudness = signalLoudness(timeData);
 
-      for (const [index, bar] of bars.entries()) {
-        const band = spectrumBandLevel(analyser, frequencyData, index, bars.length);
-        const target = waveformIdleScale + (1 - waveformIdleScale) * loudness * Math.pow(band, 0.86);
-        const response = target > displayedLevels[index] ? 0.52 : 0.2;
-        displayedLevels[index] += (target - displayedLevels[index]) * response;
-        bar.style.setProperty("--wave-level", displayedLevels[index].toFixed(3));
+        for (const [index, bar] of bars.entries()) {
+          const band = spectrumBandLevel(analyser, frequencyData, index, bars.length);
+          const target = waveformIdleScale + (1 - waveformIdleScale) * loudness * Math.pow(band, 0.86);
+          const response = target > displayedLevels[index] ? 0.52 : 0.2;
+          displayedLevels[index] += (target - displayedLevels[index]) * response;
+          bar.style.setProperty("--wave-level", displayedLevels[index].toFixed(3));
+        }
       }
 
       focusAudio.visualizerFrame = window.requestAnimationFrame(draw);
@@ -354,6 +371,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
   function clearFocusAudioState() {
     focusAudio.gain = null;
     focusAudio.analyser = null;
+    focusAudio.mediaElement = null;
     focusAudio.nodes = [];
     focusAudio.playing = false;
     focusAudio.preset = "";
@@ -565,8 +583,54 @@ function loadAudioBuffer(context: AudioContext, src: string): Promise<AudioBuffe
         throw error;
       });
     audioBufferCache.set(src, cached);
+    trimDecodedAudioBufferCache(src);
+  } else {
+    audioBufferCache.delete(src);
+    audioBufferCache.set(src, cached);
   }
   return cached;
+}
+
+function trimDecodedAudioBufferCache(activeSrc: string): void {
+  for (const src of audioBufferCache.keys()) {
+    if (audioBufferCache.size <= maximumDecodedAudioBuffers) break;
+    if (src !== activeSrc) audioBufferCache.delete(src);
+  }
+}
+
+function createStreamingAudioSource(
+  context: AudioContext,
+  audio: RealAudioTrack,
+  master: AudioNode
+): { element: HTMLAudioElement; source: MediaElementAudioSourceNode; play: () => Promise<void> } | null {
+  if (typeof Audio !== "function" || typeof context.createMediaElementSource !== "function") return null;
+  const element = new Audio(audio.src);
+  element.loop = true;
+  element.preload = "auto";
+  const source = context.createMediaElementSource(element);
+  source.connect(master);
+  return {
+    element,
+    source,
+    play: async () => {
+      try {
+        await element.play();
+      } catch (error) {
+        source.disconnect();
+        stopMediaElement(element);
+        throw new Error(`Could not play ${audio.src}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  };
+}
+
+function stopMediaElement(element: HTMLAudioElement | null): void {
+  if (!element) return;
+  try {
+    element.pause();
+    element.removeAttribute("src");
+    element.load();
+  } catch {}
 }
 
 function focusOptions(settings: FocusSoundData["state"]["settings"] = {}): SyncOptions {

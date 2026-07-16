@@ -222,6 +222,8 @@ bad_domain
   assert.equal(matchAdultBlocklistHost(state, "media.exampleadult.test"), null);
   assert.equal(matchAdultBlocklistHost(state, "video.exampleexplicit.test")?.domain, "video.exampleexplicit.test");
   assert.equal(adultBlocklistPreloadDomains(state).includes("exampleadult.test"), false);
+  assert.equal(adultBlocklistSummary(state).activeDomainCount, 1, "allowlist filtering must remain correct through the cached domain view");
+  assert.equal(adultBlocklistSummary(state).activeDomainCount, 1, "repeated summaries must reuse the same filtered count without changing behavior");
 
   const phoneArtifactDir = await mkdtemp(join(tmpdir(), "vigil-adult-phone-artifact-"));
   try {
@@ -240,6 +242,7 @@ bad_domain
   const summary = adultBlocklistSummary(state);
   assert.equal(summary.ready, true);
   assert.equal(summary.domainCount, 3);
+  assert.equal(summary.activeDomainCount, 3, "clearing the allowlist must invalidate the cached domain view");
   assert.equal(summary.preloadedDomainCount > 0, true);
   assert.equal(summary.selectedSourceId, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID);
   state.adultBlocklist.hash = summary.hash;

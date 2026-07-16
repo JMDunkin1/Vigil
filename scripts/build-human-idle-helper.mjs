@@ -16,6 +16,8 @@ if (process.platform !== "darwin") process.exit(0);
 
 await mkdir(outputDir, { recursive: true });
 await execFileAsync("/usr/bin/clang", [
+  "-x",
+  "objective-c",
   join(projectRoot, "app", "vigil-human-idle.c"),
   "-Os",
   "-Wall",
@@ -23,6 +25,8 @@ await execFileAsync("/usr/bin/clang", [
   `-mmacosx-version-min=${minimumMacosVersion}`,
   "-framework",
   "ApplicationServices",
+  "-framework",
+  "AppKit",
   "-o",
   outputPath
 ]);

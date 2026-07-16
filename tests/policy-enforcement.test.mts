@@ -16,7 +16,7 @@ import { activePlannerBlock, activePolicy, activeSchedule, appMatchesAppTargets,
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "../src/protection.js";
 import { buildSafariFilterProfile, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature, safariUrlFilterEnabled } from "../src/safariFilter.js";
 import { applySealVerificationToState, markStateSealed } from "../src/seal.js";
-import { blockedPage } from "../src/server/pages.js";
+import { blockedPage, blockedPageResponse } from "../src/server/pages.js";
 import { deleteProfile } from "../src/server/policyRoutes.js";
 import { updateSettings } from "../src/server/settingsRoutes.js";
 import { sanitizeDefaultFocusProfile, sanitizeFullBrickProfile, sanitizeSoftBlockProfile } from "../src/store.js";
@@ -518,13 +518,23 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
 
 {
   const state = defaultState();
-  const stale = blockedPage({
+  const stale = blockedPageResponse({
     url: new URL("http://127.0.0.1:8787/blocked?site=youtube.com&mode=focus&until=2026-07-15T07%3A09%3A13.730Z&back=https%3A%2F%2Fyoutube.com%2F"),
     state
   });
-  assert.match(stale, /This block is no longer active/);
-  assert.match(stale, /location\.replace\(target\)/);
-  assert.doesNotMatch(stale, /youtube\.com is blocked/);
+  assert.deepEqual(stale, { status: 302, location: "https://youtube.com/" });
+
+  const staleWithReferrer = blockedPageResponse({
+    url: new URL("http://127.0.0.1:8787/blocked?site=youtube.com&mode=focus&until=2026-07-15T07%3A09%3A13.730Z"),
+    state
+  }, "https://example.com/previous");
+  assert.deepEqual(staleWithReferrer, { status: 302, location: "https://example.com/previous" });
+
+  const staleWithoutTarget = blockedPageResponse({
+    url: new URL("http://127.0.0.1:8787/blocked?site=youtube.com&mode=focus&until=2026-07-15T07%3A09%3A13.730Z"),
+    state
+  });
+  assert.deepEqual(staleWithoutTarget, { status: 204 });
 
   const profile = state.profiles[0];
   const liveNow = new Date();
@@ -541,12 +551,12 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     source: "manual",
     profileSnapshot: profile
   };
-  const current = blockedPage({
+  const current = blockedPageResponse({
     url: new URL(`http://127.0.0.1:8787/blocked?site=example.com&mode=focus&until=${encodeURIComponent(endsAt)}&policyId=confirmed-focus`),
     state
   });
-  assert.match(current, /example\.com is blocked/);
-  assert.doesNotMatch(current, /This block is no longer active/);
+  assert.equal(current.status, 200);
+  if (current.status === 200) assert.match(current.body, /example\.com is blocked/);
 }
 
 {

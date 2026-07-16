@@ -11,6 +11,11 @@ assert.notEqual(beforeQuitStart, -1, "the app must retain a before-quit cleanup 
 assert.notEqual(beforeQuitEnd, -1, "the before-quit cleanup hook must be complete");
 const beforeQuitSource = mainSource.slice(beforeQuitStart, beforeQuitEnd + 4);
 
+assert.match(mainSource, /backgroundThrottling:\s*true/, "Electron must throttle renderer work when Vigil's window is hidden");
+assert.match(mainSource, /vigil:window-activity/, "Electron must send authoritative native focus state to the renderer");
+assert.match(mainSource, /vigilWindow\.on\("blur", syncRendererActivity\)/, "losing native window focus must immediately stop renderer animation work");
+assert.match(mainSource, /app\.commandLine\.appendSwitch\("autoplay-policy", "no-user-gesture-required"\)/, "saved Focus Sound playback must resume after a packaged-app relaunch");
+
 assert.match(
   mainSource,
   /app\.on\("activate", \(\) => \{\s*revealVigilWindow\(\);\s*\}\);/,
@@ -357,7 +362,11 @@ for (const event of ["ready-to-show", "show", "enter-full-screen", "leave-full-s
     `${event} must restore Vigil's native traffic lights`
   );
 }
-assert.doesNotMatch(mainSource, /vigilWindow\.on\("(?:focus|maximize|unmaximize)"/, "ordinary native transitions must not rewrite the window while AppKit is animating it");
+assert.doesNotMatch(
+  mainSource,
+  /vigilWindow\.on\("(?:focus|maximize|unmaximize)",\s*\(\)\s*=>\s*restoreNativeWindowControls/,
+  "ordinary native transitions must not rewrite the window while AppKit is animating it"
+);
 assert.doesNotMatch(mainSource, /setFullScreenable\(false\)|setFullScreen\(false\)/, "Vigil must never replace true fullscreen with macOS Zoom");
 assert.doesNotMatch(mainSource, /vigil:window-action|maximizedWindowControls/, "Vigil must not imitate native window controls in web content");
 assert.match(mainSource, /role:\s*"togglefullscreen"/, "the View menu must expose true native macOS fullscreen");

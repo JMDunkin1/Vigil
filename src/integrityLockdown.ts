@@ -226,6 +226,17 @@ export function syncAppleContentFilterLockdown(state: VigilState, safariFilter: 
   };
 }
 
+export function protectedLockActive(state: VigilState, now = new Date()): boolean {
+  const current = now.getTime();
+  return protectedLockOverlaps(state, current, current + 1).length > 0;
+}
+
+export function appleContentFilterRecoveryActive(state: VigilState): boolean {
+  const runtime = ensureRuntime(state);
+  const issues = Array.isArray(runtime.hardeningDriftIssues) ? runtime.hardeningDriftIssues : [];
+  return Boolean(runtime.hardeningDriftDetectedAt && onlyAppleContentFilterIssue(issues));
+}
+
 function armAppleContentFilterForProtectedLock(state: VigilState, now: Date): void {
   const runtime = ensureRuntime(state);
   const protectedLocks = protectedLockOverlaps(state, now.getTime(), now.getTime() + 1);

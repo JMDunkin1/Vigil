@@ -8,10 +8,10 @@ import { extensionDynamicRulesReady } from "./foolproof.js";
 import { firewallStatus } from "./firewall.js";
 import { grayscaleDecision, grayscaleGuardEnabled, MAC_GRAYSCALE_GUARD_APPS } from "./grayscale.js";
 import { hostsStatus, launchAgentStatus, stateSealStatus } from "./hardening.js";
-import { detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, recordRuntimeHeartbeat, syncAppleContentFilterLockdown } from "./integrityLockdown.js";
+import { appleContentFilterRecoveryActive, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, protectedLockActive, recordRuntimeHeartbeat, syncAppleContentFilterLockdown } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
-import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
+import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, readMacGrayscaleState, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
 import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldQuitAppForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
 import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, isInterruptedPollGap, roundSeconds } from "./monitor/timing.js";
@@ -35,9 +35,11 @@ interface MonitorContext {
       descriptor?: { key: string; kind: string; payload: UnknownRecord },
       complete?: (result: TResult, state: VigilState, usage: UsageState) => void | Promise<void>,
       fail?: (error: Error, state: VigilState, usage: UsageState) => void | Promise<void>
-    ) => void
-  ) => Promise<T>) => Promise<T>;
+  ) => void
+  ) => Promise<T>, options?: { persist?: boolean }) => Promise<T>;
 }
+
+export const MONITOR_PERSIST_INTERVAL_MS = 30_000;
 
 interface FrontSample extends UsageSample {
   app: string;
@@ -71,6 +73,14 @@ export function applyWifiEnvironmentObservation(
   }
 
   state.environment.wifiError = observation.error || "Wi-Fi lookup failed";
+}
+
+export function wifiEnvironmentObservationRequired(state: VigilState): boolean {
+  return (state.schedules || []).some((schedule) => (
+    schedule.enabled !== false
+    && Array.isArray(schedule.wifiNetworks)
+    && schedule.wifiNetworks.some((network) => String(network || "").trim())
+  ));
 }
 
 interface MonitorStatus extends UnknownRecord {
@@ -164,6 +174,7 @@ export class Monitor implements MonitorHandle {
   nextProcessSweepAt: number;
   nextSystemSleepLockAt: number;
   nextGrayscaleRefreshAt: number;
+  nextPersistenceAt: number;
   runtimeGapChecked: boolean;
   mutate: NonNullable<MonitorContext["mutate"]>;
   activeAfterCommit: (<TResult>(
@@ -220,8 +231,9 @@ export class Monitor implements MonitorHandle {
     this.nextProcessSweepAt = 0;
     this.nextSystemSleepLockAt = 0;
     this.nextGrayscaleRefreshAt = 0;
+    this.nextPersistenceAt = 0;
     this.runtimeGapChecked = false;
-    this.mutate = mutate || (async (operation) => await operation(this.state, this.usage, (effect, _descriptor, complete, fail) => {
+    this.mutate = mutate || (async (operation, _options) => await operation(this.state, this.usage, (effect, _descriptor, complete, fail) => {
       void (async () => {
         try {
           const result = await effect();
@@ -255,7 +267,12 @@ export class Monitor implements MonitorHandle {
   runScheduledTick(): Promise<void> {
     if (this.stopping) return Promise.resolve();
     if (this.tickInFlight) return this.tickInFlight;
-    const operation = this.enqueueOperation(() => this.runMutation(() => this.tick()))
+    const persist = Date.now() >= this.nextPersistenceAt;
+    const scheduled = this.enqueueOperation(() => this.runMutation(() => this.tick(), { persist }))
+      .then(() => {
+        if (persist) this.nextPersistenceAt = Date.now() + MONITOR_PERSIST_INTERVAL_MS;
+      });
+    const operation = scheduled
       .catch(async (error) => {
         try {
           await this.runMutation(async () => {
@@ -375,7 +392,7 @@ export class Monitor implements MonitorHandle {
     return queued;
   }
 
-  async runMutation<T>(operation: () => Promise<T>): Promise<T> {
+  async runMutation<T>(operation: () => Promise<T>, options: { persist?: boolean } = {}): Promise<T> {
     let monitorSnapshot: MonitorTransactionSnapshot | null = null;
     try {
       return await this.mutate(async (draftState, draftUsage, afterCommit) => {
@@ -393,7 +410,7 @@ export class Monitor implements MonitorHandle {
           this.usage = previousUsage;
           this.activeAfterCommit = previousAfterCommit;
         }
-      });
+      }, options);
     } catch (error) {
       if (monitorSnapshot) this.restoreTransactionSnapshot(monitorSnapshot);
       throw error;
@@ -756,6 +773,12 @@ export class Monitor implements MonitorHandle {
 
   async syncFocusShortcut(now: number, _options: { force?: boolean } = {}) {
     const policy = activePolicy(this.state, new Date(now));
+    if (!this.state.settings.focusShortcutEnabled && !this.state.focusShortcut.active) {
+      const summary = await reconcileFocusShortcut(this.state, policy, new Date(now));
+      this.status.lastFocusShortcut = summary;
+      this.setComponentDisabled("focus-shortcut");
+      return summary;
+    }
     let effectState = structuredClone(this.state);
     const summary = await this.externalEffect(
       "focus-shortcut",
@@ -784,11 +807,26 @@ export class Monitor implements MonitorHandle {
   }
 
   async reconcileGrayscale(now: number, options: { force?: boolean } = {}) {
+    const desired = grayscaleDecision(this.state, new Date(now), { device: "computer" });
+    const previous = this.status.lastGrayscale as { desired?: unknown; current?: unknown } | null;
+    const requiresObservation = desired.desired
+      || previous === null
+      || previous.desired === true
+      || previous.current !== true;
+    if (!options.force && !requiresObservation) {
+      this.nextGrayscaleRefreshAt = 0;
+      return this.status.lastGrayscale;
+    }
     if (!options.force && now < this.nextGrayscaleRefreshAt) return this.status.lastGrayscale;
     this.nextGrayscaleRefreshAt = now + 5000;
 
-    const desired = grayscaleDecision(this.state, new Date(now), { device: "computer" });
-    const result = await this.externalEffect("grayscale", { desired: desired.desired }, async () => await setMacGrayscaleEnabled(desired.desired));
+    const observed = await readMacGrayscaleState();
+    const alreadyCurrent = observed.ok
+      && observed.universalAccess === desired.desired
+      && observed.coreGraphics === desired.desired;
+    const result = alreadyCurrent
+      ? { ok: true, desired: desired.desired, changed: false, before: observed, after: observed }
+      : await this.externalEffect("grayscale", { desired: desired.desired }, async () => await setMacGrayscaleEnabled(desired.desired));
     const guardEnabled = grayscaleGuardEnabled(this.state, desired);
     const blockedApps = guardEnabled
       ? await this.blockGrayscaleGuardApps(now)
@@ -1252,13 +1290,29 @@ export class Monitor implements MonitorHandle {
   }
 
   async refreshAppleContentFilterLockdown(now: number): Promise<void> {
+    const checkedAt = new Date(now);
+    const protectedLock = protectedLockActive(this.state, checkedAt);
+    const recovery = appleContentFilterRecoveryActive(this.state);
+    const armed = Boolean(this.state.integrity?.runtime?.appleContentFilterArmedAt);
+    if (!protectedLock && !recovery) {
+      this.nextAppleContentFilterRefreshAt = 0;
+      const result = armed
+        ? syncAppleContentFilterLockdown(this.state, { required: false }, checkedAt)
+        : { active: false, started: false, cleared: false, current: false, reason: "no-protected-lock" };
+      this.status.appleContentFilterLockdown = {
+        ...result,
+        checkedAt: checkedAt.toISOString(),
+        skipped: "no-protected-lock"
+      };
+      return;
+    }
     if (now < this.nextAppleContentFilterRefreshAt) return;
     this.nextAppleContentFilterRefreshAt = now + 5000;
     const safariFilter = await safariFilterStatus(this.state);
-    const result = syncAppleContentFilterLockdown(this.state, safariFilter, new Date(now));
+    const result = syncAppleContentFilterLockdown(this.state, safariFilter, checkedAt);
     this.status.appleContentFilterLockdown = {
       ...result,
-      checkedAt: new Date(now).toISOString(),
+      checkedAt: checkedAt.toISOString(),
       safariFilter: {
         required: Boolean(safariFilter.required),
         installed: Boolean(safariFilter.installed),
@@ -1358,6 +1412,11 @@ export class Monitor implements MonitorHandle {
   }
 
   async refreshEnvironment(now: number): Promise<void> {
+    if (!wifiEnvironmentObservationRequired(this.state)) {
+      this.nextEnvironmentRefreshAt = 0;
+      this.setComponentDisabled("wifi");
+      return;
+    }
     if (now < this.nextEnvironmentRefreshAt) return;
     this.nextEnvironmentRefreshAt = now + 30 * 1000;
     const wifi = await getCurrentWifiNetwork();

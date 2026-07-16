@@ -12,6 +12,7 @@ import { recordOpen, recordUsage } from "./usage.js";
 import type { ActivePolicy, FocusedSocialSettings, IntentionalPause, IntentionalUseRule, LimitBlock, VigilState, UnknownRecord, UsageSample, UsageState } from "./types.js";
 
 export const EXTENSION_APP_NAME = "Browser Extension";
+export { compactExtensionRuleSignature } from "./extensionRuleSignature.js";
 
 type BrowserPolicy = Omit<Partial<ActivePolicy>, "session"> & {
   kind: string;

@@ -73,6 +73,9 @@ export function recordOpen(
   options: { device?: string } = {}
 ): void {
   if (!sample?.app) return;
+  const appChanged = sample.app !== previousSample?.app;
+  const siteChanged = Boolean(sample.hostname && sample.hostname !== previousSample?.hostname);
+  if (!appChanged && !siteChanged) return;
   const day = ensureDay(usage, dateKey(now));
   const device = ensureDeviceDay(day, normalizeUsageDevice(options.device || sample.device));
   recordOpenForBucket(device, sample, previousSample);

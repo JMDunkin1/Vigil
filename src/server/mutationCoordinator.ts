@@ -18,6 +18,10 @@ interface MutationContext {
 
 type SnapshotWriter = typeof saveRuntimeSnapshot;
 
+export interface MutationRunOptions {
+  persist?: boolean;
+}
+
 export interface DurableEffectDescriptor {
   key: string;
   kind: string;
@@ -59,7 +63,7 @@ export class RuntimeMutationCoordinator {
     private readonly persistSnapshot: SnapshotWriter = saveRuntimeSnapshot
   ) {}
 
-  run<T>(operation: (context: MutationContext) => Promise<T>): Promise<T> {
+  run<T>(operation: (context: MutationContext) => Promise<T>, options: MutationRunOptions = {}): Promise<T> {
     if (!this.accepting) return Promise.reject(stoppingError());
     let committedEffects: Array<{ entry: RuntimeOutboxEntry; run: () => unknown | Promise<unknown>; complete?: DurableEffectCompletion; fail?: DurableEffectFailure; awaitAttempt: boolean }> = [];
     const mutation = this.enqueueMutation(async () => {
@@ -98,11 +102,14 @@ export class RuntimeMutationCoordinator {
           });
         }
       }));
-      try {
-        await this.persistSnapshot(draftState, draftUsage, { outbox: commitOutbox });
-      } catch (error) {
-        await staged.rollback();
-        throw error;
+      const durableCommitRequired = options.persist !== false || effects.length > 0;
+      if (durableCommitRequired) {
+        try {
+          await this.persistSnapshot(draftState, draftUsage, { outbox: commitOutbox });
+        } catch (error) {
+          await staged.rollback();
+          throw error;
+        }
       }
       replaceContents(this.liveState, draftState);
       replaceContents(this.liveUsage, draftUsage);

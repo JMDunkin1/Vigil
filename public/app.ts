@@ -49,6 +49,14 @@ interface VigilAppearanceWindow extends Window {
   vigilAppearance?: VigilAppearanceBridge;
 }
 
+interface VigilWindowActivityBridge {
+  subscribe(listener: (active: boolean) => void): () => void;
+}
+
+interface VigilWindowActivityWindow extends Window {
+  vigilWindowActivity?: VigilWindowActivityBridge;
+}
+
 type JournalEntryItem = NonNullable<NonNullable<IntentionalUseSummary["lifeLog"]>["entries"]>[number];
 
 interface JournalEntriesResponse extends UnknownRecord {
@@ -81,6 +89,9 @@ const BUILT_IN_PROFILE_IDS = new Set(["default", "normal", SOFT_BLOCK_PROFILE_ID
 let protectionLevelRequestInFlight = false;
 let refreshCycle: Promise<void> | null = null;
 let refreshRequested = false;
+let nativeWindowActive: boolean | null = null;
+const ACTIVE_STATE_POLL_MS = 3_000;
+const INACTIVE_STATE_POLL_MS = 30_000;
 const forms = createFormController({
   $,
   $$,
@@ -129,7 +140,8 @@ function boot() {
   bindViewNavigation(setView);
   bindSidebarToggle();
   renderActiveView(state.activeView);
-  focusSound.setViewActive(state.activeView === "audio");
+  bindAppActivityEfficiency();
+  syncAppActivityEfficiency();
   saintStage.bind();
   trackingView.bind();
   accountUi.bind();
@@ -207,10 +219,36 @@ function iconThemeLabel(theme: string): string {
 }
 
 async function pollState(): Promise<void> {
-  await refresh();
+  if (!document.hidden) await refresh();
   window.setTimeout(() => {
     void pollState();
-  }, 3000);
+  }, appIsActive() ? ACTIVE_STATE_POLL_MS : INACTIVE_STATE_POLL_MS);
+}
+
+function bindAppActivityEfficiency(): void {
+  window.addEventListener("focus", syncAppActivityEfficiency);
+  window.addEventListener("blur", syncAppActivityEfficiency);
+  document.addEventListener("visibilitychange", syncAppActivityEfficiency);
+  const bridge = (window as VigilWindowActivityWindow).vigilWindowActivity;
+  bridge?.subscribe((active) => {
+    nativeWindowActive = active;
+    syncAppActivityEfficiency();
+  });
+}
+
+function syncAppActivityEfficiency(): void {
+  const active = appIsActive();
+  document.documentElement.classList.toggle("app-inactive", !active);
+  focusSound.setViewActive(active && state.activeView === "audio");
+  if (active) {
+    renderCountdowns();
+    void refresh();
+  }
+}
+
+function appIsActive(): boolean {
+  const rendererFocused = typeof document.hasFocus !== "function" || document.hasFocus();
+  return !document.hidden && rendererFocused && nativeWindowActive !== false;
 }
 
 function setView(view?: string) {
@@ -244,7 +282,7 @@ function setView(view?: string) {
   if (previousView === "settings" && state.activeView !== "settings") resetSettingsUi();
   if (lockOnExit) lockJournalForViewExit();
   renderActiveView(state.activeView);
-  focusSound.setViewActive(state.activeView === "audio");
+  focusSound.setViewActive(appIsActive() && state.activeView === "audio");
 }
 
 function bindJournalUnlockGate(): void {

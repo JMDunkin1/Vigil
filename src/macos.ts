@@ -1,4 +1,7 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -9,6 +12,17 @@ const execFileAsync = promisify(execFile);
 const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const HUMAN_IDLE_HELPER = runtimeExecutablePath("bin/vigil-human-idle");
 let wifiDevicePromise: Promise<string> | null = null;
+let verifiedHumanIdleHelperDigest = "";
+let humanActivityProcess: ChildProcessWithoutNullStreams | null = null;
+let humanActivityOutput = "";
+let humanActivityPending: {
+  resolve: (sample: HumanActivitySample) => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+} | null = null;
+let humanActivityQueryTail: Promise<void> = Promise.resolve();
+let recentHumanActivity: { capturedAt: number; sample: HumanActivitySample } | null = null;
+const HUMAN_ACTIVITY_CACHE_MS = 2500;
 const CHROMIUM_BROWSERS = new Set([
   "Google Chrome",
   "Microsoft Edge",
@@ -19,6 +33,12 @@ const CHROMIUM_BROWSERS = new Set([
   "Orion"
 ]);
 
+interface HumanActivitySample {
+  idleSeconds: number;
+  app: string;
+  bundleId: string;
+}
+
 export async function runAppleScript(script: string, timeout = 2500): Promise<string> {
   const { stdout } = await execFileAsync("/usr/bin/osascript", ["-e", script], {
     timeout,
@@ -28,6 +48,19 @@ export async function runAppleScript(script: string, timeout = 2500): Promise<st
 }
 
 export async function getFrontmostApp() {
+  const cached = recentHumanActivity;
+  if (cached && Date.now() - cached.capturedAt <= HUMAN_ACTIVITY_CACHE_MS) {
+    return { ok: true, app: cached.sample.app };
+  }
+  try {
+    const sample = await queryHumanActivity();
+    return { ok: true, app: sample.app };
+  } catch {
+    return await getFrontmostAppViaAppleScript();
+  }
+}
+
+async function getFrontmostAppViaAppleScript() {
   try {
     const frontmost = await runAppleScript([
       'tell application "System Events"',
@@ -421,26 +454,100 @@ export async function getCurrentWifiNetwork() {
 
 export async function getMacIdleTime() {
   try {
-    await verifyHumanIdleHelperIntegrity();
-    const { stdout } = await execFileAsync(HUMAN_IDLE_HELPER, [], {
-      timeout: 2500,
-      maxBuffer: 1024
-    });
-    const idleSeconds = parseHumanIdleSeconds(stdout);
-    if (idleSeconds === null) throw new Error("Human idle helper returned an invalid value");
-    return { ok: true, idleSeconds, source: "CGEventSource:HIDSystemState", error: "" };
+    const sample = await queryHumanActivity();
+    return { ok: true, idleSeconds: sample.idleSeconds, source: "CGEventSource:HIDSystemState", error: "" };
   } catch (humanIdleError) {
     return getFallbackMacIdleTime(humanIdleError);
   }
 }
 
+function queryHumanActivity(): Promise<HumanActivitySample> {
+  const queued = humanActivityQueryTail.then(queryHumanActivityOnce);
+  humanActivityQueryTail = queued.then(() => {}, () => {});
+  return queued;
+}
+
+async function queryHumanActivityOnce(): Promise<HumanActivitySample> {
+  const child = await ensureHumanActivityProcess();
+  return await new Promise<HumanActivitySample>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      failHumanActivityProcess(child, new Error("Human activity helper timed out."), true);
+    }, 2500);
+    humanActivityPending = { resolve, reject, timer };
+    child.stdin.write("\n", (error) => {
+      if (error) failHumanActivityProcess(child, error, true);
+    });
+  });
+}
+
+async function ensureHumanActivityProcess(): Promise<ChildProcessWithoutNullStreams> {
+  if (humanActivityProcess) return humanActivityProcess;
+  await verifyHumanIdleHelperIntegrity();
+  const child = spawn(HUMAN_IDLE_HELPER, [], { stdio: ["pipe", "pipe", "pipe"] });
+  humanActivityProcess = child;
+  humanActivityOutput = "";
+  child.unref();
+  unrefChildPipe(child.stdin);
+  unrefChildPipe(child.stdout);
+  unrefChildPipe(child.stderr);
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => consumeHumanActivityOutput(child, chunk));
+  child.stderr.resume();
+  child.once("error", (error) => failHumanActivityProcess(child, error));
+  child.once("exit", (code, signal) => {
+    failHumanActivityProcess(child, new Error(`Human activity helper exited: ${signal || code || "unknown"}`));
+  });
+  return child;
+}
+
+function unrefChildPipe(pipe: NodeJS.ReadableStream | NodeJS.WritableStream): void {
+  (pipe as NodeJS.ReadableStream & { unref?: () => void }).unref?.();
+}
+
+function consumeHumanActivityOutput(child: ChildProcessWithoutNullStreams, chunk: string): void {
+  if (humanActivityProcess !== child) return;
+  humanActivityOutput += chunk;
+  const newline = humanActivityOutput.indexOf("\n");
+  if (newline < 0) return;
+  const line = humanActivityOutput.slice(0, newline);
+  humanActivityOutput = humanActivityOutput.slice(newline + 1);
+  const pending = humanActivityPending;
+  if (!pending) return;
+  humanActivityPending = null;
+  clearTimeout(pending.timer);
+  const sample = parseHumanActivitySample(line);
+  if (!sample) {
+    pending.reject(new Error("Human activity helper returned an invalid value."));
+    return;
+  }
+  recentHumanActivity = { capturedAt: Date.now(), sample };
+  pending.resolve(sample);
+}
+
+function failHumanActivityProcess(child: ChildProcessWithoutNullStreams, error: Error, kill = false): void {
+  if (humanActivityProcess !== child) return;
+  humanActivityProcess = null;
+  humanActivityOutput = "";
+  recentHumanActivity = null;
+  const pending = humanActivityPending;
+  humanActivityPending = null;
+  if (pending) {
+    clearTimeout(pending.timer);
+    pending.reject(error);
+  }
+  if (kill && !child.killed) child.kill();
+}
+
 async function verifyHumanIdleHelperIntegrity(): Promise<void> {
   const appBundle = packagedAppBundleForExecutable(HUMAN_IDLE_HELPER);
   if (!appBundle) return;
+  const helperDigest = createHash("sha256").update(await readFile(HUMAN_IDLE_HELPER)).digest("hex");
+  if (helperDigest === verifiedHumanIdleHelperDigest) return;
   await execFileAsync("/usr/bin/codesign", ["--verify", "--deep", "--strict", appBundle], {
     timeout: 2500,
     maxBuffer: 1024 * 16
   });
+  verifiedHumanIdleHelperDigest = helperDigest;
 }
 
 export function packagedAppBundleForExecutable(path: string): string | null {
@@ -475,6 +582,17 @@ async function getFallbackMacIdleTime(humanIdleError: unknown) {
 export function parseHumanIdleSeconds(output: unknown): number | null {
   const seconds = Number(String(output || "").trim());
   return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
+}
+
+export function parseHumanActivitySample(output: unknown): HumanActivitySample | null {
+  const [idleText = "", name = "", bundleId = ""] = String(output || "").replace(/[\r\n]+$/u, "").split("\t");
+  const idleSeconds = parseHumanIdleSeconds(idleText);
+  if (idleSeconds === null) return null;
+  return {
+    idleSeconds,
+    app: canonicalFrontmostAppName(name, bundleId),
+    bundleId
+  };
 }
 
 export function parseHidIdleSeconds(output: unknown): number | null {

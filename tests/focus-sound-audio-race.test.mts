@@ -76,6 +76,7 @@ const sources: FakeBufferSourceNode[] = [];
 const analysers: FakeAnalyserNode[] = [];
 const animationFrames = new Map<number, FrameRequestCallback>();
 let nextAnimationFrame = 1;
+let animationTimestamp = 0;
 
 class FakeAudioContext {
   destination = new FakeAudioNode();
@@ -348,6 +349,10 @@ try {
   await settle();
   focusSound.render(dataForPreset("rain"));
   await settle();
+  if (pendingFetches.has("/audio/nature/rain.ogg")) {
+    resolveFetch("/audio/nature/rain.ogg");
+    await settle();
+  }
   const currentSource = sources.at(-1);
   assert.ok(currentSource);
   assert.equal(currentSource.starts, 1);
@@ -385,6 +390,10 @@ try {
   now += 61_000;
   focusSound.render(interval);
   await settle();
+  if (pendingFetches.has("/audio/nature/ocean-waves.ogg")) {
+    resolveFetch("/audio/nature/ocean-waves.ogg");
+    await settle();
+  }
   assert.equal(nowPlaying.textContent, "Ocean waves", "an interval break must name the track users actually hear");
   assert.equal(attribution.hidden, false, "the active break recording must expose its attribution");
   assert.match(attributionText.textContent, /Shore wave field recording/);
@@ -402,7 +411,8 @@ function runAnimationFrame(): void {
   assert.ok(entry, "the visualizer should schedule an animation frame");
   const [frame, callback] = entry;
   animationFrames.delete(frame);
-  callback(0);
+  animationTimestamp += 50;
+  callback(animationTimestamp);
 }
 
 function setReducedMotion(matches: boolean): void {
