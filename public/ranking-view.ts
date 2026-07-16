@@ -57,13 +57,9 @@ export function createRankingView() {
     normalizedDays.forEach((day, index) => {
       const tracked = Boolean(day.tracked);
       const seconds = Number(day.totalSeconds || 0);
-      const scale = tracked ? Math.max(0.05, seconds / maxSeconds) : 0;
       const score = tracked ? String(clampPercent(day.focusScore)) : "–";
       const duration = tracked ? formatDuration(seconds) : "";
-      const bar = el("i", {
-        className: "ranking-week-bar",
-        attrs: { style: `transform:translateX(-50%) scaleY(${scale})` }
-      });
+      const bar = usageColumn(tracked ? seconds : 0, maxSeconds);
       week.append(el("div", {
         className: `ranking-week-day${tracked ? " is-tracked" : ""}`
       },
@@ -102,7 +98,14 @@ export function createRankingView() {
         textEl("span", String(index + 1).padStart(2, "0"), { className: "ranking-app-index" }),
         el("div", { className: "ranking-app-main" },
           textEl("strong", name),
-          el("span", { className: "ranking-app-track" }, el("i", { attrs: { style: `width:${Math.max(3, (seconds / max) * 100)}%` } }))
+          el("progress", {
+            className: "ranking-app-track",
+            attrs: {
+              max: 100,
+              value: Math.max(3, (seconds / max) * 100),
+              "aria-label": `${name}: ${formatDuration(seconds)}`
+            }
+          })
         ),
         textEl("em", formatDuration(seconds))
       );
@@ -111,6 +114,25 @@ export function createRankingView() {
   }
 
   return { render };
+}
+
+function usageColumn(seconds: number, maxSeconds: number): SVGSVGElement {
+  const height = seconds > 0 ? Math.max(5, (seconds / maxSeconds) * 100) : 0;
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.classList.add("ranking-week-bar");
+  svg.setAttribute("viewBox", "0 0 100 100");
+  svg.setAttribute("preserveAspectRatio", "none");
+  svg.setAttribute("aria-hidden", "true");
+
+  const fill = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  fill.classList.add("ranking-week-bar-fill");
+  fill.setAttribute("x", "34");
+  fill.setAttribute("y", String(100 - height));
+  fill.setAttribute("width", "32");
+  fill.setAttribute("height", String(height));
+  fill.setAttribute("rx", "5");
+  svg.append(fill);
+  return svg;
 }
 
 function usageDevicesLabel(devices: DashboardData["usage"]["devices"]): string {
