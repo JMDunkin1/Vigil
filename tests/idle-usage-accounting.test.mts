@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { defaultState } from "../src/defaults.js";
-import { canonicalFrontmostAppName, packagedAppBundleForExecutable, parseHidIdleSeconds, parseHumanIdleSeconds } from "../src/macos.js";
+import { canonicalFrontmostAppName, packagedAppBundleForExecutable, parseHidIdleSeconds, parseHumanActivitySample, parseHumanIdleSeconds } from "../src/macos.js";
 import { activeSecondsBeforeIdleThreshold, Monitor } from "../src/monitor.js";
 import { isInterruptedPollGap, maxTrustedPollGapSeconds } from "../src/monitor/timing.js";
 import type { UsageState } from "../src/types.js";
@@ -10,6 +10,12 @@ assert.equal(parseHidIdleSeconds('      "HIDIdleTime" = 3376045002708'), 3376.04
 assert.equal(parseHidIdleSeconds("no idle value"), null);
 assert.equal(parseHumanIdleSeconds("12.375\n"), 12.375);
 assert.equal(parseHumanIdleSeconds("not-a-number"), null);
+assert.deepEqual(parseHumanActivitySample("12.375\tSafari\tcom.apple.Safari\n"), {
+  idleSeconds: 12.375,
+  app: "Safari",
+  bundleId: "com.apple.Safari"
+});
+assert.equal(parseHumanActivitySample("error"), null);
 assert.equal(
   packagedAppBundleForExecutable("/Applications/Vigil.app/Contents/Resources/app.asar.unpacked/dist/runtime/bin/vigil-human-idle"),
   "/Applications/Vigil.app"

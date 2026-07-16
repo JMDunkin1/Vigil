@@ -77,6 +77,13 @@ assert.equal(unguardedSummary.desired, true);
 assert.equal(guardSweeps, 0, "manual grayscale protection must not enumerate guard apps when protection is disabled");
 assert.equal(unguardedGrayscaleMonitor.status.componentHealth["grayscale-guard"]?.state, "disabled", "an inapplicable grayscale guard must not block readiness");
 
+const inactiveGrayscaleMonitor = new Monitor({ state: defaultState(), usage: {} });
+inactiveGrayscaleMonitor.status.lastGrayscale = { desired: false, current: true };
+inactiveGrayscaleMonitor.nextGrayscaleRefreshAt = Date.now() + 5_000;
+const inactiveGrayscaleSummary = await inactiveGrayscaleMonitor.reconcileGrayscale(Date.now());
+assert.equal(inactiveGrayscaleSummary, inactiveGrayscaleMonitor.status.lastGrayscale);
+assert.equal(inactiveGrayscaleMonitor.nextGrayscaleRefreshAt, 0, "confirmed inactive grayscale must stop polling macOS preferences");
+
 const rollbackState = defaultState();
 let rollbackEffects = 0;
 const rollbackCoordinator = new RuntimeMutationCoordinator(rollbackState, {}, [], async () => {

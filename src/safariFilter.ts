@@ -36,19 +36,22 @@ interface ProfileListResult {
   raw: string;
 }
 
+interface SafariFilterPolicyData {
+  denyUrls: string[];
+  pathDenyUrls: string[];
+  signature: string;
+}
+
 export function safariUrlFilterEnabled(state: VigilState): boolean {
   return contentFilterEnabled(state) || state.settings?.safariUrlFilterEnabled !== false;
 }
 
 export function safariFilterDenyUrls(state: VigilState, now = new Date()): string[] {
-  return safariFilterTargets(state, now).map((target) => target.url).slice(0, URL_LIMIT);
+  return safariFilterPolicyData(state, now).denyUrls;
 }
 
 export function safariFilterPathDenyUrls(state: VigilState, now = new Date()): string[] {
-  return safariFilterTargets(state, now)
-    .filter((target) => target.pathSpecific)
-    .map((target) => target.url)
-    .slice(0, URL_LIMIT);
+  return safariFilterPolicyData(state, now).pathDenyUrls;
 }
 
 export function safariFilterTargets(state: VigilState, now = new Date()): SafariFilterUrlTarget[] {
@@ -82,25 +85,42 @@ export function safariFilterTargets(state: VigilState, now = new Date()): Safari
 }
 
 export function safariFilterPolicySignature(state: VigilState, now = new Date()): string {
+  return safariFilterPolicyData(state, now).signature;
+}
+
+function safariFilterPolicyData(state: VigilState, now: Date): SafariFilterPolicyData {
+  const targets = safariFilterTargets(state, now);
+  const denyUrls = targets.map((target) => target.url).slice(0, URL_LIMIT);
+  const pathDenyUrls = targets
+    .filter((target) => target.pathSpecific)
+    .map((target) => target.url)
+    .slice(0, URL_LIMIT);
+  const signature = safariFilterPolicySignatureForUrls(denyUrls);
+  return { denyUrls, pathDenyUrls, signature };
+}
+
+function safariFilterPolicySignatureForUrls(denyUrls: string[]): string {
   return createHash("sha256")
     .update(JSON.stringify({
       version: SAFARI_FILTER_SIGNATURE_VERSION,
       appleBuiltInContentFilter: true,
       removalDisallowed: true,
       allowSafariHistoryClearing: true,
-      denyUrls: safariFilterDenyUrls(state, now)
+      denyUrls
     }))
     .digest("hex");
 }
 
 export function buildSafariFilterProfile(state: VigilState, now = new Date()): string {
-  const urls = safariFilterDenyUrls(state, now);
-  const signature = safariFilterPolicySignature(state, now);
+  return buildSafariFilterProfileFromData(safariFilterPolicyData(state, now));
+}
+
+function buildSafariFilterProfileFromData(data: SafariFilterPolicyData): string {
   return toPlist({
     PayloadContent: [
       {
         allowListEnabled: false,
-        filterDenyList: urls,
+        filterDenyList: data.denyUrls,
         restrictWeb: true,
         useContentFilter: true,
         PayloadDescription: "Enforces Apple's built-in web content filter plus Vigil deny URLs in Safari without rewriting browser tabs.",
@@ -120,7 +140,7 @@ export function buildSafariFilterProfile(state: VigilState, now = new Date()): s
         PayloadVersion: 1
       }
     ],
-    PayloadDescription: `Vigil Safari URL filter. VigilPolicySignature:${signature}`,
+    PayloadDescription: `Vigil Safari URL filter. VigilPolicySignature:${data.signature}`,
     PayloadDisplayName: "Vigil Safari URL Filter",
     PayloadIdentifier: SAFARI_FILTER_PROFILE_ID,
     PayloadOrganization: "Vigil",
@@ -133,28 +153,27 @@ export function buildSafariFilterProfile(state: VigilState, now = new Date()): s
 
 export async function writeSafariFilterProfile(state: VigilState, now = new Date(), options: SafariProfileOptions = {}) {
   const profilePath = options.profilePath || SAFARI_FILTER_PROFILE_PATH;
-  const text = buildSafariFilterProfile(state, now);
+  const data = safariFilterPolicyData(state, now);
+  const text = buildSafariFilterProfileFromData(data);
   await mkdir(dirname(profilePath), { recursive: true });
   await writeFile(profilePath, text, "utf8");
   return {
     path: profilePath,
-    signature: safariFilterPolicySignature(state, now),
-    urlCount: safariFilterDenyUrls(state, now).length,
-    pathUrlCount: safariFilterPathDenyUrls(state, now).length
+    signature: data.signature,
+    urlCount: data.denyUrls.length,
+    pathUrlCount: data.pathDenyUrls.length
   };
 }
 
 export async function safariFilterStatus(state: VigilState, now = new Date(), options: SafariProfileOptions = {}) {
   const profilePath = options.profilePath || SAFARI_FILTER_PROFILE_PATH;
-  const signature = safariFilterPolicySignature(state, now);
-  const urls = safariFilterDenyUrls(state, now);
-  const pathUrls = safariFilterPathDenyUrls(state, now);
-  const generated = await generatedProfileMatches(profilePath, signature);
+  const data = safariFilterPolicyData(state, now);
+  const generated = await generatedProfileMatches(profilePath, data.signature);
   const installed = await installedSafariProfile();
   const appleContentFilter = await appleContentFilterStatus();
   const required = safariUrlFilterEnabled(state) && contentFilterEnabled(state);
-  const stale = Boolean(installed.installed && installed.signature !== signature);
-  const profileCurrent = Boolean(installed.installed && installed.signature === signature);
+  const stale = Boolean(installed.installed && installed.signature !== data.signature);
+  const profileCurrent = Boolean(installed.installed && installed.signature === data.signature);
   return {
     enabled: safariUrlFilterEnabled(state),
     required,
@@ -170,11 +189,11 @@ export async function safariFilterStatus(state: VigilState, now = new Date(), op
     stale,
     generated,
     path: profilePath,
-    signature,
+    signature: data.signature,
     installedSignature: installed.signature || null,
-    urlCount: urls.length,
-    pathUrlCount: pathUrls.length,
-    expectedUrls: urls.length
+    urlCount: data.denyUrls.length,
+    pathUrlCount: data.pathDenyUrls.length,
+    expectedUrls: data.denyUrls.length
   };
 }
 

@@ -6,6 +6,20 @@ import type { UsageState } from "../src/types.js";
 import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-helpers.mjs";
 
 {
+  const usage: UsageState = {};
+  const first = new Date("2026-05-28T09:00:00-04:00");
+  recordOpen(usage, { app: "Safari", hostname: "example.com" }, null, first);
+  const day = Object.values(usage)[0];
+  const updatedAt = day?.updatedAt;
+
+  recordOpen(usage, { app: "Safari", hostname: "example.com" }, { app: "Safari", hostname: "example.com" }, new Date(first.getTime() + 3_000));
+
+  assert.equal(day?.updatedAt, updatedAt, "an unchanged foreground sample must not rebuild aggregate usage data");
+  assert.equal(day?.opens.apps.Safari, 1);
+  assert.equal(day?.opens.sites["example.com"], 1);
+}
+
+{
   const state = defaultState();
   state.settings.baselineDailyMinutes = 120;
   const usage = usageFixture({

@@ -2,7 +2,7 @@ import { keyholderSummary } from "./keyholder.js";
 import { distanceKeySummary } from "./distanceKey.js";
 import { stateSealSummary } from "./seal.js";
 import { REQUIRED_EXTENSION_VERSION } from "./defaults.js";
-import { extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "./extensionPolicy.js";
+import { compactExtensionRuleSignature, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "./extensionPolicy.js";
 import { intentReasonPolicy } from "./intentReason.js";
 import { safariUrlFilterEnabled } from "./safariFilter.js";
 import { browserCompanionRequirement, networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
@@ -170,7 +170,7 @@ export function extensionDynamicRulesReady(state: VigilState, now = new Date()) 
   const dynamicRules = (state.extension?.dynamicRules || {}) as DynamicRulesState;
   const expectedSnapshot = extensionRuleSnapshot(state, now);
   const expectedCount = extensionDynamicRuleCount(expectedSnapshot);
-  const expectedSignature = extensionDynamicRuleSignature(expectedSnapshot);
+  const expectedSignature = compactExtensionRuleSignature(extensionDynamicRuleSignature(expectedSnapshot));
   const count = Number(dynamicRules.count || 0);
   const syncedAtText = String(dynamicRules.syncedAt || "");
   const syncedAt = Date.parse(syncedAtText);
@@ -222,7 +222,7 @@ export function extensionDynamicRulesReady(state: VigilState, now = new Date()) 
     };
   }
 
-  if (count !== expectedCount || dynamicRules.signature !== expectedSignature) {
+  if (count !== expectedCount || compactExtensionRuleSignature(dynamicRules.signature) !== expectedSignature) {
     return {
       ok: false,
       status: "mismatch",

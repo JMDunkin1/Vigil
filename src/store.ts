@@ -8,6 +8,7 @@ import { BRICK_MODE_PROFILE_ID, DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_A
 import { normalizeIntentionalUse } from "./intentionalUse.js";
 import { decryptJournalEntries, encryptJournalEntries, hasEncryptedJournalEntries } from "./journalEncryption.js";
 import { resolveDefaultDataDir } from "./dataPaths.js";
+import { compactExtensionRuleSignature } from "./extensionRuleSignature.js";
 import { normalizeWeekdays } from "./normalizers.js";
 import { applySealVerificationToState, markStateSealed, verifyStateTextSeal, writeStateTextSeal } from "./seal.js";
 import { withoutFocusedSocialDeniedUrls } from "./socialFeatureFilters.js";
@@ -571,6 +572,15 @@ function migrateState(state: RawState): VigilState {
   const profiles = normalizeProfiles(migrateBuiltinProfiles(mergeBuiltinProfiles(rawProfiles, fresh.profiles)));
   const settings = migrateSettings({ ...fresh.settings, ...(state.settings || {}) });
   const activeSessions = migrateActiveSessions(state, fresh, profiles);
+  const extensionDynamicRules = {
+    ...fresh.extension.dynamicRules,
+    ...(state.extension?.dynamicRules || {})
+  };
+  for (const key of ["signature", "expectedSignature"] as const) {
+    if (extensionDynamicRules[key]) {
+      extensionDynamicRules[key] = compactExtensionRuleSignature(extensionDynamicRules[key]);
+    }
+  }
   return {
     ...fresh,
     ...state,
@@ -588,10 +598,7 @@ function migrateState(state: RawState): VigilState {
     extension: {
       ...fresh.extension,
       ...(state.extension || {}),
-      dynamicRules: {
-        ...fresh.extension.dynamicRules,
-        ...(state.extension?.dynamicRules || {})
-      }
+      dynamicRules: extensionDynamicRules
     },
     focusShortcut: {
       ...fresh.focusShortcut,

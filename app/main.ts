@@ -22,7 +22,9 @@ const APP_HOST = "app";
 const APP_URL = `${APP_SCHEME}://${APP_HOST}/`;
 const execFileAsync = promisify(execFile);
 const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const TRAY_STATUS_POLL_INTERVAL_MS = 30_000;
+// Tray clicks refresh immediately; a slow background refresh keeps its label
+// useful without waking the full runtime and rebuilding menus twice a minute.
+const TRAY_STATUS_POLL_INTERVAL_MS = 5 * 60_000;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
 const EMBEDDED_SUPERVISOR_LABEL = "tech.caseline.vigil.supervisor";
 const SUPERVISOR_START_TIMEOUT_MS = 5_000;
@@ -102,6 +104,11 @@ let appUpdateActionState: AppUpdateActionState = {
   message: ""
 };
 let windowResizeSession: WindowResizeSession | null = null;
+
+// Focus Sound is an explicit saved user preference. Allow the packaged app to
+// resume that chosen playback after a relaunch just as the prior Web Audio
+// buffer player did, including now that long recordings use streaming media.
+app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
 protocol.registerSchemesAsPrivileged([{
   scheme: APP_SCHEME,
@@ -301,6 +308,7 @@ function createWindow(appUrl: string): void {
     fullscreenable: true,
     acceptFirstMouse: true,
     webPreferences: {
+      backgroundThrottling: true,
       contextIsolation: true,
       devTools: !app.isPackaged,
       nodeIntegration: false,
@@ -310,10 +318,29 @@ function createWindow(appUrl: string): void {
   });
   mainWindow = vigilWindow;
 
+  const syncRendererActivity = (): void => {
+    if (vigilWindow.isDestroyed() || vigilWindow.webContents.isDestroyed()) return;
+    vigilWindow.webContents.send(
+      "vigil:window-activity",
+      vigilWindow.isVisible() && vigilWindow.isFocused() && !vigilWindow.isMinimized()
+    );
+  };
+
   vigilWindow.setAlwaysOnTop(false);
   vigilWindow.setVisibleOnAllWorkspaces(false);
-  vigilWindow.on("ready-to-show", () => restoreNativeWindowControls(vigilWindow));
-  vigilWindow.on("show", () => restoreNativeWindowControls(vigilWindow));
+  vigilWindow.on("ready-to-show", () => {
+    restoreNativeWindowControls(vigilWindow);
+    syncRendererActivity();
+  });
+  vigilWindow.on("show", () => {
+    restoreNativeWindowControls(vigilWindow);
+    syncRendererActivity();
+  });
+  vigilWindow.on("hide", syncRendererActivity);
+  vigilWindow.on("focus", syncRendererActivity);
+  vigilWindow.on("blur", syncRendererActivity);
+  vigilWindow.on("minimize", syncRendererActivity);
+  vigilWindow.on("restore", syncRendererActivity);
   vigilWindow.on("enter-full-screen", () => {
     restoreNativeWindowControls(vigilWindow);
     setTimeout(() => restoreNativeWindowControls(vigilWindow), 250);
@@ -321,6 +348,7 @@ function createWindow(appUrl: string): void {
   vigilWindow.on("leave-full-screen", () => restoreNativeWindowControls(vigilWindow));
 
   void vigilWindow.loadURL(appUrl);
+  vigilWindow.webContents.on("did-finish-load", syncRendererActivity);
   vigilWindow.webContents.on("will-navigate", (event, url) => {
     if (!isTrustedAppUrl(url)) event.preventDefault();
   });

@@ -34,3 +34,12 @@ contextBridge.exposeInMainWorld("vigilWindowResize", {
   move: (screenX, screenY) => ipcRenderer.send("vigil:window-resize-move", { screenX, screenY }),
   end: () => ipcRenderer.send("vigil:window-resize-end")
 });
+
+contextBridge.exposeInMainWorld("vigilWindowActivity", {
+  subscribe: (listener) => {
+    if (typeof listener !== "function") return () => {};
+    const handleActivity = (_event, active) => listener(active === true);
+    ipcRenderer.on("vigil:window-activity", handleActivity);
+    return () => ipcRenderer.removeListener("vigil:window-activity", handleActivity);
+  }
+});

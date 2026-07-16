@@ -23,7 +23,7 @@ import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanc
 import { assertKeyholderPasscode, updateKeyholderSettings } from "./keyholder.js";
 import { discardRequestBody, errorStatus, readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, sendMdmPlist, serializeError, serveStatic, mdmHeaders } from "./server/http.js";
 import { createLocalScriptRunner } from "./server/localScripts.js";
-import { blockedPage, companionPage, pausePage } from "./server/pages.js";
+import { blockedPageResponse, companionPage, pausePage } from "./server/pages.js";
 import { isExtensionApiPath, matchApiRoute } from "./server/apiRoutes.js";
 import { handleAppUpdateApiRoute } from "./server/appUpdateRoutes.js";
 import { handleAccountApiRoute } from "./server/accountRoutes.js";
@@ -190,7 +190,10 @@ export async function startVigilRuntime(options: ServerOptions = {}): Promise<Vi
       state,
       usage,
       runtimeInstanceId: startedAt,
-      mutate: async (operation) => await requireMutationCoordinator().run(({ state: draftState, usage: draftUsage, afterCommit }) => operation(draftState, draftUsage, afterCommit))
+      mutate: async (operation, mutationOptions) => await requireMutationCoordinator().run(
+        ({ state: draftState, usage: draftUsage, afterCommit }) => operation(draftState, draftUsage, afterCommit),
+        mutationOptions
+      )
     }, { start: false }) as unknown as MonitorHandle;
     const effectMonitor = monitor;
     mutationCoordinator.setEffectObserver((entry, transition, error) => effectMonitor.observeDurableEffect(entry, transition, error));
@@ -373,7 +376,17 @@ async function dispatchRequest(
     }
 
     if (url.pathname === "/blocked") {
-      sendHtml(response, blockedPage({ url, state: requestState, port: activePort }));
+      const page = blockedPageResponse(
+        { url, state: requestState, port: activePort },
+        String(request.headers.referer || "")
+      );
+      if (page.status === 302) {
+        sendEmpty(response, 302, { Location: page.location, "Cache-Control": "no-store" });
+      } else if (page.status === 204) {
+        sendEmpty(response, 204, { "Cache-Control": "no-store" });
+      } else {
+        sendHtml(response, page.body);
+      }
       return;
     }
 

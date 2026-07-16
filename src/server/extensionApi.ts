@@ -3,7 +3,7 @@ import { apiRequestGuard, extensionCorsHeaders, extensionTrustSummary, isTrusted
 import type { RequestTransportContext } from "../apiSecurity.js";
 import { truthy } from "../booleans.js";
 import { REQUIRED_EXTENSION_VERSION } from "../defaults.js";
-import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "../extensionPolicy.js";
+import { compactExtensionRuleSignature, evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "../extensionPolicy.js";
 import { confirmIntentionalPause, skipIntentionalPause } from "../intentionalUse.js";
 import { addEvent, saveState, saveUsage } from "../store.js";
 import { clampNumber } from "../time.js";
@@ -161,6 +161,7 @@ async function handleExtensionRules(
   const snapshot = extensionRuleSnapshot(state);
   const expectedCount = extensionDynamicRuleCount(snapshot);
   const expectedSignature = extensionDynamicRuleSignature(snapshot);
+  const compactExpectedSignature = compactExtensionRuleSignature(expectedSignature);
   if (trustedExtensionRequest(request)) {
     state.extension = {
       ...(state.extension || {}),
@@ -171,7 +172,7 @@ async function handleExtensionRules(
       dynamicRules: {
         ...(state.extension?.dynamicRules || {}),
         expectedCount,
-        expectedSignature,
+        expectedSignature: compactExpectedSignature,
         requestedAt: snapshot.generatedAt,
         fallbackRequired: snapshot.fallbackRequired
       }
@@ -211,8 +212,8 @@ async function handleExtensionRulesSync(
         syncedAt: new Date().toISOString(),
         count,
         expectedCount,
-        signature,
-        expectedSignature,
+        signature: compactExtensionRuleSignature(signature),
+        expectedSignature: compactExtensionRuleSignature(expectedSignature),
         fallbackRequired: snapshot.fallbackRequired,
         status: ok ? "synced" : (truthy(body.ok) ? "mismatch" : "failed"),
         ok,

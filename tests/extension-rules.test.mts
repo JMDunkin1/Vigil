@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createContext, runInContext } from "node:vm";
 import { contentFilterRuleEntries } from "../src/contentFilters.js";
 import { SOFT_BLOCK_PROFILE_ID, defaultState } from "../src/defaults.js";
-import { evaluateExtensionCheck, extensionRuleSnapshot } from "../src/extensionPolicy.js";
+import { compactExtensionRuleSignature, evaluateExtensionCheck, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { activePolicy } from "../src/policy.js";
 import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.mjs";
 
@@ -24,6 +24,12 @@ assert.doesNotMatch(contentSource, /\nexport \{\};?\s*$/u, "Chrome content scrip
 assert.doesNotMatch(backgroundSource, /result\.signature\s*=\s*snapshot\.dynamicRuleSignature/);
 assert.doesNotMatch(contentSource, /activateOfflineGuard/);
 assert.doesNotMatch(contentSource, /data-vigil-page-guard-state/);
+assert.match(compactExtensionRuleSignature("large canonical rule payload"), /^sha256:[a-f0-9]{64}$/u);
+assert.equal(
+  compactExtensionRuleSignature(compactExtensionRuleSignature("large canonical rule payload")),
+  compactExtensionRuleSignature("large canonical rule payload"),
+  "persisted rule digests must remain stable when normalized again"
+);
 assert.ok(
   contentSource.indexOf("focusedSocialCleanupEnabled === true") < contentSource.indexOf("result.offline === true"),
   "cached cleanup flags must be applied before an offline pulse releases the page guard"

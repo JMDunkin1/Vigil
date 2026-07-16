@@ -130,7 +130,13 @@ export const ADULT_BLOCKLIST_SOURCES: AdultBlocklistSource[] = [
 
 let runtimeSnapshot: AdultBlocklistSnapshot | null = null;
 let runtimeSnapshotPath: string | null = null;
-let runtimeDomainSet: Set<string> | null = null;
+let runtimeDomainViewCache: {
+  snapshot: AdultBlocklistSnapshot;
+  allowlistKey: string;
+  allowlist: string[];
+  activeCount: number;
+  preloads: Map<number, string[]>;
+} | null = null;
 const diskSnapshotCache = new Map<string, AdultBlocklistSnapshot | null>();
 
 export function adultBlocklistEnabled(state: VigilState): boolean {
@@ -330,8 +336,8 @@ export function matchAdultBlocklistHost(state: VigilState, value: unknown): Adul
     };
   }
   const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
-  if (!snapshot || !runtimeDomainSet?.size) return null;
-  const domain = matchingDomain(hostname, runtimeDomainSet);
+  if (!snapshot?.domains.length) return null;
+  const domain = matchingDomain(hostname, snapshot.domains);
   if (!domain) return null;
   return {
     id: "adult-blocklist",
@@ -348,23 +354,40 @@ export function adultBlocklistPreloadDomains(state: VigilState, options: { limit
   const limit = adultBlocklistPreloadLimit(state, options.limit);
   if (limit <= 0) return [];
   const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
-  const representative = [...new Set(DEFAULT_EXPLICIT_BLOCKED_SITES.map(normalizeAdultDomain).filter(Boolean))];
-  const representativeSet = new Set(representative);
-  const candidates = [
-    ...representative,
-    ...(snapshot?.domains || []).filter((domain) => !representativeSet.has(domain))
-  ];
-  return candidates
-    .filter((domain) => !adultBlocklistAllowsHost(state, domain))
-    .slice(0, limit);
+  const view = snapshot ? runtimeDomainView(state, snapshot) : null;
+  const cached = view?.preloads.get(limit);
+  if (cached) return [...cached];
+
+  const allowlist = view?.allowlist || normalizeAdultDomainList(state.adultBlocklist?.allowlist || []);
+  const output: string[] = [];
+  const seen = new Set<string>();
+  const append = (domain: string) => {
+    if (!domain || seen.has(domain) || adultBlocklistAllowsHost(state, domain, allowlist)) return;
+    seen.add(domain);
+    output.push(domain);
+  };
+  for (const domain of DEFAULT_EXPLICIT_BLOCKED_SITES.map(normalizeAdultDomain).filter(Boolean)) {
+    append(domain);
+    if (output.length >= limit) break;
+  }
+  if (output.length < limit) {
+    for (const domain of snapshot?.domains || []) {
+      append(domain);
+      if (output.length >= limit) break;
+    }
+  }
+  view?.preloads.set(limit, output);
+  return [...output];
 }
 
 export function adultBlocklistSummary(state: VigilState) {
   const selected = adultBlocklistSource(state);
   const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
-  const availableSnapshots = availableAdultBlocklistSnapshotsSync(state);
   const storedSourceMatches = adultBlocklistSourceMatches(state.adultBlocklist?.source, selected);
   const stored = storedSourceMatches ? state.adultBlocklist : null;
+  const availableSnapshots = snapshot && storedSourceMatches
+    ? [snapshot]
+    : availableAdultBlocklistSnapshotsSync(state);
   const domains = snapshot?.domains || [];
   const domainCount = snapshot?.domainCount || stored?.domainCount || 0;
   const activeCount = snapshot ? activeDomainCount(state, domains) : stored?.activeDomainCount || 0;
@@ -396,8 +419,12 @@ export function adultBlocklistSummary(state: VigilState) {
         format: "domains"
       }
     ],
-    allowlist: normalizeAdultDomainList(state.adultBlocklist?.allowlist || []),
-    allowlistCount: normalizeAdultDomainList(state.adultBlocklist?.allowlist || []).length,
+    allowlist: snapshot
+      ? [...runtimeDomainView(state, snapshot).allowlist]
+      : normalizeAdultDomainList(state.adultBlocklist?.allowlist || []),
+    allowlistCount: snapshot
+      ? runtimeDomainView(state, snapshot).allowlist.length
+      : normalizeAdultDomainList(state.adultBlocklist?.allowlist || []).length,
     domainCount,
     activeDomainCount: activeCount,
     preloadLimit: adultBlocklistPreloadLimit(state),
@@ -506,7 +533,7 @@ export async function syncAdultBlocklistPhoneArtifact(
 function clearAdultBlocklistCache(): void {
   runtimeSnapshot = null;
   runtimeSnapshotPath = null;
-  runtimeDomainSet = null;
+  runtimeDomainViewCache = null;
   diskSnapshotCache.clear();
 }
 
@@ -531,24 +558,76 @@ function adultBlocklistPreloadLimit(state: VigilState, override?: number): numbe
 }
 
 function activeDomainCount(state: VigilState, domains: string[]): number {
-  return activeAdultBlocklistDomains(state, domains).length;
+  const snapshot = runtimeSnapshot?.domains === domains ? runtimeSnapshot : null;
+  if (snapshot) return runtimeDomainView(state, snapshot).activeCount;
+  const allowlist = normalizeAdultDomainList(state.adultBlocklist?.allowlist || []);
+  if (!allowlist.length) return domains.length;
+  let count = 0;
+  for (const domain of domains) {
+    if (!adultBlocklistAllowsHost(state, domain, allowlist)) count += 1;
+  }
+  return count;
 }
 
 function activeAdultBlocklistDomains(state: VigilState, domains: string[]): string[] {
-  return domains.filter((domain) => !adultBlocklistAllowsHost(state, domain));
+  const allowlist = normalizeAdultDomainList(state.adultBlocklist?.allowlist || []);
+  if (!allowlist.length) return domains;
+  return domains.filter((domain) => !adultBlocklistAllowsHost(state, domain, allowlist));
 }
 
-function adultBlocklistAllowsHost(state: VigilState, hostname: string): boolean {
-  return normalizeAdultDomainList(state.adultBlocklist?.allowlist || []).some((domain) => hostMatchesDomain(hostname, domain));
+function adultBlocklistAllowsHost(state: VigilState, hostname: string, normalizedAllowlist?: string[]): boolean {
+  const allowlist = normalizedAllowlist || normalizeAdultDomainList(state.adultBlocklist?.allowlist || []);
+  return allowlist.some((domain) => hostMatchesDomain(hostname, domain));
 }
 
-function matchingDomain(hostname: string, domains: Set<string>): string {
+function runtimeDomainView(state: VigilState, snapshot: AdultBlocklistSnapshot) {
+  const allowlist = normalizeAdultDomainList(state.adultBlocklist?.allowlist || []);
+  const allowlistKey = allowlist.join("\n");
+  if (
+    runtimeDomainViewCache?.snapshot === snapshot
+    && runtimeDomainViewCache.allowlistKey === allowlistKey
+  ) return runtimeDomainViewCache;
+
+  let activeCount = snapshot.domains.length;
+  if (allowlist.length) {
+    activeCount = 0;
+    for (const domain of snapshot.domains) {
+      if (!adultBlocklistAllowsHost(state, domain, allowlist)) activeCount += 1;
+    }
+  }
+  runtimeDomainViewCache = {
+    snapshot,
+    allowlistKey,
+    allowlist,
+    activeCount,
+    preloads: new Map()
+  };
+  return runtimeDomainViewCache;
+}
+
+function matchingDomain(hostname: string, domains: ReadonlySet<string> | readonly string[]): string {
   const labels = hostname.split(".");
   for (let index = 0; index < labels.length - 1; index += 1) {
     const candidate = labels.slice(index).join(".");
-    if (domains.has(candidate)) return candidate;
+    if (domainCollectionHas(domains, candidate)) return candidate;
   }
   return "";
+}
+
+function domainCollectionHas(domains: ReadonlySet<string> | readonly string[], candidate: string): boolean {
+  const set = domains as ReadonlySet<string>;
+  if (typeof set.has === "function") return set.has(candidate);
+  const sorted = domains as readonly string[];
+  let low = 0;
+  let high = sorted.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    const value = sorted[middle] || "";
+    if (value === candidate) return true;
+    if (value < candidate) low = middle + 1;
+    else high = middle - 1;
+  }
+  return false;
 }
 
 function hostMatchesDomain(hostname: string, domain: string): boolean {
@@ -836,7 +915,7 @@ function loadAdultBlocklistSnapshotSync(path: string): AdultBlocklistSnapshot | 
 function setRuntimeSnapshot(snapshot: AdultBlocklistSnapshot, path: string | null = null): void {
   runtimeSnapshot = snapshot;
   runtimeSnapshotPath = path;
-  runtimeDomainSet = new Set(snapshot.domains);
+  runtimeDomainViewCache = null;
 }
 
 function availableAdultBlocklistSnapshotsSync(state: VigilState): AdultBlocklistSnapshot[] {

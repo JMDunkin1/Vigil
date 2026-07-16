@@ -283,7 +283,14 @@ assert.match(audioMarkup, /id="audioSoundLibrary"[\s\S]*?id="focusSoundAttributi
 assert.match(audioMarkup, /id="focusSoundWave" class="audio-wave"/, "the player should keep the compact live waveform");
 const focusSoundSource = await readFile("public/focus-sound.js", "utf8");
 assert.match(focusSoundSource, /createAnalyser\(\)/, "the waveform must measure the playback signal instead of inventing motion");
+assert.match(focusSoundSource, /createMediaElementSource/, "long recordings must stream instead of remaining as fully decoded audio buffers");
+assert.match(focusSoundSource, /maximumDecodedAudioBuffers\s*=\s*1/, "the compatibility decoder must not retain every recording played during a long session");
+assert.match(focusSoundSource, /waveformFrameIntervalMs\s*=\s*1000\s*\/\s*24/, "the live waveform must not redraw its analyser and every bar at display refresh rate");
 assert.match(focusSoundSource, /getFloatTimeDomainData/, "quiet passages must reduce the waveform using the signal's real loudness");
 assert.match(focusSoundSource, /getByteFrequencyData/, "each waveform bar must reflect the signal's real frequency shape");
 assert.doesNotMatch(styles, /@keyframes listeningWave|animation:\s*listeningWave/, "the waveform must not regress to a decorative loop");
 assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"title wave"[\s\S]*?"control control";/, "the compact waveform must stay at the top right above the full-width playback control");
+assert.match(appSource, /visibilitychange/, "the renderer must react when its window becomes hidden");
+assert.match(appSource, /vigilWindowActivity/, "the renderer must honor Electron's native focus state even when DOM focus reporting is stale");
+assert.match(appSource, /INACTIVE_STATE_POLL_MS\s*=\s*30_000/, "an inactive window must not rebuild the full dashboard every three seconds");
+assert.match(styles, /html\.app-inactive \*,[\s\S]*?animation:\s*none !important;[\s\S]*?will-change:\s*auto !important;/, "unfocused Vigil windows must release decorative animation compositor layers");
