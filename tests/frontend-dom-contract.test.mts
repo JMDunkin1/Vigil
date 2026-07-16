@@ -126,6 +126,7 @@ assert.doesNotMatch(styles, /body:not\(\[data-active-view="home"\]\) \.app-chrom
 assert.match(styles, /\.brand-home\s*\{[^}]*background:\s*transparent;[^}]*font:\s*inherit;/, "the Home button must preserve the Vigil wordmark styling");
 const uiShellSource = await readFile("public/ui-shell.js", "utf8");
 assert.match(uiShellSource, /localStorage\.setItem\("vigil-sidebar-collapsed"/, "the explicit sidebar choice must persist");
+assert.match(uiShellSource, /renderActiveView[\s\S]*window\.scrollTo\(0, 0\)/, "view navigation must reset the document scroll position");
 assert.doesNotMatch(styles, /@media \(max-width: 900px\)\s*\{\s*body\s*\{\s*display:\s*block/, "narrow windows must retain the sidebar grid");
 
 const trackingMarkup = html.match(/<section id="view-journal"[\s\S]*?<div class="journal-page journal-only"/)?.[0] || "";

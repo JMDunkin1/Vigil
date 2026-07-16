@@ -86,4 +86,5 @@ export function renderActiveView(activeView: string): void {
       button.setAttribute("title", active ? "Close settings" : "Settings");
     }
   }
+  window.scrollTo(0, 0);
 }
