@@ -70,6 +70,8 @@ assert.match(settingsUiSource, /data-editor-for|dataset\.editorFor/, "New and Ed
 assert.doesNotMatch(settingsUiSource, /addEventListener\("submit"/, "settings editors must not close before an asynchronous save succeeds");
 assert.match(settingsUiSource, /resetSettingsUi[\s\S]*querySelectorAll\("details"\)[\s\S]*disclosure\.open = false/, "leaving settings must collapse every expanded setting");
 assert.match(settingsUiSource, /resetSettingsUi[\s\S]*search\.value = ""/, "leaving settings must clear the settings search");
+assert.match(settingsUiSource, /resetSettingsUi[\s\S]*querySelectorAll\("\.settings-nav-item"\)[\s\S]*button\.hidden = false/, "leaving settings must restore category buttons hidden by search");
+assert.match(settingsUiSource, /:scope > \.pill, :scope > #iconThemeStatus/, "the icon-theme status must move out of the hidden source summary");
 assert.match(settingsAppSource, /previousView === "settings" && state\.activeView !== "settings"[\s\S]*resetSettingsUi\(\)/, "the settings reset must run only after navigating away");
 assert.match(
   setupWizardSource,

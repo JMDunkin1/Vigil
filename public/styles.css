@@ -7195,6 +7195,459 @@ body[data-active-view="settings"] .settings-disclosure-body > .workspace.two-col
   }
 }
 
+/* Settings workspace — one quiet navigation and one consistent row system. */
+body[data-active-view="settings"] .shell {
+  width: min(1180px, 100%);
+}
+
+.settings-titlebar {
+  min-height: 76px;
+  margin-bottom: 22px;
+  align-items: end;
+}
+
+.settings-titlecopy {
+  display: grid;
+  gap: 3px;
+}
+
+.settings-titlecopy > span,
+.settings-category-kicker {
+  color: var(--primary);
+  font-size: 0.64rem;
+  font-weight: 850;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.settings-titlebar .settings-titlecopy h2 {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: clamp(1.55rem, 2.5vw, 2rem);
+  font-weight: 780;
+  letter-spacing: -0.045em;
+}
+
+.settings-titlecopy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 590;
+}
+
+.settings-search {
+  width: min(260px, 100%);
+}
+
+.settings-search input {
+  min-height: 36px;
+  padding: 7px 13px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 66%, transparent);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 156px minmax(0, 1fr);
+  gap: clamp(24px, 4vw, 48px);
+  align-items: start;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 2px;
+}
+
+.settings-nav-item {
+  position: relative;
+  width: 100%;
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 8px 10px 8px 14px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.76rem;
+  font-weight: 720;
+  text-align: left;
+  box-shadow: none;
+}
+
+.settings-nav-item::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  width: 2px;
+  height: 14px;
+  border-radius: 99px;
+  background: transparent;
+}
+
+.settings-nav-item:hover,
+.settings-nav-item:focus-visible {
+  background: color-mix(in srgb, var(--surface-strong) 58%, transparent);
+  color: var(--ink);
+  transform: none;
+}
+
+.settings-nav-item.is-active {
+  background: color-mix(in srgb, var(--primary) 9%, transparent);
+  color: var(--ink);
+}
+
+.settings-nav-item.is-active::before {
+  background: var(--primary);
+}
+
+.settings-content {
+  min-width: 0;
+}
+
+body[data-active-view="settings"] .settings-category {
+  display: none;
+  margin: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body[data-active-view="settings"] .settings-category.is-active,
+body[data-active-view="settings"] .settings-root.is-searching .settings-category:not([hidden]) {
+  display: block;
+}
+
+body[data-active-view="settings"] .settings-root.is-searching .settings-category + .settings-category {
+  margin-top: 38px;
+}
+
+body[data-active-view="settings"] .settings-category > summary {
+  display: none;
+}
+
+.settings-category-header {
+  min-height: 76px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 1px 2px 18px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+}
+
+.settings-category-header > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.settings-category-header h2 {
+  margin: 0;
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.28rem;
+  font-weight: 780;
+  letter-spacing: -0.035em;
+}
+
+.settings-category-header p {
+  max-width: 620px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 560;
+  line-height: 1.45;
+}
+
+.settings-category-header > .settings-category-status {
+  flex: 0 0 auto;
+  min-height: 26px;
+  margin-top: 10px;
+  padding: 4px 9px;
+  font-size: 0.64rem;
+}
+
+.settings-category-header > :not(.pill).settings-category-status {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 650;
+}
+
+body[data-active-view="settings"] .settings-category > .settings-disclosure-body {
+  padding: 0;
+  border: 0;
+}
+
+body[data-active-view="settings"] .settings-category .settings-disclosure-body > .workspace,
+body[data-active-view="settings"] .settings-category .settings-disclosure-body > .workspace.two-column {
+  display: block;
+  margin: 0;
+}
+
+body[data-active-view="settings"] .settings-category .settings-disclosure-body > .panel {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-subsection {
+  overflow: visible;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-subsection + .settings-subsection {
+  margin-top: 0;
+}
+
+.settings-subsection > summary {
+  min-height: 68px;
+  gap: 14px;
+  padding: 12px 38px 12px 2px;
+  border-radius: 8px;
+}
+
+.settings-subsection > summary:hover {
+  background: color-mix(in srgb, var(--surface-strong) 44%, transparent);
+}
+
+.settings-subsection > summary::after {
+  right: 6px;
+  color: color-mix(in srgb, var(--muted) 76%, transparent);
+  font-size: 1.05rem;
+}
+
+.settings-subsection[open] > summary {
+  background: color-mix(in srgb, var(--surface-strong) 34%, transparent);
+}
+
+.settings-subsection-copy {
+  gap: 4px;
+}
+
+.settings-subsection-copy strong {
+  font-size: 0.88rem;
+  font-weight: 760;
+  letter-spacing: -0.018em;
+}
+
+.settings-subsection-copy small {
+  max-width: 580px;
+  color: var(--muted);
+  font-size: 0.69rem;
+  font-weight: 570;
+  line-height: 1.4;
+}
+
+.settings-subsection-actions {
+  gap: 6px;
+}
+
+.settings-subsection-actions button,
+.settings-subsection-actions select,
+.settings-subsection-actions .pill {
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 0.68rem;
+}
+
+.settings-subsection-body {
+  padding: 2px 2px 20px;
+  border-top: 0;
+}
+
+.settings-editor {
+  margin-top: 8px;
+  overflow: clip;
+  border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 32%, transparent);
+}
+
+.settings-form-section.settings-editor {
+  margin-top: 0;
+  overflow: visible;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-editor > summary {
+  min-height: 46px;
+  padding: 8px 36px 8px 11px;
+  color: var(--ink);
+  font-size: 0.73rem;
+  font-weight: 740;
+}
+
+.settings-form-section.settings-editor > summary {
+  min-height: 68px;
+  padding: 12px 38px 12px 2px;
+}
+
+.settings-editor > summary:hover {
+  background: color-mix(in srgb, var(--surface-strong) 48%, transparent);
+}
+
+.settings-editor-body {
+  gap: 8px;
+  padding: 2px 8px 10px;
+}
+
+.settings-form-section > .settings-editor-body {
+  padding: 2px 2px 20px;
+}
+
+.settings-editor-body > form {
+  padding: clamp(12px, 2vw, 18px);
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-strong) 42%, transparent);
+  box-shadow: none;
+}
+
+.settings-form-section .device-form-head {
+  margin-bottom: 14px;
+}
+
+.settings-form-section .device-form-head > div:first-child > .eyebrow,
+.settings-form-section .device-form-head > div:first-child > strong {
+  display: none;
+}
+
+.settings-form-section .device-form-head > div:first-child > span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.settings-editor-done {
+  margin: 0 2px;
+}
+
+.settings-subsection-body > :is(
+  .toggle-row,
+  .adult-blocklist-panel,
+  .app-update-panel,
+  .focus-shortcut-panel,
+  .maintenance-panel,
+  .hardening-actions,
+  .audit-list,
+  .blocker-list,
+  .hosts-preview,
+  .device-grid,
+  .setup-list
+) {
+  margin: 0;
+  padding: 14px 2px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-subsection-body > :is(.list, .limit-list) {
+  margin: 6px 0 0;
+}
+
+.settings-subsection-body .list-item {
+  min-height: 50px;
+  padding: 8px 2px;
+}
+
+body[data-active-view="settings"] .settings-content input:not([type="checkbox"]):not([type="radio"]),
+body[data-active-view="settings"] .settings-content select,
+body[data-active-view="settings"] .settings-content textarea {
+  border-radius: 7px;
+}
+
+body[data-active-view="settings"] .settings-content button:not(.settings-nav-item) {
+  border-radius: 7px;
+  letter-spacing: 0;
+}
+
+.icon-theme-settings .settings-disclosure-body {
+  padding-top: 14px !important;
+}
+
+.icon-theme-settings .icon-theme-picker {
+  gap: 6px;
+  padding: 0;
+  border: 0;
+}
+
+.icon-theme-settings .icon-theme-option {
+  min-height: 62px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.icon-theme-settings .icon-theme-option:hover {
+  background: color-mix(in srgb, var(--surface-strong) 44%, transparent);
+}
+
+@media (max-width: 760px) {
+  .settings-titlebar {
+    align-items: stretch;
+  }
+
+  .settings-layout {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+
+  .settings-nav {
+    position: static;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    padding-bottom: 3px;
+  }
+
+  .settings-nav-item {
+    width: auto;
+    flex: 0 0 auto;
+    min-height: 34px;
+    justify-content: center;
+    padding: 7px 11px;
+  }
+
+  .settings-nav-item::before {
+    inset: auto 10px 1px;
+    width: auto;
+    height: 2px;
+  }
+
+  .settings-category-header {
+    min-height: 68px;
+  }
+
+  .settings-subsection > summary,
+  .settings-form-section.settings-editor > summary {
+    align-items: flex-start;
+  }
+}
+
 #view-home .saint-info-popover {
   position: absolute;
   top: clamp(12px, 2.4vh, 24px);
