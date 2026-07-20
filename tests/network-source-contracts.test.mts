@@ -46,14 +46,18 @@ const embeddedSupervisorPlist = `
   <?xml version="1.0" encoding="UTF-8"?>
   <plist version="1.0"><dict>
     <key>Label</key><string>tech.caseline.vigil.supervisor</string>
-    <key>ProgramArguments</key><array><string>/Users/test/Library/Application Support/Vigil/supervisor/vigil-supervisor.zsh</string></array>
+    <key>ProgramArguments</key><array><string>/Users/test/Library/Application Support/Vigil/supervisor/vigil-supervisor-DO-NOT-TERMINATE-OR-BOOTOUT.zsh</string><string>--vigil-safety-boundary-do-not-terminate-or-bootout</string></array>
     <key>EnvironmentVariables</key><dict>
+      <key>HOME</key><string>/Users/test</string>
+      <key>USER</key><string>test</string>
+      <key>LOGNAME</key><string>test</string>
+      <key>PATH</key><string>/Users/test/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
       <key>VIGIL_DATA_DIR</key><string>/Users/test/Library/Application Support/Vigil</string>
       <key>VIGIL_EMBEDDED_RUNTIME</key><string>1</string>
       <key>VIGIL_RESTART_SUPERVISED</key><string>1</string>
     </dict>
     <key>RunAtLoad</key><true/>
-    <key>KeepAlive</key><dict><key>PathState</key><dict><key>/Users/test/Library/Application Support/Vigil/supervisor/enabled</key><true/></dict></dict>
+    <key>KeepAlive</key><dict><key>PathState</key><dict><key>/Users/test/Library/Application Support/Vigil/supervisor/SAFETY-BOUNDARY-DO-NOT-REMOVE.enabled</key><true/></dict></dict>
     <key>ThrottleInterval</key><integer>5</integer>
     <key>ProcessType</key><string>Interactive</string>
     <key>StandardOutPath</key><string>/Users/test/Library/Application Support/Vigil/logs/supervisor.log</string>
@@ -72,7 +76,7 @@ assert.equal(
   true,
   "the exact generated launchd configuration must pass restart-hardening diagnostics"
 );
-assert.equal(embeddedSupervisorMarkerPath(embeddedSupervisorPlist), "/Users/test/Library/Application Support/Vigil/supervisor/enabled", "restart diagnostics must read the active PathState marker path from the plist");
+assert.equal(embeddedSupervisorMarkerPath(embeddedSupervisorPlist), "/Users/test/Library/Application Support/Vigil/supervisor/SAFETY-BOUNDARY-DO-NOT-REMOVE.enabled", "restart diagnostics must read the active PathState marker path from the plist");
 assert.equal(embeddedSupervisorRestartHardened(embeddedSupervisorPlist, embeddedSupervisorExpectation, { ...healthyEmbeddedSupervisor, markerActive: false }), false, "a missing PathState marker must disable restart hardening");
 assert.equal(embeddedSupervisorRestartHardened(embeddedSupervisorPlist, embeddedSupervisorExpectation, { ...healthyEmbeddedSupervisor, supervisorRunning: false }), false, "an inactive supervisor process must disable restart hardening");
 assert.equal(embeddedSupervisorRestartHardened(embeddedSupervisorPlist, embeddedSupervisorExpectation, { ...healthyEmbeddedSupervisor, scriptExecutable: false }), false, "a non-executable supervisor script must disable restart hardening");

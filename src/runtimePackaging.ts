@@ -7,6 +7,7 @@ const EXCLUDED_RUNTIME_FILES = new Set([
   "scripts/copy-assets.mts",
   "scripts/dev-server.mjs",
   "scripts/dev-server.mts",
+  "scripts/ios-phone-suite.mjs",
   "scripts/run-tests.mjs",
   "scripts/run-tests.mts",
   "scripts/test-ios-social.mjs",

@@ -16,6 +16,23 @@ assert.match(mainSource, /vigil:window-activity/, "Electron must send authoritat
 assert.match(mainSource, /vigilWindow\.on\("blur", syncRendererActivity\)/, "losing native window focus must immediately stop renderer animation work");
 assert.match(mainSource, /app\.commandLine\.appendSwitch\("autoplay-policy", "no-user-gesture-required"\)/, "saved Focus Sound playback must resume after a packaged-app relaunch");
 
+const appIdentityIndex = mainSource.indexOf('app.setName("Vigil")');
+const canonicalUserDataIndex = mainSource.indexOf('app.setPath("userData", join(app.getPath("appData"), "Vigil"))');
+const singleInstanceLockIndex = mainSource.indexOf("app.requestSingleInstanceLock()");
+const protocolRegistrationIndex = mainSource.indexOf("protocol.registerSchemesAsPrivileged");
+assert.ok(
+  appIdentityIndex >= 0
+    && canonicalUserDataIndex > appIdentityIndex
+    && singleInstanceLockIndex > canonicalUserDataIndex
+    && protocolRegistrationIndex > singleInstanceLockIndex,
+  "every Vigil launcher must use one canonical profile and take the singleton lock before registering app UI infrastructure"
+);
+assert.match(
+  mainSource,
+  /if \(!app\.requestSingleInstanceLock\(\)\) app\.exit\(0\);/,
+  "a rejected secondary Vigil process must exit immediately before it can appear as another Dock app"
+);
+
 assert.match(
   mainSource,
   /app\.on\("activate", \(\) => \{\s*revealVigilWindow\(\);\s*\}\);/,
@@ -23,8 +40,13 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /app\.on\("second-instance", \(_event, argv\) => \{\s*if \(argv\.includes\(BACKGROUND_LAUNCH_ARG\)\) return;\s*revealVigilWindow\(\);\s*\}\);/,
-  "manual singleton launches must reveal Vigil without letting supervisor retries open its window"
+  /app\.on\("second-instance", \(_event, argv\) => \{[\s\S]*?argv\.includes\(BACKGROUND_LAUNCH_ARG\)[\s\S]*?startupComplete && !quitForUpdate && argv\.includes\(SAFETY_BOUNDARY_ARG\)[\s\S]*?requestEmbeddedSupervisorRepair\(\)[\s\S]*?return;[\s\S]*?revealVigilWindow\(\);\s*\}\);/,
+  "manual singleton launches must reveal Vigil without letting supervisor retries open its window or undo update suspension"
+);
+assert.match(
+  mainSource,
+  /function requestEmbeddedSupervisorRepair[\s\S]*?supervisorRepairInFlight[\s\S]*?repairEmbeddedRuntimeSupervisor\(\)[\s\S]*?finally/,
+  "an admin-protected system guardian launch must repair a missing user supervisor without revealing Vigil"
 );
 assert.match(
   mainSource,
@@ -115,7 +137,12 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function embeddedRuntimeSupervisorScript[\s\S]*?runtime-ready\.json[\s\S]*?kill -0 "\$pid"[\s\S]*?\/usr\/bin\/open -g "\$app_path" --args \$\{BACKGROUND_LAUNCH_ARG\}/,
+  /AGENT-NOTICE-DO-NOT-TERMINATE\.md[\s\S]*?mode: 0o644/,
+  "the agent warning must remain owner-writable so Vigil can refresh it on every supervised startup"
+);
+assert.match(
+  mainSource,
+  /function embeddedRuntimeSupervisorScript[\s\S]*?runtime-ready\.json[\s\S]*?kill -0 "\$pid"[\s\S]*?\/usr\/bin\/open -g "\$app_path" --args \$\{BACKGROUND_LAUNCH_ARG\} \$\{SAFETY_BOUNDARY_ARG\}/,
   "the launchd supervisor must watch the embedded runtime PID and reopen the packaged app in the background after a crash"
 );
 assert.match(

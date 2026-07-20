@@ -38,6 +38,11 @@
     "ios:supervise-preserve-layout": "node scripts/supervise-ios-preserving-layout.mjs",
     "ios:apply-usb": "node scripts/apply-ios-usb-profile.mjs",
     "ios:apply-usb:watch": "node scripts/watch-ios-usb-profile.mjs",
+    "ios:phone:status": "node scripts/ios-phone-suite.mjs status",
+    "ios:phone:check": "node scripts/ios-phone-suite.mjs check",
+    "ios:phone:audit": "node scripts/ios-phone-suite.mjs audit",
+    "ios:phone:update": "node scripts/ios-phone-suite.mjs update",
+    "ios:phone:bump": "node scripts/ios-phone-suite.mjs bump",
     "ios:social:build": "npm run build && node dist/runtime/scripts/build-ios-social-app.mjs",
     "ios:social:test": "npm run build && npm run ios:social:test:runtime",
     "ios:social:test:runtime": "node dist/runtime/scripts/test-ios-social.mjs",
@@ -50,7 +55,8 @@
     "doctor": "npm run build && node dist/runtime/scripts/doctor.mjs",
     "agent": "node scripts/vigil-agent.mjs",
     "install:agent": "npm run build && node dist/runtime/scripts/install-launch-agent.mjs",
-    "uninstall:agent": "npm run build && node dist/runtime/scripts/uninstall-launch-agent.mjs"
+    "uninstall:agent": "npm run build && node dist/runtime/scripts/uninstall-launch-agent.mjs",
+    "install:system-guardian": "npm run build && sudo env PATH=\"$PATH\" node dist/runtime/scripts/install-system-guardian.mjs"
   },
   "engines": {
     "node": ">=22.6"
@@ -58,7 +64,6 @@
   "build": {
     "appId": "tech.caseline.vigil",
     "productName": "Vigil",
-    "afterPack": "scripts/after-pack.mjs",
     "directories": {
       "output": "dist/mac.noindex"
     },
@@ -72,6 +77,7 @@
           "!scripts/build-ios-social-app.mjs",
           "!scripts/copy-assets.mjs",
           "!scripts/dev-server.mjs",
+          "!scripts/ios-phone-suite.mjs",
           "!scripts/run-tests.mjs",
           "!scripts/test-ios-social.mjs",
           "!scripts/write-build-info.mjs",

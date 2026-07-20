@@ -3,6 +3,7 @@ let activePauseOverlay: PauseOverlayState | null = null;
 let mediaLockActive = false;
 let pageGuardActive = false;
 let pageGuardReleaseTimer: number | null = null;
+let pageGuardPreviousVisibility: { value: string; priority: string } | null = null;
 let youtubeAutofillFrictionEnabled = false;
 let youtubeAutofillFrictionAttached = false;
 let focusedSocialCleanupEnabled = false;
@@ -402,8 +403,16 @@ function removePauseOverlay(resumeMedia: boolean): void {
 function activatePageGuard(maxMs = 3500): void {
   if (isLocalVigilPage()) return;
   injectPageGuardStyle();
+  const root = document.documentElement;
+  if (!pageGuardActive && root) {
+    pageGuardPreviousVisibility = {
+      value: root.style.getPropertyValue("visibility"),
+      priority: root.style.getPropertyPriority("visibility")
+    };
+  }
   pageGuardActive = true;
-  document.documentElement?.setAttribute("data-vigil-page-guard", "active");
+  root?.style.setProperty("visibility", "hidden", "important");
+  root?.setAttribute("data-vigil-page-guard", "active");
   if (pageGuardReleaseTimer) window.clearTimeout(pageGuardReleaseTimer);
   pageGuardReleaseTimer = maxMs > 0
     ? window.setTimeout(() => releasePageGuard(), maxMs)
@@ -415,7 +424,16 @@ function releasePageGuard(): void {
   pageGuardReleaseTimer = null;
   if (!pageGuardActive) return;
   pageGuardActive = false;
-  document.documentElement?.removeAttribute("data-vigil-page-guard");
+  const root = document.documentElement;
+  root?.removeAttribute("data-vigil-page-guard");
+  if (root && pageGuardPreviousVisibility) {
+    if (pageGuardPreviousVisibility.value) {
+      root.style.setProperty("visibility", pageGuardPreviousVisibility.value, pageGuardPreviousVisibility.priority);
+    } else {
+      root.style.removeProperty("visibility");
+    }
+  }
+  pageGuardPreviousVisibility = null;
 }
 
 function replaceLocation(url: string): void {
@@ -438,6 +456,7 @@ function injectPageGuardStyle(): void {
       z-index: 2147483646;
       background: #080d15;
       pointer-events: auto;
+      visibility: visible !important;
     }
     html[data-vigil-page-guard="active"] > body {
       visibility: hidden !important;

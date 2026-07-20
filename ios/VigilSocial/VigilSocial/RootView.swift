@@ -7,6 +7,19 @@ struct RootView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if store.fixedService == nil {
+                Picker("Service", selection: Binding(
+                    get: { store.selectedService },
+                    set: { store.select($0) }
+                )) {
+                    ForEach(SocialService.allCases) { service in
+                        Label(service.displayName, systemImage: service.systemImage).tag(service)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
             healthBanner
             SocialWebView(webView: store.webView(for: store.selectedService))
                 .id(store.selectedService)

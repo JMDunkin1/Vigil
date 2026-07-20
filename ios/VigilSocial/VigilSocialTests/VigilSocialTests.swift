@@ -1,4 +1,5 @@
 import XCTest
+import WebKit
 @testable import VigilSocial
 
 final class VigilSocialTests: XCTestCase {
@@ -100,6 +101,49 @@ final class VigilSocialTests: XCTestCase {
         store.select(.youtube)
         XCTAssertEqual(store.selectedService, .instagram)
         XCTAssertEqual(store.fixedService, .instagram)
+    }
+
+    @MainActor
+    func testCombinedAppCanSwitchServicesAndRememberSelection() {
+        let defaults = UserDefaults(suiteName: #function)!
+        defaults.removePersistentDomain(forName: #function)
+        let store = SocialWebViewStore(defaults: defaults, loadInitialPages: false)
+        XCTAssertNil(store.fixedService)
+        store.select(.instagram)
+        XCTAssertEqual(store.selectedService, .instagram)
+        let restored = SocialWebViewStore(defaults: defaults, loadInitialPages: false)
+        XCTAssertEqual(restored.selectedService, .instagram)
+    }
+
+    @MainActor
+    func testSwitchingServicesPausesPreviousRetainedWebView() async throws {
+        let defaults = UserDefaults(suiteName: #function)!
+        defaults.removePersistentDomain(forName: #function)
+        let store = SocialWebViewStore(defaults: defaults, loadInitialPages: false)
+        let youtube = store.webView(for: .youtube)
+        let navigation = TestNavigationDelegate()
+        let loaded = expectation(description: "test page loaded")
+        navigation.didFinish = { loaded.fulfill() }
+        youtube.navigationDelegate = navigation
+        youtube.loadHTMLString("<html><body></body></html>", baseURL: nil)
+        await fulfillment(of: [loaded], timeout: 5)
+        _ = try await youtube.evaluateJavaScript("""
+            window.__vigilDidPause = false;
+            window.__vigilPauseAllMedia = () => { window.__vigilDidPause = true; };
+            """)
+
+        store.select(.instagram)
+
+        let didPause = try await youtube.evaluateJavaScript("window.__vigilDidPause") as? Bool
+        XCTAssertEqual(didPause, true)
+    }
+}
+
+private final class TestNavigationDelegate: NSObject, WKNavigationDelegate {
+    var didFinish: (() -> Void)?
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        didFinish?()
     }
 }
 

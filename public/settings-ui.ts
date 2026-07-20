@@ -4,45 +4,33 @@ interface SettingsCategory {
   sourceTitle: string;
   id: string;
   label: string;
-  title: string;
-  description: string;
 }
 
 const CATEGORIES: SettingsCategory[] = [
   {
     sourceTitle: "Rules and limits",
     id: "agent",
-    label: "Agent",
-    title: "Agent rules",
-    description: "Tell Vigil what to block, when to intervene, and what you are working toward."
+    label: "Rules"
   },
   {
     sourceTitle: "Protection and hardening",
     id: "protection",
-    label: "Protection",
-    title: "Protection",
-    description: "Keep the agent healthy, active, and difficult to bypass."
+    label: "Protection"
   },
   {
     sourceTitle: "Devices and iPhone",
     id: "devices",
-    label: "Devices",
-    title: "Devices",
-    description: "Extend Vigil filtering and policy enforcement to iPhone."
+    label: "Devices"
   },
   {
     sourceTitle: "Journal access",
     id: "journal",
-    label: "Journal",
-    title: "Journal",
-    description: "Control private journal access and automatic locking."
+    label: "Journal"
   },
   {
     sourceTitle: "App icon",
     id: "appearance",
-    label: "Appearance",
-    title: "Appearance",
-    description: "Choose how Vigil appears in the Dock and menu bar."
+    label: "Appearance"
   }
 ];
 
@@ -61,11 +49,6 @@ const FORM_LABELS: EditorMap = {
   iosMdmForm: "Advanced MDM",
   keyholderForm: "Keyholder passcode",
   distanceKeyForm: "Distance key"
-};
-
-const FORM_COPY: EditorMap = {
-  iosForm: "Content filtering and escape-route controls",
-  iosMdmForm: "Self-hosted delivery for specialized deployments"
 };
 
 const NEW_EDITOR: EditorMap = {
@@ -134,13 +117,17 @@ export function resetSettingsUi(): void {
     disclosure.open = false;
     disclosure.hidden = false;
   }
-  for (const category of settingsRoot.querySelectorAll<HTMLElement>(".settings-category")) category.hidden = false;
-  for (const button of settingsRoot.querySelectorAll<HTMLButtonElement>(".settings-nav-item")) button.hidden = false;
+  clearSettingsSearch(settingsRoot);
+  selectCategory(activeCategoryId, false);
+}
 
+function clearSettingsSearch(settingsRoot: HTMLElement): void {
   const search = settingsRoot.querySelector<HTMLInputElement>("#settingsSearch");
   if (search) search.value = "";
   settingsRoot.classList.remove("is-searching");
-  selectCategory(activeCategoryId, false);
+  for (const filtered of settingsRoot.querySelectorAll<HTMLElement>(".settings-category, .settings-subsection, .settings-nav-item")) {
+    filtered.hidden = false;
+  }
 }
 
 function bindSubsectionAccordion(): void {
@@ -180,27 +167,14 @@ function buildSettingsWorkspace(settingsRoot: HTMLElement): void {
     disclosure.open = true;
     disclosure.classList.add("settings-category");
     disclosure.dataset.category = category.id;
-    disclosure.dataset.settingsSearch = `${category.label} ${category.title} ${category.description} ${disclosure.textContent || ""}`.toLowerCase();
+    disclosure.dataset.settingsSearch = `${category.label} ${disclosure.textContent || ""}`.toLowerCase();
 
     const sourceSummary = disclosure.querySelector<HTMLElement>(":scope > summary");
     const status = sourceSummary?.querySelector<HTMLElement>(":scope > .pill, :scope > #iconThemeStatus");
-    const header = document.createElement("header");
-    header.className = "settings-category-header";
-    const headingCopy = document.createElement("div");
-    const kicker = document.createElement("span");
-    kicker.className = "settings-category-kicker";
-    kicker.textContent = "Vigil agent";
-    const heading = document.createElement("h2");
-    heading.textContent = category.title;
-    const description = document.createElement("p");
-    description.textContent = category.description;
-    headingCopy.append(kicker, heading, description);
-    header.append(headingCopy);
     if (status) {
-      status.classList.add("settings-category-status");
-      header.append(status);
+      status.classList.add("settings-category-status", "sr-only");
+      sourceSummary?.after(status);
     }
-    sourceSummary?.after(header);
     content.append(disclosure);
 
     const button = document.createElement("button");
@@ -226,7 +200,7 @@ function selectCategory(categoryId: string, focus = true): void {
   const available = settingsRoot.querySelector<HTMLElement>(`.settings-category[data-category='${categoryId}']`);
   if (!available) categoryId = "agent";
   activeCategoryId = categoryId;
-  settingsRoot.classList.remove("is-searching");
+  clearSettingsSearch(settingsRoot);
 
   for (const category of settingsRoot.querySelectorAll<HTMLElement>(".settings-category")) {
     category.classList.toggle("is-active", category.dataset.category === categoryId);
@@ -268,7 +242,7 @@ function wrapSettingsPanels(): void {
     details.dataset.settingsSearch = `${originalTitle} ${eyebrow} ${SECTION_COPY[originalTitle] || ""} ${panel.textContent || ""}`.toLowerCase();
 
     const summary = document.createElement("summary");
-    summary.append(settingsRowCopy(SECTION_TITLES[originalTitle] || originalTitle, SECTION_COPY[originalTitle] || eyebrow));
+    summary.append(settingsRowCopy(SECTION_TITLES[originalTitle] || originalTitle));
 
     const actions = [...header.children].filter((child) => !child.matches("div"));
     if (actions.length) {
@@ -298,11 +272,11 @@ function wrapSettingsForms(): void {
     const editor = document.createElement("details");
     editor.className = isTopLevel ? "settings-subsection settings-editor settings-form-section" : "settings-editor";
     editor.dataset.editorFor = formId;
-    editor.dataset.settingsSearch = `${FORM_LABELS[formId] || "Settings"} ${FORM_COPY[formId] || ""} ${form.textContent || ""}`.toLowerCase();
+    editor.dataset.settingsSearch = `${FORM_LABELS[formId] || "Settings"} ${form.textContent || ""}`.toLowerCase();
     const summary = document.createElement("summary");
 
     if (isTopLevel) {
-      summary.append(settingsRowCopy(FORM_LABELS[formId] || "Settings", FORM_COPY[formId] || "Configuration details"));
+      summary.append(settingsRowCopy(FORM_LABELS[formId] || "Settings"));
       const status = form.querySelector<HTMLElement>(":scope > .device-form-head .pill");
       if (status) {
         const actions = document.createElement("span");
@@ -335,14 +309,12 @@ function wrapSettingsForms(): void {
   }
 }
 
-function settingsRowCopy(title: string, description: string): HTMLElement {
+function settingsRowCopy(title: string): HTMLElement {
   const copy = document.createElement("span");
   copy.className = "settings-subsection-copy";
   const heading = document.createElement("strong");
   heading.textContent = title;
-  const detail = document.createElement("small");
-  detail.textContent = description;
-  copy.append(heading, detail);
+  copy.append(heading);
   return copy;
 }
 

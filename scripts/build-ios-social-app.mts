@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isDirectRun } from "../src/directRun.js";
 
 const project = "ios/VigilSocial/VigilSocial.xcodeproj";
-const valueOptions = new Set(["service", "configuration", "destination", "derived-data"]);
+const valueOptions = new Set(["service", "configuration", "destination", "derived-data", "version", "build"]);
 const services = {
+  combined: {
+    bundleId: "tech.caseline.vigil.social",
+    name: "Vigil Social",
+    icon: "instagram.png",
+    scheme: "vigilsocial"
+  },
   instagram: {
     bundleId: "tech.caseline.vigil.instagram",
     name: "Instagram",
@@ -32,6 +41,8 @@ interface BuildOptions {
   destination: string;
   derivedData: string;
   unsigned: boolean;
+  version: string;
+  build: string;
 }
 
 export function buildArguments(argv: string[]): string[] {
@@ -49,7 +60,9 @@ export function buildArguments(argv: string[]): string[] {
     `VIGIL_SERVICE=${options.service}`,
     `SOCIAL_APP_NAME=${service.name}`,
     `SOCIAL_ICON_NAME=${service.icon}`,
-    `SOCIAL_URL_SCHEME=${service.scheme}`
+    `SOCIAL_URL_SCHEME=${service.scheme}`,
+    `MARKETING_VERSION=${options.version}`,
+    `CURRENT_PROJECT_VERSION=${options.build}`
   ];
   if (options.derivedData) args.splice(8, 0, "-derivedDataPath", options.derivedData);
   if (options.unsigned) args.push("CODE_SIGNING_ALLOWED=NO");
@@ -57,6 +70,7 @@ export function buildArguments(argv: string[]): string[] {
 }
 
 export function parseOptions(argv: string[]): BuildOptions {
+  const release = phoneRelease();
   const values = new Map<string, string>();
   let service = "";
   let unsigned = false;
@@ -82,14 +96,37 @@ export function parseOptions(argv: string[]): BuildOptions {
     configuration: values.get("configuration") || "Release",
     destination: values.get("destination") || "generic/platform=iOS",
     derivedData: values.get("derived-data") || "",
-    unsigned
+    unsigned,
+    version: values.get("version") || release.version,
+    build: values.get("build") || String(release.build)
   };
+}
+
+function phoneRelease(): { version: string; build: number } {
+  const fallback = { version: "0.1.0", build: 1 };
+  const moduleRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+  const candidates = [
+    resolve("ios/phone-release.json"),
+    join(moduleRoot, "ios", "phone-release.json"),
+    join(moduleRoot, "..", "..", "ios", "phone-release.json")
+  ];
+  for (const path of candidates) {
+    try {
+      const value = JSON.parse(readFileSync(path, "utf8")) as Partial<typeof fallback>;
+      if (/^\d+\.\d+\.\d+$/.test(String(value.version || "")) && Number.isInteger(value.build) && Number(value.build) > 0) {
+        return { version: String(value.version), build: Number(value.build) };
+      }
+    } catch {
+      // Try the next repository/runtime layout.
+    }
+  }
+  return fallback;
 }
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes("--help")) {
-    process.stdout.write("Usage: npm run ios:social:build -- <instagram|youtube|snapchat> [--configuration Debug|Release] [--destination value] [--derived-data path] [--unsigned]\n");
+    process.stdout.write("Usage: npm run ios:social:build -- <combined|instagram|youtube|snapchat> [--configuration Debug|Release] [--destination value] [--derived-data path] [--version x.y.z] [--build number] [--unsigned]\n");
     return;
   }
   await run("xcodebuild", buildArguments(argv));

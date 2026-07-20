@@ -1,0 +1,79 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "transform": {
+          "queryTransform": {
+            "addOrReplaceParams": [
+              { "key": "safe", "value": "active" }
+            ]
+          }
+        }
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://(www\\.|images\\.)?google\\.com(:[0-9]+)?/search([?#]|$)",
+      "isUrlFilterCaseSensitive": true,
+      "requestMethods": ["get"],
+      "resourceTypes": ["main_frame"]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 1,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "transform": {
+          "queryTransform": {
+            "addOrReplaceParams": [
+              { "key": "adlt", "value": "strict" }
+            ]
+          }
+        }
+      }
+    },
+    "condition": {
+      "urlFilter": "||bing.com/search",
+      "resourceTypes": ["main_frame"]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 1,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "transform": {
+          "queryTransform": {
+            "addOrReplaceParams": [
+              { "key": "kp", "value": "1" }
+            ]
+          }
+        }
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://([^/]+\\.)?duckduckgo\\.com/[^#]*[?&]q=",
+      "resourceTypes": ["main_frame"]
+    }
+  },
+  {
+    "id": 4,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|text)=[^&#]*(porn|porno|xxx|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(%2b|\\+|plus|-plus))",
+      "requestDomains": ["google.com", "bing.com", "duckduckgo.com"],
+      "resourceTypes": ["main_frame"]
+    }
+  }
+]

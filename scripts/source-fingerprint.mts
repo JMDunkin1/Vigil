@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readlink } from "node:fs/promises";
 import { join } from "node:path";
+import { gitExecutable } from "./git-executable.mjs";
 
 export async function sourceFingerprint(repoRoot: string): Promise<string | null> {
   const [trackedDiff, untrackedOutput] = await Promise.all([
@@ -41,9 +42,15 @@ export async function sourceFingerprint(repoRoot: string): Promise<string | null
 }
 
 async function captureGit(repoRoot: string, args: string[]): Promise<Buffer | null> {
+  let command: string;
+  try {
+    command = await gitExecutable(repoRoot);
+  } catch {
+    return null;
+  }
   return await new Promise((resolveCapture) => {
     const chunks: Buffer[] = [];
-    const child = spawn("git", args, { cwd: repoRoot, stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn(command, args, { cwd: repoRoot, stdio: ["ignore", "pipe", "ignore"] });
     child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
     child.once("error", () => resolveCapture(null));
     child.once("close", (code) => resolveCapture(code === 0 ? Buffer.concat(chunks) : null));

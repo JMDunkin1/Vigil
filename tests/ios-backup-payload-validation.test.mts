@@ -40,8 +40,13 @@ const workspace = await mkdtemp(join(tmpdir(), "vigil-ios-payload-validation-"))
 const pythonFixtureRoot = join(workspace, "python-fixture");
 const originalPythonPath = process.env.PYTHONPATH;
 const localPythonPath = join(sourceRoot, "data", "ios-tools", "pymobiledevice3-venv", "bin", "python");
+const commandLineToolsPython = "/Library/Developer/CommandLineTools/usr/bin/python3";
+const xcodePython = "/Applications/Xcode.app/Contents/Developer/usr/bin/python3";
 const pythonPath = process.env.PYIOSBACKUP_PYTHON
-  || ((await fileExists(localPythonPath)) ? localPythonPath : "python3");
+  || ((await fileExists(localPythonPath)) ? localPythonPath
+    : (await fileExists(commandLineToolsPython)) ? commandLineToolsPython
+      : (await fileExists(xcodePython)) ? xcodePython
+        : "python3");
 const execFileAsync = promisify(execFile);
 const zeroFileId = "0".repeat(40);
 const dataFileId = "a".repeat(40);

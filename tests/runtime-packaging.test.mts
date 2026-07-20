@@ -23,6 +23,7 @@ assert.equal(packageableRuntimePath("tests/policy.test.mjs"), false);
 assert.equal(packageableRuntimePath("scripts/run-tests.mjs"), false);
 assert.equal(packageableRuntimePath("scripts/copy-assets.mts"), false);
 assert.equal(packageableRuntimePath("scripts/dev-server.mjs"), false);
+assert.equal(packageableRuntimePath("scripts/ios-phone-suite.mjs"), false);
 assert.equal(packageableRuntimePath("scripts/write-build-info.mjs"), false);
 assert.equal(packageableRuntimePath("src/server 2.js"), false);
 
@@ -136,6 +137,7 @@ for (const excludedScript of [
   "build-ios-social-app.mjs",
   "copy-assets.mjs",
   "dev-server.mjs",
+  "ios-phone-suite.mjs",
   "run-tests.mjs",
   "test-ios-social.mjs",
   "write-build-info.mjs"
@@ -159,7 +161,13 @@ if (process.platform === "darwin") {
   const helperPath = existsSync(packagedHelperPath)
     ? packagedHelperPath
     : join(process.cwd(), "dist", "runtime", "bin", "vigil-human-idle");
-  const { stdout: helperLoadCommands } = await execFileAsync("/usr/bin/otool", ["-l", helperPath]);
+  const otoolPath = [
+    "/Library/Developer/CommandLineTools/usr/bin/otool",
+    "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/otool",
+    "/usr/bin/otool"
+  ].find((candidate) => existsSync(candidate));
+  assert.ok(otoolPath, "a macOS object-file inspector must be installed");
+  const { stdout: helperLoadCommands } = await execFileAsync(otoolPath, ["-l", helperPath]);
   assert.match(helperLoadCommands, /^\s+minos\s+12\.0$/mu, "the packaged idle helper must support macOS 12.0");
 }
 

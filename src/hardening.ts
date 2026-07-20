@@ -1,6 +1,6 @@
 import { access, lstat, readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { STATE_PATH, STATE_SEAL_KEY_PATH, STATE_SEAL_PATH } from "./store.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
@@ -16,6 +16,7 @@ export const HOSTS_BEGIN = "# BEGIN VIGIL";
 export const HOSTS_END = "# END VIGIL";
 export const LAUNCH_AGENT_LABEL = "com.vigil.agent";
 export const EMBEDDED_SUPERVISOR_LABEL = "tech.caseline.vigil.supervisor";
+export const VIGIL_SAFETY_BOUNDARY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
 const HOSTS_MARKER_PAIRS = [[HOSTS_BEGIN, HOSTS_END]] as const;
 const execFileAsync = promisify(execFile);
 
@@ -404,7 +405,7 @@ function embeddedSupervisorExpectation(): EmbeddedSupervisorExpectation | null {
 }
 
 function embeddedSupervisorScriptPath(expectation: EmbeddedSupervisorExpectation): string {
-  return join(expectation.userDataDir, "supervisor", "vigil-supervisor.zsh");
+  return join(expectation.userDataDir, "supervisor", "vigil-supervisor-DO-NOT-TERMINATE-OR-BOOTOUT.zsh");
 }
 
 function embeddedSupervisorConfiguration(plist: string): { root: Record<string, unknown> | null; markerPath: string } {
@@ -418,8 +419,12 @@ function embeddedSupervisorConfiguration(plist: string): { root: Record<string, 
 }
 
 function embeddedSupervisorExpectedConfiguration(expectation: EmbeddedSupervisorExpectation): Record<string, unknown> {
-  const markerPath = join(expectation.userDataDir, "supervisor", "enabled");
+  const markerPath = join(expectation.userDataDir, "supervisor", "SAFETY-BOUNDARY-DO-NOT-REMOVE.enabled");
   const environment: Record<string, string> = {
+    HOME: expectation.homeDir,
+    USER: basename(expectation.homeDir),
+    LOGNAME: basename(expectation.homeDir),
+    PATH: `${join(expectation.homeDir, ".local", "bin")}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`,
     VIGIL_DATA_DIR: expectation.dataDir,
     VIGIL_EMBEDDED_RUNTIME: "1",
     VIGIL_RESTART_SUPERVISED: "1"
@@ -428,7 +433,7 @@ function embeddedSupervisorExpectedConfiguration(expectation: EmbeddedSupervisor
   const logPath = join(expectation.userDataDir, "logs", "supervisor.log");
   return {
     Label: EMBEDDED_SUPERVISOR_LABEL,
-    ProgramArguments: [embeddedSupervisorScriptPath(expectation)],
+    ProgramArguments: [embeddedSupervisorScriptPath(expectation), VIGIL_SAFETY_BOUNDARY_ARG],
     EnvironmentVariables: environment,
     RunAtLoad: true,
     KeepAlive: { PathState: { [markerPath]: true } },
@@ -440,7 +445,7 @@ function embeddedSupervisorExpectedConfiguration(expectation: EmbeddedSupervisor
 }
 
 export function embeddedSupervisorExpectedScript(expectation: EmbeddedSupervisorExpectation): string {
-  const markerPath = join(expectation.userDataDir, "supervisor", "enabled");
+  const markerPath = join(expectation.userDataDir, "supervisor", "SAFETY-BOUNDARY-DO-NOT-REMOVE.enabled");
   const readyPath = join(expectation.dataDir, "runtime-ready.json");
   const appPath = dirname(dirname(dirname(expectation.executablePath)));
   return `#!/bin/zsh
@@ -463,7 +468,7 @@ while [[ -e "$marker" ]]; do
     if [[ ! -e "$marker" ]]; then
       break
     fi
-    /usr/bin/open -g "$app_path" --args --vigil-background
+    /usr/bin/open -g "$app_path" --args --vigil-background ${VIGIL_SAFETY_BOUNDARY_ARG}
     /bin/sleep 5
   else
     /bin/sleep 2

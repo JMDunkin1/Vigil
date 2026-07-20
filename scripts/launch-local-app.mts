@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { homedir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { isDirectRun } from "../src/directRun.js";
 import { getInstanceSecret } from "../src/instanceIdentity.js";
@@ -9,10 +9,13 @@ import { plistStringForKey } from "../src/plist.js";
 import { liveRuntimeReady } from "../src/runtimeReady.js";
 import { resumeEmbeddedRuntimeSupervisor, suspendEmbeddedRuntimeSupervisor } from "../src/embeddedSupervisor.js";
 import { fetchVigilStateHealth } from "../src/vigilHealth.js";
+import { beginGuardianMaintenance } from "../src/updateMaintenance.js";
+import type { GuardianMaintenanceTransaction } from "../src/updateMaintenance.js";
 import { atomicInstallBuiltApp } from "./update-packaged-app.mjs";
 
 const HEALTH_TIMEOUT_MS = 30_000;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
+const SAFETY_BOUNDARY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
 
 interface Options {
   repoRoot: string;
@@ -21,6 +24,8 @@ interface Options {
   userDataDir: string;
   npmPath: string;
   logPath: string;
+  lockPath: string;
+  lockToken: string;
 }
 
 interface LegacyAgentRecovery {
@@ -41,6 +46,7 @@ async function main(): Promise<void> {
   await mkdir(dirname(options.logPath), { recursive: true });
   const log = createWriteStream(options.logPath, { flags: "a" });
   await waitForLogOpen(log);
+  let guardianMaintenance: GuardianMaintenanceTransaction | null = null;
   log.write(`\n[${new Date().toISOString()}] Building local changes while Vigil process ${options.parentPid} keeps running.\n`);
   try {
     log.write(`[${new Date().toISOString()}] Building packaged Vigil from ${options.repoRoot}\n`);
@@ -65,6 +71,13 @@ async function main(): Promise<void> {
       return;
     }
 
+    try {
+      guardianMaintenance = await beginGuardianMaintenance(options.lockPath, options.lockToken);
+    } catch (error) {
+      log.write(`[${new Date().toISOString()}] The authenticated guardian maintenance transaction could not start: ${errorMessage(error)} The running app was left in place.\n`);
+      process.exitCode = 1;
+      return;
+    }
     log.write(`[${new Date().toISOString()}] Local build is ready. Asking Vigil to quit for replacement.\n`);
     process.kill(options.parentPid, "SIGUSR2");
     try {
@@ -134,6 +147,14 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
   } finally {
+    if (guardianMaintenance) {
+      await guardianMaintenance.release().catch((error) => {
+        log.write(`[${new Date().toISOString()}] The guardian maintenance marker could not be cleared: ${errorMessage(error)}\n`);
+      });
+    }
+    await releaseOwnedUpdaterLock(options.lockPath, options.lockToken).catch((error) => {
+      log.write(`[${new Date().toISOString()}] The updater lock could not be released: ${errorMessage(error)}\n`);
+    });
     log.end();
   }
 }
@@ -315,8 +336,18 @@ async function buildLocalApp(options: Options, log: ReturnType<typeof createWrit
 }
 
 async function reopenInstalledApp(appPath: string, log: ReturnType<typeof createWriteStream>): Promise<void> {
+  const account = userInfo();
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("/usr/bin/open", ["-g", appPath, "--args", BACKGROUND_LAUNCH_ARG], { stdio: ["ignore", log, log] });
+    const child = spawn("/usr/bin/open", ["-g", appPath, "--args", BACKGROUND_LAUNCH_ARG, SAFETY_BOUNDARY_ARG], {
+      stdio: ["ignore", log, log],
+      env: {
+        ...process.env,
+        HOME: account.homedir,
+        USER: account.username,
+        LOGNAME: account.username,
+        PATH: `${join(account.homedir, ".local", "bin")}:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`
+      }
+    });
     child.once("error", reject);
     child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`open exited with status ${code}`)));
   });
@@ -353,8 +384,23 @@ function parseArgs(args: string[]): Options {
     parentPid,
     userDataDir: required(values, "user-data-dir"),
     npmPath: required(values, "npm-path"),
-    logPath: values.get("log-path") || join(homedir(), "Library", "Logs", "Vigil", "local-launch.log")
+    logPath: values.get("log-path") || join(homedir(), "Library", "Logs", "Vigil", "local-launch.log"),
+    lockPath: required(values, "lock-path"),
+    lockToken: required(values, "lock-token")
   };
+}
+
+async function releaseOwnedUpdaterLock(lockPath: string, lockToken: string): Promise<void> {
+  let payload: { token?: unknown; pid?: unknown };
+  try {
+    payload = JSON.parse(await readFile(lockPath, "utf8")) as { token?: unknown; pid?: unknown };
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) return;
+    throw error;
+  }
+  if (payload.token === lockToken && payload.pid === process.pid) {
+    await rm(lockPath, { force: true });
+  }
 }
 
 function required(values: Map<string, string>, key: string): string {

@@ -40,6 +40,14 @@ import { shouldAttemptBlockedBrowserRedirect } from "../src/monitor.js";
   assert.ok(firstEscapeKey > fullscreenGate, "Safari fullscreen escape should not run before media fullscreen is detected");
   assert.doesNotMatch(script, /Exit Full Screen/);
   assert.match(script, /set previousUrl to "https:\/\/youtube\.com\/watch\?v=blocked"/);
+  assert.match(script, /if mediaMode is "javascript-error" then/);
+  assert.match(script, /make new tab at end of tabs of front window with properties \{URL:targetUrl\}/);
+  assert.match(script, /set current tab of front window to replacementTab/);
+  assert.match(script, /close blockedTab/);
   assert.match(script, /repeat with safariTab in tabs of safariWindow/);
   assert.match(script, /if URL of safariTab is previousUrl then/);
+  assert.ok(
+    script.indexOf("make new tab at end of tabs of front window") < script.indexOf("repeat with safariTab in tabs of safariWindow"),
+    "an unscriptable Safari denial page should be replaced before matching tabs are revisited"
+  );
 }

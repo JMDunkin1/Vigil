@@ -69,8 +69,9 @@ assert.match(settingsUiSource, /if \(sibling !== disclosure\)\s+sibling\.open = 
 assert.match(settingsUiSource, /data-editor-for|dataset\.editorFor/, "New and Edit actions must target a single settings editor");
 assert.doesNotMatch(settingsUiSource, /addEventListener\("submit"/, "settings editors must not close before an asynchronous save succeeds");
 assert.match(settingsUiSource, /resetSettingsUi[\s\S]*querySelectorAll\("details"\)[\s\S]*disclosure\.open = false/, "leaving settings must collapse every expanded setting");
-assert.match(settingsUiSource, /resetSettingsUi[\s\S]*search\.value = ""/, "leaving settings must clear the settings search");
-assert.match(settingsUiSource, /resetSettingsUi[\s\S]*querySelectorAll\("\.settings-nav-item"\)[\s\S]*button\.hidden = false/, "leaving settings must restore category buttons hidden by search");
+assert.match(settingsUiSource, /function resetSettingsUi\(\)[\s\S]*?clearSettingsSearch\(settingsRoot\);\s+selectCategory/, "leaving settings must clear the settings search and its hidden state");
+assert.match(settingsUiSource, /function selectCategory[\s\S]*?activeCategoryId = categoryId;\s+clearSettingsSearch\(settingsRoot\)/, "selecting a settings category must clear the active search filter");
+assert.match(settingsUiSource, /clearSettingsSearch[\s\S]*search\.value = ""[\s\S]*\.settings-category, \.settings-subsection, \.settings-nav-item[\s\S]*filtered\.hidden = false/, "clearing settings search must restore every element hidden by filtering");
 assert.match(settingsUiSource, /:scope > \.pill, :scope > #iconThemeStatus/, "the icon-theme status must move out of the hidden source summary");
 assert.match(settingsAppSource, /previousView === "settings" && state\.activeView !== "settings"[\s\S]*resetSettingsUi\(\)/, "the settings reset must run only after navigating away");
 assert.match(
@@ -115,6 +116,8 @@ assert.match(sidebarMarkup, /id="primarySidebar"/, "the sidebar toggle must cont
 assert.match(sidebarMarkup, /id="brandHomeButton"[^>]*data-view-target="home"[^>]*aria-label="Go to Home"/, "the Vigil wordmark must provide a keyboard-accessible route back Home");
 
 const styles = await readFile("public/styles.css", "utf8");
+assert.match(styles, /\.toast\s*\{[^}]*position:\s*fixed;[^}]*top:\s*20px;/, "shared toast notifications must appear at the top of the viewport");
+assert.doesNotMatch(styles, /\.toast\s*\{[^}]*bottom:/, "shared toast notifications must never return to the bottom of the viewport");
 assert.match(styles, /\.settings-disclosure \+ \.settings-disclosure\s*\{[\s\S]*?margin-top:\s*16px;/, "adjacent settings disclosures must use the shared row spacing");
 assert.match(styles, /\.settings-disclosure\s*\{[\s\S]*?container-type:\s*inline-size;/, "settings disclosures must respond to their own available width");
 assert.match(styles, /grid-template-columns:\s*minmax\(min-content, max-content\) minmax\(0, 1fr\) auto;/, "settings titles must keep a readable intrinsic column before descriptions flex");
