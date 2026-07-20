@@ -38,9 +38,9 @@ interface FocusedSocialPlatformDefinition {
 }
 
 export const IOS_SOCIAL_COMPANION_BUNDLE_IDS: Record<FocusedSocialPlatformId, string> = {
-  instagram: "tech.caseline.vigil.instagram",
-  youtube: "tech.caseline.vigil.youtube",
-  snapchat: "tech.caseline.vigil.snapchat"
+  instagram: "tech.caseline.vigil.social",
+  youtube: "tech.caseline.vigil.social",
+  snapchat: "tech.caseline.vigil.social"
 };
 
 export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [

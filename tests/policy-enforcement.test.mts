@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { appleContentFilterStatusFromRecord } from "../src/appleContentFilter.js";
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
 import { contentFilterEnabled, matchContentFilterUrl } from "../src/contentFilters.js";
-import { BRICK_MODE_PROFILE_ID, DEFAULT_EXPLICIT_URL_PATTERNS, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_URL_PATTERNS, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../src/distanceKey.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { buildHostsBlock, managedBlockDomains } from "../src/hardening.js";
@@ -454,6 +454,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/learnprogramming/comments/demo"), false);
   assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("honeytoon"), true);
   assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("webtoon18"), true);
+  assert.equal(DEFAULT_ALWAYS_BANNED_URL_PATTERNS.includes("webtoons.com"), true);
+  assert.equal(shouldBlockUrl(profileById(state, "normal"), "https://www.webtoons.com/en/"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=porn"), true);
   assert.equal(shouldBlockUrl(profile, "https://duckduckgo.com/?q=hooneytoons"), true);
   assert.equal(shouldBlockUrl(profile, "https://search.example/?q=mawha"), true);
@@ -485,7 +487,10 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(fromWatch.blocked, true);
   assert.equal(fromWatch.paused, undefined);
   assert.equal(fromWatch.reason, "content-filter");
-  assert.equal(stringValue(fromWatch.redirectUrl, "Shorts Level 1 redirect"), "https://www.youtube.com/watch?v=abc");
+  const fromWatchRedirect = new URL(stringValue(fromWatch.redirectUrl, "Shorts Level 1 redirect"));
+  assert.equal(fromWatchRedirect.pathname, "/blocked");
+  assert.equal(fromWatchRedirect.searchParams.get("site"), "YouTube Shorts");
+  assert.equal(fromWatchRedirect.searchParams.get("back"), "https://www.youtube.com/watch?v=abc");
 
   const direct = evaluateExtensionCheck(state, usage, {
     url: "https://www.youtube.com/shorts/abc",
@@ -494,7 +499,10 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   }, now);
   assert.equal(direct.blocked, true);
   assert.equal(direct.reason, "content-filter");
-  assert.equal(stringValue(direct.redirectUrl, "Shorts direct Level 1 redirect"), "https://www.youtube.com/");
+  const directRedirect = new URL(stringValue(direct.redirectUrl, "Shorts direct Level 1 redirect"));
+  assert.equal(directRedirect.pathname, "/blocked");
+  assert.equal(directRedirect.searchParams.get("site"), "YouTube Shorts");
+  assert.equal(directRedirect.searchParams.has("back"), false);
 }
 
 {
@@ -1302,13 +1310,18 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shorts.blocked, true);
   assert.equal(shorts.reason, "content-filter");
   assert.equal(must(shorts.contentFilter, "YouTube Shorts filter").id, "youtube-shorts");
-  assert.equal(stringValue(shorts.redirectUrl, "content filter redirect URL"), "https://www.youtube.com/");
+  const shortsRedirect = new URL(stringValue(shorts.redirectUrl, "content filter redirect URL"));
+  assert.equal(shortsRedirect.pathname, "/blocked");
+  assert.equal(shortsRedirect.searchParams.get("site"), "YouTube Shorts");
   const shortsFromWatch = evaluateExtensionCheck(state, usage, {
     url: "https://www.youtube.com/shorts/def",
     previousUrl: "https://www.youtube.com/watch?v=abc",
     event: "navigation"
   }, now);
-  assert.equal(stringValue(shortsFromWatch.redirectUrl, "content filter previous-page redirect URL"), "https://www.youtube.com/watch?v=abc");
+  const shortsFromWatchRedirect = new URL(stringValue(shortsFromWatch.redirectUrl, "content filter previous-page redirect URL"));
+  assert.equal(shortsFromWatchRedirect.pathname, "/blocked");
+  assert.equal(shortsFromWatchRedirect.searchParams.get("site"), "YouTube Shorts");
+  assert.equal(shortsFromWatchRedirect.searchParams.get("back"), "https://www.youtube.com/watch?v=abc");
   const watch = evaluateExtensionCheck(state, usage, { url: "https://www.youtube.com/watch?v=abc", event: "navigation" }, now);
   assert.equal(watch.blocked, false);
   const softContentPolicy = mustPolicy(activePolicy(state, now));
@@ -1381,7 +1394,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(game.blocked, true);
   assert.equal(game.reason, "url-pattern");
   assert.equal(must(game.urlPattern, "game URL pattern").pattern, "example.com/games");
-  assert.equal(new URL(stringValue(game.redirectUrl, "URL pattern redirect URL")).searchParams.get("site"), "URL pattern: example.com/games");
+  assert.equal(new URL(stringValue(game.redirectUrl, "URL pattern redirect URL")).searchParams.get("site"), "example.com/games");
   const keyword = evaluateExtensionCheck(state, usage, { url: "https://search.example/?q=casino", event: "navigation" }, now);
   assert.equal(keyword.blocked, true);
   assert.equal(must(keyword.urlPattern, "keyword URL pattern").pattern, "casino");

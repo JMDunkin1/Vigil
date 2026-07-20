@@ -171,8 +171,7 @@ export function safariRedirectScript(url: string, options: { currentUrl?: string
     "    set mediaMode to \"javascript-error\"",
     "    set redirectMethod to \"javascript-error\"",
     "  end try",
-    "  delay 0.15",
-    redirectCurrentSafariTabAppleScript(),
+    replaceUnscriptableSafariTabAppleScript(),
     redirectMatchingSafariTabsAppleScript(),
     "end tell",
     "if mediaMode contains \"media-fullscreen\" or mediaMode contains \"picture-in-picture\" then",
@@ -183,6 +182,27 @@ export function safariRedirectScript(url: string, options: { currentUrl?: string
     "  end tell",
     "end if",
     "return redirectMethod & \":\" & mediaMode & \":\" & (redirectedTabCount as text)"
+  ].join("\n");
+}
+
+function replaceUnscriptableSafariTabAppleScript(): string {
+  return [
+    "  if mediaMode is \"javascript-error\" then",
+    "    try",
+    "      set blockedTab to current tab of front window",
+    "      set replacementTab to make new tab at end of tabs of front window with properties {URL:targetUrl}",
+    "      set current tab of front window to replacementTab",
+    "      set redirectedTabCount to redirectedTabCount + 1",
+    "      set redirectMethod to redirectMethod & \"+replacement-tab\"",
+    "      close blockedTab",
+    "    on error",
+    "      set redirectMethod to redirectMethod & \"+replacement-tab-error\"",
+    redirectCurrentSafariTabAppleScript(),
+    "    end try",
+    "  else",
+    "    delay 0.15",
+    redirectCurrentSafariTabAppleScript(),
+    "  end if"
   ].join("\n");
 }
 

@@ -7,10 +7,16 @@ import { compactExtensionRuleSignature, evaluateExtensionCheck, extensionRuleSna
 import { activePolicy } from "../src/policy.js";
 import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.mjs";
 
-const [backgroundSource, contentSource] = await Promise.all([
+const [backgroundSource, contentSource, googleSafeSearchSource, staticRulesText, extensionManifestText, blockedPageSource] = await Promise.all([
   readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
-  readFile(new URL("../extension/content.js", import.meta.url), "utf8")
+  readFile(new URL("../extension/content.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/google-safe-search.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/rules.json", import.meta.url), "utf8"),
+  readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
+  readFile(new URL("../extension/blocked.html", import.meta.url), "utf8")
 ]);
+const staticRules = JSON.parse(staticRulesText) as Array<Record<string, unknown>>;
+const extensionManifest = JSON.parse(extensionManifestText) as Record<string, unknown>;
 assert.match(backgroundSource, /offlineCheckResult/);
 assert.match(backgroundSource, /VIGIL_REQUEST_TIMEOUT_MS/);
 assert.match(backgroundSource, /inFlightChecks/);
@@ -19,11 +25,51 @@ assert.match(backgroundSource, /chrome\.alarms/);
 assert.match(backgroundSource, /normalizedRuleUntil/);
 assert.match(backgroundSource, /PERSISTENT_RULE_UNTIL/);
 assert.match(backgroundSource, /vigilPulseFlags/);
+assert.equal(staticRules.length, 4);
+assert.match(staticRulesText, /"safe"\s*,\s*"value": "active"/u);
+assert.match(staticRulesText, /"adlt"\s*,\s*"value": "strict"/u);
+assert.match(staticRulesText, /"kp"\s*,\s*"value": "1"/u);
+assert.match(JSON.stringify(extensionManifest.declarative_net_request), /vigil_always_on_search_protection/u);
+assert.doesNotMatch(staticRulesText, /127\.0\.0\.1|localhost|8787/u, "static rules must not assume Vigil's configured port");
+assert.deepEqual(
+  staticRules.slice(0, 3).map((rule) => rule.priority),
+  [1, 1, 1],
+  "SafeSearch transforms must stay below all active top-level enforcement rules"
+);
+assert.equal(staticRules[3]?.priority, 1_000, "the explicit-search block must outrank SafeSearch transforms");
+const googleSafeSearchCondition = recordValue(staticRules[0]?.condition, "Google SafeSearch DNR condition");
+assert.equal(googleSafeSearchCondition.urlFilter, undefined, "Google SafeSearch must use an endpoint-exact regex filter");
+assert.equal(googleSafeSearchCondition.isUrlFilterCaseSensitive, true);
+assert.deepEqual(googleSafeSearchCondition.requestMethods, ["get"], "Google SafeSearch DNR must not rewrite non-GET requests");
+const googleSafeSearchRegex = new RegExp(String(googleSafeSearchCondition.regexFilter || ""));
+assert.equal(googleSafeSearchRegex.test("https://google.com/search?q=reference"), true);
+assert.equal(googleSafeSearchRegex.test("https://www.google.com/search?q=reference"), true);
+assert.equal(googleSafeSearchRegex.test("https://images.google.com/search?q=reference"), true);
+assert.equal(googleSafeSearchRegex.test("https://docs.google.com/search?q=reference"), false);
+assert.equal(googleSafeSearchRegex.test("https://www.google.com/search/results?q=reference"), false);
+const explicitSearchCondition = staticRules[3]?.condition as { regexFilter?: unknown } | undefined;
+const explicitSearchRegex = new RegExp(String(explicitSearchCondition?.regexFilter || ""), "i");
+assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=ordinary+reference"), false);
+assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=explicit+porn+query"), true);
+assert.equal(explicitSearchRegex.test("https://www.bing.com/search?q=18%2B"), true);
+const explicitSearchAction = recordValue(staticRules[3]?.action, "explicit-search DNR action");
+const explicitSearchRedirect = recordValue(explicitSearchAction.redirect, "explicit-search DNR redirect");
+assert.equal(explicitSearchRedirect.extensionPath, "/blocked.html");
+assert.match(blockedPageSource, /Vigil blocked this explicit search/u);
+const webAccessibleResources = extensionManifest.web_accessible_resources as Array<{ resources?: unknown }> | undefined;
+assert.equal(webAccessibleResources?.some((entry) => Array.isArray(entry.resources) && entry.resources.includes("blocked.html")), true);
+const contentScripts = extensionManifest.content_scripts as Array<{ js?: unknown }> | undefined;
+assert.equal(contentScripts?.some((entry) => Array.isArray(entry.js) && entry.js[0] === "google-safe-search.js"), true);
 assert.doesNotMatch(backgroundSource, /\nexport \{\};?\s*$/u, "the Chrome service worker must be emitted as a classic script");
 assert.doesNotMatch(contentSource, /\nexport \{\};?\s*$/u, "Chrome content scripts cannot contain ESM export syntax");
+assert.doesNotMatch(googleSafeSearchSource, /\nexport \{\};?\s*$/u, "the SafeSearch guard must be emitted as a classic content script");
+assert.doesNotMatch(googleSafeSearchSource, /safeSearchEnabled|chrome\.storage/u, "Google SafeSearch enforcement must not have a setting or stored off path");
+assert.match(googleSafeSearchSource, /searchParams\.set\("safe", "active"\)/u);
 assert.doesNotMatch(backgroundSource, /result\.signature\s*=\s*snapshot\.dynamicRuleSignature/);
 assert.doesNotMatch(contentSource, /activateOfflineGuard/);
 assert.doesNotMatch(contentSource, /data-vigil-page-guard-state/);
+assert.match(contentSource, /root\?\.style\.setProperty\("visibility", "hidden", "important"\)/u);
+assert.match(contentSource, /visibility: visible !important/u);
 assert.match(compactExtensionRuleSignature("large canonical rule payload"), /^sha256:[a-f0-9]{64}$/u);
 assert.equal(
   compactExtensionRuleSignature(compactExtensionRuleSignature("large canonical rule payload")),
@@ -34,6 +80,237 @@ assert.ok(
   contentSource.indexOf("focusedSocialCleanupEnabled === true") < contentSource.indexOf("result.offline === true"),
   "cached cleanup flags must be applied before an offline pulse releases the page guard"
 );
+
+{
+  type TestEvent = {
+    target: unknown;
+    submitter?: {
+      name: string;
+      value: string;
+      formAction: string;
+      formMethod: string;
+      hasAttribute(name: string): boolean;
+    } | null;
+    preventDefault(): void;
+    stopImmediatePropagation(): void;
+  };
+  type SafeSearchListener = (event: TestEvent) => void;
+  class TestElement {
+    anchor: { href: string } | null = null;
+
+    closest(selector: string): { href: string } | null {
+      assert.equal(selector, "a[href]");
+      return this.anchor;
+    }
+  }
+  class TestForm {
+    action = "https://www.google.com/search";
+    method = "get";
+    fields: Array<[string, string]> = [];
+  }
+  class TestFormData {
+    readonly fields: Array<[string, string]>;
+
+    constructor(form: TestForm, submitter?: { name: string; value: string } | null) {
+      this.fields = [...form.fields];
+      if (submitter?.name) this.fields.push([submitter.name, submitter.value]);
+    }
+
+    [Symbol.iterator](): IterableIterator<[string, string]> {
+      return this.fields[Symbol.iterator]();
+    }
+  }
+
+  const listeners = new Map<string, SafeSearchListener>();
+  const replacements: string[] = [];
+  const assignments: string[] = [];
+  const location = {
+    href: "https://www.google.com/search?q=ordinary&safe=off",
+    replace(value: string) { replacements.push(value); },
+    assign(value: string) { assignments.push(value); }
+  };
+  const context = createContext({
+    URL,
+    Element: TestElement,
+    FormData: TestFormData,
+    HTMLFormElement: TestForm,
+    chrome: {
+      runtime: {
+        getURL(path: string) { return `chrome-extension://vigil/${path}`; }
+      }
+    },
+    location,
+    addEventListener(name: string, listener: SafeSearchListener) { listeners.set(name, listener); }
+  });
+  runInContext(googleSafeSearchSource.replace(/\nexport \{\};?\s*$/u, ""), context);
+
+  const currentRedirect = new URL(must(replacements[0], "current-navigation SafeSearch redirect"));
+  assert.equal(currentRedirect.searchParams.get("q"), "ordinary");
+  assert.equal(currentRedirect.searchParams.get("safe"), "active");
+  assert.equal(
+    runInContext("googleSafeSearchRedirect('https://www.google.com/search?q=ready&safe=active')", context),
+    null,
+    "an already-safe Google navigation must not loop"
+  );
+  assert.equal(
+    runInContext("googleSafeSearchRedirect('https://example.com/search?q=ordinary&safe=off')", context),
+    null,
+    "the guard must not rewrite non-Google destinations"
+  );
+  assert.equal(
+    runInContext("googleSafeSearchRedirect('https://docs.google.com/search?q=ordinary&safe=off')", context),
+    null,
+    "the guard must not treat another Google product's search route as Google Search"
+  );
+  assert.equal(
+    runInContext("googleSafeSearchRedirect('https://www.google.com/maps?q=ordinary&safe=off')", context),
+    null,
+    "the guard must not rewrite non-search Google routes"
+  );
+  assert.equal(
+    runInContext("googleSafeSearchRedirect('https://www.google.com/search/results?q=ordinary&safe=off')", context),
+    null,
+    "the guard must match the Google Search path exactly"
+  );
+  assert.equal(
+    runInContext("explicitSearchBlockRedirect('https://www.google.com/search?q=p%6Frn')", context),
+    "chrome-extension://vigil/blocked.html",
+    "the always-on guard must block explicit terms containing encoded characters"
+  );
+  location.href = "https://www.google.com/search?q=p%6Frn&safe=active";
+  runInContext("enforceGoogleSafeSearchForCurrentNavigation()", context);
+  assert.equal(
+    replacements.at(-1),
+    "chrome-extension://vigil/blocked.html",
+    "an encoded explicit current navigation must reach the bundled block page even when SafeSearch is already active"
+  );
+  location.href = "https://www.google.com/search?q=ordinary&safe=active";
+  assert.equal(
+    runInContext("explicitSearchBlockRedirect('https://www.bing.com/search?QUERY=18%252B')", context),
+    "chrome-extension://vigil/blocked.html",
+    "the always-on guard must decode search names case-insensitively and nested encoded values"
+  );
+  assert.equal(
+    runInContext("explicitSearchBlockRedirect('https://google.com.example/search?q=p%6Frn')", context),
+    null,
+    "lookalike domains must not be treated as protected search providers"
+  );
+
+  const linkTarget = new TestElement();
+  linkTarget.anchor = { href: "https://images.google.com/search?q=reference&safe=off" };
+  let linkPrevented = false;
+  let linkPropagationStopped = false;
+  must(listeners.get("click"), "SafeSearch click listener")({
+    target: linkTarget,
+    preventDefault() { linkPrevented = true; },
+    stopImmediatePropagation() { linkPropagationStopped = true; }
+  });
+  assert.equal(linkPrevented, true);
+  assert.equal(linkPropagationStopped, true);
+  const linkRedirect = new URL(must(assignments.at(-1), "link SafeSearch redirect"));
+  assert.equal(linkRedirect.searchParams.get("safe"), "active");
+
+  linkTarget.anchor = { href: "https://duckduckgo.com/?q=encoded+p%6Frn" };
+  must(listeners.get("click"), "explicit-search click listener")({
+    target: linkTarget,
+    preventDefault() {},
+    stopImmediatePropagation() {}
+  });
+  assert.equal(assignments.at(-1), "chrome-extension://vigil/blocked.html");
+
+  const form = new TestForm();
+  form.action = "https://example.com/submit";
+  form.fields = [["q", "form reference"], ["safe", "off"]];
+  const submitter = {
+    name: "source",
+    value: "search-button",
+    formAction: "https://www.google.com/search",
+    formMethod: "get",
+    hasAttribute(name: string) { return name === "formaction" || name === "formmethod"; }
+  };
+  let formPrevented = false;
+  let formPropagationStopped = false;
+  must(listeners.get("submit"), "SafeSearch submit listener")({
+    target: form,
+    submitter,
+    preventDefault() { formPrevented = true; },
+    stopImmediatePropagation() { formPropagationStopped = true; }
+  });
+  assert.equal(formPrevented, true);
+  assert.equal(formPropagationStopped, true);
+  const formRedirect = new URL(must(assignments.at(-1), "form SafeSearch redirect"));
+  assert.equal(formRedirect.searchParams.get("q"), "form reference");
+  assert.equal(formRedirect.searchParams.get("safe"), "active");
+  assert.equal(formRedirect.searchParams.get("source"), "search-button", "named submitter fields must survive the redirect");
+
+  form.fields = [["q", "p%6Frn"]];
+  must(listeners.get("submit"), "explicit-search submit listener")({
+    target: form,
+    submitter,
+    preventDefault() {},
+    stopImmediatePropagation() {}
+  });
+  assert.equal(assignments.at(-1), "chrome-extension://vigil/blocked.html");
+  form.fields = [["q", "form reference"], ["safe", "off"]];
+
+  const assignmentCountBeforePost = assignments.length;
+  form.action = "https://www.google.com/search";
+  form.method = "post";
+  const plainSubmitter = {
+    name: "source",
+    value: "plain-button",
+    formAction: "https://www.google.com/maps",
+    formMethod: "get",
+    hasAttribute() { return false; }
+  };
+  let postPrevented = false;
+  let postPropagationStopped = false;
+  must(listeners.get("submit"), "SafeSearch submit listener")({
+    target: form,
+    submitter: plainSubmitter,
+    preventDefault() { postPrevented = true; },
+    stopImmediatePropagation() { postPropagationStopped = true; }
+  });
+  assert.equal(postPrevented, false, "a plain submitter must not override its parent form's POST method");
+  assert.equal(postPropagationStopped, false);
+  assert.equal(assignments.length, assignmentCountBeforePost, "POST search forms must not be replaced with GET navigations");
+
+  form.method = "get";
+  let plainGetPrevented = false;
+  let plainGetPropagationStopped = false;
+  must(listeners.get("submit"), "SafeSearch submit listener")({
+    target: form,
+    submitter: plainSubmitter,
+    preventDefault() { plainGetPrevented = true; },
+    stopImmediatePropagation() { plainGetPropagationStopped = true; }
+  });
+  assert.equal(plainGetPrevented, true, "a plain submitter must use its parent Google Search form's action");
+  assert.equal(plainGetPropagationStopped, true);
+  assert.equal(assignments.length, assignmentCountBeforePost + 1);
+  const plainGetRedirect = new URL(must(assignments.at(-1), "plain-submitter Google Search redirect"));
+  assert.equal(plainGetRedirect.pathname, "/search");
+  assert.equal(plainGetRedirect.searchParams.get("source"), "plain-button");
+
+  const assignmentCountBeforePostOverride = assignments.length;
+  const postSubmitter = {
+    name: "source",
+    value: "search-button",
+    formAction: "https://www.google.com/search",
+    formMethod: "post",
+    hasAttribute(name: string) { return name === "formmethod"; }
+  };
+  let postOverridePrevented = false;
+  let postOverridePropagationStopped = false;
+  must(listeners.get("submit"), "SafeSearch submit listener")({
+    target: form,
+    submitter: postSubmitter,
+    preventDefault() { postOverridePrevented = true; },
+    stopImmediatePropagation() { postOverridePropagationStopped = true; }
+  });
+  assert.equal(postOverridePrevented, false);
+  assert.equal(postOverridePropagationStopped, false);
+  assert.equal(assignments.length, assignmentCountBeforePostOverride, "a submitter POST override must not be replaced with a GET navigation");
+}
 
 {
   const state = defaultState();
@@ -77,7 +354,9 @@ assert.ok(
   assert.equal(extensionRuleSnapshot(state, now).focusedSocialCleanupEnabled, true);
   const blocked = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/all", event: "navigation" }, now);
   assert.equal(blocked.blocked, true);
-  assert.equal(stringValue(blocked.redirectUrl, "blocked redirect URL"), "https://www.reddit.com/");
+  const blockedRedirect = new URL(stringValue(blocked.redirectUrl, "blocked redirect URL"));
+  assert.equal(blockedRedirect.pathname, "/blocked");
+  assert.equal(blockedRedirect.searchParams.get("site"), "Reddit Popular");
   const normalReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/learnprogramming/comments/demo", event: "navigation" }, now);
   assert.equal(normalReddit.blocked, false);
   assert.equal(normalReddit.paused, false);
@@ -131,7 +410,9 @@ assert.ok(
   };
   const rules = extensionRuleSnapshot(state, now);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/shorts"), true);
-  assert.equal(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "YouTube Shorts dynamic rule").redirectUrl, "https://www.youtube.com/");
+  const shortsRedirect = new URL(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "YouTube Shorts dynamic rule").redirectUrl);
+  assert.equal(shortsRedirect.pathname, "/blocked");
+  assert.equal(shortsRedirect.searchParams.get("site"), "YouTube Shorts");
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/explore"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/feed/explore"), true);
@@ -170,7 +451,9 @@ assert.ok(
   assert.equal(allowlistRule.excludedDomains?.includes("::1"), true);
   assert.equal(allowlistRule.until, state.activeSession.endsAt);
   assert.equal(rules.dynamicRuleCount, rules.rules.length + rules.contentRules.length + rules.allowlistRules.length + 1);
-  assert.equal(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "allowed YouTube Shorts rule").redirectUrl, "https://www.youtube.com/");
+  const allowedShortsRedirect = new URL(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "allowed YouTube Shorts rule").redirectUrl);
+  assert.equal(allowedShortsRedirect.pathname, "/blocked");
+  assert.equal(allowedShortsRedirect.searchParams.get("site"), "YouTube Shorts");
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), false);
 }
 

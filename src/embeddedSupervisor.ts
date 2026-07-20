@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 export const EMBEDDED_SUPERVISOR_LABEL = "tech.caseline.vigil.supervisor";
+export const EMBEDDED_SUPERVISOR_MARKER = "SAFETY-BOUNDARY-DO-NOT-REMOVE.enabled";
 
 const execFileAsync = promisify(execFile);
 const SUPERVISOR_START_TIMEOUT_MS = 5_000;
@@ -16,7 +17,7 @@ export async function resumeEmbeddedRuntimeSupervisor(userDataDir: string): Prom
 
   const supervisorDir = join(userDataDir, "supervisor");
   await mkdir(supervisorDir, { recursive: true });
-  await writeFile(join(supervisorDir, "enabled"), "enabled\n", { mode: 0o600 });
+  await writeFile(join(supervisorDir, EMBEDDED_SUPERVISOR_MARKER), "enabled\n", { mode: 0o600 });
   const plistPath = join(home, "Library", "LaunchAgents", `${EMBEDDED_SUPERVISOR_LABEL}.plist`);
   await execFileAsync("/bin/launchctl", ["enable", `gui/${uid}/${EMBEDDED_SUPERVISOR_LABEL}`], { timeout: 5_000 });
   if (!(await launchctlServiceLoaded(uid))) {
@@ -31,7 +32,7 @@ export async function suspendEmbeddedRuntimeSupervisor(userDataDir: string): Pro
   const home = process.env.HOME;
   if (uid === undefined || !home) throw new Error("Vigil could not identify the current user to suspend restart supervision.");
 
-  await rm(join(userDataDir, "supervisor", "enabled"), { force: true });
+  await rm(join(userDataDir, "supervisor", EMBEDDED_SUPERVISOR_MARKER), { force: true });
   const plistPath = join(home, "Library", "LaunchAgents", `${EMBEDDED_SUPERVISOR_LABEL}.plist`);
   for (const args of [
     ["bootout", `gui/${uid}/${EMBEDDED_SUPERVISOR_LABEL}`],

@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gitExecutable } from "../scripts/git-executable.mjs";
 import { sourceFingerprint } from "../scripts/source-fingerprint.mjs";
 
 const root = await mkdtemp(join(tmpdir(), "vigil-source-fingerprint-"));
@@ -31,8 +32,9 @@ try {
 }
 
 async function git(args: string[]): Promise<void> {
+  const command = await gitExecutable(root);
   await new Promise<void>((resolveGit, rejectGit) => {
-    const child = spawn("git", args, { cwd: root, stdio: "ignore" });
+    const child = spawn(command, args, { cwd: root, stdio: "ignore" });
     child.once("error", rejectGit);
     child.once("close", (code) => code === 0 ? resolveGit() : rejectGit(new Error(`git exited with status ${code}`)));
   });

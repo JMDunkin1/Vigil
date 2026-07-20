@@ -3,24 +3,39 @@
   const nativeApplication = "tech.caseline.vigil.browser";
   const rulesSchemaVersion = 2;
   const rulesCacheKey = `lastKnownRules:${location.hostname.toLowerCase()}`;
+  const bootstrapRules = {
+    schemaVersion: rulesSchemaVersion,
+    blockedHosts: [],
+    blockedURLFragments: [],
+    blockedSearchTerms: [
+      "porn", "porno", "xxx", "nsfw", "hentai", "rule34", "gonewild",
+      "onlyfans", "fansly", "chaturbate", "stripchat", "cam4", "redtube",
+      "youporn", "spankbang", "xvideos", "xnxx", "xhamster", "18+",
+      "18%2b", "18plus", "18-plus"
+    ],
+    safeSearchEnabled: true,
+    blockedDomain: "",
+    filterUnavailable: false
+  };
   let rules = null;
+  let preflightHandled = false;
 
   const hostMatches = (host, blocked) => host === blocked || host.endsWith(`.${blocked}`);
   const searchText = (url) => ["q", "query", "search_query", "text"].map(key => url.searchParams.get(key) || "").join(" ").toLowerCase();
-  const decision = raw => {
-    if (!rules) return { allowed: false, reason: "Vigil filter rules are unavailable" };
-    if (rules.filterUnavailable) return { allowed: false, reason: "Vigil's content filter failed its integrity check" };
+  const decision = (raw, activeRules = rules) => {
+    if (!activeRules) return { allowed: false, reason: "Vigil filter rules are unavailable" };
+    if (activeRules.filterUnavailable) return { allowed: false, reason: "Vigil's content filter failed its integrity check" };
     let url;
     try { url = new URL(raw, location.href); } catch { return { allowed: false, reason: "Invalid address" }; }
     if (url.protocol !== "https:") return { allowed: false, reason: "Vigil requires HTTPS" };
     const host = url.hostname.toLowerCase();
-    if (rules.blockedDomain && hostMatches(host, String(rules.blockedDomain).toLowerCase())) return { allowed: false, reason: "Website blocked by Vigil" };
-    if ((rules.blockedHosts || []).some(value => hostMatches(host, String(value).toLowerCase()))) return { allowed: false, reason: "Website blocked by Vigil" };
+    if (activeRules.blockedDomain && hostMatches(host, String(activeRules.blockedDomain).toLowerCase())) return { allowed: false, reason: "Website blocked by Vigil" };
+    if ((activeRules.blockedHosts || []).some(value => hostMatches(host, String(value).toLowerCase()))) return { allowed: false, reason: "Website blocked by Vigil" };
     const absolute = url.href.toLowerCase();
-    if ((rules.blockedURLFragments || []).some(value => absolute.includes(String(value).toLowerCase()))) return { allowed: false, reason: "Page blocked by Vigil" };
+    if ((activeRules.blockedURLFragments || []).some(value => absolute.includes(String(value).toLowerCase()))) return { allowed: false, reason: "Page blocked by Vigil" };
     const terms = searchText(url);
-    if ((rules.blockedSearchTerms || []).some(value => terms.includes(String(value).toLowerCase()))) return { allowed: false, reason: "Search blocked by Vigil" };
-    if (rules.safeSearchEnabled) {
+    if ((activeRules.blockedSearchTerms || []).some(value => terms.includes(String(value).toLowerCase()))) return { allowed: false, reason: "Search blocked by Vigil" };
+    if (activeRules.safeSearchEnabled) {
       let key = null, value = null;
       if (host === "google.com" || host.endsWith(".google.com")) { key = "safe"; value = "active"; }
       else if (host === "bing.com" || host.endsWith(".bing.com")) { key = "adlt"; value = "strict"; }
@@ -36,6 +51,7 @@
   const cover = reason => {
     document.documentElement.style.setProperty("display", "none", "important");
     const show = () => {
+      document.documentElement.style.removeProperty("visibility");
       document.documentElement.style.removeProperty("display");
       document.documentElement.replaceChildren();
       const body = document.createElement("body");
@@ -56,6 +72,14 @@
     else if (result.redirect && result.redirect !== location.href) location.replace(result.redirect);
   };
   document.documentElement.style.setProperty("visibility", "hidden", "important");
+  const preflight = decision(location.href, bootstrapRules);
+  if (!preflight.allowed) {
+    preflightHandled = true;
+    cover(preflight.reason);
+  } else if (preflight.redirect && preflight.redirect !== location.href) {
+    preflightHandled = true;
+    location.replace(preflight.redirect);
+  }
   Promise.race([
     browser.runtime.sendNativeMessage(nativeApplication, { type: "rules", hostname: location.hostname }),
     new Promise((_, reject) => setTimeout(() => reject(new Error("native-timeout")), 1500))
@@ -67,6 +91,7 @@
     }))
     .finally(() => {
       if (rules) browser.storage.local.set({ [rulesCacheKey]: rules });
+      if (preflightHandled) return;
       document.documentElement.style.removeProperty("visibility");
       checkCurrent();
     });

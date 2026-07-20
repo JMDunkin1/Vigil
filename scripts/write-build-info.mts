@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sourceFingerprint } from "./source-fingerprint.mjs";
+import { gitExecutable } from "./git-executable.mjs";
 
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const projectRoot = dirname(dirname(runtimeRoot));
@@ -31,8 +32,14 @@ async function durableSourceRoot(): Promise<string> {
 }
 
 async function git(args: string[]): Promise<string> {
+  let command: string;
+  try {
+    command = await gitExecutable(projectRoot);
+  } catch {
+    return "";
+  }
   return await new Promise((resolveGit) => {
-    const child = spawn("git", args, { cwd: projectRoot, stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn(command, args, { cwd: projectRoot, stdio: ["ignore", "pipe", "ignore"] });
     let stdout = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {

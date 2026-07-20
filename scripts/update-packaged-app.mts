@@ -9,6 +9,9 @@ import { liveRuntimeReady } from "../src/runtimeReady.js";
 import { resumeEmbeddedRuntimeSupervisor, suspendEmbeddedRuntimeSupervisor } from "../src/embeddedSupervisor.js";
 import { isDirectRun } from "../src/directRun.js";
 import { plistStringForKey } from "../src/plist.js";
+import { beginGuardianMaintenance } from "../src/updateMaintenance.js";
+import type { GuardianMaintenanceTransaction } from "../src/updateMaintenance.js";
+import { gitExecutable } from "./git-executable.mjs";
 import { isLocallyRebuildableSignature, macSigningTimestamp, resolveMacSigningIdentity } from "./mac-signing-identity.mjs";
 
 interface Options {
@@ -63,6 +66,7 @@ export interface AtomicInstallOperations {
 const FETCH_TIMEOUT_MS = 8_000;
 const HEALTH_TIMEOUT_MS = 30_000;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
+const SAFETY_BOUNDARY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
 let options: Options;
 let log: ReturnType<typeof createWriteStream>;
 let activeChild: ChildProcess | null = null;
@@ -75,6 +79,7 @@ async function runUpdate(): Promise<void> {
   let agentRuntimeInstallation: AppInstallation | null = null;
   let stateSnapshot: UpdateStateSnapshot | null = null;
   let launchAgentTransition: LaunchAgentRecovery | null = null;
+  let guardianMaintenance: GuardianMaintenanceTransaction | null = null;
   let parentExited = false;
   let replacementCommitted = false;
   let launchAgentWasLoaded = false;
@@ -102,6 +107,7 @@ async function runUpdate(): Promise<void> {
     await assertActiveCheckoutUnchanged(stagedBuild);
     launchAgentTransition = await captureLoadedLaunchAgentRecovery();
     launchAgentWasLoaded = launchAgentTransition !== null;
+    guardianMaintenance = await beginGuardianMaintenance(options.lockPath, options.lockToken);
     await status("waiting", "Update ready; waiting for Vigil to quit");
     process.kill(options.parentPid, "SIGUSR2");
     try {
@@ -207,7 +213,16 @@ async function runUpdate(): Promise<void> {
     });
     process.exitCode = 1;
   } finally {
-    if (stagedBuild) await cleanupStagedBuild(stagedBuild);
+    if (guardianMaintenance) {
+      await guardianMaintenance.release().catch((error) => {
+        log?.write(`Could not clear the guardian maintenance marker: ${errorMessage(error)}\n`);
+      });
+    }
+    if (stagedBuild) {
+      await cleanupStagedBuild(stagedBuild).catch((error) => {
+        log?.write(`Could not clean up the staged update: ${errorMessage(error)}\n`);
+      });
+    }
     if (typeof options !== "undefined") await releaseOwnedUpdaterLock();
     log?.end();
   }
@@ -720,7 +735,7 @@ async function openAndVerifyInstalledApp(dataDir: string, failureMessage: string
 }
 
 async function openAppInBackground(): Promise<void> {
-  await run("/usr/bin/open", ["-g", options.appPath, "--args", BACKGROUND_LAUNCH_ARG]);
+  await run("/usr/bin/open", ["-g", options.appPath, "--args", BACKGROUND_LAUNCH_ARG, SAFETY_BOUNDARY_ARG]);
 }
 
 async function backendIsHealthy(context: BackendHealthContext): Promise<boolean> {
@@ -880,10 +895,12 @@ async function run(
   } = {}
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   if (interrupted && !optionsForRun.ignoreInterruption) throw new Error("Vigil update was interrupted.");
+  const cwd = optionsForRun.cwd || options.repoRoot;
+  const executable = command === "git" ? await gitExecutable(cwd) : command;
   return await new Promise((resolveRun, rejectRun) => {
     let settled = false;
-    const child = spawn(command, args, {
-      cwd: optionsForRun.cwd || options.repoRoot,
+    const child = spawn(executable, args, {
+      cwd,
       env: optionsForRun.env || process.env,
       detached: Boolean(optionsForRun.timeoutMs),
       stdio: ["ignore", "pipe", "pipe"]

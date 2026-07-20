@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { plistStringForKey } from "../src/plist.js";
 import { sourceFingerprint } from "../scripts/source-fingerprint.mjs";
+import { gitExecutable } from "../scripts/git-executable.mjs";
 
 const UPDATE_STATUS_FILENAME = "update-status.json";
 const UPDATE_LOG_FILENAME = "update.log";
@@ -15,7 +16,6 @@ const UPDATE_LOCK_FILENAME = "update.lock";
 const EXEC_TIMEOUT_MS = 5000;
 const REPO_CHECK_ATTEMPTS = 3;
 const REPO_CHECK_RETRY_MS = 150;
-const GIT_EXECUTABLE = process.platform === "darwin" && existsSync("/usr/bin/git") ? "/usr/bin/git" : "git";
 
 interface ExecResult {
   ok: boolean;
@@ -314,7 +314,9 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       "--app-path", appPath,
       "--parent-pid", String(process.pid),
       "--user-data-dir", userDataDir,
-      "--npm-path", npmPath
+      "--npm-path", npmPath,
+      "--lock-path", updateLock.path,
+      "--lock-token", updateLock.token
     ], { detached: true, stdio: "ignore", cwd: repoRoot, env: process.env });
     const requestQuit = () => quitForUpdate();
     process.once("SIGUSR2", requestQuit);
@@ -460,7 +462,11 @@ async function readRepoInfo(repoRoot: string): Promise<RepoInfo> {
 }
 
 async function execGit(repoRoot: string, args: string[]): Promise<ExecResult> {
-  return await execFile(GIT_EXECUTABLE, args, { cwd: repoRoot, timeoutMs: EXEC_TIMEOUT_MS });
+  try {
+    return await execFile(await gitExecutable(repoRoot), args, { cwd: repoRoot, timeoutMs: EXEC_TIMEOUT_MS });
+  } catch (error) {
+    return failedExec(errorMessage(error));
+  }
 }
 
 function failedExec(stderr: string): ExecResult {

@@ -9,13 +9,32 @@ import { SIMCTL_LIST_TIMEOUT_MS, selectIosSimulator } from "../scripts/test-ios-
 import { FOCUSED_SOCIAL_PLATFORMS } from "../src/socialFeatureFilters.js";
 import { socialIconPngBase64 } from "../src/socialIconAssets.js";
 
+const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const projectRoot = existsSync(join(runtimeRoot, "ios")) ? runtimeRoot : resolve(runtimeRoot, "..", "..");
+const phoneRelease = JSON.parse(await readFile(join(projectRoot, "ios", "phone-release.json"), "utf8")) as {
+  build: number;
+  version: string;
+};
+
 const instagram = buildArguments(["instagram", "--unsigned", "--destination", "generic/platform=iOS Simulator"]);
 assert.ok(instagram.includes("PRODUCT_BUNDLE_IDENTIFIER=tech.caseline.vigil.instagram"));
 assert.ok(instagram.includes("VIGIL_SERVICE=instagram"));
 assert.ok(instagram.includes("SOCIAL_APP_NAME=Instagram"));
 assert.ok(instagram.includes("SOCIAL_ICON_NAME=instagram.png"));
 assert.ok(instagram.includes("SOCIAL_URL_SCHEME=vigil-instagram"));
+assert.ok(instagram.includes(`MARKETING_VERSION=${phoneRelease.version}`));
+assert.ok(instagram.includes(`CURRENT_PROJECT_VERSION=${phoneRelease.build}`));
 assert.ok(instagram.includes("CODE_SIGNING_ALLOWED=NO"));
+
+const combined = buildArguments(["combined"]);
+assert.ok(combined.includes("PRODUCT_BUNDLE_IDENTIFIER=tech.caseline.vigil.social"));
+assert.ok(combined.includes("VIGIL_SERVICE=combined"));
+assert.ok(combined.includes("SOCIAL_APP_NAME=Vigil Social"));
+assert.ok(combined.includes("SOCIAL_URL_SCHEME=vigilsocial"));
+
+const explicitVersion = buildArguments(["youtube", "--version", "2.4.1", "--build", "37"]);
+assert.ok(explicitVersion.includes("MARKETING_VERSION=2.4.1"));
+assert.ok(explicitVersion.includes("CURRENT_PROJECT_VERSION=37"));
 
 const snapchat = buildArguments(["--service", "snapchat"]);
 assert.ok(snapchat.includes("PRODUCT_BUNDLE_IDENTIFIER=tech.caseline.vigil.snapchat"));
@@ -25,8 +44,6 @@ assert.throws(() => buildArguments(["youtube", "--config", "Debug"]), /Unknown o
 assert.throws(() => buildArguments(["--service"]), /Missing value for --service/);
 assert.throws(() => buildArguments(["youtube", "--destination", "--unsigned"]), /Missing value for --destination/);
 
-const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const projectRoot = existsSync(join(runtimeRoot, "ios")) ? runtimeRoot : resolve(runtimeRoot, "..", "..");
 for (const platform of FOCUSED_SOCIAL_PLATFORMS) {
   const filename = `${platform.id}.png`;
   const canonical = await readFile(join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Icons", filename));

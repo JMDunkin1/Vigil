@@ -3,7 +3,7 @@ import { PERMANENT_SOCIAL_URL_PATTERNS, defaultFocusedSocialSettings } from "./s
 
 export const APP_NAME = "Vigil";
 export const PORT = Number(process.env.VIGIL_PORT || 8787);
-export const REQUIRED_EXTENSION_VERSION = "0.3.5";
+export const REQUIRED_EXTENSION_VERSION = "0.3.6";
 export const BUILT_IN_CHROME_EXTENSION_ID = "pioggnehmhgehdlncoddbhcbcjmmcpge";
 export const DEFAULT_ADULT_BLOCKLIST_SOURCE_ID = "blocklistproject-porn";
 export const MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS = 600_000;
@@ -318,7 +318,8 @@ export const DEFAULT_EXPLICIT_URL_PATTERNS = [
 ];
 
 export const DEFAULT_ALWAYS_BANNED_URL_PATTERNS = [
-  ...PERMANENT_SOCIAL_URL_PATTERNS
+  ...PERMANENT_SOCIAL_URL_PATTERNS,
+  "webtoons.com"
 ];
 
 export const DEFAULT_SHORT_FORM_URL_PATTERNS = [

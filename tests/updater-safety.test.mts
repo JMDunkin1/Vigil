@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { acquireUpdaterLock, readRepoInfoForTest } from "../app/updater.js";
+import { gitExecutable, selectGitExecutable } from "../scripts/git-executable.mjs";
 import { macSigningTimestamp } from "../scripts/mac-signing-identity.mjs";
 import { atomicInstallBuiltApp, snapshotUpdateState } from "../scripts/update-packaged-app.mjs";
 import type { AtomicInstallOperations } from "../scripts/update-packaged-app.mjs";
@@ -20,6 +21,7 @@ const localLauncherSource = await readFile(join(sourceRoot, "scripts", "launch-l
 const embeddedSupervisorSource = await readFile(join(sourceRoot, "src", "embeddedSupervisor.ts"), "utf8");
 const packageMacSource = await readFile(join(sourceRoot, "scripts", "package-mac.mjs"), "utf8");
 const writeBuildInfoSource = await readFile(join(sourceRoot, "scripts", "write-build-info.mts"), "utf8");
+const buildHumanIdleSource = await readFile(join(sourceRoot, "scripts", "build-human-idle-helper.mjs"), "utf8");
 const execFile = promisify(execFileCallback);
 
 assert.equal(macSigningTimestamp("Vigil Local Code Signing"), "none", "local self-signing must not depend on Apple's timestamp service");
@@ -40,7 +42,13 @@ assert.match(updateScriptSource, /\["worktree", "add", "--detach"/u);
 assert.match(updaterSource, /packagedBuildRepoRoot\(app\)/u, "the installed app must retain its source checkout pointer");
 assert.match(updaterSource, /existsSync\(join\(candidate, "\.git"\)\)/u, "source discovery must reject installed runtime copies that are not Git worktrees");
 assert.match(updaterSource, /const REPO_CHECK_ATTEMPTS = 3/u, "transient repository reads must be retried");
-assert.match(updaterSource, /GIT_EXECUTABLE[\s\S]*?"\/usr\/bin\/git"/u, "the packaged macOS app must use the stable system Git path");
+assert.match(updaterSource, /await gitExecutable\(repoRoot\)/u, "repository verification must resolve a working Git binary");
+assert.match(updateScriptSource, /command === "git" \? await gitExecutable\(cwd\) : command/u, "the external updater must use the same verified Git binary");
+assert.match(
+  buildHumanIdleSource,
+  /resolveDeveloperTools\(\)[\s\S]*?CommandLineTools\/usr\/bin[\s\S]*?XcodeDefault\.xctoolchain[\s\S]*?\/usr\/bin/u,
+  "local rebuilds must bypass unusable Apple compiler shims after an Xcode update"
+);
 assert.match(updateScriptSource, /VIGIL_BUILD_SOURCE_ROOT: options\.repoRoot/u, "staged update builds must preserve the real checkout pointer");
 assert.match(
   writeBuildInfoSource,
@@ -62,6 +70,11 @@ assert.match(
 );
 assert.match(updaterSource, /launchLocalChanges\(currentStatus, updateLock\)/u, "dirty source must use the local app launcher");
 assert.match(updaterSource, /"--app-path", appPath/u, "the local launcher must receive the installed app path for recovery");
+assert.match(
+  updaterSource,
+  /"--lock-path", updateLock\.path,[\s\S]*?"--lock-token", updateLock\.token/u,
+  "the local launcher must receive the transferred authenticated updater lock"
+);
 assert.match(localLauncherSource, /exitCode = await buildLocalApp\(options, log\)/u, "the local launcher must remain alive through the packaged local build");
 assert.match(localLauncherSource, /\["run", "build:mac"\]/u, "local changes must rebuild the Vigil app bundle instead of launching a second Electron app identity");
 assert.ok(
@@ -109,6 +122,26 @@ assert.ok(
     < localLauncherSource.indexOf('process.kill(options.parentPid, "SIGUSR2")'),
   "local replacement must capture the legacy LaunchAgent before the candidate app can retire it"
 );
+assert.ok(
+  localLauncherSource.indexOf("guardianMaintenance = await beginGuardianMaintenance(options.lockPath, options.lockToken)")
+    < localLauncherSource.indexOf('process.kill(options.parentPid, "SIGUSR2")'),
+  "local replacement must publish its authenticated guardian marker before Vigil or its supervisor can exit"
+);
+assert.ok(
+  updateScriptSource.indexOf("guardianMaintenance = await beginGuardianMaintenance(options.lockPath, options.lockToken)")
+    < updateScriptSource.indexOf('process.kill(options.parentPid, "SIGUSR2")'),
+  "packaged replacement must publish its authenticated guardian marker before Vigil or its supervisor can exit"
+);
+assert.match(
+  localLauncherSource,
+  /finally \{[\s\S]*?guardianMaintenance\.release\(\)[\s\S]*?releaseOwnedUpdaterLock\(options\.lockPath, options\.lockToken\)/u,
+  "local verification and rollback must retain guardian maintenance until the complete transaction settles"
+);
+assert.match(
+  updateScriptSource,
+  /finally \{[\s\S]*?guardianMaintenance\.release\(\)[\s\S]*?releaseOwnedUpdaterLock\(\)/u,
+  "packaged verification and rollback must retain guardian maintenance until the complete transaction settles"
+);
 assert.match(
   localLauncherSource,
   /interface LegacyAgentRecovery \{[\s\S]*?plist: string;[\s\S]*?plistMode: number;[\s\S]*?plistPath: string;/u,
@@ -139,7 +172,7 @@ assert.ok(
 assert.match(localLauncherSource, /await reopenInstalledApp\(options\.appPath, log\)/u, "a failed local launch must reopen the installed app");
 assert.match(
   localLauncherSource,
-  /spawn\("\/usr\/bin\/open", \["-g", appPath, "--args", BACKGROUND_LAUNCH_ARG\]/u,
+  /spawn\("\/usr\/bin\/open", \["-g", appPath, "--args", BACKGROUND_LAUNCH_ARG, SAFETY_BOUNDARY_ARG\]/u,
   "local rebuilds and rollback recovery must relaunch Vigil without activating it or opening a window"
 );
 assert.ok(
@@ -154,16 +187,33 @@ try {
   await mkdir(join(noUpstreamRoot, "app"), { recursive: true });
   await writeFile(join(noUpstreamRoot, "package.json"), '{"name":"vigil"}\n');
   await writeFile(join(noUpstreamRoot, "app", "main.ts"), "export {};\n");
-  await execFile("/usr/bin/git", ["init", "--quiet", noUpstreamRoot]);
-  await execFile("/usr/bin/git", ["-C", noUpstreamRoot, "config", "user.email", "vigil-test@example.invalid"]);
-  await execFile("/usr/bin/git", ["-C", noUpstreamRoot, "config", "user.name", "Vigil Test"]);
-  await execFile("/usr/bin/git", ["-C", noUpstreamRoot, "add", "package.json", "app/main.ts"]);
-  await execFile("/usr/bin/git", ["-C", noUpstreamRoot, "commit", "--quiet", "-m", "fixture"]);
+  const git = await gitExecutable(noUpstreamRoot);
+  await execFile(git, ["init", "--quiet", noUpstreamRoot]);
+  await execFile(git, ["-C", noUpstreamRoot, "config", "user.email", "vigil-test@example.invalid"]);
+  await execFile(git, ["-C", noUpstreamRoot, "config", "user.name", "Vigil Test"]);
+  await execFile(git, ["-C", noUpstreamRoot, "add", "package.json", "app/main.ts"]);
+  await execFile(git, ["-C", noUpstreamRoot, "commit", "--quiet", "-m", "fixture"]);
   const repoWithoutUpstream = await readRepoInfoForTest(noUpstreamRoot);
   assert.equal(repoWithoutUpstream.ok, true, "a valid local Git checkout must remain verifiable without an upstream branch");
   assert.equal(repoWithoutUpstream.upstream, null, "missing branch tracking must remain distinct from repository verification");
 } finally {
   await rm(noUpstreamRoot, { recursive: true, force: true });
+}
+
+const gitFallbackRoot = await mkdtemp(join(tmpdir(), "vigil-git-fallback-"));
+try {
+  const brokenGit = join(gitFallbackRoot, "broken-git");
+  const workingGit = join(gitFallbackRoot, "working-git");
+  await writeFile(brokenGit, "#!/bin/sh\nexit 69\n");
+  await writeFile(workingGit, "#!/bin/sh\n[ \"$1\" = \"--version\" ]\n");
+  await Promise.all([chmod(brokenGit, 0o755), chmod(workingGit, 0o755)]);
+  assert.equal(
+    await selectGitExecutable([brokenGit, workingGit], gitFallbackRoot),
+    workingGit,
+    "an unusable Apple Git shim must fall through to a working direct toolchain binary"
+  );
+} finally {
+  await rm(gitFallbackRoot, { recursive: true, force: true });
 }
 assert.match(
   localLauncherSource,
@@ -180,8 +230,11 @@ assert.ok(
   "failed packaged updates must suspend the embedded restart supervisor before terminating and restoring the app"
 );
 assert.match(updaterSource, /"--user-data-dir", userDataDir/u, "both replacement launchers must receive Electron's exact supervisor marker directory");
+assert.match(updateScriptSource, /BACKGROUND_LAUNCH_ARG, SAFETY_BOUNDARY_ARG/u, "remote replacement launches must expose Vigil's do-not-terminate safety boundary");
+assert.match(localLauncherSource, /BACKGROUND_LAUNCH_ARG, SAFETY_BOUNDARY_ARG/u, "local replacement launches must expose Vigil's do-not-terminate safety boundary");
+assert.match(localLauncherSource, /userInfo\(\)[\s\S]*?HOME: account\.homedir[\s\S]*?PATH: `\$\{join\(account\.homedir, "\.local", "bin"\)\}/u, "local replacement launches must restore the signed-in user's home and tool path even after an admin guardian launch");
 assert.ok(
-  embeddedSupervisorSource.indexOf('rm(join(userDataDir, "supervisor", "enabled")')
+  embeddedSupervisorSource.indexOf('rm(join(userDataDir, "supervisor", EMBEDDED_SUPERVISOR_MARKER)')
     < embeddedSupervisorSource.indexOf('["bootout", `gui/${uid}/${EMBEDDED_SUPERVISOR_LABEL}`]'),
   "supervisor suspension must remove the reopen marker before booting out the launchd job"
 );
@@ -211,7 +264,7 @@ assert.ok(
 );
 assert.match(
   updateScriptSource,
-  /run\("\/usr\/bin\/open", \["-g", options\.appPath, "--args", BACKGROUND_LAUNCH_ARG\]\)/u,
+  /run\("\/usr\/bin\/open", \["-g", options\.appPath, "--args", BACKGROUND_LAUNCH_ARG, SAFETY_BOUNDARY_ARG\]\)/u,
   "updater verification must relaunch Vigil without activating it or opening a window"
 );
 assert.ok(

@@ -8,7 +8,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var health: [SocialService: AdapterHealth] = [:]
     @Published private(set) var audioPreferences: [SocialService: Bool] = [:]
 
-    let fixedService: SocialService
+    let fixedService: SocialService?
     private let defaults: UserDefaults
     private let loadInitialPages: Bool
     private let mediaClassifier: any MediaSafetyClassifying
@@ -28,9 +28,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     ) {
         let configured = fixedService
             ?? (bundle.object(forInfoDictionaryKey: "VigilService") as? String).flatMap(SocialService.init(rawValue:))
-            ?? .youtube
+        let remembered = defaults.string(forKey: "VigilSocial.selectedService").flatMap(SocialService.init(rawValue:))
         self.fixedService = configured
-        self.selectedService = configured
+        self.selectedService = configured ?? remembered ?? .youtube
         self.defaults = defaults
         self.loadInitialPages = loadInitialPages
         self.mediaClassifier = mediaClassifier
@@ -44,13 +44,17 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func select(_ service: SocialService) {
-        guard service == fixedService else { return }
+        guard fixedService == nil || service == fixedService else { return }
+        if service != selectedService {
+            webViews[selectedService]?.evaluateJavaScript("window.__vigilPauseAllMedia?.();")
+        }
         selectedService = service
+        defaults.set(service.rawValue, forKey: "VigilSocial.selectedService")
         _ = webView(for: service)
     }
 
     func open(_ url: URL) {
-        guard let service = SocialService.resolve(url), service == fixedService else { return }
+        guard let service = SocialService.resolve(url), fixedService == nil || service == fixedService else { return }
         select(service)
         guard service.allowsNavigation(to: url) else { return }
         webView(for: service).load(URLRequest(url: url))

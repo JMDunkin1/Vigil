@@ -1218,7 +1218,7 @@ button:focus-visible {
 .toast {
   position: fixed;
   left: 50%;
-  bottom: 20px;
+  top: 20px;
   transform: translateX(-50%);
   z-index: 20;
   max-width: min(520px, calc(100vw - 28px));
@@ -7192,6 +7192,478 @@ body[data-active-view="settings"] .settings-disclosure-body > .workspace.two-col
 
   .day-custom-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Settings workspace */
+body[data-active-view="settings"] .shell {
+  width: min(1040px, 100%);
+}
+
+.settings-titlebar {
+  min-height: 46px;
+  margin-bottom: 0;
+  padding: 0 0 13px;
+  align-items: center;
+}
+
+.settings-titlecopy {
+  min-width: 0;
+}
+
+.settings-titlebar .settings-titlecopy h2 {
+  margin: 0;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: 1.55rem;
+  font-weight: 760;
+  letter-spacing: -0.04em;
+}
+
+.settings-search {
+  position: relative;
+  display: block;
+  flex: 0 0 210px;
+  width: 210px;
+  height: 34px;
+  min-height: 34px;
+  gap: 0;
+}
+
+.settings-search-icon {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  z-index: 1;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  fill: none;
+  stroke: color-mix(in srgb, var(--muted) 84%, transparent);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.settings-search input {
+  display: block;
+  height: 34px;
+  min-height: 34px;
+  padding: 6px 30px 6px 31px;
+  border-color: color-mix(in srgb, var(--line) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-strong) 48%, transparent);
+  font-size: 0.72rem;
+  font-weight: 560;
+  box-shadow: none;
+}
+
+.settings-layout {
+  display: block;
+}
+
+.settings-nav {
+  position: static;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  overflow-x: auto;
+  padding: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+}
+
+.settings-nav-item {
+  position: relative;
+  width: auto;
+  min-height: 39px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 7px 1px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 680;
+  text-align: center;
+  box-shadow: none;
+}
+
+.settings-nav-item::before {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px;
+  width: auto;
+  height: 2px;
+  border-radius: 99px;
+  background: transparent;
+}
+
+.settings-nav-item:hover,
+.settings-nav-item:focus-visible {
+  color: var(--ink);
+  transform: none;
+}
+
+.settings-nav-item.is-active {
+  color: var(--ink);
+}
+
+.settings-nav-item.is-active::before {
+  background: var(--primary);
+}
+
+.settings-content {
+  min-width: 0;
+  padding-top: 4px;
+}
+
+body[data-active-view="settings"] .settings-category {
+  display: none;
+  margin: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body[data-active-view="settings"] .settings-category.is-active,
+body[data-active-view="settings"] .settings-root.is-searching .settings-category:not([hidden]) {
+  display: block;
+}
+
+body[data-active-view="settings"] .settings-root.is-searching .settings-category + .settings-category {
+  margin-top: 24px;
+}
+
+body[data-active-view="settings"] .settings-category > summary {
+  display: none;
+}
+
+body[data-active-view="settings"] .settings-category > .settings-disclosure-body {
+  padding: 0;
+  border: 0;
+}
+
+body[data-active-view="settings"] .settings-category .settings-disclosure-body > .workspace,
+body[data-active-view="settings"] .settings-category .settings-disclosure-body > .workspace.two-column {
+  display: block;
+  margin: 0;
+}
+
+body[data-active-view="settings"] .settings-category .settings-disclosure-body > .panel {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-subsection {
+  overflow: visible;
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-subsection + .settings-subsection {
+  margin-top: 0;
+}
+
+.settings-subsection > summary {
+  min-height: 52px;
+  gap: 14px;
+  padding: 9px 38px 9px 2px;
+  border-radius: 8px;
+}
+
+.settings-subsection > summary:hover {
+  background: color-mix(in srgb, var(--surface-strong) 44%, transparent);
+}
+
+.settings-subsection > summary::after {
+  right: 6px;
+  color: color-mix(in srgb, var(--muted) 76%, transparent);
+  font-size: 1.05rem;
+}
+
+.settings-subsection[open] > summary {
+  background: transparent;
+}
+
+.settings-subsection-copy {
+  display: block;
+}
+
+.settings-subsection-copy strong {
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: -0.012em;
+}
+
+.settings-subsection-actions {
+  gap: 6px;
+}
+
+.settings-subsection-actions button,
+.settings-subsection-actions select,
+.settings-subsection-actions .pill {
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  font-size: 0.68rem;
+}
+
+.settings-subsection-body {
+  margin: 0 0 8px 8px;
+  padding: 2px 0 12px 14px;
+  border-top: 0;
+  border-left: 1px solid color-mix(in srgb, var(--line) 74%, transparent);
+}
+
+.settings-editor {
+  margin-top: 8px;
+  overflow: visible;
+  border: 0;
+  border-left: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-form-section.settings-editor {
+  margin-top: 0;
+  overflow: visible;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-editor > summary {
+  min-height: 40px;
+  padding: 7px 36px 7px 10px;
+  color: var(--ink);
+  font-size: 0.72rem;
+  font-weight: 680;
+}
+
+.settings-form-section.settings-editor > summary {
+  min-height: 52px;
+  padding: 9px 38px 9px 2px;
+}
+
+.settings-editor > summary:hover {
+  background: color-mix(in srgb, var(--surface-strong) 30%, transparent);
+}
+
+.settings-editor-body {
+  gap: 8px;
+  padding: 2px 8px 10px;
+}
+
+.settings-form-section > .settings-editor-body {
+  padding: 2px 2px 20px;
+}
+
+.settings-editor-body > form {
+  padding: 10px 0 0 10px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.settings-form-section .device-form-head {
+  margin-bottom: 14px;
+}
+
+.settings-form-section .device-form-head > div:first-child > .eyebrow,
+.settings-form-section .device-form-head > div:first-child > strong {
+  display: none;
+}
+
+.settings-form-section .device-form-head > div:first-child > span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.settings-editor-done {
+  margin: 0 2px;
+}
+
+.settings-subsection-body > :is(
+  .toggle-row,
+  .adult-blocklist-panel,
+  .app-update-panel,
+  .focus-shortcut-panel,
+  .maintenance-panel,
+  .hardening-actions,
+  .audit-list,
+  .blocker-list,
+  .hosts-preview,
+  .device-grid,
+  .setup-list
+) {
+  margin: 0;
+  padding: 10px 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 56%, transparent);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+body[data-active-view="settings"] .settings-content label {
+  font-size: 0.72rem;
+  font-weight: 640;
+}
+
+body[data-active-view="settings"] .settings-content .toggle-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+  padding: 0 !important;
+  border-top: 0 !important;
+}
+
+body[data-active-view="settings"] .settings-content .toggle-row label {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  gap: 8px;
+  margin: 0;
+  padding: 6px 2px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 54%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+body[data-active-view="settings"] .settings-content :is(.toggle-row, .checkline) input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  min-height: 15px;
+  flex: 0 0 15px;
+  margin: 0;
+}
+
+body[data-active-view="settings"] .settings-content .checkline {
+  min-height: 34px;
+}
+
+.settings-subsection-body > :is(.list, .limit-list) {
+  margin: 6px 0 0;
+}
+
+.settings-subsection-body .list-item {
+  min-height: 50px;
+  padding: 8px 2px;
+}
+
+body[data-active-view="settings"] .settings-content input:not([type="checkbox"]):not([type="radio"]),
+body[data-active-view="settings"] .settings-content select,
+body[data-active-view="settings"] .settings-content textarea {
+  min-height: 34px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-size: 0.74rem;
+}
+
+body[data-active-view="settings"] .settings-content textarea {
+  min-height: 84px;
+}
+
+body[data-active-view="settings"] .settings-content .toggle-row .numberline input[type="number"] {
+  width: 60px;
+  height: 28px;
+  min-height: 28px;
+  margin-left: auto;
+  padding: 4px 7px;
+  font-size: 0.72rem;
+}
+
+body[data-active-view="settings"] .settings-content button:not(.settings-nav-item) {
+  min-height: 34px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  font-size: 0.72rem;
+  letter-spacing: 0;
+}
+
+.settings-subsection-body :is(.setup-item, .audit-item, .blocker-item, .device-row) {
+  min-height: 42px;
+  padding: 7px 2px;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 54%, transparent);
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.72rem;
+  box-shadow: none;
+}
+
+.icon-theme-settings .settings-disclosure-body {
+  padding-top: 14px !important;
+}
+
+.icon-theme-settings .icon-theme-picker {
+  gap: 6px;
+  padding: 0;
+  border: 0;
+}
+
+.icon-theme-settings .icon-theme-option {
+  min-height: 62px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: transparent;
+}
+
+.icon-theme-settings .icon-theme-option:hover {
+  background: color-mix(in srgb, var(--surface-strong) 44%, transparent);
+}
+
+@media (max-width: 760px) {
+  .settings-titlebar {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .settings-nav {
+    gap: 16px;
+  }
+
+  .settings-nav-item {
+    min-height: 38px;
+  }
+
+  .settings-subsection > summary,
+  .settings-form-section.settings-editor > summary {
+    align-items: center;
+  }
+
+  body[data-active-view="settings"] .settings-content .toggle-row {
+    gap: 0 12px;
+  }
+}
+
+@media (max-width: 520px) {
+  .settings-search {
+    flex-basis: 160px;
+    width: 160px;
+  }
+
+  .settings-nav {
+    gap: 13px;
   }
 }
 

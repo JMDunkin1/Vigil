@@ -3,6 +3,16 @@
 #include <math.h>
 #include <stdio.h>
 
+static NSRunningApplication *currentFrontmostApplication(void) {
+  // NSWorkspace delivers application-activation changes through the run loop.
+  // This helper normally blocks on stdin between samples, so give AppKit a
+  // chance to consume any queued workspace notifications before reading the
+  // cached frontmostApplication property.
+  [[NSRunLoop currentRunLoop]
+    runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+  return NSWorkspace.sharedWorkspace.frontmostApplication;
+}
+
 int main(void) {
   char request[16];
   setvbuf(stdout, NULL, _IOLBF, 0);
@@ -16,7 +26,7 @@ int main(void) {
         printf("error\n");
         continue;
       }
-      NSRunningApplication *frontmost = NSWorkspace.sharedWorkspace.frontmostApplication;
+      NSRunningApplication *frontmost = currentFrontmostApplication();
       NSString *name = frontmost.localizedName ?: @"";
       NSString *bundleId = frontmost.bundleIdentifier ?: @"";
       name = [[name stringByReplacingOccurrencesOfString:@"\t" withString:@" "]

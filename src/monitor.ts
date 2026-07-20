@@ -979,12 +979,12 @@ export class Monitor implements MonitorHandle {
       const networkEligible = policy.profile.hostsUrlPatternBlocking !== false && hostPathPatternCanUseSystemNetwork(urlPattern.pattern);
       const networkBlocked = networkSiteEnabled && networkEligible && await this.blockSiteWithSystemNetwork({
         ...front,
-        hostname: urlPattern.label
+        hostname: urlPattern.pattern
       }, policy, { urlPattern, originalHostname: front.hostname });
       if (shouldRedirectActiveBlockedBrowserTab({ redirectEnabled, networkBlocked, app: front.app, url: front.url })) {
         await this.blockSite({
           ...front,
-          hostname: urlPattern.label
+          hostname: urlPattern.pattern
         }, policy, { urlPattern, originalHostname: front.hostname });
       }
       return;

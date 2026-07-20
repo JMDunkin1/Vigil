@@ -2,7 +2,6 @@ import { PORT, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "./defau
 import { ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT, adultBlocklistPreloadDomains, matchAdultBlocklistHost } from "./adultBlocklist.js";
 import { activeAppLockPolicy } from "./appLocks.js";
 import { contentFilterEnabled, contentFilterRuleEntries, matchContentFilterUrl } from "./contentFilters.js";
-import type { ContentFilterMatch } from "./contentFilters.js";
 import { integrityLockdownActive } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
@@ -97,7 +96,7 @@ export function extensionRuleSnapshot(state: VigilState, now = new Date()) {
 
   const dynamic = canonicalExtensionDynamicSnapshot({
     rules: [...entries.values()],
-    contentRules: contentRulesForPolicy(state, sessionPolicy || baseline, now),
+    contentRules: contentRulesForPolicy(state, sessionPolicy || baseline),
     allowlistRules: allowlistRulesForPolicy(sessionPolicy)
   });
   return {
@@ -232,8 +231,12 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
   const siteBlocked = policy ? shouldBlockSite(policy.profile, hostname) : false;
   const urlPattern = policy && !siteBlocked ? matchBlockedUrlPattern(policy.profile, sample.url) : null;
   if (contentMatch) {
-    const redirectUrl = contentFilterEscapeUrl(state, input, parsed.url, contentMatch.policy, contentMatch.content, now)
-      || blockedUrl(contentMatch.content.label, contentMatch.policy, sample.url, safeBackUrl(state, input.previousUrl, parsed.url, now));
+    const redirectUrl = blockedUrl(
+      contentMatch.content.label,
+      contentMatch.policy,
+      sample.url,
+      safeBackUrl(state, input.previousUrl, parsed.url, now)
+    );
     return {
       ok: true,
       blocked: true,
@@ -291,9 +294,8 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
     };
   }
 
-  const urlPatternContent = urlPattern ? matchContentFilterUrl(state, parsed.url, policy) : null;
-  const redirectUrl = contentFilterEscapeUrl(state, input, parsed.url, policy, urlPatternContent, now)
-    || blockedUrl(urlPattern?.label || hostname, policy, sample.url, safeBackUrl(state, input.previousUrl, parsed.url, now));
+  const blockedTarget = urlPattern?.pattern || hostname;
+  const redirectUrl = blockedUrl(blockedTarget, policy, sample.url, safeBackUrl(state, input.previousUrl, parsed.url, now));
 
   return {
     ok: true,
@@ -301,7 +303,7 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
     paused: false,
     ignored: false,
     reason: urlPattern ? "url-pattern" : policy.kind,
-    hostname: urlPattern?.label || hostname,
+    hostname: blockedTarget,
     event,
     recorded,
     redirectUrl,
@@ -408,11 +410,11 @@ function addAdultBlocklistRuleEntries(entries: Map<string, ExtensionRule>, state
   }, "adult-blocklist");
 }
 
-function contentRulesForPolicy(state: VigilState, policy: ActivePolicy | null, now: Date): UrlRuleEntry[] {
+function contentRulesForPolicy(state: VigilState, policy: ActivePolicy | null): UrlRuleEntry[] {
   if (!policy) return [];
   const builtIn = contentFilterRuleEntries(state, policy).map((entry) => ({
     ...entry,
-    redirectUrl: safeContentFallbackUrlForPolicy(state, entry.fallbackUrl, policy, now) || blockedUrl(entry.label, {
+    redirectUrl: blockedUrl(entry.label, {
       ...policy,
       kind: "content-filter"
     })
@@ -457,7 +459,7 @@ function urlPatternRuleEntries(policy: ActivePolicy | null): UrlRuleEntry[] {
         mode: policy.session?.mode || "focus",
         kind: "url-pattern",
         until: policy.endsAt || policy.session?.endsAt || "",
-        redirectUrl: blockedUrl(`URL pattern: ${raw}`, {
+        redirectUrl: blockedUrl(raw, {
           ...policy,
           kind: "url-pattern"
         })
@@ -540,19 +542,6 @@ function publicPolicy(policy: BrowserPolicy) {
   };
 }
 
-function contentFilterEscapeUrl(
-  state: VigilState,
-  input: ExtensionCheckInput,
-  currentUrl: URL,
-  policy: ActivePolicy,
-  content: ContentFilterMatch | null | undefined,
-  now: Date
-): string {
-  const fallbackUrl = safeContentFallbackUrlForPolicy(state, content?.fallbackUrl, policy, now);
-  if (!fallbackUrl) return "";
-  return safeBackUrl(state, input.previousUrl, currentUrl, now, policy) || fallbackUrl;
-}
-
 function safeBackUrl(state: VigilState, value: unknown, currentUrl: URL, now: Date, policy: ActivePolicy | null = activePolicy(state, now) || baselinePolicy(state, now, { device: "computer" })): string {
   const parsed = parseHttpUrl(value);
   if (!parsed.ok || isVigilUrl(parsed.url) || sameHttpUrl(parsed.url, currentUrl)) return "";
@@ -566,24 +555,6 @@ function profileBlocksBrowserUrl(policy: ActivePolicy | null | undefined, url: U
   if (!policy?.profile) return false;
   const hostname = normalizeHost(url.hostname);
   return shouldBlockSite(policy.profile, hostname) || Boolean(matchBlockedUrlPattern(policy.profile, url.toString()));
-}
-
-function safeContentFallbackUrlForPolicy(
-  state: VigilState,
-  value: unknown,
-  policy: ActivePolicy | null | undefined,
-  now = new Date()
-): string {
-  try {
-    const url = new URL(String(value || ""));
-    if (!["http:", "https:"].includes(url.protocol) || isLocalHost(url.hostname)) return "";
-    if (matchContentFilterUrl(state, url, policy || baselinePolicy(state, now, { device: "computer" }))) return "";
-    if (profileBlocksBrowserUrl(policy, url)) return "";
-    if (profileBlocksBrowserUrl(baselinePolicy(state, now, { device: "computer" }), url)) return "";
-    return url.toString();
-  } catch {
-    return "";
-  }
 }
 
 function sameHttpUrl(left: URL, right: URL): boolean {

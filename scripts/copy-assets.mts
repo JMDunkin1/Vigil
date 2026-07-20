@@ -11,6 +11,7 @@ await copyProjectFile("package.json");
 await copyProjectFile("app/preload.cjs");
 await copyProjectFile("scripts/mac-signing-identity.mjs");
 await copyProjectFile("scripts/release-entitlements.mjs");
+await copyProjectFile("scripts/ios-phone-suite.mjs");
 await copyAssetDir("public");
 await copyAssetDir("extension");
 await makeExtensionScriptsClassic();
@@ -41,7 +42,7 @@ async function makeExtensionScriptsClassic(): Promise<void> {
   // Chrome content scripts and ordinary option-page scripts are classic
   // scripts. TypeScript treats files under this ESM package as modules and
   // emits a trailing `export {};`, which Chrome rejects before Vigil can run.
-  for (const name of ["background.js", "content.js", "options.js"]) {
+  for (const name of ["background.js", "content.js", "google-safe-search.js", "options.js"]) {
     const path = join(runtimeRoot, "extension", name);
     const source = await readFile(path, "utf8");
     const classic = source.replace(/\nexport \{\};?\s*$/u, "\n");
