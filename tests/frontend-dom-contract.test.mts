@@ -99,6 +99,17 @@ assert.match(
   /repairingRestartProtection[\s\S]*?\/api\/hardening\/launch-agent\/install[\s\S]*?Restart protection repaired/u,
   "the embedded repair control must execute the hardening request and report successful recovery"
 );
+assert.match(
+  hardeningPanelSource,
+  /Exporting Chrome profile for device management[\s\S]*?Chrome MDM profile exported[\s\S]*?manual installation is not accepted/u,
+  "Chrome SafeSearch setup must export for device management instead of inviting a removable manual install"
+);
+assert.doesNotMatch(
+  hardeningPanelSource,
+  /Approve Chrome Filter|Opening Chrome Filter profile|Chrome Filter profile opened/u,
+  "Chrome SafeSearch setup must not direct users into a manual System Settings approval flow"
+);
+assert.match(html, />Export Chrome MDM Profile<\/button>/u);
 assert.match(extensionOptionsSource, /vigilUrl\("\/api\/health", localServer\)/u, "extension connection tests must use the companion-safe health route");
 assert.doesNotMatch(extensionOptionsSource, /vigilUrl\("\/api\/state", localServer\)/u, "extension connection tests must not probe the private app state route");
 const dayControlsSource = await readFile("public/day-controls.js", "utf8");

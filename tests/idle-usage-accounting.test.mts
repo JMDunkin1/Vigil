@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { defaultState } from "../src/defaults.js";
-import { canonicalFrontmostAppName, packagedAppBundleForExecutable, parseHidIdleSeconds, parseHumanActivitySample, parseHumanIdleSeconds } from "../src/macos.js";
+import { canonicalFrontmostAppName, packagedAppBundleForExecutable, parseBrowserActivityWake, parseHidIdleSeconds, parseHumanActivitySample, parseHumanIdleSeconds, splitHumanActivityOutput } from "../src/macos.js";
 import { activeSecondsBeforeIdleThreshold, Monitor } from "../src/monitor.js";
 import { isInterruptedPollGap, maxTrustedPollGapSeconds } from "../src/monitor/timing.js";
 import type { UsageState } from "../src/types.js";
@@ -16,6 +16,21 @@ assert.deepEqual(parseHumanActivitySample("12.375\tSafari\tcom.apple.Safari\n"),
   bundleId: "com.apple.Safari"
 });
 assert.equal(parseHumanActivitySample("error"), null);
+assert.equal(parseBrowserActivityWake("wake\tkey\n"), "key");
+assert.equal(parseBrowserActivityWake("wake\tclick\n"), "click");
+assert.equal(parseBrowserActivityWake("wake\tcharacters\n"), null, "the helper protocol must not accept captured text");
+assert.equal(parseBrowserActivityWake("wake\tkey\textra\n"), null, "the helper protocol must reject wake frames with extra fields");
+assert.equal(parseBrowserActivityWake("12.375\tSafari\tcom.apple.Safari\n"), null);
+const partialActivityOutput = splitHumanActivityOutput("", "wake\tke");
+assert.deepEqual(partialActivityOutput, { lines: [], remainder: "wake\tke" });
+assert.deepEqual(
+  splitHumanActivityOutput(partialActivityOutput.remainder, "y\n12.375\tSafari\tcom.apple.Safari\nwake\tclick\npartial"),
+  {
+    lines: ["wake\tkey", "12.375\tSafari\tcom.apple.Safari", "wake\tclick"],
+    remainder: "partial"
+  },
+  "wake records and query responses must remain framed when chunks are partial or interleaved"
+);
 assert.equal(
   packagedAppBundleForExecutable("/Applications/Vigil.app/Contents/Resources/app.asar.unpacked/dist/runtime/bin/vigil-human-idle"),
   "/Applications/Vigil.app"

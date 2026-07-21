@@ -8,6 +8,7 @@ const APPLE_CONTENT_FILTER_LOCKDOWN_ENDS_AT = "until Apple Screen Time Limit Adu
 const DEFAULT_GAP_LOCKDOWN_SECONDS = 120;
 const DEFAULT_CLOCK_TAMPER_SECONDS = 90;
 export const APPLE_CONTENT_FILTER_ISSUE_ID = "apple-content-filter";
+export const CHROME_SAFE_SEARCH_ISSUE_ID = "chrome-safe-search";
 
 interface IntegrityAlarm {
   type: string;
@@ -35,6 +36,7 @@ interface HardeningChecks {
   hosts?: HardeningCheck;
   firewall?: HardeningCheck;
   safariFilter?: HardeningCheck;
+  chromeSafeSearch?: HardeningCheck;
   extensionRules?: HardeningCheck;
   sourceSeal?: HardeningCheck;
   agent?: HardeningCheck;
@@ -229,6 +231,10 @@ export function syncAppleContentFilterLockdown(state: VigilState, safariFilter: 
 export function protectedLockActive(state: VigilState, now = new Date()): boolean {
   const current = now.getTime();
   return protectedLockOverlaps(state, current, current + 1).length > 0;
+}
+
+export function hardeningDriftAttestationRequired(state: VigilState, now = new Date()): boolean {
+  return Boolean(state.settings?.foolproofModeEnabled && protectedLockActive(state, now));
 }
 
 export function appleContentFilterRecoveryActive(state: VigilState): boolean {
@@ -508,6 +514,7 @@ function hardeningIssues(checks: HardeningChecks): HardeningIssue[] {
   const hosts = checks.hosts;
   const firewall = checks.firewall;
   const safariFilter = checks.safariFilter;
+  const chromeSafeSearch = checks.chromeSafeSearch;
   const extensionRules = checks.extensionRules;
   const sourceSeal = checks.sourceSeal;
   const agent = checks.agent;
@@ -545,6 +552,13 @@ function hardeningIssues(checks: HardeningChecks): HardeningIssue[] {
     });
   }
 
+  if (chromeSafeSearch && chromeSafeSearch.required !== false && !chromeSafeSearchCurrent(chromeSafeSearch)) {
+    issues.push({
+      id: CHROME_SAFE_SEARCH_ISSUE_ID,
+      detail: chromeSafeSearch.detail || "Chrome SafeSearch is not locked to Filter by a protected, current device-management profile."
+    });
+  }
+
   if (agent && (!agent.loaded || !agent.running)) {
     issues.push({
       id: "launch-agent",
@@ -578,6 +592,11 @@ function appleContentFilterCurrent(safariFilter: HardeningCheck): boolean {
   if (isRecord(apple) && "current" in apple) return Boolean(apple.current);
   if ("appleCurrent" in safariFilter) return Boolean(safariFilter.appleCurrent);
   return false;
+}
+
+function chromeSafeSearchCurrent(chromeSafeSearch: HardeningCheck): boolean {
+  if ("effectiveCurrent" in chromeSafeSearch) return Boolean(chromeSafeSearch.effectiveCurrent);
+  return Boolean(chromeSafeSearch.current);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

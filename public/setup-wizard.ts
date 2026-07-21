@@ -29,6 +29,7 @@ function setupItems(data: DashboardData): SetupItem[] {
   const hosts = check(hardening.hosts);
   const firewall = check(hardening.firewall);
   const safariFilter = check(hardening.safariFilter);
+  const chromeSafeSearch = check(hardening.chromeSafeSearch);
   const externalNetworkBlock = check(hardening.externalNetworkBlock);
   const launchAgent = check(hardening.launchAgent);
   const sourceSeal = check(hardening.sourceSeal);
@@ -84,6 +85,16 @@ function setupItems(data: DashboardData): SetupItem[] {
           : "Apply and approve the Safari profile; extension-only blocking can be bypassed by reloading without content blockers.")
         : "No Safari content-filter profile is required for the current rules.",
       action: "Apply Safari Filter"
+    },
+    {
+      id: "chrome-safe-search",
+      label: "Chrome Filter",
+      ok: chromeSafeSearch.current === true,
+      detail: chromeSafeSearch.current === true
+        ? "Chrome SafeSearch is locked to Filter; Blur and Off cannot be selected."
+        : "Deploy the generated Chrome profile through device management to lock SafeSearch; a manual install remains removable by a local administrator.",
+      action: "Export Chrome MDM Profile",
+      actionTarget: chromeSafeSearch.current === true ? undefined : "applyChromeSafeSearch"
     },
     {
       id: "network-block",

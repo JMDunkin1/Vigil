@@ -111,6 +111,30 @@ function bindHardeningActions(context: HardeningPanelContext): void {
     await refresh();
   });
 
+  $("#applyChromeSafeSearch").addEventListener("click", async () => {
+    const status = $("#hardeningActionStatus");
+    const action = getData()?.hardening.actions?.chromeSafeSearchApply || {};
+    status.textContent = "Exporting Chrome profile for device management...";
+    $("#applyChromeSafeSearch").disabled = true;
+    try {
+      const response = await post<{ chromeSafeSearch?: { path?: string } }>(
+        action.path || "/api/hardening/chrome-safe-search/apply",
+        {}
+      );
+      const profilePath = String(response.chromeSafeSearch?.path || "").trim();
+      status.textContent = profilePath
+        ? `Chrome MDM profile exported to ${profilePath}`
+        : "Chrome MDM profile exported";
+      toast("Deploy the exported Chrome profile through device management; manual installation is not accepted");
+    } catch (error) {
+      status.textContent = errorMessage(error);
+      toast(errorMessage(error));
+    } finally {
+      $("#applyChromeSafeSearch").disabled = false;
+    }
+    await refresh();
+  });
+
   $("#clearTamperAlarm").addEventListener("click", async () => {
     const status = $("#hardeningActionStatus");
     const action = getData()?.hardening.actions?.tamperClear || {};
@@ -358,8 +382,10 @@ function renderHardeningActions(hardening: DashboardData["hardening"], $: QueryE
   const hosts = hardening.hosts || {};
   const firewall = hardening.firewall || {};
   const safariFilter = hardening.safariFilter || {};
+  const chromeSafeSearch = hardening.chromeSafeSearch || {};
   const networkCurrent = hosts.installed && !hosts.partial && !hosts.stale && firewall.installed && !firewall.partial && !firewall.stale;
   const safariCurrent = safariFilter.installed && !safariFilter.stale;
+  const chromeFilterCurrent = chromeSafeSearch.current === true;
   const tamperActive = Boolean(hardening.stateSeal?.tamperDetectedAt || hardening.stateSeal?.status === "tamper-detected");
   const restartProtectionNeedsRepair = agent.embedded === true && agent.restartHardened !== true;
   $("#installLaunchAgent").textContent = agent.embedded
@@ -368,6 +394,8 @@ function renderHardeningActions(hardening: DashboardData["hardening"], $: QueryE
   $("#installLaunchAgent").disabled = agent.embedded === true && !restartProtectionNeedsRepair;
   $("#applyHostsBlock").textContent = networkCurrent ? "Reapply Network Block" : "Apply Network Block";
   $("#applySafariFilter").textContent = safariCurrent ? "Reapply Safari Filter" : "Apply Safari Filter";
+  $("#applyChromeSafeSearch").textContent = chromeFilterCurrent ? "Chrome Filter Locked" : "Export Chrome MDM Profile";
+  $("#applyChromeSafeSearch").disabled = chromeFilterCurrent;
   $("#clearTamperAlarm").hidden = !tamperActive;
   $("#clearTamperAlarm").disabled = !tamperActive;
   $("#copyHostsCommand").textContent = networkCurrent ? "Copy Network Reapply" : "Copy Network Command";

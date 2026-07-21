@@ -173,13 +173,16 @@ const listenerStopIndex = shutdownSource.indexOf("closeListeningServer(activeSer
 const admissionStopIndex = shutdownSource.indexOf("activeMutationCoordinator?.stopAdmission()");
 const coordinatorDrainIndex = shutdownSource.indexOf("activeMutationCoordinator?.drain()");
 const requestDrainIndex = shutdownSource.indexOf("drainActiveRequests(");
+const requestAdmissionStopIndex = shutdownSource.indexOf("activeRequestAdmission.accepting = false");
 const finalSnapshotIndex = shutdownSource.indexOf("await saveRuntimeSnapshot(state, usage,");
 assert.ok(
   requestDrainIndex >= 0
-    && admissionStopIndex > requestDrainIndex
+    && requestAdmissionStopIndex > requestDrainIndex
     && monitorStopIndex > requestDrainIndex
-    && monitorStopIndex > admissionStopIndex
+    && monitorStopIndex > requestAdmissionStopIndex
+    && admissionStopIndex > monitorStopIndex
     && coordinatorDrainIndex > monitorStopIndex
+    && coordinatorDrainIndex > admissionStopIndex
     && finalSnapshotIndex > coordinatorDrainIndex
     && listenerStopIndex > finalSnapshotIndex,
   "shutdown must drain admitted work, freeze enforcement, durably snapshot it, and only then close the listener"
@@ -196,13 +199,33 @@ assert.match(
 );
 assert.match(
   shutdownSource,
-  /catch \(error\) \{\s*await resumeListeningServer\(activeServer\);\s*activeMutationCoordinator\?\.resumeAdmission\(\);\s*activeMonitor\?\.start\(\);\s*runtimeStopping = false;\s*throw error;/,
+  /catch \(error\) \{\s*await resumeListeningServer\(activeServer\);\s*activeMutationCoordinator\?\.resumeAdmission\(\);[\s\S]*?requestMutationAdmission = \{ accepting: true \};\s*activeMonitor\?\.start\(\);\s*runtimeStopping = false;\s*throw error;/,
   "a failed frozen snapshot must restore the listener before reopening mutation admission and restarting enforcement"
 );
 assert.match(
   serverSource,
-  /function drainActiveRequests[\s\S]*?setTimeout\(\(\) => \{[\s\S]*?activeMutationCoordinator\?\.stopAdmission\(\);[\s\S]*?forcedClose = closeListeningServer\(activeServer, \{ force: true \}\);[\s\S]*?Promise\.race[\s\S]*?await forcedClose/,
-  "the request drain deadline must freeze mutation admission and close the listener before proceeding"
+  /function drainActiveRequests[\s\S]*?setTimeout\(\(\) => \{[\s\S]*?activeRequestAdmission\.accepting = false;[\s\S]*?forcedClose = closeListeningServer\(activeServer, \{ force: true \}\);[\s\S]*?Promise\.race[\s\S]*?await forcedClose/,
+  "the request drain deadline must freeze request-scoped mutation admission and close the listener before proceeding"
+);
+const requestDrainStart = serverSource.indexOf("async function drainActiveRequests");
+const requestDrainEnd = serverSource.indexOf("\n}", requestDrainStart);
+const requestDrainSource = serverSource.slice(requestDrainStart, requestDrainEnd + 2);
+assert.doesNotMatch(requestDrainSource, /stopAdmission\(\)/,
+  "request grace expiry must not close global admission before browser enforcement drains");
+assert.match(
+  serverSource,
+  /const requestAdmission = requestMutationAdmission;[\s\S]*?requestMutationCoordinator\.run\([\s\S]*?\}, \{ admission: requestAdmission \}\);/,
+  "each request mutation must retain its admission generation so recovery cannot revive an expired request"
+);
+assert.match(
+  serverSource,
+  /recordExternalResult: \(type, detail\) => recordExternalHardeningResult\([\s\S]*?requestMutationCoordinator,[\s\S]*?requestAdmission[\s\S]*?async function recordExternalHardeningResult[\s\S]*?requestMutationCoordinator\.run\([\s\S]*?\}, \{ admission: requestAdmission \}\);/,
+  "request-triggered hardening result mutations must retain the request admission generation"
+);
+assert.equal(
+  serverSource.match(/requestMutationCoordinator\.run\(/gu)?.length || 0,
+  serverSource.match(/\}, \{ admission: requestAdmission \}\);/gu)?.length || 0,
+  "every request-originated coordinator mutation must use the captured request admission scope"
 );
 assert.match(
   mainSource,

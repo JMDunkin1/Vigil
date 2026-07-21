@@ -65,6 +65,7 @@ try {
   }
 
   const coordinator = new RuntimeMutationCoordinator(liveState, liveUsage);
+  assert.equal(coordinator.committedRevision(), 0);
   let releaseFirst = () => {};
   const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
   let firstStarted = () => {};
@@ -82,8 +83,49 @@ try {
   });
   releaseFirst();
   await Promise.all([first, second]);
+  assert.equal(coordinator.committedRevision(), 2,
+    "the O(1) committed revision must advance once for each published state/usage generation");
   assert.equal(liveUsage["2026-07-14"]?.totalSeconds, 11, "monitor-like usage mutation must survive a queued request draft");
   assert.equal(liveState.settings.siteRedirectEnabled, false, "queued request mutation must build on the committed monitor draft");
+
+  const scopedState = defaultState();
+  const scopedCoordinator = new RuntimeMutationCoordinator(scopedState, {}, [], async () => {});
+  let releaseScopedBlocker = () => {};
+  const scopedBlockerGate = new Promise<void>((resolve) => { releaseScopedBlocker = resolve; });
+  let markScopedBlockerStarted = () => {};
+  const scopedBlockerStarted = new Promise<void>((resolve) => { markScopedBlockerStarted = resolve; });
+  const scopedBlocker = scopedCoordinator.run(async () => {
+    markScopedBlockerStarted();
+    await scopedBlockerGate;
+  }, { persist: false });
+  await scopedBlockerStarted;
+  const expiredRequestAdmission = { accepting: true };
+  let expiredRequestRan = false;
+  const expiredRequest = scopedCoordinator.run(async () => {
+    expiredRequestRan = true;
+  }, { persist: false, admission: expiredRequestAdmission });
+  const expiredRequestRejected = assert.rejects(expiredRequest, /stopping/u);
+  const enforcementMutation = scopedCoordinator.run(async ({ state }) => {
+    state.settings.siteRedirectEnabled = false;
+  }, { persist: false });
+  expiredRequestAdmission.accepting = false;
+  releaseScopedBlocker();
+  await Promise.all([scopedBlocker, expiredRequestRejected, enforcementMutation]);
+  assert.equal(expiredRequestRan, false, "an expired request scope must cancel a request already queued at the shutdown deadline");
+  assert.equal(scopedState.settings.siteRedirectEnabled, false,
+    "closing request admission must leave unscoped browser enforcement mutations available to drain");
+  await assert.rejects(
+    scopedCoordinator.run(async () => {}, { persist: false, admission: expiredRequestAdmission }),
+    /stopping/u,
+    "recovery must not revive requests that captured the expired admission scope"
+  );
+  const recoveredRequestAdmission = { accepting: true };
+  await scopedCoordinator.run(async ({ state }) => {
+    state.settings.siteRedirectEnabled = true;
+  }, { persist: false, admission: recoveredRequestAdmission });
+  assert.equal(scopedState.settings.siteRedirectEnabled, true, "a fresh request scope must admit requests after safe recovery");
+  scopedCoordinator.stopAdmission();
+  await scopedCoordinator.drain();
 
   const completionState = defaultState();
   const completionCoordinator = new RuntimeMutationCoordinator(completionState, {}, [], async () => {});
@@ -280,21 +322,40 @@ try {
   const deadlockMonitor = new Monitor({
     state: deadlockState,
     usage: deadlockUsage,
-    mutate: async (operation) => {
+    mutate: async (operation, options) => {
       markTickWaiting();
-      return await deadlockCoordinator.run(({ state, usage, afterCommit }) => operation(state, usage, afterCommit));
+      return await deadlockCoordinator.run(
+        ({ state, usage, afterCommit }) => operation(state, usage, afterCommit),
+        options
+      );
     }
   });
   let tickRuns = 0;
-  deadlockMonitor.tick = async () => { tickRuns += 1; };
-  let effectRunsAfterBarrier = 0;
+  const enforcementOrder: string[] = [];
+  let tickEffectRuns = 0;
+  deadlockMonitor.tick = async () => {
+    tickRuns += 1;
+    await deadlockMonitor.externalEffect(
+      "lock-screen",
+      { policyId: "deadlock-regression" },
+      async () => {
+        tickEffectRuns += 1;
+        enforcementOrder.push("tick-os-effect");
+        return { ok: true };
+      }
+    );
+  };
+  let requestEffectRuns = 0;
   deadlockMonitor.runImmediateEnforcement = async () => {
-    effectRunsAfterBarrier += 1;
+    requestEffectRuns += 1;
+    enforcementOrder.push("session-enforcement");
     return { ok: true };
   };
   deadlockCoordinator = new RuntimeMutationCoordinator(deadlockState, deadlockUsage, [], async () => {});
   const deadlockTransitions: string[] = [];
-  deadlockCoordinator.setEffectObserver((_entry, transition) => deadlockTransitions.push(transition));
+  deadlockCoordinator.setEffectObserver((entry, transition) => {
+    deadlockTransitions.push(`${entry.kind}:${String(entry.payload.action || "")}:${transition}`);
+  });
   let releaseRequestCommit = () => {};
   const requestCommitGate = new Promise<void>((resolve) => { releaseRequestCommit = resolve; });
   let markRequestAtCommit = () => {};
@@ -309,21 +370,195 @@ try {
   });
   await requestAtCommit;
   // The tick now owns Monitor.operationTail and is queued behind the request's
-  // coordinator mutation. The request effect will in turn queue behind this
-  // tick: awaiting it on the mutation tail produced the old three-way cycle.
+  // coordinator mutation. Once the request commits, its immediate worker waits
+  // for that monitor tail while the tick publishes a real lock-screen intent
+  // behind it. Awaiting the lock-screen attempt while still owning the monitor
+  // tail produced the old prior-effect -> monitor-tail -> tick-effect cycle.
   const blockedTick = deadlockMonitor.runScheduledTick();
   await tickWaitingOnCoordinator;
   releaseRequestCommit();
   await withTimeout(Promise.all([deadlockRequest, blockedTick]), "coordinator/monitor deadlock regression");
   assert.equal(tickRuns, 1);
-  assert.equal(effectRunsAfterBarrier, 1);
-  assert.deepEqual(deadlockTransitions, ["running", "completed"], "the effect worker must durably publish the exact running/completed transitions");
+  assert.equal(requestEffectRuns, 1);
+  assert.equal(tickEffectRuns, 1, "the scheduled tick's real immediate OS intent must complete");
+  assert.deepEqual(enforcementOrder, ["session-enforcement", "tick-os-effect"],
+    "releasing the monitor tail at the commit barrier must preserve coordinator effect order");
+  assert.deepEqual(deadlockTransitions, [
+    "session-enforcement::running",
+    "monitor-os:lock-screen:running",
+    "monitor-os:lock-screen:completed",
+    "session-enforcement::completed"
+  ], "the control trigger must remain running until the older immediate OS lane is durably acknowledged");
   assert.equal(deadlockCoordinator.pendingEffects().length, 0, "completed deadlock-regression effect must not be lost in the outbox");
   deadlockCoordinator.stopAdmission();
   await withTimeout((async () => {
     await deadlockMonitor.stop();
     await deadlockCoordinator.drain();
   })(), "coordinator/monitor shutdown drain");
+
+  const descendantState = defaultState();
+  const descendantUsage: UsageState = {};
+  let descendantCoordinator: InstanceType<typeof RuntimeMutationCoordinator>;
+  const descendantMonitor = new Monitor({
+    state: descendantState,
+    usage: descendantUsage,
+    mutate: async (operation, options) => await descendantCoordinator.run(
+      ({ state, usage, afterCommit }) => operation(state, usage, afterCommit),
+      options
+    )
+  });
+  let markDescendantStarted = () => {};
+  const descendantStarted = new Promise<void>((resolve) => { markDescendantStarted = resolve; });
+  let releaseDescendant = () => {};
+  const descendantGate = new Promise<void>((resolve) => { releaseDescendant = resolve; });
+  const descendantTransitions: string[] = [];
+  descendantMonitor.runImmediateEnforcement = async () => {
+    const nested = await descendantMonitor.externalEffect(
+      "audit-descendant-os",
+      { reason: "request-descendant-barrier" },
+      async () => {
+        markDescendantStarted();
+        await descendantGate;
+        return { ok: true };
+      }
+    );
+    assert.equal("pending" in nested && Boolean(nested.pending), true,
+      "the nested OS attempt must remain a durable post-commit intent");
+    return { ok: true };
+  };
+  descendantCoordinator = new RuntimeMutationCoordinator(descendantState, descendantUsage, [], async () => {});
+  descendantCoordinator.setEffectObserver((entry, transition) => {
+    descendantTransitions.push(`${entry.kind}:${String(entry.payload.action || "")}:${transition}`);
+  });
+  let requestResolved = false;
+  const descendantRequest = (async () => {
+    await descendantCoordinator.run(async ({ afterCommit }) => {
+      afterCommit(
+        async () => await descendantMonitor.reconcileDurableEffect(
+          "session-enforcement",
+          { sessionId: "descendant-barrier" }
+        ),
+        {
+          key: "session-enforcement:descendant-barrier",
+          kind: "session-enforcement",
+          payload: { sessionId: "descendant-barrier" }
+        }
+      );
+    });
+    requestResolved = true;
+  })();
+  await descendantStarted;
+  await Promise.resolve();
+  assert.equal(requestResolved, false,
+    "the originating request must not resolve before its descendant monitor-OS first attempt finishes");
+  let monitorTailResolved = false;
+  void descendantMonitor.operationTail.then(() => { monitorTailResolved = true; });
+  let monitorStopResolved = false;
+  const descendantStop = descendantMonitor.stop().then(() => { monitorStopResolved = true; });
+  await Promise.resolve();
+  assert.equal(monitorTailResolved, false,
+    "Monitor.operationTail must include a captured descendant first-attempt barrier");
+  assert.equal(monitorStopResolved, false,
+    "Monitor.stop must drain a descendant first attempt already published by a control trigger");
+
+  releaseDescendant();
+  await withTimeout(Promise.all([descendantRequest, descendantStop]), "descendant control-trigger barrier");
+  assert.deepEqual(descendantTransitions, [
+    "session-enforcement::running",
+    "monitor-os:audit-descendant-os:running",
+    "monitor-os:audit-descendant-os:completed",
+    "session-enforcement::completed"
+  ], "the separate control lane must await its ordered descendant OS attempt before acknowledging the parent");
+  assert.equal(descendantCoordinator.pendingEffects().length, 0,
+    "a fully acknowledged descendant chain must leave no durable outbox entry behind");
+  descendantCoordinator.stopAdmission();
+  await withTimeout(descendantCoordinator.drain(), "descendant control-trigger drain");
+
+  const recoveredCycleState = defaultState();
+  const recoveredCycleUsage: UsageState = {};
+  const recoveredCycleOutbox = [{
+    id: "recovered-cycle-mdm",
+    key: "monitor-os:mdm-push:recovered-cycle",
+    kind: "monitor-os",
+    payload: { action: "mdm-push", intentKey: "monitor-os:mdm-push:recovered-cycle", reason: "recovered-cycle" },
+    createdAt: new Date().toISOString(),
+    attempts: 0,
+    lastError: "",
+    status: "pending" as const,
+    startedAt: null,
+    nextAttemptAt: null
+  }];
+  let recoveredCycleCoordinator: InstanceType<typeof RuntimeMutationCoordinator>;
+  let markRecoveredTickWaiting = () => {};
+  const recoveredTickWaiting = new Promise<void>((resolve) => { markRecoveredTickWaiting = resolve; });
+  const recoveredCycleMonitor = new Monitor({
+    state: recoveredCycleState,
+    usage: recoveredCycleUsage,
+    mutate: async (operation, options) => {
+      markRecoveredTickWaiting();
+      return await recoveredCycleCoordinator.run(
+        ({ state, usage, afterCommit }) => operation(state, usage, afterCommit),
+        options
+      );
+    }
+  });
+  let recoveredTickEffectRuns = 0;
+  recoveredCycleMonitor.tick = async () => {
+    await recoveredCycleMonitor.externalEffect(
+      "mdm-push",
+      { reason: "scheduled-recovered-cycle" },
+      async () => {
+        recoveredTickEffectRuns += 1;
+        return { ok: true };
+      }
+    );
+  };
+  recoveredCycleCoordinator = new RuntimeMutationCoordinator(
+    recoveredCycleState,
+    recoveredCycleUsage,
+    recoveredCycleOutbox,
+    async () => {}
+  );
+  const recoveredCycleTransitions: string[] = [];
+  recoveredCycleCoordinator.setEffectObserver((entry, transition) => {
+    recoveredCycleTransitions.push(`${String(entry.payload.reason || "")}:${transition}`);
+  });
+  let releaseRecoveredBlocker = () => {};
+  const recoveredBlockerGate = new Promise<void>((resolve) => { releaseRecoveredBlocker = resolve; });
+  let markRecoveredBlockerStarted = () => {};
+  const recoveredBlockerStarted = new Promise<void>((resolve) => { markRecoveredBlockerStarted = resolve; });
+  const recoveredBlocker = recoveredCycleCoordinator.run(async () => {
+    markRecoveredBlockerStarted();
+    await recoveredBlockerGate;
+  }, { persist: false });
+  await recoveredBlockerStarted;
+  const recoveredCycle = recoveredCycleCoordinator.retryPending(
+    async (entry) => await recoveredCycleMonitor.reconcileDurableEffect(
+      String(entry.payload.action || ""),
+      { ...entry.payload, intentKey: entry.key }
+    )
+  );
+  const recoveredCycleTick = recoveredCycleMonitor.runScheduledTick();
+  await recoveredTickWaiting;
+  releaseRecoveredBlocker();
+  await withTimeout(
+    Promise.all([recoveredBlocker, recoveredCycle, recoveredCycleTick]),
+    "recovered coordinator/monitor deadlock regression"
+  );
+  assert.equal(recoveredTickEffectRuns, 1, "a scheduled background effect must run behind a recovered effect on the same lane");
+  assert.deepEqual(recoveredCycleTransitions, [
+    "recovered-cycle:pending",
+    "recovered-cycle:running",
+    "recovered-cycle:completed",
+    "scheduled-recovered-cycle:running",
+    "scheduled-recovered-cycle:completed"
+  ], "recovered and newly committed effects must retain lane order across the released monitor tail");
+  assert.equal(recoveredCycleCoordinator.pendingEffects().length, 0);
+  recoveredCycleCoordinator.stopAdmission();
+  await withTimeout((async () => {
+    await recoveredCycleMonitor.stop();
+    await recoveredCycleCoordinator.drain();
+  })(), "recovered-cycle shutdown drain");
 
   const recoveredState = defaultState();
   const recoveredUsage: UsageState = {};

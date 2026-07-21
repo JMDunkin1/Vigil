@@ -36,6 +36,14 @@ for (const group of SITE_ALIAS_GROUPS) {
   for (const domain of normalized) SITE_ALIAS_LOOKUP.set(domain, normalized);
 }
 
+const CHROMIUM_HELPER_SUFFIXES = ["", " (Alerts)", " (GPU)", " (Plugin)", " (Renderer)"];
+
+function chromiumHelperAliases(...productNames: string[]): string[] {
+  return productNames.flatMap((productName) => (
+    CHROMIUM_HELPER_SUFFIXES.map((suffix) => `${productName} Helper${suffix}`)
+  ));
+}
+
 const APP_ALIAS_GROUPS = [
   ["Vigil", "Vigil Helper", "Vigil Helper (GPU)", "Vigil Helper (Plugin)", "Vigil Helper (Renderer)"],
   ["Discord", "Discord Helper", "Discord Canary", "Discord PTB"],
@@ -58,10 +66,23 @@ const APP_ALIAS_GROUPS = [
   ["Obsidian", "Obsidian Helper"],
   ["Spotify", "Spotify Helper", "Spotify Helper (Renderer)"],
   ["Electron", "Electron Helper"],
-  ["Google Chrome", "Chrome", "Google Chrome Helper"],
-  ["Microsoft Edge", "Edge", "Microsoft Edge Helper"],
-  ["Brave Browser", "Brave", "Brave Browser Helper"],
+  ["Google Chrome", "Chrome", ...chromiumHelperAliases("Google Chrome")],
+  ["Google Chrome Beta", "Chrome Beta", ...chromiumHelperAliases("Google Chrome Beta")],
+  ["Google Chrome Dev", "Chrome Dev", ...chromiumHelperAliases("Google Chrome Dev")],
+  ["Google Chrome Canary", "Chrome Canary", ...chromiumHelperAliases("Google Chrome Canary")],
+  ["Microsoft Edge", "Edge", ...chromiumHelperAliases("Microsoft Edge")],
+  ["Microsoft Edge Beta", "Edge Beta", ...chromiumHelperAliases("Microsoft Edge", "Microsoft Edge Beta")],
+  ["Microsoft Edge Dev", "Edge Dev", ...chromiumHelperAliases("Microsoft Edge", "Microsoft Edge Dev")],
+  ["Microsoft Edge Canary", "Edge Canary", ...chromiumHelperAliases("Microsoft Edge", "Microsoft Edge Canary")],
+  ["Brave Browser", "Brave", ...chromiumHelperAliases("Brave Browser")],
+  ["Brave Browser Beta", "Brave Beta", ...chromiumHelperAliases("Brave Browser", "Brave Browser Beta")],
+  ["Brave Browser Nightly", "Brave Nightly", ...chromiumHelperAliases("Brave Browser", "Brave Browser Nightly")],
   ["Arc", "Arc Helper"],
+  ["Vivaldi", ...chromiumHelperAliases("Vivaldi")],
+  ["Vivaldi Snapshot", ...chromiumHelperAliases("Vivaldi", "Vivaldi Snapshot")],
+  ["Opera", ...chromiumHelperAliases("Opera")],
+  ["Opera Beta", ...chromiumHelperAliases("Opera", "Opera Beta")],
+  ["Opera Developer", ...chromiumHelperAliases("Opera", "Opera Developer")],
   ["Safari", "Safari Technology Preview"],
   ["Terminal", "Apple Terminal"],
   ["iTerm2", "iTerm"],
@@ -131,8 +152,17 @@ const APP_ALIAS_GROUPS = [
 const APP_ALIAS_LOOKUP = new Map<string, string[]>();
 for (const group of APP_ALIAS_GROUPS) {
   const normalized = [...new Set(group.map(normalizeAppName).filter(Boolean))];
-  for (const app of normalized) APP_ALIAS_LOOKUP.set(app, normalized);
+  for (const app of normalized) {
+    const aliases = APP_ALIAS_LOOKUP.get(app) || [];
+    APP_ALIAS_LOOKUP.set(app, [...new Set([...aliases, ...normalized])]);
+  }
 }
+
+// Sweep exemptions identify exact processes; expanding symmetric policy aliases
+// would let an exempt helper also exempt its main browser process.
+const PROCESS_SWEEP_EXEMPT_APP_NAMES = new Set(
+  PROCESS_SWEEP_EXEMPT_APPS.map(normalizeAppName).filter(Boolean)
+);
 
 const STRICT_BROWSER_CONTROL_PROTOCOLS = new Set(["chrome:", "edge:", "brave:", "arc:", "vivaldi:", "opera:", "orion:"]);
 const STRICT_BROWSER_CONTROL_AREAS = new Set([
@@ -752,7 +782,7 @@ export function appMatchesAppTargets(appName: unknown, targets: readonly unknown
 }
 
 export function isProcessSweepExemptApp(appName: unknown): boolean {
-  return appMatchesAppTargets(appName, PROCESS_SWEEP_EXEMPT_APPS);
+  return PROCESS_SWEEP_EXEMPT_APP_NAMES.has(normalizeAppName(appName));
 }
 
 export function normalizeAppName(value: unknown): string {
