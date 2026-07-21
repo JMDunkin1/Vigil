@@ -25,7 +25,8 @@ const buildHumanIdleSource = await readFile(join(sourceRoot, "scripts", "build-h
 const execFile = promisify(execFileCallback);
 
 assert.equal(macSigningTimestamp("Vigil Local Code Signing"), "none", "local self-signing must not depend on Apple's timestamp service");
-assert.equal(macSigningTimestamp("Apple Development: Example"), undefined, "Apple Development signing must keep its normal timestamp behavior");
+assert.equal(macSigningTimestamp("Apple Development: Example"), "none", "local Apple Development signing must not wait on network timestamping");
+assert.equal(macSigningTimestamp("Developer ID Application: Example"), undefined, "distributable identities must retain normal timestamping");
 assert.match(packageMacSource, /-c\.mac\.timestamp=\$\{timestamp\}/u, "local app builds must pass the safe timestamp policy to electron-builder");
 assert.match(updateScriptSource, /-c\.mac\.timestamp=\$\{signingTimestamp\}/u, "isolated updater builds must use the same timestamp policy");
 
@@ -50,6 +51,13 @@ assert.match(
   "local rebuilds must bypass unusable Apple compiler shims after an Xcode update"
 );
 assert.match(updateScriptSource, /VIGIL_BUILD_SOURCE_ROOT: options\.repoRoot/u, "staged update builds must preserve the real checkout pointer");
+assert.ok(
+  updateScriptSource.indexOf("await guardianMaintenanceReadiness()")
+    < updateScriptSource.indexOf("stagedBuild = await buildInIsolatedWorktree()"),
+  "guardian compatibility must fail before dependency installation, compilation, and signing"
+);
+assert.doesNotMatch(updateScriptSource, /run\("git", \["fetch", "--prune"\]/u, "the external updater must reuse the commit already fetched and selected by the app");
+assert.match(updaterSource, /"--expected-commit", String\(currentStatus\.upstreamCommit \|\| ""\)/u, "the app must pin the remotely verified commit for the external updater");
 assert.match(
   writeBuildInfoSource,
   /rev-parse", "--path-format=absolute", "--git-common-dir/u,

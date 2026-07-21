@@ -122,6 +122,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     const running = Boolean(status.running);
     const dirty = Boolean(status.dirty);
     const localChanges = Boolean(status.localChanges);
+    const maintenanceReady = status.maintenanceReady !== false;
     const behind = Number(status.behind || 0);
     const appBundleOutdated = Boolean(status.appBundleOutdated);
     const currentCommit = shortCommit(status.currentCommit);
@@ -136,15 +137,17 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
       status.appBuiltAt ? `built ${formatDate(status.appBuiltAt)}` : ""
     ].filter(Boolean).join(" | ") || "--";
     const installable = canInstall(status);
-    button.textContent = installable ? (localChanges ? "Run Local Changes" : "Install Update") : "Check for Updates";
-    button.disabled = !supported || running;
+    button.textContent = !maintenanceReady
+      ? "Update Setup Required"
+      : installable ? (localChanges ? "Run Local Changes" : "Install Update") : "Check for Updates";
+    button.disabled = !supported || !maintenanceReady || running;
     button.classList.toggle("primary", installable);
     button.classList.toggle("secondary", !installable);
   }
 }
 
 function canInstall(status: UnknownRecord | null): boolean {
-  if (!status || status.ok !== true || status.supported === false || status.running || (!status.localChanges && status.remoteCheckOk === false)) return false;
+  if (!status || status.ok !== true || status.supported === false || status.maintenanceReady === false || status.running || (!status.localChanges && status.remoteCheckOk === false)) return false;
   return status.updateAvailable === true;
 }
 

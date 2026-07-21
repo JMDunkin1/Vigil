@@ -9,7 +9,7 @@ import { liveRuntimeReady } from "../src/runtimeReady.js";
 import { resumeEmbeddedRuntimeSupervisor, suspendEmbeddedRuntimeSupervisor } from "../src/embeddedSupervisor.js";
 import { isDirectRun } from "../src/directRun.js";
 import { plistStringForKey } from "../src/plist.js";
-import { beginGuardianMaintenance } from "../src/updateMaintenance.js";
+import { beginGuardianMaintenance, guardianMaintenanceReadiness } from "../src/updateMaintenance.js";
 import type { GuardianMaintenanceTransaction } from "../src/updateMaintenance.js";
 import { gitExecutable } from "./git-executable.mjs";
 import { isLocallyRebuildableSignature, macSigningTimestamp, resolveMacSigningIdentity } from "./mac-signing-identity.mjs";
@@ -23,6 +23,7 @@ interface Options {
   logPath: string;
   lockPath: string;
   lockToken: string;
+  expectedCommit: string;
   restart: boolean;
 }
 
@@ -63,7 +64,6 @@ export interface AtomicInstallOperations {
   remove(path: string): Promise<void>;
 }
 
-const FETCH_TIMEOUT_MS = 8_000;
 const HEALTH_TIMEOUT_MS = 30_000;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
 const SAFETY_BOUNDARY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
@@ -92,6 +92,9 @@ async function runUpdate(): Promise<void> {
     installSignalHandlers();
     await assertOwnedUpdaterLock();
     await assertLocallyRebuildableApp();
+
+    const maintenance = await guardianMaintenanceReadiness();
+    if (!maintenance.ready) throw new Error(maintenance.message || "Vigil's protected update setup is not ready.");
 
     const dirty = (await capture("git", ["status", "--porcelain=v1"], { cwd: options.repoRoot })).trim().length > 0;
     if (dirty) throw new Error("Vigil source has uncommitted changes. Commit or stash them before installing an update.");
@@ -229,12 +232,9 @@ async function runUpdate(): Promise<void> {
 }
 
 async function buildInIsolatedWorktree(): Promise<StagedBuild> {
-  await status("fetching", "Checking for newer Vigil source");
-  await run("git", ["fetch", "--prune"], { cwd: options.repoRoot, timeoutMs: FETCH_TIMEOUT_MS });
-  const [initialCommit, expectedCommit] = await Promise.all([
-    capture("git", ["rev-parse", "HEAD"], { cwd: options.repoRoot }),
-    capture("git", ["rev-parse", "@{u}"], { cwd: options.repoRoot })
-  ]).then((values) => values.map((value) => value.trim()));
+  await status("selecting", "Verifying the selected Vigil update");
+  const initialCommit = (await capture("git", ["rev-parse", "HEAD"], { cwd: options.repoRoot })).trim();
+  const expectedCommit = options.expectedCommit;
   if (!/^[a-f0-9]{40}$/iu.test(initialCommit) || !/^[a-f0-9]{40}$/iu.test(expectedCommit)) {
     throw new Error("Vigil could not verify the source commits selected for this update.");
   }
@@ -1041,6 +1041,7 @@ function parseArgs(args: string[]): Options {
     logPath: required(optionsMap, "log-path"),
     lockPath: required(optionsMap, "lock-path"),
     lockToken: required(optionsMap, "lock-token"),
+    expectedCommit: required(optionsMap, "expected-commit"),
     restart
   };
 }

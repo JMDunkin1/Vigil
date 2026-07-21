@@ -9,6 +9,7 @@ import {
   SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS,
   beginGuardianMaintenance,
+  guardianMaintenanceReadiness,
   guardianMaintenanceMarkerPath
 } from "../src/updateMaintenance.js";
 
@@ -71,7 +72,28 @@ const markerRoot = await mkdtemp(join(tmpdir(), "vigil-guardian-maintenance-"));
 try {
   const lockPath = join(markerRoot, "update.lock");
   const authorizationPath = join(markerRoot, "maintenance-authorization.plist");
+  const guardianScriptPath = join(markerRoot, "guardian.sh");
   const token = "12345678-1234-1234-1234-123456789abc";
+  await writeFile(guardianScriptPath, "#!/bin/zsh\nwhile true; do sleep 2; done\n", { mode: 0o755 });
+  assert.deepEqual(
+    await guardianMaintenanceReadiness(authorizationPath, guardianScriptPath, process.getuid?.() ?? 0),
+    {
+      ready: false,
+      guardianInstalled: true,
+      message: "Vigil's system guardian predates authenticated app updates. Refresh it through Vigil's protected maintenance setup before installing this update."
+    },
+    "an old guardian must block before the updater spends time rebuilding the app"
+  );
+  await writeFile(
+    guardianScriptPath,
+    `#!/bin/zsh\nauthorize_maintenance_request() { :; }\n# vigil-root-maintenance-authorization-v2\n# ${authorizationPath}\n`,
+    { mode: 0o755 }
+  );
+  assert.equal(
+    (await guardianMaintenanceReadiness(authorizationPath, guardianScriptPath, process.getuid?.() ?? 0)).ready,
+    true,
+    "a guardian with the authenticated-maintenance protocol must pass the cheap updater preflight"
+  );
   await writeFile(lockPath, `${JSON.stringify({ token, pid: process.pid, startedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
   const startedAt = Date.now();
   await writeFile(authorizationPath, toPlist({

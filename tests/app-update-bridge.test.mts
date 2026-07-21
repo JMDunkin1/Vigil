@@ -223,6 +223,22 @@ try {
   assert.equal(getCalls, 0);
   assert.equal(controls.get("#checkAppUpdate")?.textContent, "Install Update");
 
+  rendererStatus = {
+    ...rendererStatus,
+    updateAvailable: false,
+    maintenanceReady: false,
+    message: "Vigil's system guardian predates authenticated app updates."
+  };
+  await panel.refreshStatus(false);
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Update Setup Required");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true, "an incompatible guardian must not offer an update that can only fail after rebuilding");
+  rendererStatus = {
+    ...rendererStatus,
+    updateAvailable: true,
+    maintenanceReady: true
+  };
+  await panel.refreshStatus(false);
+
   const click = buttonClick as (() => void) | null;
   assert.ok(click);
   click();

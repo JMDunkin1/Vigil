@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { plistStringForKey } from "../src/plist.js";
 import { sourceFingerprint } from "../scripts/source-fingerprint.mjs";
 import { gitExecutable } from "../scripts/git-executable.mjs";
+import { guardianMaintenanceReadiness } from "../src/updateMaintenance.js";
 
 const UPDATE_STATUS_FILENAME = "update-status.json";
 const UPDATE_LOG_FILENAME = "update.log";
@@ -101,7 +102,7 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
     }
     await mkdir(updateDir, { recursive: true });
     const remoteCheck = checkRemote ? await execGit(repoRoot, ["fetch", "--prune"]) : null;
-    const [repo, currentSourceFingerprint, runtimeBuild, appBuild, appStat, lastUpdate, activeLock] = await Promise.all([
+    const [repo, currentSourceFingerprint, runtimeBuild, appBuild, appStat, lastUpdate, activeLock, maintenance] = await Promise.all([
       readRepoInfo(repoRoot),
       sourceFingerprint(repoRoot),
       readBuildInfo(join(repoRoot, "dist", "runtime", "build-info.json")),
@@ -111,7 +112,8 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       ]),
       optionalStat(join(appPath, "Contents", "Resources", "app.asar")),
       readLastUpdate(statusPath),
-      readActiveUpdaterLock(lockPath)
+      readActiveUpdaterLock(lockPath),
+      guardianMaintenanceReadiness()
     ]);
     const running = Boolean(activeLock && activeLock.token !== ownedLockToken);
     const appCommit = appBuild?.commit || null;
@@ -129,7 +131,7 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
     const remoteCheckOk = remoteCheck ? remoteCheck.ok : null;
     const checkOk = repo.ok && (localCheckoutBuild || remoteCheckOk !== false);
     const supported = repo.ok && Boolean(scriptPath);
-    const updateAvailable = Boolean(checkOk && supported && (
+    const updateAvailable = Boolean(checkOk && supported && maintenance.ready && (
       localCheckoutBuild || (!repo.dirty && Boolean(repo.upstream) && (repo.behind > 0 || appBundleOutdated))
     ));
     return {
@@ -154,6 +156,8 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       remoteCheckedAt: checkRemote ? new Date().toISOString() : null,
       remoteCheckOk,
       remoteCheckError: remoteCheck && !remoteCheck.ok ? "Remote check failed" : null,
+      maintenanceReady: maintenance.ready,
+      maintenanceMessage: maintenance.message,
       logPath,
       lastUpdate,
       message: updateMessage({
@@ -161,7 +165,9 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
         appBundleOutdated,
         localChanges: localCheckoutBuild,
         running,
-        remoteCheckError: remoteCheck && !remoteCheck.ok
+        remoteCheckError: remoteCheck && !remoteCheck.ok,
+        maintenance,
+        lastUpdate
       })
     };
   }
@@ -202,6 +208,9 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       }
       if (currentStatus.supported !== true || !scriptPath) {
         return { ok: false, supported: false, error: "Updater script is missing from this Vigil build." };
+      }
+      if (currentStatus.maintenanceReady !== true) {
+        return { ...currentStatus, ok: false, error: String(currentStatus.maintenanceMessage || "Vigil's protected update setup is not ready.") };
       }
       if (currentStatus.localChanges) {
         const result = await launchLocalChanges(currentStatus, updateLock);
@@ -248,6 +257,7 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
         "--log-path", logPath,
         "--lock-path", lockPath,
         "--lock-token", updateLock.token,
+        "--expected-commit", String(currentStatus.upstreamCommit || ""),
         "--restart"
       ];
       const requestQuit = () => quitForUpdate();
@@ -545,13 +555,25 @@ async function optionalStat(path: string) {
 }
 
 function updateMessage(
-  { repo, appBundleOutdated, localChanges, running, remoteCheckError }:
-  { repo: RepoInfo; appBundleOutdated: boolean; localChanges: boolean; running: boolean; remoteCheckError?: boolean | null }
+  { repo, appBundleOutdated, localChanges, running, remoteCheckError, maintenance, lastUpdate }:
+  {
+    repo: RepoInfo;
+    appBundleOutdated: boolean;
+    localChanges: boolean;
+    running: boolean;
+    remoteCheckError?: boolean | null;
+    maintenance: Awaited<ReturnType<typeof guardianMaintenanceReadiness>>;
+    lastUpdate: LastUpdateStatus;
+  }
 ): string {
-  if (running) return "Update in progress";
+  if (running) return lastUpdate.message || "Update in progress";
+  if (!maintenance.ready) return maintenance.message || "Vigil's protected update setup is not ready.";
   if (!repo.ok) return "Vigil could not verify its source repository";
   if (localChanges) return "Local changes ready to run";
   if (remoteCheckError) return "Could not verify remote updates";
+  if (lastUpdate.phase === "failed" && (lastUpdate.error || lastUpdate.message)) {
+    return `Last update failed: ${lastUpdate.error || lastUpdate.message}`;
+  }
   if (repo.dirty) return "Local changes are running";
   if (repo.behind > 0) return `${repo.behind} remote commit${repo.behind === 1 ? "" : "s"} ready`;
   if (appBundleOutdated) return "Installed app is behind this checkout";

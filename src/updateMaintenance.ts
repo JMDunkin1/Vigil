@@ -6,6 +6,7 @@ export const UPDATE_LOCK_FILENAME = "update.lock";
 export const SYSTEM_GUARDIAN_MAINTENANCE_FILENAME = "guardian-maintenance.json";
 export const SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS = 10 * 60;
 export const SYSTEM_GUARDIAN_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/maintenance-authorization.plist";
+export const SYSTEM_GUARDIAN_SCRIPT_PATH = "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-DO-NOT-TERMINATE.sh";
 const SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS = 10_000;
 const SYSTEM_GUARDIAN_AUTHORIZATION_POLL_MS = 100;
 
@@ -43,12 +44,63 @@ export interface GuardianMaintenanceTransaction {
   release(): Promise<void>;
 }
 
+export interface GuardianMaintenanceReadiness {
+  ready: boolean;
+  guardianInstalled: boolean;
+  message: string | null;
+}
+
 export function defaultUpdaterLockPath(targetHome: string): string {
   return join(targetHome, "Library", "Application Support", "Vigil", "updater", UPDATE_LOCK_FILENAME);
 }
 
 export function guardianMaintenanceMarkerPath(lockPath: string): string {
   return join(dirname(lockPath), SYSTEM_GUARDIAN_MAINTENANCE_FILENAME);
+}
+
+export async function guardianMaintenanceReadiness(
+  authorizationPath = SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
+  guardianScriptPath = SYSTEM_GUARDIAN_SCRIPT_PATH,
+  expectedUid = 0
+): Promise<GuardianMaintenanceReadiness> {
+  let guardianRoot: Awaited<ReturnType<typeof lstat>>;
+  try {
+    guardianRoot = await lstat(dirname(authorizationPath));
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) return { ready: true, guardianInstalled: false, message: null };
+    return maintenanceNotReady(`Vigil could not inspect its system guardian: ${errorMessage(error)}`);
+  }
+  if (!guardianRoot.isDirectory() || guardianRoot.isSymbolicLink() || guardianRoot.uid !== expectedUid || (guardianRoot.mode & 0o022) !== 0) {
+    return maintenanceNotReady("Vigil's system guardian directory is unsafe.");
+  }
+
+  try {
+    const [script, scriptStat] = await Promise.all([
+      readFile(guardianScriptPath, "utf8"),
+      lstat(guardianScriptPath)
+    ]);
+    if (!scriptStat.isFile() || scriptStat.isSymbolicLink() || scriptStat.uid !== expectedUid || (scriptStat.mode & 0o022) !== 0) {
+      return maintenanceNotReady("Vigil's installed system guardian is unsafe.");
+    }
+    const supportsAuthenticatedMaintenance = script.includes("authorize_maintenance_request()")
+      && script.includes("vigil-root-maintenance-authorization-v2")
+      && script.includes(authorizationPath);
+    if (!supportsAuthenticatedMaintenance) {
+      return maintenanceNotReady(
+        "Vigil's system guardian predates authenticated app updates. Refresh it through Vigil's protected maintenance setup before installing this update."
+      );
+    }
+    return { ready: true, guardianInstalled: true, message: null };
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) {
+      return maintenanceNotReady("Vigil's system guardian installation is incomplete. Refresh it through Vigil's protected maintenance setup.");
+    }
+    return maintenanceNotReady(`Vigil could not verify its system guardian: ${errorMessage(error)}`);
+  }
+}
+
+function maintenanceNotReady(message: string): GuardianMaintenanceReadiness {
+  return { ready: false, guardianInstalled: true, message };
 }
 
 export async function beginGuardianMaintenance(

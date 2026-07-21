@@ -27,8 +27,9 @@ export function isLocallyRebuildableSignature(detail) {
 }
 
 export function macSigningTimestamp(identity) {
-  // This self-issued identity is only used for stable local macOS permissions.
-  // Asking Apple's timestamp service to timestamp it can reject otherwise
-  // valid builds when bundled resource mtimes are a few minutes ahead.
-  return identity === LOCAL_SIGNING_IDENTITY ? "none" : undefined;
+  // Vigil's locally rebuilt apps are installed directly rather than distributed
+  // after Developer ID notarization. Network timestamping every nested Electron
+  // component adds most of the update time and is not needed for these local
+  // Apple Development or self-issued signatures.
+  return identity === LOCAL_SIGNING_IDENTITY || identity.startsWith("Apple Development:") ? "none" : undefined;
 }
