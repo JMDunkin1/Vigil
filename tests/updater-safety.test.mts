@@ -70,6 +70,9 @@ assert.ok(
 assert.match(updaterSource, /localCheckoutBuild \|\| remoteCheckOk !== false/u, "new local changes must remain runnable without a remote fetch");
 assert.match(updaterSource, /currentSourceFingerprint !== appBuild\.sourceFingerprint/u, "local changes must be compared with the source built into the installed app");
 assert.match(mainSource, /return status\.updateAvailable === true/u, "the tray must honor the updater controller's installability decision");
+assert.match(mainSource, /maintenanceReady: status\?\.maintenanceReady !== false/u, "the tray must retain updater maintenance readiness");
+assert.match(mainSource, /return "Update Setup Required"/u, "the tray must not relabel an incompatible updater as installable");
+assert.match(mainSource, /appUpdateActionState\.maintenanceReady/u, "the tray must disable an update action that cannot pass protected maintenance");
 assert.match(mainSource, /scheduleAppUpdateRefresh\(appUrl\)/u, "the tray must refresh a local build that leaves Vigil running");
 assert.match(
   mainSource,

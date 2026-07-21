@@ -54,6 +54,7 @@ interface AppUpdateActionState {
   running: boolean;
   installable: boolean;
   localChanges: boolean;
+  maintenanceReady: boolean;
   message: string;
 }
 
@@ -104,6 +105,7 @@ let appUpdateActionState: AppUpdateActionState = {
   running: false,
   installable: false,
   localChanges: false,
+  maintenanceReady: true,
   message: ""
 };
 let windowResizeSession: WindowResizeSession | null = null;
@@ -1376,6 +1378,7 @@ function appUpdateActionLabel(): string {
   if (appUpdateActionState.running) return "Updating Vigil...";
   if (appUpdateActionState.installable && appUpdateActionState.localChanges) return "Run Local Changes";
   if (appUpdateActionState.installable) return "Install Update";
+  if (appUpdateActionState.checked && !appUpdateActionState.maintenanceReady) return "Update Setup Required";
   return "Check for Updates";
 }
 
@@ -1386,7 +1389,7 @@ function appUpdateActionDetail(): string {
 }
 
 function canUseAppUpdateAction(): boolean {
-  return !appUpdateActionState.checking && !appUpdateActionState.running;
+  return !appUpdateActionState.checking && !appUpdateActionState.running && appUpdateActionState.maintenanceReady;
 }
 
 async function handleAppUpdateAction(appUrl: string): Promise<void> {
@@ -1456,6 +1459,7 @@ async function checkAppUpdate(appUrl: string): Promise<void> {
     running: false,
     installable: false,
     localChanges: false,
+    maintenanceReady: appUpdateActionState.maintenanceReady,
     message: "Checking for updates"
   };
   refreshUpdateMenus(appUrl);
@@ -1469,6 +1473,7 @@ async function checkAppUpdate(appUrl: string): Promise<void> {
       running,
       installable,
       localChanges: Boolean(status?.localChanges),
+      maintenanceReady: status?.maintenanceReady !== false,
       message: nonEmptyString(status?.message) || (installable ? "Update available" : "Vigil is current")
     };
   } catch (error) {
@@ -1478,6 +1483,7 @@ async function checkAppUpdate(appUrl: string): Promise<void> {
       running: false,
       installable: false,
       localChanges: false,
+      maintenanceReady: true,
       message: errorMessage(error)
     };
   }
@@ -1492,6 +1498,7 @@ async function startAppUpdate(appUrl: string): Promise<void> {
     running: true,
     installable: false,
     localChanges: false,
+    maintenanceReady: true,
     message: "Vigil will quit, update, and reopen"
   };
   refreshUpdateMenus(appUrl);
@@ -1503,6 +1510,7 @@ async function startAppUpdate(appUrl: string): Promise<void> {
       running: result?.running !== false,
       installable: false,
       localChanges: Boolean(result?.localChanges),
+      maintenanceReady: result?.maintenanceReady !== false,
       message: nonEmptyString(result?.message) || "Vigil will quit, update, and reopen"
     };
     refreshUpdateMenus(appUrl);
@@ -1514,6 +1522,7 @@ async function startAppUpdate(appUrl: string): Promise<void> {
       running: false,
       installable: false,
       localChanges: false,
+      maintenanceReady: true,
       message: errorMessage(error)
     };
     refreshUpdateMenus(appUrl);
@@ -1542,6 +1551,7 @@ async function refreshRunningAppUpdate(appUrl: string): Promise<void> {
       running: Boolean(status?.running),
       installable,
       localChanges: Boolean(status?.localChanges),
+      maintenanceReady: status?.maintenanceReady !== false,
       message: nonEmptyString(status?.message) || (installable ? "Update available" : "Vigil is current")
     };
   } catch (error) {
@@ -1551,6 +1561,7 @@ async function refreshRunningAppUpdate(appUrl: string): Promise<void> {
       running: false,
       installable: false,
       localChanges: false,
+      maintenanceReady: true,
       message: errorMessage(error)
     };
   }
@@ -1654,7 +1665,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function isInstallableAppUpdate(status: Record<string, unknown> | null): boolean {
-  if (!status || status.ok !== true || status.supported === false || status.running || (!status.localChanges && status.remoteCheckOk === false)) return false;
+  if (!status || status.ok !== true || status.supported === false || status.maintenanceReady === false || status.running || (!status.localChanges && status.remoteCheckOk === false)) return false;
   return status.updateAvailable === true;
 }
 
