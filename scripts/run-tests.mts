@@ -53,6 +53,7 @@ export async function runSuites(suites: readonly string[], options: RunSuitesOpt
       ? {
           ...process.env,
           ...options.env,
+          VIGIL_BROWSER_ACTIVITY_WATCH: "0",
           VIGIL_DATA_DIR: join(options.dataRoot, String(index).padStart(3, "0"))
         }
       : options.env;

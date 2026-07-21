@@ -12,9 +12,10 @@ import { buildHostsBlock, managedBlockDomains } from "../src/hardening.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "../src/keyholder.js";
 import { activeLimitBlocks, activeLimitPolicy, overrideLimitRules } from "../src/limits.js";
 import { shouldLockScreenForPolicy } from "../src/monitor.js";
-import { activePlannerBlock, activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, matchBlockedUrlPattern, matchStrictBrowserControlUrl, panicLockProfile, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
+import { activePlannerBlock, activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, isProcessSweepExemptApp, matchBlockedUrlPattern, matchStrictBrowserControlUrl, panicLockProfile, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "../src/protection.js";
 import { buildSafariFilterProfile, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature, safariUrlFilterEnabled } from "../src/safariFilter.js";
+import { CHROME_PREFERENCE_DOMAINS, buildChromeSafeSearchProfile, chromeSafeSearchStatusFromRecord } from "../src/chromeSafeSearch.js";
 import { applySealVerificationToState, markStateSealed } from "../src/seal.js";
 import { blockedPage, blockedPageResponse } from "../src/server/pages.js";
 import { deleteProfile } from "../src/server/policyRoutes.js";
@@ -48,6 +49,24 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(emergencyUnlockAllowedForPolicy(activePolicy(state, now)), false);
   state.environment.wifiSsid = "Home";
   assert.equal(activeSchedule(state, now), null);
+}
+
+{
+  const profileText = buildChromeSafeSearchProfile();
+  assert.match(profileText, /<key>PayloadScope<\/key>\s*<string>System<\/string>/);
+  assert.match(profileText, /<key>PayloadRemovalDisallowed<\/key>\s*<true\/>/);
+  assert.match(profileText, /com\.apple\.ManagedClient\.preferences/);
+  for (const domain of CHROME_PREFERENCE_DOMAINS) {
+    assert.match(profileText, new RegExp(`<key>${domain.replaceAll(".", "\\.")}<\\/key>`));
+  }
+  assert.match(profileText, /<key>Forced<\/key>/);
+  assert.match(profileText, /<key>ForceGoogleSafeSearch<\/key>\s*<true\/>/);
+  assert.doesNotMatch(profileText, /safe=images/);
+  assert.equal(chromeSafeSearchStatusFromRecord({ ForceGoogleSafeSearch: true }).forced, true);
+  assert.equal(chromeSafeSearchStatusFromRecord({ ForceGoogleSafeSearch: true }).present, true);
+  assert.equal(chromeSafeSearchStatusFromRecord({ ForceGoogleSafeSearch: false }).forced, false);
+  assert.equal(chromeSafeSearchStatusFromRecord({ ForceGoogleSafeSearch: false }).present, true);
+  assert.equal(chromeSafeSearchStatusFromRecord({}).present, false);
 }
 
 {
@@ -470,6 +489,48 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(appMatchesAppTargets("EpicWebHelper", ["Epic Games Launcher"]), true);
   assert.equal(appMatchesAppTargets("Discord Helper.app", ["Discord"]), true);
   assert.equal(appMatchesAppTargets("Slack Helper (Renderer)", ["Slack"]), true);
+  assert.equal(appMatchesAppTargets("Google Chrome Beta Helper (Renderer)", ["Google Chrome Beta"]), true);
+  assert.equal(appMatchesAppTargets("Google Chrome Dev Helper (GPU)", ["Google Chrome Dev"]), true);
+  assert.equal(appMatchesAppTargets("Google Chrome Canary Helper (Plugin)", ["Google Chrome Canary"]), true);
+  assert.equal(appMatchesAppTargets("Google Chrome Canary Helper", ["Google Chrome"]), false);
+  const chromeHelperSuffixes = ["", " (Alerts)", " (GPU)", " (Plugin)", " (Renderer)"];
+  for (const channel of ["Google Chrome Beta", "Google Chrome Dev", "Google Chrome Canary"]) {
+    assert.equal(isProcessSweepExemptApp(channel), false, `${channel} must remain eligible for process sweeping`);
+    for (const suffix of chromeHelperSuffixes) {
+      const helper = `${channel} Helper${suffix}`;
+      assert.equal(isProcessSweepExemptApp(helper), true, `${helper} must remain sweep-exempt`);
+    }
+  }
+  assert.equal(appMatchesAppTargets("Microsoft Edge Helper", ["Microsoft Edge Beta"]), true);
+  assert.equal(appMatchesAppTargets("Microsoft Edge Beta Helper (Renderer)", ["Microsoft Edge Beta"]), true);
+  assert.equal(appMatchesAppTargets("Microsoft Edge Dev Helper (GPU)", ["Microsoft Edge Dev"]), true);
+  assert.equal(appMatchesAppTargets("Microsoft Edge Canary Helper (Plugin)", ["Microsoft Edge Canary"]), true);
+  assert.equal(appMatchesAppTargets("Microsoft Edge Canary Helper", ["Microsoft Edge Beta"]), false);
+  assert.equal(appMatchesAppTargets("Brave Browser Helper", ["Brave Browser Nightly"]), true);
+  assert.equal(appMatchesAppTargets("Brave Browser Beta Helper (Renderer)", ["Brave Browser Beta"]), true);
+  assert.equal(appMatchesAppTargets("Brave Browser Nightly Helper (GPU)", ["Brave Browser Nightly"]), true);
+  assert.equal(appMatchesAppTargets("Vivaldi Helper", ["Vivaldi Snapshot"]), true);
+  assert.equal(appMatchesAppTargets("Vivaldi Snapshot Helper (Renderer)", ["Vivaldi Snapshot"]), true);
+  assert.equal(appMatchesAppTargets("Opera Helper", ["Opera Beta"]), true);
+  assert.equal(appMatchesAppTargets("Opera Beta Helper (GPU)", ["Opera Beta"]), true);
+  assert.equal(appMatchesAppTargets("Opera Developer Helper (Plugin)", ["Opera Developer"]), true);
+  const ambiguousStableHelperPrefixes = ["Microsoft Edge", "Brave Browser", "Vivaldi", "Opera"];
+  for (const prefix of ambiguousStableHelperPrefixes) {
+    assert.equal(isProcessSweepExemptApp(prefix), false, `${prefix} itself must remain sweep-eligible`);
+    for (const suffix of chromeHelperSuffixes) {
+      const helper = `${prefix} Helper${suffix}`;
+      assert.equal(isProcessSweepExemptApp(helper), true, `${helper} must be exactly sweep-exempt`);
+    }
+  }
+  for (const channelSpecificHelper of [
+    "Microsoft Edge Beta Helper",
+    "Brave Browser Nightly Helper (Renderer)",
+    "Vivaldi Snapshot Helper (GPU)",
+    "Opera Developer Helper (Plugin)"
+  ]) {
+    assert.equal(isProcessSweepExemptApp(channelSpecificHelper), false,
+      `${channelSpecificHelper} must remain sweep-eligible when its channel is blocked`);
+  }
   assert.equal(appMatchesAppTargets("MSTeams", ["Microsoft Teams"]), true);
   assert.equal(appMatchesAppTargets("Cloudflare WARP", ["WARP"]), true);
   assert.equal(appMatchesAppTargets("Little Snitch Network Monitor", ["Little Snitch Configuration"]), true);

@@ -25,6 +25,7 @@ export const API_ROUTES = Object.freeze([
   { id: "launchAgentInstall", domain: "hardening", methods: ["POST"], path: "/api/hardening/launch-agent/install" },
   { id: "hostsApply", domain: "hardening", methods: ["POST"], path: "/api/hardening/hosts/apply" },
   { id: "safariFilterApply", domain: "hardening", methods: ["POST"], path: "/api/hardening/safari-filter/apply" },
+  { id: "chromeSafeSearchApply", domain: "hardening", methods: ["POST"], path: "/api/hardening/chrome-safe-search/apply" },
   { id: "clearTamper", domain: "hardening", methods: ["POST"], path: "/api/integrity/clear-tamper" },
   { id: "iosSettings", domain: "devices", methods: ["POST"], path: "/api/devices/ios/settings" },
   { id: "iosAppRemoval", domain: "devices", methods: ["POST"], path: "/api/devices/ios/app-removal" },

@@ -14,6 +14,10 @@ const HUMAN_IDLE_HELPER = runtimeExecutablePath("bin/vigil-human-idle");
 let wifiDevicePromise: Promise<string> | null = null;
 let verifiedHumanIdleHelperDigest = "";
 let humanActivityProcess: ChildProcessWithoutNullStreams | null = null;
+let humanActivityProcessStarting: Promise<ChildProcessWithoutNullStreams> | null = null;
+let humanActivityRestartTimer: ReturnType<typeof setTimeout> | null = null;
+let humanActivityStabilityTimer: ReturnType<typeof setTimeout> | null = null;
+let humanActivityRestartAttempt = 0;
 let humanActivityOutput = "";
 let humanActivityPending: {
   resolve: (sample: HumanActivitySample) => void;
@@ -22,14 +26,28 @@ let humanActivityPending: {
 } | null = null;
 let humanActivityQueryTail: Promise<void> = Promise.resolve();
 let recentHumanActivity: { capturedAt: number; sample: HumanActivitySample } | null = null;
+const browserActivityListeners = new Set<(signal: BrowserActivitySignal) => void>();
 const HUMAN_ACTIVITY_CACHE_MS = 2500;
+const HUMAN_ACTIVITY_STABILITY_MS = 5_000;
+export const HUMAN_ACTIVITY_RESTART_DELAYS_MS = Object.freeze([25, 100, 250, 500, 1_000, 3_000]);
 const CHROMIUM_BROWSERS = new Set([
   "Google Chrome",
+  "Google Chrome Beta",
+  "Google Chrome Dev",
+  "Google Chrome Canary",
   "Microsoft Edge",
+  "Microsoft Edge Beta",
+  "Microsoft Edge Dev",
+  "Microsoft Edge Canary",
   "Brave Browser",
+  "Brave Browser Beta",
+  "Brave Browser Nightly",
   "Arc",
   "Vivaldi",
+  "Vivaldi Snapshot",
   "Opera",
+  "Opera Beta",
+  "Opera Developer",
   "Orion"
 ]);
 
@@ -37,6 +55,113 @@ interface HumanActivitySample {
   idleSeconds: number;
   app: string;
   bundleId: string;
+}
+
+export type BrowserActivityKind = "key" | "click";
+
+export interface BrowserActivitySignal {
+  kind: BrowserActivityKind;
+  at: number;
+}
+
+export interface BrowserRedirectResult {
+  [key: string]: unknown;
+  ok: boolean;
+  matched?: boolean;
+  redirectedTabCount?: number;
+  method?: string;
+  error?: string;
+}
+
+export function subscribeBrowserActivity(listener: (signal: BrowserActivitySignal) => void): () => void {
+  const wasEmpty = browserActivityListeners.size === 0;
+  // A unique registration preserves normal subscription semantics even when a
+  // caller intentionally subscribes the same callback more than once.
+  const registration = (signal: BrowserActivitySignal) => listener(signal);
+  browserActivityListeners.add(registration);
+  if (wasEmpty) {
+    requestBrowserActivityWatch(true);
+    // Warm the helper immediately. The first scheduled tick can spend time in
+    // integrity and hardening checks before it would otherwise make the helper's
+    // first idle/frontmost query, leaving startup activity unwatched.
+    requestHumanActivityProcessWarm();
+  }
+  let subscribed = true;
+  return () => {
+    if (!subscribed) return;
+    subscribed = false;
+    browserActivityListeners.delete(registration);
+    if (browserActivityListeners.size === 0) {
+      cancelHumanActivityRestart();
+      requestBrowserActivityWatch(false);
+    }
+  };
+}
+
+export function humanActivityHelperArguments(watchBrowserActivity: boolean): string[] {
+  return watchBrowserActivity ? ["--watch-browser-activity"] : [];
+}
+
+function requestBrowserActivityWatch(enabled: boolean): void {
+  const child = humanActivityProcess;
+  if (!child) return;
+  writeHumanActivityRequest(child, enabled ? "watch\n" : "unwatch\n");
+}
+
+function writeHumanActivityRequest(child: ChildProcessWithoutNullStreams, request: string): void {
+  if (child.stdin.destroyed || !child.stdin.writable) {
+    failHumanActivityProcess(child, new Error("Human activity helper input is unavailable."), true);
+    return;
+  }
+  try {
+    child.stdin.write(request, (error) => {
+      if (error) failHumanActivityProcess(child, error, true);
+    });
+  } catch (error) {
+    failHumanActivityProcess(
+      child,
+      error instanceof Error ? error : new Error(String(error || "Human activity helper input failed.")),
+      true
+    );
+  }
+}
+
+function requestHumanActivityProcessWarm(): void {
+  if (!browserActivityListeners.size || humanActivityProcess) return;
+  void ensureHumanActivityProcess().catch(() => scheduleHumanActivityRestart());
+}
+
+function scheduleHumanActivityRestart(): void {
+  if (!browserActivityListeners.size || humanActivityProcess || humanActivityRestartTimer) return;
+  const index = Math.min(humanActivityRestartAttempt, HUMAN_ACTIVITY_RESTART_DELAYS_MS.length - 1);
+  const delayMs = HUMAN_ACTIVITY_RESTART_DELAYS_MS[index]!;
+  humanActivityRestartAttempt += 1;
+  humanActivityRestartTimer = setTimeout(() => {
+    humanActivityRestartTimer = null;
+    requestHumanActivityProcessWarm();
+  }, delayMs);
+  humanActivityRestartTimer.unref?.();
+}
+
+function cancelHumanActivityRestart(): void {
+  if (humanActivityRestartTimer) clearTimeout(humanActivityRestartTimer);
+  humanActivityRestartTimer = null;
+  humanActivityRestartAttempt = 0;
+}
+
+function resetHumanActivityRestart(): void {
+  cancelHumanActivityRestart();
+  if (humanActivityStabilityTimer) clearTimeout(humanActivityStabilityTimer);
+  humanActivityStabilityTimer = null;
+}
+
+function armHumanActivityStabilityReset(child: ChildProcessWithoutNullStreams): void {
+  if (humanActivityStabilityTimer) clearTimeout(humanActivityStabilityTimer);
+  humanActivityStabilityTimer = setTimeout(() => {
+    humanActivityStabilityTimer = null;
+    if (humanActivityProcess === child) resetHumanActivityRestart();
+  }, HUMAN_ACTIVITY_STABILITY_MS);
+  humanActivityStabilityTimer.unref?.();
 }
 
 export async function runAppleScript(script: string, timeout = 2500): Promise<string> {
@@ -47,9 +172,9 @@ export async function runAppleScript(script: string, timeout = 2500): Promise<st
   return stdout.trim();
 }
 
-export async function getFrontmostApp() {
+export async function getFrontmostApp(options: { fresh?: boolean } = {}) {
   const cached = recentHumanActivity;
-  if (cached && Date.now() - cached.capturedAt <= HUMAN_ACTIVITY_CACHE_MS) {
+  if (!options.fresh && cached && Date.now() - cached.capturedAt <= HUMAN_ACTIVITY_CACHE_MS) {
     return { ok: true, app: cached.sample.app };
   }
   try {
@@ -110,12 +235,12 @@ export async function getActiveBrowserUrl(appName: string) {
 
   try {
     const app = escapeAppleScript(appName);
-    if (appName === "Safari") {
+    if (isSafariBrowser(appName)) {
       const url = await runAppleScript(safariCurrentTabUrlScript(app));
       return { ok: true, url };
     }
 
-    if (CHROMIUM_BROWSERS.has(appName)) {
+    if (isChromiumBrowser(appName)) {
       const url = await runAppleScript(`tell application "${app}" to if (count of windows) > 0 then get URL of active tab of front window`);
       return { ok: true, url };
     }
@@ -126,118 +251,343 @@ export async function getActiveBrowserUrl(appName: string) {
   }
 }
 
-export async function redirectActiveBrowserTab(appName: string, url: string, options: { currentUrl?: string } = {}) {
-  if (!BROWSERS.has(appName)) return { ok: false, error: "Not a supported browser" };
+export async function redirectActiveBrowserTab(
+  appName: string,
+  url: string,
+  options: { currentUrl?: string } = {}
+): Promise<BrowserRedirectResult> {
+  if (!BROWSERS.has(appName)) return { ok: false, matched: false, redirectedTabCount: 0, error: "Not a supported browser" };
 
   try {
-    const app = escapeAppleScript(appName);
-    const target = escapeAppleScript(url);
-    if (appName === "Safari") {
-      return await redirectSafariTab(url, options);
+    if (isSafariBrowser(appName)) {
+      return await redirectSafariTab(appName, url, options);
     }
 
-    if (CHROMIUM_BROWSERS.has(appName)) {
-      await runAppleScript(`tell application "${app}" to if (count of windows) > 0 then set URL of active tab of front window to "${target}"`);
-      return { ok: true };
+    if (isChromiumBrowser(appName)) {
+      const output = await runAppleScript(chromiumRedirectScript(appName, url, options));
+      const redirectedTabCount = parseBrowserRedirectCount(output);
+      if (redirectedTabCount === null) throw new Error("Chromium returned an invalid redirect count");
+      return { ok: true, matched: redirectedTabCount > 0, redirectedTabCount };
     }
 
-    return { ok: false, error: "Browser does not expose tab redirects" };
+    return { ok: false, matched: false, redirectedTabCount: 0, error: "Browser does not expose tab redirects" };
   } catch (error) {
-    return { ok: false, error: simplifyError(error) };
+    return { ok: false, matched: false, redirectedTabCount: 0, error: simplifyError(error) };
   }
 }
 
-async function redirectSafariTab(url: string, options: { currentUrl?: string } = {}) {
-  const method = await runAppleScript(safariRedirectScript(url, options), 5000);
-  return { ok: true, method: method || "safari-redirect" };
+async function redirectSafariTab(appName: string, url: string, options: { currentUrl?: string } = {}) {
+  const method = await runAppleScript(safariRedirectScript(url, options, appName), 5000);
+  const redirectedTabCount = parseBrowserRedirectCount(method);
+  if (redirectedTabCount === null) throw new Error("Safari returned an invalid redirect count");
+  return {
+    ok: true,
+    matched: redirectedTabCount > 0,
+    redirectedTabCount,
+    method: method || "safari-redirect"
+  };
 }
 
-export function safariRedirectScript(url: string, options: { currentUrl?: string } = {}): string {
+export function parseBrowserRedirectCount(output: unknown): number | null {
+  const value = String(output || "").trim();
+  const count = value.slice(value.lastIndexOf(":") + 1);
+  if (!/^\d+$/u.test(count)) return null;
+  const parsed = Number(count);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+export function isSafariBrowser(appName: string): boolean {
+  return appName === "Safari" || appName === "Safari Technology Preview";
+}
+
+export function isChromiumBrowser(appName: string): boolean {
+  return CHROMIUM_BROWSERS.has(appName);
+}
+
+export function chromiumRedirectScript(appName: string, url: string, options: { currentUrl?: string } = {}): string {
+  const app = escapeAppleScript(appName);
   const target = escapeAppleScript(url);
   const current = escapeAppleScript(options.currentUrl || "");
+  const atomicRedirect = escapeAppleScript(chromiumInterruptionScript(url, options));
+  return [
+    `set targetUrl to "${target}"`,
+    `set previousUrl to "${current}"`,
+    "set redirectMethod to \"missing-precondition\"",
+    "set redirectedTabCount to 0",
+    "set hasObservedTab to false",
+    "set nativeFallbackAllowed to false",
+    "set observedWindowId to \"\"",
+    "set observedTabId to \"\"",
+    "set observedTabIndex to 0",
+    "considering case",
+    `tell application "${app}"`,
+    "  if previousUrl is not \"\" and previousUrl is not targetUrl then",
+    "    if (count of windows) = 0 then",
+    "      set redirectMethod to \"no-window\"",
+    "    else",
+    "      try",
+    "        set observedWindow to front window",
+    "        set observedActiveTab to active tab of observedWindow",
+    "        set observedWindowId to id of observedWindow",
+    "        set observedTabId to id of observedActiveTab",
+    "        set observedTabIndex to active tab index of observedWindow",
+    "        if (URL of observedActiveTab) is previousUrl then",
+    "          set hasObservedTab to true",
+    "          try",
+    `            set javascriptResult to execute observedActiveTab javascript "${atomicRedirect}"`,
+    "          on error",
+    "            set javascriptResult to \"javascript-error\"",
+    "          end try",
+    "          if javascriptResult is \"redirected\" then",
+    "            set redirectMethod to \"javascript-replace-unconfirmed\"",
+          "          else if javascriptResult is \"url-mismatch\" then",
+          "            set redirectMethod to \"url-mismatch\"",
+          "          else",
+          "            set redirectMethod to \"javascript-unconfirmed\"",
+          "            set nativeFallbackAllowed to true",
+    "          end if",
+    "        else",
+    "          set redirectMethod to \"url-mismatch\"",
+    "        end if",
+    "      on error",
+    "        set redirectMethod to \"capture-error\"",
+    "      end try",
+    "    end if",
+    "  end if",
+    "end tell",
+    chromiumNativeFallbackAppleScript(app),
+    chromiumConfirmationAppleScript(app, "targetUrl", [
+      "if targetStillCurrent and hasObservedTab then",
+      "  if redirectMethod is \"javascript-replace-unconfirmed\" then",
+      "    set redirectMethod to \"javascript-replace\"",
+      "    set redirectedTabCount to 1",
+      "  else if redirectMethod is \"native-set-url-unconfirmed\" then",
+      "    set redirectMethod to \"native-set-url\"",
+      "    set redirectedTabCount to 1",
+      "  end if",
+      "end if"
+    ]),
+    "end considering",
+    "return redirectMethod & \":\" & (redirectedTabCount as text)"
+  ].join("\n");
+}
+
+function chromiumNativeFallbackAppleScript(app: string): string {
+  return [
+    "set targetStillCurrent to false",
+    "tell application \"System Events\"",
+    "  try",
+    `    set targetStillCurrent to frontmost of process "${app}"`,
+    "  on error",
+    "    set targetStillCurrent to false",
+    "  end try",
+    "end tell",
+    "if targetStillCurrent and nativeFallbackAllowed and hasObservedTab then",
+    `  tell application "${app}"`,
+    "    try",
+    "      if (count of windows) = 0 then error \"No browser windows\"",
+    "      set currentWindow to front window",
+    "      set currentTab to active tab of currentWindow",
+    "      set targetStillCurrent to ((id of currentWindow) as text) is (observedWindowId as text)",
+    "      if targetStillCurrent then set targetStillCurrent to ((id of currentTab) as text) is (observedTabId as text)",
+    "      if targetStillCurrent then set targetStillCurrent to ((active tab index of currentWindow) as integer) is observedTabIndex",
+    "      if targetStillCurrent then set targetStillCurrent to ((URL of currentTab) is previousUrl)",
+    "      if targetStillCurrent then",
+    "        set URL of observedActiveTab to targetUrl",
+    "        set redirectMethod to \"native-set-url-unconfirmed\"",
+    "      end if",
+    "    on error",
+    "      set redirectMethod to \"native-set-url-error\"",
+    "    end try",
+    "  end tell",
+    "end if"
+  ].join("\n");
+}
+
+function chromiumConfirmationAppleScript(app: string, expectedUrlVariable: string, continuation: string[]): string {
+  return [
+    "set targetStillCurrent to false",
+    "tell application \"System Events\"",
+    "  try",
+    `    set targetStillCurrent to frontmost of process "${app}"`,
+    "  on error",
+    "    set targetStillCurrent to false",
+    "  end try",
+    "end tell",
+    "if targetStillCurrent and hasObservedTab then",
+    `  tell application "${app}"`,
+    "    try",
+    "      if (count of windows) = 0 then error \"No browser windows\"",
+    "      set currentWindow to front window",
+    "      set currentTab to active tab of currentWindow",
+    "      set targetStillCurrent to ((id of currentWindow) as text) is (observedWindowId as text)",
+    "      if targetStillCurrent then set targetStillCurrent to ((id of currentTab) as text) is (observedTabId as text)",
+    "      if targetStillCurrent then set targetStillCurrent to ((active tab index of currentWindow) as integer) is observedTabIndex",
+    `      if targetStillCurrent then set targetStillCurrent to ((URL of currentTab) is ${expectedUrlVariable})`,
+    "    on error",
+    "      set targetStillCurrent to false",
+    "    end try",
+    "  end tell",
+    "end if",
+    ...continuation
+  ].join("\n");
+}
+
+export function chromiumInterruptionScript(url: string, options: { currentUrl?: string } = {}): string {
+  const target = JSON.stringify(url);
+  const current = JSON.stringify(options.currentUrl || "");
+  return [
+    "(() => {",
+    `  const expectedUrl = ${current};`,
+    `  const targetUrl = ${target};`,
+    "  if (!expectedUrl || window.location.href !== expectedUrl) return 'url-mismatch';",
+    "  try {",
+    "    window.stop();",
+    "    window.location.replace(targetUrl);",
+    "    return 'redirected';",
+    "  } catch (_) {",
+    "    return 'redirect-error';",
+    "  }",
+    "})();"
+  ].join("\n");
+}
+
+export function safariRedirectScript(url: string, options: { currentUrl?: string } = {}, appName = "Safari"): string {
+  const target = escapeAppleScript(url);
+  const current = escapeAppleScript(options.currentUrl || "");
+  const app = escapeAppleScript(appName);
   return [
     `set targetUrl to "${target}"`,
     `set previousUrl to "${current}"`,
     "set mediaMode to \"unknown\"",
-    "set redirectMethod to \"pending\"",
+    "set redirectMethod to \"missing-precondition\"",
     "set redirectedTabCount to 0",
-    "tell application \"Safari\"",
+    "set hasBlockedTab to false",
+    "set nativeFallbackAllowed to false",
+    "set blockedWindowId to \"\"",
+    "set blockedTabIndex to 0",
+    "considering case",
+    `tell application "${app}"`,
     "  if (count of windows) = 0 then error \"No Safari windows\"",
-    "  try",
-`    do JavaScript "${escapeAppleScript(safariInterruptionScript(url))}" in current tab of front window`,
-    "    set mediaMode to the result",
-    "    set redirectMethod to \"javascript-replace\"",
-    "  on error",
-    "    set mediaMode to \"javascript-error\"",
-    "    set redirectMethod to \"javascript-error\"",
-    "  end try",
-    replaceUnscriptableSafariTabAppleScript(),
-    redirectMatchingSafariTabsAppleScript(),
+    "  set blockedWindow to front window",
+    "  set candidateTab to current tab of blockedWindow",
+    "  set candidateMatchesPreviousUrl to false",
+    "  if previousUrl is not \"\" and previousUrl is not targetUrl then",
+    "    try",
+    "      set candidateMatchesPreviousUrl to ((URL of candidateTab) is previousUrl)",
+    "    on error",
+    "      set candidateMatchesPreviousUrl to false",
+    "    end try",
+    "  end if",
+    "  if candidateMatchesPreviousUrl then",
+    "    set blockedTab to candidateTab",
+    "    set hasBlockedTab to true",
+    "    set blockedWindowId to id of blockedWindow",
+    "    set blockedTabIndex to index of blockedTab",
+    "    try",
+`      do JavaScript "${escapeAppleScript(safariInterruptionScript(url, options))}" in blockedTab`,
+    "      set mediaMode to the result",
+    "      if mediaMode is \"url-mismatch\" then",
+    "        set redirectMethod to \"url-mismatch\"",
+    "      else if mediaMode starts with \"redirected:\" then",
+    "        set redirectMethod to \"javascript-replace-unconfirmed\"",
+    "      else",
+    "        set redirectMethod to \"javascript-unconfirmed\"",
+    "        set nativeFallbackAllowed to true",
+    "      end if",
+    "    on error",
+    "      set mediaMode to \"javascript-error\"",
+    "      set redirectMethod to \"javascript-error\"",
+    "      set nativeFallbackAllowed to true",
+    "    end try",
+    "  end if",
     "end tell",
-    "if mediaMode contains \"media-fullscreen\" or mediaMode contains \"picture-in-picture\" then",
-    safariFullscreenInterruptionAppleScript(),
-    "  tell application \"Safari\"",
-    redirectCurrentSafariTabAppleScript(),
-    redirectMatchingSafariTabsAppleScript(),
-    "  end tell",
+    safariNativeFallbackAppleScript(app),
+    safariTargetConfirmationAppleScript(app, "targetUrl", [
+      "if targetStillCurrent and hasBlockedTab then",
+      "  if redirectMethod is \"javascript-replace-unconfirmed\" then",
+      "    set redirectMethod to \"javascript-replace\"",
+      "    set redirectedTabCount to 1",
+      "  else if redirectMethod is \"native-set-url-unconfirmed\" then",
+      "    set redirectMethod to \"native-set-url\"",
+      "    set redirectedTabCount to 1",
+      "  end if",
+      "end if"
+    ]),
+    "if redirectedTabCount > 0 and hasBlockedTab and (mediaMode contains \"media-fullscreen\" or mediaMode contains \"picture-in-picture\") then",
+    "  set fullscreenEscapeCount to 0",
+    safariFullscreenInterruptionAppleScript(appName),
+    "  if fullscreenEscapeCount > 0 then",
+    "    set redirectMethod to redirectMethod & \"+fullscreen-escape\"",
+    "  else",
+    "    set redirectMethod to redirectMethod & \"+fullscreen-skip-stale\"",
+    "  end if",
     "end if",
+    "end considering",
     "return redirectMethod & \":\" & mediaMode & \":\" & (redirectedTabCount as text)"
   ].join("\n");
 }
 
-function replaceUnscriptableSafariTabAppleScript(): string {
+function safariNativeFallbackAppleScript(app: string): string {
   return [
-    "  if mediaMode is \"javascript-error\" then",
-    "    try",
-    "      set blockedTab to current tab of front window",
-    "      set replacementTab to make new tab at end of tabs of front window with properties {URL:targetUrl}",
-    "      set current tab of front window to replacementTab",
-    "      set redirectedTabCount to redirectedTabCount + 1",
-    "      set redirectMethod to redirectMethod & \"+replacement-tab\"",
-    "      close blockedTab",
-    "    on error",
-    "      set redirectMethod to redirectMethod & \"+replacement-tab-error\"",
-    redirectCurrentSafariTabAppleScript(),
-    "    end try",
-    "  else",
-    "    delay 0.15",
-    redirectCurrentSafariTabAppleScript(),
-    "  end if"
-  ].join("\n");
-}
-
-function redirectCurrentSafariTabAppleScript(): string {
-  return [
+    "set targetStillCurrent to false",
+    "tell application \"System Events\"",
     "  try",
-    "    set currentUrl to URL of current tab of front window",
-    "    if currentUrl is not targetUrl then",
-    "      set URL of current tab of front window to targetUrl",
-    "      set redirectedTabCount to redirectedTabCount + 1",
-    "      set redirectMethod to redirectMethod & \"+verified-set-url\"",
-    "    end if",
+    `    set targetStillCurrent to frontmost of process "${app}"`,
     "  on error",
-    "    set URL of current tab of front window to targetUrl",
-    "    set redirectedTabCount to redirectedTabCount + 1",
-    "    set redirectMethod to redirectMethod & \"+fallback-set-url\"",
-    "  end try"
+    "    set targetStillCurrent to false",
+    "  end try",
+    "end tell",
+    "if targetStillCurrent and nativeFallbackAllowed and hasBlockedTab then",
+    `  tell application "${app}"`,
+    "    try",
+    "      if (count of windows) = 0 then error \"No Safari windows\"",
+    "      set visibleWindow to front window",
+    "      set visibleTab to current tab of visibleWindow",
+    "      set targetStillCurrent to (visibleWindow is blockedWindow)",
+    "      if targetStillCurrent then set targetStillCurrent to (visibleTab is blockedTab)",
+    "      if targetStillCurrent then set targetStillCurrent to (((id of visibleWindow) as text) is (blockedWindowId as text))",
+    "      if targetStillCurrent then set targetStillCurrent to ((index of visibleTab) as integer) is blockedTabIndex",
+    "      if targetStillCurrent then set targetStillCurrent to ((URL of visibleTab) is previousUrl)",
+    "      if targetStillCurrent then",
+    "        set URL of blockedTab to targetUrl",
+    "        set redirectMethod to \"native-set-url-unconfirmed\"",
+    "      end if",
+    "    on error",
+    "      set redirectMethod to \"native-set-url-error\"",
+    "    end try",
+    "  end tell",
+    "end if"
   ].join("\n");
 }
 
-function redirectMatchingSafariTabsAppleScript(): string {
+function safariTargetConfirmationAppleScript(app: string, expectedUrlVariable: string, continuation: string[]): string {
   return [
-    "  if previousUrl is not \"\" and previousUrl is not targetUrl then",
-    "    repeat with safariWindow in windows",
-    "      repeat with safariTab in tabs of safariWindow",
-    "        try",
-    "          if URL of safariTab is previousUrl then",
-    "            set URL of safariTab to targetUrl",
-    "            set redirectedTabCount to redirectedTabCount + 1",
-    "            set redirectMethod to redirectMethod & \"+matching-tab\"",
-    "          end if",
-    "        end try",
-    "      end repeat",
-    "    end repeat",
-    "  end if"
+    "set targetStillCurrent to false",
+    "tell application \"System Events\"",
+    "  try",
+    `    set targetStillCurrent to frontmost of process "${app}"`,
+    "  on error",
+    "    set targetStillCurrent to false",
+    "  end try",
+    "end tell",
+    "if targetStillCurrent and hasBlockedTab then",
+    `  tell application "${app}"`,
+    "    try",
+    "      if (count of windows) = 0 then error \"No Safari windows\"",
+    "      set visibleWindow to front window",
+    "      set visibleTab to current tab of visibleWindow",
+    "      set targetStillCurrent to (visibleWindow is blockedWindow)",
+    "      if targetStillCurrent then set targetStillCurrent to (visibleTab is blockedTab)",
+    "      if targetStillCurrent then set targetStillCurrent to (((id of visibleWindow) as text) is (blockedWindowId as text))",
+    "      if targetStillCurrent then set targetStillCurrent to ((index of visibleTab) as integer) is blockedTabIndex",
+    `      if targetStillCurrent then set targetStillCurrent to ((URL of visibleTab) is ${expectedUrlVariable})`,
+    "    on error",
+    "      set targetStillCurrent to false",
+    "    end try",
+    "  end tell",
+    "end if",
+    ...continuation
   ].join("\n");
 }
 
@@ -261,25 +611,61 @@ function safariCurrentTabUrlScript(app: string): string {
   ].join("\n");
 }
 
-function safariFullscreenInterruptionAppleScript(): string {
+function safariFullscreenInterruptionAppleScript(appName = "Safari"): string {
+  const app = escapeAppleScript(appName);
   return [
-    "tell application \"System Events\"",
-    "  try",
-    "    set frontmost of process \"Safari\" to true",
-    "  end try",
     "  repeat 4 times",
-    "    key code 53",
+    "    set targetStillCurrent to false",
+    "    tell application \"System Events\"",
+    "      try",
+    `        set targetStillCurrent to frontmost of process "${app}"`,
+    "      on error",
+    "        set targetStillCurrent to false",
+    "      end try",
+    "    end tell",
+    "    if targetStillCurrent then",
+    `      tell application "${app}"`,
+    "        try",
+    "          set visibleWindow to front window",
+    "          set visibleTab to current tab of visibleWindow",
+    "          set targetStillCurrent to (visibleWindow is blockedWindow)",
+    "          if targetStillCurrent then set targetStillCurrent to (visibleTab is blockedTab)",
+    "          if targetStillCurrent then set targetStillCurrent to (((id of visibleWindow) as text) is (blockedWindowId as text))",
+    "          if targetStillCurrent then set targetStillCurrent to ((index of visibleTab) as integer) is blockedTabIndex",
+    "          if targetStillCurrent then",
+    "            set visibleSafariUrl to URL of visibleTab",
+    "            set targetStillCurrent to (visibleSafariUrl is previousUrl or visibleSafariUrl is targetUrl)",
+    "          end if",
+    "        on error",
+    "          set targetStillCurrent to false",
+    "        end try",
+    "      end tell",
+    "    end if",
+    "    if not targetStillCurrent then exit repeat",
+    "    set escapeSent to false",
+    "    tell application \"System Events\"",
+    "      try",
+    `        if frontmost of process "${app}" then`,
+    "          key code 53",
+    "          set escapeSent to true",
+    "        end if",
+    "      end try",
+    "    end tell",
+    "    if not escapeSent then exit repeat",
+    "    set fullscreenEscapeCount to fullscreenEscapeCount + 1",
     "    delay 0.12",
-    "  end repeat",
-    "end tell"
+    "  end repeat"
   ].join("\n");
 }
 
-export function safariInterruptionScript(url: string): string {
+export function safariInterruptionScript(url: string, options: { currentUrl?: string } = {}): string {
   const target = JSON.stringify(url);
+  const current = JSON.stringify(options.currentUrl || "");
   return [
     "(() => {",
+    `  const expectedUrl = ${current};`,
     "try {",
+    "  if (!expectedUrl || window.location.href !== expectedUrl) return 'url-mismatch';",
     "  const doc = document;",
     "  const media = Array.from(document.querySelectorAll('video,audio'));",
     "  const status = [];",
@@ -295,10 +681,15 @@ export function safariInterruptionScript(url: string): string {
     "  });",
     "  document.documentElement.innerHTML = '';",
     `  window.location.replace(${target});`,
-    "  return status.length ? status.join(',') : 'standard';",
+    "  return `redirected:${status.length ? status.join(',') : 'standard'}`;",
     "} catch (_) {",
-    `  window.location.replace(${target});`,
-    "  return 'fallback';",
+    "  try {",
+    "    if (!expectedUrl || window.location.href !== expectedUrl) return 'url-mismatch';",
+    `    window.location.replace(${target});`,
+    "    return 'redirected:fallback';",
+    "  } catch (_) {",
+    "    return 'redirect-error';",
+    "  }",
     "}",
     "})();"
   ].join("\n");
@@ -489,35 +880,59 @@ function queryHumanActivity(): Promise<HumanActivitySample> {
 
 async function queryHumanActivityOnce(): Promise<HumanActivitySample> {
   const child = await ensureHumanActivityProcess();
+  if (humanActivityProcess !== child) throw new Error("Human activity helper restarted before the query began.");
   return await new Promise<HumanActivitySample>((resolve, reject) => {
     const timer = setTimeout(() => {
       failHumanActivityProcess(child, new Error("Human activity helper timed out."), true);
     }, 2500);
     humanActivityPending = { resolve, reject, timer };
-    child.stdin.write("\n", (error) => {
-      if (error) failHumanActivityProcess(child, error, true);
-    });
+    writeHumanActivityRequest(child, "\n");
   });
 }
 
 async function ensureHumanActivityProcess(): Promise<ChildProcessWithoutNullStreams> {
   if (humanActivityProcess) return humanActivityProcess;
-  await verifyHumanIdleHelperIntegrity();
-  const child = spawn(HUMAN_IDLE_HELPER, [], { stdio: ["pipe", "pipe", "pipe"] });
-  humanActivityProcess = child;
-  humanActivityOutput = "";
-  child.unref();
-  unrefChildPipe(child.stdin);
-  unrefChildPipe(child.stdout);
-  unrefChildPipe(child.stderr);
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => consumeHumanActivityOutput(child, chunk));
-  child.stderr.resume();
-  child.once("error", (error) => failHumanActivityProcess(child, error));
-  child.once("exit", (code, signal) => {
-    failHumanActivityProcess(child, new Error(`Human activity helper exited: ${signal || code || "unknown"}`));
-  });
-  return child;
+  if (humanActivityProcessStarting) return await humanActivityProcessStarting;
+  const starting = (async () => {
+    await verifyHumanIdleHelperIntegrity();
+    if (humanActivityProcess) return humanActivityProcess;
+    const child = spawn(HUMAN_IDLE_HELPER, humanActivityHelperArguments(browserActivityListeners.size > 0), {
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    humanActivityProcess = child;
+    humanActivityOutput = "";
+    child.unref();
+    // Writable-stream failures are emitted separately from ChildProcess
+    // failures, even when the write callback receives the same EPIPE. Keep a
+    // listener installed so a helper closing stdin cannot crash Vigil.
+    child.stdin.on("error", (error) => failHumanActivityProcess(child, error, true));
+    unrefChildPipe(child.stdin);
+    unrefChildPipe(child.stdout);
+    unrefChildPipe(child.stderr);
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => consumeHumanActivityOutput(child, chunk));
+    child.stderr.resume();
+    child.once("error", (error) => failHumanActivityProcess(child, error));
+    child.once("exit", (code, signal) => {
+      failHumanActivityProcess(child, new Error(`Human activity helper exited: ${signal || code || "unknown"}`));
+    });
+    // A successful spawn (or one valid frame) is not yet proof of sustained
+    // health: a broken helper can emit once and then exit immediately. Reset
+    // crash backoff only after the stability window, preventing an otherwise
+    // unbounded 25ms emit-once/crash respawn loop.
+    armHumanActivityStabilityReset(child);
+    // A last subscriber can disappear while code-signature verification is in
+    // flight. Correct the helper mode after spawn instead of leaving an unused
+    // 25ms activity watch running.
+    if (browserActivityListeners.size === 0) requestBrowserActivityWatch(false);
+    return child;
+  })();
+  humanActivityProcessStarting = starting;
+  try {
+    return await starting;
+  } finally {
+    if (humanActivityProcessStarting === starting) humanActivityProcessStarting = null;
+  }
 }
 
 function unrefChildPipe(pipe: NodeJS.ReadableStream | NodeJS.WritableStream): void {
@@ -526,27 +941,47 @@ function unrefChildPipe(pipe: NodeJS.ReadableStream | NodeJS.WritableStream): vo
 
 function consumeHumanActivityOutput(child: ChildProcessWithoutNullStreams, chunk: string): void {
   if (humanActivityProcess !== child) return;
-  humanActivityOutput += chunk;
-  const newline = humanActivityOutput.indexOf("\n");
-  if (newline < 0) return;
-  const line = humanActivityOutput.slice(0, newline);
-  humanActivityOutput = humanActivityOutput.slice(newline + 1);
-  const pending = humanActivityPending;
-  if (!pending) return;
-  humanActivityPending = null;
-  clearTimeout(pending.timer);
-  const sample = parseHumanActivitySample(line);
-  if (!sample) {
-    pending.reject(new Error("Human activity helper returned an invalid value."));
-    return;
+  const framed = splitHumanActivityOutput(humanActivityOutput, chunk);
+  humanActivityOutput = framed.remainder;
+  for (const line of framed.lines) {
+    const wake = parseBrowserActivityWake(line);
+    if (wake) {
+      recentHumanActivity = null;
+      notifyBrowserActivity(wake);
+      continue;
+    }
+
+    const pending = humanActivityPending;
+    if (!pending) continue;
+    humanActivityPending = null;
+    clearTimeout(pending.timer);
+    const sample = parseHumanActivitySample(line);
+    if (!sample) {
+      pending.reject(new Error("Human activity helper returned an invalid value."));
+      continue;
+    }
+    recentHumanActivity = { capturedAt: Date.now(), sample };
+    pending.resolve(sample);
   }
-  recentHumanActivity = { capturedAt: Date.now(), sample };
-  pending.resolve(sample);
+}
+
+function notifyBrowserActivity(kind: BrowserActivityKind): void {
+  const signal = { kind, at: Date.now() };
+  for (const listener of browserActivityListeners) {
+    try {
+      listener(signal);
+    } catch {
+      // Browser-activity acceleration is advisory. The scheduled monitor remains
+      // the fail-closed enforcement backstop when a subscriber misbehaves.
+    }
+  }
 }
 
 function failHumanActivityProcess(child: ChildProcessWithoutNullStreams, error: Error, kill = false): void {
   if (humanActivityProcess !== child) return;
   humanActivityProcess = null;
+  if (humanActivityStabilityTimer) clearTimeout(humanActivityStabilityTimer);
+  humanActivityStabilityTimer = null;
   humanActivityOutput = "";
   recentHumanActivity = null;
   const pending = humanActivityPending;
@@ -556,6 +991,7 @@ function failHumanActivityProcess(child: ChildProcessWithoutNullStreams, error: 
     pending.reject(error);
   }
   if (kill && !child.killed) child.kill();
+  scheduleHumanActivityRestart();
 }
 
 async function verifyHumanIdleHelperIntegrity(): Promise<void> {
@@ -615,6 +1051,21 @@ export function parseHumanActivitySample(output: unknown): HumanActivitySample |
   };
 }
 
+export function parseBrowserActivityWake(output: unknown): BrowserActivityKind | null {
+  const frame = String(output || "").replace(/[\r\n]+$/u, "");
+  if (frame === "wake\tkey") return "key";
+  if (frame === "wake\tclick") return "click";
+  return null;
+}
+
+export function splitHumanActivityOutput(buffer: string, chunk: string): { lines: string[]; remainder: string } {
+  const parts = `${buffer}${chunk}`.split("\n");
+  return {
+    lines: parts.slice(0, -1),
+    remainder: parts.at(-1) || ""
+  };
+}
+
 export function parseHidIdleSeconds(output: unknown): number | null {
   const match = String(output || "").match(/"HIDIdleTime"\s*=\s*(\d+)/);
   if (!match?.[1]) return null;
@@ -652,7 +1103,11 @@ export function canonicalFrontmostAppName(value: unknown, bundleId: unknown = ""
   const id = String(bundleId || "").trim().toLowerCase();
   if (id === "com.openai.codex") return "Codex";
   if (id === "com.apple.safari") return "Safari";
+  if (id === "com.apple.safaritechnologypreview") return "Safari Technology Preview";
   if (/^Safari (Web Content|Networking|Graphics and Media|Safe Browsing)$/i.test(app)) return "Safari";
+  if (/^Safari Technology Preview (Web Content|Networking|Graphics and Media|Safe Browsing)$/i.test(app)) {
+    return "Safari Technology Preview";
+  }
   return app;
 }
 

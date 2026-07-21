@@ -8,7 +8,7 @@ import { prepareAdultBlocklistRefresh } from "./adultBlocklist.js";
 import type { AdultBlocklistRefreshPreparation } from "./adultBlocklist.js";
 import { apiRequestGuard, publicHostGuard } from "./apiSecurity.js";
 import { hostedAdminRequired, requireHostedAccount } from "./auth.js";
-import { APP_NAME, PORT, defaultState } from "./defaults.js";
+import { APP_NAME, BRICK_MODE_PROFILE_ID, PORT, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { isDirectRun } from "./directRun.js";
 import { DATA_DIR, addEvent, loadRuntimeOutbox, loadState, loadUsage, saveRuntimeSnapshot, saveState } from "./store.js";
 import type { RuntimeOutboxEntry } from "./store.js";
@@ -19,6 +19,7 @@ import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnroll
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated } from "./iosProfiles.js";
 import { exportManageEngineIosProfile } from "./manageEngineExport.js";
 import { parsePlist } from "./plist.js";
+import { normalizeLockLevel, profileById } from "./policy.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "./protection.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "./keyholder.js";
 import { discardRequestBody, errorStatus, readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, sendMdmPlist, serializeError, serveStatic, mdmHeaders } from "./server/http.js";
@@ -39,15 +40,17 @@ import { handlePolicyApiRoute } from "./server/policyRoutes.js";
 import { handleRuleSimulatorApiRoute } from "./server/ruleSimulatorRoutes.js";
 import { handleSettingsApiRoute } from "./server/settingsRoutes.js";
 import { handleSessionApiRoute, sessionIsActive } from "./server/sessionRoutes.js";
-import { buildStatePayload, invalidateStateDiagnostics, strictPreflightStatus } from "./server/statePayload.js";
+import { StrictPreflightEvidenceStaleError, buildStatePayload, collectStrictPreflightEvidence, invalidateStateDiagnostics, strictPreflightEvidenceIssue, strictPreflightStatus } from "./server/statePayload.js";
+import type { StrictPreflightEvidence } from "./server/statePayload.js";
 import { runInAppRequest } from "./server/inAppTransport.js";
 import { BufferedServerResponse, RuntimeMutationCoordinator } from "./server/mutationCoordinator.js";
-import type { DurableEffectDescriptor } from "./server/mutationCoordinator.js";
+import type { DurableEffectDescriptor, MutationAdmissionScope } from "./server/mutationCoordinator.js";
 import type { InAppRequest, InAppResponse, InAppTransport } from "./server/inAppTransport.js";
 import { vigilAppInfo, vigilStateHeaders } from "./vigilHealth.js";
 import { VIGIL_HEALTH_CHALLENGE_HEADER, VIGIL_HEALTH_SIGNATURE_HEADER } from "./vigilHealth.js";
 import { getInstanceSecret, instanceChallengeSignature } from "./instanceIdentity.js";
 import { resolvePublicAssets } from "./publicAssets.js";
+import { clampNumber } from "./time.js";
 import type {
   LockLevel,
   MonitorHandle,
@@ -89,10 +92,12 @@ let instanceSecret = "";
 let runtimeStarted = false;
 let runtimeStopping = false;
 let mutationCoordinator: RuntimeMutationCoordinator | null = null;
+let requestMutationAdmission: MutationAdmissionScope = { accepting: false };
 let shutdownPromise: Promise<void> | null = null;
 const activeRequestTasks = new Set<Promise<void>>();
 const activeSockets = new Set<Socket>();
 const SHUTDOWN_GRACE_MS = 5_000;
+const STRICT_PREFLIGHT_RECOLLECT_ATTEMPTS = 2;
 
 interface ServerOptions {
   host?: string;
@@ -112,6 +117,25 @@ interface GuardResult {
 interface PreparedMutationRequest {
   mdmBody?: UnknownRecord;
   adultBlocklistRefresh?: AdultBlocklistRefreshPreparation;
+  strictPreflightEvidence?: StrictPreflightEvidence;
+}
+
+interface StrictPreflightTarget {
+  lockLevel: LockLevel;
+  mode: string;
+  profile: Profile;
+}
+
+type StrictPreflightCollector = (
+  state: VigilState,
+  profile: Profile,
+  options: { mode: string; lockLevel: LockLevel; now?: Date }
+) => Promise<StrictPreflightEvidence>;
+
+interface StrictPreflightPreparationOptions {
+  collectEvidence?: StrictPreflightCollector;
+  maxAttempts?: number;
+  now?: () => Date;
 }
 
 type AfterCommit = <TResult>(
@@ -190,14 +214,18 @@ export async function startVigilRuntime(options: ServerOptions = {}): Promise<Vi
       state,
       usage,
       runtimeInstanceId: startedAt,
+      committedRevision: () => requireMutationCoordinator().committedRevision(),
       mutate: async (operation, mutationOptions) => await requireMutationCoordinator().run(
-        ({ state: draftState, usage: draftUsage, afterCommit }) => operation(draftState, draftUsage, afterCommit),
+        ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+          operation(draftState, draftUsage, afterCommit, requestPersistence)
+        ),
         mutationOptions
       )
     }, { start: false }) as unknown as MonitorHandle;
     const effectMonitor = monitor;
     mutationCoordinator.setEffectObserver((entry, transition, error) => effectMonitor.observeDurableEffect(entry, transition, error));
     await mutationCoordinator.retryPending(reconcileDurableEffect, completeRecoveredDurableEffect, failRecoveredDurableEffect);
+    requestMutationAdmission = { accepting: true };
     monitor.start();
     runtimeStarted = true;
   } else if (options.appUpdate) {
@@ -227,24 +255,59 @@ async function requestHandler(request: IncomingMessage, response: ServerResponse
   const method = String(request.method || "GET").toUpperCase();
   const path = new URL(request.url || "/", `http://${request.headers.host || `${activeHost}:${activePort}`}`).pathname;
   const requestMutationCoordinator = mutationCoordinator;
+  const requestAdmission = requestMutationAdmission;
   if (!requestRequiresMutation(method, path)) {
-    await dispatchRequest(request, response, state, usage, (effect) => void effect(), {}, requestMutationCoordinator);
+    await dispatchRequest(request, response, state, usage, (effect) => void effect(), {}, requestMutationCoordinator, requestAdmission);
     return;
   }
   if (!await mutationBodyAdmissionAllowed(request, response, method, path)) return;
   const preparation = await prepareMutationRequest(request, response, method, path);
   if (preparation.handled) return;
-  const buffered = new BufferedServerResponse(response);
-  try {
-    if (!requestMutationCoordinator) throw new Error("Vigil's mutation coordinator is not initialized.");
-    await requestMutationCoordinator.run(async ({ state: draftState, usage: draftUsage, afterCommit }) => {
-      await dispatchRequest(request, buffered.response, draftState, draftUsage, afterCommit, preparation.prepared);
-      if (!buffered.successful() && !requestCommitsHandledFailure(method, path, buffered.status())) throw new RequestRejectedError();
-    });
-    buffered.flush();
-  } catch (error) {
-    if (error instanceof RequestRejectedError) buffered.flush();
-    else sendJson(response, errorStatus(error), serializeError(error));
+  let prepared = preparation.prepared;
+  let staleEvidenceRetries = 0;
+  while (true) {
+    const buffered = new BufferedServerResponse(response);
+    try {
+      if (!requestMutationCoordinator) throw new Error("Vigil's mutation coordinator is not initialized.");
+      await requestMutationCoordinator.run(async ({ state: draftState, usage: draftUsage, afterCommit }) => {
+        await dispatchRequest(
+          request,
+          buffered.response,
+          draftState,
+          draftUsage,
+          afterCommit,
+          prepared,
+          requestMutationCoordinator,
+          requestAdmission
+        );
+        if (!buffered.successful() && !requestCommitsHandledFailure(method, path, buffered.status())) throw new RequestRejectedError();
+      }, { admission: requestAdmission });
+      buffered.flush();
+      return;
+    } catch (error) {
+      if (error instanceof StrictPreflightEvidenceStaleError
+        && staleEvidenceRetries < STRICT_PREFLIGHT_RECOLLECT_ATTEMPTS) {
+        staleEvidenceRetries += 1;
+        try {
+          prepared = {
+            ...prepared,
+            strictPreflightEvidence: await prepareStrictPreflightEvidenceForRequest(
+              () => state,
+              method,
+              path,
+              await readBody(request)
+            )
+          };
+          continue;
+        } catch (refreshError) {
+          sendJson(response, errorStatus(refreshError), serializeError(refreshError));
+          return;
+        }
+      }
+      if (error instanceof RequestRejectedError) buffered.flush();
+      else sendJson(response, errorStatus(error), serializeError(error));
+      return;
+    }
   }
 }
 
@@ -317,6 +380,21 @@ async function prepareMutationRequest(
     }
   }
 
+  const prepared: PreparedMutationRequest = {};
+  if (strictPreflightRequestPath(method, path)) {
+    try {
+      prepared.strictPreflightEvidence = await prepareStrictPreflightEvidenceForRequest(
+        () => state,
+        method,
+        path,
+        await readBody(request)
+      );
+    } catch (error) {
+      sendJson(response, errorStatus(error), serializeError(error));
+      return { handled: true, prepared: {} };
+    }
+  }
+
   if (method === "POST" && path === "/api/adult-blocklist/refresh") {
     const hostGuard = publicHostGuard({ path, headers: request.headers, remoteAddress: request.socket.remoteAddress });
     const apiGuard = apiRequestGuard({ method, path, headers: request.headers, remoteAddress: request.socket.remoteAddress });
@@ -324,10 +402,7 @@ async function prepareMutationRequest(
       try {
         await requireHostedAccount(request, { admin: hostedAdminRequired(method, path) });
         assertProtectedEditAllowed(state, { kind: "settings" });
-        return {
-          handled: false,
-          prepared: { adultBlocklistRefresh: await prepareAdultBlocklistRefresh(structuredClone(state)) }
-        };
+        prepared.adultBlocklistRefresh = await prepareAdultBlocklistRefresh(structuredClone(state));
       } catch {
         // Dispatch normally so the authoritative transactional checks produce
         // the same rejection and failure-persistence behavior as before.
@@ -335,7 +410,78 @@ async function prepareMutationRequest(
     }
   }
 
-  return { handled: false, prepared: {} };
+  return { handled: false, prepared };
+}
+
+export async function prepareStrictPreflightEvidenceForRequest(
+  currentState: () => VigilState,
+  method: string,
+  path: string,
+  body: UnknownRecord,
+  options: StrictPreflightPreparationOptions = {}
+): Promise<StrictPreflightEvidence | undefined> {
+  if (!strictPreflightRequestPath(method, path)) return undefined;
+  const collectEvidence = options.collectEvidence || collectStrictPreflightEvidence;
+  const now = options.now || (() => new Date());
+  const maxAttempts = Math.max(1, options.maxAttempts || STRICT_PREFLIGHT_RECOLLECT_ATTEMPTS);
+  let issue = "Strict-lock hardening inputs kept changing while evidence was being collected.";
+
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const snapshot = structuredClone(currentState());
+    const target = strictPreflightTarget(snapshot, method, path, body);
+    if (!target) return undefined;
+    const evidence = await collectEvidence(snapshot, target.profile, {
+      mode: target.mode,
+      lockLevel: target.lockLevel,
+      now: now()
+    });
+    const latest = structuredClone(currentState());
+    const latestTarget = strictPreflightTarget(latest, method, path, body);
+    if (!latestTarget) return undefined;
+    issue = strictPreflightEvidenceIssue(latest, latestTarget.profile, evidence, {
+      mode: latestTarget.mode,
+      lockLevel: latestTarget.lockLevel,
+      now: now()
+    }) || "";
+    if (!issue) return evidence;
+  }
+
+  throw new StrictPreflightEvidenceStaleError(issue);
+}
+
+function strictPreflightRequestPath(method: string, path: string): boolean {
+  return method === "POST" && [
+    "/api/protection/level",
+    "/api/session/preview",
+    "/api/session/start"
+  ].includes(path);
+}
+
+function strictPreflightTarget(
+  currentState: VigilState,
+  method: string,
+  path: string,
+  body: UnknownRecord
+): StrictPreflightTarget | null {
+  if (!strictPreflightRequestPath(method, path) || !currentState.settings.foolproofModeEnabled) return null;
+  if (path === "/api/protection/level") {
+    const level = Math.round(clampNumber(body.level, 1, 3, 1));
+    if (level < 2) return null;
+    return {
+      lockLevel: "deep",
+      mode: level === 3 ? "brick" : "focus",
+      profile: profileById(currentState, level === 3 ? BRICK_MODE_PROFILE_ID : SOFT_BLOCK_PROFILE_ID)
+    };
+  }
+
+  const lockLevel = normalizeLockLevel(body.lockLevel, currentState.settings.strictByDefault ? "deep" : "light");
+  if (lockLevel !== "deep") return null;
+  const profileId = String(body.profileId ?? "").trim() || currentState.settings.activeProfileId;
+  return {
+    lockLevel,
+    mode: String(body.mode ?? "").trim() || "focus",
+    profile: profileById(currentState, profileId)
+  };
 }
 
 async function dispatchRequest(
@@ -345,7 +491,8 @@ async function dispatchRequest(
   requestUsage: UsageState,
   afterCommit: AfterCommit,
   prepared: PreparedMutationRequest = {},
-  requestMutationCoordinator: RuntimeMutationCoordinator | null = mutationCoordinator
+  requestMutationCoordinator: RuntimeMutationCoordinator | null = mutationCoordinator,
+  requestAdmission: MutationAdmissionScope = requestMutationAdmission
 ): Promise<void> {
   try {
     const url = new URL(request.url || "/", `http://${request.headers.host || `${activeHost}:${activePort}`}`);
@@ -365,7 +512,7 @@ async function dispatchRequest(
     }
 
     if (url.pathname.startsWith("/api/")) {
-      await handleApi(request, response, url, requestState, requestUsage, afterCommit, prepared, requestMutationCoordinator);
+      await handleApi(request, response, url, requestState, requestUsage, afterCommit, prepared, requestMutationCoordinator, requestAdmission);
       return;
     }
 
@@ -402,6 +549,7 @@ async function dispatchRequest(
       typescriptSourceRoot: PUBLIC_ASSETS.sourceRoot
     });
   } catch (error) {
+    if (error instanceof StrictPreflightEvidenceStaleError) throw error;
     sendJson(response, errorStatus(error), serializeError(error));
   }
 }
@@ -409,7 +557,7 @@ async function dispatchRequest(
 const READ_ONLY_API_ROUTES = new Set([
   "accountSession", "accountSignup", "accountLogin", "accountLogout",
   "health", "state", "ruleExplain", "diagnosticExport", "appUpdateStatus", "appUpdateStart", "extensionPairing",
-  "launchAgentInstall", "hostsApply", "safariFilterApply"
+  "launchAgentInstall", "hostsApply", "safariFilterApply", "chromeSafeSearchApply"
 ]);
 
 function requestRequiresMutation(method: string, path: string): boolean {
@@ -500,16 +648,21 @@ async function performShutdown({ exit = true }: { exit?: boolean } = {}): Promis
   const activeMonitor = monitor;
   const activeServer = server;
   const activeMutationCoordinator = mutationCoordinator;
+  const activeRequestAdmission = requestMutationAdmission;
   runtimeStopping = true;
   try {
-    await drainActiveRequests(activeServer, activeMutationCoordinator);
-    activeMutationCoordinator?.stopAdmission();
+    await drainActiveRequests(activeServer, activeRequestAdmission);
+    activeRequestAdmission.accepting = false;
     await activeMonitor?.stop();
+    activeMutationCoordinator?.stopAdmission();
     await activeMutationCoordinator?.drain();
     await saveRuntimeSnapshot(state, usage, { outbox: activeMutationCoordinator?.pendingEffects() || [] });
   } catch (error) {
     await resumeListeningServer(activeServer);
     activeMutationCoordinator?.resumeAdmission();
+    // Replace the scope rather than reopening it: work from the expired request
+    // generation must stay rejected even after the runtime safely recovers.
+    requestMutationAdmission = { accepting: true };
     activeMonitor?.start();
     runtimeStopping = false;
     throw error;
@@ -702,7 +855,8 @@ async function handleApi(
   requestUsage: UsageState,
   afterCommit: AfterCommit,
   prepared: PreparedMutationRequest = {},
-  requestMutationCoordinator: RuntimeMutationCoordinator | null = mutationCoordinator
+  requestMutationCoordinator: RuntimeMutationCoordinator | null = mutationCoordinator,
+  requestAdmission: MutationAdmissionScope = requestMutationAdmission
 ): Promise<void> {
   const method = request.method || "GET";
   const path = url.pathname;
@@ -807,7 +961,10 @@ async function handleApi(
       durableEffect("session-enforcement", { sessionId }),
       (result, committedState) => addEvent(committedState, "session_immediate_enforcement", { sessionId, ok: true, result })
     ),
-    assertStrictLockAllowed: (lockLevel, profile, options) => assertStrictLockAllowed(requestState, lockLevel, profile, options)
+    assertStrictLockAllowed: (lockLevel, profile, options) => assertStrictLockAllowed(requestState, lockLevel, profile, {
+      ...options,
+      evidence: prepared.strictPreflightEvidence
+    })
   })) {
     return;
   }
@@ -845,7 +1002,12 @@ async function handleApi(
     path,
     state: requestState,
     localScripts,
-    recordExternalResult: (type, detail) => recordExternalHardeningResult(type, detail, requestMutationCoordinator)
+    recordExternalResult: (type, detail) => recordExternalHardeningResult(
+      type,
+      detail,
+      requestMutationCoordinator,
+      requestAdmission
+    )
   })) {
     return;
   }
@@ -900,14 +1062,15 @@ async function handleApi(
 async function recordExternalHardeningResult(
   type: string,
   detail: Record<string, unknown>,
-  requestMutationCoordinator: RuntimeMutationCoordinator | null
+  requestMutationCoordinator: RuntimeMutationCoordinator | null,
+  requestAdmission: MutationAdmissionScope
 ): Promise<boolean> {
   try {
     if (!requestMutationCoordinator) return false;
     await requestMutationCoordinator.run(async ({ state: draftState }) => {
       addEvent(draftState, type, detail);
       await saveState(draftState);
-    });
+    }, { admission: requestAdmission });
     return true;
   } catch (error) {
     console.error(`Vigil could not persist the ${type} external-effect result:`, error);
@@ -1158,7 +1321,7 @@ async function trackRuntimeRequest<T>(operation: () => Promise<T>): Promise<T> {
 
 async function drainActiveRequests(
   activeServer: Server | null,
-  activeMutationCoordinator: RuntimeMutationCoordinator | null
+  activeRequestAdmission: MutationAdmissionScope
 ): Promise<void> {
   if (!activeRequestTasks.size) return;
   let graceExpired = false;
@@ -1167,7 +1330,7 @@ async function drainActiveRequests(
   const deadline = new Promise<void>((resolve) => { expireGrace = resolve; });
   const timer = setTimeout(() => {
     graceExpired = true;
-    activeMutationCoordinator?.stopAdmission();
+    activeRequestAdmission.accepting = false;
     forcedClose = closeListeningServer(activeServer, { force: true });
     activeRequestTasks.clear();
     expireGrace();
@@ -1209,12 +1372,19 @@ function repoRootFromRuntimePath(runtimeRoot: string): string {
   return index > 0 ? runtimeRoot.slice(0, index) : "";
 }
 
-async function assertStrictLockAllowed(currentState: VigilState, lockLevel: LockLevel, profile: Profile, options: { mode?: string } = {}): Promise<void> {
+async function assertStrictLockAllowed(
+  currentState: VigilState,
+  lockLevel: LockLevel,
+  profile: Profile,
+  options: { mode?: string; evidence?: StrictPreflightEvidence } = {}
+): Promise<void> {
   if (lockLevel !== "deep" || !currentState.settings.foolproofModeEnabled) return;
+  if (!options.evidence) throw new StrictPreflightEvidenceStaleError("Strict-lock hardening evidence was not collected before mutation admission.");
   await strictPreflightStatus(currentState, profile, {
     mode: options.mode,
     lockLevel,
-    monitorStatus: requireMonitor().status
+    monitorStatus: requireMonitor().status,
+    evidence: options.evidence
   });
 }
 

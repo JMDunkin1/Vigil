@@ -4,6 +4,7 @@ import { hostsStatus } from "../hardening.js";
 import { clearIntegrityTamper } from "../integrityLockdown.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { safariFilterStatus } from "../safariFilter.js";
+import { chromeSafeSearchStatus, invalidateChromeSafeSearchProfileInventory } from "../chromeSafeSearch.js";
 import { addEvent, saveState } from "../store.js";
 import type { VigilState } from "../types.js";
 import { errorStatus, sendJson, serializeError } from "./http.js";
@@ -75,6 +76,27 @@ export async function handleHardeningApiRoute(response: ServerResponse, context:
       const recorded = await context.recordExternalResult?.("safari_url_filter_opened", detail) ?? false;
       invalidateStateDiagnostics();
       sendJson(response, hardeningResultHttpStatus(recorded, detail.ok), externalResultBody({ result, safariFilter }, recorded, detail.ok));
+    } catch (error) {
+      sendJson(response, 500, serializeError(error));
+    }
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/hardening/chrome-safe-search/apply") {
+    try {
+      const result = await localScripts.runLocalScript("apply-chrome-safe-search.mjs");
+      invalidateChromeSafeSearchProfileInventory();
+      const chromeSafeSearch = await chromeSafeSearchStatus();
+      const detail = {
+        ok: Boolean(chromeSafeSearch.generated),
+        current: Boolean(chromeSafeSearch.current),
+        installed: chromeSafeSearch.installed,
+        stale: chromeSafeSearch.stale,
+        forced: chromeSafeSearch.forced
+      };
+      const recorded = await context.recordExternalResult?.("chrome_safe_search_profile_exported", detail) ?? false;
+      invalidateStateDiagnostics();
+      sendJson(response, hardeningResultHttpStatus(recorded, detail.ok), externalResultBody({ result, chromeSafeSearch }, recorded, detail.ok));
     } catch (error) {
       sendJson(response, 500, serializeError(error));
     }

@@ -2,22 +2,27 @@ import { performance } from "node:perf_hooks";
 import { addEvent, saveState, saveUsage } from "./store.js";
 import { PORT } from "./defaults.js";
 import { contentFilterEnabled } from "./contentFilters.js";
+import { attestChromeSafeSearchStatus } from "./chromeSafeSearch.js";
 import { reconcileFocusShortcut } from "./focusHooks.js";
 import { activePolicy, isFullLockoutPolicy, matchBlockedUrlPattern, shouldBlockSite } from "./policy.js";
 import { extensionDynamicRulesReady } from "./foolproof.js";
 import { firewallStatus } from "./firewall.js";
 import { grayscaleDecision, grayscaleGuardEnabled, MAC_GRAYSCALE_GUARD_APPS } from "./grayscale.js";
-import { hostsStatus, launchAgentStatus, stateSealStatus } from "./hardening.js";
-import { appleContentFilterRecoveryActive, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, protectedLockActive, recordRuntimeHeartbeat, syncAppleContentFilterLockdown } from "./integrityLockdown.js";
+import { hostsStatus, launchAgentStatus, managedBlockDomains, stateSealStatus } from "./hardening.js";
+import { appleContentFilterRecoveryActive, detectClockTamper, detectHardeningDrift, detectRuntimeGap, hardeningDriftAttestationRequired, integrityLockdownActive, protectedLockActive, recordRuntimeHeartbeat, syncAppleContentFilterLockdown } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
-import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, readMacGrayscaleState, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, urlHostname } from "./macos.js";
+import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, readMacGrayscaleState, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, subscribeBrowserActivity, urlHostname } from "./macos.js";
+import type { BrowserActivitySignal } from "./macos.js";
+import { BrowserActivityBurstScheduler } from "./monitor/browserActivity.js";
+import type { BrowserActivityBurstSchedulerDependencies } from "./monitor/browserActivity.js";
 import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldQuitAppForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
 import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, isInterruptedPollGap, roundSeconds } from "./monitor/timing.js";
 import { safariFilterStatus } from "./safariFilter.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
+import { dateKey } from "./time.js";
 import { recordOpen, recordUsage } from "./usage.js";
 import type { MonitorHandle, VigilState, UnknownRecord, UsageSample, UsageState } from "./types.js";
 
@@ -27,6 +32,11 @@ interface MonitorContext {
   state: VigilState;
   usage: UsageState;
   runtimeInstanceId?: string;
+  committedRevision?: () => number;
+  browserActivityNow?: () => number;
+  browserActivitySubscribe?: (listener: (signal: BrowserActivitySignal) => void) => () => void;
+  browserActivityBurstDependencies?: Partial<BrowserActivityBurstSchedulerDependencies>;
+  browserRedirect?: typeof redirectActiveBrowserTab;
   mutate?: <T>(operation: (
     state: VigilState,
     usage: UsageState,
@@ -35,11 +45,41 @@ interface MonitorContext {
       descriptor?: { key: string; kind: string; payload: UnknownRecord },
       complete?: (result: TResult, state: VigilState, usage: UsageState) => void | Promise<void>,
       fail?: (error: Error, state: VigilState, usage: UsageState) => void | Promise<void>
-  ) => void
-  ) => Promise<T>, options?: { persist?: boolean }) => Promise<T>;
+    ) => void,
+    requestPersistence?: () => void
+  ) => Promise<T>, options?: MonitorMutationOptions) => Promise<T>;
+}
+
+interface MonitorMutationOptions {
+  persist?: boolean;
+  deferEffectAttempts?: boolean;
+  captureEffectAttemptBarrier?: (barrier: Promise<void>) => void;
 }
 
 export const MONITOR_PERSIST_INTERVAL_MS = 30_000;
+export const HARDENING_DRIFT_EVIDENCE_MAX_AGE_MS = 15_000;
+export const BROWSER_ACTIVITY_PERSISTENCE_RETRY_DELAYS_MS = Object.freeze([250, 500, 1_000, 3_000]);
+export const BROWSER_ACTIVITY_PERSISTENCE_SHUTDOWN_MAX_ATTEMPTS = 4;
+
+function isVigilBlockedPageUrl(value: unknown): boolean {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "http:"
+      && url.hostname === "127.0.0.1"
+      && String(url.port || "80") === String(PORT)
+      && url.pathname === "/blocked";
+  } catch {
+    return false;
+  }
+}
+
+function browserActivityPersistenceRetryDelayMs(attempts: number): number {
+  const index = Math.min(
+    Math.max(0, Math.trunc(attempts) - 1),
+    BROWSER_ACTIVITY_PERSISTENCE_RETRY_DELAYS_MS.length - 1
+  );
+  return BROWSER_ACTIVITY_PERSISTENCE_RETRY_DELAYS_MS[index]!;
+}
 
 interface FrontSample extends UsageSample {
   app: string;
@@ -48,6 +88,11 @@ interface FrontSample extends UsageSample {
 }
 
 type FrontResult = (FrontSample & { ok: true }) | { ok: false; app: string; error: string };
+
+interface FrontReadOptions {
+  fresh?: boolean;
+  updateHealth?: boolean;
+}
 
 interface WifiEnvironmentObservation {
   ok: boolean;
@@ -83,6 +128,153 @@ export function wifiEnvironmentObservationRequired(state: VigilState): boolean {
   ));
 }
 
+export function hardeningDriftPolicyFingerprint(state: VigilState, now = new Date()): string {
+  const runtime = state.integrity?.runtime || {};
+  // Keep persistence-only metadata (events, heartbeat/seal timestamps, effect
+  // acknowledgements) out of this generation. Those can change while evidence
+  // is collected without changing what hardening the active policy requires.
+  // The raw policy inputs plus derived time-sensitive outputs cover session,
+  // schedule, limit, app-lock, Safari/hosts/firewall, and extension rules.
+  return JSON.stringify({
+    foolproofModeEnabled: Boolean(state.settings?.foolproofModeEnabled),
+    attestationRequired: hardeningDriftAttestationRequired(state, now),
+    activePolicy: activePolicy(structuredClone(state), now),
+    managedDomains: managedBlockDomains(structuredClone(state), now),
+    settings: state.settings,
+    adultBlocklist: state.adultBlocklist,
+    profiles: state.profiles,
+    schedules: state.schedules,
+    limitRules: state.limitRules,
+    limitBlocks: state.limitBlocks,
+    appLocks: state.appLocks,
+    planBlocks: state.intentionalUse?.planBlocks || [],
+    extensionDynamicRules: state.extension?.dynamicRules || {},
+    extensionRules: extensionDynamicRulesReady(structuredClone(state), now),
+    wifiSsid: state.environment?.wifiSsid || "",
+    activeSessions: state.activeSessions,
+    activeSession: state.activeSession,
+    panicLock: state.panicLock,
+    overrides: state.overrides,
+    hardeningRuntime: {
+      appleContentFilterArmedAt: runtime.appleContentFilterArmedAt || null,
+      appleContentFilterArmedLockId: runtime.appleContentFilterArmedLockId || null,
+      appleContentFilterArmedLockIds: runtime.appleContentFilterArmedLockIds || [],
+      hardeningDriftDetectedAt: runtime.hardeningDriftDetectedAt || null,
+      hardeningDriftIssues: runtime.hardeningDriftIssues || []
+    }
+  });
+}
+
+export function browserActivityPolicyFingerprint(
+  state: VigilState,
+  usage: UsageState,
+  now = new Date(),
+  networkBlock: UnknownRecord | null = null
+): string {
+  const evaluatedState = structuredClone(state);
+  const active = activePolicy(evaluatedState, now);
+  const timestamp = now.getTime();
+  const activeIds = <T extends UnknownRecord>(items: T[] | undefined, field: keyof T): string[] => (
+    (items || [])
+      .filter((item) => {
+        const until = Date.parse(String(item[field] || ""));
+        return Number.isFinite(until) && until > timestamp;
+      })
+      .map((item) => String(item.id || ""))
+      .filter(Boolean)
+      .sort()
+  );
+  const runtime = state.integrity?.runtime || {};
+  const stateSeal = state.integrity?.stateSeal || {};
+
+  // This selector is evaluated only when the coordinator publishes a new
+  // committed revision or a known time boundary is crossed. It intentionally
+  // excludes heartbeat/events and other telemetry while retaining every input
+  // used by foreground app/site, network-only, intentional-use, app-lock, and
+  // usage-limit decisions.
+  return JSON.stringify({
+    minute: now.toISOString().slice(0, 16),
+    activePolicy: active,
+    settings: state.settings,
+    adultBlocklist: state.adultBlocklist,
+    profiles: state.profiles,
+    schedules: state.schedules,
+    limitRules: state.limitRules,
+    limitBlocks: state.limitBlocks,
+    appLocks: state.appLocks,
+    appLockUnlocks: state.appLockUnlocks,
+    appLockLedger: state.appLockLedger,
+    intentionalUse: {
+      rules: state.intentionalUse?.rules || [],
+      pauses: state.intentionalUse?.pauses || [],
+      grants: state.intentionalUse?.grants || [],
+      ledger: state.intentionalUse?.ledger || {},
+      planBlocks: state.intentionalUse?.planBlocks || []
+    },
+    activeSessions: state.activeSessions,
+    activeSession: state.activeSession,
+    panicLock: state.panicLock,
+    overrides: state.overrides,
+    environment: { wifiSsid: state.environment?.wifiSsid || "" },
+    integrityAlarm: {
+      stateSealTamperDetectedAt: stateSeal.tamperDetectedAt || null,
+      downtimeDetectedAt: runtime.downtimeDetectedAt || null,
+      hardeningDriftDetectedAt: runtime.hardeningDriftDetectedAt || null,
+      hardeningDriftIssues: runtime.hardeningDriftIssues || [],
+      clockTamperDetectedAt: runtime.clockTamperDetectedAt || null
+    },
+    activeDeadlines: {
+      limitBlocks: activeIds(state.limitBlocks as unknown as UnknownRecord[], "until"),
+      appLockUnlocks: activeIds(state.appLockUnlocks as unknown as UnknownRecord[], "until"),
+      overrides: activeIds(state.overrides as unknown as UnknownRecord[], "until"),
+      intentionalGrants: activeIds(state.intentionalUse?.grants as unknown as UnknownRecord[], "until"),
+      intentionalPauses: activeIds(state.intentionalUse?.pauses as unknown as UnknownRecord[], "expiresAt")
+    },
+    networkBlock: networkBlock ? {
+      current: Boolean(networkBlock.current),
+      hosts: {
+        installed: Boolean((networkBlock.hosts as UnknownRecord | undefined)?.installed),
+        partial: Boolean((networkBlock.hosts as UnknownRecord | undefined)?.partial),
+        stale: Boolean((networkBlock.hosts as UnknownRecord | undefined)?.stale)
+      },
+      firewall: {
+        installed: Boolean((networkBlock.firewall as UnknownRecord | undefined)?.installed),
+        partial: Boolean((networkBlock.firewall as UnknownRecord | undefined)?.partial),
+        stale: Boolean((networkBlock.firewall as UnknownRecord | undefined)?.stale)
+      }
+    } : null,
+    usage: usage[dateKey(now)] || {}
+  });
+}
+
+function nextBrowserActivityPolicyBoundary(state: VigilState, now: number): number {
+  let next = Math.floor(now / 60_000) * 60_000 + 60_000;
+  const consider = (value: unknown) => {
+    const timestamp = Date.parse(String(value || ""));
+    if (Number.isFinite(timestamp) && timestamp > now) next = Math.min(next, timestamp);
+  };
+  const policy = activePolicy(structuredClone(state), new Date(now));
+  consider(policy?.endsAt);
+  consider(policy?.phase?.endsAt);
+  consider(state.activeSession?.endsAt);
+  for (const session of Object.values(state.activeSessions || {})) consider(session?.endsAt);
+  consider((state.panicLock as UnknownRecord | null)?.until);
+  consider((state.panicLock as UnknownRecord | null)?.endsAt);
+  for (const item of state.limitBlocks || []) consider(item.until);
+  for (const item of state.appLockUnlocks || []) consider(item.until);
+  for (const item of state.overrides || []) consider(item.until);
+  for (const item of state.intentionalUse?.grants || []) consider(item.until);
+  for (const item of state.intentionalUse?.pauses || []) {
+    consider(item.eligibleAt);
+    consider(item.expiresAt);
+  }
+  for (const item of state.intentionalUse?.planBlocks || []) {
+    consider(item.startsAt);
+    consider(item.endsAt);
+  }
+  return next;
+}
+
 interface MonitorStatus extends UnknownRecord {
   ok: boolean;
   lastError: string;
@@ -115,6 +307,50 @@ interface BlockSiteOptions {
   originalHostname?: string;
 }
 
+interface BrowserBlockRecord {
+  front: FrontSample;
+  policy: EnforcedPolicy;
+  options: BlockSiteOptions;
+}
+
+interface BrowserBlockDecision extends BrowserBlockRecord {
+  sample: FrontSample;
+  evaluatedAt: string;
+}
+
+interface PendingBrowserActivityMutation {
+  operation: () => Promise<void>;
+  persist: boolean;
+  attempts: number;
+  nextRetryAt: number;
+}
+
+interface HardeningDriftMeasurement {
+  checkedAt: number;
+  policyFingerprint: string;
+  monitorFingerprint: string;
+  checks: {
+    hosts: UnknownRecord;
+    firewall: UnknownRecord;
+    safariFilter: UnknownRecord;
+    chromeSafeSearch: UnknownRecord;
+    agent: UnknownRecord;
+    monitor: UnknownRecord;
+    extensionRules: UnknownRecord;
+    sourceSeal: UnknownRecord;
+  };
+}
+
+interface HardeningDriftApplyResult {
+  stale: boolean;
+  drift: boolean;
+}
+
+interface ImmediateSideEffectObservations {
+  grayscale: Awaited<ReturnType<typeof readMacGrayscaleState>>;
+  runningApps: Awaited<ReturnType<typeof listRunningAppNames>>;
+}
+
 interface BlockAppOptions {
   source?: string;
 }
@@ -143,6 +379,13 @@ interface MonitorTransactionSnapshot {
   nextSystemSleepLockAt: number;
   nextGrayscaleRefreshAt: number;
   runtimeGapChecked: boolean;
+  lastBrowserActivityEvaluatedTarget: string;
+  lastBrowserActivityEvaluatedGeneration: number;
+  lastBrowserActivityEvaluatedPolicyGeneration: number;
+  browserActivityPolicyGeneration: number;
+  browserActivityPolicyFingerprint: string;
+  browserActivityObservedCommitRevision: number;
+  browserActivityNextPolicyRefreshAt: number;
   durableEffectProblems: Map<string, { component: string; error: string; pending: boolean }>;
 }
 
@@ -155,6 +398,8 @@ export function startMonitor(context: MonitorContext, options: { start?: boolean
 export class Monitor implements MonitorHandle {
   state: VigilState;
   usage: UsageState;
+  committedState: VigilState;
+  committedUsage: UsageState;
   lastPollAt: number;
   lastMonotonicAt: number;
   lastSample: FrontSample | null;
@@ -164,12 +409,15 @@ export class Monitor implements MonitorHandle {
   appBlockHistory: Map<string, AppBlockRecord>;
   immediateEnforcement: Promise<UnknownRecord> | null;
   tickInFlight: Promise<void> | null;
+  operationCommitTail: Promise<void>;
   operationTail: Promise<void>;
+  pendingMutationEffectAttempts: Set<Promise<void>>;
   stopping: boolean;
   nextEnvironmentRefreshAt: number;
   nextIntegrityRefreshAt: number;
   nextAppleContentFilterRefreshAt: number;
   nextHardeningDriftRefreshAt: number;
+  hardeningDriftMeasurement: Promise<boolean> | null;
   nextNetworkBlockRefreshAt: number;
   nextProcessSweepAt: number;
   nextSystemSleepLockAt: number;
@@ -183,12 +431,48 @@ export class Monitor implements MonitorHandle {
     complete?: (result: TResult, state: VigilState, usage: UsageState) => void | Promise<void>,
     fail?: (error: Error, state: VigilState, usage: UsageState) => void | Promise<void>
   ) => void) | null;
+  activePersistenceRequest: (() => void) | null;
   durableEffectProblems: Map<string, { component: string; error: string; pending: boolean }>;
   coordinatorManagedEffects: Set<string>;
+  browserActivitySubscribe: NonNullable<MonitorContext["browserActivitySubscribe"]>;
+  browserActivityBurstDependencies: Partial<BrowserActivityBurstSchedulerDependencies>;
+  browserActivityUnsubscribe: (() => void) | null;
+  browserActivityBurst: BrowserActivityBurstScheduler | null;
+  browserActivityMutationAdmissionOpen: boolean;
+  browserActivityContinuityGeneration: number;
+  committedRevision: (() => number) | null;
+  browserActivityNow: () => number;
+  browserActivityPolicyGeneration: number;
+  browserActivityPolicyFingerprint: string;
+  browserActivityObservedCommitRevision: number;
+  browserActivityNextPolicyRefreshAt: number;
+  lastBrowserActivityEvaluatedTarget: string;
+  lastBrowserActivityEvaluatedGeneration: number;
+  lastBrowserActivityEvaluatedPolicyGeneration: number;
+  browserActivityQueuedTargets: Set<string>;
+  // This replay queue intentionally survives MonitorTransactionSnapshot
+  // rollback: its purpose is to recover the mutation that just rolled back.
+  pendingBrowserActivityMutations: Map<string, PendingBrowserActivityMutation>;
+  browserRedirect: NonNullable<MonitorContext["browserRedirect"]>;
 
-  constructor({ state, usage, mutate, runtimeInstanceId }: MonitorContext) {
+  constructor({
+    state,
+    usage,
+    mutate,
+    runtimeInstanceId,
+    committedRevision,
+    browserActivityNow,
+    browserActivitySubscribe,
+    browserActivityBurstDependencies,
+    browserRedirect
+  }: MonitorContext) {
     this.state = state;
     this.usage = usage;
+    // The mutation coordinator replaces the contents of these original objects
+    // after commit. Keep stable references so the latency-critical browser path
+    // never reads a draft while a longer monitor transaction is awaiting I/O.
+    this.committedState = state;
+    this.committedUsage = usage;
     this.lastPollAt = Date.now();
     this.lastMonotonicAt = performance.now();
     this.lastSample = null;
@@ -221,36 +505,84 @@ export class Monitor implements MonitorHandle {
     this.appBlockHistory = new Map();
     this.immediateEnforcement = null;
     this.tickInFlight = null;
+    this.operationCommitTail = Promise.resolve();
     this.operationTail = Promise.resolve();
+    this.pendingMutationEffectAttempts = new Set();
     this.stopping = false;
     this.nextEnvironmentRefreshAt = 0;
     this.nextIntegrityRefreshAt = 0;
     this.nextAppleContentFilterRefreshAt = 0;
     this.nextHardeningDriftRefreshAt = 0;
+    this.hardeningDriftMeasurement = null;
     this.nextNetworkBlockRefreshAt = 0;
     this.nextProcessSweepAt = 0;
     this.nextSystemSleepLockAt = 0;
     this.nextGrayscaleRefreshAt = 0;
     this.nextPersistenceAt = 0;
     this.runtimeGapChecked = false;
-    this.mutate = mutate || (async (operation, _options) => await operation(this.state, this.usage, (effect, _descriptor, complete, fail) => {
-      void (async () => {
-        try {
-          const result = await effect();
-          await complete?.(result, this.state, this.usage);
-        } catch (error) {
-          await fail?.(error instanceof Error ? error : new Error(String(error)), this.state, this.usage);
-        }
-      })();
-    }));
+    this.mutate = mutate || (async (operation, options) => {
+      const attempts: Promise<void>[] = [];
+      const result = await operation(
+        this.state,
+        this.usage,
+        (effect, _descriptor, complete, fail) => {
+          attempts.push((async () => {
+            try {
+              const effectResult = await effect();
+              await complete?.(effectResult, this.state, this.usage);
+            } catch (error) {
+              await fail?.(error instanceof Error ? error : new Error(String(error)), this.state, this.usage);
+            }
+          })());
+        },
+        () => {}
+      );
+      const barrier = Promise.all(attempts).then(() => {});
+      options?.captureEffectAttemptBarrier?.(barrier);
+      if (options?.deferEffectAttempts) {
+        void barrier.catch((error) => {
+          console.error("Vigil deferred monitor effect failed unexpectedly:", error);
+        });
+      } else {
+        await barrier;
+      }
+      return result;
+    });
     this.activeAfterCommit = null;
+    this.activePersistenceRequest = null;
     this.durableEffectProblems = new Map();
     this.coordinatorManagedEffects = new Set();
+    this.browserActivitySubscribe = browserActivitySubscribe || subscribeBrowserActivity;
+    this.browserActivityBurstDependencies = browserActivityBurstDependencies || {};
+    this.browserActivityUnsubscribe = null;
+    this.browserActivityBurst = null;
+    this.browserActivityMutationAdmissionOpen = true;
+    this.browserActivityContinuityGeneration = 0;
+    this.committedRevision = committedRevision || null;
+    this.browserActivityNow = browserActivityNow || Date.now;
+    this.browserActivityPolicyGeneration = 0;
+    this.browserActivityObservedCommitRevision = this.committedRevision?.() || 0;
+    const browserPolicyNow = this.browserActivityNow();
+    this.browserActivityPolicyFingerprint = browserActivityPolicyFingerprint(
+      this.committedState,
+      this.committedUsage,
+      new Date(browserPolicyNow),
+      this.status.networkBlock
+    );
+    this.browserActivityNextPolicyRefreshAt = nextBrowserActivityPolicyBoundary(this.committedState, browserPolicyNow);
+    this.lastBrowserActivityEvaluatedTarget = "";
+    this.lastBrowserActivityEvaluatedGeneration = 0;
+    this.lastBrowserActivityEvaluatedPolicyGeneration = -1;
+    this.browserActivityQueuedTargets = new Set();
+    this.pendingBrowserActivityMutations = new Map();
+    this.browserRedirect = browserRedirect || redirectActiveBrowserTab;
   }
 
   start(): void {
     if (this.timer) return;
     this.stopping = false;
+    this.browserActivityMutationAdmissionOpen = true;
+    this.startBrowserActivityAcceleration();
     void this.runScheduledTick();
     this.timer = setInterval(() => {
       void this.runScheduledTick();
@@ -261,21 +593,419 @@ export class Monitor implements MonitorHandle {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     this.stopping = true;
+    // Detach the signal source first, but leave mutation admission available
+    // while an exact-tab decision already in flight finishes its bookkeeping.
+    this.browserActivityUnsubscribe?.();
+    this.browserActivityUnsubscribe = null;
+    const browserActivityBurst = this.browserActivityBurst;
+    this.browserActivityBurst = null;
+    let stopError: unknown = null;
+    try {
+      await browserActivityBurst?.stop();
+      // A confirmed exact-tab redirect can have failed only its durable state
+      // commit and be sleeping in the normal retry backoff. Shutdown must force
+      // that bookkeeping through before the server freezes mutation admission;
+      // otherwise the event, limit block, and rolling-cycle anchor disappear.
+      await this.drainPendingBrowserActivityMutationsForStop();
+    } catch (error) {
+      stopError = error;
+    }
+    // A scheduled tick can release the monitor tail while its durable OS
+    // attempts drain. Keep shutdown admission open until both phases finish,
+    // even when stopping the optional activity accelerator reported an error.
+    try {
+      await this.tickInFlight;
+      await this.hardeningDriftMeasurement;
+    } catch (error) {
+      stopError ||= error;
+    }
+    this.browserActivityMutationAdmissionOpen = false;
     await this.operationTail;
+    await this.drainMutationEffectAttempts();
+    await this.operationTail;
+    if (stopError) throw stopError;
+  }
+
+  startBrowserActivityAcceleration(): void {
+    const defaultSourceDisabled = process.env.VIGIL_BROWSER_ACTIVITY_WATCH === "0"
+      && this.browserActivitySubscribe === subscribeBrowserActivity;
+    if (defaultSourceDisabled || this.browserActivityBurst) return;
+    const burst = new BrowserActivityBurstScheduler(
+      () => this.probeBrowserActivity(),
+      this.browserActivityBurstDependencies
+    );
+    this.browserActivityBurst = burst;
+    try {
+      this.browserActivityUnsubscribe = this.browserActivitySubscribe(() => {
+        if (this.stopping || this.browserActivityBurst !== burst) return;
+        burst.wake();
+      });
+    } catch {
+      this.browserActivityBurst = null;
+      void burst.stop();
+    }
+  }
+
+  async probeBrowserActivity(): Promise<boolean> {
+    if (this.stopping) return false;
+    this.retryPendingBrowserActivityMutations();
+    const candidate = await this.readFrontmost({ fresh: true, updateHealth: false });
+    if (!candidate.ok || !appCanReportUrls(candidate.app)) {
+      this.breakBrowserActivityContinuity();
+      return true;
+    }
+    const candidateTarget = `${candidate.app}\n${candidate.url}`;
+    if (!candidate.url) {
+      this.breakBrowserActivityContinuity();
+      return true;
+    }
+    const continuityGeneration = this.browserActivityContinuityGeneration;
+    const policyGeneration = this.currentBrowserActivityPolicyGeneration();
+    const blockMutationKey = `block:${candidateTarget}`;
+    const bookkeepingPending = this.pendingBrowserActivityMutations.has(blockMutationKey);
+
+    // A browser block must not wait behind integrity inventory, device sync, or
+    // any other routine monitor work. Decide from committed state, redirect the
+    // exact observed tab immediately, then serialize only the bookkeeping. The
+    // ordinary tick and durable path remain fail-closed retry backstops.
+    const immediateBlock = this.browserBlockDecision(candidate);
+    if (immediateBlock) {
+      const redirectUrl = this.blockedPageTarget(immediateBlock.front, immediateBlock.policy);
+      const result = await this.browserRedirect(candidate.app, redirectUrl, { currentUrl: candidate.url });
+      // Only the target-atomic redirect implementations can positively confirm
+      // that the offending tab was replaced. A legacy/ambiguous `{ ok: true }`
+      // result must retain the recovery tail instead of being treated as proof.
+      const matched = result.ok && result.matched === true;
+      if (!bookkeepingPending) {
+        this.queueBrowserActivityMutation(blockMutationKey, async () => {
+          if (matched) {
+            this.commitImmediateBrowserDecision(immediateBlock);
+            this.recordImmediateBrowserBlock(immediateBlock, result);
+            return;
+          }
+          // The redirect operation is target-atomic, so retrying the observed URL
+          // cannot rewrite an unrelated tab even if the user switched meanwhile.
+          await this.enforce(immediateBlock.front);
+        }, { persist: matched, retryOnFailure: matched });
+      }
+      // Keep the sparse tail alive while confirmed redirect bookkeeping is
+      // still awaiting a durable commit. Retry due-times bound persistence work;
+      // the regular monitor tick remains the recovery backstop.
+      return true;
+    }
+
+    if (this.browserActivityTargetAlreadyEvaluated(candidateTarget, continuityGeneration, policyGeneration)) return true;
+    this.queueBrowserActivityMutation(`check:${continuityGeneration}:${policyGeneration}:${candidateTarget}`, async () => {
+      // A later probe may have observed a non-browser app or an empty URL while
+      // this check waited behind serialized monitor work. Such a check belongs
+      // to the old browsing continuity and must neither enforce stale policy nor
+      // repopulate the de-duplication marker after the user returns.
+      if (continuityGeneration !== this.browserActivityContinuityGeneration) return;
+      // Re-read inside the serialized mutation for non-blocking/intentional-use
+      // decisions. Immediate blocker redirects above already use an atomic URL
+      // precondition and therefore do not inherit this queue's latency.
+      const front = await this.readFrontmost({ fresh: true });
+      if (!front.ok || !appCanReportUrls(front.app) || !front.url) {
+        if (continuityGeneration === this.browserActivityContinuityGeneration) {
+          this.breakBrowserActivityContinuity();
+        }
+        return;
+      }
+      if (continuityGeneration !== this.browserActivityContinuityGeneration) return;
+      const target = `${front.app}\n${front.url}`;
+      const evaluationPolicyGeneration = this.currentBrowserActivityPolicyGeneration();
+      if (this.browserActivityTargetAlreadyEvaluated(target, continuityGeneration, evaluationPolicyGeneration)) return;
+      const previousEnforcement = this.status.lastEnforcement;
+      await this.enforce(front);
+      const completedPolicyGeneration = this.currentBrowserActivityPolicyGeneration();
+      if (
+        continuityGeneration === this.browserActivityContinuityGeneration
+        && evaluationPolicyGeneration === completedPolicyGeneration
+        && this.status.lastEnforcement === previousEnforcement
+      ) {
+        this.lastBrowserActivityEvaluatedTarget = target;
+        this.lastBrowserActivityEvaluatedGeneration = continuityGeneration;
+        this.lastBrowserActivityEvaluatedPolicyGeneration = completedPolicyGeneration;
+      }
+    });
+    return true;
+  }
+
+  breakBrowserActivityContinuity(): void {
+    this.browserActivityContinuityGeneration += 1;
+    this.lastBrowserActivityEvaluatedTarget = "";
+    this.lastBrowserActivityEvaluatedGeneration = -1;
+    this.lastBrowserActivityEvaluatedPolicyGeneration = -1;
+  }
+
+  currentBrowserActivityPolicyGeneration(now = this.browserActivityNow()): number {
+    const committedRevision = this.committedRevision?.() ?? this.browserActivityObservedCommitRevision;
+    const revisionChanged = this.committedRevision
+      ? committedRevision !== this.browserActivityObservedCommitRevision
+      : true;
+    if (revisionChanged || now >= this.browserActivityNextPolicyRefreshAt) {
+      const fingerprint = browserActivityPolicyFingerprint(
+        this.committedState,
+        this.committedUsage,
+        new Date(now),
+        this.status.networkBlock
+      );
+      if (fingerprint !== this.browserActivityPolicyFingerprint) {
+        this.browserActivityPolicyFingerprint = fingerprint;
+        this.browserActivityPolicyGeneration += 1;
+      }
+      this.browserActivityObservedCommitRevision = committedRevision;
+      this.browserActivityNextPolicyRefreshAt = nextBrowserActivityPolicyBoundary(this.committedState, now);
+    }
+    return this.browserActivityPolicyGeneration;
+  }
+
+  browserActivityTargetAlreadyEvaluated(
+    target: string,
+    generation = this.browserActivityContinuityGeneration,
+    policyGeneration = this.currentBrowserActivityPolicyGeneration()
+  ): boolean {
+    return generation === this.browserActivityContinuityGeneration
+      && this.lastBrowserActivityEvaluatedGeneration === generation
+      && this.lastBrowserActivityEvaluatedPolicyGeneration === policyGeneration
+      && target === this.lastBrowserActivityEvaluatedTarget;
+  }
+
+  browserBlockDecision(front: FrontSample): BrowserBlockDecision | null {
+    if (isVigilBlockedPageUrl(front.url)) return null;
+
+    // activePolicy performs expiry cleanup as part of evaluation. Use a private
+    // snapshot so the out-of-band latency path remains read-only with respect
+    // to the coordinator's committed objects.
+    const state = structuredClone(this.committedState);
+    const evaluatedAt = new Date(this.browserActivityNow());
+    const policy = policyForSample(state, this.committedUsage, front, evaluatedAt);
+    if (!policy) return null;
+    const lockdown = policy.kind === "integrity" || isFullLockoutPolicy(policy);
+    const decisionContext = { sample: front, evaluatedAt: evaluatedAt.toISOString() };
+
+    if (front.url && policy.browserControl) {
+      return {
+        ...decisionContext,
+        front: { ...front, hostname: policy.browserControl.label },
+        policy,
+        options: { browserControl: policy.browserControl, originalHostname: front.url }
+      };
+    }
+    if (front.url && policy.contentFilter && (lockdown || contentFilterEnabled(state))) {
+      return {
+        ...decisionContext,
+        front: { ...front, hostname: policy.contentFilter.label },
+        policy,
+        options: { contentFilter: policy.contentFilter, originalHostname: front.hostname }
+      };
+    }
+
+    // Network-only blocking still goes through the ordinary path because it
+    // must first confirm that the system network layer is current. Redirects
+    // enabled in policy can safely take the immediate, exact-tab path.
+    const redirectEnabled = lockdown || state.settings.siteRedirectEnabled;
+    if (!redirectEnabled) return null;
+    if (front.hostname && shouldBlockSite(policy.profile, front.hostname)) {
+      return { ...decisionContext, front, policy, options: {} };
+    }
+    const urlPattern = front.url ? matchBlockedUrlPattern(policy.profile, front.url) : null;
+    if (!urlPattern) return null;
+    return {
+      ...decisionContext,
+      front: { ...front, hostname: urlPattern.pattern },
+      policy,
+      options: { urlPattern, originalHostname: front.hostname }
+    };
+  }
+
+  commitImmediateBrowserDecision(decision: BrowserBlockDecision): void {
+    // The latency path evaluates against a disposable snapshot so it can
+    // redirect without waiting for the mutation queue. Re-evaluate the exact
+    // observed sample against current transactional state, usage, and policy
+    // time whenever serialization resumes. The same closure can survive a
+    // persistence rollback and run much later, so replaying evaluatedAt could
+    // create an already-expired limit block while anchoring all usage accrued
+    // since the redirect. A fresh evaluation either commits a currently active
+    // block with a matching current anchor or observes that the policy no
+    // longer applies. The original decision remains the receipt for the
+    // already-confirmed redirect event.
+    policyForSample(
+      this.state,
+      this.usage,
+      decision.sample,
+      new Date(this.browserActivityNow())
+    );
+  }
+
+  blockedPageTarget(front: FrontSample, policy: EnforcedPolicy): string {
+    const target = new URL(`http://127.0.0.1:${PORT}/blocked`);
+    target.searchParams.set("site", front.hostname);
+    target.searchParams.set("until", policy.endsAt);
+    target.searchParams.set("mode", policy.session.mode || "focus");
+    target.searchParams.set("policyId", policy.session.id || "");
+    if (front.url) target.searchParams.set("back", front.url);
+    return target.toString();
+  }
+
+  browserBlockKey(front: FrontSample, options: BlockSiteOptions = {}): string {
+    return options.browserControl
+      ? `browser-control:${options.browserControl.area}:${front.url || front.hostname}`
+      : options.contentFilter
+        ? `content:${options.contentFilter.id}:${front.url || front.hostname}`
+        : options.urlPattern
+          ? `url:${options.urlPattern.pattern}:${front.url || front.hostname}`
+          : `site:${front.hostname}`;
+  }
+
+  recordImmediateBrowserBlock(
+    decision: BrowserBlockDecision,
+    result: UnknownRecord & { ok?: boolean }
+  ): void {
+    const key = this.browserBlockKey(decision.front, decision.options);
+    const coolingDown = this.isCoolingDown(key);
+    if (!coolingDown) this.markCoolingDown(key);
+    this.recordBrowserBlock(decision, result, coolingDown);
+  }
+
+  recordBrowserBlock(
+    { front, policy, options }: BrowserBlockRecord,
+    result: UnknownRecord & { ok?: boolean },
+    coolingDown: boolean
+  ): void {
+    const detail = {
+      site: front.hostname,
+      app: front.app,
+      originalSite: options.originalHostname || front.hostname,
+      browserControl: options.browserControl || null,
+      contentFilter: options.contentFilter || null,
+      urlPattern: options.urlPattern || null,
+      policy: policy.session.title || policy.session.mode,
+      result,
+      coolingDownRetry: coolingDown
+    };
+    if (!coolingDown || !result.ok) {
+      addEvent(
+        this.state,
+        options.browserControl ? "blocked_browser_control" : options.contentFilter ? "blocked_content" : options.urlPattern ? "blocked_url" : "blocked_site",
+        detail
+      );
+    }
+    this.status.lastEnforcement = {
+      type: options.browserControl ? "browser-control" : options.contentFilter ? "content" : options.urlPattern ? "url" : "site",
+      target: front.hostname,
+      result,
+      coolingDownRetry: coolingDown,
+      at: new Date().toISOString()
+    };
+  }
+
+  queueBrowserActivityMutation(
+    key: string,
+    operation: () => Promise<void>,
+    options: { persist?: boolean; retryOnFailure?: boolean } = {}
+  ): void {
+    if (!this.browserActivityMutationAdmissionOpen) return;
+    if (options.retryOnFailure && !this.pendingBrowserActivityMutations.has(key)) {
+      this.pendingBrowserActivityMutations.set(key, {
+        operation,
+        persist: options.persist === true,
+        attempts: 0,
+        nextRetryAt: 0
+      });
+    }
+    if (this.browserActivityQueuedTargets.has(key)) return;
+    this.browserActivityQueuedTargets.add(key);
+    const queued = this.enqueueMutationOperation(operation, { persist: options.persist === true });
+    void queued.then(
+      () => {
+        this.browserActivityQueuedTargets.delete(key);
+        if (!options.retryOnFailure) return;
+        const pending = this.pendingBrowserActivityMutations.get(key);
+        if (pending?.operation === operation) this.pendingBrowserActivityMutations.delete(key);
+        if (!this.pendingBrowserActivityMutations.size) {
+          this.setComponentHealth("browser-activity-persistence", "");
+        }
+      },
+      (error) => {
+        this.browserActivityQueuedTargets.delete(key);
+        if (!options.retryOnFailure) return;
+        const message = errorMessage(error);
+        this.setComponentHealth(
+          "browser-activity-persistence",
+          `Browser block bookkeeping persistence failed and will be retried: ${message}`
+        );
+        console.error("Vigil could not persist browser-activity block bookkeeping; retrying:", error);
+        const pending = this.pendingBrowserActivityMutations.get(key);
+        if (pending?.operation === operation) {
+          pending.attempts += 1;
+          pending.nextRetryAt = Date.now() + browserActivityPersistenceRetryDelayMs(pending.attempts);
+        }
+      }
+    );
+  }
+
+  retryPendingBrowserActivityMutations(options: { force?: boolean } = {}): void {
+    const now = Date.now();
+    for (const [key, pending] of this.pendingBrowserActivityMutations) {
+      if (!options.force && pending.nextRetryAt > now) continue;
+      this.queueBrowserActivityMutation(key, pending.operation, {
+        persist: pending.persist,
+        retryOnFailure: true
+      });
+    }
+  }
+
+  async drainPendingBrowserActivityMutationsForStop(): Promise<void> {
+    // First let any mutation queued by the final burst probe settle and publish
+    // its retry record. Promise callbacks that maintain the replay map run in a
+    // neighboring microtask, hence the explicit yield after each tail drain.
+    await this.operationTail;
+    await Promise.resolve();
+    for (
+      let attempt = 0;
+      this.pendingBrowserActivityMutations.size > 0
+        && attempt < BROWSER_ACTIVITY_PERSISTENCE_SHUTDOWN_MAX_ATTEMPTS;
+      attempt += 1
+    ) {
+      this.retryPendingBrowserActivityMutations({ force: true });
+      await this.operationTail;
+      await Promise.resolve();
+    }
+    if (!this.pendingBrowserActivityMutations.size) return;
+    throw new Error(
+      `Vigil could not persist ${this.pendingBrowserActivityMutations.size} browser block bookkeeping mutation(s) during shutdown.`
+    );
   }
 
   runScheduledTick(): Promise<void> {
     if (this.stopping) return Promise.resolve();
+    // The ordinary monitor cadence is a recovery backstop when the native
+    // activity source is disabled or unavailable.
+    this.retryPendingBrowserActivityMutations();
     if (this.tickInFlight) return this.tickInFlight;
     const persist = Date.now() >= this.nextPersistenceAt;
-    const scheduled = this.enqueueOperation(() => this.runMutation(() => this.tick(), { persist }))
+    const scheduled = (async () => {
+      await this.enqueueMutationOperation(
+        () => this.tick(),
+        { persist }
+      );
+
+      const hardeningCheckedAt = this.lastPollAt;
+      const hardeningDue = this.hardeningDriftAttestationDue(hardeningCheckedAt);
+      if (hardeningDue) await this.runHardeningDriftPhase(hardeningCheckedAt);
+      await this.enqueueOperation(async () => {
+        this.setComponentHealth("tick", "");
+        this.status.lastSuccessfulTickAt = new Date(hardeningCheckedAt).toISOString();
+      });
+    })()
       .then(() => {
         if (persist) this.nextPersistenceAt = Date.now() + MONITOR_PERSIST_INTERVAL_MS;
       });
     const operation = scheduled
       .catch(async (error) => {
         try {
-          await this.runMutation(async () => {
+          await this.enqueueMutationOperation(async () => {
             this.reportTickFailure(error);
             await saveState(this.state);
           });
@@ -307,16 +1037,38 @@ export class Monitor implements MonitorHandle {
     await this.refreshSafetyRails(frame);
     const front = await this.updateFrontmostSample();
     await this.enforceFrontmost(front);
+    // Only prepare the hardening decision here. Fresh Chrome/profile evidence
+    // is collected outside all serialization after this transaction commits
+    // and its foreground, sleep-lock, and process-sweep effects are dispatched.
+    this.prepareHardeningDrift(frame.now);
     await this.runBackgroundEnforcement(frame.now);
     await this.persistHeartbeat(frame.now);
-    this.setComponentHealth("tick", "");
-    this.status.lastSuccessfulTickAt = new Date(frame.now).toISOString();
+  }
+
+  async runHardeningDriftPhase(now: number): Promise<void> {
+    const hardeningDriftStarted = await this.refreshHardeningDrift(now);
+    if (!hardeningDriftStarted) return;
+    // Foreground, grayscale, and process discovery are external measurements.
+    // Keep all of them outside the monitor/coordinator commit tails, then
+    // publish the complete fail-closed side-effect set in one short mutation.
+    // Browser redirects still carry their URL precondition, so a tab switch
+    // cannot rewrite an unrelated target while the intent is dispatched.
+    const [hardenedFront, sideEffectObservations] = await Promise.all([
+      this.readFrontmost({ fresh: true, updateHealth: false }),
+      this.collectImmediateSideEffectObservations()
+    ]);
+    await this.enqueueMutationOperation(async () => {
+      if (!integrityLockdownActive(this.state)) return;
+      const enforcedAt = Date.now();
+      await this.enforceFrontmost(hardenedFront);
+      await this.runImmediateSideEffects(enforcedAt, sideEffectObservations, { continueOnError: true });
+    }, { persist: false });
   }
 
   enforceImmediately(reason = "manual"): Promise<UnknownRecord> {
     if (this.stopping) return Promise.reject(new Error("Vigil monitor is stopping."));
     if (this.immediateEnforcement) return this.immediateEnforcement;
-    const operation = this.enqueueOperation(() => this.runMutation(() => this.runImmediateEnforcement(reason)));
+    const operation = this.enqueueMutationOperation(() => this.runImmediateEnforcement(reason));
     const tracked = operation.finally(() => {
       if (this.immediateEnforcement === tracked) this.immediateEnforcement = null;
     });
@@ -325,15 +1077,15 @@ export class Monitor implements MonitorHandle {
   }
 
   reconcileDurableEffect(action: string, payload: UnknownRecord): Promise<UnknownRecord> {
-    return this.enqueueOperation(async () => {
+    const reconcile = async () => {
       const key = String(payload.intentKey || monitorEffectKey(action, payload));
       this.setDurableEffectHealth(key, action, "Recovered durable effect is pending.", true);
       try {
         let result: UnknownRecord;
         let effectState: VigilState | null = null;
         if (!this.durableEffectApplicable(action, payload)) result = obsoleteEffectResult(action);
-        else if (action === "session-enforcement") result = await this.runMutation(() => this.runImmediateEnforcement("session-start"));
-        else if (action === "policy-enforcement") result = await this.runMutation(() => this.runImmediateEnforcement(String(payload.reason || "recovered-policy-enforcement")));
+        else if (action === "session-enforcement") result = await this.runImmediateEnforcement("session-start");
+        else if (action === "policy-enforcement") result = await this.runImmediateEnforcement(String(payload.reason || "recovered-policy-enforcement"));
         else if (action === "lock-screen") result = await lockScreen();
         else if (action === "focus-shortcut") {
           const snapshot = structuredClone(this.state);
@@ -344,7 +1096,7 @@ export class Monitor implements MonitorHandle {
           };
         } else if (action === "grayscale") result = await setMacGrayscaleEnabled(Boolean(payload.desired));
         else if (action === "quit-app") result = await quitApp(String(payload.app || ""), { force: Boolean(payload.force) });
-        else if (action === "redirect-browser") result = await redirectActiveBrowserTab(String(payload.app || ""), String(payload.url || ""), { currentUrl: String(payload.currentUrl || "") });
+        else if (action === "redirect-browser") result = await this.browserRedirect(String(payload.app || ""), String(payload.url || ""), { currentUrl: String(payload.currentUrl || "") });
         else if (action === "open-url") result = await openUrl(String(payload.url || ""));
         else if (action === "mdm-push") {
           if (!this.state.deviceControls.ios.mdm.enabled) {
@@ -368,7 +1120,17 @@ export class Monitor implements MonitorHandle {
         this.setDurableEffectHealth(key, action, errorMessage(error), false);
         throw error;
       }
-    });
+    };
+    // Session and policy control triggers mutate monitor state and can publish
+    // descendant monitor-OS intents. Run their mutation through the normal
+    // commit barrier so operationTail, shutdown, and the originating request
+    // all observe those first attempts. The coordinator executes the parent on
+    // a distinct control lane, so awaiting the captured immediate-lane barrier
+    // outside operationCommitTail cannot cycle back onto the same worker.
+    if (action === "session-enforcement" || action === "policy-enforcement") {
+      return this.enqueueMutationOperation(reconcile);
+    }
+    return this.enqueueOperation(reconcile);
   }
 
   observeDurableEffect(
@@ -387,28 +1149,71 @@ export class Monitor implements MonitorHandle {
   }
 
   enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
-    const queued = this.operationTail.then(operation);
-    this.operationTail = queued.then(() => {}, () => {});
+    const queued = this.operationCommitTail.then(operation);
+    this.operationCommitTail = queued.then(() => {}, () => {});
+    this.trackOperationCompletion(queued);
     return queued;
   }
 
-  async runMutation<T>(operation: () => Promise<T>, options: { persist?: boolean } = {}): Promise<T> {
+  trackOperationCompletion(operation: Promise<unknown>): void {
+    this.operationTail = Promise.all([this.operationTail, operation]).then(() => {}, () => {});
+  }
+
+  enqueueMutationOperation<T>(
+    operation: () => Promise<T>,
+    options: { persist?: boolean } = {}
+  ): Promise<T> {
+    let effectAttemptBarrier = Promise.resolve();
+    const committed = this.enqueueOperation(() => this.runMutation(operation, {
+      ...options,
+      deferEffectAttempts: true,
+      captureEffectAttemptBarrier: (barrier) => {
+        effectAttemptBarrier = barrier;
+        this.trackMutationEffectAttempts(barrier);
+      }
+    }));
+    const completed = committed.then(async (result) => {
+      await effectAttemptBarrier;
+      return result;
+    });
+    this.trackOperationCompletion(completed);
+    return completed;
+  }
+
+  trackMutationEffectAttempts(barrier: Promise<void>): void {
+    this.pendingMutationEffectAttempts.add(barrier);
+    void barrier.then(
+      () => { this.pendingMutationEffectAttempts.delete(barrier); },
+      () => { this.pendingMutationEffectAttempts.delete(barrier); }
+    );
+  }
+
+  async drainMutationEffectAttempts(): Promise<void> {
+    while (this.pendingMutationEffectAttempts.size) {
+      await Promise.allSettled([...this.pendingMutationEffectAttempts]);
+    }
+  }
+
+  async runMutation<T>(operation: () => Promise<T>, options: MonitorMutationOptions = {}): Promise<T> {
     let monitorSnapshot: MonitorTransactionSnapshot | null = null;
     try {
-      return await this.mutate(async (draftState, draftUsage, afterCommit) => {
+      return await this.mutate(async (draftState, draftUsage, afterCommit, requestPersistence) => {
         monitorSnapshot = this.captureTransactionSnapshot();
         const previousState = this.state;
         const previousUsage = this.usage;
         const previousAfterCommit = this.activeAfterCommit;
+        const previousPersistenceRequest = this.activePersistenceRequest;
         this.state = draftState;
         this.usage = draftUsage;
         this.activeAfterCommit = afterCommit;
+        this.activePersistenceRequest = requestPersistence || null;
         try {
           return await operation();
         } finally {
           this.state = previousState;
           this.usage = previousUsage;
           this.activeAfterCommit = previousAfterCommit;
+          this.activePersistenceRequest = previousPersistenceRequest;
         }
       }, options);
     } catch (error) {
@@ -543,6 +1348,13 @@ export class Monitor implements MonitorHandle {
       nextSystemSleepLockAt: this.nextSystemSleepLockAt,
       nextGrayscaleRefreshAt: this.nextGrayscaleRefreshAt,
       runtimeGapChecked: this.runtimeGapChecked,
+      lastBrowserActivityEvaluatedTarget: this.lastBrowserActivityEvaluatedTarget,
+      lastBrowserActivityEvaluatedGeneration: this.lastBrowserActivityEvaluatedGeneration,
+      lastBrowserActivityEvaluatedPolicyGeneration: this.lastBrowserActivityEvaluatedPolicyGeneration,
+      browserActivityPolicyGeneration: this.browserActivityPolicyGeneration,
+      browserActivityPolicyFingerprint: this.browserActivityPolicyFingerprint,
+      browserActivityObservedCommitRevision: this.browserActivityObservedCommitRevision,
+      browserActivityNextPolicyRefreshAt: this.browserActivityNextPolicyRefreshAt,
       durableEffectProblems: new Map([...this.durableEffectProblems].map(([key, value]) => [key, structuredClone(value)]))
     };
   }
@@ -563,6 +1375,13 @@ export class Monitor implements MonitorHandle {
     this.nextSystemSleepLockAt = snapshot.nextSystemSleepLockAt;
     this.nextGrayscaleRefreshAt = snapshot.nextGrayscaleRefreshAt;
     this.runtimeGapChecked = snapshot.runtimeGapChecked;
+    this.lastBrowserActivityEvaluatedTarget = snapshot.lastBrowserActivityEvaluatedTarget;
+    this.lastBrowserActivityEvaluatedGeneration = snapshot.lastBrowserActivityEvaluatedGeneration;
+    this.lastBrowserActivityEvaluatedPolicyGeneration = snapshot.lastBrowserActivityEvaluatedPolicyGeneration;
+    this.browserActivityPolicyGeneration = snapshot.browserActivityPolicyGeneration;
+    this.browserActivityPolicyFingerprint = snapshot.browserActivityPolicyFingerprint;
+    this.browserActivityObservedCommitRevision = snapshot.browserActivityObservedCommitRevision;
+    this.browserActivityNextPolicyRefreshAt = snapshot.browserActivityNextPolicyRefreshAt;
     this.durableEffectProblems = snapshot.durableEffectProblems;
   }
 
@@ -700,7 +1519,6 @@ export class Monitor implements MonitorHandle {
     this.checkClockTamper(frame.now, frame.previousWall, frame.previousMonotonic, frame.monotonicNow);
     await this.refreshIntegrity(frame.now);
     await this.refreshAppleContentFilterLockdown(frame.now);
-    await this.refreshHardeningDrift(frame.now);
     await this.enforceSystemSleepLock(frame.now);
     await this.syncFocusShortcut(frame.now);
     await this.reconcileGrayscale(frame.now);
@@ -727,13 +1545,41 @@ export class Monitor implements MonitorHandle {
     await this.pushIosMdmPolicy(now);
   }
 
-  async runImmediateSideEffects(now: number): Promise<void> {
-    await this.enforceSystemSleepLock(now, { force: true });
-    await this.syncFocusShortcut(now, { force: true });
-    await this.reconcileGrayscale(now, { force: true });
-    await this.sweepBlockedProcesses(now, { force: true });
-    this.syncIosMdmPolicy(now, "immediate-policy-refresh");
-    await this.pushIosMdmPolicy(now, "immediate-policy-refresh", { force: true });
+  async collectImmediateSideEffectObservations(): Promise<ImmediateSideEffectObservations> {
+    const [grayscale, runningApps] = await Promise.all([
+      readMacGrayscaleState(),
+      listRunningAppNames()
+    ]);
+    return { grayscale, runningApps };
+  }
+
+  async runImmediateSideEffects(
+    now: number,
+    observations?: ImmediateSideEffectObservations,
+    options: { continueOnError?: boolean } = {}
+  ): Promise<void> {
+    const attempt = async (kind: string, operation: () => unknown | Promise<unknown>) => {
+      try {
+        await operation();
+      } catch (error) {
+        if (!options.continueOnError) throw error;
+        addEvent(this.state, "immediate_side_effect_prepare_failed", {
+          kind,
+          error: errorMessage(error),
+          at: new Date(now).toISOString()
+        });
+      }
+    };
+    await attempt("sleep-lock", () => this.enforceSystemSleepLock(now, { force: true }));
+    await attempt("focus-shortcut", () => this.syncFocusShortcut(now, { force: true }));
+    await attempt("grayscale", () => this.reconcileGrayscale(now, {
+      force: true,
+      observed: observations?.grayscale,
+      runningApps: observations?.runningApps
+    }));
+    await attempt("process-sweep", () => this.sweepBlockedProcesses(now, { force: true, runningApps: observations?.runningApps }));
+    await attempt("mdm-policy-sync", () => this.syncIosMdmPolicy(now, "immediate-policy-refresh"));
+    await attempt("mdm-policy-push", () => this.pushIosMdmPolicy(now, "immediate-policy-refresh", { force: true }));
   }
 
   async persistHeartbeat(now: number): Promise<void> {
@@ -806,7 +1652,11 @@ export class Monitor implements MonitorHandle {
     return summary;
   }
 
-  async reconcileGrayscale(now: number, options: { force?: boolean } = {}) {
+  async reconcileGrayscale(now: number, options: {
+    force?: boolean;
+    observed?: Awaited<ReturnType<typeof readMacGrayscaleState>>;
+    runningApps?: Awaited<ReturnType<typeof listRunningAppNames>>;
+  } = {}) {
     const desired = grayscaleDecision(this.state, new Date(now), { device: "computer" });
     const previous = this.status.lastGrayscale as { desired?: unknown; current?: unknown } | null;
     const requiresObservation = desired.desired
@@ -820,7 +1670,7 @@ export class Monitor implements MonitorHandle {
     if (!options.force && now < this.nextGrayscaleRefreshAt) return this.status.lastGrayscale;
     this.nextGrayscaleRefreshAt = now + 5000;
 
-    const observed = await readMacGrayscaleState();
+    const observed = options.observed || await readMacGrayscaleState();
     const alreadyCurrent = observed.ok
       && observed.universalAccess === desired.desired
       && observed.coreGraphics === desired.desired;
@@ -829,7 +1679,7 @@ export class Monitor implements MonitorHandle {
       : await this.externalEffect("grayscale", { desired: desired.desired }, async () => await setMacGrayscaleEnabled(desired.desired));
     const guardEnabled = grayscaleGuardEnabled(this.state, desired);
     const blockedApps = guardEnabled
-      ? await this.blockGrayscaleGuardApps(now)
+      ? await this.blockGrayscaleGuardApps(now, options.runningApps)
       : [];
 
     const after = result.after && typeof result.after === "object" ? result.after as UnknownRecord : {};
@@ -856,8 +1706,11 @@ export class Monitor implements MonitorHandle {
     return summary;
   }
 
-  async blockGrayscaleGuardApps(_now: number): Promise<string[]> {
-    const running = await listRunningAppNames();
+  async blockGrayscaleGuardApps(
+    _now: number,
+    observation?: Awaited<ReturnType<typeof listRunningAppNames>>
+  ): Promise<string[]> {
+    const running = observation || await listRunningAppNames();
     if (!running.ok) {
       this.setComponentHealth("grayscale-guard", running.error || "Grayscale guard process enumeration failed");
       return [];
@@ -914,11 +1767,14 @@ export class Monitor implements MonitorHandle {
     }
   }
 
-  async readFrontmost(): Promise<FrontResult> {
-    const front = await getFrontmostApp() as { ok: boolean; app?: string; error?: string };
+  async readFrontmost(options: FrontReadOptions = {}): Promise<FrontResult> {
+    const updateHealth = options.updateHealth !== false;
+    const front = await getFrontmostApp({ fresh: options.fresh }) as { ok: boolean; app?: string; error?: string };
     if (!front.ok) {
-      this.setComponentHealth("frontmost", front.error || "Foreground app detection failed");
-      this.status.accessibilityLikelyMissing = /not allowed|assistive|access/i.test(front.error || "");
+      if (updateHealth) {
+        this.setComponentHealth("frontmost", front.error || "Foreground app detection failed");
+        this.status.accessibilityLikelyMissing = /not allowed|assistive|access/i.test(front.error || "");
+      }
       return { ok: false, app: front.app || "", error: front.error || "" };
     }
 
@@ -932,15 +1788,22 @@ export class Monitor implements MonitorHandle {
       urlError = browser.ok ? "" : String(browser.error || "");
     }
 
-    this.setComponentHealth("frontmost", urlError);
-    this.status.accessibilityLikelyMissing = false;
+    if (updateHealth) {
+      this.setComponentHealth("frontmost", urlError);
+      this.status.accessibilityLikelyMissing = false;
+    }
     return { ok: true, app: front.app || "", url, hostname };
   }
 
   async enforce(front: FrontSample): Promise<void> {
-    const policy = this.policyForTarget(front);
+    const preserveBlockedPage = isVigilBlockedPageUrl(front.url);
+    const evaluationSample = preserveBlockedPage
+      ? { ...front, hostname: "", url: "" }
+      : front;
+
+    const policy = this.policyForTarget(evaluationSample);
     if (!policy) {
-      if (await this.pauseIntentionalUse(front)) return;
+      if (await this.pauseIntentionalUse(evaluationSample)) return;
       this.status.lastEnforcement = null;
       if (front.app) this.appBlockHistory.delete(front.app);
       return;
@@ -948,7 +1811,7 @@ export class Monitor implements MonitorHandle {
 
     const lockdown = policy.kind === "integrity" || isFullLockoutPolicy(policy);
 
-    if (front.url && policy.browserControl) {
+    if (!preserveBlockedPage && front.url && policy.browserControl) {
       await this.blockSite({
         ...front,
         hostname: policy.browserControl.label
@@ -956,7 +1819,7 @@ export class Monitor implements MonitorHandle {
       return;
     }
 
-    if (front.url && policy.contentFilter && (lockdown || contentFilterEnabled(this.state))) {
+    if (!preserveBlockedPage && front.url && policy.contentFilter && (lockdown || contentFilterEnabled(this.state))) {
       await this.blockSite({
         ...front,
         hostname: policy.contentFilter.label
@@ -966,7 +1829,7 @@ export class Monitor implements MonitorHandle {
 
     const redirectEnabled = lockdown || this.state.settings.siteRedirectEnabled;
     const networkSiteEnabled = systemNetworkBlockingEnabled(this.state);
-    if (front.hostname && (redirectEnabled || networkSiteEnabled) && shouldBlockSite(policy.profile, front.hostname)) {
+    if (!preserveBlockedPage && front.hostname && (redirectEnabled || networkSiteEnabled) && shouldBlockSite(policy.profile, front.hostname)) {
       const networkBlocked = networkSiteEnabled && await this.blockSiteWithSystemNetwork(front, policy);
       if (shouldRedirectActiveBlockedBrowserTab({ redirectEnabled, networkBlocked, app: front.app, url: front.url })) {
         await this.blockSite(front, policy);
@@ -974,7 +1837,7 @@ export class Monitor implements MonitorHandle {
       return;
     }
 
-    const urlPattern = front.url ? matchBlockedUrlPattern(policy.profile, front.url) : null;
+    const urlPattern = !preserveBlockedPage && front.url ? matchBlockedUrlPattern(policy.profile, front.url) : null;
     if (urlPattern && (redirectEnabled || networkSiteEnabled)) {
       const networkEligible = policy.profile.hostsUrlPatternBlocking !== false && hostPathPatternCanUseSystemNetwork(urlPattern.pattern);
       const networkBlocked = networkSiteEnabled && networkEligible && await this.blockSiteWithSystemNetwork({
@@ -991,7 +1854,7 @@ export class Monitor implements MonitorHandle {
     }
 
     if ((lockdown || this.state.settings.appQuitEnabled) && shouldQuitAppForPolicy(this.state, policy, front.app)) {
-      await this.blockApp(front, policy);
+      await this.blockApp(evaluationSample, policy);
     }
   }
 
@@ -1081,7 +1944,11 @@ export class Monitor implements MonitorHandle {
       intentionalPauseId: decision.pause?.id || ""
     };
     const result = browser
-      ? await this.externalEffect("redirect-browser", { ...effectContext, url: redirectUrl }, async () => await redirectActiveBrowserTab(front.app, redirectUrl))
+      ? await this.externalEffect(
+          "redirect-browser",
+          { ...effectContext, url: redirectUrl },
+          async () => await this.browserRedirect(front.app, redirectUrl, { currentUrl: front.url })
+        )
       : {
           quit: await this.externalEffect("quit-app", { ...effectContext, force: false }, async () => await quitApp(front.app)),
           open: await this.externalEffect("open-url", { ...effectContext, url: redirectUrl }, async () => await openUrl(redirectUrl))
@@ -1103,46 +1970,21 @@ export class Monitor implements MonitorHandle {
   }
 
   async blockSite(front: FrontSample, policy: EnforcedPolicy, options: BlockSiteOptions = {}): Promise<void> {
-    const key = options.browserControl
-      ? `browser-control:${options.browserControl.area}:${front.url || front.hostname}`
-      : options.contentFilter
-      ? `content:${options.contentFilter.id}:${front.url || front.hostname}`
-      : options.urlPattern
-        ? `url:${options.urlPattern.pattern}:${front.url || front.hostname}`
-        : `site:${front.hostname}`;
+    const key = this.browserBlockKey(front, options);
     const coolingDown = this.isCoolingDown(key);
     if (!shouldAttemptBlockedBrowserRedirect({ coolingDown, app: front.app, url: front.url })) return;
     if (!coolingDown) this.markCoolingDown(key);
 
-    const target = new URL(`http://127.0.0.1:${PORT}/blocked`);
-    target.searchParams.set("site", front.hostname);
-    target.searchParams.set("until", policy.endsAt);
-    target.searchParams.set("mode", policy.session.mode || "focus");
-    target.searchParams.set("policyId", policy.session.id || "");
-    if (front.url) target.searchParams.set("back", front.url);
+    const target = this.blockedPageTarget(front, policy);
 
     const result = await this.externalEffect("redirect-browser", {
       app: front.app,
       hostname: front.hostname,
-      url: target.toString(),
+      url: target,
       currentUrl: front.url,
       policyId: policy.session?.id || ""
-    }, async () => await redirectActiveBrowserTab(front.app, target.toString(), { currentUrl: front.url }));
-    const detail = {
-      site: front.hostname,
-      app: front.app,
-      originalSite: options.originalHostname || front.hostname,
-      browserControl: options.browserControl || null,
-      contentFilter: options.contentFilter || null,
-      urlPattern: options.urlPattern || null,
-      policy: policy.session.title || policy.session.mode,
-      result,
-      coolingDownRetry: coolingDown
-    };
-    if (!coolingDown || !result.ok) {
-      addEvent(this.state, options.browserControl ? "blocked_browser_control" : options.contentFilter ? "blocked_content" : options.urlPattern ? "blocked_url" : "blocked_site", detail);
-    }
-    this.status.lastEnforcement = { type: options.browserControl ? "browser-control" : options.contentFilter ? "content" : options.urlPattern ? "url" : "site", target: front.hostname, result, coolingDownRetry: coolingDown, at: new Date().toISOString() };
+    }, async () => await this.browserRedirect(front.app, target, { currentUrl: front.url }));
+    this.recordBrowserBlock({ front, policy, options }, result, coolingDown);
   }
 
   async blockApp(front: FrontSample, policy: EnforcedPolicy, options: BlockAppOptions = {}): Promise<void> {
@@ -1172,7 +2014,10 @@ export class Monitor implements MonitorHandle {
     this.status.lastEnforcement = { type: "app", target: front.app, source: options.source || "frontmost", escalated: decision.force, attempts: decision.record.attempts, result, at: new Date().toISOString() };
   }
 
-  async sweepBlockedProcesses(now: number, options: { force?: boolean } = {}): Promise<void> {
+  async sweepBlockedProcesses(now: number, options: {
+    force?: boolean;
+    runningApps?: Awaited<ReturnType<typeof listRunningAppNames>>;
+  } = {}): Promise<void> {
     const lockdown = integrityLockdownActive(this.state) || isFullLockoutPolicy(activePolicy(this.state, new Date(now)));
     if (!lockdown && (!this.state.settings.processSweepEnabled || !this.state.settings.appQuitEnabled)) {
       this.setComponentDisabled("process-sweep");
@@ -1182,7 +2027,7 @@ export class Monitor implements MonitorHandle {
     const interval = lockdown ? 3 : Math.max(3, Number(this.state.settings.processSweepIntervalSeconds || 15));
     this.nextProcessSweepAt = now + interval * 1000;
 
-    const running = await listRunningAppNames();
+    const running = options.runningApps || await listRunningAppNames();
     if (!running.ok) {
       this.status.lastProcessSweep = { ok: false, error: running.error, at: new Date().toISOString(), blocked: [] };
       this.setComponentHealth("process-sweep", running.error || "Running process enumeration failed");
@@ -1331,24 +2176,141 @@ export class Monitor implements MonitorHandle {
     }
   }
 
-  async refreshHardeningDrift(now: number): Promise<void> {
-    if (!this.state.settings?.foolproofModeEnabled) return;
-    if (now < this.nextHardeningDriftRefreshAt) return;
-    this.nextHardeningDriftRefreshAt = now + 15 * 1000;
+  prepareHardeningDrift(now: number): boolean {
+    if (!this.state.settings?.foolproofModeEnabled) {
+      this.nextHardeningDriftRefreshAt = 0;
+      return false;
+    }
+    const checkedAt = new Date(now);
+    if (!hardeningDriftAttestationRequired(this.state, checkedAt)) {
+      // The Apple content-filter recovery has its own fresh five-second check.
+      // Resetting this deadline makes a future protected overlap attest all
+      // other hardening immediately instead of inheriting an idle cooldown.
+      this.nextHardeningDriftRefreshAt = 0;
+      this.status.hardeningDrift = {
+        checkedAt: checkedAt.toISOString(),
+        skipped: appleContentFilterRecoveryActive(this.state)
+          ? "apple-content-filter-recovery"
+          : "no-protected-lock"
+      };
+      return false;
+    }
+    if (now < this.nextHardeningDriftRefreshAt) return false;
+    return true;
+  }
 
-    const hosts = await hostsStatus(this.state);
-    const firewall = await firewallStatus(this.state);
-    const safariFilter = await safariFilterStatus(this.state);
-    const agent = await launchAgentStatus();
-    const extensionRules = extensionDynamicRulesReady(this.state, new Date(now));
-    const sourceSeal = await sourceSealStatus();
-    const monitor = {
-      ok: this.status.ok,
-      accessibilityLikelyMissing: this.status.accessibilityLikelyMissing
+  hardeningDriftAttestationDue(now: number): boolean {
+    return Boolean(
+      this.state.settings?.foolproofModeEnabled
+      && hardeningDriftAttestationRequired(this.state, new Date(now))
+      && now >= this.nextHardeningDriftRefreshAt
+    );
+  }
+
+  async refreshHardeningDrift(now: number): Promise<boolean> {
+    if (this.hardeningDriftMeasurement) return await this.hardeningDriftMeasurement;
+    const measurement = this.measureAndApplyHardeningDrift(now);
+    const tracked = measurement.finally(() => {
+      if (this.hardeningDriftMeasurement === tracked) this.hardeningDriftMeasurement = null;
+    });
+    this.hardeningDriftMeasurement = tracked;
+    return await tracked;
+  }
+
+  async measureAndApplyHardeningDrift(initialNow: number): Promise<boolean> {
+    let checkedAt = initialNow;
+    // A relevant state generation can change while system_profiler or another
+    // external attestor is running. Retry one fresh generation immediately;
+    // another conflict leaves the deadline at zero so the next cadence retries
+    // without ever publishing the stale result as either clean or drifted.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!this.prepareHardeningDrift(checkedAt)) return false;
+      const snapshot = structuredClone(this.committedState);
+      const checkedAtDate = new Date(checkedAt);
+      if (!hardeningDriftAttestationRequired(snapshot, checkedAtDate)) return false;
+      const policyFingerprint = hardeningDriftPolicyFingerprint(snapshot, checkedAtDate);
+      const monitorFingerprint = this.hardeningDriftMonitorFingerprint();
+      const evidence = await this.collectHardeningDriftEvidence(
+        snapshot,
+        checkedAt,
+        policyFingerprint,
+        monitorFingerprint
+      );
+      const applied = await this.enqueueMutationOperation(
+        () => Promise.resolve(this.applyHardeningDriftEvidence(evidence)),
+        { persist: false }
+      );
+      if (!applied.stale) return applied.drift;
+      checkedAt = Date.now();
+    }
+    return false;
+  }
+
+  async collectHardeningDriftEvidence(
+    snapshot: VigilState,
+    checkedAt: number,
+    policyFingerprint = hardeningDriftPolicyFingerprint(snapshot, new Date(checkedAt)),
+    monitorFingerprint = this.hardeningDriftMonitorFingerprint()
+  ): Promise<HardeningDriftMeasurement> {
+    const checkedAtDate = new Date(checkedAt);
+    const [hosts, firewall, safariFilter, chromeSafeSearch, agent, sourceSeal] = await Promise.all([
+      hostsStatus(snapshot, checkedAtDate),
+      firewallStatus(snapshot, checkedAtDate),
+      safariFilterStatus(snapshot, checkedAtDate),
+      attestChromeSafeSearchStatus(),
+      launchAgentStatus(),
+      sourceSealStatus()
+    ]);
+    return {
+      checkedAt,
+      policyFingerprint,
+      monitorFingerprint,
+      checks: {
+        hosts: hosts as UnknownRecord,
+        firewall: firewall as UnknownRecord,
+        safariFilter: safariFilter as UnknownRecord,
+        chromeSafeSearch: chromeSafeSearch as UnknownRecord,
+        agent: agent as UnknownRecord,
+        monitor: JSON.parse(monitorFingerprint) as UnknownRecord,
+        extensionRules: extensionDynamicRulesReady(snapshot, checkedAtDate),
+        sourceSeal: sourceSeal as UnknownRecord
+      }
     };
-    const drift = detectHardeningDrift(this.state, { hosts, firewall, safariFilter, agent, monitor, extensionRules, sourceSeal }, new Date(now));
+  }
+
+  applyHardeningDriftEvidence(evidence: HardeningDriftMeasurement): HardeningDriftApplyResult {
+    const checkedAt = new Date(evidence.checkedAt);
+    const appliedAt = new Date();
+    if (!hardeningDriftAttestationRequired(this.state, appliedAt)) {
+      this.nextHardeningDriftRefreshAt = 0;
+      this.status.hardeningDrift = {
+        checkedAt: appliedAt.toISOString(),
+        skipped: appleContentFilterRecoveryActive(this.state)
+          ? "apple-content-filter-recovery"
+          : "no-protected-lock"
+      };
+      return { stale: false, drift: false };
+    }
+    const evidenceAgeMs = appliedAt.getTime() - checkedAt.getTime();
+    const fresh = evidenceAgeMs >= 0 && evidenceAgeMs <= HARDENING_DRIFT_EVIDENCE_MAX_AGE_MS;
+    const samePolicyGeneration = fresh
+      && hardeningDriftPolicyFingerprint(this.state, checkedAt) === evidence.policyFingerprint
+      && hardeningDriftPolicyFingerprint(this.state, appliedAt) === evidence.policyFingerprint;
+    if (!samePolicyGeneration || this.hardeningDriftMonitorFingerprint() !== evidence.monitorFingerprint) {
+      this.nextHardeningDriftRefreshAt = 0;
+      return { stale: true, drift: false };
+    }
+
+    this.nextHardeningDriftRefreshAt = appliedAt.getTime() + 15 * 1000;
+    const { hosts, firewall, safariFilter, chromeSafeSearch, agent, monitor, extensionRules, sourceSeal } = evidence.checks;
+    const drift = detectHardeningDrift(
+      this.state,
+      { hosts, firewall, safariFilter, chromeSafeSearch, agent, monitor, extensionRules, sourceSeal },
+      appliedAt
+    );
     this.status.hardeningDrift = {
-      checkedAt: new Date(now).toISOString(),
+      checkedAt: appliedAt.toISOString(),
+      measuredAt: checkedAt.toISOString(),
       sourceSeal: {
         ok: sourceSeal.ok,
         status: sourceSeal.status,
@@ -1380,6 +2342,17 @@ export class Monitor implements MonitorHandle {
         appleCurrent: Boolean(safariFilter.appleCurrent),
         appleContentFilter: safariFilter.appleContentFilter || null
       },
+      chromeSafeSearch: {
+        required: Boolean(chromeSafeSearch.required),
+        installed: Boolean(chromeSafeSearch.installed),
+        stale: Boolean(chromeSafeSearch.stale),
+        current: Boolean(chromeSafeSearch.current),
+        effectiveCurrent: Boolean(chromeSafeSearch.effectiveCurrent),
+        profileCurrent: Boolean(chromeSafeSearch.profileCurrent),
+        forced: Boolean(chromeSafeSearch.forced),
+        locked: Boolean(chromeSafeSearch.locked),
+        detail: chromeSafeSearch.detail
+      },
       extensionRules: {
         ok: extensionRules.ok,
         status: extensionRules.status,
@@ -1387,7 +2360,21 @@ export class Monitor implements MonitorHandle {
       },
       drift
     };
-    if (drift) addEvent(this.state, "hardening_drift_lockdown", drift);
+    if (drift) {
+      addEvent(this.state, "hardening_drift_lockdown", drift);
+      // New integrity lockdown state must survive a crash even between routine
+      // heartbeat snapshots. This request happens only after evidence matches
+      // the currently committed hardening-policy generation.
+      this.activePersistenceRequest?.();
+    }
+    return { stale: false, drift: Boolean(drift) };
+  }
+
+  hardeningDriftMonitorFingerprint(): string {
+    return JSON.stringify({
+      ok: this.status.ok,
+      accessibilityLikelyMissing: this.status.accessibilityLikelyMissing
+    });
   }
 
   checkRuntimeGap(now: number): void {

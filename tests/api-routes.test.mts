@@ -19,6 +19,7 @@ assert.equal(matchApiRoute("POST", "/api/session/preview")?.id, "sessionPreview"
 assert.equal(matchApiRoute("POST", "/api/session/start")?.domain, "sessions");
 assert.equal(matchApiRoute("POST", "/api/protection/level")?.id, "protectionLevel");
 assert.equal(matchApiRoute("POST", "/api/hardening/safari-filter/apply")?.id, "safariFilterApply");
+assert.equal(matchApiRoute("POST", "/api/hardening/chrome-safe-search/apply")?.id, "chromeSafeSearchApply");
 assert.equal(matchApiRoute("POST", "/api/adult-blocklist/settings")?.id, "adultBlocklistSettings");
 assert.equal(matchApiRoute("POST", "/api/adult-blocklist/refresh")?.id, "adultBlocklistRefresh");
 assert.equal(matchApiRoute("POST", "/api/devices/ios/app-removal")?.id, "iosAppRemoval");

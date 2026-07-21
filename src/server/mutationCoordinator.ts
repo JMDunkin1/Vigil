@@ -8,6 +8,7 @@ import type { UsageState, VigilState } from "../types.js";
 interface MutationContext {
   state: VigilState;
   usage: UsageState;
+  requestPersistence(): void;
   afterCommit<TResult>(
     effect: () => TResult | Promise<TResult>,
     descriptor?: DurableEffectDescriptor,
@@ -20,6 +21,19 @@ type SnapshotWriter = typeof saveRuntimeSnapshot;
 
 export interface MutationRunOptions {
   persist?: boolean;
+  // Monitor work may release its own serialization tail after the durable
+  // commit, then await this barrier outside that tail. This prevents an older
+  // coordinator effect which needs the monitor tail from cycling with a new
+  // post-commit effect queued by the monitor operation.
+  deferEffectAttempts?: boolean;
+  captureEffectAttemptBarrier?: (barrier: Promise<void>) => void;
+  // A caller-owned generation gate can reject only that mutation source while
+  // coordinator-wide admission stays available for enforcement shutdown work.
+  admission?: MutationAdmissionScope;
+}
+
+export interface MutationAdmissionScope {
+  accepting: boolean;
 }
 
 export interface DurableEffectDescriptor {
@@ -38,11 +52,13 @@ export type DurableEffectFailure = (error: Error, state: VigilState, usage: Usag
 
 export type DurableEffectTransition = "pending" | "running" | "failed" | "completed";
 type DurableEffectObserver = (entry: RuntimeOutboxEntry, transition: DurableEffectTransition, error: string) => void;
+type RuntimeEffectLane = "control" | "immediate" | "background";
 
 export class RuntimeMutationCoordinator {
   private mutationTail: Promise<void> = Promise.resolve();
   private effectTail: Promise<void> = Promise.resolve();
   private immediateEffectTail: Promise<void> = Promise.resolve();
+  private controlEffectTail: Promise<void> = Promise.resolve();
   private accepting = true;
   private recoveryHandler: ((entry: RuntimeOutboxEntry) => unknown | Promise<unknown>) | null = null;
   private recoveryCompletion: ((entry: RuntimeOutboxEntry, result: unknown, state: VigilState, usage: UsageState) => void | Promise<void>) | null = null;
@@ -54,7 +70,8 @@ export class RuntimeMutationCoordinator {
     fail?: DurableEffectFailure;
   }>();
   private effectObserver: DurableEffectObserver | null = null;
-  private effectContext = new AsyncLocalStorage<boolean>();
+  private effectContext = new AsyncLocalStorage<RuntimeEffectLane>();
+  private revision = 0;
 
   constructor(
     private readonly liveState: VigilState,
@@ -64,17 +81,19 @@ export class RuntimeMutationCoordinator {
   ) {}
 
   run<T>(operation: (context: MutationContext) => Promise<T>, options: MutationRunOptions = {}): Promise<T> {
-    if (!this.accepting) return Promise.reject(stoppingError());
+    if (!this.accepting || options.admission?.accepting === false) return Promise.reject(stoppingError());
     let committedEffects: Array<{ entry: RuntimeOutboxEntry; run: () => unknown | Promise<unknown>; complete?: DurableEffectCompletion; fail?: DurableEffectFailure; awaitAttempt: boolean }> = [];
     const mutation = this.enqueueMutation(async () => {
-      if (!this.accepting) throw stoppingError();
+      if (!this.accepting || options.admission?.accepting === false) throw stoppingError();
       const draftState = structuredClone(this.liveState);
       const draftUsage = structuredClone(this.liveUsage);
       const commitOutbox = structuredClone(this.outbox);
+      let persistenceRequested = false;
       const effects: Array<{ entry: RuntimeOutboxEntry; run: () => unknown | Promise<unknown>; complete?: DurableEffectCompletion; fail?: DurableEffectFailure; awaitAttempt: boolean }> = [];
       const staged = await withStagedPersistence(() => operation({
         state: draftState,
         usage: draftUsage,
+        requestPersistence: () => { persistenceRequested = true; },
         afterCommit: (effect, descriptor, complete, fail) => {
           const normalized = descriptor || { key: randomUUID(), kind: "ephemeral", payload: {} };
           let entry = commitOutbox.find((candidate) => candidate.key === normalized.key);
@@ -102,7 +121,7 @@ export class RuntimeMutationCoordinator {
           });
         }
       }));
-      const durableCommitRequired = options.persist !== false || effects.length > 0;
+      const durableCommitRequired = options.persist !== false || persistenceRequested || effects.length > 0;
       if (durableCommitRequired) {
         try {
           await this.persistSnapshot(draftState, draftUsage, { outbox: commitOutbox });
@@ -113,6 +132,7 @@ export class RuntimeMutationCoordinator {
       }
       replaceContents(this.liveState, draftState);
       replaceContents(this.liveUsage, draftUsage);
+      this.revision += 1;
       this.outbox.splice(0, this.outbox.length, ...commitOutbox);
       for (const effect of effects) {
         this.operations.set(effect.entry.id, { run: effect.run, complete: effect.complete, fail: effect.fail });
@@ -127,21 +147,42 @@ export class RuntimeMutationCoordinator {
       // have had one attempt unless a latency-sensitive acknowledgement marks
       // an effect for background delivery.
       const attempts = committedEffects.map(({ entry, awaitAttempt }) => ({
+        entry,
         awaitAttempt,
         promise: this.enqueueEffect(entry)
       }));
-      // An effect may perform a short follow-up mutation which publishes a
-      // second effect. It cannot wait for work queued behind itself on the
-      // single-consumer worker, so let the outer worker pick that work up.
-      const waitForAttempts = !this.effectContext.getStore();
-      const awaited = attempts.filter((attempt) => waitForAttempts && attempt.awaitAttempt);
+      // A worker effect may publish a descendant. Determine its lane before
+      // choosing whether this re-entrant caller can safely await the attempt.
+      const activeEffectLane = this.effectContext.getStore();
+      const hasSameLaneDescendant = Boolean(
+        activeEffectLane
+        && attempts.some((attempt) => runtimeEffectLane(attempt.entry) === activeEffectLane)
+      );
+      // A control trigger has its own worker and may safely await the immediate
+      // monitor-OS intents it creates. Only a true same-lane descendant must be
+      // left to that worker's outer drain; awaiting it while owning the worker
+      // would recreate the re-entrant cycle this guard exists to prevent.
+      const waitForAttempts = options.deferEffectAttempts !== true && !hasSameLaneDescendant;
+      const attemptBarrier = Promise.all(
+        attempts.filter((attempt) => attempt.awaitAttempt).map((attempt) => attempt.promise)
+      ).then(() => {});
+      options.captureEffectAttemptBarrier?.(attemptBarrier);
+      const awaited = waitForAttempts ? attempts.filter((attempt) => attempt.awaitAttempt) : [];
       const background = attempts.filter((attempt) => !waitForAttempts || !attempt.awaitAttempt);
       for (const attempt of background) {
         void attempt.promise.catch((error) => {
           console.error("Vigil background effect worker failed unexpectedly:", error);
         });
       }
-      await Promise.all(awaited.map((attempt) => attempt.promise));
+      // Keep the aggregate handled even when a custom deferred caller fails to
+      // retain the capture callback. A caller which does retain it still sees
+      // the original rejection when it awaits the barrier.
+      if (!waitForAttempts) {
+        void attemptBarrier.catch((error) => {
+          console.error("Vigil deferred effect barrier failed unexpectedly:", error);
+        });
+      }
+      if (awaited.length) await attemptBarrier;
       return result;
     });
   }
@@ -182,6 +223,10 @@ export class RuntimeMutationCoordinator {
 
   pendingEffects(): RuntimeOutboxEntry[] {
     return structuredClone(this.outbox);
+  }
+
+  committedRevision(): number {
+    return this.revision;
   }
 
   setEffectObserver(observer: DurableEffectObserver): void {
@@ -250,6 +295,7 @@ export class RuntimeMutationCoordinator {
     await this.persistSnapshot(draftState, draftUsage, { outbox: completed });
     replaceContents(this.liveState, draftState);
     replaceContents(this.liveUsage, draftUsage);
+    this.revision += 1;
     this.outbox.splice(0, this.outbox.length, ...completed);
     this.operations.delete(running.id);
     const timer = this.retryTimers.get(running.id);
@@ -270,6 +316,7 @@ export class RuntimeMutationCoordinator {
     await this.persistSnapshot(draftState, draftUsage, { outbox: candidate });
     replaceContents(this.liveState, draftState);
     replaceContents(this.liveUsage, draftUsage);
+    this.revision += 1;
     this.outbox.splice(0, this.outbox.length, ...candidate);
   }
 
@@ -297,16 +344,21 @@ export class RuntimeMutationCoordinator {
   }
 
   private enqueueEffect(entry: RuntimeOutboxEntry, options: { scheduleRetry?: boolean } = {}): Promise<void> {
-    const immediate = immediateRuntimeEffect(entry);
-    const tail = immediate ? this.immediateEffectTail : this.effectTail;
-    const queued = tail.then(() => this.effectContext.run(true, () => this.executeEffect(entry, options)));
-    if (immediate) this.immediateEffectTail = queued.then(() => {}, () => {});
+    const lane = runtimeEffectLane(entry);
+    const tail = lane === "control"
+      ? this.controlEffectTail
+      : lane === "immediate"
+        ? this.immediateEffectTail
+        : this.effectTail;
+    const queued = tail.then(() => this.effectContext.run(lane, () => this.executeEffect(entry, options)));
+    if (lane === "control") this.controlEffectTail = queued.then(() => {}, () => {});
+    else if (lane === "immediate") this.immediateEffectTail = queued.then(() => {}, () => {});
     else this.effectTail = queued.then(() => {}, () => {});
     return queued;
   }
 
   private async drainEffectWorkers(): Promise<void> {
-    await Promise.all([this.immediateEffectTail, this.effectTail]);
+    await Promise.all([this.controlEffectTail, this.immediateEffectTail, this.effectTail]);
   }
 
   private async markRunning(id: string): Promise<RuntimeOutboxEntry | null> {
@@ -337,9 +389,10 @@ export class RuntimeMutationCoordinator {
   }
 }
 
-function immediateRuntimeEffect(entry: RuntimeOutboxEntry): boolean {
-  if (entry.kind === "session-enforcement" || entry.kind === "policy-enforcement") return true;
-  return entry.kind === "monitor-os" && entry.payload.action !== "mdm-push";
+function runtimeEffectLane(entry: RuntimeOutboxEntry): RuntimeEffectLane {
+  if (entry.kind === "session-enforcement" || entry.kind === "policy-enforcement") return "control";
+  if (entry.kind === "monitor-os" && entry.payload.action !== "mdm-push") return "immediate";
+  return "background";
 }
 
 function retryDelayMs(attempts: number): number {

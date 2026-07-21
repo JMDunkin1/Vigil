@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { currentMacAccountStatus } from "../account.js";
 import { adultBlocklistSummary } from "../adultBlocklist.js";
 import { DEVICE_TARGETS } from "../defaults.js";
@@ -19,7 +20,8 @@ import { protectionSummary } from "../protection.js";
 import { distractionPresets } from "../presets.js";
 import { focusReport } from "../reports.js";
 import { vigilAppInfo, vigilStateHeaders } from "../vigilHealth.js";
-import { safariFilterStatus } from "../safariFilter.js";
+import { safariFilterPolicySignature, safariFilterStatus } from "../safariFilter.js";
+import { attestChromeSafeSearchStatus, chromeSafeSearchStatus } from "../chromeSafeSearch.js";
 import { sourceSealStatus } from "../sourceSeal.js";
 import { weekKey } from "../time.js";
 import { usageSummary } from "../usage.js";
@@ -42,11 +44,48 @@ interface BuildStatePayloadInput {
   localScripts: LocalScriptsSummary;
 }
 
-interface StrictPreflightOptions {
+export interface StrictPreflightOptions {
   now?: Date;
   mode?: string;
   lockLevel?: LockLevel;
   monitorStatus?: UnknownRecord;
+  evidence?: StrictPreflightEvidence;
+}
+
+export const STRICT_PREFLIGHT_EVIDENCE_MAX_AGE_MS = 30_000;
+
+export interface StrictPreflightEvidence {
+  evaluatedAt: string;
+  collectedAt: string;
+  relevanceFingerprint: string;
+  hosts: Awaited<ReturnType<typeof hostsStatus>>;
+  firewall: Awaited<ReturnType<typeof firewallStatus>>;
+  safariFilter: Awaited<ReturnType<typeof safariFilterStatus>>;
+  chromeSafeSearch: Awaited<ReturnType<typeof attestChromeSafeSearchStatus>>;
+  agent: Awaited<ReturnType<typeof launchAgentStatus>>;
+  account: Awaited<ReturnType<typeof currentMacAccountStatus>>;
+  stateSeal: Awaited<ReturnType<typeof stateSealStatus>>;
+  sourceSeal: Awaited<ReturnType<typeof sourceSealStatus>>;
+}
+
+export class StrictPreflightEvidenceStaleError extends Error {
+  readonly status = 409;
+
+  constructor(detail = "Strict-lock hardening evidence became stale while the request was waiting. Please try again.") {
+    super(detail);
+    this.name = "StrictPreflightEvidenceStaleError";
+  }
+}
+
+export interface StrictPreflightEvidenceCollectors {
+  hostsStatus: typeof hostsStatus;
+  firewallStatus: typeof firewallStatus;
+  safariFilterStatus: typeof safariFilterStatus;
+  attestChromeSafeSearchStatus: typeof attestChromeSafeSearchStatus;
+  launchAgentStatus: typeof launchAgentStatus;
+  currentMacAccountStatus: typeof currentMacAccountStatus;
+  stateSealStatus: typeof stateSealStatus;
+  sourceSealStatus: typeof sourceSealStatus;
 }
 
 interface DiagnosticSnapshot {
@@ -57,6 +96,7 @@ interface DiagnosticSnapshot {
   stateSeal: Awaited<ReturnType<typeof stateSealStatus>>;
   sourceSeal: Awaited<ReturnType<typeof sourceSealStatus>>;
   safariFilter: Awaited<ReturnType<typeof safariFilterStatus>>;
+  chromeSafeSearch: Awaited<ReturnType<typeof chromeSafeSearchStatus>>;
   devices: Awaited<ReturnType<typeof deviceSummary>>;
   hostsBlock: string;
 }
@@ -73,11 +113,11 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
   const currentUsage = structuredClone(usage);
   const monitorStatus = structuredClone(monitor.status);
   const policy = activePolicy(currentState);
-  const { hosts, firewall, agent, account, stateSeal, sourceSeal, safariFilter, devices, hostsBlock } = await stateDiagnostics(currentState);
+  const { hosts, firewall, agent, account, stateSeal, sourceSeal, safariFilter, chromeSafeSearch, devices, hostsBlock } = await stateDiagnostics(currentState);
   const externalNetworkBlock = externalNetworkBlockSummary(currentState);
   const adultBlocklist = adultBlocklistSummary(currentState);
   const protection = protectionSummary(currentState);
-  const foolproof = foolproofSummary(currentState, { hosts, firewall, safariFilter, agent, account, monitor: monitorStatus, stateSeal, sourceSeal });
+  const foolproof = foolproofSummary(currentState, { hosts, firewall, safariFilter, chromeSafeSearch, agent, account, monitor: monitorStatus, stateSeal, sourceSeal });
 
   return {
     body: {
@@ -97,6 +137,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
         hosts,
         firewall,
         safariFilter,
+        chromeSafeSearch,
         externalNetworkBlock,
         adultBlocklist,
         launchAgent: agent,
@@ -107,7 +148,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
         hostsBlock,
         actions: hardeningActions(localScripts),
         foolproof,
-        audit: hardeningAudit({ state: currentState, hosts, firewall, safariFilter, externalNetworkBlock, agent, account, protection, monitor: monitorStatus, foolproof, stateSeal, sourceSeal })
+        audit: hardeningAudit({ state: currentState, hosts, firewall, safariFilter, chromeSafeSearch, externalNetworkBlock, agent, account, protection, monitor: monitorStatus, foolproof, stateSeal, sourceSeal })
       }
     },
     headers: vigilStateHeaders()
@@ -126,9 +167,10 @@ async function stateDiagnostics(state: VigilState): Promise<DiagnosticSnapshot> 
     stateSealStatus(state),
     sourceSealStatus(),
     safariFilterStatus(state),
+    chromeSafeSearchStatus(),
     deviceSummary(state),
     buildNetworkPreview(state)
-  ]).then(([hosts, firewall, agent, account, stateSeal, sourceSeal, safariFilter, devices, hostsBlock]) => ({
+  ]).then(([hosts, firewall, agent, account, stateSeal, sourceSeal, safariFilter, chromeSafeSearch, devices, hostsBlock]) => ({
     hosts,
     firewall,
     agent,
@@ -136,6 +178,7 @@ async function stateDiagnostics(state: VigilState): Promise<DiagnosticSnapshot> 
     stateSeal,
     sourceSeal,
     safariFilter,
+    chromeSafeSearch,
     devices,
     hostsBlock
   }));
@@ -278,21 +321,113 @@ export async function buildNetworkPreview(state: VigilState): Promise<string> {
   ].join("\n");
 }
 
+export async function collectStrictPreflightEvidence(
+  state: VigilState,
+  profile: Profile | null | undefined,
+  options: Omit<StrictPreflightOptions, "evidence" | "monitorStatus"> = {},
+  collectorOverrides: Partial<StrictPreflightEvidenceCollectors> = {}
+): Promise<StrictPreflightEvidence> {
+  // This instant is both the policy evaluation time and the beginning of the
+  // external collection window. Do not stamp freshness after Promise.all:
+  // one fast attestor can otherwise wait behind a slow peer and be presented
+  // as newly collected when the batch finally resolves.
+  const evaluatedAt = options.now || new Date();
+  const collectedAt = evaluatedAt;
+  const normalizedState = normalizedStrictPreflightState(state, evaluatedAt);
+  const collectors: StrictPreflightEvidenceCollectors = {
+    hostsStatus,
+    firewallStatus,
+    safariFilterStatus,
+    attestChromeSafeSearchStatus,
+    launchAgentStatus,
+    currentMacAccountStatus,
+    stateSealStatus,
+    sourceSealStatus,
+    ...collectorOverrides
+  };
+  const preflightState = () => profile ? strictPreflightState(structuredClone(normalizedState), profile, {
+    mode: options.mode,
+    lockLevel: options.lockLevel,
+    now: evaluatedAt
+  }) : structuredClone(normalizedState);
+  const [hosts, firewall, safariFilter, chromeSafeSearch, agent, account, stateSeal, sourceSeal] = await Promise.all([
+    collectors.hostsStatus(preflightState(), evaluatedAt),
+    collectors.firewallStatus(preflightState(), evaluatedAt),
+    collectors.safariFilterStatus(preflightState(), evaluatedAt),
+    collectors.attestChromeSafeSearchStatus(),
+    collectors.launchAgentStatus(),
+    collectors.currentMacAccountStatus(),
+    collectors.stateSealStatus(preflightState()),
+    collectors.sourceSealStatus()
+  ]);
+  return {
+    evaluatedAt: evaluatedAt.toISOString(),
+    collectedAt: collectedAt.toISOString(),
+    relevanceFingerprint: strictPreflightRelevanceFingerprint(normalizedState, profile, options, evaluatedAt),
+    hosts,
+    firewall,
+    safariFilter,
+    chromeSafeSearch,
+    agent,
+    account,
+    stateSeal,
+    sourceSeal
+  };
+}
+
+export function strictPreflightEvidenceIssue(
+  state: VigilState,
+  profile: Profile | null | undefined,
+  evidence: StrictPreflightEvidence | null | undefined,
+  options: Omit<StrictPreflightOptions, "evidence" | "monitorStatus"> = {}
+): string | null {
+  if (!evidence) return "Strict-lock hardening evidence was not collected before mutation admission.";
+  const now = options.now || new Date();
+  const collectedAt = Date.parse(evidence.collectedAt);
+  const evaluatedAtMs = Date.parse(evidence.evaluatedAt);
+  if (!Number.isFinite(collectedAt) || !Number.isFinite(evaluatedAtMs)) {
+    return "Strict-lock hardening evidence has no valid evaluation time.";
+  }
+  const oldestEvidenceAt = Math.min(collectedAt, evaluatedAtMs);
+  const newestEvidenceAt = Math.max(collectedAt, evaluatedAtMs);
+  if (newestEvidenceAt > now.getTime() + 5_000
+    || now.getTime() - oldestEvidenceAt > STRICT_PREFLIGHT_EVIDENCE_MAX_AGE_MS) {
+    return "Strict-lock hardening evidence is no longer fresh.";
+  }
+  const normalizedState = normalizedStrictPreflightState(state, now);
+  const expected = strictPreflightRelevanceFingerprint(normalizedState, profile, options, now);
+  if (expected !== evidence.relevanceFingerprint) {
+    return "Strict-lock hardening inputs changed while evidence was being collected.";
+  }
+  return null;
+}
+
 export async function strictPreflightStatus(state: VigilState, profile: Profile | null | undefined, options: StrictPreflightOptions = {}): Promise<void> {
   const now = options.now || new Date();
-  const preflightState = profile ? strictPreflightState(state, profile, {
+  const issue = strictPreflightEvidenceIssue(state, profile, options.evidence, {
     mode: options.mode,
     lockLevel: options.lockLevel,
     now
-  }) : state;
-  const hosts = await hostsStatus(preflightState, now);
-  const firewall = await firewallStatus(preflightState, now);
-  const safariFilter = await safariFilterStatus(preflightState, now);
-  const agent = await launchAgentStatus();
-  const account = await currentMacAccountStatus();
-  const stateSeal = await stateSealStatus(preflightState);
-  const sourceSeal = await sourceSealStatus();
-  assertFoolproofReadyForStrict(preflightState, { hosts, firewall, safariFilter, agent, account, monitor: options.monitorStatus, stateSeal, sourceSeal }, now);
+  });
+  if (issue) throw new StrictPreflightEvidenceStaleError(issue);
+  const evidence = options.evidence as StrictPreflightEvidence;
+  const normalizedState = normalizedStrictPreflightState(state, now);
+  const preflightState = profile ? strictPreflightState(normalizedState, profile, {
+    mode: options.mode,
+    lockLevel: options.lockLevel,
+    now
+  }) : normalizedState;
+  assertFoolproofReadyForStrict(preflightState, {
+    hosts: evidence.hosts,
+    firewall: evidence.firewall,
+    safariFilter: evidence.safariFilter,
+    chromeSafeSearch: evidence.chromeSafeSearch,
+    agent: evidence.agent,
+    account: evidence.account,
+    monitor: options.monitorStatus,
+    stateSeal: evidence.stateSeal,
+    sourceSeal: evidence.sourceSeal
+  }, now);
 }
 
 function publicPolicy(policy: ActivePolicy | null) {
@@ -331,4 +466,70 @@ function strictPreflightState(state: VigilState, profile: Profile, options: Stri
       profileSnapshot: snapshotProfile(profile)
     }
   };
+}
+
+function normalizedStrictPreflightState(state: VigilState, now: Date): VigilState {
+  const normalized = structuredClone(state);
+  // Session routes normalize expired policy records before invoking their
+  // strict check. Do the same outside mutation admission so expiry cleanup is
+  // not mistaken for an unrelated state generation.
+  activePolicy(normalized, now);
+  return normalized;
+}
+
+function strictPreflightRelevanceFingerprint(
+  normalizedState: VigilState,
+  profile: Profile | null | undefined,
+  options: Omit<StrictPreflightOptions, "evidence" | "monitorStatus">,
+  now: Date
+): string {
+  const preflightState = profile ? strictPreflightState(structuredClone(normalizedState), profile, {
+    mode: options.mode,
+    lockLevel: options.lockLevel,
+    now
+  }) : structuredClone(normalizedState);
+  const stateSeal = normalizedState.integrity?.stateSeal;
+  const extension = normalizedState.extension || {};
+  const dynamicRules = extension.dynamicRules || {};
+  return createHash("sha256").update(JSON.stringify({
+    settings: normalizedState.settings,
+    // The heartbeat fields are intentionally omitted. They are evaluated
+    // against the live draft inside strictPreflightStatus, so routine extension
+    // check-ins must not invalidate unrelated system evidence. Version and the
+    // fields that determine dynamic-rule readiness still form part of the
+    // admission generation.
+    extension: {
+      lastVersion: extension.lastVersion || null,
+      dynamicRules: {
+        syncedAt: dynamicRules.syncedAt || null,
+        count: dynamicRules.count ?? 0,
+        signature: dynamicRules.signature || "",
+        status: dynamicRules.status || "",
+        ok: typeof dynamicRules.ok === "boolean" ? dynamicRules.ok : null,
+        fallbackRequired: dynamicRules.fallbackRequired === true,
+        error: dynamicRules.error || ""
+      }
+    },
+    keyholder: {
+      enabled: normalizedState.keyholder?.enabled,
+      salt: normalizedState.keyholder?.salt,
+      hash: normalizedState.keyholder?.hash
+    },
+    distanceKey: {
+      enabled: normalizedState.distanceKey?.enabled,
+      salt: normalizedState.distanceKey?.salt,
+      hash: normalizedState.distanceKey?.hash,
+      keyFilePath: normalizedState.distanceKey?.keyFilePath
+    },
+    stateSeal: {
+      lastSealedAt: stateSeal?.lastSealedAt,
+      tamperDetectedAt: stateSeal?.tamperDetectedAt,
+      tamperDetail: stateSeal?.tamperDetail
+    },
+    requestedProfile: profile ? snapshotProfile(profile) : null,
+    mode: options.mode || "focus",
+    lockLevel: options.lockLevel || "deep",
+    networkDomains: managedBlockDomains(preflightState, now),
+    safariPolicySignature: safariFilterPolicySignature(preflightState, now)
+  })).digest("hex");
 }

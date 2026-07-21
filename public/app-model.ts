@@ -568,6 +568,7 @@ export interface DashboardData extends UnknownRecord {
     hosts?: HardeningCheck;
     firewall?: HardeningCheck;
     safariFilter?: HardeningCheck;
+    chromeSafeSearch?: HardeningCheck;
     externalNetworkBlock?: HardeningCheck & {
       targetDomains?: string[];
       targetDomainCount?: number;

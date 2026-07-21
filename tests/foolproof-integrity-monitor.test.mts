@@ -28,6 +28,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   assert.equal(missing.some((item) => item.id === "keyholder"), true);
   assert.equal(missing.some((item) => item.id === "distance-key"), true);
   assert.equal(missing.some((item) => item.id === "extension-rules"), true);
+  assert.equal(missing.some((item) => item.id === "chrome-safe-search"), true);
   assert.equal(missing.some((item) => item.id === "hosts"), true);
   state.settings.processSweepEnabled = false;
   assert.equal(foolproofBlockers(state, { hosts: {}, agent: {}, monitor: { ok: false } }, now).some((item) => item.id === "process-sweep"), true);
@@ -87,6 +88,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     hosts: { installed: true, partial: false, stale: false },
     firewall: readyFirewall,
     safariFilter: { required: true, installed: true, current: true, stale: false, appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." } },
+    chromeSafeSearch: { required: true, current: true, effectiveCurrent: true, detail: "Chrome SafeSearch is locked to Filter." },
     agent: { loaded: true, running: true, restartHardened: true },
     account: accountStatusFromGroups("focus", "staff everyone"),
     monitor: { ok: true, accessibilityLikelyMissing: false },
@@ -94,6 +96,15 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     sourceSeal: { ok: true, status: "sealed", detail: "Source files match integrity seal.", fileCount: 42 }
   };
   assert.deepEqual(foolproofBlockers(state, readyContext, now), []);
+  assert.equal(foolproofBlockers(state, {
+    ...readyContext,
+    chromeSafeSearch: {
+      required: true,
+      current: false,
+      effectiveCurrent: false,
+      detail: "Chrome SafeSearch can still be disabled."
+    }
+  }, now).some((item) => item.id === "chrome-safe-search"), true);
   assert.equal(foolproofBlockers(state, {
     ...readyContext,
     agent: { loaded: true, running: true, restartHardened: false }
@@ -148,6 +159,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     hosts: { installed: true, partial: false, stale: false },
     firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
     safariFilter: { required: true, installed: true, current: true, stale: false, appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." } },
+    chromeSafeSearch: { required: true, current: true, effectiveCurrent: true },
     agent: { loaded: true, running: true, restartHardened: true },
     account: accountStatusFromGroups("focus", "staff everyone"),
     monitor: { ok: true, accessibilityLikelyMissing: false },
@@ -224,6 +236,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     hosts: { installed: true, partial: false, stale: false, installedEntries: 20, expectedEntries: 20 },
     firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
     safariFilter: { required: true, installed: true, current: true, stale: false, appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." } },
+    chromeSafeSearch: { required: true, current: true, effectiveCurrent: true, detail: "Chrome SafeSearch is locked to Filter." },
     agent: { installed: true, loaded: true, running: true, restartHardened: true, pid: 12345 },
     account: accountStatusFromGroups("focus", "staff everyone")
   }, now);
@@ -235,6 +248,8 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   assert.equal(must(byId.get("extension-rules"), "extension-rules row").ok, true);
   assert.equal(must(byId.get("intent-reason"), "intent-reason row").ok, true);
   assert.equal(must(byId.get("keyholder"), "keyholder row").ok, true);
+  assert.equal(must(byId.get("chrome-safe-search"), "chrome-safe-search row").ok, true);
+  assert.equal(must(byId.get("chrome-safe-search"), "chrome-safe-search row").detail, "Chrome SafeSearch is locked to Filter.");
   assert.match(formatDoctorRows(rows), /OK\s+Foolproof readiness/);
 
   const embeddedSupervisorRows = doctorRows(state, {
@@ -260,6 +275,22 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     account: accountStatusFromGroups("focus", "staff everyone")
   }, now);
   assert.equal(must(staleRows.find((item) => item.id === "extension-rules"), "stale extension-rules row").ok, false);
+}
+
+{
+  const state = defaultState();
+  assert.equal(state.settings.foolproofModeEnabled, false);
+  const rows = doctorRows(state, {
+    chromeSafeSearch: {
+      current: false,
+      detail: "Chrome SafeSearch can still be disabled; apply the managed profile."
+    }
+  }, now);
+  const chromeSafeSearch = must(rows.find((item) => item.id === "chrome-safe-search"), "chrome-safe-search row");
+  assert.equal(chromeSafeSearch.ok, false);
+  assert.equal(chromeSafeSearch.status, "CHECK");
+  assert.equal(chromeSafeSearch.detail, "Chrome SafeSearch can still be disabled; apply the managed profile.");
+  assert.match(formatDoctorRows(rows), /CHECK\s+Chrome SafeSearch filter: Chrome SafeSearch can still be disabled/);
 }
 
 {
@@ -534,6 +565,40 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     monitor: { ok: false, accessibilityLikelyMissing: true }
   }, now), "accessibility drift");
   assert.equal(driftAccessibility.issues[0].id, "accessibility");
+  assert.equal(clearIntegrityTamper(state, now), true);
+
+  const goodChromeSafeSearch = {
+    required: true,
+    current: true,
+    effectiveCurrent: true,
+    detail: "Chrome SafeSearch is locked to Filter."
+  };
+  assert.equal(detectHardeningDrift(state, {
+    hosts: { installed: true, partial: false, stale: false },
+    firewall: goodFirewall,
+    chromeSafeSearch: goodChromeSafeSearch,
+    extensionRules: goodRules,
+    sourceSeal: goodSourceSeal,
+    agent: { installed: true, loaded: true, running: true },
+    monitor: { ok: true, accessibilityLikelyMissing: false }
+  }, now), null, "a freshly attested current Chrome profile must not trigger protected-lock drift");
+
+  const driftChromeSafeSearch = must(detectHardeningDrift(state, {
+    hosts: { installed: true, partial: false, stale: false },
+    firewall: goodFirewall,
+    chromeSafeSearch: {
+      required: true,
+      current: true,
+      effectiveCurrent: false,
+      detail: "Chrome SafeSearch is no longer locked to Filter."
+    },
+    extensionRules: goodRules,
+    sourceSeal: goodSourceSeal,
+    agent: { installed: true, loaded: true, running: true },
+    monitor: { ok: true, accessibilityLikelyMissing: false }
+  }, now), "Chrome SafeSearch drift");
+  assert.equal(driftChromeSafeSearch.issues[0].id, "chrome-safe-search");
+  assert.equal(driftChromeSafeSearch.issues[0].detail, "Chrome SafeSearch is no longer locked to Filter.");
   assert.equal(clearIntegrityTamper(state, now), true);
 
   const armedAppleContentFilter = syncAppleContentFilterLockdown(state, {
@@ -816,6 +881,56 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   };
   assert.deepEqual(sweepBlockedApps(state, usage, ["Discord", "Dock"], now).map((item) => item.app), ["Discord"]);
   assert.deepEqual(sweepBlockedApps(state, usage, ["Google Chrome Helper"], now), []);
+  for (const channel of ["Google Chrome Beta", "Google Chrome Dev", "Google Chrome Canary"]) {
+    state.activeSession.profileSnapshot.allowedApps = ["Finder", channel];
+    assert.deepEqual(
+      sweepBlockedApps(state, usage, [`${channel} Helper`, `${channel} Helper (Alerts)`, `${channel} Helper (GPU)`, `${channel} Helper (Plugin)`, `${channel} Helper (Renderer)`], now),
+      [],
+      `${channel} helper processes must remain available when the channel is allowed`
+    );
+  }
+  const browserChannelHelperPrefixes: Array<[channel: string, helperPrefixes: string[]]> = [
+    ["Microsoft Edge Beta", ["Microsoft Edge", "Microsoft Edge Beta"]],
+    ["Microsoft Edge Dev", ["Microsoft Edge", "Microsoft Edge Dev"]],
+    ["Microsoft Edge Canary", ["Microsoft Edge", "Microsoft Edge Canary"]],
+    ["Brave Browser Beta", ["Brave Browser", "Brave Browser Beta"]],
+    ["Brave Browser Nightly", ["Brave Browser", "Brave Browser Nightly"]],
+    ["Vivaldi Snapshot", ["Vivaldi", "Vivaldi Snapshot"]],
+    ["Opera Beta", ["Opera", "Opera Beta"]],
+    ["Opera Developer", ["Opera", "Opera Developer"]]
+  ];
+  const helperSuffixes = ["", " (Alerts)", " (GPU)", " (Plugin)", " (Renderer)"];
+  for (const [channel, helperPrefixes] of browserChannelHelperPrefixes) {
+    const helperProcesses = helperPrefixes.flatMap((prefix) => (
+      helperSuffixes.map((suffix) => `${prefix} Helper${suffix}`)
+    ));
+    state.activeSession.profileSnapshot.allowedApps = ["Finder", channel];
+    assert.deepEqual(
+      sweepBlockedApps(state, usage, helperProcesses, now),
+      [],
+      `${channel} helper processes must remain available when the channel is allowed`
+    );
+  }
+  const ambiguousChannelBlocks: Array<[channel: string, stableApp: string, channelHelper: string]> = [
+    ["Microsoft Edge Beta", "Microsoft Edge", "Microsoft Edge Beta Helper"],
+    ["Brave Browser Nightly", "Brave Browser", "Brave Browser Nightly Helper"],
+    ["Vivaldi Snapshot", "Vivaldi", "Vivaldi Snapshot Helper"],
+    ["Opera Developer", "Opera", "Opera Developer Helper"]
+  ];
+  for (const [blockedChannel, stableApp, channelHelper] of ambiguousChannelBlocks) {
+    state.activeSession.profileSnapshot = {
+      ...state.profiles[0],
+      mode: "blocklist",
+      blockedApps: [blockedChannel],
+      blockedSites: [],
+      blockedUrlPatterns: []
+    };
+    assert.deepEqual(
+      sweepBlockedApps(state, usage, [stableApp, `${stableApp} Helper`, blockedChannel, channelHelper], now).map((item) => item.app),
+      [blockedChannel, channelHelper],
+      `blocking ${blockedChannel} must not sweep ${stableApp}'s ambiguous helper`
+    );
+  }
   assert.deepEqual(sweepBlockedApps(state, usage, ["Terminal", "Dock"], now), []);
   state.activeSession.profileSnapshot = {
     ...state.profiles[0],

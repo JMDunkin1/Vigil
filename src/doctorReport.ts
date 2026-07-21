@@ -57,6 +57,7 @@ interface DoctorContext {
   hosts?: SummaryRecord;
   firewall?: SummaryRecord;
   safariFilter?: SummaryRecord;
+  chromeSafeSearch?: SummaryRecord;
   externalNetworkBlock?: SummaryRecord;
   agent?: SummaryRecord;
   account?: SummaryRecord;
@@ -78,11 +79,12 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
   const hosts = context.hosts || {};
   const firewall = context.firewall || {};
   const safariFilter = context.safariFilter || {};
+  const chromeSafeSearch = context.chromeSafeSearch || {};
   const externalNetworkBlock = context.externalNetworkBlock || externalNetworkBlockSummary(state);
   const agent = context.agent || {};
   const account = context.account || {};
   const monitor = context.monitor || monitorFromHeartbeat(state, now);
-  const foolproof = foolproofSummary(state, { hosts, firewall, safariFilter, agent, account, monitor, stateSeal: seal, sourceSeal }, now);
+  const foolproof = foolproofSummary(state, { hosts, firewall, safariFilter, chromeSafeSearch, agent, account, monitor, stateSeal: seal, sourceSeal }, now);
   const runtime = integrityRuntimeSummary(state);
   const keyholder = keyholderSummary(state);
   const distanceKey = distanceKeySummary(state);
@@ -115,6 +117,7 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
     row("notification-focus", "Notification Focus", focusShortcut.enabled && !focusShortcut.lastError, focusShortcutDetail(focusShortcut)),
     row("system-network-block", "System network block", networkEnabled && networkCurrent, networkEnabled ? (networkCurrent ? "Whole-site domain blocks are enforced across apps by hosts/PF." : "Apply the network block so hosts/PF are current.") : "System network blocking is disabled."),
     row("safari-url-filter", "Safari web filter", !safariRequired || safariWebFilterCurrent(safariFilter), safariFilterDetail(safariFilter, Boolean(safariRequired))),
+    row("chrome-safe-search", "Chrome SafeSearch filter", Boolean(chromeSafeSearch.current), chromeSafeSearchDetail(chromeSafeSearch)),
     row("external-network-block", "Apple network DNS/router", !externalNetworkBlock.enabled || Boolean(externalNetworkBlock.ready), externalNetworkBlockDetail(externalNetworkBlock)),
     row("adult-blocklist", "Adult blocklist", !adultBlocklist.enabled || Boolean(adultBlocklist.ready), adultBlocklist.detail),
     row("browser-redirect", "Browser redirect fallback", networkCurrent || Boolean(settings.siteRedirectEnabled), networkCurrent ? "Not required while the system network block is current." : (settings.siteRedirectEnabled ? "Fallback redirects blocked sites to the block screen." : "Disabled while the system network block is not current.")),
@@ -130,6 +133,12 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
     row("extension-rules", "Extension rules", !companionRequirement.required || extensionRules.ok, companionRequirement.required ? extensionRules.detail : "Not required for current system-network site blocking."),
     row("foolproof", "Foolproof readiness", foolproof.enabled && foolproof.ready, foolproofDetail(foolproof))
   ];
+}
+
+function chromeSafeSearchDetail(chromeSafeSearch: SummaryRecord): string {
+  if (chromeSafeSearch.detail) return String(chromeSafeSearch.detail);
+  if (chromeSafeSearch.current) return "Google SafeSearch is locked to Filter in Chrome.";
+  return "Chrome SafeSearch is not locked to Filter; apply the current Vigil Chrome profile through device management.";
 }
 
 function safariFilterDetail(safariFilter: SummaryRecord, required: boolean): string {

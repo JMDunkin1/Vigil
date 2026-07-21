@@ -53,6 +53,7 @@ interface HardeningAuditInput {
   hosts: SummaryRecord;
   firewall: SummaryRecord;
   safariFilter: SummaryRecord;
+  chromeSafeSearch: SummaryRecord;
   externalNetworkBlock?: SummaryRecord;
   agent: SummaryRecord;
   account: SummaryRecord;
@@ -75,7 +76,7 @@ interface HardeningActionsInput {
   resourcePath: (resourceName: string) => string;
 }
 
-export function hardeningAudit({ state, hosts, firewall, safariFilter, externalNetworkBlock, agent, account, protection, monitor, foolproof, stateSeal, sourceSeal }: HardeningAuditInput): HardeningAuditRow[] {
+export function hardeningAudit({ state, hosts, firewall, safariFilter, chromeSafeSearch, externalNetworkBlock, agent, account, protection, monitor, foolproof, stateSeal, sourceSeal }: HardeningAuditInput): HardeningAuditRow[] {
   const keyholder = keyholderSummary(state);
   const distanceKey = distanceKeySummary(state);
   const focusShortcut = focusShortcutSummary(state);
@@ -161,6 +162,12 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, externalN
       label: "Safari web filter",
       ok: safariFilter.required ? safariWebFilterCurrent(safariFilter) : true,
       detail: safariFilterDetail(safariFilter)
+    },
+    {
+      id: "chrome-safe-search",
+      label: "Chrome SafeSearch filter",
+      ok: Boolean(chromeSafeSearch.current),
+      detail: String(chromeSafeSearch.detail || "Chrome SafeSearch is not locked to Filter.")
     },
     {
       id: "external-network-block",
@@ -334,6 +341,12 @@ export function hardeningActions({ localScriptCommand, resourcePath }: Hardening
       method: "POST",
       path: "/api/hardening/safari-filter/apply",
       command: localScriptCommand("apply-safari-filter.mjs", { npmScript: "safari:apply" })
+    },
+    chromeSafeSearchApply: {
+      label: "Export Chrome MDM Profile",
+      method: "POST",
+      path: "/api/hardening/chrome-safe-search/apply",
+      command: localScriptCommand("apply-chrome-safe-search.mjs", { npmScript: "chrome:safe-search:apply" })
     },
     adultBlocklistRefresh: {
       label: "Refresh Adult List",

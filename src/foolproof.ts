@@ -31,6 +31,7 @@ interface FoolproofContext {
   hosts?: SummaryRecord;
   firewall?: SummaryRecord;
   safariFilter?: SummaryRecord;
+  chromeSafeSearch?: SummaryRecord;
   agent?: SummaryRecord;
   monitor?: SummaryRecord;
   stateSeal?: SummaryRecord;
@@ -92,6 +93,7 @@ export function foolproofBlockers(state: VigilState, context: FoolproofContext =
   const hosts = context.hosts || {};
   const firewall = context.firewall || {};
   const safariFilter = context.safariFilter || {};
+  const chromeSafeSearch = context.chromeSafeSearch || {};
   const agent = context.agent || {};
   const monitor = context.monitor || {};
   const stateSeal = context.stateSeal || stateSealSummary(state);
@@ -118,6 +120,9 @@ export function foolproofBlockers(state: VigilState, context: FoolproofContext =
   if (!distanceKey.enabled || !distanceKey.hasToken) blockers.push(blocker("distance-key", "Distance key must be enabled and placed away from the computer, preferably as a removable key file."));
   if (!systemNetworkBlockingEnabled(state)) blockers.push(blocker("system-network-block", "System network blocking must be enabled for across-app site enforcement."));
   if (safariFilterRequired && !appleContentFilterCurrent(safariFilter)) blockers.push(blocker("apple-content-filter", "Apple Screen Time Limit Adult Websites and Content & Privacy Restrictions must stay on."));
+  if (chromeSafeSearch.required !== false && !chromeSafeSearchCurrent(chromeSafeSearch)) {
+    blockers.push(blocker("chrome-safe-search", chromeSafeSearch.detail || "Chrome SafeSearch must be locked to Filter by a non-removable device-management profile."));
+  }
   if (!networkCurrent && !settings.siteRedirectEnabled) blockers.push(blocker("browser-redirect", "Browser redirect fallback must stay enabled until the system network block is current."));
   if (!settings.appQuitEnabled) blockers.push(blocker("app-quit", "App quit must be enabled."));
   if (!settings.strictBypassProtectionEnabled) blockers.push(blocker("bypass-protection", "Strict-lock bypass protection must be enabled."));
@@ -254,4 +259,9 @@ function appleContentFilterCurrent(safariFilter: SummaryRecord): boolean {
   if (apple && "current" in apple) return Boolean(apple.current);
   if ("appleCurrent" in safariFilter) return Boolean(safariFilter.appleCurrent);
   return false;
+}
+
+function chromeSafeSearchCurrent(chromeSafeSearch: SummaryRecord): boolean {
+  if ("effectiveCurrent" in chromeSafeSearch) return Boolean(chromeSafeSearch.effectiveCurrent);
+  return Boolean(chromeSafeSearch.current);
 }
