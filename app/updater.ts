@@ -3,7 +3,7 @@ import { isLocallyRebuildableSignature } from "../scripts/mac-signing-identity.m
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { link, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { plistStringForKey } from "../src/plist.js";
@@ -586,7 +586,13 @@ async function findExecutable(repoRoot: string, command: string): Promise<string
     timeoutMs: EXEC_TIMEOUT_MS
   });
   const path = result.ok ? result.stdout.trim().split(/\r?\n/u)[0] : "";
-  return path && resolve(path) === path && existsSync(path) ? path : null;
+  if (!path || resolve(path) !== path || !existsSync(path)) return null;
+  try {
+    const canonicalPath = await realpath(path);
+    return resolve(canonicalPath) === canonicalPath && existsSync(canonicalPath) ? canonicalPath : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function acquireUpdaterLock(lockPath: string, ownerPid = process.pid): Promise<UpdaterLock> {

@@ -44,6 +44,7 @@ assert.match(updaterSource, /packagedBuildRepoRoot\(app\)/u, "the installed app 
 assert.match(updaterSource, /existsSync\(join\(candidate, "\.git"\)\)/u, "source discovery must reject installed runtime copies that are not Git worktrees");
 assert.match(updaterSource, /const REPO_CHECK_ATTEMPTS = 3/u, "transient repository reads must be retried");
 assert.match(updaterSource, /await gitExecutable\(repoRoot\)/u, "repository verification must resolve a working Git binary");
+assert.match(updaterSource, /const canonicalPath = await realpath\(path\)/u, "the updater must launch the canonical Node executable rather than a user-path symlink rejected by the root guardian");
 assert.match(updateScriptSource, /command === "git" \? await gitExecutable\(cwd\) : command/u, "the external updater must use the same verified Git binary");
 assert.match(
   buildHumanIdleSource,
