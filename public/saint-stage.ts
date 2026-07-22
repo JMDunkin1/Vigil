@@ -267,7 +267,7 @@ export function createSaintStage() {
     aesthetic = normalizeSaintAesthetic(value);
     document.documentElement.dataset.saintAesthetic = aesthetic;
     for (const input of aestheticInputs) input.checked = input.value === aesthetic;
-    if (aestheticStatus) aestheticStatus.textContent = `${aesthetic === "serious" ? "Sacred Icons" : "Pixel Art"} active`;
+    if (aestheticStatus) aestheticStatus.textContent = `${aesthetic === "serious" ? "Traditional" : "Pixel Art"} active`;
     if (persist) storeSaintAesthetic(aesthetic);
     select(selectedId, persist, keepInfoOpen);
   }
