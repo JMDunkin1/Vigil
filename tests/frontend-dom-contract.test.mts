@@ -54,6 +54,9 @@ assert.match(html, /name="saintAesthetic" value="playful"/, "Appearance must off
 assert.match(html, /name="saintAesthetic" value="serious"/, "Appearance must offer the serious saint style");
 assert.match(html, /src="\/art\/saints\/michael\.png"/, "the playful style preview must use the existing saint artwork");
 assert.match(html, /src="\/art\/saints\/serious\/michael\.png"/, "the serious style preview must use the alternate saint artwork");
+assert.match(html, /Choose how the sacred portraits and app typography should feel/, "the aesthetic picker must describe a portrait set that can include Christ");
+assert.match(html, /Christ Pantocrator bonus/, "the serious option must disclose its bonus portrait");
+assert.match(html, /aria-label="Browse sacred portraits"/, "portrait navigation must not describe Christ as a patron saint");
 const settingsMarkup = html.match(/<section id="view-rules"[\s\S]*?<section id="view-devices"/)?.[0] || "";
 const firstSettingsDisclosure = settingsMarkup.match(/<details class="settings-disclosure[^>]*>[\s\S]*?<\/summary>/)?.[0] || "";
 assert.match(firstSettingsDisclosure, />App icon</, "app icon must be the first settings disclosure");
@@ -82,7 +85,19 @@ assert.match(settingsUiSource, /:scope > \.pill, :scope > #iconThemeStatus/, "th
 assert.match(saintAestheticStageSource, /vigil-saint-aesthetic/, "the saint aesthetic must persist as a renderer-local preference");
 assert.match(saintAestheticStageSource, /document\.documentElement\.dataset\.saintAesthetic = aesthetic/, "the preference must project to a root styling hook");
 assert.match(saintAestheticStageSource, /serious\/.*\$\{id\}\.png|serious\//, "serious mode must resolve the separate saint asset set");
-assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\][\s\S]*--font-display: Georgia/, "serious mode must enable formal display typography");
+assert.match(saintAestheticStageSource, /CHRIST_PANTOCRATOR[\s\S]*id: "christ"/, "serious mode must define the Christ Pantocrator bonus portrait");
+assert.match(saintAestheticStageSource, /SERIOUS_STAGE_PORTRAITS[\s\S]*CHRIST_PANTOCRATOR/, "Christ must belong only to the extended serious portrait set");
+assert.match(saintAestheticStageSource, /function setAesthetic[\s\S]*select\(selectedId, persist, keepInfoOpen\)/, "changing aesthetics must reselect a mode-valid portrait and refresh all stage metadata");
+const seriousTypographyDeclaration = stylesSource.match(/:root\[data-saint-aesthetic="serious"\]\s*\{([^}]*)\}/)?.[1] || "";
+assert.match(seriousTypographyDeclaration, /--font-body: Georgia, "Times New Roman", serif/, "serious mode must replace ordinary body copy typography");
+assert.match(seriousTypographyDeclaration, /--font-display: Georgia, "Times New Roman", serif/, "serious mode must replace formal display typography");
+assert.doesNotMatch(seriousTypographyDeclaration, /--font-mono:/, "serious mode must preserve the functional numeral font");
+assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] \.settings-titlebar \.settings-titlecopy h2/, "serious mode must override the hard-coded modern Settings heading");
+assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] body\[data-active-view="settings"\] \.settings-disclosure > summary > span:first-child/, "serious mode must override modern Settings disclosure titles");
+assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] body\[data-active-view="settings"\] \.settings-disclosure > summary > \.pill/, "serious mode must override modern Settings status copy");
+assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] \.saint-info-eyebrow/, "serious mode must carry its type through portrait metadata");
+assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] #protectionLevelStatus/, "serious mode must carry its type through utility labels");
+assert.match(stylesSource, /\.protection-level-choice span\s*\{[^}]*font-family: var\(--font-mono\)/, "protection-level digits must retain their functional numeral face");
 assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] #view-home \.saint-artwork[\s\S]*image-rendering: auto/, "serious paintings must not inherit pixel-art rendering");
 assert.doesNotMatch(stylesSource, /:root\[data-saint-aesthetic="serious"\][^{]*\{[^}]*background:/, "the serious preference must not replace Vigil's existing backgrounds");
 assert.match(settingsAppSource, /previousView === "settings" && state\.activeView !== "settings"[\s\S]*resetSettingsUi\(\)/, "the settings reset must run only after navigating away");
@@ -286,7 +301,7 @@ assert.match(html, /id="saintInfoPopover"[^>]*role="dialog"[^>]*aria-labelledby=
 for (const id of ["saintInfoName", "saintInfoEpithet", "saintInfoQuote", "saintInfoSource", "saintInfoClose", "saintInfoPrevious", "saintInfoNext"]) {
   assert.ok(idSet.has(id), `saint details are missing #${id}`);
 }
-assert.match(html, /class="saint-info-navigation" aria-label="Browse patron saints"/, "saint details must expose in-card previous and next navigation");
+assert.match(html, /class="saint-info-navigation" aria-label="Browse sacred portraits"/, "portrait details must expose in-card previous and next navigation");
 assert.match(html, /class="saint-info-actions">[\s\S]*?class="saint-info-navigation"[\s\S]*?id="saintInfoClose"/, "saint navigation and close must share a dedicated visible action area");
 assert.ok(html.indexOf('id="saintInfoPopover"') < html.indexOf('id="saintStage"'), "saint details must sit above rather than inside the artwork stage");
 assert.match(styles, /body\[data-active-view="home"\]\s*\{[^}]*height:\s*100vh;[^}]*overflow:\s*hidden;/, "Home must remain a fixed app viewport without page-level scrollbars");
@@ -300,8 +315,8 @@ const saintStageSource = await readFile("public/saint-stage.js", "utf8");
 assert.doesNotMatch(saintStageSource, /addEventListener\(["']dblclick["']/, "double-click must not open saint details");
 assert.match(saintStageSource, /addEventListener\(["']contextmenu["']/, "two-finger and right-click must open saint details");
 assert.doesNotMatch(saintStageSource, /event\.detail|clickTimer|setTimeout/, "every rapid left click must advance the saint immediately");
-assert.match(saintStageSource, /select\(previousSaintId\(selectedId\), true, true\)/, "the open saint card must browse backward without closing");
-assert.match(saintStageSource, /select\(nextSaintId\(selectedId\), true, true\)/, "the open saint card must browse forward without closing");
+assert.match(saintStageSource, /select\(previousStagePortraitId\(selectedId, aesthetic\), true, true\)/, "the open portrait card must browse backward within the active aesthetic without closing");
+assert.match(saintStageSource, /select\(nextStagePortraitId\(selectedId, aesthetic\), true, true\)/, "the open portrait card must browse forward within the active aesthetic without closing");
 assert.match(html, /class="saint-ambient"[\s\S]*?class="saint-geometry"[\s\S]*?class="saint-particles"/, "the patron stage must expose layered ambient geometry");
 assert.doesNotMatch(html, /saint-cursor-aura/, "the Home screen must not render a glow that follows the cursor");
 assert.doesNotMatch(styles, /saint-cursor-aura|--saint-pointer-(?:x|y|distance)/, "cursor-following glow styles must stay removed");

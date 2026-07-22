@@ -1,11 +1,18 @@
-export interface SaintPatron {
-  id: "michael" | "augustine" | "mary" | "joseph" | "thomas" | "benedict" | "pio";
+export type SaintPatronId = "michael" | "augustine" | "mary" | "joseph" | "thomas" | "benedict" | "pio";
+export type SaintStagePortraitId = SaintPatronId | "christ";
+
+export interface SaintStagePortrait {
+  id: SaintStagePortraitId;
   shortName: string;
   name: string;
   epithet: string;
   quote: string;
   source: string;
   fallback: string;
+}
+
+export interface SaintPatron extends SaintStagePortrait {
+  id: SaintPatronId;
 }
 
 export type SaintAesthetic = "playful" | "serious";
@@ -79,13 +86,54 @@ export const SAINT_PATRONS: readonly SaintPatron[] = [
   }
 ] as const;
 
+export const CHRIST_PANTOCRATOR: SaintStagePortrait = {
+  id: "christ",
+  shortName: "Christ",
+  name: "Jesus Christ Pantocrator",
+  epithet: "Ruler of All",
+  quote: "I am the light of the world. Whoever follows me will not walk in darkness, but will have the light of life.",
+  source: "John 8:12",
+  fallback: "C"
+};
+
+export const SERIOUS_STAGE_PORTRAITS: readonly SaintStagePortrait[] = [
+  ...SAINT_PATRONS,
+  CHRIST_PANTOCRATOR
+];
+
 const STORAGE_KEY = "vigil-patron-saint";
 
 export function normalizeSaintAesthetic(value: unknown): SaintAesthetic {
   return value === "serious" ? "serious" : "playful";
 }
 
-export function saintArtworkPath(id: SaintPatron["id"], aesthetic: SaintAesthetic): string {
+export function stagePortraitsForAesthetic(aesthetic: SaintAesthetic): readonly SaintStagePortrait[] {
+  return aesthetic === "serious" ? SERIOUS_STAGE_PORTRAITS : SAINT_PATRONS;
+}
+
+export function coerceStagePortraitId(id: unknown, aesthetic: SaintAesthetic): SaintStagePortraitId {
+  const portrait = stagePortraitsForAesthetic(aesthetic).find((item) => item.id === id);
+  return portrait?.id || "michael";
+}
+
+export function nextStagePortraitId(id: SaintStagePortraitId, aesthetic: SaintAesthetic): SaintStagePortraitId {
+  const portraits = stagePortraitsForAesthetic(aesthetic);
+  const selectedId = coerceStagePortraitId(id, aesthetic);
+  const index = portraits.findIndex((portrait) => portrait.id === selectedId);
+  return portraits[(index + 1) % portraits.length].id;
+}
+
+export function previousStagePortraitId(id: SaintStagePortraitId, aesthetic: SaintAesthetic): SaintStagePortraitId {
+  const portraits = stagePortraitsForAesthetic(aesthetic);
+  const selectedId = coerceStagePortraitId(id, aesthetic);
+  const index = portraits.findIndex((portrait) => portrait.id === selectedId);
+  return portraits[(index - 1 + portraits.length) % portraits.length].id;
+}
+
+export function saintArtworkPath(id: SaintStagePortraitId, aesthetic: SaintAesthetic): string {
+  if (!stagePortraitsForAesthetic(aesthetic).some((portrait) => portrait.id === id)) {
+    throw new Error(`${id} artwork is unavailable in ${aesthetic} mode`);
+  }
   const directory = aesthetic === "serious" ? "serious/" : "";
   return `/art/saints/${directory}${id}.png`;
 }
@@ -114,15 +162,14 @@ export function createSaintStage() {
   const infoSource = required<HTMLElement>("#saintInfoSource");
   const aestheticStatus = document.querySelector<HTMLElement>("#saintAestheticStatus");
   const aestheticInputs = [...document.querySelectorAll<HTMLInputElement>('input[name="saintAesthetic"]')];
-  let selectedId = storedSaintId();
   let aesthetic = storedSaintAesthetic();
+  let selectedId = coerceStagePortraitId(storedStagePortraitId(), aesthetic);
   let pointerFrame: number | null = null;
 
   function bind(): void {
     setAesthetic(aesthetic, false);
-    select(selectedId, false);
     stageButton.addEventListener("click", () => {
-      select(nextSaintId(selectedId));
+      select(nextStagePortraitId(selectedId, aesthetic));
     });
     stageButton.addEventListener("contextmenu", (event) => {
       event.preventDefault();
@@ -134,8 +181,8 @@ export function createSaintStage() {
       openInfo();
     });
     infoClose.addEventListener("click", () => closeInfo());
-    infoPrevious.addEventListener("click", () => select(previousSaintId(selectedId), true, true));
-    infoNext.addEventListener("click", () => select(nextSaintId(selectedId), true, true));
+    infoPrevious.addEventListener("click", () => select(previousStagePortraitId(selectedId, aesthetic), true, true));
+    infoNext.addEventListener("click", () => select(nextStagePortraitId(selectedId, aesthetic), true, true));
     document.addEventListener("pointerdown", (event) => {
       if (infoPopover.hidden) return;
       const target = event.target;
@@ -152,10 +199,10 @@ export function createSaintStage() {
       if (!(target instanceof Node) || !infoPopover.contains(target)) return;
       if (event.key === "ArrowLeft") {
         event.preventDefault();
-        select(previousSaintId(selectedId), true, true);
+        select(previousStagePortraitId(selectedId, aesthetic), true, true);
       } else if (event.key === "ArrowRight") {
         event.preventDefault();
-        select(nextSaintId(selectedId), true, true);
+        select(nextStagePortraitId(selectedId, aesthetic), true, true);
       }
     });
     artwork.addEventListener("load", () => {
@@ -198,31 +245,31 @@ export function createSaintStage() {
     });
   }
 
-  function select(id: SaintPatron["id"], persist = true, keepInfoOpen = false): void {
-    const saint = SAINT_PATRONS.find((item) => item.id === id) || SAINT_PATRONS[0];
+  function select(id: SaintStagePortraitId, persist = true, keepInfoOpen = false): void {
+    const portrait = stagePortrait(coerceStagePortraitId(id, aesthetic), aesthetic);
     if (!keepInfoOpen) closeInfo();
-    selectedId = saint.id;
+    selectedId = portrait.id;
     stage.classList.remove("is-switching-saint");
     void stage.offsetWidth;
     stage.classList.add("is-switching-saint");
-    stage.dataset.saint = saint.id;
+    stage.dataset.saint = portrait.id;
     stage.dataset.artMissing = "false";
-    artwork.src = saintArtworkPath(saint.id, aesthetic);
-    artwork.alt = saint.name;
-    fallback.textContent = saint.fallback;
-    stageButton.setAttribute("aria-label", `${saint.name}. Show the next patron saint.`);
-    if (persist) storeSaintId(saint.id);
+    artwork.src = saintArtworkPath(portrait.id, aesthetic);
+    artwork.alt = portrait.name;
+    fallback.textContent = portrait.fallback;
+    stageButton.setAttribute("aria-label", `${portrait.name}. Show the next sacred portrait.`);
+    if (persist) storeStagePortraitId(portrait.id);
     if (keepInfoOpen) renderInfo();
   }
 
   function setAesthetic(value: SaintAesthetic, persist = true): void {
+    const keepInfoOpen = !infoPopover.hidden;
     aesthetic = normalizeSaintAesthetic(value);
     document.documentElement.dataset.saintAesthetic = aesthetic;
     for (const input of aestheticInputs) input.checked = input.value === aesthetic;
     if (aestheticStatus) aestheticStatus.textContent = `${aesthetic === "serious" ? "Serious" : "Playful"} style active`;
-    stage.dataset.artMissing = "false";
-    artwork.src = saintArtworkPath(selectedId, aesthetic);
     if (persist) storeSaintAesthetic(aesthetic);
+    select(selectedId, persist, keepInfoOpen);
   }
 
   function openInfo(): void {
@@ -233,13 +280,13 @@ export function createSaintStage() {
   }
 
   function renderInfo(): void {
-    const saint = SAINT_PATRONS.find((item) => item.id === selectedId) || SAINT_PATRONS[0];
-    infoName.textContent = saint.name;
-    infoEpithet.textContent = saint.epithet;
-    infoQuote.textContent = `\u201c${saint.quote}\u201d`;
-    infoSource.textContent = saint.source;
-    const previous = patron(previousSaintId(selectedId));
-    const next = patron(nextSaintId(selectedId));
+    const portrait = stagePortrait(selectedId, aesthetic);
+    infoName.textContent = portrait.name;
+    infoEpithet.textContent = portrait.epithet;
+    infoQuote.textContent = `\u201c${portrait.quote}\u201d`;
+    infoSource.textContent = portrait.source;
+    const previous = stagePortrait(previousStagePortraitId(selectedId, aesthetic), aesthetic);
+    const next = stagePortrait(nextStagePortraitId(selectedId, aesthetic), aesthetic);
     infoPrevious.setAttribute("aria-label", `Show ${previous.name}`);
     infoNext.setAttribute("aria-label", `Show ${next.name}`);
   }
@@ -263,23 +310,14 @@ export function createSaintStage() {
   return { bind, select };
 }
 
-function nextSaintId(id: SaintPatron["id"]): SaintPatron["id"] {
-  const index = SAINT_PATRONS.findIndex((saint) => saint.id === id);
-  return SAINT_PATRONS[(index + 1) % SAINT_PATRONS.length].id;
+function stagePortrait(id: SaintStagePortraitId, aesthetic: SaintAesthetic): SaintStagePortrait {
+  return stagePortraitsForAesthetic(aesthetic).find((portrait) => portrait.id === id) || SAINT_PATRONS[0];
 }
 
-function previousSaintId(id: SaintPatron["id"]): SaintPatron["id"] {
-  const index = SAINT_PATRONS.findIndex((saint) => saint.id === id);
-  return SAINT_PATRONS[(index - 1 + SAINT_PATRONS.length) % SAINT_PATRONS.length].id;
-}
-
-function patron(id: SaintPatron["id"]): SaintPatron {
-  return SAINT_PATRONS.find((saint) => saint.id === id) || SAINT_PATRONS[0];
-}
-
-function storedSaintId(): SaintPatron["id"] {
+function storedStagePortraitId(): SaintStagePortraitId {
   try {
     const value = localStorage.getItem(STORAGE_KEY);
+    if (value === "christ") return value;
     const saint = SAINT_PATRONS.find((item) => item.id === value);
     if (saint) return saint.id;
   } catch {
@@ -287,7 +325,7 @@ function storedSaintId(): SaintPatron["id"] {
   return "michael";
 }
 
-function storeSaintId(id: SaintPatron["id"]): void {
+function storeStagePortraitId(id: SaintStagePortraitId): void {
   try {
     localStorage.setItem(STORAGE_KEY, id);
   } catch {

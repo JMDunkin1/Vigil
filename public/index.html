@@ -56,11 +56,11 @@
         <div id="vigilOrb" class="vigil-orb idle" aria-hidden="true"></div>
         <aside id="saintInfoPopover" class="saint-info-popover" role="dialog" aria-labelledby="saintInfoName" tabindex="-1" hidden>
           <div class="saint-info-actions">
-            <nav class="saint-info-navigation" aria-label="Browse patron saints">
-              <button id="saintInfoPrevious" class="saint-info-navigation-button" type="button" aria-label="Show previous saint details" title="Previous saint">&larr;</button>
-              <button id="saintInfoNext" class="saint-info-navigation-button" type="button" aria-label="Show next saint details" title="Next saint">&rarr;</button>
+            <nav class="saint-info-navigation" aria-label="Browse sacred portraits">
+              <button id="saintInfoPrevious" class="saint-info-navigation-button" type="button" aria-label="Show previous sacred portrait" title="Previous portrait">&larr;</button>
+              <button id="saintInfoNext" class="saint-info-navigation-button" type="button" aria-label="Show next sacred portrait" title="Next portrait">&rarr;</button>
             </nav>
-            <button id="saintInfoClose" class="saint-info-close" type="button" aria-label="Close saint details">&times;</button>
+            <button id="saintInfoClose" class="saint-info-close" type="button" aria-label="Close portrait details">&times;</button>
           </div>
           <p id="saintInfoEpithet" class="saint-info-eyebrow"></p>
           <h2 id="saintInfoName"></h2>
@@ -70,7 +70,7 @@
           </blockquote>
         </aside>
         <div id="saintStage" class="saint-stage" data-saint="michael">
-          <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next patron saint" aria-haspopup="dialog" aria-controls="saintInfoPopover" aria-expanded="false">
+          <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next sacred portrait" aria-haspopup="dialog" aria-controls="saintInfoPopover" aria-expanded="false">
             <span class="saint-ambient" aria-hidden="true">
               <span class="saint-geometry"></span>
               <span class="saint-orbit saint-orbit-primary"></span>
@@ -353,7 +353,7 @@
           <p class="field-note">The menu-bar icon changes immediately. macOS keeps the installed app bundle's Jerusalem Cross icon in Finder and Spotlight until the app is rebuilt.</p>
           <div class="saint-aesthetic-settings">
             <fieldset class="icon-theme-picker saint-aesthetic-picker">
-              <legend>Choose how the patron saints and display type should feel</legend>
+              <legend>Choose how the sacred portraits and app typography should feel</legend>
               <label class="icon-theme-option">
                 <input type="radio" name="saintAesthetic" value="playful" checked>
                 <span class="icon-theme-preview saint-aesthetic-preview"><img src="/art/saints/michael.png" alt=""></span>
@@ -362,7 +362,7 @@
               <label class="icon-theme-option">
                 <input type="radio" name="saintAesthetic" value="serious">
                 <span class="icon-theme-preview saint-aesthetic-preview"><img src="/art/saints/serious/michael.png" alt=""></span>
-                <span><strong>Serious</strong><small>Aged icon paintings with formal serif display type</small></span>
+                <span><strong>Serious</strong><small>Aged icon paintings, cohesive serif type, and a Christ Pantocrator bonus</small></span>
               </label>
             </fieldset>
             <p id="saintAestheticStatus" class="field-note" aria-live="polite">Playful style active</p>

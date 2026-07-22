@@ -8791,8 +8791,8 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   cursor: nesw-resize;
 }
 
-/* Patron artwork preference: preserve the existing scene and swap only the
-   figure assets plus the display typography selected in Appearance. */
+/* Sacred portrait preference: preserve the existing scene and swap only the
+   figure assets plus the cohesive typography selected in Appearance. */
 .saint-aesthetic-settings {
   margin-top: 16px;
   padding-top: 16px;
@@ -8817,6 +8817,7 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
 }
 
 :root[data-saint-aesthetic="serious"] {
+  --font-body: Georgia, "Times New Roman", serif;
   --font-display: Georgia, "Times New Roman", serif;
 }
 
@@ -8824,15 +8825,31 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   letter-spacing: 0.055em;
 }
 
+:root[data-saint-aesthetic="serious"] .settings-titlebar .settings-titlecopy h2,
+:root[data-saint-aesthetic="serious"] body[data-active-view="settings"] .settings-disclosure > summary > span:first-child {
+  font-family: var(--font-display);
+  letter-spacing: 0.01em;
+}
+
+:root[data-saint-aesthetic="serious"] body[data-active-view="settings"] .settings-disclosure > summary > .pill,
+:root[data-saint-aesthetic="serious"] .eyebrow,
+:root[data-saint-aesthetic="serious"] .saint-info-eyebrow,
+:root[data-saint-aesthetic="serious"] .audio-session-controls legend,
+:root[data-saint-aesthetic="serious"] .protection-level-scale,
+:root[data-saint-aesthetic="serious"] .home-runtime-status,
+:root[data-saint-aesthetic="serious"] .audio-track-row em,
+:root[data-saint-aesthetic="serious"] #protectionLevelStatus {
+  font-family: var(--font-body);
+}
+
 :root[data-saint-aesthetic="serious"] #view-home .home-runtime-status {
-  font-family: Georgia, "Times New Roman", serif;
   font-weight: 700;
   letter-spacing: 0.11em;
 }
 
 :root[data-saint-aesthetic="serious"] #view-home .saint-info-popover h2,
 :root[data-saint-aesthetic="serious"] #view-home .saint-info-popover blockquote p {
-  font-family: Georgia, "Times New Roman", serif;
+  font-family: var(--font-display);
 }
 
 :root[data-saint-aesthetic="serious"] #view-home .saint-artwork {
