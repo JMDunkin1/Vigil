@@ -99,13 +99,13 @@ assert.match(
 assert.doesNotMatch(mainSource, /label: "Quit Vigil"/, "the menu-bar menu must not offer a misleading true-quit action");
 assert.match(
   mainSource,
-  /quitForUpdate: \(\) => \{\s*try \{\s*suspendEmbeddedRuntimeSupervisor\(\);\s*\} catch \(error\) \{[\s\S]*?return;\s*\}\s*quitForUpdate = true;\s*app\.quit\(\);\s*\}/,
-  "an app update must stay running when restart supervision cannot be suspended and only quit after suspension succeeds"
+  /quitForUpdate: async \(\) => \{\s*try \{\s*await assertEmbeddedRuntimeSupervisorArmedForUpdate\(\);\s*\} catch \(error\) \{[\s\S]*?throw error;\s*\}\s*quitForUpdate = true;\s*app\.quit\(\);\s*\}/,
+  "an app update must stay running and reject quit authorization unless its maintenance-aware recovery supervisor is armed"
 );
 assert.match(
   mainSource,
-  /function suspendEmbeddedRuntimeSupervisor\(\): void \{\s*if \(!app\.isPackaged\) return;\s*const markerPath = embeddedRuntimeSupervisorMarkerPath\(\);\s*rmSync\(markerPath, \{ force: true \}\);\s*if \(existsSync\(markerPath\)\) \{\s*throw new Error\("Vigil could not verify that restart supervision was suspended\."\);\s*\}\s*\}/,
-  "restart supervision suspension must surface marker-removal failures and verify the reopen marker is gone"
+  /async function assertEmbeddedRuntimeSupervisorArmedForUpdate\(\): Promise<void> \{[\s\S]*?lstatSync\(markerPath\)[\s\S]*?marker\.isSymbolicLink\(\)[\s\S]*?readFileSync\(markerPath, "utf8"\) !== "enabled\\n"[\s\S]*?waitForLaunchctlServiceRunning\(uid, EMBEDDED_SUPERVISOR_LABEL\)/,
+  "the update quit path must verify the private recovery marker and a stably running supervisor"
 );
 assert.match(
   beforeQuitSource,
@@ -375,7 +375,8 @@ const menuInstallIndex = mainSource.indexOf("installMenu(appUrl)", protocolInsta
 const trayInstallIndex = mainSource.indexOf("installMenuBarCompanion(appUrl)", menuInstallIndex);
 const windowInitializationIndex = mainSource.indexOf("showVigilWindow(appUrl)", trayInstallIndex);
 const runtimeReadyIndex = mainSource.indexOf("await markRuntimeReady(appDataDir(), process.execPath)", windowInitializationIndex);
-const startupCompleteIndex = mainSource.indexOf("startupComplete = true", runtimeReadyIndex);
+const candidateAttestationIndex = mainSource.indexOf("await attestUpdateCandidateAfterSustainedHealth(runtimeReady)", runtimeReadyIndex);
+const startupCompleteIndex = mainSource.indexOf("startupComplete = true", candidateAttestationIndex);
 const interruptionClearIndex = mainSource.indexOf("await clearRuntimeInterruption(appDataDir(), acknowledgedRuntimeInterruption.id)", startupCompleteIndex);
 assert.ok(
   runtimeStartIndex >= 0
@@ -387,9 +388,46 @@ assert.ok(
     && trayInstallIndex > menuInstallIndex
     && windowInitializationIndex > trayInstallIndex
     && runtimeReadyIndex > windowInitializationIndex
-    && startupCompleteIndex > runtimeReadyIndex
+    && candidateAttestationIndex > runtimeReadyIndex
+    && startupCompleteIndex > candidateAttestationIndex
     && interruptionClearIndex > startupCompleteIndex,
-  "runtime readiness must follow initialization and clear only interruption evidence already persisted by successful startup"
+  "runtime readiness and sustained candidate attestation must follow initialization before startup clears acknowledged interruption evidence"
+);
+const candidateAttestationStart = mainSource.indexOf("async function attestUpdateCandidateAfterSustainedHealth");
+const candidateAttestationEnd = mainSource.indexOf("\nasync function companionServerIsHealthy", candidateAttestationStart);
+assert.ok(candidateAttestationStart >= 0 && candidateAttestationEnd > candidateAttestationStart, "candidate attestation must be implemented as a bounded startup step");
+const candidateAttestationSource = mainSource.slice(candidateAttestationStart, candidateAttestationEnd);
+assert.match(
+  mainSource,
+  /const UPDATE_CANDIDATE_SUSTAINED_HEALTH_MS = 1_500;/u,
+  "candidate self-attestation must retain a meaningful 1.5-second sustained-health window"
+);
+assert.match(
+  candidateAttestationSource,
+  /setTimeout\(resolve, UPDATE_CANDIDATE_SUSTAINED_HEALTH_MS\)[\s\S]*?attestUpdateCandidateOnce\(expected, null\)[\s\S]*?liveRuntimeReady\(appDataDir\(\), Date\.parse\(expected\.startedAt\)\)[\s\S]*?companionServerIsHealthy\(\)/u,
+  "candidate attestation must retain the sustained-health window before rechecking exact live readiness and signed companion health"
+);
+for (const exactField of ["pid", "appPath", "startedAt"]) {
+  assert.match(
+    candidateAttestationSource,
+    new RegExp(`liveReady\\.${exactField} !== expected\\.${exactField}`, "u"),
+    `candidate attestation must bind the live readiness ${exactField} to the marker this process wrote`
+  );
+}
+assert.match(
+  candidateAttestationSource,
+  /updateRecoveryPaths\(join\(app\.getPath\("userData"\), "updater"\)\)[\s\S]*?recoveryManifestEntryExists\(recoveryPaths\.manifestPath\)[\s\S]*?readUpdateRecoveryPolicyFile\(recoveryPaths\.policyPath\)[\s\S]*?readUpdateRecoveryManifest\(loadedPolicy\.policy\)[\s\S]*?if \(!manifest\) return;[\s\S]*?observedAttemptId \|\|= manifest\.attemptId[\s\S]*?manifest\.attemptId !== observedAttemptId[\s\S]*?markUpdateRecoveryCommitIntent\(loadedPolicy\.policy, observedAttemptId\)/u,
+  "a live candidate must load the private recovery policy and attest only the exact manifest attempt, while an absent manifest remains a no-op"
+);
+assert.match(
+  candidateAttestationSource,
+  /catch \(error\) \{[\s\S]*?console\.error\("Vigil could not attest the sustained health of its update candidate; it will retry\."[\s\S]*?scheduleUpdateCandidateAttestationRetry\(expected, observedAttemptId\)/u,
+  "candidate attestation failure must be logged without discarding recovery evidence or taking down the healthy runtime"
+);
+assert.match(
+  mainSource,
+  /const UPDATE_CANDIDATE_ATTESTATION_RETRY_MS = 2_000;[\s\S]*?if \(quitForUpdate \|\| updateCandidateAttestationRetryTimer\) return;[\s\S]*?attestUpdateCandidateOnce\(expected, pinnedAttemptId\)/u,
+  "a transient candidate-attestation failure must retry the pinned attempt instead of wedging a healthy pending replacement"
 );
 assert.match(
   mainSource,

@@ -70,11 +70,11 @@ assert.doesNotMatch(embeddedSupervisorScript, /kill -0/, "the supervisor must ob
 assert.match(embeddedSupervisorScript, /ready_loaded=false[\s\S]*?if \[\[ "\$ready_loaded" == true \]\]; then[\s\S]*?ready_loaded=true/, "healthy supervisor polls must reuse the validated immutable readiness identity");
 const embeddedHealthyContinue = embeddedSupervisorScript.indexOf('/bin/sleep 2\n    continue');
 const embeddedPreserveCall = embeddedSupervisorScript.indexOf('if ! preserve_interruption "$pid" "$started_at" "$reason"');
-const embeddedRecoveryOpen = embeddedSupervisorScript.indexOf('/usr/bin/open -g "$app_path"', embeddedPreserveCall);
+const embeddedRecoveryOpen = embeddedSupervisorScript.indexOf('\n          reopen_vigil', embeddedPreserveCall);
 const embeddedPreserveRetry = embeddedSupervisorScript.indexOf('/bin/sleep 2\n        continue', embeddedRecoveryOpen);
 const embeddedReadyRemoval = embeddedSupervisorScript.indexOf('/bin/rm -f "$ready"', embeddedPreserveCall);
 const embeddedMarkerRecheck = embeddedSupervisorScript.indexOf('if [[ ! -e "$marker" ]]', embeddedReadyRemoval);
-const embeddedReopen = embeddedSupervisorScript.indexOf('/usr/bin/open -g "$app_path"', embeddedMarkerRecheck);
+const embeddedReopen = embeddedSupervisorScript.indexOf('\n  reopen_vigil', embeddedMarkerRecheck);
 assert.ok(
   embeddedHealthyContinue >= 0
     && embeddedPreserveCall > embeddedHealthyContinue

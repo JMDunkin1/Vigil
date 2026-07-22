@@ -16,6 +16,14 @@ interface FocusedSocialFeatureDefinition {
   key: FocusedSocialFeatureKey;
   label: string;
   deniedUrls: string[];
+  /**
+   * A harmless, same-origin URL used by the fixed iOS companion to determine
+   * whether this individual feature is active in the managed web filter. The
+   * service page never navigates here; it only issues a credentialed HEAD
+   * request. Query-specific probes let DOM cleanup mirror each toggle instead
+   * of collapsing every option into one platform-wide "soft" state.
+   */
+  probeUrls?: string[];
   permanent?: boolean;
 }
 
@@ -45,6 +53,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "reels",
         label: "Reels",
+        probeUrls: ["https://www.instagram.com/?__vigil_feature=reels"],
         deniedUrls: [
           "instagram.com/reel",
           "instagram.com/reels"
@@ -53,6 +62,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "explore",
         label: "Explore",
+        probeUrls: ["https://www.instagram.com/?__vigil_feature=explore"],
         deniedUrls: [
           "instagram.com/explore"
         ]
@@ -60,6 +70,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "suggested",
         label: "Suggested posts",
+        probeUrls: ["https://www.instagram.com/?__vigil_feature=suggested"],
         deniedUrls: [
           "instagram.com/explore/people/suggested"
         ]
@@ -67,6 +78,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "shopping",
         label: "Shopping and live",
+        probeUrls: ["https://www.instagram.com/?__vigil_feature=shopping"],
         deniedUrls: [
           "instagram.com/shop",
           "instagram.com/shopping",
@@ -76,6 +88,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "ads",
         label: "Ads and sponsored posts",
+        probeUrls: ["https://www.instagram.com/?__vigil_feature=ads"],
         deniedUrls: []
       }
     ]
@@ -99,6 +112,10 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "home",
         label: "Home recommendations",
+        probeUrls: [
+          "https://www.youtube.com/?__vigil_feature=home",
+          "https://m.youtube.com/?__vigil_feature=home"
+        ],
         deniedUrls: [
           "youtube.com/feed/recommended",
           "m.youtube.com/feed/recommended"
@@ -107,6 +124,10 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "explore",
         label: "Explore and trending",
+        probeUrls: [
+          "https://www.youtube.com/?__vigil_feature=explore",
+          "https://m.youtube.com/?__vigil_feature=explore"
+        ],
         deniedUrls: [
           "youtube.com/feed/explore",
           "m.youtube.com/feed/explore",
@@ -117,6 +138,10 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "suggested",
         label: "Suggested next",
+        probeUrls: [
+          "https://www.youtube.com/?__vigil_feature=suggested",
+          "https://m.youtube.com/?__vigil_feature=suggested"
+        ],
         deniedUrls: [
           "youtube.com/results?search_query=shorts",
           "m.youtube.com/results?search_query=shorts"
@@ -125,6 +150,10 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "ads",
         label: "Ads and sponsored posts",
+        probeUrls: [
+          "https://www.youtube.com/?__vigil_feature=ads",
+          "https://m.youtube.com/?__vigil_feature=ads"
+        ],
         deniedUrls: []
       }
     ]
@@ -157,7 +186,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
 ];
 
 export const FOCUSED_SOCIAL_URL_PATTERNS = FOCUSED_SOCIAL_PLATFORMS.flatMap((platform) => (
-  platform.features.flatMap((feature) => feature.deniedUrls)
+  platform.features.flatMap(featureUrls)
 ));
 const FOCUSED_SOCIAL_URL_PATTERN_KEYS = new Set(FOCUSED_SOCIAL_URL_PATTERNS.map(normalizePatternKey));
 
@@ -218,7 +247,7 @@ export function focusedSocialDeniedUrls(value: unknown): string[] {
     if (!platformSettings.enabled) {
       return platform.features.flatMap((feature) => feature.permanent ? feature.deniedUrls : []);
     }
-    return platform.features.flatMap((feature) => platformSettings[feature.key] === false ? [] : feature.deniedUrls);
+    return platform.features.flatMap((feature) => platformSettings[feature.key] === false ? [] : featureUrls(feature));
   }).concat(permanent));
 }
 
@@ -280,7 +309,7 @@ export function focusedSocialSummary(
       companionBundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS[platform.id as keyof typeof IOS_SOCIAL_COMPANION_BUNDLE_IDS] || null,
       webClip: null,
       features: platformSettings.enabled ? features.map((feature) => feature.label) : [],
-      deniedUrlCount: platformSettings.enabled && includeDeniedUrls ? features.reduce((total, feature) => total + feature.deniedUrls.length, 0) : 0
+      deniedUrlCount: platformSettings.enabled && includeDeniedUrls ? features.reduce((total, feature) => total + featureUrls(feature).length, 0) : 0
     };
   });
   const enabledPlatforms = platforms.filter((platform) => platform.enabled);
@@ -387,4 +416,8 @@ function normalizePatternKey(value: unknown): string {
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
     .replace(/\/+$/, "");
+}
+
+function featureUrls(feature: FocusedSocialFeatureDefinition): string[] {
+  return feature.probeUrls?.length ? [...feature.deniedUrls, ...feature.probeUrls] : feature.deniedUrls;
 }

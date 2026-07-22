@@ -23,7 +23,9 @@ enum SocialService: String, CaseIterable, Identifiable {
     var homeURL: URL {
         switch self {
         case .instagram:
-            URL(string: "https://www.instagram.com/")!
+            // The public root is a marketing shell on signed-out mobile WebKit.
+            // Authenticated sessions are redirected back to the feed by Instagram.
+            URL(string: "https://www.instagram.com/accounts/login/")!
         case .youtube:
             URL(string: "https://m.youtube.com/")!
         }
@@ -53,6 +55,16 @@ enum SocialService: String, CaseIterable, Identifiable {
         }
     }
 
+    func isCanonicalAppHost(_ host: String) -> Bool {
+        let normalized = host.lowercased()
+        switch self {
+        case .instagram:
+            return normalized == "instagram.com" || normalized == "www.instagram.com"
+        case .youtube:
+            return ["youtube.com", "www.youtube.com", "m.youtube.com"].contains(normalized)
+        }
+    }
+
     static func resolve(_ url: URL) -> SocialService? {
         let scheme = url.scheme?.lowercased() ?? ""
         if scheme == "vigilsocial" || scheme.hasPrefix("vigil-") {
@@ -71,7 +83,8 @@ enum SocialService: String, CaseIterable, Identifiable {
     }
 
     func allowsNavigation(to url: URL) -> Bool {
-        guard url.scheme?.lowercased() == "https" else { return false }
+        guard url.scheme?.lowercased() == "https",
+              url.port == nil || url.port == 443 else { return false }
         let host = url.host?.lowercased() ?? ""
         switch self {
         case .instagram:
@@ -88,6 +101,12 @@ enum SocialService: String, CaseIterable, Identifiable {
                 || host == "youtu.be"
                 || host == "accounts.google.com"
         }
+    }
+
+    func allowsEmbeddedNavigation(to url: URL) -> Bool {
+        let scheme = url.scheme?.lowercased() ?? ""
+        if scheme == "about" { return url.absoluteString.lowercased() == "about:blank" }
+        return allowsNavigation(to: url) && !isRestrictedSurface(url)
     }
 
     func isRestrictedSurface(_ url: URL) -> Bool {

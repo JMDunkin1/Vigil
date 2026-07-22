@@ -1,4 +1,5 @@
 import type { ControlElement, UnknownRecord } from "./app-model.js";
+import { deriveAppUpdateViewState } from "./app-update-state.js";
 
 type GetRequest = <T = unknown>(path: string) => Promise<T>;
 type PostRequest = <T = unknown>(path: string, body: unknown) => Promise<T>;
@@ -15,6 +16,7 @@ interface AppUpdatePanelContext {
 interface VigilAppUpdateBridge {
   status(options?: { checkRemote?: boolean }): Promise<unknown>;
   start(): Promise<unknown>;
+  subscribe?(listener: (status: unknown) => void): () => void;
 }
 
 interface VigilAppUpdateWindow extends Window {
@@ -23,12 +25,25 @@ interface VigilAppUpdateWindow extends Window {
 
 export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppUpdatePanelContext) {
   let cached: UnknownRecord | null = null;
-  let checking = false;
+  let requestInFlight = false;
+  let visibleOperation: "checking" | "starting" | null = null;
   let runningRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let requestVersion = 0;
+  let acceptedStateRevision = -1;
+  let unsubscribeFromState: (() => void) | null = null;
+  let unloadCleanupBound = false;
 
   return {
     bind() {
+      unsubscribeFromState?.();
+      unsubscribeFromState = appUpdateBridge()?.subscribe?.(acceptPublishedStatus) || null;
+      if (!unloadCleanupBound && typeof window.addEventListener === "function") {
+        unloadCleanupBound = true;
+        window.addEventListener("beforeunload", dispose, { once: true });
+      }
       $("#checkAppUpdate").addEventListener("click", () => {
+        if (requestInFlight) return;
+        if (!currentView().actionEnabled) return;
         if (canInstall(cached)) {
           void startUpdate();
           return;
@@ -39,44 +54,93 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     refreshStatus,
     render() {
       renderStatus(cached);
-    }
+    },
+    dispose
   };
 
+  function dispose(): void {
+    requestVersion += 1;
+    requestInFlight = false;
+    visibleOperation = null;
+    unsubscribeFromState?.();
+    unsubscribeFromState = null;
+    if (runningRefreshTimer) clearTimeout(runningRefreshTimer);
+    runningRefreshTimer = null;
+  }
+
   async function refreshStatus(checkRemote = false): Promise<void> {
-    if (checking) return;
-    checking = true;
-    const button = $("#checkAppUpdate");
-    button.disabled = true;
-    button.textContent = "Checking...";
-    $("#appUpdateStatus").textContent = "Checking...";
+    if (requestInFlight) return;
+    const submittedVersion = ++requestVersion;
+    requestInFlight = true;
+    visibleOperation = checkRemote || !cached ? "checking" : null;
+    renderStatus(cached);
     try {
-      cached = await requestStatus(checkRemote);
-      renderStatus(cached);
+      const status = await requestStatus(checkRemote);
+      if (submittedVersion !== requestVersion || !acceptStateRevision(status)) return;
+      cached = status;
     } catch (error) {
-      cached = failedStatus(errorMessage(error));
+      if (submittedVersion !== requestVersion) return;
+      cached = failedStatus(errorMessage(error), cached);
     } finally {
-      checking = false;
+      if (submittedVersion !== requestVersion) return;
+      requestInFlight = false;
+      visibleOperation = null;
       renderStatus(cached);
       scheduleRunningRefresh();
     }
   }
 
   async function startUpdate(): Promise<void> {
-    const button = $("#checkAppUpdate");
-    button.disabled = true;
-    button.textContent = "Starting Update...";
-    $("#appUpdateStatus").textContent = "Starting update...";
+    if (requestInFlight) return;
+    const submittedVersion = ++requestVersion;
+    requestInFlight = true;
+    visibleOperation = "starting";
+    renderStatus(cached);
     try {
-      cached = await requestStart();
-      renderStatus(cached);
-      scheduleRunningRefresh();
-      toast("Vigil update started");
+      const status = await requestStart();
+      if (submittedVersion !== requestVersion || !acceptStateRevision(status)) return;
+      cached = status;
+      toast(cached.noUpdate === true
+        ? String(cached.message || "No newer Vigil update is available.")
+        : cached.ok === true
+          ? "Vigil update started"
+          : String(cached.message || cached.error || "Vigil update is already running"));
     } catch (error) {
+      if (submittedVersion !== requestVersion) return;
       const message = errorMessage(error);
       cached = failedStatus(message, cached);
       toast(message);
+    } finally {
+      if (submittedVersion !== requestVersion) return;
+      requestInFlight = false;
+      visibleOperation = null;
       renderStatus(cached);
+      scheduleRunningRefresh();
     }
+  }
+
+  function acceptPublishedStatus(value: unknown): void {
+    let status: UnknownRecord;
+    try {
+      status = statusResult(value, "Update state could not be read.");
+    } catch {
+      return;
+    }
+    if (!acceptStateRevision(status)) return;
+    requestVersion += 1;
+    requestInFlight = false;
+    visibleOperation = null;
+    cached = { ...(cached || {}), ...status };
+    renderStatus(cached);
+    scheduleRunningRefresh();
+  }
+
+  function acceptStateRevision(status: UnknownRecord): boolean {
+    const revision = Number(status.updateStateRevision);
+    if (!Number.isSafeInteger(revision) || revision < 0) return true;
+    if (revision < acceptedStateRevision) return false;
+    acceptedStateRevision = revision;
+    return true;
   }
 
   function scheduleRunningRefresh(): void {
@@ -84,7 +148,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
       clearTimeout(runningRefreshTimer);
       runningRefreshTimer = null;
     }
-    if (!cached?.running) return;
+    if (!deriveAppUpdateViewState(cached).shouldPoll) return;
     runningRefreshTimer = setTimeout(() => {
       runningRefreshTimer = null;
       void refreshStatus(false);
@@ -96,7 +160,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     const result = bridge
       ? await bridge.status({ checkRemote })
       : await get<UnknownRecord>(checkRemote ? "/api/app-update/status?check=1" : "/api/app-update/status");
-    return successfulResult(result, "Update check failed.");
+    return statusResult(result, "Update check failed.");
   }
 
   async function requestStart(): Promise<UnknownRecord> {
@@ -109,25 +173,22 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
 
   function renderStatus(status: UnknownRecord | null): void {
     const button = $("#checkAppUpdate");
+    const view = currentView(status);
     if (!status) {
-      $("#appUpdateStatus").textContent = "Not checked";
+      $("#appUpdateStatus").textContent = view.statusMessage;
       $("#appUpdateMeta").textContent = "--";
-      button.textContent = "Check for Updates";
-      button.disabled = false;
+      button.textContent = view.actionLabel;
+      button.disabled = !view.actionEnabled;
       button.classList.remove("primary");
       button.classList.add("secondary");
       return;
     }
-    const supported = status.supported !== false;
-    const running = Boolean(status.running);
     const dirty = Boolean(status.dirty);
-    const localChanges = Boolean(status.localChanges);
-    const maintenanceReady = status.maintenanceReady !== false;
     const behind = Number(status.behind || 0);
     const appBundleOutdated = Boolean(status.appBundleOutdated);
     const currentCommit = shortCommit(status.currentCommit);
     const branch = String(status.branch || "");
-    $("#appUpdateStatus").textContent = String(status.message || (supported ? "Ready" : "Unavailable"));
+    $("#appUpdateStatus").textContent = view.statusMessage;
     $("#appUpdateMeta").textContent = [
       branch,
       currentCommit,
@@ -136,19 +197,22 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
       dirty ? "local edits" : "",
       status.appBuiltAt ? `built ${formatDate(status.appBuiltAt)}` : ""
     ].filter(Boolean).join(" | ") || "--";
-    const installable = canInstall(status);
-    button.textContent = !maintenanceReady
-      ? "Update Setup Required"
-      : installable ? (localChanges ? "Run Local Changes" : "Install Update") : "Check for Updates";
-    button.disabled = !supported || !maintenanceReady || running;
-    button.classList.toggle("primary", installable);
-    button.classList.toggle("secondary", !installable);
+    button.textContent = view.actionLabel;
+    button.disabled = !view.actionEnabled;
+    button.classList.toggle("primary", view.installable);
+    button.classList.toggle("secondary", !view.installable);
+  }
+
+  function currentView(status: UnknownRecord | null = cached) {
+    return deriveAppUpdateViewState(status, {
+      checking: visibleOperation === "checking",
+      starting: visibleOperation === "starting"
+    });
   }
 }
 
 function canInstall(status: UnknownRecord | null): boolean {
-  if (!status || status.ok !== true || status.supported === false || status.maintenanceReady === false || status.running || (!status.localChanges && status.remoteCheckOk === false)) return false;
-  return status.updateAvailable === true;
+  return deriveAppUpdateViewState(status).installable;
 }
 
 function appUpdateBridge(): VigilAppUpdateBridge | null {
@@ -157,17 +221,32 @@ function appUpdateBridge(): VigilAppUpdateBridge | null {
 
 function successfulResult(value: unknown, fallback: string): UnknownRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(fallback);
+  return value as UnknownRecord;
+}
+
+function statusResult(value: unknown, fallback: string): UnknownRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(fallback);
   const result = value as UnknownRecord;
-  if (result.ok !== true) throw new Error(String(result.error || result.message || fallback));
-  return result;
+  if (result.ok === true) return result;
+  const recoveryMessage = (result.recoveryPending === true || result.recoveryBlocked === true)
+    && typeof result.message === "string"
+    && result.message.trim()
+    ? result.message
+    : null;
+  return {
+    ...result,
+    checkOk: false,
+    message: recoveryMessage || String(result.error || result.message || fallback)
+  };
 }
 
 function failedStatus(message: string, previous: UnknownRecord | null = null): UnknownRecord {
   return {
     ...(previous || {}),
     ok: false,
+    checkOk: false,
     supported: previous?.supported !== false,
-    running: false,
+    running: previous?.running === true,
     updateAvailable: false,
     message
   };

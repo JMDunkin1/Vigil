@@ -173,7 +173,8 @@ for (const expected of [
   "dist.nosync/runtime/public/**/*",
   "dist.nosync/runtime/src/**/*",
   "dist.nosync/runtime/scripts/**/*",
-  "dist.nosync/runtime/extension/**/*"
+  "dist.nosync/runtime/extension/**/*",
+  "dist.nosync/runtime/bin/**/*"
 ]) {
   assert.ok(asarUnpack.includes(expected), `${expected} should remain available outside app.asar`);
 }
@@ -184,20 +185,26 @@ assert.deepEqual(build.extraResources, [
   { from: "build/browser-store.json", to: "browser-store.json" }
 ]);
 if (process.platform === "darwin") {
-  const packagedHelperPath = join(process.cwd(), "bin", "vigil-human-idle");
-  const helperPath = existsSync(packagedHelperPath)
-    ? packagedHelperPath
-    : join(process.cwd(), "dist", "runtime", "bin", "vigil-human-idle");
   const otoolPath = [
     "/Library/Developer/CommandLineTools/usr/bin/otool",
     "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/otool",
     "/usr/bin/otool"
   ].find((candidate) => existsSync(candidate));
   assert.ok(otoolPath, "a macOS object-file inspector must be installed");
-  const { stdout: helperLoadCommands } = await execFileAsync(otoolPath, ["-l", helperPath]);
-  assert.match(helperLoadCommands, /^\s+minos\s+12\.0$/mu, "the packaged idle helper must support macOS 12.0");
-  const { stdout: helperArchitectures } = await execFileAsync("/usr/bin/lipo", ["-archs", helperPath]);
-  assert.deepEqual(new Set(helperArchitectures.trim().split(/\s+/u)), new Set(["x86_64", "arm64"]));
+  for (const helperName of ["vigil-human-idle", "vigil-atomic-swap"]) {
+    const packagedHelperPath = join(process.cwd(), "bin", helperName);
+    const helperPath = existsSync(packagedHelperPath)
+      ? packagedHelperPath
+      : join(process.cwd(), "dist", "runtime", "bin", helperName);
+    const { stdout: helperLoadCommands } = await execFileAsync(otoolPath, ["-l", helperPath]);
+    assert.match(helperLoadCommands, /^\s+minos\s+12\.0$/mu, `the packaged ${helperName} helper must support macOS 12.0`);
+    const { stdout: helperArchitectures } = await execFileAsync("/usr/bin/lipo", ["-archs", helperPath]);
+    assert.deepEqual(
+      new Set(helperArchitectures.trim().split(/\s+/u)),
+      new Set(["x86_64", "arm64"]),
+      `the packaged ${helperName} helper must support Intel and Apple silicon`
+    );
+  }
 }
 
 const manifest = recordValue(JSON.parse(await readFile("extension/manifest.json", "utf8")), "extension manifest");

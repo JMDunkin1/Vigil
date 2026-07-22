@@ -1,11 +1,17 @@
-import { lstat, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { cp, lstat, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import { parsePlist } from "./plist.js";
+
+const execFileAsync = promisify(execFile);
 
 export const UPDATE_LOCK_FILENAME = "update.lock";
 export const SYSTEM_GUARDIAN_MAINTENANCE_FILENAME = "guardian-maintenance.json";
 export const SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS = 10 * 60;
 export const SYSTEM_GUARDIAN_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/maintenance-authorization.plist";
+export const SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization.plist";
 export const SYSTEM_GUARDIAN_SCRIPT_PATH = "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-DO-NOT-TERMINATE.sh";
 const SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS = 10_000;
 const SYSTEM_GUARDIAN_AUTHORIZATION_POLL_MS = 100;
@@ -31,10 +37,14 @@ interface GuardianAuthorizationPayload {
   updaterExecutable?: unknown;
   updaterStarted?: unknown;
   expiresAtEpoch?: unknown;
+  recoveryAttemptId?: unknown;
+  recoveryPolicySha256?: unknown;
+  recoveryManifestSha256?: unknown;
 }
 
 export interface GuardianMaintenanceOptions {
   authorizationPath?: string | null;
+  recoveryAuthorizationPath?: string;
   authorizationTimeoutMs?: number;
   expectedAuthorizationUid?: number;
 }
@@ -84,6 +94,10 @@ export async function guardianMaintenanceReadiness(
     }
     const supportsAuthenticatedMaintenance = script.includes("authorize_maintenance_request()")
       && script.includes("vigil-root-maintenance-authorization-v2")
+      && script.includes("attest_update_recovery()")
+      && script.includes("attested_canonical_app_generation()")
+      && script.includes("bounded_root_copy()")
+      && script.includes("vigil-root-update-recovery-authorization-v2")
       && script.includes(authorizationPath);
     if (!supportsAuthenticatedMaintenance) {
       return maintenanceNotReady(
@@ -181,32 +195,7 @@ async function waitForRootGuardianAuthorization(
   let lastError: unknown = new Error("Vigil's system guardian did not authorize maintenance.");
   do {
     try {
-      const [authorization, authorizationStat] = await Promise.all([
-        readGuardianAuthorization(authorizationPath),
-        lstat(authorizationPath)
-      ]);
-      const nowEpoch = Math.floor(Date.now() / 1_000);
-      if (!authorizationStat.isFile() || authorizationStat.isSymbolicLink() || authorizationStat.uid !== expectedUid) {
-        throw new Error("Vigil's system guardian authorization is not root-owned.");
-      }
-      if ((authorizationStat.mode & 0o022) !== 0) {
-        throw new Error("Vigil's system guardian authorization is writable outside root.");
-      }
-      if (
-        authorization.kind !== "vigil-root-maintenance-authorization-v2"
-        || authorization.token !== request.token
-        || authorization.pid !== request.pid
-        || authorization.lockPath !== request.lockPath
-        || typeof authorization.updaterExecutable !== "string"
-        || !authorization.updaterExecutable.startsWith("/")
-        || typeof authorization.updaterStarted !== "string"
-        || !authorization.updaterStarted
-        || !Number.isInteger(authorization.expiresAtEpoch)
-        || Number(authorization.expiresAtEpoch) < nowEpoch
-        || Number(authorization.expiresAtEpoch) > Math.floor(authorizationStat.mtimeMs / 1_000) + SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS
-      ) {
-        throw new Error("Vigil's system guardian authorization does not match this updater.");
-      }
+      await assertRootGuardianAuthorization(authorizationPath, request, Date.now(), expectedUid);
       return;
     } catch (error) {
       lastError = error;
@@ -239,6 +228,178 @@ export async function assertOwnedUpdaterLock(lockPath: string, lockToken: string
   }
   if (payload.token !== lockToken || payload.pid !== ownerPid) {
     throw new Error("Vigil updater lock ownership could not be verified.");
+  }
+}
+
+export async function assertGuardianMaintenanceActive(
+  lockPath: string,
+  lockToken: string,
+  ownerPid: number,
+  now = Date.now(),
+  options: GuardianMaintenanceOptions = {}
+): Promise<void> {
+  await assertOwnedUpdaterLock(lockPath, lockToken, ownerPid);
+  const markerPath = guardianMaintenanceMarkerPath(lockPath);
+  let payload: Partial<GuardianMaintenancePayload>;
+  let markerStat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    [payload, markerStat] = await Promise.all([
+      readJson<Partial<GuardianMaintenancePayload>>(markerPath),
+      lstat(markerPath)
+    ]);
+  } catch {
+    throw new Error("Vigil's authenticated update maintenance marker is missing or unreadable.");
+  }
+  const uid = process.getuid?.();
+  if (!markerStat.isFile() || markerStat.isSymbolicLink()) {
+    throw new Error("Vigil's update maintenance marker is not a regular file.");
+  }
+  if (uid !== undefined && markerStat.uid !== uid) {
+    throw new Error("Vigil's update maintenance marker is owned by another account.");
+  }
+  if ((markerStat.mode & 0o077) !== 0) {
+    throw new Error("Vigil's update maintenance marker permissions are too broad.");
+  }
+  const nowEpoch = Math.floor(now / 1_000);
+  if (
+    payload.kind !== "vigil-maintenance-request-v2"
+    || payload.token !== lockToken
+    || payload.pid !== ownerPid
+    || payload.lockPath !== lockPath
+    || !Number.isInteger(payload.expiresAtEpoch)
+    || Number(payload.expiresAtEpoch) < nowEpoch
+    || Number(payload.expiresAtEpoch) > Math.floor(markerStat.mtimeMs / 1_000) + SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS
+  ) {
+    throw new Error("Vigil's update maintenance marker does not authorize this updater.");
+  }
+  const authorizationPath = options.authorizationPath === undefined
+    ? SYSTEM_GUARDIAN_AUTHORIZATION_PATH
+    : options.authorizationPath;
+  const expectedAuthorizationUid = options.expectedAuthorizationUid ?? 0;
+  if (authorizationPath && await rootGuardianAuthorizationRequired(authorizationPath, expectedAuthorizationUid)) {
+    await assertRootGuardianAuthorization(
+      authorizationPath,
+      payload as GuardianMaintenancePayload,
+      now,
+      expectedAuthorizationUid
+    );
+  }
+}
+
+/**
+ * Wait for the root guardian to bind the immutable recovery transaction before
+ * any canonical artifact is activated. Systems without the optional root
+ * guardian have no root authorization directory and continue to rely on the
+ * always-loaded user supervisor.
+ */
+export async function waitForGuardianRecoveryAuthorization(
+  lockPath: string,
+  lockToken: string,
+  recoveryPolicySha256: string,
+  ownerPid = process.pid,
+  options: GuardianMaintenanceOptions = {}
+): Promise<void> {
+  if (!/^[a-f0-9]{64}$/u.test(recoveryPolicySha256)) {
+    throw new Error("Vigil's update recovery policy digest is invalid.");
+  }
+  const authorizationPath = options.authorizationPath === undefined
+    ? SYSTEM_GUARDIAN_AUTHORIZATION_PATH
+    : options.authorizationPath;
+  if (!authorizationPath) return;
+  const expectedUid = options.expectedAuthorizationUid ?? 0;
+  if (!await rootGuardianAuthorizationRequired(authorizationPath, expectedUid)) return;
+  const recoveryAuthorizationPath = options.recoveryAuthorizationPath
+    ?? SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH;
+  const recoveryManifestSha256 = await guardianRecoveryManifestSha256(
+    join(dirname(lockPath), "update-recovery.json")
+  );
+
+  const timeoutMs = options.authorizationTimeoutMs ?? SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS;
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown = new Error("Vigil's system guardian did not attest update recovery.");
+  do {
+    try {
+      const now = Date.now();
+      await assertGuardianMaintenanceActive(lockPath, lockToken, ownerPid, now, options);
+      const [authorization, authorizationStat] = await Promise.all([
+        readGuardianAuthorization(recoveryAuthorizationPath),
+        lstat(recoveryAuthorizationPath)
+      ]);
+      if (!authorizationStat.isFile()
+        || authorizationStat.isSymbolicLink()
+        || authorizationStat.uid !== expectedUid
+        || (authorizationStat.mode & 0o777) !== 0o644
+        || authorization.kind !== "vigil-root-update-recovery-authorization-v2"
+        || authorization.recoveryAttemptId !== lockToken
+        || authorization.recoveryPolicySha256 !== recoveryPolicySha256
+        || typeof authorization.recoveryManifestSha256 !== "string"
+        || authorization.recoveryManifestSha256 !== recoveryManifestSha256) {
+        throw new Error("Vigil's system guardian recovery attestation does not match this update.");
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, SYSTEM_GUARDIAN_AUTHORIZATION_POLL_MS));
+  } while (Date.now() < deadline);
+  throw new Error(`Vigil's system guardian did not attest update recovery: ${errorMessage(lastError)}`);
+}
+
+/** Hash the immutable manifest projection exactly as the installed zsh guardian does. */
+export async function guardianRecoveryManifestSha256(manifestPath: string): Promise<string> {
+  const manifest = await lstat(manifestPath);
+  const uid = process.getuid?.();
+  if (!manifest.isFile()
+    || manifest.isSymbolicLink()
+    || (manifest.mode & 0o077) !== 0
+    || (uid !== undefined && manifest.uid !== uid)) {
+    throw new Error("Vigil's update recovery manifest is unsafe for root attestation.");
+  }
+  const temporaryRoot = await mkdtemp(join(dirname(manifestPath), ".guardian-attestation-"));
+  const temporaryPath = join(temporaryRoot, "manifest.plist");
+  try {
+    await cp(manifestPath, temporaryPath, { force: false });
+    for (const key of ["state", "source.syncPending", "timestamps"]) {
+      await execFileAsync("/usr/bin/plutil", ["-remove", key, temporaryPath]);
+    }
+    await execFileAsync("/usr/bin/plutil", ["-convert", "binary1", temporaryPath]);
+    return createHash("sha256").update(await readFile(temporaryPath)).digest("hex");
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+async function assertRootGuardianAuthorization(
+  authorizationPath: string,
+  request: GuardianMaintenancePayload,
+  now: number,
+  expectedUid: number
+): Promise<void> {
+  const [authorization, authorizationStat] = await Promise.all([
+    readGuardianAuthorization(authorizationPath),
+    lstat(authorizationPath)
+  ]);
+  const nowEpoch = Math.floor(now / 1_000);
+  if (!authorizationStat.isFile() || authorizationStat.isSymbolicLink() || authorizationStat.uid !== expectedUid) {
+    throw new Error("Vigil's system guardian authorization is not root-owned.");
+  }
+  if ((authorizationStat.mode & 0o022) !== 0) {
+    throw new Error("Vigil's system guardian authorization is writable outside root.");
+  }
+  if (
+    authorization.kind !== "vigil-root-maintenance-authorization-v2"
+    || authorization.token !== request.token
+    || authorization.pid !== request.pid
+    || authorization.lockPath !== request.lockPath
+    || typeof authorization.updaterExecutable !== "string"
+    || !authorization.updaterExecutable.startsWith("/")
+    || typeof authorization.updaterStarted !== "string"
+    || !authorization.updaterStarted
+    || !Number.isInteger(authorization.expiresAtEpoch)
+    || Number(authorization.expiresAtEpoch) < nowEpoch
+    || Number(authorization.expiresAtEpoch) > Math.floor(authorizationStat.mtimeMs / 1_000) + SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS
+  ) {
+    throw new Error("Vigil's system guardian authorization does not match this updater.");
   }
 }
 

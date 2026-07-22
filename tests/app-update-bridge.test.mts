@@ -11,6 +11,7 @@ import { atomicInstallBuiltApp } from "../scripts/update-packaged-app.mjs";
 interface Bridge {
   status(options?: { checkRemote?: boolean; instanceSecret?: string }): Promise<unknown>;
   start(): Promise<unknown>;
+  subscribe?(listener: (status: unknown) => void): () => void;
 }
 
 interface Invocation {
@@ -40,6 +41,8 @@ const updaterSource = await readFile(join(sourceRoot, "app", "updater.ts"), "utf
 const updateScriptSource = await readFile(join(sourceRoot, "scripts", "update-packaged-app.mts"), "utf8");
 const exposed = new Map<string, unknown>();
 const invocations: Invocation[] = [];
+type IpcListener = (...args: unknown[]) => void;
+const ipcListeners = new Map<string, Set<IpcListener>>();
 
 vm.runInNewContext(preloadSource, {
   require(specifier: string) {
@@ -52,6 +55,14 @@ vm.runInNewContext(preloadSource, {
       },
       ipcRenderer: {
         send() {},
+        on(channel: string, listener: IpcListener) {
+          const listeners = ipcListeners.get(channel) || new Set<IpcListener>();
+          listeners.add(listener);
+          ipcListeners.set(channel, listeners);
+        },
+        removeListener(channel: string, listener: IpcListener) {
+          ipcListeners.get(channel)?.delete(listener);
+        },
         async invoke(channel: string, ...args: unknown[]) {
           invocations.push({ channel, args });
           return { ok: true };
@@ -80,6 +91,16 @@ assert.deepEqual(Object.keys(invocations[0]?.args[0] as object), ["checkRemote"]
 assert.equal((invocations[0]?.args[0] as { checkRemote?: unknown }).checkRemote, true);
 assert.equal(invocations[1]?.channel, "vigil:app-update-start");
 assert.equal(invocations[1]?.args.length, 0);
+let publishedBridgeStatus: unknown = null;
+const unsubscribeFromUpdateState = preloadBridge.subscribe?.((status) => {
+  publishedBridgeStatus = status;
+});
+assert.ok(unsubscribeFromUpdateState, "the update bridge should expose a removable state subscription");
+const publishedStatus = { running: true, operation: "starting", updateStateRevision: 4 };
+for (const listener of ipcListeners.get("vigil:app-update-state") || []) listener({}, publishedStatus);
+assert.equal(publishedBridgeStatus, publishedStatus);
+unsubscribeFromUpdateState();
+assert.equal(ipcListeners.get("vigil:app-update-state")?.size, 0, "unsubscribing must remove the exact IPC listener");
 const appearanceBridge = exposed.get("vigilAppearance") as AppearanceBridge | undefined;
 assert.ok(appearanceBridge, "preload should expose the icon appearance bridge");
 await appearanceBridge.getIconTheme();
@@ -128,6 +149,22 @@ assert.match(
 );
 assert.match(mainSource, /ipcMain\.handle\("vigil:app-update-status", handleAppUpdateStatus\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:app-update-start", handleAppUpdateStart\)/u);
+assert.match(mainSource, /handleAppUpdateStart[\s\S]*?return await startAppUpdate\(appUrl\)/u, "renderer starts must use the native app-wide coordinator");
+assert.match(mainSource, /handleAppUpdateStatus[\s\S]*?checkAppUpdate\(appUrl\)[\s\S]*?refreshRunningAppUpdate\(appUrl\)/u, "renderer status reads must use the native app-wide coordinator");
+assert.match(
+  mainSource,
+  /async function startAppUpdate[\s\S]*?responseBase = result \|\| \{\};\s*applyAppUpdateStatus\(responseBase\)/u,
+  "a raced start rejection must preserve authoritative recovery and maintenance fields from the updater"
+);
+assert.doesNotMatch(
+  mainSource,
+  /result\?\.ok !== true && result\?\.running !== true[\s\S]*?throw new Error/u,
+  "the coordinator must not flatten a structured updater rejection into a generic failure"
+);
+assert.match(mainSource, /webContents\.send\(APP_UPDATE_STATE_CHANNEL, status\)/u, "coordinator state changes must be broadcast to Settings");
+assert.match(mainSource, /recoveryPending: appUpdateActionState\.recoveryPending/u, "the coordinator must broadcast pending recovery state");
+assert.match(mainSource, /recoveryBlocked: appUpdateActionState\.recoveryBlocked/u, "the coordinator must broadcast blocked recovery state");
+assert.match(mainSource, /!appUpdateActionState\.running && !appUpdateActionState\.recoveryPending/u, "pending recovery must keep the coordinator polling");
 assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-get", handleIconThemeGet\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-set", handleIconThemeSet\)/u);
 assert.doesNotMatch(mainSource, /cursorAuraWindow|CURSOR_AURA_MARGIN|vigil:cursor-aura-update/u, "the cursor glow must not create an oversized native window around Vigil");
@@ -159,6 +196,7 @@ try {
   await mkdir(builtApp, { recursive: true });
   await writeFile(join(builtApp, "version.txt"), "newer");
   const finalized = await atomicInstallBuiltApp(builtApp, installedApp, stageRoot);
+  await finalized.markVerified();
   await finalized.finalize();
   assert.equal(await readFile(join(installedApp, "version.txt"), "utf8"), "newer");
   assert.equal(existsSync(`${installedApp}.vigil-previous`), false);
@@ -174,7 +212,11 @@ let getCalls = 0;
 let postCalls = 0;
 let statusCalls = 0;
 let startCalls = 0;
+const updateToasts: string[] = [];
 let checkedRemote: boolean | undefined;
+let nextRendererStatus: Promise<UnknownRecord> | null = null;
+let nextRendererStartResult: Promise<UnknownRecord> | null = null;
+let rendererStateListener: ((status: unknown) => void) | null = null;
 let rendererStatus: UnknownRecord = {
   ok: true,
   supported: true,
@@ -194,11 +236,27 @@ const rendererBridge = {
   async status(options: { checkRemote?: boolean } = {}) {
     statusCalls += 1;
     checkedRemote = options.checkRemote;
+    if (nextRendererStatus) {
+      const result = nextRendererStatus;
+      nextRendererStatus = null;
+      return await result;
+    }
     return rendererStatus;
   },
   async start() {
     startCalls += 1;
+    if (nextRendererStartResult) {
+      const result = nextRendererStartResult;
+      nextRendererStartResult = null;
+      return await result;
+    }
     return rendererStartResult;
+  },
+  subscribe(listener: (status: unknown) => void) {
+    rendererStateListener = listener;
+    return () => {
+      if (rendererStateListener === listener) rendererStateListener = null;
+    };
   }
 };
 
@@ -227,7 +285,9 @@ try {
       postCalls += 1;
       return {} as T;
     },
-    toast() {},
+    toast(message) {
+      updateToasts.push(message);
+    },
     errorMessage: (error) => error instanceof Error ? error.message : String(error)
   });
   panel.bind();
@@ -237,10 +297,75 @@ try {
   assert.equal(getCalls, 0);
   assert.equal(controls.get("#checkAppUpdate")?.textContent, "Install Update");
 
+  const pendingCheckResult = deferred<UnknownRecord>();
+  nextRendererStatus = pendingCheckResult.promise;
+  const pendingCheck = panel.refreshStatus(true);
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Checking for Updates...");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  panel.render();
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Checking for Updates...", "a dashboard render must not restore the cached action during a pending check");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  pendingCheckResult.resolve(rendererStatus);
+  await pendingCheck;
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Install Update");
+
+  const staleStatusResult = deferred<UnknownRecord>();
+  nextRendererStatus = staleStatusResult.promise;
+  const staleStatusRequest = panel.refreshStatus(false);
+  publishRendererUpdate({
+    ok: true,
+    running: true,
+    updateAvailable: false,
+    operation: "starting",
+    phase: "starting",
+    message: "Vigil will quit, update, and reopen",
+    updateStateRevision: 10
+  });
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update...", "a native start must immediately update Settings through the coordinator broadcast");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  staleStatusResult.resolve({ ...rendererStatus, updateStateRevision: 9 });
+  await staleStatusRequest;
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update...", "a status response captured before the native start must not overwrite its running state");
+  publishRendererUpdate({ ...rendererStatus, running: false, operation: null, updateStateRevision: 9 });
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update...", "an older coordinator event must not overwrite the active revision");
+  publishRendererUpdate({ ...rendererStatus, running: false, operation: null, updateStateRevision: 11 });
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Install Update");
+
+  publishRendererUpdate({
+    ...rendererStatus,
+    running: false,
+    updateAvailable: true,
+    recoveryPending: true,
+    recoveryBlocked: false,
+    message: "Restoring the verified Vigil recovery copy.",
+    updateStateRevision: 12
+  });
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Recovering Vigil Update...");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  assert.equal(controls.get("#appUpdateStatus")?.textContent, "Restoring the verified Vigil recovery copy.");
+
+  publishRendererUpdate({
+    ...rendererStatus,
+    ok: false,
+    running: false,
+    updateAvailable: true,
+    maintenanceReady: false,
+    recoveryPending: false,
+    recoveryBlocked: true,
+    error: "A generic status failure must not replace recovery guidance.",
+    message: "The preserved recovery evidence needs manual attention.",
+    updateStateRevision: 13
+  });
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Update Recovery Required");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  assert.equal(controls.get("#appUpdateStatus")?.textContent, "The preserved recovery evidence needs manual attention.");
+
   rendererStatus = {
     ...rendererStatus,
     updateAvailable: false,
     maintenanceReady: false,
+    recoveryPending: false,
+    recoveryBlocked: false,
     message: "Vigil's system guardian predates authenticated app updates."
   };
   await panel.refreshStatus(false);
@@ -255,7 +380,15 @@ try {
 
   const click = buttonClick as (() => void) | null;
   assert.ok(click);
+  const pendingStartResult = deferred<UnknownRecord>();
+  nextRendererStartResult = pendingStartResult.promise;
   click();
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update...");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  panel.render();
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update...", "a dashboard render must not restore the cached action during a pending start");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  pendingStartResult.resolve(rendererStartResult);
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
   assert.equal(startCalls, 1);
   assert.equal(postCalls, 0);
@@ -301,6 +434,72 @@ try {
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 1_100));
   assert.equal(controls.get("#checkAppUpdate")?.disabled, false, "a completed or failed local build must refresh the cached running state");
   assert.equal(controls.get("#checkAppUpdate")?.textContent, "Run Local Changes");
+
+  rendererStartResult = {
+    ok: false,
+    running: true,
+    updateAvailable: false,
+    phase: "starting",
+    message: "A Vigil update is already starting."
+  };
+  const statusCallsBeforeActivePoll = statusCalls;
+  click();
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(startCalls, 3);
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Updating Vigil...", "an already-running start result must preserve the active transaction state");
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 1_100));
+  assert.ok(statusCalls > statusCallsBeforeActivePoll, "an already-running start result must continue polling updater status");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, false);
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Run Local Changes");
+  rendererStartResult = {
+    ok: true,
+    noUpdate: true,
+    running: false,
+    updateAvailable: false,
+    phase: "",
+    message: "No newer Vigil update is available."
+  };
+  click();
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(updateToasts.at(-1), "No newer Vigil update is available.", "a revalidation no-op must not claim that an update started");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Check for Updates");
+
+  rendererStatus = {
+    ok: true,
+    checkOk: true,
+    supported: true,
+    maintenanceReady: true,
+    running: false,
+    updateAvailable: true,
+    localChanges: false,
+    message: "Update available"
+  };
+  await panel.refreshStatus(false);
+  rendererStartResult = {
+    ok: false,
+    checkOk: false,
+    supported: true,
+    maintenanceReady: false,
+    running: false,
+    updateAvailable: false,
+    recoveryPending: false,
+    recoveryBlocked: true,
+    phase: "failed",
+    message: "The preserved recovery evidence needs manual attention.",
+    error: "The preserved recovery evidence needs manual attention."
+  };
+  click();
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Update Recovery Required");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  assert.equal(
+    controls.get("#appUpdateStatus")?.textContent,
+    "The preserved recovery evidence needs manual attention.",
+    "a structured start rejection must retain exact recovery guidance instead of becoming a retryable generic error"
+  );
+  panel.dispose();
+  assert.equal(rendererStateListener, null, "disposing the panel must unsubscribe from coordinator state");
 } finally {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
@@ -331,4 +530,18 @@ function fakeControl(onClick?: (listener: () => void) => void): ControlElement {
       });
     }
   } as unknown as ControlElement;
+}
+
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolvePromise: (value: T) => void = () => undefined;
+  const promise = new Promise<T>((resolveDeferred) => {
+    resolvePromise = resolveDeferred;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
+function publishRendererUpdate(status: UnknownRecord): void {
+  const listener = rendererStateListener;
+  assert.ok(listener, "the Settings panel should subscribe to coordinator state");
+  listener(status);
 }

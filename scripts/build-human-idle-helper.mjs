@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const outputDir = join(projectRoot, "dist", "runtime", "bin");
 const outputPath = join(outputDir, "vigil-human-idle");
+const atomicSwapOutputPath = join(outputDir, "vigil-atomic-swap");
 const minimumMacosVersion = "12.0";
 const releaseArchitectures = ["x86_64", "arm64"];
 
@@ -36,15 +37,29 @@ await execFileAsync(join(developerTools.bin, "clang"), [
   "-o",
   outputPath
 ]);
-const { stdout: loadCommands } = await execFileAsync(join(developerTools.bin, "otool"), ["-l", outputPath]);
-const builtMinimumVersions = [...loadCommands.matchAll(/^\s+minos\s+(\S+)$/gmu)].map((match) => match[1]);
-if (builtMinimumVersions.length !== releaseArchitectures.length || builtMinimumVersions.some((version) => version !== minimumMacosVersion)) {
-  throw new Error(`Expected every slice in ${outputPath} to target macOS ${minimumMacosVersion}, got ${builtMinimumVersions.join(", ") || "unknown"}.`);
+await execFileAsync(join(developerTools.bin, "clang"), [
+  "-isysroot",
+  developerTools.sdk,
+  ...releaseArchitectures.flatMap((architecture) => ["-arch", architecture]),
+  join(projectRoot, "app", "vigil-atomic-swap.c"),
+  "-Os",
+  "-Wall",
+  "-Wextra",
+  `-mmacosx-version-min=${minimumMacosVersion}`,
+  "-o",
+  atomicSwapOutputPath
+]);
+for (const helperPath of [outputPath, atomicSwapOutputPath]) {
+  const { stdout: loadCommands } = await execFileAsync(join(developerTools.bin, "otool"), ["-l", helperPath]);
+  const builtMinimumVersions = [...loadCommands.matchAll(/^\s+minos\s+(\S+)$/gmu)].map((match) => match[1]);
+  if (builtMinimumVersions.length !== releaseArchitectures.length || builtMinimumVersions.some((version) => version !== minimumMacosVersion)) {
+    throw new Error(`Expected every slice in ${helperPath} to target macOS ${minimumMacosVersion}, got ${builtMinimumVersions.join(", ") || "unknown"}.`);
+  }
+  for (const architecture of releaseArchitectures) {
+    await execFileAsync(join(developerTools.bin, "lipo"), [helperPath, "-verify_arch", architecture]);
+  }
+  await chmod(helperPath, 0o755);
 }
-for (const architecture of releaseArchitectures) {
-  await execFileAsync(join(developerTools.bin, "lipo"), [outputPath, "-verify_arch", architecture]);
-}
-await chmod(outputPath, 0o755);
 
 async function resolveDeveloperTools() {
   const configured = process.env.VIGIL_DEVELOPER_BIN?.trim() || "";

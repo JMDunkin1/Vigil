@@ -59,6 +59,10 @@ assert.match(html, /<strong>Pixel Art<\/strong>/, "the existing sprite treatment
 assert.match(html, /<strong>Traditional<\/strong>/, "the icon-painting treatment must use its requested user-facing name");
 assert.match(html, /Aged sacred portraits, classical serif typography, and Christ Pantocrator/, "the Traditional option must describe its visual treatment and Christ portrait");
 assert.match(html, /id="saintAestheticStatus"[^>]*>Pixel Art active<\/p>/, "the default aesthetic status must use its user-facing name");
+assert.match(html, /id="saintBackdropEnabled"[^>]*type="checkbox"[^>]*role="switch"[^>]*checked/, "Appearance must offer an independent animated-backdrop switch that defaults on");
+assert.match(html, /<strong>Animated backdrop<\/strong>/, "the saint backdrop setting must have a clear user-facing name");
+assert.match(html, /halo, geometric orbits, symbols, and particles/, "the backdrop setting must describe every decorative layer it controls");
+assert.match(html, /id="saintBackdropStatus"[^>]*>On<\/p>/, "the animated backdrop must report its default state");
 assert.match(html, /aria-label="Browse sacred portraits"/, "portrait navigation must not describe Christ as a patron saint");
 const settingsMarkup = html.match(/<section id="view-rules"[\s\S]*?<section id="view-devices"/)?.[0] || "";
 const firstSettingsDisclosure = settingsMarkup.match(/<details class="settings-disclosure[^>]*>[\s\S]*?<\/summary>/)?.[0] || "";
@@ -92,6 +96,8 @@ assert.match(saintAestheticStageSource, /CHRIST_PANTOCRATOR[\s\S]*id: "christ"/,
 assert.match(saintAestheticStageSource, /SERIOUS_STAGE_PORTRAITS[\s\S]*CHRIST_PANTOCRATOR/, "Christ must belong only to the extended serious portrait set");
 assert.match(saintAestheticStageSource, /function setAesthetic[\s\S]*select\(selectedId, persist, keepInfoOpen\)/, "changing aesthetics must reselect a mode-valid portrait and refresh all stage metadata");
 assert.match(saintAestheticStageSource, /aesthetic === "serious" \? "Traditional" : "Pixel Art"/, "the runtime status must use the user-facing aesthetic names");
+assert.match(saintAestheticStageSource, /vigil-saint-backdrop/, "the animated backdrop must persist independently of portrait style");
+assert.match(saintAestheticStageSource, /document\.documentElement\.dataset\.saintBackdrop = enabled \? "on" : "off"/, "the backdrop preference must project to its own root styling hook");
 const seriousTypographyDeclaration = stylesSource.match(/:root\[data-saint-aesthetic="serious"\]\s*\{([^}]*)\}/)?.[1] || "";
 assert.match(seriousTypographyDeclaration, /--font-body: Georgia, "Times New Roman", serif/, "serious mode must replace ordinary body copy typography");
 assert.match(seriousTypographyDeclaration, /--font-display: Georgia, "Times New Roman", serif/, "serious mode must replace formal display typography");
@@ -335,6 +341,7 @@ assert.match(
   "reduced-motion and coarse-pointer users must not receive the saint artwork hover scale"
 );
 assert.match(styles, /#view-home \.saint-artifact:hover:not\(:disabled\),[\s\S]*?#view-home \.saint-artifact:focus-visible\s*\{[\s\S]*?transform:\s*scale\(1\.012\);/, "hovering the saint composition must enlarge it slightly without cursor-driven translation or rotation");
+assert.match(styles, /:root\[data-saint-backdrop="off"\] #view-home :is\(\.saint-ambient, \.saint-halo, \.saint-symbol\)\s*\{[\s\S]*?display:\s*none;/, "turning off the backdrop must hide its geometry, halo, and saint-specific symbols while preserving the portrait");
 assert.match(styles, /#view-home \.saint-artifact,[\s\S]*?#view-home \.saint-stage\[data-saint\] \.saint-artifact\s*\{[\s\S]*?width:\s*min\(720px, 100%\);/, "the patron composition must size from the usable stage instead of the full viewport");
 assert.match(styles, /\.saint-artifact:focus-visible\s*\{\s*outline:\s*none;/, "the saint button must not draw a rectangular focus artifact");
 assert.match(styles, /\.audio-desk\s*\{[\s\S]*?container:\s*audio-desk \/ inline-size;/, "the audio player must respond to its usable panel width");

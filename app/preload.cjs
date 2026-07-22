@@ -21,7 +21,13 @@ contextBridge.exposeInMainWorld("vigilAppUpdate", {
   status: (options = {}) => ipcRenderer.invoke("vigil:app-update-status", {
     checkRemote: options?.checkRemote === true
   }),
-  start: () => ipcRenderer.invoke("vigil:app-update-start")
+  start: () => ipcRenderer.invoke("vigil:app-update-start"),
+  subscribe: (listener) => {
+    if (typeof listener !== "function") return () => {};
+    const handleUpdateState = (_event, status) => listener(status);
+    ipcRenderer.on("vigil:app-update-state", handleUpdateState);
+    return () => ipcRenderer.removeListener("vigil:app-update-state", handleUpdateState);
+  }
 });
 
 contextBridge.exposeInMainWorld("vigilAppearance", {

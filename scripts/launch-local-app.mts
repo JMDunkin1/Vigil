@@ -1,19 +1,56 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { isDirectRun } from "../src/directRun.js";
 import { getInstanceSecret } from "../src/instanceIdentity.js";
 import { plistStringForKey } from "../src/plist.js";
 import { liveRuntimeReady } from "../src/runtimeReady.js";
-import { resumeEmbeddedRuntimeSupervisor, suspendEmbeddedRuntimeSupervisor } from "../src/embeddedSupervisor.js";
+import { resumeEmbeddedRuntimeSupervisor } from "../src/embeddedSupervisor.js";
 import { fetchVigilStateHealth } from "../src/vigilHealth.js";
-import { beginGuardianMaintenance } from "../src/updateMaintenance.js";
+import {
+  beginGuardianMaintenance,
+  guardianMaintenanceReadiness,
+  waitForGuardianRecoveryAuthorization
+} from "../src/updateMaintenance.js";
 import type { GuardianMaintenanceTransaction } from "../src/updateMaintenance.js";
-import { atomicInstallBuiltApp } from "./update-packaged-app.mjs";
+import { mergeWriteUpdateReceipt } from "../src/updateReceipt.js";
+import type { UpdateReceiptPatch, UpdateReceiptPhase } from "../src/updateReceipt.js";
+import {
+  activateStagedUpdateArtifact,
+  beginUpdateRecoveryTransaction,
+  captureUpdateArtifactIdentity,
+  markUpdateRecoveryCommitIntent,
+  markUpdateRecoveryCommitted,
+  readUpdateRecoveryManifest,
+  reconcileStagedUpdateArtifactCandidate,
+  recoverUpdateTransaction,
+  recoverUpdateTransactionFromPolicyFile,
+  stageUpdateArtifactCandidate,
+  updateArtifactIdentitiesExactlyMatch,
+  updateRecoveryPaths
+} from "../src/updateTransaction.js";
+import type {
+  UpdateArtifactIdentity,
+  UpdateArtifactPlan,
+  UpdateRecoveryBundleSource,
+  UpdateRecoveryOutcome,
+  UpdateRecoveryPolicy
+} from "../src/updateTransaction.js";
+import { sourceFingerprint } from "./source-fingerprint.mjs";
+import { gitExecutable } from "./git-executable.mjs";
 
 const HEALTH_TIMEOUT_MS = 30_000;
+const UPDATER_LOCK_HANDOFF_TIMEOUT_MS = 10_000;
+const SOURCE_COMMAND_TIMEOUT_MS = 60_000;
+const DEPENDENCY_INSTALL_TIMEOUT_MS = 15 * 60_000;
+const RUNTIME_BUILD_TIMEOUT_MS = 15 * 60_000;
+const APP_PACKAGE_TIMEOUT_MS = 20 * 60_000;
+const COMMAND_TERMINATION_GRACE_MS = 5_000;
+const COMMAND_KILL_CONFIRMATION_MS = 5_000;
+const COMMAND_TERMINATION_POLL_MS = 50;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
 const SAFETY_BOUNDARY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
 
@@ -22,7 +59,12 @@ interface Options {
   appPath: string;
   parentPid: number;
   userDataDir: string;
+  nodePath: string;
   npmPath: string;
+  statusPath: string;
+  expectedCommit: string;
+  expectedBranch: string;
+  expectedFingerprint: string;
   logPath: string;
   lockPath: string;
   lockToken: string;
@@ -33,6 +75,7 @@ interface LegacyAgentRecovery {
     port: number;
     instanceSecret: string;
   };
+  dataDir: string;
   plist: string;
   plistMode: number;
   plistPath: string;
@@ -43,107 +86,167 @@ if (isDirectRun(import.meta.url)) await main();
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  await mkdir(dirname(options.statusPath), { recursive: true });
   await mkdir(dirname(options.logPath), { recursive: true });
+  const buildRoot = await mkdtemp(join(dirname(options.statusPath), "local-build-"));
+  const snapshotRoot = join(buildRoot, "source");
+  const packageOutputRoot = join(buildRoot, "output");
+  const builtAppPath = join(packageOutputRoot, "mac-universal", "Vigil.app");
   const log = createWriteStream(options.logPath, { flags: "a" });
+  log.on("error", () => undefined);
   await waitForLogOpen(log);
   let guardianMaintenance: GuardianMaintenanceTransaction | null = null;
+  let appPlan: UpdateArtifactPlan | null = null;
+  let recoveryPolicy: UpdateRecoveryPolicy | null = null;
+  let legacyAgent: LegacyAgentRecovery | null = null;
+  let legacyAgentStopped = false;
+  let parentExited = false;
   log.write(`\n[${new Date().toISOString()}] Building local changes while Vigil process ${options.parentPid} keeps running.\n`);
   try {
+    await waitForOwnedUpdaterLock(options.lockPath, options.lockToken);
+    await reconcilePreviousLocalGlobalUpdate(options);
+    const maintenance = await guardianMaintenanceReadiness();
+    if (!maintenance.ready) {
+      throw new Error(maintenance.message || "Vigil's protected update setup is not ready.");
+    }
+    await localStatus(options, log, "building", "Building local Vigil changes");
     log.write(`[${new Date().toISOString()}] Building packaged Vigil from ${options.repoRoot}\n`);
     let exitCode: number | null = 1;
+    let buildError = "";
+    const buildStartedAt = Date.now();
     try {
-      exitCode = await buildLocalApp(options, log);
+      await assertSourceIdentity(options);
+      await createLocalBuildSnapshot(options, snapshotRoot, buildRoot, log);
+      exitCode = await buildLocalApp(options, snapshotRoot, packageOutputRoot, log);
+      if (exitCode === 0) {
+        await assertSourceIdentity(options);
+        await verifyLocalBuildCandidate(builtAppPath, options, buildStartedAt);
+      }
     } catch (error) {
-      log.write(`[${new Date().toISOString()}] Local Vigil could not be built: ${errorMessage(error)}\n`);
+      buildError = errorMessage(error);
+      log.write(`[${new Date().toISOString()}] Local Vigil could not be built: ${buildError}\n`);
     }
-    if (exitCode !== 0) {
-      log.write(`[${new Date().toISOString()}] Local Vigil build exited with status ${exitCode}. The running app was left in place.\n`);
-      process.exitCode = exitCode ?? 1;
-      return;
-    }
-
-    let legacyAgent: LegacyAgentRecovery | null;
-    try {
-      legacyAgent = await captureLegacyLaunchAgentRecovery();
-    } catch (error) {
-      log.write(`[${new Date().toISOString()}] The legacy Vigil background service could not be prepared for rollback: ${errorMessage(error)} The running app was left in place.\n`);
+    if (buildError || exitCode !== 0) {
+      const message = buildError
+        ? `Local Vigil could not be built: ${buildError}`
+        : `Local Vigil build exited with status ${exitCode}. The running app was left in place.`;
+      log.write(`[${new Date().toISOString()}] ${message}\n`);
+      await safeLocalStatus(options, log, "failed", message, { error: message });
       process.exitCode = 1;
       return;
     }
+
+    try {
+      legacyAgent = await captureLegacyLaunchAgentRecovery();
+    } catch (error) {
+      const message = `The legacy Vigil background service could not be prepared for rollback: ${errorMessage(error)} The running app was left in place.`;
+      log.write(`[${new Date().toISOString()}] ${message}\n`);
+      await safeLocalStatus(options, log, "failed", message, { error: message });
+      process.exitCode = 1;
+      return;
+    }
+
+    const expectedDataDir = legacyAgent?.dataDir
+      || process.env.VIGIL_DATA_DIR
+      || options.userDataDir;
+    recoveryPolicy = {
+      updaterDir: dirname(options.statusPath),
+      expectedAppPath: options.appPath,
+      repoRoot: options.repoRoot,
+      userDataDir: options.userDataDir,
+      expectedDataDir,
+      expectedRuntimePaths: []
+    };
+    await localStatus(options, log, "installing-app", "Durably staging the verified local Vigil build");
+    appPlan = await stageUpdateArtifactCandidate(
+      recoveryPolicy,
+      options.lockToken,
+      builtAppPath,
+      options.appPath,
+      "app"
+    );
 
     try {
       guardianMaintenance = await beginGuardianMaintenance(options.lockPath, options.lockToken);
     } catch (error) {
-      log.write(`[${new Date().toISOString()}] The authenticated guardian maintenance transaction could not start: ${errorMessage(error)} The running app was left in place.\n`);
-      process.exitCode = 1;
-      return;
+      throw new Error(`The authenticated guardian maintenance transaction could not start: ${errorMessage(error)} The running app was left in place.`);
     }
+    await assertSourceIdentity(options);
+    await localStatus(options, log, "waiting", "Local Vigil build verified; waiting to replace the running app");
     log.write(`[${new Date().toISOString()}] Local build is ready. Asking Vigil to quit for replacement.\n`);
     process.kill(options.parentPid, "SIGUSR2");
     try {
       await waitForExit(options.parentPid, 45_000);
+      parentExited = true;
     } catch (error) {
       await resumeEmbeddedRuntimeSupervisor(options.userDataDir);
-      log.write(`[${new Date().toISOString()}] ${errorMessage(error)} The built app was not installed.\n`);
-      process.exitCode = 1;
-      return;
+      throw new Error(`${errorMessage(error)} The built app was not installed.`);
     }
 
-    const builtAppPath = join(
-      options.repoRoot,
-      "dist",
-      "mac.noindex",
-      process.arch === "arm64" ? "mac-arm64" : "mac",
-      "Vigil.app"
-    );
-    let installation: Awaited<ReturnType<typeof atomicInstallBuiltApp>>;
-    try {
-      installation = await atomicInstallBuiltApp(builtAppPath, options.appPath, "");
-    } catch (error) {
-      log.write(`[${new Date().toISOString()}] Rebuilt Vigil could not be installed: ${errorMessage(error)} Reopening ${options.appPath}.\n`);
-      let persistentRecovery = false;
-      try {
-        await resumeEmbeddedRuntimeSupervisor(options.userDataDir);
-        persistentRecovery = true;
-      } catch (supervisorError) {
-        log.write(`[${new Date().toISOString()}] Restart supervision could not be restored: ${errorMessage(supervisorError)}\n`);
-        if (legacyAgent) {
-          try {
-            await restoreLegacyLaunchAgent(legacyAgent);
-            persistentRecovery = true;
-          } catch (legacyError) {
-            log.write(`[${new Date().toISOString()}] The legacy Vigil background service could not be restored: ${errorMessage(legacyError)}\n`);
-          }
-        }
-      }
-      try {
-        await reopenInstalledApp(options.appPath, log);
-      } catch (reopenError) {
-        log.write(`[${new Date().toISOString()}] The restored Vigil app could not be reopened: ${errorMessage(reopenError)}${persistentRecovery ? " Persistent supervision will keep enforcement running and retry the app launch." : ""}\n`);
-      }
-      process.exitCode = 1;
-      return;
+    if (legacyAgent) {
+      await localStatus(options, log, "installing-runtime", "Pausing the legacy Vigil runtime for a coherent update snapshot");
+      await stopLegacyLaunchAgentForUpdate(legacyAgent);
+      legacyAgentStopped = true;
     }
-    try {
-      log.write(`[${new Date().toISOString()}] Reopening rebuilt Vigil at ${options.appPath}.\n`);
-      await reopenInstalledApp(options.appPath, log);
-      await verifyReplacement(options.appPath);
-      await installation.finalize();
-    } catch (error) {
-      log.write(`[${new Date().toISOString()}] Rebuilt Vigil could not reopen: ${errorMessage(error)} Restoring the previous app.\n`);
-      try {
-        await suspendEmbeddedRuntimeSupervisor(options.userDataDir);
-        await terminateInstalledApp(options.appPath);
-        await installation.rollback();
-        if (legacyAgent) {
-          await restoreLegacyLaunchAgent(legacyAgent);
-        } else {
-          await resumeEmbeddedRuntimeSupervisor(options.userDataDir);
-        }
-        await reopenInstalledApp(options.appPath, log);
-      } catch (recoveryError) {
-        log.write(`[${new Date().toISOString()}] Rebuilt Vigil could not be safely rolled back: ${errorMessage(recoveryError)}\n`);
-      }
+    const recoveryBundle = await localUpdateRecoveryBundleSource(options);
+    await localStatus(options, log, "installing-app", "Recording the crash-recoverable local update transaction");
+    const recoveryManifest = await beginUpdateRecoveryTransaction(recoveryPolicy, {
+      attemptId: options.lockToken,
+      source: {
+        initialCommit: options.expectedCommit,
+        initialBranch: expectedBranchName(options.expectedBranch),
+        targetCommit: options.expectedCommit
+      },
+      app: appPlan,
+      recoveryBundle
+    });
+    await waitForGuardianRecoveryAuthorization(
+      options.lockPath,
+      options.lockToken,
+      recoveryManifest.recovery.policySha256
+    );
+    await activateStagedUpdateArtifact(
+      recoveryPolicy,
+      options.lockToken,
+      appPlan,
+      "app"
+    );
+    await verifyLocalBuildCandidate(options.appPath, options, buildStartedAt);
+    await localStatus(options, log, "verifying", "Reopening and verifying the local Vigil build");
+    log.write(`[${new Date().toISOString()}] Reopening rebuilt Vigil at ${options.appPath}.\n`);
+    await reopenInstalledApp(options.appPath, log);
+    await verifyReplacement(options.appPath, recoveryPolicy.expectedDataDir, legacyAgent?.context);
+    await markUpdateRecoveryCommitIntent(recoveryPolicy, options.lockToken);
+    await markUpdateRecoveryCommitted(recoveryPolicy, options.lockToken);
+    const outcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+    if (!outcome || outcome.attemptId !== options.lockToken || outcome.status !== "complete") {
+      throw new Error(outcome?.message || "Vigil could not durably finalize the verified local update transaction.");
+    }
+    await safeLocalStatus(options, log, "complete", "Local Vigil update complete", {
+      installedCommit: options.expectedCommit,
+      installedFingerprint: options.expectedFingerprint
+    });
+  } catch (error) {
+    let message = errorMessage(error) || "The local Vigil updater failed unexpectedly.";
+    if (!parentExited) parentExited = !(await processStillExistsAfter(options.parentPid, 2_000));
+    const recovery = await settleLocalGlobalUpdateAfterFailure({
+      options,
+      log,
+      recoveryPolicy,
+      appPlan,
+      legacyAgent,
+      legacyAgentStopped,
+      parentExited
+    });
+    if (recovery.errors.length) message = `${message} Recovery also reported: ${recovery.errors.join(" ")}`;
+    log.write(`[${new Date().toISOString()}] ${message}\n`);
+    if (recovery.committed) {
+      await safeLocalStatus(options, log, "complete", `Local Vigil update complete. Final confirmation warning: ${message}`, {
+        installedCommit: options.expectedCommit,
+        installedFingerprint: options.expectedFingerprint
+      });
+    } else {
+      await safeLocalStatus(options, log, "failed", message, { error: message });
       process.exitCode = 1;
     }
   } finally {
@@ -155,8 +258,218 @@ async function main(): Promise<void> {
     await releaseOwnedUpdaterLock(options.lockPath, options.lockToken).catch((error) => {
       log.write(`[${new Date().toISOString()}] The updater lock could not be released: ${errorMessage(error)}\n`);
     });
+    await removeLocalBuildSnapshot(options.repoRoot, snapshotRoot, log);
+    await rm(buildRoot, { recursive: true, force: true }).catch((error) => {
+      log.write(`[${new Date().toISOString()}] The isolated local build could not be removed: ${errorMessage(error)}\n`);
+    });
     log.end();
   }
+}
+
+interface LocalFailureRecovery {
+  committed: boolean;
+  errors: string[];
+}
+
+async function reconcilePreviousLocalGlobalUpdate(options: Options): Promise<void> {
+  const paths = updateRecoveryPaths(dirname(options.statusPath));
+  if (!(await pathExists(paths.manifestPath))) return;
+  const outcome = await recoverUpdateTransactionFromPolicyFile(paths.policyPath, { allowRollback: false });
+  if (outcome?.status === "complete" && !(await pathExists(paths.manifestPath))) return;
+  throw new Error(outcome?.message || "Vigil must finish recovering the previous update before local changes can start.");
+}
+
+async function localUpdateRecoveryBundleSource(options: Options): Promise<UpdateRecoveryBundleSource> {
+  const runtimeScriptsDir = dirname(fileURLToPath(import.meta.url));
+  const selectedGit = await gitExecutable(options.repoRoot);
+  const absoluteGit = isAbsolute(selectedGit)
+    ? selectedGit
+    : await lookupExecutablePath(selectedGit, options.repoRoot);
+  return {
+    nodePath: await realpath(options.nodePath),
+    gitPath: await realpath(absoluteGit),
+    scriptSourcePath: join(runtimeScriptsDir, "recover-update-transaction.mjs"),
+    moduleSourcePath: join(runtimeScriptsDir, "..", "src", "updateTransaction.js"),
+    helperSourcePath: join(runtimeScriptsDir, "..", "bin", "vigil-atomic-swap")
+  };
+}
+
+async function lookupExecutablePath(command: string, cwd: string): Promise<string> {
+  return await new Promise<string>((resolveLookup, rejectLookup) => {
+    let settled = false;
+    let stdout = "";
+    let stderr = "";
+    const child = spawn("/usr/bin/which", [command], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      rejectLookup(new Error(`Vigil timed out while resolving the exact ${command} executable.`));
+    }, 5_000);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      rejectLookup(error);
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      const path = stdout.trim();
+      if (code === 0 && isAbsolute(path)) resolveLookup(path);
+      else rejectLookup(new Error(stderr.trim() || `Vigil could not resolve the exact ${command} executable.`));
+    });
+  });
+}
+
+async function settleLocalGlobalUpdateAfterFailure({
+  options,
+  log,
+  recoveryPolicy,
+  appPlan,
+  legacyAgent,
+  legacyAgentStopped,
+  parentExited
+}: {
+  options: Options;
+  log: ReturnType<typeof createWriteStream>;
+  recoveryPolicy: UpdateRecoveryPolicy | null;
+  appPlan: UpdateArtifactPlan | null;
+  legacyAgent: LegacyAgentRecovery | null;
+  legacyAgentStopped: boolean;
+  parentExited: boolean;
+}): Promise<LocalFailureRecovery> {
+  const errors: string[] = [];
+  let outcome: UpdateRecoveryOutcome | null = null;
+  let manifestObserved = false;
+  if (recoveryPolicy) {
+    try {
+      manifestObserved = true;
+      manifestObserved = await pathExists(updateRecoveryPaths(recoveryPolicy.updaterDir).manifestPath);
+      const manifest = await readUpdateRecoveryManifest(recoveryPolicy);
+      manifestObserved ||= manifest !== null;
+      if (manifest && (manifest.state === "commit-intent" || manifest.state === "committed")) {
+        outcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+      } else if (manifest) {
+        if (!parentExited) {
+          errors.push("The pending local transaction is waiting for the original Vigil process to exit before rollback.");
+        } else {
+          await terminateLocalInstalledCandidate(options.appPath, appPlan);
+          outcome = await recoverUpdateTransaction(recoveryPolicy);
+        }
+      } else {
+        const priorOutcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+        if (priorOutcome?.attemptId === options.lockToken) outcome = priorOutcome;
+      }
+    } catch (recoveryError) {
+      errors.push(`The durable local update transaction could not be reconciled: ${errorMessage(recoveryError)}`);
+    }
+  }
+
+  if (outcome?.attemptId === options.lockToken && outcome.status === "complete") {
+    return { committed: true, errors };
+  }
+  if (outcome?.attemptId === options.lockToken && outcome.status === "recovery-failed") {
+    errors.push(outcome.message);
+    return { committed: false, errors };
+  }
+  if (!manifestObserved && outcome?.attemptId !== options.lockToken && recoveryPolicy) {
+    try {
+      await reconcileStagedUpdateArtifactCandidate(recoveryPolicy, recoveryPolicy.expectedAppPath, "app");
+    } catch (cleanupError) {
+      errors.push(`The staged local app could not be reconciled: ${errorMessage(cleanupError)}`);
+    }
+  }
+
+  const rolledBack = outcome?.attemptId === options.lockToken && outcome.status === "failed-recovered";
+  const unchangedBeforeTransaction = !manifestObserved && outcome?.attemptId !== options.lockToken;
+  if (parentExited && (rolledBack || unchangedBeforeTransaction)) {
+    let legacyRestored = false;
+    if (legacyAgent && legacyAgentStopped) {
+      try {
+        await restoreLegacyLaunchAgent(legacyAgent);
+        legacyRestored = true;
+      } catch (restoreError) {
+        errors.push(`The previous legacy runtime could not be restored: ${errorMessage(restoreError)}`);
+      }
+    }
+    try {
+      if (!legacyRestored) await resumeEmbeddedRuntimeSupervisor(options.userDataDir);
+      await reopenInstalledApp(options.appPath, log);
+      await verifyReplacement(
+        options.appPath,
+        recoveryPolicy?.expectedDataDir || legacyAgent?.dataDir || options.userDataDir,
+        legacyAgent?.context
+      );
+    } catch (reopenError) {
+      errors.push(`The restored Vigil app could not be verified; persistent supervision will retry: ${errorMessage(reopenError)}`);
+    }
+  }
+  for (const recoveryError of errors) log.write(`[${new Date().toISOString()}] ${recoveryError}\n`);
+  return { committed: false, errors };
+}
+
+async function terminateLocalInstalledCandidate(appPath: string, plan: UpdateArtifactPlan | null): Promise<void> {
+  if (!plan) return;
+  const installed = await captureUpdateArtifactIdentity(appPath, "app");
+  if (installed && artifactIdentitiesMatch(plan.targetIdentity, installed)) {
+    await terminateInstalledApp(appPath);
+    return;
+  }
+  if ((installed === null && plan.initialIdentity === null)
+    || (installed !== null && plan.initialIdentity !== null && artifactIdentitiesMatch(plan.initialIdentity, installed))) {
+    return;
+  }
+  throw new Error("Vigil preserved a local app with an ambiguous identity instead of terminating it for rollback.");
+}
+
+function artifactIdentitiesMatch(expected: UpdateArtifactIdentity, observed: UpdateArtifactIdentity): boolean {
+  return updateArtifactIdentitiesExactlyMatch(expected, observed);
+}
+
+async function processStillExistsAfter(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (!processExists(pid)) return false;
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 100));
+  } while (Date.now() < deadline);
+  return processExists(pid);
+}
+
+async function safeLocalStatus(
+  options: Options,
+  log: ReturnType<typeof createWriteStream>,
+  phase: UpdateReceiptPhase,
+  message: string,
+  extra: Omit<UpdateReceiptPatch, "phase" | "message"> = {}
+): Promise<void> {
+  try {
+    await localStatus(options, log, phase, message, extra);
+  } catch (error) {
+    log.write(`[${new Date().toISOString()}] Updater status could not be persisted: ${errorMessage(error)}\n`);
+  }
+}
+
+async function localStatus(
+  options: Options,
+  log: ReturnType<typeof createWriteStream>,
+  phase: UpdateReceiptPhase,
+  message: string,
+  extra: Omit<UpdateReceiptPatch, "phase" | "message"> = {}
+): Promise<void> {
+  const updatedAt = new Date().toISOString();
+  log.write(`[${updatedAt}] ${phase}: ${message}\n`);
+  await mergeWriteUpdateReceipt(options.statusPath, options.lockToken, {
+    phase,
+    message,
+    updatedAt,
+    ...extra
+  });
 }
 
 async function captureLegacyLaunchAgentRecovery(): Promise<LegacyAgentRecovery | null> {
@@ -164,14 +477,24 @@ async function captureLegacyLaunchAgentRecovery(): Promise<LegacyAgentRecovery |
   const uid = process.getuid?.();
   if (uid === undefined) throw new Error("Vigil could not identify the current user for background-service recovery.");
   const plistPath = join(home, "Library", "LaunchAgents", "com.vigil.agent.plist");
+  const loaded = await runCommandResult("/bin/launchctl", ["print", `gui/${uid}/com.vigil.agent`]);
+  if (!loaded.ok) {
+    if (launchctlServiceMissing(loaded.stderr)) return null;
+    throw new Error(`Vigil could not verify its legacy background service: ${loaded.stderr || "launchctl failed"}`);
+  }
   let plist: string;
   let plistMode: number;
   try {
     const [contents, plistStat] = await Promise.all([readFile(plistPath, "utf8"), lstat(plistPath)]);
+    if (!plistStat.isFile() || plistStat.isSymbolicLink() || plistStat.uid !== uid) {
+      throw new Error("The loaded legacy Vigil background service has an unsafe recovery plist.");
+    }
     plist = contents;
     plistMode = plistStat.mode & 0o777;
   } catch (error) {
-    if (isErrorCode(error, "ENOENT")) return null;
+    if (isErrorCode(error, "ENOENT")) {
+      throw new Error("The loaded legacy Vigil background service has no recovery plist.");
+    }
     throw error;
   }
   const configuredPort = process.env.VIGIL_PORT || plistStringForKey(plist, "VIGIL_PORT") || "8787";
@@ -181,11 +504,27 @@ async function captureLegacyLaunchAgentRecovery(): Promise<LegacyAgentRecovery |
   if (!dataDir) throw new Error("The legacy Vigil background service data directory could not be verified.");
   return {
     context: { port, instanceSecret: await getInstanceSecret(dataDir) },
+    dataDir,
     plist,
     plistMode,
     plistPath,
     uid
   };
+}
+
+async function stopLegacyLaunchAgentForUpdate(recovery: LegacyAgentRecovery): Promise<void> {
+  for (const args of [
+    ["bootout", `gui/${recovery.uid}/com.vigil.agent`],
+    ["bootout", `gui/${recovery.uid}`, recovery.plistPath]
+  ]) {
+    await runCommand("/bin/launchctl", args, true);
+  }
+  const loaded = await runCommandResult("/bin/launchctl", ["print", `gui/${recovery.uid}/com.vigil.agent`]);
+  if (loaded.ok) throw new Error("The legacy Vigil background service remained loaded during the protected update.");
+  if (!launchctlServiceMissing(loaded.stderr)) {
+    throw new Error(`Vigil could not verify that its legacy background service stopped: ${loaded.stderr || "launchctl failed"}`);
+  }
+  await waitForLegacyBackendStopped(recovery.context);
 }
 
 async function restoreLegacyLaunchAgent(recovery: LegacyAgentRecovery | null): Promise<void> {
@@ -232,35 +571,108 @@ async function waitForLegacyLaunchAgent(
   throw new Error("The restored Vigil background service did not become healthy in time.");
 }
 
+async function waitForLegacyBackendStopped(context: LegacyAgentRecovery["context"]): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (!(await legacyBackendIsHealthy(context))) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("The legacy Vigil background service did not stop before update state was captured.");
+}
+
+async function legacyBackendIsHealthy(context: LegacyAgentRecovery["context"]): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2_000);
+  try {
+    const health = await fetchVigilStateHealth(`http://127.0.0.1:${context.port}/api/health`, {
+      signal: controller.signal,
+      expectedPort: context.port,
+      instanceSecret: context.instanceSecret
+    });
+    return health.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function runCommand(command: string, args: string[], allowFailure = false): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
+  const result = await runCommandResult(command, args);
+  if (!result.ok && !allowFailure) {
+    throw new Error(`${command} exited unsuccessfully: ${result.stderr || "Unknown error"}`);
+  }
+}
+
+async function runCommandResult(command: string, args: string[]): Promise<{ ok: boolean; stderr: string }> {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
     const child = spawn(command, args, { stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    child.once("error", reject);
-    child.once("close", (code) => code === 0 || allowFailure
-      ? resolve()
-      : reject(new Error(`${command} exited with status ${code}: ${stderr.trim() || "Unknown error"}`)));
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // launchctl already exited.
+      }
+    }, 5_000);
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve({
+        ok: code === 0,
+        stderr: stderr.trim() || (signal ? `${command} was terminated by ${signal}` : `${command} exited with status ${code}`)
+      });
+    });
   });
+}
+
+function launchctlServiceMissing(detail: string): boolean {
+  return /could not find service|service not found|no such process/iu.test(detail);
+}
+
+function validPort(value: string): number {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("Vigil has an invalid server port.");
+  }
+  return port;
 }
 
 function isErrorCode(error: unknown, code: string): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
-async function verifyReplacement(appPath: string): Promise<void> {
-  const dataDir = process.env.VIGIL_DATA_DIR || join(homedir(), "Library", "Application Support", "Vigil");
+async function verifyReplacement(
+  appPath: string,
+  dataDir: string,
+  preservedContext?: LegacyAgentRecovery["context"]
+): Promise<void> {
+  const healthContext = preservedContext || {
+    port: validPort(process.env.VIGIL_PORT || "8787"),
+    instanceSecret: await getInstanceSecret(dataDir)
+  };
   const launchedAfter = Date.now() - 2_000;
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   let healthySince = 0;
   while (Date.now() < deadline) {
-    const [pids, ready] = await Promise.all([
+    const [pids, ready, signedHealthy] = await Promise.all([
       installedAppProcessIds(appPath),
-      liveRuntimeReady(dataDir, launchedAfter)
+      liveRuntimeReady(dataDir, launchedAfter),
+      legacyBackendIsHealthy(healthContext)
     ]);
     const running = Boolean(ready && pids.includes(ready.pid) && ready.appPath === join(appPath, "Contents", "MacOS", basename(appPath, ".app")));
-    const healthy = ready?.transport === "in-app";
+    const healthy = ready?.transport === "in-app" && signedHealthy;
     if (running && healthy) {
       if (!healthySince) healthySince = Date.now();
       if (Date.now() - healthySince >= 1_500) return;
@@ -323,16 +735,312 @@ async function waitForLogOpen(log: ReturnType<typeof createWriteStream>): Promis
   });
 }
 
-async function buildLocalApp(options: Options, log: ReturnType<typeof createWriteStream>): Promise<number | null> {
-  return await new Promise((resolve, reject) => {
-    const child = spawn(options.npmPath, ["run", "build:mac"], {
-      cwd: options.repoRoot,
-      stdio: ["ignore", log, log],
-      env: process.env
+interface LocalBuildInfo {
+  builtAt?: unknown;
+  commit?: unknown;
+  sourceFingerprint?: unknown;
+}
+
+export function localBuildIdentityMatches(
+  build: LocalBuildInfo,
+  expectedCommit: string,
+  expectedFingerprint: string,
+  builtAfter: number
+): boolean {
+  const builtAt = Date.parse(String(build.builtAt || ""));
+  return build.commit === expectedCommit
+    && build.sourceFingerprint === expectedFingerprint
+    && Number.isFinite(builtAt)
+    && builtAt >= builtAfter - 1_000;
+}
+
+async function assertSourceIdentity(options: Options): Promise<void> {
+  const [head, branch, fingerprint] = await Promise.all([
+    captureGitHead(options.repoRoot),
+    captureGitBranch(options.repoRoot),
+    sourceFingerprint(options.repoRoot)
+  ]);
+  if (head !== options.expectedCommit
+    || branch !== options.expectedBranch
+    || fingerprint !== options.expectedFingerprint) {
+    throw new Error("Vigil source changed while local changes were being prepared. Nothing was installed.");
+  }
+}
+
+async function verifyLocalBuildCandidate(appPath: string, options: Options, builtAfter: number): Promise<void> {
+  const candidateStat = await lstat(appPath);
+  if (!candidateStat.isDirectory() || candidateStat.isSymbolicLink()) {
+    throw new Error("The isolated Vigil build did not produce a trustworthy app bundle.");
+  }
+  const infoPath = join(
+    appPath,
+    "Contents",
+    "Resources",
+    "app.asar.unpacked",
+    "dist",
+    "runtime",
+    "build-info.json"
+  );
+  let build: LocalBuildInfo;
+  try {
+    build = JSON.parse(await readFile(infoPath, "utf8")) as LocalBuildInfo;
+  } catch {
+    throw new Error("The isolated Vigil build is missing valid source identity metadata.");
+  }
+  if (!localBuildIdentityMatches(build, options.expectedCommit, options.expectedFingerprint, builtAfter)) {
+    throw new Error("The isolated Vigil build does not match the source selected for this update. Nothing was installed.");
+  }
+}
+
+async function captureGitHead(repoRoot: string): Promise<string> {
+  return await captureGitText(repoRoot, ["rev-parse", "HEAD"]);
+}
+
+async function captureGitBranch(repoRoot: string): Promise<string> {
+  return await captureGitText(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]);
+}
+
+async function captureGitText(repoRoot: string, args: string[]): Promise<string> {
+  const command = await gitExecutable(repoRoot);
+  return await new Promise<string>((resolveCapture, rejectCapture) => {
+    const child = spawn(command, args, {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"]
     });
-    child.once("error", reject);
-    child.once("close", (code) => resolve(code));
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
+    child.once("error", rejectCapture);
+    child.once("close", (code) => code === 0
+      ? resolveCapture(stdout.trim())
+      : rejectCapture(new Error(`git ${args.join(" ")} failed with status ${code}: ${stderr.trim() || "Unknown error"}`)));
   });
+}
+
+function expectedBranchName(value: string): string | null {
+  return value === "HEAD" ? null : value;
+}
+
+async function buildLocalApp(
+  options: Options,
+  snapshotRoot: string,
+  packageOutputRoot: string,
+  log: ReturnType<typeof createWriteStream>
+): Promise<number | null> {
+  const installCode = await runBuildCommand(options.npmPath, ["ci"], snapshotRoot, log, {
+    VIGIL_BUILD_SOURCE_ROOT: options.repoRoot
+  }, DEPENDENCY_INSTALL_TIMEOUT_MS);
+  if (installCode !== 0) return installCode;
+  const buildCode = await runBuildCommand(options.npmPath, ["run", "build"], snapshotRoot, log, {
+    VIGIL_BUILD_SOURCE_ROOT: options.repoRoot
+  }, RUNTIME_BUILD_TIMEOUT_MS);
+  if (buildCode !== 0) return buildCode;
+  return await runBuildCommand(options.nodePath, [
+    join(snapshotRoot, "scripts", "package-mac.mjs"),
+    "dir",
+    `-c.directories.output=${packageOutputRoot}`
+  ], snapshotRoot, log, {
+    VIGIL_BUILD_SOURCE_ROOT: options.repoRoot
+  }, APP_PACKAGE_TIMEOUT_MS);
+}
+
+async function runBuildCommand(
+  command: string,
+  args: string[],
+  cwd: string,
+  log: ReturnType<typeof createWriteStream>,
+  environment: NodeJS.ProcessEnv = process.env,
+  timeoutMs = SOURCE_COMMAND_TIMEOUT_MS
+): Promise<number | null> {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let timedOut = false;
+    let childClosed = false;
+    let killConfirmationReached = false;
+    let terminationGrace: ReturnType<typeof setTimeout> | null = null;
+    let killConfirmation: ReturnType<typeof setTimeout> | null = null;
+    let terminationPoll: ReturnType<typeof setInterval> | null = null;
+    const child = spawn(command, args, {
+      cwd,
+      stdio: ["ignore", log, log],
+      env: { ...process.env, ...environment },
+      detached: true
+    });
+    const clearLifecycleTimers = () => {
+      clearTimeout(timeout);
+      if (terminationGrace) clearTimeout(terminationGrace);
+      if (killConfirmation) clearTimeout(killConfirmation);
+      if (terminationPoll) clearInterval(terminationPoll);
+    };
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearLifecycleTimers();
+      resolve(code);
+    };
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearLifecycleTimers();
+      reject(error);
+    };
+    const processGroupStillExists = () => buildProcessGroupExists(child.pid);
+    const finishTimedOutCommandWhenStopped = () => {
+      if (!timedOut || settled || processGroupStillExists()) return;
+      if (childClosed || killConfirmationReached) finish(124);
+    };
+    const waitForKillConfirmation = () => {
+      killConfirmation = setTimeout(() => {
+        if (settled) return;
+        killConfirmationReached = true;
+        if (!processGroupStillExists()) {
+          finish(124);
+          return;
+        }
+        // A process in an uninterruptible kernel wait can outlive SIGKILL.
+        // Retain the updater lock and retry instead of allowing cleanup to race it.
+        stopBuildCommand(child.pid, "SIGKILL");
+        waitForKillConfirmation();
+      }, COMMAND_KILL_CONFIRMATION_MS);
+    };
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      log.write(`[${new Date().toISOString()}] ${command} timed out after ${timeoutMs}ms; terminating its process group.\n`);
+      stopBuildCommand(child.pid, "SIGTERM");
+      terminationPoll = setInterval(finishTimedOutCommandWhenStopped, COMMAND_TERMINATION_POLL_MS);
+      terminationGrace = setTimeout(() => {
+        if (settled) return;
+        if (!processGroupStillExists()) {
+          finishTimedOutCommandWhenStopped();
+          if (!settled) waitForKillConfirmation();
+          return;
+        }
+        stopBuildCommand(child.pid, "SIGKILL");
+        waitForKillConfirmation();
+      }, COMMAND_TERMINATION_GRACE_MS);
+    }, timeoutMs);
+    child.once("error", (error) => {
+      if (settled) return;
+      if (timedOut) {
+        childClosed = true;
+        finishTimedOutCommandWhenStopped();
+        return;
+      }
+      fail(error);
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      childClosed = true;
+      if (timedOut) {
+        finishTimedOutCommandWhenStopped();
+        return;
+      }
+      finish(code);
+    });
+  });
+}
+
+function stopBuildCommand(pid: number | undefined, signal: NodeJS.Signals): void {
+  if (!pid) return;
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    try {
+      process.kill(pid, signal);
+    } catch {
+      // The bounded build command already exited.
+    }
+  }
+}
+
+function buildProcessGroupExists(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return typeof error === "object" && error !== null && "code" in error && error.code === "EPERM";
+  }
+}
+
+async function createLocalBuildSnapshot(
+  options: Options,
+  snapshotRoot: string,
+  buildRoot: string,
+  log: ReturnType<typeof createWriteStream>
+): Promise<void> {
+  const git = await gitExecutable(options.repoRoot);
+  const patchPath = join(buildRoot, "working-tree.patch");
+  const [trackedPatch, untrackedOutput] = await Promise.all([
+    captureGitBytes(git, options.repoRoot, ["diff", "--binary", "--no-ext-diff", "--no-textconv", "HEAD", "--"]),
+    captureGitBytes(git, options.repoRoot, ["ls-files", "--others", "--exclude-standard", "-z"])
+  ]);
+  await writeFile(patchPath, trackedPatch, { mode: 0o600 });
+  const worktreeCode = await runBuildCommand(
+    git,
+    ["worktree", "add", "--detach", snapshotRoot, options.expectedCommit],
+    options.repoRoot,
+    log
+  );
+  if (worktreeCode !== 0) throw new Error(`Vigil could not create an isolated local source snapshot (status ${worktreeCode}).`);
+  if (trackedPatch.length) {
+    const applyCode = await runBuildCommand(git, ["apply", "--binary", patchPath], snapshotRoot, log);
+    if (applyCode !== 0) throw new Error(`Vigil could not reproduce tracked local changes in its isolated snapshot (status ${applyCode}).`);
+  }
+  const untrackedPaths = untrackedOutput.toString("utf8").split("\0").filter(Boolean);
+  for (const relativePath of untrackedPaths) {
+    if (relativePath.startsWith("/") || relativePath.split("/").includes("..")) {
+      throw new Error("Vigil found an unsafe untracked path while isolating local changes.");
+    }
+    const source = join(options.repoRoot, relativePath);
+    const destination = join(snapshotRoot, relativePath);
+    await mkdir(dirname(destination), { recursive: true });
+    await cp(source, destination, {
+      recursive: true,
+      force: false,
+      preserveTimestamps: true,
+      verbatimSymlinks: true
+    });
+  }
+  const snapshotFingerprint = await sourceFingerprint(snapshotRoot);
+  if (snapshotFingerprint !== options.expectedFingerprint) {
+    throw new Error("The isolated local source snapshot does not match the selected source fingerprint.");
+  }
+}
+
+async function captureGitBytes(command: string, cwd: string, args: string[]): Promise<Buffer> {
+  return await new Promise<Buffer>((resolveCapture, rejectCapture) => {
+    const chunks: Buffer[] = [];
+    const errors: Buffer[] = [];
+    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
+    child.once("error", rejectCapture);
+    child.once("close", (code) => code === 0
+      ? resolveCapture(Buffer.concat(chunks))
+      : rejectCapture(new Error(`git ${args.join(" ")} failed with status ${code}: ${Buffer.concat(errors).toString("utf8").trim()}`)));
+  });
+}
+
+async function removeLocalBuildSnapshot(
+  repoRoot: string,
+  snapshotRoot: string,
+  log: ReturnType<typeof createWriteStream>
+): Promise<void> {
+  try {
+    const git = await gitExecutable(repoRoot);
+    if (await pathExists(snapshotRoot)) {
+      const code = await runBuildCommand(git, ["worktree", "remove", "--force", snapshotRoot], repoRoot, log);
+      if (code !== 0) log.write(`[${new Date().toISOString()}] Isolated worktree cleanup exited with status ${code}.\n`);
+    }
+    await runBuildCommand(git, ["worktree", "prune"], repoRoot, log);
+  } catch (error) {
+    log.write(`[${new Date().toISOString()}] The isolated source worktree could not be fully retired: ${errorMessage(error)}\n`);
+  }
 }
 
 async function reopenInstalledApp(appPath: string, log: ReturnType<typeof createWriteStream>): Promise<void> {
@@ -378,12 +1086,23 @@ function parseArgs(args: string[]): Options {
   }
   const parentPid = Number(required(values, "parent-pid"));
   if (!Number.isInteger(parentPid) || parentPid <= 0) throw new Error("--parent-pid must be a positive process ID");
+  const expectedCommit = required(values, "expected-commit");
+  const expectedBranch = required(values, "expected-branch");
+  const expectedFingerprint = required(values, "expected-fingerprint");
+  if (!/^[a-f0-9]{40}$/iu.test(expectedCommit) || !/^[a-f0-9]{64}$/iu.test(expectedFingerprint)) {
+    throw new Error("The selected local source identity is invalid.");
+  }
   return {
-    repoRoot: required(values, "repo-root"),
-    appPath: required(values, "app-path"),
-    parentPid,
-    userDataDir: required(values, "user-data-dir"),
-    npmPath: required(values, "npm-path"),
+      repoRoot: required(values, "repo-root"),
+      appPath: required(values, "app-path"),
+      parentPid,
+      userDataDir: required(values, "user-data-dir"),
+      nodePath: required(values, "node-path"),
+      npmPath: required(values, "npm-path"),
+      statusPath: required(values, "status-path"),
+      expectedCommit,
+      expectedBranch,
+      expectedFingerprint,
     logPath: values.get("log-path") || join(homedir(), "Library", "Logs", "Vigil", "local-launch.log"),
     lockPath: required(values, "lock-path"),
     lockToken: required(values, "lock-token")
@@ -400,6 +1119,30 @@ async function releaseOwnedUpdaterLock(lockPath: string, lockToken: string): Pro
   }
   if (payload.token === lockToken && payload.pid === process.pid) {
     await rm(lockPath, { force: true });
+  }
+}
+
+async function waitForOwnedUpdaterLock(lockPath: string, lockToken: string): Promise<void> {
+  const deadline = Date.now() + UPDATER_LOCK_HANDOFF_TIMEOUT_MS;
+  do {
+    try {
+      const payload = JSON.parse(await readFile(lockPath, "utf8")) as { token?: unknown; pid?: unknown };
+      if (payload.token === lockToken && payload.pid === process.pid) return;
+    } catch {
+      // The controller may still be atomically transferring the lock payload.
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+  } while (Date.now() < deadline);
+  throw new Error("Vigil updater lock ownership could not be verified after startup handoff.");
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) return false;
+    throw error;
   }
 }
 

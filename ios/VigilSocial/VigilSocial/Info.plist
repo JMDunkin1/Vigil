@@ -41,6 +41,12 @@
     <dict/>
     <key>LSRequiresIPhoneOS</key>
     <true/>
+    <key>NSCameraUsageDescription</key>
+    <string>Use the camera when you choose to capture a photo or video in $(SOCIAL_APP_NAME).</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Use the microphone when you choose voice search, recording, or calling in $(SOCIAL_APP_NAME).</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>Choose photos and videos to upload in $(SOCIAL_APP_NAME).</string>
     <key>VigilService</key>
     <string>$(VIGIL_SERVICE)</string>
     <key>VigilUnclassifiedMediaPolicy</key>

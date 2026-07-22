@@ -149,6 +149,10 @@ function boot() {
   bindJournalSecuritySettings();
   bindIconThemeSettings();
   appUpdatePanel.bind();
+  // Rehydrate the transaction journal after every app/window relaunch. The
+  // replacement app can reopen while its updater still owns the lock, so an
+  // in-memory "not checked" default is not authoritative.
+  void appUpdatePanel.refreshStatus(false);
   bindSetupAssistant({ refresh, toast });
   bindAppEvents({
     state,

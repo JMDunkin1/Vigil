@@ -1,18 +1,47 @@
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { cp, lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getInstanceSecret } from "../src/instanceIdentity.js";
 import { fetchVigilStateHealth } from "../src/vigilHealth.js";
 import { liveRuntimeReady } from "../src/runtimeReady.js";
-import { resumeEmbeddedRuntimeSupervisor, suspendEmbeddedRuntimeSupervisor } from "../src/embeddedSupervisor.js";
+import { resumeEmbeddedRuntimeSupervisor } from "../src/embeddedSupervisor.js";
 import { isDirectRun } from "../src/directRun.js";
 import { plistStringForKey } from "../src/plist.js";
-import { beginGuardianMaintenance, guardianMaintenanceReadiness } from "../src/updateMaintenance.js";
+import {
+  beginGuardianMaintenance,
+  guardianMaintenanceReadiness,
+  waitForGuardianRecoveryAuthorization
+} from "../src/updateMaintenance.js";
 import type { GuardianMaintenanceTransaction } from "../src/updateMaintenance.js";
+import { mergeWriteUpdateReceipt } from "../src/updateReceipt.js";
+import type { UpdateReceiptPatch, UpdateReceiptPhase } from "../src/updateReceipt.js";
+import {
+  activateStagedUpdateArtifact,
+  beginUpdateRecoveryTransaction,
+  captureUpdateArtifactIdentity,
+  markUpdateRecoveryCommitIntent,
+  markUpdateRecoveryCommitted,
+  readUpdateRecoveryManifest,
+  reconcileStagedUpdateArtifactCandidate,
+  recoverUpdateTransaction,
+  recoverUpdateTransactionFromPolicyFile,
+  stageUpdateArtifactCandidate,
+  updateArtifactIdentitiesExactlyMatch,
+  updateRecoveryPaths
+} from "../src/updateTransaction.js";
+import type {
+  UpdateArtifactIdentity,
+  UpdateArtifactPlan,
+  UpdateRecoveryBundleSource,
+  UpdateRecoveryOutcome,
+  UpdateRecoveryPolicy
+} from "../src/updateTransaction.js";
 import { gitExecutable } from "./git-executable.mjs";
-import { isLocallyRebuildableSignature, macSigningTimestamp, resolveMacSigningIdentity } from "./mac-signing-identity.mjs";
+import { isLocallyRebuildableSignature } from "./mac-signing-identity.mjs";
 
 interface Options {
   repoRoot: string;
@@ -23,6 +52,8 @@ interface Options {
   logPath: string;
   lockPath: string;
   lockToken: string;
+  expectedInitialCommit: string;
+  expectedBranch: string;
   expectedCommit: string;
   restart: boolean;
 }
@@ -33,6 +64,7 @@ interface StagedBuild {
   builtAppPath: string;
   expectedCommit: string;
   initialCommit: string;
+  initialBranch: string | null;
 }
 
 interface BackendHealthContext {
@@ -49,12 +81,16 @@ interface LaunchAgentRecovery {
 }
 
 export interface AppInstallation {
+  attachStateSnapshot(snapshot: UpdateStateSnapshot): Promise<void>;
+  markVerified(): Promise<void>;
   finalize(): Promise<void>;
   rollback(): Promise<void>;
 }
 
 export interface UpdateStateSnapshot extends AppInstallation {
   dataDir: string;
+  snapshotRoot: string;
+  restore(): Promise<void>;
 }
 
 export interface AtomicInstallOperations {
@@ -62,9 +98,44 @@ export interface AtomicInstallOperations {
   copy(source: string, destination: string): Promise<void>;
   move(source: string, destination: string): Promise<void>;
   remove(path: string): Promise<void>;
+  identity?(path: string): Promise<FileIdentity>;
+  swap?(left: string, right: string): Promise<void>;
+}
+
+interface FileIdentity {
+  dev: number;
+  ino: number;
+}
+
+interface AtomicInstallJournal {
+  version: 2;
+  id: string;
+  targetPath: string;
+  nextPath: string;
+  previousPath: string;
+  phase: "preparing" | "prepared" | "swapping" | "backing-up" | "installed" | "verified" | "rolling-back" | "finalizing";
+  hadPrevious: boolean;
+  candidateDevice?: number;
+  candidateInode?: number;
+  initialPresent?: boolean;
+  initialCommit?: string | null;
+  initialFingerprint?: string | null;
+  initialDevice?: number | null;
+  initialInode?: number | null;
+  stateDataDir?: string;
+  stateSnapshotRoot?: string;
+  updatedAt: string;
 }
 
 const HEALTH_TIMEOUT_MS = 30_000;
+const UPDATER_LOCK_HANDOFF_TIMEOUT_MS = 10_000;
+const SOURCE_COMMAND_TIMEOUT_MS = 60_000;
+const DEPENDENCY_INSTALL_TIMEOUT_MS = 15 * 60_000;
+const RUNTIME_BUILD_TIMEOUT_MS = 15 * 60_000;
+const APP_PACKAGE_TIMEOUT_MS = 20 * 60_000;
+const COMMAND_TERMINATION_GRACE_MS = 5_000;
+const COMMAND_KILL_CONFIRMATION_MS = 5_000;
+const COMMAND_TERMINATION_POLL_MS = 50;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
 const SAFETY_BOUNDARY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
 let options: Options;
@@ -74,42 +145,80 @@ let interrupted = false;
 
 async function runUpdate(): Promise<void> {
   let stagedBuild: StagedBuild | null = null;
-  let appInstallation: AppInstallation | null = null;
-  let runtimeInstallation: AppInstallation | null = null;
-  let agentRuntimeInstallation: AppInstallation | null = null;
-  let stateSnapshot: UpdateStateSnapshot | null = null;
+  let appPlan: UpdateArtifactPlan | null = null;
+  let runtimePlan: UpdateArtifactPlan | null = null;
+  let recoveryPolicy: UpdateRecoveryPolicy | null = null;
+  let recoveryBundle: UpdateRecoveryBundleSource | null = null;
   let launchAgentTransition: LaunchAgentRecovery | null = null;
   let guardianMaintenance: GuardianMaintenanceTransaction | null = null;
   let parentExited = false;
-  let replacementCommitted = false;
   let launchAgentWasLoaded = false;
+  let launchAgentStopped = false;
+  let replacementDataDirectory = "";
 
   try {
     options = parseArgs(process.argv.slice(2));
     await mkdir(dirname(options.statusPath), { recursive: true });
     await mkdir(dirname(options.logPath), { recursive: true });
     log = createWriteStream(options.logPath, { flags: "a" });
+    // Logging is diagnostic only. A late filesystem error must never bypass the
+    // updater's transactional catch/finally recovery path via EventEmitter's
+    // special unhandled `error` behavior.
+    log.on("error", () => undefined);
     installSignalHandlers();
     await assertOwnedUpdaterLock();
+    await status("selecting", "Protected Vigil updater started");
+    await reconcilePreviousGlobalUpdateWhileRuntimeIsLive();
     await assertLocallyRebuildableApp();
 
     const maintenance = await guardianMaintenanceReadiness();
     if (!maintenance.ready) throw new Error(maintenance.message || "Vigil's protected update setup is not ready.");
 
+    await assertSelectedSourceIdentity();
     const dirty = (await capture("git", ["status", "--porcelain=v1"], { cwd: options.repoRoot })).trim().length > 0;
     if (dirty) throw new Error("Vigil source has uncommitted changes. Commit or stash them before installing an update.");
 
     stagedBuild = await buildInIsolatedWorktree();
 
-    await status("exporting-ios-policy", "Refreshing ManageEngine iPhone policy artifact");
-    await run("node", ["dist/runtime/scripts/export-manageengine-ios-profile.mjs", "--current-state"], {
-      cwd: stagedBuild.repoRoot,
-      env: manageEngineExportEnv()
-    });
-
     await assertActiveCheckoutUnchanged(stagedBuild);
     launchAgentTransition = await captureLoadedLaunchAgentRecovery();
     launchAgentWasLoaded = launchAgentTransition !== null;
+    replacementDataDirectory = await replacementDataDir(
+      launchAgentWasLoaded,
+      launchAgentTransition?.plist
+    );
+    // `dist` is intentionally a convenience symlink to `dist.nosync` in the
+    // primary checkout. Recovery policy paths are durable security boundaries,
+    // so bind the runtime target to its canonical location before any staging
+    // journal is created rather than teaching recovery to follow a mutable
+    // symlink after a crash or reboot.
+    const installedRuntimePath = await resolveInstalledRuntimeTarget(options.repoRoot);
+    recoveryPolicy = {
+      updaterDir: dirname(options.statusPath),
+      expectedAppPath: options.appPath,
+      repoRoot: options.repoRoot,
+      userDataDir: options.userDataDir,
+      expectedDataDir: replacementDataDirectory,
+      expectedRuntimePaths: [installedRuntimePath]
+    };
+    await status("installing-runtime", "Durably staging the rebuilt Vigil runtime");
+    runtimePlan = await stageUpdateArtifactCandidate(
+      recoveryPolicy,
+      options.lockToken,
+      join(stagedBuild.repoRoot, "dist", "runtime"),
+      installedRuntimePath,
+      "runtime"
+    );
+    await status("installing-app", "Durably staging the rebuilt Vigil app");
+    appPlan = await stageUpdateArtifactCandidate(
+      recoveryPolicy,
+      options.lockToken,
+      stagedBuild.builtAppPath,
+      options.appPath,
+      "app"
+    );
+    await assertActiveCheckoutUnchanged(stagedBuild);
+
     guardianMaintenance = await beginGuardianMaintenance(options.lockPath, options.lockToken);
     await status("waiting", "Update ready; waiting for Vigil to quit");
     process.kill(options.parentPid, "SIGUSR2");
@@ -121,69 +230,87 @@ async function runUpdate(): Promise<void> {
       throw error;
     }
 
-    await status("installing-runtime", "Staging the rebuilt Vigil background runtime");
-    runtimeInstallation = await atomicInstallBuiltApp(
-      join(stagedBuild.repoRoot, "dist", "runtime"),
-      join(options.repoRoot, "dist", "runtime"),
-      ""
+    if (launchAgentTransition) {
+      launchAgentTransition = await stopLaunchAgentForStateTransition(launchAgentTransition);
+      launchAgentStopped = true;
+    }
+    await status("installing-runtime", "Recording the crash-recoverable Vigil update transaction");
+    recoveryBundle = await updateRecoveryBundleSource();
+    const recoveryManifest = await beginUpdateRecoveryTransaction(recoveryPolicy, {
+      attemptId: options.lockToken,
+      source: {
+        initialCommit: stagedBuild.initialCommit,
+        initialBranch: stagedBuild.initialBranch,
+        targetCommit: stagedBuild.expectedCommit
+      },
+      app: appPlan,
+      runtimes: [runtimePlan],
+      recoveryBundle
+    });
+    await waitForGuardianRecoveryAuthorization(
+      options.lockPath,
+      options.lockToken,
+      recoveryManifest.recovery.policySha256
+    );
+
+    await activateStagedUpdateArtifact(
+      recoveryPolicy,
+      options.lockToken,
+      runtimePlan,
+      "runtime"
     );
     await verifyBuildInfo(
-      join(options.repoRoot, "dist", "runtime", "build-info.json"),
+      join(installedRuntimePath, "build-info.json"),
       stagedBuild.expectedCommit,
       "installed Vigil runtime"
     );
-    if (launchAgentWasLoaded) {
-      const installedAgentRuntime = launchAgentRuntimePath();
-      agentRuntimeInstallation = await atomicInstallBuiltApp(
-        join(stagedBuild.repoRoot, "dist", "runtime"),
-        installedAgentRuntime,
-        ""
-      );
-      await verifyBuildInfo(
-        join(installedAgentRuntime, "build-info.json"),
-        stagedBuild.expectedCommit,
-        "installed Vigil LaunchAgent runtime"
-      );
-    }
-
-    await status("installing-app", "Installing the rebuilt Vigil app");
-    appInstallation = await atomicInstallBuiltApp(stagedBuild.builtAppPath, options.appPath, "");
-    await verifyInstalledAppBuild(stagedBuild.expectedCommit);
-
-    if (launchAgentTransition) {
-      launchAgentTransition = await stopLaunchAgentForStateTransition(launchAgentTransition);
-    }
-    const replacementDataDirectory = await replacementDataDir(
-      launchAgentWasLoaded,
-      launchAgentTransition?.plist
+    await status("installing-app", "Activating the exact staged Vigil app");
+    await activateStagedUpdateArtifact(
+      recoveryPolicy,
+      options.lockToken,
+      appPlan,
+      "app"
     );
-    stateSnapshot = await snapshotUpdateState(replacementDataDirectory, dirname(options.statusPath));
-    if (launchAgentTransition) {
-      await startLaunchAgentAfterStateTransition(launchAgentTransition);
-    }
+    await verifyInstalledAppBuild(stagedBuild.expectedCommit);
     if (!options.restart) throw new Error("Vigil app replacement verification requires --restart.");
     await status("verifying", "Reopening and verifying the rebuilt Vigil app");
-    await openAndVerifyReplacement(replacementDataDirectory);
+    await openAndVerifyReplacement(replacementDataDirectory, launchAgentTransition?.context);
 
-    await assertActiveCheckoutUnchanged(stagedBuild);
+    // The candidate app repeats this transition after its own sustained,
+    // signed-health check. Recording the same attempt here makes the handshake
+    // idempotent if either process exits immediately after attestation.
+    await markUpdateRecoveryCommitIntent(recoveryPolicy, options.lockToken);
+
+    await assertActiveCheckoutUnchanged(stagedBuild, recoveryBundle.gitPath);
     await status("updating-source", "Fast-forwarding Vigil source to the verified build");
+    let sourceSyncDiagnostic = "";
     try {
-      await run("git", ["merge", "--ff-only", stagedBuild.expectedCommit], { cwd: options.repoRoot });
-      replacementCommitted = true;
+      await run(recoveryBundle.gitPath, ["merge", "--ff-only", stagedBuild.expectedCommit], {
+        cwd: options.repoRoot,
+        timeoutMs: SOURCE_COMMAND_TIMEOUT_MS
+      });
     } catch (error) {
-      replacementCommitted = await activeHeadMatches(stagedBuild.expectedCommit);
-      throw error;
+      if (await activeHeadMatches(stagedBuild.expectedCommit, recoveryBundle.gitPath)) {
+        sourceSyncDiagnostic = `Git reported an error after the checkout reached ${stagedBuild.expectedCommit}: ${errorMessage(error)}`;
+      } else {
+        sourceSyncDiagnostic = `The initial source fast-forward attempt did not complete: ${errorMessage(error)}`;
+      }
     }
 
-    const appToFinalize = appInstallation;
-    const runtimeToFinalize = runtimeInstallation;
-    const agentRuntimeToFinalize = agentRuntimeInstallation;
-    const stateSnapshotToFinalize = stateSnapshot;
-    appInstallation = null;
-    runtimeInstallation = null;
-    agentRuntimeInstallation = null;
-    stateSnapshot = null;
-    const cleanupErrors = await finalizeInstallations([appToFinalize, agentRuntimeToFinalize, runtimeToFinalize, stateSnapshotToFinalize]);
+    await markUpdateRecoveryCommitted(recoveryPolicy, options.lockToken);
+    const outcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+    if (!outcome
+      || outcome.attemptId !== options.lockToken
+      || outcome.status !== "complete"
+      || outcome.sourceSyncPending) {
+      throw new Error(outcome?.message || "Vigil could not durably finalize the verified update transaction.");
+    }
+    // A `complete` global outcome proves that recovery either observed or
+    // retried the exact source fast-forward successfully. Keep an earlier Git
+    // process error in the diagnostic log, but never resurrect it as a stale UI
+    // warning after the authoritative finalizer has proved success.
+    if (sourceSyncDiagnostic) log?.write(`${sourceSyncDiagnostic} Durable finalization subsequently verified the source checkout.\n`);
+    const cleanupErrors: string[] = [];
     if (launchAgentTransition && process.env.VIGIL_KEEP_LEGACY_SERVER !== "1") {
       const legacyAgentCleanupError = await finalizeLegacyLaunchAgentRetirement(launchAgentTransition);
       if (legacyAgentCleanupError) cleanupErrors.push(legacyAgentCleanupError);
@@ -191,30 +318,41 @@ async function runUpdate(): Promise<void> {
     const message = cleanupErrors.length
       ? `Vigil update complete. Cleanup warning: ${cleanupErrors.join(" ")}`
       : "Vigil update complete";
-    await status("complete", message, { ok: true, finishedAt: new Date().toISOString() });
+    await status("complete", message, {
+      ok: true,
+      installedCommit: stagedBuild.expectedCommit,
+      finishedAt: new Date().toISOString()
+    });
   } catch (error) {
     let message = errorMessage(error);
     if (!parentExited && typeof options !== "undefined" && options.restart) {
       parentExited = await parentExitedSoon(options.parentPid, 2_000);
     }
-    if (!replacementCommitted) {
-      const recoveryErrors = await recoverFailedUpdate({
-        appInstallation,
-        runtimeInstallation,
-        agentRuntimeInstallation,
-        stateSnapshot,
-        launchAgentTransition,
-        parentExited,
-        launchAgentWasLoaded
-      });
-      if (recoveryErrors.length) message = `${message} Recovery also failed: ${recoveryErrors.join(" ")}`;
-    }
-    await safeStatus("failed", message, {
-      ok: false,
-      error: message,
-      finishedAt: new Date().toISOString()
+    const recovery = await settleGlobalUpdateAfterFailure({
+      recoveryPolicy,
+      stagedPlans: [appPlan, runtimePlan],
+      launchAgentTransition,
+      launchAgentStopped,
+      parentExited,
+      launchAgentWasLoaded,
+      replacementDataDirectory
     });
-    process.exitCode = 1;
+    if (recovery.errors.length) message = `${message} Recovery also reported: ${recovery.errors.join(" ")}`;
+    if (recovery.committed) {
+      const completionMessage = `Vigil update complete. Final confirmation warning: ${message}`;
+      await safeStatus("complete", completionMessage, {
+        ok: true,
+        installedCommit: stagedBuild?.expectedCommit || options.expectedCommit,
+        finishedAt: new Date().toISOString()
+      });
+    } else {
+      await safeStatus("failed", message, {
+        ok: false,
+        error: message,
+        finishedAt: new Date().toISOString()
+      });
+      process.exitCode = 1;
+    }
   } finally {
     if (guardianMaintenance) {
       await guardianMaintenance.release().catch((error) => {
@@ -231,9 +369,176 @@ async function runUpdate(): Promise<void> {
   }
 }
 
+interface GlobalFailureRecovery {
+  committed: boolean;
+  errors: string[];
+}
+
+async function reconcilePreviousGlobalUpdateWhileRuntimeIsLive(): Promise<void> {
+  const paths = updateRecoveryPaths(dirname(options.statusPath));
+  if (!(await pathExists(paths.manifestPath))) return;
+  const outcome = await recoverUpdateTransactionFromPolicyFile(paths.policyPath, { allowRollback: false });
+  if (outcome?.status === "complete" && !(await pathExists(paths.manifestPath))) return;
+  throw new Error(outcome?.message || "Vigil must finish recovering the previous update before another can start.");
+}
+
+async function updateRecoveryBundleSource(): Promise<UpdateRecoveryBundleSource> {
+  const runtimeScriptsDir = dirname(fileURLToPath(import.meta.url));
+  const selectedGit = await gitExecutable(options.repoRoot);
+  const absoluteGit = isAbsolute(selectedGit)
+    ? selectedGit
+    : (await capture("/usr/bin/which", [selectedGit], {
+        cwd: options.repoRoot,
+        timeoutMs: SOURCE_COMMAND_TIMEOUT_MS
+      })).trim();
+  if (!absoluteGit || !isAbsolute(absoluteGit)) {
+    throw new Error("Vigil could not bind update recovery to an exact Git executable.");
+  }
+  return {
+    nodePath: await realpath(process.execPath),
+    gitPath: await realpath(absoluteGit),
+    scriptSourcePath: join(runtimeScriptsDir, "recover-update-transaction.mjs"),
+    moduleSourcePath: join(runtimeScriptsDir, "..", "src", "updateTransaction.js"),
+    helperSourcePath: join(runtimeScriptsDir, "..", "bin", "vigil-atomic-swap")
+  };
+}
+
+/**
+ * Bind the ignored `dist` convenience link to the one runtime location this
+ * updater is authorized to replace. Merely accepting `realpath(dist/runtime)`
+ * would let a stale or retargeted ignored link redirect the transaction to an
+ * unrelated directory without making the Git checkout dirty.
+ */
+export async function resolveInstalledRuntimeTarget(repoRootInput: string): Promise<string> {
+  const repoRoot = resolve(repoRootInput);
+  const canonicalRepoRoot = await realpath(repoRoot);
+  if (canonicalRepoRoot !== repoRoot) {
+    throw new Error("Vigil's source repository path must be canonical before selecting its runtime target.");
+  }
+  const intendedRuntimePath = join(canonicalRepoRoot, "dist.nosync", "runtime");
+  const [canonicalIntendedRuntimePath, linkedRuntimePath] = await Promise.all([
+    realpath(intendedRuntimePath),
+    realpath(join(canonicalRepoRoot, "dist", "runtime"))
+  ]);
+  if (canonicalIntendedRuntimePath !== intendedRuntimePath || linkedRuntimePath !== intendedRuntimePath) {
+    throw new Error("Vigil's dist runtime link does not resolve to its authorized dist.nosync runtime target.");
+  }
+  return intendedRuntimePath;
+}
+
+async function settleGlobalUpdateAfterFailure({
+  recoveryPolicy,
+  stagedPlans,
+  launchAgentTransition,
+  launchAgentStopped,
+  parentExited,
+  launchAgentWasLoaded,
+  replacementDataDirectory
+}: {
+  recoveryPolicy: UpdateRecoveryPolicy | null;
+  stagedPlans: Array<UpdateArtifactPlan | null>;
+  launchAgentTransition: LaunchAgentRecovery | null;
+  launchAgentStopped: boolean;
+  parentExited: boolean;
+  launchAgentWasLoaded: boolean;
+  replacementDataDirectory: string;
+}): Promise<GlobalFailureRecovery> {
+  const errors: string[] = [];
+  const attemptId = typeof options === "undefined" ? "" : options.lockToken;
+  let outcome: UpdateRecoveryOutcome | null = null;
+  let manifestObserved = false;
+  if (recoveryPolicy) {
+    try {
+      manifestObserved = true;
+      manifestObserved = await pathExists(updateRecoveryPaths(recoveryPolicy.updaterDir).manifestPath);
+      const manifest = await readUpdateRecoveryManifest(recoveryPolicy);
+      manifestObserved ||= manifest !== null;
+      if (manifest && (manifest.state === "commit-intent" || manifest.state === "committed")) {
+        outcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+      } else if (manifest) {
+        if (!parentExited) {
+          errors.push("The pending transaction is waiting for the original Vigil process to exit before rollback.");
+        } else {
+          const appPlan = stagedPlans.find((plan) => plan?.targetPath === options.appPath) || null;
+          await terminateInstalledCandidate(appPlan);
+          outcome = await recoverUpdateTransaction(recoveryPolicy);
+        }
+      } else {
+        const priorOutcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+        if (priorOutcome?.attemptId === attemptId) outcome = priorOutcome;
+      }
+    } catch (recoveryError) {
+      errors.push(`The durable update transaction could not be reconciled: ${errorMessage(recoveryError)}`);
+    }
+  }
+
+  if (attemptId && outcome?.attemptId === attemptId && outcome.status === "complete") {
+    return { committed: true, errors };
+  }
+  if (attemptId && outcome?.attemptId === attemptId && outcome.status === "recovery-failed") {
+    errors.push(outcome.message);
+    return { committed: false, errors };
+  }
+
+  if (!manifestObserved && outcome?.attemptId !== attemptId && recoveryPolicy) {
+    const stagedTargets = [
+      ...recoveryPolicy.expectedRuntimePaths.map((targetPath) => ({ targetPath, kind: "runtime" as const })),
+      { targetPath: recoveryPolicy.expectedAppPath, kind: "app" as const }
+    ];
+    for (const target of stagedTargets.reverse()) {
+      try {
+        await reconcileStagedUpdateArtifactCandidate(recoveryPolicy, target.targetPath, target.kind);
+      } catch (cleanupError) {
+        errors.push(`The staged artifact at ${target.targetPath} could not be reconciled: ${errorMessage(cleanupError)}`);
+      }
+    }
+  }
+
+  const rolledBack = attemptId !== "" && outcome?.attemptId === attemptId && outcome.status === "failed-recovered";
+  const unchangedBeforeTransaction = !manifestObserved && outcome?.attemptId !== attemptId;
+  if (typeof options !== "undefined" && parentExited && options.restart && (rolledBack || unchangedBeforeTransaction)) {
+    let legacyRestored = false;
+    if (launchAgentWasLoaded && launchAgentStopped && launchAgentTransition) {
+      try {
+        await startLaunchAgentAfterStateTransition(launchAgentTransition);
+        legacyRestored = true;
+      } catch (restoreError) {
+        errors.push(`The previous background service could not be restored: ${errorMessage(restoreError)}`);
+      }
+    }
+    try {
+      if (!legacyRestored) await resumeEmbeddedRuntimeSupervisor(options.userDataDir);
+      const dataDir = replacementDataDirectory || await replacementDataDir(launchAgentWasLoaded, launchAgentTransition?.plist);
+      await openAndVerifyRecoveredApp(dataDir, launchAgentTransition?.context);
+    } catch (reopenError) {
+      errors.push(`The restored Vigil app could not be verified; persistent supervision will retry: ${errorMessage(reopenError)}`);
+    }
+  }
+  return { committed: false, errors };
+}
+
+async function terminateInstalledCandidate(plan: UpdateArtifactPlan | null): Promise<void> {
+  if (!plan) return;
+  const installed = await captureUpdateArtifactIdentity(plan.targetPath, "app");
+  if (installed && artifactIdentitiesMatch(plan.targetIdentity, installed)) {
+    await terminateInstalledApp();
+    return;
+  }
+  if ((installed === null && plan.initialIdentity === null)
+    || (installed !== null && plan.initialIdentity !== null && artifactIdentitiesMatch(plan.initialIdentity, installed))) {
+    return;
+  }
+  throw new Error("Vigil preserved an app with an ambiguous identity instead of terminating it for rollback.");
+}
+
+function artifactIdentitiesMatch(expected: UpdateArtifactIdentity, observed: UpdateArtifactIdentity): boolean {
+  return updateArtifactIdentitiesExactlyMatch(expected, observed);
+}
+
 async function buildInIsolatedWorktree(): Promise<StagedBuild> {
   await status("selecting", "Verifying the selected Vigil update");
-  const initialCommit = (await capture("git", ["rev-parse", "HEAD"], { cwd: options.repoRoot })).trim();
+  const initialCommit = options.expectedInitialCommit;
+  const initialBranch = expectedBranchName(options.expectedBranch);
   const expectedCommit = options.expectedCommit;
   if (!/^[a-f0-9]{40}$/iu.test(initialCommit) || !/^[a-f0-9]{40}$/iu.test(expectedCommit)) {
     throw new Error("Vigil could not verify the source commits selected for this update.");
@@ -249,15 +554,19 @@ async function buildInIsolatedWorktree(): Promise<StagedBuild> {
   const repoRoot = join(root, "source");
   try {
     await status("staging", "Creating an isolated Vigil source checkout");
-    await run("git", ["worktree", "add", "--detach", repoRoot, expectedCommit], { cwd: options.repoRoot });
+    await run("git", ["worktree", "add", "--detach", repoRoot, expectedCommit], {
+      cwd: options.repoRoot,
+      timeoutMs: SOURCE_COMMAND_TIMEOUT_MS
+    });
 
     await status("installing", "Installing locked Vigil dependencies in the staged checkout");
-    await run(npmExecutable(), ["ci"], { cwd: repoRoot });
+    await run(npmExecutable(), ["ci"], { cwd: repoRoot, timeoutMs: DEPENDENCY_INSTALL_TIMEOUT_MS });
 
     await status("building", "Building the Vigil runtime in the staged checkout");
     await run(npmExecutable(), ["run", "build"], {
       cwd: repoRoot,
-      env: { ...process.env, VIGIL_BUILD_SOURCE_ROOT: options.repoRoot }
+      env: { ...process.env, VIGIL_BUILD_SOURCE_ROOT: options.repoRoot },
+      timeoutMs: RUNTIME_BUILD_TIMEOUT_MS
     });
     await verifyBuildInfo(
       join(repoRoot, "dist", "runtime", "build-info.json"),
@@ -268,38 +577,65 @@ async function buildInIsolatedWorktree(): Promise<StagedBuild> {
     const outputPath = join(repoRoot, "dist", "update-mac.noindex");
     await rm(outputPath, { recursive: true, force: true });
     await status("packaging", "Packaging a staged Vigil app");
-    const signingIdentity = await resolveMacSigningIdentity();
-    const signingTimestamp = macSigningTimestamp(signingIdentity);
-    await run(npmExecutable(), [
-      "exec", "--", "electron-builder", "--mac", "dir",
-      `-c.mac.identity=${signingIdentity}`,
-      ...(signingTimestamp ? [`-c.mac.timestamp=${signingTimestamp}`] : []),
-      "-c.asarUnpack=dist.nosync/runtime/**/*",
+    await run(process.execPath, [
+      join(repoRoot, "scripts", "package-mac.mjs"),
+      "dir",
       "-c.directories.output=dist/update-mac.noindex"
-    ], { cwd: repoRoot });
+    ], { cwd: repoRoot, timeoutMs: APP_PACKAGE_TIMEOUT_MS });
 
-    const builtAppPath = join(outputPath, process.arch === "arm64" ? "mac-arm64" : "mac", "Vigil.app");
+    const builtAppPath = join(outputPath, "mac-universal", "Vigil.app");
     if (!(await pathExists(builtAppPath))) throw new Error(`Rebuilt Vigil app was not found at ${builtAppPath}`);
     await verifyBuildInfo(
       join(builtAppPath, "Contents", "Resources", "app.asar.unpacked", "dist", "runtime", "build-info.json"),
       expectedCommit,
       "staged Vigil app"
     );
-    return { root, repoRoot, builtAppPath, expectedCommit, initialCommit };
+    return { root, repoRoot, builtAppPath, expectedCommit, initialCommit, initialBranch };
   } catch (error) {
-    await cleanupStagedBuild({ root, repoRoot, builtAppPath: "", expectedCommit, initialCommit });
+    await cleanupStagedBuild({ root, repoRoot, builtAppPath: "", expectedCommit, initialCommit, initialBranch });
     throw error;
   }
 }
 
-async function assertActiveCheckoutUnchanged(stagedBuild: StagedBuild): Promise<void> {
-  const [head, dirty] = await Promise.all([
-    capture("git", ["rev-parse", "HEAD"], { cwd: options.repoRoot }),
-    capture("git", ["status", "--porcelain=v1"], { cwd: options.repoRoot })
+async function assertActiveCheckoutUnchanged(stagedBuild: StagedBuild, gitCommand = "git"): Promise<void> {
+  const [head, branch, dirty] = await Promise.all([
+    capture(gitCommand, ["rev-parse", "HEAD"], { cwd: options.repoRoot }),
+    capture(gitCommand, ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: options.repoRoot }),
+    capture(gitCommand, ["status", "--porcelain=v1"], { cwd: options.repoRoot })
   ]);
-  if (head.trim() !== stagedBuild.initialCommit || dirty.trim()) {
+  if (head.trim() !== stagedBuild.initialCommit
+    || expectedBranchName(branch.trim()) !== stagedBuild.initialBranch
+    || dirty.trim()) {
     throw new Error("Vigil source changed while the update was being prepared. Nothing was installed permanently.");
   }
+}
+
+async function assertSelectedSourceIdentity(): Promise<void> {
+  const [head, branch] = await Promise.all([
+    capture("git", ["rev-parse", "HEAD"], { cwd: options.repoRoot }),
+    capture("git", ["rev-parse", "--abbrev-ref", "HEAD"], { cwd: options.repoRoot })
+  ]);
+  if (!selectedSourceIdentityMatches(
+    options.expectedInitialCommit,
+    options.expectedBranch,
+    head.trim(),
+    branch.trim()
+  )) {
+    throw new Error("Vigil source branch or HEAD changed after the update was selected. Nothing was staged or installed.");
+  }
+}
+
+export function selectedSourceIdentityMatches(
+  expectedCommit: string,
+  expectedBranch: string,
+  observedCommit: string,
+  observedBranch: string
+): boolean {
+  return expectedCommit === observedCommit && expectedBranch === observedBranch;
+}
+
+function expectedBranchName(value: string): string | null {
+  return value === "HEAD" ? null : value;
 }
 
 export async function atomicInstallBuiltApp(
@@ -311,56 +647,427 @@ export async function atomicInstallBuiltApp(
   if (resolve(builtAppPath) === resolve(appPath)) {
     throw new Error("The staged Vigil app must be separate from the installed app.");
   }
+  await mkdir(dirname(appPath), { recursive: true });
 
   const nextAppPath = `${appPath}.vigil-next`;
   const previousAppPath = `${appPath}.vigil-previous`;
-  if (await operations.pathExists(previousAppPath)) {
-    throw new Error(`A previous Vigil recovery copy still exists at ${previousAppPath}.`);
-  }
+  const journalPath = `${appPath}.vigil-transaction.json`;
+  await reconcileAtomicInstallResidue(appPath, nextAppPath, previousAppPath, journalPath, operations);
+  const journal: AtomicInstallJournal = {
+    version: 2,
+    id: randomUUID(),
+    targetPath: appPath,
+    nextPath: nextAppPath,
+    previousPath: previousAppPath,
+    phase: "preparing",
+    hadPrevious: false,
+    updatedAt: new Date().toISOString()
+  };
+  await writeAtomicInstallJournal(journalPath, journal);
   let backedUp = false;
   let installed = false;
+  let swapped = false;
   try {
     await operations.remove(nextAppPath);
     await operations.copy(builtAppPath, nextAppPath);
-    if (await operations.pathExists(appPath)) {
-      await operations.move(appPath, previousAppPath);
-      backedUp = true;
+    if (operations.identity) {
+      const candidateIdentity = await operations.identity(nextAppPath);
+      journal.candidateDevice = candidateIdentity.dev;
+      journal.candidateInode = candidateIdentity.ino;
     }
-    await operations.move(nextAppPath, appPath);
-    installed = true;
+    await updateAtomicInstallJournal(journalPath, journal, "prepared");
+    if (await operations.pathExists(appPath)) {
+      journal.hadPrevious = true;
+      if (operations.swap) {
+        await updateAtomicInstallJournal(journalPath, journal, "swapping");
+        await operations.swap(appPath, nextAppPath);
+        swapped = true;
+        installed = true;
+        await operations.move(nextAppPath, previousAppPath);
+        backedUp = true;
+      } else {
+        await updateAtomicInstallJournal(journalPath, journal, "backing-up");
+        await operations.move(appPath, previousAppPath);
+        backedUp = true;
+        await operations.move(nextAppPath, appPath);
+        installed = true;
+      }
+    } else {
+      await operations.move(nextAppPath, appPath);
+      installed = true;
+    }
+    await updateAtomicInstallJournal(journalPath, journal, "installed");
   } catch (error) {
-    if (backedUp) {
-      if (await operations.pathExists(appPath)) await operations.remove(appPath);
-      if (await operations.pathExists(previousAppPath)) await operations.move(previousAppPath, appPath);
+    try {
+      await safeUpdateAtomicInstallJournal(journalPath, journal, "rolling-back");
+      await rollbackAtomicInstallation({
+        appPath,
+        nextAppPath,
+        previousAppPath,
+        operations,
+        backedUp,
+        installed,
+        swapped
+      });
+      await operations.remove(nextAppPath);
+      await rm(journalPath, { force: true });
+    } catch (recoveryError) {
+      throw new Error(`${errorMessage(error)} Automatic app replacement recovery also failed: ${errorMessage(recoveryError)}`);
     }
     throw error;
-  } finally {
-    await operations.remove(nextAppPath);
   }
 
   let settled = false;
+  let verified = false;
+  let attachedStateSnapshot: UpdateStateSnapshot | null = null;
   return {
+    async attachStateSnapshot(snapshot) {
+      if (settled || verified) {
+        throw new Error("Vigil cannot attach rollback state after the replacement transaction is settled.");
+      }
+      journal.stateDataDir = snapshot.dataDir;
+      journal.stateSnapshotRoot = snapshot.snapshotRoot;
+      await writeAtomicInstallJournal(journalPath, journal);
+      attachedStateSnapshot = snapshot;
+    },
+    async markVerified() {
+      if (settled || verified) return;
+      await updateAtomicInstallJournal(journalPath, journal, "verified");
+      verified = true;
+    },
     async finalize() {
       if (settled) return;
+      if (!verified) throw new Error("Vigil cannot discard its recovery copy before the replacement is verified.");
+      await updateAtomicInstallJournal(journalPath, journal, "finalizing");
       await operations.remove(previousAppPath);
+      await operations.remove(nextAppPath);
       if (cleanupPath) await operations.remove(cleanupPath);
+      await rm(journalPath, { force: true });
       settled = true;
     },
     async rollback() {
       if (settled) return;
-      if (backedUp) {
-        if (!(await operations.pathExists(previousAppPath))) {
-          throw new Error(`Vigil recovery copy is missing at ${previousAppPath}; the installed copy was left untouched.`);
-        }
-        if (await operations.pathExists(appPath)) await operations.remove(appPath);
-        await operations.move(previousAppPath, appPath);
-      } else if (installed && await operations.pathExists(appPath)) {
-        await operations.remove(appPath);
-      }
+      if (verified) throw new Error("Vigil will not roll back a replacement after it was durably marked verified.");
+      await safeUpdateAtomicInstallJournal(journalPath, journal, "rolling-back");
+      await attachedStateSnapshot?.restore();
+      await rollbackAtomicInstallation({
+        appPath,
+        nextAppPath,
+        previousAppPath,
+        operations,
+        backedUp,
+        installed,
+        swapped
+      });
+      await operations.remove(nextAppPath);
       if (cleanupPath) await operations.remove(cleanupPath);
+      await rm(journalPath, { force: true });
+      await attachedStateSnapshot?.finalize();
       settled = true;
     }
   };
+}
+
+async function rollbackAtomicInstallation({
+  appPath,
+  nextAppPath,
+  previousAppPath,
+  operations,
+  backedUp,
+  installed,
+  swapped
+}: {
+  appPath: string;
+  nextAppPath: string;
+  previousAppPath: string;
+  operations: AtomicInstallOperations;
+  backedUp: boolean;
+  installed: boolean;
+  swapped: boolean;
+}): Promise<void> {
+  if (backedUp) {
+    if (!(await operations.pathExists(previousAppPath))) {
+      throw new Error(`Vigil recovery copy is missing at ${previousAppPath}; the installed copy was left untouched.`);
+    }
+    if (swapped && operations.swap && await operations.pathExists(appPath)) {
+      await operations.swap(appPath, previousAppPath);
+      await operations.remove(previousAppPath);
+      return;
+    }
+    if (await operations.pathExists(appPath)) await operations.remove(appPath);
+    await operations.move(previousAppPath, appPath);
+    return;
+  }
+  if (swapped && operations.swap && await operations.pathExists(appPath) && await operations.pathExists(nextAppPath)) {
+    await operations.swap(appPath, nextAppPath);
+    await operations.remove(nextAppPath);
+    return;
+  }
+  if (installed && await operations.pathExists(appPath)) await operations.remove(appPath);
+}
+
+/**
+ * Reconcile a replacement interrupted by process death or power loss. A
+ * present canonical path is not proof of success: before `verified`, it may be
+ * the candidate that failed its health check. Recovery therefore follows the
+ * fsynced journal and the copied candidate's inode identity, and never discards
+ * an ambiguous recovery copy.
+ */
+export async function reconcileAtomicInstallResidue(
+  appPath: string,
+  nextAppPath = `${appPath}.vigil-next`,
+  previousAppPath = `${appPath}.vigil-previous`,
+  journalPath = `${appPath}.vigil-transaction.json`,
+  operations: AtomicInstallOperations = defaultInstallOperations
+): Promise<void> {
+  const journal = await readAtomicInstallJournal(journalPath, appPath, nextAppPath, previousAppPath);
+  const targetExists = await operations.pathExists(appPath);
+  const previousExists = await operations.pathExists(previousAppPath);
+  const nextExists = await operations.pathExists(nextAppPath);
+
+  if (!journal) {
+    if (!targetExists && previousExists) {
+      await operations.move(previousAppPath, appPath);
+      if (nextExists) await operations.remove(nextAppPath);
+      return;
+    }
+    if (previousExists || nextExists) {
+      throw new Error(`Vigil found replacement residue for ${appPath} without a trustworthy transaction journal.`);
+    }
+    return;
+  }
+
+  if (journal.phase === "preparing" && !previousExists) {
+    const initialMatches = journal.initialPresent === false
+      ? !targetExists
+      : journal.initialPresent === true
+        && targetExists
+        && await pathMatchesJournalInitial(appPath, journal, operations) === true;
+    if (initialMatches) {
+      if (nextExists) await operations.remove(nextAppPath);
+      await rm(journalPath, { force: true });
+      await syncDirectory(dirname(journalPath));
+      return;
+    }
+  }
+
+  if (journal.phase === "verified" || journal.phase === "finalizing") {
+    if (!targetExists) {
+      if (nextExists && await pathMatchesJournalCandidate(nextAppPath, journal, operations) === true) {
+        await operations.move(nextAppPath, appPath);
+      } else if (previousExists) {
+        // A verified target should not disappear. Prefer the known recovery
+        // copy over leaving Vigil unavailable, and retain the journal until all
+        // cleanup below succeeds.
+        await operations.move(previousAppPath, appPath);
+      } else {
+        throw new Error(`Vigil's verified replacement is missing at ${appPath}, and no recovery copy is available.`);
+      }
+    }
+    await operations.remove(previousAppPath);
+    await operations.remove(nextAppPath);
+    await rm(journalPath, { force: true });
+    return;
+  }
+
+  if (previousExists) {
+    if (targetExists) {
+      const targetIsCandidate = await pathMatchesJournalCandidate(appPath, journal, operations);
+      const previousIsCandidate = await pathMatchesJournalCandidate(previousAppPath, journal, operations);
+      if (targetIsCandidate === true && previousIsCandidate !== true) {
+        if (operations.swap) {
+          await operations.swap(appPath, previousAppPath);
+          await operations.remove(previousAppPath);
+        } else {
+          await operations.remove(appPath);
+          await operations.move(previousAppPath, appPath);
+        }
+      } else if (previousIsCandidate === true && targetIsCandidate !== true) {
+        // A prior rollback already swapped the known-good generation back into
+        // place and then lost power before deleting the displaced candidate.
+        // Cleanup must be idempotent: never swap that candidate into service.
+        await operations.remove(previousAppPath);
+      } else {
+        throw new Error(`Vigil cannot identify the interrupted candidate for ${appPath}; its recovery copies were preserved.`);
+      }
+    } else {
+      if (await pathMatchesJournalCandidate(previousAppPath, journal, operations) === true) {
+        throw new Error(`Vigil's known-good recovery copy is missing for the unverified replacement at ${appPath}.`);
+      }
+      await operations.move(previousAppPath, appPath);
+    }
+    if (nextExists) await operations.remove(nextAppPath);
+    await rm(journalPath, { force: true });
+    return;
+  }
+
+  if (targetExists && nextExists) {
+    const targetIsCandidate = await pathMatchesJournalCandidate(appPath, journal, operations);
+    const nextIsCandidate = await pathMatchesJournalCandidate(nextAppPath, journal, operations);
+    if (nextIsCandidate === true && targetIsCandidate !== true) {
+      await operations.remove(nextAppPath);
+    } else if (targetIsCandidate === true && nextIsCandidate !== true) {
+      if (operations.swap) {
+        await operations.swap(appPath, nextAppPath);
+        await operations.remove(nextAppPath);
+      } else {
+        const displacedCandidate = `${nextAppPath}.${journal.id}.failed`;
+        await operations.move(appPath, displacedCandidate);
+        try {
+          await operations.move(nextAppPath, appPath);
+        } catch (error) {
+          await operations.move(displacedCandidate, appPath).catch(() => undefined);
+          throw error;
+        }
+        await operations.remove(displacedCandidate);
+      }
+    } else {
+      throw new Error(`Vigil cannot identify the interrupted candidate for ${appPath}; its recovery copies were preserved.`);
+    }
+    await rm(journalPath, { force: true });
+    return;
+  }
+
+  if (targetExists) {
+    const targetIsCandidate = await pathMatchesJournalCandidate(appPath, journal, operations);
+    if (targetIsCandidate === true) {
+      if (journal.hadPrevious) {
+        throw new Error(`Vigil's previous recovery copy is missing for the unverified replacement at ${appPath}.`);
+      }
+      await operations.remove(appPath);
+    } else if (targetIsCandidate === null && journal.phase !== "preparing" && journal.phase !== "prepared") {
+      throw new Error(`Vigil cannot prove that the canonical copy at ${appPath} predates the interrupted update.`);
+    }
+    await rm(journalPath, { force: true });
+    return;
+  }
+
+  if (nextExists) {
+    const nextIsCandidate = await pathMatchesJournalCandidate(nextAppPath, journal, operations);
+    if (journal.hadPrevious) {
+      throw new Error(`Vigil's canonical and previous copies are missing for the interrupted replacement at ${appPath}.`);
+    }
+    if (nextIsCandidate !== true) {
+      throw new Error(`Vigil cannot identify the remaining replacement copy for ${appPath}.`);
+    }
+    await operations.remove(nextAppPath);
+  }
+  await rm(journalPath, { force: true });
+}
+
+async function pathMatchesJournalCandidate(
+  path: string,
+  journal: AtomicInstallJournal,
+  operations: AtomicInstallOperations
+): Promise<boolean | null> {
+  if (!operations.identity
+    || !Number.isInteger(journal.candidateDevice)
+    || !Number.isInteger(journal.candidateInode)) return null;
+  try {
+    const identity = await operations.identity(path);
+    return identity.dev === journal.candidateDevice && identity.ino === journal.candidateInode;
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+async function pathMatchesJournalInitial(
+  path: string,
+  journal: AtomicInstallJournal,
+  operations: AtomicInstallOperations
+): Promise<boolean | null> {
+  if (!operations.identity
+    || !Number.isInteger(journal.initialDevice)
+    || !Number.isInteger(journal.initialInode)) return null;
+  try {
+    const identity = await operations.identity(path);
+    return identity.dev === journal.initialDevice && identity.ino === journal.initialInode;
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) return false;
+    throw error;
+  }
+}
+
+async function readAtomicInstallJournal(
+  path: string,
+  appPath: string,
+  nextAppPath: string,
+  previousAppPath: string
+): Promise<AtomicInstallJournal | null> {
+  if (!(await pathExists(path))) return null;
+  try {
+    const value = JSON.parse(await readFile(path, "utf8")) as Partial<AtomicInstallJournal>;
+    if (
+      value.version === 2
+      && typeof value.id === "string"
+      && value.id.length > 0
+      && value.targetPath === appPath
+      && value.nextPath === nextAppPath
+      && value.previousPath === previousAppPath
+      && typeof value.phase === "string"
+      && ["preparing", "prepared", "swapping", "backing-up", "installed", "verified", "rolling-back", "finalizing"].includes(value.phase)
+      && typeof value.hadPrevious === "boolean"
+      && typeof value.updatedAt === "string"
+    ) return value as AtomicInstallJournal;
+  } catch {
+    // Archive malformed transaction evidence below.
+  }
+  const archivePath = `${path}.invalid.${Date.now()}.${randomUUID()}`;
+  await rename(path, archivePath);
+  throw new Error(`Vigil found an invalid replacement journal for ${appPath}; recovery evidence was preserved at ${archivePath}.`);
+}
+
+async function writeAtomicInstallJournal(path: string, journal: AtomicInstallJournal): Promise<void> {
+  const temporaryPath = `${path}.${journal.id}.${randomUUID()}.tmp`;
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(temporaryPath, "wx", 0o600);
+    await handle.writeFile(`${JSON.stringify(journal, null, 2)}\n`, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await rename(temporaryPath, path);
+    await syncDirectory(dirname(path));
+  } finally {
+    await handle?.close().catch(() => undefined);
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
+}
+
+async function updateAtomicInstallJournal(
+  path: string,
+  journal: AtomicInstallJournal,
+  phase: AtomicInstallJournal["phase"]
+): Promise<void> {
+  journal.phase = phase;
+  journal.updatedAt = new Date().toISOString();
+  await writeAtomicInstallJournal(path, journal);
+}
+
+async function safeUpdateAtomicInstallJournal(
+  path: string,
+  journal: AtomicInstallJournal,
+  phase: AtomicInstallJournal["phase"]
+): Promise<void> {
+  try {
+    await updateAtomicInstallJournal(path, journal, phase);
+  } catch {
+    // Recovery/finalization must continue even when diagnostic journal storage
+    // itself is unavailable. The path topology remains self-reconciling.
+  }
+}
+
+async function syncDirectory(path: string): Promise<void> {
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    handle = await open(path, "r");
+    await handle.sync();
+  } catch (error) {
+    if (!isErrorCode(error, "EINVAL") && !isErrorCode(error, "ENOTSUP") && !isErrorCode(error, "EISDIR")) throw error;
+  } finally {
+    await handle?.close().catch(() => undefined);
+  }
 }
 
 const defaultInstallOperations: AtomicInstallOperations = {
@@ -377,10 +1084,49 @@ const defaultInstallOperations: AtomicInstallOperations = {
   },
   async remove(path) {
     await rm(path, { recursive: true, force: true });
+  },
+  async identity(path) {
+    const value = await lstat(path);
+    return { dev: value.dev, ino: value.ino };
+  },
+  async swap(left, right) {
+    await atomicSwap(left, right);
   }
 };
 
-const UPDATE_STATE_FILES = ["state.json", "state.seal.json", "state-seal.key", "journal-encryption.key"] as const;
+async function atomicSwap(left: string, right: string): Promise<void> {
+  const helperPath = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "vigil-atomic-swap");
+  const helperStat = await lstat(helperPath);
+  if (!helperStat.isFile() || helperStat.isSymbolicLink() || (helperStat.mode & 0o111) === 0) {
+    throw new Error("Vigil's atomic app-swap helper is missing or unsafe.");
+  }
+  await new Promise<void>((resolveSwap, rejectSwap) => {
+    const child = spawn(helperPath, [left, right], { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.once("error", rejectSwap);
+    child.once("close", (code) => {
+      if (code === 0) resolveSwap();
+      else rejectSwap(new Error(stderr.trim() || `Vigil's atomic app-swap helper exited with status ${code}.`));
+    });
+  });
+}
+
+const UPDATE_STATE_FILES = [
+  "state.json",
+  "state.seal.json",
+  "state-seal.key",
+  "usage.json",
+  "usage.seal.json",
+  "runtime-snapshot.wal.json",
+  "runtime-effects.json",
+  "runtime-usage.checkpoint.json",
+  "runtime-interruption.json",
+  "journal-encryption.key"
+] as const;
 
 export async function snapshotUpdateState(dataDir: string, snapshotParent: string): Promise<UpdateStateSnapshot> {
   const snapshotRoot = await mkdtemp(join(snapshotParent, "state-before-update-"));
@@ -389,17 +1135,54 @@ export async function snapshotUpdateState(dataDir: string, snapshotParent: strin
     for (const name of UPDATE_STATE_FILES) {
       const source = join(dataDir, name);
       if (!(await pathExists(source))) continue;
-      await cp(source, join(snapshotRoot, name), { preserveTimestamps: true });
+      const sourceStat = await lstat(source);
+      if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+        throw new Error(`Vigil refused to snapshot unsafe update state at ${source}.`);
+      }
+      const destination = join(snapshotRoot, name);
+      await cp(source, destination, { preserveTimestamps: true });
+      await syncFile(destination);
       present.add(name);
     }
+    await syncDirectory(snapshotRoot);
   } catch (error) {
     await rm(snapshotRoot, { recursive: true, force: true });
     throw error;
   }
 
   let settled = false;
+  let restored = false;
+  const restore = async () => {
+    if (settled || restored) return;
+    await mkdir(dataDir, { recursive: true });
+    for (const name of UPDATE_STATE_FILES) {
+      const destination = join(dataDir, name);
+      if (!present.has(name)) {
+        await rm(destination, { force: true });
+        await syncDirectory(dataDir);
+        continue;
+      }
+      const temporary = `${destination}.${process.pid}.rollback`;
+      await rm(temporary, { force: true });
+      await cp(join(snapshotRoot, name), temporary, { preserveTimestamps: true });
+      await syncFile(temporary);
+      await rename(temporary, destination);
+      await syncDirectory(dataDir);
+    }
+    restored = true;
+  };
   return {
     dataDir,
+    snapshotRoot,
+    restore,
+    async attachStateSnapshot() {
+      // A state snapshot is itself the recovery payload and has nothing to
+      // attach to another state snapshot.
+    },
+    async markVerified() {
+      // The snapshot remains available until the whole replacement is
+      // finalized. Marking the app verified merely makes rollback ineligible.
+    },
     async finalize() {
       if (settled) return;
       await rm(snapshotRoot, { recursive: true, force: true });
@@ -407,121 +1190,20 @@ export async function snapshotUpdateState(dataDir: string, snapshotParent: strin
     },
     async rollback() {
       if (settled) return;
-      await mkdir(dataDir, { recursive: true });
-      for (const name of UPDATE_STATE_FILES) {
-        const destination = join(dataDir, name);
-        await rm(destination, { force: true });
-        if (!present.has(name)) continue;
-        const temporary = `${destination}.${process.pid}.rollback`;
-        await rm(temporary, { force: true });
-        await cp(join(snapshotRoot, name), temporary, { preserveTimestamps: true });
-        await rename(temporary, destination);
-      }
+      await restore();
       settled = true;
       await rm(snapshotRoot, { recursive: true, force: true }).catch(() => {});
     }
   };
 }
 
-async function recoverFailedUpdate({
-  appInstallation,
-  runtimeInstallation,
-  agentRuntimeInstallation,
-  stateSnapshot,
-  launchAgentTransition,
-  parentExited,
-  launchAgentWasLoaded
-}: {
-  appInstallation: AppInstallation | null;
-  runtimeInstallation: AppInstallation | null;
-  agentRuntimeInstallation: AppInstallation | null;
-  stateSnapshot: UpdateStateSnapshot | null;
-  launchAgentTransition: LaunchAgentRecovery | null;
-  parentExited: boolean;
-  launchAgentWasLoaded: boolean;
-}): Promise<string[]> {
-  const errors: string[] = [];
-  let stoppedLaunchAgent: LaunchAgentRecovery | null = null;
-  let stateReady = true;
-  let appReady = true;
-  if (appInstallation) {
-    try {
-      await suspendEmbeddedRuntimeSupervisor(options.userDataDir);
-      await terminateInstalledApp();
-    } catch (error) {
-      errors.push(`Could not safely stop the rebuilt app. ${errorMessage(error)}`);
-      appReady = false;
-      stateReady = false;
-    }
-  }
-  if (stateSnapshot && launchAgentWasLoaded) {
-    try {
-      stoppedLaunchAgent = await stopLaunchAgentForStateTransition(launchAgentTransition);
-    } catch (error) {
-      errors.push(`Could not stop the rebuilt background service before restoring data. ${errorMessage(error)}`);
-      stateReady = false;
-    }
-  } else if (launchAgentTransition) {
-    stoppedLaunchAgent = launchAgentTransition;
-  }
-  if (appInstallation && appReady) await collectRecoveryError(errors, "Could not restore the previous app.", appInstallation.rollback());
-  if (agentRuntimeInstallation) {
-    await collectRecoveryError(errors, "Could not restore the previous LaunchAgent runtime.", agentRuntimeInstallation.rollback());
-  }
-  if (runtimeInstallation) await collectRecoveryError(errors, "Could not restore the previous runtime.", runtimeInstallation.rollback());
-  if (stateSnapshot && stateReady) {
-    try {
-      await stateSnapshot.rollback();
-    } catch (error) {
-      errors.push(`Could not restore the pre-update Vigil data. ${errorMessage(error)}`);
-      stateReady = false;
-    }
-  }
-  if (launchAgentWasLoaded && agentRuntimeInstallation && stateReady) {
-    try {
-      if (!stoppedLaunchAgent) throw new Error("Vigil lost the captured background service recovery state.");
-      await startLaunchAgentAfterStateTransition(stoppedLaunchAgent);
-    } catch (error) {
-      errors.push(`Could not restart the previous background service. ${errorMessage(error)}`);
-      stateReady = false;
-    }
-  }
-  if (parentExited && options.restart && stateReady) {
-    try {
-      if (launchAgentWasLoaded) {
-        await openAppInBackground();
-      } else {
-        await resumeEmbeddedRuntimeSupervisor(options.userDataDir);
-        const dataDir = stateSnapshot?.dataDir
-          || await replacementDataDir(false);
-        await openAndVerifyRecoveredApp(dataDir);
-      }
-    } catch (error) {
-      errors.push(`Could not restore the previous app's supervision and runtime. ${errorMessage(error)}`);
-    }
-  }
-  return errors;
-}
-
-async function collectRecoveryError(errors: string[], prefix: string, operation: Promise<void>): Promise<void> {
+async function syncFile(path: string): Promise<void> {
+  const handle = await open(path, "r");
   try {
-    await operation;
-  } catch (error) {
-    errors.push(`${prefix} ${errorMessage(error)}`);
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
-}
-
-async function finalizeInstallations(installations: Array<AppInstallation | null>): Promise<string[]> {
-  const errors: string[] = [];
-  for (const installation of installations) {
-    if (!installation) continue;
-    try {
-      await installation.finalize();
-    } catch (error) {
-      errors.push(errorMessage(error));
-    }
-  }
-  return errors;
 }
 
 async function finalizeLegacyLaunchAgentRetirement(recovery: LaunchAgentRecovery): Promise<string | null> {
@@ -585,6 +1267,9 @@ async function stopLaunchAgentForStateTransition(preserved: LaunchAgentRecovery 
     ignoreInterruption: true
   });
   if (stillLoaded.ok) throw new Error("The Vigil background service remained loaded during the state transition.");
+  if (!launchctlServiceMissingDetail(stillLoaded.stderr)) {
+    throw new Error(`Vigil could not verify that its background service stopped: ${stillLoaded.stderr || "launchctl failed"}`);
+  }
   await waitForBackendStopped(recovery.context);
   return recovery;
 }
@@ -598,6 +1283,9 @@ async function captureLaunchAgentRecovery(): Promise<LaunchAgentRecovery> {
     readFile(plistPath, "utf8"),
     lstat(plistPath)
   ]);
+  if (!plistStat.isFile() || plistStat.isSymbolicLink() || plistStat.uid !== uid) {
+    throw new Error("The loaded Vigil background service has an unsafe recovery plist.");
+  }
   const context = await backendHealthContext(plist);
   return { context, plist, plistMode: plistStat.mode & 0o777, plistPath, uid };
 }
@@ -607,13 +1295,22 @@ async function captureLoadedLaunchAgentRecovery(): Promise<LaunchAgentRecovery |
   const uid = process.getuid?.();
   if (!home || uid === undefined) throw new Error("Vigil could not identify the current user's background service.");
   const plistPath = join(home, "Library", "LaunchAgents", "com.vigil.agent.plist");
-  if (!(await pathExists(plistPath))) return null;
   const loaded = await run("/bin/launchctl", ["print", `gui/${uid}/com.vigil.agent`], {
     allowFailure: true,
     capture: true
   });
-  if (!loaded.ok) return null;
+  if (!loaded.ok) {
+    if (launchctlServiceMissingDetail(loaded.stderr)) return null;
+    throw new Error(`Vigil could not verify its legacy background service: ${loaded.stderr || "launchctl failed"}`);
+  }
+  if (!(await pathExists(plistPath))) {
+    throw new Error("The loaded Vigil background service has no recovery plist.");
+  }
   return await captureLaunchAgentRecovery();
+}
+
+function launchctlServiceMissingDetail(detail: string): boolean {
+  return /could not find service|service not found|no such process/iu.test(detail);
 }
 
 async function startLaunchAgentAfterStateTransition(recovery: LaunchAgentRecovery): Promise<void> {
@@ -639,12 +1336,6 @@ async function waitForBackendStopped(context: BackendHealthContext): Promise<voi
     await delay(100);
   }
   throw new Error("The Vigil background service did not stop for the state transition.");
-}
-
-function launchAgentRuntimePath(): string {
-  const home = process.env.HOME;
-  if (!home) throw new Error("Vigil could not identify the current user runtime directory.");
-  return join(home, "Library", "Application Support", "Vigil", "agent-runtime");
 }
 
 async function replacementDataDir(launchAgentWasLoaded: boolean, preservedLaunchAgentPlist = ""): Promise<string> {
@@ -699,31 +1390,53 @@ async function waitForLaunchAgent(restartedAfter: number, context: BackendHealth
   throw new Error("The updated Vigil background service did not become healthy in time.");
 }
 
-async function openAndVerifyReplacement(dataDir: string): Promise<void> {
+async function openAndVerifyReplacement(
+  dataDir: string,
+  preservedContext?: BackendHealthContext
+): Promise<void> {
   await openAndVerifyInstalledApp(
     dataDir,
-    "The rebuilt Vigil app or its private enforcement runtime did not remain healthy after launch."
+    "The rebuilt Vigil app or its private enforcement runtime did not remain healthy after launch.",
+    preservedContext
   );
 }
 
-async function openAndVerifyRecoveredApp(dataDir: string): Promise<void> {
+async function openAndVerifyRecoveredApp(
+  dataDir: string,
+  preservedContext?: BackendHealthContext
+): Promise<void> {
   await openAndVerifyInstalledApp(
     dataDir,
-    "The restored Vigil app or its private enforcement runtime did not remain healthy after recovery."
+    "The restored Vigil app or its private enforcement runtime did not remain healthy after recovery.",
+    preservedContext
   );
 }
 
-async function openAndVerifyInstalledApp(dataDir: string, failureMessage: string): Promise<void> {
+async function openAndVerifyInstalledApp(
+  dataDir: string,
+  failureMessage: string,
+  preservedContext?: BackendHealthContext
+): Promise<void> {
   const launchedAfter = Date.now() - 2_000;
+  const healthContext = preservedContext || {
+    port: validPort(process.env.VIGIL_PORT || "8787"),
+    instanceSecret: await getInstanceSecret(dataDir)
+  };
+  const executablePath = join(options.appPath, "Contents", "MacOS", basename(options.appPath, ".app"));
   await openAppInBackground();
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   let healthySince = 0;
   while (Date.now() < deadline) {
-    const [pids, ready] = await Promise.all([
+    const [pids, ready, signedHealthy] = await Promise.all([
       installedAppProcessIds(),
-      liveRuntimeReady(dataDir, launchedAfter)
+      liveRuntimeReady(dataDir, launchedAfter),
+      backendIsHealthy(healthContext)
     ]);
-    if (ready && ready.transport === "in-app" && pids.includes(ready.pid)) {
+    if (ready
+      && ready.transport === "in-app"
+      && ready.appPath === executablePath
+      && pids.includes(ready.pid)
+      && signedHealthy) {
       if (!healthySince) healthySince = Date.now();
       if (Date.now() - healthySince >= 1_500) return;
     } else {
@@ -822,9 +1535,9 @@ async function parentExitedSoon(pid: number, timeoutMs: number): Promise<boolean
   return !processExists(pid);
 }
 
-async function activeHeadMatches(expectedCommit: string): Promise<boolean> {
+async function activeHeadMatches(expectedCommit: string, gitCommand = "git"): Promise<boolean> {
   try {
-    const result = await run("git", ["rev-parse", "HEAD"], {
+    const result = await run(gitCommand, ["rev-parse", "HEAD"], {
       allowFailure: true,
       capture: true,
       cwd: options.repoRoot,
@@ -846,13 +1559,17 @@ function processExists(pid: number): boolean {
 }
 
 async function assertOwnedUpdaterLock(): Promise<void> {
-  let payload: { token?: unknown };
-  try {
-    payload = JSON.parse(await readFile(options.lockPath, "utf8")) as { token?: unknown };
-  } catch {
-    throw new Error("Vigil updater lock is missing or unreadable.");
-  }
-  if (payload.token !== options.lockToken) throw new Error("Vigil updater lock ownership could not be verified.");
+  const deadline = Date.now() + UPDATER_LOCK_HANDOFF_TIMEOUT_MS;
+  do {
+    try {
+      const payload = JSON.parse(await readFile(options.lockPath, "utf8")) as { token?: unknown; pid?: unknown };
+      if (payload.token === options.lockToken && payload.pid === process.pid) return;
+    } catch {
+      // The controller may still be atomically transferring the lock payload.
+    }
+    await delay(25);
+  } while (Date.now() < deadline);
+  throw new Error("Vigil updater lock ownership could not be verified after startup handoff.");
 }
 
 async function releaseOwnedUpdaterLock(): Promise<void> {
@@ -899,6 +1616,12 @@ async function run(
   const executable = command === "git" ? await gitExecutable(cwd) : command;
   return await new Promise((resolveRun, rejectRun) => {
     let settled = false;
+    let timedOut = false;
+    let childClosed = false;
+    let killConfirmationReached = false;
+    let terminationGrace: ReturnType<typeof setTimeout> | null = null;
+    let killConfirmation: ReturnType<typeof setTimeout> | null = null;
+    let terminationPoll: ReturnType<typeof setInterval> | null = null;
     const child = spawn(executable, args, {
       cwd,
       env: optionsForRun.env || process.env,
@@ -908,17 +1631,78 @@ async function run(
     activeChild = child;
     let stdout = "";
     let stderr = "";
-    const timeout = optionsForRun.timeoutMs ? setTimeout(() => {
+    const clearLifecycleTimers = () => {
+      if (timeout) clearTimeout(timeout);
+      if (terminationGrace) clearTimeout(terminationGrace);
+      if (killConfirmation) clearTimeout(killConfirmation);
+      if (terminationPoll) clearInterval(terminationPoll);
+    };
+    const finishTimedOutCommand = () => {
       if (settled) return;
       settled = true;
-      stopChild(child.pid, "SIGTERM");
       activeChild = null;
-      log.write(`${command} ${args.join(" ")} timed out after ${optionsForRun.timeoutMs}ms\n`);
+      clearLifecycleTimers();
       if (optionsForRun.allowFailure) {
         resolveRun({ ok: false, stdout: optionsForRun.capture ? stdout : "", stderr: "Command timed out" });
       } else {
         rejectRun(new Error(`${command} ${args.join(" ")} timed out after ${optionsForRun.timeoutMs}ms`));
       }
+    };
+    const finishWithError = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      activeChild = null;
+      clearLifecycleTimers();
+      rejectRun(error);
+    };
+    const finishWithExit = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      activeChild = null;
+      clearLifecycleTimers();
+      if (interrupted && !optionsForRun.ignoreInterruption) {
+        rejectRun(new Error("Vigil update was interrupted."));
+      } else if (code === 0 || optionsForRun.allowFailure) {
+        resolveRun({ ok: code === 0, stdout: optionsForRun.capture ? stdout : "", stderr: optionsForRun.capture ? stderr : "" });
+      } else {
+        rejectRun(new Error(`${command} ${args.join(" ")} failed with exit code ${code}`));
+      }
+    };
+    const processGroupStillExists = () => commandProcessGroupExists(child.pid);
+    const finishTimedOutCommandWhenStopped = () => {
+      if (!timedOut || settled || processGroupStillExists()) return;
+      if (childClosed || killConfirmationReached) finishTimedOutCommand();
+    };
+    const waitForKillConfirmation = () => {
+      killConfirmation = setTimeout(() => {
+        if (settled) return;
+        killConfirmationReached = true;
+        if (!processGroupStillExists()) {
+          finishTimedOutCommand();
+          return;
+        }
+        // Do not release the update lock while a timed-out child can still
+        // mutate the source or staged artifacts. Retry until SIGKILL is observed.
+        stopChild(child.pid, "SIGKILL");
+        waitForKillConfirmation();
+      }, COMMAND_KILL_CONFIRMATION_MS);
+    };
+    const timeout = optionsForRun.timeoutMs ? setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      log.write(`${command} ${args.join(" ")} timed out after ${optionsForRun.timeoutMs}ms; terminating its process group.\n`);
+      stopChild(child.pid, "SIGTERM");
+      terminationPoll = setInterval(finishTimedOutCommandWhenStopped, COMMAND_TERMINATION_POLL_MS);
+      terminationGrace = setTimeout(() => {
+        if (settled) return;
+        if (!processGroupStillExists()) {
+          finishTimedOutCommandWhenStopped();
+          if (!settled) waitForKillConfirmation();
+          return;
+        }
+        stopChild(child.pid, "SIGKILL");
+        waitForKillConfirmation();
+      }, COMMAND_TERMINATION_GRACE_MS);
     }, optionsForRun.timeoutMs) : null;
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -932,33 +1716,23 @@ async function run(
     });
     child.on("error", (error) => {
       if (settled) return;
-      settled = true;
-      activeChild = null;
-      if (timeout) clearTimeout(timeout);
-      rejectRun(error);
+      if (timedOut) {
+        childClosed = true;
+        finishTimedOutCommandWhenStopped();
+        return;
+      }
+      finishWithError(error);
     });
     child.on("close", (code) => {
       if (settled) return;
-      settled = true;
-      activeChild = null;
-      if (timeout) clearTimeout(timeout);
-      if (interrupted && !optionsForRun.ignoreInterruption) {
-        rejectRun(new Error("Vigil update was interrupted."));
-      } else if (code === 0 || optionsForRun.allowFailure) {
-        resolveRun({ ok: code === 0, stdout: optionsForRun.capture ? stdout : "", stderr: optionsForRun.capture ? stderr : "" });
-      } else {
-        rejectRun(new Error(`${command} ${args.join(" ")} failed with exit code ${code}`));
+      childClosed = true;
+      if (timedOut) {
+        finishTimedOutCommandWhenStopped();
+        return;
       }
+      finishWithExit(code);
     });
   });
-}
-
-function manageEngineExportEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  if (!env.VIGIL_DATA_DIR && env.HOME) {
-    env.VIGIL_DATA_DIR = join(env.HOME, "Library", "Application Support", "Vigil");
-  }
-  return env;
 }
 
 function npmExecutable(): string {
@@ -982,7 +1756,17 @@ function stopChild(pid: number | undefined, signal: NodeJS.Signals): void {
   }
 }
 
-async function safeStatus(phase: string, message: string, extra: Record<string, unknown>): Promise<void> {
+function commandProcessGroupExists(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return isErrorCode(error, "EPERM");
+  }
+}
+
+async function safeStatus(phase: UpdateReceiptPhase, message: string, extra: Omit<UpdateReceiptPatch, "phase">): Promise<void> {
   try {
     await status(phase, message, extra);
   } catch (error) {
@@ -990,12 +1774,19 @@ async function safeStatus(phase: string, message: string, extra: Record<string, 
   }
 }
 
-async function status(phase: string, message: string, extra: Record<string, unknown> = {}): Promise<void> {
+async function status(
+  phase: UpdateReceiptPhase,
+  message: string,
+  extra: Omit<UpdateReceiptPatch, "phase"> = {}
+): Promise<void> {
   const now = new Date().toISOString();
   log.write(`[${now}] ${phase}: ${message}\n`);
-  const temporaryPath = `${options.statusPath}.${process.pid}.tmp`;
-  await writeFile(temporaryPath, `${JSON.stringify({ phase, message, updatedAt: now, ...extra }, null, 2)}\n`);
-  await rename(temporaryPath, options.statusPath);
+  await mergeWriteUpdateReceipt(options.statusPath, options.lockToken, {
+    phase,
+    message,
+    updatedAt: now,
+    ...extra
+  });
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -1041,6 +1832,8 @@ function parseArgs(args: string[]): Options {
     logPath: required(optionsMap, "log-path"),
     lockPath: required(optionsMap, "lock-path"),
     lockToken: required(optionsMap, "lock-token"),
+    expectedInitialCommit: required(optionsMap, "expected-initial-commit"),
+    expectedBranch: required(optionsMap, "expected-branch"),
     expectedCommit: required(optionsMap, "expected-commit"),
     restart
   };

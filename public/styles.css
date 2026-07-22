@@ -8799,6 +8799,53 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
+.saint-backdrop-settings {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.saint-backdrop-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.saint-backdrop-toggle:hover {
+  background: color-mix(in srgb, var(--surface-strong) 44%, transparent);
+}
+
+.saint-backdrop-toggle strong,
+.saint-backdrop-toggle small {
+  display: block;
+}
+
+.saint-backdrop-toggle small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.saint-backdrop-toggle input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+}
+
+:root[data-saint-backdrop="off"] #view-home :is(.saint-ambient, .saint-halo, .saint-symbol) {
+  display: none;
+}
+
 .saint-aesthetic-picker {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

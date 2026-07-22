@@ -4,15 +4,19 @@ import {
   CHRIST_PANTOCRATOR,
   coerceStagePortraitId,
   nextStagePortraitId,
+  normalizeSaintBackdropEnabled,
   normalizeSaintAesthetic,
   previousStagePortraitId,
+  readSaintBackdropEnabled,
   readSaintAesthetic,
   SAINT_AESTHETICS,
   SAINT_AESTHETIC_STORAGE_KEY,
+  SAINT_BACKDROP_STORAGE_KEY,
   SAINT_PATRONS,
   saintArtworkPath,
   SERIOUS_STAGE_PORTRAITS,
   stagePortraitsForAesthetic,
+  writeSaintBackdropEnabled,
   writeSaintAesthetic
 } from "../public/saint-stage.js";
 
@@ -76,6 +80,18 @@ assert.equal(readSaintAesthetic(storage), "playful");
 writeSaintAesthetic(storage, "serious");
 assert.equal(preferences.get(SAINT_AESTHETIC_STORAGE_KEY), "serious");
 assert.equal(readSaintAesthetic(storage), "serious");
+
+assert.equal(normalizeSaintBackdropEnabled(undefined), true, "the animated backdrop must remain on by default");
+assert.equal(normalizeSaintBackdropEnabled("on"), true);
+assert.equal(normalizeSaintBackdropEnabled("off"), false);
+assert.equal(normalizeSaintBackdropEnabled(false), false);
+assert.equal(readSaintBackdropEnabled(storage), true);
+writeSaintBackdropEnabled(storage, false);
+assert.equal(preferences.get(SAINT_BACKDROP_STORAGE_KEY), "off");
+assert.equal(readSaintBackdropEnabled(storage), false);
+writeSaintBackdropEnabled(storage, true);
+assert.equal(preferences.get(SAINT_BACKDROP_STORAGE_KEY), "on");
+assert.equal(readSaintBackdropEnabled(storage), true);
 
 for (const aesthetic of SAINT_AESTHETICS) {
   for (const portrait of stagePortraitsForAesthetic(aesthetic)) {

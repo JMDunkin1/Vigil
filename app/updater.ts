@@ -3,20 +3,47 @@ import { isLocallyRebuildableSignature } from "../scripts/mac-signing-identity.m
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { link, mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { plistStringForKey } from "../src/plist.js";
 import { sourceFingerprint } from "../scripts/source-fingerprint.mjs";
 import { gitExecutable } from "../scripts/git-executable.mjs";
-import { guardianMaintenanceReadiness } from "../src/updateMaintenance.js";
+import { assertGuardianMaintenanceActive, guardianMaintenanceReadiness } from "../src/updateMaintenance.js";
+import {
+  beginUpdateReceipt,
+  failedUpdateReceiptSuperseded,
+  isTerminalUpdateReceipt,
+  mergeWriteUpdateReceipt,
+  newUpdateReceipt,
+  readUpdateReceipt,
+  receiptMatchesActiveLock,
+  receiptTargetInstalled
+} from "../src/updateReceipt.js";
+import type { LegacyUpdateReceipt, UpdateReceipt } from "../src/updateReceipt.js";
+import {
+  UPDATE_RECOVERY_MANIFEST_FILENAME,
+  UPDATE_RECOVERY_POLICY_FILENAME,
+  readUpdateRecoveryManifest,
+  readUpdateRecoveryOutcome,
+  readUpdateRecoveryPolicyFile
+} from "../src/updateTransaction.js";
+import type { UpdateRecoveryOutcome } from "../src/updateTransaction.js";
 
 const UPDATE_STATUS_FILENAME = "update-status.json";
 const UPDATE_LOG_FILENAME = "update.log";
 const UPDATE_LOCK_FILENAME = "update.lock";
 const EXEC_TIMEOUT_MS = 5000;
+const FETCH_TIMEOUT_MS = 60_000;
+const UPDATER_BOOTSTRAP_TIMEOUT_MS = 5_000;
 const REPO_CHECK_ATTEMPTS = 3;
 const REPO_CHECK_RETRY_MS = 150;
+const EXEC_TERMINATION_GRACE_MS = 1_000;
+const EXEC_KILL_CONFIRMATION_MS = 2_000;
+const EXEC_TERMINATION_POLL_MS = 25;
+const UPDATER_BOOTSTRAP_TERMINATION_TIMEOUT_MS = 5_000;
+const UPDATER_BOOTSTRAP_TERMINATION_POLL_MS = 25;
 
 interface ExecResult {
   ok: boolean;
@@ -45,20 +72,13 @@ interface BuildInfo {
   sourceFingerprint?: string;
 }
 
-interface LastUpdateStatus {
-  ok?: boolean;
-  phase?: string;
-  message?: string;
-  startedAt?: string;
-  updatedAt?: string;
-  finishedAt?: string;
-  error?: string;
-}
+type LastUpdateStatus = UpdateReceipt | LegacyUpdateReceipt;
 
 interface UpdateLockPayload {
   token: string;
   pid: number;
   startedAt: string;
+  ownerStartedAt?: string;
 }
 
 export interface UpdaterLock {
@@ -68,6 +88,34 @@ export interface UpdaterLock {
   release(): Promise<void>;
 }
 
+export interface UpdaterLockRecoveryHooks {
+  afterSnapshot?(): Promise<void>;
+  afterReleaseSnapshot?(): Promise<void>;
+}
+
+export interface UpdaterBootstrapTerminationOperations {
+  signal(pid: number): void;
+  processGroupExists(pid: number): boolean;
+  wait(milliseconds: number): Promise<void>;
+}
+
+class UpdaterBootstrapOwnershipError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UpdaterBootstrapOwnershipError";
+  }
+}
+
+interface PinnedUpdaterLockSnapshot {
+  handle: FileHandle;
+  dev: number;
+  ino: number;
+  mode: number;
+  uid: number;
+  raw: string;
+  payload: UpdateLockPayload | null;
+}
+
 export interface VigilAppUpdateController {
   status(options?: { checkRemote?: boolean }): Promise<unknown>;
   start(): Promise<unknown>;
@@ -75,7 +123,15 @@ export interface VigilAppUpdateController {
 
 interface ControllerOptions {
   app: App;
-  quitForUpdate(): void;
+  quitForUpdate(): void | Promise<void>;
+}
+
+interface GlobalUpdateRecoveryStatus {
+  hasManifest: boolean;
+  blocked: boolean;
+  message: string | null;
+  attemptId: string | null;
+  outcome: UpdateRecoveryOutcome | null;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -101,8 +157,8 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       scriptPath = updateScriptPath(repoRoot);
     }
     await mkdir(updateDir, { recursive: true });
-    const remoteCheck = checkRemote ? await execGit(repoRoot, ["fetch", "--prune"]) : null;
-    const [repo, currentSourceFingerprint, runtimeBuild, appBuild, appStat, lastUpdate, activeLock, maintenance] = await Promise.all([
+    const remoteCheck = checkRemote ? await execGit(repoRoot, ["fetch", "--prune"], FETCH_TIMEOUT_MS) : null;
+    const [repo, currentSourceFingerprint, runtimeBuild, appBuild, appStat, lastUpdateRead, activeLock, maintenance, recovery] = await Promise.all([
       readRepoInfo(repoRoot),
       sourceFingerprint(repoRoot),
       readBuildInfo(join(repoRoot, "dist", "runtime", "build-info.json")),
@@ -111,39 +167,118 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
         join(appPath, "Contents", "Resources", "app.asar.unpacked", "dist", "runtime", "build-info.json")
       ]),
       optionalStat(join(appPath, "Contents", "Resources", "app.asar")),
-      readLastUpdate(statusPath),
+      readUpdateReceipt(statusPath),
       readActiveUpdaterLock(lockPath),
-      guardianMaintenanceReadiness()
+      guardianMaintenanceReadiness(),
+      readGlobalUpdateRecovery(updateDir)
     ]);
     const running = Boolean(activeLock && activeLock.token !== ownedLockToken);
+    const lastUpdate = lastUpdateRead.status === "valid" || lastUpdateRead.status === "legacy"
+      ? lastUpdateRead.receipt
+      : null;
+    const activeAttemptStatus = running && receiptMatchesActiveLock(lastUpdate, activeLock) ? lastUpdate : null;
+    const recoveryOutcomeApplies = Boolean(
+      recovery.outcome
+      && (!lastUpdate
+        || ("attemptId" in lastUpdate && lastUpdate.attemptId === recovery.outcome.attemptId))
+    );
+    const recoveredComplete = recoveryOutcomeApplies && recovery.outcome?.status === "complete";
+    const recoveredFailure = recoveryOutcomeApplies && recovery.outcome?.status === "failed-recovered";
+    const recoveryBlocked = !running && recovery.hasManifest && recovery.blocked;
+    const recoveryPending = !running && recovery.hasManifest && !recovery.blocked;
     const appCommit = appBuild?.commit || null;
     const currentCommit = repo.ok ? repo.head : runtimeBuild?.commit || "";
-    const appBundleOutdated = repo.ok && (Boolean(currentCommit && appCommit && appCommit !== currentCommit) || Boolean(currentCommit && !appCommit));
-    const localChanges = Boolean(repo.dirty && (
-      !currentSourceFingerprint
-      || !appBuild?.sourceFingerprint
-      || currentSourceFingerprint !== appBuild.sourceFingerprint
-    ));
+    const sourceFingerprintOk = typeof currentSourceFingerprint === "string"
+      && /^[a-f0-9]{64}$/iu.test(currentSourceFingerprint);
+    const appMatchesCheckout = Boolean(
+      repo.ok
+      && sourceFingerprintOk
+      && currentCommit
+      && appCommit === currentCommit
+      && appBuild?.sourceFingerprint === currentSourceFingerprint
+    );
+    // A verified app update may complete even when the final best-effort Git
+    // fast-forward is interrupted. In that state the installed bundle already
+    // represents the fetched upstream target and must not be offered again or
+    // described as a failed installation merely because the checkout lags.
+    const appMatchesUpstream = Boolean(
+      repo.ok
+      && repo.upstream
+      && appCommit === repo.upstream
+      && appBuild?.dirty === false
+    );
+    const appBundleOutdated = Boolean(repo.ok && sourceFingerprintOk && !appMatchesCheckout);
+    const localChanges = Boolean(repo.dirty && !appMatchesCheckout);
+    const installedBuildEvidence = {
+      builtAt: typeof appBuild?.builtAt === "string" ? appBuild.builtAt : null,
+      modifiedAt: appStat?.mtime || null,
+      commit: appCommit,
+      fingerprint: appBuild?.sourceFingerprint || null
+    };
+    const lastUpdateTargetInstalled = receiptTargetInstalled(lastUpdate, installedBuildEvidence);
+    const failureSupersededByBuild = failedUpdateReceiptSuperseded(lastUpdate, installedBuildEvidence);
+    const lastUpdateCorrectedComplete = Boolean(
+      recoveredComplete
+      || (lastUpdate?.phase === "failed"
+        && (lastUpdateTargetInstalled || appMatchesUpstream || failureSupersededByBuild))
+    );
+    const lastUpdateSuperseded = failureSupersededByBuild
+      || lastUpdateCorrectedComplete;
+    const orphanedAttempt = Boolean(
+      lastUpdate
+      && !running
+      && !recoveryOutcomeApplies
+      && !recovery.hasManifest
+      && !isTerminalUpdateReceipt(lastUpdate)
+    );
+    const orphanedAttemptInstalled = orphanedAttempt && receiptTargetInstalled(lastUpdate, installedBuildEvidence);
     // A clean PR/worktree branch can legitimately have no upstream yet. Its
     // checked-out commit is still a valid local build source, just not a remote
     // update target.
-    const localCheckoutBuild = localChanges || Boolean(!repo.upstream && appBundleOutdated);
+    const localCheckoutBuild = shouldBuildLocalCheckout(repo, appBundleOutdated, localChanges);
     const remoteCheckOk = remoteCheck ? remoteCheck.ok : null;
-    const checkOk = repo.ok && (localCheckoutBuild || remoteCheckOk !== false);
+    const checkOk = repo.ok
+      && sourceFingerprintOk
+      && !recovery.hasManifest
+      && (localCheckoutBuild || remoteCheckOk !== false);
     const supported = repo.ok && Boolean(scriptPath);
     const updateAvailable = Boolean(checkOk && supported && maintenance.ready && (
-      localCheckoutBuild || (!repo.dirty && Boolean(repo.upstream) && (repo.behind > 0 || appBundleOutdated))
+      localCheckoutBuild || shouldInstallRemoteUpdate(repo, appBundleOutdated, appMatchesUpstream)
     ));
+    let displayPhase: string | null = lastUpdate?.phase || null;
+    if (lastUpdateCorrectedComplete) displayPhase = "complete";
+    if (orphanedAttempt) displayPhase = orphanedAttemptInstalled ? "complete" : "failed";
+    if (recoveredFailure) displayPhase = "failed";
+    if (recoveredComplete) displayPhase = "complete";
+    if (updateAvailable) displayPhase = "available";
+    if (recoveryPending) displayPhase = "recovering";
+    if (recoveryBlocked) displayPhase = "failed";
+    if (running) displayPhase = activeAttemptStatus?.phase || "starting";
     return {
-      ok: checkOk,
+      // `ok` describes a valid status response. Repository/fetch health is a
+      // separate field so a transient check failure cannot erase a live update
+      // lock or make either UI stop polling the active transaction.
+      ok: true,
+      checkOk,
       supported,
       running,
+      recoveryPending,
+      recoveryBlocked,
+      recoveryAttemptId: recovery.attemptId,
+      recoveryOutcome: recoveryOutcomeApplies ? recovery.outcome : null,
       updateAvailable,
       appBundleOutdated,
       repoRoot,
       appPath,
       branch: repo.branch,
       currentCommit,
+      currentSourceFingerprint,
+      sourceFingerprintVerified: sourceFingerprintOk,
+      appCommit,
+      appSourceFingerprint: appBuild?.sourceFingerprint || null,
+      appMatchesCheckout,
+      appMatchesUpstream,
+      installedAppCurrent: appMatchesCheckout || appMatchesUpstream,
       upstreamCommit: repo.upstream,
       ahead: repo.ahead,
       behind: repo.behind,
@@ -160,14 +295,32 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       maintenanceMessage: maintenance.message,
       logPath,
       lastUpdate,
+      lastUpdateTargetInstalled,
+      lastUpdateCorrectedComplete,
+      lastUpdateSuperseded,
+      lastUpdateInterrupted: orphanedAttempt,
+      lastUpdateInterruptedAfterInstall: orphanedAttemptInstalled,
+      updateReceiptError: lastUpdateRead.status === "invalid" ? lastUpdateRead.reason : null,
+      phase: displayPhase,
       message: updateMessage({
         repo,
+        sourceFingerprintOk,
         appBundleOutdated,
+        appMatchesUpstream,
         localChanges: localCheckoutBuild,
         running,
+        recoveryPending,
+        recoveryBlocked,
+        recoveryMessage: recovery.message,
+        recoveryOutcome: recoveryOutcomeApplies ? recovery.outcome : null,
+        activeAttemptStatus,
         remoteCheckError: remoteCheck && !remoteCheck.ok,
         maintenance,
-        lastUpdate
+        lastUpdate,
+        lastUpdateCorrectedComplete,
+        lastUpdateSuperseded,
+        orphanedAttempt,
+        orphanedAttemptInstalled
       })
     };
   }
@@ -178,7 +331,14 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
     },
     async start() {
       if (startInFlight) {
-        return { ok: false, running: true, error: "A Vigil update is already starting." };
+        return {
+          ok: false,
+          supported: true,
+          running: true,
+          phase: "starting",
+          message: "A Vigil update is already starting.",
+          error: "A Vigil update is already starting."
+        };
       }
       startInFlight = startOnce();
       try {
@@ -195,58 +355,110 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
     try {
       updateLock = await acquireUpdaterLock(lockPath);
     } catch (error) {
-      return { ok: false, running: true, error: errorMessage(error) };
+      const message = errorMessage(error);
+      try {
+        const activeStatus = await readStatusPayload();
+        return { ...activeStatus, ok: false, error: message };
+      } catch {
+        return { ok: false, running: false, phase: "failed", message, error: message };
+      }
     }
     let handedOff = false;
-    let startedAt = "";
+    let preserveUpdateLock = false;
+    let receiptStarted = false;
     let currentStatus: Record<string, unknown> = {};
     let updaterChild: ReturnType<typeof spawn> | null = null;
+    let updaterLockTransferred = false;
+    const failAttempt = async (message: string): Promise<Record<string, unknown>> => {
+      if (receiptStarted) {
+        if (preserveUpdateLock) {
+          await mergeWriteUpdateReceipt(statusPath, updateLock.token, {
+            phase: "waiting",
+            message
+          }).catch(() => undefined);
+        } else {
+          await mergeWriteUpdateReceipt(statusPath, updateLock.token, {
+            phase: "failed",
+            message,
+            error: message
+          }).catch(() => undefined);
+        }
+      }
+      return {
+        ...currentStatus,
+        ok: false,
+        running: preserveUpdateLock,
+        phase: preserveUpdateLock ? "waiting" : "failed",
+        message,
+        error: message
+      };
+    };
     try {
       currentStatus = await readStatusPayload({ ownedLockToken: updateLock.token });
-      if (currentStatus.ok !== true) {
-        return { ...currentStatus, ok: false, error: "The Vigil source repository could not be verified." };
+      if (currentStatus.recoveryPending === true || currentStatus.recoveryBlocked === true) {
+        const message = String(currentStatus.message || "Vigil must finish recovering the previous update before another can start.");
+        return { ...currentStatus, ok: false, error: message };
+      }
+      const localAttempt = currentStatus.localChanges === true;
+      if (currentStatus.checkOk !== true) {
+        return await failAttempt("The Vigil source repository could not be verified.");
       }
       if (currentStatus.supported !== true || !scriptPath) {
-        return { ok: false, supported: false, error: "Updater script is missing from this Vigil build." };
+        return await failAttempt("Updater script is missing from this Vigil build.");
       }
       if (currentStatus.maintenanceReady !== true) {
-        return { ...currentStatus, ok: false, error: String(currentStatus.maintenanceMessage || "Vigil's protected update setup is not ready.") };
+        return await failAttempt(String(currentStatus.maintenanceMessage || "Vigil's protected update setup is not ready."));
       }
-      if (currentStatus.localChanges) {
+      if (localAttempt) {
+        await prepareLocalUpdateReceipt(statusPath, updateLock.token, currentStatus);
+        receiptStarted = true;
         const result = await launchLocalChanges(currentStatus, updateLock);
         if (result.ok === true) handedOff = true;
-        return result;
+        return result.ok === true ? result : await failAttempt(String(result.error || result.message || "The local Vigil update could not start."));
       }
       currentStatus = await readStatusPayload({ checkRemote: true, ownedLockToken: updateLock.token });
-      if (currentStatus.ok !== true || currentStatus.remoteCheckOk !== true) {
-        return { ...currentStatus, ok: false, error: "Vigil could not verify remote updates. Nothing was changed." };
+      if (currentStatus.checkOk !== true || currentStatus.remoteCheckOk !== true) {
+        return await failAttempt("Vigil could not verify remote updates. Nothing was changed.");
+      }
+      if (currentStatus.localChanges) {
+        return await failAttempt("The Vigil source topology changed during the update check. Check again to use the protected local-build path.");
       }
       if (currentStatus.dirty) {
-        return { ...currentStatus, ok: false, error: "Commit or stash local changes before installing a Vigil update." };
+        return await failAttempt("Commit or stash local changes before installing a Vigil update.");
       }
-      if (!currentStatus.updateAvailable) {
-        return { ...currentStatus, ok: false, error: "No Vigil update is available." };
+      if (Number(currentStatus.ahead || 0) > 0) {
+        return await failAttempt("The Vigil source topology changed during the update check. Check again before installing an update.");
       }
+      if (currentStatus.supported !== true || !scriptPath) {
+        return await failAttempt("Updater script is missing from this Vigil build.");
+      }
+      if (currentStatus.maintenanceReady !== true) {
+        return await failAttempt(String(currentStatus.maintenanceMessage || "Vigil's protected update setup is not ready."));
+      }
+      const remotePreparation = await prepareRemoteUpdateReceipt(statusPath, updateLock.token, currentStatus);
+      currentStatus = remotePreparation.status;
+      if (!remotePreparation.started) {
+        return currentStatus;
+      }
+      receiptStarted = true;
       const [nodePath, npmPath] = await Promise.all([
-        findExecutable(repoRoot, "node"),
-        findExecutable(repoRoot, "npm")
+        findExecutable(repoRoot, "node", app.getPath("home")),
+        findExecutable(repoRoot, "npm", app.getPath("home"))
       ]);
       if (!nodePath || !npmPath) {
-        return { ...currentStatus, ok: false, error: "Node.js and npm are required to rebuild Vigil, but they were not found." };
+        return await failAttempt("Node.js and npm are required to rebuild Vigil, but they were not found.");
       }
+      const childEnv = updaterChildEnvironment(app.getPath("home"), nodePath, npmPath);
       const updaterSyntax = await execFile(nodePath, ["--check", scriptPath], { cwd: repoRoot, timeoutMs: EXEC_TIMEOUT_MS });
       if (!updaterSyntax.ok) {
-        return { ...currentStatus, ok: false, error: "The packaged Vigil updater failed its preflight check." };
+        return await failAttempt("The packaged Vigil updater failed its preflight check.");
       }
       await assertLocallyRebuildableApp(appPath);
-      startedAt = new Date().toISOString();
-      await writeFile(statusPath, `${JSON.stringify({
-        ok: true,
+      await mergeWriteUpdateReceipt(statusPath, updateLock.token, {
         phase: "starting",
-        message: "Preparing Vigil update",
-        startedAt,
-        updatedAt: startedAt
-      }, null, 2)}\n`);
+        message: "Launching the protected Vigil updater",
+        targetCommit: stringOrNull(currentStatus.upstreamCommit)
+      });
       const command = [
         scriptPath,
         "--repo-root", repoRoot,
@@ -257,18 +469,36 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
         "--log-path", logPath,
         "--lock-path", lockPath,
         "--lock-token", updateLock.token,
+        "--expected-initial-commit", String(currentStatus.currentCommit || ""),
+        "--expected-branch", String(currentStatus.branch || ""),
         "--expected-commit", String(currentStatus.upstreamCommit || ""),
         "--restart"
       ];
-      const requestQuit = () => quitForUpdate();
-      process.once("SIGUSR2", requestQuit);
+      let quitAuthorizationInFlight = false;
+      const requestQuit = () => {
+        const childPid = updaterChild?.pid;
+        if (!childPid || quitAuthorizationInFlight) return;
+        quitAuthorizationInFlight = true;
+        void authorizeQuit(childPid);
+      };
+      async function authorizeQuit(childPid: number): Promise<void> {
+        try {
+          await assertGuardianMaintenanceActive(lockPath, updateLock.token, childPid);
+          await quitForUpdate();
+          process.off("SIGUSR2", requestQuit);
+        } catch (error) {
+          quitAuthorizationInFlight = false;
+          console.error("Vigil rejected an unauthenticated updater quit request.", error);
+        }
+      }
+      process.on("SIGUSR2", requestQuit);
       try {
         updaterChild = spawn(nodePath, command, {
           detached: true,
           stdio: "ignore",
           cwd: repoRoot,
           env: {
-            ...process.env,
+            ...childEnv,
             VIGIL_UPDATE_LAUNCHED_BY: "vigil-app",
             VIGIL_UPDATE_NPM_PATH: npmPath
           }
@@ -281,6 +511,8 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       }
       updaterChild.once("exit", () => process.off("SIGUSR2", requestQuit));
       await updateLock.transferTo(updaterChild.pid);
+      updaterLockTransferred = true;
+      await waitForUpdaterBootstrap(statusPath, updateLock.token, updaterChild.pid);
       handedOff = true;
       updaterChild.unref();
       return {
@@ -292,30 +524,39 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
         logPath
       };
     } catch (error) {
-      if (updaterChild && !handedOff) stopUpdaterChild(updaterChild.pid);
-      const message = errorMessage(error) || "The updater process could not start.";
-      const now = new Date().toISOString();
-      await writeFile(statusPath, `${JSON.stringify({
-        ok: false,
-        phase: "failed",
-        message,
-        error: message,
-        ...(startedAt ? { startedAt } : {}),
-        updatedAt: now,
-        finishedAt: now
-      }, null, 2)}\n`);
-      return { ...currentStatus, ok: false, error: message };
+      let failure = error;
+      if (updaterChild && !handedOff) {
+        const terminated = await terminateUpdaterChildAndConfirm(updaterChild.pid);
+        if (!terminated && updaterLockTransferred) {
+          preserveUpdateLock = true;
+          failure = new UpdaterBootstrapOwnershipError(
+            `${errorMessage(error)} Vigil could not confirm that the failed updater process group stopped, so its lock was preserved.`
+          );
+        }
+      } else if (error instanceof UpdaterBootstrapOwnershipError) {
+        preserveUpdateLock = true;
+      }
+      const message = errorMessage(failure) || "The updater process could not start.";
+      return await failAttempt(message);
     } finally {
-      if (!handedOff) await updateLock.release();
+      if (!handedOff && !preserveUpdateLock) await updateLock.release();
     }
   }
 
   async function launchLocalChanges(currentStatus: Record<string, unknown>, updateLock: UpdaterLock): Promise<Record<string, unknown>> {
-    const [nodePath, npmPath] = await Promise.all([findExecutable(repoRoot, "node"), findExecutable(repoRoot, "npm")]);
+    if (!/^[a-f0-9]{40}$/iu.test(String(currentStatus.currentCommit || ""))
+      || !/^[a-f0-9]{64}$/iu.test(String(currentStatus.currentSourceFingerprint || ""))) {
+      return { ...currentStatus, ok: false, error: "Vigil could not capture a stable identity for the local source. Nothing was changed." };
+    }
+    const [nodePath, npmPath] = await Promise.all([
+      findExecutable(repoRoot, "node", app.getPath("home")),
+      findExecutable(repoRoot, "npm", app.getPath("home"))
+    ]);
     const launcherPath = localLauncherPath(repoRoot);
     if (!nodePath || !npmPath || !launcherPath) {
       return { ...currentStatus, ok: false, error: "Node.js, npm, and the local launcher are required to run Vigil changes." };
     }
+    const childEnv = updaterChildEnvironment(app.getPath("home"), nodePath, npmPath);
     const syntax = await execFile(nodePath, ["--check", launcherPath], { cwd: repoRoot, timeoutMs: EXEC_TIMEOUT_MS });
     if (!syntax.ok) return { ...currentStatus, ok: false, error: "The Vigil local launcher failed its preflight check." };
     const child = spawn(nodePath, [
@@ -324,31 +565,138 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       "--app-path", appPath,
       "--parent-pid", String(process.pid),
       "--user-data-dir", userDataDir,
+      "--node-path", nodePath,
       "--npm-path", npmPath,
+      "--status-path", statusPath,
+      "--log-path", logPath,
+      "--expected-commit", String(currentStatus.currentCommit || ""),
+      "--expected-branch", String(currentStatus.branch || ""),
+      "--expected-fingerprint", String(currentStatus.currentSourceFingerprint || ""),
       "--lock-path", updateLock.path,
       "--lock-token", updateLock.token
-    ], { detached: true, stdio: "ignore", cwd: repoRoot, env: process.env });
-    const requestQuit = () => quitForUpdate();
-    process.once("SIGUSR2", requestQuit);
+    ], { detached: true, stdio: "ignore", cwd: repoRoot, env: childEnv });
+    let quitAuthorizationInFlight = false;
+    const requestQuit = () => {
+      if (!child.pid || quitAuthorizationInFlight) return;
+      quitAuthorizationInFlight = true;
+      void authorizeQuit(child.pid);
+    };
+    async function authorizeQuit(childPid: number): Promise<void> {
+      try {
+        await assertGuardianMaintenanceActive(updateLock.path, updateLock.token, childPid);
+        await quitForUpdate();
+        process.off("SIGUSR2", requestQuit);
+      } catch (error) {
+        quitAuthorizationInFlight = false;
+        console.error("Vigil rejected an unauthenticated local-update quit request.", error);
+      }
+    }
+    process.on("SIGUSR2", requestQuit);
+    let updateLockTransferred = false;
     try {
       await childStarted(child);
       if (!child.pid) throw new Error("The local launcher did not report a process ID.");
+      child.once("exit", () => process.off("SIGUSR2", requestQuit));
+      await updateLock.transferTo(child.pid);
+      updateLockTransferred = true;
+      await waitForUpdaterBootstrap(statusPath, updateLock.token, child.pid);
+      child.unref();
+      return {
+        ...currentStatus,
+        ok: true,
+        supported: true,
+        running: true,
+        phase: "building",
+        message: "Building local changes; Vigil will restart when ready."
+      };
     } catch (error) {
       process.off("SIGUSR2", requestQuit);
+      if (!await terminateUpdaterChildAndConfirm(child.pid) && updateLockTransferred) {
+        throw new UpdaterBootstrapOwnershipError(
+          `${errorMessage(error)} Vigil could not confirm that the failed local updater process group stopped, so its lock was preserved.`
+        );
+      }
       throw error;
     }
-    child.once("exit", () => process.off("SIGUSR2", requestQuit));
-    await updateLock.transferTo(child.pid);
-    child.unref();
+  }
+}
+
+export interface RemoteUpdateReceiptPreparation {
+  started: boolean;
+  status: Record<string, unknown>;
+}
+
+/** Begin a local attempt only after its exact source identity is trustworthy. */
+export async function prepareLocalUpdateReceipt(
+  statusPath: string,
+  attemptId: string,
+  selectedStatus: Record<string, unknown>
+): Promise<void> {
+  const sourceCommit = stringOrNull(selectedStatus.currentCommit);
+  const sourceFingerprint = stringOrNull(selectedStatus.currentSourceFingerprint);
+  if (!sourceCommit
+    || !/^[a-f0-9]{40}$/iu.test(sourceCommit)
+    || !sourceFingerprint
+    || !/^[a-f0-9]{64}$/iu.test(sourceFingerprint)) {
+    throw new Error("Vigil could not capture a stable identity for the local source. Nothing was changed.");
+  }
+  await beginUpdateReceipt(statusPath, newUpdateReceipt({
+    attemptId,
+    kind: "local",
+    message: "Preparing local Vigil changes",
+    sourceCommit,
+    sourceFingerprint,
+    targetCommit: sourceCommit,
+    targetFingerprint: sourceFingerprint
+  }));
+}
+
+/**
+ * Cross the durable attempt boundary only after the second remote check has
+ * selected an installable target. A target that disappeared between Check and
+ * Install is a successful no-op, not a failed update, and must leave the prior
+ * terminal receipt byte-for-byte intact.
+ */
+export async function prepareRemoteUpdateReceipt(
+  statusPath: string,
+  attemptId: string,
+  selectedStatus: Record<string, unknown>
+): Promise<RemoteUpdateReceiptPreparation> {
+  if (selectedStatus.updateAvailable !== true) {
     return {
-      ...currentStatus,
-      ok: true,
-      supported: true,
-      running: true,
-      phase: "building",
-      message: "Building local changes; Vigil will restart when ready."
+      started: false,
+      status: {
+        ...selectedStatus,
+        ok: true,
+        running: false,
+        updateAvailable: false,
+        noUpdate: true,
+        phase: "",
+        message: "No newer Vigil update is available."
+      }
     };
   }
+  const sourceCommit = stringOrNull(selectedStatus.currentCommit);
+  const sourceFingerprint = stringOrNull(selectedStatus.currentSourceFingerprint);
+  const targetCommit = stringOrNull(selectedStatus.upstreamCommit);
+  if (!sourceCommit
+    || !/^[a-f0-9]{40}$/iu.test(sourceCommit)
+    || !sourceFingerprint
+    || !/^[a-f0-9]{64}$/iu.test(sourceFingerprint)
+    || !targetCommit
+    || !/^[a-f0-9]{40}$/iu.test(targetCommit)) {
+    throw new Error("Vigil could not capture the selected remote update identity. Nothing was changed.");
+  }
+  await beginUpdateReceipt(statusPath, newUpdateReceipt({
+    attemptId,
+    kind: "remote",
+    message: "Preparing Vigil update",
+    sourceCommit,
+    sourceFingerprint,
+    targetCommit,
+    targetFingerprint: null
+  }));
+  return { started: true, status: selectedStatus };
 }
 
 function findRepoRoot(app: App, previousRoot = ""): string {
@@ -409,7 +757,7 @@ function packagedAppPath(repoRoot: string): string {
   if (process.platform === "darwin" && process.execPath.includes(".app/Contents/MacOS/")) {
     return dirname(dirname(dirname(process.execPath)));
   }
-  return join(repoRoot, "dist", "mac.noindex", process.arch === "arm64" ? "mac-arm64" : "mac", "Vigil.app");
+  return join(repoRoot, "dist", "mac.noindex", "mac-universal", "Vigil.app");
 }
 
 function updateScriptPath(repoRoot: string): string | null {
@@ -430,6 +778,31 @@ function localLauncherPath(repoRoot: string): string | null {
 
 export async function readRepoInfoForTest(repoRoot: string): Promise<RepoInfo> {
   return await readRepoInfo(repoRoot);
+}
+
+export function shouldBuildLocalCheckout(
+  repo: Pick<RepoInfo, "upstream" | "ahead">,
+  appBundleOutdated: boolean,
+  localChanges: boolean
+): boolean {
+  // A checkout with commits that are not in its upstream cannot use the remote
+  // updater's required fast-forward transaction. Rebuild its checked-out HEAD
+  // through the protected local flow instead when the installed app is behind.
+  return localChanges || Boolean(appBundleOutdated && (!repo.upstream || repo.ahead > 0));
+}
+
+export function shouldInstallRemoteUpdate(
+  repo: Pick<RepoInfo, "upstream" | "ahead" | "behind" | "dirty">,
+  appBundleOutdated: boolean,
+  appMatchesUpstream = false
+): boolean {
+  return Boolean(
+    !repo.dirty
+    && repo.ahead === 0
+    && repo.upstream
+    && !appMatchesUpstream
+    && (repo.behind > 0 || appBundleOutdated)
+  );
 }
 
 async function readRepoInfo(repoRoot: string): Promise<RepoInfo> {
@@ -471,9 +844,9 @@ async function readRepoInfo(repoRoot: string): Promise<RepoInfo> {
   };
 }
 
-async function execGit(repoRoot: string, args: string[]): Promise<ExecResult> {
+async function execGit(repoRoot: string, args: string[], timeoutMs = EXEC_TIMEOUT_MS): Promise<ExecResult> {
   try {
-    return await execFile(await gitExecutable(repoRoot), args, { cwd: repoRoot, timeoutMs: EXEC_TIMEOUT_MS });
+    return await execFile(await gitExecutable(repoRoot), args, { cwd: repoRoot, timeoutMs });
   } catch (error) {
     return failedExec(errorMessage(error));
   }
@@ -487,17 +860,69 @@ async function delay(milliseconds: number): Promise<void> {
   await new Promise<void>((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 }
 
-async function execFile(command: string, args: string[], options: { cwd: string; timeoutMs: number }): Promise<ExecResult> {
+async function execFile(
+  command: string,
+  args: string[],
+  options: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv }
+): Promise<ExecResult> {
   return await new Promise((resolveExec) => {
     let settled = false;
-    const child = spawn(command, args, { cwd: options.cwd, stdio: ["ignore", "pipe", "pipe"] });
+    let timedOut = false;
+    let childClosed = false;
+    let terminationGrace: ReturnType<typeof setTimeout> | null = null;
+    let killConfirmation: ReturnType<typeof setTimeout> | null = null;
+    let terminationPoll: ReturnType<typeof setInterval> | null = null;
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      detached: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
     let stdout = "";
     let stderr = "";
-    const timeout = setTimeout(() => {
+    const clearLifecycleTimers = () => {
+      clearTimeout(timeout);
+      if (terminationGrace) clearTimeout(terminationGrace);
+      if (killConfirmation) clearTimeout(killConfirmation);
+      if (terminationPoll) clearInterval(terminationPoll);
+    };
+    const finish = (result: ExecResult) => {
       if (settled) return;
       settled = true;
-      child.kill("SIGTERM");
-      resolveExec({ ok: false, stdout, stderr: stderr || "Command timed out" });
+      clearLifecycleTimers();
+      resolveExec(result);
+    };
+    const finishTimedOutWhenStopped = () => {
+      if (!timedOut || settled || updaterProcessGroupExists(child.pid)) return;
+      if (childClosed) finish({ ok: false, stdout, stderr: stderr || "Command timed out" });
+    };
+    const awaitKillConfirmation = () => {
+      killConfirmation = setTimeout(() => {
+        if (settled) return;
+        if (!updaterProcessGroupExists(child.pid)) {
+          childClosed = true;
+          finishTimedOutWhenStopped();
+          return;
+        }
+        signalUpdaterChild(child.pid, "SIGKILL");
+        awaitKillConfirmation();
+      }, EXEC_KILL_CONFIRMATION_MS);
+    };
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      signalUpdaterChild(child.pid, "SIGTERM");
+      terminationPoll = setInterval(finishTimedOutWhenStopped, EXEC_TERMINATION_POLL_MS);
+      terminationGrace = setTimeout(() => {
+        if (settled) return;
+        if (!updaterProcessGroupExists(child.pid)) {
+          childClosed = true;
+          finishTimedOutWhenStopped();
+          return;
+        }
+        signalUpdaterChild(child.pid, "SIGKILL");
+        awaitKillConfirmation();
+      }, EXEC_TERMINATION_GRACE_MS);
     }, options.timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -509,15 +934,21 @@ async function execFile(command: string, args: string[], options: { cwd: string;
     });
     child.on("error", (error) => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolveExec({ ok: false, stdout, stderr: error.message });
+      childClosed = true;
+      if (timedOut) {
+        finishTimedOutWhenStopped();
+        return;
+      }
+      finish({ ok: false, stdout, stderr: error.message });
     });
     child.on("close", (code) => {
       if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      resolveExec({ ok: code === 0, stdout, stderr });
+      childClosed = true;
+      if (timedOut) {
+        finishTimedOutWhenStopped();
+        return;
+      }
+      finish({ ok: code === 0, stdout, stderr });
     });
   });
 }
@@ -538,14 +969,6 @@ async function readFirstBuildInfo(paths: string[]): Promise<BuildInfo | null> {
   return null;
 }
 
-async function readLastUpdate(path: string): Promise<LastUpdateStatus> {
-  try {
-    return JSON.parse(await readFile(path, "utf8")) as LastUpdateStatus;
-  } catch {
-    return {};
-  }
-}
-
 async function optionalStat(path: string) {
   try {
     return await stat(path);
@@ -554,36 +977,183 @@ async function optionalStat(path: string) {
   }
 }
 
-function updateMessage(
-  { repo, appBundleOutdated, localChanges, running, remoteCheckError, maintenance, lastUpdate }:
+async function readGlobalUpdateRecovery(updateDir: string): Promise<GlobalUpdateRecoveryStatus> {
+  const manifestPath = join(updateDir, UPDATE_RECOVERY_MANIFEST_FILENAME);
+  let manifestStat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    manifestStat = await lstat(manifestPath);
+  } catch (error) {
+    if (!isErrorCode(error, "ENOENT")) {
+      return {
+        hasManifest: true,
+        blocked: true,
+        message: `Vigil could not inspect its durable update recovery record: ${errorMessage(error)}`,
+        attemptId: null,
+        outcome: null
+      };
+    }
+    return {
+      hasManifest: false,
+      blocked: false,
+      message: null,
+      attemptId: null,
+      outcome: await readUpdateRecoveryOutcome(updateDir).catch(() => null)
+    };
+  }
+  if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
+    return {
+      hasManifest: true,
+      blocked: true,
+      message: "Vigil preserved an unsafe durable update recovery record for manual inspection.",
+      attemptId: null,
+      outcome: null
+    };
+  }
+
+  try {
+    const loadedPolicy = await readUpdateRecoveryPolicyFile(join(updateDir, UPDATE_RECOVERY_POLICY_FILENAME));
+    const manifest = await readUpdateRecoveryManifest(loadedPolicy.policy);
+    if (!manifest) {
+      return {
+        hasManifest: false,
+        blocked: false,
+        message: null,
+        attemptId: null,
+        outcome: await readUpdateRecoveryOutcome(updateDir).catch(() => null)
+      };
+    }
+    const outcome = await readUpdateRecoveryOutcome(updateDir);
+    const applicableOutcome = outcome?.attemptId === manifest.attemptId ? outcome : null;
+    const blocked = applicableOutcome?.status === "recovery-failed";
+    return {
+      hasManifest: true,
+      blocked,
+      message: applicableOutcome?.message
+        || "Vigil is recovering an interrupted update before it can check again.",
+      attemptId: manifest.attemptId,
+      outcome: applicableOutcome
+    };
+  } catch (error) {
+    // Recovery may atomically remove its manifest while this read is in flight.
+    // Recheck the authoritative pathname before reporting a persistent block.
+    try {
+      await lstat(manifestPath);
+    } catch (restatError) {
+      if (isErrorCode(restatError, "ENOENT")) {
+        return {
+          hasManifest: false,
+          blocked: false,
+          message: null,
+          attemptId: null,
+          outcome: await readUpdateRecoveryOutcome(updateDir).catch(() => null)
+        };
+      }
+    }
+    return {
+      hasManifest: true,
+      blocked: true,
+      message: `Vigil preserved an interrupted update because its recovery evidence could not be verified: ${errorMessage(error)}`,
+      attemptId: null,
+      outcome: null
+    };
+  }
+}
+
+export function updateMessage(
+  {
+    repo,
+    sourceFingerprintOk,
+    appBundleOutdated,
+    appMatchesUpstream,
+    localChanges,
+    running,
+    recoveryPending,
+    recoveryBlocked,
+    recoveryMessage,
+    recoveryOutcome,
+    activeAttemptStatus,
+    remoteCheckError,
+    maintenance,
+    lastUpdate,
+    lastUpdateCorrectedComplete,
+    lastUpdateSuperseded,
+    orphanedAttempt,
+    orphanedAttemptInstalled
+  }:
   {
     repo: RepoInfo;
+    sourceFingerprintOk: boolean;
     appBundleOutdated: boolean;
+    appMatchesUpstream: boolean;
     localChanges: boolean;
     running: boolean;
+    recoveryPending: boolean;
+    recoveryBlocked: boolean;
+    recoveryMessage: string | null;
+    recoveryOutcome: UpdateRecoveryOutcome | null;
+    activeAttemptStatus: LastUpdateStatus | null;
     remoteCheckError?: boolean | null;
     maintenance: Awaited<ReturnType<typeof guardianMaintenanceReadiness>>;
-    lastUpdate: LastUpdateStatus;
+    lastUpdate: LastUpdateStatus | null;
+    lastUpdateCorrectedComplete: boolean;
+    lastUpdateSuperseded: boolean;
+    orphanedAttempt: boolean;
+    orphanedAttemptInstalled: boolean;
   }
 ): string {
-  if (running) return lastUpdate.message || "Update in progress";
+  if (running) {
+    if (!activeAttemptStatus) return "Update starting";
+    if (activeAttemptStatus.phase === "complete") return "Finishing the successful Vigil update";
+    if (activeAttemptStatus.phase === "failed") return "Finishing protected recovery from the failed update";
+    return activeAttemptStatus.message || "Update in progress";
+  }
+  if (recoveryBlocked) {
+    return recoveryMessage || "Vigil preserved an interrupted update because automatic recovery needs attention.";
+  }
+  if (recoveryPending) return recoveryMessage || "Recovering the interrupted Vigil update";
   if (!maintenance.ready) return maintenance.message || "Vigil's protected update setup is not ready.";
   if (!repo.ok) return "Vigil could not verify its source repository";
+  if (!sourceFingerprintOk) return "Vigil could not verify its exact source identity";
   if (localChanges) return "Local changes ready to run";
   if (remoteCheckError) return "Could not verify remote updates";
-  if (lastUpdate.phase === "failed" && (lastUpdate.error || lastUpdate.message)) {
+  if (repo.dirty && repo.behind > 0) return "Commit or stash local edits before installing remote updates";
+  if (repo.ahead > 0 && repo.behind > 0) return "This checkout has diverged from its upstream; remote updates are not auto-installed";
+  if (appMatchesUpstream && repo.behind > 0) {
+    return lastUpdate?.phase === "complete"
+      ? lastUpdate.message || "Vigil update complete"
+      : "Vigil is current; source checkout synchronization is pending";
+  }
+  if (repo.behind > 0 && repo.ahead === 0) return `${repo.behind} remote commit${repo.behind === 1 ? "" : "s"} ready`;
+  if (appBundleOutdated) return "Installed app is behind this checkout";
+  // Terminal receipts and recovery outcomes are historical evidence. They
+  // remain useful once the current topology is settled, but must never mask a
+  // newly actionable checkout or upstream target with a stale "current" or
+  // "complete" message while the button correctly offers that newer action.
+  if (orphanedAttempt && !orphanedAttemptInstalled && lastUpdate) {
+    return `Last update was interrupted during ${lastUpdate.phase}: ${lastUpdate.message || "the updater stopped unexpectedly"}.`;
+  }
+  if (!recoveryOutcome
+    && !lastUpdateSuperseded
+    && lastUpdate?.phase === "failed"
+    && (lastUpdate.error || lastUpdate.message)) {
     return `Last update failed: ${lastUpdate.error || lastUpdate.message}`;
   }
-  if (repo.dirty) return "Local changes are running";
-  if (repo.behind > 0) return `${repo.behind} remote commit${repo.behind === 1 ? "" : "s"} ready`;
-  if (appBundleOutdated) return "Installed app is behind this checkout";
+  if (orphanedAttemptInstalled) return "Vigil update installed; its final confirmation was interrupted";
+  if (recoveryOutcome?.status === "complete") return recoveryOutcome.message;
+  if (recoveryOutcome?.status === "failed-recovered") return recoveryOutcome.message;
+  if (lastUpdateCorrectedComplete) return "Vigil is current; its earlier failed-update status is obsolete";
+  if (lastUpdate?.phase === "complete") return lastUpdate.message || "Vigil update complete";
   return "Vigil is current";
 }
 
-async function findExecutable(repoRoot: string, command: string): Promise<string | null> {
+async function findExecutable(repoRoot: string, command: string, homeDir: string): Promise<string | null> {
   const result = await execFile("/bin/zsh", ["-lc", "command -v -- \"$1\"", "vigil-updater", command], {
     cwd: repoRoot,
-    timeoutMs: EXEC_TIMEOUT_MS
+    timeoutMs: EXEC_TIMEOUT_MS,
+    env: {
+      ...process.env,
+      PATH: updaterExecutableSearchPath(homeDir, process.env.PATH)
+    }
   });
   const path = result.ok ? result.stdout.trim().split(/\r?\n/u)[0] : "";
   if (!path || resolve(path) !== path || !existsSync(path)) return null;
@@ -595,14 +1165,57 @@ async function findExecutable(repoRoot: string, command: string): Promise<string
   }
 }
 
-export async function acquireUpdaterLock(lockPath: string, ownerPid = process.pid): Promise<UpdaterLock> {
+export function updaterExecutableSearchPath(
+  homeDir: string,
+  inheritedPath = "",
+  preferredDirectories: string[] = []
+): string {
+  return [...new Set([
+    ...preferredDirectories.filter(Boolean),
+    join(homeDir, ".local", "bin"),
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    ...inheritedPath.split(":").filter(Boolean),
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin"
+  ])].join(":");
+}
+
+export function updaterChildEnvironment(
+  homeDir: string,
+  nodePath: string,
+  npmPath: string,
+  inherited: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  return {
+    ...inherited,
+    PATH: updaterExecutableSearchPath(homeDir, inherited.PATH, [dirname(nodePath), dirname(npmPath)])
+  };
+}
+
+export async function acquireUpdaterLock(
+  lockPath: string,
+  ownerPid = process.pid,
+  recoveryHooks: UpdaterLockRecoveryHooks = {}
+): Promise<UpdaterLock> {
   await mkdir(dirname(lockPath), { recursive: true });
   const token = randomUUID();
   const startedAt = new Date().toISOString();
+  const ownerStartedAt = await processStartedAt(ownerPid, dirname(lockPath));
+  if (!ownerStartedAt && processExists(ownerPid)) {
+    throw new Error("Vigil could not verify the updater lock owner's process identity.");
+  }
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const temporaryPath = `${lockPath}.${token}.tmp`;
     try {
-      await writeFile(temporaryPath, `${JSON.stringify({ token, pid: ownerPid, startedAt })}\n`, {
+      await writeFile(temporaryPath, `${JSON.stringify({
+        token,
+        pid: ownerPid,
+        startedAt,
+        ownerStartedAt: ownerStartedAt || undefined
+      })}\n`, {
         encoding: "utf8",
         flag: "wx",
         mode: 0o600
@@ -613,16 +1226,24 @@ export async function acquireUpdaterLock(lockPath: string, ownerPid = process.pi
         token,
         async transferTo(pid: number) {
           if (!Number.isInteger(pid) || pid <= 0) throw new Error("The updater lock owner must be a positive process ID.");
-          await replaceOwnedLockPayload(lockPath, token, { token, pid, startedAt });
+          const transferredOwnerStartedAt = await processStartedAt(pid, dirname(lockPath));
+          if (!transferredOwnerStartedAt && processExists(pid)) {
+            throw new Error("Vigil could not verify the updater process identity before transferring its lock.");
+          }
+          await replaceOwnedLockPayload(lockPath, token, {
+            token,
+            pid,
+            startedAt,
+            ownerStartedAt: transferredOwnerStartedAt || undefined
+          });
         },
         async release() {
-          const current = await readUpdaterLock(lockPath);
-          if (current?.token === token) await rm(lockPath, { force: true });
+          await releaseOwnedUpdaterLock(lockPath, token, recoveryHooks);
         }
       };
     } catch (error) {
       if (!isErrorCode(error, "EEXIST")) throw error;
-      if (attempt === 0 && await removeStaleUpdaterLock(lockPath)) continue;
+      if (attempt === 0 && await removeStaleUpdaterLock(lockPath, recoveryHooks)) continue;
       throw new Error("A Vigil update is already running.");
     } finally {
       await rm(temporaryPath, { force: true }).catch(() => undefined);
@@ -643,33 +1264,231 @@ async function replaceOwnedLockPayload(lockPath: string, token: string, payload:
   }
 }
 
+async function releaseOwnedUpdaterLock(
+  lockPath: string,
+  token: string,
+  recoveryHooks: UpdaterLockRecoveryHooks
+): Promise<void> {
+  let snapshot: PinnedUpdaterLockSnapshot | null;
+  try {
+    snapshot = await openPinnedUpdaterLock(lockPath);
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) return;
+    throw error;
+  }
+  try {
+    if (!snapshot || snapshot.payload?.token !== token) return;
+    await recoveryHooks.afterReleaseSnapshot?.();
+    const releasedPath = `${lockPath}.released.${Date.now()}.${randomUUID()}`;
+    try {
+      await rename(lockPath, releasedPath);
+    } catch (error) {
+      if (isErrorCode(error, "ENOENT")) return;
+      throw error;
+    }
+    const moved = await openPinnedUpdaterLock(releasedPath).catch(() => null);
+    try {
+      if (moved
+        && moved.dev === snapshot.dev
+        && moved.ino === snapshot.ino
+        && moved.raw === snapshot.raw) {
+        await rm(releasedPath, { force: true });
+        return;
+      }
+
+      // Another owner replaced the canonical path after our snapshot. Restore
+      // exactly the inode we displaced when the name is still vacant; when a
+      // third contender already owns it, preserve the displaced lock for
+      // diagnosis instead of deleting evidence that may still be live.
+      let restored = false;
+      try {
+        await link(releasedPath, lockPath);
+        restored = true;
+      } catch (error) {
+        if (!isErrorCode(error, "EEXIST") && !isErrorCode(error, "ENOENT")) throw error;
+      }
+      if (restored) await rm(releasedPath, { force: true });
+    } finally {
+      await moved?.handle.close().catch(() => undefined);
+    }
+  } finally {
+    await snapshot?.handle.close().catch(() => undefined);
+  }
+}
+
 async function readActiveUpdaterLock(lockPath: string): Promise<UpdateLockPayload | null> {
   const payload = await readUpdaterLock(lockPath);
-  return payload && processExists(payload.pid) ? payload : null;
+  if (!payload || !processExists(payload.pid)) return null;
+  if (payload.ownerStartedAt) {
+    const observedStart = await processStartedAt(payload.pid, dirname(lockPath));
+    if (observedStart && !sameProcessStart(payload.ownerStartedAt, observedStart)) return null;
+  } else {
+    const legacyOwner = await legacyUpdaterOwnerMatches(payload, lockPath);
+    if (legacyOwner === false) return null;
+  }
+  return payload;
 }
 
 async function readUpdaterLock(lockPath: string): Promise<UpdateLockPayload | null> {
   try {
-    const value = JSON.parse(await readFile(lockPath, "utf8")) as Partial<UpdateLockPayload>;
-    return typeof value.token === "string"
-      && Number.isInteger(value.pid)
-      && Number(value.pid) > 0
-      && typeof value.startedAt === "string"
-      ? value as UpdateLockPayload
-      : null;
+    return parseUpdaterLockPayload(await readFile(lockPath, "utf8"));
   } catch (error) {
     if (isErrorCode(error, "ENOENT")) return null;
     return null;
   }
 }
 
-async function removeStaleUpdaterLock(lockPath: string): Promise<boolean> {
-  const payload = await readUpdaterLock(lockPath);
-  if (!payload || processExists(payload.pid)) return false;
-  const current = await readUpdaterLock(lockPath);
-  if (!current || current.token !== payload.token) return false;
-  await rm(lockPath, { force: true });
-  return true;
+async function removeStaleUpdaterLock(
+  lockPath: string,
+  recoveryHooks: UpdaterLockRecoveryHooks = {}
+): Promise<boolean> {
+  let snapshot: PinnedUpdaterLockSnapshot | null;
+  try {
+    snapshot = await openPinnedUpdaterLock(lockPath);
+  } catch (error) {
+    return isErrorCode(error, "ENOENT");
+  }
+  try {
+    if (!snapshot) return false;
+    const uid = process.getuid?.();
+    if (uid !== undefined && snapshot.uid !== uid) return false;
+    if ((snapshot.mode & 0o077) !== 0) return false;
+
+    const payload = snapshot.payload;
+    if (payload && processExists(payload.pid)) {
+      if (payload.ownerStartedAt) {
+        const observedStart = await processStartedAt(payload.pid, dirname(lockPath));
+        if (!observedStart || sameProcessStart(payload.ownerStartedAt, observedStart)) return false;
+      } else {
+        // Pre-v1 locks had no process-start identity and can otherwise wedge
+        // forever after PID reuse. Preserve one only when the live process's
+        // exact argv still proves ownership of this path and unguessable token;
+        // an unreadable process table remains fail-closed.
+        const legacyOwner = await legacyUpdaterOwnerMatches(payload, lockPath);
+        if (legacyOwner !== false) return false;
+      }
+    }
+    await recoveryHooks.afterSnapshot?.();
+    return await quarantinePinnedUpdaterLock(lockPath, snapshot, payload ? "stale" : "invalid");
+  } finally {
+    await snapshot?.handle.close().catch(() => undefined);
+  }
+}
+
+async function openPinnedUpdaterLock(lockPath: string): Promise<PinnedUpdaterLockSnapshot | null> {
+  let handle: FileHandle | null = null;
+  try {
+    handle = await open(lockPath, "r");
+    const [handleStat, pathStat] = await Promise.all([handle.stat(), lstat(lockPath)]);
+    if (!pathStat.isFile()
+      || pathStat.isSymbolicLink()
+      || handleStat.dev !== pathStat.dev
+      || handleStat.ino !== pathStat.ino) {
+      await handle.close();
+      return null;
+    }
+    const raw = await handle.readFile("utf8");
+    return {
+      handle,
+      dev: handleStat.dev,
+      ino: handleStat.ino,
+      mode: handleStat.mode,
+      uid: handleStat.uid,
+      raw,
+      payload: parseUpdaterLockPayload(raw)
+    };
+  } catch (error) {
+    await handle?.close().catch(() => undefined);
+    if (isErrorCode(error, "ENOENT")) throw error;
+    return null;
+  }
+}
+
+async function quarantinePinnedUpdaterLock(
+  lockPath: string,
+  expected: PinnedUpdaterLockSnapshot,
+  reason: "invalid" | "stale"
+): Promise<boolean> {
+  const quarantinePath = `${lockPath}.${reason}.${Date.now()}.${randomUUID()}`;
+  try {
+    await rename(lockPath, quarantinePath);
+  } catch (error) {
+    return isErrorCode(error, "ENOENT");
+  }
+
+  const moved = await openPinnedUpdaterLock(quarantinePath).catch(() => null);
+  try {
+    if (moved
+      && moved.dev === expected.dev
+      && moved.ino === expected.ino
+      && moved.raw === expected.raw) {
+      return true;
+    }
+
+    // The canonical path changed after our snapshot. Put the displaced owner
+    // back only when the canonical name is still empty; never overwrite a newer
+    // contender and never treat this recovery attempt as lock acquisition.
+    try {
+      await link(quarantinePath, lockPath);
+    } catch (error) {
+      if (!isErrorCode(error, "EEXIST") && !isErrorCode(error, "ENOENT")) throw error;
+    }
+    return false;
+  } finally {
+    await moved?.handle.close().catch(() => undefined);
+  }
+}
+
+function parseUpdaterLockPayload(raw: string): UpdateLockPayload | null {
+  try {
+    const value = JSON.parse(raw) as Partial<UpdateLockPayload> | null;
+    return value
+      && typeof value.token === "string"
+      && value.token.length > 0
+      && value.token.length <= 512
+      && !/[\u0000\r\n]/u.test(value.token)
+      && Number.isInteger(value.pid)
+      && Number(value.pid) > 0
+      && typeof value.startedAt === "string"
+      && Number.isFinite(Date.parse(value.startedAt))
+      && (value.ownerStartedAt === undefined
+        || (typeof value.ownerStartedAt === "string" && Number.isFinite(Date.parse(value.ownerStartedAt))))
+      ? value as UpdateLockPayload
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function legacyUpdaterOwnerMatches(
+  payload: UpdateLockPayload,
+  lockPath: string
+): Promise<boolean | null> {
+  const result = await execFile("/bin/ps", ["-ww", "-p", String(payload.pid), "-o", "command="], {
+    cwd: dirname(lockPath),
+    timeoutMs: EXEC_TIMEOUT_MS
+  });
+  if (!result.ok) return processExists(payload.pid) ? null : false;
+  const command = result.stdout.trim();
+  return command.includes(`--lock-path ${lockPath}`)
+    && command.includes(`--lock-token ${payload.token}`);
+}
+
+async function processStartedAt(pid: number, cwd: string): Promise<string | null> {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  const result = await execFile("/bin/ps", ["-p", String(pid), "-o", "lstart="], {
+    cwd,
+    timeoutMs: EXEC_TIMEOUT_MS
+  });
+  if (!result.ok) return null;
+  const timestamp = Date.parse(result.stdout.trim());
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
+function sameProcessStart(expected: string, observed: string): boolean {
+  const expectedAt = Date.parse(expected);
+  const observedAt = Date.parse(observed);
+  return Number.isFinite(expectedAt) && Number.isFinite(observedAt) && Math.abs(expectedAt - observedAt) < 2_000;
 }
 
 async function assertLocallyRebuildableApp(appPath: string): Promise<void> {
@@ -703,16 +1522,57 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function stopUpdaterChild(pid: number | undefined): void {
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function signalUpdaterChild(pid: number | undefined, signal: NodeJS.Signals): void {
   if (!pid) return;
   try {
-    process.kill(-pid, "SIGKILL");
+    process.kill(-pid, signal);
   } catch {
     try {
-      process.kill(pid, "SIGKILL");
+      process.kill(pid, signal);
     } catch {
       // The child already exited.
     }
+  }
+}
+
+/**
+ * A detached updater owns both a process group and, after handoff, the durable
+ * update lock. Never let the controller release that lock merely because a
+ * signal was sent: confirmation that the entire group is gone is the boundary
+ * which permits another attempt.
+ */
+export async function terminateUpdaterChildAndConfirm(
+  pid: number | undefined,
+  timeoutMs = UPDATER_BOOTSTRAP_TERMINATION_TIMEOUT_MS,
+  overrides: Partial<UpdaterBootstrapTerminationOperations> = {}
+): Promise<boolean> {
+  if (!pid) return true;
+  const operations: UpdaterBootstrapTerminationOperations = {
+    signal: overrides.signal || ((targetPid) => signalUpdaterChild(targetPid, "SIGKILL")),
+    processGroupExists: overrides.processGroupExists || updaterProcessGroupExists,
+    wait: overrides.wait || delay
+  };
+  operations.signal(pid);
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  do {
+    if (!operations.processGroupExists(pid)) return true;
+    if (Date.now() >= deadline) return false;
+    await operations.wait(Math.min(UPDATER_BOOTSTRAP_TERMINATION_POLL_MS, Math.max(1, deadline - Date.now())));
+  } while (Date.now() <= deadline);
+  return !operations.processGroupExists(pid);
+}
+
+function updaterProcessGroupExists(pid: number | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    return isErrorCode(error, "EPERM");
   }
 }
 
@@ -722,4 +1582,25 @@ async function childStarted(child: ReturnType<typeof spawn>): Promise<void> {
     child.once("spawn", resolveStart);
     child.once("error", rejectStart);
   });
+}
+
+export async function waitForUpdaterBootstrap(
+  statusPath: string,
+  attemptId: string,
+  childPid: number,
+  timeoutMs = UPDATER_BOOTSTRAP_TIMEOUT_MS
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const receipt = await readUpdateReceipt(statusPath);
+    if (receipt.status === "valid" && receipt.receipt.attemptId === attemptId) {
+      if (receipt.receipt.phase === "failed") {
+        throw new Error(receipt.receipt.error || receipt.receipt.message || "The Vigil updater failed during startup.");
+      }
+      if (receipt.receipt.phase !== "starting" && receipt.receipt.phase !== "checking") return;
+    }
+    if (!processExists(childPid)) throw new Error("The Vigil updater exited before confirming startup.");
+    await delay(50);
+  }
+  throw new Error("The Vigil updater did not confirm startup in time.");
 }
