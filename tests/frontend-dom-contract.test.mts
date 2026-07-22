@@ -55,7 +55,10 @@ assert.match(html, /name="saintAesthetic" value="serious"/, "Appearance must off
 assert.match(html, /src="\/art\/saints\/michael\.png"/, "the playful style preview must use the existing saint artwork");
 assert.match(html, /src="\/art\/saints\/serious\/michael\.png"/, "the serious style preview must use the alternate saint artwork");
 assert.match(html, /Choose how the sacred portraits and app typography should feel/, "the aesthetic picker must describe a portrait set that can include Christ");
-assert.match(html, /Christ Pantocrator bonus/, "the serious option must disclose its bonus portrait");
+assert.match(html, /<strong>Pixel Art<\/strong>/, "the existing sprite treatment must use a neutral medium-based name");
+assert.match(html, /<strong>Sacred Icons<\/strong>/, "the icon-painting treatment must use a neutral medium-based name");
+assert.match(html, /Aged sacred portraits, classical serif typography, and Christ Pantocrator/, "the Sacred Icons option must describe its visual treatment and Christ portrait");
+assert.match(html, /id="saintAestheticStatus"[^>]*>Pixel Art active<\/p>/, "the default aesthetic status must use its user-facing name");
 assert.match(html, /aria-label="Browse sacred portraits"/, "portrait navigation must not describe Christ as a patron saint");
 const settingsMarkup = html.match(/<section id="view-rules"[\s\S]*?<section id="view-devices"/)?.[0] || "";
 const firstSettingsDisclosure = settingsMarkup.match(/<details class="settings-disclosure[^>]*>[\s\S]*?<\/summary>/)?.[0] || "";
@@ -88,6 +91,7 @@ assert.match(saintAestheticStageSource, /serious\/.*\$\{id\}\.png|serious\//, "s
 assert.match(saintAestheticStageSource, /CHRIST_PANTOCRATOR[\s\S]*id: "christ"/, "serious mode must define the Christ Pantocrator bonus portrait");
 assert.match(saintAestheticStageSource, /SERIOUS_STAGE_PORTRAITS[\s\S]*CHRIST_PANTOCRATOR/, "Christ must belong only to the extended serious portrait set");
 assert.match(saintAestheticStageSource, /function setAesthetic[\s\S]*select\(selectedId, persist, keepInfoOpen\)/, "changing aesthetics must reselect a mode-valid portrait and refresh all stage metadata");
+assert.match(saintAestheticStageSource, /aesthetic === "serious" \? "Sacred Icons" : "Pixel Art"/, "the runtime status must use the neutral user-facing aesthetic names");
 const seriousTypographyDeclaration = stylesSource.match(/:root\[data-saint-aesthetic="serious"\]\s*\{([^}]*)\}/)?.[1] || "";
 assert.match(seriousTypographyDeclaration, /--font-body: Georgia, "Times New Roman", serif/, "serious mode must replace ordinary body copy typography");
 assert.match(seriousTypographyDeclaration, /--font-display: Georgia, "Times New Roman", serif/, "serious mode must replace formal display typography");
