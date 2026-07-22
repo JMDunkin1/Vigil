@@ -351,6 +351,22 @@
             </label>
           </fieldset>
           <p class="field-note">The menu-bar icon changes immediately. macOS keeps the installed app bundle's Jerusalem Cross icon in Finder and Spotlight until the app is rebuilt.</p>
+          <div class="saint-aesthetic-settings">
+            <fieldset class="icon-theme-picker saint-aesthetic-picker">
+              <legend>Choose how the patron saints and display type should feel</legend>
+              <label class="icon-theme-option">
+                <input type="radio" name="saintAesthetic" value="playful" checked>
+                <span class="icon-theme-preview saint-aesthetic-preview"><img src="/art/saints/michael.png" alt=""></span>
+                <span><strong>Playful</strong><small>Pixel-art saints with modern display type</small></span>
+              </label>
+              <label class="icon-theme-option">
+                <input type="radio" name="saintAesthetic" value="serious">
+                <span class="icon-theme-preview saint-aesthetic-preview"><img src="/art/saints/serious/michael.png" alt=""></span>
+                <span><strong>Serious</strong><small>Aged icon paintings with formal serif display type</small></span>
+              </label>
+            </fieldset>
+            <p id="saintAestheticStatus" class="field-note" aria-live="polite">Playful style active</p>
+          </div>
         </div>
       </details>
 

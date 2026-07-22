@@ -50,6 +50,10 @@ assert.match(html, /<svg class="settings-icon"[^>]*aria-hidden="true"/, "setting
 assert.match(html, /name="appIconTheme" value="jerusalem-cross"/, "settings must offer the Jerusalem Cross icon");
 assert.match(html, /name="appIconTheme" value="sacred-heart"/, "settings must offer the Sacred Heart icon");
 assert.match(html, /name="appIconTheme" value="saint-michael"/, "settings must offer the Saint Michael icon");
+assert.match(html, /name="saintAesthetic" value="playful"/, "Appearance must offer the existing playful saint style");
+assert.match(html, /name="saintAesthetic" value="serious"/, "Appearance must offer the serious saint style");
+assert.match(html, /src="\/art\/saints\/michael\.png"/, "the playful style preview must use the existing saint artwork");
+assert.match(html, /src="\/art\/saints\/serious\/michael\.png"/, "the serious style preview must use the alternate saint artwork");
 const settingsMarkup = html.match(/<section id="view-rules"[\s\S]*?<section id="view-devices"/)?.[0] || "";
 const firstSettingsDisclosure = settingsMarkup.match(/<details class="settings-disclosure[^>]*>[\s\S]*?<\/summary>/)?.[0] || "";
 assert.match(firstSettingsDisclosure, />App icon</, "app icon must be the first settings disclosure");
@@ -57,6 +61,8 @@ assert.doesNotMatch(firstSettingsDisclosure, /<details[^>]*\sopen(?:\s|>)/, "app
 assert.match(settingsMarkup, /id="settingsSearch"[^>]*type="search"[^>]*placeholder="Find a setting"/, "settings must expose one compact search control");
 const settingsUiSource = await readFile("public/settings-ui.js", "utf8");
 const settingsAppSource = await readFile("public/app.js", "utf8");
+const saintAestheticStageSource = await readFile("public/saint-stage.js", "utf8");
+const stylesSource = await readFile("public/styles.css", "utf8");
 const setupWizardSource = await readFile("public/setup-wizard.js", "utf8");
 const hardeningPanelSource = await readFile("public/hardening-panel.js", "utf8");
 const rankingViewSource = await readFile("public/ranking-view.js", "utf8");
@@ -73,6 +79,12 @@ assert.match(settingsUiSource, /function resetSettingsUi\(\)[\s\S]*?clearSetting
 assert.match(settingsUiSource, /function selectCategory[\s\S]*?activeCategoryId = categoryId;\s+clearSettingsSearch\(settingsRoot\)/, "selecting a settings category must clear the active search filter");
 assert.match(settingsUiSource, /clearSettingsSearch[\s\S]*search\.value = ""[\s\S]*\.settings-category, \.settings-subsection, \.settings-nav-item[\s\S]*filtered\.hidden = false/, "clearing settings search must restore every element hidden by filtering");
 assert.match(settingsUiSource, /:scope > \.pill, :scope > #iconThemeStatus/, "the icon-theme status must move out of the hidden source summary");
+assert.match(saintAestheticStageSource, /vigil-saint-aesthetic/, "the saint aesthetic must persist as a renderer-local preference");
+assert.match(saintAestheticStageSource, /document\.documentElement\.dataset\.saintAesthetic = aesthetic/, "the preference must project to a root styling hook");
+assert.match(saintAestheticStageSource, /serious\/.*\$\{id\}\.png|serious\//, "serious mode must resolve the separate saint asset set");
+assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\][\s\S]*--font-display: Georgia/, "serious mode must enable formal display typography");
+assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] #view-home \.saint-artwork[\s\S]*image-rendering: auto/, "serious paintings must not inherit pixel-art rendering");
+assert.doesNotMatch(stylesSource, /:root\[data-saint-aesthetic="serious"\][^{]*\{[^}]*background:/, "the serious preference must not replace Vigil's existing backgrounds");
 assert.match(settingsAppSource, /previousView === "settings" && state\.activeView !== "settings"[\s\S]*resetSettingsUi\(\)/, "the settings reset must run only after navigating away");
 assert.match(
   setupWizardSource,

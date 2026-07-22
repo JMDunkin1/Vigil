@@ -8790,3 +8790,57 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   left: 0;
   cursor: nesw-resize;
 }
+
+/* Patron artwork preference: preserve the existing scene and swap only the
+   figure assets plus the display typography selected in Appearance. */
+.saint-aesthetic-settings {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.saint-aesthetic-picker {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.saint-aesthetic-preview {
+  overflow: hidden;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  border-radius: 13px;
+  background: var(--night-soft);
+}
+
+.saint-aesthetic-preview img {
+  object-fit: contain;
+  object-position: center;
+}
+
+:root[data-saint-aesthetic="serious"] {
+  --font-display: Georgia, "Times New Roman", serif;
+}
+
+:root[data-saint-aesthetic="serious"] .brand-lockup h1 {
+  letter-spacing: 0.055em;
+}
+
+:root[data-saint-aesthetic="serious"] #view-home .home-runtime-status {
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+}
+
+:root[data-saint-aesthetic="serious"] #view-home .saint-info-popover h2,
+:root[data-saint-aesthetic="serious"] #view-home .saint-info-popover blockquote p {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+:root[data-saint-aesthetic="serious"] #view-home .saint-artwork {
+  image-rendering: auto;
+}
+
+@media (max-width: 680px) {
+  .saint-aesthetic-picker {
+    grid-template-columns: 1fr;
+  }
+}

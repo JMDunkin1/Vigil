@@ -8,6 +8,11 @@ export interface SaintPatron {
   fallback: string;
 }
 
+export type SaintAesthetic = "playful" | "serious";
+
+export const SAINT_AESTHETICS: readonly SaintAesthetic[] = ["playful", "serious"] as const;
+export const SAINT_AESTHETIC_STORAGE_KEY = "vigil-saint-aesthetic";
+
 export const SAINT_PATRONS: readonly SaintPatron[] = [
   {
     id: "michael",
@@ -76,6 +81,23 @@ export const SAINT_PATRONS: readonly SaintPatron[] = [
 
 const STORAGE_KEY = "vigil-patron-saint";
 
+export function normalizeSaintAesthetic(value: unknown): SaintAesthetic {
+  return value === "serious" ? "serious" : "playful";
+}
+
+export function saintArtworkPath(id: SaintPatron["id"], aesthetic: SaintAesthetic): string {
+  const directory = aesthetic === "serious" ? "serious/" : "";
+  return `/art/saints/${directory}${id}.png`;
+}
+
+export function readSaintAesthetic(storage: Pick<Storage, "getItem">): SaintAesthetic {
+  return normalizeSaintAesthetic(storage.getItem(SAINT_AESTHETIC_STORAGE_KEY));
+}
+
+export function writeSaintAesthetic(storage: Pick<Storage, "setItem">, aesthetic: SaintAesthetic): void {
+  storage.setItem(SAINT_AESTHETIC_STORAGE_KEY, aesthetic);
+}
+
 export function createSaintStage() {
   const homeStage = required<HTMLElement>("#view-home .home-stage");
   const stage = required<HTMLElement>("#saintStage");
@@ -90,10 +112,14 @@ export function createSaintStage() {
   const infoEpithet = required<HTMLElement>("#saintInfoEpithet");
   const infoQuote = required<HTMLElement>("#saintInfoQuote");
   const infoSource = required<HTMLElement>("#saintInfoSource");
+  const aestheticStatus = document.querySelector<HTMLElement>("#saintAestheticStatus");
+  const aestheticInputs = [...document.querySelectorAll<HTMLInputElement>('input[name="saintAesthetic"]')];
   let selectedId = storedSaintId();
+  let aesthetic = storedSaintAesthetic();
   let pointerFrame: number | null = null;
 
   function bind(): void {
+    setAesthetic(aesthetic, false);
     select(selectedId, false);
     stageButton.addEventListener("click", () => {
       select(nextSaintId(selectedId));
@@ -138,6 +164,11 @@ export function createSaintStage() {
     artwork.addEventListener("error", () => {
       stage.dataset.artMissing = "true";
     });
+    for (const input of aestheticInputs) {
+      input.addEventListener("change", () => {
+        if (input.checked) setAesthetic(normalizeSaintAesthetic(input.value));
+      });
+    }
 
     if (!motionAllowed()) return;
     homeStage.addEventListener("pointerenter", (event) => {
@@ -176,12 +207,22 @@ export function createSaintStage() {
     stage.classList.add("is-switching-saint");
     stage.dataset.saint = saint.id;
     stage.dataset.artMissing = "false";
-    artwork.src = `/art/saints/${saint.id}.png`;
+    artwork.src = saintArtworkPath(saint.id, aesthetic);
     artwork.alt = saint.name;
     fallback.textContent = saint.fallback;
     stageButton.setAttribute("aria-label", `${saint.name}. Show the next patron saint.`);
     if (persist) storeSaintId(saint.id);
     if (keepInfoOpen) renderInfo();
+  }
+
+  function setAesthetic(value: SaintAesthetic, persist = true): void {
+    aesthetic = normalizeSaintAesthetic(value);
+    document.documentElement.dataset.saintAesthetic = aesthetic;
+    for (const input of aestheticInputs) input.checked = input.value === aesthetic;
+    if (aestheticStatus) aestheticStatus.textContent = `${aesthetic === "serious" ? "Serious" : "Playful"} style active`;
+    stage.dataset.artMissing = "false";
+    artwork.src = saintArtworkPath(selectedId, aesthetic);
+    if (persist) storeSaintAesthetic(aesthetic);
   }
 
   function openInfo(): void {
@@ -249,6 +290,21 @@ function storedSaintId(): SaintPatron["id"] {
 function storeSaintId(id: SaintPatron["id"]): void {
   try {
     localStorage.setItem(STORAGE_KEY, id);
+  } catch {
+  }
+}
+
+function storedSaintAesthetic(): SaintAesthetic {
+  try {
+    return readSaintAesthetic(localStorage);
+  } catch {
+    return "playful";
+  }
+}
+
+function storeSaintAesthetic(aesthetic: SaintAesthetic): void {
+  try {
+    writeSaintAesthetic(localStorage, aesthetic);
   } catch {
   }
 }
