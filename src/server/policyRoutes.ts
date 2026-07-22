@@ -18,12 +18,13 @@ import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
 interface PolicyApiContext {
   state: VigilState;
   recordIosMdmPolicyQueue: (reason: string) => unknown;
+  schedulePolicyEnforcement?: (reason: string) => unknown;
 }
 
 export async function handlePolicyApiRoute(
   request: IncomingMessage,
   response: ServerResponse,
-  { state, recordIosMdmPolicyQueue }: PolicyApiContext
+  { state, recordIosMdmPolicyQueue, schedulePolicyEnforcement }: PolicyApiContext
 ): Promise<boolean> {
   const method = request.method || "GET";
   const path = new URL(request.url || "/", "http://localhost").pathname;
@@ -37,6 +38,7 @@ export async function handlePolicyApiRoute(
       preventManualChanges: state.grayscale.preventManualChanges
     });
     recordIosMdmPolicyQueue("grayscale-settings");
+    schedulePolicyEnforcement?.("grayscale-settings");
     await saveState(state);
     sendJson(response, 200, { ok: true, grayscale: state.grayscale });
     return true;
@@ -53,6 +55,7 @@ export async function handlePolicyApiRoute(
       deviceTargets: schedule.deviceTargets
     });
     recordIosMdmPolicyQueue("grayscale-schedule");
+    schedulePolicyEnforcement?.("grayscale-schedule");
     await saveState(state);
     sendJson(response, 200, { ok: true, schedule });
     return true;
@@ -64,6 +67,7 @@ export async function handlePolicyApiRoute(
     state.grayscale.schedules = (state.grayscale.schedules || []).filter((schedule) => schedule.id !== id);
     addEvent(state, "grayscale_schedule_deleted", { scheduleId: id });
     recordIosMdmPolicyQueue("grayscale-schedule-deleted");
+    schedulePolicyEnforcement?.("grayscale-schedule-deleted");
     await saveState(state);
     sendJson(response, 200, { ok: true });
     return true;
@@ -75,6 +79,7 @@ export async function handlePolicyApiRoute(
     const profile = upsertProfile(state, body);
     addEvent(state, "profile_saved", { profileId: profile.id, name: profile.name });
     recordIosMdmPolicyQueue("profile-saved");
+    schedulePolicyEnforcement?.("profile-saved");
     await saveState(state);
     sendJson(response, 200, { ok: true, profile });
     return true;
@@ -86,6 +91,7 @@ export async function handlePolicyApiRoute(
     const fallbackProfile = deleteProfile(state, id);
     addEvent(state, "profile_deleted", { profileId: id, fallbackProfileId: fallbackProfile.id });
     recordIosMdmPolicyQueue("profile-deleted");
+    schedulePolicyEnforcement?.("profile-deleted");
     await saveState(state);
     sendJson(response, 200, { ok: true, activeProfileId: state.settings.activeProfileId });
     return true;
@@ -97,6 +103,7 @@ export async function handlePolicyApiRoute(
     const schedule = upsertSchedule(state, body);
     addEvent(state, "schedule_saved", { scheduleId: schedule.id, name: schedule.name });
     recordIosMdmPolicyQueue("schedule-saved");
+    schedulePolicyEnforcement?.("schedule-saved");
     await saveState(state);
     sendJson(response, 200, { ok: true, schedule });
     return true;
@@ -108,6 +115,7 @@ export async function handlePolicyApiRoute(
     state.schedules = state.schedules.filter((schedule) => schedule.id !== id);
     addEvent(state, "schedule_deleted", { scheduleId: id });
     recordIosMdmPolicyQueue("schedule-deleted");
+    schedulePolicyEnforcement?.("schedule-deleted");
     await saveState(state);
     sendJson(response, 200, { ok: true });
     return true;
@@ -119,6 +127,7 @@ export async function handlePolicyApiRoute(
     const rule = upsertLimitRule(state, body);
     addEvent(state, "limit_rule_saved", { ruleId: rule.id, name: rule.name, type: rule.type });
     recordIosMdmPolicyQueue("limit-saved");
+    schedulePolicyEnforcement?.("limit-saved");
     await saveState(state);
     sendJson(response, 200, { ok: true, rule });
     return true;
@@ -131,6 +140,7 @@ export async function handlePolicyApiRoute(
     state.limitBlocks = (state.limitBlocks || []).filter((block) => block.ruleId !== id);
     addEvent(state, "limit_rule_deleted", { ruleId: id });
     recordIosMdmPolicyQueue("limit-deleted");
+    schedulePolicyEnforcement?.("limit-deleted");
     await saveState(state);
     sendJson(response, 200, { ok: true });
     return true;
@@ -142,6 +152,7 @@ export async function handlePolicyApiRoute(
     const lock = upsertAppLock(state, body);
     addEvent(state, "app_lock_saved", { lockId: lock.id, name: lock.name });
     recordIosMdmPolicyQueue("app-lock-saved");
+    schedulePolicyEnforcement?.("app-lock-saved");
     await saveState(state);
     sendJson(response, 200, { ok: true, lock });
     return true;
@@ -155,6 +166,7 @@ export async function handlePolicyApiRoute(
     state.appLockRequests = (state.appLockRequests || []).filter((request) => request.lockId !== id);
     addEvent(state, "app_lock_deleted", { lockId: id });
     recordIosMdmPolicyQueue("app-lock-deleted");
+    schedulePolicyEnforcement?.("app-lock-deleted");
     await saveState(state);
     sendJson(response, 200, { ok: true });
     return true;
@@ -180,6 +192,7 @@ export async function handlePolicyApiRoute(
       assertDistanceKey(state, body.distanceKey);
       const unlock = confirmAppLockUnlock(state, String(body.requestId || ""), { challengeText: String(body.challengeText || "") });
       addEvent(state, "app_lock_unlocked", { lockId: unlock.lockId, unlockId: unlock.id, until: unlock.until });
+      schedulePolicyEnforcement?.("app-lock-unlocked");
       await saveState(state);
       sendJson(response, 200, { ok: true, unlock });
     } catch (error) {

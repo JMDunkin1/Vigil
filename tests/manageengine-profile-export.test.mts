@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { defaultState } from "../src/defaults.js";
 import { parsePlist } from "../src/plist.js";
 import { detectManageEngineDeploymentState, exportManageEngineIosProfile, pinManageEngineCurrentGeneration, resolveManageEngineCurrentGeneration } from "../src/manageEngineExport.js";
-import { IOS_SOCIAL_COMPANION_BUNDLE_IDS } from "../src/socialFeatureFilters.js";
+import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS } from "../src/socialFeatureFilters.js";
 import type { VigilState } from "../src/types.js";
 import { recordValue } from "./test-helpers.mjs";
 
@@ -29,6 +29,8 @@ try {
   const summaryPath = join(dataDir, "vigil-manageengine-policy.summary.json");
   const launcherProfilePath = join(dataDir, "vigil-social-launchers.mobileconfig");
   const launcherSummaryPath = join(dataDir, "vigil-social-launchers.summary.json");
+  await writeFile(launcherProfilePath, "retired launcher profile");
+  await writeFile(launcherSummaryPath, "retired launcher summary");
   const result = await runExporter(["--out", profilePath, "--summary", summaryPath], dataDir);
 
   assert.equal(result.code, 0, result.stderr || result.stdout);
@@ -37,9 +39,7 @@ try {
   for (const path of [
     join(dataDir, "state.json"),
     profilePath,
-    summaryPath,
-    launcherProfilePath,
-    launcherSummaryPath
+    summaryPath
   ]) {
     assert.equal((await stat(path)).mode & 0o777, 0o600, `${path} should be private`);
   }
@@ -64,7 +64,7 @@ try {
   assert.equal(restrictionsPayload?.allowAppRemoval, true);
   assert.equal(restrictionsPayload?.allowUIAppInstallation, true);
   assert.ok(Array.isArray(restrictionsPayload?.blockedAppBundleIDs));
-  assert.ok((restrictionsPayload?.blockedAppBundleIDs as unknown[]).includes("com.google.chrome.ios"));
+  assert.equal((restrictionsPayload?.blockedAppBundleIDs as unknown[]).includes("com.google.chrome.ios"), false);
   assert.equal(restrictionsPayload?.allowListedAppBundleIDs, undefined);
   const baselineWebFilter = profile.PayloadContent
     .map((item) => recordValue(item, "profile payload"))
@@ -75,29 +75,15 @@ try {
     .map((item) => recordValue(item, "profile payload"))
     .filter((payload) => payload.PayloadType === "com.apple.webClip.managed");
   assert.equal(webClips.length, 0, "dynamic policy profile must not own launcher icons");
-  const launcherProfile = recordValue(parsePlist(await readFile(launcherProfilePath, "utf8")), "ManageEngine launcher profile");
-  assert.equal(launcherProfile.DurationUntilRemoval, undefined);
-  assert.ok(Array.isArray(launcherProfile.PayloadContent));
-  const launcherWebClips = launcherProfile.PayloadContent
-    .map((item) => recordValue(item, "launcher profile payload"))
-    .filter((payload) => payload.PayloadType === "com.apple.webClip.managed");
-  assert.deepEqual(launcherWebClips.map((payload) => String(payload.Label || "")).sort(), ["Instagram", "Snapchat", "YouTube"]);
-  for (const payload of launcherWebClips) {
-    assert.equal(payload.PayloadDisplayName, payload.Label);
-    assert.equal(payload.Precomposed, true);
-    const service = String(payload.Label || "").toLowerCase() as keyof typeof IOS_SOCIAL_COMPANION_BUNDLE_IDS;
-    assert.equal(payload.TargetApplicationBundleIdentifier, IOS_SOCIAL_COMPANION_BUNDLE_IDS[service]);
-    const icon = recordValue(payload.Icon, "web clip icon data");
-    assert.equal(typeof icon.__plistData, "string");
-    assert.ok(String(icon.__plistData).length > 500, "web clip should include embedded PNG icon data");
-  }
+  assert.equal(await fileExists(launcherProfilePath), false, "export must retire the stale launcher profile artifact");
+  assert.equal(await fileExists(launcherSummaryPath), false, "export must retire the stale launcher summary artifact");
 
   const summaryText = await readFile(summaryPath, "utf8");
   const summary = recordValue(JSON.parse(summaryText), "ManageEngine export summary");
   assert.equal(summary.stateSaved, true);
   assert.equal(summary.deliveryProvider, "manageengine");
   assert.equal(summary.normalFreeDeliveryPath, true);
-  assert.equal(summary.appBundleCount, 20);
+  assert.equal(summary.appBundleCount, 10);
   assert.ok(Number(summary.deniedUrlCount) > 0);
   assert.equal(summary.enforcementActive, false);
   assert.equal(summary.focusedSocialEnforcementActive, false);
@@ -112,19 +98,19 @@ try {
   assert.equal(deployment.status, "unverified");
   assert.equal(deployment.artifactOnly, true);
   assert.equal(deployment.requiresManageEngineUploadAndAssignment, true);
-  const launcherArtifact = recordValue(summary.launcherProfile, "launcher artifact summary");
-  assert.equal(launcherArtifact.outputPath, launcherProfilePath);
-  assert.equal(launcherArtifact.summaryPath, launcherSummaryPath);
-  assert.equal(launcherArtifact.webClipCount, 3);
-  assert.equal(launcherArtifact.durationUntilRemoval, false);
-  const launcherSummary = recordValue(JSON.parse(await readFile(launcherSummaryPath, "utf8")), "launcher sidecar summary");
-  assert.equal(launcherSummary.mode, "static-social-launchers");
-  assert.equal(launcherSummary.stablePayloadIdentities, true);
-  assert.equal(recordValue(launcherSummary.deployment, "launcher deployment summary").status, "unverified");
+  const companionApps = recordValue(summary.companionApps, "companion app summary");
+  assert.equal(companionApps.appCount, 2);
+  assert.deepEqual(companionApps.labels, ["Instagram", "YouTube"]);
+  assert.deepEqual(companionApps.bundleIds, Object.values(IOS_SOCIAL_COMPANION_BUNDLE_IDS));
+  assert.deepEqual(companionApps.apps, IOS_SOCIAL_COMPANION_APPS.map((app) => ({ ...app })));
+  const retiredLauncher = recordValue(summary.launcherProfile, "retired launcher summary");
+  assert.equal(retiredLauncher.retired, true);
+  assert.equal(retiredLauncher.webClipCount, 0);
+  assert.equal(retiredLauncher.outputPath, null);
+  assert.equal(retiredLauncher.uploadToManageEngineAsSeparateCustomConfigurationProfile, false);
   assert.equal(summaryText.includes(removalPassword), false);
 
   const observationPath = join(dataDir, "deployment-observation.json");
-  const launcherObservationPath = join(dataDir, "launcher-deployment-observation.json");
   const observedProfilePath = join(dataDir, "observed-policy.mobileconfig");
   const observedSummaryPath = join(dataDir, "observed-policy.summary.json");
   await writeFile(observationPath, JSON.stringify({
@@ -134,25 +120,18 @@ try {
     effectiveProhibitAppInstall: false,
     effectiveProhibitAppDelete: false
   }));
-  await writeFile(launcherObservationPath, JSON.stringify({
-    observedAt: "2026-07-10T12:00:00.000Z",
-    installedProfileIdentifier: "tech.caseline.vigil.ios-social-launchers",
-    installedProfileHash: launcherSummary.artifactHash,
-    effectiveProhibitAppInstall: false,
-    effectiveProhibitAppDelete: false
-  }));
   const observedResult = await runExporter([
     "--out", observedProfilePath,
     "--summary", observedSummaryPath,
-    "--deployment-observation", observationPath,
-    "--launcher-deployment-observation", launcherObservationPath
+    "--deployment-observation", observationPath
   ], dataDir);
   assert.equal(observedResult.code, 0, observedResult.stderr || observedResult.stdout);
   const observedSummary = recordValue(JSON.parse(await readFile(observedSummaryPath, "utf8")), "observed deployment summary");
   assert.equal(recordValue(observedSummary.deployment, "observed deployment").status, "current");
-  assert.equal(recordValue(recordValue(observedSummary.launcherProfile, "observed launcher artifact").deployment, "observed launcher deployment").status, "current");
-  const observedLauncherSummary = recordValue(JSON.parse(await readFile(launcherSummaryPath, "utf8")), "observed launcher sidecar");
-  assert.equal(recordValue(observedLauncherSummary.deployment, "observed launcher sidecar deployment").status, "current");
+
+  const retiredOptionResult = await runExporter(["--launcher-deployment-observation", observationPath], dataDir);
+  assert.notEqual(retiredOptionResult.code, 0);
+  assert.match(retiredOptionResult.stderr, /Unknown option: --launcher-deployment-observation/);
 
   const typoProfilePath = join(dataDir, "typo-should-not-write.mobileconfig");
   const typoSummaryPath = join(dataDir, "typo-should-not-write.summary.json");
@@ -199,9 +178,7 @@ try {
   await assert.rejects(exportManageEngineIosProfile(failureState, {
     currentState: true,
     outPath: failureProfilePath,
-    summaryPath: join(failureRoot, "blocked.summary.json"),
-    launcherOutPath: join(failureRoot, "blocked-launcher.mobileconfig"),
-    launcherSummaryPath: join(failureRoot, "blocked-launcher.summary.json")
+    summaryPath: join(failureRoot, "blocked.summary.json")
   }));
   assert.equal((await stat(failureRoot)).mode & 0o777, 0o700);
   assert.equal((await readdir(failureRoot)).some((name) => name.startsWith(".blocked.mobileconfig.") && name.endsWith(".tmp")), false);
@@ -273,8 +250,10 @@ try {
     });
     assert.ok((await readFile(splitResult.outPath, "utf8")).length > 0);
     assert.equal(recordValue(JSON.parse(await readFile(splitResult.summaryPath, "utf8")), "split summary").outputPath, paths.outPath);
-    assert.ok((await readFile(splitResult.launcherOutPath, "utf8")).length > 0);
-    assert.equal(recordValue(JSON.parse(await readFile(splitResult.launcherSummaryPath, "utf8")), "split launcher summary").outputPath, paths.launcherOutPath);
+    assert.equal(splitResult.launcherOutPath, null);
+    assert.equal(splitResult.launcherSummaryPath, null);
+    assert.equal(await fileExists(paths.launcherOutPath), false);
+    assert.equal(await fileExists(paths.launcherSummaryPath), false);
   } finally {
     await rm(splitRoot, { recursive: true, force: true });
   }
@@ -305,6 +284,35 @@ try {
       }
     }), /crash after aliased current publication/u);
     assert.notEqual(await resolveManageEngineCurrentGeneration(aliasedRoot), firstGeneration, "crash cleanup must retain a generation published through a path alias");
+
+    const oldGenerationPin = await pinManageEngineCurrentGeneration(aliasedRoot);
+    const oldGeneration = oldGenerationPin.generationPath;
+    for (let index = 0; index < 4; index += 1) {
+      await exportManageEngineIosProfile(defaultState(), {
+        currentState: true,
+        outPath,
+        summaryPath,
+        saveState: async () => {}
+      });
+    }
+    await oldGenerationPin.release();
+    await rm(join(aliasedRoot, "current"), { force: true });
+    await symlink(join(".generations", basename(oldGeneration)), join(aliasedRoot, "current"));
+    await assert.rejects(exportManageEngineIosProfile(defaultState(), {
+      currentState: true,
+      outPath,
+      summaryPath,
+      saveState: async () => {},
+      afterPublicationBoundary(boundary) {
+        if (boundary === "generation-fsynced") throw new Error("stop after aliased sweep");
+      }
+    }), /stop after aliased sweep/u);
+    await stat(oldGeneration);
+    assert.equal(
+      await resolveManageEngineCurrentGeneration(aliasedRoot),
+      oldGeneration,
+      "an aliased publication root must retain an older generation while current points to it"
+    );
   } finally {
     await rm(aliasedRoot, { force: true });
     await rm(canonicalRoot, { recursive: true, force: true });
@@ -359,11 +367,7 @@ try {
     const baselineFilter = recordValue(profile.PayloadContent[1], "overlap Level 1 web filter");
     assert.equal(baselineFilter.PayloadType, "com.apple.webcontent-filter");
     assert.ok(Array.isArray(baselineFilter.DenyListURLs));
-    const launcherPath = join(overlapDir, "vigil-social-launchers.mobileconfig");
-    const pinnedLauncher = initialPin.paths[join("main", basename(launcherPath))];
-    assert.ok(pinnedLauncher);
-    const launcherText = await readFile(pinnedLauncher.path, "utf8");
-    assert.equal(recordValue(summary.launcherProfile, "overlap launcher summary").artifactHash, createHash("sha256").update(launcherText).digest("hex"));
+    assert.equal(Object.keys(initialPin.paths).some((path) => path.includes("social-launchers")), false);
     assert.equal(pinnedMainProfile.sha256, createHash("sha256").update(profileText).digest("hex"));
     await initialPin.release();
 

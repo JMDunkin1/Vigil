@@ -14,6 +14,7 @@ import { BUILT_IN_CHROME_EXTENSION_ID, REQUIRED_EXTENSION_VERSION } from "../src
 import { isDirectRun } from "../src/directRun.js";
 import { packageableRuntimePath } from "../src/runtimePackaging.js";
 import { plistStringForKey } from "../src/plist.js";
+import { LOCAL_MAC_BUILD_VERSION, resolveMacBuildVersion } from "../scripts/mac-build-version.mjs";
 import { recordValue, stringArrayValue } from "./test-helpers.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -116,6 +117,22 @@ const macBuild = recordValue(build.mac, "mac build");
 const macInfo = recordValue(macBuild.extendInfo, "mac build info");
 const buildDirectories = recordValue(build.directories, "package build directories");
 assert.equal(buildDirectories.output, "dist/mac.noindex");
+assert.equal(build.buildVersion, undefined, "the package manifest must not pin every release to one bundle build number");
+assert.equal(LOCAL_MAC_BUILD_VERSION, "1");
+assert.equal(resolveMacBuildVersion({}), "1", "credential-free local packages need a valid default");
+for (const valid of ["1", "42", "9999", "1.0", "2026.7.21", "9999.99.99"]) {
+  assert.equal(resolveMacBuildVersion({ VIGIL_MAC_BUILD_VERSION: valid }), valid);
+}
+for (const invalid of ["0", "01", "10000", "1.00", "1.100", "1.2.100", "1.2.3.4", "1a", "1-2"]) {
+  assert.throws(
+    () => resolveMacBuildVersion({ VIGIL_MAC_BUILD_VERSION: invalid }),
+    /VIGIL_MAC_BUILD_VERSION must be/u
+  );
+}
+assert.throws(
+  () => resolveMacBuildVersion({}, { requireExplicit: true }),
+  /required for a production release/u
+);
 assert.match(String(scripts["package:mac"]), /package-mac\.mjs dir/);
 assert.match(String(scripts["package:mac:dmg"]), /package-mac\.mjs dmg/);
 for (const command of ["package:mac", "package:mac:dmg", "build:mac:signed", "dist:mac:signed"]) {
@@ -124,6 +141,10 @@ for (const command of ["package:mac", "package:mac:dmg", "build:mac:signed", "di
 }
 assert.doesNotMatch(String(scripts["build:mac:signed"]), /identity=null/);
 assert.doesNotMatch(String(scripts["dist:mac:signed"]), /identity=null/);
+for (const command of ["build:mac:signed", "dist:mac:signed"]) {
+  assert.match(String(scripts[command]), /--universal/, `${command} must support both Intel and Apple silicon`);
+  assert.match(String(scripts[command]), /package-mac-signed\.mjs/u, `${command} must inject a validated macOS build number`);
+}
 assert.equal(macBuild.sign, "scripts/sign-mac.mjs");
 assert.equal(macInfo.LSUIElement, true);
 assert.ok(Array.isArray(build.files), "package files should be an array");
@@ -156,6 +177,12 @@ for (const expected of [
 ]) {
   assert.ok(asarUnpack.includes(expected), `${expected} should remain available outside app.asar`);
 }
+assert.equal(build.afterPack, "scripts/after-pack.mjs");
+assert.equal(build.artifactName, "${productName}-${version}-${arch}.${ext}");
+assert.deepEqual(build.extraResources, [
+  { from: "build/PrivacyInfo.xcprivacy", to: "PrivacyInfo.xcprivacy" },
+  { from: "build/browser-store.json", to: "browser-store.json" }
+]);
 if (process.platform === "darwin") {
   const packagedHelperPath = join(process.cwd(), "bin", "vigil-human-idle");
   const helperPath = existsSync(packagedHelperPath)
@@ -169,13 +196,44 @@ if (process.platform === "darwin") {
   assert.ok(otoolPath, "a macOS object-file inspector must be installed");
   const { stdout: helperLoadCommands } = await execFileAsync(otoolPath, ["-l", helperPath]);
   assert.match(helperLoadCommands, /^\s+minos\s+12\.0$/mu, "the packaged idle helper must support macOS 12.0");
+  const { stdout: helperArchitectures } = await execFileAsync("/usr/bin/lipo", ["-archs", helperPath]);
+  assert.deepEqual(new Set(helperArchitectures.trim().split(/\s+/u)), new Set(["x86_64", "arm64"]));
 }
 
 const manifest = recordValue(JSON.parse(await readFile("extension/manifest.json", "utf8")), "extension manifest");
 assert.equal(manifest.version, REQUIRED_EXTENSION_VERSION);
+const extensionIcons = recordValue(manifest.icons, "extension icons");
+for (const [size, path] of Object.entries({
+  "16": "icons/icon-16.png",
+  "32": "icons/icon-32.png",
+  "48": "icons/icon-48.png",
+  "128": "icons/icon-128.png"
+})) {
+  assert.equal(extensionIcons[size], path);
+  assert.ok((await stat(join(process.cwd(), "extension", path))).size > 0, `browser-store icon ${size} must be packaged`);
+}
 const extensionKeyHash = createHash("sha256").update(Buffer.from(String(manifest.key || ""), "base64")).digest().subarray(0, 16).toString("hex");
 assert.equal(extensionKeyHash.replace(/[0-9a-f]/g, (nibble) => String.fromCharCode("a".charCodeAt(0) + Number.parseInt(nibble, 16))), BUILT_IN_CHROME_EXTENSION_ID);
+const browserStoreRoot = existsSync(join(process.cwd(), "build", "browser-store.json")) ? process.cwd() : resolve(process.cwd(), "..", "..");
+const browserStore = JSON.parse(await readFile(join(browserStoreRoot, "build", "browser-store.json"), "utf8")) as Record<string, unknown>;
+assert.equal(browserStore.extensionId, BUILT_IN_CHROME_EXTENSION_ID, "the browser-store item must match Vigil's trusted extension origin");
+assert.equal(typeof browserStore.published, "boolean", "browser-store publication must be an explicit release gate");
+assert.equal(
+  typeof browserStore.publishedVersion === "string" || browserStore.publishedVersion === null,
+  true,
+  "the browser-store gate must identify the exact reviewed version, or null while unpublished"
+);
+if (browserStore.published === true) {
+  assert.equal(browserStore.publishedVersion, manifest.version, "the release gate must apply to the current extension version");
+}
+assert.match(String(scripts["package:extension:release"]), /package-browser-extension\.mjs --release/u, "consumer extension packaging must require the published-store gate");
 assert.equal(stringArrayValue(manifest.permissions, "extension permissions").includes("declarativeNetRequest"), true);
+
+const extensionPackager = await readFile(join(browserStoreRoot, "scripts", "package-browser-extension.mjs"), "utf8");
+for (const requiredStoreAsset of ["blocked.html", "rules.json", "icons/icon-128.png"]) {
+  assert.match(extensionPackager, new RegExp(`"${requiredStoreAsset.replace(".", "\\.")}"`, "u"));
+}
+assert.match(extensionPackager, /publishedVersion !== manifest\.version/u, "release packaging must reject a stale published-version gate");
 
 for (const path of [
   "public/audio/nature/rain.ogg",

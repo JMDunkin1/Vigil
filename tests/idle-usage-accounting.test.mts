@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { defaultState } from "../src/defaults.js";
-import { canonicalFrontmostAppName, packagedAppBundleForExecutable, parseBrowserActivityWake, parseHidIdleSeconds, parseHumanActivitySample, parseHumanIdleSeconds, splitHumanActivityOutput } from "../src/macos.js";
+import { HUMAN_ACTIVITY_WATCH_HEALTH_MAX_AGE_MS, browserActivityWatchHeartbeatCurrent, canonicalFrontmostAppName, packagedAppBundleForExecutable, parseBrowserActivityWake, parseBrowserActivityWatchHeartbeat, parseHidIdleSeconds, parseHumanActivitySample, parseHumanIdleSeconds, splitHumanActivityOutput } from "../src/macos.js";
 import { activeSecondsBeforeIdleThreshold, Monitor } from "../src/monitor.js";
 import { isInterruptedPollGap, maxTrustedPollGapSeconds } from "../src/monitor/timing.js";
 import type { UsageState } from "../src/types.js";
@@ -18,9 +18,16 @@ assert.deepEqual(parseHumanActivitySample("12.375\tSafari\tcom.apple.Safari\n"),
 assert.equal(parseHumanActivitySample("error"), null);
 assert.equal(parseBrowserActivityWake("wake\tkey\n"), "key");
 assert.equal(parseBrowserActivityWake("wake\tclick\n"), "click");
+assert.equal(parseBrowserActivityWake("wake\tactivate\n"), "activate");
+assert.equal(parseBrowserActivityWake("wake\tlaunch\n"), "launch");
 assert.equal(parseBrowserActivityWake("wake\tcharacters\n"), null, "the helper protocol must not accept captured text");
 assert.equal(parseBrowserActivityWake("wake\tkey\textra\n"), null, "the helper protocol must reject wake frames with extra fields");
 assert.equal(parseBrowserActivityWake("12.375\tSafari\tcom.apple.Safari\n"), null);
+assert.equal(parseBrowserActivityWatchHeartbeat("watch\talive\n"), true);
+assert.equal(parseBrowserActivityWatchHeartbeat("watch\talive\textra\n"), false);
+assert.equal(browserActivityWatchHeartbeatCurrent(10_000, 10_000 + HUMAN_ACTIVITY_WATCH_HEALTH_MAX_AGE_MS), true);
+assert.equal(browserActivityWatchHeartbeatCurrent(10_000, 10_001 + HUMAN_ACTIVITY_WATCH_HEALTH_MAX_AGE_MS), false,
+  "a live-but-wedged activity helper must age into the fast recovery cadence");
 const partialActivityOutput = splitHumanActivityOutput("", "wake\tke");
 assert.deepEqual(partialActivityOutput, { lines: [], remainder: "wake\tke" });
 assert.deepEqual(

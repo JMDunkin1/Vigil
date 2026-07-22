@@ -9,6 +9,7 @@ const socialIconNames = ["instagram.png", "youtube.png", "snapchat.png"];
 
 await copyProjectFile("package.json");
 await copyProjectFile("app/preload.cjs");
+await copyProjectFile("scripts/mac-build-version.mjs");
 await copyProjectFile("scripts/mac-signing-identity.mjs");
 await copyProjectFile("scripts/release-entitlements.mjs");
 await copyProjectFile("scripts/ios-phone-suite.mjs");

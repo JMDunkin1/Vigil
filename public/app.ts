@@ -16,7 +16,7 @@ import { createLifeLogView } from "./life-log-view.js";
 import { renderMinecraftAudioLibrary } from "./minecraft-audio-ui.js";
 import { createRankingView } from "./ranking-view.js";
 import { createSaintStage } from "./saint-stage.js";
-import { renderSetupWizard } from "./setup-wizard.js";
+import { bindSetupAssistant, renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
 import { enhanceSettingsUi, resetSettingsUi } from "./settings-ui.js";
 import { createTrackingView } from "./tracking-view.js";
@@ -149,6 +149,7 @@ function boot() {
   bindJournalSecuritySettings();
   bindIconThemeSettings();
   appUpdatePanel.bind();
+  bindSetupAssistant({ refresh, toast });
   bindAppEvents({
     state,
     devicePanel,

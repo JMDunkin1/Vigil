@@ -1,10 +1,16 @@
 {
   "manifest_version": 3,
-  "minimum_chrome_version": "101",
+  "minimum_chrome_version": "120",
   "name": "Vigil Companion",
   "version": "0.3.6",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzBZXbcRntKpxIbRWavUbGVHjdCwlCzuducvK2tMeQwp4LRXCpZJ8ojZVPsn2v+E1g9oT1XDjzu2VqMOTdfkoPb4UMjDF6PeyPIWo5r4J5fsHCgLJ3i148+at/PGu/Rztm2HRKATDisVPprAUctvaxaFD6YFyxiY834KD2pQcM3K8wa+kd/uozG0mWhC/F18sCT/8ouZHfzgUEu2LldNZD8i5/14zUT86esJv3r6DLYAvm1ns5lagSWeBY4va04fSc8foDQEzN2q5KG+ljNQ/pu1Na18Xp2AH9uiI8D3ckEUUweJcGS6qTyxOWegHFXkjIcMsEI3UmUqa5fzJtWbxJwIDAQAB",
   "description": "Connects browser tabs to the local Vigil blocker.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "permissions": ["tabs", "webNavigation", "storage", "declarativeNetRequest", "alarms"],
   "host_permissions": [
     "http://127.0.0.1/*",
@@ -39,6 +45,10 @@
     }
   ],
   "action": {
-    "default_title": "Vigil"
+    "default_title": "Vigil",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
   }
 }

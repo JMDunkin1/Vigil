@@ -6,7 +6,6 @@ import { runtimeReadiness } from "../src/server.js";
 const state = defaultState();
 const instance = new Date(Date.now() - 1_000).toISOString();
 const tick = new Date().toISOString();
-state.integrity.runtime.lastHeartbeatAt = tick;
 const monitorStatus = {
   ok: true,
   componentErrors: {},
@@ -36,9 +35,12 @@ assert.equal(runtimeReadiness(disabled, state, instance).ok, true, "an explicitl
 disabled.componentHealth["grayscale-guard"] = { lastAttemptAt: tick, lastSuccessAt: null, error: "", applicable: false, state: "healthy" };
 assert.equal(runtimeReadiness(disabled, state, instance).ok, false, "non-applicable components must use explicit disabled state");
 
-const stale = structuredClone(state);
-stale.integrity.runtime.lastHeartbeatAt = new Date(Date.now() - 60_000).toISOString();
-assert.equal(runtimeReadiness(monitorStatus, stale, instance).ok, false);
+const staleTick = new Date(Date.now() - 31_000).toISOString();
+assert.equal(runtimeReadiness({ ...monitorStatus, lastSuccessfulTickAt: staleTick }, state, instance).ok, false);
+
+const fallbackStaleTick = new Date(Date.now() - 16_000).toISOString();
+assert.equal(runtimeReadiness({ ...monitorStatus, effectivePollIntervalMs: 3_000, lastSuccessfulTickAt: fallbackStaleTick }, state, instance).ok, false,
+  "readiness must tighten when event acceleration is unhealthy and the three-second recovery cadence is active");
 
 const degraded = structuredClone(state);
 degraded.integrity.runtime.clockTamperDetectedAt = new Date().toISOString();

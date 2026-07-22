@@ -236,7 +236,8 @@ function buildMilestones({ state, current, streak, allDays, focusScoreGoal, prog
   const events = state.events || [];
   const hasCleanTrackedDay = allDays.some((day) => day.tracked && day.distractingSeconds === 0);
   return [
-    milestone("first-lock", "First lock", events.some((event) => event.type === "session_started")),
+    milestone("first-lock", "First lock", Boolean(state.functionalEvents?.firstSessionStartedAt)
+      || events.some((event) => event.type === "session_started")),
     milestone("rules-enabled", "Rules armed", enabledRules >= 1),
     milestone("clean-tracked-day", "Clean tracked day", hasCleanTrackedDay),
     milestone("first-reflection", "First reflection", (state.intentionalUse?.journalEntries || []).length >= 1),

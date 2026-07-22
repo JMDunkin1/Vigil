@@ -10,7 +10,8 @@ import {
   isPhoneImplementationFile,
   parseArguments,
   policyFreshnessProblems,
-  preservedPolicyReceipt
+  preservedPolicyReceipt,
+  removalPasswordFromProfile
 } from "../scripts/ios-phone-suite.mjs";
 
 const projectRoot = existsSync(join(process.cwd(), "scripts", "ios-phone-suite.mjs"))
@@ -67,9 +68,11 @@ assert.ok(
 );
 assert.match(
   phoneSuiteSource,
-  /if \(selectedCommand === "audit"\) \{[\s\S]*?prepareAuditToolchain\(\)[\s\S]*?auditThreePolicies\(toolEnvironment\)/u,
-  "standalone policy audits must select and use an Xcode tool environment"
+  /if \(selectedCommand === "audit"\) \{[\s\S]*?prepareAuditToolchain\(\)[\s\S]*?auditFourPolicies\(toolEnvironment\)/u,
+  "standalone four-level policy audits must select and use an Xcode tool environment"
 );
+assert.match(phoneSuiteSource, /PANIC_LOCK_PROFILE_ID[\s\S]*?title: "Panic"/u, "the phone audit must include Panic");
+assert.match(phoneSuiteSource, /console\.log\("Four-level policy audit:"\)/u);
 assert.equal(
   (phoneSuiteSource.match(/await phoneStatus\(selectedOptions, device, toolEnvironment\)/gu) || []).length,
   2,
@@ -95,7 +98,8 @@ assert.match(
   "captured devicectl calls must receive the selected Xcode environment"
 );
 
-assert.equal(isPhoneImplementationFile("/repo/ios/VigilBrowser/VigilBrowser/BrowserStore.swift"), true);
+assert.equal(isPhoneImplementationFile("/repo/ios/VigilBrowser/VigilBrowser/BrowserStore.swift"), false);
+assert.equal(isPhoneImplementationFile("/repo/ios/VigilSocial/VigilSocial/SocialWebViewStore.swift"), true);
 assert.equal(isPhoneImplementationFile("/repo/ios/VigilBrowser/VigilBrowserTests/VigilBrowserTests.swift"), false);
 assert.equal(isPhoneImplementationFile("/repo/ios/PHONE_MAINTENANCE.md"), false);
 assert.equal(isPhoneImplementationFile("/repo/ios/phone-release.json"), false);
@@ -103,14 +107,99 @@ assert.equal(isPhoneImplementationFile("/repo/ios/phone-release.json"), false);
 for (const bundleIdentifier of [
   "tech.caseline.sentinel.instagram",
   "tech.caseline.sentinel.youtube",
-  "tech.caseline.vigil.instagram",
-  "tech.caseline.vigil.youtube",
+  "tech.caseline.vigil.browser",
+  "tech.caseline.vigil.social",
   "tech.caseline.vigil.snapchat"
 ]) {
-  assert.equal(isLegacyPhoneBundleIdentifier(bundleIdentifier), true, `${bundleIdentifier} should be replaced by Vigil Social`);
+  assert.equal(isLegacyPhoneBundleIdentifier(bundleIdentifier), true, `${bundleIdentifier} should be treated as obsolete`);
 }
-assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.social"), false);
-assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.browser"), false);
+assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.instagram"), false);
+assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.youtube"), false);
+
+const requiredAppsStart = phoneSuiteSource.indexOf("const REQUIRED_APPS = [");
+const requiredAppsEnd = phoneSuiteSource.indexOf("];", requiredAppsStart);
+const requiredAppsSource = phoneSuiteSource.slice(requiredAppsStart, requiredAppsEnd);
+assert.match(requiredAppsSource, /tech\.caseline\.vigil\.instagram/u);
+assert.match(requiredAppsSource, /tech\.caseline\.vigil\.youtube/u);
+assert.doesNotMatch(requiredAppsSource, /tech\.caseline\.vigil\.(?:browser|social|snapchat)/u);
+
+const buildPhoneAppsStart = phoneSuiteSource.indexOf("async function buildPhoneApps");
+const buildPhoneAppsEnd = phoneSuiteSource.indexOf("async function hashAppBundle", buildPhoneAppsStart);
+const buildPhoneAppsSource = phoneSuiteSource.slice(buildPhoneAppsStart, buildPhoneAppsEnd);
+assert.match(buildPhoneAppsSource, /for \(const social of REQUIRED_APPS\)/u);
+assert.match(buildPhoneAppsSource, /VIGIL_SERVICE=\$\{social\.service\}/u);
+assert.doesNotMatch(buildPhoneAppsSource, /VigilBrowser|browserDerived|VIGIL_SERVICE=combined/u);
+assert.match(
+  buildPhoneAppsSource,
+  /CODE_SIGN_ENTITLEMENTS=\$\{personalTeamEntitlements\}[\s\S]*?VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified/u,
+  "Personal Team fallback builds must explicitly reveal media that SCA cannot classify"
+);
+assert.match(
+  phoneSuiteSource,
+  /if \(\(obsoleteBeforeUpdate\.length \|\| obsoleteLauncherBeforeUpdate\) && !selectedOptions\.replaceLegacy\)[\s\S]*?Re-run with --replace-legacy/u,
+  "obsolete bundles and launcher configuration must require the explicit replacement flag before removal"
+);
+assert.match(
+  phoneSuiteSource,
+  /configurationProfileStatus\(device\.identifier, toolEnvironment\)[\s\S]*?Configuration-profile verification is unavailable/u,
+  "read-only status must report unsupported configuration-profile inspection instead of crashing"
+);
+assert.match(
+  phoneSuiteSource,
+  /configuration profile management[\s\S]*not supported/iu,
+  "only CoreDevice's unsupported profile-management capability should be downgraded"
+);
+assert.match(phoneSuiteSource, /com\\\.apple\\\.coredevice\\\.feature\\\.configurationprofiles/u);
+assert.doesNotMatch(phoneSuiteSource, /stable Vigil social-launcher profile is not installed/u);
+assert.doesNotMatch(phoneSuiteSource, /buildIosSocialLauncherProfile|buildStampedLauncherProfile/u);
+assert.match(
+  phoneSuiteSource,
+  /if \(selectedOptions\.replaceLegacy\) \{\s*await removeObsoleteLauncherProfile\(device\.identifier, toolEnvironment\);\s*\}/u,
+  "explicit legacy replacement must remove the retired launcher profile"
+);
+assert.match(
+  phoneSuiteSource,
+  /"devicectl", "device", "profile", "remove",[\s\S]*?LAUNCHER_PROFILE_IDENTIFIER,[\s\S]*?"--type", "configuration",[\s\S]*?"--force-removal"/u
+);
+assert.match(phoneSuiteSource, /isMissingConfigurationProfileError\(detail\)/u);
+assert.match(phoneSuiteSource, /isUnsupportedConfigurationProfileError\(detail\)/u);
+const liveProfileInstall = phoneSuiteSource.match(/"profile", "install"[^\n]+/u)?.[0] || "";
+assert.match(liveProfileInstall, /lockPath/u);
+assert.doesNotMatch(liveProfileInstall, /launcher/u);
+assert.match(
+  phoneSuiteSource,
+  /buildCurrentPolicyFromLiveState\(server,[\s\S]*?buildIosConfigurationProfile\(state, new Date\(\)\)/u,
+  "updates must generate policy bytes with the freshly built profile code and current live state"
+);
+assert.match(
+  phoneSuiteSource,
+  /const runningProfile = await downloadPolicy\(server, signal\)[\s\S]*?removalPasswordFromProfile/u,
+  "fresh generation may reuse only the hidden removal password from the running profile"
+);
+assert.match(
+  phoneSuiteSource,
+  /async function stampProfile[\s\S]*?writeFile\(path, profile, \{ mode: 0o600 \}\)[\s\S]*?finally \{\s*await rm\(dir, \{ recursive: true, force: true \}\);/u,
+  "an unsigned stamped profile may contain the removal password and must remain owner-only and be deleted"
+);
+assert.match(
+  phoneSuiteSource,
+  /async function signProfile[\s\S]*?await chmod\(temporaryOutput, 0o600\)[\s\S]*?await rename\(temporaryOutput, outputPath\)[\s\S]*?finally \{\s*await rm\(temporaryOutput, \{ force: true \}\);\s*await rm\(dir, \{ recursive: true, force: true \}\);/u,
+  "profile signing must atomically publish an owner-only output and remove all temporary material"
+);
+assert.doesNotMatch(
+  phoneSuiteSource,
+  /if \(!selectedOptions\.noPolicy\) \{\s*const profile = await downloadPolicy/u,
+  "the updater must never install the running server's potentially stale profile bytes"
+);
+
+assert.equal(removalPasswordFromProfile({
+  PayloadContent: [
+    { PayloadType: "com.apple.webcontent-filter", DenyListURLs: ["https://example.test/"] },
+    { PayloadType: "com.apple.profileRemovalPassword", RemovalPassword: "preserved-secret" }
+  ]
+}), "preserved-secret");
+assert.equal(removalPasswordFromProfile({ PayloadContent: [] }), "");
+assert.equal(removalPasswordFromProfile(null), "");
 
 assert.deepEqual(policyFreshnessProblems({
   installedProfileName: "Vigil iPhone Lock • 1.2.3 (4) • aaaaaaaaaaaa",

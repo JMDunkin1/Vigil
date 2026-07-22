@@ -6,9 +6,7 @@ import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep 
 import { promisify } from "node:util";
 
 import {
-  IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER,
   buildIosConfigurationProfile,
-  buildIosSocialLauncherProfile,
   ensureIosRemovalPassword,
   iosProfileSummary
 } from "./iosProfiles.js";
@@ -20,7 +18,9 @@ export const MANAGEENGINE_POLICY_PROFILE_PATH = "data/manageengine/vigil-managee
 export const MANAGEENGINE_POLICY_SUMMARY_PATH = "data/manageengine/vigil-manageengine-policy.summary.json";
 export const MANAGEENGINE_ENROLLMENT_WINDOW_PROFILE_PATH = "data/manageengine/vigil-manageengine-enrollment-window.mobileconfig";
 export const MANAGEENGINE_ENROLLMENT_WINDOW_SUMMARY_PATH = "data/manageengine/vigil-manageengine-enrollment-window.summary.json";
+/** @deprecated Launcher artifacts are retired and are removed from current exports. */
 export const MANAGEENGINE_SOCIAL_LAUNCHER_PROFILE_NAME = "vigil-social-launchers.mobileconfig";
+/** @deprecated Launcher artifacts are retired and are removed from current exports. */
 export const MANAGEENGINE_SOCIAL_LAUNCHER_SUMMARY_NAME = "vigil-social-launchers.summary.json";
 
 export interface ManageEngineIosExportOptions {
@@ -29,8 +29,11 @@ export interface ManageEngineIosExportOptions {
   disabled?: boolean;
   enable?: boolean;
   enrollmentWindow?: boolean;
+  /** @deprecated If supplied, this retired artifact path is removed after publication. */
   launcherOutPath?: string;
+  /** @deprecated Ignored because launcher profiles are no longer deployed. */
   launcherDeploymentObservation?: ManageEngineDeploymentObservation;
+  /** @deprecated If supplied, this retired artifact path is removed after publication. */
   launcherSummaryPath?: string;
   noHardenRemoval?: boolean;
   outPath?: string;
@@ -56,13 +59,13 @@ export interface ManageEngineIosExportResult {
   profileIdentifier: string;
   mirroredOutPath: string | null;
   mirroredSummaryPath: string | null;
-  launcherOutPath: string;
+  launcherOutPath: null;
   launcherProfileBytes: number;
-  launcherProfileHash: string;
-  launcherProfileIdentifier: string;
-  launcherSummaryPath: string;
-  mirroredLauncherOutPath: string | null;
-  mirroredLauncherSummaryPath: string | null;
+  launcherProfileHash: null;
+  launcherProfileIdentifier: null;
+  launcherSummaryPath: null;
+  mirroredLauncherOutPath: null;
+  mirroredLauncherSummaryPath: null;
   stateSaved: boolean;
   summary: ReturnType<typeof buildManageEngineIosExportSummary>;
   summaryPath: string;
@@ -122,14 +125,8 @@ async function exportManageEngineIosProfileUnlocked(
   const enrollmentWindow = Boolean(options.enrollmentWindow);
   const outPath = resolve(options.outPath || defaultManageEngineOutputPath(enrollmentWindow));
   const summaryPath = resolve(options.summaryPath || defaultManageEngineSummaryPath(outPath));
-  const launcherOutPath = resolve(options.launcherOutPath || join(dirname(outPath), MANAGEENGINE_SOCIAL_LAUNCHER_PROFILE_NAME));
-  const launcherSummaryPath = resolve(options.launcherSummaryPath || join(dirname(outPath), MANAGEENGINE_SOCIAL_LAUNCHER_SUMMARY_NAME));
   if (summaryPath === outPath) {
     throw new Error(`Summary output path must differ from profile output path: ${summaryPath}`);
-  }
-  const uniquePaths = new Set([outPath, summaryPath, launcherOutPath, launcherSummaryPath]);
-  if (uniquePaths.size !== 4) {
-    throw new Error("Policy, launcher, and summary output paths must all differ.");
   }
 
   const exportState = structuredClone(savedState) as VigilState;
@@ -138,73 +135,32 @@ async function exportManageEngineIosProfileUnlocked(
   const stateSaved = await persistRemovalPasswordForHardenedExport(savedState, exportState, options.saveState || defaultSaveState);
   const profile = buildIosConfigurationProfile(exportState);
   const profileHash = createHash("sha256").update(profile).digest("hex");
-  const launcherProfile = buildIosSocialLauncherProfile();
-  const launcherProfileHash = createHash("sha256").update(launcherProfile).digest("hex");
-  const launcherDeployment = detectManageEngineDeploymentState({
-    artifactHash: launcherProfileHash,
-    profileIdentifier: IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER,
-    appStoreAllowedByThisProfile: true
-  }, options.launcherDeploymentObservation);
   const summary = buildManageEngineIosExportSummary(
     exportState,
     enrollmentWindow,
     outPath,
     stateSaved,
     profileHash,
-    options.deploymentObservation,
-    {
-      outputPath: launcherOutPath,
-      summaryPath: launcherSummaryPath,
-      profileHash: launcherProfileHash,
-      deployment: launcherDeployment
-    }
+    options.deploymentObservation
   );
-  const launcherSummary = {
-    generatedAt: summary.generatedAt,
-    mode: "static-social-launchers",
-    deliveryProvider: "manageengine",
-    outputPath: launcherOutPath,
-    profileIdentifier: IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER,
-    artifactHash: launcherProfileHash,
-    durationUntilRemoval: false,
-    stablePayloadIdentities: true,
-    webClipCount: summary.launcherProfile.webClipCount,
-    labels: summary.launcherProfile.labels,
-    assignmentOrder: "Assign once before the dynamic enforcement profile; do not attach a timed removal command.",
-    deployment: launcherDeployment
-  };
 
   const mirror = defaultPolicyHandoffMirrorPaths(outPath, summaryPath);
-  const launcherMirror = mirror ? {
-    outPath: join(dirname(mirror.outPath), basename(launcherOutPath)),
-    summaryPath: join(dirname(mirror.summaryPath), basename(launcherSummaryPath))
-  } : null;
   const mirroredSummary = mirror ? `${JSON.stringify({
       ...summary,
-      outputPath: mirror.outPath,
-      launcherProfile: {
-        ...summary.launcherProfile,
-        outputPath: launcherMirror?.outPath || summary.launcherProfile.outputPath,
-        summaryPath: launcherMirror?.summaryPath || summary.launcherProfile.summaryPath
-      }
+      outputPath: mirror.outPath
     }, null, 2)}\n` : null;
-  const mirroredLauncherSummary = launcherMirror
-    ? `${JSON.stringify({ ...launcherSummary, outputPath: launcherMirror.outPath }, null, 2)}\n`
-    : null;
+  const retiredLauncherPaths = retiredManageEngineLauncherPaths(outPath, summaryPath, mirror, options);
   const publication = await publishManageEngineGeneration({
     root: dirname(outPath),
     artifacts: [
       { fixedPath: outPath, generationPath: join("main", basename(outPath)), content: profile },
       { fixedPath: summaryPath, generationPath: join("main", basename(summaryPath)), content: `${JSON.stringify(summary, null, 2)}\n` },
-      { fixedPath: launcherOutPath, generationPath: join("main", basename(launcherOutPath)), content: launcherProfile },
-      { fixedPath: launcherSummaryPath, generationPath: join("main", basename(launcherSummaryPath)), content: `${JSON.stringify(launcherSummary, null, 2)}\n` },
-      ...(mirror && launcherMirror && mirroredSummary && mirroredLauncherSummary ? [
+      ...(mirror && mirroredSummary ? [
         { fixedPath: mirror.outPath, generationPath: join("handoff", basename(mirror.outPath)), content: profile },
-        { fixedPath: mirror.summaryPath, generationPath: join("handoff", basename(mirror.summaryPath)), content: mirroredSummary },
-        { fixedPath: launcherMirror.outPath, generationPath: join("handoff", basename(launcherMirror.outPath)), content: launcherProfile },
-        { fixedPath: launcherMirror.summaryPath, generationPath: join("handoff", basename(launcherMirror.summaryPath)), content: mirroredLauncherSummary }
+        { fixedPath: mirror.summaryPath, generationPath: join("handoff", basename(mirror.summaryPath)), content: mirroredSummary }
       ] : [])
     ],
+    retiredFixedPaths: retiredLauncherPaths,
     boundary: options.afterPublicationBoundary
   });
 
@@ -216,13 +172,13 @@ async function exportManageEngineIosProfileUnlocked(
     profileIdentifier: MANAGEENGINE_IOS_PROFILE_IDENTIFIER,
     mirroredOutPath: mirror?.outPath || null,
     mirroredSummaryPath: mirror?.summaryPath || null,
-    launcherOutPath,
-    launcherProfileBytes: Buffer.byteLength(launcherProfile),
-    launcherProfileHash,
-    launcherProfileIdentifier: IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER,
-    launcherSummaryPath,
-    mirroredLauncherOutPath: launcherMirror?.outPath || null,
-    mirroredLauncherSummaryPath: launcherMirror?.summaryPath || null,
+    launcherOutPath: null,
+    launcherProfileBytes: 0,
+    launcherProfileHash: null,
+    launcherProfileIdentifier: null,
+    launcherSummaryPath: null,
+    mirroredLauncherOutPath: null,
+    mirroredLauncherSummaryPath: null,
     stateSaved,
     summary,
     summaryPath,
@@ -252,13 +208,7 @@ export function buildManageEngineIosExportSummary(
   outputPath: string,
   stateSaved: boolean,
   profileHash = "",
-  deploymentObservation?: ManageEngineDeploymentObservation,
-  launcherArtifact?: {
-    outputPath: string;
-    summaryPath: string;
-    profileHash: string;
-    deployment: ReturnType<typeof detectManageEngineDeploymentState>;
-  }
+  deploymentObservation?: ManageEngineDeploymentObservation
 ) {
   const ios = state.deviceControls.ios;
   const summary = iosProfileSummary(state);
@@ -291,7 +241,7 @@ export function buildManageEngineIosExportSummary(
       ? "Vigil iPhone protection is disabled; this artifact does not enforce the content-filter contract."
       : summary.profile.enforcementActive
       ? "Active Vigil enforcement profile for ManageEngine assignment and remote delivery."
-        : "Always-on explicit-content protection is active with targeted browser/social escape-route blocking.",
+        : "Always-on managed web filtering is active with targeted native social-app restrictions.",
     generatedFrom: summary.profile.generatedFrom,
     appBundleCount: summary.profile.appBundleCount,
     managedHelperAppBundleIds: summary.profile.managedHelperAppBundleIds,
@@ -300,17 +250,14 @@ export function buildManageEngineIosExportSummary(
     webClipCount: summary.profile.webClipCount,
     enforcementActive: summary.profile.enforcementActive,
     protection: summary.protection,
+    companionApps: summary.companionApps,
     launcherProfile: {
       ...summary.launcherProfile,
-      outputPath: launcherArtifact?.outputPath || null,
-      summaryPath: launcherArtifact?.summaryPath || null,
-      artifactHash: launcherArtifact?.profileHash || null,
-      deployment: launcherArtifact?.deployment || detectManageEngineDeploymentState({
-        artifactHash: launcherArtifact?.profileHash || "",
-        profileIdentifier: IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER,
-        appStoreAllowedByThisProfile: true
-      }),
-      uploadToManageEngineAsSeparateCustomConfigurationProfile: true
+      outputPath: null,
+      summaryPath: null,
+      artifactHash: null,
+      deployment: null,
+      uploadToManageEngineAsSeparateCustomConfigurationProfile: false
     },
     focusedSocialEnforcementActive: summary.profile.focusedSocialEnforcementActive,
     grayscale: summary.profile.grayscale
@@ -447,6 +394,26 @@ function defaultPolicyHandoffMirrorPaths(outPath: string, summaryPath: string): 
   };
 }
 
+function retiredManageEngineLauncherPaths(
+  outPath: string,
+  summaryPath: string,
+  mirror: { outPath: string; summaryPath: string } | null,
+  options: ManageEngineIosExportOptions
+): string[] {
+  const candidates = [
+    options.launcherOutPath,
+    options.launcherSummaryPath,
+    join(dirname(outPath), MANAGEENGINE_SOCIAL_LAUNCHER_PROFILE_NAME),
+    join(dirname(outPath), MANAGEENGINE_SOCIAL_LAUNCHER_SUMMARY_NAME),
+    ...(mirror ? [
+      join(dirname(mirror.outPath), MANAGEENGINE_SOCIAL_LAUNCHER_PROFILE_NAME),
+      join(dirname(mirror.summaryPath), MANAGEENGINE_SOCIAL_LAUNCHER_SUMMARY_NAME)
+    ] : [])
+  ].filter((value): value is string => Boolean(value));
+  const activePaths = new Set([outPath, summaryPath, mirror?.outPath, mirror?.summaryPath].filter(Boolean).map((value) => resolve(String(value))));
+  return [...new Set(candidates.map((value) => resolve(value)))].filter((value) => !activePaths.has(value));
+}
+
 interface GenerationArtifact {
   fixedPath: string;
   generationPath: string;
@@ -456,24 +423,28 @@ interface GenerationArtifact {
 async function publishManageEngineGeneration({
   root,
   artifacts,
+  retiredFixedPaths = [],
   boundary
 }: {
   root: string;
   artifacts: GenerationArtifact[];
+  retiredFixedPaths?: string[];
   boundary?: (name: string) => void | Promise<void>;
 }): Promise<{ generationPath: string; manifestPath: string }> {
   await ensurePrivateDirectory(root);
-  return await withManageEngineRootLock(root, async (assertOwned) => await publishManageEngineGenerationLocked({ root, artifacts, boundary, assertOwned }));
+  return await withManageEngineRootLock(root, async (assertOwned) => await publishManageEngineGenerationLocked({ root, artifacts, retiredFixedPaths, boundary, assertOwned }));
 }
 
 async function publishManageEngineGenerationLocked({
   root,
   artifacts,
+  retiredFixedPaths,
   boundary,
   assertOwned
 }: {
   root: string;
   artifacts: GenerationArtifact[];
+  retiredFixedPaths: string[];
   boundary?: (name: string) => void | Promise<void>;
   assertOwned: () => Promise<void>;
 }): Promise<{ generationPath: string; manifestPath: string }> {
@@ -520,6 +491,10 @@ async function publishManageEngineGenerationLocked({
     for (const artifact of artifacts) {
       const relativeTarget = relative(dirname(artifact.fixedPath), join(root, "current", artifact.generationPath));
       await replaceWithSymlink(artifact.fixedPath, relativeTarget);
+      await assertOwned();
+    }
+    for (const retiredPath of retiredFixedPaths) {
+      await rm(retiredPath, { force: true });
       await assertOwned();
     }
     await boundary?.("compatibility-published");
@@ -609,7 +584,7 @@ const MANAGEENGINE_GENERATIONS_TO_RETAIN = 3;
 
 async function sweepManageEngineGenerations(root: string): Promise<void> {
   const generationsRoot = join(root, ".generations");
-  const current = await realpath(join(root, "current")).catch(() => "");
+  const currentGeneration = basename(await realpath(join(root, "current")).catch(() => ""));
   const pinned = await activePinnedGenerations(root);
   const entries = await readdir(generationsRoot, { withFileTypes: true });
   const generations = await Promise.all(entries
@@ -618,7 +593,7 @@ async function sweepManageEngineGenerations(root: string): Promise<void> {
   generations.sort((left, right) => right.modifiedAt - left.modifiedAt || right.name.localeCompare(left.name));
   const retainedHistory = new Set(generations.slice(0, MANAGEENGINE_GENERATIONS_TO_RETAIN).map((entry) => entry.name));
   for (const entry of generations) {
-    if (entry.path === current || pinned.has(entry.name) || retainedHistory.has(entry.name)) continue;
+    if (entry.name === currentGeneration || pinned.has(entry.name) || retainedHistory.has(entry.name)) continue;
     await rm(entry.path, { recursive: true, force: true });
   }
 }

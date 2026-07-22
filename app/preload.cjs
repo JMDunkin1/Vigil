@@ -29,6 +29,10 @@ contextBridge.exposeInMainWorld("vigilAppearance", {
   setIconTheme: (theme) => ipcRenderer.invoke("vigil:icon-theme-set", theme)
 });
 
+contextBridge.exposeInMainWorld("vigilSetup", {
+  open: (destination) => ipcRenderer.invoke("vigil:setup-open", String(destination || ""))
+});
+
 contextBridge.exposeInMainWorld("vigilWindowResize", {
   begin: (edge, screenX, screenY) => ipcRenderer.send("vigil:window-resize-begin", { edge, screenX, screenY }),
   move: (screenX, screenY) => ipcRenderer.send("vigil:window-resize-move", { screenX, screenY }),

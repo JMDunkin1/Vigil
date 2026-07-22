@@ -59,13 +59,29 @@ export function emergencyDelaySeconds(state: VigilState, now = new Date()): numb
 
 export function recentBlockAttempts(state: VigilState, now = new Date(), windowMinutes = 10): AttemptWithTarget[] {
   const cutoff = now.getTime() - Math.max(1, Number(windowMinutes || 10)) * 60 * 1000;
-  return (state.events || [])
+  const functional = state.functionalEvents?.version === 1
+    ? (state.functionalEvents.blockAttempts || []).map((attempt, index) => ({
+        id: `functional-block-${index}-${attempt.at}`,
+        type: attempt.type,
+        at: attempt.at,
+        detail: {},
+        target: { type: attempt.targetType, label: attempt.targetLabel }
+      }))
+    : [];
+  const audit = (state.events || [])
     .filter((event) => BLOCK_ATTEMPT_TYPES.has(event.type))
-    .map((event) => ({ ...event, target: eventTarget(event) }))
+    .map((event) => ({ ...event, target: eventTarget(event) }));
+  const recent = (attempts: AttemptWithTarget[]) => attempts
     .filter((event) => {
       const at = Date.parse(event.at || "");
       return Number.isFinite(at) && at >= cutoff && at <= now.getTime();
-    })
+    });
+  const functionalRecent = recent(functional);
+  const auditRecent = recent(audit);
+  // The functional ledger normally contains the complete bounded window. The
+  // max-source fallback prevents a partial migration or manually constructed
+  // state from ever lowering intervention friction.
+  return (functionalRecent.length >= auditRecent.length ? functionalRecent : auditRecent)
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 

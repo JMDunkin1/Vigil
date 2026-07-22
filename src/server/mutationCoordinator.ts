@@ -1,6 +1,7 @@
 import type { ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { isDeepStrictEqual } from "node:util";
 import { saveRuntimeSnapshot, withStagedPersistence } from "../store.js";
 import type { RuntimeOutboxEntry } from "../store.js";
 import type { UsageState, VigilState } from "../types.js";
@@ -121,7 +122,14 @@ export class RuntimeMutationCoordinator {
           });
         }
       }));
-      const durableCommitRequired = options.persist !== false || persistenceRequested || effects.length > 0;
+      const explicitlyRequested = persistenceRequested || effects.length > 0;
+      const durableCommitRequired = options.persist === false
+        ? explicitlyRequested
+        : explicitlyRequested
+          || staged.stateSaveRequested
+          || staged.usageSaveRequested
+          || !isDeepStrictEqual(draftState, this.liveState)
+          || !isDeepStrictEqual(draftUsage, this.liveUsage);
       if (durableCommitRequired) {
         try {
           await this.persistSnapshot(draftState, draftUsage, { outbox: commitOutbox });
@@ -320,12 +328,6 @@ export class RuntimeMutationCoordinator {
     this.outbox.splice(0, this.outbox.length, ...candidate);
   }
 
-  private async persistReplacement(id: string, replacement: RuntimeOutboxEntry): Promise<void> {
-    const candidate = this.outbox.map((entry) => entry.id === id ? replacement : entry);
-    await this.persistSnapshot(this.liveState, this.liveUsage, { outbox: candidate });
-    this.outbox.splice(0, this.outbox.length, ...candidate);
-  }
-
   private scheduleRetry(entry: RuntimeOutboxEntry): void {
     if (!this.accepting || !this.recoveryHandler || this.retryTimers.has(entry.id)) return;
     const delay = Math.max(0, entry.nextAttemptAt ? Date.parse(entry.nextAttemptAt) - Date.now() : retryDelayMs(Math.max(1, entry.attempts)));
@@ -363,8 +365,9 @@ export class RuntimeMutationCoordinator {
 
   private async markRunning(id: string): Promise<RuntimeOutboxEntry | null> {
     return await this.enqueueMutation(async () => {
-      const current = this.outbox.find((candidate) => candidate.id === id);
-      if (!current) return null;
+      const index = this.outbox.findIndex((candidate) => candidate.id === id);
+      if (index < 0) return null;
+      const current = this.outbox[index]!;
       const operation = this.operations.get(current.id) || this.recoveryHandler;
       if (!operation) return null;
       const running: RuntimeOutboxEntry = {
@@ -375,16 +378,14 @@ export class RuntimeMutationCoordinator {
         startedAt: new Date().toISOString(),
         nextAttemptAt: null
       };
-      try {
-        await this.persistReplacement(current.id, running);
-        this.effectObserver?.(running, "running", "Durable effect is running.");
-        return running;
-      } catch (error) {
-        console.error("Vigil could not persist the running outbox state; the effect was not executed:", error);
-        this.effectObserver?.(current, "pending", error instanceof Error ? error.message : String(error));
-        this.scheduleRetry(current);
-        return null;
-      }
+      // The pending intent is already durable before effect dispatch. Keeping
+      // `running` as an in-memory observation avoids rewriting state, usage,
+      // seals, and the WAL before every idempotent enforcement attempt. A crash
+      // still replays the durable pending intent; completion/failure remains an
+      // atomic full snapshot with any callback state changes.
+      this.outbox[index] = running;
+      this.effectObserver?.(running, "running", "Durable effect is running.");
+      return running;
     });
   }
 }

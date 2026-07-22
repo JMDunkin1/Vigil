@@ -42,6 +42,7 @@ interface BuildStatePayloadInput {
   activePort: number;
   startedAt: string | null;
   localScripts: LocalScriptsSummary;
+  manageEngineOutputDirectory: string;
 }
 
 export interface StrictPreflightOptions {
@@ -108,12 +109,12 @@ export function invalidateStateDiagnostics(): void {
   diagnosticCache = null;
 }
 
-export async function buildStatePayload({ state, usage, monitor, activePort, startedAt, localScripts }: BuildStatePayloadInput) {
+export async function buildStatePayload({ state, usage, monitor, activePort, startedAt, localScripts, manageEngineOutputDirectory }: BuildStatePayloadInput) {
   const currentState = structuredClone(state);
   const currentUsage = structuredClone(usage);
   const monitorStatus = structuredClone(monitor.status);
   const policy = activePolicy(currentState);
-  const { hosts, firewall, agent, account, stateSeal, sourceSeal, safariFilter, chromeSafeSearch, devices, hostsBlock } = await stateDiagnostics(currentState);
+  const { hosts, firewall, agent, account, stateSeal, sourceSeal, safariFilter, chromeSafeSearch, devices, hostsBlock } = await stateDiagnostics(currentState, manageEngineOutputDirectory);
   const externalNetworkBlock = externalNetworkBlockSummary(currentState);
   const adultBlocklist = adultBlocklistSummary(currentState);
   const protection = protectionSummary(currentState);
@@ -155,9 +156,9 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
   };
 }
 
-async function stateDiagnostics(state: VigilState): Promise<DiagnosticSnapshot> {
+async function stateDiagnostics(state: VigilState, manageEngineOutputDirectory: string): Promise<DiagnosticSnapshot> {
   const now = Date.now();
-  const key = diagnosticStateKey(state);
+  const key = diagnosticStateKey(state, manageEngineOutputDirectory);
   if (diagnosticCache && diagnosticCache.key === key && diagnosticCache.expiresAt > now) return await diagnosticCache.promise;
   const promise = Promise.all([
     hostsStatus(state),
@@ -168,7 +169,7 @@ async function stateDiagnostics(state: VigilState): Promise<DiagnosticSnapshot> 
     sourceSealStatus(),
     safariFilterStatus(state),
     chromeSafeSearchStatus(),
-    deviceSummary(state),
+    deviceSummary(state, { manageEngineOutputDirectory }),
     buildNetworkPreview(state)
   ]).then(([hosts, firewall, agent, account, stateSeal, sourceSeal, safariFilter, chromeSafeSearch, devices, hostsBlock]) => ({
     hosts,
@@ -191,7 +192,7 @@ async function stateDiagnostics(state: VigilState): Promise<DiagnosticSnapshot> 
   }
 }
 
-function diagnosticStateKey(state: VigilState): string {
+function diagnosticStateKey(state: VigilState, manageEngineOutputDirectory: string): string {
   return JSON.stringify({
     settings: state.settings,
     profiles: state.profiles,
@@ -203,6 +204,7 @@ function diagnosticStateKey(state: VigilState): string {
     appLocks: state.appLocks,
     appLockUnlocks: state.appLockUnlocks,
     deviceControls: diagnosticDeviceControls(state),
+    manageEngineOutputDirectory,
     adultBlocklist: state.adultBlocklist,
     intentionalUse: {
       pauses: state.intentionalUse?.pauses,
@@ -240,6 +242,12 @@ function diagnosticDeviceControls(state: VigilState): UnknownRecord {
       deniedUrls: ios.deniedUrls,
       allowedUrls: ios.allowedUrls,
       focusedSocial: ios.focusedSocial,
+      manageEngineGeneration: ios.manageEngineGeneration ? {
+        version: ios.manageEngineGeneration.version,
+        generatedAt: ios.manageEngineGeneration.generatedAt,
+        generation: ios.manageEngineGeneration.generation,
+        profileHash: ios.manageEngineGeneration.profileHash
+      } : null,
       mdm: {
         enabled: mdm.enabled,
         publicBaseUrl: mdm.publicBaseUrl,
@@ -493,7 +501,7 @@ function strictPreflightRelevanceFingerprint(
   const dynamicRules = extension.dynamicRules || {};
   return createHash("sha256").update(JSON.stringify({
     settings: normalizedState.settings,
-    // The heartbeat fields are intentionally omitted. They are evaluated
+    // Volatile extension telemetry is intentionally omitted. It is evaluated
     // against the live draft inside strictPreflightStatus, so routine extension
     // check-ins must not invalidate unrelated system evidence. Version and the
     // fields that determine dynamic-rule readiness still form part of the

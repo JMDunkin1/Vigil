@@ -10,7 +10,7 @@ import {
 } from "../src/manageEngineExport.js";
 import type { ManageEngineDeploymentObservation } from "../src/manageEngineExport.js";
 
-const VALUE_OPTIONS = new Set(["deployment-observation", "launcher-deployment-observation", "out", "summary"]);
+const VALUE_OPTIONS = new Set(["deployment-observation", "out", "summary"]);
 const BOOLEAN_OPTIONS = new Set([
   "allow-profile-install",
   "current-state",
@@ -30,9 +30,6 @@ const summaryPath = resolve(String(args.summary || defaultManageEngineSummaryPat
 const deploymentObservation = args["deployment-observation"]
   ? await loadDeploymentObservation(resolve(String(args["deployment-observation"])))
   : undefined;
-const launcherDeploymentObservation = args["launcher-deployment-observation"]
-  ? await loadDeploymentObservation(resolve(String(args["launcher-deployment-observation"])))
-  : undefined;
 const result = await exportManageEngineIosProfile(savedState, {
   allowProfileInstall: Boolean(args["allow-profile-install"]),
   currentState: Boolean(args["current-state"]),
@@ -40,7 +37,6 @@ const result = await exportManageEngineIosProfile(savedState, {
   disabled: Boolean(args.disabled),
   enable: Boolean(args.enable),
   enrollmentWindow,
-  launcherDeploymentObservation,
   noHardenRemoval: Boolean(args["no-harden-removal"]),
   outPath,
   saveState,
@@ -49,15 +45,11 @@ const result = await exportManageEngineIosProfile(savedState, {
 
 console.log([
   `Wrote ManageEngine iOS profile: ${result.outPath}`,
-  `Wrote stable social launcher profile: ${result.launcherOutPath}`,
   ...(result.mirroredOutPath ? [`Mirrored handoff profile: ${result.mirroredOutPath}`] : []),
   `Summary: ${result.summaryPath}`,
-  `Launcher summary: ${result.launcherSummaryPath}`,
   `Immutable generation: ${result.generationPath}`,
   `Generation manifest: ${result.generationManifestPath}`,
   ...(result.mirroredSummaryPath ? [`Mirrored handoff summary: ${result.mirroredSummaryPath}`] : []),
-  ...(result.mirroredLauncherOutPath ? [`Mirrored launcher profile: ${result.mirroredLauncherOutPath}`] : []),
-  ...(result.mirroredLauncherSummaryPath ? [`Mirrored launcher summary: ${result.mirroredLauncherSummaryPath}`] : []),
   `Identifier: ${MANAGEENGINE_IOS_PROFILE_IDENTIFIER}`,
   `Mode: ${result.mode}`,
   `State saved: ${result.stateSaved ? "yes" : "no"}`

@@ -13,6 +13,18 @@ export function maxTrustedPollGapSeconds(pollIntervalMs: unknown): number {
   return Math.max(10, intervalSeconds * 3);
 }
 
+export const MONITOR_RUNTIME_FRESHNESS_MIN_MS = 15_000;
+export const MONITOR_RUNTIME_FRESHNESS_MAX_MS = 30_000;
+
+export function monitorRuntimeFreshnessLimitMs(pollIntervalMs: unknown): number {
+  const intervalMs = Number(pollIntervalMs);
+  const effectiveIntervalMs = Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 15_000;
+  return Math.max(
+    MONITOR_RUNTIME_FRESHNESS_MIN_MS,
+    Math.min(MONITOR_RUNTIME_FRESHNESS_MAX_MS, effectiveIntervalMs * 2)
+  );
+}
+
 export function isInterruptedPollGap(elapsedSeconds: unknown, pollIntervalMs: unknown): boolean {
   const elapsed = Number(elapsedSeconds);
   return Number.isFinite(elapsed) && elapsed > maxTrustedPollGapSeconds(pollIntervalMs);

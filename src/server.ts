@@ -2,18 +2,24 @@ import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
 import type { Socket } from "node:net";
-import { join, sep } from "node:path";
+import { uptime as systemUptimeSeconds } from "node:os";
+import { basename, dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { prepareAdultBlocklistRefresh } from "./adultBlocklist.js";
 import type { AdultBlocklistRefreshPreparation } from "./adultBlocklist.js";
 import { apiRequestGuard, publicHostGuard } from "./apiSecurity.js";
 import { hostedAdminRequired, requireHostedAccount } from "./auth.js";
 import { APP_NAME, BRICK_MODE_PROFILE_ID, PORT, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { isDirectRun } from "./directRun.js";
-import { DATA_DIR, addEvent, loadRuntimeOutbox, loadState, loadUsage, saveRuntimeSnapshot, saveState } from "./store.js";
+import { DATA_DIR, STATE_SEAL_KEY_PATH, addEvent, loadRuntimeOutbox, loadState, loadUsage, saveRuntimeSnapshot, saveState } from "./store.js";
 import type { RuntimeOutboxEntry } from "./store.js";
 import { launchAgentStatus } from "./hardening.js";
 import { MONITOR_HEALTH_COMPONENTS, startMonitor } from "./monitor.js";
+import { monitorRuntimeFreshnessLimitMs } from "./monitor/timing.js";
+import { detectClockTamper, detectRuntimeInterruption } from "./integrityLockdown.js";
+import { quarantineRuntimeInterruption, readRuntimeInterruption } from "./runtimeReady.js";
+import { quarantineRuntimeUsageCheckpoint, recoverRuntimeUsageCheckpoint, runtimeUsageCheckpointPath } from "./runtimeUsageCheckpoint.js";
 import { assertDistanceKey, updateDistanceKeySettings } from "./distanceKey.js";
 import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated } from "./iosProfiles.js";
@@ -98,6 +104,7 @@ const activeRequestTasks = new Set<Promise<void>>();
 const activeSockets = new Set<Socket>();
 const SHUTDOWN_GRACE_MS = 5_000;
 const STRICT_PREFLIGHT_RECOLLECT_ATTEMPTS = 2;
+const SYSTEM_BOOT_TOLERANCE_MS = 10_000;
 
 interface ServerOptions {
   host?: string;
@@ -207,13 +214,17 @@ export async function startVigilRuntime(options: ServerOptions = {}): Promise<Vi
     startedAt = new Date().toISOString();
     state = await loadState();
     usage = await loadUsage(state);
+    const runtimeOutbox = await loadRuntimeOutbox();
+    const startupRecovery = await recoverStartupContinuity(state, usage, runtimeOutbox, new Date(startedAt));
     instanceSecret = await getInstanceSecret(DATA_DIR);
     invalidateStateDiagnostics();
-    mutationCoordinator = new RuntimeMutationCoordinator(state, usage, await loadRuntimeOutbox());
+    mutationCoordinator = new RuntimeMutationCoordinator(state, usage, runtimeOutbox);
     monitor = startMonitor({
       state,
       usage,
       runtimeInstanceId: startedAt,
+      runtimeUsageCheckpointEnabled: startupRecovery.runtimeUsageCheckpointEnabled,
+      startupSnapshotPersisted: startupRecovery.snapshotPersisted,
       committedRevision: () => requireMutationCoordinator().committedRevision(),
       mutate: async (operation, mutationOptions) => await requireMutationCoordinator().run(
         ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
@@ -232,6 +243,181 @@ export async function startVigilRuntime(options: ServerOptions = {}): Promise<Vi
     appUpdateController = options.appUpdate;
   }
   return runtimeHandle();
+}
+
+export async function recoverStartupContinuity(
+  recoveredState: VigilState,
+  recoveredUsage: UsageState,
+  runtimeOutbox: RuntimeOutboxEntry[],
+  now: Date,
+  options: { persistSnapshot?: typeof saveRuntimeSnapshot } = {}
+): Promise<{
+  runtimeUsageCheckpointEnabled: boolean;
+  checkpointChanged: boolean;
+  snapshotPersisted: boolean;
+}> {
+  const checkpointPath = runtimeUsageCheckpointPath(DATA_DIR);
+  const usageBeforeCheckpoint = structuredClone(recoveredUsage);
+  const intentionalBeforeCheckpoint = structuredClone({
+    ledger: recoveredState.intentionalUse?.ledger || {},
+    grants: recoveredState.intentionalUse?.grants || []
+  });
+  const checkpoint = await recoverRuntimeUsageCheckpoint(recoveredState, recoveredUsage, {
+    checkpointPath,
+    keyPath: STATE_SEAL_KEY_PATH,
+    now
+  });
+  const checkpointChanged = checkpoint.status === "recovered" && (
+    !isDeepStrictEqual(recoveredUsage, usageBeforeCheckpoint)
+    || !isDeepStrictEqual({
+      ledger: recoveredState.intentionalUse?.ledger || {},
+      grants: recoveredState.intentionalUse?.grants || []
+    }, intentionalBeforeCheckpoint)
+  );
+  let runtimeUsageCheckpointEnabled = true;
+  let persistenceRequired = checkpointChanged;
+  const invalidCheckpoint = checkpoint.status === "invalid";
+
+  if (invalidCheckpoint) {
+    recordStartupIntegrityFailure(
+      recoveredState,
+      "runtime_usage_checkpoint_invalid",
+      `Runtime usage checkpoint integrity failed: ${checkpoint.detail}`,
+      { checkpointPath, quarantinePending: true },
+      now
+    );
+    persistenceRequired = true;
+  }
+
+  const trustedContinuityAt = newestTimestamp([
+    recoveredState.integrity?.stateSeal?.lastSealedAt,
+    checkpoint.ok ? checkpoint.createdAt : null
+  ]);
+  if (trustedContinuityAt && trustedContinuityAt.getTime() > now.getTime()) {
+    const clockTamper = detectClockTamper(recoveredState, {
+      previousWallMs: trustedContinuityAt.getTime(),
+      currentWallMs: now.getTime(),
+      previousMonotonicMs: 0,
+      currentMonotonicMs: 0
+    }, now);
+    if (clockTamper) {
+      addEvent(recoveredState, "clock_tamper_lockdown", {
+        ...clockTamper,
+        source: "authenticated-runtime-checkpoint"
+      });
+      persistenceRequired = true;
+    }
+  }
+
+  const interruption = await readRuntimeInterruption(DATA_DIR);
+  let invalidInterruptionReason: string | null = null;
+  if (interruption.status === "invalid") {
+    invalidInterruptionReason = interruption.reason;
+  } else if (interruption.status === "valid") {
+    const record = interruption.record;
+    if (record.reason === "invalid-ready-record") {
+      invalidInterruptionReason = record.reason;
+    } else if (record.appPath !== process.execPath) {
+      invalidInterruptionReason = "runtime-identity-mismatch";
+    } else {
+      const bootedAt = new Date(now.getTime() - Math.max(0, systemUptimeSeconds() * 1000));
+      const rebooted = Date.parse(record.startedAt) < bootedAt.getTime() - SYSTEM_BOOT_TOLERANCE_MS;
+      const gapStartedAt = rebooted
+        ? newestTimestampBefore([
+            recoveredState.integrity?.stateSeal?.lastSealedAt,
+            checkpoint.ok ? checkpoint.createdAt : null,
+            record.startedAt
+          ], now)
+        : null;
+      const observation = detectRuntimeInterruption(recoveredState, {
+        id: record.id,
+        detectedAt: record.detectedAt,
+        previousRuntimeStartedAt: record.startedAt
+      }, now, { rebooted, bootedAt, gapStartedAt });
+      if (observation) {
+        addEvent(
+          recoveredState,
+          observation.lockdown ? "runtime_downtime_lockdown" : "runtime_interruption_observed",
+          observation
+        );
+        persistenceRequired = true;
+      }
+    }
+  }
+
+  if (invalidInterruptionReason) {
+    recordStartupIntegrityFailure(
+      recoveredState,
+      "runtime_interruption_evidence_invalid",
+      `Runtime interruption evidence was invalid (${invalidInterruptionReason}).`,
+      { reason: invalidInterruptionReason, quarantinePending: true },
+      now
+    );
+    persistenceRequired = true;
+  }
+
+  let snapshotPersisted = false;
+  if (persistenceRequired) {
+    await (options.persistSnapshot || saveRuntimeSnapshot)(recoveredState, recoveredUsage, { outbox: runtimeOutbox });
+    snapshotPersisted = true;
+  }
+
+  // Evidence is moved out of its canonical path only after the fail-closed
+  // alarm above is durable. If persistence fails, startup aborts while the
+  // original bytes remain available for the next recovery attempt.
+  if (invalidCheckpoint) {
+    try {
+      await quarantineRuntimeUsageCheckpoint(checkpointPath, now);
+    } catch (error) {
+      runtimeUsageCheckpointEnabled = false;
+      console.error("Vigil could not quarantine an invalid runtime usage checkpoint; compact checkpoint writes are disabled for this runtime.", error);
+    }
+  }
+  if (invalidInterruptionReason) {
+    try {
+      await quarantineRuntimeInterruption(DATA_DIR, now);
+    } catch (error) {
+      console.error("Vigil could not quarantine invalid runtime interruption evidence; the durable integrity alarm remains active and the original evidence is preserved.", error);
+    }
+  }
+  return { runtimeUsageCheckpointEnabled, checkpointChanged, snapshotPersisted };
+}
+
+function recordStartupIntegrityFailure(
+  recoveredState: VigilState,
+  eventType: string,
+  detail: string,
+  eventDetail: Record<string, unknown>,
+  now: Date
+): void {
+  const seal = recoveredState.integrity.stateSeal;
+  const previousDetail = String(seal.tamperDetail || "").trim();
+  seal.tamperDetectedAt ||= now.toISOString();
+  seal.tamperDetail = previousDetail && previousDetail !== detail
+    ? `${previousDetail} ${detail}`
+    : detail;
+  seal.lastStatus = "tamper-detected";
+  seal.lastDetail = detail;
+  seal.lastCheckedAt = now.toISOString();
+  addEvent(recoveredState, eventType, { ...eventDetail, detail });
+}
+
+function newestTimestamp(values: Array<unknown>): Date | null {
+  let newest: Date | null = null;
+  for (const value of values) {
+    const timestamp = Date.parse(String(value || ""));
+    if (!Number.isFinite(timestamp) || (newest && timestamp <= newest.getTime())) continue;
+    newest = new Date(timestamp);
+  }
+  return newest;
+}
+
+function newestTimestampBefore(values: Array<unknown>, before: Date): Date | null {
+  const eligible = values.filter((value) => {
+    const timestamp = Date.parse(String(value || ""));
+    return Number.isFinite(timestamp) && timestamp <= before.getTime();
+  });
+  return newestTimestamp(eligible);
 }
 
 export async function dispatchVigilRequest(input: InAppRequest): Promise<InAppResponse> {
@@ -269,7 +455,7 @@ async function requestHandler(request: IncomingMessage, response: ServerResponse
     const buffered = new BufferedServerResponse(response);
     try {
       if (!requestMutationCoordinator) throw new Error("Vigil's mutation coordinator is not initialized.");
-      await requestMutationCoordinator.run(async ({ state: draftState, usage: draftUsage, afterCommit }) => {
+      await requestMutationCoordinator.run(async ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => {
         await dispatchRequest(
           request,
           buffered.response,
@@ -278,10 +464,14 @@ async function requestHandler(request: IncomingMessage, response: ServerResponse
           afterCommit,
           prepared,
           requestMutationCoordinator,
-          requestAdmission
+          requestAdmission,
+          requestPersistence
         );
         if (!buffered.successful() && !requestCommitsHandledFailure(method, path, buffered.status())) throw new RequestRejectedError();
-      }, { admission: requestAdmission });
+      }, {
+        admission: requestAdmission,
+        ...(requestDefersRoutinePersistence(method, path) ? { persist: false } : {})
+      });
       buffered.flush();
       return;
     } catch (error) {
@@ -492,7 +682,8 @@ async function dispatchRequest(
   afterCommit: AfterCommit,
   prepared: PreparedMutationRequest = {},
   requestMutationCoordinator: RuntimeMutationCoordinator | null = mutationCoordinator,
-  requestAdmission: MutationAdmissionScope = requestMutationAdmission
+  requestAdmission: MutationAdmissionScope = requestMutationAdmission,
+  requestPersistence: () => void = () => {}
 ): Promise<void> {
   try {
     const url = new URL(request.url || "/", `http://${request.headers.host || `${activeHost}:${activePort}`}`);
@@ -512,7 +703,7 @@ async function dispatchRequest(
     }
 
     if (url.pathname.startsWith("/api/")) {
-      await handleApi(request, response, url, requestState, requestUsage, afterCommit, prepared, requestMutationCoordinator, requestAdmission);
+      await handleApi(request, response, url, requestState, requestUsage, afterCommit, prepared, requestMutationCoordinator, requestAdmission, requestPersistence);
       return;
     }
 
@@ -565,6 +756,14 @@ function requestRequiresMutation(method: string, path: string): boolean {
   if (path.startsWith("/mdm/")) return true;
   const route = matchApiRoute(method, path);
   return Boolean(route && !READ_ONLY_API_ROUTES.has(route.id));
+}
+
+function requestDefersRoutinePersistence(method: string, path: string): boolean {
+  return (method === "GET" || method === "POST") && [
+    "/api/extension/check",
+    "/api/extension/rules",
+    "/api/extension/rules/sync"
+  ].includes(path);
 }
 
 function requestCommitsHandledFailure(method: string, path: string, status: number): boolean {
@@ -856,7 +1055,8 @@ async function handleApi(
   afterCommit: AfterCommit,
   prepared: PreparedMutationRequest = {},
   requestMutationCoordinator: RuntimeMutationCoordinator | null = mutationCoordinator,
-  requestAdmission: MutationAdmissionScope = requestMutationAdmission
+  requestAdmission: MutationAdmissionScope = requestMutationAdmission,
+  requestPersistence: () => void = () => {}
 ): Promise<void> {
   const method = request.method || "GET";
   const path = url.pathname;
@@ -875,7 +1075,7 @@ async function handleApi(
     return;
   }
 
-  if (await handleExtensionApiRoute(request, response, url, { state: requestState, usage: requestUsage })) {
+  if (await handleExtensionApiRoute(request, response, url, { state: requestState, usage: requestUsage, requestPersistence })) {
     return;
   }
 
@@ -922,7 +1122,15 @@ async function handleApi(
   }
 
   if (method === "GET" && path === "/api/state") {
-    const payload = await buildStatePayload({ state: requestState, usage: requestUsage, monitor: requireMonitor(), activePort, startedAt, localScripts });
+    const payload = await buildStatePayload({
+      state: requestState,
+      usage: requestUsage,
+      monitor: requireMonitor(),
+      activePort,
+      startedAt,
+      localScripts,
+      manageEngineOutputDirectory: dirname(manageEnginePolicyOutputPaths().outPath)
+    });
     sendJson(response, 200, payload.body, { ...payload.headers, ...healthSignatureHeaders(request) });
     return;
   }
@@ -939,7 +1147,14 @@ async function handleApi(
     return;
   }
 
-  if (await handleSettingsApiRoute(request, response, { state: requestState })) {
+  if (await handleSettingsApiRoute(request, response, {
+    state: requestState,
+    schedulePolicyEnforcement: (reason) => afterCommit(
+      () => schedulePolicyEnforcement(reason),
+      durableEffect("policy-enforcement", { reason, eventId: requestState.events[0]?.id || "state" }),
+      (result, committedState) => addEvent(committedState, "policy_immediate_enforcement", { reason, ok: true, result })
+    )
+  })) {
     return;
   }
 
@@ -1028,7 +1243,15 @@ async function handleApi(
     return;
   }
 
-  if (await handlePolicyApiRoute(request, response, { state: requestState, recordIosMdmPolicyQueue: (reason) => recordIosMdmPolicyQueue(requestState, reason, afterCommit) })) {
+  if (await handlePolicyApiRoute(request, response, {
+    state: requestState,
+    recordIosMdmPolicyQueue: (reason) => recordIosMdmPolicyQueue(requestState, reason, afterCommit),
+    schedulePolicyEnforcement: (reason) => afterCommit(
+      () => schedulePolicyEnforcement(reason),
+      durableEffect("policy-enforcement", { reason, eventId: requestState.events[0]?.id || "state" }),
+      (result, committedState) => addEvent(committedState, "policy_immediate_enforcement", { reason, ok: true, result })
+    )
+  })) {
     return;
   }
 
@@ -1099,11 +1322,14 @@ export function runtimeReadiness(monitorStatus: UnknownRecord, requestState: Vig
   for (const [component, error] of Object.entries(componentErrors)) {
     if (String(error || "")) blockers.push(`${component}: ${String(error)}`);
   }
-  const heartbeatAt = requestState.integrity.runtime.lastHeartbeatAt || null;
-  const heartbeatAgeMs = heartbeatAt ? Date.now() - Date.parse(heartbeatAt) : Number.POSITIVE_INFINITY;
-  const freshnessLimitMs = Math.max(15_000, Number(requestState.settings.pollIntervalMs || 3_000) * 4);
-  if (!Number.isFinite(heartbeatAgeMs) || heartbeatAgeMs > freshnessLimitMs) blockers.push("monitor heartbeat is stale");
-  if (Number.isFinite(tickMs) && Date.now() - tickMs > freshnessLimitMs) blockers.push("monitor successful tick is stale");
+  const reportedPollIntervalMs = Number(monitorStatus.effectivePollIntervalMs);
+  const freshnessLimitMs = monitorRuntimeFreshnessLimitMs(
+    Number.isFinite(reportedPollIntervalMs) && reportedPollIntervalMs > 0
+      ? reportedPollIntervalMs
+      : requestState.settings.pollIntervalMs
+  );
+  const successfulTickAgeMs = Number.isFinite(tickMs) ? Date.now() - tickMs : Number.POSITIVE_INFINITY;
+  if (!Number.isFinite(successfulTickAgeMs) || successfulTickAgeMs > freshnessLimitMs) blockers.push("monitor successful tick is stale");
   const componentHealth = monitorStatus.componentHealth && typeof monitorStatus.componentHealth === "object"
     ? monitorStatus.componentHealth as Record<string, UnknownRecord>
     : {};
@@ -1127,14 +1353,21 @@ export function runtimeReadiness(monitorStatus: UnknownRecord, requestState: Vig
   if (integrityRuntime.downtimeDetectedAt) blockers.push("runtime gap lockdown is active");
   if (integrityRuntime.clockTamperDetectedAt) blockers.push("clock tamper lockdown is active");
   if (integrityRuntime.hardeningDriftDetectedAt) blockers.push("required hardening has drifted");
-  for (const field of ["stateSeal", "hardeningDrift", "runtimeGap", "clockTamper"] as const) {
+  for (const field of ["stateSeal", "hardeningDrift", "clockTamper"] as const) {
     const status = monitorStatus[field];
     if (status && typeof status === "object" && (status as UnknownRecord).ok === false) blockers.push(`${field} check is degraded`);
   }
   return {
     ok: monitorStatus.ok !== false && blockers.length === 0,
     blockers: [...new Set(blockers)],
-    freshness: { runtimeInstanceId, runtimeStartedAt, successfulTickAt: successfulTickAt || null, heartbeatAt, ageMs: Number.isFinite(heartbeatAgeMs) ? Math.max(0, heartbeatAgeMs) : null, limitMs: freshnessLimitMs, components: componentHealth }
+    freshness: {
+      runtimeInstanceId,
+      runtimeStartedAt,
+      successfulTickAt: successfulTickAt || null,
+      ageMs: Number.isFinite(successfulTickAgeMs) ? Math.max(0, successfulTickAgeMs) : null,
+      limitMs: freshnessLimitMs,
+      components: componentHealth
+    }
   };
 }
 
@@ -1231,6 +1464,12 @@ function completeManageEnginePolicyExport(effect: ManageEnginePolicyExportEffect
     throw new Error("The iOS removal password changed while the ManageEngine profile was exported.");
   }
   if (effect.removalPassword && !committedPassword) committedState.deviceControls.ios.removalPassword = effect.removalPassword;
+  committedState.deviceControls.ios.manageEngineGeneration = {
+    version: 1,
+    generatedAt: effect.result.summary.generatedAt,
+    generation: basename(effect.result.generationPath),
+    profileHash: effect.result.profileHash
+  };
   addEvent(committedState, "ios_manageengine_policy_exported", {
     reasons: [effect.reason],
     bytes: effect.result.profileBytes,

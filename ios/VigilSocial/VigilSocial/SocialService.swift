@@ -3,7 +3,6 @@ import Foundation
 enum SocialService: String, CaseIterable, Identifiable {
     case instagram
     case youtube
-    case snapchat
 
     var id: String { rawValue }
 
@@ -11,7 +10,6 @@ enum SocialService: String, CaseIterable, Identifiable {
         switch self {
         case .instagram: "Instagram"
         case .youtube: "YouTube"
-        case .snapchat: "Snapchat"
         }
     }
 
@@ -19,18 +17,39 @@ enum SocialService: String, CaseIterable, Identifiable {
         switch self {
         case .instagram: "camera"
         case .youtube: "play.rectangle"
-        case .snapchat: "message"
         }
     }
 
     var homeURL: URL {
         switch self {
         case .instagram:
-            URL(string: "https://www.instagram.com/direct/inbox/")!
+            URL(string: "https://www.instagram.com/")!
         case .youtube:
             URL(string: "https://m.youtube.com/")!
-        case .snapchat:
-            URL(string: "https://web.snapchat.com/")!
+        }
+    }
+
+    var allowsBackForwardNavigationGestures: Bool {
+        switch self {
+        case .instagram:
+            // Preserve Instagram's horizontal carousels and inbox gestures;
+            // WebKit's edge history recognizer competes with those gestures.
+            false
+        case .youtube:
+            // YouTube uses edge-back navigation, while its in-page horizontal
+            // controls continue to be handled by the mobile site.
+            true
+        }
+    }
+
+    var usesDirectionalScrollLock: Bool {
+        switch self {
+        case .instagram:
+            // Instagram intentionally mixes horizontal and vertical movement.
+            false
+        case .youtube:
+            // Keep vertical watch/feed motion from drifting into horizontal UI.
+            true
         }
     }
 
@@ -48,7 +67,6 @@ enum SocialService: String, CaseIterable, Identifiable {
         let host = url.host?.lowercased() ?? ""
         if host == "instagram.com" || host.hasSuffix(".instagram.com") { return .instagram }
         if host == "youtube.com" || host.hasSuffix(".youtube.com") || host == "youtu.be" { return .youtube }
-        if host == "snapchat.com" || host.hasSuffix(".snapchat.com") { return .snapchat }
         return nil
     }
 
@@ -57,13 +75,29 @@ enum SocialService: String, CaseIterable, Identifiable {
         let host = url.host?.lowercased() ?? ""
         switch self {
         case .instagram:
-            return Self.host(host, matches: "instagram.com") || Self.host(host, matches: "facebook.com")
+            if Self.host(host, matches: "instagram.com") { return true }
+            guard Self.host(host, matches: "facebook.com") else { return false }
+            let path = url.path.lowercased()
+            return path == "/login.php"
+                || path.hasPrefix("/login/")
+                || path.hasPrefix("/dialog/oauth")
+                || path.contains("/dialog/oauth")
+                || path.hasPrefix("/checkpoint/")
         case .youtube:
-            return Self.host(host, matches: "youtube.com")
+            return ["youtube.com", "www.youtube.com", "m.youtube.com", "consent.youtube.com"].contains(host)
                 || host == "youtu.be"
                 || host == "accounts.google.com"
-        case .snapchat:
-            return Self.host(host, matches: "snapchat.com")
+        }
+    }
+
+    func isRestrictedSurface(_ url: URL) -> Bool {
+        guard allowsNavigation(to: url) else { return true }
+        switch self {
+        case .instagram:
+            return false
+        case .youtube:
+            let path = url.path.lowercased()
+            return path == "/shorts" || path.hasPrefix("/shorts/")
         }
     }
 

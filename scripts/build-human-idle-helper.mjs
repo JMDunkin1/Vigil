@@ -12,6 +12,7 @@ const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const outputDir = join(projectRoot, "dist", "runtime", "bin");
 const outputPath = join(outputDir, "vigil-human-idle");
 const minimumMacosVersion = "12.0";
+const releaseArchitectures = ["x86_64", "arm64"];
 
 if (process.platform !== "darwin") process.exit(0);
 
@@ -20,6 +21,7 @@ await mkdir(outputDir, { recursive: true });
 await execFileAsync(join(developerTools.bin, "clang"), [
   "-isysroot",
   developerTools.sdk,
+  ...releaseArchitectures.flatMap((architecture) => ["-arch", architecture]),
   "-x",
   "objective-c",
   join(projectRoot, "app", "vigil-human-idle.c"),
@@ -35,9 +37,12 @@ await execFileAsync(join(developerTools.bin, "clang"), [
   outputPath
 ]);
 const { stdout: loadCommands } = await execFileAsync(join(developerTools.bin, "otool"), ["-l", outputPath]);
-const builtMinimumVersion = loadCommands.match(/^\s+minos\s+(\S+)$/mu)?.[1];
-if (builtMinimumVersion !== minimumMacosVersion) {
-  throw new Error(`Expected ${outputPath} to target macOS ${minimumMacosVersion}, got ${builtMinimumVersion || "unknown"}.`);
+const builtMinimumVersions = [...loadCommands.matchAll(/^\s+minos\s+(\S+)$/gmu)].map((match) => match[1]);
+if (builtMinimumVersions.length !== releaseArchitectures.length || builtMinimumVersions.some((version) => version !== minimumMacosVersion)) {
+  throw new Error(`Expected every slice in ${outputPath} to target macOS ${minimumMacosVersion}, got ${builtMinimumVersions.join(", ") || "unknown"}.`);
+}
+for (const architecture of releaseArchitectures) {
+  await execFileAsync(join(developerTools.bin, "lipo"), [outputPath, "-verify_arch", architecture]);
 }
 await chmod(outputPath, 0o755);
 
@@ -65,8 +70,9 @@ async function resolveDeveloperTools() {
     if (checkedBins.has(candidate.bin)) continue;
     checkedBins.add(candidate.bin);
     const clang = join(candidate.bin, "clang");
+    const lipo = join(candidate.bin, "lipo");
     const otool = join(candidate.bin, "otool");
-    if (!existsSync(clang) || !existsSync(otool) || !existsSync(candidate.sdk)) continue;
+    if (!existsSync(clang) || !existsSync(lipo) || !existsSync(otool) || !existsSync(candidate.sdk)) continue;
     try {
       await execFileAsync(clang, ["--version"], { timeout: 5_000 });
       return candidate;

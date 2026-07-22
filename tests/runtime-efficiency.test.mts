@@ -1,9 +1,391 @@
 import assert from "node:assert/strict";
+import { performance } from "node:perf_hooks";
 import { defaultState } from "../src/defaults.js";
 import { hardeningDriftAttestationRequired } from "../src/integrityLockdown.js";
-import { MONITOR_PERSIST_INTERVAL_MS, Monitor, wifiEnvironmentObservationRequired } from "../src/monitor.js";
+import { queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
+import { hotUsageCheckpointFingerprint, hotUsageCheckpointRetryDelayMs, MONITOR_FULL_CHECKPOINT_INTERVAL_MS, MONITOR_HOT_CHECKPOINT_MAX_RETRY_MS, Monitor, monitorPollIntervalMs, wifiEnvironmentObservationRequired } from "../src/monitor.js";
 import { RuntimeMutationCoordinator } from "../src/server/mutationCoordinator.js";
 import type { UsageState } from "../src/types.js";
+import { recordUsage } from "../src/usage.js";
+
+assert.equal(defaultState().settings.pollIntervalMs, 15_000,
+  "event-driven app and browser enforcement must keep the omnibus recovery sweep off the legacy three-second cadence");
+assert.equal(monitorPollIntervalMs(15_000, true), 15_000,
+  "healthy activity acceleration should retain the efficient recovery cadence");
+assert.equal(monitorPollIntervalMs(15_000, false), 3_000,
+  "an unavailable activity source must restore the fast safety cadence");
+assert.equal(monitorPollIntervalMs(3_000, true), 3_000,
+  "an explicit three-second cadence must remain exact even when acceleration is healthy");
+assert.equal(hotUsageCheckpointRetryDelayMs(1), 30_000);
+assert.equal(hotUsageCheckpointRetryDelayMs(100), MONITOR_HOT_CHECKPOINT_MAX_RETRY_MS,
+  "persistent compact-checkpoint failures must use a capped retry cadence");
+
+{
+  const cadenceStartedAt = performance.now();
+  const monitor = new Monitor({
+    state: defaultState(),
+    usage: {},
+    startupSnapshotPersisted: true
+  });
+  assert.ok(
+    monitor.nextFullCheckpointAt >= cadenceStartedAt + MONITOR_FULL_CHECKPOINT_INTERVAL_MS,
+    "a startup snapshot that already folded recovered counters must defer the next full checkpoint"
+  );
+}
+
+{
+  const checkedAt = new Date("2026-07-21T12:00:00-04:00");
+  const state = defaultState();
+  const usage: UsageState = {};
+  const before = hotUsageCheckpointFingerprint(state, usage, checkedAt);
+  usage["2026-07-20"] = {
+    totalSeconds: 30,
+    apps: {},
+    sites: {},
+    opens: { apps: {}, sites: {} },
+    devices: {}
+  };
+  assert.notEqual(
+    hotUsageCheckpointFingerprint(state, usage, checkedAt),
+    before,
+    "the compact checkpoint fingerprint must retain a late previous-day counter change"
+  );
+}
+
+{
+  const monitor = new Monitor({ state: defaultState(), usage: {} });
+  const futureFullDeadline = performance.now() + 60_000;
+  const futureHotDeadline = performance.now() + 60_000;
+  monitor.nextFullCheckpointAt = futureFullDeadline;
+  monitor.nextHotCheckpointAt = futureHotDeadline;
+  let fullCheckpointRequested: boolean | null = null;
+  const wallNow = Date.now();
+  const originalDateNow = Date.now;
+  Date.now = () => wallNow + 10 * 365 * 24 * 60 * 60_000;
+  try {
+    await monitor.persistHotUsageCheckpoint(wallNow);
+    assert.equal(monitor.nextHotCheckpointAt, futureHotDeadline,
+      "a forward wall-clock jump must not bypass the monotonic hot-checkpoint deadline");
+    monitor.tick = async (forceCheckpoint = false) => {
+      fullCheckpointRequested = forceCheckpoint;
+      monitor.lastPollAt = wallNow;
+    };
+    monitor.hardeningDriftAttestationDue = () => false;
+    monitor.persistHotUsageCheckpoint = async () => {};
+    await monitor.runScheduledTick();
+  } finally {
+    Date.now = originalDateNow;
+  }
+  assert.equal(fullCheckpointRequested, false,
+    "wall-clock jumps must not turn a future monotonic full deadline into an immediate fold");
+
+  const backwardUsage: UsageState = {};
+  let backwardHotWrites = 0;
+  const backwardMonitor = new Monitor({
+    state: defaultState(),
+    usage: backwardUsage,
+    runtimeUsageCheckpointWriter: async () => {
+      backwardHotWrites += 1;
+      return {} as never;
+    },
+    runtimeUsageCheckpointLocation: { checkpointPath: "/unused/checkpoint", keyPath: "/unused/key" }
+  });
+  recordUsage(backwardUsage, { app: "Safari", hostname: "example.com" }, 1);
+  backwardMonitor.nextFullCheckpointAt = 0;
+  backwardMonitor.nextHotCheckpointAt = 0;
+  let backwardFullCheckpointRequested: boolean | null = null;
+  backwardMonitor.tick = async (forceCheckpoint = false) => {
+    backwardFullCheckpointRequested = forceCheckpoint;
+    backwardMonitor.lastPollAt = wallNow;
+  };
+  backwardMonitor.hardeningDriftAttestationDue = () => false;
+  const backwardDateNow = Date.now;
+  Date.now = () => -1;
+  try {
+    await backwardMonitor.persistHotUsageCheckpoint(wallNow);
+    backwardMonitor.persistHotUsageCheckpoint = async () => {};
+    await backwardMonitor.runScheduledTick();
+  } finally {
+    Date.now = backwardDateNow;
+  }
+  assert.equal(backwardHotWrites, 1,
+    "a backward wall-clock jump must not suppress a due compact checkpoint");
+  assert.equal(backwardFullCheckpointRequested, true,
+    "a backward wall-clock jump must not suppress a due full checkpoint");
+}
+
+{
+  const state = defaultState();
+  const usage: UsageState = {};
+  let fullSnapshotWrites = 0;
+  let compactAttempts = 0;
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async () => {
+    fullSnapshotWrites += 1;
+  });
+  const monitor = new Monitor({
+    state,
+    usage,
+    runtimeUsageCheckpointWriter: async () => {
+      compactAttempts += 1;
+      throw Object.assign(new Error("checkpoint path denied"), { code: "EACCES" });
+    },
+    runtimeUsageCheckpointLocation: { checkpointPath: "/unused/checkpoint", keyPath: "/unused/key" },
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+        operation(draftState, draftUsage, afterCommit, requestPersistence)
+      ),
+      options
+    )
+  });
+  recordUsage(usage, { app: "Safari", hostname: "example.com" }, 1);
+  monitor.nextHotCheckpointAt = 0;
+  await monitor.persistHotUsageCheckpoint(Date.now());
+  const firstRetryAt = monitor.nextHotCheckpointAt;
+  assert.equal(compactAttempts, 1);
+  assert.equal(fullSnapshotWrites, 1, "the first compact I/O failure must fold current counters once");
+  assert.ok(firstRetryAt >= performance.now() + 29_000,
+    "the first compact I/O failure must back off instead of retrying on the next 15-second pulse");
+
+  recordUsage(usage, { app: "Safari", hostname: "example.com" }, 1);
+  await monitor.persistHotUsageCheckpoint(Date.now());
+  assert.equal(compactAttempts, 1, "changed counters must respect compact-checkpoint backoff");
+  assert.equal(fullSnapshotWrites, 1, "backoff must prevent a 15-second full-snapshot storm");
+
+  monitor.nextHotCheckpointAt = 0;
+  recordUsage(usage, { app: "Safari", hostname: "example.com" }, 1);
+  await monitor.persistHotUsageCheckpoint(Date.now());
+  assert.equal(compactAttempts, 2);
+  assert.equal(fullSnapshotWrites, 2);
+  assert.ok(monitor.nextHotCheckpointAt >= performance.now() + 59_000,
+    "successive compact I/O failures must exponentially extend retry delay");
+  assert.equal(state.events.filter((event) => event.type === "runtime_usage_checkpoint_failed").length, 1,
+    "one persistent compact I/O incident must not append a new event on every retry");
+  coordinator.stopAdmission();
+  await coordinator.drain();
+}
+
+{
+  const state = defaultState();
+  const usage: UsageState = {};
+  let fullSnapshotWrites = 0;
+  let compactAttempts = 0;
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async () => {
+    fullSnapshotWrites += 1;
+  });
+  const monitor = new Monitor({
+    state,
+    usage,
+    runtimeUsageCheckpointWriter: async () => {
+      compactAttempts += 1;
+      if (compactAttempts === 1) throw Object.assign(new Error("temporary checkpoint error"), { code: "EIO" });
+      return {} as never;
+    },
+    runtimeUsageCheckpointLocation: { checkpointPath: "/unused/checkpoint", keyPath: "/unused/key" },
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+        operation(draftState, draftUsage, afterCommit, requestPersistence)
+      ),
+      options
+    )
+  });
+  recordUsage(usage, { app: "Safari", hostname: "example.com" }, 1);
+  monitor.nextHotCheckpointAt = 0;
+  await monitor.persistHotUsageCheckpoint(Date.now());
+  assert.equal(fullSnapshotWrites, 1);
+  monitor.nextHotCheckpointAt = 0;
+  await monitor.persistHotUsageCheckpoint(Date.now());
+  assert.equal(compactAttempts, 2,
+    "an idle runtime must probe the same checkpoint fingerprint after backoff");
+  assert.equal(fullSnapshotWrites, 1,
+    "a same-fingerprint recovery probe must not repeat the prior full fallback");
+  assert.equal(monitor.hotCheckpointFailureCount, 0);
+  assert.equal(monitor.status.componentHealth["runtime-usage-checkpoint"]?.state, "healthy");
+  coordinator.stopAdmission();
+  await coordinator.drain();
+}
+
+{
+  const state = defaultState();
+  const usage: UsageState = {};
+  const checkedAt = new Date();
+  const mdm = state.deviceControls.ios.mdm;
+  mdm.enabled = true;
+  mdm.devices = [{
+    id: "cancellation-device",
+    udid: "cancellation-udid",
+    status: "enrolled",
+    pushMagic: "push-magic",
+    token: "push-token",
+    tokenHex: Buffer.from("push-token").toString("hex")
+  }];
+  const originalBlockedApps = [...state.deviceControls.ios.blockedAppBundleIds];
+  const policyA = queueIosMdmPolicyRefresh(state, "policy-a", checkedAt);
+  if (!("profileQueued" in policyA)) throw new Error("Expected enabled MDM policy A queue result.");
+  assert.ok(policyA.profileQueued > 0);
+  for (const command of state.deviceControls.ios.mdm.commands) command.status = "sent";
+  state.deviceControls.ios.blockedAppBundleIds = [...originalBlockedApps, "com.example.policy-b"];
+  const policyB = queueIosMdmPolicyRefresh(state, "policy-b", new Date(checkedAt.getTime() + 1_000));
+  if (!("profileQueued" in policyB)) throw new Error("Expected enabled MDM policy B queue result.");
+  assert.ok(policyB.profileQueued > 0);
+  const staleCommand = state.deviceControls.ios.mdm.commands.find((command) => (
+    command.policyHash === policyB.policyHash && command.status === "queued"
+  ));
+  assert.ok(staleCommand);
+  const staleCommandId = staleCommand.id;
+  state.deviceControls.ios.blockedAppBundleIds = originalBlockedApps;
+
+  let snapshotWrites = 0;
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async () => {
+    snapshotWrites += 1;
+  });
+  const monitor = new Monitor({
+    state,
+    usage,
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+        operation(draftState, draftUsage, afterCommit, requestPersistence)
+      ),
+      options
+    )
+  });
+  await monitor.runMutation(async () => {
+    const result = monitor.syncIosMdmPolicy(checkedAt.getTime() + 2_000, "policy-returned-to-a");
+    if (!("profileQueued" in result)) throw new Error("Expected enabled MDM cancellation result.");
+    assert.equal(result.profileQueued, 0,
+      "returning to an already-sent policy should cancel the stale command without a replacement");
+  }, { persist: false });
+  assert.equal(state.deviceControls.ios.mdm.commands.find((command) => command.id === staleCommandId)?.status, "cancelled");
+  assert.equal(snapshotWrites, 1,
+    "a stale MDM command cancellation must persist even when no replacement is queued");
+  coordinator.stopAdmission();
+  await coordinator.drain();
+}
+
+{
+  const state = defaultState();
+  const usage: UsageState = {};
+  const checkedAt = new Date();
+  const mdm = state.deviceControls.ios.mdm;
+  mdm.enabled = true;
+  mdm.devices = [{
+    id: "cooldown-device",
+    udid: "cooldown-udid",
+    status: "enrolled",
+    pushMagic: "push-magic",
+    token: "push-token",
+    tokenHex: Buffer.from("push-token").toString("hex"),
+    lastPushAt: checkedAt.toISOString()
+  }];
+  let snapshotWrites = 0;
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async () => {
+    snapshotWrites += 1;
+  });
+  const monitor = new Monitor({
+    state,
+    usage,
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+        operation(draftState, draftUsage, afterCommit, requestPersistence)
+      ),
+      options
+    )
+  });
+  await monitor.runMutation(async () => {
+    const queued = monitor.syncIosMdmPolicy(checkedAt.getTime());
+    assert.ok(Number(queued.queued) > 0);
+    const pushed = await monitor.pushIosMdmPolicy(checkedAt.getTime());
+    assert.equal(pushed.skipped, "no-queued-devices");
+  }, { persist: false });
+  assert.equal(snapshotWrites, 1,
+    "new MDM commands must persist once even when cooldown suppresses the no-op push effect");
+  coordinator.stopAdmission();
+  await coordinator.drain();
+}
+
+{
+  const state = defaultState();
+  const usage: UsageState = {};
+  const checkedAt = new Date();
+  state.settings.focusShortcutEnabled = true;
+  state.activeSession = {
+    id: "current-focus-shortcut",
+    title: "Current focus shortcut",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: new Date(checkedAt.getTime() - 1_000).toISOString(),
+    endsAt: new Date(checkedAt.getTime() + 60_000).toISOString(),
+    canEndEarly: false,
+    source: "manual"
+  };
+  state.focusShortcut.active = true;
+  state.focusShortcut.desiredActive = true;
+  state.deviceControls.ios.mdm.enabled = true;
+  state.deviceControls.ios.mdm.devices = [];
+  state.deviceControls.ios.mdm.commands = [];
+  let snapshotWrites = 0;
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async () => {
+    snapshotWrites += 1;
+  });
+  const monitor = new Monitor({
+    state,
+    usage,
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+        operation(draftState, draftUsage, afterCommit, requestPersistence)
+      ),
+      options
+    )
+  });
+  await monitor.runMutation(async () => {
+    const focus = await monitor.syncFocusShortcut(checkedAt.getTime());
+    const mdm = await monitor.pushIosMdmPolicy(checkedAt.getTime());
+    assert.equal(focus.changed, false);
+    assert.equal(mdm.skipped, "no-queued-devices");
+  }, { persist: false });
+  assert.equal(snapshotWrites, 0,
+    "already-current Focus and empty MDM checks must not enqueue no-op durable snapshots");
+  coordinator.stopAdmission();
+  await coordinator.drain();
+}
+
+{
+  const state = defaultState();
+  const usage: UsageState = {};
+  let snapshotWrites = 0;
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async () => {
+    snapshotWrites += 1;
+  });
+  const monitor = new Monitor({
+    state,
+    usage,
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+        operation(draftState, draftUsage, afterCommit, requestPersistence)
+      ),
+      options
+    )
+  });
+  monitor.tick = async (forceCheckpoint = false) => {
+    monitor.lastPollAt = Date.now();
+    if (forceCheckpoint) monitor.activePersistenceRequest?.();
+  };
+  monitor.hardeningDriftAttestationDue = () => true;
+  monitor.runHardeningDriftPhase = async () => { throw new Error("hardening probe failed"); };
+  monitor.persistHotUsageCheckpoint = async () => {};
+  await monitor.runScheduledTick();
+  assert.equal(snapshotWrites, 2,
+    "the first failed hardening pass includes one full fold and one durable failure receipt");
+  assert.ok(monitor.nextFullCheckpointAt > performance.now(),
+    "a committed full fold must advance its deadline before later hardening work fails");
+
+  monitor.hardeningDriftAttestationDue = () => false;
+  await monitor.runScheduledTick();
+  assert.equal(snapshotWrites, 2,
+    "a post-fold hardening failure must not make the next recovery poll repeat the full fold");
+  coordinator.stopAdmission();
+  await coordinator.drain();
+}
 
 {
   const state = defaultState();
@@ -28,6 +410,17 @@ import type { UsageState } from "../src/types.js";
   assert.equal(state.environment.wifiSsid, "safety-critical-monitor");
   assert.equal(snapshotWrites, 1, "a mutation must be able to promote a safety-critical result to a durable snapshot");
 
+  const writesBeforeNoop = snapshotWrites;
+  await coordinator.run(async () => {});
+  assert.equal(snapshotWrites, writesBeforeNoop, "a no-op mutation must not rewrite the sealed runtime generation");
+
+  await coordinator.run(async ({ state: draftState }) => {
+    draftState.environment.wifiError = "unmarked mutation";
+  });
+  assert.equal(snapshotWrites, writesBeforeNoop + 1,
+    "change detection must retain the default durability safety net for unmarked mutations");
+
+  const writesBeforeEffect = snapshotWrites;
   await coordinator.run(async ({ afterCommit }) => {
     afterCommit(
       async () => ({ ok: true }),
@@ -35,8 +428,173 @@ import type { UsageState } from "../src/types.js";
     );
   }, { persist: false });
 
-  assert.equal(snapshotWrites >= 4, true, "a monitor cycle with an external effect must remain durable through intent, running, and completion commits");
+  assert.equal(snapshotWrites - writesBeforeEffect, 2,
+    "a successful durable effect needs only the pending-intent and atomic completion snapshots");
   assert.equal(coordinator.pendingEffects().length, 0);
+  coordinator.stopAdmission();
+  await coordinator.drain();
+}
+
+{
+  const checkedAt = new Date();
+  const state = defaultState();
+  const usage: UsageState = {};
+  state.activeSession = {
+    id: "durable-clock-alarm",
+    title: "Durable clock alarm",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    startedAt: new Date(checkedAt.getTime() - 60_000).toISOString(),
+    endsAt: new Date(checkedAt.getTime() + 20 * 60_000).toISOString(),
+    canEndEarly: false,
+    source: "manual"
+  };
+  let snapshotWrites = 0;
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async () => { snapshotWrites += 1; });
+  const monitor = new Monitor({
+    state,
+    usage,
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+        operation(draftState, draftUsage, afterCommit, requestPersistence)
+      ),
+      options
+    )
+  });
+
+  await monitor.runMutation(async () => {
+    monitor.checkClockTamper(checkedAt.getTime() + 10 * 60_000, checkedAt.getTime(), 1_000, 4_000);
+  }, { persist: false });
+  assert.equal(snapshotWrites, 1, "a newly detected clock-tamper lockdown must be durable immediately");
+  await monitor.runMutation(async () => {
+    monitor.checkClockTamper(checkedAt.getTime() + 11 * 60_000, checkedAt.getTime(), 1_000, 4_000);
+  }, { persist: false });
+  assert.equal(snapshotWrites, 1, "an existing clock-tamper alarm must not rewrite the same snapshot every poll");
+  coordinator.stopAdmission();
+  await coordinator.drain();
+}
+
+{
+  const state = defaultState();
+  const usage: UsageState = {};
+  state.integrity.runtime.appleContentFilterArmedAt = new Date().toISOString();
+  state.integrity.runtime.appleContentFilterArmedLockId = "finished-lock";
+  state.integrity.runtime.appleContentFilterArmedLockIds = ["finished-lock"];
+  let snapshotWrites = 0;
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async () => { snapshotWrites += 1; });
+  const monitor = new Monitor({
+    state,
+    usage,
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+        operation(draftState, draftUsage, afterCommit, requestPersistence)
+      ),
+      options
+    )
+  });
+
+  await monitor.runMutation(() => monitor.refreshAppleContentFilterLockdown(Date.now()), { persist: false });
+  assert.equal(snapshotWrites, 1, "clearing obsolete Apple-filter arm evidence must persist once");
+  await monitor.runMutation(() => monitor.refreshAppleContentFilterLockdown(Date.now()), { persist: false });
+  assert.equal(snapshotWrites, 1, "unchanged Apple-filter state must not restore periodic full writes");
+  coordinator.stopAdmission();
+  await coordinator.drain();
+}
+
+{
+  const state = defaultState();
+  const usage: UsageState = {};
+  state.limitRules = [{
+    id: "durable-monitor-limit",
+    name: "Durable monitor limit",
+    enabled: true,
+    type: "time",
+    lockLevel: "deep",
+    days: [0, 1, 2, 3, 4, 5, 6],
+    apps: ["Safari"],
+    sites: [],
+    limitMinutes: 1,
+    unlocksAllowed: 0,
+    blockMinutes: 30
+  }];
+  recordUsage(usage, { app: "Safari", hostname: "" }, 61);
+  let snapshotWrites = 0;
+  let persistedLimitBlocks = 0;
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async (snapshotState) => {
+    snapshotWrites += 1;
+    persistedLimitBlocks = snapshotState.limitBlocks.length;
+  });
+  const monitor = new Monitor({
+    state,
+    usage,
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+        operation(draftState, draftUsage, afterCommit, requestPersistence)
+      ),
+      options
+    )
+  });
+
+  await monitor.runMutation(async () => { monitor.policyForTarget({ app: "Safari", hostname: "", url: "" }); }, { persist: false });
+  assert.equal(snapshotWrites, 1, "a monitor-created protective limit block must persist immediately");
+  assert.equal(persistedLimitBlocks, 1);
+  await monitor.runMutation(async () => { monitor.policyForTarget({ app: "Safari", hostname: "", url: "" }); }, { persist: false });
+  assert.equal(snapshotWrites, 1, "re-evaluating an existing limit block must not trigger another snapshot");
+  coordinator.stopAdmission();
+  await coordinator.drain();
+}
+
+{
+  const checkedAt = new Date();
+  const state = defaultState();
+  const usage: UsageState = {};
+  let fullSnapshotFingerprint = "";
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async (snapshotState, snapshotUsage) => {
+    fullSnapshotFingerprint = hotUsageCheckpointFingerprint(snapshotState, snapshotUsage, checkedAt);
+  });
+  const monitor = new Monitor({
+    state,
+    usage,
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit, requestPersistence }) => (
+        operation(draftState, draftUsage, afterCommit, requestPersistence)
+      ),
+      options
+    )
+  });
+  monitor.tick = async () => {
+    monitor.lastPollAt = checkedAt.getTime();
+    recordUsage(monitor.usage, { app: "Safari", hostname: "example.com" }, 1, checkedAt);
+  };
+  monitor.hardeningDriftAttestationDue = () => true;
+  let releaseHardening = () => {};
+  const hardeningGate = new Promise<void>((resolve) => { releaseHardening = resolve; });
+  let markHardeningStarted = () => {};
+  const hardeningStarted = new Promise<void>((resolve) => { markHardeningStarted = resolve; });
+  monitor.runHardeningDriftPhase = async () => {
+    markHardeningStarted();
+    await hardeningGate;
+  };
+  let forcedHotComparison = false;
+  monitor.persistHotUsageCheckpoint = async (now, options = {}) => {
+    assert.equal(options.force, true);
+    assert.equal(monitor.lastHotCheckpointFingerprint, fullSnapshotFingerprint,
+      "the hot baseline must describe the exact draft included in the full snapshot");
+    assert.notEqual(hotUsageCheckpointFingerprint(state, usage, new Date(now)), fullSnapshotFingerprint,
+      "a concurrent sparse counter mutation must remain visible after slow hardening");
+    forcedHotComparison = true;
+  };
+
+  const ticking = monitor.runScheduledTick();
+  await hardeningStarted;
+  await coordinator.run(async ({ usage: draftUsage }) => {
+    recordUsage(draftUsage, { app: "Safari", hostname: "example.com" }, 1, checkedAt);
+  }, { persist: false });
+  releaseHardening();
+  await ticking;
+  assert.equal(forcedHotComparison, true,
+    "a full checkpoint must immediately compare live hot counters after slow hardening");
   coordinator.stopAdmission();
   await coordinator.drain();
 }
@@ -146,8 +704,8 @@ import type { UsageState } from "../src/types.js";
   await monitor.runScheduledTick();
   await monitor.runScheduledTick();
 
-  assert.deepEqual(persistenceRequests, [true, false], "the monitor must persist its first heartbeat and batch subsequent polls");
-  assert.equal(MONITOR_PERSIST_INTERVAL_MS, 30_000, "batched persistence must remain well inside the runtime-gap safety window");
+  assert.deepEqual(persistenceRequests, [true, false], "the monitor must fold its first checkpoint and batch subsequent polls");
+  assert.equal(MONITOR_FULL_CHECKPOINT_INTERVAL_MS, 15 * 60_000, "full state compaction must stay off the former 30-second cadence");
 }
 
 {
@@ -279,7 +837,7 @@ import type { UsageState } from "../src/types.js";
       }
     }, options)
   });
-  monitor.nextPersistenceAt = Date.now() + MONITOR_PERSIST_INTERVAL_MS;
+  monitor.nextFullCheckpointAt = performance.now() + MONITOR_FULL_CHECKPOINT_INTERVAL_MS;
   monitor.recordElapsedUsage = async () => {};
   monitor.refreshSafetyRails = async () => {
     order.push("safety");
@@ -358,7 +916,6 @@ import type { UsageState } from "../src/types.js";
       return { ok: true };
     });
   };
-  monitor.persistHeartbeat = async () => { order.push("persist"); };
   monitor.enforceSystemSleepLock = async (_now, options = {}) => {
     assert.equal(mutationActive, true);
     assert.equal(options.force, true);
@@ -408,7 +965,7 @@ import type { UsageState } from "../src/types.js";
   await attestationStarted;
   assert.deepEqual(effectStarts, ["sleep-lock", "redirect", "process-sweep"],
     "the real coordinator must commit and start every core enforcement effect before slow attestation");
-  assert.deepEqual(order, ["safety", "front", "enforce-before-attestation", "background", "persist", "attestation-start"],
+  assert.deepEqual(order, ["safety", "front", "enforce-before-attestation", "background", "attestation-start"],
     "core enforcement must commit and dispatch before a slow fresh Chrome profile attestation");
   assert.equal(tickFinished, false);
 
@@ -437,7 +994,6 @@ import type { UsageState } from "../src/types.js";
     "front",
     "enforce-before-attestation",
     "background",
-    "persist",
     "attestation-start",
     "attestation-end",
     "fresh-front",
@@ -459,7 +1015,7 @@ import type { UsageState } from "../src/types.js";
     "mdm-push"
   ], "all fail-closed side effects must be published before waiting for a later poll");
   assert.equal(attestationPhaseSnapshots, 1,
-    "a newly detected lockdown must request one durable snapshot even between heartbeat cadence writes");
+    "a newly detected lockdown must request one durable snapshot between full checkpoint folds");
   assert.equal(coordinator.pendingEffects().length, 0);
   coordinator.stopAdmission();
   await coordinator.drain();

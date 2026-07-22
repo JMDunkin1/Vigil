@@ -17,8 +17,10 @@
     "package:mac": "node scripts/prepare-mac-output.mjs && node scripts/package-mac.mjs dir && node scripts/hide-mac-build.mjs",
     "dist:mac": "npm run build && npm run package:mac:dmg",
     "package:mac:dmg": "node scripts/prepare-mac-output.mjs && node scripts/package-mac.mjs dmg && node scripts/hide-mac-build.mjs",
-    "build:mac:signed": "npm run build && node scripts/prepare-mac-output.mjs && electron-builder --mac dir && node scripts/hide-mac-build.mjs",
-    "dist:mac:signed": "npm run build && node scripts/prepare-mac-output.mjs && electron-builder --mac dmg && node scripts/hide-mac-build.mjs",
+    "package:extension": "npm run build && node scripts/package-browser-extension.mjs",
+    "package:extension:release": "npm run build && node scripts/package-browser-extension.mjs --release",
+    "build:mac:signed": "npm run build && node scripts/prepare-mac-output.mjs && node scripts/package-mac-signed.mjs dir --universal && node scripts/hide-mac-build.mjs",
+    "dist:mac:signed": "npm run build && node scripts/prepare-mac-output.mjs && node scripts/package-mac-signed.mjs dmg --universal && node scripts/hide-mac-build.mjs",
     "release:mac": "npm run build && node scripts/prepare-mac-output.mjs && node scripts/release-mac.mjs",
     "start": "npm run build && node dist/runtime/src/server.js",
     "dev": "node --watch --watch-preserve-output --watch-path=app --watch-path=src --watch-path=public --watch-path=extension --watch-path=scripts --watch-path=tsconfig.json --watch-path=package.json scripts/dev.mjs",
@@ -97,12 +99,26 @@
       "dist.nosync/runtime/extension/**/*",
       "dist.nosync/runtime/bin/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "build/PrivacyInfo.xcprivacy",
+        "to": "PrivacyInfo.xcprivacy"
+      },
+      {
+        "from": "build/browser-store.json",
+        "to": "browser-store.json"
+      }
+    ],
+    "afterPack": "scripts/after-pack.mjs",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
       "sign": "scripts/sign-mac.mjs",
       "extendInfo": {
-        "LSUIElement": true
+        "LSUIElement": true,
+        "NSCameraUsageDescription": "Scan a Vigil distance-key QR code when you choose Scan.",
+        "NSAppleEventsUsageDescription": "Control supported apps and Focus shortcuts only when you enable those Vigil protections."
       },
       "target": [
         "dir"

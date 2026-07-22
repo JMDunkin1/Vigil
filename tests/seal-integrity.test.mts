@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultState } from "../src/defaults.js";
 import { resolveDefaultDataDir } from "../src/store.js";
-import { stateDigest, verifyStateTextSeal, writeStateTextSeal } from "../src/seal.js";
+import { protectedStateSnapshot, stateDigest, verifyStateTextSeal, writeStateTextSeal } from "../src/seal.js";
 import { sourceManifestText, sourceSealStatus, writeSourceSeal } from "../src/sourceSeal.js";
 
 const now = new Date("2026-05-28T14:00:00-04:00");
@@ -61,6 +62,23 @@ assert.equal(
   }
 }
 
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stableText(value: unknown): string {
+  return JSON.stringify(stableValue(value));
+}
+
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(record).sort().map((key) => [key, stableValue(record[key])]));
+}
+
 {
   const dir = await mkdtemp(join(tmpdir(), "vigil-seal-"));
   try {
@@ -89,7 +107,6 @@ assert.equal(
 
     const bookkeepingChange = structuredClone(state);
     bookkeepingChange.events.unshift({ id: "event", type: "note", detail: {}, at: now.toISOString() });
-    bookkeepingChange.integrity.runtime.lastHeartbeatAt = new Date(now.getTime() + 1000).toISOString();
     const bookkeepingText = `${JSON.stringify(bookkeepingChange, null, 2)}\n`;
     const bookkeepingVerification = await verifyStateTextSeal(bookkeepingText, { keyPath, sealPath });
     assert.equal(bookkeepingVerification.ok, true);
@@ -104,6 +121,23 @@ assert.equal(
     runtimeThresholdChange.settings.runtimeGapLockdownSeconds = 999999;
     const runtimeThresholdText = `${JSON.stringify(runtimeThresholdChange, null, 2)}\n`;
     assert.equal((await verifyStateTextSeal(runtimeThresholdText, { keyPath, sealPath })).status, "mismatch");
+
+    const continuityEvidenceChange = structuredClone(state);
+    continuityEvidenceChange.integrity.runtime.lastInterruptionId = "forged-interruption-id";
+    const continuityEvidenceText = `${JSON.stringify(continuityEvidenceChange, null, 2)}\n`;
+    assert.equal((await verifyStateTextSeal(continuityEvidenceText, { keyPath, sealPath })).status, "mismatch");
+
+    const functionalCounterChange = structuredClone(state);
+    functionalCounterChange.functionalEvents.dailyBlockCounts["2026-05-28"] = 12;
+    functionalCounterChange.functionalEvents.blockAttempts.push({
+      at: now.toISOString(),
+      type: "blocked_site",
+      targetType: "site",
+      targetLabel: "example.com"
+    });
+    const functionalCounterText = `${JSON.stringify(functionalCounterChange, null, 2)}\n`;
+    assert.equal((await verifyStateTextSeal(functionalCounterText, { keyPath, sealPath })).status, "mismatch",
+      "functional counters that drive intervention friction must be protected by the state seal");
 
     const clockThresholdChange = structuredClone(state);
     clockThresholdChange.settings.clockTamperLockdownSeconds = 999999;
@@ -130,6 +164,17 @@ assert.equal(
     focusedSocialChange.deviceControls.ios.focusedSocial.enabled = false;
     const focusedSocialText = `${JSON.stringify(focusedSocialChange, null, 2)}\n`;
     assert.equal((await verifyStateTextSeal(focusedSocialText, { keyPath, sealPath })).status, "mismatch");
+
+    const manageEngineEvidenceChange = structuredClone(state);
+    manageEngineEvidenceChange.deviceControls.ios.manageEngineGeneration = {
+      version: 1,
+      generatedAt: now.toISOString(),
+      generation: "forged-generation",
+      profileHash: "a".repeat(64)
+    };
+    const manageEngineEvidenceText = `${JSON.stringify(manageEngineEvidenceChange, null, 2)}\n`;
+    assert.equal((await verifyStateTextSeal(manageEngineEvidenceText, { keyPath, sealPath })).status, "mismatch",
+      "ManageEngine readiness evidence must be protected by the state seal");
 
     const safariHistoryChange = structuredClone(state);
     safariHistoryChange.deviceControls.ios.allowSafariHistoryClearing = false;
@@ -169,6 +214,28 @@ assert.equal(
     const grayscaleMigrationVerification = await verifyStateTextSeal(text, { keyPath, sealPath });
     assert.equal(grayscaleMigrationVerification.ok, true);
     assert.equal(grayscaleMigrationVerification.status, "trusted-migration");
+
+    const preCurrentReleaseState = structuredClone(state);
+    delete (preCurrentReleaseState as Partial<typeof preCurrentReleaseState>).functionalEvents;
+    delete (preCurrentReleaseState.integrity.runtime as Partial<typeof preCurrentReleaseState.integrity.runtime>).lastInterruptionId;
+    delete (preCurrentReleaseState.integrity.runtime as Partial<typeof preCurrentReleaseState.integrity.runtime>).lastInterruptionObservedAt;
+    delete (preCurrentReleaseState.deviceControls.ios as Partial<typeof preCurrentReleaseState.deviceControls.ios>).manageEngineGeneration;
+    const preCurrentReleaseText = `${JSON.stringify(preCurrentReleaseState, null, 2)}\n`;
+    const preCurrentReleaseSeal = await writeStateTextSeal(preCurrentReleaseText, { keyPath, sealPath, scope: "state" }, now.toISOString());
+    const legacySnapshot = protectedStateSnapshot(state as unknown as Record<string, unknown>);
+    delete legacySnapshot.functionalEvents;
+    const legacyRuntime = recordValue(recordValue(legacySnapshot.integrity).runtime);
+    delete legacyRuntime.lastInterruptionId;
+    delete legacyRuntime.lastInterruptionObservedAt;
+    delete recordValue(recordValue(legacySnapshot.deviceControls).ios).manageEngineGeneration;
+    const sealKey = (await readFile(keyPath, "utf8")).trim();
+    preCurrentReleaseSeal.protectedDigest = createHmac("sha256", sealKey)
+      .update(stableText(legacySnapshot), "utf8")
+      .digest("hex");
+    await writeFile(sealPath, `${JSON.stringify(preCurrentReleaseSeal, null, 2)}\n`);
+    const currentReleaseMigrationVerification = await verifyStateTextSeal(text, { keyPath, sealPath });
+    assert.equal(currentReleaseMigrationVerification.ok, true);
+    assert.equal(currentReleaseMigrationVerification.status, "trusted-migration");
 
     const preActiveSessionsState = structuredClone(state);
     delete (preActiveSessionsState as Partial<typeof preActiveSessionsState>).activeSessions;

@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseBrowserActivityWake, parseHumanActivitySample } from "../src/macos.js";
+import { parseBrowserActivityWake, parseBrowserActivityWatchHeartbeat, parseHumanActivitySample } from "../src/macos.js";
 
 if (process.platform === "darwin") {
   const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -29,6 +29,7 @@ if (process.platform === "darwin") {
   const samples = lines.map((line) => parseHumanActivitySample(line)).filter(Boolean);
   assert.equal(samples.length, 1, "watch/unwatch commands must not be mistaken for idle-sample requests");
   for (const line of lines) {
-    assert.ok(parseHumanActivitySample(line) || parseBrowserActivityWake(line), `unexpected helper record: ${line}`);
+    assert.ok(parseHumanActivitySample(line) || parseBrowserActivityWake(line) || parseBrowserActivityWatchHeartbeat(line),
+      `unexpected helper record: ${line}`);
   }
 }

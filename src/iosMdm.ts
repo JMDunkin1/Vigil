@@ -571,6 +571,15 @@ export async function pushIosMdmQueuedCommands(state: VigilState, reason = "queu
   return summary;
 }
 
+export function iosMdmQueuedPushEligible(
+  state: VigilState,
+  now = new Date(),
+  options: PushOptions = {}
+): boolean {
+  const mdm = currentIosMdmSettings(state);
+  return Boolean(mdm.enabled && devicesWithQueuedCommands(mdm, now, options).length);
+}
+
 export function buildIosMdmPushRequest(mdm: MdmSettings, device: MdmDevice): MdmPushRequest {
   const tokenHex = tokenHexFromDevice(device);
   if (!tokenHex) throw new Error("Missing APNs device token from MDM TokenUpdate.");

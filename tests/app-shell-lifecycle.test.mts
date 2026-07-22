@@ -142,18 +142,13 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function embeddedRuntimeSupervisorScript[\s\S]*?runtime-ready\.json[\s\S]*?kill -0 "\$pid"[\s\S]*?\/usr\/bin\/open -g "\$app_path" --args \$\{BACKGROUND_LAUNCH_ARG\} \$\{SAFETY_BOUNDARY_ARG\}/,
-  "the launchd supervisor must watch the embedded runtime PID and reopen the packaged app in the background after a crash"
+  /import \{[^}]*buildRuntimeSupervisorScript[^}]*\} from "\.\.\/src\/runtimeReady\.js";/,
+  "the packaged app must use the shared, validated runtime-supervisor protocol"
 );
 assert.match(
   mainSource,
-  /function embeddedRuntimeSupervisorScript[\s\S]*?\/bin\/ps -p "\$pid" -o command=[\s\S]*?"\$command" != "\$executable_path"[\s\S]*?\/bin\/rm -f "\$ready"[\s\S]*?\/usr\/bin\/open -g/,
-  "the launchd supervisor must reject reused PIDs that do not belong to Vigil and clear their stale readiness record"
-);
-assert.match(
-  mainSource,
-  /\/bin\/rm -f "\$ready"\s*if \[\[ ! -e "\$marker" \]\]; then\s*break\s*fi\s*\/usr\/bin\/open -g/,
-  "the launchd supervisor must recheck its marker immediately before reopening Vigil"
+  /function embeddedRuntimeSupervisorScript\(markerPath: string\): string \{[\s\S]*?return buildRuntimeSupervisorScript\(\{[\s\S]*?markerPath,[\s\S]*?dataDir: appDataDir\(\),[\s\S]*?executablePath: process\.execPath,[\s\S]*?backgroundLaunchArg: BACKGROUND_LAUNCH_ARG,[\s\S]*?safetyBoundaryArg: SAFETY_BOUNDARY_ARG[\s\S]*?\}\);/,
+  "the installed and integrity-expected supervisors must be generated from identical inputs"
 );
 const stopOwnedRuntimeStart = mainSource.indexOf("async function stopOwnedRuntime");
 const stopOwnedRuntimeEnd = mainSource.indexOf("\n}", stopOwnedRuntimeStart);
@@ -214,8 +209,8 @@ assert.doesNotMatch(requestDrainSource, /stopAdmission\(\)/,
   "request grace expiry must not close global admission before browser enforcement drains");
 assert.match(
   serverSource,
-  /const requestAdmission = requestMutationAdmission;[\s\S]*?requestMutationCoordinator\.run\([\s\S]*?\}, \{ admission: requestAdmission \}\);/,
-  "each request mutation must retain its admission generation so recovery cannot revive an expired request"
+  /const requestAdmission = requestMutationAdmission;[\s\S]*?requestMutationCoordinator\.run\([\s\S]*?admission: requestAdmission,[\s\S]*?requestDefersRoutinePersistence\(method, path\)[\s\S]*?persist: false/,
+  "each request mutation must retain its admission generation while routine extension telemetry may explicitly defer persistence"
 );
 assert.match(
   serverSource,
@@ -224,7 +219,7 @@ assert.match(
 );
 assert.equal(
   serverSource.match(/requestMutationCoordinator\.run\(/gu)?.length || 0,
-  serverSource.match(/\}, \{ admission: requestAdmission \}\);/gu)?.length || 0,
+  serverSource.match(/\badmission:\s*requestAdmission\b/gu)?.length || 0,
   "every request-originated coordinator mutation must use the captured request admission scope"
 );
 assert.match(
@@ -372,19 +367,29 @@ assert.doesNotMatch(
   "reusing a development server must not create a second in-memory enforcement runtime"
 );
 const runtimeStartIndex = mainSource.indexOf("await ensureVigilRuntime(appUpdateController)");
-const protocolInstallIndex = mainSource.indexOf("installInAppProtocol()", runtimeStartIndex);
+const interruptionReadIndex = mainSource.indexOf("await readRuntimeInterruption(appDataDir())", runtimeStartIndex);
+const invalidInterruptionPreservationIndex = mainSource.indexOf('runtimeInterruption.status === "invalid"', interruptionReadIndex);
+const interruptionAcknowledgementIndex = mainSource.indexOf('runtimeInterruption.status === "valid"', invalidInterruptionPreservationIndex);
+const protocolInstallIndex = mainSource.indexOf("installInAppProtocol()", interruptionAcknowledgementIndex);
 const menuInstallIndex = mainSource.indexOf("installMenu(appUrl)", protocolInstallIndex);
 const trayInstallIndex = mainSource.indexOf("installMenuBarCompanion(appUrl)", menuInstallIndex);
 const windowInitializationIndex = mainSource.indexOf("showVigilWindow(appUrl)", trayInstallIndex);
 const runtimeReadyIndex = mainSource.indexOf("await markRuntimeReady(appDataDir(), process.execPath)", windowInitializationIndex);
+const startupCompleteIndex = mainSource.indexOf("startupComplete = true", runtimeReadyIndex);
+const interruptionClearIndex = mainSource.indexOf("await clearRuntimeInterruption(appDataDir(), acknowledgedRuntimeInterruption.id)", startupCompleteIndex);
 assert.ok(
   runtimeStartIndex >= 0
-    && protocolInstallIndex > runtimeStartIndex
+    && interruptionReadIndex > runtimeStartIndex
+    && invalidInterruptionPreservationIndex > interruptionReadIndex
+    && interruptionAcknowledgementIndex > invalidInterruptionPreservationIndex
+    && protocolInstallIndex > interruptionAcknowledgementIndex
     && menuInstallIndex > protocolInstallIndex
     && trayInstallIndex > menuInstallIndex
     && windowInitializationIndex > trayInstallIndex
-    && runtimeReadyIndex > windowInitializationIndex,
-  "runtime readiness must follow protocol, menu, tray, and optional window initialization"
+    && runtimeReadyIndex > windowInitializationIndex
+    && startupCompleteIndex > runtimeReadyIndex
+    && interruptionClearIndex > startupCompleteIndex,
+  "runtime readiness must follow initialization and clear only interruption evidence already persisted by successful startup"
 );
 assert.match(
   mainSource,

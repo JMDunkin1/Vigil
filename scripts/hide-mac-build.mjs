@@ -11,18 +11,19 @@ const launchServicesRegister = "/System/Library/Frameworks/CoreServices.framewor
 if (process.platform === "darwin") await unregisterMacBuild(projectRoot);
 
 export async function unregisterMacBuild(root) {
-  const outputFolder = process.arch === "arm64" ? "mac-arm64" : "mac";
-  const appPath = join(root, "dist", "mac.noindex", outputFolder, "Vigil.app");
-  try {
-    await access(appPath);
+  const outputFolders = ["mac-universal", process.arch === "arm64" ? "mac-arm64" : "mac"];
+  for (const outputFolder of outputFolders) {
+    const appPath = join(root, "dist", "mac.noindex", outputFolder, "Vigil.app");
     try {
-      await execFileAsync(launchServicesRegister, ["-u", await realpath(appPath)]);
-    } catch {
-      // A .noindex build is normally absent from Launch Services already.
+      await access(appPath);
+      try {
+        await execFileAsync(launchServicesRegister, ["-u", await realpath(appPath)]);
+      } catch {
+        // A .noindex build is normally absent from Launch Services already.
+      }
+    } catch (error) {
+      if (!isMissing(error)) throw error;
     }
-  } catch (error) {
-    if (isMissing(error)) return;
-    throw error;
   }
 }
 

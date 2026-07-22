@@ -65,6 +65,26 @@ const embeddedSupervisorPlist = `
   </dict></plist>
   `;
 const embeddedSupervisorScript = embeddedSupervisorExpectedScript(embeddedSupervisorExpectation);
+assert.match(embeddedSupervisorScript, /runtime-interruption\.json/, "the packaged supervisor must preserve an event-driven interruption receipt");
+assert.doesNotMatch(embeddedSupervisorScript, /kill -0/, "the supervisor must observe process identity without probe signals");
+assert.match(embeddedSupervisorScript, /ready_loaded=false[\s\S]*?if \[\[ "\$ready_loaded" == true \]\]; then[\s\S]*?ready_loaded=true/, "healthy supervisor polls must reuse the validated immutable readiness identity");
+const embeddedHealthyContinue = embeddedSupervisorScript.indexOf('/bin/sleep 2\n    continue');
+const embeddedPreserveCall = embeddedSupervisorScript.indexOf('if ! preserve_interruption "$pid" "$started_at" "$reason"');
+const embeddedRecoveryOpen = embeddedSupervisorScript.indexOf('/usr/bin/open -g "$app_path"', embeddedPreserveCall);
+const embeddedPreserveRetry = embeddedSupervisorScript.indexOf('/bin/sleep 2\n        continue', embeddedRecoveryOpen);
+const embeddedReadyRemoval = embeddedSupervisorScript.indexOf('/bin/rm -f "$ready"', embeddedPreserveCall);
+const embeddedMarkerRecheck = embeddedSupervisorScript.indexOf('if [[ ! -e "$marker" ]]', embeddedReadyRemoval);
+const embeddedReopen = embeddedSupervisorScript.indexOf('/usr/bin/open -g "$app_path"', embeddedMarkerRecheck);
+assert.ok(
+  embeddedHealthyContinue >= 0
+    && embeddedPreserveCall > embeddedHealthyContinue
+    && embeddedRecoveryOpen > embeddedPreserveCall
+    && embeddedPreserveRetry > embeddedRecoveryOpen
+    && embeddedReadyRemoval > embeddedPreserveRetry
+    && embeddedMarkerRecheck > embeddedReadyRemoval
+    && embeddedReopen > embeddedMarkerRecheck,
+  "healthy polls must stay write-free, stale evidence must precede deletion, and evidence failures must not prevent relaunch"
+);
 const healthyEmbeddedSupervisor = {
   markerActive: true,
   script: embeddedSupervisorScript,

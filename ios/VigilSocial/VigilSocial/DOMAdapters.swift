@@ -1,7 +1,22 @@
 import Foundation
 
 enum DOMAdapters {
-    static let contentFilterBootstrap = #"""
+    static var contentFilterBootstrap: String {
+        contentFilterBootstrap(for: .conceal)
+    }
+
+    static func contentFilterBootstrap(for unclassifiedMediaPolicy: UnclassifiedMediaPolicy) -> String {
+        let unclassifiedMediaCSS = unclassifiedMediaPolicy.concealsUnclassifiedMedia ? #"""
+        canvas, object, embed, input[type="image"],
+        svg image, svg foreignObject { visibility: hidden !important; }
+        *, *::before, *::after {
+          background-image: none !important;
+          border-image-source: none !important;
+          list-style-image: none !important;
+        }
+        """# : ""
+        let policy = unclassifiedMediaPolicy.rawValue
+        return #"""
     (() => {
       if (window.__vigilContentBootstrapInstalled) return;
       window.__vigilContentBootstrapInstalled = true;
@@ -11,15 +26,7 @@ enum DOMAdapters {
         img, video {
           filter: blur(32px) !important;
         }
-        canvas, svg, object, embed, input[type="image"] { visibility: hidden !important; }
-        *, *::before, *::after {
-          background-image: none !important;
-          border-image-source: none !important;
-          list-style-image: none !important;
-          -webkit-mask-image: none !important;
-          mask-image: none !important;
-          content: normal !important;
-        }
+        UNCLASSIFIED_MEDIA_CSS
         [data-vigil-media-verdict="safe"] { filter: none !important; }
         [data-vigil-media-verdict="sensitive"] {
           filter: blur(48px) !important;
@@ -31,27 +38,84 @@ enum DOMAdapters {
         }
       `;
       (document.head || document.documentElement).appendChild(style);
+      document.documentElement.dataset.vigilUnclassifiedMediaPolicy = 'UNCLASSIFIED_MEDIA_POLICY';
       document.documentElement.dataset.vigilPageVerdict = 'unknown';
     })();
     """#
-
-    static func preflightScript(for service: SocialService) -> String? {
-        guard service == .snapchat else { return nil }
-        return #"""
-        (() => {
-          const define = (target, key, value) => {
-            try { Object.defineProperty(target, key, { configurable: true, get: () => value }); } catch (_) {}
-          };
-          define(Navigator.prototype, 'platform', 'MacIntel');
-          define(Navigator.prototype, 'vendor', 'Google Inc.');
-          define(Navigator.prototype, 'maxTouchPoints', 0);
-          define(Navigator.prototype, 'webdriver', false);
-        })();
-        """#
+            .replacingOccurrences(of: "UNCLASSIFIED_MEDIA_CSS", with: unclassifiedMediaCSS)
+            .replacingOccurrences(of: "UNCLASSIFIED_MEDIA_POLICY", with: policy)
     }
 
     static func script(for service: SocialService, audioEnabled: Bool) -> String {
-        common(audioEnabled: audioEnabled) + serviceScript(service)
+        common(audioEnabled: audioEnabled) + lockdownProbe(service) + serviceScript(service)
+    }
+
+    private static func lockdownProbe(_ service: SocialService) -> String {
+        let probePath: String
+        let serviceDomain: String
+        switch service {
+        case .instagram:
+            probePath = "/reels/?__vigil_policy_probe__=1"
+            serviceDomain = "instagram.com"
+        case .youtube:
+            probePath = "/feed/explore?__vigil_policy_probe__=1"
+            serviceDomain = "youtube.com"
+        }
+        return #"""
+        (() => {
+          if (window.__vigilPolicyProbeInstalled) return;
+          window.__vigilPolicyProbeInstalled = true;
+          let request = 0;
+          const publish = (tier) => {
+            if (!['normal', 'soft'].includes(tier)) return;
+            if (document.documentElement.dataset.vigilPolicyTier === tier) return;
+            document.documentElement.dataset.vigilPolicyTier = tier;
+            document.dispatchEvent(new CustomEvent('__vigilPolicyTierChanged', { detail: { tier } }));
+          };
+          const probe = async () => {
+            const current = ++request;
+            if (!navigator.onLine) { publish('soft'); return; }
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 6000);
+            try {
+              const requestedURL = new URL('PROBE_PATH', location.href);
+              const response = await fetch(requestedURL.href, {
+                method: 'HEAD',
+                cache: 'no-store',
+                credentials: 'same-origin',
+                redirect: 'follow',
+                signal: controller.signal
+              });
+              let responseURL = null;
+              try { responseURL = response.url ? new URL(response.url) : null; } catch (_) {}
+              const responseHost = String(responseURL?.hostname || '').toLowerCase();
+              const isServiceHost = responseHost === 'SERVICE_DOMAIN'
+                || responseHost.endsWith('.SERVICE_DOMAIN');
+              const accepted = response.ok
+                && response.status >= 200 && response.status < 300
+                && responseURL !== null
+                && responseURL.protocol === 'https:'
+                && isServiceHost
+                && responseURL.pathname === requestedURL.pathname
+                && responseURL.searchParams.get('__vigil_policy_probe__') === '1';
+              if (current === request) publish(accepted ? 'normal' : 'soft');
+            } catch (_) {
+              // The managed device filter rejects this Level 2-only URL before
+              // it reaches the service. Network uncertainty fails restrictive.
+              if (current === request) publish('soft');
+            } finally {
+              clearTimeout(timeout);
+            }
+          };
+          publish('soft');
+          probe();
+          addEventListener('online', probe);
+          addEventListener('focus', probe);
+          setInterval(probe, 15000);
+        })();
+        """#
+            .replacingOccurrences(of: "PROBE_PATH", with: probePath)
+            .replacingOccurrences(of: "SERVICE_DOMAIN", with: serviceDomain)
     }
 
     private static func common(audioEnabled: Bool) -> String {
@@ -263,7 +327,6 @@ enum DOMAdapters {
         switch service {
         case .instagram: instagram
         case .youtube: youtube
-        case .snapchat: snapchat
         }
     }
 
@@ -277,9 +340,28 @@ enum DOMAdapters {
       style.textContent = `
         a[href^="/shorts"], a[href*="youtube.com/shorts"],
         ytm-reel-shelf-renderer, ytd-reel-shelf-renderer,
+        ytm-reel-item-renderer, ytd-reel-video-renderer,
+        ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2,
+        [is-shorts], ytd-rich-section-renderer:has(a[href*="/shorts"]),
         ytm-pivot-bar-item-renderer:has(a[href*="/shorts"]),
         ytd-guide-entry-renderer:has(a[href*="/shorts"]),
         ytm-rich-section-renderer:has(a[href*="/shorts"]) {
+          display: none !important;
+        }
+        html[data-vigil-policy-tier="soft"] a[href*="/feed/explore"],
+        html[data-vigil-policy-tier="soft"] a[href*="/feed/trending"],
+        html[data-vigil-policy-tier="soft"] ytm-related-item-section-renderer,
+        html[data-vigil-policy-tier="soft"] ytm-watch-next-secondary-results-renderer,
+        html[data-vigil-policy-tier="soft"] ytm-promoted-sparkles-web-renderer,
+        html[data-vigil-policy-tier="soft"] ytm-companion-ad-renderer,
+        html[data-vigil-policy-tier="soft"] [data-is-ad="true"] {
+          display: none !important;
+        }
+        html[data-vigil-policy-tier="soft"][data-vigil-youtube-home="true"] ytm-rich-grid-renderer,
+        html[data-vigil-policy-tier="soft"][data-vigil-youtube-home="true"] ytm-browse {
+          visibility: hidden !important;
+        }
+        [data-vigil-soft-hidden="true"] {
           display: none !important;
         }
       `;
@@ -290,7 +372,8 @@ enum DOMAdapters {
         if (!link) return;
         try {
           const target = new URL(link.href, location.href);
-          if (target.pathname.startsWith('/shorts')) {
+          const path = target.pathname.toLowerCase();
+          if (path === '/shorts' || path.startsWith('/shorts/')) {
             event.preventDefault();
             event.stopImmediatePropagation();
             window.__vigilBridge({
@@ -302,6 +385,27 @@ enum DOMAdapters {
         } catch (_) {}
       };
       document.addEventListener('click', blockShorts, true);
+
+      const enforceShortsLocation = () => {
+        const path = location.pathname.toLowerCase();
+        if (path !== '/shorts' && !path.startsWith('/shorts/')) return;
+        window.__vigilBridge({
+          type: 'health',
+          state: 'degraded',
+          detail: 'YouTube Shorts is intentionally unavailable.'
+        });
+        location.replace('/');
+      };
+      for (const name of ['pushState', 'replaceState']) {
+        const original = history[name];
+        history[name] = function(...args) {
+          const result = original.apply(this, args);
+          queueMicrotask(enforceShortsLocation);
+          return result;
+        };
+      }
+      addEventListener('popstate', enforceShortsLocation);
+      enforceShortsLocation();
 
       let attachedVideo = null;
       let lastSavedAt = 0;
@@ -351,7 +455,10 @@ enum DOMAdapters {
       };
 
       const reconcile = () => {
-        document.querySelectorAll('a[href^="/shorts"], a[href*="youtube.com/shorts"], ytm-reel-shelf-renderer, ytd-reel-shelf-renderer')
+        document.documentElement.dataset.vigilYoutubeHome = String(location.pathname === '/' || location.pathname === '');
+        document.querySelectorAll('[data-vigil-soft-hidden="true"]')
+          .forEach((node) => node.removeAttribute('data-vigil-soft-hidden'));
+        document.querySelectorAll('a[href^="/shorts"], a[href*="youtube.com/shorts"], ytm-reel-shelf-renderer, ytd-reel-shelf-renderer, ytm-reel-item-renderer, ytd-reel-video-renderer, ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2, [is-shorts]')
           .forEach((node) => {
             const container = node.closest('ytm-pivot-bar-item-renderer, ytm-pivot-bar-item, ytd-guide-entry-renderer, [role="tab"]') || node;
             container.style.setProperty('display', 'none', 'important');
@@ -359,7 +466,20 @@ enum DOMAdapters {
         document.querySelectorAll('ytm-pivot-bar-item-renderer, ytm-pivot-bar-item, [role="tab"]').forEach((node) => {
           const label = String(node.textContent || node.getAttribute('aria-label') || '').trim().toLowerCase();
           if (label === 'shorts' || label.startsWith('shorts ')) node.style.setProperty('display', 'none', 'important');
+          if (document.documentElement.dataset.vigilPolicyTier === 'soft'
+              && (label === 'explore' || label === 'trending')) {
+            node.dataset.vigilSoftHidden = 'true';
+          }
         });
+        if (document.documentElement.dataset.vigilPolicyTier === 'soft') {
+          document.querySelectorAll('ytm-promoted-sparkles-web-renderer, ytm-companion-ad-renderer, ytm-item-section-renderer, ytm-rich-item-renderer')
+            .forEach((node) => {
+              const label = String(node.textContent || node.getAttribute('aria-label') || '').trim().toLowerCase();
+              if (label.includes('sponsored') || label.includes('suggested for you')) {
+                node.dataset.vigilSoftHidden = 'true';
+              }
+            });
+        }
         attachPlayback();
       };
       let reconcileScheduled = false;
@@ -373,6 +493,7 @@ enum DOMAdapters {
       };
       reconcile();
       new MutationObserver(scheduleReconcile).observe(document.documentElement, { childList: true, subtree: true });
+      document.addEventListener('__vigilPolicyTierChanged', scheduleReconcile);
 
       const reportHealth = () => {
         const text = String(document.body?.innerText || '').toLowerCase();
@@ -380,7 +501,7 @@ enum DOMAdapters {
           window.__vigilBridge({
             type: 'health',
             state: 'unsupported',
-            detail: 'Google rejected embedded WebKit sign-in. This authentication path is not verified; Level 1 restores the native YouTube app.'
+            detail: 'Google rejected embedded WebKit sign-in. This authentication path is unavailable in the YouTube companion.'
           });
           return;
         }
@@ -391,7 +512,7 @@ enum DOMAdapters {
             type: 'health',
             state: 'degraded',
             detail: signIn
-              ? 'YouTube is signed out. Embedded Google sign-in may be rejected; if that happens, use native YouTube in Level 1.'
+              ? 'YouTube is signed out. Google may reject embedded WebKit sign-in for this companion.'
               : 'YouTube has not loaded a usable subscription or video surface yet.'
           });
           return;
@@ -416,64 +537,36 @@ enum DOMAdapters {
           max-width: none !important;
           min-width: 0 !important;
         }
-        html, body { overflow-x: hidden !important; touch-action: pan-y pinch-zoom; }
+        html, body { max-width: 100% !important; touch-action: pan-x pan-y pinch-zoom; }
         article { max-width: min(100vw, 680px) !important; margin-inline: auto !important; }
-      `;
-      document.documentElement.appendChild(style);
-      window.__vigilBridge({ type: 'health', state: 'ready', detail: '' });
-    })();
-    """#
-
-    private static let snapchat = #"""
-    (() => {
-      if (window.__vigilSnapchatInstalled) return;
-      window.__vigilSnapchatInstalled = true;
-
-      const style = document.createElement('style');
-      style.id = 'vigil-snapchat-style';
-      style.textContent = `
-        a[href*="/spotlight"], a[href*="/stories"],
-        [data-testid*="spotlight" i], [data-testid*="stories" i],
-        [aria-label*="Spotlight" i], [aria-label*="Stories" i] {
+        html[data-vigil-policy-tier="soft"] a[href^="/reel"],
+        html[data-vigil-policy-tier="soft"] a[href^="/reels"],
+        html[data-vigil-policy-tier="soft"] a[href^="/explore"],
+        html[data-vigil-policy-tier="soft"] a[href^="/shop"],
+        html[data-vigil-policy-tier="soft"] a[href^="/shopping"],
+        html[data-vigil-policy-tier="soft"] a[href^="/live"],
+        html[data-vigil-policy-tier="soft"] [aria-label="Reels" i],
+        html[data-vigil-policy-tier="soft"] [aria-label="Explore" i] {
+          display: none !important;
+        }
+        [data-vigil-soft-hidden="true"] {
           display: none !important;
         }
       `;
       document.documentElement.appendChild(style);
 
       const reconcile = () => {
-        document.querySelectorAll('a[href*="/spotlight"], a[href*="/stories"], [data-testid*="spotlight" i], [data-testid*="stories" i], [aria-label*="Spotlight" i], [aria-label*="Stories" i]')
-          .forEach((node) => { node.style.setProperty('display', 'none', 'important'); });
-      };
-
-      document.addEventListener('click', (event) => {
-        const link = event.target?.closest?.('a[href]');
-        if (!link) return;
-        const href = String(link.getAttribute('href') || '').toLowerCase();
-        if (href.includes('/spotlight') || href.includes('/stories')) {
-          event.preventDefault();
-          event.stopImmediatePropagation();
-        }
-      }, true);
-
-      const reportHealth = () => {
-        const text = String(document.body?.innerText || '').toLowerCase();
-        const unsupported = /browser (isn't|is not) supported|unsupported browser|use snapchat on your computer|only available on desktop|download snapchat/.test(text);
-        if (unsupported) {
-          window.__vigilBridge({
-            type: 'health',
-            state: 'unsupported',
-            detail: 'Snapchat rejected its experimental desktop web client. Level 1 restores the native app; public iOS APIs cannot remove Spotlight or Stories inside that native app.'
+        document.querySelectorAll('[data-vigil-soft-hidden="true"]')
+          .forEach((node) => node.removeAttribute('data-vigil-soft-hidden'));
+        if (document.documentElement.dataset.vigilPolicyTier !== 'soft') return;
+        document.querySelectorAll('article, div[role="presentation"], div[role="button"]')
+          .forEach((node) => {
+            const label = String(node.textContent || node.getAttribute('aria-label') || '').trim().toLowerCase();
+            if (!label.includes('sponsored') && !label.includes('suggested for you')) return;
+            const container = node.closest('article') || node;
+            container.dataset.vigilSoftHidden = 'true';
           });
-          return;
-        }
-        const recognizable = document.querySelector('canvas, video, nav, [role="navigation"], input[type="password"]');
-        window.__vigilBridge({
-          type: 'health',
-          state: recognizable ? 'ready' : 'degraded',
-          detail: recognizable ? '' : 'Snapchat web is experimental and has not reached a recognized login or chat screen yet.'
-        });
       };
-
       let reconcileScheduled = false;
       const scheduleReconcile = () => {
         if (reconcileScheduled) return;
@@ -485,8 +578,9 @@ enum DOMAdapters {
       };
       reconcile();
       new MutationObserver(scheduleReconcile).observe(document.documentElement, { childList: true, subtree: true });
-      setTimeout(reportHealth, 1500);
-      setTimeout(reportHealth, 8000);
+      document.addEventListener('__vigilPolicyTierChanged', scheduleReconcile);
+      window.__vigilBridge({ type: 'health', state: 'ready', detail: '' });
     })();
     """#
+
 }

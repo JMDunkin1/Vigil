@@ -1,15 +1,65 @@
 import assert from "node:assert/strict";
 import { ADULT_BLOCKLIST_SOURCES, clearAdultBlocklistCacheForTest, setAdultBlocklistDomainsForTest } from "../src/adultBlocklist.js";
-import { BRICK_MODE_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
-import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDeviceUsageCredential, iosMdmDoctor, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
-import { IOS_APP_STORE_BUNDLE_ID, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER, buildIosConfigurationProfile, buildIosSocialLauncherProfile, iosProfileSummary } from "../src/iosProfiles.js";
-import { IOS_SOCIAL_COMPANION_BUNDLE_IDS } from "../src/socialFeatureFilters.js";
+import { BRICK_MODE_PROFILE_ID, IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS, PANIC_LOCK_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
+import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDeviceUsageCredential, iosMdmDoctor, iosMdmQueuedPushEligible, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
+import { IOS_APP_STORE_BUNDLE_ID, IOS_PANIC_ALLOWED_APP_BUNDLE_IDS, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER, buildIosConfigurationProfile, iosProfileSummary } from "../src/iosProfiles.js";
+import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS } from "../src/socialFeatureFilters.js";
 import { activeLimitPolicy } from "../src/limits.js";
 import { parsePlist, plistData, toPlist } from "../src/plist.js";
-import { profileById } from "../src/policy.js";
+import { panicLockProfile, profileById } from "../src/policy.js";
 import type { UsageState } from "../src/types.js";
 import { syncDeviceUsageSnapshot } from "../src/usage.js";
 import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
+
+{
+  const state = defaultState();
+  const mdm = state.deviceControls.ios.mdm;
+  const eligibleAt = new Date("2026-07-21T12:00:00.000Z");
+  mdm.devices = [{
+    id: "eligible-device",
+    udid: "eligible-udid",
+    status: "enrolled",
+    pushMagic: "push-magic",
+    token: "push-token",
+    tokenHex: Buffer.from("push-token").toString("hex")
+  }];
+  mdm.commands = [{
+    id: "eligible-command",
+    commandUuid: "eligible-command-uuid",
+    udid: "eligible-udid",
+    requestType: "DeviceInformation",
+    command: { RequestType: "DeviceInformation" },
+    reason: "eligibility-test",
+    status: "queued",
+    queuedAt: eligibleAt.toISOString(),
+    sentAt: null,
+    completedAt: null,
+    attempts: 0
+  }];
+  const before = structuredClone(state);
+
+  assert.equal(iosMdmQueuedPushEligible(state, eligibleAt), false, "disabled MDM must not schedule a queued push");
+  mdm.enabled = true;
+  assert.equal(iosMdmQueuedPushEligible(state, eligibleAt), true, "an enrolled device with a queued command is push-eligible");
+  assert.equal(iosMdmQueuedPushEligible(state, eligibleAt, { udids: ["other-udid"] }), false, "the push UDID filter must be exact");
+  assert.equal(iosMdmQueuedPushEligible(state, eligibleAt, { udids: ["eligible-udid"] }), true);
+
+  mdm.devices[0]!.lastPushAt = new Date(eligibleAt.getTime() - 29_999).toISOString();
+  assert.equal(iosMdmQueuedPushEligible(state, eligibleAt), false, "the normal push cooldown must suppress an otherwise eligible device");
+  assert.equal(iosMdmQueuedPushEligible(state, eligibleAt, { force: true }), true, "forced pushes must bypass the cooldown");
+  mdm.devices[0]!.lastPushAt = new Date(eligibleAt.getTime() - 30_000).toISOString();
+  assert.equal(iosMdmQueuedPushEligible(state, eligibleAt), true, "a device is eligible exactly at the cooldown boundary");
+
+  mdm.commands[0]!.status = "sent";
+  assert.equal(iosMdmQueuedPushEligible(state, eligibleAt), false, "only queued commands select a device for APNs push");
+  mdm.commands[0]!.status = "queued";
+  mdm.devices[0]!.status = "checked-out";
+  assert.equal(iosMdmQueuedPushEligible(state, eligibleAt, { force: true }), false, "checked-out devices must never be push-selected");
+
+  const disabledProbeState = structuredClone(before);
+  iosMdmQueuedPushEligible(disabledProbeState, eligibleAt);
+  assert.deepEqual(disabledProbeState, before, "the eligibility probe must not normalize or mutate live MDM state");
+}
 
 {
   const state = defaultState();
@@ -25,8 +75,8 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.match(enabledProfile, /com\.burbn\.instagram/);
   assert.match(enabledProfile, /com\.google\.ios\.youtube/);
   assert.match(enabledProfile, /com\.toyopagroup\.picaboo/);
-  assert.match(enabledProfile, /com\.google\.chrome\.ios/);
-  assert.match(enabledProfile, /org\.mozilla\.ios\.Firefox/);
+  assert.doesNotMatch(enabledProfile, /com\.google\.chrome\.ios/);
+  assert.doesNotMatch(enabledProfile, /org\.mozilla\.ios\.Firefox/);
   assert.doesNotMatch(enabledProfile, /Vigil Instagram/);
   assert.doesNotMatch(enabledProfile, /Vigil YouTube/);
   assert.doesNotMatch(enabledProfile, /Vigil Snapchat/);
@@ -42,7 +92,8 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.equal(enabledRestrictions?.allowUIAppInstallation, true);
   assert.equal(enabledRestrictions?.allowEraseContentAndSettings, true);
   assert.ok(Array.isArray(enabledRestrictions?.blockedAppBundleIDs));
-  assert.ok((enabledRestrictions?.blockedAppBundleIDs as unknown[]).includes("com.google.chrome.ios"));
+  assert.equal((enabledRestrictions?.blockedAppBundleIDs as unknown[]).includes("com.google.chrome.ios"), false, "browsers must stay available behind the managed web filter");
+  assert.equal(IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS.some((bundleId) => (enabledRestrictions?.blockedAppBundleIDs as unknown[]).includes(bundleId)), false);
   assert.equal(enabledRestrictions?.allowListedAppBundleIDs, undefined);
   assert.equal(enabledRestrictions?.allowUIConfigurationProfileInstallation, false);
   assert.equal(enabledRestrictions?.allowVPNCreation, false);
@@ -55,24 +106,11 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.equal(levelOneDeniedUrls.includes("https://snapchat.com/spotlight"), true);
   assert.equal(levelOneDeniedUrls.includes("https://snapchat.com/stories"), true);
   assert.equal(levelOneDeniedUrls.includes("https://pornhub.com/"), true);
+  assert.equal(levelOneDeniedUrls.includes("https://www.google.com/search?q=porn"), true);
+  assert.equal(levelOneDeniedUrls.includes("https://duckduckgo.com/?q=nsfw"), true);
   assert.equal(webClipPayloads(enabledParsed).length, 0, "dynamic enforcement profile must not own launcher icons");
-  const launcherProfileText = buildIosSocialLauncherProfile();
-  const launcherParsed = recordValue(parsePlist(launcherProfileText), "social launcher profile");
-  assert.equal(launcherParsed.PayloadIdentifier, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER);
-  assert.equal(launcherParsed.DurationUntilRemoval, undefined);
-  const enabledWebClips = webClipPayloads(launcherParsed);
-  assert.deepEqual(enabledWebClips.map((payload) => stringValue(payload.Label, "web clip label")).sort(), ["Instagram", "Snapchat", "YouTube"]);
-  for (const payload of enabledWebClips) {
-    assert.equal(payload.PayloadDisplayName, payload.Label);
-    assert.equal(payload.Precomposed, true);
-    const service = String(payload.Label || "").toLowerCase() as keyof typeof IOS_SOCIAL_COMPANION_BUNDLE_IDS;
-    assert.equal(payload.TargetApplicationBundleIdentifier, IOS_SOCIAL_COMPANION_BUNDLE_IDS[service]);
-    const icon = recordValue(payload.Icon, "web clip icon data");
-    assert.equal(typeof icon.__plistData, "string");
-    assert.ok(String(icon.__plistData).length > 500, "web clip should include embedded PNG icon data");
-  }
   const enabledSummary = iosProfileSummary(state, now);
-  assert.equal(enabledSummary.profile.appBundleCount, 20);
+  assert.equal(enabledSummary.profile.appBundleCount, 10);
   assert.ok(enabledSummary.profile.deniedUrlCount > 0);
   assert.equal(enabledSummary.profile.enforcementActive, false);
   assert.equal(enabledSummary.profile.protectionActive, true);
@@ -82,13 +120,19 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.equal(enabledSummary.profile.focusedSocial.nativeAppBundleCount, 0);
   assert.equal(enabledSummary.profile.webClipCount, 0);
   assert.equal(enabledSummary.profile.focusedSocial.webClipCount, 0);
-  assert.equal(enabledSummary.launcherProfile.webClipCount, 3);
-  assert.equal(enabledSummary.launcherProfile.durationUntilRemoval, false);
+  assert.equal(enabledSummary.companionApps.appCount, 2);
+  assert.deepEqual(enabledSummary.companionApps.labels, ["Instagram", "YouTube"]);
+  assert.deepEqual(enabledSummary.companionApps.bundleIds, Object.values(IOS_SOCIAL_COMPANION_BUNDLE_IDS));
+  assert.deepEqual(enabledSummary.companionApps.apps, IOS_SOCIAL_COMPANION_APPS.map((app) => ({ ...app })));
+  assert.equal(enabledSummary.launcherProfile.identifier, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER);
+  assert.equal(enabledSummary.launcherProfile.retired, true);
+  assert.equal(enabledSummary.launcherProfile.webClipCount, 0);
   assert.equal(enabledSummary.profile.focusedSocialEnforcementActive, false);
   assert.equal(enabledSummary.appStoreAllowedByThisProfile, true);
   assert.equal(enabledSummary.appStoreRestrictionKeysEmitted, false);
   assert.equal(enabledSummary.protection.appWorkaroundsClosed, true);
   assert.equal(enabledSummary.protection.allAppsHidden, false);
+  assert.equal(enabledSummary.protection.explicitSearchesBlocked, true);
   assert.equal(enabledSummary.protection.explicitSearchTermCount, 22);
   assert.equal(enabledSummary.manageEngine.deliveryProvider, "manageengine");
   assert.equal(enabledSummary.manageEngine.preferred, true);
@@ -96,9 +140,6 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   const enabledParsedAgain = recordValue(parsePlist(buildIosConfigurationProfile(state, now)), "repeat enabled phone profile");
   assert.equal(enabledParsedAgain.PayloadUUID, enabledParsed.PayloadUUID);
   assert.deepEqual(payloadUuidMap(enabledParsedAgain), payloadUuidMap(enabledParsed));
-  const launcherParsedAgain = recordValue(parsePlist(buildIosSocialLauncherProfile()), "repeat social launcher profile");
-  assert.equal(launcherParsedAgain.PayloadUUID, launcherParsed.PayloadUUID);
-  assert.deepEqual(payloadUuidMap(launcherParsedAgain), payloadUuidMap(launcherParsed));
 
   state.activeSessions.phone = {
     id: "phone-strict",
@@ -147,7 +188,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.match(softPhoneProfile, /snapchat\.com\/spotlight/);
   assert.match(softPhoneProfile, /story\.snapchat\.com/);
   const softPhoneSummary = iosProfileSummary(state, now);
-  assert.equal(softPhoneSummary.profile.focusedSocial.nativeAppBundleCount, 3);
+  assert.equal(softPhoneSummary.profile.focusedSocial.nativeAppBundleCount, 2);
   assert.equal(softPhoneSummary.profile.focusedSocialEnforcementActive, true);
   assert.equal(softPhoneSummary.appStoreAllowedByThisProfile, true);
   assert.doesNotMatch(softPhoneProfile, /allowAppInstallation/);
@@ -186,7 +227,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   state.activeSessions.phone = null;
   const contextReleasedProfile = buildIosConfigurationProfile(state, now);
   assert.match(contextReleasedProfile, /blockedAppBundleIDs/);
-  assert.match(contextReleasedProfile, /com\.google\.chrome\.ios/);
+  assert.doesNotMatch(contextReleasedProfile, /com\.google\.chrome\.ios/);
   assert.match(contextReleasedProfile, /DenyListURLs/);
   assert.match(contextReleasedProfile, /youtube\.com\/shorts/);
   assert.doesNotMatch(contextReleasedProfile, /<string>https:\/\/youtube\.com\/<\/string>/);
@@ -206,9 +247,11 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   const limitOnlyParsed = recordValue(parsePlist(limitOnlyProfile), "limit-only phone profile");
   const limitOnlyRestrictions = profilePayload(limitOnlyParsed, "com.apple.applicationaccess");
   assert.ok((limitOnlyRestrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.google.ios.youtube"));
-  assert.ok((limitOnlyRestrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.google.chrome.ios"));
+  assert.equal((limitOnlyRestrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.google.chrome.ios"), false);
   const limitOnlyWebFilter = profilePayload(limitOnlyParsed, "com.apple.webcontent-filter");
   assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://youtube.com/"));
+  assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://www.google.com/search?q=porn"), "standalone time limits must preserve permanent explicit-search protection");
+  assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://youtube.com/shorts"), "standalone time limits must preserve permanent Shorts protection");
   assert.match(limitOnlyProfile, /com\.burbn\.instagram/);
   state.limitBlocks = [];
   assert.equal(activeLimitPolicy(state, phoneUsage, { app: "com.google.ios.youtube", hostname: "youtube.com", device: "phone" }, now), null);
@@ -229,6 +272,36 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
     const summary = iosProfileSummary(state, now);
     assert.equal(summary.protection.knownSiteDomainCount, 5, "phone count must describe only adult domains embedded in its profile");
     assert.notEqual(summary.protection.knownSiteDomainCount, 300, "phone count must not reuse the full desktop blocklist count");
+  } finally {
+    clearAdultBlocklistCacheForTest();
+  }
+}
+
+{
+  const state = defaultState();
+  state.deviceControls.ios.enabled = true;
+  state.settings.adultBlocklistPreloadLimit = 500;
+  const policyUrls = Array.from({ length: 30 }, (_, index) => `https://policy-priority-${index}.example.test/path`);
+  const userUrls = Array.from({ length: 500 }, (_, index) => `https://user-priority-${index}.example.test/path`);
+  const baseline = profileById(state, state.settings.baselineProfileId);
+  assert.ok(baseline);
+  baseline.blockedUrlPatterns.push(...policyUrls);
+  state.deviceControls.ios.deniedUrls = userUrls;
+  setAdultBlocklistDomainsForTest(
+    Array.from({ length: 500 }, (_, index) => `adult-priority-${index}.bulk.test`),
+    ADULT_BLOCKLIST_SOURCES[0]
+  );
+  try {
+    const parsed = recordValue(parsePlist(buildIosConfigurationProfile(state, now)), "capped deny-list profile");
+    const webFilter = profilePayload(parsed, "com.apple.webcontent-filter");
+    const deniedUrls = webFilter?.DenyListURLs as unknown[] | undefined;
+    assert.ok(Array.isArray(deniedUrls));
+    assert.equal(deniedUrls.length, 500, "Apple's built-in web filter deny list must never exceed 500 URLs");
+    assert.equal(deniedUrls.includes("https://www.google.com/search?q=porn"), true, "permanent explicit-search protection must have first priority");
+    assert.equal(deniedUrls.includes("https://youtube.com/shorts"), true, "permanent default protection must have first priority");
+    assert.equal(deniedUrls.includes(policyUrls.at(-1)), true, "policy URLs must be retained ahead of user and bulk adult entries");
+    assert.equal(deniedUrls.includes(userUrls[0]), true, "user-configured URLs must be retained ahead of the bulk adult preload");
+    assert.equal(deniedUrls.includes("https://adult-priority-0.bulk.test/"), false, "bulk adult entries must yield when higher-priority protections fill Apple's limit");
   } finally {
     clearAdultBlocklistCacheForTest();
   }
@@ -258,19 +331,19 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
 
   const summary = iosProfileSummary(state, now);
   assert.equal(summary.profile.enforcementActive, true);
-  assert.equal(summary.profile.appBundleCount, 20);
+  assert.equal(summary.profile.appBundleCount, 10);
   assert.ok(summary.profile.deniedUrlCount > 0);
   assert.equal(summary.profile.allowedUrlCount, 0);
 
   const parsed = recordValue(parsePlist(buildIosConfigurationProfile(state, now)), "allowlist baseline limit-only profile");
   const restrictions = profilePayload(parsed, "com.apple.applicationaccess");
   assert.ok((restrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.google.ios.youtube"));
-  assert.ok((restrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.google.chrome.ios"));
+  assert.equal((restrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.google.chrome.ios"), false);
   assert.equal(restrictions?.allowListedAppBundleIDs, undefined);
   const webFilter = profilePayload(parsed, "com.apple.webcontent-filter");
   assert.ok((webFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://youtube.com/"));
   assert.equal(webFilter?.AllowListBookmarks, undefined);
-  assert.equal((webFilter?.DenyListURLs as unknown[]).includes("https://baseline-denied.test/"), false);
+  assert.equal((webFilter?.DenyListURLs as unknown[]).includes("https://baseline-denied.test/"), true, "standalone time limits must preserve configured permanent URL blocks");
 }
 
 {
@@ -309,7 +382,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.ok(Array.isArray(webFilter.DenyListURLs), "custom Shorts profile should include denied URLs");
   assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts"), true);
   assert.equal(webFilter.DenyListURLs.includes("https://www.youtube.com/shorts"), true);
-  assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts/"), false);
+  assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts/"), true, "permanent Shorts variants must survive custom profile snapshots");
 }
 
 {
@@ -331,7 +404,8 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   };
   const summary = iosProfileSummary(state, now);
   assert.equal(summary.profile.webClipCount, 0);
-  assert.equal(summary.launcherProfile.webClipCount, 3);
+  assert.equal(summary.launcherProfile.webClipCount, 0);
+  assert.equal(summary.companionApps.appCount, 2);
   assert.equal(summary.appStoreAllowedByThisProfile, true);
   const profile = buildIosConfigurationProfile(state, now);
   const parsedProfile = recordValue(parsePlist(profile), "brick web clip profile");
@@ -354,6 +428,80 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts"), true);
   assert.equal(webFilter.DenyListURLs.includes("https://instagram.com/"), true);
   assert.equal(webFilter.SafariHistoryRetentionEnabled, false);
+}
+
+{
+  const state = defaultState();
+  state.deviceControls.ios.enabled = true;
+  state.deviceControls.ios.blockApps = false;
+  state.deviceControls.ios.blockWeb = false;
+  state.deviceControls.ios.allowedAppBundleIds = [
+    "com.apple.AppStore",
+    "com.google.chrome.ios",
+    "com.google.ios.youtube",
+    IOS_SOCIAL_COMPANION_BUNDLE_IDS.instagram,
+    IOS_SOCIAL_COMPANION_BUNDLE_IDS.youtube
+  ];
+  state.deviceControls.ios.allowedUrls = [
+    "https://instagram.com/",
+    "https://youtube.com/"
+  ];
+  state.panicLock = {
+    id: "phone-panic-lockout",
+    title: "Panic Lockout",
+    mode: "panic",
+    profileId: PANIC_LOCK_PROFILE_ID,
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 3 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    commitmentLock: true,
+    emergencyUnlocksAllowed: false,
+    source: "panic",
+    fullLockout: true,
+    profileSnapshot: panicLockProfile()
+  };
+
+  const summary = iosProfileSummary(state, now);
+  assert.equal(summary.profile.enforcementActive, true);
+  assert.equal(summary.profile.appBundleCount, IOS_PANIC_ALLOWED_APP_BUNDLE_IDS.length);
+  assert.equal(summary.profile.allowedUrlCount, 4);
+  assert.equal(summary.profile.deniedUrlCount, 0);
+  assert.equal(summary.protection.allAppsHidden, true);
+  assert.equal(summary.appStoreAllowedByThisProfile, false);
+
+  const parsed = recordValue(parsePlist(buildIosConfigurationProfile(state, now)), "panic phone profile");
+  const restrictions = profilePayload(parsed, "com.apple.applicationaccess");
+  assert.ok(Array.isArray(restrictions?.allowListedAppBundleIDs), "Panic must enforce a minimal app allowlist even when app blocking is disabled");
+  const panicAllowedApps = restrictions?.allowListedAppBundleIDs as string[];
+  assert.deepEqual([...panicAllowedApps].sort(), [...IOS_PANIC_ALLOWED_APP_BUNDLE_IDS].sort());
+  assert.equal(restrictions?.blockedAppBundleIDs, undefined);
+  assert.equal(panicAllowedApps.includes(IOS_APP_STORE_BUNDLE_ID), false);
+
+  const unavailableBrowserBundles = ["com.apple.mobilesafari", ...IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS];
+  assert.equal(unavailableBrowserBundles.every((bundleId) => !panicAllowedApps.includes(bundleId)), true, "Panic must make Safari and third-party browsers unavailable");
+  const unavailableSocialBundles = [
+    "com.burbn.instagram",
+    "com.google.ios.youtube",
+    "com.toyopagroup.picaboo",
+    ...Object.values(IOS_SOCIAL_COMPANION_BUNDLE_IDS)
+  ];
+  assert.equal(unavailableSocialBundles.every((bundleId) => !panicAllowedApps.includes(bundleId)), true, "Panic must make native social apps and both fixed companions unavailable");
+
+  const webFilter = profilePayload(parsed, "com.apple.webcontent-filter");
+  assert.ok(Array.isArray(webFilter?.AllowListBookmarks), "Panic must enforce a URL allowlist even when web blocking is disabled");
+  const panicAllowedUrls = (webFilter?.AllowListBookmarks as unknown[])
+    .map((item) => recordValue(item, "panic allowlist bookmark"))
+    .map((bookmark) => stringValue(bookmark.URL, "panic allowlist URL"))
+    .sort();
+  assert.deepEqual(panicAllowedUrls, [
+    "http://127.0.0.1/",
+    "http://localhost/",
+    "https://127.0.0.1/",
+    "https://localhost/"
+  ]);
+  assert.equal(webFilter?.DenyListURLs, undefined);
+  assert.equal(panicAllowedUrls.some((url) => /instagram|youtube|snapchat/i.test(url)), false);
 }
 
 {
@@ -498,7 +646,8 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.equal(summary.profile.webClipCount, 0);
   assert.equal(summary.profile.focusedSocial.webClipCount, 0);
   assert.equal(summary.profile.focusedSocial.nativeAppBundleCount, 0);
-  assert.equal(summary.launcherProfile.webClipCount, 3);
+  assert.equal(summary.launcherProfile.webClipCount, 0);
+  assert.equal(summary.companionApps.appCount, 2);
   const profile = buildIosConfigurationProfile(state, now);
   assert.doesNotMatch(profile, /com\.apple\.webClip\.managed/);
   assert.doesNotMatch(profile, /Vigil YouTube/);
@@ -550,7 +699,8 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.equal(noWebSummary.profile.deniedUrlCount, 0);
   assert.equal(noWebSummary.profile.allowedUrlCount, 0);
   assert.equal(noWebSummary.profile.webClipCount, 0);
-  assert.equal(noWebSummary.launcherProfile.webClipCount, 3);
+  assert.equal(noWebSummary.launcherProfile.webClipCount, 0);
+  assert.equal(noWebSummary.companionApps.appCount, 2);
   assert.equal(noWebSummary.profile.focusedSocial.deniedUrlCount, 0);
   assert.equal(noWebSummary.profile.focusedSocial.webClipCount, 0);
   const noWebProfile = buildIosConfigurationProfile(noWebState, now);
@@ -773,7 +923,7 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   const expiredMdmProfile = parseMdmProfile(expiredCommand?.profileBase64);
   assert.equal(expiredMdmProfile.DurationUntilRemoval, undefined);
   const expiredRestrictions = profilePayload(expiredMdmProfile, "com.apple.applicationaccess");
-  assert.ok((expiredRestrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.google.chrome.ios"));
+  assert.equal((expiredRestrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.google.chrome.ios"), false);
   assert.ok((expiredRestrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.burbn.instagram"));
   assert.equal(expiredRestrictions?.allowListedAppBundleIDs, undefined);
 

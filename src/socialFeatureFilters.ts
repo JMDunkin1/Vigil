@@ -1,5 +1,4 @@
 import { parseBoolean } from "./booleans.js";
-import { socialIconPngBase64 } from "./socialIconAssets.js";
 import type { FocusedSocialPlatformId, FocusedSocialSettings, UnknownRecord } from "./types.js";
 
 export type FocusedSocialFeatureKey =
@@ -20,42 +19,28 @@ interface FocusedSocialFeatureDefinition {
   permanent?: boolean;
 }
 
-export interface FocusedSocialWebClip {
-  id: string;
-  label: string;
-  displayName: string;
-  url: string;
-  iconPngBase64: string;
-  targetApplicationBundleIdentifier: string;
-}
-
 interface FocusedSocialPlatformDefinition {
   id: FocusedSocialPlatformId;
   label: string;
   nativeBundleId: string;
-  webClip: FocusedSocialWebClip;
   features: FocusedSocialFeatureDefinition[];
 }
 
-export const IOS_SOCIAL_COMPANION_BUNDLE_IDS: Record<FocusedSocialPlatformId, string> = {
-  instagram: "tech.caseline.vigil.social",
-  youtube: "tech.caseline.vigil.social",
-  snapchat: "tech.caseline.vigil.social"
-};
+export const IOS_SOCIAL_COMPANION_BUNDLE_IDS = {
+  instagram: "tech.caseline.vigil.instagram",
+  youtube: "tech.caseline.vigil.youtube"
+} as const satisfies Partial<Record<FocusedSocialPlatformId, string>>;
+
+export const IOS_SOCIAL_COMPANION_APPS = [
+  { id: "instagram", label: "Instagram", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.instagram },
+  { id: "youtube", label: "YouTube", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.youtube }
+] as const;
 
 export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
   {
     id: "instagram",
     label: "Instagram",
     nativeBundleId: "com.burbn.instagram",
-    webClip: {
-      id: "instagram",
-      label: "Instagram",
-      displayName: "Instagram",
-      url: "https://www.instagram.com/direct/inbox/",
-      iconPngBase64: socialIconPngBase64("instagram"),
-      targetApplicationBundleIdentifier: IOS_SOCIAL_COMPANION_BUNDLE_IDS.instagram
-    },
     features: [
       {
         key: "reels",
@@ -99,14 +84,6 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
     id: "youtube",
     label: "YouTube",
     nativeBundleId: "com.google.ios.youtube",
-    webClip: {
-      id: "youtube",
-      label: "YouTube",
-      displayName: "YouTube",
-      url: "https://m.youtube.com/feed/subscriptions",
-      iconPngBase64: socialIconPngBase64("youtube"),
-      targetApplicationBundleIdentifier: IOS_SOCIAL_COMPANION_BUNDLE_IDS.youtube
-    },
     features: [
       {
         key: "shorts",
@@ -156,14 +133,6 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
     id: "snapchat",
     label: "Snapchat",
     nativeBundleId: "com.toyopagroup.picaboo",
-    webClip: {
-      id: "snapchat",
-      label: "Snapchat",
-      displayName: "Snapchat",
-      url: "https://web.snapchat.com/",
-      iconPngBase64: socialIconPngBase64("snapchat"),
-      targetApplicationBundleIdentifier: IOS_SOCIAL_COMPANION_BUNDLE_IDS.snapchat
-    },
     features: [
       {
         key: "spotlight",
@@ -276,23 +245,17 @@ export function focusedSocialBrowserCleanupSettings(value: unknown): FocusedSoci
 export function focusedSocialBlockedBundleIds(value: unknown): string[] {
   const settings = normalizeFocusedSocialSettings(value);
   return FOCUSED_SOCIAL_PLATFORMS
-    .filter((platform) => shouldUseManagedWebPath(settings, platform))
+    .filter((platform) => shouldUseManagedCompanionPath(settings, platform))
     .map((platform) => platform.nativeBundleId);
 }
 
-export function focusedSocialWebClips(value: unknown): FocusedSocialWebClip[] {
-  const settings = normalizeFocusedSocialSettings(value);
-  return FOCUSED_SOCIAL_PLATFORMS
-    .filter((platform) => shouldUseManagedWebPath(settings, platform))
-    .map((platform) => ({ ...platform.webClip }));
-}
-
-export function focusedSocialLauncherWebClips(): FocusedSocialWebClip[] {
-  return FOCUSED_SOCIAL_PLATFORMS.map((platform) => ({ ...platform.webClip }));
-}
-
-function shouldUseManagedWebPath(settings: FocusedSocialSettings, platform: FocusedSocialPlatformDefinition): boolean {
-  return Boolean(settings.enabled && settings.forceWebClips && settings[platform.id].enabled);
+function shouldUseManagedCompanionPath(settings: FocusedSocialSettings, platform: FocusedSocialPlatformDefinition): boolean {
+  return Boolean(
+    settings.enabled
+    && settings.forceWebClips
+    && settings[platform.id].enabled
+    && IOS_SOCIAL_COMPANION_BUNDLE_IDS[platform.id as keyof typeof IOS_SOCIAL_COMPANION_BUNDLE_IDS]
+  );
 }
 
 export function focusedSocialSummary(
@@ -306,7 +269,6 @@ export function focusedSocialSummary(
   const settings = normalizeFocusedSocialSettings(value);
   const includeDeniedUrls = options.includeDeniedUrls !== false;
   const includeNativeApps = options.includeNativeApps !== false;
-  const includeWebClips = options.includeWebClips !== false;
   const platforms = FOCUSED_SOCIAL_PLATFORMS.map((platform) => {
     const platformSettings = settings[platform.id];
     const features = platform.features.filter((feature) => platformSettings[feature.key] !== false);
@@ -315,7 +277,8 @@ export function focusedSocialSummary(
       label: platform.label,
       enabled: Boolean(platformSettings.enabled),
       nativeBundleId: platform.nativeBundleId,
-      webClip: publicWebClip(platform.webClip),
+      companionBundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS[platform.id as keyof typeof IOS_SOCIAL_COMPANION_BUNDLE_IDS] || null,
+      webClip: null,
       features: platformSettings.enabled ? features.map((feature) => feature.label) : [],
       deniedUrlCount: platformSettings.enabled && includeDeniedUrls ? features.reduce((total, feature) => total + feature.deniedUrls.length, 0) : 0
     };
@@ -323,20 +286,16 @@ export function focusedSocialSummary(
   const enabledPlatforms = platforms.filter((platform) => platform.enabled);
   return {
     enabled: settings.enabled,
+    companionAppsEnabled: settings.forceWebClips,
+    /** @deprecated Compatibility alias for clients and states created before native companions replaced Web Clips. */
     forceWebClips: settings.forceWebClips,
     deniedUrlCount: includeDeniedUrls ? focusedSocialDeniedUrls(settings).length : 0,
     nativeAppBundleCount: includeNativeApps ? focusedSocialBlockedBundleIds(settings).length : 0,
-    webClipCount: includeWebClips ? focusedSocialWebClips(settings).length : 0,
+    webClipCount: 0,
     platforms,
     platformCount: enabledPlatforms.length,
     featureCount: enabledPlatforms.reduce((total, platform) => total + platform.features.length, 0)
   };
-}
-
-function publicWebClip(clip: FocusedSocialWebClip) {
-  const { iconPngBase64, ...rest } = clip;
-  void iconPngBase64;
-  return rest;
 }
 
 function mergeFocusedSocialSettings(defaults: FocusedSocialSettings, existing: Partial<FocusedSocialSettings>): FocusedSocialSettings {

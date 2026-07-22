@@ -1011,16 +1011,23 @@ function protectedSecondsToday(state: VigilState, now: Date): number {
 
 function blockCountToday(state: VigilState, now: Date): number {
   const { startMs, endMs } = dayBounds(now);
-  return (state.events || []).filter((event) => {
+  const auditCount = (state.events || []).filter((event) => {
     if (!BLOCK_EVENT_TYPES.has(event.type)) return false;
     const at = parseTime(event.at);
     return Number.isFinite(at) && at >= startMs && at < endMs;
   }).length;
+  const functionalCount = state.functionalEvents?.version === 1
+    ? Math.max(0, Math.trunc(Number(state.functionalEvents.dailyBlockCounts?.[dateKey(now)] || 0)))
+    : 0;
+  return Math.max(functionalCount, auditCount);
 }
 
 function sessionRecords(state: VigilState, now: Date): Map<string, SessionRecord> {
   const records = new Map<string, SessionRecord>();
 
+  if (state.functionalEvents?.version === 1) {
+    for (const session of state.functionalEvents.sessions || []) upsertSession(records, session);
+  }
   for (const event of state.events || []) {
     const detail = event.detail || {};
     if ((event.type === "session_started" || event.type === "panic_lock_started") && detail.id) {
@@ -1055,11 +1062,34 @@ function upsertSession(records: Map<string, SessionRecord>, session: Partial<Ses
   const existing = records.get(id) || { id };
   records.set(id, {
     ...existing,
-    startedAt: existing.startedAt || current.startedAt,
-    endsAt: current.endsAt || existing.endsAt,
-    endedAt: current.endedAt || existing.endedAt,
+    startedAt: earliestTimestamp(existing.startedAt, current.startedAt),
+    endsAt: latestTimestamp(existing.endsAt, current.endsAt),
+    endedAt: latestTimestamp(existing.endedAt, current.endedAt),
     active: Boolean(existing.active || options.active)
   });
+}
+
+function earliestTimestamp(left: unknown, right: unknown): string | undefined {
+  return orderedTimestamp(left, right, Math.min);
+}
+
+function latestTimestamp(left: unknown, right: unknown): string | undefined {
+  return orderedTimestamp(left, right, Math.max);
+}
+
+function orderedTimestamp(
+  left: unknown,
+  right: unknown,
+  select: (left: number, right: number) => number
+): string | undefined {
+  const values = [left, right]
+    .map((value) => String(value || ""))
+    .map((value) => ({ value, timestamp: Date.parse(value) }))
+    .filter((item) => Number.isFinite(item.timestamp));
+  if (!values.length) return undefined;
+  if (values.length === 1) return values[0]!.value;
+  const selected = select(values[0]!.timestamp, values[1]!.timestamp);
+  return values.find((item) => item.timestamp === selected)!.value;
 }
 
 function activeSessions(state: VigilState): Session[] {

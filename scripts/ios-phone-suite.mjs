@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { execFile, spawn } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -15,12 +15,13 @@ const DEFAULT_SERVER = "http://127.0.0.1:8787";
 const PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
 const LAUNCHER_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-social-launchers";
 const LEGACY_BUNDLE_PREFIX = "tech.caseline.sentinel.";
-const LEGACY_VIGIL_SOCIAL_BUNDLE_IDS = new Set([
-  "tech.caseline.vigil.instagram",
-  "tech.caseline.vigil.youtube",
+const OBSOLETE_VIGIL_PHONE_BUNDLE_IDS = new Set([
+  "tech.caseline.vigil.browser",
+  "tech.caseline.vigil.social",
   "tech.caseline.vigil.snapchat"
 ]);
-const LEGACY_APPS_PROBLEM_PREFIX = "Legacy social apps remain installed:";
+const OBSOLETE_APPS_PROBLEM_PREFIX = "Obsolete phone apps remain installed:";
+const OBSOLETE_LAUNCHER_PROFILE_PROBLEM = "The obsolete Vigil social-launcher profile remains installed; use --replace-legacy to remove its duplicate Home Screen icons.";
 const PHONE_SOURCE_FILES = [
   "scripts/apply-ios-usb-profile.mjs",
   "scripts/build-ios-social-app.mts",
@@ -40,11 +41,12 @@ const PHONE_SOURCE_FILES = [
   "src/presets.ts",
   "src/socialFeatureFilters.ts",
   "src/socialIconAssets.ts",
+  "src/store.ts",
   "src/types.ts"
 ];
 const REQUIRED_APPS = [
-  { id: "browser", name: "Vigil Browser", bundleId: "tech.caseline.vigil.browser" },
-  { id: "social", service: "combined", name: "Vigil Social", bundleId: "tech.caseline.vigil.social", icon: "instagram.png", scheme: "vigilsocial" }
+  { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", icon: "instagram.png", scheme: "vigil-instagram" },
+  { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", icon: "youtube.png", scheme: "vigil-youtube" }
 ];
 
 if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
@@ -68,7 +70,7 @@ async function main(selectedCommand, selectedOptions) {
     const { developerDir, toolEnvironment } = await prepareAuditToolchain();
     console.log(`Apple toolchain: ${developerDir}`);
     await buildRuntime();
-    const audit = await auditThreePolicies(toolEnvironment);
+    const audit = await auditFourPolicies(toolEnvironment);
     printPolicyAudit(audit);
     return;
   }
@@ -142,6 +144,7 @@ export async function implementationFingerprint() {
 export function isPhoneImplementationFile(path) {
   const iosRelativePath = relative(join(ROOT, "ios"), path);
   if (basename(path) === "phone-release.json" || path.endsWith(".md")) return false;
+  if (String(path).replaceAll("\\", "/").includes("/ios/VigilBrowser/")) return false;
   return !iosRelativePath.split("/").some((part) => part.endsWith("Tests"));
 }
 
@@ -199,7 +202,7 @@ export function incrementVersion(version, level) {
 
 export function isLegacyPhoneBundleIdentifier(bundleIdentifier) {
   const value = String(bundleIdentifier || "");
-  return value.startsWith(LEGACY_BUNDLE_PREFIX) || LEGACY_VIGIL_SOCIAL_BUNDLE_IDS.has(value);
+  return value.startsWith(LEGACY_BUNDLE_PREFIX) || OBSOLETE_VIGIL_PHONE_BUNDLE_IDS.has(value);
 }
 
 export function policyFreshnessProblems({ installedProfileName = "", receiptFingerprint = "", livePolicyFingerprint = "" } = {}) {
@@ -228,21 +231,24 @@ async function phoneStatus(selectedOptions, device, toolEnvironment) {
     readRelease(),
     implementationFingerprint()
   ]);
-  const [appsResult, profilesResult, serverState, livePolicyFingerprint] = await Promise.all([
+  const [appsResult, profileVerification, serverState] = await Promise.all([
     devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment),
-    devicectlJson(["device", "profile", "list", "--device", device.identifier, "--type", "configuration"], toolEnvironment),
-    fetchServerState(selectedOptions.server),
-    fetchLivePolicyFingerprint(selectedOptions.server)
+    configurationProfileStatus(device.identifier, toolEnvironment),
+    fetchServerState(selectedOptions.server)
   ]);
+  const currentPolicy = await currentPolicyFingerprint(selectedOptions.server, serverState, {
+    allowCurrentRuntime: release.sourceFingerprint === fingerprint.hash
+  });
+  const livePolicyFingerprint = currentPolicy.fingerprint;
   const apps = appsResult.result?.apps || [];
-  const profiles = profilesResult.result?.configurationProfiles || [];
+  const profiles = profileVerification.profiles;
   const requiredApps = REQUIRED_APPS.map((required) => {
     const installed = apps.find((app) => app.bundleIdentifier === required.bundleId);
     return { ...required, installed: installed ? { version: installed.version || "", build: installed.bundleVersion || "" } : null };
   });
-  const legacyApps = apps.filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
+  const obsoleteApps = apps.filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
   const lockProfile = profiles.find((profile) => profile.identifier === PROFILE_IDENTIFIER);
-  const launcherProfile = profiles.find((profile) => profile.identifier === LAUNCHER_PROFILE_IDENTIFIER);
+  const obsoleteLauncherProfile = profiles.find((profile) => profile.identifier === LAUNCHER_PROFILE_IDENTIFIER);
   const receipt = await readReceipt(device.udid || device.identifier);
   const problems = [];
   if (release.sourceFingerprint !== fingerprint.hash) problems.push("Phone-facing sources changed after the current release; bump and deploy a new phone release.");
@@ -252,12 +258,16 @@ async function phoneStatus(selectedOptions, device, toolEnvironment) {
       problems.push(`${app.name} is ${app.installed.version} (${app.installed.build}), expected ${release.version} (${release.build}).`);
     }
   }
-  if (legacyApps.length) problems.push(`${LEGACY_APPS_PROBLEM_PREFIX} ${legacyApps.map((app) => app.bundleIdentifier).join(", ")}.`);
+  if (obsoleteApps.length) problems.push(`${OBSOLETE_APPS_PROBLEM_PREFIX} ${obsoleteApps.map((app) => app.bundleIdentifier).join(", ")}.`);
   const iosEnabled = Boolean(serverState?.state?.deviceControls?.ios?.enabled);
-  if (iosEnabled && !lockProfile) problems.push("The live Vigil iPhone policy is enabled locally but no Vigil lock profile is installed.");
-  if (iosEnabled && !launcherProfile) problems.push("The stable Vigil social-launcher profile is not installed.");
+  if (!profileVerification.available) {
+    problems.push(`Configuration-profile verification is unavailable: ${profileVerification.detail}`);
+  } else {
+    if (iosEnabled && !lockProfile) problems.push("The live Vigil iPhone policy is enabled locally but no Vigil lock profile is installed.");
+    if (obsoleteLauncherProfile) problems.push(OBSOLETE_LAUNCHER_PROFILE_PROBLEM);
+  }
   if (!serverState) problems.push(`The Vigil server at ${selectedOptions.server} is unavailable, so live policy freshness cannot be checked.`);
-  else if (!livePolicyFingerprint) problems.push("The currently generated live policy could not be downloaded for a freshness check.");
+  else if (!livePolicyFingerprint) problems.push("The currently generated live policy could not be resolved for a freshness check.");
   if (receipt && receipt.release?.sourceFingerprint !== release.sourceFingerprint) problems.push("The last device receipt belongs to a different implementation fingerprint.");
   if (receipt?.policyFingerprint && lockProfile && !profileName(lockProfile).includes(receipt.policyFingerprint.slice(0, 12))) {
     problems.push("The installed policy profile name does not match the last deployment receipt.");
@@ -267,7 +277,7 @@ async function phoneStatus(selectedOptions, device, toolEnvironment) {
     receiptFingerprint: receipt?.policyFingerprint,
     livePolicyFingerprint
   }));
-  return { release, fingerprint, device, requiredApps, legacyApps, profiles, lockProfile, launcherProfile, receipt, serverState, livePolicyFingerprint, problems };
+  return { release, fingerprint, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
 }
 
 function printStatus(report) {
@@ -279,10 +289,14 @@ function printStatus(report) {
     console.log(`- ${app.name}: ${app.installed ? `${app.installed.version} (${app.installed.build})` : "missing"}`);
   }
   console.log("Profiles:");
-  console.log(`- Live policy: ${report.lockProfile ? profileName(report.lockProfile) : "missing"}`);
-  console.log(`- Social launchers: ${report.launcherProfile ? profileName(report.launcherProfile) : "missing"}`);
+  if (report.profileVerification.available) {
+    console.log(`- Live policy: ${report.lockProfile ? profileName(report.lockProfile) : "missing"}`);
+    console.log(`- Retired social launchers: ${report.obsoleteLauncherProfile ? "installed — remove with --replace-legacy" : "absent"}`);
+  } else {
+    console.log(`- Verification unavailable: ${report.profileVerification.detail}`);
+  }
   if (report.receipt?.policyFingerprint) console.log(`Last deployed policy: ${report.receipt.policyFingerprint.slice(0, 12)}`);
-  if (report.livePolicyFingerprint) console.log(`Current live policy: ${report.livePolicyFingerprint.slice(0, 12)}`);
+  if (report.livePolicyFingerprint) console.log(`Current live policy: ${report.livePolicyFingerprint.slice(0, 12)} • ${report.policyGenerationSource}`);
   console.log(`Live policy source: ${report.serverState ? (report.serverState.state?.deviceControls?.ios?.enabled ? "enabled" : "disabled") : "server unavailable"}`);
   if (!report.problems.length) console.log("Status: current");
   else {
@@ -302,18 +316,30 @@ async function updatePhone(selectedOptions) {
   console.log(`Updating ${device.name} to Vigil phone ${release.version} (${release.build}) without rebooting.`);
   console.log(`Apple toolchain: ${developerDir}`);
   await buildRuntime();
-  const audit = await auditThreePolicies(toolEnvironment);
+  const audit = await auditFourPolicies(toolEnvironment);
   printPolicyAudit(audit);
   const build = await buildPhoneApps(release, toolEnvironment);
+  const preparedPolicy = selectedOptions.noPolicy
+    ? null
+    : await prepareCurrentPolicy(release, selectedOptions.server, toolEnvironment);
   const installedBeforeUpdate = await devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment);
-  const legacyBeforeUpdate = (installedBeforeUpdate.result?.apps || [])
+  const obsoleteBeforeUpdate = (installedBeforeUpdate.result?.apps || [])
     .filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
-  if (legacyBeforeUpdate.length && !selectedOptions.replaceLegacy) {
-    throw new Error(`Legacy apps must be removed before the combined replacement can be installed. Re-run with --replace-legacy: ${legacyBeforeUpdate.map((app) => app.bundleIdentifier).join(", ")}`);
+  const profileBeforeUpdate = await configurationProfileStatus(device.identifier, toolEnvironment);
+  const obsoleteLauncherBeforeUpdate = profileBeforeUpdate.profiles.some((profile) => profile.identifier === LAUNCHER_PROFILE_IDENTIFIER);
+  if ((obsoleteBeforeUpdate.length || obsoleteLauncherBeforeUpdate) && !selectedOptions.replaceLegacy) {
+    const obsoleteItems = [
+      ...obsoleteBeforeUpdate.map((app) => app.bundleIdentifier),
+      ...(obsoleteLauncherBeforeUpdate ? [LAUNCHER_PROFILE_IDENTIFIER] : [])
+    ];
+    throw new Error(`Obsolete phone apps or launcher configuration must be removed before the fixed companions can be installed. Re-run with --replace-legacy: ${obsoleteItems.join(", ")}`);
   }
-  for (const legacy of legacyBeforeUpdate) {
-    console.log(`Removing obsolete ${legacy.bundleIdentifier}; its app-local data cannot be recovered after uninstall…`);
-    await run("xcrun", ["devicectl", "device", "uninstall", "app", "--device", device.identifier, legacy.bundleIdentifier], { env: toolEnvironment });
+  for (const obsolete of obsoleteBeforeUpdate) {
+    console.log(`Removing obsolete ${obsolete.bundleIdentifier}; its app-local data cannot be recovered after uninstall…`);
+    await run("xcrun", ["devicectl", "device", "uninstall", "app", "--device", device.identifier, obsolete.bundleIdentifier], { env: toolEnvironment });
+  }
+  if (selectedOptions.replaceLegacy) {
+    await removeObsoleteLauncherProfile(device.identifier, toolEnvironment);
   }
   for (const app of build.apps) {
     console.log(`Installing ${app.name}…`);
@@ -323,21 +349,10 @@ async function updatePhone(selectedOptions) {
   const deviceReceiptId = device.udid || device.identifier;
   const previousReceipt = selectedOptions.noPolicy ? await readReceipt(deviceReceiptId) : null;
   let { policyFingerprint, policyArtifactHash } = preservedPolicyReceipt(previousReceipt);
-  if (!selectedOptions.noPolicy) {
-    const profile = await downloadPolicy(selectedOptions.server);
-    policyFingerprint = sha256(profile);
-    const stamped = await stampProfile(profile, `Vigil iPhone Lock • ${release.version} (${release.build}) • ${policyFingerprint.slice(0, 12)}`);
-    policyArtifactHash = sha256(stamped);
-    const profileDir = join(ROOT, "data", "ios-phone-profiles");
-    await mkdir(profileDir, { recursive: true });
-    const lockPath = join(profileDir, "vigil-iphone-lock.mobileconfig");
-    const launcherPath = join(profileDir, "vigil-social-launchers.mobileconfig");
-    await signProfile(stamped, lockPath);
-    const launcher = await buildStampedLauncherProfile(release);
-    await signProfile(launcher, launcherPath);
-    await run("xcrun", ["devicectl", "device", "profile", "validate", "--type", "configuration", lockPath, launcherPath], { env: toolEnvironment });
-    console.log(`Installing policy ${policyFingerprint.slice(0, 12)} and stable launchers…`);
-    await run("xcrun", ["devicectl", "device", "profile", "install", "--device", device.identifier, lockPath, launcherPath, "--type", "configuration", "--replace-existing"], { env: toolEnvironment });
+  if (preparedPolicy) {
+    ({ policyFingerprint, policyArtifactHash } = preparedPolicy);
+    console.log(`Installing policy ${policyFingerprint.slice(0, 12)}…`);
+    await run("xcrun", ["devicectl", "device", "profile", "install", "--device", device.identifier, preparedPolicy.lockPath, "--type", "configuration", "--replace-existing"], { env: toolEnvironment });
   }
 
   await writeReceipt(deviceReceiptId, {
@@ -353,7 +368,7 @@ async function updatePhone(selectedOptions) {
   });
   const report = await phoneStatus(selectedOptions, device, toolEnvironment);
   printStatus(report);
-  if (report.problems.filter((problem) => !problem.startsWith(LEGACY_APPS_PROBLEM_PREFIX)).length) process.exitCode = 1;
+  if (report.problems.length) process.exitCode = 1;
 }
 
 async function buildRuntime() {
@@ -361,7 +376,7 @@ async function buildRuntime() {
   await run("npm", ["run", "build"], { cwd: ROOT });
 }
 
-async function auditThreePolicies(toolEnvironment) {
+async function auditFourPolicies(toolEnvironment) {
   const defaultsModule = await importFresh(join(ROOT, "dist", "runtime", "src", "defaults.js"));
   const policyModule = await importFresh(join(ROOT, "dist", "runtime", "src", "policy.js"));
   const profilesModule = await importFresh(join(ROOT, "dist", "runtime", "src", "iosProfiles.js"));
@@ -369,7 +384,8 @@ async function auditThreePolicies(toolEnvironment) {
   const levels = [
     { id: "normal", title: "Normal", mode: "normal", lockLevel: "light" },
     { id: defaultsModule.SOFT_BLOCK_PROFILE_ID, title: "Soft Lock", mode: "focus", lockLevel: "light" },
-    { id: defaultsModule.BRICK_MODE_PROFILE_ID, title: "Full Brick", mode: "brick", lockLevel: "deep" }
+    { id: defaultsModule.BRICK_MODE_PROFILE_ID, title: "Full Brick", mode: "brick", lockLevel: "deep" },
+    { id: defaultsModule.PANIC_LOCK_PROFILE_ID, title: "Panic", mode: "panic", lockLevel: "deep", panic: true }
   ];
   const auditDir = join(ROOT, "data", "ios-phone-policy-audit");
   await mkdir(auditDir, { recursive: true });
@@ -378,8 +394,25 @@ async function auditThreePolicies(toolEnvironment) {
     const state = defaultsModule.defaultState();
     state.deviceControls.ios.enabled = true;
     state.deviceControls.ios.hardenRemoval = false;
-    if (level.id === "normal") state.settings.baselineProfileId = "normal";
-    else {
+    if (level.id === "normal") {
+      state.settings.baselineProfileId = "normal";
+    } else if (level.panic) {
+      state.panicLock = {
+        id: "phone-audit-panic",
+        title: "Panic Lockout",
+        mode: "panic",
+        profileId: defaultsModule.PANIC_LOCK_PROFILE_ID,
+        lockLevel: "deep",
+        startedAt: now.toISOString(),
+        endsAt: new Date(now.getTime() + 3 * 60 * 1000).toISOString(),
+        canEndEarly: false,
+        commitmentLock: true,
+        emergencyUnlocksAllowed: false,
+        source: "panic",
+        fullLockout: true,
+        profileSnapshot: policyModule.panicLockProfile()
+      };
+    } else {
       state.activeSessions.phone = {
         id: `phone-audit-${level.id}`,
         title: level.title,
@@ -415,7 +448,7 @@ async function auditThreePolicies(toolEnvironment) {
 }
 
 function printPolicyAudit(audit) {
-  console.log("Three-level policy audit:");
+  console.log("Four-level policy audit:");
   for (const level of audit) {
     console.log(`- ${level.title}: ${level.apps} apps • ${level.deniedUrls} denied URLs • ${level.allowedUrls} allowed URLs • ${level.sha256.slice(0, 12)}`);
   }
@@ -428,30 +461,9 @@ async function buildPhoneApps(release, toolEnvironment = process.env) {
   const blocklistPath = await currentBlocklistPath();
   if (!blocklistPath) throw new Error("The adult blocklist artifact is missing. Refresh it before a Release phone build.");
   const environment = { ...toolEnvironment, VIGIL_PHONE_BLOCKLIST: blocklistPath };
-  const browserDerived = join(root, "browser");
-  console.log("Building Vigil Browser…");
   let reducedEntitlements = false;
-  const browserArguments = [
-    "-project", "ios/VigilBrowser/VigilBrowser.xcodeproj",
-    "-scheme", "VigilBrowser",
-    "-configuration", "Release",
-    "-destination", "generic/platform=iOS",
-    "-derivedDataPath", browserDerived,
-    "-allowProvisioningUpdates",
-    "build",
-    `MARKETING_VERSION=${release.version}`,
-    `CURRENT_PROJECT_VERSION=${release.build}`
-  ];
-  try {
-    await run("xcodebuild", browserArguments, { cwd: ROOT, env: environment });
-  } catch {
-    reducedEntitlements = true;
-    console.warn("Full Apple capabilities are unavailable for this signing team; retrying with the conservative Personal Team entitlement set.");
-    await run("xcodebuild", [...browserArguments, `CODE_SIGN_ENTITLEMENTS=${personalTeamEntitlements}`], { cwd: ROOT, env: environment });
-  }
-  const browserPath = join(browserDerived, "Build", "Products", "Release-iphoneos", "VigilBrowser.app");
-  const apps = [{ ...REQUIRED_APPS[0], path: browserPath, sha256: await hashAppBundle(browserPath) }];
-  for (const social of REQUIRED_APPS.slice(1)) {
+  const apps = [];
+  for (const social of REQUIRED_APPS) {
     const derived = join(root, social.id);
     console.log(`Building ${social.name} companion…`);
     const socialArguments = [
@@ -470,14 +482,23 @@ async function buildPhoneApps(release, toolEnvironment = process.env) {
       `MARKETING_VERSION=${release.version}`,
       `CURRENT_PROJECT_VERSION=${release.build}`
     ];
-    if (reducedEntitlements) socialArguments.push(`CODE_SIGN_ENTITLEMENTS=${personalTeamEntitlements}`);
+    if (reducedEntitlements) {
+      socialArguments.push(
+        `CODE_SIGN_ENTITLEMENTS=${personalTeamEntitlements}`,
+        "VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified"
+      );
+    }
     try {
       await run("xcodebuild", socialArguments, { cwd: ROOT, env: environment });
     } catch (error) {
       if (reducedEntitlements) throw error;
       reducedEntitlements = true;
-      console.warn("Full Apple capabilities are unavailable for the social companions; retrying with the conservative Personal Team entitlement set.");
-      await run("xcodebuild", [...socialArguments, `CODE_SIGN_ENTITLEMENTS=${personalTeamEntitlements}`], { cwd: ROOT, env: environment });
+      console.warn("Full Apple capabilities are unavailable for the fixed social companions; retrying with the conservative Personal Team entitlement set.");
+      await run("xcodebuild", [
+        ...socialArguments,
+        `CODE_SIGN_ENTITLEMENTS=${personalTeamEntitlements}`,
+        "VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified"
+      ], { cwd: ROOT, env: environment });
     }
     const path = join(derived, "Build", "Products", "Release-iphoneos", "VigilSocial.app");
     apps.push({ ...social, path, sha256: await hashAppBundle(path) });
@@ -492,29 +513,35 @@ async function hashAppBundle(root) {
   return digest.digest("hex");
 }
 
-async function buildStampedLauncherProfile(release) {
-  const profilesModule = await importFresh(join(ROOT, "dist", "runtime", "src", "iosProfiles.js"));
-  const profile = profilesModule.buildIosSocialLauncherProfile();
-  return await stampProfile(profile, `Vigil Social Launchers • ${release.version} (${release.build})`);
-}
-
 async function stampProfile(profile, displayName) {
   const dir = await mkdtemp(join(tmpdir(), "vigil-profile-stamp-"));
-  const path = join(dir, "profile.mobileconfig");
-  await writeFile(path, profile);
-  await execFileAsync("/usr/bin/plutil", ["-replace", "PayloadDisplayName", "-string", displayName, path]);
-  return await readFile(path);
+  try {
+    const path = join(dir, "profile.mobileconfig");
+    await writeFile(path, profile, { mode: 0o600 });
+    await execFileAsync("/usr/bin/plutil", ["-replace", "PayloadDisplayName", "-string", displayName, path]);
+    return await readFile(path);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 async function signProfile(profile, outputPath) {
   const identity = await profileSigningIdentity();
   const dir = await mkdtemp(join(tmpdir(), "vigil-profile-sign-"));
-  const inputPath = join(dir, "unsigned.mobileconfig");
-  await writeFile(inputPath, profile, { mode: 0o600 });
-  await execFileAsync("/usr/bin/security", ["cms", "-S", "-N", identity, "-i", inputPath, "-o", outputPath], {
-    timeout: 30_000,
-    maxBuffer: 1024 * 1024
-  });
+  const temporaryOutput = join(dirname(outputPath), `.${basename(outputPath)}.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    const inputPath = join(dir, "unsigned.mobileconfig");
+    await writeFile(inputPath, profile, { mode: 0o600 });
+    await execFileAsync("/usr/bin/security", ["cms", "-S", "-N", identity, "-i", inputPath, "-o", temporaryOutput], {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024
+    });
+    await chmod(temporaryOutput, 0o600);
+    await rename(temporaryOutput, outputPath);
+  } finally {
+    await rm(temporaryOutput, { force: true });
+    await rm(dir, { recursive: true, force: true });
+  }
 }
 
 async function profileSigningIdentity() {
@@ -531,6 +558,46 @@ async function profileSigningIdentity() {
   return match[1];
 }
 
+async function prepareCurrentPolicy(release, server, toolEnvironment) {
+  const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(5000));
+  const policyFingerprint = sha256(profile);
+  const stamped = await stampProfile(profile, `Vigil iPhone Lock • ${release.version} (${release.build}) • ${policyFingerprint.slice(0, 12)}`);
+  const policyArtifactHash = sha256(stamped);
+  const profileDir = join(ROOT, "data", "ios-phone-profiles");
+  await mkdir(profileDir, { recursive: true });
+  const lockPath = join(profileDir, "vigil-iphone-lock.mobileconfig");
+  await signProfile(stamped, lockPath);
+  await run("xcrun", ["devicectl", "device", "profile", "validate", "--type", "configuration", lockPath], { env: toolEnvironment });
+  return { lockPath, policyFingerprint, policyArtifactHash };
+}
+
+async function buildCurrentPolicyFromLiveState(server, signal, suppliedServerState = null) {
+  const serverState = suppliedServerState || await downloadServerState(server, signal);
+  const state = structuredClone(serverState.state);
+  const ios = state?.deviceControls?.ios;
+  if (!ios || typeof ios !== "object") throw new Error("Vigil live state does not contain iPhone policy settings.");
+
+  if (ios.hardenRemoval && ios.removalPasswordSet !== true) {
+    throw new Error("Vigil's hardened iPhone profile has no persisted removal password; refusing to generate an unrecoverable profile.");
+  }
+  if (ios.removalPasswordSet === true) {
+    const runningProfile = await downloadPolicy(server, signal);
+    const plistModule = await importFresh(join(ROOT, "dist", "runtime", "src", "plist.js"));
+    const removalPassword = removalPasswordFromProfile(plistModule.parsePlist(runningProfile.toString("utf8")));
+    if (!removalPassword) throw new Error("The running Vigil profile did not expose its expected removal-password payload.");
+    ios.removalPassword = removalPassword;
+  }
+
+  const profilesModule = await importFresh(join(ROOT, "dist", "runtime", "src", "iosProfiles.js"));
+  return Buffer.from(profilesModule.buildIosConfigurationProfile(state, new Date()));
+}
+
+export function removalPasswordFromProfile(profile) {
+  const payloads = Array.isArray(profile?.PayloadContent) ? profile.PayloadContent : [];
+  const removalPayload = payloads.find((payload) => payload?.PayloadType === "com.apple.profileRemovalPassword");
+  return typeof removalPayload?.RemovalPassword === "string" ? removalPayload.RemovalPassword : "";
+}
+
 async function downloadPolicy(server, signal) {
   const response = await fetch(`${server}/api/devices/ios/profile.mobileconfig`, {
     headers: { "x-vigil-intent": "vigil-app" },
@@ -540,10 +607,20 @@ async function downloadPolicy(server, signal) {
   return Buffer.from(await response.arrayBuffer());
 }
 
+async function downloadServerState(server, signal) {
+  const response = await fetch(`${server}/api/state`, {
+    headers: { "x-vigil-intent": "vigil-app" },
+    signal
+  });
+  if (!response.ok) throw new Error(`Vigil state download failed: HTTP ${response.status}`);
+  const payload = await response.json();
+  if (!payload?.state || typeof payload.state !== "object") throw new Error("Vigil state response is missing its state object.");
+  return payload;
+}
+
 async function fetchServerState(server) {
   try {
-    const response = await fetch(`${server}/api/state`, { headers: { "x-vigil-intent": "vigil-app" }, signal: AbortSignal.timeout(3000) });
-    return response.ok ? await response.json() : null;
+    return await downloadServerState(server, AbortSignal.timeout(3000));
   } catch {
     return null;
   }
@@ -555,6 +632,20 @@ async function fetchLivePolicyFingerprint(server) {
   } catch {
     return "";
   }
+}
+
+async function currentPolicyFingerprint(server, serverState, { allowCurrentRuntime }) {
+  if (allowCurrentRuntime && serverState) {
+    try {
+      const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(3000), serverState);
+      return { fingerprint: sha256(profile), source: "current source + live state" };
+    } catch {
+      // A read-only status check can still report the running server's profile;
+      // update itself never falls back and therefore cannot install stale bytes.
+    }
+  }
+  const fingerprint = await fetchLivePolicyFingerprint(server);
+  return { fingerprint, source: fingerprint ? "running-server fallback" : "unavailable" };
 }
 
 async function prepareAuditToolchain() {
@@ -654,6 +745,60 @@ async function devicectlJson(args, toolEnvironment) {
   return JSON.parse(stdout);
 }
 
+async function configurationProfileStatus(deviceIdentifier, toolEnvironment) {
+  try {
+    const result = await devicectlJson(["device", "profile", "list", "--device", deviceIdentifier, "--type", "configuration"], toolEnvironment);
+    return {
+      available: true,
+      detail: "",
+      profiles: result.result?.configurationProfiles || []
+    };
+  } catch (error) {
+    const detail = [error?.message, error?.stderr, error?.stdout].filter(Boolean).join("\n");
+    if (!isUnsupportedConfigurationProfileError(detail)) {
+      throw error;
+    }
+    return {
+      available: false,
+      detail: "CoreDevice does not support configuration-profile inspection for this device.",
+      profiles: []
+    };
+  }
+}
+
+async function removeObsoleteLauncherProfile(deviceIdentifier, toolEnvironment) {
+  try {
+    await execFileAsync("xcrun", [
+      "devicectl", "device", "profile", "remove",
+      "--device", deviceIdentifier,
+      LAUNCHER_PROFILE_IDENTIFIER,
+      "--type", "configuration",
+      "--force-removal"
+    ], {
+      env: toolEnvironment,
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 120_000
+    });
+    console.log(`Removed obsolete configuration profile ${LAUNCHER_PROFILE_IDENTIFIER}.`);
+  } catch (error) {
+    const detail = [error?.message, error?.stderr, error?.stdout].filter(Boolean).join("\n");
+    if (isMissingConfigurationProfileError(detail)) return;
+    if (isUnsupportedConfigurationProfileError(detail)) {
+      console.warn(`Could not inspect or remove ${LAUNCHER_PROFILE_IDENTIFIER}: CoreDevice does not support configuration-profile management for this device.`);
+      return;
+    }
+    throw error;
+  }
+}
+
+function isUnsupportedConfigurationProfileError(detail) {
+  return /configuration profile management[\s\S]*not supported|com\.apple\.coredevice\.feature\.configurationprofiles/iu.test(String(detail || ""));
+}
+
+function isMissingConfigurationProfileError(detail) {
+  return /(?:configuration )?profile[^\n]*(?:not found|does not exist)|no (?:configuration )?profile[^\n]*(?:found|matches)/iu.test(String(detail || ""));
+}
+
 function profileName(profile) {
   return String(profile.name || profile.displayName || profile.identifier || "installed");
 }
@@ -718,7 +863,7 @@ function printHelp() {
 Commands:
   status       Read-only source, app, profile, and policy delivery status (default)
   check        Status with a nonzero exit when drift exists
-  audit        Build and validate Normal, Soft Lock, and Full Brick profiles
+  audit        Build and validate Normal, Soft Lock, Full Brick, and Panic profiles
   update       Bump when needed, audit, build, install, sync policy, and verify
   bump [kind]  Bump patch, minor, or major only when phone inputs changed
   fingerprint  Print the current phone implementation fingerprint
@@ -727,7 +872,7 @@ Options:
   --device ID  Select a CoreDevice UUID, UDID, or device name
   --server URL Vigil server used for live state and policy (default ${DEFAULT_SERVER})
   --no-policy  Update apps but do not replace configuration profiles
-  --replace-legacy  Remove legacy Sentinel and per-service Vigil social apps before replacement
+  --replace-legacy  Remove obsolete Sentinel/Browser/Social/Snapchat apps and the retired launcher profile
   --force      Force a version bump even if phone inputs are unchanged
   --json       JSON output for fingerprint`);
 }

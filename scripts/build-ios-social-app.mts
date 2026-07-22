@@ -7,14 +7,9 @@ import { fileURLToPath } from "node:url";
 import { isDirectRun } from "../src/directRun.js";
 
 const project = "ios/VigilSocial/VigilSocial.xcodeproj";
-const valueOptions = new Set(["service", "configuration", "destination", "derived-data", "version", "build"]);
+const valueOptions = new Set(["service", "configuration", "destination", "derived-data", "version", "build", "unclassified-media-policy"]);
+const unclassifiedMediaPolicies = new Set(["conceal", "reveal-unclassified"]);
 const services = {
-  combined: {
-    bundleId: "tech.caseline.vigil.social",
-    name: "Vigil Social",
-    icon: "instagram.png",
-    scheme: "vigilsocial"
-  },
   instagram: {
     bundleId: "tech.caseline.vigil.instagram",
     name: "Instagram",
@@ -26,12 +21,6 @@ const services = {
     name: "YouTube",
     icon: "youtube.png",
     scheme: "vigil-youtube"
-  },
-  snapchat: {
-    bundleId: "tech.caseline.vigil.snapchat",
-    name: "Snapchat",
-    icon: "snapchat.png",
-    scheme: "vigil-snapchat"
   }
 } as const;
 
@@ -43,6 +32,7 @@ interface BuildOptions {
   unsigned: boolean;
   version: string;
   build: string;
+  unclassifiedMediaPolicy: string;
 }
 
 export function buildArguments(argv: string[]): string[] {
@@ -61,6 +51,7 @@ export function buildArguments(argv: string[]): string[] {
     `SOCIAL_APP_NAME=${service.name}`,
     `SOCIAL_ICON_NAME=${service.icon}`,
     `SOCIAL_URL_SCHEME=${service.scheme}`,
+    `VIGIL_UNCLASSIFIED_MEDIA_POLICY=${options.unclassifiedMediaPolicy}`,
     `MARKETING_VERSION=${options.version}`,
     `CURRENT_PROJECT_VERSION=${options.build}`
   ];
@@ -91,6 +82,10 @@ export function parseOptions(argv: string[]): BuildOptions {
       throw new Error(`Unexpected argument: ${argument}`);
     }
   }
+  const unclassifiedMediaPolicy = values.get("unclassified-media-policy") || "conceal";
+  if (!unclassifiedMediaPolicies.has(unclassifiedMediaPolicy)) {
+    throw new Error(`Unknown unclassified media policy: ${unclassifiedMediaPolicy}`);
+  }
   return {
     service: values.get("service") || service,
     configuration: values.get("configuration") || "Release",
@@ -98,7 +93,8 @@ export function parseOptions(argv: string[]): BuildOptions {
     derivedData: values.get("derived-data") || "",
     unsigned,
     version: values.get("version") || release.version,
-    build: values.get("build") || String(release.build)
+    build: values.get("build") || String(release.build),
+    unclassifiedMediaPolicy
   };
 }
 
@@ -126,7 +122,7 @@ function phoneRelease(): { version: string; build: number } {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes("--help")) {
-    process.stdout.write("Usage: npm run ios:social:build -- <combined|instagram|youtube|snapchat> [--configuration Debug|Release] [--destination value] [--derived-data path] [--version x.y.z] [--build number] [--unsigned]\n");
+    process.stdout.write("Usage: npm run ios:social:build -- <instagram|youtube> [--configuration Debug|Release] [--destination value] [--derived-data path] [--version x.y.z] [--build number] [--unclassified-media-policy conceal|reveal-unclassified] [--unsigned]\n");
     return;
   }
   await run("xcodebuild", buildArguments(argv));

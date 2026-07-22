@@ -6,7 +6,7 @@ import { assertDistanceKey, updateDistanceKeySettings } from "../src/distanceKey
 import { doctorRows, formatDoctorRows } from "../src/doctorReport.js";
 import { extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { assertFoolproofReadyForStrict, extensionDynamicRulesReady, extensionVersionReady, foolproofBlockers } from "../src/foolproof.js";
-import { clearIntegrityTamper, clearTrustedSourceSealDrift, detectClockTamper, detectHardeningDrift, detectRuntimeGap, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, recordRuntimeHeartbeat, syncAppleContentFilterLockdown } from "../src/integrityLockdown.js";
+import { clearIntegrityTamper, clearTrustedSourceSealDrift, detectClockTamper, detectHardeningDrift, detectRuntimeInterruption, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, syncAppleContentFilterLockdown } from "../src/integrityLockdown.js";
 import { emergencyDelaySeconds, interventionSummary, recentBlockAttempts } from "../src/intervention.js";
 import { updateKeyholderSettings } from "../src/keyholder.js";
 import { activeLimitPolicy } from "../src/limits.js";
@@ -214,7 +214,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   const state = defaultState();
   state.settings.foolproofModeEnabled = true;
   state.settings.strictBypassProtectionEnabled = true;
-  state.integrity.runtime.lastHeartbeatAt = now.toISOString();
+  const liveMonitor = { ok: true, accessibilityLikelyMissing: false, detail: "Live monitor checks are healthy." };
   state.extension.lastSeenAt = now.toISOString();
   state.extension.lastVersion = REQUIRED_EXTENSION_VERSION;
   const expectedRules = extensionRuleSnapshot(state, now);
@@ -238,7 +238,8 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     safariFilter: { required: true, installed: true, current: true, stale: false, appleContentFilter: { current: true, detail: "Apple Screen Time Limit Adult Websites is on." } },
     chromeSafeSearch: { required: true, current: true, effectiveCurrent: true, detail: "Chrome SafeSearch is locked to Filter." },
     agent: { installed: true, loaded: true, running: true, restartHardened: true, pid: 12345 },
-    account: accountStatusFromGroups("focus", "staff everyone")
+    account: accountStatusFromGroups("focus", "staff everyone"),
+    monitor: liveMonitor
   }, now);
   const byId = new Map(rows.map((item) => [item.id, item]));
   assert.equal(must(byId.get("external-network-block"), "external-network-block row").ok, true);
@@ -259,7 +260,8 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     firewall: { installed: true, partial: false, stale: false },
     safariFilter: { required: false },
     agent: { installed: true, loaded: true, running: true, embedded: true, restartHardened: false },
-    account: accountStatusFromGroups("focus", "staff everyone")
+    account: accountStatusFromGroups("focus", "staff everyone"),
+    monitor: liveMonitor
   }, now);
   const embeddedSupervisorRow = must(embeddedSupervisorRows.find((item) => item.id === "launch-agent"), "embedded launch-agent row");
   assert.equal(embeddedSupervisorRow.ok, false, "doctor must fail when the embedded supervisor is unhealthy");
@@ -272,7 +274,8 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     hosts: { installed: true, partial: false, stale: false, installedEntries: 20, expectedEntries: 20 },
     firewall: { installed: true, partial: false, stale: false, installedEntries: 8 },
     agent: { installed: true, loaded: true, running: true, restartHardened: true, pid: 12345 },
-    account: accountStatusFromGroups("focus", "staff everyone")
+    account: accountStatusFromGroups("focus", "staff everyone"),
+    monitor: liveMonitor
   }, now);
   assert.equal(must(staleRows.find((item) => item.id === "extension-rules"), "stale extension-rules row").ok, false);
 }
@@ -362,9 +365,13 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     canEndEarly: false,
     source: "manual"
   };
-  recordRuntimeHeartbeat(state, now);
-  const gap = must(detectRuntimeGap(state, new Date(now.getTime() + 3 * 60 * 1000)), "runtime gap");
-  assert.equal(gap.overlap.kind, "manual");
+  const gap = must(detectRuntimeInterruption(state, {
+    id: "offline-strict-interruption",
+    detectedAt: now.toISOString(),
+    previousRuntimeStartedAt: new Date(now.getTime() - 60_000).toISOString()
+  }, new Date(now.getTime() + 3 * 60 * 1000)), "runtime interruption");
+  assert.equal(gap.lockdown, true);
+  assert.equal(must(gap.overlap, "runtime interruption overlap").kind, "manual");
   assert.equal(integrityRuntimeSummary(state).ok, false);
   assert.equal(mustPolicy(activePolicy(state, now)).kind, "integrity");
   assert.equal(clearIntegrityTamper(state, now), true);
@@ -374,8 +381,8 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
 {
   const state = defaultState();
   state.activeSession = {
-    id: "future-heartbeat-strict",
-    title: "Future heartbeat strict",
+    id: "future-interruption-strict",
+    title: "Future interruption strict",
     mode: "focus",
     profileId: "default",
     lockLevel: "deep",
@@ -384,11 +391,13 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     canEndEarly: false,
     source: "manual"
   };
-  recordRuntimeHeartbeat(state, new Date(now.getTime() + 10 * 60 * 1000));
-  const gap = must(detectRuntimeGap(state, now), "future heartbeat tamper");
-  assert.equal(gap.futureHeartbeat, true);
+  const gap = must(detectRuntimeInterruption(state, {
+    id: "future-interruption-evidence",
+    detectedAt: new Date(now.getTime() + 10 * 60 * 1000).toISOString()
+  }, now), "future interruption evidence");
+  assert.equal(gap.futureEvidence, true);
   assert.equal(gap.gapSeconds, 10 * 60);
-  assert.match(gap.detail, /heartbeat was 600s in the future/);
+  assert.match(String(gap.detail), /evidence was 600s in the future/);
   assert.equal(integrityRuntimeSummary(state).status, "downtime-detected");
 }
 
@@ -406,10 +415,12 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     source: "manual",
     deviceTargets: ["phone"]
   };
-  recordRuntimeHeartbeat(state, now);
-  const gap = must(detectRuntimeGap(state, new Date(now.getTime() + 3 * 60 * 1000)), "phone runtime gap");
-  assert.equal(gap.overlap.kind, "manual");
-  assert.equal(gap.overlap.id, "phone-offline-strict");
+  const gap = must(detectRuntimeInterruption(state, {
+    id: "phone-runtime-interruption",
+    detectedAt: now.toISOString()
+  }, new Date(now.getTime() + 3 * 60 * 1000)), "phone runtime interruption");
+  assert.equal(must(gap.overlap, "phone runtime interruption overlap").kind, "manual");
+  assert.equal(must(gap.overlap, "phone runtime interruption overlap").id, "phone-offline-strict");
   assert.equal(recordValue(mustPolicy(integrityLockdownPolicy(state, now)).alarm, "phone runtime gap alarm").type, "runtime-downtime");
   assert.equal(clearIntegrityTamper(state, now), true);
   assert.equal(integrityRuntimeSummary(state).ok, true);
@@ -818,16 +829,22 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     end: "23:59",
     wifiNetworks: []
   }];
-  recordRuntimeHeartbeat(state, new Date(2026, 4, 28, 12, 0, 0));
-  const gap = detectRuntimeGap(state, new Date(2026, 4, 28, 16, 0, 0));
+  const gap = detectRuntimeInterruption(state, {
+    id: "scheduled-runtime-interruption",
+    detectedAt: new Date(2026, 4, 28, 12, 0, 0).toISOString()
+  }, new Date(2026, 4, 28, 16, 0, 0));
   assert.ok(gap);
-  assert.equal(gap.overlap.kind, "schedule");
+  assert.equal(gap.lockdown, true);
+  assert.equal(gap.overlap?.kind, "schedule");
 }
 
 {
   const state = defaultState();
-  recordRuntimeHeartbeat(state, now);
-  assert.equal(detectRuntimeGap(state, new Date(now.getTime() + 10 * 60 * 1000)), null);
+  const observation = detectRuntimeInterruption(state, {
+    id: "unprotected-runtime-interruption",
+    detectedAt: now.toISOString()
+  }, new Date(now.getTime() + 10 * 60 * 1000));
+  assert.equal(observation?.lockdown, false);
   assert.equal(integrityLockdownActive(state), false);
 }
 

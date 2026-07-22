@@ -6,6 +6,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { BROWSERS } from "./defaults.js";
+import { InFlightCoalescer } from "./inFlight.js";
 import type { UnknownRecord } from "./types.js";
 
 const execFileAsync = promisify(execFile);
@@ -18,17 +19,20 @@ let humanActivityProcessStarting: Promise<ChildProcessWithoutNullStreams> | null
 let humanActivityRestartTimer: ReturnType<typeof setTimeout> | null = null;
 let humanActivityStabilityTimer: ReturnType<typeof setTimeout> | null = null;
 let humanActivityRestartAttempt = 0;
+let humanActivityLastWatchAliveAt = 0;
 let humanActivityOutput = "";
 let humanActivityPending: {
   resolve: (sample: HumanActivitySample) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
 } | null = null;
-let humanActivityQueryTail: Promise<void> = Promise.resolve();
+const humanActivityQueries = new InFlightCoalescer<"sample", HumanActivitySample>();
+const activeBrowserUrlQueries = new InFlightCoalescer<string, BrowserUrlResult>();
 let recentHumanActivity: { capturedAt: number; sample: HumanActivitySample } | null = null;
 const browserActivityListeners = new Set<(signal: BrowserActivitySignal) => void>();
 const HUMAN_ACTIVITY_CACHE_MS = 2500;
 const HUMAN_ACTIVITY_STABILITY_MS = 5_000;
+export const HUMAN_ACTIVITY_WATCH_HEALTH_MAX_AGE_MS = 3_500;
 export const HUMAN_ACTIVITY_RESTART_DELAYS_MS = Object.freeze([25, 100, 250, 500, 1_000, 3_000]);
 const CHROMIUM_BROWSERS = new Set([
   "Google Chrome",
@@ -57,7 +61,13 @@ interface HumanActivitySample {
   bundleId: string;
 }
 
-export type BrowserActivityKind = "key" | "click";
+interface BrowserUrlResult {
+  ok: boolean;
+  url: string;
+  error?: string;
+}
+
+export type BrowserActivityKind = "key" | "click" | "activate" | "launch";
 
 export interface BrowserActivitySignal {
   kind: BrowserActivityKind;
@@ -80,6 +90,7 @@ export function subscribeBrowserActivity(listener: (signal: BrowserActivitySigna
   const registration = (signal: BrowserActivitySignal) => listener(signal);
   browserActivityListeners.add(registration);
   if (wasEmpty) {
+    humanActivityLastWatchAliveAt = 0;
     requestBrowserActivityWatch(true);
     // Warm the helper immediately. The first scheduled tick can spend time in
     // integrity and hardening checks before it would otherwise make the helper's
@@ -92,10 +103,36 @@ export function subscribeBrowserActivity(listener: (signal: BrowserActivitySigna
     subscribed = false;
     browserActivityListeners.delete(registration);
     if (browserActivityListeners.size === 0) {
+      humanActivityLastWatchAliveAt = 0;
       cancelHumanActivityRestart();
       requestBrowserActivityWatch(false);
     }
   };
+}
+
+export function browserActivityWatchHealthy(): boolean {
+  const child = humanActivityProcess;
+  if (!child || browserActivityListeners.size === 0) return false;
+  return browserActivityWatchHeartbeatCurrent(humanActivityLastWatchAliveAt)
+    && child.exitCode === null
+    && child.signalCode === null
+    && !child.killed
+    && !child.stdin.destroyed
+    && child.stdin.writable;
+}
+
+export function browserActivityWatchHeartbeatCurrent(lastAliveAt: unknown, now = Date.now()): boolean {
+  const timestamp = Number(lastAliveAt);
+  const ageMs = now - timestamp;
+  return Number.isFinite(timestamp)
+    && timestamp > 0
+    && Number.isFinite(ageMs)
+    && ageMs >= 0
+    && ageMs <= HUMAN_ACTIVITY_WATCH_HEALTH_MAX_AGE_MS;
+}
+
+export function parseBrowserActivityWatchHeartbeat(output: unknown): boolean {
+  return String(output || "").replace(/[\r\n]+$/u, "") === "watch\talive";
 }
 
 export function humanActivityHelperArguments(watchBrowserActivity: boolean): string[] {
@@ -233,6 +270,13 @@ export function parseProcessList(output = ""): string[] {
 export async function getActiveBrowserUrl(appName: string) {
   if (!BROWSERS.has(appName)) return { ok: true, url: "" };
 
+  // The scheduled recovery tick, the activity burst, and hardening recovery
+  // can ask for the same active tab at the same time. One observation satisfies
+  // all concurrent callers; a later call still performs a fresh read.
+  return await activeBrowserUrlQueries.run(appName, () => readActiveBrowserUrl(appName));
+}
+
+async function readActiveBrowserUrl(appName: string): Promise<BrowserUrlResult> {
   try {
     const app = escapeAppleScript(appName);
     if (isSafariBrowser(appName)) {
@@ -873,9 +917,10 @@ export async function getMacIdleTime() {
 }
 
 function queryHumanActivity(): Promise<HumanActivitySample> {
-  const queued = humanActivityQueryTail.then(queryHumanActivityOnce);
-  humanActivityQueryTail = queued.then(() => {}, () => {});
-  return queued;
+  // A fresh foreground probe and the ordinary usage tick can overlap. The
+  // helper supports one pending request, and both callers need the same current
+  // aggregate sample, so share only the request that is presently in flight.
+  return humanActivityQueries.run("sample", queryHumanActivityOnce);
 }
 
 async function queryHumanActivityOnce(): Promise<HumanActivitySample> {
@@ -900,6 +945,7 @@ async function ensureHumanActivityProcess(): Promise<ChildProcessWithoutNullStre
       stdio: ["pipe", "pipe", "pipe"]
     });
     humanActivityProcess = child;
+    humanActivityLastWatchAliveAt = 0;
     humanActivityOutput = "";
     child.unref();
     // Writable-stream failures are emitted separately from ChildProcess
@@ -944,19 +990,28 @@ function consumeHumanActivityOutput(child: ChildProcessWithoutNullStreams, chunk
   const framed = splitHumanActivityOutput(humanActivityOutput, chunk);
   humanActivityOutput = framed.remainder;
   for (const line of framed.lines) {
+    if (parseBrowserActivityWatchHeartbeat(line)) {
+      humanActivityLastWatchAliveAt = Date.now();
+      continue;
+    }
     const wake = parseBrowserActivityWake(line);
     if (wake) {
+      humanActivityLastWatchAliveAt = Date.now();
       recentHumanActivity = null;
       notifyBrowserActivity(wake);
       continue;
     }
 
     const pending = humanActivityPending;
-    if (!pending) continue;
+    if (!pending) {
+      humanActivityLastWatchAliveAt = 0;
+      continue;
+    }
     humanActivityPending = null;
     clearTimeout(pending.timer);
     const sample = parseHumanActivitySample(line);
     if (!sample) {
+      humanActivityLastWatchAliveAt = 0;
       pending.reject(new Error("Human activity helper returned an invalid value."));
       continue;
     }
@@ -980,6 +1035,7 @@ function notifyBrowserActivity(kind: BrowserActivityKind): void {
 function failHumanActivityProcess(child: ChildProcessWithoutNullStreams, error: Error, kill = false): void {
   if (humanActivityProcess !== child) return;
   humanActivityProcess = null;
+  humanActivityLastWatchAliveAt = 0;
   if (humanActivityStabilityTimer) clearTimeout(humanActivityStabilityTimer);
   humanActivityStabilityTimer = null;
   humanActivityOutput = "";
@@ -1055,6 +1111,8 @@ export function parseBrowserActivityWake(output: unknown): BrowserActivityKind |
   const frame = String(output || "").replace(/[\r\n]+$/u, "");
   if (frame === "wake\tkey") return "key";
   if (frame === "wake\tclick") return "click";
+  if (frame === "wake\tactivate") return "activate";
+  if (frame === "wake\tlaunch") return "launch";
   return null;
 }
 

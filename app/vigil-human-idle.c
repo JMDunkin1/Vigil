@@ -4,14 +4,17 @@
 #include <math.h>
 #include <poll.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 enum {
   // Keep the aggregate, permission-free fallback within roughly one to two
   // display frames. The expensive URL query is still event-coalesced in Node;
   // this loop only reads tiny WindowServer counters.
-  browserActivityPollMilliseconds = 25
+  browserActivityPollMilliseconds = 25,
+  browserActivityHeartbeatMilliseconds = 1000
 };
 
 typedef struct {
@@ -27,6 +30,31 @@ typedef struct {
   uint32_t otherMouseUp;
   uint32_t scrollWheel;
 } BrowserActivityCounters;
+
+static bool watchBrowserActivity = false;
+
+static int64_t monotonicMilliseconds(void) {
+  struct timespec now;
+  if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+  return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+@interface VigilWorkspaceObserver : NSObject
+- (void)applicationActivated:(NSNotification *)notification;
+- (void)applicationLaunched:(NSNotification *)notification;
+@end
+
+@implementation VigilWorkspaceObserver
+- (void)applicationActivated:(NSNotification *)notification {
+  (void)notification;
+  if (watchBrowserActivity) printf("wake\tactivate\n");
+}
+
+- (void)applicationLaunched:(NSNotification *)notification {
+  (void)notification;
+  if (watchBrowserActivity) printf("wake\tlaunch\n");
+}
+@end
 
 static uint32_t eventCounter(CGEventType type) {
   // Aggregate counters reveal only that an event occurred. They do not expose
@@ -85,6 +113,12 @@ static NSRunningApplication *currentFrontmostApplication(void) {
   return NSWorkspace.sharedWorkspace.frontmostApplication;
 }
 
+static void drainWorkspaceNotifications(void) {
+  [[NSRunLoop currentRunLoop]
+    runMode:NSDefaultRunLoopMode
+    beforeDate:[NSDate date]];
+}
+
 static void printHumanActivitySample(void) {
   @autoreleasepool {
     const double seconds = CGEventSourceSecondsSinceLastEventType(
@@ -108,12 +142,25 @@ static void printHumanActivitySample(void) {
 
 int main(int argc, const char *argv[]) {
   char request[16];
-  bool watchBrowserActivity = argc > 1
+  watchBrowserActivity = argc > 1
     && strcmp(argv[1], "--watch-browser-activity") == 0;
   BrowserActivityCounters activityCounters = {0};
+  VigilWorkspaceObserver *workspaceObserver = [VigilWorkspaceObserver new];
+  NSNotificationCenter *workspaceNotifications = NSWorkspace.sharedWorkspace.notificationCenter;
+  [workspaceNotifications
+    addObserver:workspaceObserver
+    selector:@selector(applicationActivated:)
+    name:NSWorkspaceDidActivateApplicationNotification
+    object:nil];
+  [workspaceNotifications
+    addObserver:workspaceObserver
+    selector:@selector(applicationLaunched:)
+    name:NSWorkspaceDidLaunchApplicationNotification
+    object:nil];
   setvbuf(stdin, NULL, _IONBF, 0);
   setvbuf(stdout, NULL, _IOLBF, 0);
   if (watchBrowserActivity) (void)changedBrowserActivityKind(&activityCounters);
+  int64_t nextBrowserActivityHeartbeatAt = monotonicMilliseconds() + browserActivityHeartbeatMilliseconds;
 
   while (true) {
     if (watchBrowserActivity) {
@@ -127,8 +174,14 @@ int main(int argc, const char *argv[]) {
         if (errno == EINTR) continue;
         return 1;
       }
+      drainWorkspaceNotifications();
       const char *kind = changedBrowserActivityKind(&activityCounters);
       if (kind != NULL) printf("wake\t%s\n", kind);
+      const int64_t heartbeatNow = monotonicMilliseconds();
+      if (heartbeatNow >= nextBrowserActivityHeartbeatAt) {
+        printf("watch\talive\n");
+        nextBrowserActivityHeartbeatAt = heartbeatNow + browserActivityHeartbeatMilliseconds;
+      }
       if (result == 0) continue;
       if ((input.revents & POLLIN) == 0) break;
     }
@@ -138,6 +191,7 @@ int main(int argc, const char *argv[]) {
       watchBrowserActivity = true;
       memset(&activityCounters, 0, sizeof(activityCounters));
       (void)changedBrowserActivityKind(&activityCounters);
+      nextBrowserActivityHeartbeatAt = monotonicMilliseconds() + browserActivityHeartbeatMilliseconds;
       continue;
     }
     if (strcmp(request, "unwatch\n") == 0) {
@@ -147,5 +201,6 @@ int main(int argc, const char *argv[]) {
     }
     printHumanActivitySample();
   }
+  [workspaceNotifications removeObserver:workspaceObserver];
   return 0;
 }

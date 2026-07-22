@@ -958,7 +958,10 @@
               <p class="eyebrow">First Run</p>
               <h2 id="setupWizardTitle">Setup Checklist</h2>
             </div>
-            <span id="setupProgress" class="pill neutral">0/8 ready</span>
+            <div class="setup-panel-actions">
+              <span id="setupProgress" class="pill neutral">0/4 core ready</span>
+              <button id="openSetupAssistant" class="secondary compact" type="button">Guided Setup</button>
+            </div>
           </div>
           <div id="setupChecklist" class="setup-list"></div>
         </section>
@@ -1163,10 +1166,10 @@
                 <span id="iosStatus" class="pill neutral">Ready</span>
               </div>
               <label class="checkline"><input id="iosEnabled" name="enabled" type="checkbox"> Enable Vigil content filter</label>
-              <p class="device-safety-note">Uses Vigil's own adult blocklist, explicit-search rules, SafeSearch enforcement, and on-device sensitive-media analysis. Blocking unfiltered browser and social apps only closes filter escape routes; Vigil's distraction schedules remain separate.</p>
+              <p class="device-safety-note">Uses a managed web-content filter across Safari and third-party browsers. When native-app restrictions are selected, listed social apps stay restricted whenever Vigil's iPhone policy is enabled; separate Instagram and YouTube companions apply feature controls. Snapchat stays policy-only and has no companion.</p>
               <div class="form-row">
                 <label>
-                  Unfiltered app policy
+                  Native app policy
                   <select id="iosMode" name="mode">
                     <option value="denylist">Block listed apps</option>
                     <option value="allowlist">Only allow listed apps</option>
@@ -1181,8 +1184,8 @@
                 </label>
               </div>
               <div class="toggle-grid">
-                <label class="checkline"><input id="iosBlockApps" name="blockApps" type="checkbox"> Close browser and social escape routes</label>
-                <label class="checkline"><input id="iosBlockWeb" name="blockWeb" type="checkbox"> Filter adult websites and searches</label>
+                <label class="checkline"><input id="iosBlockApps" name="blockApps" type="checkbox"> Restrict native social and feed apps</label>
+                <label class="checkline"><input id="iosBlockWeb" name="blockWeb" type="checkbox"> Filter websites across phone browsers</label>
                 <label class="checkline"><input id="iosHardenRemoval" name="hardenRemoval" type="checkbox"> Removal passcode</label>
                 <label class="checkline"><input id="iosRestrictInstallErase" name="restrictInstallAndErase" type="checkbox"> Lock escapes</label>
                 <label class="checkline"><input id="iosAllowSafariHistoryClearing" name="allowSafariHistoryClearing" type="checkbox"> Safari history</label>
@@ -1191,11 +1194,11 @@
                 <div class="focused-social-head">
                   <div>
                     <p class="eyebrow">Filtered Social</p>
-                    <strong>Sensitive-content and discovery controls</strong>
+                    <strong>Feature controls and native-app restrictions</strong>
                   </div>
                   <div class="focused-social-master">
                     <label class="checkline"><input id="iosFocusedSocialEnabled" type="checkbox"> On</label>
-                    <label class="checkline"><input id="iosFocusedSocialForceWebClips" type="checkbox"> Web clips</label>
+                    <label class="checkline"><input id="iosFocusedSocialForceWebClips" type="checkbox"> Instagram + YouTube companions</label>
                   </div>
                 </div>
                 <div class="social-menu-grid">
@@ -1226,7 +1229,7 @@
                   <fieldset class="social-menu-card">
                     <legend>
                       <span class="social-menu-icon snapchat" aria-hidden="true"></span>
-                      Snapchat
+                      Snapchat (policy only)
                     </legend>
                     <label class="checkline"><input id="iosFocusedSnapchatEnabled" type="checkbox"> Platform</label>
                     <label class="checkline"><input id="iosFocusedSnapchatSpotlight" type="checkbox" disabled> Spotlight</label>
@@ -1313,6 +1316,43 @@
     </section>
 
   </main>
+
+  <dialog id="setupAssistant" class="setup-assistant" aria-labelledby="setupAssistantTitle" aria-describedby="setupAssistantCopy">
+    <div class="setup-assistant-shell">
+      <header class="setup-assistant-header">
+        <div class="setup-assistant-mark" aria-hidden="true">
+          <img src="/app-icons/jerusalem-cross.png" alt="">
+        </div>
+        <div class="setup-assistant-heading">
+          <span id="setupAssistantKicker" class="eyebrow">Welcome to Vigil</span>
+          <h2 id="setupAssistantTitle">Set up protection, one clear step at a time</h2>
+          <p id="setupAssistantCopy">Vigil checks every step after you complete it, so you always know what is actually protecting this Mac.</p>
+        </div>
+        <button id="closeSetupAssistant" class="setup-assistant-close" type="button" aria-label="Finish setup later">&times;</button>
+      </header>
+
+      <div class="setup-assistant-progress" aria-live="polite">
+        <div>
+          <span id="setupAssistantStep">Step 1 of 1</span>
+          <strong id="setupAssistantReadiness">Checking this Mac…</strong>
+        </div>
+        <div class="setup-assistant-progress-track" aria-hidden="true">
+          <i id="setupAssistantProgressBar"></i>
+        </div>
+      </div>
+
+      <section id="setupAssistantBody" class="setup-assistant-body"></section>
+
+      <footer class="setup-assistant-footer">
+        <button id="setupAssistantLater" class="ghost" type="button">Finish later</button>
+        <div>
+          <button id="setupAssistantBack" class="secondary" type="button">Back</button>
+          <button id="setupAssistantAction" class="secondary" type="button" hidden>Open Settings</button>
+          <button id="setupAssistantNext" class="primary" type="button">Continue</button>
+        </div>
+      </footer>
+    </div>
+  </dialog>
 
   <dialog id="accountDialog" class="account-dialog" aria-labelledby="accountDialogTitle">
     <div class="account-dialog-head">

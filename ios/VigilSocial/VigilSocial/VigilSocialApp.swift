@@ -6,10 +6,7 @@ struct VigilSocialApp: App {
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack {
-                RootView(store: store)
-                    .toolbar(.hidden, for: .navigationBar)
-            }
+            RootView(store: store)
             .onOpenURL { store.open($0) }
         }
     }

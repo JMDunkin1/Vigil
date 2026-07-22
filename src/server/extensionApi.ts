@@ -20,16 +20,23 @@ interface GuardResult {
 interface ExtensionApiContext {
   state: VigilState;
   usage: UsageState;
+  requestPersistence?: () => void;
+}
+
+interface ExtensionPersistenceTargets {
+  state?: boolean;
+  usage?: boolean;
 }
 
 export async function handleExtensionApiRoute(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
-  { state, usage }: ExtensionApiContext
+  context: ExtensionApiContext
 ): Promise<boolean> {
   const method = request.method || "GET";
   const path = url.pathname;
+  const { state } = context;
 
   if (method === "OPTIONS" && isExtensionApiPath(path)) {
     const extensionGuard = extensionRouteGuard(method, path, request);
@@ -39,7 +46,7 @@ export async function handleExtensionApiRoute(
   }
 
   if ((method === "POST" || method === "GET") && path === "/api/extension/check") {
-    await handleExtensionCheck(request, response, url, { state, usage });
+    await handleExtensionCheck(request, response, url, context);
     return true;
   }
 
@@ -49,22 +56,22 @@ export async function handleExtensionApiRoute(
   }
 
   if (method === "GET" && path === "/api/extension/rules") {
-    await handleExtensionRules(request, response, url, state);
+    await handleExtensionRules(request, response, url, context);
     return true;
   }
 
   if (method === "POST" && path === "/api/extension/rules/sync") {
-    await handleExtensionRulesSync(request, response, state);
+    await handleExtensionRulesSync(request, response, context);
     return true;
   }
 
   if (method === "POST" && path === "/api/extension/pause/continue") {
-    await handleExtensionPauseContinue(request, response, state);
+    await handleExtensionPauseContinue(request, response, context);
     return true;
   }
 
   if (method === "POST" && path === "/api/extension/pause/skip") {
-    await handleExtensionPauseSkip(request, response, state);
+    await handleExtensionPauseSkip(request, response, context);
     return true;
   }
 
@@ -75,8 +82,9 @@ async function handleExtensionCheck(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
-  { state, usage }: ExtensionApiContext
+  context: ExtensionApiContext
 ): Promise<void> {
+  const { state, usage } = context;
   const method = request.method || "GET";
   const extensionGuard = extensionRouteGuard(method, url.pathname, request);
   if (!extensionGuard.ok) {
@@ -91,6 +99,9 @@ async function handleExtensionCheck(
         event: url.searchParams.get("event"),
         seconds: url.searchParams.get("seconds")
       };
+  const pauseIdsBefore = new Set((state.intentionalUse?.pauses || []).map((pause) => pause.id));
+  const limitBlockIdsBefore = new Set((state.limitBlocks || []).map((block) => block.id));
+  const extensionVersionBefore = state.extension?.lastVersion || null;
   const result = evaluateExtensionCheck(state, usage, body);
   if (trustedExtensionRequest(request)) {
     state.extension = {
@@ -101,13 +112,15 @@ async function handleExtensionCheck(
       lastHost: String(result.hostname || state.extension?.lastHost || "") || null
     };
   }
-  if (result.blocked && result.event !== "heartbeat") {
+  const blockEventAdded = result.blocked === true && result.event !== "heartbeat";
+  if (blockEventAdded) {
     addEvent(state, "extension_blocked_site", {
       site: result.hostname,
       policy: result.policy?.title || result.reason
     });
   }
-  if (result.paused && result.event !== "heartbeat") {
+  const pauseEventAdded = result.paused === true && result.event !== "heartbeat";
+  if (pauseEventAdded) {
     addEvent(state, "intentional_pause_requested", {
       site: result.hostname,
       ruleId: result.rule?.id,
@@ -115,8 +128,12 @@ async function handleExtensionCheck(
       pauseId: result.pause?.id
     });
   }
-  await saveUsage(usage);
-  await saveState(state);
+  const durableMutation = blockEventAdded
+    || pauseEventAdded
+    || (state.intentionalUse?.pauses || []).some((pause) => !pauseIdsBefore.has(pause.id))
+    || (state.limitBlocks || []).some((block) => !limitBlockIdsBefore.has(block.id))
+    || (state.extension?.lastVersion || null) !== extensionVersionBefore;
+  await persistExtensionChanges(context, durableMutation, { state: true, usage: true });
   sendJson(response, 200, result, extensionResponseCorsHeaders(request));
 }
 
@@ -150,14 +167,17 @@ async function handleExtensionRules(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
-  state: VigilState
+  context: ExtensionApiContext
 ): Promise<void> {
+  const { state } = context;
   const method = request.method || "GET";
   const extensionGuard = extensionRouteGuard(method, url.pathname, request);
   if (!extensionGuard.ok) {
     sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionResponseCorsHeaders(request));
     return;
   }
+  const dynamicRulesBefore = dynamicRulesDurabilityFingerprint(state);
+  const extensionVersionBefore = state.extension?.lastVersion || null;
   const snapshot = extensionRuleSnapshot(state);
   const expectedCount = extensionDynamicRuleCount(snapshot);
   const expectedSignature = extensionDynamicRuleSignature(snapshot);
@@ -177,7 +197,9 @@ async function handleExtensionRules(
         fallbackRequired: snapshot.fallbackRequired
       }
     };
-    await saveState(state);
+    const durableMutation = dynamicRulesDurabilityFingerprint(state) !== dynamicRulesBefore
+      || (state.extension?.lastVersion || null) !== extensionVersionBefore;
+    await persistExtensionChanges(context, durableMutation, { state: true });
   }
   sendJson(response, 200, snapshot, extensionResponseCorsHeaders(request));
 }
@@ -185,8 +207,9 @@ async function handleExtensionRules(
 async function handleExtensionRulesSync(
   request: IncomingMessage,
   response: ServerResponse,
-  state: VigilState
+  context: ExtensionApiContext
 ): Promise<void> {
+  const { state } = context;
   const method = request.method || "GET";
   const extensionGuard = extensionRouteGuard(method, "/api/extension/rules/sync", request);
   if (!extensionGuard.ok) {
@@ -195,6 +218,8 @@ async function handleExtensionRulesSync(
   }
 
   const body = await readBody(request);
+  const dynamicRulesBefore = dynamicRulesDurabilityFingerprint(state);
+  const extensionVersionBefore = state.extension?.lastVersion || null;
   const snapshot = extensionRuleSnapshot(state);
   const expectedCount = extensionDynamicRuleCount(snapshot);
   const expectedSignature = extensionDynamicRuleSignature(snapshot);
@@ -220,7 +245,9 @@ async function handleExtensionRulesSync(
         error: String(body.error || "").slice(0, 200)
       }
     };
-    await saveState(state);
+    const durableMutation = dynamicRulesDurabilityFingerprint(state) !== dynamicRulesBefore
+      || (state.extension?.lastVersion || null) !== extensionVersionBefore;
+    await persistExtensionChanges(context, durableMutation, { state: true });
   }
   sendJson(response, 200, { ok, count, expectedCount }, extensionResponseCorsHeaders(request));
 }
@@ -228,8 +255,9 @@ async function handleExtensionRulesSync(
 async function handleExtensionPauseContinue(
   request: IncomingMessage,
   response: ServerResponse,
-  state: VigilState
+  context: ExtensionApiContext
 ): Promise<void> {
+  const { state } = context;
   const extensionGuard = extensionRouteGuard(request.method || "POST", "/api/extension/pause/continue", request);
   if (!extensionGuard.ok) {
     sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionResponseCorsHeaders(request));
@@ -247,7 +275,7 @@ async function handleExtensionPauseContinue(
       source: "extension-overlay"
     });
     markExtensionActionSeen(request, state, "pause-continue");
-    await saveState(state);
+    await persistExtensionChanges(context, true, { state: true });
     sendJson(response, 200, { ok: true, ...result }, extensionResponseCorsHeaders(request));
   } catch (error) {
     sendJson(response, errorStatus(error), serializeError(error), extensionResponseCorsHeaders(request));
@@ -257,8 +285,9 @@ async function handleExtensionPauseContinue(
 async function handleExtensionPauseSkip(
   request: IncomingMessage,
   response: ServerResponse,
-  state: VigilState
+  context: ExtensionApiContext
 ): Promise<void> {
+  const { state } = context;
   const extensionGuard = extensionRouteGuard(request.method || "POST", "/api/extension/pause/skip", request);
   if (!extensionGuard.ok) {
     sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionResponseCorsHeaders(request));
@@ -276,11 +305,43 @@ async function handleExtensionPauseSkip(
       source: "extension-overlay"
     });
     markExtensionActionSeen(request, state, "pause-skip");
-    await saveState(state);
+    await persistExtensionChanges(context, true, { state: true });
     sendJson(response, 200, { ok: true, ...result }, extensionResponseCorsHeaders(request));
   } catch (error) {
     sendJson(response, errorStatus(error), serializeError(error), extensionResponseCorsHeaders(request));
   }
+}
+
+async function persistExtensionChanges(
+  context: ExtensionApiContext,
+  durableMutation: boolean,
+  targets: ExtensionPersistenceTargets
+): Promise<void> {
+  if (context.requestPersistence) {
+    if (durableMutation) context.requestPersistence();
+    return;
+  }
+  if (targets.usage) await saveUsage(context.usage);
+  if (targets.state) await saveState(context.state);
+}
+
+function dynamicRulesDurabilityFingerprint(state: VigilState): string {
+  const dynamicRules = state.extension?.dynamicRules || {};
+  return JSON.stringify({
+    count: normalizedRuleCount(dynamicRules.count),
+    expectedCount: normalizedRuleCount(dynamicRules.expectedCount),
+    signature: String(dynamicRules.signature || ""),
+    expectedSignature: String(dynamicRules.expectedSignature || ""),
+    fallbackRequired: dynamicRules.fallbackRequired === true,
+    status: String(dynamicRules.status || "missing"),
+    ok: dynamicRules.ok === true,
+    error: String(dynamicRules.error || "")
+  });
+}
+
+function normalizedRuleCount(value: unknown): number {
+  const count = Number(value);
+  return Number.isFinite(count) ? count : 0;
 }
 
 function markExtensionActionSeen(request: IncomingMessage, state: VigilState, event: string): void {

@@ -27,6 +27,10 @@ interface ApiBridge {
   request(path: string, options?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<unknown>;
 }
 
+interface SetupBridge {
+  open(destination: string): Promise<unknown>;
+}
+
 const sourceRoot = existsSync(join(process.cwd(), "app", "main.ts"))
   ? process.cwd()
   : resolve(process.cwd(), "..", "..");
@@ -97,7 +101,17 @@ assert.equal(JSON.stringify(invocations[4]?.args), JSON.stringify([{
   headers: { "Content-Type": "application/json" },
   body: "{}"
 }]));
+const setupBridge = exposed.get("vigilSetup") as SetupBridge | undefined;
+assert.ok(setupBridge, "preload should expose the restricted setup bridge");
+await setupBridge.open("accessibility");
+assert.equal(invocations[5]?.channel, "vigil:setup-open");
+assert.deepEqual(invocations[5]?.args, ["accessibility"]);
 assert.match(mainSource, /ipcMain\.handle\("vigil:api-request", handlePrivateApiRequest\)/u);
+assert.match(mainSource, /ipcMain\.handle\("vigil:setup-open", handleSetupOpen\)/u);
+assert.match(mainSource, /destination === "accessibility"[\s\S]*?isTrustedAccessibilityClient\(true\)[\s\S]*?Privacy_Accessibility/u);
+assert.match(mainSource, /destination === "extension"[\s\S]*?chromewebstore\.google\.com\/detail\/[\s\S]*?join\(RUNTIME_ROOT, "extension", "manifest\.json"\)[\s\S]*?showItemInFolder/u);
+assert.match(mainSource, /value\.extensionId !== BUILT_IN_CHROME_EXTENSION_ID/u, "a packaged store shortcut must use only Vigil's trusted extension ID");
+assert.doesNotMatch(mainSource, /handleSetupOpen[\s\S]*?shell\.openExternal\(String\(value/u, "renderer input must never become an arbitrary external URL");
 assert.match(mainSource, /APP_URL = `\$\{APP_SCHEME\}:\/\/\$\{APP_HOST\}\//u);
 assert.match(
   mainSource,

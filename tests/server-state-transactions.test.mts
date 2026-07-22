@@ -23,7 +23,7 @@ try {
       path: "/api/extension/check?url=https%3A%2F%2Fexample.com%2F&event=heartbeat&seconds=4",
       headers: extensionHeaders()
     });
-    assert.equal(response.status, 500, "mutating extension GET must be coordinated in-app");
+    assert.equal(response.status, 200, "routine extension usage pulses must stay live without forcing a full-state write");
   });
   const stagedKeyPath = join(dataDir, "staged-distance-key.txt");
   await withStateWriteFailure(async () => {

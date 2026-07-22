@@ -9,6 +9,33 @@ enum ContentSafetyVerdict: String, Equatable, Sendable {
     case unknown
 }
 
+enum UnclassifiedMediaPolicy: String, Equatable, Sendable {
+    static let infoDictionaryKey = "VigilUnclassifiedMediaPolicy"
+
+    case conceal
+    case revealUnclassified = "reveal-unclassified"
+
+    init(infoDictionaryValue: Any?) {
+        guard let value = infoDictionaryValue as? String,
+              let configured = Self(rawValue: value) else {
+            self = .conceal
+            return
+        }
+        self = configured
+    }
+
+    init(bundle: Bundle) {
+        self.init(infoDictionaryValue: bundle.object(forInfoDictionaryKey: Self.infoDictionaryKey))
+    }
+
+    var concealsUnclassifiedMedia: Bool { self == .conceal }
+
+    func resolve(_ verdict: ContentSafetyVerdict) -> ContentSafetyVerdict {
+        guard verdict == .unknown, self == .revealUnclassified else { return verdict }
+        return .safe
+    }
+}
+
 protocol MediaSafetyClassifying: Sendable {
     func classify(imageData: Data) async -> ContentSafetyVerdict
 }
@@ -20,7 +47,9 @@ protocol PageTextSafetyClassifying: Sendable {
 /// Uses Apple's on-device Sensitive Content Analysis framework. The framework only
 /// operates when its entitlement and the person's system policy permit analysis.
 /// A disabled policy, malformed image, or analysis error deliberately returns
-/// `.unknown`; callers must keep the media concealed in that state.
+/// `.unknown`; the caller applies the explicit build policy for unclassified
+/// media. Full-capability builds conceal it, while the Personal Team fallback
+/// can reveal it without changing the classifier's verdict globally.
 final class AppleSensitiveMediaClassifier: MediaSafetyClassifying, @unchecked Sendable {
     private let analyzer: SCSensitivityAnalyzer
 

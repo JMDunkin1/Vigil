@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import type { UsageDay, UsageState } from "../src/types.js";
 
 const dataDir = await mkdtemp(join(tmpdir(), "vigil-runtime-commit-"));
@@ -263,7 +264,6 @@ try {
   const transitionState = defaultState();
   transitionState.integrity.stateSeal.lastCheckedAt = "2001-01-01T00:00:00.000Z";
   transitionState.integrity.stateSeal.lastSealedAt = "2001-01-01T00:00:00.000Z";
-  const transitionBefore = structuredClone(transitionState);
   const transitionOutbox = [{
     id: "seal-transition",
     key: "seal-transition",
@@ -276,25 +276,40 @@ try {
     startedAt: null,
     nextAttemptAt: null
   }];
-  let failRunningTransition = true;
+  await store.saveRuntimeSnapshot(transitionState, {}, { outbox: transitionOutbox });
+  const transitionBefore = structuredClone(transitionState);
+  let transitionSnapshots = 0;
   let transitionRuns = 0;
+  let markTransitionStarted = () => {};
+  const transitionStarted = new Promise<void>((resolve) => { markTransitionStarted = resolve; });
+  let releaseTransition = () => {};
+  const transitionGate = new Promise<void>((resolve) => { releaseTransition = resolve; });
   const transitionCoordinator = new RuntimeMutationCoordinator(transitionState, {}, transitionOutbox, async (state, usage, options = {}) => {
-    await store.saveRuntimeSnapshot(state, usage, {
-      ...options,
-      ...(failRunningTransition ? { beforeUsageWrite() { throw new Error("deterministic running transition failure"); } } : {})
-    });
+    transitionSnapshots += 1;
+    await store.saveRuntimeSnapshot(state, usage, options);
   });
-  await transitionCoordinator.retryPending(async () => { transitionRuns += 1; });
-  transitionCoordinator.stopAdmission();
-  assert.equal(transitionRuns, 0, "an effect must not run when its running transition was not persisted");
-  assert.deepEqual(transitionState, transitionBefore, "a failed outbox transition must leave the entire live state unchanged");
-  failRunningTransition = false;
-  await transitionCoordinator.retryPending(async () => { transitionRuns += 1; });
+  const transitionAttempt = transitionCoordinator.retryPending(async () => {
+    transitionRuns += 1;
+    markTransitionStarted();
+    await transitionGate;
+  });
+  await transitionStarted;
+  assert.equal(transitionCoordinator.pendingEffects()[0]?.status, "running",
+    "running remains observable in memory while the effect is active");
+  const durableDuringAttempt = await store.loadRuntimeOutbox();
+  assert.equal(durableDuringAttempt[0]?.status, "pending",
+    "the already-durable pending intent remains the crash-recovery record during execution");
+  assert.equal(transitionSnapshots, 0, "starting an idempotent effect must not rewrite the full runtime snapshot");
+  assert.deepEqual(transitionState, transitionBefore, "a transient running observation must not churn live seal metadata");
+  releaseTransition();
+  await transitionAttempt;
   assert.equal(transitionRuns, 1);
-  assert.notEqual(transitionState.integrity.stateSeal.lastSealedAt, "2001-01-01T00:00:00.000Z", "a successful outbox transition must publish committed seal metadata");
+  assert.equal(transitionSnapshots, 1, "completion must atomically acknowledge the intent with one full snapshot");
+  assert.notEqual(transitionState.integrity.stateSeal.lastSealedAt, "2001-01-01T00:00:00.000Z", "a successful completion must publish committed seal metadata");
   const storedTransitionState = JSON.parse(await readFile(store.STATE_PATH, "utf8"));
   assert.deepEqual(storedTransitionState.integrity.stateSeal, transitionState.integrity.stateSeal, "outbox completion must publish the same seal metadata held on disk");
   assert.equal(transitionCoordinator.pendingEffects().length, 0);
+  transitionCoordinator.stopAdmission();
   await transitionCoordinator.drain();
 
   const reentrantCoordinator = new RuntimeMutationCoordinator(defaultState(), {}, [], async () => {});
@@ -690,6 +705,7 @@ for (const boundary of [
   "usage-published",
   "usageSeal-published",
   "outbox-published",
+  "canonical-directory-fsynced",
   "journal-removed"
 ]) {
   const crashDir = await mkdtemp(join(tmpdir(), `vigil-runtime-crash-${boundary}-`));
@@ -706,11 +722,48 @@ for (const boundary of [
   }
 }
 
+const legacyPlainJournalDir = await mkdtemp(join(tmpdir(), "vigil-runtime-legacy-journal-"));
+try {
+  await snapshotChild("save-old", legacyPlainJournalDir);
+  const crash = await snapshotChild("save-new", legacyPlainJournalDir, "journal-published", true);
+  assert.equal(crash.signal, "SIGKILL");
+  const journalPath = join(legacyPlainJournalDir, "runtime-snapshot.wal.json");
+  await writeFile(journalPath, gunzipSync(await readFile(journalPath)), { mode: 0o600 });
+  const recovered = JSON.parse((await snapshotChild("load", legacyPlainJournalDir)).stdout) as { enabled: boolean; seconds: number };
+  assert.equal(recovered.enabled, true, "recovery must remain compatible with pre-compression plain JSON WAL files");
+  assert.equal(recovered.seconds, 23);
+} finally {
+  await rm(legacyPlainJournalDir, { recursive: true, force: true });
+}
+
+const corruptJournalDir = await mkdtemp(join(tmpdir(), "vigil-runtime-corrupt-journal-"));
+try {
+  await snapshotChild("save-old", corruptJournalDir);
+  const crash = await snapshotChild("save-new", corruptJournalDir, "journal-published", true);
+  assert.equal(crash.signal, "SIGKILL");
+  const journalPath = join(corruptJournalDir, "runtime-snapshot.wal.json");
+  const journal = await readFile(journalPath);
+  await writeFile(journalPath, journal.subarray(0, Math.max(1, journal.length - 8)), { mode: 0o600 });
+  const failedRecovery = await snapshotChild("load", corruptJournalDir, "", true);
+  assert.notEqual(failedRecovery.code, 0, "a truncated compressed WAL must fail closed");
+  assert.match(failedRecovery.stderr, /quarantined an invalid runtime snapshot journal/u);
+  const canonicalState = JSON.parse(await readFile(join(corruptJournalDir, "state.json"), "utf8"));
+  const canonicalUsage = JSON.parse(await readFile(join(corruptJournalDir, "usage.json"), "utf8"));
+  assert.equal(canonicalState.settings.siteRedirectEnabled, false, "invalid WAL recovery must not modify canonical state");
+  assert.equal(canonicalUsage["2026-07-14"]?.totalSeconds, 5, "invalid WAL recovery must not modify canonical usage");
+  assert.equal((await readdir(corruptJournalDir)).some((name) => name.startsWith("runtime-snapshot.corrupt.")), true,
+    "invalid compressed WAL bytes must be retained as evidence");
+} finally {
+  await rm(corruptJournalDir, { recursive: true, force: true });
+}
+
 const aggregateJournalDir = await mkdtemp(join(tmpdir(), "vigil-runtime-large-journal-"));
 try {
   await snapshotChild("save-old", aggregateJournalDir);
   const crash = await snapshotChild("save-large", aggregateJournalDir, "journal-published", true);
   assert.equal(crash.signal, "SIGKILL", "large aggregate WAL fixture must crash after publication");
+  assert.ok((await stat(join(aggregateJournalDir, "runtime-snapshot.wal.json"))).size < 3 * 1024 * 1024,
+    "the durable WAL should compress repetitive snapshot payloads before writing them");
   const recovered = JSON.parse((await snapshotChild("load-large", aggregateJournalDir)).stdout) as { enabled: boolean; paddingLength: number };
   assert.equal(recovered.enabled, true, "a valid aggregate WAL larger than one file limit must be replayed");
   assert.equal(recovered.paddingLength, 17 * 1024 * 1024, "large aggregate WAL recovery must preserve its complete usage payload");

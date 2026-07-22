@@ -81,14 +81,37 @@ assert.match(
 );
 assert.match(
   setupWizardSource,
-  /detail: launchAgent\.embedded && launchAgent\.restartHardened !== true[\s\S]*?Repair automatic restart protection without leaving Vigil\.[\s\S]*?action: launchAgent\.embedded \? "Repair Restart Protection"[\s\S]*?actionTarget: launchAgentReady \? undefined : "installLaunchAgent"/u,
+  /detail: launchAgent\.embedded && launchAgent\.restartHardened !== true[\s\S]*?Repair automatic restart protection without leaving Vigil\.[\s\S]*?action: launchAgentReady \? "Open Login Items" : launchAgent\.embedded \? "Repair protection" : "Enable at login"[\s\S]*?actionTarget: launchAgentReady \? undefined : "installLaunchAgent"/u,
   "embedded runtime setup must route its recovery guidance to the working restart-protection control"
 );
 assert.match(
   setupWizardSource,
-  /action\.addEventListener\("click", \(\) => document\.querySelector\(`#\$\{item\.actionTarget\}`\)\?\.click\(\)\)/u,
+  /action\.addEventListener\("click", \(\) => \{[\s\S]*?runChecklistItemAction\(item\)\.catch\(\(error\) => assistant\?\.showActionError\(error\)\)[\s\S]*?async function runChecklistItemAction[\s\S]*?target\.click\(\)/u,
   "setup checklist recovery actions must invoke their matching hardening control"
 );
+assert.match(
+  setupWizardSource,
+  /runChecklistItemAction\(item\)\.catch\(\(error\) => assistant\?\.showActionError\(error\)\)[\s\S]*?if \(item\.nativeDestination\)[\s\S]*?await openNativeSetupDestination\(item\.nativeDestination\)[\s\S]*?showActionError\(error\)[\s\S]*?this\.options\.toast/u,
+  "native checklist action failures must reach the shared setup toast"
+);
+assert.match(
+  setupWizardSource,
+  /startedOnRenderRevision = this\.pageRenderRevision[\s\S]*?if \(this\.pageRenderRevision !== startedOnRenderRevision\)[\s\S]*?return;[\s\S]*?this\.pageRenderRevision \+= 1[\s\S]*?actionButton\.disabled = false/u,
+  "delayed action cleanup must not restore stale shared-button state after setup navigation"
+);
+assert.match(
+  setupWizardSource,
+  /focusReplacement[\s\S]*?dataset\.setupSignature === setupSignature\(item\)[\s\S]*?currentNode\.replaceWith\(node\)[\s\S]*?focusReplacement\?\.focus\(\)/u,
+  "live setup updates must replace stale focused rows while preserving focus when the replacement remains actionable"
+);
+assert.match(html, /id="setupAssistant"[^>]*aria-labelledby="setupAssistantTitle"/u, "first run must have a dedicated guided setup dialog");
+assert.match(html, /id="openSetupAssistant"[^>]*>Guided Setup</u, "the live setup checklist must always reopen the guide");
+assert.match(setupWizardSource, /SETUP_SCHEMA_VERSION[\s\S]*SETUP_SNOOZE_KEY[\s\S]*coreReady/u, "guided setup must persist resumable, versioned completion state");
+assert.match(setupWizardSource, /tier: networkEnabled \? "core" : "recommended"/u, "disabled network coverage must not block core completion");
+assert.match(setupWizardSource, /tier: safariFilter\.required \? "core" : "optional"/u, "unneeded Safari coverage must not block core completion");
+assert.match(setupWizardSource, /id: "extension"[\s\S]*?action: "Install Companion"/u, "the Chromium setup step must use consumer-facing install language");
+assert.doesNotMatch(setupWizardSource, /Reveal Companion|Add the bundled companion/u, "the production Chromium setup must not expose development or sideloading language");
+assert.match(setupWizardSource, /iPhoneReady = Boolean\(ios\.enabled && \(mdm\.ready \|\| \(manageEngine\.preferred && manageEngine\.currentGeneration\)\)\)/u, "iPhone setup must require enabled policy plus concrete delivery evidence");
 assert.match(
   hardeningPanelSource,
   /restartProtectionNeedsRepair = agent\.embedded === true && agent\.restartHardened !== true[\s\S]*?Repair Restart Protection[\s\S]*?disabled = agent\.embedded === true && !restartProtectionNeedsRepair/u,

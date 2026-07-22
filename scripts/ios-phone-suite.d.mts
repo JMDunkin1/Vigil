@@ -19,6 +19,7 @@ export function policyFreshnessProblems(options?: {
   livePolicyFingerprint?: string;
 }): string[];
 export function preservedPolicyReceipt(receipt: unknown): { policyFingerprint: string; policyArtifactHash: string };
+export function removalPasswordFromProfile(profile: unknown): string;
 export function implementationFingerprint(): Promise<{
   hash: string;
   files: Array<{ path: string; bytes: number; sha256: string }>;

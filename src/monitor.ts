@@ -1,5 +1,6 @@
 import { performance } from "node:perf_hooks";
-import { addEvent, saveState, saveUsage } from "./store.js";
+import { createHash } from "node:crypto";
+import { addEvent, DATA_DIR, saveState, STATE_SEAL_KEY_PATH } from "./store.js";
 import { PORT } from "./defaults.js";
 import { contentFilterEnabled } from "./contentFilters.js";
 import { attestChromeSafeSearchStatus } from "./chromeSafeSearch.js";
@@ -9,10 +10,11 @@ import { extensionDynamicRulesReady } from "./foolproof.js";
 import { firewallStatus } from "./firewall.js";
 import { grayscaleDecision, grayscaleGuardEnabled, MAC_GRAYSCALE_GUARD_APPS } from "./grayscale.js";
 import { hostsStatus, launchAgentStatus, managedBlockDomains, stateSealStatus } from "./hardening.js";
-import { appleContentFilterRecoveryActive, detectClockTamper, detectHardeningDrift, detectRuntimeGap, hardeningDriftAttestationRequired, integrityLockdownActive, protectedLockActive, recordRuntimeHeartbeat, syncAppleContentFilterLockdown } from "./integrityLockdown.js";
+import { appleContentFilterRecoveryActive, detectClockTamper, detectHardeningDrift, hardeningDriftAttestationRequired, integrityLockdownActive, protectedLockActive, syncAppleContentFilterLockdown } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
-import { maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
-import { appCanReportUrls, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, readMacGrayscaleState, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, subscribeBrowserActivity, urlHostname } from "./macos.js";
+import { iosMdmQueuedPushEligible, maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
+import { activeLimitBlocks } from "./limits.js";
+import { appCanReportUrls, browserActivityWatchHealthy, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, readMacGrayscaleState, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, subscribeBrowserActivity, urlHostname } from "./macos.js";
 import type { BrowserActivitySignal } from "./macos.js";
 import { BrowserActivityBurstScheduler } from "./monitor/browserActivity.js";
 import type { BrowserActivityBurstSchedulerDependencies } from "./monitor/browserActivity.js";
@@ -21,6 +23,7 @@ import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
 import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, isInterruptedPollGap, roundSeconds } from "./monitor/timing.js";
 import { safariFilterStatus } from "./safariFilter.js";
 import { sourceSealStatus } from "./sourceSeal.js";
+import { isNonRetryableRuntimeUsageCheckpointError, runtimeUsageCheckpointPath, saveRuntimeUsageCheckpoint } from "./runtimeUsageCheckpoint.js";
 import { networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
 import { dateKey } from "./time.js";
 import { recordOpen, recordUsage } from "./usage.js";
@@ -35,8 +38,13 @@ interface MonitorContext {
   committedRevision?: () => number;
   browserActivityNow?: () => number;
   browserActivitySubscribe?: (listener: (signal: BrowserActivitySignal) => void) => () => void;
+  browserActivityHealthy?: () => boolean;
   browserActivityBurstDependencies?: Partial<BrowserActivityBurstSchedulerDependencies>;
   browserRedirect?: typeof redirectActiveBrowserTab;
+  runtimeUsageCheckpointEnabled?: boolean;
+  runtimeUsageCheckpointWriter?: typeof saveRuntimeUsageCheckpoint;
+  runtimeUsageCheckpointLocation?: { checkpointPath: string; keyPath: string };
+  startupSnapshotPersisted?: boolean;
   mutate?: <T>(operation: (
     state: VigilState,
     usage: UsageState,
@@ -56,18 +64,99 @@ interface MonitorMutationOptions {
   captureEffectAttemptBarrier?: (barrier: Promise<void>) => void;
 }
 
-export const MONITOR_PERSIST_INTERVAL_MS = 30_000;
+export const MONITOR_FULL_CHECKPOINT_INTERVAL_MS = 15 * 60_000;
+export const MONITOR_HOT_CHECKPOINT_INTERVAL_MS = 15_000;
+export const MONITOR_HOT_CHECKPOINT_MAX_RETRY_MS = MONITOR_FULL_CHECKPOINT_INTERVAL_MS;
+export const MONITOR_RECOVERY_POLL_INTERVAL_MS = 3_000;
 export const HARDENING_DRIFT_EVIDENCE_MAX_AGE_MS = 15_000;
 export const BROWSER_ACTIVITY_PERSISTENCE_RETRY_DELAYS_MS = Object.freeze([250, 500, 1_000, 3_000]);
 export const BROWSER_ACTIVITY_PERSISTENCE_SHUTDOWN_MAX_ATTEMPTS = 4;
 
-function isVigilBlockedPageUrl(value: unknown): boolean {
+export function monitorPollIntervalMs(configuredIntervalMs: unknown, activityAccelerationHealthy: boolean): number {
+  const configured = Number(configuredIntervalMs);
+  const intervalMs = Number.isFinite(configured) && configured > 0 ? configured : 15_000;
+  return activityAccelerationHealthy ? intervalMs : Math.min(intervalMs, MONITOR_RECOVERY_POLL_INTERVAL_MS);
+}
+
+export function hotUsageCheckpointRetryDelayMs(failureCount: unknown): number {
+  const failures = Math.max(1, Math.trunc(Number(failureCount) || 1));
+  return Math.min(
+    MONITOR_HOT_CHECKPOINT_MAX_RETRY_MS,
+    MONITOR_HOT_CHECKPOINT_INTERVAL_MS * (2 ** Math.min(failures, 16))
+  );
+}
+
+export function hotUsageCheckpointFingerprint(state: VigilState, usage: UsageState, now = new Date()): string {
+  const day = dateKey(now);
+  const previousLocalDay = new Date(now);
+  previousLocalDay.setDate(previousLocalDay.getDate() - 1);
+  const previousDay = dateKey(previousLocalDay);
+  const grantCounters = (state.intentionalUse?.grants || [])
+    .map((grant) => ({
+      id: grant.id,
+      usedSeconds: Number(grant.usedSeconds || 0),
+      lastSeenAt: grant.lastSeenAt || null
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+  return createHash("sha256").update(JSON.stringify({
+    days: [previousDay, day].map((dayKey) => ({
+      dayKey,
+      usage: usage[dayKey] || null,
+      intentionalDay: state.intentionalUse?.ledger?.[dayKey] || null
+    })),
+    grantCounters
+  }), "utf8").digest("hex");
+}
+
+function appleContentFilterDurabilityFingerprint(state: VigilState): string {
+  const runtime = state.integrity?.runtime || {};
+  const armedLockIds = [
+    ...(Array.isArray(runtime.appleContentFilterArmedLockIds)
+      ? runtime.appleContentFilterArmedLockIds
+      : []),
+    runtime.appleContentFilterArmedLockId
+  ]
+    .filter((id): id is string => typeof id === "string" && Boolean(id))
+    .sort();
+  return JSON.stringify({
+    armed: Boolean(runtime.appleContentFilterArmedAt),
+    armedLockIds: [...new Set(armedLockIds)],
+    recoveryDetectedAt: runtime.hardeningDriftDetectedAt || null,
+    recoveryDetail: runtime.hardeningDriftDetail || "",
+    recoveryIssues: runtime.hardeningDriftIssues || []
+  });
+}
+
+function iosMdmQueueDurabilityFingerprint(state: VigilState): string {
+  const mdm = state.deviceControls?.ios?.mdm;
+  return JSON.stringify({
+    lastPolicyHash: mdm?.lastPolicyHash || "",
+    lastGrayscaleHash: mdm?.lastGrayscaleHash || "",
+    lastCommandQueuedAt: mdm?.lastCommandQueuedAt || null,
+    commands: (mdm?.commands || [])
+      .map((command) => ({
+        id: String(command.id || ""),
+        commandUuid: String(command.commandUuid || ""),
+        requestType: String(command.requestType || ""),
+        status: String(command.status || ""),
+        policyHash: String(command.policyHash || "") || null,
+        grayscaleHash: String(command.grayscaleHash || "") || null,
+        queuedAt: String(command.queuedAt || ""),
+        completedAt: String(command.completedAt || "") || null
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id))
+  });
+}
+
+export function isVigilBlockedPageUrl(value: unknown): boolean {
   try {
     const url = new URL(String(value || ""));
-    return url.protocol === "http:"
-      && url.hostname === "127.0.0.1"
-      && String(url.port || "80") === String(PORT)
-      && url.pathname === "/blocked";
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.pathname !== "/blocked") return false;
+    if (String(url.port || "80") === String(PORT)) return true;
+    // A prior Vigil process may have used another loopback port. Recognize its
+    // fully marked receipt so it is not recursively nested into a new `back`
+    // parameter after an update or restart.
+    return ["site", "until", "mode", "policyId"].every((key) => url.searchParams.has(key));
   } catch {
     return false;
   }
@@ -130,7 +219,7 @@ export function wifiEnvironmentObservationRequired(state: VigilState): boolean {
 
 export function hardeningDriftPolicyFingerprint(state: VigilState, now = new Date()): string {
   const runtime = state.integrity?.runtime || {};
-  // Keep persistence-only metadata (events, heartbeat/seal timestamps, effect
+  // Keep persistence-only metadata (events, seal timestamps, effect
   // acknowledgements) out of this generation. Those can change while evidence
   // is collected without changing what hardening the active policy requires.
   // The raw policy inputs plus derived time-sensitive outputs cover session,
@@ -189,7 +278,7 @@ export function browserActivityPolicyFingerprint(
 
   // This selector is evaluated only when the coordinator publishes a new
   // committed revision or a known time boundary is crossed. It intentionally
-  // excludes heartbeat/events and other telemetry while retaining every input
+  // excludes events and other telemetry while retaining every input
   // used by foreground app/site, network-only, intentional-use, app-lock, and
   // usage-limit decisions.
   return JSON.stringify({
@@ -247,6 +336,80 @@ export function browserActivityPolicyFingerprint(
   });
 }
 
+export function policyBoundaryTransitionFingerprint(state: VigilState, at = new Date()): string {
+  const timestamp = at.getTime();
+  const activeIds = (items: UnknownRecord[] | undefined, field: string, status?: [string, string]): string[] => (
+    (items || [])
+      .filter((item) => {
+        if (status && String(item[status[0]] || "") !== status[1]) return false;
+        const until = Date.parse(String(item[field] || ""));
+        return Number.isFinite(until) && until > timestamp;
+      })
+      .map((item) => String(item.id || ""))
+      .filter(Boolean)
+      .sort()
+  );
+  const policyForDevice = (device: "computer" | "phone") => (
+    activePolicy(structuredClone(state), at, { device })
+  );
+  const grayscaleForDevice = (device: "computer" | "phone") => {
+    const decision = grayscaleDecision(structuredClone(state), at, { device });
+    return {
+      desired: decision.desired,
+      reason: decision.reason,
+      source: decision.source,
+      scheduleId: decision.schedule?.id || null,
+      policy: decision.policy
+    };
+  };
+  const activeLimitIds = (device: "computer" | "phone") => (
+    activeLimitBlocks(structuredClone(state), at, { device }).map((block) => block.id).sort()
+  );
+  const extensionRules = extensionDynamicRulesReady(structuredClone(state), at);
+  const activeAppLockIds = (state.appLocks || [])
+    .filter((lock) => lock.enabled && (!(lock.days || []).length || lock.days.includes(at.getDay())))
+    .map((lock) => lock.id)
+    .sort();
+
+  return JSON.stringify({
+    date: dateKey(at),
+    policies: {
+      computer: policyForDevice("computer"),
+      phone: policyForDevice("phone")
+    },
+    activeAppLockIds,
+    activeLimitIds: {
+      computer: activeLimitIds("computer"),
+      phone: activeLimitIds("phone")
+    },
+    activeDeadlines: {
+      appLockUnlocks: activeIds(state.appLockUnlocks as unknown as UnknownRecord[], "until"),
+      overrides: activeIds(state.overrides as unknown as UnknownRecord[], "until"),
+      intentionalGrants: activeIds(state.intentionalUse?.grants as unknown as UnknownRecord[], "until", ["status", "active"]),
+      intentionalPauses: activeIds(state.intentionalUse?.pauses as unknown as UnknownRecord[], "expiresAt", ["status", "pending"])
+    },
+    grayscale: {
+      computer: grayscaleForDevice("computer"),
+      phone: grayscaleForDevice("phone")
+    },
+    managedDomains: managedBlockDomains(structuredClone(state), at),
+    extensionRules: {
+      expectedCount: extensionRules.expectedCount,
+      expectedSignature: extensionRules.expectedSignature
+    }
+  });
+}
+
+export function policyBoundaryRequiresImmediateEnforcement(
+  state: VigilState,
+  boundary: number,
+  checkedAt = Date.now()
+): boolean {
+  const before = policyBoundaryTransitionFingerprint(state, new Date(boundary - 1));
+  const after = policyBoundaryTransitionFingerprint(state, new Date(Math.max(boundary, checkedAt)));
+  return before !== after;
+}
+
 function nextBrowserActivityPolicyBoundary(state: VigilState, now: number): number {
   let next = Math.floor(now / 60_000) * 60_000 + 60_000;
   const consider = (value: unknown) => {
@@ -265,7 +428,6 @@ function nextBrowserActivityPolicyBoundary(state: VigilState, now: number): numb
   for (const item of state.overrides || []) consider(item.until);
   for (const item of state.intentionalUse?.grants || []) consider(item.until);
   for (const item of state.intentionalUse?.pauses || []) {
-    consider(item.eligibleAt);
     consider(item.expiresAt);
   }
   for (const item of state.intentionalUse?.planBlocks || []) {
@@ -286,7 +448,6 @@ interface MonitorStatus extends UnknownRecord {
   lastSample: FrontSample | null;
   lastEnforcement: UnknownRecord | null;
   stateSeal: UnknownRecord | null;
-  runtimeGap: UnknownRecord | null;
   clockTamper: UnknownRecord | null;
   hardeningDrift: UnknownRecord | null;
   appleContentFilterLockdown: UnknownRecord | null;
@@ -298,6 +459,8 @@ interface MonitorStatus extends UnknownRecord {
   lastGrayscale: UnknownRecord | null;
   lastIdleAccounting: UnknownRecord | null;
   accessibilityLikelyMissing: boolean;
+  browserActivityAccelerationHealthy: boolean;
+  effectivePollIntervalMs: number;
 }
 
 interface BlockSiteOptions {
@@ -378,7 +541,6 @@ interface MonitorTransactionSnapshot {
   nextProcessSweepAt: number;
   nextSystemSleepLockAt: number;
   nextGrayscaleRefreshAt: number;
-  runtimeGapChecked: boolean;
   lastBrowserActivityEvaluatedTarget: string;
   lastBrowserActivityEvaluatedGeneration: number;
   lastBrowserActivityEvaluatedPolicyGeneration: number;
@@ -404,10 +566,13 @@ export class Monitor implements MonitorHandle {
   lastMonotonicAt: number;
   lastSample: FrontSample | null;
   timer: ReturnType<typeof setInterval> | null;
+  lastScheduledTickMonotonicAt: number;
+  policyBoundaryTimer: ReturnType<typeof setTimeout> | null;
   status: MonitorStatus;
   recentBlocks: Map<string, number>;
   appBlockHistory: Map<string, AppBlockRecord>;
   immediateEnforcement: Promise<UnknownRecord> | null;
+  pendingImmediateEnforcementReasons: Set<string>;
   tickInFlight: Promise<void> | null;
   operationCommitTail: Promise<void>;
   operationTail: Promise<void>;
@@ -422,8 +587,14 @@ export class Monitor implements MonitorHandle {
   nextProcessSweepAt: number;
   nextSystemSleepLockAt: number;
   nextGrayscaleRefreshAt: number;
-  nextPersistenceAt: number;
-  runtimeGapChecked: boolean;
+  nextFullCheckpointAt: number;
+  nextHotCheckpointAt: number;
+  lastHotCheckpointFingerprint: string;
+  runtimeUsageCheckpointEnabled: boolean;
+  hotCheckpointFailureCount: number;
+  hotCheckpointFailureReported: boolean;
+  runtimeUsageCheckpointWriter: typeof saveRuntimeUsageCheckpoint;
+  runtimeUsageCheckpointLocation: { checkpointPath: string; keyPath: string };
   mutate: NonNullable<MonitorContext["mutate"]>;
   activeAfterCommit: (<TResult>(
     effect: () => TResult | Promise<TResult>,
@@ -435,6 +606,7 @@ export class Monitor implements MonitorHandle {
   durableEffectProblems: Map<string, { component: string; error: string; pending: boolean }>;
   coordinatorManagedEffects: Set<string>;
   browserActivitySubscribe: NonNullable<MonitorContext["browserActivitySubscribe"]>;
+  browserActivityHealthy: NonNullable<MonitorContext["browserActivityHealthy"]>;
   browserActivityBurstDependencies: Partial<BrowserActivityBurstSchedulerDependencies>;
   browserActivityUnsubscribe: (() => void) | null;
   browserActivityBurst: BrowserActivityBurstScheduler | null;
@@ -463,8 +635,13 @@ export class Monitor implements MonitorHandle {
     committedRevision,
     browserActivityNow,
     browserActivitySubscribe,
+    browserActivityHealthy,
     browserActivityBurstDependencies,
-    browserRedirect
+    browserRedirect,
+    runtimeUsageCheckpointEnabled,
+    runtimeUsageCheckpointWriter,
+    runtimeUsageCheckpointLocation,
+    startupSnapshotPersisted
   }: MonitorContext) {
     this.state = state;
     this.usage = usage;
@@ -477,6 +654,8 @@ export class Monitor implements MonitorHandle {
     this.lastMonotonicAt = performance.now();
     this.lastSample = null;
     this.timer = null;
+    this.lastScheduledTickMonotonicAt = performance.now();
+    this.policyBoundaryTimer = null;
     this.status = {
       ok: true,
       lastError: "",
@@ -488,7 +667,6 @@ export class Monitor implements MonitorHandle {
       lastSample: null,
       lastEnforcement: null,
       stateSeal: null,
-      runtimeGap: null,
       clockTamper: null,
       hardeningDrift: null,
       appleContentFilterLockdown: null,
@@ -499,11 +677,14 @@ export class Monitor implements MonitorHandle {
       lastFocusShortcut: null,
       lastGrayscale: null,
       lastIdleAccounting: null,
-      accessibilityLikelyMissing: false
+      accessibilityLikelyMissing: false,
+      browserActivityAccelerationHealthy: false,
+      effectivePollIntervalMs: MONITOR_RECOVERY_POLL_INTERVAL_MS
     };
     this.recentBlocks = new Map();
     this.appBlockHistory = new Map();
     this.immediateEnforcement = null;
+    this.pendingImmediateEnforcementReasons = new Set();
     this.tickInFlight = null;
     this.operationCommitTail = Promise.resolve();
     this.operationTail = Promise.resolve();
@@ -518,8 +699,20 @@ export class Monitor implements MonitorHandle {
     this.nextProcessSweepAt = 0;
     this.nextSystemSleepLockAt = 0;
     this.nextGrayscaleRefreshAt = 0;
-    this.nextPersistenceAt = 0;
-    this.runtimeGapChecked = false;
+    const checkpointCadenceNow = performance.now();
+    this.nextFullCheckpointAt = startupSnapshotPersisted
+      ? checkpointCadenceNow + MONITOR_FULL_CHECKPOINT_INTERVAL_MS
+      : 0;
+    this.nextHotCheckpointAt = checkpointCadenceNow + MONITOR_HOT_CHECKPOINT_INTERVAL_MS;
+    this.lastHotCheckpointFingerprint = hotUsageCheckpointFingerprint(this.state, this.usage);
+    this.runtimeUsageCheckpointEnabled = runtimeUsageCheckpointEnabled !== false;
+    this.hotCheckpointFailureCount = 0;
+    this.hotCheckpointFailureReported = false;
+    this.runtimeUsageCheckpointWriter = runtimeUsageCheckpointWriter || saveRuntimeUsageCheckpoint;
+    this.runtimeUsageCheckpointLocation = runtimeUsageCheckpointLocation || {
+      checkpointPath: runtimeUsageCheckpointPath(DATA_DIR),
+      keyPath: STATE_SEAL_KEY_PATH
+    };
     this.mutate = mutate || (async (operation, options) => {
       const attempts: Promise<void>[] = [];
       const result = await operation(
@@ -552,7 +745,12 @@ export class Monitor implements MonitorHandle {
     this.activePersistenceRequest = null;
     this.durableEffectProblems = new Map();
     this.coordinatorManagedEffects = new Set();
+    const usingDefaultBrowserActivitySource = !browserActivitySubscribe;
     this.browserActivitySubscribe = browserActivitySubscribe || subscribeBrowserActivity;
+    this.browserActivityHealthy = browserActivityHealthy
+      || (usingDefaultBrowserActivitySource
+        ? browserActivityWatchHealthy
+        : () => this.browserActivityUnsubscribe !== null);
     this.browserActivityBurstDependencies = browserActivityBurstDependencies || {};
     this.browserActivityUnsubscribe = null;
     this.browserActivityBurst = null;
@@ -583,16 +781,35 @@ export class Monitor implements MonitorHandle {
     this.stopping = false;
     this.browserActivityMutationAdmissionOpen = true;
     this.startBrowserActivityAcceleration();
+    this.lastScheduledTickMonotonicAt = performance.now();
+    this.refreshEffectivePollInterval();
     void this.runScheduledTick();
+    const recoveryCheckIntervalMs = monitorPollIntervalMs(this.state.settings.pollIntervalMs, false);
     this.timer = setInterval(() => {
+      const now = performance.now();
+      const intervalMs = this.refreshEffectivePollInterval();
+      if (now - this.lastScheduledTickMonotonicAt < intervalMs) return;
+      this.lastScheduledTickMonotonicAt = now;
       void this.runScheduledTick();
-    }, this.state.settings.pollIntervalMs || 3000);
+    }, recoveryCheckIntervalMs);
+    this.armPolicyBoundaryTimer();
+  }
+
+  refreshEffectivePollInterval(): number {
+    const healthy = this.browserActivityUnsubscribe !== null && this.browserActivityHealthy();
+    const intervalMs = monitorPollIntervalMs(this.state.settings.pollIntervalMs, healthy);
+    this.status.browserActivityAccelerationHealthy = healthy;
+    this.status.effectivePollIntervalMs = intervalMs;
+    return intervalMs;
   }
 
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.policyBoundaryTimer) clearTimeout(this.policyBoundaryTimer);
+    this.policyBoundaryTimer = null;
     this.stopping = true;
+    this.pendingImmediateEnforcementReasons.clear();
     // Detach the signal source first, but leave mutation admission available
     // while an exact-tab decision already in flight finishes its bookkeeping.
     this.browserActivityUnsubscribe?.();
@@ -636,14 +853,71 @@ export class Monitor implements MonitorHandle {
     );
     this.browserActivityBurst = burst;
     try {
-      this.browserActivityUnsubscribe = this.browserActivitySubscribe(() => {
+      this.browserActivityUnsubscribe = this.browserActivitySubscribe((signal) => {
         if (this.stopping || this.browserActivityBurst !== burst) return;
+        if (signal.kind === "activate" || signal.kind === "launch") {
+          this.handleApplicationActivity(signal.kind, burst);
+          return;
+        }
         burst.wake();
       });
     } catch {
       this.browserActivityBurst = null;
       void burst.stop();
     }
+  }
+
+  handleApplicationActivity(kind: "activate" | "launch", burst: BrowserActivityBurstScheduler): void {
+    const operation = kind === "activate"
+      ? this.enforceActivatedApplication(burst)
+      : this.enforceLaunchedApplications();
+    this.trackOperationCompletion(operation);
+    void operation.catch((error) => {
+      this.setComponentHealth(
+        kind === "activate" ? "frontmost" : "process-sweep",
+        `Application ${kind} enforcement failed: ${errorMessage(error)}`
+      );
+    });
+  }
+
+  async enforceActivatedApplication(burst: BrowserActivityBurstScheduler): Promise<void> {
+    const front = await this.readFrontmost({ fresh: true });
+    if (this.stopping || !front.ok) return;
+    if (appCanReportUrls(front.app)) burst.wake();
+    await this.enqueueMutationOperation(async () => {
+      this.applyFrontmostSample(front);
+      await this.enforceFrontmost(front);
+    }, { persist: false });
+  }
+
+  async enforceLaunchedApplications(): Promise<void> {
+    if (this.stopping) return;
+    await this.enqueueMutationOperation(
+      () => this.sweepBlockedProcesses(Date.now(), { force: true }),
+      { persist: false }
+    );
+  }
+
+  armPolicyBoundaryTimer(): void {
+    if (this.policyBoundaryTimer) clearTimeout(this.policyBoundaryTimer);
+    this.policyBoundaryTimer = null;
+    if (this.stopping || !this.timer) return;
+    const now = Date.now();
+    const boundary = nextBrowserActivityPolicyBoundary(this.committedState, now);
+    const delayMs = Math.max(25, boundary - now + 25);
+    this.policyBoundaryTimer = setTimeout(() => {
+      this.policyBoundaryTimer = null;
+      if (!policyBoundaryRequiresImmediateEnforcement(this.committedState, boundary, Date.now())) {
+        this.armPolicyBoundaryTimer();
+        return;
+      }
+      void this.enforceImmediately("policy-boundary")
+        .catch((error) => {
+          this.setComponentHealth("tick", `Policy-boundary enforcement failed: ${errorMessage(error)}`);
+        })
+        .finally(() => { this.armPolicyBoundaryTimer(); });
+    }, delayMs);
+    this.policyBoundaryTimer.unref?.();
   }
 
   async probeBrowserActivity(): Promise<boolean> {
@@ -984,24 +1258,51 @@ export class Monitor implements MonitorHandle {
     // activity source is disabled or unavailable.
     this.retryPendingBrowserActivityMutations();
     if (this.tickInFlight) return this.tickInFlight;
-    const persist = Date.now() >= this.nextPersistenceAt;
+    const fullCheckpoint = performance.now() >= this.nextFullCheckpointAt;
+    let persistedHotFingerprint: string | null = null;
     const scheduled = (async () => {
       await this.enqueueMutationOperation(
-        () => this.tick(),
-        { persist }
+        async () => {
+          await this.tick(fullCheckpoint);
+          if (fullCheckpoint) {
+            // Capture the hot-data fingerprint from the exact draft that the
+            // coordinator is about to commit. Other request mutations may run
+            // while slow hardening evidence is collected below.
+            persistedHotFingerprint = hotUsageCheckpointFingerprint(
+              this.state,
+              this.usage,
+              new Date(this.lastPollAt)
+            );
+          }
+        },
+        { persist: fullCheckpoint }
       );
+      // The full generation is already durable here. Advance its monotonic
+      // deadline before slower hardening and compact-checkpoint work so a
+      // failure in either phase cannot turn every recovery poll into another
+      // full disk fold.
+      if (fullCheckpoint) {
+        this.nextFullCheckpointAt = performance.now() + MONITOR_FULL_CHECKPOINT_INTERVAL_MS;
+      }
 
       const hardeningCheckedAt = this.lastPollAt;
       const hardeningDue = this.hardeningDriftAttestationDue(hardeningCheckedAt);
       if (hardeningDue) await this.runHardeningDriftPhase(hardeningCheckedAt);
+      if (fullCheckpoint) {
+        this.lastHotCheckpointFingerprint = persistedHotFingerprint!;
+        // An extension heartbeat or another sparse request can advance hot
+        // counters while hardening I/O is in flight. Compare immediately with
+        // the committed baseline so those counters are never mistaken for data
+        // already present in the full snapshot.
+        await this.persistHotUsageCheckpoint(Date.now(), { force: true });
+      } else {
+        await this.persistHotUsageCheckpoint(hardeningCheckedAt);
+      }
       await this.enqueueOperation(async () => {
         this.setComponentHealth("tick", "");
         this.status.lastSuccessfulTickAt = new Date(hardeningCheckedAt).toISOString();
       });
-    })()
-      .then(() => {
-        if (persist) this.nextPersistenceAt = Date.now() + MONITOR_PERSIST_INTERVAL_MS;
-      });
+    })();
     const operation = scheduled
       .catch(async (error) => {
         try {
@@ -1031,7 +1332,7 @@ export class Monitor implements MonitorHandle {
     addEvent(this.state, "monitor_tick_failed", detail);
   }
 
-  async tick(): Promise<void> {
+  async tick(forceCheckpoint = false): Promise<void> {
     const frame = this.beginPollFrame();
     await this.recordElapsedUsage(frame);
     await this.refreshSafetyRails(frame);
@@ -1042,7 +1343,70 @@ export class Monitor implements MonitorHandle {
     // and its foreground, sleep-lock, and process-sweep effects are dispatched.
     this.prepareHardeningDrift(frame.now);
     await this.runBackgroundEnforcement(frame.now);
-    await this.persistHeartbeat(frame.now);
+    if (forceCheckpoint) this.activePersistenceRequest?.();
+  }
+
+  async persistHotUsageCheckpoint(now: number, options: { force?: boolean } = {}): Promise<void> {
+    if (!this.runtimeUsageCheckpointEnabled) return;
+    const cadenceNow = performance.now();
+    if (!options.force && cadenceNow < this.nextHotCheckpointAt) return;
+    const checkedAt = new Date(now);
+    const fingerprint = hotUsageCheckpointFingerprint(this.state, this.usage, checkedAt);
+    const countersChanged = fingerprint !== this.lastHotCheckpointFingerprint;
+    this.nextHotCheckpointAt = cadenceNow + MONITOR_HOT_CHECKPOINT_INTERVAL_MS;
+    // After a failed write, retry the same fingerprint once backoff expires so
+    // an idle runtime can verify recovery and clear degraded health. With no
+    // active failure, an unchanged fingerprint remains completely write-free.
+    if (!countersChanged && this.hotCheckpointFailureCount === 0) return;
+    try {
+      await this.runtimeUsageCheckpointWriter(this.state, this.usage, {
+        ...this.runtimeUsageCheckpointLocation,
+        now: checkedAt
+      });
+      this.lastHotCheckpointFingerprint = fingerprint;
+      if (this.hotCheckpointFailureCount > 0) {
+        this.hotCheckpointFailureCount = 0;
+        this.hotCheckpointFailureReported = false;
+        this.setComponentHealth("runtime-usage-checkpoint", "");
+      }
+    } catch (error) {
+      const disabledForRuntime = isNonRetryableRuntimeUsageCheckpointError(error);
+      this.hotCheckpointFailureCount += 1;
+      const retryDelayMs = disabledForRuntime
+        ? null
+        : hotUsageCheckpointRetryDelayMs(this.hotCheckpointFailureCount);
+      if (disabledForRuntime) this.runtimeUsageCheckpointEnabled = false;
+      else this.nextHotCheckpointAt = performance.now() + retryDelayMs!;
+      const reportFailure = !this.hotCheckpointFailureReported || disabledForRuntime;
+      if (countersChanged || reportFailure) {
+        await this.enqueueMutationOperation(async () => {
+          if (reportFailure) {
+            addEvent(this.state, "runtime_usage_checkpoint_failed", {
+              error: errorMessage(error),
+              disabledForRuntime,
+              retryDelayMs,
+              at: checkedAt.toISOString()
+            });
+          }
+          // A same-fingerprint health probe is already covered by the prior
+          // full fallback and must not create another full snapshot.
+          if (countersChanged || reportFailure) this.activePersistenceRequest?.();
+        }, { persist: true });
+      }
+      this.hotCheckpointFailureReported = true;
+      if (disabledForRuntime) {
+        this.setComponentHealth(
+          "runtime-usage-checkpoint",
+          "Compact usage checkpoints are disabled for this runtime; sealed full snapshots remain active."
+        );
+      } else {
+        this.setComponentHealth(
+          "runtime-usage-checkpoint",
+          `Compact usage checkpoint failed; retrying in ${Math.round(retryDelayMs! / 1000)}s while sealed full snapshots remain active.`
+        );
+      }
+      if (countersChanged) this.lastHotCheckpointFingerprint = fingerprint;
+    }
   }
 
   async runHardeningDriftPhase(now: number): Promise<void> {
@@ -1067,10 +1431,34 @@ export class Monitor implements MonitorHandle {
 
   enforceImmediately(reason = "manual"): Promise<UnknownRecord> {
     if (this.stopping) return Promise.reject(new Error("Vigil monitor is stopping."));
+    this.pendingImmediateEnforcementReasons.add(reason);
     if (this.immediateEnforcement) return this.immediateEnforcement;
-    const operation = this.enqueueMutationOperation(() => this.runImmediateEnforcement(reason));
+    const operation = (async () => {
+      let result: UnknownRecord = {};
+      let firstError: unknown = null;
+      while (!this.stopping && this.pendingImmediateEnforcementReasons.size) {
+        const reasons = [...this.pendingImmediateEnforcementReasons];
+        this.pendingImmediateEnforcementReasons.clear();
+        try {
+          result = await this.enqueueMutationOperation(() => this.runImmediateEnforcement(reasons.join(",")));
+        } catch (error) {
+          firstError ||= error;
+        }
+      }
+      if (firstError) throw firstError;
+      return result;
+    })();
     const tracked = operation.finally(() => {
       if (this.immediateEnforcement === tracked) this.immediateEnforcement = null;
+      if (!this.stopping && this.pendingImmediateEnforcementReasons.size) {
+        const pendingReason = this.pendingImmediateEnforcementReasons.values().next().value || "queued";
+        void this.enforceImmediately(pendingReason).catch((error) => {
+          this.setComponentHealth("tick", `Queued immediate enforcement failed: ${errorMessage(error)}`);
+          this.armPolicyBoundaryTimer();
+        });
+      } else {
+        this.armPolicyBoundaryTimer();
+      }
     });
     this.immediateEnforcement = tracked;
     return tracked;
@@ -1176,6 +1564,10 @@ export class Monitor implements MonitorHandle {
       await effectAttemptBarrier;
       return result;
     });
+    void committed.then(
+      () => { this.armPolicyBoundaryTimer(); },
+      () => {}
+    );
     this.trackOperationCompletion(completed);
     return completed;
   }
@@ -1244,7 +1636,12 @@ export class Monitor implements MonitorHandle {
       }
     }
     const key = monitorEffectKey(kind, payload);
-    addEvent(this.state, "monitor_os_effect_intended", { kind, key, payload });
+    // The coordinator already owns retries for a durable effect with this
+    // exact intent key. Re-enqueuing it from every monitor poll would add a
+    // pending and completion/failure snapshot without improving enforcement.
+    if (this.coordinatorManagedEffects.has(key)) {
+      return { ok: false, pending: true, intentKey: key, error: "Durable macOS effect is already pending." } as unknown as T;
+    }
     this.setDurableEffectHealth(key, kind, "Durable macOS effect is pending.", true);
     let attemptedResult: T | undefined;
     let attempts = 0;
@@ -1347,7 +1744,6 @@ export class Monitor implements MonitorHandle {
       nextProcessSweepAt: this.nextProcessSweepAt,
       nextSystemSleepLockAt: this.nextSystemSleepLockAt,
       nextGrayscaleRefreshAt: this.nextGrayscaleRefreshAt,
-      runtimeGapChecked: this.runtimeGapChecked,
       lastBrowserActivityEvaluatedTarget: this.lastBrowserActivityEvaluatedTarget,
       lastBrowserActivityEvaluatedGeneration: this.lastBrowserActivityEvaluatedGeneration,
       lastBrowserActivityEvaluatedPolicyGeneration: this.lastBrowserActivityEvaluatedPolicyGeneration,
@@ -1374,7 +1770,6 @@ export class Monitor implements MonitorHandle {
     this.nextProcessSweepAt = snapshot.nextProcessSweepAt;
     this.nextSystemSleepLockAt = snapshot.nextSystemSleepLockAt;
     this.nextGrayscaleRefreshAt = snapshot.nextGrayscaleRefreshAt;
-    this.runtimeGapChecked = snapshot.runtimeGapChecked;
     this.lastBrowserActivityEvaluatedTarget = snapshot.lastBrowserActivityEvaluatedTarget;
     this.lastBrowserActivityEvaluatedGeneration = snapshot.lastBrowserActivityEvaluatedGeneration;
     this.lastBrowserActivityEvaluatedPolicyGeneration = snapshot.lastBrowserActivityEvaluatedPolicyGeneration;
@@ -1390,7 +1785,6 @@ export class Monitor implements MonitorHandle {
     const front = await this.updateFrontmostSample();
     await this.enforceFrontmost(front);
     await this.runImmediateSideEffects(now);
-    await this.persistHeartbeat(now);
 
     const summary = {
       reason,
@@ -1515,7 +1909,6 @@ export class Monitor implements MonitorHandle {
   }
 
   async refreshSafetyRails(frame: PollFrame): Promise<void> {
-    this.checkRuntimeGap(frame.now);
     this.checkClockTamper(frame.now, frame.previousWall, frame.previousMonotonic, frame.monotonicNow);
     await this.refreshIntegrity(frame.now);
     await this.refreshAppleContentFilterLockdown(frame.now);
@@ -1525,13 +1918,17 @@ export class Monitor implements MonitorHandle {
   }
 
   async updateFrontmostSample(): Promise<FrontResult> {
-    const previousSample = this.lastSample;
     const front = await this.readFrontmost();
+    this.applyFrontmostSample(front);
+    return front;
+  }
+
+  applyFrontmostSample(front: FrontResult): void {
+    const previousSample = this.lastSample;
     const currentSample: FrontSample | null = front.ok ? { app: front.app, hostname: front.hostname || "", url: front.url || "" } : null;
     if (currentSample) recordOpen(this.usage, currentSample, previousSample);
     this.lastSample = currentSample;
     this.status.lastSample = currentSample;
-    return front;
   }
 
   async enforceFrontmost(front: FrontResult): Promise<void> {
@@ -1582,12 +1979,6 @@ export class Monitor implements MonitorHandle {
     await attempt("mdm-policy-push", () => this.pushIosMdmPolicy(now, "immediate-policy-refresh", { force: true }));
   }
 
-  async persistHeartbeat(now: number): Promise<void> {
-    recordRuntimeHeartbeat(this.state, new Date(now));
-    await saveUsage(this.usage);
-    await saveState(this.state);
-  }
-
   async enforceSystemSleepLock(now: number, options: { force?: boolean } = {}) {
     const policy = activePolicy(this.state, new Date(now));
     if (!shouldLockScreenForPolicy(this.state, policy)) {
@@ -1619,10 +2010,28 @@ export class Monitor implements MonitorHandle {
 
   async syncFocusShortcut(now: number, _options: { force?: boolean } = {}) {
     const policy = activePolicy(this.state, new Date(now));
-    if (!this.state.settings.focusShortcutEnabled && !this.state.focusShortcut.active) {
+    const enabled = Boolean(this.state.settings.focusShortcutEnabled);
+    const desiredActive = Boolean(enabled && policy);
+    const active = Boolean(this.state.focusShortcut.active);
+    const shortcutName = desiredActive
+      ? String(this.state.settings.focusShortcutOnName || "").trim()
+      : String(this.state.settings.focusShortcutOffName || "").trim();
+    if (active === desiredActive || !shortcutName) {
+      const durableBefore = JSON.stringify({
+        active,
+        desiredActive: Boolean(this.state.focusShortcut.desiredActive),
+        lastError: this.state.focusShortcut.lastError || ""
+      });
       const summary = await reconcileFocusShortcut(this.state, policy, new Date(now));
       this.status.lastFocusShortcut = summary;
-      this.setComponentDisabled("focus-shortcut");
+      const durableAfter = JSON.stringify({
+        active: Boolean(this.state.focusShortcut.active),
+        desiredActive: Boolean(this.state.focusShortcut.desiredActive),
+        lastError: this.state.focusShortcut.lastError || ""
+      });
+      if (durableAfter !== durableBefore) this.activePersistenceRequest?.();
+      if (!enabled && !active) this.setComponentDisabled("focus-shortcut");
+      else this.setComponentHealth("focus-shortcut", summary.enabled && summary.lastError ? String(summary.lastError) : "");
       return summary;
     }
     let effectState = structuredClone(this.state);
@@ -1728,9 +2137,16 @@ export class Monitor implements MonitorHandle {
   }
 
   syncIosMdmPolicy(now: number, reason = "monitor-policy-refresh") {
+    const durabilityBefore = iosMdmQueueDurabilityFingerprint(this.state);
     const result = maybeQueueIosMdmPolicyRefresh(this.state, reason, new Date(now));
     if (result.queued) {
       addEvent(this.state, "ios_mdm_policy_queued", { reason, ...result });
+    }
+    // Persist both additions and cancellations. A cancellation can queue zero
+    // replacements when an older matching command is already sent; losing it
+    // could resurrect and later deliver a stale policy after a crash.
+    if (iosMdmQueueDurabilityFingerprint(this.state) !== durabilityBefore) {
+      this.activePersistenceRequest?.();
     }
     return result;
   }
@@ -1739,6 +2155,10 @@ export class Monitor implements MonitorHandle {
     if (!this.state.deviceControls.ios.mdm.enabled) {
       this.setComponentDisabled("mdm-push");
       return { ok: true, pushed: 0, skipped: "disabled" };
+    }
+    if (!iosMdmQueuedPushEligible(this.state, new Date(now), options)) {
+      this.setComponentHealth("mdm-push", "");
+      return { ok: true, pushed: 0, skipped: "no-queued-devices" };
     }
     try {
       let effectState = structuredClone(this.state);
@@ -1966,7 +2386,16 @@ export class Monitor implements MonitorHandle {
   }
 
   policyForTarget(sample: UsageSample): EnforcedPolicy | null {
-    return policyForSample(this.state, this.usage, sample);
+    const limitBlockIdsBefore = new Set((this.state.limitBlocks || []).map((block) => block.id));
+    const policy = policyForSample(this.state, this.usage, sample);
+    this.requestPersistenceForNewLimitBlocks(limitBlockIdsBefore);
+    return policy;
+  }
+
+  requestPersistenceForNewLimitBlocks(previousIds: ReadonlySet<string>): void {
+    if ((this.state.limitBlocks || []).some((block) => !previousIds.has(block.id))) {
+      this.activePersistenceRequest?.();
+    }
   }
 
   async blockSite(front: FrontSample, policy: EnforcedPolicy, options: BlockSiteOptions = {}): Promise<void> {
@@ -2035,7 +2464,9 @@ export class Monitor implements MonitorHandle {
       return;
     }
 
+    const limitBlockIdsBefore = new Set((this.state.limitBlocks || []).map((block) => block.id));
     const blocked = sweepBlockedApps(this.state, this.usage, running.apps);
+    this.requestPersistenceForNewLimitBlocks(limitBlockIdsBefore);
     for (const { app, policy } of blocked) {
       await this.blockApp({ app, hostname: "", url: "" }, policy, { source: "process-sweep" });
     }
@@ -2131,11 +2562,13 @@ export class Monitor implements MonitorHandle {
         status: stateSeal.status,
         detail: stateSeal.detail
       });
+      this.activePersistenceRequest?.();
     }
   }
 
   async refreshAppleContentFilterLockdown(now: number): Promise<void> {
     const checkedAt = new Date(now);
+    const durabilityBefore = appleContentFilterDurabilityFingerprint(this.state);
     const protectedLock = protectedLockActive(this.state, checkedAt);
     const recovery = appleContentFilterRecoveryActive(this.state);
     const armed = Boolean(this.state.integrity?.runtime?.appleContentFilterArmedAt);
@@ -2149,6 +2582,9 @@ export class Monitor implements MonitorHandle {
         checkedAt: checkedAt.toISOString(),
         skipped: "no-protected-lock"
       };
+      if (appleContentFilterDurabilityFingerprint(this.state) !== durabilityBefore) {
+        this.activePersistenceRequest?.();
+      }
       return;
     }
     if (now < this.nextAppleContentFilterRefreshAt) return;
@@ -2173,6 +2609,9 @@ export class Monitor implements MonitorHandle {
     if (result.cleared) addEvent(this.state, "apple_content_filter_restored", result);
     if (result.reason === "uncorroborated-recovery-cleared") {
       addEvent(this.state, "apple_content_filter_recovery_discarded", result);
+    }
+    if (appleContentFilterDurabilityFingerprint(this.state) !== durabilityBefore) {
+      this.activePersistenceRequest?.();
     }
   }
 
@@ -2362,8 +2801,8 @@ export class Monitor implements MonitorHandle {
     };
     if (drift) {
       addEvent(this.state, "hardening_drift_lockdown", drift);
-      // New integrity lockdown state must survive a crash even between routine
-      // heartbeat snapshots. This request happens only after evidence matches
+      // New integrity lockdown state must survive a crash between routine
+      // checkpoints. This request happens only after evidence matches
       // the currently committed hardening-policy generation.
       this.activePersistenceRequest?.();
     }
@@ -2377,15 +2816,6 @@ export class Monitor implements MonitorHandle {
     });
   }
 
-  checkRuntimeGap(now: number): void {
-    if (this.runtimeGapChecked) return;
-    this.runtimeGapChecked = true;
-    const gap = detectRuntimeGap(this.state, new Date(now));
-    if (!gap) return;
-    this.status.runtimeGap = gap;
-    addEvent(this.state, "runtime_downtime_lockdown", gap);
-  }
-
   checkClockTamper(now: number, previousWall: number, previousMonotonic: number, currentMonotonic: number): void {
     const tamper = detectClockTamper(this.state, {
       previousWallMs: previousWall,
@@ -2396,6 +2826,7 @@ export class Monitor implements MonitorHandle {
     if (!tamper) return;
     this.status.clockTamper = tamper;
     addEvent(this.state, "clock_tamper_lockdown", tamper);
+    this.activePersistenceRequest?.();
   }
 
   async refreshEnvironment(now: number): Promise<void> {
@@ -2431,8 +2862,22 @@ function monitorEffectKey(kind: string, payload: UnknownRecord): string {
     Object.entries(payload)
       .filter(([key]) => key !== "intentKey")
       .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => [key, canonicalEffectValue(value)])
   );
-  return `monitor-os:${kind}:${JSON.stringify(canonicalPayload)}`;
+  const digest = createHash("sha256")
+    .update(JSON.stringify(canonicalPayload), "utf8")
+    .digest("hex");
+  return `monitor-os:${kind}:${digest}`;
+}
+
+function canonicalEffectValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalEffectValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as UnknownRecord)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => [key, canonicalEffectValue(item)])
+  );
 }
 
 function obsoleteEffectResult(action: string): UnknownRecord {

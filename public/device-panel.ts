@@ -166,19 +166,21 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
   const iosSummary = $("#iosSummary");
   iosSummary.replaceChildren();
   const profile = ios.profile || {};
+  const companionApps = ios.companionApps || {};
   const manageEngine = ios.manageEngine || {};
   [
+    ["Browser filtering", ios.protection?.systemWideManagedWebFilter ? "managed across Safari and third-party browsers" : "off"],
     ["Known adult sites", ios.protection?.knownSitesBlocked ? `${Number(ios.protection.knownSiteDomainCount || 0).toLocaleString()} blocked domains + Apple's adult filter` : "off"],
     ["Explicit searches", ios.protection?.explicitSearchesBlocked ? `${ios.protection.explicitSearchTermCount || 0} terms blocked before results` : "off"],
-    ["SafeSearch", ios.protection?.safeSearchEnforced ? "forced in Vigil Browser and managed Safari" : "off"],
-    ["Sensitive media", ios.protection?.sensitiveMediaFiltered ? "configured; requires the managed Safari extension" : "off"],
+    ["SafeSearch", ios.protection?.safeSearchEnforced ? "enabled by the active phone policy" : "off"],
+    ["Sensitive media", ios.protection?.sensitiveMediaFiltered ? "enabled by the active phone policy" : "off"],
     ["Delivery", manageEngine.deliveryProvider === "manageengine" ? "ManageEngine" : "Apple devices only"],
     ["Setup", ios.supervisedRequired ? "supervised iPhone required" : "standard"],
-    ["App workarounds", ios.protection?.appWorkaroundsClosed ? `${profile.appBundleCount || 0} targeted browser/social apps; other apps stay` : "off"],
-    ["Web", ios.blockWeb ? `${profile.deniedUrlCount || 0} denied / ${profile.allowedUrlCount || 0} allowed` : "off"],
-    ["Web clips", profile.webClipCount ? `${profile.webClipCount} managed` : "none"],
+    ["Native app restrictions", ios.protection?.appWorkaroundsClosed ? `${ios.protection.targetedAppBundleCount || profile.appBundleCount || 0} targeted social/feed apps; browsers remain available` : "off"],
+    ["Web", ios.blockWeb ? `${profile.deniedUrlCount || 0} denied / ${profile.allowedUrlCount || 0} allowed across phone browsers` : "off"],
+    ["Companion apps", companionAppsText(companionApps)],
     ["Focused social", focusedSocialSummaryText(profile.focusedSocial)],
-    ["Native social apps", nativeSocialText(profile.focusedSocial, Boolean(ios.enabled))],
+    ["Snapchat", ios.enabled && ios.blockApps ? "covered by the managed native-app policy; no companion" : "policy-only; no companion"],
     ["Grayscale", profile.grayscale?.desired ? `${profile.grayscale.label || "on"}${profile.grayscale.settingsGuarded ? " + Settings guard" : ""}` : "normal"],
     ["Native Reels", "not available through public iOS APIs"],
     ["Safari history", ios.allowSafariHistoryClearing !== false ? "clearing allowed" : "clearing blocked"],
@@ -297,13 +299,18 @@ function focusedSocialSummaryText(value: unknown): string {
   return `${platformCount} platforms / ${featureCount} features / ${deniedUrlCount} URLs`;
 }
 
-function nativeSocialText(value: unknown, active: boolean): string {
+function companionAppsText(value: unknown): string {
   const summary = recordValue(value);
-  if (summary.enabled === false) return "unchanged";
-  if (!active) return "configured for phone locks";
-  if (summary.forceWebClips === false) return "left available";
-  const nativeAppBundleCount = Number(summary.nativeAppBundleCount || 0);
-  return nativeAppBundleCount > 0 ? `${nativeAppBundleCount} configured for restriction` : "ready during phone lock";
+  const labels = Array.isArray(summary.labels)
+    ? summary.labels
+      .filter((label): label is string => typeof label === "string" && Boolean(label.trim()))
+      .map((label) => label.trim())
+    : [];
+  const configuredCount = Number(summary.appCount);
+  const count = Number.isInteger(configuredCount) && configuredCount >= 0 ? configuredCount : labels.length;
+  if (!count) return "none configured";
+  const names = labels.length ? labels.slice(0, count).join(" + ") : `${count} configured`;
+  return `${names}; ${count} separate app${count === 1 ? "" : "s"}`;
 }
 
 function recordValue(value: unknown): Record<string, unknown> {

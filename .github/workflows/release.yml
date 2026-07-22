@@ -23,6 +23,7 @@ jobs:
       - run: npm run check
       - name: Build, notarize, staple, and checksum
         env:
+          VIGIL_MAC_BUILD_VERSION: ${{ github.run_number }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY }}

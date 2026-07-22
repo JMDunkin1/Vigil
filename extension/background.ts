@@ -85,10 +85,26 @@ const ALLOWLIST_RULE_IDS = Array.from({ length: ALLOWLIST_RULE_LIMIT }, (_, inde
 const SITE_EMBEDDED_BLOCK_RULE_IDS = Array.from({ length: SITE_BLOCK_RULE_LIMIT }, (_, index) => SITE_EMBEDDED_BLOCK_RULE_START + index);
 const CONTENT_EMBEDDED_BLOCK_RULE_IDS = Array.from({ length: CONTENT_BLOCK_RULE_LIMIT }, (_, index) => CONTENT_EMBEDDED_BLOCK_RULE_START + index);
 const ALLOWLIST_EMBEDDED_BLOCK_RULE_IDS = Array.from({ length: ALLOWLIST_RULE_LIMIT }, (_, index) => ALLOWLIST_EMBEDDED_BLOCK_RULE_START + index);
+const SITE_MANAGED_RULE_IDS = new Set([
+  ...SITE_BLOCK_RULE_IDS,
+  ...CONTENT_BLOCK_RULE_IDS,
+  LOCAL_SERVER_ALLOW_RULE_ID,
+  ...ALLOWLIST_RULE_IDS,
+  ...SITE_EMBEDDED_BLOCK_RULE_IDS,
+  ...CONTENT_EMBEDDED_BLOCK_RULE_IDS,
+  ...ALLOWLIST_EMBEDDED_BLOCK_RULE_IDS
+]);
+const NOISE_MANAGED_RULE_IDS = new Set(NOISE_RULE_IDS);
+const RULE_SYNC_PERIOD_MINUTES = 0.5;
 let noiseRulesEnabled: boolean | null = null;
 let siteRulesSignature = "";
 let siteRuleCount = 0;
 let lastRuleSyncAt = 0;
+// `undefined` means this service-worker instance has not reconciled the
+// persisted Chrome alarm yet. `null` means it has deliberately cleared it.
+let scheduledRuleExpirySourceAt: number | null | undefined;
+let ruleExpiryAlarmGeneration = 0;
+let coldStartDynamicRulesPromise: Promise<chrome.declarativeNetRequest.Rule[] | null> | null = null;
 let cachedPulseFlags: PulseFlagSnapshot = {};
 const pulseFlagsReady = loadPulseFlags();
 const RULE_SYNC_ALARM = "vigil-rule-sync";
@@ -184,6 +200,13 @@ interface RuleSyncResult {
   error?: string;
 }
 
+interface NormalizedSiteBlockingSnapshot extends RuleSyncResult {
+  siteEntries: SiteRuleEntry[];
+  contentEntries: ContentRuleEntry[];
+  allowlistEntries: AllowlistRuleEntry[];
+  dynamicRules: chrome.declarativeNetRequest.Rule[];
+}
+
 type StorageDefaults = Record<string, unknown>;
 type StorageResult<T extends StorageDefaults> = T & Record<string, unknown>;
 
@@ -191,9 +214,13 @@ void loadVigilConnection();
 void loadNoisePreference();
 void pulseFlagsReady;
 void initializeSiteBlocking();
-chrome.alarms.create(RULE_SYNC_ALARM, { periodInMinutes: 0.5 });
+void ensureRuleSyncAlarm();
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === RULE_SYNC_ALARM || alarm.name === RULE_EXPIRY_ALARM) {
+    // One-shot alarms disappear when they fire. Forget the in-memory cache so
+    // a clock rollback or unexpectedly early delivery cannot suppress the
+    // next required expiry alarm.
+    if (alarm.name === RULE_EXPIRY_ALARM) scheduledRuleExpirySourceAt = undefined;
     void syncSiteBlockingFromServer();
   }
 });
@@ -517,7 +544,19 @@ function delay(ms: number): Promise<void> {
 
 async function loadNoisePreference() {
   const stored = await storageGet({ browserNoiseBlockingEnabled: false });
-  await syncNoiseBlocking(Boolean(stored.browserNoiseBlockingEnabled));
+  const enabled = Boolean(stored.browserNoiseBlockingEnabled);
+  if (noiseRulesEnabled === null) {
+    const installedRules = await coldStartDynamicRules();
+    if (
+      noiseRulesEnabled === null
+      && installedRules
+      && managedDynamicRulesCurrent(installedRules, enabled ? noiseRules() : [], NOISE_MANAGED_RULE_IDS)
+    ) {
+      noiseRulesEnabled = enabled;
+      return;
+    }
+  }
+  await syncNoiseBlocking(enabled);
 }
 
 async function syncNoiseBlocking(enabled: boolean): Promise<boolean> {
@@ -566,16 +605,12 @@ async function syncSiteBlockingFromServer() {
       result.ok = false;
       result.error = "Rule signature mismatch after client normalization.";
     }
+    if (result.ok) await clearRuleSyncFailureTelemetry(result.count);
+    else await recordRuleSyncFailure(result.error || "Dynamic rule synchronization failed.");
     await reportRuleSync(result);
   } catch (error) {
     await pruneStoredSiteBlocking();
-    await storageSet({
-      siteBlockRules: {
-        count: siteRuleCount,
-        staleAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error)
-      }
-    });
+    await recordRuleSyncFailure(error);
   }
 }
 
@@ -583,52 +618,27 @@ async function syncSiteBlocking(entries: ServerRuleEntry[], contentEntries: Serv
   if (!chrome.declarativeNetRequest?.updateDynamicRules) {
     return { ok: false, count: 0, signature: "", error: "Declarative Net Request is unavailable" };
   }
-  const safeEntries = normalizeSiteRuleEntries(entries).slice(0, SITE_BLOCK_RULE_LIMIT);
-  const safeContentEntries = normalizeContentRuleEntries(contentEntries).slice(0, CONTENT_BLOCK_RULE_LIMIT);
-  const safeAllowlistEntries = normalizeAllowlistRuleEntries(allowlistEntries).slice(0, ALLOWLIST_RULE_LIMIT);
-  const hasLocalServerAllowRule = safeAllowlistEntries.length > 0;
-  const count = safeEntries.length + safeContentEntries.length + safeAllowlistEntries.length + (hasLocalServerAllowRule ? 1 : 0);
-  const signature = JSON.stringify({
-    site: safeEntries,
-    content: safeContentEntries,
-    allowlist: safeAllowlistEntries,
-    localServerAllow: hasLocalServerAllowRule
-  });
+  const normalized = normalizedSiteBlockingSnapshot(entries, contentEntries, allowlistEntries);
+  scheduleRuleExpiry([...normalized.siteEntries, ...normalized.contentEntries, ...normalized.allowlistEntries]);
+  if (siteRulesSignature === normalized.signature) return normalized;
   await storageSet({
     siteBlockRuleSnapshot: {
-      rules: safeEntries,
-      contentRules: safeContentEntries,
-      allowlistRules: safeAllowlistEntries
+      rules: normalized.siteEntries,
+      contentRules: normalized.contentEntries,
+      allowlistRules: normalized.allowlistEntries
     }
   });
-  scheduleRuleExpiry([...safeEntries, ...safeContentEntries, ...safeAllowlistEntries]);
-  if (siteRulesSignature === signature) return { ok: true, count, signature };
 
   const ok = await updateDynamicRules({
-    removeRuleIds: [
-      ...SITE_BLOCK_RULE_IDS,
-      ...CONTENT_BLOCK_RULE_IDS,
-      LOCAL_SERVER_ALLOW_RULE_ID,
-      ...ALLOWLIST_RULE_IDS,
-      ...SITE_EMBEDDED_BLOCK_RULE_IDS,
-      ...CONTENT_EMBEDDED_BLOCK_RULE_IDS,
-      ...ALLOWLIST_EMBEDDED_BLOCK_RULE_IDS
-    ],
-    addRules: [
-      ...siteBlockRules(safeEntries),
-      ...siteEmbeddedBlockRules(safeEntries),
-      ...contentBlockRules(safeContentEntries),
-      ...contentEmbeddedBlockRules(safeContentEntries),
-      ...allowlistBlockRules(safeAllowlistEntries),
-      ...allowlistEmbeddedBlockRules(safeAllowlistEntries)
-    ]
+    removeRuleIds: [...SITE_MANAGED_RULE_IDS],
+    addRules: normalized.dynamicRules
   });
-  if (!ok) return { ok: false, count, signature, error: "Dynamic rule update failed" };
+  if (!ok) return { ...normalized, ok: false, error: "Dynamic rule update failed" };
 
-  siteRulesSignature = signature;
-  siteRuleCount = count;
-  await storageSet({ siteBlockRules: { count, syncedAt: new Date().toISOString() } });
-  return { ok: true, count, signature };
+  siteRulesSignature = normalized.signature;
+  siteRuleCount = normalized.count;
+  await storageSet({ siteBlockRules: { count: normalized.count, syncedAt: new Date().toISOString() } });
+  return normalized;
 }
 
 async function pruneStoredSiteBlocking(): Promise<void> {
@@ -637,16 +647,147 @@ async function pruneStoredSiteBlocking(): Promise<void> {
   const rules = Array.isArray(snapshot.rules) ? snapshot.rules as ServerRuleEntry[] : [];
   const contentRules = Array.isArray(snapshot.contentRules) ? snapshot.contentRules as ServerRuleEntry[] : [];
   const allowlistRules = Array.isArray(snapshot.allowlistRules) ? snapshot.allowlistRules as ServerRuleEntry[] : [];
+  if (!siteRulesSignature) {
+    const normalized = normalizedSiteBlockingSnapshot(rules, contentRules, allowlistRules);
+    const installedRules = await coldStartDynamicRules();
+    if (installedRules && managedDynamicRulesCurrent(installedRules, normalized.dynamicRules, SITE_MANAGED_RULE_IDS)) {
+      siteRulesSignature = normalized.signature;
+      siteRuleCount = normalized.count;
+      scheduleRuleExpiry([...normalized.siteEntries, ...normalized.contentEntries, ...normalized.allowlistEntries]);
+      return;
+    }
+  }
   await syncSiteBlocking(rules, contentRules, allowlistRules);
+}
+
+function normalizedSiteBlockingSnapshot(
+  entries: ServerRuleEntry[],
+  contentEntries: ServerRuleEntry[],
+  allowlistEntries: ServerRuleEntry[]
+): NormalizedSiteBlockingSnapshot {
+  const siteEntries = normalizeSiteRuleEntries(entries).slice(0, SITE_BLOCK_RULE_LIMIT);
+  const safeContentEntries = normalizeContentRuleEntries(contentEntries).slice(0, CONTENT_BLOCK_RULE_LIMIT);
+  const safeAllowlistEntries = normalizeAllowlistRuleEntries(allowlistEntries).slice(0, ALLOWLIST_RULE_LIMIT);
+  const hasLocalServerAllowRule = safeAllowlistEntries.length > 0;
+  return {
+    ok: true,
+    count: siteEntries.length + safeContentEntries.length + safeAllowlistEntries.length + (hasLocalServerAllowRule ? 1 : 0),
+    signature: JSON.stringify({
+      site: siteEntries,
+      content: safeContentEntries,
+      allowlist: safeAllowlistEntries,
+      localServerAllow: hasLocalServerAllowRule
+    }),
+    siteEntries,
+    contentEntries: safeContentEntries,
+    allowlistEntries: safeAllowlistEntries,
+    dynamicRules: [
+      ...siteBlockRules(siteEntries),
+      ...siteEmbeddedBlockRules(siteEntries),
+      ...contentBlockRules(safeContentEntries),
+      ...contentEmbeddedBlockRules(safeContentEntries),
+      ...allowlistBlockRules(safeAllowlistEntries),
+      ...allowlistEmbeddedBlockRules(safeAllowlistEntries)
+    ]
+  };
+}
+
+function coldStartDynamicRules(): Promise<chrome.declarativeNetRequest.Rule[] | null> {
+  if (coldStartDynamicRulesPromise) return coldStartDynamicRulesPromise;
+  coldStartDynamicRulesPromise = new Promise((resolve) => {
+    chrome.declarativeNetRequest.getDynamicRules((rules) => {
+      const error = chrome.runtime.lastError;
+      resolve(error ? null : rules);
+    });
+  });
+  return coldStartDynamicRulesPromise;
+}
+
+function managedDynamicRulesCurrent(
+  installedRules: chrome.declarativeNetRequest.Rule[],
+  expectedRules: chrome.declarativeNetRequest.Rule[],
+  managedIds: ReadonlySet<number>
+): boolean {
+  const managedInstalledRules = installedRules.filter((rule) => managedIds.has(rule.id));
+  return canonicalDynamicRules(managedInstalledRules) === canonicalDynamicRules(expectedRules);
+}
+
+function canonicalDynamicRules(rules: chrome.declarativeNetRequest.Rule[]): string {
+  return JSON.stringify(
+    [...rules]
+      .sort((left, right) => left.id - right.id)
+      .map((rule) => canonicalJsonValue(rule))
+  );
+}
+
+function canonicalJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((entry) => canonicalJsonValue(entry));
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(
+    Object.keys(value)
+      .sort()
+      .map((key) => [key, canonicalJsonValue(value[key])])
+  );
+}
+
+async function recordRuleSyncFailure(error: unknown): Promise<void> {
+  const message = error instanceof Error ? error.message : String(error);
+  const stored = await storageGet({ siteBlockRules: null });
+  const storedStatus: unknown = stored.siteBlockRules;
+  const current: Record<string, unknown> = isRecord(storedStatus) ? storedStatus : {};
+  const currentCount = Number(current.count);
+  if (
+    Number.isFinite(currentCount)
+    && currentCount === siteRuleCount
+    && String(current.error || "") === message
+    && Boolean(current.staleAt)
+  ) return;
+  await storageSet({
+    siteBlockRules: {
+      count: siteRuleCount,
+      staleAt: new Date().toISOString(),
+      error: message
+    }
+  });
+}
+
+async function clearRuleSyncFailureTelemetry(count: number): Promise<void> {
+  const stored = await storageGet({ siteBlockRules: null });
+  const storedStatus: unknown = stored.siteBlockRules;
+  if (!isRecord(storedStatus)) return;
+  const current = storedStatus;
+  const currentCount = Number(current.count);
+  const hasFailure = Boolean(current.staleAt) || Boolean(current.error);
+  if (!hasFailure && Number.isFinite(currentCount) && currentCount === count) return;
+  await storageSet({ siteBlockRules: { count, syncedAt: new Date().toISOString() } });
+}
+
+async function ensureRuleSyncAlarm(): Promise<void> {
+  const existing = await ruleSyncAlarm();
+  if (existing?.periodInMinutes === RULE_SYNC_PERIOD_MINUTES) return;
+  chrome.alarms.create(RULE_SYNC_ALARM, { periodInMinutes: RULE_SYNC_PERIOD_MINUTES });
+}
+
+function ruleSyncAlarm(): Promise<chrome.alarms.Alarm | null> {
+  return new Promise((resolve) => {
+    chrome.alarms.get(RULE_SYNC_ALARM, (alarm) => {
+      const error = chrome.runtime.lastError;
+      resolve(error ? null : alarm || null);
+    });
+  });
 }
 
 function scheduleRuleExpiry(entries: Array<SiteRuleEntry | ContentRuleEntry | AllowlistRuleEntry>): void {
   const expirations = entries
     .map((entry) => Date.parse(entry.until))
     .filter((value) => Number.isFinite(value) && value > Date.now());
+  const expirySourceAt = expirations.length ? Math.min(...expirations) : null;
+  if (scheduledRuleExpirySourceAt === expirySourceAt) return;
+  scheduledRuleExpirySourceAt = expirySourceAt;
+  const generation = ++ruleExpiryAlarmGeneration;
   chrome.alarms.clear(RULE_EXPIRY_ALARM, () => {
-    if (!expirations.length) return;
-    chrome.alarms.create(RULE_EXPIRY_ALARM, { when: Math.max(Date.now() + 1_000, Math.min(...expirations) + 250) });
+    if (generation !== ruleExpiryAlarmGeneration || expirySourceAt === null) return;
+    chrome.alarms.create(RULE_EXPIRY_ALARM, { when: Math.max(Date.now() + 1_000, expirySourceAt + 250) });
   });
 }
 

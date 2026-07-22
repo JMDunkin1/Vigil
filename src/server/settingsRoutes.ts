@@ -27,12 +27,13 @@ interface SettingMutation {
 
 interface SettingsApiContext {
   state: VigilState;
+  schedulePolicyEnforcement?: (reason: string) => unknown;
 }
 
 export async function handleSettingsApiRoute(
   request: IncomingMessage,
   response: ServerResponse,
-  { state }: SettingsApiContext
+  { state, schedulePolicyEnforcement }: SettingsApiContext
 ): Promise<boolean> {
   const method = request.method || "GET";
   const path = new URL(request.url || "/", "http://localhost").pathname;
@@ -48,7 +49,12 @@ export async function handleSettingsApiRoute(
   if (invalidateAdultBlocklistIfSourceChanged(state, previousAdultBlocklistSource)) {
     keys.push("adultBlocklistSnapshot");
   }
+  if (!keys.length) {
+    sendJson(response, 200, { ok: true, keys });
+    return true;
+  }
   addEvent(state, "settings_updated", { keys });
+  if (settingsRequireImmediatePolicyEnforcement(keys)) schedulePolicyEnforcement?.("settings-updated");
   await saveState(state);
   sendJson(response, 200, { ok: true, keys });
   return true;
@@ -59,10 +65,51 @@ export function updateSettings(settings: AppSettings, body: UnknownRecord): stri
   for (const [key, value] of Object.entries(body || {})) {
     const mutation = settingMutation(key);
     if (!mutation) continue;
+    const before = (settings as unknown as UnknownRecord)[key];
     mutation.apply(settings, value);
-    updated.push(key);
+    if (!Object.is(before, (settings as unknown as UnknownRecord)[key])) updated.push(key);
   }
   return updated;
+}
+
+const SETTINGS_WITHOUT_IMMEDIATE_ENFORCEMENT = new Set([
+  "pollIntervalMs",
+  "idleUsageTrackingEnabled",
+  "idleUsageThresholdSeconds",
+  "strictByDefault",
+  "emergencyTokensPerWeek",
+  "emergencyDelaySeconds",
+  "panicLockDurationMinutes",
+  "intentReasonEnabled",
+  "intentReasonMinLength",
+  "focusSoundEnabled",
+  "focusSoundMode",
+  "focusSoundActivity",
+  "focusSoundPreset",
+  "focusSoundIntensity",
+  "focusSoundTimerMode",
+  "focusSoundTimerMinutes",
+  "focusSoundBreakMinutes",
+  "focusSoundVolume",
+  "typingChallengeEnabled",
+  "interventionEnabled",
+  "interventionWindowMinutes",
+  "interventionThreshold",
+  "interventionExtraDelaySeconds",
+  "interventionMaxExtraDelaySeconds",
+  "baselineDailyMinutes",
+  "focusScoreGoal",
+  "browserNoiseBlockingEnabled",
+  "externalNetworkBlockEnabled",
+  "externalNetworkBlockProvider",
+  "hostsBlockingEnabled",
+  "protectedEditsEnabled",
+  "protectedEditDelaySeconds",
+  "protectedEditWindowMinutes"
+]);
+
+export function settingsRequireImmediatePolicyEnforcement(keys: readonly string[]): boolean {
+  return keys.some((key) => !SETTINGS_WITHOUT_IMMEDIATE_ENFORCEMENT.has(key));
 }
 
 export function isProtectedSettingsMutation(body: UnknownRecord): boolean {

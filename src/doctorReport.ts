@@ -83,7 +83,11 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
   const externalNetworkBlock = context.externalNetworkBlock || externalNetworkBlockSummary(state);
   const agent = context.agent || {};
   const account = context.account || {};
-  const monitor = context.monitor || monitorFromHeartbeat(state, now);
+  const monitor = context.monitor || {
+    ok: false,
+    accessibilityLikelyMissing: false,
+    detail: "Live monitor health is unavailable in this offline report."
+  };
   const foolproof = foolproofSummary(state, { hosts, firewall, safariFilter, chromeSafeSearch, agent, account, monitor, stateSeal: seal, sourceSeal }, now);
   const runtime = integrityRuntimeSummary(state);
   const keyholder = keyholderSummary(state);
@@ -103,7 +107,7 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
     row("state-seal", "State seal", Boolean(seal.ok), stateSealDetail(seal)),
     row("source-seal", "Source seal", Boolean(sourceSeal.ok), sourceSealDetail(sourceSeal)),
     row("runtime-watchdog", "Runtime watchdog", runtime.ok, runtime.detail),
-    row("watcher-heartbeat", "Watcher heartbeat", monitor.ok, monitor.detail || "Watcher heartbeat is current."),
+    row("monitor-health", "Monitor health", monitor.ok, monitor.detail || "Live monitor checks are healthy."),
     row("idle-usage", "AFK-aware usage", idleUsageOk(settings, monitor), idleUsageDetail(settings, monitor)),
     row("launch-agent", "LaunchAgent", Boolean(agent.loaded && agent.running && (!agent.embedded || agent.restartHardened === true)), launchAgentDetail(agent)),
     row("mac-account", "Mac account", Boolean(account.username && !account.isAdmin), accountDetail(account)),
@@ -192,27 +196,6 @@ function row(id: string, label: string, ok: unknown, detail: unknown): DoctorRow
     ok: Boolean(ok),
     status: ok ? "OK" : "CHECK",
     detail: String(detail || "")
-  };
-}
-
-function monitorFromHeartbeat(state: VigilState, now: Date): SummaryRecord {
-  const heartbeat = Date.parse(state.integrity?.runtime?.lastHeartbeatAt || "");
-  const maxAgeMs = Math.max(30, Number(state.settings?.pollIntervalMs || 3000) / 1000 * 4) * 1000;
-  if (!Number.isFinite(heartbeat)) {
-    return {
-      ok: false,
-      accessibilityLikelyMissing: false,
-      detail: "Watcher heartbeat has not been recorded yet."
-    };
-  }
-
-  const ageMs = now.getTime() - heartbeat;
-  return {
-    ok: ageMs >= 0 && ageMs <= maxAgeMs,
-    accessibilityLikelyMissing: false,
-    detail: ageMs >= 0 && ageMs <= maxAgeMs
-      ? `Watcher heartbeat is current (${new Date(heartbeat).toISOString()}).`
-      : `Watcher heartbeat is stale (${new Date(heartbeat).toISOString()}).`
   };
 }
 

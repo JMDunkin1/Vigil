@@ -5,9 +5,12 @@ import { spawn } from "node:child_process";
 import { access, lstat, mkdtemp, open, readdir, readFile, readlink, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
+import { resolveMacBuildVersion } from "./mac-build-version.mjs";
 import { verifyEntitlementObject } from "./release-entitlements.mjs";
 
 if (process.platform !== "darwin") throw new Error("Developer ID releases must be built and verified on macOS.");
+const buildVersion = resolveMacBuildVersion(process.env, { requireExplicit: true });
+await verifyPublishedBrowserCompanion();
 for (const name of ["CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER", "APPLE_TEAM_ID"]) {
   if (!process.env[name]) throw new Error(`Missing required release secret: ${name}`);
 }
@@ -20,11 +23,13 @@ await verifyEntitlements("build/mac-entitlements-inherit.plist");
 
 await run("npx", [
   "electron-builder", "--mac", "dmg",
+  "--universal",
   "-c.mac.hardenedRuntime=true",
   "-c.mac.gatekeeperAssess=true",
   "-c.mac.entitlements=build/mac-entitlements.plist",
   "-c.mac.entitlementsInherit=build/mac-entitlements-inherit.plist",
-  "-c.mac.notarize=true"
+  "-c.mac.notarize=true",
+  `-c.buildVersion=${buildVersion}`
 ]);
 
 const outputDir = join(process.cwd(), "dist", "mac.noindex");
@@ -60,12 +65,30 @@ const sha256 = createHash("sha256").update(await readFile(dmgPath)).digest("hex"
 const manifestPath = join(outputDir, "release-checksums.json");
 await writeFile(manifestPath, `${JSON.stringify({
   version: process.env.npm_package_version,
+  buildVersion,
   artifact: basename(dmgPath),
   bytes,
   sha256
 }, null, 2)}\n`, { mode: 0o644 });
 console.log(`Verified notarized release: ${dmgPath}`);
 console.log(`SHA-256: ${sha256}`);
+
+async function verifyPublishedBrowserCompanion() {
+  const [manifest, storeConfig, defaultsSource] = await Promise.all([
+    readFile("extension/manifest.json", "utf8").then(JSON.parse),
+    readFile("build/browser-store.json", "utf8").then(JSON.parse),
+    readFile("src/defaults.ts", "utf8")
+  ]);
+  const builtInExtensionId = defaultsSource.match(/BUILT_IN_CHROME_EXTENSION_ID\s*=\s*"([a-p]{32})"/u)?.[1];
+  if (!builtInExtensionId) throw new Error("Vigil's trusted browser companion ID could not be read.");
+  const digest = createHash("sha256").update(Buffer.from(String(manifest.key || ""), "base64")).digest().subarray(0, 16).toString("hex");
+  const extensionId = digest.replace(/[0-9a-f]/gu, (nibble) => String.fromCharCode("a".charCodeAt(0) + Number.parseInt(nibble, 16)));
+  if (storeConfig.extensionId !== extensionId) throw new Error("The Chrome Web Store item ID does not match the browser companion manifest key.");
+  if (storeConfig.extensionId !== builtInExtensionId) throw new Error("The Chrome Web Store item ID does not match Vigil's trusted companion origin.");
+  if (storeConfig.published !== true || storeConfig.publishedVersion !== manifest.version) {
+    throw new Error(`Chrome Web Store companion version ${String(manifest.version || "(missing)")} must be reviewed, publicly installable, and recorded as the exact published version before producing a consumer Mac release.`);
+  }
+}
 
 async function verifyEntitlements(path) {
   verifyEntitlementObject(await parsePlist(path), path, { requireJit: true });
@@ -77,6 +100,10 @@ async function verifyEmittedEntitlements(source, label, requireJit) {
 
 async function verifySignedPath(path, requireJit) {
   await run("codesign", ["--verify", "--strict", "--verbose=2", path]);
+  if ((await stat(path)).isFile()) {
+    await run("lipo", [path, "-verify_arch", "x86_64"]);
+    await run("lipo", [path, "-verify_arch", "arm64"]);
+  }
   const signing = await runCapture("codesign", ["-dvv", path]);
   const signedTeam = signing.match(/^TeamIdentifier=(.+)$/mu)?.[1] || "";
   const authority = signing.match(/^Authority=(.+)$/mu)?.[1] || "";

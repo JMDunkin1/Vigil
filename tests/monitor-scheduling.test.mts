@@ -323,7 +323,6 @@ recoveryMonitor.runImmediateSideEffects = async () => {
     async () => ({ ok: false, error: "recovered OS effect failed" })
   );
 };
-recoveryMonitor.persistHeartbeat = async () => {};
 const recoveredIntent: RuntimeOutboxEntry = {
   id: "recovered-session-intent",
   key: "session-enforcement:recovered",

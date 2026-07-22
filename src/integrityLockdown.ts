@@ -59,6 +59,18 @@ interface ProtectedOverlap {
   endsAt?: string;
 }
 
+export interface RuntimeInterruptionEvidenceInput {
+  id: string;
+  detectedAt: string;
+  previousRuntimeStartedAt?: string | null;
+}
+
+interface RuntimeInterruptionOptions {
+  rebooted?: boolean;
+  bootedAt?: Date | null;
+  gapStartedAt?: Date | null;
+}
+
 export function integrityLockdownActive(state: VigilState): boolean {
   return Boolean(activeIntegrityAlarm(state));
 }
@@ -309,52 +321,70 @@ function appleContentFilterArmedLockIds(runtime: IntegrityRuntimeState): string[
   return [...new Set(ids)];
 }
 
-export function detectRuntimeGap(state: VigilState, now = new Date()) {
+export function detectRuntimeInterruption(
+  state: VigilState,
+  evidence: RuntimeInterruptionEvidenceInput,
+  now = new Date(),
+  options: RuntimeInterruptionOptions = {}
+) {
   const runtime = ensureRuntime(state);
-  if (runtime.downtimeDetectedAt) return null;
-
-  const previous = Date.parse(runtime.lastHeartbeatAt || "");
-  if (!Number.isFinite(previous)) return null;
+  const evidenceId = String(evidence.id || "").trim();
+  if (!evidenceId || runtime.lastInterruptionId === evidenceId) return null;
 
   const current = now.getTime();
-  if (previous > current) {
-    const futureSeconds = Math.max(1, Math.ceil((previous - current) / 1000));
-    const overlap = protectedLockOverlap(state, current, previous);
-    if (!overlap) return null;
+  const reported = Date.parse(evidence.detectedAt || "");
+  const bootedAt = options.bootedAt instanceof Date && Number.isFinite(options.bootedAt.getTime())
+    ? options.bootedAt.getTime()
+    : current;
+  const explicitGapStartedAt = options.gapStartedAt instanceof Date && Number.isFinite(options.gapStartedAt.getTime())
+    ? options.gapStartedAt.getTime()
+    : null;
+  const futureEvidence = Number.isFinite(reported) && reported > current;
+  let gapStartedAt = current;
+  if (explicitGapStartedAt !== null) gapStartedAt = Math.min(explicitGapStartedAt, current);
+  else if (options.rebooted) gapStartedAt = Math.min(bootedAt, current);
+  else if (Number.isFinite(reported)) gapStartedAt = Math.min(reported, current);
+  const gapEndedAt = futureEvidence ? reported : current;
+  const gapSeconds = Math.max(0, Math.round(Math.abs(gapEndedAt - gapStartedAt) / 1000));
 
-    runtime.downtimeDetectedAt = now.toISOString();
-    runtime.downtimeDetail = `Vigil's saved runtime heartbeat was ${futureSeconds}s in the future during ${overlap.name}.`;
-    runtime.lastGapSeconds = futureSeconds;
-    runtime.lastGapStartedAt = now.toISOString();
-    runtime.lastGapEndedAt = new Date(previous).toISOString();
+  runtime.lastInterruptionId = evidenceId;
+  runtime.lastInterruptionObservedAt = now.toISOString();
+
+  const overlap = protectedLockOverlap(state, gapStartedAt, Math.max(gapStartedAt + 1, gapEndedAt));
+  const thresholdReached = options.rebooted || futureEvidence || gapSeconds >= runtimeGapLockdownSeconds(state);
+  if (runtime.downtimeDetectedAt || !overlap || !thresholdReached) {
     return {
-      detectedAt: runtime.downtimeDetectedAt,
-      detail: runtime.downtimeDetail,
-      gapSeconds: futureSeconds,
-      gapStartedAt: runtime.lastGapStartedAt,
-      gapEndedAt: runtime.lastGapEndedAt,
-      futureHeartbeat: true,
+      id: evidenceId,
+      observedAt: runtime.lastInterruptionObservedAt,
+      gapSeconds,
+      gapStartedAt: new Date(gapStartedAt).toISOString(),
+      gapEndedAt: new Date(gapEndedAt).toISOString(),
+      rebooted: Boolean(options.rebooted),
+      futureEvidence,
+      lockdown: false,
       overlap
     };
   }
 
-  const gapSeconds = Math.round((current - previous) / 1000);
-  if (gapSeconds < runtimeGapLockdownSeconds(state)) return null;
-
-  const overlap = protectedLockOverlap(state, previous, current);
-  if (!overlap) return null;
-
   runtime.downtimeDetectedAt = now.toISOString();
-  runtime.downtimeDetail = `Vigil was offline for ${gapSeconds}s during ${overlap.name}.`;
+  runtime.downtimeDetail = options.rebooted
+    ? `Restart supervision found an unclean prior runtime across a system restart during ${overlap.name}.`
+    : futureEvidence
+      ? `Restart supervision evidence was ${gapSeconds}s in the future during ${overlap.name}.`
+      : `Restart supervision detected a ${gapSeconds}s runtime interruption during ${overlap.name}.`;
   runtime.lastGapSeconds = gapSeconds;
-  runtime.lastGapStartedAt = new Date(previous).toISOString();
-  runtime.lastGapEndedAt = now.toISOString();
+  runtime.lastGapStartedAt = new Date(gapStartedAt).toISOString();
+  runtime.lastGapEndedAt = new Date(gapEndedAt).toISOString();
   return {
+    id: evidenceId,
     detectedAt: runtime.downtimeDetectedAt,
     detail: runtime.downtimeDetail,
     gapSeconds,
     gapStartedAt: runtime.lastGapStartedAt,
     gapEndedAt: runtime.lastGapEndedAt,
+    rebooted: Boolean(options.rebooted),
+    futureEvidence,
+    lockdown: true,
     overlap
   };
 }
@@ -400,12 +430,6 @@ export function detectClockTamper(state: VigilState, sample: ClockTamperSample =
   };
 }
 
-export function recordRuntimeHeartbeat(state: VigilState, now = new Date()): string {
-  const runtime = ensureRuntime(state);
-  runtime.lastHeartbeatAt = now.toISOString();
-  return runtime.lastHeartbeatAt;
-}
-
 export function integrityRuntimeSummary(state: VigilState) {
   const runtime = ensureRuntime(state);
   if (runtime.downtimeDetectedAt) {
@@ -413,7 +437,6 @@ export function integrityRuntimeSummary(state: VigilState) {
       ok: false,
       status: "downtime-detected",
       detail: runtime.downtimeDetail || "Vigil was offline during a protected lock.",
-      lastHeartbeatAt: runtime.lastHeartbeatAt || null,
       downtimeDetectedAt: runtime.downtimeDetectedAt,
       lastGapSeconds: runtime.lastGapSeconds || 0
     };
@@ -424,7 +447,6 @@ export function integrityRuntimeSummary(state: VigilState) {
       ok: false,
       status: "hardening-drift",
       detail: runtime.hardeningDriftDetail || "A hardening protection weakened during a protected lock.",
-      lastHeartbeatAt: runtime.lastHeartbeatAt || null,
       hardeningDriftDetectedAt: runtime.hardeningDriftDetectedAt,
       hardeningDriftIssues: runtime.hardeningDriftIssues || []
     };
@@ -435,21 +457,16 @@ export function integrityRuntimeSummary(state: VigilState) {
       ok: false,
       status: "clock-tamper",
       detail: runtime.clockTamperDetail || "System clock changed during a protected lock.",
-      lastHeartbeatAt: runtime.lastHeartbeatAt || null,
       clockTamperDetectedAt: runtime.clockTamperDetectedAt,
       clockTamperSeconds: runtime.clockTamperSeconds || 0,
       clockTamperDirection: runtime.clockTamperDirection || ""
     };
   }
 
-  const lastHeartbeatAt = runtime.lastHeartbeatAt || null;
   return {
     ok: true,
-    status: lastHeartbeatAt ? "watching" : "starting",
-    detail: lastHeartbeatAt
-      ? `Runtime heartbeat is current (${lastHeartbeatAt}).`
-      : "Runtime heartbeat will start after the watcher ticks.",
-    lastHeartbeatAt,
+    status: "clear",
+    detail: "No runtime integrity alarm is active.",
     downtimeDetectedAt: null,
     lastGapSeconds: 0
   };

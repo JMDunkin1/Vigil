@@ -34,6 +34,7 @@ export async function reconcileFocusShortcut(state: VigilState, policy: ActivePo
   status.lastPolicy = policy?.session?.title || policy?.kind || "";
 
   if (active === desiredActive) {
+    status.lastError = "";
     return { ...focusShortcutSummary(state), ok: true, changed: false };
   }
 

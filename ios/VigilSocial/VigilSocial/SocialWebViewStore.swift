@@ -8,11 +8,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var health: [SocialService: AdapterHealth] = [:]
     @Published private(set) var audioPreferences: [SocialService: Bool] = [:]
 
-    let fixedService: SocialService?
+    let fixedService: SocialService
     private let defaults: UserDefaults
     private let loadInitialPages: Bool
     private let mediaClassifier: any MediaSafetyClassifying
     private let textClassifier: any PageTextSafetyClassifying
+    private let unclassifiedMediaPolicy: UnclassifiedMediaPolicy
     private var webViews: [SocialService: WKWebView] = [:]
     private var serviceByWebView: [ObjectIdentifier: SocialService] = [:]
     private var messageBridges: [SocialService: ScriptMessageBridge] = [:]
@@ -24,43 +25,43 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         bundle: Bundle = .main,
         loadInitialPages: Bool = true,
         mediaClassifier: any MediaSafetyClassifying = AppleSensitiveMediaClassifier(),
-        textClassifier: any PageTextSafetyClassifying = ConservativePageTextClassifier()
+        textClassifier: any PageTextSafetyClassifying = ConservativePageTextClassifier(),
+        unclassifiedMediaPolicy: UnclassifiedMediaPolicy? = nil
     ) {
         let configured = fixedService
             ?? (bundle.object(forInfoDictionaryKey: "VigilService") as? String).flatMap(SocialService.init(rawValue:))
-        let remembered = defaults.string(forKey: "VigilSocial.selectedService").flatMap(SocialService.init(rawValue:))
+            ?? .youtube
         self.fixedService = configured
-        self.selectedService = configured ?? remembered ?? .youtube
+        self.selectedService = configured
         self.defaults = defaults
         self.loadInitialPages = loadInitialPages
         self.mediaClassifier = mediaClassifier
         self.textClassifier = textClassifier
+        self.unclassifiedMediaPolicy = unclassifiedMediaPolicy ?? UnclassifiedMediaPolicy(bundle: bundle)
         super.init()
         for service in SocialService.allCases {
             let key = audioPreferenceKey(service)
             audioPreferences[service] = defaults.object(forKey: key) == nil ? true : defaults.bool(forKey: key)
             health[service] = .loading
         }
+        if loadInitialPages { _ = webView(for: selectedService) }
     }
 
     func select(_ service: SocialService) {
-        guard fixedService == nil || service == fixedService else { return }
-        if service != selectedService {
-            webViews[selectedService]?.evaluateJavaScript("window.__vigilPauseAllMedia?.();")
-        }
-        selectedService = service
-        defaults.set(service.rawValue, forKey: "VigilSocial.selectedService")
-        _ = webView(for: service)
+        guard service == fixedService else { return }
+        _ = webView(for: fixedService)
     }
 
     func open(_ url: URL) {
-        guard let service = SocialService.resolve(url), fixedService == nil || service == fixedService else { return }
-        select(service)
-        guard service.allowsNavigation(to: url) else { return }
-        webView(for: service).load(URLRequest(url: url))
+        guard let service = SocialService.resolve(url),
+              service == fixedService,
+              service.allowsNavigation(to: url),
+              !service.isRestrictedSurface(url) else { return }
+        webView(for: fixedService).load(URLRequest(url: url))
     }
 
-    func webView(for service: SocialService) -> WKWebView {
+    func webView(for requestedService: SocialService) -> WKWebView {
+        let service = requestedService == fixedService ? requestedService : fixedService
         if let existing = webViews[service] { return existing }
 
         let controller = WKUserContentController()
@@ -69,17 +70,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
         controller.add(bridge, name: "vigil")
         controller.addUserScript(WKUserScript(
-            source: DOMAdapters.contentFilterBootstrap,
+            source: DOMAdapters.contentFilterBootstrap(for: unclassifiedMediaPolicy),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
-        if let preflight = DOMAdapters.preflightScript(for: service) {
-            controller.addUserScript(WKUserScript(
-                source: preflight,
-                injectionTime: .atDocumentStart,
-                forMainFrameOnly: false
-            ))
-        }
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.script(for: service, audioEnabled: audioEnabled(for: service)),
             injectionTime: .atDocumentEnd,
@@ -98,16 +92,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        webView.allowsBackForwardNavigationGestures = true
+        webView.allowsBackForwardNavigationGestures = service.allowsBackForwardNavigationGestures
         webView.scrollView.alwaysBounceVertical = true
-        webView.scrollView.isDirectionalLockEnabled = true
+        webView.scrollView.isDirectionalLockEnabled = service.usesDirectionalScrollLock
         #if DEBUG
         if #available(iOS 16.4, *) { webView.isInspectable = true }
         #endif
-        if service == .snapchat {
-            webView.customUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-        }
-
         webViews[service] = webView
         serviceByWebView[ObjectIdentifier(webView)] = service
         messageBridges[service] = bridge
@@ -213,7 +203,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private func resolveMedia(id: String, token: String, verdict: ContentSafetyVerdict, service: SocialService) {
         let encodedID = javascriptString(id)
         let encodedToken = javascriptString(token)
-        webViews[service]?.evaluateJavaScript("window.__vigilResolveMedia?.(\(encodedID), \(encodedToken), '\(verdict.rawValue)');")
+        let resolvedVerdict = unclassifiedMediaPolicy.resolve(verdict)
+        webViews[service]?.evaluateJavaScript("window.__vigilResolveMedia?.(\(encodedID), \(encodedToken), '\(resolvedVerdict.rawValue)');")
     }
 
     private func handlePageText(_ body: [String: Any], service: SocialService) {
@@ -273,19 +264,15 @@ extension SocialWebViewStore: WKNavigationDelegate {
         decisionHandler: @escaping (WKNavigationActionPolicy, WKWebpagePreferences) -> Void
     ) {
         guard let service = service(for: webView), let url = navigationAction.request.url else {
-            decisionHandler(.allow, preferences)
+            decisionHandler(.cancel, preferences)
             return
         }
 
-        if service == .snapchat { preferences.preferredContentMode = .desktop }
         guard service.allowsNavigation(to: url) else {
             decisionHandler(.cancel, preferences)
             return
         }
-        let path = url.path.lowercased()
-        let blocked = (service == .youtube && path.hasPrefix("/shorts"))
-            || (service == .snapchat && (path.contains("/spotlight") || path.contains("/stories")))
-        if blocked {
+        if service.isRestrictedSurface(url) {
             health[service] = .degraded("That short-form surface is intentionally unavailable.")
             decisionHandler(.cancel, preferences)
             return
@@ -318,7 +305,11 @@ extension SocialWebViewStore: WKUIDelegate {
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        if let request = navigationAction.request.url { webView.load(URLRequest(url: request)) }
+        guard let service = service(for: webView), let request = navigationAction.request.url else { return nil }
+        guard service.allowsNavigation(to: request), !service.isRestrictedSurface(request) else {
+            return nil
+        }
+        webView.load(URLRequest(url: request))
         return nil
     }
 }

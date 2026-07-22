@@ -451,9 +451,7 @@ export const BRICK_ALLOWED_SITES = [
   "stackoverflow.com"
 ];
 
-export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
-  // Unfiltered browsers are closed while Safari and Vigil's filtered browser
-  // remain available. This is deliberately a denylist, not an all-app allowlist.
+export const IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS = [
   "com.google.chrome.ios",
   "org.mozilla.ios.Firefox",
   "org.mozilla.ios.Focus",
@@ -463,9 +461,14 @@ export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
   "com.opera.OperaTouch",
   "com.vivaldi.Vivaldi",
   "company.thebrowser.Browser",
-  "org.torproject.OnionBrowser",
-  // Native social/feed apps remain targeted so they cannot bypass the filtered
-  // Safari, Vigil Browser, and Vigil Social paths.
+  "org.torproject.OnionBrowser"
+];
+
+export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
+  // Apple's managed built-in WebContentFilter applies to Safari and third-party
+  // apps, so browsers stay available and share the same device policy. Native
+  // social apps remain hidden because iOS cannot remove individual feeds inside
+  // another developer's signed binary; the fixed Vigil companions are used.
   "com.google.ios.youtube",
   "com.atebits.Tweetie2",
   "com.burbn.instagram",
@@ -505,7 +508,7 @@ export function defaultState(): VigilState {
     version: 1,
     createdAt: new Date().toISOString(),
     settings: {
-      pollIntervalMs: 3000,
+      pollIntervalMs: 15000,
       idleUsageTrackingEnabled: true,
       idleUsageThresholdSeconds: 120,
       strictByDefault: true,
@@ -647,7 +650,7 @@ export function defaultState(): VigilState {
         type: "time",
         lockLevel: "deep",
         days: [0, 1, 2, 3, 4, 5, 6],
-        apps: ["Instagram", "com.burbn.instagram"],
+        apps: ["Instagram", "com.burbn.instagram", "tech.caseline.vigil.instagram"],
         sites: ["instagram.com"],
         limitMinutes: 20,
         unlocksAllowed: 0,
@@ -661,7 +664,7 @@ export function defaultState(): VigilState {
         type: "time",
         lockLevel: "deep",
         days: [0, 1, 2, 3, 4, 5, 6],
-        apps: ["YouTube", "com.google.ios.youtube"],
+        apps: ["YouTube", "com.google.ios.youtube", "tech.caseline.vigil.youtube"],
         sites: ["youtube.com"],
         limitMinutes: 20,
         unlocksAllowed: 0,
@@ -899,7 +902,8 @@ export function defaultState(): VigilState {
         migratedAt: null
       },
       runtime: {
-        lastHeartbeatAt: null,
+        lastInterruptionId: null,
+        lastInterruptionObservedAt: null,
         appleContentFilterArmedAt: null,
         appleContentFilterArmedLockId: null,
         appleContentFilterArmedLockIds: [],
@@ -943,6 +947,7 @@ export function defaultState(): VigilState {
         focusedSocial: defaultFocusedSocialSettings(),
         removalPassword: null,
         lastGeneratedAt: null,
+        manageEngineGeneration: null,
         mdm: {
           enabled: false,
           publicBaseUrl: "",
@@ -987,6 +992,13 @@ export function defaultState(): VigilState {
       pending: []
     },
     overrides: [],
+    functionalEvents: {
+      version: 1,
+      blockAttempts: [],
+      dailyBlockCounts: {},
+      sessions: [],
+      firstSessionStartedAt: null
+    },
     events: []
   };
 }

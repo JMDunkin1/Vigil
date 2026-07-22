@@ -827,6 +827,7 @@ import { recordUsage } from "../src/usage.js";
   const source: { listener?: (signal: BrowserActivitySignal) => void } = {};
   let unsubscribed = 0;
   let probes = 0;
+  const applicationSignals: string[] = [];
   const monitor = new Monitor({
     state,
     usage: {},
@@ -848,18 +849,50 @@ import { recordUsage } from "../src/usage.js";
     probes += 1;
     return false;
   };
+  monitor.handleApplicationActivity = ((kind) => {
+    applicationSignals.push(kind);
+  }) as typeof monitor.handleApplicationActivity;
 
   monitor.start();
   assert.ok(source.listener, "starting the monitor must attach the activity source");
   source.listener({ kind: "key", at: Date.now() });
   for (let turn = 0; turn < 4; turn += 1) await Promise.resolve();
   assert.equal(probes, 1, "a browser-activity signal must launch a debounced probe");
+  source.listener({ kind: "activate", at: Date.now() });
+  source.listener({ kind: "launch", at: Date.now() });
+  assert.deepEqual(applicationSignals, ["activate", "launch"],
+    "workspace lifecycle signals must use event-driven application enforcement");
 
   await monitor.stop();
   assert.equal(unsubscribed, 1, "stopping must detach the activity source");
   source.listener({ kind: "click", at: Date.now() });
   await Promise.resolve();
   assert.equal(probes, 1, "activity after stop must not launch another probe");
+}
+
+{
+  const monitor = new Monitor({ state: defaultState(), usage: {} });
+  let browserTailWakes = 0;
+  let enforcements = 0;
+  monitor.readFrontmost = async () => ({
+    ok: true,
+    app: "Safari",
+    hostname: "example.com",
+    url: "https://example.com/"
+  });
+  monitor.enforceFrontmost = async () => { enforcements += 1; };
+  await monitor.enforceActivatedApplication({ wake() { browserTailWakes += 1; } } as BrowserActivityBurstScheduler);
+  assert.equal(enforcements, 1, "an application activation must enforce the newly frontmost target immediately");
+  assert.equal(browserTailWakes, 1, "a browser activation must retain the post-navigation settling tail");
+  assert.equal(monitor.lastSample?.app, "Safari");
+
+  let processSweeps = 0;
+  monitor.sweepBlockedProcesses = async (_now, options = {}) => {
+    assert.equal(options.force, true);
+    processSweeps += 1;
+  };
+  await monitor.enforceLaunchedApplications();
+  assert.equal(processSweeps, 1, "an application launch must trigger an immediate blocked-process sweep");
 }
 
 {
@@ -1043,6 +1076,12 @@ import { recordUsage } from "../src/usage.js";
     assert.ok(helperSource.includes(eventType), `browser activity helper must cover ${eventType}`);
   }
   assert.match(helperSource, /printf\("wake\\t%s\\n", kind\)/u);
+  assert.match(helperSource, /printf\("watch\\talive\\n"\)/u,
+    "the native watcher must expose liveness without requiring another full monitor sweep");
+  assert.match(helperSource, /NSWorkspaceDidActivateApplicationNotification/u);
+  assert.match(helperSource, /NSWorkspaceDidLaunchApplicationNotification/u);
+  assert.match(helperSource, /printf\("wake\\tactivate\\n"\)/u);
+  assert.match(helperSource, /printf\("wake\\tlaunch\\n"\)/u);
   assert.match(helperSource, /strcmp\(request, "watch\\n"\)/u);
   assert.match(helperSource, /strcmp\(request, "unwatch\\n"\)/u);
   assert.doesNotMatch(helperSource, /CGEventTapCreate|CGEventGetIntegerValueField|CGEventKeyboardGetUnicodeString|NSEvent\.keyCode/u,
@@ -1065,6 +1104,8 @@ import { recordUsage } from "../src/usage.js";
     /resetHumanActivityRestart\(\)/u,
     "a single valid helper frame must not erase short-lifetime crash history"
   );
+  assert.match(macosSource, /parseBrowserActivityWatchHeartbeat\(line\)[\s\S]*?humanActivityLastWatchAliveAt = Date\.now\(\)[\s\S]*?continue/u,
+    "watcher heartbeats must be consumed before pending idle-sample responses");
   const stabilityStart = macosSource.indexOf("function armHumanActivityStabilityReset");
   const stabilityEnd = macosSource.indexOf("\nexport async function runAppleScript", stabilityStart);
   const stabilitySource = macosSource.slice(stabilityStart, stabilityEnd);

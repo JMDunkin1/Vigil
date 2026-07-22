@@ -43,6 +43,8 @@
     <true/>
     <key>VigilService</key>
     <string>$(VIGIL_SERVICE)</string>
+    <key>VigilUnclassifiedMediaPolicy</key>
+    <string>$(VIGIL_UNCLASSIFIED_MEDIA_POLICY)</string>
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
     <key>UISupportedInterfaceOrientations</key>

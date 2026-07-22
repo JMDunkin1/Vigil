@@ -16,8 +16,8 @@
 		A10000000000000000000007 /* icon.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* icon.png */; };
 		A10000000000000000000008 /* instagram.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* instagram.png */; };
 		A10000000000000000000009 /* youtube.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* youtube.png */; };
-		A1000000000000000000000A /* snapchat.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* snapchat.png */; };
 		A1000000000000000000000B /* ContentSafetyClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* ContentSafetyClassifier.swift */; };
+		A1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -43,9 +43,9 @@
 		A20000000000000000000010 /* icon.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = icon.png; path = ../../../build/icon.png; sourceTree = "<group>"; };
 		A20000000000000000000011 /* instagram.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icons/instagram.png; sourceTree = "<group>"; };
 		A20000000000000000000012 /* youtube.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icons/youtube.png; sourceTree = "<group>"; };
-		A20000000000000000000013 /* snapchat.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = Icons/snapchat.png; sourceTree = "<group>"; };
 		A20000000000000000000014 /* ContentSafetyClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentSafetyClassifier.swift; sourceTree = "<group>"; };
 		A20000000000000000000015 /* VigilSocial.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VigilSocial.entitlements; sourceTree = "<group>"; };
+		A20000000000000000000016 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -87,9 +87,9 @@
 				A20000000000000000000010 /* icon.png */,
 				A20000000000000000000011 /* instagram.png */,
 				A20000000000000000000012 /* youtube.png */,
-				A20000000000000000000013 /* snapchat.png */,
 				A20000000000000000000014 /* ContentSafetyClassifier.swift */,
 				A20000000000000000000015 /* VigilSocial.entitlements */,
+				A20000000000000000000016 /* PrivacyInfo.xcprivacy */,
 			);
 			path = VigilSocial;
 			sourceTree = "<group>";
@@ -183,7 +183,7 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000007 /* icon.png in Resources */, A10000000000000000000008 /* instagram.png in Resources */, A10000000000000000000009 /* youtube.png in Resources */, A1000000000000000000000A /* snapchat.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		A40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000007 /* icon.png in Resources */, A10000000000000000000008 /* instagram.png in Resources */, A10000000000000000000009 /* youtube.png in Resources */, A1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		A40000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
@@ -268,6 +268,7 @@
 				PRODUCT_MODULE_NAME = VigilSocial;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				VIGIL_SERVICE = youtube;
+				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
 				SOCIAL_APP_NAME = YouTube;
 				SOCIAL_ICON_NAME = youtube.png;
 				SOCIAL_URL_SCHEME = vigil-youtube;
@@ -294,6 +295,7 @@
 				PRODUCT_MODULE_NAME = VigilSocial;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				VIGIL_SERVICE = youtube;
+				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
 				SOCIAL_APP_NAME = YouTube;
 				SOCIAL_ICON_NAME = youtube.png;
 				SOCIAL_URL_SCHEME = vigil-youtube;

@@ -10,12 +10,13 @@ import { resolveDefaultDataDir } from "../src/dataPaths.js";
 import { getInstanceSecret } from "../src/instanceIdentity.js";
 import { plistStringForKey } from "../src/plist.js";
 import { getTouchIdSecret } from "../src/touchIdAuth.js";
-import { clearRuntimeReady, markRuntimeReady } from "../src/runtimeReady.js";
+import { buildRuntimeSupervisorScript, clearRuntimeInterruption, clearRuntimeReady, markRuntimeReady, readRuntimeInterruption } from "../src/runtimeReady.js";
 import type { VigilRuntimeHandle } from "../src/server.js";
 import type { InAppRequest, InAppResponse } from "../src/server/inAppTransport.js";
 import { fetchVigilStateHealth } from "../src/vigilHealth.js";
 import { createVigilAppUpdateController } from "./updater.js";
 import type { VigilAppUpdateController } from "./updater.js";
+import { BUILT_IN_CHROME_EXTENSION_ID, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
 
 const APP_SCHEME = "vigil-app";
 const APP_HOST = "app";
@@ -144,6 +145,7 @@ ipcMain.handle("vigil:app-update-status", handleAppUpdateStatus);
 ipcMain.handle("vigil:app-update-start", handleAppUpdateStart);
 ipcMain.handle("vigil:icon-theme-get", handleIconThemeGet);
 ipcMain.handle("vigil:icon-theme-set", handleIconThemeSet);
+ipcMain.handle("vigil:setup-open", handleSetupOpen);
 ipcMain.on("vigil:window-resize-begin", handleWindowResizeBegin);
 ipcMain.on("vigil:window-resize-move", handleWindowResizeMove);
 ipcMain.on("vigil:window-resize-end", handleWindowResizeEnd);
@@ -194,6 +196,13 @@ void app.whenReady().then(async () => {
     await ensureEmbeddedRuntimeSupervisor(legacyAgent);
     await retireLegacyLoopbackAgent(legacyAgent);
     await ensureVigilRuntime(appUpdateController);
+    const runtimeInterruption = await readRuntimeInterruption(appDataDir());
+    if (runtimeInterruption.status === "invalid") {
+      console.error(`Vigil preserved an invalid runtime interruption receipt (${runtimeInterruption.reason}) for integrity lockdown.`);
+    }
+    const acknowledgedRuntimeInterruption = runtimeInterruption.status === "valid"
+      ? runtimeInterruption.record
+      : null;
     installInAppProtocol();
     const appUrl = APP_URL;
     currentAppUrl = appUrl;
@@ -203,6 +212,13 @@ void app.whenReady().then(async () => {
     if (shouldShowWindowOnLaunch() || revealWindowWhenReady) showVigilWindow(appUrl);
     await markRuntimeReady(appDataDir(), process.execPath);
     startupComplete = true;
+    if (acknowledgedRuntimeInterruption) {
+      try {
+        await clearRuntimeInterruption(appDataDir(), acknowledgedRuntimeInterruption.id);
+      } catch (error) {
+        console.error("Vigil could not clear acknowledged runtime interruption evidence.", error);
+      }
+    }
   } catch (error) {
     try {
       await clearRuntimeReady(appDataDir());
@@ -598,6 +614,77 @@ function rejectedIconThemeRequest(): Record<string, unknown> {
   return { ok: false, theme: selectedIconTheme, error: "Icon request origin was rejected." };
 }
 
+async function handleSetupOpen(event: IpcMainInvokeEvent, value: unknown): Promise<Record<string, unknown>> {
+  if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) {
+    return { ok: false, error: "Setup request origin was rejected." };
+  }
+  if (process.platform !== "darwin") {
+    return { ok: false, error: "This setup shortcut is available on macOS." };
+  }
+  const destination = String(value || "");
+  try {
+    if (destination === "accessibility") {
+      systemPreferences.isTrustedAccessibilityClient(true);
+      await shell.openExternal("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility");
+      return { ok: true, destination };
+    }
+    if (destination === "login-items") {
+      await shell.openExternal("x-apple.systempreferences:com.apple.LoginItems-Settings.extension");
+      return { ok: true, destination };
+    }
+    if (destination === "accounts") {
+      await shell.openExternal("x-apple.systempreferences:com.apple.Users-Groups-Settings.extension");
+      return { ok: true, destination };
+    }
+    if (destination === "extension") {
+      const storeConfig = packagedBrowserStoreConfig();
+      if (app.isPackaged && storeConfig.published) {
+        await shell.openExternal(`https://chromewebstore.google.com/detail/${storeConfig.extensionId}`);
+        return { ok: true, destination, mode: "store" };
+      }
+      const manifestPath = join(RUNTIME_ROOT, "extension", "manifest.json");
+      if (!existsSync(manifestPath)) throw new Error("The bundled browser companion could not be found.");
+      shell.showItemInFolder(manifestPath);
+      return { ok: true, destination, mode: "development" };
+    }
+    return { ok: false, error: "Unknown setup destination." };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "The setup destination could not be opened."
+    };
+  }
+}
+
+function packagedBrowserStoreConfig(): { extensionId: string; published: boolean; publishedVersion: string | null } {
+  if (!app.isPackaged) {
+    return { extensionId: BUILT_IN_CHROME_EXTENSION_ID, published: false, publishedVersion: null };
+  }
+  try {
+    const value = JSON.parse(readFileSync(join(process.resourcesPath, "browser-store.json"), "utf8")) as {
+      extensionId?: unknown;
+      published?: unknown;
+      publishedVersion?: unknown;
+    };
+    if (value.extensionId !== BUILT_IN_CHROME_EXTENSION_ID) throw new Error("Browser-store item ID does not match Vigil's trusted companion ID.");
+    if (typeof value.published !== "boolean") throw new Error("Browser-store publication status is malformed.");
+    if (!(typeof value.publishedVersion === "string" || value.publishedVersion === null)) {
+      throw new Error("Browser-store published version is malformed.");
+    }
+    if (value.published && value.publishedVersion !== REQUIRED_EXTENSION_VERSION) {
+      throw new Error(`Browser-store publication does not match required companion version ${REQUIRED_EXTENSION_VERSION}.`);
+    }
+    return {
+      extensionId: value.extensionId,
+      published: value.published && value.publishedVersion === REQUIRED_EXTENSION_VERSION,
+      publishedVersion: value.publishedVersion
+    };
+  } catch (error) {
+    console.error("Vigil could not verify its browser-store release configuration.", error);
+    return { extensionId: BUILT_IN_CHROME_EXTENSION_ID, published: false, publishedVersion: null };
+  }
+}
+
 function trustedAppUpdateController(event: IpcMainInvokeEvent): VigilAppUpdateController | null {
   if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return null;
   return appUpdateController;
@@ -828,36 +915,15 @@ ${environment.map(([key, value]) => `    <key>${xmlEscape(key)}</key>\n    <stri
 }
 
 function embeddedRuntimeSupervisorScript(markerPath: string): string {
-  const readyPath = join(appDataDir(), "runtime-ready.json");
   const appPath = dirname(dirname(dirname(process.execPath)));
-  const executablePath = process.execPath;
-  return `#!/bin/zsh
-set -u
-marker=${shellSingleQuote(markerPath)}
-ready=${shellSingleQuote(readyPath)}
-app_path=${shellSingleQuote(appPath)}
-executable_path=${shellSingleQuote(executablePath)}
-while [[ -e "$marker" ]]; do
-  pid=""
-  command=""
-  if [[ -f "$ready" ]]; then
-    pid=$(/usr/bin/sed -nE 's/^[[:space:]]*"pid":[[:space:]]*([0-9]+),?$/\\1/p' "$ready" | /usr/bin/head -n 1)
-  fi
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    command=$(/bin/ps -p "$pid" -o command= 2>/dev/null)
-  fi
-  if [[ -z "$pid" ]] || [[ "$command" != "$executable_path" && "$command" != "$executable_path "* ]]; then
-    /bin/rm -f "$ready"
-    if [[ ! -e "$marker" ]]; then
-      break
-    fi
-    /usr/bin/open -g "$app_path" --args ${BACKGROUND_LAUNCH_ARG} ${SAFETY_BOUNDARY_ARG}
-    /bin/sleep 5
-  else
-    /bin/sleep 2
-  fi
-done
-`;
+  return buildRuntimeSupervisorScript({
+    markerPath,
+    dataDir: appDataDir(),
+    appPath,
+    executablePath: process.execPath,
+    backgroundLaunchArg: BACKGROUND_LAUNCH_ARG,
+    safetyBoundaryArg: SAFETY_BOUNDARY_ARG
+  });
 }
 
 function suspendEmbeddedRuntimeSupervisor(): void {
@@ -975,10 +1041,6 @@ function requestEmbeddedSupervisorRepair(): void {
     .finally(() => {
       supervisorRepairInFlight = null;
     });
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 function xmlEscape(value: string): string {

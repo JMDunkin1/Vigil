@@ -207,6 +207,28 @@ export interface StateEvent {
   at: string;
 }
 
+export interface FunctionalBlockAttempt {
+  at: string;
+  type: string;
+  targetType: string;
+  targetLabel: string;
+}
+
+export interface FunctionalSessionRecord {
+  id: string;
+  startedAt?: string;
+  endsAt?: string;
+  endedAt?: string;
+}
+
+export interface FunctionalEventState {
+  version: 1;
+  blockAttempts: FunctionalBlockAttempt[];
+  dailyBlockCounts: Record<string, number>;
+  sessions: FunctionalSessionRecord[];
+  firstSessionStartedAt: string | null;
+}
+
 export interface LimitProgress {
   seconds?: number;
   opens?: number;
@@ -600,7 +622,8 @@ export interface HardeningIssue {
 }
 
 export interface IntegrityRuntimeState {
-  lastHeartbeatAt?: string | null;
+  lastInterruptionId?: string | null;
+  lastInterruptionObservedAt?: string | null;
   appleContentFilterArmedAt?: string | null;
   appleContentFilterArmedLockId?: string | null;
   appleContentFilterArmedLockIds?: string[];
@@ -718,6 +741,7 @@ export interface FocusedSocialPlatformSettings {
 
 export interface FocusedSocialSettings {
   enabled: boolean;
+  /** @deprecated Persisted compatibility key; this now enables the native companion-app path. */
   forceWebClips: boolean;
   instagram: FocusedSocialPlatformSettings & {
     reels: boolean;
@@ -731,6 +755,13 @@ export interface FocusedSocialSettings {
     spotlight: boolean;
     stories: boolean;
   };
+}
+
+export interface IosManageEngineGeneration {
+  version: 1;
+  generatedAt: string;
+  generation: string;
+  profileHash: string;
 }
 
 export interface IosSettings {
@@ -750,6 +781,7 @@ export interface IosSettings {
   focusedSocial: FocusedSocialSettings;
   removalPassword: string | null;
   lastGeneratedAt: string | null;
+  manageEngineGeneration: IosManageEngineGeneration | null;
   profileId?: string;
   mdm: IosMdmSettings;
 }
@@ -812,6 +844,7 @@ export interface VigilState {
     pending: EmergencyRequest[];
   };
   overrides: OverrideRecord[];
+  functionalEvents: FunctionalEventState;
   events: StateEvent[];
 }
 

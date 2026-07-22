@@ -146,6 +146,21 @@ export async function verifyStateTextSeal(text: string, { keyPath, sealPath }: S
 }
 
 export async function writeStateTextSeal(text: string, { keyPath, sealPath, scope }: SealPaths, sealedAt = new Date().toISOString()): Promise<StateSealFile> {
+  const seal = await createStateTextSeal(text, { keyPath, scope }, sealedAt);
+  await mkdir(dirname(sealPath), { recursive: true });
+  const tempPath = `${sealPath}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+  await writeFile(tempPath, `${JSON.stringify(seal, null, 2)}\n`, { mode: 0o600 });
+  await chmod(tempPath, 0o600).catch(() => {});
+  await rename(tempPath, sealPath);
+  await chmod(sealPath, 0o600).catch(() => {});
+  return seal;
+}
+
+export async function createStateTextSeal(
+  text: string,
+  { keyPath, scope }: Pick<SealPaths, "keyPath" | "scope">,
+  sealedAt = new Date().toISOString()
+): Promise<StateSealFile> {
   const key = await ensureKey(keyPath);
   const seal: StateSealFile = {
     algorithm: ALGORITHM,
@@ -157,12 +172,6 @@ export async function writeStateTextSeal(text: string, { keyPath, sealPath, scop
     seal.protectedVersion = STATE_PROTECTION_VERSION;
     seal.protectedDigest = protectedStateDigest(text, key);
   }
-  await mkdir(dirname(sealPath), { recursive: true });
-  const tempPath = `${sealPath}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
-  await writeFile(tempPath, `${JSON.stringify(seal, null, 2)}\n`, { mode: 0o600 });
-  await chmod(tempPath, 0o600).catch(() => {});
-  await rename(tempPath, sealPath);
-  await chmod(sealPath, 0o600).catch(() => {});
   return seal;
 }
 
@@ -287,6 +296,12 @@ function trustedProtectedStateMigrationVariants(snapshot: ProtectedSnapshot): Ar
       detail: "State file changed only by the trusted usage-seal protected-state schema migration; the seal can be refreshed without entering lockdown."
     });
   }
+  for (const currentReleaseSchema of currentReleaseSchemaVariants(snapshot)) {
+    variants.push({
+      snapshot: currentReleaseSchema,
+      detail: "State file changed only by the trusted runtime-continuity, functional-ledger, and ManageEngine-evidence schema migration; the seal can be refreshed without entering lockdown."
+    });
+  }
   const enforcementSchema = enforcementStateSchemaVariant(snapshot);
   if (enforcementSchema) {
     variants.push({
@@ -302,6 +317,39 @@ function trustedProtectedStateMigrationVariants(snapshot: ProtectedSnapshot): Ar
     });
   }
   return variants;
+}
+
+function currentReleaseSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
+  // These fields ship together. A legacy seal can therefore lack any subset
+  // when unprotected bookkeeping changed around an upgrade. Generate only the
+  // explicit combinations of these three additive schema migrations.
+  let variants = [snapshot];
+  for (const migrate of [
+    runtimeContinuitySchemaVariants,
+    functionalEventsSchemaVariants,
+    iosManageEngineGenerationSchemaVariants
+  ]) {
+    const additions = variants.flatMap((variant) => migrate(variant));
+    variants = [...variants, ...additions];
+  }
+  return variants.slice(1);
+}
+
+function runtimeContinuitySchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
+  const runtime = asRecord(asRecord(snapshot.integrity).runtime);
+  if (!Object.hasOwn(runtime, "lastInterruptionId") && !Object.hasOwn(runtime, "lastInterruptionObservedAt")) return [];
+  const legacy = structuredClone(snapshot);
+  const legacyRuntime = asRecord(asRecord(legacy.integrity).runtime);
+  delete legacyRuntime.lastInterruptionId;
+  delete legacyRuntime.lastInterruptionObservedAt;
+  return [legacy];
+}
+
+function functionalEventsSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
+  if (!Object.hasOwn(snapshot, "functionalEvents")) return [];
+  const legacy = structuredClone(snapshot);
+  delete legacy.functionalEvents;
+  return [legacy];
 }
 
 function usageSealSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
@@ -337,6 +385,7 @@ function enforcementStateSchemaVariant(snapshot: ProtectedSnapshot): ProtectedSn
   const ios = asRecord(deviceControls.ios);
   const mdm = asRecord(ios.mdm);
   delete ios.allowSafariHistoryClearing;
+  delete ios.manageEngineGeneration;
   delete mdm.enrollmentTokens;
   delete mdm.lastGrayscaleHash;
   return variant;
@@ -351,8 +400,17 @@ function iosEnforcementStateSchemaVariant(snapshot: ProtectedSnapshot): Protecte
   const variantIos = asRecord(asRecord(variant.deviceControls).ios);
   const variantMdm = asRecord(variantIos.mdm);
   delete variantIos.allowSafariHistoryClearing;
+  delete variantIos.manageEngineGeneration;
   delete variantMdm.lastGrayscaleHash;
   return variant;
+}
+
+function iosManageEngineGenerationSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
+  const ios = asRecord(asRecord(snapshot.deviceControls).ios);
+  if (!Object.hasOwn(ios, "manageEngineGeneration")) return [];
+  const variant = structuredClone(snapshot);
+  delete asRecord(asRecord(variant.deviceControls).ios).manageEngineGeneration;
+  return [variant];
 }
 
 function intentionalUseSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSnapshot[] {
@@ -424,7 +482,7 @@ function activeSessionsSchemaVariants(snapshot: ProtectedSnapshot): ProtectedSna
   return variants;
 }
 
-function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnapshot {
+export function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnapshot {
   const snapshot: ProtectedSnapshot = {
     version: state.version ?? null,
     settings: pick(state.settings, PROTECTED_SETTINGS),
@@ -448,6 +506,10 @@ function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnapshot {
     activeSession: state.activeSession || null,
     emergency: state.emergency || {},
     overrides: state.overrides || [],
+    // This bounded ledger feeds adaptive unlock friction, daily block counts,
+    // and completed-session accounting after display events are compacted.
+    // Treat it as enforcement state rather than repairable audit bookkeeping.
+    functionalEvents: state.functionalEvents || {},
     environment: {
       wifiSsid: asRecord(state.environment).wifiSsid || ""
     },
@@ -523,6 +585,7 @@ function protectedDeviceControls(deviceControls: unknown): UnknownRecord {
       allowedUrls: ios.allowedUrls || [],
       focusedSocial: normalizeFocusedSocialSettings(ios.focusedSocial),
       removalPassword: ios.removalPassword || null,
+      manageEngineGeneration: protectedIosManageEngineGeneration(ios.manageEngineGeneration),
       mdm: {
         enabled: mdm.enabled,
         publicBaseUrl: mdm.publicBaseUrl || "",
@@ -545,6 +608,18 @@ function protectedDeviceControls(deviceControls: unknown): UnknownRecord {
       }
     }
   };
+}
+
+function protectedIosManageEngineGeneration(value: unknown): UnknownRecord | null {
+  const record = asRecord(value);
+  const generatedAt = String(record.generatedAt || "").trim();
+  const generation = String(record.generation || "").trim();
+  const profileHash = String(record.profileHash || "").trim().toLowerCase();
+  if (Number(record.version) !== 1) return null;
+  if (!generatedAt || !Number.isFinite(Date.parse(generatedAt))) return null;
+  if (!generation || generation.length > 200) return null;
+  if (!/^[a-f0-9]{64}$/u.test(profileHash)) return null;
+  return { version: 1, generatedAt, generation, profileHash };
 }
 
 function protectedExtension(extension: unknown): UnknownRecord {
@@ -582,6 +657,8 @@ function protectedIntegrity(integrity: unknown): UnknownRecord {
       migratedAt: typeof usageSeal.migratedAt === "string" ? usageSeal.migratedAt : null
     },
     runtime: {
+      lastInterruptionId: typeof runtime.lastInterruptionId === "string" ? runtime.lastInterruptionId : null,
+      lastInterruptionObservedAt: typeof runtime.lastInterruptionObservedAt === "string" ? runtime.lastInterruptionObservedAt : null,
       appleContentFilterArmedAt: typeof runtime.appleContentFilterArmedAt === "string" ? runtime.appleContentFilterArmedAt : null,
       appleContentFilterArmedLockId: typeof runtime.appleContentFilterArmedLockId === "string" ? runtime.appleContentFilterArmedLockId : null,
       appleContentFilterArmedLockIds: Array.isArray(runtime.appleContentFilterArmedLockIds)

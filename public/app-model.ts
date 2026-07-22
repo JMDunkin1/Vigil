@@ -343,6 +343,7 @@ export interface IosDeviceSummary extends UnknownRecord {
   allowedUrls?: string[];
   focusedSocial?: UnknownRecord & {
     enabled?: boolean;
+    companionAppsEnabled?: boolean;
     forceWebClips?: boolean;
     instagram?: UnknownRecord;
     youtube?: UnknownRecord;
@@ -358,6 +359,7 @@ export interface IosDeviceSummary extends UnknownRecord {
     safeSearchEnforced?: boolean;
     sensitiveMediaFiltered?: boolean;
     requiresManagedSafariExtension?: boolean;
+    systemWideManagedWebFilter?: boolean;
     appWorkaroundsClosed?: boolean;
     targetedAppBundleCount?: number;
     allAppsHidden?: boolean;
@@ -371,6 +373,7 @@ export interface IosDeviceSummary extends UnknownRecord {
     generatedFrom?: string;
     focusedSocial?: UnknownRecord & {
       enabled?: boolean;
+      companionAppsEnabled?: boolean;
       forceWebClips?: boolean;
       platformCount?: number;
       featureCount?: number;
@@ -383,6 +386,20 @@ export interface IosDeviceSummary extends UnknownRecord {
       label?: string;
       settingsGuarded?: boolean;
     };
+  };
+  launcherProfile?: UnknownRecord & {
+    identifier?: string;
+    retired?: boolean;
+    managedSeparately?: boolean;
+    webClipCount?: number;
+    labels?: string[];
+    bundleIds?: string[];
+  };
+  companionApps?: UnknownRecord & {
+    appCount?: number;
+    labels?: string[];
+    bundleIds?: string[];
+    apps?: Array<{ id?: string; label?: string; bundleId?: string }>;
   };
   manageEngine?: UnknownRecord & {
     preferred?: boolean;
@@ -397,6 +414,10 @@ export interface IosDeviceSummary extends UnknownRecord {
     appBundleCount?: number;
     deniedUrlCount?: number;
     allowedUrlCount?: number;
+    currentGeneration?: boolean;
+    generatedAt?: string | null;
+    generation?: string | null;
+    profileHash?: string | null;
     note?: string;
   };
   mdm?: UnknownRecord & {

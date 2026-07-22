@@ -17,6 +17,7 @@ const [backgroundSource, contentSource, googleSafeSearchSource, staticRulesText,
 ]);
 const staticRules = JSON.parse(staticRulesText) as Array<Record<string, unknown>>;
 const extensionManifest = JSON.parse(extensionManifestText) as Record<string, unknown>;
+assert.equal(extensionManifest.minimum_chrome_version, "120", "30-second rule-sync alarms require Chrome 120 or newer");
 assert.match(backgroundSource, /offlineCheckResult/);
 assert.match(backgroundSource, /VIGIL_REQUEST_TIMEOUT_MS/);
 assert.match(backgroundSource, /inFlightChecks/);
@@ -489,8 +490,15 @@ assert.ok(
 
 {
   const storage: Record<string, unknown> = {};
+  const storageWrites: Array<Record<string, unknown>> = [];
   const dynamicRuleUpdates: Array<Record<string, unknown>> = [];
+  let installedDynamicRules: Array<Record<string, unknown>> = [];
   const alarmCreates: Array<{ name: string; options: Record<string, unknown> }> = [];
+  const alarmClears: string[] = [];
+  const installedAlarms = new Map<string, { name: string; periodInMinutes?: number; scheduledTime: number }>();
+  let ruleFetchFailure = "";
+  let dynamicRuleUpdateFailure = false;
+  let runtimeLastError: { message: string } | null = null;
   const event = () => ({ addListener() {} });
   const context = createContext({
     AbortController,
@@ -501,6 +509,7 @@ assert.ok(
     console,
     fetch: async (url: string) => {
       if (String(url).includes("/api/extension/rules?")) {
+        if (ruleFetchFailure) throw new Error(ruleFetchFailure);
         return new Response(JSON.stringify({
           rules: [],
           contentRules: [],
@@ -518,19 +527,45 @@ assert.ok(
         setBadgeText(_options: unknown, callback: () => void) { callback(); }
       },
       alarms: {
-        create(name: string, options: Record<string, unknown>) { alarmCreates.push({ name, options }); },
-        clear(_name: string, callback: () => void) { callback(); },
+        create(name: string, options: Record<string, unknown>) {
+          alarmCreates.push({ name, options });
+          installedAlarms.set(name, {
+            name,
+            ...(Number.isFinite(Number(options.periodInMinutes)) ? { periodInMinutes: Number(options.periodInMinutes) } : {}),
+            scheduledTime: Number(options.when || Date.now() + Number(options.periodInMinutes || 0) * 60_000)
+          });
+        },
+        clear(name: string, callback: () => void) {
+          alarmClears.push(name);
+          installedAlarms.delete(name);
+          callback();
+        },
+        get(name: string, callback: (alarm?: { name: string; periodInMinutes?: number; scheduledTime: number }) => void) {
+          callback(installedAlarms.get(name));
+        },
         onAlarm: event()
       },
       declarativeNetRequest: {
         updateDynamicRules(options: Record<string, unknown>, callback: () => void) {
           dynamicRuleUpdates.push(options);
+          if (dynamicRuleUpdateFailure) {
+            runtimeLastError = { message: "simulated dynamic-rule update failure" };
+            callback();
+            runtimeLastError = null;
+            return;
+          }
+          const removeRuleIds = Array.isArray(options.removeRuleIds) ? options.removeRuleIds.map(Number) : [];
+          installedDynamicRules = installedDynamicRules.filter((rule) => !removeRuleIds.includes(Number(rule.id)));
+          if (Array.isArray(options.addRules)) installedDynamicRules.push(...options.addRules as Array<Record<string, unknown>>);
           callback();
+        },
+        getDynamicRules(callback: (rules: Array<Record<string, unknown>>) => void) {
+          callback(installedDynamicRules);
         }
       },
       runtime: {
         getManifest() { return { version: "0.3.2" }; },
-        lastError: null,
+        get lastError() { return runtimeLastError; },
         onInstalled: event(),
         onMessage: event(),
         onStartup: event()
@@ -541,6 +576,7 @@ assert.ok(
             callback({ ...defaults, ...storage });
           },
           set(value: Record<string, unknown>, callback: () => void) {
+            storageWrites.push(value);
             Object.assign(storage, value);
             callback();
           }
@@ -565,6 +601,20 @@ assert.ok(
   runInContext(backgroundSource.replace(/\nexport \{\};?\s*$/u, ""), context);
   await new Promise((resolve) => setTimeout(resolve, 0));
   dynamicRuleUpdates.length = 0;
+
+  const initialRuleSyncAlarmCreates = alarmCreates.filter((alarm) => alarm.name === "vigil-rule-sync").length;
+  assert.equal(initialRuleSyncAlarmCreates, 1, "a missing periodic rule-sync alarm must be installed on worker start");
+  await runInContext("ensureRuleSyncAlarm()", context);
+  assert.equal(alarmCreates.filter((alarm) => alarm.name === "vigil-rule-sync").length, initialRuleSyncAlarmCreates,
+    "an already-correct periodic alarm must survive a worker restart without being recreated");
+  installedAlarms.set("vigil-rule-sync", { name: "vigil-rule-sync", periodInMinutes: 1, scheduledTime: Date.now() + 60_000 });
+  await runInContext("ensureRuleSyncAlarm()", context);
+  assert.equal(alarmCreates.filter((alarm) => alarm.name === "vigil-rule-sync").length, initialRuleSyncAlarmCreates + 1,
+    "a misconfigured periodic rule-sync alarm must be repaired");
+  installedAlarms.delete("vigil-rule-sync");
+  await runInContext("ensureRuleSyncAlarm()", context);
+  assert.equal(alarmCreates.filter((alarm) => alarm.name === "vigil-rule-sync").length, initialRuleSyncAlarmCreates + 2,
+    "a missing periodic rule-sync alarm must be restored");
 
   const runtimeNow = new Date();
   const runtimeState = defaultState();
@@ -639,6 +689,135 @@ assert.ok(
   const embeddedAllowlistCondition = recordValue(allowlistEmbeddedRule.condition, "embedded allowlist DNR condition");
   assert.deepEqual(Array.from(embeddedAllowlistCondition.resourceTypes as unknown[]), ["sub_frame"]);
   assert.equal(Array.isArray(embeddedAllowlistCondition.excludedRequestDomains) && embeddedAllowlistCondition.excludedRequestDomains.includes("example.com"), false);
+  const storageWriteCount = storageWrites.length;
+  const dynamicRuleUpdateCount = dynamicRuleUpdates.length;
+  const expiryAlarmCreateCount = alarmCreates.filter((alarm) => alarm.name === "vigil-rule-expiry").length;
+  const expiryAlarmClearCount = alarmClears.filter((name) => name === "vigil-rule-expiry").length;
+  const repeatedResult = await runInContext("syncSiteBlocking(testRules, testContentRules, testAllowlistRules)", context) as {
+    ok: boolean;
+    count: number;
+    signature: string;
+  };
+  assert.equal(repeatedResult.ok, true);
+  assert.equal(repeatedResult.signature, result.signature);
+  assert.equal(dynamicRuleUpdates.length, dynamicRuleUpdateCount, "unchanged rules must not reinstall Chrome DNR entries");
+  assert.equal(storageWrites.length, storageWriteCount, "unchanged rules must not rewrite Chrome storage snapshots");
+  assert.equal(alarmCreates.filter((alarm) => alarm.name === "vigil-rule-expiry").length, expiryAlarmCreateCount,
+    "unchanged rules must not recreate the same Chrome expiry alarm");
+  assert.equal(alarmClears.filter((name) => name === "vigil-rule-expiry").length, expiryAlarmClearCount,
+    "unchanged rules must not clear the same Chrome expiry alarm");
+
+  runInContext(`
+    siteRulesSignature = "";
+    siteRuleCount = 0;
+    noiseRulesEnabled = null;
+    scheduledRuleExpirySourceAt = undefined;
+    coldStartDynamicRulesPromise = null;
+  `, context);
+  const coldStartStorageWrites = storageWrites.length;
+  const coldStartDynamicRuleUpdates = dynamicRuleUpdates.length;
+  await Promise.all([
+    runInContext("pruneStoredSiteBlocking()", context),
+    runInContext("loadNoisePreference()", context)
+  ]);
+  assert.equal(storageWrites.length, coldStartStorageWrites,
+    "verified persistent DNR and storage snapshots must not be rewritten on an MV3 worker cold start");
+  assert.equal(dynamicRuleUpdates.length, coldStartDynamicRuleUpdates,
+    "verified persistent DNR rules must not be reinstalled on an MV3 worker cold start");
+  assert.equal(alarmCreates.filter((alarm) => alarm.name === "vigil-rule-expiry").length, expiryAlarmCreateCount + 1,
+    "a fresh service-worker instance must recreate the required expiry alarm even when DNR rules are already current");
+  assert.equal(alarmClears.filter((name) => name === "vigil-rule-expiry").length, expiryAlarmClearCount + 1,
+    "a fresh service-worker instance must reconcile any persisted expiry alarm before recreating it");
+
+  installedDynamicRules = installedDynamicRules.filter((rule) => Number(rule.id) !== 10000);
+  runInContext("siteRulesSignature = ''; coldStartDynamicRulesPromise = null", context);
+  const updatesBeforeMissingDnrRule = dynamicRuleUpdates.length;
+  await runInContext("pruneStoredSiteBlocking()", context);
+  assert.equal(dynamicRuleUpdates.length, updatesBeforeMissingDnrRule + 1,
+    "cold-start hydration must repair persistent DNR rules when verification finds one missing");
+
+  await runInContext("syncNoiseBlocking(true)", context);
+  runInContext("noiseRulesEnabled = null; coldStartDynamicRulesPromise = null", context);
+  const writesBeforeNoiseHydration = storageWrites.length;
+  const updatesBeforeNoiseHydration = dynamicRuleUpdates.length;
+  await runInContext("loadNoisePreference()", context);
+  assert.equal(storageWrites.length, writesBeforeNoiseHydration,
+    "verified persistent noise-rule preference must not rewrite Chrome storage on cold start");
+  assert.equal(dynamicRuleUpdates.length, updatesBeforeNoiseHydration,
+    "verified persistent noise DNR rules must not be reinstalled on cold start");
+  installedDynamicRules = installedDynamicRules.filter((rule) => Number(rule.id) !== 9100);
+  runInContext("noiseRulesEnabled = null; coldStartDynamicRulesPromise = null", context);
+  await runInContext("loadNoisePreference()", context);
+  assert.equal(dynamicRuleUpdates.length, updatesBeforeNoiseHydration + 1,
+    "cold-start noise hydration must repair a missing managed DNR rule instead of trusting storage alone");
+
+  Object.assign(context, {
+    changedExpiryAllowlistRules: [{
+      excludedDomains: ["localhost", "::1", "127.0.0.1"],
+      redirectUrl: "http://127.0.0.1:8787/blocked",
+      until: "2098-01-01T00:00:00.000Z"
+    }]
+  });
+  await runInContext("syncSiteBlocking(testRules, testContentRules, changedExpiryAllowlistRules)", context);
+  assert.equal(alarmCreates.filter((alarm) => alarm.name === "vigil-rule-expiry").length, expiryAlarmCreateCount + 2,
+    "a changed earliest rule expiry must replace the Chrome expiry alarm");
+  assert.equal(alarmClears.filter((name) => name === "vigil-rule-expiry").length, expiryAlarmClearCount + 2);
+
+  Object.assign(context, {
+    expiredRules: [{
+      domain: "expired.example",
+      redirectUrl: "http://127.0.0.1:8787/blocked",
+      until: "2000-01-01T00:00:00.000Z"
+    }]
+  });
+  const createsBeforeExpiredRules = alarmCreates.filter((alarm) => alarm.name === "vigil-rule-expiry").length;
+  await runInContext("syncSiteBlocking(expiredRules, [], [])", context);
+  assert.equal(alarmClears.filter((name) => name === "vigil-rule-expiry").length, expiryAlarmClearCount + 3,
+    "when the final expiring rule disappears, its persisted Chrome alarm must be cleared");
+  assert.equal(alarmCreates.filter((alarm) => alarm.name === "vigil-rule-expiry").length, createsBeforeExpiredRules,
+    "expired rules must not schedule a replacement alarm");
+  await runInContext("syncSiteBlocking(expiredRules, [], [])", context);
+  assert.equal(alarmClears.filter((name) => name === "vigil-rule-expiry").length, expiryAlarmClearCount + 3,
+    "an unchanged empty expiry set must not repeatedly clear Chrome alarms");
+
+  const writesBeforeRuleFetchFailure = storageWrites.length;
+  ruleFetchFailure = "local server unavailable";
+  await runInContext("syncSiteBlockingFromServer()", context);
+  assert.equal(storageWrites.length, writesBeforeRuleFetchFailure + 1,
+    "the first rule-fetch failure must persist stale fallback telemetry");
+  await runInContext("syncSiteBlockingFromServer()", context);
+  assert.equal(storageWrites.length, writesBeforeRuleFetchFailure + 1,
+    "an identical repeated rule-fetch failure must not rewrite its timestamp every poll");
+  ruleFetchFailure = "local server timed out";
+  await runInContext("syncSiteBlockingFromServer()", context);
+  assert.equal(storageWrites.length, writesBeforeRuleFetchFailure + 2,
+    "a changed rule-fetch error must refresh persisted failure telemetry");
+  runInContext("siteRuleCount += 1", context);
+  await runInContext("syncSiteBlockingFromServer()", context);
+  assert.equal(storageWrites.length, writesBeforeRuleFetchFailure + 3,
+    "a changed fallback rule count must refresh persisted failure telemetry");
+  runInContext("siteRuleCount = 0", context);
+  ruleFetchFailure = "";
+  await runInContext("syncSiteBlockingFromServer()", context);
+  assert.equal(storageWrites.length, writesBeforeRuleFetchFailure + 4,
+    "the first successful fetch after an outage must clear stale failure telemetry once");
+  await runInContext("syncSiteBlockingFromServer()", context);
+  assert.equal(storageWrites.length, writesBeforeRuleFetchFailure + 4,
+    "steady successful rule fetches must not rewrite recovery telemetry");
+
+  dynamicRuleUpdateFailure = true;
+  runInContext("siteRulesSignature = 'force-dynamic-rule-retry'", context);
+  await runInContext("syncSiteBlockingFromServer()", context);
+  const failedDynamicRuleStatus = recordValue(storage.siteBlockRules, "failed dynamic-rule status");
+  assert.equal(failedDynamicRuleStatus.error, "Dynamic rule update failed",
+    "a successful server fetch must not clear a failed local DNR reconciliation");
+  assert.equal(Boolean(failedDynamicRuleStatus.staleAt), true);
+  dynamicRuleUpdateFailure = false;
+  await runInContext("syncSiteBlockingFromServer()", context);
+  const recoveredDynamicRuleStatus = recordValue(storage.siteBlockRules, "recovered dynamic-rule status");
+  assert.equal(recoveredDynamicRuleStatus.error, undefined);
+  assert.equal(recoveredDynamicRuleStatus.staleAt, undefined);
+
   assert.equal(runInContext("normalizedRuleUntil(PERSISTENT_RULE_UNTIL)", context), persistentUntil);
   assert.equal(runInContext("duplicateCheckKey(1, 'https://example.com/', 'heartbeat', 5, {})", context), null);
   assert.equal(runInContext("duplicateCheckKey(1, 'https://example.com/', 'navigation', 1, {})", context), null);

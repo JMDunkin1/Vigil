@@ -10,6 +10,7 @@ import { activePolicy, baselinePolicy, expandSiteTargets, normalizeHost, normali
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { applySealVerificationToState, stateSealSummary, verifyStateTextSeal } from "./seal.js";
 import { parsePlist } from "./plist.js";
+import { buildRuntimeSupervisorScript } from "./runtimeReady.js";
 import type { Profile, VigilState, UnknownRecord } from "./types.js";
 
 export const HOSTS_BEGIN = "# BEGIN VIGIL";
@@ -446,39 +447,15 @@ function embeddedSupervisorExpectedConfiguration(expectation: EmbeddedSupervisor
 
 export function embeddedSupervisorExpectedScript(expectation: EmbeddedSupervisorExpectation): string {
   const markerPath = join(expectation.userDataDir, "supervisor", "SAFETY-BOUNDARY-DO-NOT-REMOVE.enabled");
-  const readyPath = join(expectation.dataDir, "runtime-ready.json");
   const appPath = dirname(dirname(dirname(expectation.executablePath)));
-  return `#!/bin/zsh
-set -u
-marker=${shellSingleQuote(markerPath)}
-ready=${shellSingleQuote(readyPath)}
-app_path=${shellSingleQuote(appPath)}
-executable_path=${shellSingleQuote(expectation.executablePath)}
-while [[ -e "$marker" ]]; do
-  pid=""
-  command=""
-  if [[ -f "$ready" ]]; then
-    pid=$(/usr/bin/sed -nE 's/^[[:space:]]*"pid":[[:space:]]*([0-9]+),?$/\\1/p' "$ready" | /usr/bin/head -n 1)
-  fi
-  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-    command=$(/bin/ps -p "$pid" -o command= 2>/dev/null)
-  fi
-  if [[ -z "$pid" ]] || [[ "$command" != "$executable_path" && "$command" != "$executable_path "* ]]; then
-    /bin/rm -f "$ready"
-    if [[ ! -e "$marker" ]]; then
-      break
-    fi
-    /usr/bin/open -g "$app_path" --args --vigil-background ${VIGIL_SAFETY_BOUNDARY_ARG}
-    /bin/sleep 5
-  else
-    /bin/sleep 2
-  fi
-done
-`;
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
+  return buildRuntimeSupervisorScript({
+    markerPath,
+    dataDir: expectation.dataDir,
+    appPath,
+    executablePath: expectation.executablePath,
+    backgroundLaunchArg: "--vigil-background",
+    safetyBoundaryArg: VIGIL_SAFETY_BOUNDARY_ARG
+  });
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {

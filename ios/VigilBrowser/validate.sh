@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-plutil -lint "$ROOT/VigilBrowser/Info.plist" "$ROOT/VigilBrowser/VigilBrowser.entitlements" "$ROOT/VigilSafariExtension/Info.plist" "$ROOT/VigilSafariExtension/VigilSafariExtension.entitlements" >/dev/null
+plutil -lint "$ROOT/VigilBrowser/Info.plist" "$ROOT/VigilBrowser/PrivacyInfo.xcprivacy" "$ROOT/VigilBrowser/VigilBrowser.entitlements" "$ROOT/VigilSafariExtension/Info.plist" "$ROOT/VigilSafariExtension/VigilSafariExtension.entitlements" >/dev/null
 plutil -lint "$ROOT/VigilBrowser.xcodeproj/project.pbxproj" >/dev/null
 python3 -m json.tool "$ROOT/VigilSafariExtension/Resources/manifest.json" >/dev/null
 python3 -m json.tool "$ROOT/Deployment/managed-extension.json" >/dev/null
