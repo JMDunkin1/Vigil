@@ -31,6 +31,7 @@ const APP_SCHEME = "vigil-app";
 const APP_HOST = "app";
 const APP_URL = `${APP_SCHEME}://${APP_HOST}/`;
 const APP_UPDATE_STATE_CHANNEL = "vigil:app-update-state";
+const APP_UPDATE_DETAILS_CHANNEL = "vigil:show-app-update-details";
 const execFileAsync = promisify(execFile);
 const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 // Tray clicks refresh immediately; a slow background refresh keeps its label
@@ -1509,7 +1510,6 @@ function stopTrayRefresh(): void {
 function updateTrayMenu(appUrl: string, status: TrayStatus): void {
   lastTrayStatus = status;
   if (!tray) return;
-  const updateDetail = appUpdateActionDetail();
   const template: MenuItemConstructorOptions[] = [
     {
       label: "Open Vigil",
@@ -1518,8 +1518,8 @@ function updateTrayMenu(appUrl: string, status: TrayStatus): void {
       }
     },
     { type: "separator" },
-    { label: status.label, enabled: false },
-    { label: status.detail, enabled: false },
+    { label: shortTrayDetail(status.label), enabled: false },
+    { label: shortTrayDetail(status.detail), enabled: false },
     { type: "separator" },
     {
       label: status.panicActionLabel,
@@ -1528,14 +1528,7 @@ function updateTrayMenu(appUrl: string, status: TrayStatus): void {
         void startPanicLock(appUrl);
       }
     },
-    {
-      label: appUpdateActionLabel(),
-      enabled: canUseAppUpdateAction(),
-      click: () => {
-        void handleAppUpdateAction(appUrl);
-      }
-    },
-    ...(updateDetail ? [{ label: updateDetail, enabled: false } satisfies MenuItemConstructorOptions] : []),
+    trayAppUpdateMenuItem(appUrl),
     {
       label: "Reload Vigil",
       click: () => {
@@ -1561,19 +1554,44 @@ function refreshUpdateMenus(appUrl: string): void {
   if (lastTrayStatus) updateTrayMenu(appUrl, lastTrayStatus);
 }
 
-function appUpdateActionLabel(): string {
-  return nativeAppUpdateView().actionLabel;
+function trayAppUpdateMenuItem(appUrl: string): MenuItemConstructorOptions {
+  const view = nativeAppUpdateView();
+  const needsFullAppDetails = appUpdateActionState.checked
+    && !view.actionEnabled
+    && !view.running
+    && !appUpdateOperation;
+  if (needsFullAppDetails) {
+    return {
+      label: "App Update Details…",
+      click: () => {
+        showAppUpdateDetails(appUrl);
+      }
+    };
+  }
+  return {
+    label: view.actionLabel,
+    enabled: view.actionEnabled,
+    click: () => {
+      void handleAppUpdateAction(appUrl);
+    }
+  };
 }
 
-function appUpdateActionDetail(): string {
-  if (appUpdateOperation === "checking") return "Updates: checking...";
-  if (appUpdateOperation === "starting") return "Updates: starting...";
-  if (!appUpdateActionState.checked
-    && !appUpdateActionState.running
-    && !appUpdateActionState.recoveryPending
-    && !appUpdateActionState.recoveryBlocked) return "";
-  const message = nativeAppUpdateView().statusMessage;
-  return message ? `Updates: ${shortTrayDetail(message)}` : "";
+function showAppUpdateDetails(appUrl: string): void {
+  showVigilWindow(appUrl);
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+  const send = () => {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send(APP_UPDATE_DETAILS_CHANNEL);
+    }
+  };
+  if (window.webContents.isLoading()) window.webContents.once("did-finish-load", send);
+  else send();
+}
+
+function appUpdateActionLabel(): string {
+  return nativeAppUpdateView().actionLabel;
 }
 
 function canUseAppUpdateAction(): boolean {
@@ -2090,7 +2108,7 @@ function shortTrayText(value: string): string {
 }
 
 function shortTrayDetail(value: string): string {
-  return value.length <= 72 ? value : `${value.slice(0, 69)}...`;
+  return value.length <= 42 ? value : `${value.slice(0, 39)}...`;
 }
 
 function errorMessage(error: unknown): string {

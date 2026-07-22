@@ -204,8 +204,9 @@ export async function handlePolicyApiRoute(
   return false;
 }
 
-function upsertProfile(state: VigilState, body: UnknownRecord): Profile {
+export function upsertProfile(state: VigilState, body: UnknownRecord): Profile {
   const id = stringValue(body.id, randomUUID());
+  if (builtInProfileIds.has(id)) throw httpError(409, "Built-in profiles cannot be modified");
   const existing = state.profiles.find((item) => item.id === id);
   const profile: Profile = {
     id,

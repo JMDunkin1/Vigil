@@ -1163,7 +1163,12 @@ async function handleApi(
     currentState: () => state,
     afterCommit,
     preparedRefresh: prepared.adultBlocklistRefresh,
-    recordIosMdmPolicyQueue: (reason) => recordIosMdmPolicyQueue(requestState, reason, afterCommit)
+    recordIosMdmPolicyQueue: (reason) => recordIosMdmPolicyQueue(requestState, reason, afterCommit),
+    schedulePolicyEnforcement: (reason) => afterCommit(
+      () => schedulePolicyEnforcement(reason),
+      durableEffect("policy-enforcement", { reason, eventId: requestState.events[0]?.id || "state" }),
+      (result, committedState) => addEvent(committedState, "policy_immediate_enforcement", { reason, ok: true, result })
+    )
   })) {
     return;
   }

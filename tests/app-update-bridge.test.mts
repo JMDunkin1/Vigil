@@ -12,6 +12,7 @@ interface Bridge {
   status(options?: { checkRemote?: boolean; instanceSecret?: string }): Promise<unknown>;
   start(): Promise<unknown>;
   subscribe?(listener: (status: unknown) => void): () => void;
+  subscribeDetails?(listener: () => void): () => void;
 }
 
 interface Invocation {
@@ -101,6 +102,15 @@ for (const listener of ipcListeners.get("vigil:app-update-state") || []) listene
 assert.equal(publishedBridgeStatus, publishedStatus);
 unsubscribeFromUpdateState();
 assert.equal(ipcListeners.get("vigil:app-update-state")?.size, 0, "unsubscribing must remove the exact IPC listener");
+let updateDetailsRequested = false;
+const unsubscribeFromUpdateDetails = preloadBridge.subscribeDetails?.(() => {
+  updateDetailsRequested = true;
+});
+assert.ok(unsubscribeFromUpdateDetails, "the update bridge should expose navigation for native update details");
+for (const listener of ipcListeners.get("vigil:show-app-update-details") || []) listener({});
+assert.equal(updateDetailsRequested, true);
+unsubscribeFromUpdateDetails();
+assert.equal(ipcListeners.get("vigil:show-app-update-details")?.size, 0, "unsubscribing must remove the exact details listener");
 const appearanceBridge = exposed.get("vigilAppearance") as AppearanceBridge | undefined;
 assert.ok(appearanceBridge, "preload should expose the icon appearance bridge");
 await appearanceBridge.getIconTheme();
@@ -162,6 +172,11 @@ assert.doesNotMatch(
   "the coordinator must not flatten a structured updater rejection into a generic failure"
 );
 assert.match(mainSource, /webContents\.send\(APP_UPDATE_STATE_CHANNEL, status\)/u, "coordinator state changes must be broadcast to Settings");
+assert.match(mainSource, /label: "App Update Details…"[\s\S]*?showAppUpdateDetails\(appUrl\)/u, "a blocked tray update action must open its explanation in Vigil");
+assert.match(mainSource, /webContents\.send\(APP_UPDATE_DETAILS_CHANNEL\)/u, "the native details action must route the open app to update settings");
+assert.doesNotMatch(mainSource, /function appUpdateActionDetail/u, "the tray must not render verbose updater diagnostics as native menu rows");
+assert.match(mainSource, /label: shortTrayDetail\(status\.label\)[\s\S]*?label: shortTrayDetail\(status\.detail\)/u, "dynamic status rows must stay compact enough for macOS to anchor the menu to its icon");
+assert.match(mainSource, /function shortTrayDetail[\s\S]*?value\.length <= 42/u, "tray diagnostics must have a bounded native-menu width");
 assert.match(mainSource, /recoveryPending: appUpdateActionState\.recoveryPending/u, "the coordinator must broadcast pending recovery state");
 assert.match(mainSource, /recoveryBlocked: appUpdateActionState\.recoveryBlocked/u, "the coordinator must broadcast blocked recovery state");
 assert.match(mainSource, /!appUpdateActionState\.running && !appUpdateActionState\.recoveryPending/u, "pending recovery must keep the coordinator polling");

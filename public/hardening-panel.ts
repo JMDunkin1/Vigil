@@ -1,6 +1,7 @@
 import type { ControlElement, DashboardData, DashboardItem, DashboardState, DistanceKeySummary, FocusShortcutSummary, FoolproofSummary, KeyholderSummary, ProtectionSummary } from "./app-model.js";
 import { textEl } from "./dom.js";
 import { formatDuration } from "./format.js";
+import { formHasUnsavedChanges } from "./form-state.js";
 
 type QueryElement = (selector: string) => ControlElement;
 type PostRequest = <T = unknown>(path: string, body: unknown) => Promise<T>;
@@ -283,12 +284,13 @@ function renderHardening(data: DashboardData, context: HardeningPanelContext): v
   $("#siteRedirectEnabled").checked = Boolean(settings.siteRedirectEnabled);
   $("#contentFilterEnabled").checked = true;
   $("#contentFilterEnabled").disabled = true;
+  $("#strictBypassProtectionEnabled").checked = true;
+  $("#strictBypassProtectionEnabled").disabled = true;
   $("#adultBlocklistEnabled").checked = settings.adultBlocklistEnabled !== false;
   $("#browserNoiseBlockingEnabled").checked = settings.browserNoiseBlockingEnabled !== false;
   $("#typingChallengeEnabled").checked = settings.typingChallengeEnabled !== false;
   $("#intentReasonEnabled").checked = settings.intentReasonEnabled !== false;
   $("#appQuitEnabled").checked = Boolean(settings.appQuitEnabled);
-  $("#strictBypassProtectionEnabled").checked = settings.strictBypassProtectionEnabled !== false;
   $("#processSweepEnabled").checked = Boolean(settings.processSweepEnabled);
   $("#systemSleepLockEnabled").checked = Boolean(settings.systemSleepLockEnabled);
   $("#focusShortcutEnabled").checked = Boolean(settings.focusShortcutEnabled);
@@ -345,10 +347,10 @@ function renderAdultBlocklist(data: DashboardData, $: QueryElement): void {
   $("#adultBlocklistStatus").textContent = adult.lastError
     ? String(adult.lastError)
     : (!adult.current && adult.detail ? String(adult.detail) : "")
-      || `${activeCount.toLocaleString()} active / ${domainCount.toLocaleString()} loaded`;
+      || `${domainCount.toLocaleString()} domains loaded · ${activeCount.toLocaleString()} after protected exceptions`;
   $("#adultBlocklistMeta").textContent = [
     String(adult.selectedSourceLabel || "Adult source"),
-    `${preloadCount} preloaded`,
+    `${preloadCount} preloaded for network layers`,
     freshness,
     adult.shortHash ? `hash ${adult.shortHash}` : ""
   ].filter(Boolean).join(" | ");
@@ -430,16 +432,19 @@ function renderIntentReasonHints(settings: DashboardState["settings"], $: QueryE
 }
 
 function renderKeyholder(keyholder: KeyholderSummary, $: QueryElement): void {
-  $("#keyholderEnabled").checked = Boolean(keyholder?.enabled);
+  const form = $("#keyholderForm") as unknown as HTMLFormElement;
+  if (!formHasUnsavedChanges(form)) $("#keyholderEnabled").checked = Boolean(keyholder?.enabled);
   $("#keyholderStatus").textContent = keyholder?.enabled
     ? "Required"
     : (keyholder?.hasPasscode ? "Saved" : "Not set");
 }
 
 function renderDistanceKey(distanceKey: DistanceKeySummary, $: QueryElement): void {
-  $("#distanceKeyEnabled").checked = Boolean(distanceKey?.enabled);
-  const keyFile = $("#distanceKeyFilePath");
-  if (document.activeElement !== keyFile) keyFile.value = distanceKey?.keyFilePath || "";
+  const form = $("#distanceKeyForm") as unknown as HTMLFormElement;
+  if (!formHasUnsavedChanges(form)) {
+    $("#distanceKeyEnabled").checked = Boolean(distanceKey?.enabled);
+    $("#distanceKeyFilePath").value = distanceKey?.keyFilePath || "";
+  }
   $("#distanceKeyStatus").textContent = distanceKey?.enabled
     ? (distanceKey?.hasKeyFile ? "File required" : "Required")
     : (distanceKey?.hasToken ? (distanceKey?.hasKeyFile ? "Saved + file" : "Saved") : "Not set");

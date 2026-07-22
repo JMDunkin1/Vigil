@@ -35,6 +35,7 @@ try {
   assert.equal(phoneBlocklistMatchesHost(before, "allowed.exampleadult.test"), "allowed.exampleadult.test");
 
   const queuedReasons: string[] = [];
+  const enforcementReasons: string[] = [];
   const postCommitEffects: Array<() => void | Promise<void>> = [];
   const effectKinds: string[] = [];
   const routeResponse = mockResponse();
@@ -48,7 +49,8 @@ try {
         postCommitEffects.push(effect);
         effectKinds.push(descriptor?.kind || "");
       },
-      recordIosMdmPolicyQueue: (reason) => queuedReasons.push(reason)
+      recordIosMdmPolicyQueue: (reason) => queuedReasons.push(reason),
+      schedulePolicyEnforcement: (reason) => enforcementReasons.push(reason)
     }
   );
 
@@ -56,6 +58,7 @@ try {
   assert.equal(routeResponse.statusCodeValue, 200);
   assert.deepEqual(state.adultBlocklist.allowlist, ["allowed.exampleadult.test"]);
   assert.deepEqual(queuedReasons, ["adult-blocklist-settings"]);
+  assert.deepEqual(enforcementReasons, ["adult-blocklist-settings"]);
   assert.deepEqual(effectKinds, ["adult-blocklist-phone-sync"]);
 
   const beforeCommit = decodePhoneBlocklistArtifact(await readFile(ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH));

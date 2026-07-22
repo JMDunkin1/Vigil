@@ -330,28 +330,45 @@
       </div>
 
       <details class="settings-disclosure icon-theme-settings">
-        <summary><span>App icon</span><em id="iconThemeStatus">Loading icon choice…</em></summary>
+        <summary><span>App icon</span><em>Icon, portraits, and motion</em></summary>
         <div class="settings-disclosure-body">
-          <fieldset class="icon-theme-picker">
-            <legend>Choose the icon used by Vigil and its menu-bar companion</legend>
-            <label class="icon-theme-option">
-              <input type="radio" name="appIconTheme" value="jerusalem-cross">
-              <span class="icon-theme-preview"><img src="/app-icons/jerusalem-cross.png" alt=""></span>
-              <span><strong>Jerusalem Cross</strong><small>Five crosses · parchment and midnight blue</small></span>
-            </label>
-            <label class="icon-theme-option">
-              <input type="radio" name="appIconTheme" value="sacred-heart">
-              <span class="icon-theme-preview"><img src="/app-icons/sacred-heart.png" alt=""></span>
-              <span><strong>Sacred Heart</strong><small>Heart, thorns, flame, and cross</small></span>
-            </label>
-            <label class="icon-theme-option">
-              <input type="radio" name="appIconTheme" value="saint-michael">
-              <span class="icon-theme-preview"><img src="/app-icons/saint-michael.png" alt=""></span>
-              <span><strong>Saint Michael</strong><small>Archangel, spear, radiant eye, and dragon</small></span>
-            </label>
-          </fieldset>
-          <p class="field-note">The menu-bar icon changes immediately. macOS keeps the installed app bundle's Jerusalem Cross icon in Finder and Spotlight until the app is rebuilt.</p>
-          <div class="saint-aesthetic-settings">
+          <section class="panel appearance-panel appearance-icon-panel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Identity</p>
+                <h2>App icon</h2>
+              </div>
+              <span id="iconThemeStatus" class="pill neutral">Loading…</span>
+            </div>
+            <fieldset class="icon-theme-picker">
+              <legend>Choose the icon used by Vigil and its menu-bar companion</legend>
+              <label class="icon-theme-option">
+                <input type="radio" name="appIconTheme" value="jerusalem-cross">
+                <span class="icon-theme-preview"><img src="/app-icons/jerusalem-cross.png" alt=""></span>
+                <span><strong>Jerusalem Cross</strong><small>Five crosses · parchment and midnight blue</small></span>
+              </label>
+              <label class="icon-theme-option">
+                <input type="radio" name="appIconTheme" value="sacred-heart">
+                <span class="icon-theme-preview"><img src="/app-icons/sacred-heart.png" alt=""></span>
+                <span><strong>Sacred Heart</strong><small>Heart, thorns, flame, and cross</small></span>
+              </label>
+              <label class="icon-theme-option">
+                <input type="radio" name="appIconTheme" value="saint-michael">
+                <span class="icon-theme-preview"><img src="/app-icons/saint-michael.png" alt=""></span>
+                <span><strong>Saint Michael</strong><small>Archangel, spear, radiant eye, and dragon</small></span>
+              </label>
+            </fieldset>
+            <p class="field-note">The menu-bar icon changes immediately. Finder and Spotlight update when the app is rebuilt.</p>
+          </section>
+
+          <section class="panel appearance-panel saint-aesthetic-settings">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Portraits &amp; type</p>
+                <h2>Visual style</h2>
+              </div>
+              <span id="saintAestheticStatus" class="pill neutral" aria-live="polite">Pixel Art active</span>
+            </div>
             <fieldset class="icon-theme-picker saint-aesthetic-picker">
               <legend>Choose how the sacred portraits and app typography should feel</legend>
               <label class="icon-theme-option">
@@ -365,18 +382,24 @@
                 <span><strong>Traditional</strong><small>Aged sacred portraits, classical serif typography, and Christ Pantocrator</small></span>
               </label>
             </fieldset>
-            <p id="saintAestheticStatus" class="field-note" aria-live="polite">Pixel Art active</p>
-          </div>
-          <div class="saint-backdrop-settings">
+          </section>
+
+          <section class="panel appearance-panel saint-backdrop-settings">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Motion</p>
+                <h2>Animated backdrop</h2>
+              </div>
+              <span id="saintBackdropStatus" class="pill neutral" aria-live="polite">On</span>
+            </div>
             <label class="saint-backdrop-toggle" for="saintBackdropEnabled">
               <span>
                 <strong>Animated backdrop</strong>
-                <small>Show the halo, geometric orbits, symbols, and particles behind sacred portraits</small>
+                <small>Show geometric orbits, symbols, and particles behind sacred portraits</small>
               </span>
               <input id="saintBackdropEnabled" type="checkbox" role="switch" checked>
             </label>
-            <p id="saintBackdropStatus" class="field-note" aria-live="polite">On</p>
-          </div>
+          </section>
         </div>
       </details>
 
@@ -391,9 +414,17 @@
               <p class="eyebrow">Profile</p>
               <h2>Block Rules</h2>
             </div>
-            <select id="profileSelect"></select>
+            <select id="profileSelect" aria-label="Default protection ruleset"></select>
           </div>
-          <form id="profileForm" class="profile-form">
+          <div class="managed-policy-summary" aria-live="polite">
+            <span class="managed-policy-mark" aria-hidden="true">✓</span>
+            <div>
+              <strong>Protected by Vigil</strong>
+              <p id="managedBlocklistSummary">Vigil maintains the effective app, site, unsafe-content, and URL rules for this profile.</p>
+              <small>Raw domains and patterns stay out of Settings so the screen always reflects enforcement instead of a partial editable list.</small>
+            </div>
+          </div>
+          <form id="profileForm" class="profile-form settings-internal-form" hidden aria-hidden="true">
             <input name="id" type="hidden">
             <div class="form-row">
               <label>
@@ -446,38 +477,45 @@
           </div>
           <form id="scheduleForm" class="schedule-form">
             <input name="id" type="hidden">
-            <div class="form-row">
+            <input id="scheduleLockLevel" name="lockLevel" type="hidden" value="deep">
+            <div class="form-row thirds">
               <label>
-                Name
+                Schedule name
                 <input name="name" type="text" value="Focus block">
               </label>
               <label>
-                Mode
+                Session style
                 <select name="mode">
-                  <option value="focus">Focus</option>
-                  <option value="brick">Brick</option>
-                  <option value="sleep">Sleep</option>
-                  <option value="rehab">Rehab</option>
+                  <option value="focus">Focus — block distractions</option>
+                  <option value="brick">Full lock — strongest protection</option>
+                  <option value="sleep">Sleep — overnight protection</option>
+                  <option value="rehab">Recovery — structured reset</option>
                 </select>
+              </label>
+              <label>
+                Ruleset
+                <select id="scheduleProfileId" name="profileId" aria-label="Rules used by this schedule"></select>
               </label>
             </div>
             <div class="form-row">
               <label>
-                Start
+                Starts
                 <input name="start" type="time" value="09:00">
               </label>
               <label>
-                End
+                Ends
                 <input name="end" type="time" value="17:00">
               </label>
             </div>
-            <label>
+            <label class="settings-internal-field" hidden aria-hidden="true">
               Wi-Fi networks
               <textarea name="wifiNetworks" rows="2"></textarea>
             </label>
             <div class="day-grid" id="scheduleDays"></div>
-            <label class="checkline"><input name="enabled" type="checkbox"> Enabled</label>
-            <label class="checkline"><input name="commitmentLock" type="checkbox"> Commitment lock</label>
+            <div class="settings-switch-list">
+              <label class="checkline"><input name="enabled" type="checkbox"><span><strong>Turn this schedule on</strong><small>Vigil starts and ends it automatically on the selected days.</small></span></label>
+              <label class="checkline"><input name="commitmentLock" type="checkbox"><span><strong>Commitment lock</strong><small>Prevent early changes while a scheduled session is active.</small></span></label>
+            </div>
             <button class="primary" type="submit">Save Schedule</button>
           </form>
           <div id="scheduleList" class="list"></div>
@@ -497,35 +535,35 @@
             <input name="id" type="hidden">
             <div class="form-row thirds">
               <label>
-                Name
+                Limit name
                 <input name="name" type="text" value="Instagram 20/20">
               </label>
               <label>
-                Type
+                Measure by
                 <select name="type">
-                  <option value="time">Time</option>
-                  <option value="open">Open</option>
+                  <option value="time">Time used</option>
+                  <option value="open">Number of opens</option>
                 </select>
               </label>
               <label>
-                Lock
+                When reached
                 <select name="lockLevel">
-                  <option value="deep">Strict</option>
-                  <option value="light">Soft</option>
+                  <option value="deep">Block strictly</option>
+                  <option value="light">Show a soft block</option>
                 </select>
               </label>
             </div>
             <div class="form-row thirds">
-              <label>
-                Minutes
+              <label data-limit-field="time">
+                Daily minutes
                 <input name="limitMinutes" type="number" min="1" max="1440" value="20">
               </label>
-              <label>
-                Opens
+              <label data-limit-field="open">
+                Daily opens
                 <input name="unlocksAllowed" type="number" min="0" max="200" value="5">
               </label>
               <label>
-                Block
+                Block for
                 <select name="blockMinutes">
                   <option value="0">Rest of day</option>
                   <option value="20" selected>20 min</option>
@@ -548,7 +586,9 @@
               </label>
             </div>
             <div id="limitPresetStrip" class="preset-strip" data-form="limitForm" data-app-field="apps" data-site-field="sites"></div>
-            <label class="checkline"><input name="enabled" type="checkbox"> Enabled</label>
+            <div class="settings-switch-list">
+              <label class="checkline"><input name="enabled" type="checkbox"><span><strong>Turn this limit on</strong><small>Usage resets at the start of each day.</small></span></label>
+            </div>
             <button class="primary" type="submit">Save Limit</button>
           </form>
           <div id="limitList" class="list limit-list"></div>
@@ -619,14 +659,14 @@
             <button class="primary" type="submit">Save App Lock</button>
           </form>
           <div class="unlock-strip">
-            <input id="appLockReason" type="text" placeholder="Reason">
-            <input id="appLockPasscode" type="password" placeholder="Keyholder passcode">
+            <input id="appLockReason" type="text" placeholder="Reason" aria-label="Reason for this app-lock unlock">
+            <input id="appLockPasscode" type="password" placeholder="Keyholder passcode" aria-label="Keyholder passcode for app-lock unlock">
             <div class="distance-input">
-              <input id="appLockDistanceKey" type="password" placeholder="Distance key">
+              <input id="appLockDistanceKey" type="password" placeholder="Distance key" aria-label="Distance key for app-lock unlock">
               <button class="secondary compact" type="button" data-scan-distance-key="#appLockDistanceKey">Scan</button>
             </div>
             <code id="appLockChallenge" class="typing-challenge hidden"></code>
-            <input id="appLockChallengeInput" class="hidden" type="text" placeholder="Typing challenge">
+            <input id="appLockChallengeInput" class="hidden" type="text" placeholder="Typing challenge" aria-label="App-lock typing challenge">
             <span class="tiny-status">Unlock confirm</span>
           </div>
           <div id="appLockList" class="list limit-list"></div>
@@ -660,7 +700,8 @@
             <button id="applyRecoverySetup" class="secondary" type="button">Apply Recovery Setup</button>
           </form>
           <form id="accountabilityForm" class="keyholder-panel">
-            <label class="checkline"><input id="accountabilityEnabled" type="checkbox"> Accountability digest</label>
+            <p class="field-note">Build a private summary you can copy and share yourself. Vigil does not send messages automatically.</p>
+            <label class="checkline"><input id="accountabilityEnabled" type="checkbox"> Include accountability summary</label>
             <div class="form-row">
               <label>
                 Partner
@@ -674,8 +715,8 @@
                 </select>
               </label>
             </div>
-            <button class="secondary" type="submit">Save Digest</button>
-            <button id="copyAccountabilityDigest" class="ghost" type="button">Copy Digest</button>
+            <button class="secondary" type="submit">Save summary settings</button>
+            <button id="copyAccountabilityDigest" class="ghost" type="button">Copy summary</button>
             <pre id="accountabilityDigest" class="code-block small-code"></pre>
           </form>
         </section>
@@ -750,6 +791,39 @@
             <button class="primary" type="submit">Save Pause Rule</button>
           </form>
           <div id="intentionalRuleList" class="list limit-list"></div>
+        </section>
+      </div>
+
+      <div class="workspace">
+        <section class="journal-security-panel panel" aria-labelledby="journalSecurityTitle">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Journal</p>
+              <h2 id="journalSecurityTitle">Journal security</h2>
+            </div>
+            <span id="journalSecurityStatus" class="pill neutral">Locked</span>
+          </div>
+          <form id="journalSecurityForm" class="profile-form">
+            <p class="field-note">Journal entries unlock only with Touch ID. Choose when the journal locks again after you leave it.</p>
+            <div class="form-row settings-compact-row">
+              <label>
+                Lock journal
+                <select id="journalAutoLockMinutes" name="autoLockMinutes">
+                  <option value="0" selected>When I leave Journal</option>
+                  <option value="5">After 5 minutes</option>
+                  <option value="15">After 15 minutes</option>
+                  <option value="30">After 30 minutes</option>
+                  <option value="60">After 1 hour</option>
+                  <option value="120">After 2 hours</option>
+                </select>
+              </label>
+            </div>
+            <div class="form-actions">
+              <button id="saveJournalSecurity" class="primary" type="submit">Save</button>
+              <button id="lockJournalNow" class="secondary" type="button">Lock now</button>
+            </div>
+          </form>
+          <p id="journalSecurityHelp" class="tiny-status">Changes use Vigil's protected maintenance flow when required.</p>
         </section>
       </div>
         </div>
@@ -937,159 +1011,103 @@
     </section>
 
     <section id="view-settings" class="view settings-segment" data-view="settings" hidden>
-      <details class="settings-disclosure journal-security-settings">
-        <summary><span>Journal access</span><em>Touch ID and automatic locking</em></summary>
-        <div class="settings-disclosure-body">
-          <section class="journal-security-panel panel" aria-labelledby="journalSecurityTitle">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Access Control</p>
-                <h2 id="journalSecurityTitle">Journal security</h2>
-              </div>
-              <span id="journalSecurityStatus" class="pill neutral">Locked</span>
-            </div>
-            <form id="journalSecurityForm" class="profile-form">
-              <p class="field-note">Only Touch ID can unlock the journal. The temporary unlock token stays in this app session.</p>
-              <div class="form-row">
-                <label>
-                  Lock after
-                  <select id="journalAutoLockMinutes" name="autoLockMinutes">
-                    <option value="0" selected>Immediately</option>
-                    <option value="5">5 minutes</option>
-                    <option value="15">15 minutes</option>
-                    <option value="30">30 minutes</option>
-                    <option value="60">1 hour</option>
-                    <option value="120">2 hours</option>
-                  </select>
-                </label>
-              </div>
-              <div class="form-actions">
-                <button id="saveJournalSecurity" class="primary" type="submit">Save lock timing</button>
-                <button id="lockJournalNow" class="secondary" type="button">Lock now</button>
-              </div>
-            </form>
-            <p id="journalSecurityHelp" class="tiny-status">A protected maintenance window may be required to change this setting.</p>
-          </section>
-        </div>
-      </details>
-
       <details class="settings-disclosure">
-        <summary><span>Protection and hardening</span><em>Setup, local protections, updates, and grayscale</em><span id="hostsStatus" class="pill neutral">Network</span></summary>
+        <summary><span>Protection and hardening</span><em>Health, enforcement, access, and updates</em></summary>
         <div class="settings-disclosure-body">
 
       <div class="workspace">
         <section class="panel setup-panel" aria-labelledby="setupWizardTitle">
           <div class="section-head">
             <div>
-              <p class="eyebrow">First Run</p>
-              <h2 id="setupWizardTitle">Setup Checklist</h2>
+              <p class="eyebrow">Health</p>
+              <h2 id="setupWizardTitle">Protection status</h2>
             </div>
             <div class="setup-panel-actions">
               <span id="setupProgress" class="pill neutral">0/4 core ready</span>
               <button id="openSetupAssistant" class="secondary compact" type="button">Guided Setup</button>
             </div>
           </div>
-          <div id="setupChecklist" class="setup-list"></div>
+          <div id="setupChecklist" class="setup-list"><p class="settings-loading-state">Checking protection…</p></div>
         </section>
 
         <section class="panel">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Hardening</p>
-              <h2>Local Protections</h2>
+              <p class="eyebrow">Coverage</p>
+              <h2>Browser &amp; network</h2>
+            </div>
+            <span id="hostsStatus" class="pill neutral">Checking…</span>
+          </div>
+          <p class="settings-detail-intro">These layers keep the same effective rules in browsers and at the network boundary.</p>
+          <div class="settings-switch-list">
+            <label class="checkline"><input id="systemNetworkBlockingEnabled" type="checkbox"><span><strong>System network blocking</strong><small>Apply supported whole-site rules outside the browser companion.</small></span></label>
+            <label class="checkline"><input id="safariUrlFilterEnabled" type="checkbox"><span><strong>Safari filtering</strong><small>Required protection for Safari URLs.</small></span></label>
+            <label class="checkline"><input id="contentFilterEnabled" type="checkbox"><span><strong>Content filtering</strong><small>Keep permanent unsafe-content and feed protections active.</small></span></label>
+            <label class="checkline"><input id="siteRedirectEnabled" type="checkbox"><span><strong>Blocked-page redirect</strong><small>Show Vigil's explanation when a browser can redirect safely.</small></span></label>
+            <label class="checkline"><input id="externalNetworkBlockEnabled" type="checkbox"><span><strong>Managed DNS or router sync</strong><small>Extend compatible whole-site rules to another managed network layer.</small></span></label>
+            <label class="checkline"><input id="browserNoiseBlockingEnabled" type="checkbox"><span><strong>Browser cleanup</strong><small>Reduce distracting recommendations and visual noise on supported sites.</small></span></label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Managed rules</p>
+              <h2>Unsafe-content protection</h2>
             </div>
           </div>
-          <div class="toggle-row">
-            <label><input id="systemNetworkBlockingEnabled" type="checkbox"> System network block</label>
-            <label><input id="safariUrlFilterEnabled" type="checkbox"> Safari URL filter</label>
-            <label><input id="externalNetworkBlockEnabled" type="checkbox"> DNS/router sync</label>
-            <label><input id="siteRedirectEnabled" type="checkbox"> Browser redirect fallback</label>
-            <label><input id="contentFilterEnabled" type="checkbox"> Content filter</label>
-            <label><input id="browserNoiseBlockingEnabled" type="checkbox"> Browser cleanup</label>
-            <label><input id="typingChallengeEnabled" type="checkbox"> Typing challenge</label>
-            <label><input id="intentReasonEnabled" type="checkbox"> Reason gate</label>
-            <label><input id="appQuitEnabled" type="checkbox"> App quit</label>
-            <label><input id="strictBypassProtectionEnabled" type="checkbox"> Bypass tools</label>
-            <label><input id="processSweepEnabled" type="checkbox"> Background sweep</label>
-            <label><input id="systemSleepLockEnabled" type="checkbox"> Sleep screen lock</label>
-            <label><input id="focusShortcutEnabled" type="checkbox"> Focus hooks</label>
-            <label><input id="strictByDefault" type="checkbox"> Strict default</label>
-            <label><input id="protectedEditsEnabled" type="checkbox"> Protected edits</label>
-            <label><input id="foolproofModeEnabled" type="checkbox"> Foolproof mode</label>
-            <label class="numberline">Escalate after <input id="appQuitEscalationSeconds" type="number" min="1" max="3600" step="1"> sec</label>
-            <label class="numberline">Sweep every <input id="processSweepIntervalSeconds" type="number" min="3" max="3600" step="1"> sec</label>
-            <label class="numberline">Relock sleep every <input id="systemSleepLockIntervalSeconds" type="number" min="15" max="3600" step="1"> sec</label>
-            <label class="numberline">Panic lock <input id="panicLockDurationMinutes" type="number" min="1" max="1440" step="1"> min</label>
-            <label class="numberline">Reason min <input id="intentReasonMinLength" type="number" min="1" max="280" step="1"> chars</label>
-          </div>
-
           <div class="adult-blocklist-panel">
             <div>
-              <p class="eyebrow">Adult Web</p>
-              <p id="adultBlocklistStatus">Not refreshed</p>
+              <strong>Vigil managed list</strong>
+              <p id="adultBlocklistStatus">Checking coverage…</p>
+              <span id="adultBlocklistMeta" class="tiny-status">Loading source health…</span>
             </div>
-            <label class="checkline"><input id="adultBlocklistEnabled" type="checkbox"> Adult blocklist</label>
-            <select id="adultBlocklistSourceId" aria-label="Adult blocklist source"></select>
-            <input id="adultBlocklistCustomUrl" type="url" placeholder="Custom list URL">
-            <label class="numberline">Preload <input id="adultBlocklistPreloadLimit" type="number" min="0" max="250" step="1"> domains</label>
-            <textarea id="adultBlocklistAllowlist" rows="3" placeholder="Allowlist domains"></textarea>
-            <button id="saveAdultBlocklistSettings" class="secondary" type="button">Save Adult List</button>
-            <button id="refreshAdultBlocklist" class="secondary" type="button">Refresh Adult List</button>
-            <span id="adultBlocklistMeta" class="tiny-status">Ready</span>
+            <label class="checkline"><input id="adultBlocklistEnabled" type="checkbox"><span><strong>Use managed unsafe-content protection</strong><small>The underlying domains and URL patterns are maintained by Vigil and are not edited here.</small></span></label>
+            <button id="refreshAdultBlocklist" class="secondary" type="button">Refresh protection</button>
+            <div class="settings-internal-fields" hidden aria-hidden="true">
+              <select id="adultBlocklistSourceId" aria-label="Adult blocklist source"></select>
+              <input id="adultBlocklistCustomUrl" type="url" placeholder="Custom list URL">
+              <label class="numberline">Preload <input id="adultBlocklistPreloadLimit" type="number" min="0" max="250" step="1"> domains</label>
+              <textarea id="adultBlocklistAllowlist" rows="3" placeholder="Allowlist domains"></textarea>
+              <button id="saveAdultBlocklistSettings" class="secondary" type="button">Save managed list settings</button>
+            </div>
           </div>
+        </section>
 
-          <div class="app-update-panel">
+        <section class="panel">
+          <div class="section-head">
             <div>
-              <p class="eyebrow">App Updates</p>
-              <p id="appUpdateStatus">Not checked</p>
-              <span id="appUpdateMeta" class="tiny-status">--</span>
-            </div>
-            <div class="app-update-actions">
-              <button id="checkAppUpdate" class="secondary" type="button">Check for Updates</button>
+              <p class="eyebrow">Access</p>
+              <h2>Unlock safeguards</h2>
             </div>
           </div>
-
-          <div class="focus-shortcut-panel">
-            <div>
-              <p class="eyebrow">Notification Focus</p>
-              <p id="focusShortcutStatus">Disabled</p>
-            </div>
-            <input id="focusShortcutOnName" type="text" placeholder="Focus On shortcut">
-            <input id="focusShortcutOffName" type="text" placeholder="Focus Off shortcut">
-            <button id="saveFocusShortcuts" class="secondary" type="button">Save Focus Hooks</button>
+          <p class="settings-detail-intro">Require deliberate proof before protected rules can be changed or bypassed.</p>
+          <div class="settings-switch-list">
+            <label class="checkline"><input id="typingChallengeEnabled" type="checkbox"><span><strong>Typing challenge</strong><small>Require a generated phrase for protected actions.</small></span></label>
+            <label class="checkline"><input id="intentReasonEnabled" type="checkbox"><span><strong>Reason gate</strong><small>Require a written reason before an override can continue.</small></span></label>
+            <label class="checkline"><input id="protectedEditsEnabled" type="checkbox"><span><strong>Protect settings changes</strong><small>Route weakening changes through authenticated maintenance.</small></span></label>
+            <label class="checkline"><input id="strictByDefault" type="checkbox"><span><strong>Strict by default</strong><small>Prefer the stronger lock when a rule does not specify one.</small></span></label>
           </div>
-
-          <div class="maintenance-panel">
-            <div>
-              <p class="eyebrow">Maintenance</p>
-              <p id="maintenanceStatus">Closed</p>
-            </div>
-            <input id="maintenanceReason" type="text" placeholder="Reason">
-            <input id="maintenancePasscode" type="password" placeholder="Keyholder passcode">
-            <div class="distance-input">
-              <input id="maintenanceDistanceKey" type="password" placeholder="Distance key">
-              <button class="secondary compact" type="button" data-scan-distance-key="#maintenanceDistanceKey">Scan</button>
-            </div>
-            <code id="maintenanceChallenge" class="typing-challenge hidden"></code>
-            <input id="maintenanceChallengeInput" class="hidden" type="text" placeholder="Typing challenge">
-            <button id="requestMaintenance" class="secondary" type="button">Request</button>
-            <button id="confirmMaintenance" class="danger ghost" type="button" disabled>Confirm</button>
+          <div class="form-row settings-compact-row">
+            <label>Minimum reason length<input id="intentReasonMinLength" type="number" min="1" max="280" step="1"><small>characters</small></label>
+            <label>Panic lock duration<input id="panicLockDurationMinutes" type="number" min="1" max="1440" step="1"><small>minutes</small></label>
           </div>
-
           <form id="keyholderForm" class="keyholder-panel">
-            <label class="checkline"><input id="keyholderEnabled" name="enabled" type="checkbox"> Keyholder passcode</label>
-            <input id="keyholderPasscode" name="passcode" type="password" placeholder="New passcode">
+            <h3>Keyholder passcode</h3>
+            <label class="checkline"><input id="keyholderEnabled" name="enabled" type="checkbox"> Require a keyholder passcode</label>
+            <input id="keyholderPasscode" name="passcode" type="password" placeholder="New passcode" aria-label="New keyholder passcode">
             <span id="keyholderStatus" class="tiny-status">Not set</span>
-            <button class="secondary" type="submit">Save Keyholder</button>
+            <button class="secondary" type="submit">Save passcode</button>
           </form>
 
           <form id="distanceKeyForm" class="distance-key-panel">
-            <label class="checkline"><input id="distanceKeyEnabled" name="enabled" type="checkbox"> Distance key</label>
+            <h3>Distance key</h3>
+            <label class="checkline"><input id="distanceKeyEnabled" name="enabled" type="checkbox"> Require a key stored away from this Mac</label>
             <div class="distance-input">
-              <input id="distanceKeyTokenInput" name="token" type="password" placeholder="Enter existing token">
+              <input id="distanceKeyTokenInput" name="token" type="password" placeholder="Enter existing token" aria-label="Existing distance-key token">
               <button class="secondary compact" type="button" data-scan-distance-key="#distanceKeyTokenInput">Scan</button>
             </div>
-            <input id="distanceKeyFilePath" name="keyFilePath" type="text" placeholder="Key file path">
+            <input id="distanceKeyFilePath" name="keyFilePath" type="text" placeholder="Key file path" aria-label="Distance-key file path">
             <span id="distanceKeyStatus" class="tiny-status">Not set</span>
             <button id="saveDistanceKey" class="secondary" type="submit">Save</button>
             <button id="rotateDistanceKey" class="secondary" type="button">Generate</button>
@@ -1100,22 +1118,102 @@
               <button id="printDistanceKey" class="secondary compact" type="button">Print Key</button>
             </div>
           </form>
+        </section>
 
-          <div class="hardening-actions">
-            <button id="installLaunchAgent" class="secondary" type="button">Install Login Agent</button>
-            <button id="applyHostsBlock" class="secondary" type="button">Apply Network Block</button>
-            <button id="applySafariFilter" class="secondary" type="button">Apply Safari Filter</button>
-            <button id="applyChromeSafeSearch" class="secondary" type="button">Export Chrome MDM Profile</button>
-            <button id="clearTamperAlarm" class="secondary" type="button" hidden>Clear Tamper Alarm</button>
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Reliability</p>
+              <h2>Background enforcement</h2>
+            </div>
+          </div>
+          <p class="settings-detail-intro">These protections keep Vigil available and reapply rules when apps or system state change.</p>
+          <div class="settings-switch-list">
+            <label class="checkline"><input id="appQuitEnabled" type="checkbox"><span><strong>Close blocked apps</strong><small>Escalate from a warning when a blocked app remains open.</small></span></label>
+            <label class="checkline"><input id="strictBypassProtectionEnabled" type="checkbox"><span><strong>Block bypass tools</strong><small>Restrict tools that can interfere with active protection.</small></span></label>
+            <label class="checkline"><input id="processSweepEnabled" type="checkbox"><span><strong>Background app sweep</strong><small>Recheck running apps while a protected rule is active.</small></span></label>
+            <label class="checkline"><input id="systemSleepLockEnabled" type="checkbox"><span><strong>Sleep-screen relock</strong><small>Restore the lock screen if sleep protection is bypassed.</small></span></label>
+            <label class="checkline"><input id="foolproofModeEnabled" type="checkbox"><span><strong>Foolproof mode</strong><small>Require readiness checks before strict enforcement starts.</small></span></label>
+          </div>
+          <div class="form-row thirds settings-compact-row">
+            <label>App escalation<input id="appQuitEscalationSeconds" type="number" min="1" max="3600" step="1"><small>seconds</small></label>
+            <label>Sweep interval<input id="processSweepIntervalSeconds" type="number" min="3" max="3600" step="1"><small>seconds</small></label>
+            <label>Sleep relock<input id="systemSleepLockIntervalSeconds" type="number" min="15" max="3600" step="1"><small>seconds</small></label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">macOS</p>
+              <h2>Notification Focus</h2>
+            </div>
+            <span id="focusShortcutStatus" class="pill neutral">Disabled</span>
+          </div>
+          <label class="settings-switch-row checkline"><input id="focusShortcutEnabled" type="checkbox"><span><strong>Run Focus shortcuts with Vigil</strong><small>Use named Shortcuts when protected sessions start and end.</small></span></label>
+          <div class="focus-shortcut-panel">
+            <input id="focusShortcutOnName" type="text" placeholder="Focus On shortcut" aria-label="Shortcut to run when Focus starts">
+            <input id="focusShortcutOffName" type="text" placeholder="Focus Off shortcut" aria-label="Shortcut to run when Focus ends">
+            <button id="saveFocusShortcuts" class="secondary" type="button">Save shortcut names</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Vigil</p>
+              <h2>App updates</h2>
+            </div>
+          </div>
+          <div class="app-update-panel">
+            <div>
+              <strong id="appUpdateStatus">Not checked</strong>
+              <span id="appUpdateMeta" class="tiny-status">—</span>
+            </div>
+            <div class="app-update-actions">
+              <button id="checkAppUpdate" class="secondary" type="button">Check for updates</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Protected access</p>
+              <h2>Maintenance &amp; diagnostics</h2>
+            </div>
+            <span id="maintenanceStatus" class="pill neutral">Closed</span>
+          </div>
+          <p class="settings-detail-intro">Maintenance is the authenticated path for weakening changes and repairs. It does not stop Vigil's availability protection.</p>
+          <div class="maintenance-panel">
+            <input id="maintenanceReason" type="text" placeholder="Reason for maintenance" aria-label="Reason for protected maintenance">
+            <input id="maintenancePasscode" type="password" placeholder="Keyholder passcode" aria-label="Keyholder passcode for maintenance">
+            <div class="distance-input">
+              <input id="maintenanceDistanceKey" type="password" placeholder="Distance key" aria-label="Distance key for maintenance">
+              <button class="secondary compact" type="button" data-scan-distance-key="#maintenanceDistanceKey">Scan</button>
+            </div>
+            <code id="maintenanceChallenge" class="typing-challenge hidden"></code>
+            <input id="maintenanceChallengeInput" class="hidden" type="text" placeholder="Typing challenge" aria-label="Maintenance typing challenge">
+            <button id="requestMaintenance" class="secondary" type="button">Request maintenance</button>
+            <button id="confirmMaintenance" class="danger ghost" type="button" disabled>Confirm</button>
+          </div>
+          <div class="hardening-actions settings-repair-actions">
+            <button id="installLaunchAgent" class="secondary" type="button">Repair login protection</button>
+            <button id="applyHostsBlock" class="secondary" type="button">Repair network block</button>
+            <button id="applySafariFilter" class="secondary" type="button">Repair Safari filter</button>
+            <button id="applyChromeSafeSearch" class="secondary" type="button">Export Chrome policy</button>
+            <button id="clearTamperAlarm" class="secondary" type="button" hidden>Clear tamper alarm</button>
+            <button id="exportDiagnosticSnapshot" class="secondary" type="button">Export diagnostics</button>
+            <span id="hardeningActionStatus" class="tiny-status">Ready</span>
+          </div>
+          <div class="settings-internal-actions" hidden aria-hidden="true">
             <button id="copyHostsCommand" class="secondary" type="button">Copy Network Command</button>
             <button id="copySourceSealCommand" class="secondary" type="button">Copy Source Seal</button>
             <button id="copyExtensionPath" class="secondary" type="button">Copy Extension Path</button>
-            <button id="exportDiagnosticSnapshot" class="secondary" type="button">Export Diagnostic Snapshot</button>
-            <span id="hardeningActionStatus" class="tiny-status">Ready</span>
           </div>
           <div id="hardeningAudit" class="audit-list"></div>
           <div id="foolproofBlockers" class="blocker-list"></div>
-          <pre id="hostsBlock" class="hosts-preview"></pre>
+          <pre id="hostsBlock" class="hosts-preview" hidden aria-hidden="true"></pre>
         </section>
 
         <section class="panel">
@@ -1141,7 +1239,7 @@
                 <span id="grayscalePhoneStatus">Normal</span>
               </div>
             </div>
-            <button class="secondary" type="submit">Save Grayscale</button>
+            <p class="field-note">Changes save immediately.</p>
           </form>
           <form id="grayscaleScheduleForm" class="schedule-form">
             <input name="id" type="hidden">
@@ -1193,7 +1291,7 @@
               </div>
               <label class="checkline"><input id="iosEnabled" name="enabled" type="checkbox"> Enable Vigil content filter</label>
               <p class="device-safety-note">Uses a managed web-content filter across Safari and third-party browsers. When native-app restrictions are selected, listed social apps stay restricted whenever Vigil's iPhone policy is enabled; separate Instagram and YouTube companions apply feature controls. Snapchat stays policy-only and has no companion.</p>
-              <div class="form-row">
+              <div class="form-row settings-internal-fields" hidden aria-hidden="true">
                 <label>
                   Native app policy
                   <select id="iosMode" name="mode">
@@ -1214,7 +1312,7 @@
                 <label class="checkline"><input id="iosBlockWeb" name="blockWeb" type="checkbox"> Filter websites across phone browsers</label>
                 <label class="checkline"><input id="iosHardenRemoval" name="hardenRemoval" type="checkbox"> Removal passcode</label>
                 <label class="checkline"><input id="iosRestrictInstallErase" name="restrictInstallAndErase" type="checkbox"> Lock escapes</label>
-                <label class="checkline"><input id="iosAllowSafariHistoryClearing" name="allowSafariHistoryClearing" type="checkbox"> Safari history</label>
+                <label class="checkline"><input id="iosAllowSafariHistoryClearing" name="allowSafariHistoryClearing" type="checkbox"> Allow clearing Safari history</label>
               </div>
               <div class="focused-social-panel">
                 <div class="focused-social-head">
@@ -1263,19 +1361,19 @@
                   </fieldset>
                 </div>
               </div>
-              <label>
+              <label class="settings-internal-field" hidden aria-hidden="true">
                 Blocked app bundle IDs
                 <textarea id="iosBlockedBundles" name="blockedAppBundleIds" rows="7"></textarea>
               </label>
-              <label>
+              <label class="settings-internal-field" hidden aria-hidden="true">
                 Allowed app bundle IDs
                 <textarea id="iosAllowedBundles" name="allowedAppBundleIds" rows="7"></textarea>
               </label>
-              <label>
+              <label class="settings-internal-field" hidden aria-hidden="true">
                 Extra denied URLs
                 <textarea id="iosDeniedUrls" name="deniedUrls" rows="5"></textarea>
               </label>
-              <label>
+              <label class="settings-internal-field" hidden aria-hidden="true">
                 Extra allowed URLs
                 <textarea id="iosAllowedUrls" name="allowedUrls" rows="5"></textarea>
               </label>

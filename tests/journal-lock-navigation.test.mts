@@ -13,7 +13,7 @@ assert.equal(shouldConfirmJournalDraftOnViewExit(true, false), false);
 assert.equal(shouldConfirmJournalDraftOnViewExit(false, true), false);
 
 const html = await readFile("public/index.html", "utf8");
-assert.match(html, /<option value="0" selected>Immediately<\/option>/u);
+assert.match(html, /<option value="0" selected>When I leave Journal<\/option>/u);
 
 const appSource = await readFile("public/app.js", "utf8");
 assert.match(appSource, /shouldConfirmJournalDraftOnViewExit[\s\S]*?window\.confirm\("Leave Journal and discard your unsaved entry\?"\)/u);

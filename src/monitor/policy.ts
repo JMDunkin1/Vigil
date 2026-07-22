@@ -1,4 +1,5 @@
 import { activeAppLockPolicy } from "../appLocks.js";
+import { matchAdultBlocklistHost } from "../adultBlocklist.js";
 import { matchContentFilterUrl } from "../contentFilters.js";
 import { FULL_BRICK_BLOCKED_APPS } from "../defaults.js";
 import { activeLimitBlocks, activeLimitPolicy } from "../limits.js";
@@ -24,6 +25,7 @@ export interface AppBlockRecord {
 }
 
 export type EnforcedPolicy = ActivePolicy & {
+  adultBlocklist?: { id: string; label: string; hostname: string; domain: string; sourceId: string; sourceLabel: string };
   browserControl?: { area: string; label: string; url: string };
   contentFilter?: UnknownRecord & { id?: string; label: string };
   urlPattern?: { pattern: string; label: string };
@@ -39,6 +41,8 @@ export function policyForSample(state: VigilState, usage: UsageState, sample: Us
   const contentPolicy = sessionPolicy || baseline;
   const contentFilter = sample.url && contentPolicy ? matchContentFilterUrl(state, sample.url, contentPolicy) : null;
   if (contentFilter && contentPolicy) return { ...contentPolicy, kind: "content-filter", contentFilter };
+  const adultBlocklist = matchAdultBlocklistHost(state, sample.hostname || sample.url);
+  if (adultBlocklist && contentPolicy) return { ...contentPolicy, kind: "adult-blocklist", adultBlocklist };
   const appLockPolicy = activeAppLockPolicy(state, sample, now) as EnforcedPolicy | null;
   const limitPolicy = activeLimitPolicy(state, usage, sample, now) as EnforcedPolicy | null;
   const appLockControlPolicy = sample.url ? strictAppLockBrowserControlPolicy(state, now) : null;

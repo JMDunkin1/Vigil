@@ -2,6 +2,7 @@ import type { DistanceKeyResponse, PendingResponse, UiState } from "./app-model.
 import { lines } from "./format.js";
 import { formRevision, markFormSaved, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
 import type { FormController } from "./forms.js";
+import { closeSettingsEditor } from "./settings-ui.js";
 import { $, $$, errorMessage, eventTarget, formPayload } from "./ui-shell.js";
 
 type PostRequest = <T = unknown>(path: string, body: unknown) => Promise<T>;
@@ -49,8 +50,16 @@ export function bindAppEvents(context: AppEventsContext) {
   devicePanel.bind();
   hardeningPanel.bind();
   const profileForm = $("#profileForm") as unknown as HTMLFormElement;
+  const intentionalGoalForm = $("#intentionalGoalForm") as unknown as HTMLFormElement;
+  const accountabilityForm = $("#accountabilityForm") as unknown as HTMLFormElement;
+  const keyholderForm = $("#keyholderForm") as unknown as HTMLFormElement;
+  const distanceKeyForm = $("#distanceKeyForm") as unknown as HTMLFormElement;
   trackFormChanges(profileForm);
   trackFormChanges($("#journalEntryForm") as unknown as HTMLFormElement);
+  trackFormChanges(intentionalGoalForm);
+  trackFormChanges(accountabilityForm);
+  trackFormChanges(keyholderForm);
+  trackFormChanges(distanceKeyForm);
 
   $$("[data-scan-distance-key]").forEach((button) => {
     button.addEventListener("click", () => distanceKeyUi.openScanner(button.dataset.scanDistanceKey));
@@ -186,7 +195,7 @@ export function bindAppEvents(context: AppEventsContext) {
   $("#profileSelect").addEventListener("change", async (event: Event) => {
     state.selectedProfileId = eventTarget(event).value;
     markFormSaved(profileForm);
-    await post("/api/settings", { activeProfileId: state.selectedProfileId });
+    await post("/api/settings", { baselineProfileId: state.selectedProfileId });
     await refresh();
   });
 
@@ -214,11 +223,11 @@ export function bindAppEvents(context: AppEventsContext) {
     body.commitmentLock = form.has("commitmentLock");
     body.days = [...$$("#scheduleDays input:checked")].map((input) => Number(input.value));
     body.wifiNetworks = lines(body.wifiNetworks);
-    body.profileId = state.data?.state.settings.activeProfileId || "";
-    body.lockLevel = "deep";
+    body.profileId = $("#scheduleProfileId").value;
     await post("/api/schedule", body);
     toast("Schedule saved");
     forms.resetScheduleForm();
+    closeSettingsEditor("scheduleForm");
     await refresh();
   });
 
@@ -276,6 +285,7 @@ export function bindAppEvents(context: AppEventsContext) {
     await post("/api/grayscale/schedule", body);
     toast("Grayscale schedule saved");
     forms.resetGrayscaleScheduleForm();
+    closeSettingsEditor("grayscaleScheduleForm");
     await refresh();
   });
 
@@ -296,6 +306,7 @@ export function bindAppEvents(context: AppEventsContext) {
     await post("/api/limit", body);
     toast("Limit saved");
     forms.resetLimitForm();
+    closeSettingsEditor("limitForm");
     await refresh();
   });
 
@@ -310,11 +321,13 @@ export function bindAppEvents(context: AppEventsContext) {
     await post("/api/app-lock", body);
     toast("App lock saved");
     forms.resetAppLockForm();
+    closeSettingsEditor("appLockForm");
     await refresh();
   });
 
   $("#intentionalGoalForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
+    const submittedRevision = formRevision(intentionalGoalForm);
     try {
       await post("/api/settings", { intentionalUseEnabled: $("#intentionalUseEnabled").checked });
       await post("/api/intentional-use/goal", {
@@ -322,6 +335,7 @@ export function bindAppEvents(context: AppEventsContext) {
         values: lines($("#intentionalGoalValues").value),
         replacements: lines($("#intentionalGoalReplacements").value)
       });
+      markFormSavedAtRevision(intentionalGoalForm, submittedRevision);
       toast("Intentional goal saved");
     } catch (error) {
       toast(errorMessage(error));
@@ -342,6 +356,7 @@ export function bindAppEvents(context: AppEventsContext) {
       await post("/api/intentional-use/rule", body);
       toast("Pause rule saved");
       forms.resetIntentionalRuleForm();
+      closeSettingsEditor("intentionalRuleForm");
     } catch (error) {
       toast(errorMessage(error));
     }
@@ -350,12 +365,14 @@ export function bindAppEvents(context: AppEventsContext) {
 
   $("#accountabilityForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
+    const submittedRevision = formRevision(accountabilityForm);
     try {
       await post("/api/intentional-use/accountability", {
         enabled: $("#accountabilityEnabled").checked,
         partnerName: $("#accountabilityPartner").value,
         cadence: $("#accountabilityCadence").value
       });
+      markFormSavedAtRevision(accountabilityForm, submittedRevision);
       toast("Digest settings saved");
     } catch (error) {
       toast(errorMessage(error));
@@ -479,12 +496,14 @@ export function bindAppEvents(context: AppEventsContext) {
 
   $("#keyholderForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
+    const submittedRevision = formRevision(keyholderForm);
     try {
       await post("/api/keyholder", {
         enabled: $("#keyholderEnabled").checked,
         passcode: $("#keyholderPasscode").value
       });
       $("#keyholderPasscode").value = "";
+      markFormSavedAtRevision(keyholderForm, submittedRevision);
       toast("Keyholder saved");
     } catch (error) {
       toast(errorMessage(error));
@@ -494,6 +513,7 @@ export function bindAppEvents(context: AppEventsContext) {
 
   $("#distanceKeyForm").addEventListener("submit", async (event: Event) => {
     event.preventDefault();
+    const submittedRevision = formRevision(distanceKeyForm);
     try {
       const result = await post<DistanceKeyResponse>("/api/distance-key", {
         enabled: $("#distanceKeyEnabled").checked,
@@ -503,6 +523,7 @@ export function bindAppEvents(context: AppEventsContext) {
       $("#distanceKeyTokenInput").value = "";
       distanceKeyUi.hideToken();
       if (result.token) distanceKeyUi.showToken(result.token);
+      markFormSavedAtRevision(distanceKeyForm, submittedRevision);
       toast("Distance key saved");
     } catch (error) {
       toast(errorMessage(error));
