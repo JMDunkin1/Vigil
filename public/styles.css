@@ -8842,6 +8842,12 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   font-family: var(--font-body);
 }
 
+:root[data-saint-aesthetic="serious"] .protection-level-choice span {
+  font-family: var(--font-display);
+  font-variant-numeric: oldstyle-nums proportional-nums;
+  font-feature-settings: "onum" 1, "pnum" 1;
+}
+
 :root[data-saint-aesthetic="serious"] #view-home .home-runtime-status {
   font-weight: 700;
   letter-spacing: 0.11em;

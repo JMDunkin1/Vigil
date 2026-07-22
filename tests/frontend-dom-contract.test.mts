@@ -91,13 +91,14 @@ assert.match(saintAestheticStageSource, /function setAesthetic[\s\S]*select\(sel
 const seriousTypographyDeclaration = stylesSource.match(/:root\[data-saint-aesthetic="serious"\]\s*\{([^}]*)\}/)?.[1] || "";
 assert.match(seriousTypographyDeclaration, /--font-body: Georgia, "Times New Roman", serif/, "serious mode must replace ordinary body copy typography");
 assert.match(seriousTypographyDeclaration, /--font-display: Georgia, "Times New Roman", serif/, "serious mode must replace formal display typography");
-assert.doesNotMatch(seriousTypographyDeclaration, /--font-mono:/, "serious mode must preserve the functional numeral font");
+assert.doesNotMatch(seriousTypographyDeclaration, /--font-mono:/, "serious mode must not globally replace every functional monospace surface");
 assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] \.settings-titlebar \.settings-titlecopy h2/, "serious mode must override the hard-coded modern Settings heading");
 assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] body\[data-active-view="settings"\] \.settings-disclosure > summary > span:first-child/, "serious mode must override modern Settings disclosure titles");
 assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] body\[data-active-view="settings"\] \.settings-disclosure > summary > \.pill/, "serious mode must override modern Settings status copy");
 assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] \.saint-info-eyebrow/, "serious mode must carry its type through portrait metadata");
 assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] #protectionLevelStatus/, "serious mode must carry its type through utility labels");
-assert.match(stylesSource, /\.protection-level-choice span\s*\{[^}]*font-family: var\(--font-mono\)/, "protection-level digits must retain their functional numeral face");
+assert.match(stylesSource, /\.protection-level-choice span\s*\{[^}]*font-family: var\(--font-mono\)/, "playful protection-level digits must retain their existing numeral face");
+assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] \.protection-level-choice span\s*\{[^}]*font-family: var\(--font-display\)[^}]*font-variant-numeric: oldstyle-nums proportional-nums/, "serious protection buttons must use old-style serif numerals");
 assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] #view-home \.saint-artwork[\s\S]*image-rendering: auto/, "serious paintings must not inherit pixel-art rendering");
 assert.doesNotMatch(stylesSource, /:root\[data-saint-aesthetic="serious"\][^{]*\{[^}]*background:/, "the serious preference must not replace Vigil's existing backgrounds");
 assert.match(settingsAppSource, /previousView === "settings" && state\.activeView !== "settings"[\s\S]*resetSettingsUi\(\)/, "the settings reset must run only after navigating away");
