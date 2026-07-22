@@ -134,6 +134,10 @@ assert.match(settingsUiSource, /function resetSettingsUi\(\)[\s\S]*?clearSetting
 assert.match(settingsUiSource, /function selectCategory[\s\S]*?activeCategoryId = categoryId;\s+activeDetailId = null;\s+clearSettingsSearch\(settingsRoot\)/, "selecting a settings category must clear the active search filter");
 assert.match(settingsUiSource, /function revealAppUpdateSettings[\s\S]*?selectCategory\("protection", false\)[\s\S]*?openSettingsDetail\(detail, false\)[\s\S]*?#checkAppUpdate/u, "native update details must reveal and focus the update detail instead of merely opening Vigil's home view");
 assert.match(settingsAppSource, /subscribeDetails[\s\S]*?setView\("settings"\)[\s\S]*?revealAppUpdateSettings\(\)/u, "the renderer must route the tray's update-details request into Settings");
+assert.match(protectionSettingsMarkup, /id="appUpdatePanel"[^>]*aria-busy="false"/u, "the update surface must expose whether its one-button transaction is busy");
+assert.match(protectionSettingsMarkup, /id="appUpdateStatus"[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true"/u, "update phases must be announced without moving keyboard focus");
+assert.match(protectionSettingsMarkup, /<progress id="appUpdateProgress"[^>]*max="1"[^>]*aria-label="Vigil update progress"[^>]*hidden/u, "the updater must use a labelled indeterminate progress indicator instead of a fake percentage");
+assert.match(protectionSettingsMarkup, /id="checkAppUpdate"[^>]*aria-describedby="appUpdateStatus appUpdateHelp"/u, "the single update action must name its live status and one-time setup guidance");
 assert.match(settingsUiSource, /clearSettingsSearch[\s\S]*search\.value = ""[\s\S]*\.settings-category, \.settings-index-item, \.settings-nav-item[\s\S]*filtered\.hidden = false/, "clearing settings search must restore every category, index row, and tab hidden by filtering");
 assert.match(
   settingsUiSource,

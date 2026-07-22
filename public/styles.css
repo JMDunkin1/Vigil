@@ -9615,6 +9615,32 @@ body[data-active-view="settings"] .settings-detail .list-item button {
   gap: 16px;
 }
 
+.app-update-panel[aria-busy="true"] {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+}
+
+.app-update-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.app-update-panel #appUpdateHelp {
+  max-width: 58ch;
+  margin-top: 7px;
+}
+
+.app-update-progress {
+  display: block;
+  width: min(100%, 34rem);
+  height: 4px;
+  margin-top: 12px;
+  accent-color: var(--accent);
+}
+
+.app-update-progress[hidden] {
+  display: none;
+}
+
 .focus-shortcut-panel,
 .maintenance-panel,
 .settings-repair-actions {
@@ -9847,5 +9873,14 @@ body[data-active-view="settings"] .settings-detail .list-item button {
   .keyholder-panel,
   .distance-key-panel {
     grid-template-columns: 1fr;
+  }
+
+  .app-update-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .app-update-actions {
+    justify-content: start;
   }
 }

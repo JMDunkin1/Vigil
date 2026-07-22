@@ -1165,13 +1165,15 @@
               <h2>App updates</h2>
             </div>
           </div>
-          <div class="app-update-panel">
-            <div>
-              <strong id="appUpdateStatus">Not checked</strong>
+          <div id="appUpdatePanel" class="app-update-panel" aria-busy="false">
+            <div class="app-update-copy">
+              <strong id="appUpdateStatus" role="status" aria-live="polite" aria-atomic="true">Not checked</strong>
               <span id="appUpdateMeta" class="tiny-status">—</span>
+              <p id="appUpdateHelp" class="tiny-status">Build and switch to your latest local changes without leaving Vigil.</p>
+              <progress id="appUpdateProgress" class="app-update-progress" max="1" aria-label="Vigil update progress" aria-hidden="true" hidden></progress>
             </div>
             <div class="app-update-actions">
-              <button id="checkAppUpdate" class="secondary" type="button">Check for updates</button>
+              <button id="checkAppUpdate" class="secondary" type="button" aria-describedby="appUpdateStatus appUpdateHelp">Check for updates</button>
             </div>
           </div>
         </section>

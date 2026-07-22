@@ -305,6 +305,29 @@ assert.ok(
     < updaterSource.indexOf("await prepareLocalUpdateReceipt(statusPath, updateLock.token, currentStatus)"),
   "local receipt creation must follow repository, setup, and exact source-identity validation"
 );
+const guardianSetupIndex = updaterSource.indexOf("await setupGuardian({");
+const postSetupStatusIndex = updaterSource.indexOf(
+  "currentStatus = await readStatusPayload({ ownedLockToken: updateLock.token })",
+  guardianSetupIndex
+);
+const localReceiptIndex = updaterSource.indexOf(
+  "await prepareLocalUpdateReceipt(statusPath, updateLock.token, currentStatus)"
+);
+assert.ok(
+  guardianSetupIndex >= 0
+    && postSetupStatusIndex > guardianSetupIndex
+    && localReceiptIndex > postSetupStatusIndex,
+  "one-time guardian setup must complete and revalidate readiness before any local update receipt is committed"
+);
+assert.ok(
+  updaterSource.indexOf("if (!setupResult.ok)", guardianSetupIndex) < postSetupStatusIndex,
+  "canceling one-time setup must return before update state is revalidated or an update receipt can begin"
+);
+assert.match(
+  updaterSource,
+  /const updateCandidateAvailable = Boolean\(checkOk && supported && \([\s\S]*?\)\);[\s\S]*?const updateAvailable = updateCandidateAvailable/u,
+  "a verified candidate must remain visible while repairable guardian setup is pending"
+);
 assert.ok(
   updaterSource.indexOf("readStatusPayload({ checkRemote: true, ownedLockToken: updateLock.token })")
     < updaterSource.indexOf("await prepareRemoteUpdateReceipt(statusPath, updateLock.token, currentStatus)"),

@@ -7,6 +7,10 @@ import { join, resolve } from "node:path";
 import { SYSTEM_GUARDIAN_LABEL, SYSTEM_GUARDIAN_SAFETY_ARG, systemGuardianPlist, systemGuardianScript } from "../src/systemGuardian.js";
 import { toPlist } from "../src/plist.js";
 import {
+  SYSTEM_GUARDIAN_STABILITY_MS,
+  observeGuardianRunningStability
+} from "../scripts/install-system-guardian.mjs";
+import {
   SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS,
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
@@ -22,6 +26,52 @@ const sourceRoot = existsSync(join(process.cwd(), "scripts", "install-system-gua
   ? process.cwd()
   : resolve(process.cwd(), "..", "..");
 const installerSource = await readFile(join(sourceRoot, "scripts", "install-system-guardian.mts"), "utf8");
+
+const firstRunningObservation = observeGuardianRunningStability(
+  { pid: null, since: 0 },
+  { loaded: true, running: true, pid: 200 },
+  100,
+  1_000
+);
+assert.equal(firstRunningObservation.stable, false, "one instantaneous replacement PID must not pass guardian health verification");
+assert.deepEqual(firstRunningObservation.state, { pid: 200, since: 1_000 });
+assert.equal(observeGuardianRunningStability(
+  firstRunningObservation.state,
+  { loaded: true, running: true, pid: 200 },
+  100,
+  1_000 + SYSTEM_GUARDIAN_STABILITY_MS - 1
+).stable, false, "the replacement guardian must remain stable for the full bounded window");
+assert.equal(observeGuardianRunningStability(
+  firstRunningObservation.state,
+  { loaded: true, running: true, pid: 200 },
+  100,
+  1_000 + SYSTEM_GUARDIAN_STABILITY_MS
+).stable, true, "the same running replacement PID may pass after the bounded stability window");
+const changedPidObservation = observeGuardianRunningStability(
+  firstRunningObservation.state,
+  { loaded: true, running: true, pid: 201 },
+  100,
+  1_400
+);
+assert.deepEqual(changedPidObservation, {
+  stable: false,
+  state: { pid: 201, since: 1_400 }
+}, "a second launchd PID must restart the stability window");
+assert.deepEqual(observeGuardianRunningStability(
+  changedPidObservation.state,
+  { loaded: true, running: false, pid: 201 },
+  100,
+  1_500
+), {
+  stable: false,
+  state: { pid: null, since: 0 }
+}, "any non-running observation must reset continuity");
+assert.equal(observeGuardianRunningStability(
+  { pid: 100, since: 0 },
+  { loaded: true, running: true, pid: 100 },
+  100,
+  10_000
+).stable, false, "the pre-kickstart PID can never satisfy replacement health verification");
 
 const script = systemGuardianScript({
   appPath: "/Applications/Vigil.app",
@@ -101,23 +151,42 @@ assert.match(plist, /<key>RunAtLoad<\/key>\s*<true\/>/u);
 const stagedScriptValidation = installerSource.indexOf('execFileAsync("/bin/zsh", ["-n", files[0].stagedPath]');
 const stagedPlistValidation = installerSource.indexOf('execFileAsync("/usr/bin/plutil", ["-lint", files[1].stagedPath]');
 const liveActivation = installerSource.indexOf("for (const file of files) await activateStagedFile(file)");
-const guardianBootout = installerSource.indexOf("await bootoutSystemGuardianIfLoaded()", liveActivation);
+const loadedReplacement = installerSource.indexOf("await kickstartLoadedSystemGuardian(initialService.pid)", liveActivation);
 assert.ok(
   stagedScriptValidation >= 0
     && stagedPlistValidation > stagedScriptValidation
     && liveActivation > stagedPlistValidation
-    && guardianBootout > liveActivation,
+    && loadedReplacement > liveActivation,
   "guardian candidates must be fully staged and validated before the live files or launchd job are touched"
 );
-assert.match(installerSource, /rename\(file\.path, file\.backupPath\)[\s\S]*?file\.hadPrevious = true/u, "the installer must retain each prior root-owned file before replacement");
+assert.match(installerSource, /link\(file\.path, file\.backupPath\)[\s\S]*?backupStat\.ino !== previousStat\.ino[\s\S]*?file\.hadPrevious = true/u,
+  "the installer must retain and verify each prior root-owned inode before replacement");
+assert.match(installerSource, /file\.hadPrevious = true[\s\S]*?rename\(file\.stagedPath, file\.path\)/u,
+  "the staged guardian must atomically replace the live pathname only after rollback is secured");
 assert.match(installerSource, /for \(const file of \[\.\.\.files\]\.reverse\(\)\)[\s\S]*?restorePreviousFile\(file\)/u, "failed installation must restore both prior files in reverse activation order");
-assert.match(installerSource, /files\[1\]\.hadPrevious[\s\S]*?bootstrapSystemGuardian\(\)/u, "failed replacement must re-bootstrap and health-check the restored guardian");
+const loadedActivationBranch = installerSource.slice(
+  installerSource.indexOf("if (initialService.loaded) {", liveActivation),
+  installerSource.indexOf("} else {", installerSource.indexOf("if (initialService.loaded) {", liveActivation))
+);
+assert.match(loadedActivationBranch, /kickstartLoadedSystemGuardian/u, "a loaded guardian must be transactionally restarted in its still-loaded launchd job");
+assert.doesNotMatch(loadedActivationBranch, /bootout/u, "a topology-compatible loaded guardian must never be unloaded during setup");
+assert.match(installerSource, /initialService\.loaded[\s\S]*?restartRestoredLoadedSystemGuardian/u, "failed loaded replacement must restart and health-check the restored guardian");
+assert.match(installerSource, /restartRestoredLoadedSystemGuardian\(\)[\s\S]*?inspectSystemGuardianService\(\)[\s\S]*?candidateService\.loaded[\s\S]*?kickstartLoadedSystemGuardian\(candidateService\.pid\)/u,
+  "rollback must treat inspection or restart failure as an incomplete restoration and preserve recovery files");
+assert.match(installerSource, /rollbackErrors\.length[\s\S]*?Recovery files were preserved/u, "failed rollback must preserve root-owned recovery files for inspection");
+assert.match(installerSource, /assertExpectedCurrentGuardian\(options\)[\s\S]*?stageRootOwnedFile[\s\S]*?assertExpectedCurrentGuardian\(options\)[\s\S]*?activateStagedFile/u, "the root helper must close the authorization-to-activation race over the legacy guardian bytes");
+assert.match(installerSource, /targetPath !== DEFAULT_TARGET_APP_PATH[\s\S]*?validateAppOwnedAccount\(options\)/u,
+  "app-owned root setup must independently pin the canonical protected app before changing guardian files");
+assert.match(installerSource, /validateAppOwnedAccount[\s\S]*?\/usr\/bin\/id[\s\S]*?\/usr\/bin\/dscl[\s\S]*?accountUid !== options\.targetUid[\s\S]*?accountHome !== options\.targetHome/u,
+  "the root helper must bind the approved uid, user, and home tuple to the macOS account database");
 
 const markerRoot = await mkdtemp(join(tmpdir(), "vigil-guardian-maintenance-"));
 try {
   const lockPath = join(markerRoot, "update.lock");
   const authorizationPath = join(markerRoot, "maintenance-authorization.plist");
   const guardianScriptPath = join(markerRoot, "guardian.sh");
+  const guardianPlistPath = join(markerRoot, "guardian.plist");
+  const guardianLabel = "tech.caseline.vigil.test-system-guardian";
   const token = "12345678-1234-1234-1234-123456789abc";
   await writeFile(guardianScriptPath, "#!/bin/zsh\nwhile true; do sleep 2; done\n", { mode: 0o755 });
   assert.deepEqual(
@@ -125,10 +194,57 @@ try {
     {
       ready: false,
       guardianInstalled: true,
+      reason: "legacy-protocol",
+      setupRequired: true,
+      setupSupported: true,
       message: "Vigil's system guardian predates authenticated app updates. Refresh it through Vigil's protected maintenance setup before installing this update."
     },
     "an old guardian must block before the updater spends time rebuilding the app"
   );
+  await writeFile(guardianPlistPath, toPlist({
+    Label: guardianLabel,
+    ProgramArguments: [guardianScriptPath, "--vigil-system-guardian"],
+    KeepAlive: true,
+    RunAtLoad: true
+  }), { mode: 0o644 });
+  assert.deepEqual(
+    await guardianMaintenanceReadiness(
+      authorizationPath,
+      guardianScriptPath,
+      process.getuid?.() ?? 0,
+      { guardianPlistPath, guardianLabel }
+    ),
+    {
+      ready: false,
+      guardianInstalled: true,
+      reason: "legacy-protocol",
+      setupRequired: true,
+      setupSupported: true,
+      message: "Vigil's system guardian predates authenticated app updates. Refresh it through Vigil's protected maintenance setup before installing this update."
+    },
+    "a safe legacy guardian with the expected launchd topology may use the one-prompt setup path"
+  );
+  await writeFile(guardianPlistPath, toPlist({
+    Label: `${guardianLabel}.unexpected`,
+    ProgramArguments: [guardianScriptPath],
+    KeepAlive: true,
+    RunAtLoad: true
+  }), { mode: 0o644 });
+  const topologyMismatch = await guardianMaintenanceReadiness(
+    authorizationPath,
+    guardianScriptPath,
+    process.getuid?.() ?? 0,
+    { guardianPlistPath, guardianLabel }
+  );
+  assert.equal(topologyMismatch.reason, "topology-mismatch");
+  assert.equal(topologyMismatch.setupSupported, false,
+    "an unexpected loaded topology must not expose a setup path that would require unloading protection");
+  await writeFile(guardianPlistPath, toPlist({
+    Label: guardianLabel,
+    ProgramArguments: [guardianScriptPath, "--vigil-system-guardian"],
+    KeepAlive: true,
+    RunAtLoad: true
+  }), { mode: 0o644 });
   await writeFile(
     guardianScriptPath,
     `#!/bin/zsh\nauthorize_maintenance_request() { :; }\nattest_update_recovery() { :; }\n# vigil-root-maintenance-authorization-v2\n# ${authorizationPath}\n`,

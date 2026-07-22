@@ -13,6 +13,8 @@ export const SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS = 10 * 60;
 export const SYSTEM_GUARDIAN_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/maintenance-authorization.plist";
 export const SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization.plist";
 export const SYSTEM_GUARDIAN_SCRIPT_PATH = "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-DO-NOT-TERMINATE.sh";
+export const SYSTEM_GUARDIAN_PLIST_PATH = "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.plist";
+export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian";
 const SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS = 10_000;
 const SYSTEM_GUARDIAN_AUTHORIZATION_POLL_MS = 100;
 
@@ -57,7 +59,29 @@ export interface GuardianMaintenanceTransaction {
 export interface GuardianMaintenanceReadiness {
   ready: boolean;
   guardianInstalled: boolean;
+  reason?: GuardianMaintenanceReadinessReason;
+  setupRequired?: boolean;
+  setupSupported?: boolean;
   message: string | null;
+}
+
+export type GuardianMaintenanceReadinessReason =
+  | "not-installed"
+  | "ready"
+  | "legacy-protocol"
+  | "incomplete"
+  | "unsafe"
+  | "topology-mismatch"
+  | "inspection-failed";
+
+export interface GuardianMaintenanceReadinessOptions {
+  /**
+   * Custom tests and migrations can explicitly select a launchd plist. The
+   * production default is inspected automatically only when the production
+   * authorization and guardian paths are in use.
+   */
+  guardianPlistPath?: string | null;
+  guardianLabel?: string;
 }
 
 export function defaultUpdaterLockPath(targetHome: string): string {
@@ -71,17 +95,51 @@ export function guardianMaintenanceMarkerPath(lockPath: string): string {
 export async function guardianMaintenanceReadiness(
   authorizationPath = SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   guardianScriptPath = SYSTEM_GUARDIAN_SCRIPT_PATH,
-  expectedUid = 0
+  expectedUid = 0,
+  options: GuardianMaintenanceReadinessOptions = {}
 ): Promise<GuardianMaintenanceReadiness> {
   let guardianRoot: Awaited<ReturnType<typeof lstat>>;
   try {
     guardianRoot = await lstat(dirname(authorizationPath));
   } catch (error) {
-    if (isErrorCode(error, "ENOENT")) return { ready: true, guardianInstalled: false, message: null };
-    return maintenanceNotReady(`Vigil could not inspect its system guardian: ${errorMessage(error)}`);
+    if (isErrorCode(error, "ENOENT")) {
+      return {
+        ready: true,
+        guardianInstalled: false,
+        reason: "not-installed",
+        setupRequired: false,
+        setupSupported: false,
+        message: null
+      };
+    }
+    return maintenanceNotReady(
+      `Vigil could not inspect its system guardian: ${errorMessage(error)}`,
+      "inspection-failed"
+    );
   }
   if (!guardianRoot.isDirectory() || guardianRoot.isSymbolicLink() || guardianRoot.uid !== expectedUid || (guardianRoot.mode & 0o022) !== 0) {
-    return maintenanceNotReady("Vigil's system guardian directory is unsafe.");
+    return maintenanceNotReady("Vigil's system guardian directory is unsafe.", "unsafe");
+  }
+
+  const inspectProductionTopology = authorizationPath === SYSTEM_GUARDIAN_AUTHORIZATION_PATH
+    && guardianScriptPath === SYSTEM_GUARDIAN_SCRIPT_PATH
+    && expectedUid === 0;
+  const guardianPlistPath = options.guardianPlistPath === undefined
+    ? (inspectProductionTopology ? SYSTEM_GUARDIAN_PLIST_PATH : null)
+    : options.guardianPlistPath;
+  const topology = guardianPlistPath
+    ? await inspectGuardianPlistTopology(
+        guardianPlistPath,
+        guardianScriptPath,
+        options.guardianLabel || SYSTEM_GUARDIAN_LABEL,
+        expectedUid
+      )
+    : { ready: true as const, reason: "ready" as const, message: "" };
+  if (!topology.ready) {
+    return maintenanceNotReady(
+      topology.message,
+      topology.reason as Exclude<GuardianMaintenanceReadinessReason, "not-installed" | "ready">
+    );
   }
 
   try {
@@ -90,7 +148,7 @@ export async function guardianMaintenanceReadiness(
       lstat(guardianScriptPath)
     ]);
     if (!scriptStat.isFile() || scriptStat.isSymbolicLink() || scriptStat.uid !== expectedUid || (scriptStat.mode & 0o022) !== 0) {
-      return maintenanceNotReady("Vigil's installed system guardian is unsafe.");
+      return maintenanceNotReady("Vigil's installed system guardian is unsafe.", "unsafe");
     }
     const supportsAuthenticatedMaintenance = script.includes("authorize_maintenance_request()")
       && script.includes("vigil-root-maintenance-authorization-v2")
@@ -101,20 +159,115 @@ export async function guardianMaintenanceReadiness(
       && script.includes(authorizationPath);
     if (!supportsAuthenticatedMaintenance) {
       return maintenanceNotReady(
-        "Vigil's system guardian predates authenticated app updates. Refresh it through Vigil's protected maintenance setup before installing this update."
+        "Vigil's system guardian predates authenticated app updates. Refresh it through Vigil's protected maintenance setup before installing this update.",
+        "legacy-protocol",
+        true
       );
     }
-    return { ready: true, guardianInstalled: true, message: null };
+    return {
+      ready: true,
+      guardianInstalled: true,
+      reason: "ready",
+      setupRequired: false,
+      setupSupported: false,
+      message: null
+    };
   } catch (error) {
     if (isErrorCode(error, "ENOENT")) {
-      return maintenanceNotReady("Vigil's system guardian installation is incomplete. Refresh it through Vigil's protected maintenance setup.");
+      return maintenanceNotReady(
+        "Vigil's system guardian installation is incomplete. Refresh it through Vigil's protected maintenance setup.",
+        "incomplete"
+      );
     }
-    return maintenanceNotReady(`Vigil could not verify its system guardian: ${errorMessage(error)}`);
+    return maintenanceNotReady(
+      `Vigil could not verify its system guardian: ${errorMessage(error)}`,
+      "inspection-failed"
+    );
   }
 }
 
-function maintenanceNotReady(message: string): GuardianMaintenanceReadiness {
-  return { ready: false, guardianInstalled: true, message };
+interface GuardianPlistTopologyInspection {
+  ready: boolean;
+  reason: "ready" | "incomplete" | "unsafe" | "topology-mismatch" | "inspection-failed";
+  message: string;
+}
+
+async function inspectGuardianPlistTopology(
+  plistPath: string,
+  guardianScriptPath: string,
+  guardianLabel: string,
+  expectedUid: number
+): Promise<GuardianPlistTopologyInspection> {
+  let text: string;
+  let plistStat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    [text, plistStat] = await Promise.all([
+      readFile(plistPath, "utf8"),
+      lstat(plistPath)
+    ]);
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) {
+      return {
+        ready: false,
+        reason: "incomplete",
+        message: "Vigil's system guardian launch configuration is missing. Refresh it through Vigil's protected maintenance setup."
+      };
+    }
+    return {
+      ready: false,
+      reason: "inspection-failed",
+      message: `Vigil could not inspect its system guardian launch configuration: ${errorMessage(error)}`
+    };
+  }
+  if (!plistStat.isFile()
+    || plistStat.isSymbolicLink()
+    || plistStat.uid !== expectedUid
+    || (plistStat.mode & 0o022) !== 0) {
+    return {
+      ready: false,
+      reason: "unsafe",
+      message: "Vigil's system guardian launch configuration is unsafe."
+    };
+  }
+  try {
+    const plist = parsePlist(text) as Record<string, unknown>;
+    const argumentsValue = Array.isArray(plist.ProgramArguments)
+      ? plist.ProgramArguments
+      : [];
+    const topologyMatches = plist.Label === guardianLabel
+      && argumentsValue[0] === guardianScriptPath
+      && plist.KeepAlive === true
+      && plist.RunAtLoad === true;
+    if (!topologyMatches) {
+      return {
+        ready: false,
+        reason: "topology-mismatch",
+        message: "Vigil's system guardian uses an older launch configuration that cannot be refreshed automatically."
+      };
+    }
+  } catch (error) {
+    return {
+      ready: false,
+      reason: "topology-mismatch",
+      message: `Vigil's system guardian launch configuration is invalid: ${errorMessage(error)}`
+    };
+  }
+  return { ready: true, reason: "ready", message: "" };
+}
+
+function maintenanceNotReady(
+  message: string,
+  reason: Exclude<GuardianMaintenanceReadinessReason, "not-installed" | "ready">,
+  setupSupported = false
+): GuardianMaintenanceReadiness {
+  return {
+    ready: false,
+    guardianInstalled: true,
+    reason,
+    setupRequired: true,
+    setupSupported,
+    message
+  };
 }
 
 export async function beginGuardianMaintenance(

@@ -26,7 +26,7 @@ interface VigilAppUpdateWindow extends Window {
 export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppUpdatePanelContext) {
   let cached: UnknownRecord | null = null;
   let requestInFlight = false;
-  let visibleOperation: "checking" | "starting" | null = null;
+  let visibleOperation: "checking" | "starting" | "setting-up" | null = null;
   let runningRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let requestVersion = 0;
   let acceptedStateRevision = -1;
@@ -43,8 +43,9 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
       }
       $("#checkAppUpdate").addEventListener("click", () => {
         if (requestInFlight) return;
-        if (!currentView().actionEnabled) return;
-        if (canInstall(cached)) {
+        const view = currentView();
+        if (!view.actionEnabled) return;
+        if (view.actionKind === "update" || view.actionKind === "setup-update") {
           void startUpdate();
           return;
         }
@@ -94,7 +95,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     if (requestInFlight) return;
     const submittedVersion = ++requestVersion;
     requestInFlight = true;
-    visibleOperation = "starting";
+    visibleOperation = currentView().actionKind === "setup-update" ? "setting-up" : "starting";
     renderStatus(cached);
     try {
       const status = await requestStart();
@@ -108,7 +109,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     } catch (error) {
       if (submittedVersion !== requestVersion) return;
       const message = errorMessage(error);
-      cached = failedStatus(message, cached);
+      cached = failedStatus(message, cached, true);
       toast(message);
     } finally {
       if (submittedVersion !== requestVersion) return;
@@ -172,10 +173,18 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
   }
 
   function renderStatus(status: UnknownRecord | null): void {
+    const panel = $("#appUpdatePanel");
     const button = $("#checkAppUpdate");
+    const progress = $("#appUpdateProgress");
     const view = currentView(status);
+    panel.setAttribute("aria-busy", String(view.busy));
+    $("#appUpdateStatus").textContent = view.statusMessage;
+    $("#appUpdateHelp").textContent = view.helpMessage;
+    progress.hidden = !view.showProgress;
+    progress.setAttribute("aria-hidden", String(!view.showProgress));
+    if (view.progressLabel) progress.setAttribute("aria-valuetext", view.progressLabel);
+    else progress.removeAttribute("aria-valuetext");
     if (!status) {
-      $("#appUpdateStatus").textContent = view.statusMessage;
       $("#appUpdateMeta").textContent = "--";
       button.textContent = view.actionLabel;
       button.disabled = !view.actionEnabled;
@@ -188,7 +197,6 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     const appBundleOutdated = Boolean(status.appBundleOutdated);
     const currentCommit = shortCommit(status.currentCommit);
     const branch = String(status.branch || "");
-    $("#appUpdateStatus").textContent = view.statusMessage;
     $("#appUpdateMeta").textContent = [
       branch,
       currentCommit,
@@ -196,23 +204,21 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
       appBundleOutdated ? "app stale" : "",
       dirty ? "local edits" : "",
       status.appBuiltAt ? `built ${formatDate(status.appBuiltAt)}` : ""
-    ].filter(Boolean).join(" | ") || "--";
+    ].filter(Boolean).join(" · ") || "--";
     button.textContent = view.actionLabel;
     button.disabled = !view.actionEnabled;
-    button.classList.toggle("primary", view.installable);
-    button.classList.toggle("secondary", !view.installable);
+    const primaryAction = view.actionKind === "update" || view.actionKind === "setup-update";
+    button.classList.toggle("primary", primaryAction);
+    button.classList.toggle("secondary", !primaryAction);
   }
 
   function currentView(status: UnknownRecord | null = cached) {
     return deriveAppUpdateViewState(status, {
       checking: visibleOperation === "checking",
-      starting: visibleOperation === "starting"
+      starting: visibleOperation === "starting",
+      settingUp: visibleOperation === "setting-up"
     });
   }
-}
-
-function canInstall(status: UnknownRecord | null): boolean {
-  return deriveAppUpdateViewState(status).installable;
 }
 
 function appUpdateBridge(): VigilAppUpdateBridge | null {
@@ -240,14 +246,21 @@ function statusResult(value: unknown, fallback: string): UnknownRecord {
   };
 }
 
-function failedStatus(message: string, previous: UnknownRecord | null = null): UnknownRecord {
+function failedStatus(
+  message: string,
+  previous: UnknownRecord | null = null,
+  preserveSelectedUpdate = false
+): UnknownRecord {
   return {
     ...(previous || {}),
     ok: false,
-    checkOk: false,
+    checkOk: preserveSelectedUpdate ? previous?.checkOk !== false : false,
     supported: previous?.supported !== false,
     running: previous?.running === true,
-    updateAvailable: false,
+    updateAvailable: preserveSelectedUpdate ? previous?.updateAvailable === true : false,
+    updateCandidateAvailable: preserveSelectedUpdate
+      ? previous?.updateCandidateAvailable === true || previous?.updateAvailable === true
+      : false,
     message
   };
 }

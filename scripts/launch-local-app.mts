@@ -41,6 +41,11 @@ import type {
 } from "../src/updateTransaction.js";
 import { sourceFingerprint } from "./source-fingerprint.mjs";
 import { gitExecutable } from "./git-executable.mjs";
+import {
+  attachLocalDependencyCache,
+  describeLocalDependencyCache,
+  publishLocalDependencyCache
+} from "./local-dependency-cache.mjs";
 
 const HEALTH_TIMEOUT_MS = 30_000;
 const UPDATER_LOCK_HANDOFF_TIMEOUT_MS = 10_000;
@@ -830,21 +835,55 @@ async function buildLocalApp(
   packageOutputRoot: string,
   log: ReturnType<typeof createWriteStream>
 ): Promise<number | null> {
-  const installCode = await runBuildCommand(options.npmPath, ["ci"], snapshotRoot, log, {
-    VIGIL_BUILD_SOURCE_ROOT: options.repoRoot
-  }, DEPENDENCY_INSTALL_TIMEOUT_MS);
-  if (installCode !== 0) return installCode;
+  const dependencyStartedAt = Date.now();
+  const dependencyCache = await describeLocalDependencyCache(snapshotRoot, options.nodePath, options.npmPath);
+  const updaterDir = dirname(options.statusPath);
+  const cacheHit = await attachLocalDependencyCache(snapshotRoot, updaterDir, dependencyCache);
+  if (cacheHit) {
+    log.write(
+      `[${new Date().toISOString()}] Reusing locked local build dependencies ${dependencyCache.key.slice(0, 12)} `
+      + `(warm dependency stage ${formatBuildSeconds(dependencyStartedAt)}s).\n`
+    );
+  } else {
+    log.write(`[${new Date().toISOString()}] Preparing locked local build dependencies ${dependencyCache.key.slice(0, 12)}.\n`);
+    const installCode = await runBuildCommand(
+      options.npmPath,
+      ["ci", "--prefer-offline", "--no-audit", "--no-fund"],
+      snapshotRoot,
+      log,
+      { VIGIL_BUILD_SOURCE_ROOT: options.repoRoot },
+      DEPENDENCY_INSTALL_TIMEOUT_MS
+    );
+    if (installCode !== 0) return installCode;
+    await publishLocalDependencyCache(snapshotRoot, updaterDir, dependencyCache);
+    log.write(
+      `[${new Date().toISOString()}] Locked local build dependencies cached `
+      + `(cold dependency stage ${formatBuildSeconds(dependencyStartedAt)}s).\n`
+    );
+  }
+  const runtimeStartedAt = Date.now();
   const buildCode = await runBuildCommand(options.npmPath, ["run", "build"], snapshotRoot, log, {
     VIGIL_BUILD_SOURCE_ROOT: options.repoRoot
   }, RUNTIME_BUILD_TIMEOUT_MS);
   if (buildCode !== 0) return buildCode;
-  return await runBuildCommand(options.nodePath, [
-    join(snapshotRoot, "scripts", "package-mac.mjs"),
-    "dir",
-    `-c.directories.output=${packageOutputRoot}`
+  log.write(`[${new Date().toISOString()}] Rebuilt local runtime in ${formatBuildSeconds(runtimeStartedAt)}s.\n`);
+  const packageStartedAt = Date.now();
+  const packageCode = await runBuildCommand(options.nodePath, [
+    join(snapshotRoot, "scripts", "package-local-mac.mjs"),
+    "--template-app", options.appPath,
+    "--output", packageOutputRoot
   ], snapshotRoot, log, {
     VIGIL_BUILD_SOURCE_ROOT: options.repoRoot
   }, APP_PACKAGE_TIMEOUT_MS);
+  log.write(
+    `[${new Date().toISOString()}] Local package stage finished in ${formatBuildSeconds(packageStartedAt)}s `
+    + `(status ${packageCode ?? "signal"}).\n`
+  );
+  return packageCode;
+}
+
+function formatBuildSeconds(startedAt: number): string {
+  return ((Date.now() - startedAt) / 1_000).toFixed(2);
 }
 
 async function runBuildCommand(

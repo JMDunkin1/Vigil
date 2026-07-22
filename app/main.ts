@@ -67,8 +67,11 @@ interface AppUpdateActionState {
   checking: boolean;
   running: boolean;
   installable: boolean;
+  candidateAvailable: boolean;
   localChanges: boolean;
   maintenanceReady: boolean;
+  maintenanceSetupRequired: boolean;
+  maintenanceSetupSupported: boolean;
   recoveryPending: boolean;
   recoveryBlocked: boolean;
   supported: boolean;
@@ -114,7 +117,7 @@ let currentAppUrl: string | null = null;
 let revealWindowWhenReady = false;
 let appUpdateController: VigilAppUpdateController | null = null;
 let appUpdateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-let appUpdateOperation: "checking" | "starting" | null = null;
+let appUpdateOperation: "checking" | "setting-up" | "starting" | null = null;
 // Request versions invalidate snapshots captured before another surface starts
 // an operation; state revisions order the snapshots published to the renderer.
 let appUpdateRequestVersion = 0;
@@ -131,8 +134,11 @@ let appUpdateActionState: AppUpdateActionState = {
   checking: false,
   running: false,
   installable: false,
+  candidateAvailable: false,
   localChanges: false,
   maintenanceReady: true,
+  maintenanceSetupRequired: false,
+  maintenanceSetupSupported: false,
   recoveryPending: false,
   recoveryBlocked: false,
   supported: true,
@@ -1604,16 +1610,19 @@ function nativeAppUpdateView() {
     checkOk: appUpdateActionState.checkOk,
     supported: appUpdateActionState.supported,
     running: appUpdateActionState.running,
-    updateAvailable: appUpdateActionState.installable,
+    updateAvailable: appUpdateActionState.candidateAvailable,
     localChanges: appUpdateActionState.localChanges,
     maintenanceReady: appUpdateActionState.maintenanceReady,
+    maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+    maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
     recoveryPending: appUpdateActionState.recoveryPending,
     recoveryBlocked: appUpdateActionState.recoveryBlocked,
     phase: appUpdateActionState.phase,
     message: appUpdateActionState.message
   }, {
     checking: appUpdateOperation === "checking",
-    starting: appUpdateOperation === "starting"
+    starting: appUpdateOperation === "starting",
+    settingUp: appUpdateOperation === "setting-up"
   });
 }
 
@@ -1622,7 +1631,8 @@ async function handleAppUpdateAction(appUrl: string): Promise<void> {
     || appUpdateActionState.running
     || appUpdateActionState.recoveryPending
     || appUpdateActionState.recoveryBlocked) return;
-  if (appUpdateActionState.installable) {
+  if (appUpdateActionState.candidateAvailable
+    && (appUpdateActionState.maintenanceReady || appUpdateActionState.maintenanceSetupSupported)) {
     await startAppUpdate(appUrl);
     return;
   }
@@ -1691,8 +1701,11 @@ async function checkAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
     checking: true,
     running: false,
     installable: false,
+    candidateAvailable: false,
     localChanges: false,
     maintenanceReady: appUpdateActionState.maintenanceReady,
+    maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+    maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
     recoveryPending: false,
     recoveryBlocked: false,
     supported: appUpdateActionState.supported,
@@ -1716,8 +1729,11 @@ async function checkAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
       checking: false,
       running: false,
       installable: false,
+      candidateAvailable: false,
       localChanges: false,
-      maintenanceReady: true,
+      maintenanceReady: appUpdateActionState.maintenanceReady,
+      maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+      maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
       recoveryPending: false,
       recoveryBlocked: false,
       supported: appUpdateActionState.supported,
@@ -1744,20 +1760,28 @@ async function startAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
     return appUpdateStatePayload({ ok: false, error: message });
   }
   const requestVersion = ++appUpdateRequestVersion;
-  appUpdateOperation = "starting";
+  const settingUp = !appUpdateActionState.maintenanceReady
+    && appUpdateActionState.maintenanceSetupRequired
+    && appUpdateActionState.maintenanceSetupSupported;
+  appUpdateOperation = settingUp ? "setting-up" : "starting";
   appUpdateActionState = {
     checked: true,
     checking: false,
     running: true,
     installable: false,
-    localChanges: false,
-    maintenanceReady: true,
+    candidateAvailable: appUpdateActionState.candidateAvailable,
+    localChanges: appUpdateActionState.localChanges,
+    maintenanceReady: appUpdateActionState.maintenanceReady,
+    maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+    maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
     recoveryPending: false,
     recoveryBlocked: false,
     supported: appUpdateActionState.supported,
     checkOk: true,
-    phase: "starting",
-    message: "Vigil will quit, update, and reopen"
+    phase: settingUp ? "setting-up" : "starting",
+    message: settingUp
+      ? "Approve the one-time macOS prompt; Vigil will stay online and continue automatically."
+      : "Building latest changes in the background; Vigil stays active until the verified replacement is ready."
   };
   publishAppUpdateState(appUrl);
   let responseBase: Record<string, unknown> = {};
@@ -1775,8 +1799,11 @@ async function startAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
       checking: false,
       running: false,
       installable: false,
-      localChanges: false,
-      maintenanceReady: true,
+      candidateAvailable: appUpdateActionState.candidateAvailable,
+      localChanges: appUpdateActionState.localChanges,
+      maintenanceReady: appUpdateActionState.maintenanceReady,
+      maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+      maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
       recoveryPending: false,
       recoveryBlocked: false,
       supported: appUpdateActionState.supported,
@@ -1842,8 +1869,11 @@ async function refreshAppUpdateStateOnce(appUrl: string): Promise<Record<string,
       checking: false,
       running: appUpdateActionState.running,
       installable: false,
+      candidateAvailable: appUpdateActionState.candidateAvailable,
       localChanges: appUpdateActionState.localChanges,
       maintenanceReady: appUpdateActionState.maintenanceReady,
+      maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+      maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
       recoveryPending: appUpdateActionState.recoveryPending,
       recoveryBlocked: appUpdateActionState.recoveryBlocked,
       supported: appUpdateActionState.supported,
@@ -1861,13 +1891,17 @@ async function refreshAppUpdateStateOnce(appUrl: string): Promise<Record<string,
 function applyAppUpdateStatus(status: Record<string, unknown>): void {
   const installable = isInstallableAppUpdate(status);
   const recoveryBlocked = status.recoveryBlocked === true;
+  const candidateAvailable = status.updateCandidateAvailable === true || status.updateAvailable === true;
   appUpdateActionState = {
     checked: true,
     checking: false,
     running: Boolean(status.running),
     installable,
+    candidateAvailable,
     localChanges: Boolean(status.localChanges),
     maintenanceReady: status.maintenanceReady !== false,
+    maintenanceSetupRequired: status.maintenanceSetupRequired === true,
+    maintenanceSetupSupported: status.maintenanceSetupSupported === true,
     recoveryPending: status.recoveryPending === true && !recoveryBlocked,
     recoveryBlocked,
     supported: status.supported !== false,
@@ -1898,9 +1932,12 @@ function appUpdateStatePayload(base: Record<string, unknown> = {}): Record<strin
     checkOk: appUpdateActionState.checkOk,
     supported: appUpdateActionState.supported,
     running: appUpdateActionState.running,
-    updateAvailable: appUpdateActionState.installable,
+    updateAvailable: appUpdateActionState.candidateAvailable,
+    updateCandidateAvailable: appUpdateActionState.candidateAvailable,
     localChanges: appUpdateActionState.localChanges,
     maintenanceReady: appUpdateActionState.maintenanceReady,
+    maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+    maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
     recoveryPending: appUpdateActionState.recoveryPending,
     recoveryBlocked: appUpdateActionState.recoveryBlocked,
     operation: appUpdateOperation,
