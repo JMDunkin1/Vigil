@@ -27,6 +27,7 @@ import {
   markUpdateRecoveryCommitted,
   readUpdateRecoveryManifest,
   reconcileStagedUpdateArtifactCandidate,
+  recoveryDependenciesForStableHelper,
   recoverUpdateTransaction,
   recoverUpdateTransactionFromPolicyFile,
   stageUpdateArtifactCandidate,
@@ -37,6 +38,7 @@ import type {
   UpdateArtifactIdentity,
   UpdateArtifactPlan,
   UpdateRecoveryBundleSource,
+  UpdateRecoveryDependencies,
   UpdateRecoveryOutcome,
   UpdateRecoveryPolicy
 } from "../src/updateTransaction.js";
@@ -50,6 +52,12 @@ import {
 
 const HEALTH_TIMEOUT_MS = 30_000;
 const UPDATER_LOCK_HANDOFF_TIMEOUT_MS = 10_000;
+// The restarted candidate independently records the same commit intent after
+// sustained health. Its exact app verification can legitimately hold the
+// recovery lock longer than the short default used by ordinary callers, so
+// the updater's redundant handoff must wait for that bounded operation instead
+// of mistaking safe serialization for a failed update.
+const RECOVERY_LOCK_HANDOFF_TIMEOUT_MS = 60_000;
 const SOURCE_COMMAND_TIMEOUT_MS = 60_000;
 const DEPENDENCY_INSTALL_TIMEOUT_MS = 15 * 60_000;
 const RUNTIME_BUILD_TIMEOUT_MS = 15 * 60_000;
@@ -104,6 +112,7 @@ async function main(): Promise<void> {
   let guardianMaintenance: GuardianMaintenanceTransaction | null = null;
   let appPlan: UpdateArtifactPlan | null = null;
   let recoveryPolicy: UpdateRecoveryPolicy | null = null;
+  let recoveryDependencies: UpdateRecoveryDependencies | null = null;
   let legacyAgent: LegacyAgentRecovery | null = null;
   let legacyAgentStopped = false;
   let parentExited = false;
@@ -207,6 +216,10 @@ async function main(): Promise<void> {
       app: appPlan,
       recoveryBundle
     });
+    recoveryDependencies = {
+      ...await recoveryDependenciesForStableHelper(recoveryPolicy, recoveryManifest),
+      lockTimeoutMs: RECOVERY_LOCK_HANDOFF_TIMEOUT_MS
+    };
     await waitForGuardianRecoveryAuthorization(
       options.lockPath,
       options.lockToken,
@@ -219,7 +232,8 @@ async function main(): Promise<void> {
       recoveryPolicy,
       options.lockToken,
       appPlan,
-      "app"
+      "app",
+      recoveryDependencies
     );
     await assertLocalAppCodeDirectoryHashes(appPlan, true);
     await verifyLocalBuildCandidate(options.appPath, options, buildStartedAt);
@@ -227,9 +241,12 @@ async function main(): Promise<void> {
     log.write(`[${new Date().toISOString()}] Reopening rebuilt Vigil at ${options.appPath}.\n`);
     await reopenInstalledApp(options.appPath, log);
     await verifyReplacement(options.appPath, recoveryPolicy.expectedDataDir, legacyAgent?.context);
-    await markUpdateRecoveryCommitIntent(recoveryPolicy, options.lockToken);
-    await markUpdateRecoveryCommitted(recoveryPolicy, options.lockToken);
-    const outcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+    await markUpdateRecoveryCommitIntent(recoveryPolicy, options.lockToken, recoveryDependencies);
+    await markUpdateRecoveryCommitted(recoveryPolicy, options.lockToken, recoveryDependencies);
+    const outcome = await recoverUpdateTransaction(recoveryPolicy, {
+      ...recoveryDependencies,
+      allowRollback: false
+    });
     if (!outcome || outcome.attemptId !== options.lockToken || outcome.status !== "complete") {
       throw new Error(outcome?.message || "Vigil could not durably finalize the verified local update transaction.");
     }
@@ -244,6 +261,7 @@ async function main(): Promise<void> {
       options,
       log,
       recoveryPolicy,
+      recoveryDependencies,
       appPlan,
       legacyAgent,
       legacyAgentStopped,
@@ -377,6 +395,7 @@ async function settleLocalGlobalUpdateAfterFailure({
   options,
   log,
   recoveryPolicy,
+  recoveryDependencies,
   appPlan,
   legacyAgent,
   legacyAgentStopped,
@@ -385,6 +404,7 @@ async function settleLocalGlobalUpdateAfterFailure({
   options: Options;
   log: ReturnType<typeof createWriteStream>;
   recoveryPolicy: UpdateRecoveryPolicy | null;
+  recoveryDependencies: UpdateRecoveryDependencies | null;
   appPlan: UpdateArtifactPlan | null;
   legacyAgent: LegacyAgentRecovery | null;
   legacyAgentStopped: boolean;
@@ -393,6 +413,7 @@ async function settleLocalGlobalUpdateAfterFailure({
   const errors: string[] = [];
   let outcome: UpdateRecoveryOutcome | null = null;
   let manifestObserved = false;
+  const activeRecoveryDependencies = recoveryDependencies || {};
   if (recoveryPolicy) {
     try {
       manifestObserved = true;
@@ -400,16 +421,22 @@ async function settleLocalGlobalUpdateAfterFailure({
       const manifest = await readUpdateRecoveryManifest(recoveryPolicy);
       manifestObserved ||= manifest !== null;
       if (manifest && (manifest.state === "commit-intent" || manifest.state === "committed")) {
-        outcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+        outcome = await recoverUpdateTransaction(recoveryPolicy, {
+          ...activeRecoveryDependencies,
+          allowRollback: false
+        });
       } else if (manifest) {
         if (!parentExited) {
           errors.push("The pending local transaction is waiting for the original Vigil process to exit before rollback.");
         } else {
           await terminateLocalInstalledCandidate(options.appPath, appPlan);
-          outcome = await recoverUpdateTransaction(recoveryPolicy);
+          outcome = await recoverUpdateTransaction(recoveryPolicy, activeRecoveryDependencies);
         }
       } else {
-        const priorOutcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+        const priorOutcome = await recoverUpdateTransaction(recoveryPolicy, {
+          ...activeRecoveryDependencies,
+          allowRollback: false
+        });
         if (priorOutcome?.attemptId === options.lockToken) outcome = priorOutcome;
       }
     } catch (recoveryError) {

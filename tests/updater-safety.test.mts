@@ -459,13 +459,18 @@ assert.ok(
 );
 assert.match(
   localLauncherSource,
-  /await verifyReplacement\(options\.appPath, recoveryPolicy\.expectedDataDir, legacyAgent\?\.context\);[\s\S]*?await markUpdateRecoveryCommitIntent\(recoveryPolicy, options\.lockToken\)[\s\S]*?await markUpdateRecoveryCommitted\(recoveryPolicy, options\.lockToken\)[\s\S]*?recoverUpdateTransaction\(recoveryPolicy, \{ allowRollback: false \}\)/u,
+  /await verifyReplacement\(options\.appPath, recoveryPolicy\.expectedDataDir, legacyAgent\?\.context\);[\s\S]*?await markUpdateRecoveryCommitIntent\(recoveryPolicy, options\.lockToken, recoveryDependencies\)[\s\S]*?await markUpdateRecoveryCommitted\(recoveryPolicy, options\.lockToken, recoveryDependencies\)[\s\S]*?recoverUpdateTransaction\(recoveryPolicy, \{\s*\.\.\.recoveryDependencies,\s*allowRollback: false\s*\}\)/u,
   "local replacement must pass sustained signed health before the attempt-bound durable commit"
 );
 assert.match(
   localLauncherSource,
-  /async function settleLocalGlobalUpdateAfterFailure[\s\S]*?terminateLocalInstalledCandidate\(options\.appPath, appPlan\)[\s\S]*?recoverUpdateTransaction\(recoveryPolicy\)[\s\S]*?outcome\.status === "failed-recovered"/u,
+  /async function settleLocalGlobalUpdateAfterFailure[\s\S]*?terminateLocalInstalledCandidate\(options\.appPath, appPlan\)[\s\S]*?recoverUpdateTransaction\(recoveryPolicy, activeRecoveryDependencies\)[\s\S]*?outcome\.status === "failed-recovered"/u,
   "a pending local transaction must stop only its identified candidate before global rollback"
+);
+assert.match(
+  localLauncherSource,
+  /await recoveryDependenciesForStableHelper\(recoveryPolicy, recoveryManifest\)[\s\S]*?activateStagedUpdateArtifact\([\s\S]*?"app",\s*recoveryDependencies\s*\)/u,
+  "local activation and finalization must use the recovery helper copy that survives app replacement"
 );
 assert.match(
   localLauncherSource,
@@ -592,8 +597,18 @@ assert.match(localLauncherSource, /"Library", "Logs", "Vigil", "local-launch\.lo
 assert.match(updateScriptSource, /await openAndVerifyReplacement\(/u);
 assert.match(
   updateScriptSource,
-  /async function settleGlobalUpdateAfterFailure[\s\S]*?await terminateInstalledCandidate\(appPlan\)[\s\S]*?outcome = await recoverUpdateTransaction\(recoveryPolicy\)/u,
+  /async function settleGlobalUpdateAfterFailure[\s\S]*?await terminateInstalledCandidate\(appPlan\)[\s\S]*?outcome = await recoverUpdateTransaction\(recoveryPolicy, activeRecoveryDependencies\)/u,
   "failed packaged updates must stop only the exact installed candidate before global rollback"
+);
+assert.match(
+  updateScriptSource,
+  /await recoveryDependenciesForStableHelper\(recoveryPolicy, recoveryManifest\)[\s\S]*?activateStagedUpdateArtifact\([\s\S]*?"runtime",\s*recoveryDependencies\s*\)[\s\S]*?activateStagedUpdateArtifact\([\s\S]*?"app",\s*recoveryDependencies\s*\)/u,
+  "packaged runtime and app activation must use the recovery helper copy that survives app replacement"
+);
+assert.match(
+  updateScriptSource,
+  /markUpdateRecoveryCommitted\(recoveryPolicy, options\.lockToken, recoveryDependencies\)[\s\S]*?recoverUpdateTransaction\(recoveryPolicy, \{\s*\.\.\.recoveryDependencies,\s*allowRollback: false\s*\}\)/u,
+  "packaged durable finalization must retain the policy-bound stable helper"
 );
 assert.match(updaterSource, /"--user-data-dir", userDataDir/u, "both replacement launchers must receive Electron's exact supervisor marker directory");
 assert.match(updateScriptSource, /BACKGROUND_LAUNCH_ARG, SAFETY_BOUNDARY_ARG/u, "remote replacement launches must expose Vigil's do-not-terminate safety boundary");
@@ -617,6 +632,11 @@ assert.match(
 const failedUpdateRecoveryStart = updateScriptSource.indexOf("async function settleGlobalUpdateAfterFailure");
 const failedUpdateRecoveryEnd = updateScriptSource.indexOf("\nasync function terminateInstalledCandidate", failedUpdateRecoveryStart);
 const failedUpdateRecoverySource = updateScriptSource.slice(failedUpdateRecoveryStart, failedUpdateRecoveryEnd);
+assert.match(
+  failedUpdateRecoverySource,
+  /recoverUpdateTransaction\(recoveryPolicy, \{\s*\.\.\.activeRecoveryDependencies,\s*allowRollback: false\s*\}\)[\s\S]*?recoverUpdateTransaction\(recoveryPolicy, activeRecoveryDependencies\)/u,
+  "packaged failure settlement must retain the stable helper for roll-forward and rollback"
+);
 assert.doesNotMatch(
   failedUpdateRecoverySource,
   /suspendEmbeddedRuntimeSupervisor/u,
@@ -636,8 +656,8 @@ assert.match(
 );
 assert.ok(
   updateScriptSource.indexOf("await openAndVerifyReplacement(")
-    < updateScriptSource.indexOf("await markUpdateRecoveryCommitIntent(recoveryPolicy, options.lockToken)")
-    && updateScriptSource.indexOf("await markUpdateRecoveryCommitIntent(recoveryPolicy, options.lockToken)")
+    < updateScriptSource.indexOf("await markUpdateRecoveryCommitIntent(recoveryPolicy, options.lockToken")
+    && updateScriptSource.indexOf("await markUpdateRecoveryCommitIntent(recoveryPolicy, options.lockToken")
       < updateScriptSource.indexOf("[\"merge\", \"--ff-only\", stagedBuild.expectedCommit]"),
   "the replacement must be healthy before the source checkout is fast-forwarded"
 );

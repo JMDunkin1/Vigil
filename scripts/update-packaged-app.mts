@@ -29,6 +29,7 @@ import {
   markUpdateRecoveryCommitted,
   readUpdateRecoveryManifest,
   reconcileStagedUpdateArtifactCandidate,
+  recoveryDependenciesForStableHelper,
   recoverUpdateTransaction,
   recoverUpdateTransactionFromPolicyFile,
   stageUpdateArtifactCandidate,
@@ -39,6 +40,7 @@ import type {
   UpdateArtifactIdentity,
   UpdateArtifactPlan,
   UpdateRecoveryBundleSource,
+  UpdateRecoveryDependencies,
   UpdateRecoveryOutcome,
   UpdateRecoveryPolicy
 } from "../src/updateTransaction.js";
@@ -132,6 +134,12 @@ interface AtomicInstallJournal {
 
 const HEALTH_TIMEOUT_MS = 30_000;
 const UPDATER_LOCK_HANDOFF_TIMEOUT_MS = 10_000;
+// The restarted candidate independently records the same commit intent after
+// sustained health. Its exact app verification can legitimately hold the
+// recovery lock longer than the short default used by ordinary callers, so
+// the updater's redundant handoff must wait for that bounded operation instead
+// of mistaking safe serialization for a failed update.
+const RECOVERY_LOCK_HANDOFF_TIMEOUT_MS = 60_000;
 const SOURCE_COMMAND_TIMEOUT_MS = 60_000;
 const DEPENDENCY_INSTALL_TIMEOUT_MS = 15 * 60_000;
 const RUNTIME_BUILD_TIMEOUT_MS = 15 * 60_000;
@@ -158,6 +166,7 @@ export async function runPackagedUpdate(): Promise<void> {
   let appPlan: UpdateArtifactPlan | null = null;
   let runtimePlan: UpdateArtifactPlan | null = null;
   let recoveryPolicy: UpdateRecoveryPolicy | null = null;
+  let recoveryDependencies: UpdateRecoveryDependencies | null = null;
   let recoveryBundle: UpdateRecoveryBundleSource | null = null;
   let launchAgentTransition: LaunchAgentRecovery | null = null;
   let guardianMaintenance: GuardianMaintenanceTransaction | null = null;
@@ -258,6 +267,10 @@ export async function runPackagedUpdate(): Promise<void> {
       runtimes: [runtimePlan],
       recoveryBundle
     });
+    recoveryDependencies = {
+      ...await recoveryDependenciesForStableHelper(recoveryPolicy, recoveryManifest),
+      lockTimeoutMs: RECOVERY_LOCK_HANDOFF_TIMEOUT_MS
+    };
     await waitForGuardianRecoveryAuthorization(
       options.lockPath,
       options.lockToken,
@@ -271,7 +284,8 @@ export async function runPackagedUpdate(): Promise<void> {
       recoveryPolicy,
       options.lockToken,
       runtimePlan,
-      "runtime"
+      "runtime",
+      recoveryDependencies
     );
     await verifyBuildInfo(
       join(installedRuntimePath, "build-info.json"),
@@ -283,7 +297,8 @@ export async function runPackagedUpdate(): Promise<void> {
       recoveryPolicy,
       options.lockToken,
       appPlan,
-      "app"
+      "app",
+      recoveryDependencies
     );
     await assertAppPlanCodeDirectoryHashes(appPlan, true);
     await verifyInstalledAppBuild(stagedBuild.expectedCommit);
@@ -294,7 +309,7 @@ export async function runPackagedUpdate(): Promise<void> {
     // The candidate app repeats this transition after its own sustained,
     // signed-health check. Recording the same attempt here makes the handshake
     // idempotent if either process exits immediately after attestation.
-    await markUpdateRecoveryCommitIntent(recoveryPolicy, options.lockToken);
+    await markUpdateRecoveryCommitIntent(recoveryPolicy, options.lockToken, recoveryDependencies);
 
     await assertActiveCheckoutUnchanged(stagedBuild, recoveryBundle.gitPath);
     await status("updating-source", "Fast-forwarding Vigil source to the verified build");
@@ -312,8 +327,11 @@ export async function runPackagedUpdate(): Promise<void> {
       }
     }
 
-    await markUpdateRecoveryCommitted(recoveryPolicy, options.lockToken);
-    const outcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+    await markUpdateRecoveryCommitted(recoveryPolicy, options.lockToken, recoveryDependencies);
+    const outcome = await recoverUpdateTransaction(recoveryPolicy, {
+      ...recoveryDependencies,
+      allowRollback: false
+    });
     if (!outcome
       || outcome.attemptId !== options.lockToken
       || outcome.status !== "complete"
@@ -345,6 +363,7 @@ export async function runPackagedUpdate(): Promise<void> {
     }
     const recovery = await settleGlobalUpdateAfterFailure({
       recoveryPolicy,
+      recoveryDependencies,
       stagedPlans: [appPlan, runtimePlan],
       launchAgentTransition,
       launchAgentStopped,
@@ -482,6 +501,7 @@ export async function resolveInstalledRuntimeTarget(repoRootInput: string): Prom
 
 async function settleGlobalUpdateAfterFailure({
   recoveryPolicy,
+  recoveryDependencies,
   stagedPlans,
   launchAgentTransition,
   launchAgentStopped,
@@ -490,6 +510,7 @@ async function settleGlobalUpdateAfterFailure({
   replacementDataDirectory
 }: {
   recoveryPolicy: UpdateRecoveryPolicy | null;
+  recoveryDependencies: UpdateRecoveryDependencies | null;
   stagedPlans: Array<UpdateArtifactPlan | null>;
   launchAgentTransition: LaunchAgentRecovery | null;
   launchAgentStopped: boolean;
@@ -501,6 +522,7 @@ async function settleGlobalUpdateAfterFailure({
   const attemptId = typeof options === "undefined" ? "" : options.lockToken;
   let outcome: UpdateRecoveryOutcome | null = null;
   let manifestObserved = false;
+  const activeRecoveryDependencies = recoveryDependencies || {};
   if (recoveryPolicy) {
     try {
       manifestObserved = true;
@@ -508,17 +530,23 @@ async function settleGlobalUpdateAfterFailure({
       const manifest = await readUpdateRecoveryManifest(recoveryPolicy);
       manifestObserved ||= manifest !== null;
       if (manifest && (manifest.state === "commit-intent" || manifest.state === "committed")) {
-        outcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+        outcome = await recoverUpdateTransaction(recoveryPolicy, {
+          ...activeRecoveryDependencies,
+          allowRollback: false
+        });
       } else if (manifest) {
         if (!parentExited) {
           errors.push("The pending transaction is waiting for the original Vigil process to exit before rollback.");
         } else {
           const appPlan = stagedPlans.find((plan) => plan?.targetPath === options.appPath) || null;
           await terminateInstalledCandidate(appPlan);
-          outcome = await recoverUpdateTransaction(recoveryPolicy);
+          outcome = await recoverUpdateTransaction(recoveryPolicy, activeRecoveryDependencies);
         }
       } else {
-        const priorOutcome = await recoverUpdateTransaction(recoveryPolicy, { allowRollback: false });
+        const priorOutcome = await recoverUpdateTransaction(recoveryPolicy, {
+          ...activeRecoveryDependencies,
+          allowRollback: false
+        });
         if (priorOutcome?.attemptId === attemptId) outcome = priorOutcome;
       }
     } catch (recoveryError) {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   UPDATE_RECOVERY_MANIFEST_FILENAME,
+  UPDATE_RECOVERY_LOCK_FILENAME,
   UPDATE_RECOVERY_OUTCOME_FILENAME,
   UPDATE_RECOVERY_POLICY_FILENAME,
   UPDATE_RECOVERY_RUNTIME_DIRNAME,
@@ -20,6 +21,7 @@ import {
   readUpdateRecoveryOutcome,
   readUpdateRecoveryPolicyFile,
   reconcileStagedUpdateArtifactCandidate,
+  recoveryDependenciesForStableHelper,
   recoverUpdateTransaction,
   stageUpdateArtifactCandidate,
   updateArtifactIdentitiesExactlyMatch
@@ -67,6 +69,9 @@ try {
   await verifyContradictoryCodeDirectoryHashFailsClosed();
   await verifyLegacyGuardianCanNormalizeRuntimeManifest();
   verifyExactIdentityComparisonRejectsPartialAgreement();
+  await verifySuccessfulOperationSurfacesRecoveryLockReleaseFailure();
+  await verifyStableRecoveryHelperReleasesLockAfterAppActivation();
+  await verifyTamperedStableHelperCannotReconcileStaleLock();
   await verifyRecoveryLockSerializesConcurrentCallers();
   await verifyLiveRuntimeModeNeverSwapsCanonicalArtifacts();
   await verifyTamperedAllowlistedPathIsPreserved();
@@ -573,6 +578,129 @@ function verifyExactIdentityComparisonRejectsPartialAgreement(): void {
     ...expected,
     cdHash: "b".repeat(40)
   }), false, "matching inode and mutable build metadata must not override a contradictory CodeDirectory hash");
+}
+
+async function verifySuccessfulOperationSurfacesRecoveryLockReleaseFailure(): Promise<void> {
+  const fixture = await createFixture("release-failure", false);
+  const releaseFailure = new Error("injected recovery lock release failure");
+  const dependencies: UpdateRecoveryDependencies = {
+    ...fixture.dependencies,
+    operations: {
+      ...fixture.operations,
+      async swapPaths() {
+        throw releaseFailure;
+      }
+    }
+  };
+  await assert.rejects(
+    beginUpdateRecoveryTransaction(fixture.policy, fixture.input, dependencies),
+    releaseFailure,
+    "a completed recovery operation must not report success when its live lock could not be released"
+  );
+  assert.ok(
+    await lstat(join(fixture.policy.updaterDir, UPDATE_RECOVERY_LOCK_FILENAME)),
+    "the surfaced failure must preserve the unreleased lock for bounded stale-owner recovery"
+  );
+}
+
+async function verifyStableRecoveryHelperReleasesLockAfterAppActivation(): Promise<void> {
+  const fixture = await createFixture("stable-helper-activation", false);
+  const helperMarker = `${fixture.appPath}.stable-helper-used`;
+  await writeFile(fixture.input.recoveryBundle.helperSourcePath, [
+    "#!/bin/sh",
+    "set -eu",
+    `: > ${JSON.stringify(helperMarker)}`,
+    "probe_tmp=\"$1.vigil-test-swap\"",
+    "mv \"$1\" \"$probe_tmp\"",
+    "mv \"$2\" \"$1\"",
+    "mv \"$probe_tmp\" \"$2\"",
+    ""
+  ].join("\n"), { mode: 0o700 });
+  await chmod(fixture.input.recoveryBundle.helperSourcePath, 0o700);
+  const manifest = await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
+  const stableHelperDependencies = await recoveryDependenciesForStableHelper(fixture.policy, manifest);
+  const dependencies: UpdateRecoveryDependencies = {
+    ...fixture.dependencies,
+    operations: {
+      ...fixture.operations,
+      ...stableHelperDependencies.operations
+    }
+  };
+  await activateStagedUpdateArtifact(
+    fixture.policy,
+    fixture.input.attemptId,
+    fixture.input.app,
+    "app",
+    dependencies
+  );
+  assert.ok(
+    await lstat(helperMarker),
+    "activation must execute the exact helper copied into the private recovery runtime"
+  );
+  await assert.rejects(
+    lstat(join(fixture.policy.updaterDir, UPDATE_RECOVERY_LOCK_FILENAME)),
+    (error: unknown) => isErrorCode(error, "ENOENT"),
+    "app activation must release its lock through the recovery copy that survives bundle replacement"
+  );
+  const first = await markUpdateRecoveryCommitIntent(
+    fixture.policy,
+    fixture.input.attemptId,
+    dependencies
+  );
+  const second = await markUpdateRecoveryCommitIntent(
+    fixture.policy,
+    fixture.input.attemptId,
+    dependencies
+  );
+  assert.equal(first.state, "commit-intent");
+  assert.equal(second.state, "commit-intent");
+  await assert.rejects(
+    lstat(join(fixture.policy.updaterDir, UPDATE_RECOVERY_LOCK_FILENAME)),
+    (error: unknown) => isErrorCode(error, "ENOENT"),
+    "candidate and updater commit-intent calls must remain idempotent without leaking the recovery lock"
+  );
+}
+
+async function verifyTamperedStableHelperCannotReconcileStaleLock(): Promise<void> {
+  const fixture = await createFixture("tampered-stable-helper-lock", false);
+  const manifest = await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
+  const stableHelperDependencies = await recoveryDependenciesForStableHelper(fixture.policy, manifest);
+  const maliciousMarker = join(fixture.root, "tampered-helper-executed");
+  await writeFile(manifest.recovery.helperPath, [
+    "#!/bin/sh",
+    "set -eu",
+    `: > ${JSON.stringify(maliciousMarker)}`,
+    "exit 1",
+    ""
+  ].join("\n"), { mode: 0o700 });
+  await chmod(manifest.recovery.helperPath, 0o700);
+  const lockPath = join(fixture.policy.updaterDir, UPDATE_RECOVERY_LOCK_FILENAME);
+  await writeFile(lockPath, `${JSON.stringify({
+    version: manifest.version,
+    token: "stale-lock-token",
+    pid: 999_999,
+    processStartedAt: "stale-process-identity",
+    createdAt: new Date().toISOString()
+  }, null, 2)}\n`, { mode: 0o600 });
+  await chmod(lockPath, 0o600);
+  const dependencies: UpdateRecoveryDependencies = {
+    ...fixture.dependencies,
+    operations: {
+      ...fixture.operations,
+      ...stableHelperDependencies.operations
+    }
+  };
+  await assert.rejects(
+    markUpdateRecoveryCommitIntent(fixture.policy, fixture.input.attemptId, dependencies),
+    /failed validation/u,
+    "a policy-hash mismatch must fail before a stale lock can invoke the modified helper"
+  );
+  await assert.rejects(
+    lstat(maliciousMarker),
+    (error: unknown) => isErrorCode(error, "ENOENT"),
+    "a tampered stable helper must never execute during pre-operation lock reconciliation"
+  );
+  assert.ok(await lstat(lockPath), "failed helper validation must preserve the stale lock as recovery evidence");
 }
 
 async function verifyRecoveryLockSerializesConcurrentCallers(): Promise<void> {

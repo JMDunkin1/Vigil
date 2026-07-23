@@ -1735,7 +1735,10 @@ async function verifyRecoveryRuntimeFiles(record: UpdateRecoveryPolicyFile): Pro
   }
 }
 
-async function verifyManifestPolicyBinding(manifest: UpdateRecoveryManifest, policy: UpdateRecoveryPolicy): Promise<void> {
+async function verifyManifestPolicyBinding(
+  manifest: UpdateRecoveryManifest,
+  policy: UpdateRecoveryPolicy
+): Promise<LoadedUpdateRecoveryPolicy> {
   const loaded = await readUpdateRecoveryPolicyFile(manifest.recovery.policyPath);
   if (loaded.sha256 !== manifest.recovery.policySha256
     || loaded.record.attemptId !== manifest.attemptId
@@ -1749,6 +1752,7 @@ async function verifyManifestPolicyBinding(manifest: UpdateRecoveryManifest, pol
     || loaded.record.recoveryRuntime.helperPath !== manifest.recovery.helperPath) {
     throw new UpdateRecoveryValidationError("The update recovery manifest and private recovery policy do not match.");
   }
+  return loaded;
 }
 
 function policiesEqual(left: UpdateRecoveryPolicy, right: UpdateRecoveryPolicy): boolean {
@@ -2101,10 +2105,20 @@ async function withRecoveryLock<T>(
     }
   } while (Date.now() < deadline);
   if (!acquired) throw new UpdateRecoveryBusyError();
+  let operationFailed = false;
   try {
     return await operation();
+  } catch (error) {
+    operationFailed = true;
+    throw error;
   } finally {
-    await releaseRecoveryLock(lockPath, lock, operations).catch(() => undefined);
+    try {
+      await releaseRecoveryLock(lockPath, lock, operations);
+    } catch (error) {
+      // Preserve an operation failure as the primary diagnostic, but never
+      // report success while leaving a live recovery lock behind.
+      if (!operationFailed) throw error;
+    }
   }
 }
 
@@ -2580,8 +2594,43 @@ async function safeReadBuildInfo(path: string): Promise<Record<string, unknown> 
 
 async function defaultAtomicSwap(left: string, right: string): Promise<void> {
   const helperPath = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "vigil-atomic-swap");
+  await executeVerifiedAtomicSwapHelper(helperPath, left, right);
+}
+
+/**
+ * Bind lock release and artifact swaps to the private recovery copy captured
+ * before an app replacement. An updater module may itself live inside the app
+ * bundle it swaps, so resolving its ordinary helper after activation is not
+ * stable enough for transaction cleanup.
+ */
+export async function recoveryDependenciesForStableHelper(
+  policyInput: UpdateRecoveryPolicy,
+  manifestInput: UpdateRecoveryManifest
+): Promise<UpdateRecoveryDependencies> {
+  const policy = normalizedPolicy(policyInput);
+  const manifest = validatedManifest(manifestInput, policy);
+  const loaded = await verifyManifestPolicyBinding(manifest, policy);
+  const helperPath = loaded.record.recoveryRuntime.helperPath;
+  return {
+    operations: {
+      swapPaths: async (left, right) => {
+        // Lock reconciliation can invoke this operation before the transaction
+        // body re-reads the manifest. Revalidate the policy-bound helper and
+        // its private directory topology before every execution.
+        await verifyRecoveryRuntimeFiles(loaded.record);
+        await executeVerifiedAtomicSwapHelper(helperPath, left, right);
+      }
+    }
+  };
+}
+
+async function executeVerifiedAtomicSwapHelper(helperPath: string, left: string, right: string): Promise<void> {
+  const canonical = await realpath(helperPath);
   const helper = await lstat(helperPath);
-  if (!helper.isFile() || helper.isSymbolicLink() || (helper.mode & 0o111) === 0) {
+  if (canonical !== helperPath
+    || !helper.isFile()
+    || helper.isSymbolicLink()
+    || (helper.mode & 0o111) === 0) {
     throw new Error("Vigil's atomic swap helper is missing or unsafe.");
   }
   await executeAtomicSwapHelper(helperPath, left, right);
