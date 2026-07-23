@@ -1815,6 +1815,8 @@ async function refreshAppUpdateStateOnce(appUrl: string): Promise<Record<string,
     const preserveRemoteCheckFailure = appUpdateActionState.checked
       && appUpdateActionState.checkOk === false
       && !appUpdateActionState.running
+      && !appUpdateActionState.recoveryPending
+      && !appUpdateActionState.recoveryBlocked
       && status?.running !== true
       && status?.recoveryPending !== true
       && status?.recoveryBlocked !== true

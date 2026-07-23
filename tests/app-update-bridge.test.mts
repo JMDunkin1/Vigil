@@ -180,6 +180,11 @@ assert.match(mainSource, /function shortTrayDetail[\s\S]*?value\.length <= 42/u,
 assert.match(mainSource, /recoveryPending: appUpdateActionState\.recoveryPending/u, "the coordinator must broadcast pending recovery state");
 assert.match(mainSource, /recoveryBlocked: appUpdateActionState\.recoveryBlocked/u, "the coordinator must broadcast blocked recovery state");
 assert.match(mainSource, /!appUpdateActionState\.running && !appUpdateActionState\.recoveryPending/u, "pending recovery must keep the coordinator polling");
+assert.match(
+  mainSource,
+  /preserveRemoteCheckFailure = appUpdateActionState\.checked[\s\S]*?!appUpdateActionState\.recoveryPending[\s\S]*?!appUpdateActionState\.recoveryBlocked[\s\S]*?status\?\.recoveryPending !== true[\s\S]*?status\?\.recoveryBlocked !== true/u,
+  "a completed recovery must clear the old failure instead of leaving every standard update action disabled"
+);
 assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-get", handleIconThemeGet\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-set", handleIconThemeSet\)/u);
 assert.doesNotMatch(mainSource, /cursorAuraWindow|CURSOR_AURA_MARGIN|vigil:cursor-aura-update/u, "the cursor glow must not create an oversized native window around Vigil");
