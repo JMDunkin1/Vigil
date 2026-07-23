@@ -57,6 +57,11 @@ try {
   assert.equal(companionPairing.status, 200, "the companion listener must preserve extension reachability");
   const blockedPage = await fetch(`http://127.0.0.1:${port}/blocked?site=example.com`);
   assert.equal(blockedPage.status, 200, "the companion listener must preserve browser redirect pages");
+  const blockedPageHtml = await blockedPage.text();
+  assert.match(blockedPageHtml, /data-vigil-block-page="1"/u, "the live redirect must render Vigil's branded block surface");
+  assert.match(blockedPageHtml, /id="leaveBlockedPage" href="about:blank"/u, "the live redirect must always expose a valid escape action");
+  assert.match(blockedPageHtml, /location\.replace\(escapeTarget\)/u, "the escape action must replace the blocked history entry");
+  assert.doesNotMatch(blockedPageHtml, /history\.(?:back|go)/u, "the live redirect must not depend on unsafe browser history");
   const companionIndex = await fetch(`http://127.0.0.1:${port}/`);
   assert.equal(companionIndex.status, 200, "pause-page links must reach the Vigil handoff page");
   const companionIndexHtml = await companionIndex.text();

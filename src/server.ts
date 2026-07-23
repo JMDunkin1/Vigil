@@ -715,13 +715,11 @@ async function dispatchRequest(
 
     if (url.pathname === "/blocked") {
       const page = blockedPageResponse(
-        { url, state: requestState, port: activePort },
+        { url, state: requestState, usage: requestUsage, port: activePort },
         String(request.headers.referer || "")
       );
       if (page.status === 302) {
         sendEmpty(response, 302, { Location: page.location, "Cache-Control": "no-store" });
-      } else if (page.status === 204) {
-        sendEmpty(response, 204, { "Cache-Control": "no-store" });
       } else {
         sendHtml(response, page.body);
       }

@@ -7,13 +7,14 @@ import { compactExtensionRuleSignature, evaluateExtensionCheck, extensionRuleSna
 import { activePolicy } from "../src/policy.js";
 import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.mjs";
 
-const [backgroundSource, contentSource, googleSafeSearchSource, staticRulesText, extensionManifestText, blockedPageSource] = await Promise.all([
+const [backgroundSource, contentSource, googleSafeSearchSource, staticRulesText, extensionManifestText, blockedPageSource, blockedPageScriptSource] = await Promise.all([
   readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
   readFile(new URL("../extension/content.js", import.meta.url), "utf8"),
   readFile(new URL("../extension/google-safe-search.js", import.meta.url), "utf8"),
   readFile(new URL("../extension/rules.json", import.meta.url), "utf8"),
   readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
-  readFile(new URL("../extension/blocked.html", import.meta.url), "utf8")
+  readFile(new URL("../extension/blocked.html", import.meta.url), "utf8"),
+  readFile(new URL("../extension/blocked.js", import.meta.url), "utf8")
 ]);
 const staticRules = JSON.parse(staticRulesText) as Array<Record<string, unknown>>;
 const extensionManifest = JSON.parse(extensionManifestText) as Record<string, unknown>;
@@ -56,7 +57,15 @@ assert.equal(explicitSearchRegex.test("https://www.bing.com/search?q=18%2B"), tr
 const explicitSearchAction = recordValue(staticRules[3]?.action, "explicit-search DNR action");
 const explicitSearchRedirect = recordValue(explicitSearchAction.redirect, "explicit-search DNR redirect");
 assert.equal(explicitSearchRedirect.extensionPath, "/blocked.html");
-assert.match(blockedPageSource, /Vigil blocked this explicit search/u);
+assert.match(blockedPageSource, /data-vigil-block-page="1"/u);
+assert.match(blockedPageSource, /--primary: #b77952/u);
+assert.match(blockedPageSource, /<p class="eyebrow">Vigil<\/p>/u);
+assert.match(blockedPageSource, /id="leaveBlockedPage" href="about:blank">Go back/u);
+assert.match(blockedPageSource, /<script src="blocked\.js"><\/script>/u);
+assert.match(blockedPageScriptSource, /location\.replace\("about:blank"\)/u);
+assert.doesNotMatch(blockedPageSource, /history\.(?:back|go)/u);
+assert.doesNotMatch(blockedPageScriptSource, /history\.(?:back|go)/u);
+assert.doesNotMatch(blockedPageScriptSource, /\nexport \{\};?\s*$/u, "the blocked-page script must be emitted as a classic extension script");
 const webAccessibleResources = extensionManifest.web_accessible_resources as Array<{ resources?: unknown }> | undefined;
 assert.equal(webAccessibleResources?.some((entry) => Array.isArray(entry.resources) && entry.resources.includes("blocked.html")), true);
 const contentScripts = extensionManifest.content_scripts as Array<{ js?: unknown }> | undefined;
@@ -414,6 +423,8 @@ assert.ok(
   const shortsRedirect = new URL(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "YouTube Shorts dynamic rule").redirectUrl);
   assert.equal(shortsRedirect.pathname, "/blocked");
   assert.equal(shortsRedirect.searchParams.get("site"), "YouTube Shorts");
+  assert.equal(shortsRedirect.searchParams.get("back"), "https://www.youtube.com/");
+  assert.equal(decodeURIComponent(shortsRedirect.toString()).includes("youtube.com/shorts"), false);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/explore"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/feed/explore"), true);
@@ -455,6 +466,8 @@ assert.ok(
   const allowedShortsRedirect = new URL(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "allowed YouTube Shorts rule").redirectUrl);
   assert.equal(allowedShortsRedirect.pathname, "/blocked");
   assert.equal(allowedShortsRedirect.searchParams.get("site"), "YouTube Shorts");
+  assert.equal(allowedShortsRedirect.searchParams.get("back"), "https://www.youtube.com/");
+  assert.equal(decodeURIComponent(allowedShortsRedirect.toString()).includes("youtube.com/shorts"), false);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), false);
 }
 

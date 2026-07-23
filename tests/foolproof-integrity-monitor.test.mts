@@ -253,6 +253,21 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   assert.equal(must(byId.get("chrome-safe-search"), "chrome-safe-search row").detail, "Chrome SafeSearch is locked to Filter.");
   assert.match(formatDoctorRows(rows), /OK\s+Foolproof readiness/);
 
+  const unreachableBlockPageRows = doctorRows(state, {
+    safariFilter: {
+      required: true,
+      current: false,
+      appleContentFilter: { current: true },
+      vigilPagesReachable: false
+    }
+  }, now);
+  const unreachableBlockPageRow = must(
+    unreachableBlockPageRows.find((item) => item.id === "safari-url-filter"),
+    "unreachable Safari block-page row"
+  );
+  assert.equal(unreachableBlockPageRow.ok, false);
+  assert.match(unreachableBlockPageRow.detail, /branded block screen stays reachable/);
+
   const embeddedSupervisorRows = doctorRows(state, {
     seal: { ok: true },
     sourceSeal: { ok: true },

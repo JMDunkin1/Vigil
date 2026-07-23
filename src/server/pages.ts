@@ -1,21 +1,24 @@
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../apiSecurity.js";
+import { BLOCKED_PAGE_ESCAPE_FALLBACK, safeExternalPageUrl } from "../blockedPageUrl.js";
 import { PORT } from "../defaults.js";
 import { emergencyUnlockAllowedForPolicy, activePolicy } from "../policy.js";
 import { intentReasonPolicy } from "../intentReason.js";
 import { interventionSummary } from "../intervention.js";
 import { pausePageData } from "../intentionalUse.js";
-import type { ActivePolicy, VigilState } from "../types.js";
+import { policyForSample } from "../monitor/policy.js";
+import { safariFilterDenyMatch } from "../safariFilter.js";
+import type { ActivePolicy, UsageState, VigilState } from "../types.js";
 
 interface PageInput {
   url: URL;
   state: VigilState;
+  usage?: UsageState;
   port?: number;
 }
 
 export type BlockedPageResponse =
   | { status: 200; body: string }
-  | { status: 302; location: string }
-  | { status: 204 };
+  | { status: 302; location: string };
 
 interface PauseBudget {
   budgetSeconds?: number;
@@ -70,29 +73,31 @@ export function companionPage(): string {
 </html>`;
 }
 
-export function blockedPageResponse(input: PageInput, referrer = ""): BlockedPageResponse {
+export function blockedPageResponse(input: PageInput, _referrer = ""): BlockedPageResponse {
   if (staleFocusBlock(input.url, input.state)) {
-    const location = safePageNavigationUrl(input.url.searchParams.get("back"))
-      || safePageNavigationUrl(referrer);
-    return location ? { status: 302, location } : { status: 204 };
+    const location = safeBlockedPageEscapeUrl(input, input.url.searchParams.get("back"));
+    return location ? { status: 302, location } : { status: 200, body: blockedPage(input) };
   }
   return { status: 200, body: blockedPage(input) };
 }
 
-export function blockedPage({ url }: PageInput): string {
+export function blockedPage(input: PageInput): string {
+  const { url } = input;
   const site = escapeHtml(url.searchParams.get("site") || "This target");
-  const backUrl = safePageNavigationUrl(url.searchParams.get("back"));
+  const backUrl = safeBlockedPageEscapeUrl(input, url.searchParams.get("back"));
+  const escapeUrl = backUrl || BLOCKED_PAGE_ESCAPE_FALLBACK;
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Blocked</title>
+  <title>Blocked · Vigil</title>
   <style>
     :root { color-scheme: dark; --paper: #101111; --paper-2: #161717; --ink: #f0ece5; --primary: #b77952; --primary-strong: #d5a16b; --focus: rgba(213, 161, 107, .24); }
     * { box-sizing: border-box; }
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; color: var(--ink); background: radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .08), transparent 34rem), radial-gradient(circle at 28% 106%, rgba(157, 124, 88, .04), transparent 30rem), linear-gradient(180deg, var(--paper), var(--paper-2)); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     main { width: min(560px, 100%); }
+    .eyebrow { margin: 0 0 12px; color: var(--primary-strong); font-size: .78rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
     h1 { max-width: 12ch; margin: 0; font: 700 clamp(2.75rem, 8vw, 5rem)/.98 Georgia, "Times New Roman", serif; letter-spacing: -.04em; text-wrap: balance; }
     .escape-actions { margin-top: 32px; }
     .escape-actions a { min-height: 48px; display: inline-grid; place-items: center; padding: 0 22px; border-radius: 7px; color: #16120f; background: var(--primary); text-decoration: none; font-weight: 700; transition: background .15s ease, transform .15s ease; }
@@ -102,39 +107,22 @@ export function blockedPage({ url }: PageInput): string {
     @media (max-width: 520px) { body { place-items: start; padding: 64px 24px; } }
   </style>
 </head>
-<body>
+<body data-vigil-block-page="1">
   <main>
+    <p class="eyebrow">Vigil</p>
     <h1>${site} is blocked.</h1>
     <div class="escape-actions">
-      <a id="leaveBlockedPage" href="${escapeHtml(backUrl || "#")}">Go back</a>
+      <a id="leaveBlockedPage" href="${escapeHtml(escapeUrl)}">Go back</a>
     </div>
   </main>
   <script>
-    const explicitBackUrl = ${safeScriptJson(backUrl)};
+    const escapeTarget = ${safeScriptJson(escapeUrl)};
     const leaveBlockedPage = document.querySelector("#leaveBlockedPage");
-    const escapeTarget = blockedEscapeTarget();
     if (leaveBlockedPage) {
-      if (escapeTarget) leaveBlockedPage.href = escapeTarget;
       leaveBlockedPage.addEventListener("click", (event) => {
         event.preventDefault();
-        if (escapeTarget) location.replace(escapeTarget);
-        else history.go(-2);
+        location.replace(escapeTarget);
       });
-    }
-
-    function blockedEscapeTarget() {
-      return safeNavigationUrl(explicitBackUrl) || safeNavigationUrl(document.referrer);
-    }
-
-    function safeNavigationUrl(value) {
-      try {
-        const candidate = new URL(String(value || ""), location.href);
-        if (!["http:", "https:"].includes(candidate.protocol)) return "";
-        if (["127.0.0.1", "localhost", "::1"].includes(candidate.hostname)) return "";
-        return candidate.toString();
-      } catch {
-        return "";
-      }
     }
   </script>
 </body>
@@ -227,7 +215,7 @@ function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
     <h1>${site} is blocked.</h1>
     <p>The ${mode} lock is active. The useful move is to close this tab and go back to the thing you chose before impulse got loud.</p>
     <div id="escapeActions" class="escape-actions">
-      <a id="leaveBlockedPage" href="${escapeHtml(backUrl || "#")}">Go back</a>
+      <a id="leaveBlockedPage" href="${escapeHtml(backUrl || BLOCKED_PAGE_ESCAPE_FALLBACK)}">Go back</a>
     </div>
     <div class="intervention ${interventionClass}">
       <strong>Adaptive friction</strong>
@@ -271,16 +259,12 @@ function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
     let scanStream = null;
 
     const escapeTarget = blockedEscapeTarget();
-    if (escapeActions && leaveBlockedPage && (escapeTarget || history.length > 1)) {
+    if (escapeActions && leaveBlockedPage) {
       escapeActions.classList.add("is-visible");
-      if (escapeTarget) leaveBlockedPage.href = escapeTarget;
+      leaveBlockedPage.href = escapeTarget;
       leaveBlockedPage.addEventListener("click", (event) => {
         event.preventDefault();
-        if (escapeTarget) {
-          location.replace(escapeTarget);
-        } else {
-          history.go(-2);
-        }
+        location.replace(escapeTarget);
       });
     }
 
@@ -417,7 +401,7 @@ function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
     }
 
     function blockedEscapeTarget() {
-      return safeNavigationTarget(pageData.backUrl) || safeNavigationTarget(document.referrer);
+      return safeNavigationTarget(pageData.backUrl) || ${safeScriptJson(BLOCKED_PAGE_ESCAPE_FALLBACK)};
     }
 
     function safeNavigationTarget(value) {
@@ -688,6 +672,21 @@ function safePageNavigationUrl(value: unknown): string {
   } catch {
     return "";
   }
+}
+
+function safeBlockedPageEscapeUrl(input: PageInput, value: unknown): string {
+  const candidate = safeExternalPageUrl(value);
+  if (!candidate) return "";
+  const parsed = new URL(candidate);
+  const state = structuredClone(input.state);
+  const usage = structuredClone(input.usage || {});
+  const policy = policyForSample(state, usage, {
+    app: "Safari",
+    hostname: parsed.hostname,
+    url: parsed.toString()
+  });
+  if (policy || safariFilterDenyMatch(state, parsed)) return "";
+  return parsed.toString();
 }
 
 function isLocalPageHost(hostname: unknown): boolean {

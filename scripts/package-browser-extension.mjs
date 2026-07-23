@@ -14,6 +14,7 @@ const storeConfig = JSON.parse(await readFile(join(projectRoot, "build", "browse
 const packageEntries = [
   "manifest.json",
   "background.js",
+  "blocked.js",
   "content.js",
   "google-safe-search.js",
   "options.html",

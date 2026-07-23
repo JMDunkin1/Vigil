@@ -26,6 +26,7 @@ interface SummaryRecord extends UnknownRecord {
   generated?: boolean;
   effectiveCurrent?: boolean;
   appleCurrent?: boolean;
+  vigilPagesReachable?: boolean;
   appleContentFilter?: SummaryRecord;
   duplicate?: boolean;
   loaded?: boolean;
@@ -291,6 +292,9 @@ function browserRedirectFallbackDetail(enabled: boolean, networkCurrent: boolean
 function safariFilterDetail(safariFilter: SummaryRecord): string {
   if (!safariFilter.enabled) return "Safari URL filtering is disabled.";
   if (!safariFilter.required) return "Safari's Apple content-filter profile is not required right now.";
+  if (appleContentFilterCurrent(safariFilter) && safariFilter.vigilPagesReachable === false) {
+    return "Apple Screen Time web filtering is active, but Vigil's Safari profile must be reapplied so the branded block screen stays reachable.";
+  }
   if (appleContentFilterCurrent(safariFilter) && safariFilter.current) return `Apple's system web-safety policy is active (${safariFilter.expectedUrls || 0} deny URLs, ${safariFilter.pathUrlCount || 0} path URLs).`;
   if (appleContentFilterCurrent(safariFilter)) return "Apple Screen Time web content filtering is active, but Vigil's Safari profile needs to be reapplied for the current deny list.";
   if (safariFilter.current) return "Vigil's Safari profile is installed, but Apple's system web-safety policy is not active; reapply and approve it.";
@@ -300,7 +304,7 @@ function safariFilterDetail(safariFilter: SummaryRecord): string {
 }
 
 function safariWebFilterCurrent(safariFilter: SummaryRecord): boolean {
-  return appleContentFilterCurrent(safariFilter);
+  return appleContentFilterCurrent(safariFilter) && safariFilter.vigilPagesReachable !== false;
 }
 
 function appleContentFilterCurrent(safariFilter: SummaryRecord): boolean {

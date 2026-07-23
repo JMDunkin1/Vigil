@@ -540,6 +540,29 @@ assert.equal(
   false,
   "the hardening audit must fail when the embedded supervisor is unhealthy"
 );
+const unreachableSafariBlockPageAudit = hardeningAudit({
+  state: defaultState(),
+  hosts: {},
+  firewall: {},
+  safariFilter: {
+    enabled: true,
+    required: true,
+    current: false,
+    appleContentFilter: { current: true },
+    vigilPagesReachable: false
+  },
+  chromeSafeSearch: {},
+  agent: {},
+  account: {},
+  protection: {},
+  monitor: {},
+  foolproof: {},
+  stateSeal: {},
+  sourceSeal: {}
+});
+const unreachableSafariBlockPageRow = unreachableSafariBlockPageAudit.find((row) => row.id === "safari-url-filter");
+assert.equal(unreachableSafariBlockPageRow?.ok, false, "hardening must flag an Apple filter that cannot load Vigil's block page");
+assert.match(unreachableSafariBlockPageRow?.detail || "", /branded block screen stays reachable/);
 
 const actions = hardeningActions({
   localScriptCommand(name, options = {}) {

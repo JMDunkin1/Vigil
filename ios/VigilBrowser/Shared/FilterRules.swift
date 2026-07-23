@@ -105,17 +105,23 @@ struct NavigationFilter: Sendable {
             return .block(reason: "Only web links are allowed.")
         }
         guard scheme == "https" else { return .block(reason: "This browser requires a secure HTTPS connection.") }
-        guard let host = url.host?.lowercased(), !host.isEmpty else {
+        guard let rawHost = url.host, !rawHost.isEmpty else {
             return .block(reason: "This address is not valid.")
         }
-        if rules.blockedHosts.contains(where: { host == $0 || host.hasSuffix(".\($0)") }) {
+        let host = Self.normalizedHost(rawHost)
+        if rules.blockedHosts.contains(where: {
+            let blocked = Self.normalizedHost($0)
+            return !blocked.isEmpty && (host == blocked || host.hasSuffix(".\(blocked)"))
+        }) {
             return .block(reason: "This website is blocked by Vigil.")
         }
         if blocklist?.matchingDomain(for: host) != nil {
             return .block(reason: "This website is blocked by Vigil.")
         }
-        let absolute = url.absoluteString.lowercased()
-        if rules.blockedURLFragments.contains(where: absolute.contains) {
+        let candidates = Self.decodedCandidates(url.absoluteString)
+        if rules.blockedURLFragments.contains(where: { fragment in
+            candidates.contains(where: { $0.contains(fragment.lowercased()) })
+        }) {
             return .block(reason: "This page is blocked by Vigil.")
         }
         if isBlockedSearch(url) {
@@ -128,7 +134,9 @@ struct NavigationFilter: Sendable {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
         let terms = components.queryItems?
             .filter { ["q", "query", "search_query", "text"].contains($0.name.lowercased()) }
-            .compactMap(\.value).joined(separator: " ").lowercased() ?? ""
+            .compactMap(\.value)
+            .flatMap(Self.decodedCandidates)
+            .joined(separator: " ").lowercased() ?? ""
         return rules.blockedSearchTerms.contains { term in
             terms.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         }
@@ -136,8 +144,9 @@ struct NavigationFilter: Sendable {
 
     private func safeSearchURL(for url: URL) -> URL {
         guard rules.safeSearchEnabled,
-              let host = url.host?.lowercased(),
+              let rawHost = url.host,
               var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        let host = Self.normalizedHost(rawHost)
         var items = components.queryItems ?? []
         let value: (String, String)?
         if host == "google.com" || host.hasSuffix(".google.com") { value = ("safe", "active") }
@@ -149,5 +158,43 @@ struct NavigationFilter: Sendable {
         items.append(URLQueryItem(name: name, value: setting))
         components.queryItems = items
         return components.url ?? url
+    }
+
+    private static func normalizedHost(_ value: String) -> String {
+        var host = value.lowercased()
+        while host.last == "." { host.removeLast() }
+        return host
+    }
+
+    private static func decodedCandidates(_ value: String) -> [String] {
+        var candidates = [value.lowercased()]
+        var decoded = candidates[0]
+        for _ in 0..<3 {
+            let next = decodePercentRuns(decoded).lowercased()
+            guard next != decoded else { break }
+            candidates.append(next)
+            decoded = next
+        }
+        var seen = Set<String>()
+        return candidates.filter { seen.insert($0).inserted }
+    }
+
+    private static func decodePercentRuns(_ value: String) -> String {
+        guard let expression = try? NSRegularExpression(pattern: "(?:%[0-9a-fA-F]{2})+") else { return value }
+        let result = NSMutableString(string: value)
+        let matches = expression.matches(in: value, range: NSRange(location: 0, length: (value as NSString).length))
+        for match in matches.reversed() {
+            let encoded = result.substring(with: match.range)
+            let decoded = encoded.removingPercentEncoding ?? bytewisePercentDecode(encoded)
+            result.replaceCharacters(in: match.range, with: decoded)
+        }
+        return result as String
+    }
+
+    private static func bytewisePercentDecode(_ value: String) -> String {
+        let hexBytes = value.split(separator: "%", omittingEmptySubsequences: true)
+        let bytes = hexBytes.compactMap { UInt8($0, radix: 16) }
+        guard bytes.count == hexBytes.count else { return value }
+        return String(String.UnicodeScalarView(bytes.map { UnicodeScalar($0) }))
     }
 }

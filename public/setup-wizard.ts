@@ -85,7 +85,10 @@ function setupItems(data: DashboardData): SetupItem[] {
   const manageEngine = record(ios.manageEngine);
   const networkEnabled = settings.systemNetworkBlockingEnabled !== false;
   const networkReady = networkEnabled && current(hosts) && current(firewall);
-  const safariReady = Boolean(!safariFilter.required || safariFilter.appleCurrent);
+  const safariReady = Boolean(
+    !safariFilter.required
+    || (safariFilter.appleCurrent && safariFilter.vigilPagesReachable !== false)
+  );
   const extensionSeen = Boolean(extension.lastSeenAt);
   const extensionRulesReady = dynamicRules.ok !== false && dynamicRules.status !== "missing";
   const iPhoneReady = Boolean(ios.enabled && (mdm.ready || (manageEngine.preferred && manageEngine.currentGeneration)));
@@ -137,9 +140,11 @@ function setupItems(data: DashboardData): SetupItem[] {
       label: "Safari protection",
       ok: safariReady,
       detail: safariFilter.required
-        ? (safariFilter.appleCurrent
-          ? "Apple's system web-safety policy is active."
-          : "Apply and approve the Safari profile so protected pages cannot bypass the filter.")
+        ? (safariFilter.appleCurrent && safariFilter.vigilPagesReachable === false
+          ? "Reapply the Safari profile so Apple's filter can show Vigil's block screen."
+          : safariFilter.appleCurrent
+            ? "Apple's system web-safety policy is active and Vigil's block screen is reachable."
+            : "Apply and approve the Safari profile so protected pages cannot bypass the filter.")
         : "No Safari content-filter profile is required for the current rules.",
       action: safariFilter.required ? "Apply Safari Filter" : "Not required",
       tier: safariFilter.required ? "core" : "optional",

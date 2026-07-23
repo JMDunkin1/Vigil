@@ -1,12 +1,14 @@
 import { PORT, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
 import { ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT, adultBlocklistPreloadDomains, matchAdultBlocklistHost } from "./adultBlocklist.js";
 import { activeAppLockPolicy } from "./appLocks.js";
+import { buildBlockedPageUrl } from "./blockedPageUrl.js";
 import { contentFilterEnabled, contentFilterRuleEntries, matchContentFilterUrl } from "./contentFilters.js";
 import { integrityLockdownActive } from "./integrityLockdown.js";
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { activeLimitBlocks, activeLimitPolicy } from "./limits.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, matchBlockedUrlPattern, normalizeHost, normalizeUrlPattern, shouldBlockSite, shouldBlockUrl } from "./policy.js";
 import { focusedSocialBrowserCleanupSettings } from "./socialFeatureFilters.js";
+import { safariFilterDenyMatch } from "./safariFilter.js";
 import { recordOpen, recordUsage } from "./usage.js";
 import type { ActivePolicy, FocusedSocialSettings, IntentionalPause, IntentionalUseRule, LimitBlock, VigilState, UnknownRecord, UsageSample, UsageState } from "./types.js";
 
@@ -96,7 +98,7 @@ export function extensionRuleSnapshot(state: VigilState, now = new Date()) {
 
   const dynamic = canonicalExtensionDynamicSnapshot({
     rules: [...entries.values()],
-    contentRules: contentRulesForPolicy(state, sessionPolicy || baseline),
+    contentRules: contentRulesForPolicy(state, sessionPolicy || baseline, now),
     allowlistRules: allowlistRulesForPolicy(sessionPolicy)
   });
   return {
@@ -231,11 +233,12 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
   const siteBlocked = policy ? shouldBlockSite(policy.profile, hostname) : false;
   const urlPattern = policy && !siteBlocked ? matchBlockedUrlPattern(policy.profile, sample.url) : null;
   if (contentMatch) {
+    const backUrl = safeBackUrl(state, usage, input.previousUrl, parsed.url, now)
+      || safeBackUrl(state, usage, contentMatch.content.fallbackUrl, parsed.url, now);
     const redirectUrl = blockedUrl(
       contentMatch.content.label,
       contentMatch.policy,
-      sample.url,
-      safeBackUrl(state, input.previousUrl, parsed.url, now)
+      backUrl
     );
     return {
       ok: true,
@@ -295,7 +298,9 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
   }
 
   const blockedTarget = urlPattern?.pattern || hostname;
-  const redirectUrl = blockedUrl(blockedTarget, policy, sample.url, safeBackUrl(state, input.previousUrl, parsed.url, now));
+  const backUrl = safeBackUrl(state, usage, input.previousUrl, parsed.url, now)
+    || (urlPattern ? safeBackUrl(state, usage, urlPatternFallbackUrl(urlPattern.pattern), parsed.url, now) : "");
+  const redirectUrl = blockedUrl(blockedTarget, policy, backUrl);
 
   return {
     ok: true,
@@ -410,16 +415,16 @@ function addAdultBlocklistRuleEntries(entries: Map<string, ExtensionRule>, state
   }, "adult-blocklist");
 }
 
-function contentRulesForPolicy(state: VigilState, policy: ActivePolicy | null): UrlRuleEntry[] {
+function contentRulesForPolicy(state: VigilState, policy: ActivePolicy | null, now: Date): UrlRuleEntry[] {
   if (!policy) return [];
   const builtIn = contentFilterRuleEntries(state, policy).map((entry) => ({
     ...entry,
     redirectUrl: blockedUrl(entry.label, {
       ...policy,
       kind: "content-filter"
-    })
+    }, safeBackUrl(state, {}, entry.fallbackUrl, null, now))
   }));
-  return [...builtIn, ...urlPatternRuleEntries(policy)];
+  return [...builtIn, ...urlPatternRuleEntries(state, policy, now)];
 }
 
 function allowlistRulesForPolicy(policy: ActivePolicy | null): UrlRuleEntry[] {
@@ -447,7 +452,7 @@ function allowedDomainsForPolicy(policy: ActivePolicy): string[] {
   return [...allowed].filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
 
-function urlPatternRuleEntries(policy: ActivePolicy | null): UrlRuleEntry[] {
+function urlPatternRuleEntries(state: VigilState, policy: ActivePolicy | null, now: Date): UrlRuleEntry[] {
   if (!policy?.profile) return [];
   const entries: UrlRuleEntry[] = [];
   for (const raw of policy.profile.blockedUrlPatterns || []) {
@@ -462,7 +467,7 @@ function urlPatternRuleEntries(policy: ActivePolicy | null): UrlRuleEntry[] {
         redirectUrl: blockedUrl(raw, {
           ...policy,
           kind: "url-pattern"
-        })
+        }, safeBackUrl(state, {}, urlPatternFallbackUrl(raw), null, now))
       });
     }
   }
@@ -542,19 +547,20 @@ function publicPolicy(policy: BrowserPolicy) {
   };
 }
 
-function safeBackUrl(state: VigilState, value: unknown, currentUrl: URL, now: Date, policy: ActivePolicy | null = activePolicy(state, now) || baselinePolicy(state, now, { device: "computer" })): string {
+function safeBackUrl(state: VigilState, usage: UsageState, value: unknown, currentUrl: URL | null, now: Date): string {
   const parsed = parseHttpUrl(value);
-  if (!parsed.ok || isVigilUrl(parsed.url) || sameHttpUrl(parsed.url, currentUrl)) return "";
+  if (!parsed.ok || isVigilUrl(parsed.url) || (currentUrl && sameHttpUrl(parsed.url, currentUrl))) return "";
+  const snapshot = structuredClone(state);
+  const sample = {
+    app: EXTENSION_APP_NAME,
+    hostname: normalizeHost(parsed.url.hostname),
+    url: parsed.url.toString()
+  };
+  if (blockingPolicyFor(snapshot, structuredClone(usage), sample, now)) return "";
+  const policy = activePolicy(snapshot, now) || baselinePolicy(snapshot, now, { device: "computer" });
   if (matchContentFilterUrl(state, parsed.url, policy)) return "";
-  if (profileBlocksBrowserUrl(activePolicy(state, now), parsed.url)) return "";
-  if (profileBlocksBrowserUrl(baselinePolicy(state, now, { device: "computer" }), parsed.url)) return "";
+  if (safariFilterDenyMatch(state, parsed.url, now)) return "";
   return parsed.url.toString();
-}
-
-function profileBlocksBrowserUrl(policy: ActivePolicy | null | undefined, url: URL): boolean {
-  if (!policy?.profile) return false;
-  const hostname = normalizeHost(url.hostname);
-  return shouldBlockSite(policy.profile, hostname) || Boolean(matchBlockedUrlPattern(policy.profile, url.toString()));
 }
 
 function sameHttpUrl(left: URL, right: URL): boolean {
@@ -569,17 +575,24 @@ function defaultPort(url: URL): string {
   return url.protocol === "https:" ? "443" : "80";
 }
 
-function blockedUrl(hostname: string, policy: BrowserPolicy, returnUrl = "", backUrl = ""): string {
-  const target = new URL(`http://127.0.0.1:${PORT}/blocked`);
-  target.searchParams.set("site", hostname);
-  target.searchParams.set("until", policy.endsAt || "");
-  target.searchParams.set("mode", policy.session?.mode || "focus");
-  target.searchParams.set("kind", policy.kind || "manual");
+function blockedUrl(hostname: string, policy: BrowserPolicy, backUrl = ""): string {
   const lockId = policy.appLock?.id || policy.session?.lockId || "";
-  if (lockId) target.searchParams.set("lockId", lockId);
-  if (returnUrl) target.searchParams.set("return", returnUrl);
-  if (backUrl) target.searchParams.set("back", backUrl);
-  return target.toString();
+  return buildBlockedPageUrl({
+    site: hostname,
+    until: policy.endsAt || "",
+    mode: policy.session?.mode || "focus",
+    kind: policy.kind || "manual",
+    lockId,
+    backUrl,
+    port: PORT
+  });
+}
+
+function urlPatternFallbackUrl(value: unknown): string {
+  const pattern = normalizeUrlPattern(value);
+  if (!pattern || pattern.startsWith("/") || !pattern.includes("/")) return "";
+  const host = normalizeHost(pattern.slice(0, pattern.indexOf("/")));
+  return host ? `https://${host}/` : "";
 }
 
 function parseHttpUrl(value: unknown): ParsedHttpUrl {

@@ -23,6 +23,7 @@
 		100000000000000000000010 = {isa = PBXBuildFile; fileRef = 200000000000000000000012; };
 		100000000000000000000011 = {isa = PBXBuildFile; fileRef = 200000000000000000000013; };
 		100000000000000000000012 = {isa = PBXBuildFile; fileRef = 200000000000000000000013; };
+		100000000000000000000013 = {isa = PBXBuildFile; fileRef = 200000000000000000000014; };
 /* End PBXBuildFile section */
 /* Begin PBXContainerItemProxy section */
 		300000000000000000000001 = {isa = PBXContainerItemProxy; containerPortal = 900000000000000000000001; proxyType = 1; remoteGlobalIDString = 600000000000000000000001; remoteInfo = VigilBrowser; };
@@ -51,6 +52,7 @@
 		200000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentSafety.swift; sourceTree = "<group>"; };
 		200000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = ContentSafety.js; sourceTree = "<group>"; };
 		200000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		200000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "history-bridge.js"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 /* Begin PBXFrameworksBuildPhase section */
 		400000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
@@ -62,7 +64,7 @@
 		500000000000000000000002 = {isa = PBXGroup; path = VigilBrowser; sourceTree = "<group>"; children = (200000000000000000000001, 200000000000000000000002, 200000000000000000000003, 200000000000000000000006, 20000000000000000000000E, 200000000000000000000013, ); };
 		500000000000000000000003 = {isa = PBXGroup; path = Shared; sourceTree = "<group>"; children = (200000000000000000000004, 200000000000000000000011, ); };
 		500000000000000000000004 = {isa = PBXGroup; path = VigilSafariExtension; sourceTree = "<group>"; children = (200000000000000000000005, 20000000000000000000000A, 20000000000000000000000F, 500000000000000000000007, ); };
-		500000000000000000000007 = {isa = PBXGroup; path = Resources; sourceTree = "<group>"; children = (200000000000000000000007, 200000000000000000000008, 200000000000000000000012, ); };
+		500000000000000000000007 = {isa = PBXGroup; path = Resources; sourceTree = "<group>"; children = (200000000000000000000007, 200000000000000000000008, 200000000000000000000012, 200000000000000000000014, ); };
 		500000000000000000000005 = {isa = PBXGroup; path = VigilBrowserTests; sourceTree = "<group>"; children = (200000000000000000000009, ); };
 		500000000000000000000006 = {isa = PBXGroup; name = Products; sourceTree = "<group>"; children = (20000000000000000000000C, 20000000000000000000000B, 20000000000000000000000D, ); };
 		500000000000000000000008 = {isa = PBXGroup; name = RepositoryShared; path = ../Shared; sourceTree = "<group>"; children = (200000000000000000000010, ); };
@@ -77,7 +79,7 @@
 /* End PBXProject section */
 /* Begin PBXResourcesBuildPhase section */
 		400000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (10000000000000000000000F, 100000000000000000000011, ); runOnlyForDeploymentPostprocessing = 0; };
-		400000000000000000000008 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000007, 100000000000000000000008, 100000000000000000000010, 100000000000000000000012, ); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000008 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000007, 100000000000000000000008, 100000000000000000000010, 100000000000000000000012, 100000000000000000000013, ); runOnlyForDeploymentPostprocessing = 0; };
 		40000000000000000000000A = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 /* Begin PBXShellScriptBuildPhase section */

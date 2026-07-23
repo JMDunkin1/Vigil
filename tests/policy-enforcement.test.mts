@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appleContentFilterStatusFromRecord } from "../src/appleContentFilter.js";
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
+import { blockedPageDisplayLabel, managedFilterAllowsVigilPages, safeExternalPageUrl } from "../src/blockedPageUrl.js";
 import { contentFilterEnabled, matchContentFilterUrl } from "../src/contentFilters.js";
 import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_URL_PATTERNS, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../src/distanceKey.js";
@@ -14,7 +16,7 @@ import { activeLimitBlocks, activeLimitPolicy, overrideLimitRules } from "../src
 import { shouldLockScreenForPolicy } from "../src/monitor.js";
 import { activePlannerBlock, activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, isProcessSweepExemptApp, matchBlockedUrlPattern, matchStrictBrowserControlUrl, panicLockProfile, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "../src/protection.js";
-import { buildSafariFilterProfile, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature, safariUrlFilterEnabled } from "../src/safariFilter.js";
+import { buildSafariFilterProfile, safariFilterDenyMatch, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature, safariUrlFilterEnabled } from "../src/safariFilter.js";
 import { CHROME_PREFERENCE_DOMAINS, buildChromeSafeSearchProfile, chromeSafeSearchStatusFromRecord } from "../src/chromeSafeSearch.js";
 import { applySealVerificationToState, markStateSealed } from "../src/seal.js";
 import { blockedPage, blockedPageResponse } from "../src/server/pages.js";
@@ -552,6 +554,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(fromWatchRedirect.pathname, "/blocked");
   assert.equal(fromWatchRedirect.searchParams.get("site"), "YouTube Shorts");
   assert.equal(fromWatchRedirect.searchParams.get("back"), "https://www.youtube.com/watch?v=abc");
+  assert.equal(fromWatchRedirect.searchParams.has("return"), false);
+  assert.equal(decodeURIComponent(fromWatchRedirect.toString()).includes("https://www.youtube.com/shorts/abc"), false);
 
   const direct = evaluateExtensionCheck(state, usage, {
     url: "https://www.youtube.com/shorts/abc",
@@ -563,7 +567,19 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const directRedirect = new URL(stringValue(direct.redirectUrl, "Shorts direct Level 1 redirect"));
   assert.equal(directRedirect.pathname, "/blocked");
   assert.equal(directRedirect.searchParams.get("site"), "YouTube Shorts");
-  assert.equal(directRedirect.searchParams.has("back"), false);
+  assert.equal(directRedirect.searchParams.get("back"), "https://www.youtube.com/");
+  assert.equal(directRedirect.searchParams.has("return"), false);
+  assert.equal(decodeURIComponent(directRedirect.toString()).includes("https://www.youtube.com/shorts/abc"), false);
+
+  const nestedDeniedPrevious = "https://www.youtube.com/watch?v=abc&next=https%3A%2F%2Fwww.youtube.com%2Fshorts%2Fagain";
+  const nested = evaluateExtensionCheck(state, usage, {
+    url: "https://www.youtube.com/shorts/abc",
+    previousUrl: nestedDeniedPrevious,
+    event: "navigation"
+  }, now);
+  const nestedRedirect = new URL(stringValue(nested.redirectUrl, "nested denied previous redirect"));
+  assert.equal(nestedRedirect.searchParams.get("back"), "https://www.youtube.com/");
+  assert.equal(decodeURIComponent(nestedRedirect.toString()).includes("youtube.com/shorts"), false);
 }
 
 {
@@ -574,8 +590,10 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   });
   assert.match(page, /id="leaveBlockedPage"/);
   assert.match(page, /https:\/\/example\.com\/docs/);
-  assert.match(page, /document\.referrer/);
-  assert.match(page, /history\.go\(-2\)/);
+  assert.match(page, /data-vigil-block-page="1"/);
+  assert.match(page, /<p class="eyebrow">Vigil<\/p>/);
+  assert.doesNotMatch(page, /document\.referrer/);
+  assert.doesNotMatch(page, /history\.go/);
   assert.match(page, /color-scheme: dark/);
   assert.match(page, /--paper: #101111/);
   assert.doesNotMatch(page, /--paper: #eee8dc/);
@@ -583,6 +601,53 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.doesNotMatch(page, /Intentional break/);
   assert.doesNotMatch(page, /<blockquote>/);
   assert.doesNotMatch(page, /<section/);
+
+  const blockedBackPage = blockedPage({
+    url: new URL("http://127.0.0.1:8787/blocked?site=YouTube+Shorts&back=https%3A%2F%2Fwww.youtube.com%2Fshorts%2Fagain"),
+    state
+  });
+  assert.match(blockedBackPage, /href="about:blank"/);
+  assert.match(blockedBackPage, /const escapeTarget = "about:blank"/);
+  assert.match(blockedBackPage, /location\.replace\(escapeTarget\)/);
+  assert.doesNotMatch(blockedBackPage, /www\.youtube\.com\/shorts\/again/);
+
+  for (const localAlias of [
+    "http://0:8787/blocked",
+    "http://0.1.2.3:8787/blocked",
+    "http://0.0.0.0:8787/blocked",
+    "http://localhost.:8787/blocked",
+    "http://work.localhost:8787/blocked",
+    "http://127.0.0.2:8787/blocked",
+    "http://127.1:8787/blocked",
+    "http://2130706433:8787/blocked",
+    "http://[::]:8787/blocked",
+    "http://[::1]:8787/blocked",
+    "http://[::ffff:0:1]:8787/blocked",
+    "http://[::ffff:127.0.0.1]:8787/blocked"
+  ]) {
+    assert.equal(safeExternalPageUrl(localAlias), "", `${localAlias} must not become a block-page escape target`);
+  }
+  assert.equal(safeExternalPageUrl("https://example.com/work"), "https://example.com/work");
+  assert.equal(safeExternalPageUrl("https://user:secret@example.com/work"), "",
+    "credential-bearing URLs must not be embedded in a block-page escape");
+  assert.equal(blockedPageDisplayLabel("Blocked (example.com)"), "This page");
+  assert.equal(blockedPageDisplayLabel("example.com!"), "This page");
+  assert.equal(blockedPageDisplayLabel("example%252ecom"), "This page",
+    "nested percent-encoded host labels must be redacted before Apple filter decoding");
+  assert.equal(blockedPageDisplayLabel("YouTube Shorts"), "YouTube Shorts");
+  const validLocalAllow = { address: "http://localhost:8787/", pageTitle: "Vigil" };
+  assert.equal(managedFilterAllowsVigilPages([
+    { address: "http://user@127.0.0.1:8787/", pageTitle: "Vigil" },
+    validLocalAllow
+  ]), false, "credentials must not be normalized into a valid managed allow-list prefix");
+  assert.equal(managedFilterAllowsVigilPages([
+    { address: "http://127.0.0.1:8787/?page=blocked", pageTitle: "Vigil" },
+    validLocalAllow
+  ]), false, "query-bearing roots must not be reported as allowing Vigil pages");
+  assert.equal(managedFilterAllowsVigilPages([
+    { address: "http://127.0.0.1:8787/?", pageTitle: "Vigil" },
+    validLocalAllow
+  ]), false, "even an empty query marker must not normalize into a managed allow-list root");
 }
 
 {
@@ -597,13 +662,21 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     url: new URL("http://127.0.0.1:8787/blocked?site=youtube.com&mode=focus&until=2026-07-15T07%3A09%3A13.730Z"),
     state
   }, "https://example.com/previous");
-  assert.deepEqual(staleWithReferrer, { status: 302, location: "https://example.com/previous" });
+  assert.equal(staleWithReferrer.status, 200);
+  if (staleWithReferrer.status === 200) {
+    assert.match(staleWithReferrer.body, /data-vigil-block-page="1"/);
+    assert.match(staleWithReferrer.body, /href="about:blank"/);
+  }
 
   const staleWithoutTarget = blockedPageResponse({
     url: new URL("http://127.0.0.1:8787/blocked?site=youtube.com&mode=focus&until=2026-07-15T07%3A09%3A13.730Z"),
     state
   });
-  assert.deepEqual(staleWithoutTarget, { status: 204 });
+  assert.equal(staleWithoutTarget.status, 200);
+  if (staleWithoutTarget.status === 200) {
+    assert.match(staleWithoutTarget.body, /data-vigil-block-page="1"/);
+    assert.match(staleWithoutTarget.body, /href="about:blank"/);
+  }
 
   const profile = state.profiles[0];
   const liveNow = new Date();
@@ -636,6 +709,11 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(baselineUrls.includes("https://youtube.com/shorts"), true);
   assert.equal(baselineUrls.includes("https://snapchat.com/spotlight"), true);
   const baselineProfileText = buildSafariFilterProfile(state, now);
+  assert.match(baselineProfileText, /<key>siteAllowList<\/key>/);
+  assert.match(baselineProfileText, /<key>address<\/key>\s*<string>http:\/\/127\.0\.0\.1:8787\/<\/string>/);
+  assert.match(baselineProfileText, /<key>address<\/key>\s*<string>http:\/\/localhost:8787\/<\/string>/);
+  assert.match(baselineProfileText, /<key>allowListEnabled<\/key>\s*<false\/>/);
+  assert.doesNotMatch(baselineProfileText, /<key>filterAllowList<\/key>/);
   assert.match(baselineProfileText, /<key>restrictWeb<\/key>\s*<true\/>/);
   assert.match(baselineProfileText, /<key>useContentFilter<\/key>\s*<true\/>/);
   assert.match(baselineProfileText, /com\.apple\.familycontrols\.contentfilter/);
@@ -664,10 +742,31 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(urls.includes("https://www.youtube.com/shorts"), true);
   assert.equal(urls.includes("https://m.youtube.com/shorts"), true);
   assert.equal(urls.includes("https://www.youtube.com/watch"), false);
+  assert.equal(
+    safariFilterDenyMatch(state, "https://www.youtube.com/watch?next=https%3A%2F%2Fwww.youtube.com%2Fshorts%2Fabc", now),
+    "https://www.youtube.com/shorts"
+  );
+  assert.equal(
+    safariFilterDenyMatch(state, "https://www.youtube.com/%ZZ?next=https%253A%252F%252Fwww.youtube.com%252Fshorts%252Fabc", now),
+    "https://www.youtube.com/shorts",
+    "malformed escapes must not suppress bounded decoding of nested denied URLs"
+  );
   assert.equal(safariFilterPathDenyUrls(state, now).some((url) => url.includes("/shorts")), true);
-  assert.match(safariFilterPolicySignature(state, now), /^[a-f0-9]{64}$/);
+  const signature = safariFilterPolicySignature(state, now);
+  assert.match(signature, /^[a-f0-9]{64}$/);
+  const legacySignature = createHash("sha256")
+    .update(JSON.stringify({
+      version: 2,
+      appleBuiltInContentFilter: true,
+      removalDisallowed: true,
+      allowSafariHistoryClearing: true,
+      denyUrls: safariFilterDenyUrls(state, now)
+    }))
+    .digest("hex");
+  assert.notEqual(signature, legacySignature);
   const profileText = buildSafariFilterProfile(state, now);
   assert.match(profileText, /<key>filterDenyList<\/key>/);
+  assert.match(profileText, /<key>siteAllowList<\/key>/);
   assert.match(profileText, /<key>restrictWeb<\/key>\s*<true\/>/);
   assert.match(profileText, /<key>useContentFilter<\/key>\s*<true\/>/);
   assert.match(profileText, /<key>PayloadRemovalDisallowed<\/key>\s*<true\/>/);
@@ -1343,8 +1442,9 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(result.browserNoiseBlockingEnabled, true);
   assert.equal(redirect.searchParams.get("kind"), "app-lock");
   assert.equal(redirect.searchParams.get("lockId"), "lock-social");
-  assert.equal(redirect.searchParams.get("return"), "https://redd.it/abc123");
+  assert.equal(redirect.searchParams.has("return"), false);
   assert.equal(redirect.searchParams.get("back"), "https://example.com/work");
+  assert.equal(decodeURIComponent(redirect.toString()).includes("https://redd.it/abc123"), false);
 }
 
 {
@@ -1411,15 +1511,43 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
 }
 
 {
-  const on = appleContentFilterStatusFromRecord({
+  const missingVigilAllowList = appleContentFilterStatusFromRecord({
     restrictWeb: true,
     useContentFilter: true,
     allowListEnabled: false,
     filterDenyList: ["https://pornhub.com/"]
   }, "/tmp/com.apple.familycontrols.contentfilter.plist");
+  assert.equal(missingVigilAllowList.current, true);
+  assert.equal(missingVigilAllowList.vigilPagesReachable, false);
+  assert.match(missingVigilAllowList.detail, /local block page is not allowed/);
+
+  const on = appleContentFilterStatusFromRecord({
+    restrictWeb: true,
+    useContentFilter: true,
+    allowListEnabled: false,
+    filterDenyList: ["https://pornhub.com/"],
+    siteAllowList: [
+      { address: "http://127.0.0.1:8787/", pageTitle: "Vigil" },
+      { address: "http://localhost:8787/", pageTitle: "Vigil" }
+    ]
+  }, "/tmp/com.apple.familycontrols.contentfilter.plist");
   assert.equal(on.current, true);
   assert.equal(on.denyUrlCount, 1);
+  assert.equal(on.siteAllowListCount, 2);
+  assert.equal(on.vigilPagesReachable, true);
   assert.match(on.detail, /Limit Adult Websites is on/);
+
+  const legacy = appleContentFilterStatusFromRecord({
+    restrictWeb: true,
+    useContentFilter: true,
+    allowListEnabled: false,
+    siteWhitelist: [
+      { address: "http://127.0.0.1:8787/", pageTitle: "Vigil" },
+      { address: "http://localhost:8787/", pageTitle: "Vigil" }
+    ]
+  }, "/tmp/com.apple.familycontrols.contentfilter.plist");
+  assert.equal(legacy.current, true);
+  assert.equal(legacy.vigilPagesReachable, true);
 
   const off = appleContentFilterStatusFromRecord({
     restrictWeb: false,
@@ -1455,7 +1583,10 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(game.blocked, true);
   assert.equal(game.reason, "url-pattern");
   assert.equal(must(game.urlPattern, "game URL pattern").pattern, "example.com/games");
-  assert.equal(new URL(stringValue(game.redirectUrl, "URL pattern redirect URL")).searchParams.get("site"), "example.com/games");
+  const gameRedirect = new URL(stringValue(game.redirectUrl, "URL pattern redirect URL"));
+  assert.equal(gameRedirect.searchParams.get("site"), "This page");
+  assert.equal(gameRedirect.searchParams.get("back"), "https://example.com/");
+  assert.equal(decodeURIComponent(gameRedirect.toString()).includes("example.com/games"), false);
   const keyword = evaluateExtensionCheck(state, usage, { url: "https://search.example/?q=casino", event: "navigation" }, now);
   assert.equal(keyword.blocked, true);
   assert.equal(must(keyword.urlPattern, "keyword URL pattern").pattern, "casino");

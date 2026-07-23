@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 import { createHash } from "node:crypto";
 import { addEvent, DATA_DIR, saveState, STATE_SEAL_KEY_PATH } from "./store.js";
 import { PORT } from "./defaults.js";
+import { buildBlockedPageUrl, safeExternalPageUrl } from "./blockedPageUrl.js";
 import { contentFilterEnabled } from "./contentFilters.js";
 import { attestChromeSafeSearchStatus } from "./chromeSafeSearch.js";
 import { reconcileFocusShortcut } from "./focusHooks.js";
@@ -21,7 +22,7 @@ import type { BrowserActivityBurstSchedulerDependencies } from "./monitor/browse
 import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldQuitAppForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
 import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, isInterruptedPollGap, roundSeconds } from "./monitor/timing.js";
-import { safariFilterStatus } from "./safariFilter.js";
+import { safariFilterDenyMatch, safariFilterStatus } from "./safariFilter.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { isNonRetryableRuntimeUsageCheckpointError, runtimeUsageCheckpointPath, saveRuntimeUsageCheckpoint } from "./runtimeUsageCheckpoint.js";
 import { networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
@@ -157,6 +158,23 @@ export function isVigilBlockedPageUrl(value: unknown): boolean {
     // fully marked receipt so it is not recursively nested into a new `back`
     // parameter after an update or restart.
     return ["site", "until", "mode", "policyId"].every((key) => url.searchParams.has(key));
+  } catch {
+    return false;
+  }
+}
+
+function browserOriginUrl(value: unknown): string {
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:"].includes(url.protocol) ? `${url.origin}/` : "";
+  } catch {
+    return "";
+  }
+}
+
+function sameBrowserUrl(left: unknown, right: unknown): boolean {
+  try {
+    return new URL(String(left || "")).toString() === new URL(String(right || "")).toString();
   } catch {
     return false;
   }
@@ -465,9 +483,14 @@ interface MonitorStatus extends UnknownRecord {
 
 interface BlockSiteOptions {
   browserControl?: { area: string; label: string; url: string };
-  contentFilter?: UnknownRecord & { id?: string; label: string };
+  contentFilter?: UnknownRecord & { id?: string; label: string; fallbackUrl?: string };
   urlPattern?: { pattern: string; label: string };
   originalHostname?: string;
+}
+
+interface BlockedPageValidationSnapshot {
+  state: VigilState;
+  usage: UsageState;
 }
 
 interface BrowserBlockRecord {
@@ -530,6 +553,7 @@ interface MonitorTransactionSnapshot {
   lastPollAt: number;
   lastMonotonicAt: number;
   lastSample: FrontSample | null;
+  previousSample: FrontSample | null;
   status: MonitorStatus;
   recentBlocks: Map<string, number>;
   appBlockHistory: Map<string, AppBlockRecord>;
@@ -565,6 +589,7 @@ export class Monitor implements MonitorHandle {
   lastPollAt: number;
   lastMonotonicAt: number;
   lastSample: FrontSample | null;
+  previousSample: FrontSample | null;
   timer: ReturnType<typeof setInterval> | null;
   lastScheduledTickMonotonicAt: number;
   policyBoundaryTimer: ReturnType<typeof setTimeout> | null;
@@ -653,6 +678,7 @@ export class Monitor implements MonitorHandle {
     this.lastPollAt = Date.now();
     this.lastMonotonicAt = performance.now();
     this.lastSample = null;
+    this.previousSample = null;
     this.timer = null;
     this.lastScheduledTickMonotonicAt = performance.now();
     this.policyBoundaryTimer = null;
@@ -944,7 +970,12 @@ export class Monitor implements MonitorHandle {
     // ordinary tick and durable path remain fail-closed retry backstops.
     const immediateBlock = this.browserBlockDecision(candidate);
     if (immediateBlock) {
-      const redirectUrl = this.blockedPageTarget(immediateBlock.front, immediateBlock.policy);
+      const redirectUrl = this.blockedPageTarget(
+        immediateBlock.front,
+        immediateBlock.policy,
+        immediateBlock.options,
+        { state: this.committedState, usage: this.committedUsage }
+      );
       const result = await this.browserRedirect(candidate.app, redirectUrl, { currentUrl: candidate.url });
       // Only the target-atomic redirect implementations can positively confirm
       // that the offending tab was replaced. A legacy/ambiguous `{ ok: true }`
@@ -1112,14 +1143,59 @@ export class Monitor implements MonitorHandle {
     );
   }
 
-  blockedPageTarget(front: FrontSample, policy: EnforcedPolicy): string {
-    const target = new URL(`http://127.0.0.1:${PORT}/blocked`);
-    target.searchParams.set("site", front.hostname);
-    target.searchParams.set("until", policy.endsAt);
-    target.searchParams.set("mode", policy.session.mode || "focus");
-    target.searchParams.set("policyId", policy.session.id || "");
-    if (front.url) target.searchParams.set("back", front.url);
-    return target.toString();
+  blockedPageTarget(
+    front: FrontSample,
+    policy: EnforcedPolicy,
+    options: BlockSiteOptions = {},
+    validation: BlockedPageValidationSnapshot = { state: this.state, usage: this.usage }
+  ): string {
+    const backUrl = this.safeBlockedPageBackUrl(front, options, validation);
+    return buildBlockedPageUrl({
+      site: front.hostname,
+      until: policy.endsAt,
+      mode: policy.session.mode || "focus",
+      policyId: policy.session.id || "",
+      backUrl,
+      port: PORT
+    });
+  }
+
+  safeBlockedPageBackUrl(
+    front: FrontSample,
+    options: BlockSiteOptions = {},
+    validation: BlockedPageValidationSnapshot = { state: this.state, usage: this.usage }
+  ): string {
+    const recentSampleCandidates = [this.lastSample, this.previousSample]
+      .flatMap((sample) => (
+        sample?.app === front.app
+        && Boolean(sample.url)
+        && !sameBrowserUrl(sample.url, front.url)
+          ? [sample.url]
+          : []
+      ));
+    const candidates = [
+      ...recentSampleCandidates,
+      options.contentFilter?.fallbackUrl || "",
+      browserOriginUrl(front.url)
+    ];
+    for (const value of candidates) {
+      const candidate = safeExternalPageUrl(value);
+      if (!candidate || sameBrowserUrl(candidate, front.url)) continue;
+      const parsed = new URL(candidate);
+      const sample = {
+        app: front.app,
+        hostname: urlHostname(candidate),
+        url: candidate
+      };
+      const state = structuredClone(validation.state);
+      const usage = structuredClone(validation.usage);
+      const evaluatedAt = new Date(this.browserActivityNow());
+      if (!policyForSample(state, usage, sample, evaluatedAt)) {
+        if (safariFilterDenyMatch(state, candidate, evaluatedAt)) continue;
+        return parsed.toString();
+      }
+    }
+    return "";
   }
 
   browserBlockKey(front: FrontSample, options: BlockSiteOptions = {}): string {
@@ -1733,6 +1809,7 @@ export class Monitor implements MonitorHandle {
       lastPollAt: this.lastPollAt,
       lastMonotonicAt: this.lastMonotonicAt,
       lastSample: structuredClone(this.lastSample),
+      previousSample: structuredClone(this.previousSample),
       status: structuredClone(this.status),
       recentBlocks: new Map(this.recentBlocks),
       appBlockHistory: new Map([...this.appBlockHistory].map(([key, value]) => [key, structuredClone(value)])),
@@ -1759,6 +1836,7 @@ export class Monitor implements MonitorHandle {
     this.lastPollAt = snapshot.lastPollAt;
     this.lastMonotonicAt = snapshot.lastMonotonicAt;
     this.lastSample = snapshot.lastSample;
+    this.previousSample = snapshot.previousSample;
     this.status = snapshot.status;
     this.recentBlocks = snapshot.recentBlocks;
     this.appBlockHistory = snapshot.appBlockHistory;
@@ -1927,6 +2005,11 @@ export class Monitor implements MonitorHandle {
     const previousSample = this.lastSample;
     const currentSample: FrontSample | null = front.ok ? { app: front.app, hostname: front.hostname || "", url: front.url || "" } : null;
     if (currentSample) recordOpen(this.usage, currentSample, previousSample);
+    if (
+      currentSample
+      && previousSample
+      && (currentSample.app !== previousSample.app || !sameBrowserUrl(currentSample.url, previousSample.url))
+    ) this.previousSample = previousSample;
     this.lastSample = currentSample;
     this.status.lastSample = currentSample;
   }
@@ -2404,7 +2487,7 @@ export class Monitor implements MonitorHandle {
     if (!shouldAttemptBlockedBrowserRedirect({ coolingDown, app: front.app, url: front.url })) return;
     if (!coolingDown) this.markCoolingDown(key);
 
-    const target = this.blockedPageTarget(front, policy);
+    const target = this.blockedPageTarget(front, policy, options);
 
     const result = await this.externalEffect("redirect-browser", {
       app: front.app,

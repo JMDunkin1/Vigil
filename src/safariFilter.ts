@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { appleContentFilterStatus } from "./appleContentFilter.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
+import { vigilLocalSiteAllowList } from "./blockedPageUrl.js";
 import { CONTENT_FILTER_RULES, contentFilterEnabled } from "./contentFilters.js";
 import { DATA_DIR } from "./store.js";
 import { toPlist } from "./plist.js";
@@ -18,7 +19,7 @@ export const SAFARI_FILTER_PROFILE_PATH = join(DATA_DIR, "vigil-safari-url-filte
 
 const execFileAsync = promisify(execFile);
 const URL_LIMIT = 500;
-const SAFARI_FILTER_SIGNATURE_VERSION = 2;
+const SAFARI_FILTER_SIGNATURE_VERSION = 3;
 
 export interface SafariFilterUrlTarget {
   url: string;
@@ -39,6 +40,7 @@ interface ProfileListResult {
 interface SafariFilterPolicyData {
   denyUrls: string[];
   pathDenyUrls: string[];
+  siteAllowList: ReturnType<typeof vigilLocalSiteAllowList>;
   signature: string;
 }
 
@@ -52,6 +54,49 @@ export function safariFilterDenyUrls(state: VigilState, now = new Date()): strin
 
 export function safariFilterPathDenyUrls(state: VigilState, now = new Date()): string[] {
   return safariFilterPolicyData(state, now).pathDenyUrls;
+}
+
+export function safariFilterDenyMatch(state: VigilState, value: unknown, now = new Date()): string {
+  let url: URL;
+  try {
+    url = new URL(String(value || ""));
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+  } catch {
+    return "";
+  }
+  const candidates = managedFilterMatchCandidates(url);
+  return safariFilterTargets(state, now).find((target) => {
+    const pattern = target.url.toLowerCase();
+    return candidates.some((candidate) => candidate.includes(pattern));
+  })?.url || "";
+}
+
+function managedFilterMatchCandidates(url: URL): string[] {
+  const candidates: string[] = [];
+  const seeds = [url.toString(), ...url.searchParams.values()];
+  for (const seed of seeds) {
+    let decoded = seed.toLowerCase();
+    candidates.push(decoded);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const next = decodePercentRuns(decoded).toLowerCase();
+      if (next === decoded) break;
+      candidates.push(next);
+      decoded = next;
+    }
+  }
+  return [...new Set(candidates)];
+}
+
+function decodePercentRuns(value: string): string {
+  return value.replace(/(?:%[0-9a-f]{2})+/gi, (run) => {
+    try {
+      return decodeURIComponent(run);
+    } catch {
+      return run.replace(/%([0-9a-f]{2})/gi, (_match, hex: string) => (
+        String.fromCharCode(Number.parseInt(hex, 16))
+      ));
+    }
+  });
 }
 
 export function safariFilterTargets(state: VigilState, now = new Date()): SafariFilterUrlTarget[] {
@@ -95,17 +140,22 @@ function safariFilterPolicyData(state: VigilState, now: Date): SafariFilterPolic
     .filter((target) => target.pathSpecific)
     .map((target) => target.url)
     .slice(0, URL_LIMIT);
-  const signature = safariFilterPolicySignatureForUrls(denyUrls);
-  return { denyUrls, pathDenyUrls, signature };
+  const siteAllowList = vigilLocalSiteAllowList();
+  const signature = safariFilterPolicySignatureForUrls(denyUrls, siteAllowList);
+  return { denyUrls, pathDenyUrls, siteAllowList, signature };
 }
 
-function safariFilterPolicySignatureForUrls(denyUrls: string[]): string {
+function safariFilterPolicySignatureForUrls(
+  denyUrls: string[],
+  siteAllowList: ReturnType<typeof vigilLocalSiteAllowList>
+): string {
   return createHash("sha256")
     .update(JSON.stringify({
       version: SAFARI_FILTER_SIGNATURE_VERSION,
       appleBuiltInContentFilter: true,
       removalDisallowed: true,
       allowSafariHistoryClearing: true,
+      siteAllowList,
       denyUrls
     }))
     .digest("hex");
@@ -122,6 +172,7 @@ function buildSafariFilterProfileFromData(data: SafariFilterPolicyData): string 
         allowListEnabled: false,
         filterDenyList: data.denyUrls,
         restrictWeb: true,
+        siteAllowList: data.siteAllowList,
         useContentFilter: true,
         PayloadDescription: "Enforces Apple's built-in web content filter plus Vigil deny URLs in Safari without rewriting browser tabs.",
         PayloadDisplayName: "Vigil Safari URL Filter",
@@ -179,6 +230,7 @@ export async function safariFilterStatus(state: VigilState, now = new Date(), op
     required,
     appleContentFilter,
     appleCurrent: appleContentFilter.current,
+    vigilPagesReachable: appleContentFilter.vigilPagesReachable,
     // Safari's "Reload Without Content Blockers" can disable extension-level
     // blockers for a page. Only count the filter as effective when Apple's
     // system web-content policy is actually active; an installed profile record

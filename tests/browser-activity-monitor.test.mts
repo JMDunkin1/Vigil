@@ -538,11 +538,84 @@ import { recordUsage } from "../src/usage.js";
   const blockerTarget = new URL(redirects[0]?.target || "");
   assert.equal(blockerTarget.hostname, "127.0.0.1");
   assert.equal(blockerTarget.pathname, "/blocked");
-  assert.equal(blockerTarget.searchParams.get("back"), blockedUrl);
+  assert.equal(blockerTarget.searchParams.get("back"), "https://www.google.com/");
+  assert.equal(decodeURIComponent(blockerTarget.toString()).includes(blockedUrl), false,
+    "the blocker receipt must never embed the URL that Safari just denied");
 
   releaseRoutineWork();
   await monitor.operationTail;
   assert.equal(monitor.status.lastEnforcement?.type, "url", "successful fast blocking must still be recorded after serialization resumes");
+}
+
+{
+  const state = defaultState();
+  const monitor = new Monitor({ state, usage: {} });
+  const safe = { ok: true as const, app: "Safari", hostname: "example.com", url: "https://example.com/work" };
+  const blocked = { ok: true as const, app: "Safari", hostname: "google.com", url: "https://www.google.com/search?q=porn" };
+  monitor.applyFrontmostSample(safe);
+  monitor.applyFrontmostSample(blocked);
+  const policy = monitor.policyForTarget(blocked);
+  assert.ok(policy, "the normal monitor path must identify the blocked explicit search");
+  const target = new URL(monitor.blockedPageTarget(blocked, policy));
+  assert.equal(target.searchParams.get("back"), safe.url,
+    "scheduled enforcement must preserve the prior validated page instead of overwriting it with the blocked sample");
+}
+
+{
+  const state = defaultState();
+  const monitor = new Monitor({ state, usage: {} });
+  const safe = { ok: true as const, app: "Safari", hostname: "example.com", url: "https://example.com/work" };
+  const previousBlocked = { ok: true as const, app: "Safari", hostname: "pornhub.com", url: "https://www.pornhub.com/video/first" };
+  const currentBlocked = { ok: true as const, app: "Safari", hostname: "pornhub.com", url: "https://www.pornhub.com/video/second" };
+  monitor.applyFrontmostSample(safe);
+  monitor.applyFrontmostSample(previousBlocked);
+  const policy = monitor.policyForTarget(currentBlocked);
+  assert.ok(policy, "the fast path must identify the newly observed blocked URL");
+  const target = new URL(monitor.blockedPageTarget(currentBlocked, policy));
+  assert.equal(target.searchParams.get("back"), safe.url,
+    "a denied last sample must fall through to the older validated page instead of discarding it");
+}
+
+{
+  const state = defaultState();
+  state.limitRules = [{
+    id: "transactional-browser-limit",
+    name: "Transactional browser limit",
+    enabled: true,
+    type: "time",
+    lockLevel: "deep",
+    days: [0, 1, 2, 3, 4, 5, 6],
+    apps: [],
+    sites: ["reddit.com"],
+    limitMinutes: 1,
+    unlocksAllowed: 0,
+    blockMinutes: 30
+  }];
+  const usage = {};
+  const coordinator = new RuntimeMutationCoordinator(state, usage, [], async () => {});
+  const monitor = new Monitor({
+    state,
+    usage,
+    mutate: async (operation, options) => await coordinator.run(
+      ({ state: draftState, usage: draftUsage, afterCommit }) => operation(draftState, draftUsage, afterCommit),
+      options
+    )
+  });
+  const blocked = { ok: true as const, app: "Safari", hostname: "reddit.com", url: "https://www.reddit.com/r/typescript/" };
+  let redirect = "";
+  await monitor.enqueueMutationOperation(async () => {
+    monitor.applyFrontmostSample(blocked);
+    recordUsage(monitor.usage, blocked, 61);
+    const policy = monitor.policyForTarget(blocked);
+    assert.ok(policy?.limitBlock, "crossing the limit inside the transaction must create a draft limit block");
+    redirect = monitor.blockedPageTarget(blocked, policy);
+  });
+  const target = new URL(redirect);
+  assert.equal(target.searchParams.has("back"), false,
+    "a newly denied origin must be validated against the draft restriction before entering the blocker URL");
+  assert.equal(decodeURIComponent(target.toString()).includes("reddit.com"), false);
+  coordinator.stopAdmission();
+  await coordinator.drain();
 }
 
 {

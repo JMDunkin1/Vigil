@@ -29,6 +29,138 @@ final class VigilBrowserTests: XCTestCase {
         XCTAssertNil(ContentSafetyPayload.inlineMedia(from: ["dataURL": "data:image/jpeg;base64,\(oversized)"]))
     }
 
+    func testBlockedPageIsBrandedAndUsesValidatedNativeEscapeAction() throws {
+        let attempted = try XCTUnwrap(URL(string: "https://example.com/shorts/<script>alert(1)</script>"))
+        let nonce = try XCTUnwrap(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
+        let documentNonce = try XCTUnwrap(UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+        let escapeURL = VigilBlockedPage.escapeURL(nonce: nonce)
+        let documentURL = VigilBlockedPage.documentURL(nonce: documentNonce)
+        let html = VigilBlockedPage.html(reason: "Page <blocked>", attemptedURL: attempted, escapeURL: escapeURL)
+
+        XCTAssertTrue(html.contains("data-vigil-block-page=\"1\""))
+        XCTAssertTrue(html.contains("radial-gradient"))
+        XCTAssertTrue(html.contains("#b77952"))
+        XCTAssertTrue(html.contains(">Vigil<"))
+        XCTAssertTrue(html.contains(">Go back<"))
+        XCTAssertTrue(html.contains("href=\"\(escapeURL.absoluteString)\""))
+        XCTAssertFalse(html.contains("Page <blocked>"))
+        XCTAssertEqual(VigilBlockedPage.fallbackURL.absoluteString, "about:blank")
+        XCTAssertEqual(documentURL.absoluteString, "https://blocked.vigil.invalid/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+        XCTAssertTrue(VigilBlockedPage.isDocumentURL(documentURL))
+        XCTAssertFalse(VigilBlockedPage.isDocumentURL(try XCTUnwrap(URL(string: "https://blocked.vigil.invalid.example/page"))))
+        XCTAssertNotEqual(documentURL, VigilBlockedPage.fallbackURL)
+        XCTAssertNotEqual(documentURL, escapeURL)
+    }
+
+    func testBlockedSurfaceKeepsItsNonceAndStateUntilValidatedNavigationCommits() throws {
+        let nonce = try XCTUnwrap(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
+        let otherNonce = try XCTUnwrap(UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"))
+        let escapeURL = VigilBlockedPage.escapeURL(nonce: nonce)
+        let wrongEscapeURL = VigilBlockedPage.escapeURL(nonce: otherNonce)
+        var state = BrowserSurfaceState.blocked(BrowserBlockedPageSession(escapeURL: escapeURL))
+
+        XCTAssertTrue(state.isShowingBlockedPage)
+        XCTAssertFalse(state.isBlockedPageCommitted)
+        XCTAssertFalse(state.canEscapeBlockedPage)
+        XCTAssertFalse(state.acceptsEscape(
+            escapeURL,
+            sourceIsMainFrame: true,
+            targetIsMainFrame: true,
+            isLinkActivation: true
+        ))
+
+        state.blockedPageDidCommit()
+        XCTAssertTrue(state.isBlockedPageCommitted)
+        XCTAssertTrue(state.canEscapeBlockedPage)
+        XCTAssertTrue(state.acceptsEscape(
+            escapeURL,
+            sourceIsMainFrame: true,
+            targetIsMainFrame: true,
+            isLinkActivation: true
+        ))
+        XCTAssertFalse(state.acceptsEscape(
+            wrongEscapeURL,
+            sourceIsMainFrame: true,
+            targetIsMainFrame: true,
+            isLinkActivation: true
+        ))
+        XCTAssertFalse(state.acceptsEscape(
+            try XCTUnwrap(URL(string: "\(escapeURL.absoluteString)?replayed=1")),
+            sourceIsMainFrame: true,
+            targetIsMainFrame: true,
+            isLinkActivation: true
+        ))
+        XCTAssertFalse(state.acceptsEscape(
+            escapeURL,
+            sourceIsMainFrame: false,
+            targetIsMainFrame: true,
+            isLinkActivation: true
+        ))
+        XCTAssertFalse(state.acceptsEscape(
+            escapeURL,
+            sourceIsMainFrame: true,
+            targetIsMainFrame: false,
+            isLinkActivation: true
+        ))
+        XCTAssertFalse(state.acceptsEscape(
+            escapeURL,
+            sourceIsMainFrame: true,
+            targetIsMainFrame: true,
+            isLinkActivation: false
+        ))
+
+        state.beginAllowedNavigation()
+        XCTAssertTrue(state.isShowingBlockedPage)
+        XCTAssertTrue(state.isLeavingBlockedPage)
+        XCTAssertFalse(state.canEscapeBlockedPage)
+        XCTAssertFalse(state.allowsBackForwardNavigationGestures)
+        XCTAssertFalse(state.acceptsEscape(
+            escapeURL,
+            sourceIsMainFrame: true,
+            targetIsMainFrame: true,
+            isLinkActivation: true
+        ))
+        state.pendingAllowedNavigationDidFail()
+        XCTAssertTrue(state.isShowingBlockedPage)
+        XCTAssertTrue(state.isBlockedPageCommitted)
+        XCTAssertFalse(state.isLeavingBlockedPage)
+        XCTAssertTrue(state.canEscapeBlockedPage)
+
+        state.beginAllowedNavigation()
+        state.allowedNavigationDidCommit()
+        XCTAssertEqual(state, .browsing)
+        XCTAssertTrue(state.allowsBackForwardNavigationGestures)
+        XCTAssertFalse(state.acceptsEscape(
+            escapeURL,
+            sourceIsMainFrame: true,
+            targetIsMainFrame: true,
+            isLinkActivation: true
+        ))
+    }
+
+    func testExplicitNeutralEscapeIsDistinctFromCommittedSyntheticBlock() throws {
+        let nonce = try XCTUnwrap(UUID(uuidString: "11111111-2222-3333-4444-555555555555"))
+        let escapeURL = VigilBlockedPage.escapeURL(nonce: nonce)
+        var state = BrowserSurfaceState.blocked(BrowserBlockedPageSession(
+            escapeURL: escapeURL,
+            isCommitted: true
+        ))
+
+        state.beginAllowedNavigation()
+        state.neutralNavigationDidCommit()
+
+        XCTAssertTrue(state.isAtNeutralEscapePage)
+        XCTAssertFalse(state.isShowingBlockedPage)
+        XCTAssertFalse(state.canEscapeBlockedPage)
+        XCTAssertFalse(state.allowsBackForwardNavigationGestures)
+        XCTAssertFalse(state.acceptsEscape(
+            escapeURL,
+            sourceIsMainFrame: true,
+            targetIsMainFrame: true,
+            isLinkActivation: true
+        ))
+    }
+
     func testBlocksInsecureAndBlockedHostsIncludingSubdomains() throws {
         var rules = FilterRules.bootstrap
         rules.blockedHosts = ["xvideos.com"]
@@ -36,6 +168,46 @@ final class VigilBrowserTests: XCTestCase {
         XCTAssertEqual(filter.decide(try XCTUnwrap(URL(string: "http://example.com"))), .block(reason: "This browser requires a secure HTTPS connection."))
         XCTAssertEqual(filter.decide(try XCTUnwrap(URL(string: "https://cdn.xvideos.com/video"))), .block(reason: "This website is blocked by Vigil."))
         XCTAssertEqual(filter.decide(try XCTUnwrap(URL(string: "https://example.com"))), .allow(try XCTUnwrap(URL(string: "https://example.com"))))
+    }
+
+    func testTrailingDotCannotBypassHostRulesOrSafeSearch() throws {
+        var rules = FilterRules.bootstrap
+        rules.blockedHosts = ["blocked.example"]
+        let filter = NavigationFilter(rules: rules)
+        XCTAssertEqual(
+            filter.decide(try XCTUnwrap(URL(string: "https://blocked.example./path"))),
+            .block(reason: "This website is blocked by Vigil.")
+        )
+        let google = try XCTUnwrap(URL(string: "https://www.google.com./search?q=test&safe=off"))
+        guard case let .allow(output) = filter.decide(google) else { return XCTFail("Expected dotted Google host to be allowed safely") }
+        let safe = URLComponents(url: output, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "safe" }?.value
+        XCTAssertEqual(safe, "active")
+    }
+
+    func testEncodedPathsAndSearchTermsCannotBypassRules() throws {
+        var rules = FilterRules.bootstrap
+        rules.blockedURLFragments = ["/shorts/"]
+        let filter = NavigationFilter(rules: rules)
+        XCTAssertEqual(
+            filter.decide(try XCTUnwrap(URL(string: "https://example.com/%73horts/video"))),
+            .block(reason: "This page is blocked by Vigil.")
+        )
+        XCTAssertEqual(
+            filter.decide(try XCTUnwrap(URL(string: "https://example.com/%2573horts/video"))),
+            .block(reason: "This page is blocked by Vigil.")
+        )
+        XCTAssertEqual(
+            filter.decide(try XCTUnwrap(URL(string: "https://example.com/%25ZZ/%2573horts/video"))),
+            .block(reason: "This page is blocked by Vigil.")
+        )
+        XCTAssertEqual(
+            filter.decide(try XCTUnwrap(URL(string: "https://example.com/%ff%2fshorts%2fvideo"))),
+            .block(reason: "This page is blocked by Vigil.")
+        )
+        XCTAssertEqual(
+            filter.decide(try XCTUnwrap(URL(string: "https://example.com/search?q=%2570orn"))),
+            .block(reason: "That search is blocked by Vigil.")
+        )
     }
 
     func testSafeSearchCannotBeDisabledByIncomingURL() throws {

@@ -5,6 +5,10 @@
   "description": "Applies Vigil navigation rules inside Safari.",
   "permissions": ["nativeMessaging", "storage"],
   "host_permissions": ["http://*/*", "https://*/*"],
+  "web_accessible_resources": [{
+    "resources": ["history-bridge.js"],
+    "matches": ["http://*/*", "https://*/*"]
+  }],
   "content_scripts": [{
     "matches": ["http://*/*", "https://*/*"],
     "js": ["ContentSafety.js", "content.js"],

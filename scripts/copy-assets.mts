@@ -43,7 +43,7 @@ async function makeExtensionScriptsClassic(): Promise<void> {
   // Chrome content scripts and ordinary option-page scripts are classic
   // scripts. TypeScript treats files under this ESM package as modules and
   // emits a trailing `export {};`, which Chrome rejects before Vigil can run.
-  for (const name of ["background.js", "content.js", "google-safe-search.js", "options.js"]) {
+  for (const name of ["background.js", "blocked.js", "content.js", "google-safe-search.js", "options.js"]) {
     const path = join(runtimeRoot, "extension", name);
     const source = await readFile(path, "utf8");
     const classic = source.replace(/\nexport \{\};?\s*$/u, "\n");
