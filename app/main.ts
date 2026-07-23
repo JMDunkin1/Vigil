@@ -23,6 +23,7 @@ import {
   markUpdateRecoveryCommitIntent,
   readUpdateRecoveryManifest,
   readUpdateRecoveryPolicyFile,
+  recoveryDependenciesForStableHelper,
   updateRecoveryPaths
 } from "../src/updateTransaction.js";
 import { deriveAppUpdateViewState } from "../public/app-update-state.js";
@@ -1199,7 +1200,8 @@ async function attestUpdateCandidateOnce(
     if (!companionHealthy) {
       throw new Error("Vigil's sustained update-candidate companion health could not be verified.");
     }
-    await markUpdateRecoveryCommitIntent(loadedPolicy.policy, observedAttemptId);
+    const recoveryDependencies = await recoveryDependenciesForStableHelper(loadedPolicy.policy, manifest);
+    await markUpdateRecoveryCommitIntent(loadedPolicy.policy, observedAttemptId, recoveryDependencies);
     updateCandidateAttestationLastError = "";
   } catch (error) {
     // Recovery evidence remains authoritative. A failed attestation must never

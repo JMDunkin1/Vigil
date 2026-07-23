@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { chmod, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   UPDATE_RECOVERY_MANIFEST_FILENAME,
   UPDATE_RECOVERY_LOCK_FILENAME,
@@ -71,6 +71,7 @@ try {
   verifyExactIdentityComparisonRejectsPartialAgreement();
   await verifySuccessfulOperationSurfacesRecoveryLockReleaseFailure();
   await verifyStableRecoveryHelperReleasesLockAfterAppActivation();
+  await verifyRelocatedCandidateUsesStableRecoveryHelper();
   await verifyTamperedStableHelperCannotReconcileStaleLock();
   await verifyRecoveryLockSerializesConcurrentCallers();
   await verifyLiveRuntimeModeNeverSwapsCanonicalArtifacts();
@@ -701,6 +702,48 @@ async function verifyTamperedStableHelperCannotReconcileStaleLock(): Promise<voi
     "a tampered stable helper must never execute during pre-operation lock reconciliation"
   );
   assert.ok(await lstat(lockPath), "failed helper validation must preserve the stale lock as recovery evidence");
+}
+
+async function verifyRelocatedCandidateUsesStableRecoveryHelper(): Promise<void> {
+  const fixture = await createFixture("relocated-candidate-helper", false);
+  const manifest = await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
+  await activateStagedUpdateArtifact(
+    fixture.policy,
+    fixture.input.attemptId,
+    fixture.input.app,
+    "app",
+    fixture.dependencies
+  );
+  const relocatedRoot = join(fixture.root, "packed-candidate");
+  const relocatedModulePath = join(relocatedRoot, "src", "updateTransaction.js");
+  await mkdir(join(relocatedRoot, "src"), { recursive: true });
+  await writeFile(join(relocatedRoot, "package.json"), '{"type":"module"}\n');
+  await cp(
+    fileURLToPath(new URL("../src/updateTransaction.js", import.meta.url)),
+    relocatedModulePath
+  );
+  const relocated = await import(
+    `${pathToFileURL(relocatedModulePath).href}?fixture=${encodeURIComponent(fixture.input.attemptId)}`
+  ) as typeof import("../src/updateTransaction.js");
+  const stable = await relocated.recoveryDependenciesForStableHelper(fixture.policy, manifest);
+  const dependencies: UpdateRecoveryDependencies = {
+    ...fixture.dependencies,
+    operations: {
+      ...fixture.operations,
+      ...stable.operations
+    }
+  };
+  const intent = await relocated.markUpdateRecoveryCommitIntent(
+    fixture.policy,
+    fixture.input.attemptId,
+    dependencies
+  );
+  assert.equal(intent.state, "commit-intent");
+  await assert.rejects(
+    lstat(join(fixture.policy.updaterDir, UPDATE_RECOVERY_LOCK_FILENAME)),
+    (error: unknown) => isErrorCode(error, "ENOENT"),
+    "an ASAR-like candidate module without a sibling helper must release its lock through the stable recovery copy"
+  );
 }
 
 async function verifyRecoveryLockSerializesConcurrentCallers(): Promise<void> {

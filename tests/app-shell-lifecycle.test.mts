@@ -422,8 +422,8 @@ for (const exactField of ["pid", "appPath", "startedAt"]) {
 }
 assert.match(
   candidateAttestationSource,
-  /updateRecoveryPaths\(join\(app\.getPath\("userData"\), "updater"\)\)[\s\S]*?recoveryManifestEntryExists\(recoveryPaths\.manifestPath\)[\s\S]*?readUpdateRecoveryPolicyFile\(recoveryPaths\.policyPath\)[\s\S]*?readUpdateRecoveryManifest\(loadedPolicy\.policy\)[\s\S]*?if \(!manifest\) return;[\s\S]*?observedAttemptId \|\|= manifest\.attemptId[\s\S]*?manifest\.attemptId !== observedAttemptId[\s\S]*?markUpdateRecoveryCommitIntent\(loadedPolicy\.policy, observedAttemptId\)/u,
-  "a live candidate must load the private recovery policy and attest only the exact manifest attempt, while an absent manifest remains a no-op"
+  /updateRecoveryPaths\(join\(app\.getPath\("userData"\), "updater"\)\)[\s\S]*?recoveryManifestEntryExists\(recoveryPaths\.manifestPath\)[\s\S]*?readUpdateRecoveryPolicyFile\(recoveryPaths\.policyPath\)[\s\S]*?readUpdateRecoveryManifest\(loadedPolicy\.policy\)[\s\S]*?if \(!manifest\) return;[\s\S]*?observedAttemptId \|\|= manifest\.attemptId[\s\S]*?manifest\.attemptId !== observedAttemptId[\s\S]*?recoveryDependenciesForStableHelper\(loadedPolicy\.policy, manifest\)[\s\S]*?markUpdateRecoveryCommitIntent\(loadedPolicy\.policy, observedAttemptId, recoveryDependencies\)/u,
+  "a live candidate must load the private recovery policy, bind lock release to its stable helper, and attest only the exact manifest attempt"
 );
 assert.match(
   candidateAttestationSource,
