@@ -170,6 +170,7 @@ const asarUnpack = stringArrayValue(build.asarUnpack, "asar unpack patterns");
 for (const expected of [
   "dist.nosync/runtime/build-info.json",
   "dist.nosync/runtime/package.json",
+  "dist.nosync/runtime/app/updater.js",
   "dist.nosync/runtime/public/**/*",
   "dist.nosync/runtime/src/**/*",
   "dist.nosync/runtime/scripts/**/*",
