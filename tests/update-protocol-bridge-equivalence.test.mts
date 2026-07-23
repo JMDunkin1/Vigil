@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import {
   chmod,
   link,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -25,7 +26,9 @@ const execFileAsync = promisify(execFile);
 const root = await realpath(await mkdtemp(join(tmpdir(), "vigil-protocol-bridge-equivalence-")));
 const installedAppPath = join(root, "installed", "Vigil.app");
 const candidateAppPath = join(root, "candidate", "Vigil.app");
+const refreshedCandidateAppPath = join(root, "refreshed-candidate", "Vigil.app");
 const payloadPath = join(root, "payload");
+const refreshedPayloadPath = join(root, "refreshed-payload");
 const standardRuntime = join("Contents", "Resources", "app.asar.unpacked", "dist", "runtime");
 const buildInfoPath = join(standardRuntime, "build-info.json");
 const updaterPath = join(standardRuntime, "scripts", "update-packaged-app.mjs");
@@ -38,6 +41,10 @@ const launcherPath = join("Contents", "MacOS", "Vigil");
 try {
   await createBaselineFixture(installedAppPath);
   await createPayloadFixture(payloadPath);
+  await Promise.all([
+    mkdir(dirname(candidateAppPath), { recursive: true }),
+    mkdir(dirname(refreshedCandidateAppPath), { recursive: true })
+  ]);
   const manifest = await assembleUpdateProtocolBridgeCandidate({
     installedAppPath,
     runtimePayloadPath: payloadPath,
@@ -91,6 +98,43 @@ try {
   const evidence = await verifyFixture();
   assert.equal(evidence.payloadTreeSha256, manifest.payloadTreeSha256);
   assert.equal(evidence.equivalentTreeSha256, manifest.equivalentTreeSha256);
+
+  await createPayloadFixture(refreshedPayloadPath);
+  await writeFile(join(refreshedPayloadPath, "src.mjs"), "export const payload = 4;\n");
+  const refreshedManifest = await assembleUpdateProtocolBridgeCandidate({
+    installedAppPath: candidateAppPath,
+    runtimePayloadPath: refreshedPayloadPath,
+    candidateAppPath: refreshedCandidateAppPath
+  });
+  assert.notEqual(refreshedManifest.payloadTreeSha256, manifest.payloadTreeSha256,
+    "a bridge refresh must pin the new runtime payload");
+  assert.equal(refreshedManifest.equivalentTreeSha256, manifest.equivalentTreeSha256,
+    "a bridge refresh must preserve generation A's protected tree");
+  assert.equal(refreshedManifest.baselineBuildInfoSha256, manifest.baselineBuildInfoSha256,
+    "a bridge refresh must preserve generation A's build identity");
+  assert.deepEqual(
+    refreshedManifest.wrappers.map(({ kind, mode, baselinePresent, xattrs }) => ({ kind, mode, baselinePresent, xattrs })),
+    manifest.wrappers.map(({ kind, mode, baselinePresent, xattrs }) => ({ kind, mode, baselinePresent, xattrs })),
+    "a bridge refresh must retain the original wrapper topology and metadata"
+  );
+  const refreshedEvidence = await verifyUpdateProtocolBridgeEquivalence(
+    candidateAppPath,
+    refreshedCandidateAppPath,
+    { requireSignedSeal: false }
+  );
+  assert.equal(refreshedEvidence.payloadTreeSha256, refreshedManifest.payloadTreeSha256);
+  const originalBaselineRefreshEvidence = await verifyUpdateProtocolBridgeEquivalence(
+    installedAppPath,
+    refreshedCandidateAppPath,
+    { requireSignedSeal: false }
+  );
+  assert.equal(originalBaselineRefreshEvidence.payloadTreeSha256, refreshedManifest.payloadTreeSha256,
+    "the refreshed bridge must remain directly equivalent to the original generation A");
+  await assert.rejects(
+    lstat(join(refreshedCandidateAppPath, manifest.payloadRoot)),
+    { code: "ENOENT" },
+    "the refreshed bridge must not retain the superseded payload tree"
+  );
 
   const transactionRoot = join(root, "transaction");
   const previousAppPath = join(transactionRoot, "Vigil.app.vigil-previous");
@@ -260,9 +304,41 @@ async function createPayloadFixture(path: string): Promise<void> {
 }
 
 async function assertClosedPayloadRejections(): Promise<void> {
+  const aliasedOutputParent = join(root, "aliased-installed-parent");
+  await symlink(dirname(installedAppPath), aliasedOutputParent);
+  await assert.rejects(
+    assembleUpdateProtocolBridgeCandidate({
+      installedAppPath,
+      runtimePayloadPath: payloadPath,
+      candidateAppPath: join(aliasedOutputParent, "Vigil.app")
+    }),
+    /unsafe output directory/u,
+    "a symlinked output parent must not alias the installed app"
+  );
+
+  await assert.rejects(
+    assembleUpdateProtocolBridgeCandidate({
+      installedAppPath,
+      runtimePayloadPath: payloadPath,
+      candidateAppPath: join(installedAppPath, "nested", "Vigil.app")
+    }),
+    /unsafe update-protocol bridge candidate path/u,
+    "a candidate must never be created inside the installed app"
+  );
+  await assert.rejects(
+    assembleUpdateProtocolBridgeCandidate({
+      installedAppPath,
+      runtimePayloadPath: payloadPath,
+      candidateAppPath: join(payloadPath, "nested", "Vigil.app")
+    }),
+    /unsafe update-protocol bridge candidate path/u,
+    "a candidate must never be created inside the payload source"
+  );
+
   const symlinkPayload = join(root, "payload-symlink");
   await createPayloadFixture(symlinkPayload);
   await symlink("src.mjs", join(symlinkPayload, "alias.mjs"));
+  await mkdir(join(root, "candidate-symlink"), { recursive: true });
   await assert.rejects(
     assembleUpdateProtocolBridgeCandidate({
       installedAppPath,
@@ -275,6 +351,7 @@ async function assertClosedPayloadRejections(): Promise<void> {
   const hardlinkPayload = join(root, "payload-hardlink");
   await createPayloadFixture(hardlinkPayload);
   await link(join(hardlinkPayload, "src.mjs"), join(hardlinkPayload, "alias.mjs"));
+  await mkdir(join(root, "candidate-hardlink"), { recursive: true });
   await assert.rejects(
     assembleUpdateProtocolBridgeCandidate({
       installedAppPath,
@@ -287,6 +364,7 @@ async function assertClosedPayloadRejections(): Promise<void> {
   const weirdPayload = join(root, "payload-weird");
   await createPayloadFixture(weirdPayload);
   await writeFile(join(weirdPayload, "bad\nname"), "no\n");
+  await mkdir(join(root, "candidate-weird"), { recursive: true });
   await assert.rejects(
     assembleUpdateProtocolBridgeCandidate({
       installedAppPath,

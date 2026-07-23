@@ -169,7 +169,8 @@ const updaterCapability: BootstrapUpdaterCapability = {
   revision: 3,
   sha256: "9".repeat(64),
   bootstrapSha256: "8".repeat(64),
-  setupSha256: "7".repeat(64)
+  setupSha256: "7".repeat(64),
+  payloadCommit: upstreamCommitM
 };
 const bridgeEquivalence = {
   manifestSha256: "2".repeat(64),
@@ -364,6 +365,12 @@ await assertPreinstallGateFailure(
   /required v3 updater capability/u,
   "read-source-updater",
   "verify-initial-2"
+);
+await assertPreinstallGateFailure(
+  { sourceUpdaterCapability: { ...updaterCapability, payloadCommit: "6".repeat(40) } },
+  /payload does not match the exact follow-on update commit/u,
+  "read-source-updater",
+  "authorization-before"
 );
 await assertPreinstallGateFailure(
   { changedInitialSignatureAtCheck: 2 },
@@ -570,6 +577,7 @@ interface FakeOptions {
   installedUpdaterCapability?: BootstrapUpdaterCapability;
   recoveryError?: Error;
   signedOriginError?: Error;
+  sourceUpdaterCapability?: BootstrapUpdaterCapability;
   updaterCapabilityErrorAtRead?: number;
 }
 
@@ -701,6 +709,7 @@ function fakeOperations(
       if (options.updaterCapabilityErrorAtRead === updaterReads) {
         throw new Error("required v3 updater capability is missing");
       }
+      if (path === sourceAppPath && options.sourceUpdaterCapability) return options.sourceUpdaterCapability;
       return path === targetAppPath && installed && options.installedUpdaterCapability
         ? options.installedUpdaterCapability
         : updaterCapability;

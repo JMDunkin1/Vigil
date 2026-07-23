@@ -65,6 +65,7 @@ try {
   await verifyAmbiguousIdentityFailsClosed();
   await verifyContradictoryInodeAndContentFailsClosed();
   await verifyContradictoryCodeDirectoryHashFailsClosed();
+  await verifyLegacyGuardianCanNormalizeRuntimeManifest();
   verifyExactIdentityComparisonRejectsPartialAgreement();
   await verifyRecoveryLockSerializesConcurrentCallers();
   await verifyLiveRuntimeModeNeverSwapsCanonicalArtifacts();
@@ -137,6 +138,62 @@ async function verifyExactNextCandidateIdentityIsActivatedWithoutRecopy(): Promi
   assert.equal(installed.ino, plan.targetIdentity.ino, "activation must preserve the staged candidate inode");
   assert.equal(installed.commit, "target-app", "activation must never recopy a later-mutated build directory");
   assert.equal((await requiredIdentity(`${target}.vigil-previous`, "app")).ino, plan.initialIdentity?.ino);
+}
+
+async function verifyLegacyGuardianCanNormalizeRuntimeManifest(): Promise<void> {
+  const fixture = await createFixture("legacy-guardian-manifest", true);
+  fixture.source.branch = null;
+  fixture.input.source.initialBranch = null;
+  fixture.input.app.initialCdHash = "a".repeat(40);
+  fixture.input.app.targetCdHash = "b".repeat(40);
+  const manifestPath = join(fixture.policy.updaterDir, UPDATE_RECOVERY_MANIFEST_FILENAME);
+  await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
+
+  const persisted = JSON.parse(await readFile(manifestPath, "utf8")) as {
+    app: Record<string, unknown>;
+    runtimes: Array<Record<string, unknown>>;
+    source: Record<string, unknown>;
+  };
+  assert.equal(persisted.app.initialCdHash, fixture.input.app.initialCdHash,
+    "the signed app's initial CodeDirectory hash must remain in the recovery manifest");
+  assert.equal(persisted.app.targetCdHash, fixture.input.app.targetCdHash,
+    "the signed app's target CodeDirectory hash must remain in the recovery manifest");
+  assert.equal(Object.hasOwn(persisted.runtimes[0]!, "initialCdHash"), false,
+    "unsigned runtime records must omit an inapplicable initial CodeDirectory hash");
+  assert.equal(Object.hasOwn(persisted.runtimes[0]!, "targetCdHash"), false,
+    "unsigned runtime records must omit an inapplicable target CodeDirectory hash");
+  assert.equal(Object.hasOwn(persisted.source, "initialBranch"), false,
+    "a detached source checkout must omit its inapplicable branch value");
+  assert.equal(jsonContainsNull(persisted), false,
+    "the recovery manifest must omit nullable properties so every supported guardian can normalize it");
+  const repeated = await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
+  assert.equal(repeated.source.initialBranch, null,
+    "an idempotent begin must restore omitted nullable properties to their canonical in-memory value");
+  assert.equal(repeated.runtimes[0]?.initialCdHash, null);
+  assert.equal(repeated.runtimes[0]?.targetCdHash, null);
+  assert.equal(repeated.timestamps.commitIntentAt, null);
+  assert.equal(repeated.timestamps.committedAt, null);
+
+  const legacyProjectionPath = join(fixture.root, "legacy-guardian-manifest.plist");
+  await cp(manifestPath, legacyProjectionPath);
+  for (const args of [
+    ["-remove", "state", legacyProjectionPath],
+    ["-remove", "source.syncPending", legacyProjectionPath],
+    ["-remove", "timestamps", legacyProjectionPath],
+    ["-convert", "binary1", legacyProjectionPath]
+  ]) {
+    const result = await executeFile("/usr/bin/plutil", args);
+    assert.equal(result.code, 0,
+      `the supported legacy guardian must be able to normalize the current recovery manifest: ${result.stderr}`);
+  }
+}
+
+function jsonContainsNull(value: unknown): boolean {
+  if (value === null) return true;
+  if (Array.isArray(value)) return value.some(jsonContainsNull);
+  return typeof value === "object" && value !== null
+    ? Object.values(value).some(jsonContainsNull)
+    : false;
 }
 
 async function verifyInterruptedPrestageIsDurablyReconciled(): Promise<void> {

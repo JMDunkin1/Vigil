@@ -638,7 +638,7 @@ export async function beginUpdateRecoveryTransaction(
     await ensureSafeDirectory(policy.updaterDir, true);
     try {
       await captureStateRollbackWal(manifest, operations);
-      await atomicWritePrivateJson(paths.manifestPath, manifest);
+      await atomicWriteRecoveryManifest(paths.manifestPath, manifest);
       await removePrivateRegularFileIfPresent(paths.outcomePath);
       return manifest;
     } catch (error) {
@@ -771,7 +771,7 @@ async function transitionUpdateRecoveryState(
     manifest.timestamps.updatedAt = updatedAt;
     if (nextState === "commit-intent") manifest.timestamps.commitIntentAt = updatedAt;
     else manifest.timestamps.committedAt = updatedAt;
-    await atomicWritePrivateJson(path, manifest);
+    await atomicWriteRecoveryManifest(path, manifest);
     return manifest;
   });
 }
@@ -823,12 +823,12 @@ async function recoverValidManifest(
     const updatedAt = monotonicTimestamp(manifest.timestamps.updatedAt, operations.now());
     manifest.timestamps.updatedAt = updatedAt;
     if (rollForward) manifest.timestamps.committedAt = updatedAt;
-    await atomicWritePrivateJson(updateRecoveryPaths(policy.updaterDir).manifestPath, manifest);
+    await atomicWriteRecoveryManifest(updateRecoveryPaths(policy.updaterDir).manifestPath, manifest);
   } else if (manifest.state === "pending") {
     if (!allowRollback) throw new Error("the pending transaction requires rollback after the live Vigil runtime exits");
     manifest.state = "rolling-back";
     manifest.timestamps.updatedAt = monotonicTimestamp(manifest.timestamps.updatedAt, operations.now());
-    await atomicWritePrivateJson(updateRecoveryPaths(policy.updaterDir).manifestPath, manifest);
+    await atomicWriteRecoveryManifest(updateRecoveryPaths(policy.updaterDir).manifestPath, manifest);
   }
 
   if (rollForward) {
@@ -848,7 +848,7 @@ async function recoverValidManifest(
     if (head !== manifest.source.targetCommit && head === manifest.source.initialCommit) {
       manifest.source.syncPending = true;
       manifest.timestamps.updatedAt = monotonicTimestamp(manifest.timestamps.updatedAt, operations.now());
-      await atomicWritePrivateJson(updateRecoveryPaths(policy.updaterDir).manifestPath, manifest);
+      await atomicWriteRecoveryManifest(updateRecoveryPaths(policy.updaterDir).manifestPath, manifest);
       await operations.synchronizeSource(
         policy.repoRoot,
         manifest.source.initialCommit,
@@ -868,7 +868,7 @@ async function recoverValidManifest(
     if (manifest.source.syncPending) {
       manifest.source.syncPending = false;
       manifest.timestamps.updatedAt = monotonicTimestamp(manifest.timestamps.updatedAt, operations.now());
-      await atomicWritePrivateJson(updateRecoveryPaths(policy.updaterDir).manifestPath, manifest);
+      await atomicWriteRecoveryManifest(updateRecoveryPaths(policy.updaterDir).manifestPath, manifest);
     }
     await ensureArtifactGeneration(manifest.app, "app", "target", operations);
     for (const runtime of manifest.runtimes) {
@@ -1833,7 +1833,7 @@ function validatedManifest(value: unknown, policy: UpdateRecoveryPolicy): Update
   const manifest = value as unknown as UpdateRecoveryManifest;
   updateAttemptId(manifest.attemptId);
   gitObjectId(manifest.source.initialCommit, "initial source commit");
-  sourceBranch(manifest.source.initialBranch, "initial source branch");
+  manifest.source.initialBranch = sourceBranch(manifest.source.initialBranch ?? null, "initial source branch");
   gitObjectId(manifest.source.targetCommit, "target source commit");
   if (typeof manifest.source.syncPending !== "boolean") {
     throw new UpdateRecoveryValidationError("The recovery manifest source synchronization state is invalid.");
@@ -1857,14 +1857,14 @@ function validateArtifactShape(value: unknown, label: string): asserts value is 
     exactAbsolutePath(value[field], `${label} ${field}`);
   }
   for (const field of ["initialCommit", "initialFingerprint", "targetCommit", "targetFingerprint"] as const) {
-    nullableIdentifier(value[field], `${label} ${field}`);
+    value[field] = nullableIdentifier(value[field] ?? null, `${label} ${field}`);
   }
-  nullableCdHash(value.initialCdHash, `${label} initial CodeDirectory hash`);
-  nullableCdHash(value.targetCdHash, `${label} target CodeDirectory hash`);
-  nullableNonNegativeInteger(value.initialDev, `${label} initial device`);
-  nullablePositiveInteger(value.initialIno, `${label} initial inode`);
-  nullableNonNegativeInteger(value.targetDev, `${label} target device`);
-  nullablePositiveInteger(value.targetIno, `${label} target inode`);
+  value.initialCdHash = nullableCdHash(value.initialCdHash, `${label} initial CodeDirectory hash`);
+  value.targetCdHash = nullableCdHash(value.targetCdHash, `${label} target CodeDirectory hash`);
+  value.initialDev = nullableNonNegativeInteger(value.initialDev ?? null, `${label} initial device`);
+  value.initialIno = nullablePositiveInteger(value.initialIno ?? null, `${label} initial inode`);
+  value.targetDev = nullableNonNegativeInteger(value.targetDev ?? null, `${label} target device`);
+  value.targetIno = nullablePositiveInteger(value.targetIno ?? null, `${label} target inode`);
 }
 
 function nullableCdHash(value: unknown, label: string): string | null {
@@ -1942,7 +1942,11 @@ function validateArtifactTopology(artifact: UpdateRecoveryArtifact, label: strin
 }
 
 function validateTimestamps(manifest: UpdateRecoveryManifest): void {
-  const { startedAt, updatedAt, commitIntentAt, committedAt } = manifest.timestamps;
+  const { startedAt, updatedAt } = manifest.timestamps;
+  const commitIntentAt = manifest.timestamps.commitIntentAt ?? null;
+  const committedAt = manifest.timestamps.committedAt ?? null;
+  manifest.timestamps.commitIntentAt = commitIntentAt;
+  manifest.timestamps.committedAt = committedAt;
   const started = timestampValue(startedAt);
   const updated = timestampValue(updatedAt);
   if (started === null || updated === null || updated < started) {
@@ -2294,6 +2298,18 @@ async function atomicWritePrivateJson(path: string, value: unknown): Promise<voi
   } finally {
     if (created) await rm(temporaryPath, { force: true }).catch(() => undefined);
   }
+}
+
+async function atomicWriteRecoveryManifest(path: string, manifest: UpdateRecoveryManifest): Promise<void> {
+  await atomicWritePrivateJson(path, recoveryManifestWithoutNullProperties(manifest));
+}
+
+function recoveryManifestWithoutNullProperties(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(recoveryManifestWithoutNullProperties);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(Object.entries(value).flatMap(([key, entry]) => (
+    entry === null ? [] : [[key, recoveryManifestWithoutNullProperties(entry)]]
+  )));
 }
 
 async function assertSafeReplaceTarget(path: string): Promise<void> {

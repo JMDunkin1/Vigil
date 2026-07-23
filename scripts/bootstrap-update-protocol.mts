@@ -4,7 +4,7 @@ import { constants } from "node:fs";
 import type { Stats } from "node:fs";
 import { lstat, open, realpath, rename, rm } from "node:fs/promises";
 import { userInfo } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { acquireUpdaterLock } from "../app/updater.js";
@@ -88,6 +88,7 @@ export interface BootstrapUpdaterCapability {
   sha256: string;
   bootstrapSha256: string;
   setupSha256: string;
+  payloadCommit: string;
 }
 
 export interface BootstrapAuthorizationEvidence {
@@ -245,6 +246,9 @@ export async function bootstrapUpdateProtocol(
       updater,
       bridge
     };
+    if (updater.payloadCommit !== evidence.expectedUpdateCommit) {
+      throw new Error("Vigil's signed bridge payload does not match the exact follow-on update commit.");
+    }
     const authorizedTarget = await operations.assertBootstrapAuthorization(evidence);
     assertAuthorizedTargetIdentity(authorizedTarget);
     await operations.assertGuardianReady();
@@ -279,6 +283,7 @@ export async function bootstrapUpdateProtocol(
       || installedUpdater.sha256 !== updater.sha256
       || installedUpdater.bootstrapSha256 !== updater.bootstrapSha256
       || installedUpdater.setupSha256 !== updater.setupSha256
+      || installedUpdater.payloadCommit !== updater.payloadCommit
       || !sameBridgeEquivalence(installedBridge, bridge)) {
       throw new Error("Vigil could not verify the exact signed v3 bridge app after activation.");
     }
@@ -322,10 +327,12 @@ export async function bootstrapUpdateProtocol(
       || preMarkSourceUpdater.sha256 !== updater.sha256
       || preMarkSourceUpdater.bootstrapSha256 !== updater.bootstrapSha256
       || preMarkSourceUpdater.setupSha256 !== updater.setupSha256
+      || preMarkSourceUpdater.payloadCommit !== updater.payloadCommit
       || preMarkInstalledUpdater.revision !== updater.revision
       || preMarkInstalledUpdater.sha256 !== updater.sha256
       || preMarkInstalledUpdater.bootstrapSha256 !== updater.bootstrapSha256
       || preMarkInstalledUpdater.setupSha256 !== updater.setupSha256
+      || preMarkInstalledUpdater.payloadCommit !== updater.payloadCommit
       || !sameBridgeEquivalence(preMarkSourceBridge, bridge)
       || !sameBridgeEquivalence(preMarkInstalledBridge, bridge)) {
       throw new Error("Vigil's exact signed bridge evidence changed at the final verification boundary.");
@@ -490,21 +497,35 @@ async function readBuildIdentity(appPath: string): Promise<BootstrapBuildIdentit
 }
 
 async function readUpdaterCapability(appPath: string): Promise<BootstrapUpdaterCapability> {
-  const [bytes, bootstrapBytes, setupBytes] = await Promise.all([
+  const payloadUpdaterPath = await updateProtocolBridgePayloadModulePath(appPath, "scripts/update-packaged-app.mjs");
+  const [bytes, bootstrapBytes, setupBytes, payloadBuildBytes] = await Promise.all([
     readPinnedRegularFile(join(appPath, UPDATE_SCRIPT_RELATIVE_PATH), MAX_UPDATER_SCRIPT_BYTES),
     readPinnedRegularFile(join(appPath, BOOTSTRAP_SCRIPT_RELATIVE_PATH), MAX_UPDATER_SCRIPT_BYTES),
-    readPinnedRegularFile(join(appPath, SETUP_SCRIPT_RELATIVE_PATH), MAX_UPDATER_SCRIPT_BYTES)
+    readPinnedRegularFile(join(appPath, SETUP_SCRIPT_RELATIVE_PATH), MAX_UPDATER_SCRIPT_BYTES),
+    readPinnedRegularFile(join(dirname(dirname(payloadUpdaterPath)), "build-info.json"), MAX_BUILD_INFO_BYTES)
   ]);
   const script = bytes.toString("utf8");
   const marker = `export const PACKAGED_UPDATE_RECOVERY_PROTOCOL_REVISION = ${UPDATE_PACKAGED_APP_RECOVERY_PROTOCOL_REVISION};`;
   if (!script.includes(marker)) {
     throw new Error("Vigil's signed bridge app does not contain the required v3 packaged updater.");
   }
+  const payloadBuild = JSON.parse(payloadBuildBytes.toString("utf8")) as {
+    commit?: unknown;
+    dirty?: unknown;
+    name?: unknown;
+  };
+  const payloadCommit = String(payloadBuild.commit || "").toLowerCase();
+  if (payloadBuild.name !== "vigil"
+    || payloadBuild.dirty !== false
+    || !/^[a-f0-9]{40}$/u.test(payloadCommit)) {
+    throw new Error("Vigil's signed bridge payload has invalid build metadata.");
+  }
   return {
     revision: UPDATE_PACKAGED_APP_RECOVERY_PROTOCOL_REVISION,
     sha256: sha256(bytes),
     bootstrapSha256: sha256(bootstrapBytes),
-    setupSha256: sha256(setupBytes)
+    setupSha256: sha256(setupBytes),
+    payloadCommit
   };
 }
 

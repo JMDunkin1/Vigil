@@ -133,8 +133,20 @@ export async function assembleUpdateProtocolBridgeCandidate({
 }): Promise<UpdateProtocolBridgeEquivalenceManifest> {
   const installed = await exactAppDirectory(installedAppPath, "installed bridge baseline");
   const payload = await exactDirectory(runtimePayloadPath, "v3 runtime payload");
-  const candidate = safeCandidatePath(candidateAppPath, installed, payload);
-  await assertNoBridgePayload(installed);
+  const candidate = await safeCandidatePath(candidateAppPath, installed, payload);
+  const installedBridge = await optionalBridgeManifest(installed);
+  if (installedBridge) {
+    const installedEvidence = await verifyUpdateProtocolBridgeEquivalence(
+      null,
+      installed,
+      { requireSignedSeal: false }
+    );
+    if (sha256(installedBridge.bytes) !== installedEvidence.manifestSha256) {
+      throw new Error("Vigil's installed bridge manifest changed while refresh evidence was captured.");
+    }
+  } else {
+    await assertNoBridgePayload(installed);
+  }
   const [payloadSourceTree, baselineTree, baselineBuildInfo, codeResourceRulesSha256] = await Promise.all([
     snapshotTree(payload, () => false, true),
     protectedTree(installed),
@@ -151,6 +163,9 @@ export async function assembleUpdateProtocolBridgeCandidate({
     encoding: "utf8"
   });
   await recreateProtectedHardlinks(candidate, baselineTree);
+  if (installedBridge) {
+    await rm(join(candidate, "Contents", "Resources", "VigilUpdater"), { recursive: true });
+  }
 
   const payloadDestination = join(candidate, payloadRelativeRoot);
   await mkdir(dirname(payloadDestination), { recursive: true });
@@ -168,23 +183,29 @@ export async function assembleUpdateProtocolBridgeCandidate({
   for (const definition of WRAPPERS) {
     const baselinePath = join(installed, definition.relativePath);
     const candidatePath = join(candidate, definition.relativePath);
-    const baselineStat = await lstat(baselinePath).catch((error: unknown) => {
-      if (definition.mayBeAdded && isErrorCode(error, "ENOENT")) return null;
-      throw error;
-    });
+    const installedRecord = installedBridge?.manifest.wrappers.find((record) => record.kind === definition.kind);
+    if (installedBridge && !installedRecord) {
+      throw new Error(`Vigil's installed bridge has no ${definition.kind} wrapper record.`);
+    }
+    const baselineStat = installedBridge
+      ? await lstat(baselinePath)
+      : await lstat(baselinePath).catch((error: unknown) => {
+          if (definition.mayBeAdded && isErrorCode(error, "ENOENT")) return null;
+          throw error;
+        });
     if (baselineStat && (!baselineStat.isFile() || baselineStat.isSymbolicLink())) {
       throw new Error(`Vigil's installed bridge baseline has an unsafe ${definition.kind} script.`);
     }
     if (baselineStat && (baselineStat.nlink !== 1 || await realpath(baselinePath) !== baselinePath)) {
       throw new Error(`Vigil's installed bridge baseline has an aliased ${definition.kind} script.`);
     }
-    const mode = baselineStat ? baselineStat.mode & 0o7777 : 0o644;
-    const baselineXattrs = baselineStat ? await extendedAttributes(baselinePath, false) : [];
+    const mode = installedRecord?.mode ?? (baselineStat ? baselineStat.mode & 0o7777 : 0o644);
+    const baselineXattrs = installedRecord?.xattrs ?? (baselineStat ? await extendedAttributes(baselinePath, false) : []);
     const bytes = Buffer.from(wrapperSource(definition.kind, payloadDigest), "utf8");
     await mkdir(dirname(candidatePath), { recursive: true });
     await writeFile(candidatePath, bytes, { mode });
     await chmod(candidatePath, mode);
-    if (!baselineStat) await clearExtendedAttributes(candidatePath);
+    if (!installedRecord?.baselinePresent && !baselineStat) await clearExtendedAttributes(candidatePath);
     const xattrs = await extendedAttributes(candidatePath, false);
     if (baselineStat && JSON.stringify(xattrs) !== JSON.stringify(baselineXattrs)) {
       throw new Error(`Vigil's cloned ${definition.kind} wrapper changed extended attributes.`);
@@ -195,7 +216,7 @@ export async function assembleUpdateProtocolBridgeCandidate({
       mode,
       sha256: sha256(bytes),
       payloadModule: definition.payloadModule,
-      baselinePresent: baselineStat !== null,
+      baselinePresent: installedRecord?.baselinePresent ?? baselineStat !== null,
       xattrs
     });
   }
@@ -290,7 +311,11 @@ export async function verifyUpdateProtocolBridgeEquivalence(
       "installed bridge baseline",
       options.allowAtomicInstallBundlePaths === true
     );
-    await assertNoBridgePayload(installed);
+    const installedBridge = await optionalBridgeManifest(installed);
+    const installedBridgeEvidence = installedBridge
+      ? await verifyUpdateProtocolBridgeEquivalence(null, installed, options)
+      : null;
+    if (!installedBridge) await assertNoBridgePayload(installed);
     const [baselineTree, baselineBuildInfo] = await Promise.all([
       protectedTree(installed),
       readFile(join(installed, UPDATE_PROTOCOL_BRIDGE_BUILD_INFO_RELATIVE_PATH))
@@ -300,8 +325,25 @@ export async function verifyUpdateProtocolBridgeEquivalence(
       || sha256(baselineBuildInfo) !== manifest.baselineBuildInfoSha256) {
       throw new Error("Vigil's bridge candidate is not equivalent to the exact installed generation.");
     }
+    if (installedBridgeEvidence
+      && (sha256(installedBridge!.bytes) !== installedBridgeEvidence.manifestSha256
+        || installedBridgeEvidence.equivalentTreeSha256 !== manifest.equivalentTreeSha256
+        || installedBridgeEvidence.baselineBuildInfoSha256 !== manifest.baselineBuildInfoSha256
+        || installedBridge!.manifest.codeResourceRulesSha256 !== manifest.codeResourceRulesSha256)) {
+      throw new Error("Vigil's refreshed bridge candidate does not preserve its exact installed baseline.");
+    }
     for (const definition of WRAPPERS) {
       const record = manifest.wrappers.find((candidateRecord) => candidateRecord.kind === definition.kind)!;
+      const installedRecord = installedBridge?.manifest.wrappers.find((candidateRecord) => candidateRecord.kind === definition.kind);
+      if (installedBridge) {
+        if (!installedRecord
+          || installedRecord.baselinePresent !== record.baselinePresent
+          || installedRecord.mode !== record.mode
+          || JSON.stringify(installedRecord.xattrs) !== JSON.stringify(record.xattrs)) {
+          throw new Error(`Vigil's refreshed bridge changed baseline ${definition.kind} wrapper metadata.`);
+        }
+        continue;
+      }
       const present = await pathExists(join(installed, definition.relativePath));
       if (present !== record.baselinePresent || (!present && !definition.mayBeAdded)) {
         throw new Error(`Vigil's bridge manifest misstates the installed ${definition.kind} script topology.`);
@@ -317,6 +359,7 @@ export async function verifyUpdateProtocolBridgeEquivalence(
           || stat.isSymbolicLink()
           || stat.nlink !== 1
           || canonical !== baselinePath
+          || (stat.mode & 0o7777) !== record.mode
           || JSON.stringify(xattrs) !== JSON.stringify(record.xattrs)) {
           throw new Error(`Vigil's bridge manifest misstates the installed ${definition.kind} script metadata.`);
         }
@@ -1010,6 +1053,19 @@ async function assertNoBridgePayload(appPath: string): Promise<void> {
   }
 }
 
+async function optionalBridgeManifest(appPath: string): Promise<{
+  bytes: Buffer;
+  manifest: UpdateProtocolBridgeEquivalenceManifest;
+} | null> {
+  try {
+    await lstat(join(appPath, UPDATE_PROTOCOL_BRIDGE_MANIFEST_RELATIVE_PATH));
+    return await readBridgeManifest(appPath);
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) return null;
+    throw error;
+  }
+}
+
 async function exactAppDirectory(
   path: string,
   label: string,
@@ -1034,15 +1090,30 @@ async function exactDirectory(path: string, label: string): Promise<string> {
   return path;
 }
 
-function safeCandidatePath(path: string, installed: string, payload: string): string {
+async function safeCandidatePath(path: string, installed: string, payload: string): Promise<string> {
   if (!isAbsolute(path)
     || resolve(path) !== path
     || basename(path) !== "Vigil.app"
     || path === installed
     || path === payload
     || installed.startsWith(`${path}${sep}`)
-    || payload.startsWith(`${path}${sep}`)) {
+    || payload.startsWith(`${path}${sep}`)
+    || path.startsWith(`${installed}${sep}`)
+    || path.startsWith(`${payload}${sep}`)) {
     throw new Error("Vigil refused an unsafe update-protocol bridge candidate path.");
+  }
+  const parent = dirname(path);
+  const [canonicalParent, parentStat] = await Promise.all([realpath(parent), lstat(parent)]);
+  if (canonicalParent !== parent || !parentStat.isDirectory() || parentStat.isSymbolicLink()) {
+    throw new Error("Vigil refused a bridge candidate beneath an unsafe output directory.");
+  }
+  try {
+    const [canonicalCandidate, candidateStat] = await Promise.all([realpath(path), lstat(path)]);
+    if (canonicalCandidate !== path || !candidateStat.isDirectory() || candidateStat.isSymbolicLink()) {
+      throw new Error("Vigil refused an aliased update-protocol bridge candidate.");
+    }
+  } catch (error) {
+    if (!isErrorCode(error, "ENOENT")) throw error;
   }
   return path;
 }
