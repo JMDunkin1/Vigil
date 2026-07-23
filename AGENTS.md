@@ -23,4 +23,6 @@ When the user asks to update the installed Vigil app to the latest available ver
 
 Read-only checks may be used to confirm the installed version, available version, updater status, and post-update health. If the standard updater cannot complete, stop and report the exact blocker before doing anything else. Do not modify source code to fix or work around an update failure unless the user separately and explicitly asks for that source change.
 
+Updateability is also a safety property: a broken protected updater can prevent users from receiving safety fixes and required features. When the user explicitly authorizes an updater repair, make the narrowest source change that restores authenticated updates without weakening Vigil's availability, transaction integrity, or guardian protections. Validate the repair before using the protected updater again.
+
 Read-only health checks are safe. If Vigil appears unhealthy, repair or relaunch it without first disabling any watchdog. When uncertain, preserve availability and ask the user to use Vigil's protected maintenance controls.

@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   readUpdateRecoveryPolicyFile,
+  recoverAbandonedLiveUpdateTransaction,
   recoverUpdateTransaction
 } from "../src/updateTransaction.js";
 import type {
@@ -12,16 +13,28 @@ import type {
 
 export async function runUpdateRecoveryCli(args: readonly string[]): Promise<number> {
   const liveRuntime = args[2] === "--live-runtime";
+  const abandonedLiveOwnerPid = args[2] === "--repair-abandoned-live-lock"
+    ? positivePid(args[3])
+    : null;
   if (args[0] !== "--policy-file"
-    || (args.length !== 2 && !(args.length === 3 && liveRuntime))
+    || (args.length !== 2
+      && !(args.length === 3 && liveRuntime)
+      && !(args.length === 4 && abandonedLiveOwnerPid !== null))
     || !args[1]) {
     throw new Error("The Vigil recovery policy invocation is invalid.");
   }
   const loaded = await readUpdateRecoveryPolicyFile(exactPath(args[1], "policy file"));
-  const outcome = await recoverUpdateTransaction(loaded.policy, {
+  const dependencies = {
     operations: { swapPaths: swapWithHelper(loaded.record.recoveryRuntime.helperPath) },
     allowRollback: !liveRuntime
-  });
+  };
+  const outcome = abandonedLiveOwnerPid === null
+    ? await recoverUpdateTransaction(loaded.policy, dependencies)
+    : await recoverAbandonedLiveUpdateTransaction(
+        loaded.policy,
+        { expectedOwnerPid: abandonedLiveOwnerPid },
+        { ...dependencies, allowRollback: false }
+      );
   return writeOutcome(outcome);
 }
 
@@ -61,6 +74,12 @@ function exactPath(value: string, label: string): string {
     throw new Error(`The Vigil update recovery ${label} must be an exact absolute path.`);
   }
   return value;
+}
+
+function positivePid(value: string | undefined): number | null {
+  if (!value || !/^[1-9]\d*$/u.test(value)) return null;
+  const pid = Number(value);
+  return Number.isSafeInteger(pid) ? pid : null;
 }
 
 async function isDirectRecoveryRun(argvPath: string | undefined): Promise<boolean> {

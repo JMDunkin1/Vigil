@@ -22,6 +22,7 @@ import {
   readUpdateRecoveryPolicyFile,
   reconcileStagedUpdateArtifactCandidate,
   recoveryDependenciesForStableHelper,
+  recoverAbandonedLiveUpdateTransaction,
   recoverUpdateTransaction,
   stageUpdateArtifactCandidate,
   updateArtifactIdentitiesExactlyMatch
@@ -58,6 +59,8 @@ try {
   await verifyPrestageTamperingAndMissingEvidenceFailClosed();
   await verifyPendingRollbackAndDurableStateWal();
   await verifyCommitIntentRollsForwardOnlyWithCompleteEvidence();
+  await verifyRecoveryAcceptsVerifiedFilesystemDeviceRenumbering();
+  await verifyRecoveryPreservesCleanForwardSourceProgress();
   await verifyHealthyArtifactsSynchronizeSourceBeforeCompletion();
   await verifyFailedSourceSynchronizationRemainsDurablyRetryable();
   await verifyRecoveryRejectsSameCommitBranchSwitch();
@@ -69,7 +72,8 @@ try {
   await verifyContradictoryCodeDirectoryHashFailsClosed();
   await verifyLegacyGuardianCanNormalizeRuntimeManifest();
   verifyExactIdentityComparisonRejectsPartialAgreement();
-  await verifySuccessfulOperationSurfacesRecoveryLockReleaseFailure();
+  await verifyLockReleaseDoesNotDependOnAtomicSwapHelper();
+  await verifyAbandonedLiveCandidateLockCanBeSafelyTakenOver();
   await verifyStableRecoveryHelperReleasesLockAfterAppActivation();
   await verifyRelocatedCandidateUsesStableRecoveryHelper();
   await verifyTamperedStableHelperCannotReconcileStaleLock();
@@ -350,6 +354,45 @@ async function verifyCommitIntentRollsForwardOnlyWithCompleteEvidence(): Promise
   assert.equal(outcome?.sourceSyncPending, false);
 }
 
+async function verifyRecoveryAcceptsVerifiedFilesystemDeviceRenumbering(): Promise<void> {
+  const fixture = await createFixture("device-renumbering", true);
+  await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
+  await installTargetTopology(fixture.appPath);
+  await installTargetTopology(fixture.runtimePath!);
+  await markUpdateRecoveryCommitIntent(fixture.policy, fixture.input.attemptId, fixture.dependencies);
+  const identifyArtifact = fixture.operations.identifyArtifact;
+  const renumbered: UpdateRecoveryDependencies = {
+    ...fixture.dependencies,
+    operations: {
+      ...fixture.operations,
+      async identifyArtifact(path, kind) {
+        const identity = await identifyArtifact(path, kind);
+        return identity?.dev === null || !identity
+          ? identity
+          : { ...identity, dev: identity.dev + 100 };
+      }
+    }
+  };
+  const outcome = await recoverUpdateTransaction(fixture.policy, renumbered);
+  assert.equal(outcome?.status, "complete",
+    "a reboot may renumber the filesystem device while preserving exact inode and content proofs");
+  assert.equal(outcome?.installedIdentity?.commit, "target-app");
+  assert.equal(await readUpdateRecoveryManifest(fixture.policy), null);
+}
+
+async function verifyRecoveryPreservesCleanForwardSourceProgress(): Promise<void> {
+  const fixture = await createFixture("forward-source-progress", false);
+  await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
+  await installTargetTopology(fixture.appPath);
+  await markUpdateRecoveryCommitIntent(fixture.policy, fixture.input.attemptId, fixture.dependencies);
+  fixture.source.head = SOURCE_OTHER;
+  const outcome = await recoverUpdateTransaction(fixture.policy, fixture.dependencies);
+  assert.equal(outcome?.status, "complete",
+    "recovery must preserve a clean source checkout that safely advanced beyond the installed target");
+  assert.equal(fixture.source.head, SOURCE_OTHER);
+  assert.equal(fixture.source.restoreCalls, 0);
+}
+
 async function verifyHealthyArtifactsSynchronizeSourceBeforeCompletion(): Promise<void> {
   const fixture = await createFixture("source-sync-pending", false);
   await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
@@ -581,26 +624,64 @@ function verifyExactIdentityComparisonRejectsPartialAgreement(): void {
   }), false, "matching inode and mutable build metadata must not override a contradictory CodeDirectory hash");
 }
 
-async function verifySuccessfulOperationSurfacesRecoveryLockReleaseFailure(): Promise<void> {
-  const fixture = await createFixture("release-failure", false);
-  const releaseFailure = new Error("injected recovery lock release failure");
+async function verifyLockReleaseDoesNotDependOnAtomicSwapHelper(): Promise<void> {
+  const fixture = await createFixture("release-without-helper", false);
   const dependencies: UpdateRecoveryDependencies = {
     ...fixture.dependencies,
     operations: {
       ...fixture.operations,
       async swapPaths() {
-        throw releaseFailure;
+        throw new Error("the atomic swap helper is unavailable");
       }
     }
   };
+  await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, dependencies);
   await assert.rejects(
-    beginUpdateRecoveryTransaction(fixture.policy, fixture.input, dependencies),
-    releaseFailure,
-    "a completed recovery operation must not report success when its live lock could not be released"
+    lstat(join(fixture.policy.updaterDir, UPDATE_RECOVERY_LOCK_FILENAME)),
+    (error: unknown) => isErrorCode(error, "ENOENT"),
+    "lock release must use pinned rename semantics instead of the artifact swap helper"
   );
-  assert.ok(
-    await lstat(join(fixture.policy.updaterDir, UPDATE_RECOVERY_LOCK_FILENAME)),
-    "the surfaced failure must preserve the unreleased lock for bounded stale-owner recovery"
+}
+
+async function verifyAbandonedLiveCandidateLockCanBeSafelyTakenOver(): Promise<void> {
+  const fixture = await createFixture("abandoned-live-lock", false);
+  await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
+  await installTargetTopology(fixture.appPath);
+  fixture.source.head = fixture.input.source.targetCommit;
+  await markUpdateRecoveryCommitIntent(fixture.policy, fixture.input.attemptId, fixture.dependencies);
+  const outcomePath = join(fixture.policy.updaterDir, UPDATE_RECOVERY_OUTCOME_FILENAME);
+  await writeFile(outcomePath, `${JSON.stringify({
+    version: 1,
+    attemptId: fixture.input.attemptId,
+    status: "recovery-failed",
+    message: "fixture terminal recovery failure",
+    recoveredAt: new Date(Date.now() - 120_000).toISOString(),
+    installedIdentity: await requiredIdentity(fixture.appPath, "app"),
+    sourceSyncPending: false
+  }, null, 2)}\n`, { mode: 0o600 });
+  await chmod(outcomePath, 0o600);
+  const ownerPid = 43_210;
+  const lockPath = join(fixture.policy.updaterDir, UPDATE_RECOVERY_LOCK_FILENAME);
+  await writeFile(lockPath, `${JSON.stringify({
+    version: 1,
+    token: "abandoned-live-candidate-lock",
+    pid: ownerPid,
+    processStartedAt: `test-process-${ownerPid}`,
+    createdAt: new Date(Date.now() - 120_000).toISOString()
+  }, null, 2)}\n`, { mode: 0o600 });
+  await chmod(lockPath, 0o600);
+
+  const recovered = await recoverAbandonedLiveUpdateTransaction(
+    fixture.policy,
+    { expectedOwnerPid: ownerPid },
+    fixture.dependencies
+  );
+  assert.equal(recovered?.status, "complete");
+  assert.equal(await readUpdateRecoveryManifest(fixture.policy), null);
+  await assert.rejects(
+    lstat(lockPath),
+    (error: unknown) => isErrorCode(error, "ENOENT"),
+    "a successful takeover must release its replacement lock without stopping the live app"
   );
 }
 
@@ -701,7 +782,11 @@ async function verifyTamperedStableHelperCannotReconcileStaleLock(): Promise<voi
     (error: unknown) => isErrorCode(error, "ENOENT"),
     "a tampered stable helper must never execute during pre-operation lock reconciliation"
   );
-  assert.ok(await lstat(lockPath), "failed helper validation must preserve the stale lock as recovery evidence");
+  await assert.rejects(
+    lstat(lockPath),
+    (error: unknown) => isErrorCode(error, "ENOENT"),
+    "a tampered artifact helper must not wedge recovery-lock cleanup"
+  );
 }
 
 async function verifyRelocatedCandidateUsesStableRecoveryHelper(): Promise<void> {
@@ -958,6 +1043,9 @@ async function createFixture(name: string, includeRuntime: boolean): Promise<Fix
     async assertSourceWorktreeClean() {
       if (source.dirty) throw new Error("fixture source worktree is mixed");
     },
+    async sourceDescendsFrom(_repoRoot, ancestor, descendant) {
+      return ancestor === SOURCE_TARGET && descendant === SOURCE_OTHER;
+    },
     async synchronizeSource(_repoRoot, expected, branch, target) {
       assert.equal(source.head, expected);
       assert.equal(source.branch, branch);
@@ -970,6 +1058,7 @@ async function createFixture(name: string, includeRuntime: boolean): Promise<Fix
       source.head = initial;
     },
     processIdentity: async (pid) => `test-process-${pid}`,
+    processExecutable: async () => join(appPath, "Contents", "MacOS", "Vigil"),
     now: () => new Date()
   };
   const appInitial = await requiredIdentity(appPath, "app");

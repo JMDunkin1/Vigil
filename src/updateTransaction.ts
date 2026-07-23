@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   cp,
+  link,
   lstat,
   mkdir,
   open,
@@ -35,6 +36,7 @@ const MAX_RUNTIME_TARGETS = 8;
 const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 const DEFAULT_LOCK_POLL_MS = 25;
 const INCOMPLETE_LOCK_GRACE_MS = 10_000;
+const ABANDONED_LIVE_LOCK_MIN_AGE_MS = 60_000;
 const RECOVERY_PACKAGE_BYTES = Buffer.from('{\n  "type": "module"\n}\n', "utf8");
 
 export const UPDATE_TRANSACTION_STATE_FILES = [
@@ -269,9 +271,11 @@ export interface UpdateRecoveryOperations {
   readSourceBranch(repoRoot: string, gitPath: string): Promise<string | null>;
   validateSourceTransition(repoRoot: string, initialCommit: string, initialBranch: string | null, targetCommit: string, gitPath: string): Promise<void>;
   assertSourceWorktreeClean(repoRoot: string, gitPath: string): Promise<void>;
+  sourceDescendsFrom(repoRoot: string, ancestorCommit: string, descendantCommit: string, gitPath: string): Promise<boolean>;
   synchronizeSource(repoRoot: string, expectedCurrentCommit: string, expectedBranch: string | null, targetCommit: string, gitPath: string): Promise<void>;
   restoreSource(repoRoot: string, expectedCurrentCommit: string, expectedBranch: string | null, initialCommit: string, gitPath: string): Promise<void>;
   processIdentity(pid: number): Promise<string | null>;
+  processExecutable(pid: number): Promise<string | null>;
   beforeStateEntryRestore?(entry: Readonly<UpdateStateRollbackEntry>): Promise<void>;
   now(): Date;
 }
@@ -282,6 +286,11 @@ export interface UpdateRecoveryDependencies {
   lockTimeoutMs?: number;
   lockPollMs?: number;
   incompleteLockGraceMs?: number;
+}
+
+export interface AbandonedLiveRecoveryRequest {
+  expectedOwnerPid: number;
+  minimumLockAgeMs?: number;
 }
 
 interface RecoveryPaths {
@@ -698,33 +707,99 @@ export async function recoverUpdateTransaction(
 ): Promise<UpdateRecoveryOutcome | null> {
   const policy = normalizedPolicy(policyInput);
   const operations = resolvedOperations(dependencies.operations);
-  return await withRecoveryLock(policy, operations, dependencies, async () => {
-    const paths = updateRecoveryPaths(policy.updaterDir);
-    const raw = await readPrivateJsonIfPresent(paths.manifestPath);
-    if (raw === null) return await readUpdateRecoveryOutcome(policy.updaterDir);
-    const manifest = validatedManifest(raw, policy);
-    await verifyManifestPolicyBinding(manifest, policy);
+  return await withRecoveryLock(
+    policy,
+    operations,
+    dependencies,
+    async () => await recoverUpdateTransactionLocked(
+      policy,
+      operations,
+      dependencies.allowRollback !== false
+    )
+  );
+}
 
-    try {
-      const outcome = await recoverValidManifest(manifest, policy, operations, dependencies.allowRollback !== false);
-      await atomicWritePrivateJson(paths.outcomePath, outcome);
-      await removePrivateRegularFile(paths.manifestPath);
-      await removeSnapshotRoot(manifest, policy).catch(() => undefined);
-      return outcome;
-    } catch (error) {
-      const outcome: UpdateRecoveryOutcome = {
-        version: UPDATE_RECOVERY_VERSION,
-        attemptId: manifest.attemptId,
-        status: "recovery-failed",
-        message: boundedMessage(`Vigil preserved the interrupted update because recovery was ambiguous or incomplete: ${errorMessage(error)}`),
-        recoveredAt: timestamp(operations.now(), "recovery failure"),
-        installedIdentity: await safeInstalledIdentity(manifest.app, operations),
-        sourceSyncPending: await safeSourceSyncPending(manifest, policy, operations)
-      };
-      await atomicWritePrivateJson(paths.outcomePath, outcome);
-      return outcome;
+/**
+ * Recover a commit-intent transaction whose old candidate process leaked its
+ * recovery lock and is still serving the exact installed target generation.
+ * The takeover atomically replaces that abandoned lock, never stops Vigil,
+ * and is available only after terminal recovery evidence and sustained lock
+ * age prove that the candidate operation is no longer making progress.
+ */
+export async function recoverAbandonedLiveUpdateTransaction(
+  policyInput: UpdateRecoveryPolicy,
+  request: AbandonedLiveRecoveryRequest,
+  dependencies: UpdateRecoveryDependencies = {}
+): Promise<UpdateRecoveryOutcome | null> {
+  const policy = normalizedPolicy(policyInput);
+  const operations = resolvedOperations(dependencies.operations);
+  const expectedOwnerPid = positiveInteger(request.expectedOwnerPid, "expected abandoned recovery owner PID");
+  const minimumLockAgeMs = request.minimumLockAgeMs ?? ABANDONED_LIVE_LOCK_MIN_AGE_MS;
+  if (!Number.isSafeInteger(minimumLockAgeMs) || minimumLockAgeMs < ABANDONED_LIVE_LOCK_MIN_AGE_MS) {
+    throw new UpdateRecoveryValidationError("The abandoned live recovery lock age is below Vigil's safety floor.");
+  }
+  await assertPolicyFilesystemBoundaries(policy);
+  await ensureSafeDirectory(policy.updaterDir, true);
+  const paths = updateRecoveryPaths(policy.updaterDir);
+  if (await pathEntryExists(join(policy.updaterDir, "update.lock"))) {
+    throw new UpdateRecoveryValidationError("Vigil refused recovery lock takeover while an updater operation is active.");
+  }
+  const manifestRaw = await readPrivateJsonIfPresent(paths.manifestPath);
+  if (manifestRaw === null) return await readUpdateRecoveryOutcome(policy.updaterDir);
+  const manifest = validatedManifest(manifestRaw, policy);
+  await verifyManifestPolicyBinding(manifest, policy);
+  if (manifest.state !== "commit-intent") {
+    throw new UpdateRecoveryValidationError("Only a commit-intent transaction can authorize live recovery lock takeover.");
+  }
+  const outcome = await readUpdateRecoveryOutcome(policy.updaterDir);
+  if (!outcome
+    || outcome.attemptId !== manifest.attemptId
+    || outcome.status !== "recovery-failed") {
+    throw new UpdateRecoveryValidationError("Terminal failed-recovery evidence is required before live recovery lock takeover.");
+  }
+  await assertCanonicalTargetsReadyForLiveRecovery(manifest, policy, operations);
+
+  const pinned = await openPinnedFile(paths.lockPath);
+  let takeoverLock: RecoveryLockRecord | null = null;
+  try {
+    assertPrivatePinnedFile(pinned, "abandoned live recovery lock");
+    const owner = validatedLockRecord(JSON.parse(pinned.raw));
+    if (owner.pid !== expectedOwnerPid) {
+      throw new UpdateRecoveryValidationError("The live recovery lock owner changed before takeover.");
     }
-  });
+    const [currentIdentity, executable] = await Promise.all([
+      operations.processIdentity(owner.pid),
+      operations.processExecutable(owner.pid)
+    ]);
+    if (currentIdentity !== owner.processStartedAt
+      || executable !== join(policy.expectedAppPath, "Contents", "MacOS", "Vigil")) {
+      throw new UpdateRecoveryValidationError("The abandoned recovery lock is not owned by the exact installed Vigil process.");
+    }
+    const createdAtMs = Date.parse(owner.createdAt);
+    if (!Number.isFinite(createdAtMs) || operations.now().getTime() - createdAtMs < minimumLockAgeMs) {
+      throw new UpdateRecoveryValidationError("The live recovery lock is not old enough for safe takeover.");
+    }
+    const processStartedAt = await operations.processIdentity(process.pid);
+    if (!processStartedAt) {
+      throw new UpdateRecoveryValidationError("Vigil could not establish the recovery takeover process identity.");
+    }
+    takeoverLock = {
+      version: UPDATE_RECOVERY_VERSION,
+      token: randomUUID(),
+      pid: process.pid,
+      processStartedAt,
+      createdAt: timestamp(operations.now(), "recovery takeover lock creation")
+    };
+    await replacePinnedRecoveryLock(paths.lockPath, pinned, takeoverLock, operations);
+  } finally {
+    await pinned.handle.close().catch(() => undefined);
+  }
+  if (!takeoverLock) throw new UpdateRecoveryValidationError("Vigil could not establish recovery lock takeover.");
+  return await runWithOwnedRecoveryLock(
+    paths.lockPath,
+    takeoverLock,
+    async () => await recoverUpdateTransactionLocked(policy, operations, false)
+  );
 }
 
 export async function recoverUpdateTransactionFromPolicyFile(
@@ -733,6 +808,38 @@ export async function recoverUpdateTransactionFromPolicyFile(
 ): Promise<UpdateRecoveryOutcome | null> {
   const loaded = await readUpdateRecoveryPolicyFile(policyPath);
   return await recoverUpdateTransaction(loaded.policy, dependencies);
+}
+
+async function recoverUpdateTransactionLocked(
+  policy: UpdateRecoveryPolicy,
+  operations: UpdateRecoveryOperations,
+  allowRollback: boolean
+): Promise<UpdateRecoveryOutcome | null> {
+  const paths = updateRecoveryPaths(policy.updaterDir);
+  const raw = await readPrivateJsonIfPresent(paths.manifestPath);
+  if (raw === null) return await readUpdateRecoveryOutcome(policy.updaterDir);
+  const manifest = validatedManifest(raw, policy);
+  await verifyManifestPolicyBinding(manifest, policy);
+
+  try {
+    const outcome = await recoverValidManifest(manifest, policy, operations, allowRollback);
+    await atomicWritePrivateJson(paths.outcomePath, outcome);
+    await removePrivateRegularFile(paths.manifestPath);
+    await removeSnapshotRoot(manifest, policy).catch(() => undefined);
+    return outcome;
+  } catch (error) {
+    const outcome: UpdateRecoveryOutcome = {
+      version: UPDATE_RECOVERY_VERSION,
+      attemptId: manifest.attemptId,
+      status: "recovery-failed",
+      message: boundedMessage(`Vigil preserved the interrupted update because recovery was ambiguous or incomplete: ${errorMessage(error)}`),
+      recoveredAt: timestamp(operations.now(), "recovery failure"),
+      installedIdentity: await safeInstalledIdentity(manifest.app, operations),
+      sourceSyncPending: await safeSourceSyncPending(manifest, policy, operations)
+    };
+    await atomicWritePrivateJson(paths.outcomePath, outcome);
+    return outcome;
+  }
 }
 
 async function transitionUpdateRecoveryState(
@@ -794,6 +901,25 @@ async function assertCanonicalTargetsReadyToCommit(
   return head;
 }
 
+async function assertCanonicalTargetsReadyForLiveRecovery(
+  manifest: UpdateRecoveryManifest,
+  policy: UpdateRecoveryPolicy,
+  operations: UpdateRecoveryOperations
+): Promise<void> {
+  await assertSourceBranchMatches(manifest, policy, operations);
+  const head = await operations.readSourceHead(policy.repoRoot, manifest.recovery.gitPath);
+  if (!await sourceMatchesTransactionOrForwardDescendant(manifest, policy, operations, head)) {
+    throw new UpdateRecoveryValidationError("The source checkout is not an exact or safely advanced transaction generation.");
+  }
+  const generations = [
+    await inspectCanonical(manifest.app, "app", operations),
+    ...await Promise.all(manifest.runtimes.map(async (runtime) => await inspectCanonical(runtime, "runtime", operations)))
+  ];
+  if (generations.some((generation) => generation !== "target")) {
+    throw new UpdateRecoveryValidationError("Live recovery lock takeover requires every canonical artifact to match the target generation.");
+  }
+}
+
 async function recoverValidManifest(
   manifest: UpdateRecoveryManifest,
   policy: UpdateRecoveryPolicy,
@@ -812,8 +938,13 @@ async function recoverValidManifest(
       throw new Error("one or more canonical artifacts have ambiguous identities");
     }
     rollForward = artifacts.every((generation) => generation === "target");
-    if (rollForward && sourceHead !== manifest.source.initialCommit && sourceHead !== manifest.source.targetCommit) {
-      throw new Error("the source checkout matches neither exact transaction commit while target artifacts are installed");
+    if (rollForward && !await sourceMatchesTransactionOrForwardDescendant(
+      manifest,
+      policy,
+      operations,
+      sourceHead
+    )) {
+      throw new Error("the source checkout matches neither the transaction nor a clean forward descendant while target artifacts are installed");
     }
     if (!rollForward && !allowRollback) {
       throw new Error("the interrupted transaction requires rollback after the live Vigil runtime exits");
@@ -833,8 +964,8 @@ async function recoverValidManifest(
 
   if (rollForward) {
     let head = await operations.readSourceHead(policy.repoRoot, manifest.recovery.gitPath);
-    if (head !== manifest.source.initialCommit && head !== manifest.source.targetCommit) {
-      throw new Error("the source checkout matches neither exact transaction commit for the committed artifacts");
+    if (!await sourceMatchesTransactionOrForwardDescendant(manifest, policy, operations, head)) {
+      throw new Error("the source checkout matches neither the transaction nor a clean forward descendant for the committed artifacts");
     }
     if (!allowRollback) {
       const liveGenerations = [
@@ -862,7 +993,8 @@ async function recoverValidManifest(
         throw new Error("the source checkout fast-forward could not be verified");
       }
     }
-    if (manifest.source.initialCommit !== manifest.source.targetCommit) {
+    if (manifest.source.initialCommit !== manifest.source.targetCommit
+      || head !== manifest.source.targetCommit) {
       await operations.assertSourceWorktreeClean(policy.repoRoot, manifest.recovery.gitPath);
     }
     if (manifest.source.syncPending) {
@@ -944,6 +1076,23 @@ async function assertSourceBranchMatches(
   if (branch !== manifest.source.initialBranch) {
     throw new Error("the source checkout branch no longer matches the exact transaction source");
   }
+}
+
+async function sourceMatchesTransactionOrForwardDescendant(
+  manifest: UpdateRecoveryManifest,
+  policy: UpdateRecoveryPolicy,
+  operations: UpdateRecoveryOperations,
+  head: string
+): Promise<boolean> {
+  if (head === manifest.source.initialCommit || head === manifest.source.targetCommit) return true;
+  if (!await operations.sourceDescendsFrom(
+    policy.repoRoot,
+    manifest.source.targetCommit,
+    head,
+    manifest.recovery.gitPath
+  )) return false;
+  await operations.assertSourceWorktreeClean(policy.repoRoot, manifest.recovery.gitPath);
+  return true;
 }
 
 async function ensureArtifactGeneration(
@@ -1046,7 +1195,9 @@ async function safeSourceSyncPending(
     const installed = await operations.identifyArtifact(manifest.app.targetPath, "app");
     if (classifyIdentity(installed, manifest.app) !== "target") return false;
     if (await operations.readSourceBranch(policy.repoRoot, manifest.recovery.gitPath) !== manifest.source.initialBranch) return true;
-    if (await operations.readSourceHead(policy.repoRoot, manifest.recovery.gitPath) !== manifest.source.targetCommit) return true;
+    const head = await operations.readSourceHead(policy.repoRoot, manifest.recovery.gitPath);
+    if (!await sourceMatchesTransactionOrForwardDescendant(manifest, policy, operations, head)) return true;
+    if (head === manifest.source.initialCommit && head !== manifest.source.targetCommit) return true;
     if (manifest.source.initialCommit !== manifest.source.targetCommit) {
       try {
         await operations.assertSourceWorktreeClean(policy.repoRoot, manifest.recovery.gitPath);
@@ -1082,10 +1233,24 @@ function classifyIdentity(
     ino: artifact.targetIno
   };
 
-  const initialMatch = initial ? exactIdentityMatches(initial, observed) : false;
-  const targetMatch = exactIdentityMatches(target, observed);
+  const initialMatch = initial ? recoveryIdentityMatches(initial, observed) : false;
+  const targetMatch = recoveryIdentityMatches(target, observed);
   if (initialMatch !== targetMatch) return initialMatch ? "initial" : "target";
   return "ambiguous";
+}
+
+function recoveryIdentityMatches(
+  expected: UpdateArtifactIdentity,
+  observed: UpdateArtifactIdentity
+): boolean {
+  if (exactIdentityMatches(expected, observed)) return true;
+  return expected.dev !== null
+    && expected.ino !== null
+    && observed.dev !== null
+    && observed.ino !== null
+    && expected.dev !== observed.dev
+    && expected.ino === observed.ino
+    && contentMatches(expected, observed);
 }
 
 function inodeMatches(expected: UpdateArtifactIdentity, observed: UpdateArtifactIdentity): boolean {
@@ -2100,11 +2265,19 @@ async function withRecoveryLock<T>(
       break;
     } catch (error) {
       if (!isErrorCode(error, "EEXIST")) throw error;
-      if (await quarantineStaleRecoveryLock(lockPath, operations, incompleteGraceMs, lock)) continue;
+      if (await quarantineStaleRecoveryLock(lockPath, operations, incompleteGraceMs)) continue;
       await new Promise<void>((resolveWait) => setTimeout(resolveWait, pollMs));
     }
   } while (Date.now() < deadline);
   if (!acquired) throw new UpdateRecoveryBusyError();
+  return await runWithOwnedRecoveryLock(lockPath, lock, operation);
+}
+
+async function runWithOwnedRecoveryLock<T>(
+  lockPath: string,
+  lock: RecoveryLockRecord,
+  operation: () => Promise<T>
+): Promise<T> {
   let operationFailed = false;
   try {
     return await operation();
@@ -2113,7 +2286,7 @@ async function withRecoveryLock<T>(
     throw error;
   } finally {
     try {
-      await releaseRecoveryLock(lockPath, lock, operations);
+      await releaseRecoveryLock(lockPath, lock);
     } catch (error) {
       // Preserve an operation failure as the primary diagnostic, but never
       // report success while leaving a live recovery lock behind.
@@ -2125,8 +2298,7 @@ async function withRecoveryLock<T>(
 async function quarantineStaleRecoveryLock(
   path: string,
   operations: UpdateRecoveryOperations,
-  incompleteGraceMs: number,
-  replacementGuard: RecoveryLockRecord
+  incompleteGraceMs: number
 ): Promise<boolean> {
   const pinned = await openPinnedFile(path).catch((error) => {
     if (isErrorCode(error, "ENOENT")) return null;
@@ -2155,7 +2327,7 @@ async function quarantineStaleRecoveryLock(
         if (currentIdentity === owner.processStartedAt) return false;
       }
     }
-    return await quarantinePinnedFile(path, pinned, "stale", replacementGuard, operations);
+    return await quarantinePinnedFile(path, pinned, "stale");
   } finally {
     await pinned.handle.close().catch(() => undefined);
   }
@@ -2163,8 +2335,7 @@ async function quarantineStaleRecoveryLock(
 
 async function releaseRecoveryLock(
   path: string,
-  lock: RecoveryLockRecord,
-  operations: UpdateRecoveryOperations
+  lock: RecoveryLockRecord
 ): Promise<void> {
   const pinned = await openPinnedFile(path).catch((error) => {
     if (isErrorCode(error, "ENOENT")) return null;
@@ -2175,7 +2346,7 @@ async function releaseRecoveryLock(
     assertPrivatePinnedFile(pinned, "recovery lock");
     const owner = validatedLockRecord(JSON.parse(pinned.raw));
     if (owner.token !== lock.token) return;
-    await quarantinePinnedFile(path, pinned, "released", lock, operations);
+    await quarantinePinnedFile(path, pinned, "released");
   } finally {
     await pinned.handle.close().catch(() => undefined);
   }
@@ -2184,52 +2355,87 @@ async function releaseRecoveryLock(
 async function quarantinePinnedFile(
   path: string,
   pinned: PinnedFile,
-  suffix: string,
-  replacementGuard: RecoveryLockRecord,
-  operations: UpdateRecoveryOperations
+  suffix: string
 ): Promise<boolean> {
   const quarantinePath = `${path}.${suffix}.${Date.now()}.${randomUUID()}`;
-  const guardNonce = randomUUID();
-  const nonOwnerGuard: RecoveryLockRecord = {
-    ...replacementGuard,
-    token: `quarantine-${guardNonce}`,
-    processStartedAt: `non-owner-guard-${guardNonce}`
-  };
-  await createExclusivePrivateJson(quarantinePath, nonOwnerGuard);
-  const guard = await lstat(quarantinePath);
   try {
-    await operations.swapPaths(path, quarantinePath);
+    await rename(path, quarantinePath);
   } catch (error) {
-    await removeFileWithIdentity(quarantinePath, guard.dev, guard.ino).catch(() => undefined);
     if (isErrorCode(error, "ENOENT")) return false;
     throw error;
   }
-  const displaced = await lstat(quarantinePath).catch(() => null);
-  if (!displaced || displaced.dev !== pinned.dev || displaced.ino !== pinned.ino) {
-    await operations.swapPaths(path, quarantinePath);
-    const [restored, returnedGuard] = await Promise.all([
-      lstat(path),
-      lstat(quarantinePath)
-    ]);
-    if (!displaced
-      || restored.dev !== displaced.dev
-      || restored.ino !== displaced.ino
-      || returnedGuard.dev !== guard.dev
-      || returnedGuard.ino !== guard.ino) {
-      throw new UpdateRecoveryValidationError("The recovery lock changed during atomic stale-lock reconciliation and was preserved.");
+  const displaced = await openPinnedFile(quarantinePath).catch(() => null);
+  if (!displaced
+    || displaced.dev !== pinned.dev
+    || displaced.ino !== pinned.ino
+    || displaced.raw !== pinned.raw) {
+    if (displaced) {
+      try {
+        await link(quarantinePath, path);
+        const restored = await lstat(path);
+        if (restored.dev !== displaced.dev || restored.ino !== displaced.ino) {
+          throw new UpdateRecoveryValidationError("The displaced recovery lock could not be safely restored.");
+        }
+        await removeFileWithIdentity(quarantinePath, displaced.dev, displaced.ino);
+      } catch (error) {
+        if (!isErrorCode(error, "EEXIST")) throw error;
+      }
     }
-    await removeFileWithIdentity(quarantinePath, guard.dev, guard.ino);
+    await displaced?.handle.close().catch(() => undefined);
     await syncDirectory(dirname(path));
     return false;
   }
-  const installedGuard = await lstat(path);
-  if (installedGuard.dev !== guard.dev || installedGuard.ino !== guard.ino) {
-    throw new UpdateRecoveryValidationError("The recovery lock guard changed during atomic stale-lock reconciliation.");
+  try {
+    await removeFileWithIdentity(quarantinePath, pinned.dev, pinned.ino);
+    await syncDirectory(dirname(path));
+    return true;
+  } finally {
+    await displaced.handle.close().catch(() => undefined);
   }
-  await removeFileWithIdentity(quarantinePath, pinned.dev, pinned.ino);
-  await removeFileWithIdentity(path, guard.dev, guard.ino);
-  await syncDirectory(dirname(path));
-  return true;
+}
+
+async function replacePinnedRecoveryLock(
+  path: string,
+  pinned: PinnedFile,
+  replacement: RecoveryLockRecord,
+  operations: UpdateRecoveryOperations
+): Promise<void> {
+  const replacementPath = `${path}.takeover.${Date.now()}.${randomUUID()}`;
+  await createExclusivePrivateJson(replacementPath, replacement);
+  const replacementIdentity = await lstat(replacementPath);
+  try {
+    await operations.swapPaths(path, replacementPath);
+  } catch (error) {
+    await removeFileWithIdentity(
+      replacementPath,
+      replacementIdentity.dev,
+      replacementIdentity.ino
+    ).catch(() => undefined);
+    throw error;
+  }
+  const [canonical, displaced] = await Promise.all([
+    openPinnedFile(path).catch(() => null),
+    openPinnedFile(replacementPath).catch(() => null)
+  ]);
+  try {
+    const installedReplacement = canonical
+      && canonical.dev === replacementIdentity.dev
+      && canonical.ino === replacementIdentity.ino
+      && validatedLockRecord(JSON.parse(canonical.raw)).token === replacement.token;
+    const exactDisplaced = displaced
+      && displaced.dev === pinned.dev
+      && displaced.ino === pinned.ino
+      && displaced.raw === pinned.raw;
+    if (!installedReplacement || !exactDisplaced) {
+      await operations.swapPaths(path, replacementPath);
+      throw new UpdateRecoveryValidationError("The recovery lock changed during atomic live-lock takeover and was preserved.");
+    }
+    await removeFileWithIdentity(replacementPath, pinned.dev, pinned.ino);
+    await syncDirectory(dirname(path));
+  } finally {
+    await canonical?.handle.close().catch(() => undefined);
+    await displaced?.handle.close().catch(() => undefined);
+  }
 }
 
 async function removeFileWithIdentity(path: string, dev: number, ino: number): Promise<void> {
@@ -2515,9 +2721,11 @@ function resolvedOperations(overrides: Partial<UpdateRecoveryOperations> | undef
     readSourceBranch: overrides?.readSourceBranch || defaultReadSourceBranch,
     validateSourceTransition: overrides?.validateSourceTransition || defaultValidateSourceTransition,
     assertSourceWorktreeClean: overrides?.assertSourceWorktreeClean || defaultAssertSourceWorktreeClean,
+    sourceDescendsFrom: overrides?.sourceDescendsFrom || defaultSourceDescendsFrom,
     synchronizeSource: overrides?.synchronizeSource || defaultSynchronizeSource,
     restoreSource: overrides?.restoreSource || defaultRestoreSource,
     processIdentity: overrides?.processIdentity || defaultProcessIdentity,
+    processExecutable: overrides?.processExecutable || defaultProcessExecutable,
     beforeStateEntryRestore: overrides?.beforeStateEntryRestore,
     now: overrides?.now || (() => new Date())
   };
@@ -2730,6 +2938,27 @@ async function defaultAssertSourceWorktreeClean(repoRoot: string, gitPath: strin
   }
 }
 
+async function defaultSourceDescendsFrom(
+  repoRoot: string,
+  ancestorCommit: string,
+  descendantCommit: string,
+  gitPath: string
+): Promise<boolean> {
+  try {
+    await execFileText(gitPath, [
+      "-C",
+      repoRoot,
+      "merge-base",
+      "--is-ancestor",
+      ancestorCommit,
+      descendantCommit
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function defaultSynchronizeSource(
   repoRoot: string,
   expectedCurrentCommit: string,
@@ -2790,6 +3019,37 @@ async function defaultProcessIdentity(pid: number): Promise<string | null> {
           return;
         }
         rejectIdentity(new Error(String(stderr).trim() || `Process identity inspection failed: ${error.message}`));
+      }
+    );
+  });
+}
+
+async function defaultProcessExecutable(pid: number): Promise<string | null> {
+  return await new Promise<string | null>((resolveExecutable, rejectExecutable) => {
+    execFile(
+      "/bin/ps",
+      ["-p", String(pid), "-o", "comm="],
+      { encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 },
+      (error, stdout, stderr) => {
+        const executable = String(stdout).trim();
+        if (!error) {
+          if (!executable) {
+            rejectExecutable(new Error("Process inspection succeeded without returning an executable."));
+            return;
+          }
+          resolveExecutable(executable);
+          return;
+        }
+        if (typeof error.code === "number"
+          && error.code === 1
+          && !executable
+          && !String(stderr).trim()
+          && !error.killed
+          && !error.signal) {
+          resolveExecutable(null);
+          return;
+        }
+        rejectExecutable(new Error(String(stderr).trim() || `Process executable inspection failed: ${error.message}`));
       }
     );
   });
@@ -2940,6 +3200,12 @@ function nullablePositiveInteger(value: unknown, label: string): number | null {
   if (value === null) return null;
   if (!Number.isSafeInteger(value) || Number(value) < 1) throw new UpdateRecoveryValidationError(`The ${label} is invalid.`);
   return Number(value);
+}
+
+function positiveInteger(value: unknown, label: string): number {
+  const normalized = nullablePositiveInteger(value, label);
+  if (normalized === null) throw new UpdateRecoveryValidationError(`The ${label} is invalid.`);
+  return normalized;
 }
 
 function timestamp(value: Date, label: string): string {
