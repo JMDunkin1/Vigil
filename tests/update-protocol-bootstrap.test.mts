@@ -119,6 +119,14 @@ assert.equal(
 );
 assert.equal(
   runtimeReadyMainCommandMatches(
+    "/Applications/Vigil.app/Contents/MacOS/Vigil",
+    "/Applications/Vigil.app/Contents/MacOS/Vigil"
+  ),
+  true,
+  "an ordinary canonical app launch must remain eligible for the protected online update bridge"
+);
+assert.equal(
+  runtimeReadyMainCommandMatches(
     "/Applications/Vigil.app/Contents/MacOS/Vigil /tmp/setup-system-guardian.mjs --bootstrap-worker-relay true",
     "/Applications/Vigil.app/Contents/MacOS/Vigil"
   ),

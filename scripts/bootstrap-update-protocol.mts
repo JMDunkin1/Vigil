@@ -757,7 +757,10 @@ async function captureAvailability(
     processIdentity(
       appPid,
       executablePath,
-      `${executablePath} ${BACKGROUND_LAUNCH_ARG} ${VIGIL_SAFETY_BOUNDARY_ARG}`
+      [
+        executablePath,
+        `${executablePath} ${BACKGROUND_LAUNCH_ARG} ${VIGIL_SAFETY_BOUNDARY_ARG}`
+      ]
     ),
     processIdentity(supervisorPid)
   ]);
@@ -822,7 +825,7 @@ async function readPinnedRuntimeReady(
 async function processIdentity(
   pid: number,
   expectedExecutable?: string,
-  expectedCommand?: string
+  expectedCommand?: string | readonly string[]
 ): Promise<ProtectedProcessIdentity> {
   const requests = [
     execFileAsync("/bin/ps", ["-p", String(pid), "-o", "lstart="], {
@@ -843,16 +846,21 @@ async function processIdentity(
   const startedAt = values[0].stdout.trim();
   const executable = values[1]?.stdout.trim();
   const command = values[2]?.stdout.trim();
+  const commandMatches = !expectedCommand
+    || (typeof expectedCommand === "string"
+      ? command === expectedCommand
+      : expectedCommand.includes(command || ""));
   if (!startedAt
     || (expectedExecutable && executable !== expectedExecutable)
-    || (expectedCommand && command !== expectedCommand)) {
+    || !commandMatches) {
     throw new Error("Vigil could not pin the protected process start identity.");
   }
   return { pid, startedAt };
 }
 
 export function runtimeReadyMainCommandMatches(command: string, executablePath: string): boolean {
-  return command === `${executablePath} ${BACKGROUND_LAUNCH_ARG} ${VIGIL_SAFETY_BOUNDARY_ARG}`;
+  return command === executablePath
+    || command === `${executablePath} ${BACKGROUND_LAUNCH_ARG} ${VIGIL_SAFETY_BOUNDARY_ARG}`;
 }
 
 export function assertAvailabilityContinuity(
