@@ -330,10 +330,25 @@ const legacyLaunchctlOutput = `system/${LEGACY_SYSTEM_GUARDIAN_LABEL} = {
 `;
 assert.equal(predecessorLaunchctlTopologyMatches(legacyLaunchctlOutput, legacyPredecessorCandidate), true,
   "an exact root LaunchDaemon topology must qualify as the live predecessor");
+assert.equal(
+  predecessorLaunchctlTopologyMatches(
+    legacyLaunchctlOutput.replace(
+      "properties = keepalive | runatload | inferred program",
+      "properties = keepalive | runatload | inferred program | managed LWCR"
+    ),
+    legacyPredecessorCandidate
+  ),
+  true,
+  "launchd-added guardian properties must not invalidate otherwise exact protected topology"
+);
 for (const weakenedTopology of [
   legacyLaunchctlOutput.replace("minimum runtime = 5", "minimum runtime = 3600"),
   legacyLaunchctlOutput.replace("domain = system", "username = test-user\n  domain = system"),
-  legacyLaunchctlOutput.replace("OSLogRateLimit => 64", "ATTACKER_OVERRIDE => 1\n    OSLogRateLimit => 64")
+  legacyLaunchctlOutput.replace("OSLogRateLimit => 64", "ATTACKER_OVERRIDE => 1\n    OSLogRateLimit => 64"),
+  legacyLaunchctlOutput.replace(
+    "properties = keepalive | runatload | inferred program",
+    "properties = runatload | inferred program | managed LWCR"
+  )
 ]) {
   assert.equal(predecessorLaunchctlTopologyMatches(weakenedTopology, legacyPredecessorCandidate), false,
     "cached launchd semantics that differ from the exact root availability job must fail closed");

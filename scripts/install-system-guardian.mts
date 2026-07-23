@@ -982,6 +982,7 @@ export function predecessorLaunchctlTopologyMatches(
   const argumentsBlock = launchctlBlockEntries(output, "arguments");
   const defaultEnvironment = launchctlBlockEntries(output, "default environment");
   const environment = launchctlBlockEntries(output, "environment");
+  const requiredProperties = ["keepalive", "runatload", "inferred program"];
   return launchctlFieldMatches(output, "path", candidate.plistPath)
     && launchctlFieldMatches(output, "type", "LaunchDaemon")
     && launchctlFieldMatches(output, "program", candidate.scriptPath)
@@ -990,7 +991,7 @@ export function predecessorLaunchctlTopologyMatches(
     && launchctlFieldMatches(output, "domain", "system")
     && launchctlFieldMatches(output, "minimum runtime", "5")
     && launchctlFieldMatches(output, "spawn type", "background (5)")
-    && launchctlFieldMatches(output, "properties", "keepalive | runatload | inferred program")
+    && launchctlFieldContainsAllTokens(output, "properties", requiredProperties)
     && JSON.stringify(argumentsBlock) === JSON.stringify([candidate.scriptPath, SYSTEM_GUARDIAN_SAFETY_ARG])
     && JSON.stringify(defaultEnvironment) === JSON.stringify(["PATH => /usr/bin:/bin:/usr/sbin:/sbin"])
     && JSON.stringify(environment?.sort()) === JSON.stringify([
@@ -1409,6 +1410,18 @@ function sameRootOwnedFileIdentity(left: RootOwnedFileIdentity, right: RootOwned
 
 function launchctlFieldMatches(output: string, field: string, expected: string): boolean {
   return output.split("\n").filter((line) => line.trim() === `${field} = ${expected}`).length === 1;
+}
+
+function launchctlFieldContainsAllTokens(output: string, field: string, expected: string[]): boolean {
+  const prefix = `${field} = `;
+  const values = output.split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length));
+  if (values.length !== 1) return false;
+  const tokens = values[0]?.split(/\s*\|\s*/u).filter(Boolean) ?? [];
+  return new Set(tokens).size === tokens.length
+    && expected.every((token) => tokens.includes(token));
 }
 
 function scriptAssignmentMatches(script: string, name: string, expected: string): boolean {
