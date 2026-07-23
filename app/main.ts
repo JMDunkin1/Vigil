@@ -1759,6 +1759,10 @@ async function startAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
       || (appUpdateOperation === "checking" ? "Vigil is checking for updates." : "A Vigil update is already running.");
     return appUpdateStatePayload({ ok: false, error: message });
   }
+  if (!appUpdateActionState.candidateAvailable) {
+    const message = "Check for updates before starting a protected Vigil update.";
+    return appUpdateStatePayload({ ok: false, noUpdate: true, error: message, message });
+  }
   const requestVersion = ++appUpdateRequestVersion;
   const settingUp = !appUpdateActionState.maintenanceReady
     && appUpdateActionState.maintenanceSetupRequired

@@ -37,6 +37,10 @@ export interface GuardianSetupRequest {
   targetUser: string;
   electronPath?: string;
   installerPath?: string;
+  protocolBootstrap?: {
+    token: string;
+    expectedUpdateCommit: string;
+  };
 }
 
 export interface GuardianSetupResult {
@@ -55,6 +59,9 @@ export interface GuardianSetupAdminRequest {
   expectedCurrentGuardianSha256: string;
   expectedSourceCdHash: string;
   expectedTargetCdHash: string;
+  protocolBootstrapToken: string | null;
+  protocolBootstrapExpectedUpdateCommit: string | null;
+  authorizationOnly: boolean;
 }
 
 export interface SignedSetupBundleIdentity {
@@ -82,7 +89,7 @@ export async function setupSystemGuardian(
 ): Promise<GuardianSetupResult> {
   validateRequest(request);
   const initialReadiness = await operations.readiness();
-  if (initialReadiness.ready) {
+  if (initialReadiness.ready && !request.protocolBootstrap) {
     return {
       ok: true,
       canceled: false,
@@ -90,7 +97,7 @@ export async function setupSystemGuardian(
       readiness: initialReadiness
     };
   }
-  if (!initialReadiness.setupSupported) {
+  if (!initialReadiness.ready && !initialReadiness.setupSupported) {
     throw new Error(initialReadiness.message || "Vigil's guardian cannot be refreshed automatically.");
   }
 
@@ -125,16 +132,21 @@ export async function setupSystemGuardian(
     throw new Error("Vigil refused to run guardian setup from unexpected signed-app executables.");
   }
 
-  const guardianStat = await operations.stat(SYSTEM_GUARDIAN_SCRIPT_PATH);
-  if (!guardianStat.isFile()
-    || guardianStat.isSymbolicLink()
-    || guardianStat.uid !== 0
-    || (guardianStat.mode & 0o022) !== 0) {
-    throw new Error("Vigil refused to refresh an unsafe installed system guardian.");
+  let expectedCurrentGuardianSha256 = "absent";
+  try {
+    const guardianStat = await operations.stat(SYSTEM_GUARDIAN_SCRIPT_PATH);
+    if (!guardianStat.isFile()
+      || guardianStat.isSymbolicLink()
+      || guardianStat.uid !== 0
+      || (guardianStat.mode & 0o022) !== 0) {
+      throw new Error("Vigil refused to refresh an unsafe installed system guardian.");
+    }
+    expectedCurrentGuardianSha256 = createHash("sha256")
+      .update(await operations.read(SYSTEM_GUARDIAN_SCRIPT_PATH))
+      .digest("hex");
+  } catch (error) {
+    if (!isErrorCode(error, "ENOENT") || initialReadiness.ready) throw error;
   }
-  const expectedCurrentGuardianSha256 = createHash("sha256")
-    .update(await operations.read(SYSTEM_GUARDIAN_SCRIPT_PATH))
-    .digest("hex");
 
   const signedBundles = await operations.verifyMatchingSignedApps(sourceAppPath, targetAppPath);
   await operations.assertProtectedAvailability(targetAppPath, request.targetUid);
@@ -147,7 +159,10 @@ export async function setupSystemGuardian(
       targetUser: request.targetUser,
       expectedCurrentGuardianSha256,
       expectedSourceCdHash: signedBundles.sourceCdHash,
-      expectedTargetCdHash: signedBundles.targetCdHash
+      expectedTargetCdHash: signedBundles.targetCdHash,
+      protocolBootstrapToken: request.protocolBootstrap?.token || null,
+      protocolBootstrapExpectedUpdateCommit: request.protocolBootstrap?.expectedUpdateCommit || null,
+      authorizationOnly: initialReadiness.ready
     });
   } catch (error) {
     if (administratorPromptCanceled(error)) {
@@ -203,6 +218,14 @@ function validateRequest(request: GuardianSetupRequest): void {
       throw new Error(`Vigil guardian setup requires an absolute ${label} path.`);
     }
   }
+  if (request.protocolBootstrap) {
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(request.protocolBootstrap.token)) {
+      throw new Error("Vigil's updater-protocol bridge requires a fresh authorization token.");
+    }
+    if (!/^[a-f0-9]{40}$/iu.test(request.protocolBootstrap.expectedUpdateCommit)) {
+      throw new Error("Vigil's updater-protocol bridge requires the exact follow-on update commit.");
+    }
+  }
 }
 
 async function canonicalDirectory(
@@ -247,7 +270,7 @@ export interface CodeSignatureIdentity {
   teamIdentifier: string;
 }
 
-async function verifyMatchingSignedApps(
+export async function verifyMatchingSignedApps(
   sourceAppPath: string,
   targetAppPath: string
 ): Promise<SignedSetupBundleIdentity> {
@@ -348,7 +371,10 @@ async function runGuardianInstallerWithAdministratorPrivileges(request: Guardian
     request.targetUser,
     request.expectedCurrentGuardianSha256,
     request.expectedSourceCdHash,
-    request.expectedTargetCdHash
+    request.expectedTargetCdHash,
+    request.protocolBootstrapToken || "",
+    request.protocolBootstrapExpectedUpdateCommit || "",
+    request.authorizationOnly ? "true" : "false"
   ], {
     timeout: ADMIN_TIMEOUT_MS,
     maxBuffer: 1024 * 1024
@@ -365,7 +391,11 @@ export function administratorAppleScript(): string {
   set guardianSha to item 6 of argv
   set sourceCdHash to item 7 of argv
   set targetCdHash to item 8 of argv
+  set bootstrapToken to item 9 of argv
+  set bootstrapCommit to item 10 of argv
+  set authorizationOnly to item 11 of argv
   set shellProgram to "set -eu; setup_root=$(/usr/bin/mktemp -d /private/var/tmp/tech.caseline.vigil.guardian-setup.XXXXXX); /bin/chmod 700 \\\"$setup_root\\\"; cleanup() { case \\\"$setup_root\\\" in /private/var/tmp/tech.caseline.vigil.guardian-setup.*) /bin/rm -rf \\\"$setup_root\\\" ;; esac; }; trap cleanup EXIT HUP INT TERM; stage_app=\\\"$setup_root/Vigil.app\\\"; /usr/bin/ditto --noqtn \\\"$1\\\" \\\"$stage_app\\\"; /usr/bin/codesign --verify --deep --strict \\\"$stage_app\\\"; staged_cdhash=$(/usr/bin/codesign -dv --verbose=4 \\\"$stage_app\\\" 2>&1 | /usr/bin/sed -n 's/^CDHash=//p'); /usr/bin/codesign --verify --deep --strict \\\"$2\\\"; target_cdhash=$(/usr/bin/codesign -dv --verbose=4 \\\"$2\\\" 2>&1 | /usr/bin/sed -n 's/^CDHash=//p'); if [ \\\"$staged_cdhash\\\" != \\\"$7\\\" ] || [ \\\"$target_cdhash\\\" != \\\"$8\\\" ]; then echo 'Vigil refused a signed app substitution during guardian setup.' >&2; exit 65; fi; /usr/bin/env ELECTRON_RUN_AS_NODE=1 \\\"$stage_app/Contents/MacOS/Vigil\\\" \\\"$stage_app/Contents/Resources/app.asar.unpacked/dist/runtime/scripts/install-system-guardian.mjs\\\" --source-app \\\"$stage_app\\\" --app \\\"$2\\\" --home \\\"$3\\\" --uid \\\"$4\\\" --user \\\"$5\\\" --expected-current-script-sha256 \\\"$6\\\" --expected-source-cdhash \\\"$7\\\" --expected-target-cdhash \\\"$8\\\" --json"
+  set shellProgram to shellProgram & " --bootstrap-source-app \\\"$1\\\" --bootstrap-token \\\"$9\\\" --bootstrap-expected-update-commit \\\"\${10}\\\" --authorization-only \\\"\${11}\\\""
   set commandText to "/bin/sh -c " & quoted form of shellProgram & " vigil-guardian-setup"
   set commandText to commandText & " " & quoted form of sourceAppPath
   set commandText to commandText & " " & quoted form of targetAppPath
@@ -375,6 +405,9 @@ export function administratorAppleScript(): string {
   set commandText to commandText & " " & quoted form of guardianSha
   set commandText to commandText & " " & quoted form of sourceCdHash
   set commandText to commandText & " " & quoted form of targetCdHash
+  set commandText to commandText & " " & quoted form of bootstrapToken
+  set commandText to commandText & " " & quoted form of bootstrapCommit
+  set commandText to commandText & " " & quoted form of authorizationOnly
   do shell script commandText with administrator privileges with prompt "Vigil needs one-time administrator approval to enable fast protected updates. Vigil stays online."
 end run`;
 }
@@ -395,6 +428,10 @@ function regexEscape(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "Unknown guardian setup error.");
+}
+
+function isErrorCode(error: unknown, code: string): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
 }
 
 export const GUARDIAN_SETUP_SERVICE_LABEL = SYSTEM_GUARDIAN_LABEL;

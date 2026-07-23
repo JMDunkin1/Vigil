@@ -18,6 +18,7 @@ import type {
   GuardianSetupRequest
 } from "../src/guardianSetup.js";
 import type { GuardianMaintenanceReadiness } from "../src/updateMaintenance.js";
+import { SYSTEM_GUARDIAN_SCRIPT_PATH } from "../src/updateMaintenance.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -78,6 +79,107 @@ assert.equal(
 assert.equal((adminRequest as GuardianSetupAdminRequest).targetAppPath, "/Applications/Vigil.app");
 assert.equal((adminRequest as GuardianSetupAdminRequest).expectedSourceCdHash, sourceCdHash);
 assert.equal((adminRequest as GuardianSetupAdminRequest).expectedTargetCdHash, targetCdHash);
+
+const protocolBootstrapToken = "12345678-1234-4123-8123-123456789abc";
+const protocolBootstrapExpectedUpdateCommit = "c".repeat(40);
+let bridgeReadinessReads = 0;
+let bridgeAdminCalls = 0;
+let bridgeAdminRequest: GuardianSetupAdminRequest | null = null;
+const bridgeResult = await setupSystemGuardian({
+  ...request,
+  protocolBootstrap: {
+    token: protocolBootstrapToken,
+    expectedUpdateCommit: protocolBootstrapExpectedUpdateCommit
+  }
+}, fakeOperations({
+  readiness: async () => bridgeReadinessReads++ === 0 ? legacyReadiness : readyReadiness,
+  runAdministrator: async (value) => {
+    bridgeAdminCalls += 1;
+    bridgeAdminRequest = value;
+  }
+}));
+assert.equal(bridgeResult.ok, true);
+assert.equal(bridgeAdminCalls, 1,
+  "the updater-protocol bridge must mint its root authorization in the same one-time administrator transaction as guardian refresh");
+assert.equal(bridgeReadinessReads, 2,
+  "the bridge must verify the newly installed guardian after the single administrator transaction");
+assert.equal((bridgeAdminRequest as GuardianSetupAdminRequest | null)?.protocolBootstrapToken, protocolBootstrapToken);
+assert.equal(
+  (bridgeAdminRequest as GuardianSetupAdminRequest | null)?.protocolBootstrapExpectedUpdateCommit,
+  protocolBootstrapExpectedUpdateCommit,
+  "root authorization must pin the exact follow-on update that remains actionable after bridging"
+);
+assert.equal((bridgeAdminRequest as GuardianSetupAdminRequest | null)?.authorizationOnly, false,
+  "the first migration must add a parallel v3 guardian without replacing the running legacy guardian");
+
+let absentGuardianAdminRequest: GuardianSetupAdminRequest | null = null;
+await setupSystemGuardian({
+  ...request,
+  protocolBootstrap: {
+    token: protocolBootstrapToken,
+    expectedUpdateCommit: protocolBootstrapExpectedUpdateCommit
+  }
+}, fakeOperations({
+  stat: async (path) => {
+    if (path === SYSTEM_GUARDIAN_SCRIPT_PATH) {
+      const error = new Error("missing parallel guardian") as NodeJS.ErrnoException;
+      error.code = "ENOENT";
+      throw error;
+    }
+    return path.endsWith(".app") ? directoryStat() : fileStat();
+  },
+  runAdministrator: async (value) => { absentGuardianAdminRequest = value; }
+}));
+assert.equal(
+  (absentGuardianAdminRequest as GuardianSetupAdminRequest | null)?.expectedCurrentGuardianSha256,
+  "absent",
+  "the first parallel-v3 install must pin the expected absence of its new script path"
+);
+
+let currentGuardianAdminCalls = 0;
+let currentGuardianReadinessReads = 0;
+let currentGuardianAdminRequest: GuardianSetupAdminRequest | null = null;
+const currentGuardianResult = await setupSystemGuardian({
+    ...request,
+    protocolBootstrap: {
+      token: protocolBootstrapToken,
+      expectedUpdateCommit: protocolBootstrapExpectedUpdateCommit
+    }
+  }, fakeOperations({
+    readiness: async () => {
+      currentGuardianReadinessReads += 1;
+      return readyReadiness;
+    },
+    runAdministrator: async (value) => {
+      currentGuardianAdminCalls += 1;
+      currentGuardianAdminRequest = value;
+    }
+  }));
+assert.equal(currentGuardianResult.ok, true);
+assert.equal(currentGuardianAdminCalls, 1,
+  "a current v3 guardian must support reauthorizing an expired or interrupted exact bridge");
+assert.equal(currentGuardianReadinessReads, 2,
+  "authorization-only retry must recheck the still-running parallel guardian");
+assert.equal((currentGuardianAdminRequest as GuardianSetupAdminRequest | null)?.authorizationOnly, true,
+  "retry must replace only the short-lived root grant and never restart either guardian");
+
+let staleGuardianAdminCalls = 0;
+await assert.rejects(
+  setupSystemGuardian({
+    ...request,
+    protocolBootstrap: {
+      token: protocolBootstrapToken,
+      expectedUpdateCommit: protocolBootstrapExpectedUpdateCommit
+    }
+  }, fakeOperations({
+    readiness: async () => legacyReadiness,
+    runAdministrator: async () => { staleGuardianAdminCalls += 1; }
+  })),
+  /guardian setup required/iu,
+  "the bridge must fail closed if the single privileged transaction does not leave a v3-ready guardian"
+);
+assert.equal(staleGuardianAdminCalls, 1,
+  "a failed readiness recheck must not loop into repeated administrator prompts");
 
 let canceledAdminCalls = 0;
 const canceled = await setupSystemGuardian(request, fakeOperations({
@@ -140,6 +242,43 @@ assert.ok(stagedHashPin >= 0 && substitutionGate > stagedHashPin && privilegedJa
   "the root shell must reject source or target bundle substitution before executing staged JavaScript");
 assert.match(appleScript, /--expected-source-cdhash/u);
 assert.match(appleScript, /--expected-target-cdhash/u);
+assert.match(appleScript, /--bootstrap-source-app/u);
+assert.match(appleScript, /--bootstrap-token/u);
+assert.match(appleScript, /--bootstrap-expected-update-commit/u);
+const bootstrapShellLine = appleScript.split("\n")
+  .find((line) => line.includes("set shellProgram to shellProgram &"));
+const bootstrapShellFragment = bootstrapShellLine?.match(/& "(.*)"$/u)?.[1]
+  ?.replaceAll('\\"', '"');
+assert.ok(bootstrapShellFragment, "the privileged shell must append its bridge authorization arguments");
+const shellArguments = [
+  request.sourceAppPath,
+  request.targetAppPath,
+  request.targetHome,
+  String(request.targetUid),
+  request.targetUser,
+  "guardian-sha",
+  sourceCdHash,
+  targetCdHash,
+  protocolBootstrapToken,
+  protocolBootstrapExpectedUpdateCommit,
+  "false"
+];
+const { stdout: expandedBootstrapArguments } = await execFileAsync("/bin/sh", [
+  "-c",
+  `/usr/bin/printf '%s\\n' ${bootstrapShellFragment}`,
+  "vigil-guardian-setup",
+  ...shellArguments
+]);
+assert.deepEqual(expandedBootstrapArguments.trim().split("\n"), [
+  "--bootstrap-source-app",
+  request.sourceAppPath,
+  "--bootstrap-token",
+  protocolBootstrapToken,
+  "--bootstrap-expected-update-commit",
+  protocolBootstrapExpectedUpdateCommit,
+  "--authorization-only",
+  "false"
+], "the actual /bin/sh positional expansion must preserve the tenth commit argument exactly");
 if (process.platform === "darwin") {
   const compileRoot = await mkdtemp(join(tmpdir(), "vigil-guardian-applescript-"));
   try {

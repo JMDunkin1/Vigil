@@ -390,6 +390,34 @@ try {
     ...rendererStatus,
     ok: true,
     checkOk: true,
+    updateAvailable: false,
+    updateCandidateAvailable: false,
+    localChanges: false,
+    maintenanceReady: false,
+    maintenanceSetupRequired: true,
+    maintenanceSetupSupported: true,
+    recoveryPending: false,
+    recoveryBlocked: false,
+    message: "One-time setup is available when an update is ready"
+  };
+  await panel.refreshStatus(false);
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Check for Updates");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, false,
+    "legacy guardian setup readiness must not disable remote update discovery");
+  const statusCallsBeforeLegacyDiscovery = statusCalls;
+  const startCallsBeforeLegacyDiscovery = startCalls;
+  click();
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(statusCalls, statusCallsBeforeLegacyDiscovery + 1,
+    "the pre-candidate action must perform a remote update check");
+  assert.equal(checkedRemote, true);
+  assert.equal(startCalls, startCallsBeforeLegacyDiscovery,
+    "checking an auto-refreshable legacy guardian must not start setup before a candidate is verified");
+
+  rendererStatus = {
+    ...rendererStatus,
+    ok: true,
+    checkOk: true,
     updateAvailable: true,
     updateCandidateAvailable: true,
     localChanges: true,

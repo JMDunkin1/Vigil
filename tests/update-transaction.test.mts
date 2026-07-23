@@ -64,6 +64,7 @@ try {
   await verifyStateRollbackWalRetriesAfterInterruption();
   await verifyAmbiguousIdentityFailsClosed();
   await verifyContradictoryInodeAndContentFailsClosed();
+  await verifyContradictoryCodeDirectoryHashFailsClosed();
   verifyExactIdentityComparisonRejectsPartialAgreement();
   await verifyRecoveryLockSerializesConcurrentCallers();
   await verifyLiveRuntimeModeNeverSwapsCanonicalArtifacts();
@@ -112,8 +113,14 @@ async function verifyExactNextCandidateIdentityIsActivatedWithoutRecopy(): Promi
     "the exact next candidate and its parent directory must be durable before its identity is returned");
   const exactNext = await requiredIdentity(`${target}.vigil-next`, "app");
   assert.deepEqual(plan.targetIdentity, exactNext, "the transaction must capture the identity of the exact .vigil-next copy");
+  plan.initialCdHash = "a".repeat(40);
+  plan.targetCdHash = "b".repeat(40);
   const input: BeginUpdateRecoveryInput = { ...fixture.input, app: plan };
-  await beginUpdateRecoveryTransaction(fixture.policy, input, dependencies);
+  const manifest = await beginUpdateRecoveryTransaction(fixture.policy, input, dependencies);
+  assert.equal(manifest.app.initialCdHash, plan.initialCdHash,
+    "the pending manifest must carry the updater-captured initial CodeDirectory hash");
+  assert.equal(manifest.app.targetCdHash, plan.targetCdHash,
+    "the pending manifest must carry the updater-captured target CodeDirectory hash");
   await writeFile(join(source, "identity.json"), `${JSON.stringify({
     commit: "changed-build-directory",
     fingerprint: "changed-build-directory-fingerprint"
@@ -465,10 +472,34 @@ async function verifyContradictoryInodeAndContentFailsClosed(): Promise<void> {
   assert.equal((await requiredIdentity(fixture.appPath, "app")).commit, "tampered-app");
 }
 
+async function verifyContradictoryCodeDirectoryHashFailsClosed(): Promise<void> {
+  const fixture = await createFixture("contradictory-cdhash", false);
+  const initialCdHash = "a".repeat(40);
+  const targetCdHash = "b".repeat(40);
+  fixture.input.app.initialCdHash = initialCdHash;
+  fixture.input.app.targetCdHash = targetCdHash;
+  const identifyArtifact = fixture.operations.identifyArtifact;
+  fixture.operations.identifyArtifact = async (path, kind) => {
+    const identity = await identifyArtifact(path, kind);
+    if (!identity || kind !== "app") return identity;
+    return {
+      ...identity,
+      cdHash: path === `${fixture.appPath}.vigil-next` ? targetCdHash : "c".repeat(40)
+    };
+  };
+  await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
+  const outcome = await recoverUpdateTransaction(fixture.policy, fixture.dependencies);
+  assert.equal(outcome?.status, "recovery-failed",
+    "recovery must refuse an inode and build identity whose recomputed signed-bundle hash contradicts the manifest");
+  assert.ok(await readUpdateRecoveryManifest(fixture.policy),
+    "a CodeDirectory mismatch must preserve the durable transaction for diagnosis and retry");
+}
+
 function verifyExactIdentityComparisonRejectsPartialAgreement(): void {
   const expected: UpdateArtifactIdentity = {
     commit: "expected",
     fingerprint: "expected-fingerprint",
+    cdHash: "a".repeat(40),
     dev: 10,
     ino: 20
   };
@@ -481,6 +512,10 @@ function verifyExactIdentityComparisonRejectsPartialAgreement(): void {
     ...expected,
     ino: 21
   }), false, "matching content metadata must not authorize a different recorded inode");
+  assert.equal(updateArtifactIdentitiesExactlyMatch(expected, {
+    ...expected,
+    cdHash: "b".repeat(40)
+  }), false, "matching inode and mutable build metadata must not override a contradictory CodeDirectory hash");
 }
 
 async function verifyRecoveryLockSerializesConcurrentCallers(): Promise<void> {
@@ -729,7 +764,11 @@ async function createFixture(name: string, includeRuntime: boolean): Promise<Fix
   const input: BeginUpdateRecoveryInput = {
     attemptId: `attempt-${name}`,
     source: { initialCommit: SOURCE_INITIAL, initialBranch: source.branch, targetCommit: SOURCE_TARGET },
-    app: { targetPath: appPath, initialIdentity: appInitial, targetIdentity: appTarget },
+    app: {
+      targetPath: appPath,
+      initialIdentity: appInitial,
+      targetIdentity: appTarget
+    },
     runtimes: runtimePlans,
     recoveryBundle: {
       nodePath: await realpath(process.execPath),

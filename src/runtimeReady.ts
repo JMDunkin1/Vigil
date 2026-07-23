@@ -244,6 +244,16 @@ path_matches_initial() {
   [[ "$(/usr/bin/stat -f '%i' "$initial_path" 2>/dev/null)" == "$expected_inode" ]]
 }
 
+verified_app_transaction_topology() {
+  path_matches_candidate "$app_path" || return 1
+  local sidecar
+  for sidecar in "$app_previous_path" "$app_next_path"; do
+    [[ -e "$sidecar" || -L "$sidecar" ]] || continue
+    [[ -e "$sidecar" && ! -L "$sidecar" ]] || return 1
+    path_matches_candidate "$sidecar" || path_matches_initial "$sidecar" || return 1
+  done
+}
+
 swap_app_paths() {
   local left="$1"
   local right="$2"
@@ -356,7 +366,10 @@ reconcile_interrupted_app_update() {
   valid_app_transaction || return 1
   local phase=$(json_value "$app_transaction_path" phase)
   if [[ "$phase" == "verified" || "$phase" == "finalizing" ]]; then
-    [[ -e "$app_path" && ! -L "$app_path" ]] || return 1
+    # A phase string is not generation proof. Refuse to discard either
+    # sidecar unless the canonical path is still the pinned candidate and all
+    # residue is one of the two exact journaled generations.
+    verified_app_transaction_topology || return 1
     clear_app_transaction_residue
     return $?
   fi
@@ -365,7 +378,16 @@ reconcile_interrupted_app_update() {
     local initial_present=$(json_value "$app_transaction_path" initialPresent)
     if { [[ "$initial_present" == "true" ]] && path_matches_initial "$app_path"; } \
       || { [[ "$initial_present" == "false" ]] && [[ ! -e "$app_path" && ! -L "$app_path" ]]; }; then
-      /bin/rm -rf "$app_next_path" || return 1
+      if [[ -e "$app_next_path" || -L "$app_next_path" ]]; then
+        # A preparing journal does not yet contain a candidate identity. Move
+        # partial bytes out of the canonical staging name instead of deleting
+        # evidence that cannot be proved to be either journaled generation.
+        local partial_uuid=$(/usr/bin/uuidgen 2>/dev/null)
+        [[ -n "$partial_uuid" ]] || return 1
+        local partial_path="\${app_next_path}.partial.\${partial_uuid}"
+        [[ ! -e "$partial_path" && ! -L "$partial_path" ]] || return 1
+        /bin/mv "$app_next_path" "$partial_path" || return 1
+      fi
       cleanup_attached_state_snapshot || return 1
       /bin/rm -f "$app_transaction_path" || return 1
       /bin/sync
@@ -387,14 +409,20 @@ reconcile_interrupted_app_update() {
   [[ -e "$app_previous_path" && ! -L "$app_previous_path" ]] && previous_exists=true
 
   if [[ "$previous_exists" == true ]]; then
+    # Every extant sidecar must be one of the two exact journaled generations
+    # before any swap, move, deletion, or journal removal is attempted.
+    { path_matches_initial "$app_previous_path" || path_matches_candidate "$app_previous_path"; } || return 1
+    if [[ "$next_exists" == true ]]; then
+      { path_matches_initial "$app_next_path" || path_matches_candidate "$app_next_path"; } || return 1
+    fi
     if [[ "$target_exists" == true ]]; then
-      if path_matches_candidate "$app_path" && ! path_matches_candidate "$app_previous_path"; then
+      if path_matches_candidate "$app_path" && path_matches_initial "$app_previous_path"; then
         # The candidate is still canonical: restore the known-good previous
         # generation. If power is lost after the swap, the inverse topology is
         # recognized by the branch below instead of being swapped back again.
         swap_app_paths "$app_path" "$app_previous_path" || return 1
         /bin/rm -rf "$app_previous_path" || return 1
-      elif path_matches_candidate "$app_previous_path" && ! path_matches_candidate "$app_path"; then
+      elif path_matches_candidate "$app_previous_path" && path_matches_initial "$app_path"; then
         # Rollback already completed and only candidate residue remains. Never
         # undo that completed rollback on a supervisor retry.
         /bin/rm -rf "$app_previous_path" || return 1
@@ -402,7 +430,7 @@ reconcile_interrupted_app_update() {
         return 1
       fi
     else
-      path_matches_candidate "$app_previous_path" && return 1
+      path_matches_initial "$app_previous_path" || return 1
       /bin/mv "$app_previous_path" "$app_path" || return 1
     fi
     /bin/rm -rf "$app_next_path" || return 1
@@ -413,9 +441,9 @@ reconcile_interrupted_app_update() {
   fi
 
   if [[ "$target_exists" == true && "$next_exists" == true ]]; then
-    if path_matches_candidate "$app_next_path" && ! path_matches_candidate "$app_path"; then
+    if path_matches_candidate "$app_next_path" && path_matches_initial "$app_path"; then
       /bin/rm -rf "$app_next_path" || return 1
-    elif path_matches_candidate "$app_path" && ! path_matches_candidate "$app_next_path"; then
+    elif path_matches_candidate "$app_path" && path_matches_initial "$app_next_path"; then
       swap_app_paths "$app_path" "$app_next_path" || return 1
       /bin/rm -rf "$app_next_path" || return 1
     else
@@ -428,14 +456,23 @@ reconcile_interrupted_app_update() {
   fi
 
   if [[ "$target_exists" == true && "$next_exists" == false ]]; then
-    if [[ "$phase" == "preparing" || "$phase" == "prepared" ]] && ! path_matches_candidate "$app_path"; then
+    local initial_present=$(json_value "$app_transaction_path" initialPresent)
+    if [[ "$initial_present" == "true" ]] && path_matches_initial "$app_path"; then
+      cleanup_attached_state_snapshot || return 1
+      /bin/rm -f "$app_transaction_path" || return 1
+      /bin/sync
+      return $?
+    fi
+    if [[ "$initial_present" == "false" ]] && path_matches_candidate "$app_path"; then
+      /bin/rm -rf "$app_path" || return 1
       cleanup_attached_state_snapshot || return 1
       /bin/rm -f "$app_transaction_path" || return 1
       /bin/sync
       return $?
     fi
     # An installed candidate without its promised previous generation is not a
-    # safe recovery source. Preserve all evidence for the updater/guardian.
+    # safe recovery source, and an arbitrary target must never be mistaken for
+    # the initial generation. Preserve all evidence for the updater/guardian.
     return 1
   fi
   return 1

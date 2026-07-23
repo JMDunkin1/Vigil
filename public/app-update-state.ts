@@ -166,7 +166,7 @@ export function deriveAppUpdateViewState(
   } else if (setupActionAvailable) {
     actionKind = "setup-update";
     actionLabel = status.ok === false ? "Retry Setup & Update" : "Enable & Run Latest";
-  } else if (!maintenanceReady || setupRequired) {
+  } else if ((!maintenanceReady || setupRequired) && !setupCanContinue) {
     actionKind = "none";
     actionLabel = "Update Setup Required";
   } else if (installable) {
@@ -196,7 +196,7 @@ export function deriveAppUpdateViewState(
       recoveryBlocked,
       recoveryPending,
       running,
-      setupCanContinue: setupActionAvailable,
+      setupCanContinue,
       supported
     })
   };
@@ -276,6 +276,9 @@ function helpMessage({
   if (!supported) return "This build does not include the protected updater.";
   if (setupCanContinue && candidateAvailable) {
     return "Approve one macOS password prompt. Vigil will enable fast updates and continue automatically.";
+  }
+  if (setupCanContinue) {
+    return "Check for Updates first. Vigil starts one-time setup only after it finds a verified update.";
   }
   if (!maintenanceReady) return "Protected update setup must be repaired before Vigil can replace the app.";
   if (candidateAvailable && localChanges) return "Vigil will build in the background, switch versions, and reopen automatically.";

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { parsePlist } from "./plist.js";
@@ -11,10 +12,27 @@ export const UPDATE_LOCK_FILENAME = "update.lock";
 export const SYSTEM_GUARDIAN_MAINTENANCE_FILENAME = "guardian-maintenance.json";
 export const SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS = 10 * 60;
 export const SYSTEM_GUARDIAN_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/maintenance-authorization.plist";
-export const SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization.plist";
-export const SYSTEM_GUARDIAN_SCRIPT_PATH = "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-DO-NOT-TERMINATE.sh";
-export const SYSTEM_GUARDIAN_PLIST_PATH = "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.plist";
-export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian";
+export const SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization-v3.plist";
+export const UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-authorization.json";
+export const UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_KIND = "vigil-root-update-protocol-bootstrap-authorization-v1";
+export const UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_MAX_SECONDS = 5 * 60;
+export const UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH = "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-worker-claim.plist";
+export const UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND = "vigil-root-update-protocol-bootstrap-worker-claim-v1";
+export const UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME = "bootstrap-worker-request.json";
+export const UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_KIND = "vigil-update-protocol-bootstrap-worker-request-v1";
+export const UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS = 5 * 60;
+export const SYSTEM_GUARDIAN_SCRIPT_PATH = "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-v3-DO-NOT-TERMINATE.sh";
+export const SYSTEM_GUARDIAN_PLIST_PATH = "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.v3.plist";
+export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v3";
+export const LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH = "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-DO-NOT-TERMINATE.sh";
+export const LEGACY_SYSTEM_GUARDIAN_PLIST_PATH = "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.plist";
+export const LEGACY_SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian";
+export const LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization.plist";
+export const SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND = "vigil-root-update-recovery-authorization-v3";
+export const SYSTEM_GUARDIAN_REVISION = 3;
+export const SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX = "# vigil-system-guardian-revision=";
+export const SYSTEM_GUARDIAN_REVISION_MARKER = `${SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX}${SYSTEM_GUARDIAN_REVISION}`;
+export const UPDATE_PACKAGED_APP_RECOVERY_PROTOCOL_REVISION = 3;
 const SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS = 10_000;
 const SYSTEM_GUARDIAN_AUTHORIZATION_POLL_MS = 100;
 
@@ -38,10 +56,69 @@ interface GuardianAuthorizationPayload {
   lockPath?: unknown;
   updaterExecutable?: unknown;
   updaterStarted?: unknown;
+  authorizationMode?: unknown;
+  updaterCommand?: unknown;
+  updaterScriptPath?: unknown;
+  updaterScriptSha256?: unknown;
+  updaterAppCdHash?: unknown;
+  parentPid?: unknown;
+  parentExecutable?: unknown;
+  parentStarted?: unknown;
+  parentCommand?: unknown;
+  bootstrapAuthorizationSha256?: unknown;
   expiresAtEpoch?: unknown;
   recoveryAttemptId?: unknown;
   recoveryPolicySha256?: unknown;
-  recoveryManifestSha256?: unknown;
+  recoveryPendingManifestSha256?: unknown;
+  appInitialCdHash?: unknown;
+  appTargetCdHash?: unknown;
+}
+
+interface BootstrapWorkerRequestPayload {
+  kind: typeof UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_KIND;
+  bootstrapToken: string;
+  lockPath: string;
+  lockToken: string;
+  sourceAppPath: string;
+  targetAppPath: string;
+  expectedUpdateCommit: string;
+  workerPid: number;
+  relayPid: number;
+  expiresAtEpoch: number;
+}
+
+interface BootstrapWorkerClaimPayload {
+  kind?: unknown;
+  bootstrapToken?: unknown;
+  lockPath?: unknown;
+  lockToken?: unknown;
+  sourceAppPath?: unknown;
+  targetAppPath?: unknown;
+  expectedUpdateCommit?: unknown;
+  workerPid?: unknown;
+  relayPid?: unknown;
+  workerStarted?: unknown;
+  workerCommand?: unknown;
+  relayStarted?: unknown;
+  relayCommand?: unknown;
+  bootstrapAuthorizationSha256?: unknown;
+  expiresAtEpoch?: unknown;
+}
+
+export interface BootstrapWorkerAuthorizationRequest {
+  bootstrapToken: string;
+  lockPath: string;
+  lockToken: string;
+  sourceAppPath: string;
+  targetAppPath: string;
+  expectedUpdateCommit: string;
+  workerPid: number;
+  relayPid: number;
+}
+
+export interface BootstrapWorkerRequestTransaction {
+  requestPath: string;
+  release(): Promise<void>;
 }
 
 export interface GuardianMaintenanceOptions {
@@ -49,6 +126,8 @@ export interface GuardianMaintenanceOptions {
   recoveryAuthorizationPath?: string;
   authorizationTimeoutMs?: number;
   expectedAuthorizationUid?: number;
+  expectedAppInitialCdHash?: string;
+  expectedAppTargetCdHash?: string;
 }
 
 export interface GuardianMaintenanceTransaction {
@@ -69,6 +148,7 @@ export type GuardianMaintenanceReadinessReason =
   | "not-installed"
   | "ready"
   | "legacy-protocol"
+  | "outdated-revision"
   | "incomplete"
   | "unsafe"
   | "topology-mismatch"
@@ -82,6 +162,13 @@ export interface GuardianMaintenanceReadinessOptions {
    */
   guardianPlistPath?: string | null;
   guardianLabel?: string;
+}
+
+export function guardianServiceAllowsParallelSetup(
+  service: { loaded: boolean; running: boolean },
+  legacyGuardianSafe: boolean
+): boolean {
+  return !service.loaded && !service.running && legacyGuardianSafe;
 }
 
 export function defaultUpdaterLockPath(targetHome: string): string {
@@ -127,6 +214,30 @@ export async function guardianMaintenanceReadiness(
   const guardianPlistPath = options.guardianPlistPath === undefined
     ? (inspectProductionTopology ? SYSTEM_GUARDIAN_PLIST_PATH : null)
     : options.guardianPlistPath;
+  if (inspectProductionTopology
+    && await currentGuardianFilesMissingOrIncomplete(guardianScriptPath, guardianPlistPath)) {
+    try {
+      const service = await inspectLiveGuardianService(options.guardianLabel || SYSTEM_GUARDIAN_LABEL);
+      if (service.loaded) {
+        return maintenanceNotReady(
+          "Vigil's parallel v3 system guardian is loaded with an incomplete on-disk installation. It was left untouched.",
+          "incomplete"
+        );
+      }
+      if (await legacyGuardianSupportsParallelMigration(expectedUid)) {
+        return maintenanceNotReady(
+          "Vigil's parallel v3 system guardian must be added before installing this update. The legacy guardian stays online during setup.",
+          "outdated-revision",
+          true
+        );
+      }
+    } catch (error) {
+      return maintenanceNotReady(
+        `Vigil could not inspect its parallel v3 system guardian service: ${errorMessage(error)}`,
+        "inspection-failed"
+      );
+    }
+  }
   const topology = guardianPlistPath
     ? await inspectGuardianPlistTopology(
         guardianPlistPath,
@@ -142,6 +253,29 @@ export async function guardianMaintenanceReadiness(
     );
   }
 
+  let productionService: { loaded: boolean; running: boolean } | null = null;
+  let productionSetupSupported = false;
+  if (inspectProductionTopology) {
+    try {
+      productionService = await inspectLiveGuardianService(options.guardianLabel || SYSTEM_GUARDIAN_LABEL);
+      productionSetupSupported = guardianServiceAllowsParallelSetup(
+        productionService,
+        await legacyGuardianSupportsParallelMigration(expectedUid)
+      );
+      if (productionService.loaded && !productionService.running) {
+        return maintenanceNotReady(
+          "Vigil's parallel v3 system guardian is loaded but not running. It was left untouched.",
+          "incomplete"
+        );
+      }
+    } catch (error) {
+      return maintenanceNotReady(
+        `Vigil could not inspect its parallel v3 system guardian service: ${errorMessage(error)}`,
+        "inspection-failed"
+      );
+    }
+  }
+
   try {
     const [script, scriptStat] = await Promise.all([
       readFile(guardianScriptPath, "utf8"),
@@ -155,14 +289,31 @@ export async function guardianMaintenanceReadiness(
       && script.includes("attest_update_recovery()")
       && script.includes("attested_canonical_app_generation()")
       && script.includes("bounded_root_copy()")
-      && script.includes("vigil-root-update-recovery-authorization-v2")
       && script.includes(authorizationPath);
     if (!supportsAuthenticatedMaintenance) {
       return maintenanceNotReady(
         "Vigil's system guardian predates authenticated app updates. Refresh it through Vigil's protected maintenance setup before installing this update.",
         "legacy-protocol",
-        true
+        inspectProductionTopology ? productionSetupSupported : true
       );
+    }
+    const installedRevision = guardianScriptRevision(script);
+    if (installedRevision === null
+      || installedRevision < SYSTEM_GUARDIAN_REVISION
+      || (installedRevision === SYSTEM_GUARDIAN_REVISION
+        && !script.includes(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND))) {
+      return maintenanceNotReady(
+        "Vigil's system guardian needs the latest availability safety fixes. Refresh it through Vigil's protected maintenance setup before installing this update.",
+        "outdated-revision",
+        inspectProductionTopology ? productionSetupSupported : true
+      );
+    }
+    if (productionService && !productionService.running) {
+        return maintenanceNotReady(
+          "Vigil's parallel v3 system guardian is installed but not yet running.",
+          "incomplete",
+          productionSetupSupported
+        );
     }
     return {
       ready: true,
@@ -184,6 +335,90 @@ export async function guardianMaintenanceReadiness(
       "inspection-failed"
     );
   }
+}
+
+async function currentGuardianFilesMissingOrIncomplete(
+  scriptPath: string,
+  plistPath: string | null
+): Promise<boolean> {
+  if (!plistPath) return false;
+  try {
+    const [scriptStat, plistStat] = await Promise.all([lstat(scriptPath), lstat(plistPath)]);
+    return !scriptStat.isFile()
+      || scriptStat.isSymbolicLink()
+      || !plistStat.isFile()
+      || plistStat.isSymbolicLink();
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) return true;
+    throw error;
+  }
+}
+
+async function legacyGuardianSupportsParallelMigration(expectedUid: number): Promise<boolean> {
+  try {
+    const [script, plist, scriptStat, plistStat] = await Promise.all([
+      readFile(LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH, "utf8"),
+      readFile(LEGACY_SYSTEM_GUARDIAN_PLIST_PATH, "utf8"),
+      lstat(LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH),
+      lstat(LEGACY_SYSTEM_GUARDIAN_PLIST_PATH)
+    ]);
+    if (!scriptStat.isFile()
+      || scriptStat.isSymbolicLink()
+      || scriptStat.uid !== expectedUid
+      || (scriptStat.mode & 0o022) !== 0
+      || !plistStat.isFile()
+      || plistStat.isSymbolicLink()
+      || plistStat.uid !== expectedUid
+      || (plistStat.mode & 0o022) !== 0
+      || !script.includes("authorize_maintenance_request()")) return false;
+    const parsed = parsePlist(plist) as Record<string, unknown>;
+    const args = Array.isArray(parsed.ProgramArguments) ? parsed.ProgramArguments : [];
+    return parsed.Label === LEGACY_SYSTEM_GUARDIAN_LABEL
+      && args[0] === LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH
+      && parsed.KeepAlive === true
+      && parsed.RunAtLoad === true;
+  } catch {
+    return false;
+  }
+}
+
+async function inspectLiveGuardianService(label: string): Promise<{ loaded: boolean; running: boolean }> {
+  try {
+    const { stdout } = await execFileAsync("/bin/launchctl", ["print", `system/${label}`], {
+      timeout: 5_000,
+      maxBuffer: 256 * 1024,
+      encoding: "utf8"
+    });
+    return {
+      loaded: true,
+      running: /^\s*state = running\s*$/mu.test(stdout)
+        && /^\s*pid = [1-9]\d*\s*$/mu.test(stdout)
+    };
+  } catch (error) {
+    if (launchctlServiceMissing(error)) return { loaded: false, running: false };
+    throw error;
+  }
+}
+
+function launchctlServiceMissing(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { message?: unknown; stderr?: unknown };
+  const detail = `${String(record.stderr || "")}\n${String(record.message || "")}`;
+  return /could not find service|service not found|no such process/iu.test(detail);
+}
+
+export function guardianScriptRevision(script: string): number | null {
+  let revision: number | null = null;
+  for (const line of script.split(/\r?\n/u)) {
+    if (!line.startsWith(SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX)) continue;
+    if (revision !== null) return null;
+    const value = line.slice(SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX.length);
+    if (!/^\d+$/u.test(value)) return null;
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < 1) return null;
+    revision = parsed;
+  }
+  return revision;
 }
 
 interface GuardianPlistTopologyInspection {
@@ -268,6 +503,138 @@ function maintenanceNotReady(
     setupSupported,
     message
   };
+}
+
+export function bootstrapWorkerRequestPath(lockPath: string): string {
+  return join(dirname(lockPath), UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME);
+}
+
+/**
+ * Publish the signed bridge worker identity before updater-lock ownership is
+ * transferred. The root guardian independently verifies the exact relay/worker
+ * process chain and creates a one-shot root-owned claim; the launcher must wait
+ * for that claim before it can hand the lock to the worker PID.
+ */
+export async function publishBootstrapWorkerAuthorizationRequest(
+  request: BootstrapWorkerAuthorizationRequest,
+  now = Date.now()
+): Promise<BootstrapWorkerRequestTransaction> {
+  validateBootstrapWorkerAuthorizationRequest(request);
+  const requestPath = bootstrapWorkerRequestPath(request.lockPath);
+  const temporaryPath = `${requestPath}.${request.workerPid}.${request.bootstrapToken}.tmp`;
+  const payload: BootstrapWorkerRequestPayload = {
+    kind: UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_KIND,
+    ...request,
+    expiresAtEpoch: Math.floor(now / 1_000) + UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS
+  };
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(payload)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600
+    });
+    await rename(temporaryPath, requestPath);
+  } catch (error) {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+  let released = false;
+  return {
+    requestPath,
+    async release() {
+      if (released) return;
+      let current: Partial<BootstrapWorkerRequestPayload> | null = null;
+      try {
+        current = await readJson<Partial<BootstrapWorkerRequestPayload>>(requestPath);
+      } catch (error) {
+        if (isErrorCode(error, "ENOENT")) {
+          released = true;
+          return;
+        }
+        throw error;
+      }
+      if (current.kind === UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_KIND
+        && current.bootstrapToken === request.bootstrapToken
+        && current.workerPid === request.workerPid
+        && current.relayPid === request.relayPid
+        && current.lockToken === request.lockToken) {
+        await rm(requestPath, { force: true });
+      }
+      released = true;
+    }
+  };
+}
+
+export async function waitForBootstrapWorkerAuthorization(
+  request: BootstrapWorkerAuthorizationRequest,
+  timeoutMs = SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS,
+  expectedUid = 0,
+  claimPath = UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH
+): Promise<void> {
+  validateBootstrapWorkerAuthorizationRequest(request);
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown = new Error("Vigil's system guardian has not attested the bootstrap worker.");
+  do {
+    try {
+      const [claim, claimStat] = await Promise.all([
+        readGuardianAuthorization(claimPath) as Promise<BootstrapWorkerClaimPayload>,
+        lstat(claimPath)
+      ]);
+      const nowEpoch = Math.floor(Date.now() / 1_000);
+      if (!claimStat.isFile()
+        || claimStat.isSymbolicLink()
+        || claimStat.uid !== expectedUid
+        || (claimStat.mode & 0o777) !== 0o644
+        || claim.kind !== UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND
+        || claim.bootstrapToken !== request.bootstrapToken
+        || claim.lockPath !== request.lockPath
+        || claim.lockToken !== request.lockToken
+        || claim.sourceAppPath !== request.sourceAppPath
+        || claim.targetAppPath !== request.targetAppPath
+        || claim.expectedUpdateCommit !== request.expectedUpdateCommit
+        || claim.workerPid !== request.workerPid
+        || claim.relayPid !== request.relayPid
+        || typeof claim.workerStarted !== "string"
+        || !claim.workerStarted
+        || typeof claim.workerCommand !== "string"
+        || !claim.workerCommand
+        || typeof claim.relayStarted !== "string"
+        || !claim.relayStarted
+        || typeof claim.relayCommand !== "string"
+        || !claim.relayCommand
+        || typeof claim.bootstrapAuthorizationSha256 !== "string"
+        || !/^[a-f0-9]{64}$/u.test(claim.bootstrapAuthorizationSha256)
+        || !Number.isInteger(claim.expiresAtEpoch)
+        || Number(claim.expiresAtEpoch) < nowEpoch
+        || Number(claim.expiresAtEpoch) > Math.floor(claimStat.mtimeMs / 1_000) + UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS) {
+        throw new Error("Vigil's root bootstrap-worker claim does not match this exact relay transaction.");
+      }
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, SYSTEM_GUARDIAN_AUTHORIZATION_POLL_MS));
+  } while (Date.now() < deadline);
+  throw new Error(`Vigil's system guardian did not attest the bootstrap worker: ${errorMessage(lastError)}`);
+}
+
+function validateBootstrapWorkerAuthorizationRequest(request: BootstrapWorkerAuthorizationRequest): void {
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(request.bootstrapToken)
+    || !request.lockPath.startsWith("/")
+    || !request.lockToken
+    || request.lockToken.length > 256
+    || !request.sourceAppPath.startsWith("/")
+    || !request.sourceAppPath.endsWith(".app")
+    || !request.targetAppPath.startsWith("/")
+    || !request.targetAppPath.endsWith(".app")
+    || !/^[a-f0-9]{40}$/iu.test(request.expectedUpdateCommit)
+    || !Number.isSafeInteger(request.workerPid)
+    || request.workerPid < 1
+    || !Number.isSafeInteger(request.relayPid)
+    || request.relayPid < 1
+    || request.workerPid === request.relayPid) {
+    throw new Error("Vigil refused an incomplete bootstrap worker authorization request.");
+  }
 }
 
 export async function beginGuardianMaintenance(
@@ -461,9 +828,17 @@ export async function waitForGuardianRecoveryAuthorization(
   if (!authorizationPath) return;
   const expectedUid = options.expectedAuthorizationUid ?? 0;
   if (!await rootGuardianAuthorizationRequired(authorizationPath, expectedUid)) return;
+  const expectedAppInitialCdHash = exactCodeDirectoryHash(
+    options.expectedAppInitialCdHash,
+    "initial app CodeDirectory hash"
+  );
+  const expectedAppTargetCdHash = exactCodeDirectoryHash(
+    options.expectedAppTargetCdHash,
+    "target app CodeDirectory hash"
+  );
   const recoveryAuthorizationPath = options.recoveryAuthorizationPath
     ?? SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH;
-  const recoveryManifestSha256 = await guardianRecoveryManifestSha256(
+  const recoveryPendingManifestSha256 = await guardianRecoveryManifestSha256(
     join(dirname(lockPath), "update-recovery.json")
   );
 
@@ -482,11 +857,13 @@ export async function waitForGuardianRecoveryAuthorization(
         || authorizationStat.isSymbolicLink()
         || authorizationStat.uid !== expectedUid
         || (authorizationStat.mode & 0o777) !== 0o644
-        || authorization.kind !== "vigil-root-update-recovery-authorization-v2"
+        || authorization.kind !== SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND
         || authorization.recoveryAttemptId !== lockToken
         || authorization.recoveryPolicySha256 !== recoveryPolicySha256
-        || typeof authorization.recoveryManifestSha256 !== "string"
-        || authorization.recoveryManifestSha256 !== recoveryManifestSha256) {
+        || typeof authorization.recoveryPendingManifestSha256 !== "string"
+        || authorization.recoveryPendingManifestSha256 !== recoveryPendingManifestSha256
+        || authorization.appInitialCdHash !== expectedAppInitialCdHash
+        || authorization.appTargetCdHash !== expectedAppTargetCdHash) {
         throw new Error("Vigil's system guardian recovery attestation does not match this update.");
       }
       return;
@@ -498,27 +875,72 @@ export async function waitForGuardianRecoveryAuthorization(
   throw new Error(`Vigil's system guardian did not attest update recovery: ${errorMessage(lastError)}`);
 }
 
-/** Hash the immutable manifest projection exactly as the installed zsh guardian does. */
-export async function guardianRecoveryManifestSha256(manifestPath: string): Promise<string> {
-  const manifest = await lstat(manifestPath);
-  const uid = process.getuid?.();
-  if (!manifest.isFile()
-    || manifest.isSymbolicLink()
-    || (manifest.mode & 0o077) !== 0
-    || (uid !== undefined && manifest.uid !== uid)) {
-    throw new Error("Vigil's update recovery manifest is unsafe for root attestation.");
+/** Verify and capture one exact signed app generation without trusting bundle resources. */
+export async function verifiedAppCodeDirectoryHash(appPath: string): Promise<string> {
+  const before = await lstat(appPath);
+  if (!before.isDirectory() || before.isSymbolicLink()) {
+    throw new Error(`Vigil refused an unsafe app bundle at ${appPath}.`);
   }
-  const temporaryRoot = await mkdtemp(join(dirname(manifestPath), ".guardian-attestation-"));
-  const temporaryPath = join(temporaryRoot, "manifest.plist");
+  await verifyAppCodeSignature(appPath);
+  const first = await appCodeDirectoryHash(appPath);
+  await verifyAppCodeSignature(appPath);
+  const second = await appCodeDirectoryHash(appPath);
+  const after = await lstat(appPath);
+  if (after.isSymbolicLink()
+    || before.dev !== after.dev
+    || before.ino !== after.ino
+    || first !== second) {
+    throw new Error(`Vigil's signed app generation changed while it was being identified at ${appPath}.`);
+  }
+  return first;
+}
+
+async function verifyAppCodeSignature(appPath: string): Promise<void> {
+  await execFileAsync("/usr/bin/codesign", ["--verify", "--deep", "--strict", appPath], {
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+    encoding: "utf8"
+  });
+}
+
+async function appCodeDirectoryHash(appPath: string): Promise<string> {
+  const { stderr } = await execFileAsync("/usr/bin/codesign", ["-dv", "--verbose=4", appPath], {
+    timeout: 30_000,
+    maxBuffer: 1024 * 1024,
+    encoding: "utf8"
+  });
+  return exactCodeDirectoryHash(
+    String(stderr).match(/^CDHash=([a-f0-9]+)$/imu)?.[1]?.toLowerCase(),
+    `CodeDirectory hash for ${appPath}`
+  );
+}
+
+function exactCodeDirectoryHash(value: unknown, label: string): string {
+  if (typeof value !== "string" || !/^[a-f0-9]{40,64}$/u.test(value)) {
+    throw new Error(`Vigil's ${label} is invalid.`);
+  }
+  return value;
+}
+
+/** Hash the exact private pending-manifest bytes pinned by this updater. */
+export async function guardianRecoveryManifestSha256(manifestPath: string): Promise<string> {
+  const handle = await open(manifestPath, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    await cp(manifestPath, temporaryPath, { force: false });
-    for (const key of ["state", "source.syncPending", "timestamps"]) {
-      await execFileAsync("/usr/bin/plutil", ["-remove", key, temporaryPath]);
+    const manifest = await handle.stat();
+    const uid = process.getuid?.();
+    if (!manifest.isFile()
+      || (manifest.mode & 0o077) !== 0
+      || manifest.size > 256 * 1024
+      || (uid !== undefined && manifest.uid !== uid)) {
+      throw new Error("Vigil's update recovery manifest is unsafe for root attestation.");
     }
-    await execFileAsync("/usr/bin/plutil", ["-convert", "binary1", temporaryPath]);
-    return createHash("sha256").update(await readFile(temporaryPath)).digest("hex");
+    const bytes = await handle.readFile();
+    if (bytes.length !== manifest.size || bytes.length > 256 * 1024) {
+      throw new Error("Vigil's update recovery manifest changed while it was being attested.");
+    }
+    return createHash("sha256").update(bytes).digest("hex");
   } finally {
-    await rm(temporaryRoot, { recursive: true, force: true });
+    await handle.close();
   }
 }
 
@@ -548,6 +970,27 @@ async function assertRootGuardianAuthorization(
     || !authorization.updaterExecutable.startsWith("/")
     || typeof authorization.updaterStarted !== "string"
     || !authorization.updaterStarted
+    || (authorization.authorizationMode !== "normal" && authorization.authorizationMode !== "bootstrap")
+    || typeof authorization.updaterCommand !== "string"
+    || !authorization.updaterCommand
+    || typeof authorization.updaterScriptPath !== "string"
+    || !authorization.updaterScriptPath.startsWith("/")
+    || typeof authorization.updaterScriptSha256 !== "string"
+    || !/^[a-f0-9]{64}$/u.test(authorization.updaterScriptSha256)
+    || typeof authorization.updaterAppCdHash !== "string"
+    || !/^[a-f0-9]{40,64}$/u.test(authorization.updaterAppCdHash)
+    || !Number.isInteger(authorization.parentPid)
+    || Number(authorization.parentPid) < 1
+    || typeof authorization.parentExecutable !== "string"
+    || !authorization.parentExecutable.startsWith("/")
+    || typeof authorization.parentStarted !== "string"
+    || !authorization.parentStarted
+    || typeof authorization.parentCommand !== "string"
+    || !authorization.parentCommand
+    || (authorization.authorizationMode === "normal" && authorization.bootstrapAuthorizationSha256 !== "-")
+    || (authorization.authorizationMode === "bootstrap"
+      && (typeof authorization.bootstrapAuthorizationSha256 !== "string"
+        || !/^[a-f0-9]{64}$/u.test(authorization.bootstrapAuthorizationSha256)))
     || !Number.isInteger(authorization.expiresAtEpoch)
     || Number(authorization.expiresAtEpoch) < nowEpoch
     || Number(authorization.expiresAtEpoch) > Math.floor(authorizationStat.mtimeMs / 1_000) + SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS

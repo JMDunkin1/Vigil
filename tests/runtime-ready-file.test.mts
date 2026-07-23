@@ -164,6 +164,48 @@ try {
     "legacy per-app reconciliation must fail closed before reading its journal while the global manifest exists"
   );
 
+  const verifiedTopologyDefinition = script.indexOf("verified_app_transaction_topology() {");
+  const verifiedTargetProof = script.indexOf('path_matches_candidate "$app_path" || return 1', verifiedTopologyDefinition);
+  const verifiedSidecarLoop = script.indexOf('for sidecar in "$app_previous_path" "$app_next_path"; do', verifiedTargetProof);
+  const verifiedSidecarProof = script.indexOf('path_matches_candidate "$sidecar" || path_matches_initial "$sidecar" || return 1', verifiedSidecarLoop);
+  const verifiedPhaseBranch = script.indexOf('if [[ "$phase" == "verified" || "$phase" == "finalizing" ]]; then', legacyRecoveryDefinition);
+  const verifiedTopologyGate = script.indexOf("verified_app_transaction_topology || return 1", verifiedPhaseBranch);
+  const verifiedCleanup = script.indexOf("clear_app_transaction_residue", verifiedTopologyGate);
+  assert.ok(
+    verifiedTopologyDefinition >= 0
+      && verifiedTargetProof > verifiedTopologyDefinition
+      && verifiedSidecarLoop > verifiedTargetProof
+      && verifiedSidecarProof > verifiedSidecarLoop
+      && verifiedPhaseBranch > legacyRecoveryDefinition
+      && verifiedTopologyGate > verifiedPhaseBranch
+      && verifiedCleanup > verifiedTopologyGate,
+    "verified/finalizing supervisor cleanup must prove the exact candidate and every pinned sidecar before deletion"
+  );
+
+  const targetOnlyBranch = script.indexOf('if [[ "$target_exists" == true && "$next_exists" == false ]]; then', legacyRecoveryDefinition);
+  const targetOnlyInitialProof = script.indexOf('[[ "$initial_present" == "true" ]] && path_matches_initial "$app_path"', targetOnlyBranch);
+  const targetOnlyAbsentProof = script.indexOf('[[ "$initial_present" == "false" ]] && path_matches_candidate "$app_path"', targetOnlyInitialProof);
+  const targetOnlyCandidateRemoval = script.indexOf('/bin/rm -rf "$app_path"', targetOnlyAbsentProof);
+  assert.ok(
+    targetOnlyBranch >= 0
+      && targetOnlyInitialProof > targetOnlyBranch
+      && targetOnlyAbsentProof > targetOnlyInitialProof
+      && targetOnlyCandidateRemoval > targetOnlyAbsentProof,
+    "target-only supervisor recovery must prove the exact initial app or an exact candidate installed over prior absence"
+  );
+
+  const preparingBranch = script.indexOf('if [[ "$phase" == "preparing"', legacyRecoveryDefinition);
+  const partialQuarantine = script.indexOf('local partial_path="${app_next_path}.partial.${partial_uuid}"', preparingBranch);
+  const partialMove = script.indexOf('/bin/mv "$app_next_path" "$partial_path"', partialQuarantine);
+  const preparingJournalRemoval = script.indexOf('/bin/rm -f "$app_transaction_path"', partialMove);
+  assert.ok(
+    preparingBranch >= 0
+      && partialQuarantine > preparingBranch
+      && partialMove > partialQuarantine
+      && preparingJournalRemoval > partialMove,
+    "an unpinned partial app copy must be quarantined before its preparing journal is removed"
+  );
+
   const reopenDefinition = script.indexOf("reopen_vigil() {");
   const recoverGlobalFirst = script.indexOf("if ! recover_global_update_transaction; then", reopenDefinition);
   const reconcileLegacySecond = script.indexOf("if ! reconcile_interrupted_app_update; then", recoverGlobalFirst);
@@ -199,14 +241,18 @@ try {
   );
 
   const previousGenerationBranch = script.indexOf('if [[ "$previous_exists" == true ]]; then');
-  const candidateStillCanonical = script.indexOf('if path_matches_candidate "$app_path" && ! path_matches_candidate "$app_previous_path"; then', previousGenerationBranch);
+  const pinnedPrevious = script.indexOf('{ path_matches_initial "$app_previous_path" || path_matches_candidate "$app_previous_path"; } || return 1', previousGenerationBranch);
+  const pinnedNext = script.indexOf('{ path_matches_initial "$app_next_path" || path_matches_candidate "$app_next_path"; } || return 1', pinnedPrevious);
+  const candidateStillCanonical = script.indexOf('if path_matches_candidate "$app_path" && path_matches_initial "$app_previous_path"; then', pinnedNext);
   const rollbackSwap = script.indexOf('swap_app_paths "$app_path" "$app_previous_path"', candidateStillCanonical);
-  const rollbackAlreadyComplete = script.indexOf('elif path_matches_candidate "$app_previous_path" && ! path_matches_candidate "$app_path"; then', rollbackSwap);
+  const rollbackAlreadyComplete = script.indexOf('elif path_matches_candidate "$app_previous_path" && path_matches_initial "$app_path"; then', rollbackSwap);
   const removeCandidateResidue = script.indexOf('/bin/rm -rf "$app_previous_path"', rollbackAlreadyComplete);
   const endAlreadyCompleteBranch = script.indexOf("\n      else", rollbackAlreadyComplete);
   assert.ok(
     previousGenerationBranch >= 0
-      && candidateStillCanonical > previousGenerationBranch
+      && pinnedPrevious > previousGenerationBranch
+      && pinnedNext > pinnedPrevious
+      && candidateStillCanonical > pinnedNext
       && rollbackSwap > candidateStillCanonical
       && rollbackAlreadyComplete > rollbackSwap
       && removeCandidateResidue > rollbackAlreadyComplete
@@ -217,6 +263,18 @@ try {
     script.slice(rollbackAlreadyComplete, endAlreadyCompleteBranch),
     /swap_app_paths/,
     "an already-restored topology must delete candidate residue without ever swapping it back into service"
+  );
+
+  const targetAndNextBranch = script.indexOf('if [[ "$target_exists" == true && "$next_exists" == true ]]; then', previousGenerationBranch);
+  const nextCandidateInitialTarget = script.indexOf('path_matches_candidate "$app_next_path" && path_matches_initial "$app_path"', targetAndNextBranch);
+  const targetCandidateInitialNext = script.indexOf('path_matches_candidate "$app_path" && path_matches_initial "$app_next_path"', nextCandidateInitialTarget);
+  const targetAndNextJournalRemoval = script.indexOf('/bin/rm -f "$app_transaction_path"', targetCandidateInitialNext);
+  assert.ok(
+    targetAndNextBranch > previousGenerationBranch
+      && nextCandidateInitialTarget > targetAndNextBranch
+      && targetCandidateInitialNext > nextCandidateInitialTarget
+      && targetAndNextJournalRemoval > targetCandidateInitialNext,
+    "two-path recovery must prove one exact initial and one exact candidate before deleting either path or its journal"
   );
 
   const malformedReadyBranch = script.indexOf('preserve_interruption "$$" "$invalid_started_at" "invalid-ready-record"');

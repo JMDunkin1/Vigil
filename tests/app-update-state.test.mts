@@ -13,6 +13,16 @@ const [mainSource, panelSource] = await Promise.all([
 ]);
 assert.match(mainSource, /deriveAppUpdateViewState/u, "the native menu must consume the shared updater view state");
 assert.match(panelSource, /deriveAppUpdateViewState/u, "Settings must consume the shared updater view state");
+assert.match(
+  mainSource,
+  /async function startAppUpdate[\s\S]*?!appUpdateActionState\.candidateAvailable[\s\S]*?return appUpdateStatePayload/u,
+  "native setup/update start must reject requests made before verified candidate discovery"
+);
+assert.match(
+  panelSource,
+  /const requestedAction = currentView\(\)\.actionKind[\s\S]*?requestedAction !== "update" && requestedAction !== "setup-update"/u,
+  "Settings must not invoke setup/update start from its discovery action"
+);
 
 assert.deepEqual(deriveAppUpdateViewState(null), {
   actionKind: "check",
@@ -116,6 +126,27 @@ assert.equal(setupAndUpdate.actionEnabled, true);
 assert.equal(setupAndUpdate.installable, true, "one button must continue from setup into the selected update");
 assert.equal(setupAndUpdate.setupRequired, true);
 assert.equal(setupAndUpdate.statusMessage, "One-time setup is needed for fast updates.");
+
+const legacyDiscovery = deriveAppUpdateViewState({
+  ok: true,
+  checkOk: true,
+  supported: true,
+  maintenanceReady: false,
+  maintenanceSetupRequired: true,
+  maintenanceSetupSupported: true,
+  running: false,
+  updateAvailable: false,
+  updateCandidateAvailable: false,
+  message: "One-time setup is available when an update is ready"
+});
+assert.equal(legacyDiscovery.actionKind, "check");
+assert.equal(legacyDiscovery.actionLabel, "Check for Updates");
+assert.equal(legacyDiscovery.actionEnabled, true,
+  "an auto-refreshable legacy guardian must not block remote candidate discovery");
+assert.equal(legacyDiscovery.installable, false,
+  "setup and update must remain unavailable until discovery returns a verified candidate");
+assert.equal(legacyDiscovery.setupRequired, true);
+assert.match(legacyDiscovery.helpMessage, /setup only after it finds a verified update/u);
 
 const settingUp = deriveAppUpdateViewState({
   ...setupAndUpdate,

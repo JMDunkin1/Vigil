@@ -13,6 +13,7 @@ import { fetchVigilStateHealth } from "../src/vigilHealth.js";
 import {
   beginGuardianMaintenance,
   guardianMaintenanceReadiness,
+  verifiedAppCodeDirectoryHash,
   waitForGuardianRecoveryAuthorization
 } from "../src/updateMaintenance.js";
 import type { GuardianMaintenanceTransaction } from "../src/updateMaintenance.js";
@@ -170,6 +171,7 @@ async function main(): Promise<void> {
       options.appPath,
       "app"
     );
+    await bindLocalAppCodeDirectoryHashes(appPlan);
 
     try {
       guardianMaintenance = await beginGuardianMaintenance(options.lockPath, options.lockToken);
@@ -208,14 +210,18 @@ async function main(): Promise<void> {
     await waitForGuardianRecoveryAuthorization(
       options.lockPath,
       options.lockToken,
-      recoveryManifest.recovery.policySha256
+      recoveryManifest.recovery.policySha256,
+      process.pid,
+      localGuardianCodeDirectoryHashOptions(appPlan)
     );
+    await assertLocalAppCodeDirectoryHashes(appPlan, false);
     await activateStagedUpdateArtifact(
       recoveryPolicy,
       options.lockToken,
       appPlan,
       "app"
     );
+    await assertLocalAppCodeDirectoryHashes(appPlan, true);
     await verifyLocalBuildCandidate(options.appPath, options, buildStartedAt);
     await localStatus(options, log, "verifying", "Reopening and verifying the local Vigil build");
     log.write(`[${new Date().toISOString()}] Reopening rebuilt Vigil at ${options.appPath}.\n`);
@@ -268,6 +274,41 @@ async function main(): Promise<void> {
       log.write(`[${new Date().toISOString()}] The isolated local build could not be removed: ${errorMessage(error)}\n`);
     });
     log.end();
+  }
+}
+
+async function bindLocalAppCodeDirectoryHashes(plan: UpdateArtifactPlan): Promise<void> {
+  if (!plan.initialIdentity) {
+    throw new Error("Vigil's protected local app update requires an installed signed generation.");
+  }
+  [plan.initialCdHash, plan.targetCdHash] = await Promise.all([
+    verifiedAppCodeDirectoryHash(plan.targetPath),
+    verifiedAppCodeDirectoryHash(`${plan.targetPath}.vigil-next`)
+  ]);
+}
+
+function localGuardianCodeDirectoryHashOptions(plan: UpdateArtifactPlan): {
+  expectedAppInitialCdHash: string;
+  expectedAppTargetCdHash: string;
+} {
+  if (!plan.initialCdHash || !plan.targetCdHash) {
+    throw new Error("Vigil's protected local app update is missing its signed generation hashes.");
+  }
+  return {
+    expectedAppInitialCdHash: plan.initialCdHash,
+    expectedAppTargetCdHash: plan.targetCdHash
+  };
+}
+
+async function assertLocalAppCodeDirectoryHashes(plan: UpdateArtifactPlan, activated: boolean): Promise<void> {
+  const expected = localGuardianCodeDirectoryHashOptions(plan);
+  const [initialCdHash, targetCdHash] = await Promise.all([
+    verifiedAppCodeDirectoryHash(activated ? `${plan.targetPath}.vigil-previous` : plan.targetPath),
+    verifiedAppCodeDirectoryHash(activated ? plan.targetPath : `${plan.targetPath}.vigil-next`)
+  ]);
+  if (initialCdHash !== expected.expectedAppInitialCdHash
+    || targetCdHash !== expected.expectedAppTargetCdHash) {
+    throw new Error("Vigil's exact signed local app generations changed across protected activation.");
   }
 }
 

@@ -93,9 +93,11 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
 
   async function startUpdate(): Promise<void> {
     if (requestInFlight) return;
+    const requestedAction = currentView().actionKind;
+    if (requestedAction !== "update" && requestedAction !== "setup-update") return;
     const submittedVersion = ++requestVersion;
     requestInFlight = true;
-    visibleOperation = currentView().actionKind === "setup-update" ? "setting-up" : "starting";
+    visibleOperation = requestedAction === "setup-update" ? "setting-up" : "starting";
     renderStatus(cached);
     try {
       const status = await requestStart();
