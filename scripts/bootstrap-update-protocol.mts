@@ -17,7 +17,6 @@ import {
   beginGuardianMaintenance,
   defaultUpdaterLockPath,
   guardianMaintenanceReadiness,
-  PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   publishBootstrapWorkerAuthorizationRequest,
   UPDATE_PACKAGED_APP_RECOVERY_PROTOCOL_REVISION,
   UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_KIND,
@@ -424,13 +423,10 @@ const defaultOperations: UpdateProtocolBootstrapOperations = {
     };
   },
   // Lock transfer is possible only after both root bootstrap claims bind this
-  // exact relay/worker pair. During this one-time bridge, accept the exact
-  // predecessor guardian's sparse grant so older loaded guardians cannot
-  // overwrite the v5 grant path and strand the authenticated transition.
-  beginMaintenance: (lock) => beginGuardianMaintenance(lock.path, lock.token, lock.ownerPid, Date.now(), {
-    authorizationPath: PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
-    allowLegacySparseAuthorization: true
-  }),
+  // exact relay/worker pair. Complete the bridge under the current guardian's
+  // fully bound authorization rather than the predecessor's shared sparse
+  // grant path, which can retain an unrelated still-live legacy deadline.
+  beginMaintenance: (lock) => beginGuardianMaintenance(lock.path, lock.token, lock.ownerPid),
   assertNoRecoveryTransaction,
   captureAvailability,
   installCandidate: installSignedCandidate,
