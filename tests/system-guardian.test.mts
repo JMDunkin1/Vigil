@@ -1062,7 +1062,18 @@ try {
     false,
     "a guardian without root-attested canonical-app fallback must not authorize an update"
   );
-  const authenticatedGuardianCore = `authorize_maintenance_request() { :; }\nattest_update_recovery() { :; }\nattested_canonical_app_generation() { :; }\nbounded_root_copy() { :; }\n# vigil-root-maintenance-authorization-v2\n# ${authorizationPath}\n`;
+  const legacyAuthorizationGuardianCore = `authorize_maintenance_request() { :; }\nattest_update_recovery() { :; }\nattested_canonical_app_generation() { :; }\nbounded_root_copy() { :; }\n# vigil-root-maintenance-authorization-v2\n# ${authorizationPath}\n`;
+  await writeFile(
+    guardianScriptPath,
+    `#!/bin/zsh\n${SYSTEM_GUARDIAN_REVISION_MARKER}\n${legacyAuthorizationGuardianCore}# ${SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}\n`,
+    { mode: 0o755 }
+  );
+  assert.equal(
+    (await guardianMaintenanceReadiness(authorizationPath, guardianScriptPath, process.getuid?.() ?? 0)).reason,
+    "legacy-protocol",
+    "a guardian that writes the old partial maintenance authorization must be refreshed even if its revision marker looks current"
+  );
+  const authenticatedGuardianCore = `${legacyAuthorizationGuardianCore}write_maintenance_authorization() { :; }\nnormal_updater_script_for_command() { :; }\nverified_signed_script_hash() { :; }\n# authorizationMode updaterCommand updaterScriptPath updaterScriptSha256 updaterAppCdHash\n# parentPid parentExecutable parentStarted parentCommand bootstrapAuthorizationSha256\n`;
   const v2GuardianProtocol = `${authenticatedGuardianCore}# vigil-root-update-recovery-authorization-v2\n`;
   const authenticatedGuardianProtocol = `${authenticatedGuardianCore}# ${SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}\n`;
   await writeFile(

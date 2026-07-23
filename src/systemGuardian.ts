@@ -22,9 +22,9 @@ import {
   UPDATE_RECOVERY_POLICY_FILENAME
 } from "./updateTransaction.js";
 
-export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v4";
+export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v5";
 export const SYSTEM_GUARDIAN_ROOT = "/Library/Application Support/Vigil/System Guardian";
-export const SYSTEM_GUARDIAN_SCRIPT_PATH = join(SYSTEM_GUARDIAN_ROOT, "vigil-system-guardian-v4-DO-NOT-TERMINATE.sh");
+export const SYSTEM_GUARDIAN_SCRIPT_PATH = join(SYSTEM_GUARDIAN_ROOT, "vigil-system-guardian-v5-DO-NOT-TERMINATE.sh");
 export const SYSTEM_GUARDIAN_PLIST_PATH = `/Library/LaunchDaemons/${SYSTEM_GUARDIAN_LABEL}.plist`;
 export const SYSTEM_GUARDIAN_SAFETY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
 
