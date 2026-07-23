@@ -146,7 +146,7 @@ for (const command of ["build:mac:signed", "dist:mac:signed"]) {
   assert.match(String(scripts[command]), /package-mac-signed\.mjs/u, `${command} must inject a validated macOS build number`);
 }
 assert.equal(macBuild.sign, "scripts/sign-mac.mjs");
-assert.equal(macInfo.LSUIElement, true);
+assert.equal(macInfo.LSUIElement, undefined, "Vigil must retain its ordinary Dock application identity");
 assert.ok(Array.isArray(build.files), "package files should be an array");
 const runtimeFileSet = recordValue(build.files[0], "runtime package file set");
 assert.equal(runtimeFileSet.from, "dist.nosync/runtime");

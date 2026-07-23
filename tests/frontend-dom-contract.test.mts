@@ -59,11 +59,7 @@ assert.match(html, /<strong>Pixel Art<\/strong>/, "the existing sprite treatment
 assert.match(html, /<strong>Traditional<\/strong>/, "the icon-painting treatment must use its requested user-facing name");
 assert.match(html, /Aged sacred portraits, classical serif typography, and Christ Pantocrator/, "the Traditional option must describe its visual treatment and Christ portrait");
 assert.match(html, /id="saintAestheticStatus"[^>]*>Pixel Art active<\/span>/, "the default aesthetic status must use its user-facing name");
-assert.match(html, /id="saintBackdropEnabled"[^>]*type="checkbox"[^>]*role="switch"[^>]*checked/, "Appearance must offer an independent animated-backdrop switch that defaults on");
-assert.match(html, /<strong>Animated backdrop<\/strong>/, "the saint backdrop setting must have a clear user-facing name");
-assert.match(html, /Show geometric orbits, symbols, and particles/, "the backdrop setting must describe every decorative layer it controls");
-assert.doesNotMatch(html, /Animated backdrop[\s\S]*?Show the halo/, "the backdrop setting must not imply that it removes the saint's glow");
-assert.match(html, /id="saintBackdropStatus"[^>]*>On<\/span>/, "the animated backdrop must report its default state");
+assert.doesNotMatch(html, /saintBackdropEnabled|Animated backdrop/, "Appearance must not reintroduce the removed portrait geometry");
 assert.match(html, /aria-label="Browse sacred portraits"/, "portrait navigation must not describe Christ as a patron saint");
 const rulesViewStart = html.indexOf('<section id="view-rules"');
 const journalViewStart = html.indexOf('<section id="view-journal"');
@@ -153,8 +149,7 @@ assert.match(saintAestheticStageSource, /CHRIST_PANTOCRATOR[\s\S]*id: "christ"/,
 assert.match(saintAestheticStageSource, /SERIOUS_STAGE_PORTRAITS[\s\S]*CHRIST_PANTOCRATOR/, "Christ must belong only to the extended serious portrait set");
 assert.match(saintAestheticStageSource, /function setAesthetic[\s\S]*select\(selectedId, persist, keepInfoOpen\)/, "changing aesthetics must reselect a mode-valid portrait and refresh all stage metadata");
 assert.match(saintAestheticStageSource, /aesthetic === "serious" \? "Traditional" : "Pixel Art"/, "the runtime status must use the user-facing aesthetic names");
-assert.match(saintAestheticStageSource, /vigil-saint-backdrop/, "the animated backdrop must persist independently of portrait style");
-assert.match(saintAestheticStageSource, /document\.documentElement\.dataset\.saintBackdrop = enabled \? "on" : "off"/, "the backdrop preference must project to its own root styling hook");
+assert.doesNotMatch(saintAestheticStageSource, /saintBackdrop|vigil-saint-backdrop/, "the removed portrait geometry must not retain renderer state");
 const seriousTypographyDeclaration = stylesSource.match(/:root\[data-saint-aesthetic="serious"\]\s*\{([^}]*)\}/)?.[1] || "";
 assert.match(seriousTypographyDeclaration, /--font-body: Georgia, "Times New Roman", serif/, "serious mode must replace ordinary body copy typography");
 assert.match(seriousTypographyDeclaration, /--font-display: Georgia, "Times New Roman", serif/, "serious mode must replace formal display typography");
@@ -384,21 +379,19 @@ assert.match(saintStageSource, /addEventListener\(["']contextmenu["']/, "two-fin
 assert.doesNotMatch(saintStageSource, /event\.detail|clickTimer|setTimeout/, "every rapid left click must advance the saint immediately");
 assert.match(saintStageSource, /select\(previousStagePortraitId\(selectedId, aesthetic\), true, true\)/, "the open portrait card must browse backward within the active aesthetic without closing");
 assert.match(saintStageSource, /select\(nextStagePortraitId\(selectedId, aesthetic\), true, true\)/, "the open portrait card must browse forward within the active aesthetic without closing");
-assert.match(html, /class="saint-ambient"[\s\S]*?class="saint-geometry"[\s\S]*?class="saint-particles"/, "the patron stage must expose layered ambient geometry");
+assert.doesNotMatch(html, /saint-(?:ambient|geometry|orbit|particles)/, "the patron stage must not render geometric shapes behind sacred portraits");
 assert.doesNotMatch(html, /saint-cursor-aura/, "the Home screen must not render a glow that follows the cursor");
 assert.doesNotMatch(styles, /saint-cursor-aura|--saint-pointer-(?:x|y|distance)/, "cursor-following glow styles must stay removed");
 assert.match(styles, /#view-home \.home-stage::before\s*\{\s*display:\s*none;/, "the Home background must not retain a stationary oval tint around the cursor glow");
 assert.doesNotMatch(styles, /\.electron-shell \.saint-cursor-aura\s*\{\s*display:\s*none;/, "Electron must keep the cursor glow inside Vigil's real window");
 assert.doesNotMatch(saintStageSource, /vigilCursorAura|screenX|screenY/, "the Home stage must not drive a second native aura window");
-assert.doesNotMatch(styles, /is-pointer-active \.saint-(?:geometry|orbit|particles|symbol)/, "the ambient geometry must keep its calm resting brightness and motion under the cursor");
+assert.doesNotMatch(styles, /is-pointer-active \.saint-(?:geometry|orbit|particles|symbol)/, "portrait decorations must not react to cursor movement");
 assert.match(
   styles,
   /@media \(hover: none\), \(pointer: coarse\), \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.home-stage\.is-pointer-active \.saint-artifact,[\s\S]*?\.saint-artifact:hover:not\(:disabled\)[\s\S]*?transform: none;/,
   "reduced-motion and coarse-pointer users must not receive the saint artwork hover scale"
 );
 assert.match(styles, /#view-home \.saint-artifact:hover:not\(:disabled\),[\s\S]*?#view-home \.saint-artifact:focus-visible\s*\{[\s\S]*?transform:\s*scale\(1\.012\);/, "hovering the saint composition must enlarge it slightly without cursor-driven translation or rotation");
-assert.match(styles, /:root\[data-saint-backdrop="off"\] #view-home :is\(\.saint-ambient, \.saint-symbol\)\s*\{[\s\S]*?display:\s*none;/, "turning off the backdrop must hide its geometry and saint-specific symbols while preserving the portrait");
-assert.doesNotMatch(styles, /data-saint-backdrop="off"[^\{]*\.saint-halo/, "turning off backdrop motion must preserve the saint's glow");
 assert.match(styles, /#view-home \.saint-artifact,[\s\S]*?#view-home \.saint-stage\[data-saint\] \.saint-artifact\s*\{[\s\S]*?width:\s*min\(720px, 100%\);/, "the patron composition must size from the usable stage instead of the full viewport");
 assert.match(styles, /\.saint-artifact:focus-visible\s*\{\s*outline:\s*none;/, "the saint button must not draw a rectangular focus artifact");
 assert.match(styles, /\.audio-desk\s*\{[\s\S]*?container:\s*audio-desk \/ inline-size;/, "the audio player must respond to its usable panel width");

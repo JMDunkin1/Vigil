@@ -19,7 +19,6 @@ export type SaintAesthetic = "playful" | "serious";
 
 export const SAINT_AESTHETICS: readonly SaintAesthetic[] = ["playful", "serious"] as const;
 export const SAINT_AESTHETIC_STORAGE_KEY = "vigil-saint-aesthetic";
-export const SAINT_BACKDROP_STORAGE_KEY = "vigil-saint-backdrop";
 
 export const SAINT_PATRONS: readonly SaintPatron[] = [
   {
@@ -147,18 +146,6 @@ export function writeSaintAesthetic(storage: Pick<Storage, "setItem">, aesthetic
   storage.setItem(SAINT_AESTHETIC_STORAGE_KEY, aesthetic);
 }
 
-export function normalizeSaintBackdropEnabled(value: unknown): boolean {
-  return value !== "off" && value !== false;
-}
-
-export function readSaintBackdropEnabled(storage: Pick<Storage, "getItem">): boolean {
-  return normalizeSaintBackdropEnabled(storage.getItem(SAINT_BACKDROP_STORAGE_KEY));
-}
-
-export function writeSaintBackdropEnabled(storage: Pick<Storage, "setItem">, enabled: boolean): void {
-  storage.setItem(SAINT_BACKDROP_STORAGE_KEY, enabled ? "on" : "off");
-}
-
 export function createSaintStage() {
   const homeStage = required<HTMLElement>("#view-home .home-stage");
   const stage = required<HTMLElement>("#saintStage");
@@ -175,15 +162,11 @@ export function createSaintStage() {
   const infoSource = required<HTMLElement>("#saintInfoSource");
   const aestheticStatus = document.querySelector<HTMLElement>("#saintAestheticStatus");
   const aestheticInputs = [...document.querySelectorAll<HTMLInputElement>('input[name="saintAesthetic"]')];
-  const backdropInput = document.querySelector<HTMLInputElement>("#saintBackdropEnabled");
-  const backdropStatus = document.querySelector<HTMLElement>("#saintBackdropStatus");
   let aesthetic = storedSaintAesthetic();
-  let backdropEnabled = storedSaintBackdropEnabled();
   let selectedId = coerceStagePortraitId(storedStagePortraitId(), aesthetic);
   let pointerFrame: number | null = null;
 
   function bind(): void {
-    setBackdropEnabled(backdropEnabled, false);
     setAesthetic(aesthetic, false);
     stageButton.addEventListener("click", () => {
       select(nextStagePortraitId(selectedId, aesthetic));
@@ -233,8 +216,6 @@ export function createSaintStage() {
         if (input.checked) setAesthetic(normalizeSaintAesthetic(input.value));
       });
     }
-    backdropInput?.addEventListener("change", () => setBackdropEnabled(backdropInput.checked));
-
     if (!motionAllowed()) return;
     homeStage.addEventListener("pointerenter", (event) => {
       if (event.pointerType === "touch") return;
@@ -288,14 +269,6 @@ export function createSaintStage() {
     if (aestheticStatus) aestheticStatus.textContent = `${aesthetic === "serious" ? "Traditional" : "Pixel Art"} active`;
     if (persist) storeSaintAesthetic(aesthetic);
     select(selectedId, persist, keepInfoOpen);
-  }
-
-  function setBackdropEnabled(enabled: boolean, persist = true): void {
-    backdropEnabled = enabled;
-    document.documentElement.dataset.saintBackdrop = enabled ? "on" : "off";
-    if (backdropInput) backdropInput.checked = enabled;
-    if (backdropStatus) backdropStatus.textContent = enabled ? "On" : "Off";
-    if (persist) storeSaintBackdropEnabled(enabled);
   }
 
   function openInfo(): void {
@@ -369,21 +342,6 @@ function storedSaintAesthetic(): SaintAesthetic {
 function storeSaintAesthetic(aesthetic: SaintAesthetic): void {
   try {
     writeSaintAesthetic(localStorage, aesthetic);
-  } catch {
-  }
-}
-
-function storedSaintBackdropEnabled(): boolean {
-  try {
-    return readSaintBackdropEnabled(localStorage);
-  } catch {
-    return true;
-  }
-}
-
-function storeSaintBackdropEnabled(enabled: boolean): void {
-  try {
-    writeSaintBackdropEnabled(localStorage, enabled);
   } catch {
   }
 }

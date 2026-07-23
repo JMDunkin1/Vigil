@@ -104,7 +104,7 @@ The current production release design accepts complete published DMGs but does n
 
 - **The assistant reappears:** at least one selected core check is still pending or has drifted. Read the live detail and use its matching action.
 - **A button was clicked but the step is not ready:** return from System Settings, allow a few seconds for verification, then reopen the assistant. The verified result controls the status.
-- **Vigil is not in the Dock:** packaged Vigil normally lives in the menu bar. Use its menu-bar item to show the window.
+- **Vigil is not in the Dock:** reopen the installed app from Applications or Spotlight. Current builds keep both the Dock icon and menu-bar companion available.
 - **Checksum or Gatekeeper verification fails:** stop. Do not weaken macOS security to continue.
 - **Background protection appears unhealthy:** use **Repair protection** inside Vigil. Preserve the running watchdog while it repairs the app.
 - **Support is needed:** use the verified support contact supplied on the official release page. A stable public support URL still must be published before general release.

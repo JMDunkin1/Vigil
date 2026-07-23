@@ -118,7 +118,6 @@
       "icon": "build/icon.icns",
       "sign": "scripts/sign-mac.mjs",
       "extendInfo": {
-        "LSUIElement": true,
         "NSCameraUsageDescription": "Scan a Vigil distance-key QR code when you choose Scan.",
         "NSAppleEventsUsageDescription": "Control supported apps and Focus shortcuts only when you enable those Vigil protections."
       },

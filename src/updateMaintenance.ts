@@ -148,6 +148,7 @@ export interface BootstrapWorkerRequestTransaction {
 
 export interface GuardianMaintenanceOptions {
   authorizationPath?: string | null;
+  allowLegacySparseAuthorization?: boolean;
   recoveryAuthorizationPath?: string;
   authorizationTimeoutMs?: number;
   expectedAuthorizationUid?: number;
@@ -750,7 +751,8 @@ export async function beginGuardianMaintenance(
         authorizationPath,
         payload,
         options.authorizationTimeoutMs ?? SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS,
-        options.expectedAuthorizationUid ?? 0
+        options.expectedAuthorizationUid ?? 0,
+        options.allowLegacySparseAuthorization === true
       );
     }
   } catch (error) {
@@ -787,7 +789,8 @@ async function waitForRootGuardianAuthorization(
   authorizationPath: string,
   request: GuardianMaintenancePayload,
   timeoutMs: number,
-  expectedUid: number
+  expectedUid: number,
+  allowLegacySparseAuthorization: boolean
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = new Error("Vigil's system guardian did not authorize maintenance.");
@@ -800,7 +803,8 @@ async function waitForRootGuardianAuthorization(
         authorizationPath,
         request,
         observedAt,
-        expectedUid
+        expectedUid,
+        allowLegacySparseAuthorization
       );
       if (identity !== stableIdentity) {
         stableIdentity = identity;
@@ -894,7 +898,8 @@ export async function assertGuardianMaintenanceActive(
       authorizationPath,
       payload as GuardianMaintenancePayload,
       now,
-      expectedAuthorizationUid
+      expectedAuthorizationUid,
+      options.allowLegacySparseAuthorization === true
     );
   }
 }
@@ -1214,7 +1219,8 @@ async function assertRootGuardianAuthorization(
   authorizationPath: string,
   request: GuardianMaintenancePayload,
   now: number,
-  expectedUid: number
+  expectedUid: number,
+  allowLegacySparseAuthorization = false
 ): Promise<string> {
   const {
     authorization,
@@ -1228,16 +1234,38 @@ async function assertRootGuardianAuthorization(
   if ((authorizationStat.mode & 0o022) !== 0) {
     throw new Error("Vigil's system guardian authorization is writable outside root.");
   }
-  if (
+  const commonAuthorizationMatches =
     authorization.kind !== "vigil-root-maintenance-authorization-v2"
-    || authorization.token !== request.token
-    || authorization.pid !== request.pid
-    || authorization.lockPath !== request.lockPath
-    || typeof authorization.updaterExecutable !== "string"
-    || !authorization.updaterExecutable.startsWith("/")
-    || typeof authorization.updaterStarted !== "string"
-    || !authorization.updaterStarted
-    || (authorization.authorizationMode !== "normal" && authorization.authorizationMode !== "bootstrap")
+    ? false
+    : authorization.token === request.token
+      && authorization.pid === request.pid
+      && authorization.lockPath === request.lockPath
+      && typeof authorization.updaterExecutable === "string"
+      && authorization.updaterExecutable.startsWith("/")
+      && typeof authorization.updaterStarted === "string"
+      && Boolean(authorization.updaterStarted)
+      && Number.isInteger(authorization.expiresAtEpoch)
+      && Number(authorization.expiresAtEpoch) >= nowEpoch
+      && Number(authorization.expiresAtEpoch)
+        <= Math.floor(authorizationStat.mtimeMs / 1_000) + SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS;
+  if (!commonAuthorizationMatches) {
+    throw new Error("Vigil's system guardian authorization does not match this updater.");
+  }
+  if (allowLegacySparseAuthorization
+    && authorization.authorizationMode === undefined
+    && authorization.updaterCommand === undefined
+    && authorization.updaterScriptPath === undefined
+    && authorization.updaterScriptSha256 === undefined
+    && authorization.updaterAppCdHash === undefined
+    && authorization.parentPid === undefined
+    && authorization.parentExecutable === undefined
+    && authorization.parentStarted === undefined
+    && authorization.parentCommand === undefined
+    && authorization.bootstrapAuthorizationSha256 === undefined) {
+    return identity;
+  }
+  if (
+    (authorization.authorizationMode !== "normal" && authorization.authorizationMode !== "bootstrap")
     || typeof authorization.updaterCommand !== "string"
     || !authorization.updaterCommand
     || typeof authorization.updaterScriptPath !== "string"
@@ -1258,9 +1286,6 @@ async function assertRootGuardianAuthorization(
     || (authorization.authorizationMode === "bootstrap"
       && (typeof authorization.bootstrapAuthorizationSha256 !== "string"
         || !/^[a-f0-9]{64}$/u.test(authorization.bootstrapAuthorizationSha256)))
-    || !Number.isInteger(authorization.expiresAtEpoch)
-    || Number(authorization.expiresAtEpoch) < nowEpoch
-    || Number(authorization.expiresAtEpoch) > Math.floor(authorizationStat.mtimeMs / 1_000) + SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS
   ) {
     throw new Error("Vigil's system guardian authorization does not match this updater.");
   }

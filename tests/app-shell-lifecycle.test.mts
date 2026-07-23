@@ -87,10 +87,10 @@ assert.match(
   /function hideVigilWindow\(\): void \{\s*mainWindow\?\.hide\(\);\s*\}/,
   "hiding Vigil must hide only its native window while enforcement remains resident"
 );
-assert.match(
+assert.doesNotMatch(
   packageSource,
-  /"extendInfo":\s*\{[\s\S]*?"LSUIElement":\s*true/,
-  "Vigil's own packaged Info.plist must declare its menu-bar-only identity"
+  /"LSUIElement"\s*:\s*true/,
+  "Vigil's packaged application identity must remain visible in the Dock"
 );
 assert.doesNotMatch(
   mainSource,
@@ -440,10 +440,20 @@ assert.match(
   /catch \(error\) \{[\s\S]*?await clearRuntimeReady\(appDataDir\(\)\);[\s\S]*?await stopOwnedRuntime\(\);[\s\S]*?await rollbackEmbeddedRuntimeSupervisor\(legacyAgent\);[\s\S]*?await restoreLegacyLoopbackAgent\(legacyAgent\);/,
   "failed embedded startup must clear readiness, stop partial runtime state, roll back a new supervisor, and restore the legacy service"
 );
+assert.match(
+  mainSource,
+  /titleBarStyle:\s*"hiddenInset"/,
+  "Vigil must integrate native window controls without a separate gray title bar"
+);
+assert.match(
+  mainSource,
+  /trafficLightPosition:\s*\{\s*x:\s*18,\s*y:\s*19\s*\}/,
+  "Vigil's integrated traffic lights must retain their intended position"
+);
 assert.doesNotMatch(
   mainSource,
-  /titleBarStyle|trafficLightPosition|setWindowButtonPosition|setWindowButtonVisibility/,
-  "Vigil must use Electron's stock native title bar and traffic lights"
+  /setWindowButtonPosition|setWindowButtonVisibility/,
+  "Vigil must not rewrite native controls while AppKit is transitioning the window"
 );
 assert.doesNotMatch(
   mainSource,

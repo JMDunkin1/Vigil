@@ -348,6 +348,8 @@ function createWindow(appUrl: string): void {
     center: true,
     title: "Vigil",
     icon: iconAssetPath(`${selectedIconTheme}.png`),
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 18, y: 19 },
     backgroundColor: "#14191c",
     webPreferences: {
       backgroundThrottling: true,
@@ -709,8 +711,8 @@ function rejectedAppUpdateRequest(error = "App update request origin was rejecte
 
 function configureMenuBarResidency(): void {
   if (!shouldStayResident()) return;
-  // The packaged app's LSUIElement declaration owns its menu-bar identity.
-  // Avoid changing AppKit's activation policy while Vigil is running.
+  // Keep the menu-bar companion and login launch while retaining Vigil's
+  // ordinary Dock presence and native application identity.
   app.setLoginItemSettings({
     openAtLogin: true,
     openAsHidden: true
