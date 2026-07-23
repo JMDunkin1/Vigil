@@ -383,6 +383,7 @@ function wrapperSource(kind: UpdateProtocolBridgeWrapperKind, payloadTreeSha256:
   if (kind === "updater") {
     return [
       "// Vigil signed update-protocol bridge wrapper v1",
+      "process.noAsar = true;",
       `export const PACKAGED_UPDATE_RECOVERY_PROTOCOL_REVISION = ${PROTOCOL_REVISION};`,
       `const { runPackagedUpdate } = await import("${prefix}update-packaged-app.mjs");`,
       "await runPackagedUpdate();",
@@ -392,6 +393,7 @@ function wrapperSource(kind: UpdateProtocolBridgeWrapperKind, payloadTreeSha256:
   if (kind === "setup") {
     return [
       "// Vigil signed update-protocol bridge wrapper v1",
+      "process.noAsar = true;",
       `const { runSystemGuardianSetup } = await import("${prefix}setup-system-guardian.mjs");`,
       "try {",
       "  await runSystemGuardianSetup();",
@@ -405,6 +407,7 @@ function wrapperSource(kind: UpdateProtocolBridgeWrapperKind, payloadTreeSha256:
   if (kind === "bootstrap") {
     return [
       "// Vigil signed update-protocol bridge wrapper v1",
+      "process.noAsar = true;",
       "import { randomUUID } from \"node:crypto\";",
       `const { runBootstrapCli } = await import("${prefix}bootstrap-update-protocol.mjs");`,
       "try {",
@@ -418,6 +421,7 @@ function wrapperSource(kind: UpdateProtocolBridgeWrapperKind, payloadTreeSha256:
   }
   return [
     "// Vigil signed update-protocol bridge wrapper v1",
+    "process.noAsar = true;",
     `const { installSystemGuardian } = await import("${prefix}install-system-guardian.mjs");`,
     "await installSystemGuardian();",
     "console.log(process.argv.includes(\"--json\")",

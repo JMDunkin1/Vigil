@@ -69,9 +69,16 @@ try {
     ["bootstrap", bootstrapPath],
     ["installer", installerPath]
   ] as const) {
+    const wrapper = updateProtocolBridgeWrapperSource(kind, manifest.payloadTreeSha256);
+    const noAsar = wrapper.indexOf("process.noAsar = true;");
+    const payloadImport = wrapper.indexOf("await import(");
+    assert.ok(
+      noAsar >= 0 && noAsar < payloadImport,
+      `the ${kind} wrapper must disable Electron's virtual ASAR filesystem before loading v3 code`
+    );
     assert.equal(
       await readFile(join(candidateAppPath, path), "utf8"),
-      updateProtocolBridgeWrapperSource(kind, manifest.payloadTreeSha256),
+      wrapper,
       `the ${kind} wrapper must be the exact root-pinned v3 loader`
     );
   }
