@@ -745,7 +745,15 @@ export async function recoverAbandonedLiveUpdateTransaction(
     throw new UpdateRecoveryValidationError("Vigil refused recovery lock takeover while an updater operation is active.");
   }
   const manifestRaw = await readPrivateJsonIfPresent(paths.manifestPath);
-  if (manifestRaw === null) return await readUpdateRecoveryOutcome(policy.updaterDir);
+  if (manifestRaw === null) {
+    return await releaseCompletedRecoveryRaceLock(
+      policy,
+      paths,
+      expectedOwnerPid,
+      minimumLockAgeMs,
+      operations
+    );
+  }
   const manifest = validatedManifest(manifestRaw, policy);
   await verifyManifestPolicyBinding(manifest, policy);
   if (manifest.state !== "commit-intent") {
@@ -800,6 +808,57 @@ export async function recoverAbandonedLiveUpdateTransaction(
     takeoverLock,
     async () => await recoverUpdateTransactionLocked(policy, operations, false)
   );
+}
+
+async function releaseCompletedRecoveryRaceLock(
+  policy: UpdateRecoveryPolicy,
+  paths: ReturnType<typeof updateRecoveryPaths>,
+  expectedOwnerPid: number,
+  minimumLockAgeMs: number,
+  operations: UpdateRecoveryOperations
+): Promise<UpdateRecoveryOutcome | null> {
+  const outcome = await readUpdateRecoveryOutcome(policy.updaterDir);
+  if (!outcome || outcome.status !== "complete" || !outcome.installedIdentity) return outcome;
+  const pinned = await openPinnedFile(paths.lockPath).catch((error) => {
+    if (isErrorCode(error, "ENOENT")) return null;
+    throw error;
+  });
+  if (!pinned) return outcome;
+  try {
+    assertPrivatePinnedFile(pinned, "completed recovery race lock");
+    const owner = validatedLockRecord(JSON.parse(pinned.raw));
+    if (owner.pid !== expectedOwnerPid) {
+      throw new UpdateRecoveryValidationError("The completed recovery race lock owner changed before cleanup.");
+    }
+    const [currentIdentity, executable, installed] = await Promise.all([
+      operations.processIdentity(owner.pid),
+      operations.processExecutable(owner.pid),
+      operations.identifyArtifact(policy.expectedAppPath, "app")
+    ]);
+    if (currentIdentity !== owner.processStartedAt
+      || executable !== join(policy.expectedAppPath, "Contents", "MacOS", "Vigil")) {
+      throw new UpdateRecoveryValidationError("The completed recovery race lock is not owned by the exact installed Vigil process.");
+    }
+    if (!installed || !recoveryIdentityMatches(outcome.installedIdentity, installed)) {
+      throw new UpdateRecoveryValidationError("The installed Vigil generation no longer matches the completed recovery outcome.");
+    }
+    const createdAtMs = Date.parse(owner.createdAt);
+    const recoveredAtMs = Date.parse(outcome.recoveredAt);
+    if (!Number.isFinite(createdAtMs)
+      || !Number.isFinite(recoveredAtMs)
+      || recoveredAtMs < createdAtMs
+      || operations.now().getTime() - createdAtMs < minimumLockAgeMs) {
+      throw new UpdateRecoveryValidationError("The completed recovery race lock lacks safe terminal-age evidence.");
+    }
+    if (await pathEntryExists(join(policy.updaterDir, "update.lock"))
+      || await readPrivateJsonIfPresent(paths.manifestPath) !== null) {
+      throw new UpdateRecoveryValidationError("Vigil refused completed recovery lock cleanup after updater state changed.");
+    }
+    await quarantinePinnedFile(paths.lockPath, pinned, "completed");
+    return outcome;
+  } finally {
+    await pinned.handle.close().catch(() => undefined);
+  }
 }
 
 export async function recoverUpdateTransactionFromPolicyFile(

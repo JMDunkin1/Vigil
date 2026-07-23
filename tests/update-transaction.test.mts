@@ -74,6 +74,7 @@ try {
   verifyExactIdentityComparisonRejectsPartialAgreement();
   await verifyLockReleaseDoesNotDependOnAtomicSwapHelper();
   await verifyAbandonedLiveCandidateLockCanBeSafelyTakenOver();
+  await verifyCompletedRecoveryRaceLockCanBeSafelyReleased();
   await verifyStableRecoveryHelperReleasesLockAfterAppActivation();
   await verifyRelocatedCandidateUsesStableRecoveryHelper();
   await verifyTamperedStableHelperCannotReconcileStaleLock();
@@ -683,6 +684,74 @@ async function verifyAbandonedLiveCandidateLockCanBeSafelyTakenOver(): Promise<v
     (error: unknown) => isErrorCode(error, "ENOENT"),
     "a successful takeover must release its replacement lock without stopping the live app"
   );
+}
+
+async function verifyCompletedRecoveryRaceLockCanBeSafelyReleased(): Promise<void> {
+  const fixture = await createFixture("completed-recovery-race-lock", false);
+  const ownerPid = 43_211;
+  const lockPath = join(fixture.policy.updaterDir, UPDATE_RECOVERY_LOCK_FILENAME);
+  const outcomePath = join(fixture.policy.updaterDir, UPDATE_RECOVERY_OUTCOME_FILENAME);
+  await writeFile(outcomePath, `${JSON.stringify({
+    version: 1,
+    attemptId: fixture.input.attemptId,
+    status: "complete",
+    message: "fixture completed recovery",
+    recoveredAt: new Date(Date.now() - 60_000).toISOString(),
+    installedIdentity: await requiredIdentity(fixture.appPath, "app"),
+    sourceSyncPending: false
+  }, null, 2)}\n`, { mode: 0o600 });
+  await chmod(outcomePath, 0o600);
+  await writeFile(lockPath, `${JSON.stringify({
+    version: 1,
+    token: "completed-recovery-race-lock",
+    pid: ownerPid,
+    processStartedAt: `test-process-${ownerPid}`,
+    createdAt: new Date(Date.now() - 120_000).toISOString()
+  }, null, 2)}\n`, { mode: 0o600 });
+  await chmod(lockPath, 0o600);
+
+  const recovered = await recoverAbandonedLiveUpdateTransaction(
+    fixture.policy,
+    { expectedOwnerPid: ownerPid },
+    fixture.dependencies
+  );
+  assert.equal(recovered?.status, "complete");
+  await assert.rejects(
+    lstat(lockPath),
+    (error: unknown) => isErrorCode(error, "ENOENT"),
+    "a lock created before the terminal outcome may be released after the manifest is gone"
+  );
+
+  const unsafe = await createFixture("post-recovery-live-lock", false);
+  const unsafeLockPath = join(unsafe.policy.updaterDir, UPDATE_RECOVERY_LOCK_FILENAME);
+  await writeFile(join(unsafe.policy.updaterDir, UPDATE_RECOVERY_OUTCOME_FILENAME), `${JSON.stringify({
+    version: 1,
+    attemptId: unsafe.input.attemptId,
+    status: "complete",
+    message: "fixture completed recovery",
+    recoveredAt: new Date(Date.now() - 180_000).toISOString(),
+    installedIdentity: await requiredIdentity(unsafe.appPath, "app"),
+    sourceSyncPending: false
+  }, null, 2)}\n`, { mode: 0o600 });
+  await chmod(join(unsafe.policy.updaterDir, UPDATE_RECOVERY_OUTCOME_FILENAME), 0o600);
+  await writeFile(unsafeLockPath, `${JSON.stringify({
+    version: 1,
+    token: "post-recovery-live-lock",
+    pid: ownerPid,
+    processStartedAt: `test-process-${ownerPid}`,
+    createdAt: new Date(Date.now() - 120_000).toISOString()
+  }, null, 2)}\n`, { mode: 0o600 });
+  await chmod(unsafeLockPath, 0o600);
+  await assert.rejects(
+    recoverAbandonedLiveUpdateTransaction(
+      unsafe.policy,
+      { expectedOwnerPid: ownerPid },
+      unsafe.dependencies
+    ),
+    /terminal-age evidence/u,
+    "a lock created after the terminal outcome must never be inferred to be recovery residue"
+  );
+  assert.ok(await lstat(unsafeLockPath), "an unproven live lock must be preserved");
 }
 
 async function verifyStableRecoveryHelperReleasesLockAfterAppActivation(): Promise<void> {
