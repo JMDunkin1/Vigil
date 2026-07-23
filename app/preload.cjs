@@ -27,6 +27,12 @@ contextBridge.exposeInMainWorld("vigilAppUpdate", {
     const handleUpdateState = (_event, status) => listener(status);
     ipcRenderer.on("vigil:app-update-state", handleUpdateState);
     return () => ipcRenderer.removeListener("vigil:app-update-state", handleUpdateState);
+  },
+  subscribeDetails: (listener) => {
+    if (typeof listener !== "function") return () => {};
+    const handleShowDetails = () => listener();
+    ipcRenderer.on("vigil:show-app-update-details", handleShowDetails);
+    return () => ipcRenderer.removeListener("vigil:show-app-update-details", handleShowDetails);
   }
 });
 

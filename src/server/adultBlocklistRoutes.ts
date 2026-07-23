@@ -25,12 +25,13 @@ interface AdultBlocklistApiContext {
   afterCommit: (effect: () => void | Promise<void>, descriptor?: DurableEffectDescriptor) => void;
   preparedRefresh?: AdultBlocklistRefreshPreparation;
   recordIosMdmPolicyQueue?: (reason: string) => unknown;
+  schedulePolicyEnforcement?: (reason: string) => unknown;
 }
 
 export async function handleAdultBlocklistApiRoute(
   request: IncomingMessage,
   response: ServerResponse,
-  { state, currentState, afterCommit, preparedRefresh, recordIosMdmPolicyQueue }: AdultBlocklistApiContext
+  { state, currentState, afterCommit, preparedRefresh, recordIosMdmPolicyQueue, schedulePolicyEnforcement }: AdultBlocklistApiContext
 ): Promise<boolean> {
   const method = request.method || "GET";
   const path = new URL(request.url || "/", "http://localhost").pathname;
@@ -49,7 +50,10 @@ export async function handleAdultBlocklistApiRoute(
         keys.push("adultBlocklistAllowlist");
       }
       addEvent(state, "adult_blocklist_settings_updated", { keys });
-      if (keys.length) recordIosMdmPolicyQueue?.("adult-blocklist-settings");
+      if (keys.length) {
+        recordIosMdmPolicyQueue?.("adult-blocklist-settings");
+        schedulePolicyEnforcement?.("adult-blocklist-settings");
+      }
       await saveState(state);
       if (sourceChanged || allowlistChanged) {
         const snapshotHash = state.adultBlocklist.hash || "";
@@ -85,6 +89,7 @@ export async function handleAdultBlocklistApiRoute(
         hash: summary.shortHash
       });
       recordIosMdmPolicyQueue?.("adult-blocklist-refresh");
+      schedulePolicyEnforcement?.("adult-blocklist-refresh");
       await saveState(state);
       const allowlistHash = adultBlocklistAllowlistHash(state);
       const descriptor = {

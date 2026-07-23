@@ -58,6 +58,8 @@ export type UpdateArtifactKind = "app" | "runtime";
 export interface UpdateArtifactIdentity {
   commit: string | null;
   fingerprint: string | null;
+  /** Verified CodeDirectory hash for app bundles; null for unsigned or non-app artifacts. */
+  cdHash?: string | null;
   dev: number | null;
   ino: number | null;
 }
@@ -70,10 +72,12 @@ export interface UpdateRecoveryArtifact {
   initialPresent: boolean;
   initialCommit: string | null;
   initialFingerprint: string | null;
+  initialCdHash?: string | null;
   initialDev: number | null;
   initialIno: number | null;
   targetCommit: string | null;
   targetFingerprint: string | null;
+  targetCdHash?: string | null;
   targetDev: number | null;
   targetIno: number | null;
 }
@@ -158,6 +162,9 @@ export interface UpdateArtifactPlan {
   targetPath: string;
   initialIdentity: UpdateArtifactIdentity | null;
   targetIdentity: UpdateArtifactIdentity;
+  /** Exact signed bundle hashes used only for app recovery authorization. */
+  initialCdHash?: string | null;
+  targetCdHash?: string | null;
 }
 
 type StagedArtifactJournalPhase =
@@ -1062,6 +1069,7 @@ function classifyIdentity(
     ? {
         commit: artifact.initialCommit,
         fingerprint: artifact.initialFingerprint,
+        cdHash: artifact.initialCdHash ?? null,
         dev: artifact.initialDev,
         ino: artifact.initialIno
       }
@@ -1069,6 +1077,7 @@ function classifyIdentity(
   const target = {
     commit: artifact.targetCommit,
     fingerprint: artifact.targetFingerprint,
+    cdHash: artifact.targetCdHash ?? null,
     dev: artifact.targetDev,
     ino: artifact.targetIno
   };
@@ -1087,10 +1096,11 @@ function inodeMatches(expected: UpdateArtifactIdentity, observed: UpdateArtifact
 }
 
 function contentMatches(expected: UpdateArtifactIdentity, observed: UpdateArtifactIdentity): boolean {
-  const comparable = expected.commit !== null || expected.fingerprint !== null;
+  const comparable = expected.commit !== null || expected.fingerprint !== null || expected.cdHash != null;
   if (!comparable) return false;
   if (expected.commit !== null && expected.commit !== observed.commit) return false;
-  return expected.fingerprint === null || expected.fingerprint === observed.fingerprint;
+  if (expected.fingerprint !== null && expected.fingerprint !== observed.fingerprint) return false;
+  return expected.cdHash == null || expected.cdHash === observed.cdHash;
 }
 
 function exactIdentityMatches(
@@ -1100,7 +1110,7 @@ function exactIdentityMatches(
   if (!observed) return false;
   const hasInode = expected.dev !== null && expected.ino !== null;
   if (hasInode && !inodeMatches(expected, observed)) return false;
-  const hasContent = expected.commit !== null || expected.fingerprint !== null;
+  const hasContent = expected.commit !== null || expected.fingerprint !== null || expected.cdHash != null;
   if (hasContent && !contentMatches(expected, observed)) return false;
   return hasInode || hasContent;
 }
@@ -1485,10 +1495,12 @@ function artifactFromPlan(plan: UpdateArtifactPlan, label: string): UpdateRecove
     initialPresent: initial !== null,
     initialCommit: initial?.commit ?? null,
     initialFingerprint: initial?.fingerprint ?? null,
+    initialCdHash: nullableCdHash(plan.initialCdHash, `${label} initial CodeDirectory hash`),
     initialDev: initial?.dev ?? null,
     initialIno: initial?.ino ?? null,
     targetCommit: target.commit,
     targetFingerprint: target.fingerprint,
+    targetCdHash: nullableCdHash(plan.targetCdHash, `${label} target CodeDirectory hash`),
     targetDev: target.dev,
     targetIno: target.ino
   };
@@ -1753,10 +1765,11 @@ function normalizedIdentity(identity: UpdateArtifactIdentity, label: string): Up
   const normalized: UpdateArtifactIdentity = {
     commit: nullableIdentifier(identity.commit, `${label} commit`),
     fingerprint: nullableIdentifier(identity.fingerprint, `${label} fingerprint`),
+    cdHash: nullableCdHash(identity.cdHash, `${label} CodeDirectory hash`),
     dev: nullableNonNegativeInteger(identity.dev, `${label} device`),
     ino: nullablePositiveInteger(identity.ino, `${label} inode`)
   };
-  const contentProof = normalized.commit !== null || normalized.fingerprint !== null;
+  const contentProof = normalized.commit !== null || normalized.fingerprint !== null || normalized.cdHash !== null;
   const inodeProof = normalized.dev !== null && normalized.ino !== null;
   if (!contentProof && !inodeProof) {
     throw new UpdateRecoveryValidationError(`The ${label} has neither content nor inode identity.`);
@@ -1846,10 +1859,20 @@ function validateArtifactShape(value: unknown, label: string): asserts value is 
   for (const field of ["initialCommit", "initialFingerprint", "targetCommit", "targetFingerprint"] as const) {
     nullableIdentifier(value[field], `${label} ${field}`);
   }
+  nullableCdHash(value.initialCdHash, `${label} initial CodeDirectory hash`);
+  nullableCdHash(value.targetCdHash, `${label} target CodeDirectory hash`);
   nullableNonNegativeInteger(value.initialDev, `${label} initial device`);
   nullablePositiveInteger(value.initialIno, `${label} initial inode`);
   nullableNonNegativeInteger(value.targetDev, `${label} target device`);
   nullablePositiveInteger(value.targetIno, `${label} target inode`);
+}
+
+function nullableCdHash(value: unknown, label: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !/^[a-f0-9]{40,64}$/u.test(value)) {
+    throw new UpdateRecoveryValidationError(`The ${label} is invalid.`);
+  }
+  return value;
 }
 
 function validateManifestIdentities(manifest: UpdateRecoveryManifest): void {
@@ -2496,11 +2519,32 @@ async function defaultIdentifyArtifact(path: string, kind: UpdateArtifactKind): 
     fingerprint = nullableIdentifier(info.sourceFingerprint, "build fingerprint");
     break;
   }
+  const cdHash = kind === "app" ? await safeVerifiedAppCodeDirectoryHash(path) : null;
   const after = await lstat(path);
   if (after.isSymbolicLink() || after.dev !== value.dev || after.ino !== value.ino) {
     throw new UpdateRecoveryValidationError(`The ${kind} artifact at ${path} changed during identity capture.`);
   }
-  return { commit, fingerprint, dev: value.dev, ino: value.ino };
+  return { commit, fingerprint, cdHash, dev: value.dev, ino: value.ino };
+}
+
+async function safeVerifiedAppCodeDirectoryHash(path: string): Promise<string | null> {
+  try {
+    await execFileText("/usr/bin/codesign", ["--verify", "--deep", "--strict", path]);
+    const first = await codeDirectoryHash(path);
+    await execFileText("/usr/bin/codesign", ["--verify", "--deep", "--strict", path]);
+    const second = await codeDirectoryHash(path);
+    return first === second ? first : null;
+  } catch {
+    return null;
+  }
+}
+
+async function codeDirectoryHash(path: string): Promise<string> {
+  const output = await execFileOutput("/usr/bin/codesign", ["-dv", "--verbose=4", path]);
+  const match = output.stderr.match(/^CDHash=([a-f0-9]+)$/imu)?.[1]?.toLowerCase();
+  const cdHash = nullableCdHash(match, `CodeDirectory hash for ${path}`);
+  if (!cdHash) throw new UpdateRecoveryValidationError(`The CodeDirectory hash for ${path} is missing.`);
+  return cdHash;
 }
 
 async function safeReadBuildInfo(path: string): Promise<Record<string, unknown> | null> {
@@ -2694,6 +2738,18 @@ async function execFileText(command: string, args: readonly string[]): Promise<s
         return;
       }
       resolveCommand(String(stdout));
+    });
+  });
+}
+
+async function execFileOutput(command: string, args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
+  return await new Promise<{ stdout: string; stderr: string }>((resolveCommand, rejectCommand) => {
+    execFile(command, [...args], { encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024 }, (error, stdout, stderr) => {
+      if (error) {
+        rejectCommand(new Error(String(stderr || "").trim() || error.message));
+        return;
+      }
+      resolveCommand({ stdout: String(stdout), stderr: String(stderr) });
     });
   });
 }

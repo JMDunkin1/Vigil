@@ -16,6 +16,8 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     form.elements.id.value = schedule.id;
     form.elements.name.value = schedule.name;
     form.elements.mode.value = schedule.mode;
+    form.elements.lockLevel.value = schedule.lockLevel || "deep";
+    $("#scheduleProfileId").value = schedule.profileId;
     form.elements.start.value = schedule.start;
     form.elements.end.value = schedule.end;
     form.elements.wifiNetworks.value = (schedule.wifiNetworks || []).join("\n");
@@ -164,6 +166,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     form.elements.id.value = rule.id;
     form.elements.name.value = rule.name;
     form.elements.type.value = rule.type || "time";
+    form.elements.type.dispatchEvent(new Event("change", { bubbles: true }));
     form.elements.lockLevel.value = rule.lockLevel || "deep";
     form.elements.limitMinutes.value = String(rule.limitMinutes || 0);
     form.elements.unlocksAllowed.value = String(rule.unlocksAllowed || 0);
@@ -183,6 +186,7 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     form.elements.id.value = "";
     form.elements.name.value = "Instagram 20/20";
     form.elements.type.value = "time";
+    form.elements.type.dispatchEvent(new Event("change", { bubbles: true }));
     form.elements.lockLevel.value = "deep";
     form.elements.limitMinutes.value = "20";
     form.elements.unlocksAllowed.value = "0";
@@ -202,11 +206,14 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     form.elements.id.value = "";
     form.elements.name.value = "Focus block";
     form.elements.mode.value = "focus";
+    form.elements.lockLevel.value = "deep";
     form.elements.start.value = "09:00";
     form.elements.end.value = "17:00";
     form.elements.wifiNetworks.value = "";
     form.elements.enabled.checked = false;
     form.elements.commitmentLock.checked = false;
+    const profileSelect = $("#scheduleProfileId");
+    profileSelect.value = profileSelect.dataset.baselineProfileId || profileSelect.value;
     for (const input of $$("#scheduleDays input")) {
       input.checked = !["0", "6"].includes(input.value);
     }

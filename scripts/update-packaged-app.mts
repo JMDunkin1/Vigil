@@ -14,6 +14,8 @@ import { plistStringForKey } from "../src/plist.js";
 import {
   beginGuardianMaintenance,
   guardianMaintenanceReadiness,
+  UPDATE_PACKAGED_APP_RECOVERY_PROTOCOL_REVISION,
+  verifiedAppCodeDirectoryHash,
   waitForGuardianRecoveryAuthorization
 } from "../src/updateMaintenance.js";
 import type { GuardianMaintenanceTransaction } from "../src/updateMaintenance.js";
@@ -98,7 +100,8 @@ export interface AtomicInstallOperations {
   copy(source: string, destination: string): Promise<void>;
   move(source: string, destination: string): Promise<void>;
   remove(path: string): Promise<void>;
-  identity?(path: string): Promise<FileIdentity>;
+  identity(path: string): Promise<FileIdentity>;
+  quarantinePartial?(path: string, quarantinePath: string): Promise<void>;
   swap?(left: string, right: string): Promise<void>;
 }
 
@@ -138,12 +141,19 @@ const COMMAND_KILL_CONFIRMATION_MS = 5_000;
 const COMMAND_TERMINATION_POLL_MS = 50;
 const BACKGROUND_LAUNCH_ARG = "--vigil-background";
 const SAFETY_BOUNDARY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
+// Signed protocol capability consumed by the one-time v2-to-v3 online bridge.
+// Keep this literal export in the packaged updater so the bridge can pin the
+// exact script it will cause the already-running controller to resolve.
+export const PACKAGED_UPDATE_RECOVERY_PROTOCOL_REVISION = 3;
+if (PACKAGED_UPDATE_RECOVERY_PROTOCOL_REVISION !== UPDATE_PACKAGED_APP_RECOVERY_PROTOCOL_REVISION) {
+  throw new Error("Vigil's packaged updater protocol revision is inconsistent.");
+}
 let options: Options;
 let log: ReturnType<typeof createWriteStream>;
 let activeChild: ChildProcess | null = null;
 let interrupted = false;
 
-async function runUpdate(): Promise<void> {
+export async function runPackagedUpdate(): Promise<void> {
   let stagedBuild: StagedBuild | null = null;
   let appPlan: UpdateArtifactPlan | null = null;
   let runtimePlan: UpdateArtifactPlan | null = null;
@@ -217,6 +227,7 @@ async function runUpdate(): Promise<void> {
       options.appPath,
       "app"
     );
+    await bindAppPlanCodeDirectoryHashes(appPlan);
     await assertActiveCheckoutUnchanged(stagedBuild);
 
     guardianMaintenance = await beginGuardianMaintenance(options.lockPath, options.lockToken);
@@ -250,9 +261,12 @@ async function runUpdate(): Promise<void> {
     await waitForGuardianRecoveryAuthorization(
       options.lockPath,
       options.lockToken,
-      recoveryManifest.recovery.policySha256
+      recoveryManifest.recovery.policySha256,
+      process.pid,
+      guardianCodeDirectoryHashOptions(appPlan)
     );
 
+    await assertAppPlanCodeDirectoryHashes(appPlan, false);
     await activateStagedUpdateArtifact(
       recoveryPolicy,
       options.lockToken,
@@ -271,6 +285,7 @@ async function runUpdate(): Promise<void> {
       appPlan,
       "app"
     );
+    await assertAppPlanCodeDirectoryHashes(appPlan, true);
     await verifyInstalledAppBuild(stagedBuild.expectedCommit);
     if (!options.restart) throw new Error("Vigil app replacement verification requires --restart.");
     await status("verifying", "Reopening and verifying the rebuilt Vigil app");
@@ -366,6 +381,45 @@ async function runUpdate(): Promise<void> {
     }
     if (typeof options !== "undefined") await releaseOwnedUpdaterLock();
     log?.end();
+  }
+}
+
+async function bindAppPlanCodeDirectoryHashes(plan: UpdateArtifactPlan): Promise<void> {
+  if (!plan.initialIdentity) {
+    throw new Error("Vigil's protected app update requires an installed signed generation.");
+  }
+  const [initialCdHash, targetCdHash] = await Promise.all([
+    verifiedAppCodeDirectoryHash(plan.targetPath),
+    verifiedAppCodeDirectoryHash(`${plan.targetPath}.vigil-next`)
+  ]);
+  plan.initialCdHash = initialCdHash;
+  plan.targetCdHash = targetCdHash;
+}
+
+function guardianCodeDirectoryHashOptions(plan: UpdateArtifactPlan): {
+  expectedAppInitialCdHash: string;
+  expectedAppTargetCdHash: string;
+} {
+  if (!plan.initialCdHash || !plan.targetCdHash) {
+    throw new Error("Vigil's protected app update is missing its signed generation hashes.");
+  }
+  return {
+    expectedAppInitialCdHash: plan.initialCdHash,
+    expectedAppTargetCdHash: plan.targetCdHash
+  };
+}
+
+async function assertAppPlanCodeDirectoryHashes(plan: UpdateArtifactPlan, activated: boolean): Promise<void> {
+  const expected = guardianCodeDirectoryHashOptions(plan);
+  const initialPath = activated ? `${plan.targetPath}.vigil-previous` : plan.targetPath;
+  const targetPath = activated ? plan.targetPath : `${plan.targetPath}.vigil-next`;
+  const [initialCdHash, targetCdHash] = await Promise.all([
+    verifiedAppCodeDirectoryHash(initialPath),
+    verifiedAppCodeDirectoryHash(targetPath)
+  ]);
+  if (initialCdHash !== expected.expectedAppInitialCdHash
+    || targetCdHash !== expected.expectedAppTargetCdHash) {
+    throw new Error("Vigil's exact signed app generations changed across protected activation.");
   }
 }
 
@@ -663,55 +717,61 @@ export async function atomicInstallBuiltApp(
     hadPrevious: false,
     updatedAt: new Date().toISOString()
   };
+  const initialPresent = await operations.pathExists(appPath);
+  journal.initialPresent = initialPresent;
+  if (initialPresent) {
+    const initialIdentity = await operations.identity(appPath);
+    journal.initialDevice = initialIdentity.dev;
+    journal.initialInode = initialIdentity.ino;
+  }
   await writeAtomicInstallJournal(journalPath, journal);
-  let backedUp = false;
-  let installed = false;
-  let swapped = false;
   try {
     await operations.remove(nextAppPath);
     await operations.copy(builtAppPath, nextAppPath);
-    if (operations.identity) {
-      const candidateIdentity = await operations.identity(nextAppPath);
-      journal.candidateDevice = candidateIdentity.dev;
-      journal.candidateInode = candidateIdentity.ino;
-    }
+    const candidateIdentity = await operations.identity(nextAppPath);
+    journal.candidateDevice = candidateIdentity.dev;
+    journal.candidateInode = candidateIdentity.ino;
     await updateAtomicInstallJournal(journalPath, journal, "prepared");
     if (await operations.pathExists(appPath)) {
       journal.hadPrevious = true;
       if (operations.swap) {
         await updateAtomicInstallJournal(journalPath, journal, "swapping");
         await operations.swap(appPath, nextAppPath);
-        swapped = true;
-        installed = true;
         await operations.move(nextAppPath, previousAppPath);
-        backedUp = true;
       } else {
         await updateAtomicInstallJournal(journalPath, journal, "backing-up");
         await operations.move(appPath, previousAppPath);
-        backedUp = true;
         await operations.move(nextAppPath, appPath);
-        installed = true;
       }
     } else {
       await operations.move(nextAppPath, appPath);
-      installed = true;
     }
     await updateAtomicInstallJournal(journalPath, journal, "installed");
   } catch (error) {
     try {
+      if (journal.phase === "preparing"
+        && !Number.isInteger(journal.candidateDevice)
+        && !Number.isInteger(journal.candidateInode)) {
+        if (await operations.pathExists(nextAppPath)) {
+          const quarantinePath = `${nextAppPath}.${journal.id}.partial`;
+          if (operations.quarantinePartial) {
+            await operations.quarantinePartial(nextAppPath, quarantinePath);
+          } else {
+            await operations.remove(nextAppPath);
+          }
+        }
+        await rm(journalPath, { force: true });
+        await syncDirectory(dirname(journalPath));
+        throw error;
+      }
       await safeUpdateAtomicInstallJournal(journalPath, journal, "rolling-back");
-      await rollbackAtomicInstallation({
-        appPath,
-        nextAppPath,
-        previousAppPath,
-        operations,
-        backedUp,
-        installed,
-        swapped
-      });
-      await operations.remove(nextAppPath);
-      await rm(journalPath, { force: true });
+      // A swap helper can complete the kernel exchange and still report an
+      // error (for example if it exits before its success status is observed).
+      // Re-read the pinned candidate/initial inode topology from the durable
+      // journal instead of trusting an in-memory `swapped` boolean.
+      await reconcileAtomicInstallResidue(appPath, nextAppPath, previousAppPath, journalPath, operations);
     } catch (recoveryError) {
+      if (recoveryError === error) throw error;
       throw new Error(`${errorMessage(error)} Automatic app replacement recovery also failed: ${errorMessage(recoveryError)}`);
     }
     throw error;
@@ -732,15 +792,21 @@ export async function atomicInstallBuiltApp(
     },
     async markVerified() {
       if (settled || verified) return;
+      await assertVerifiedAtomicInstallTopology(appPath, nextAppPath, previousAppPath, journal, operations);
       await updateAtomicInstallJournal(journalPath, journal, "verified");
       verified = true;
     },
     async finalize() {
       if (settled) return;
       if (!verified) throw new Error("Vigil cannot discard its recovery copy before the replacement is verified.");
+      await assertVerifiedAtomicInstallTopology(appPath, nextAppPath, previousAppPath, journal, operations);
       await updateAtomicInstallJournal(journalPath, journal, "finalizing");
+      await assertVerifiedAtomicInstallTopology(appPath, nextAppPath, previousAppPath, journal, operations);
       await operations.remove(previousAppPath);
+      await assertJournalCandidateAtTarget(appPath, journal, operations);
+      await assertJournalSidecarPinned(nextAppPath, journal, operations);
       await operations.remove(nextAppPath);
+      await assertJournalCandidateAtTarget(appPath, journal, operations);
       if (cleanupPath) await operations.remove(cleanupPath);
       await rm(journalPath, { force: true });
       settled = true;
@@ -750,60 +816,12 @@ export async function atomicInstallBuiltApp(
       if (verified) throw new Error("Vigil will not roll back a replacement after it was durably marked verified.");
       await safeUpdateAtomicInstallJournal(journalPath, journal, "rolling-back");
       await attachedStateSnapshot?.restore();
-      await rollbackAtomicInstallation({
-        appPath,
-        nextAppPath,
-        previousAppPath,
-        operations,
-        backedUp,
-        installed,
-        swapped
-      });
-      await operations.remove(nextAppPath);
+      await reconcileAtomicInstallResidue(appPath, nextAppPath, previousAppPath, journalPath, operations);
       if (cleanupPath) await operations.remove(cleanupPath);
-      await rm(journalPath, { force: true });
       await attachedStateSnapshot?.finalize();
       settled = true;
     }
   };
-}
-
-async function rollbackAtomicInstallation({
-  appPath,
-  nextAppPath,
-  previousAppPath,
-  operations,
-  backedUp,
-  installed,
-  swapped
-}: {
-  appPath: string;
-  nextAppPath: string;
-  previousAppPath: string;
-  operations: AtomicInstallOperations;
-  backedUp: boolean;
-  installed: boolean;
-  swapped: boolean;
-}): Promise<void> {
-  if (backedUp) {
-    if (!(await operations.pathExists(previousAppPath))) {
-      throw new Error(`Vigil recovery copy is missing at ${previousAppPath}; the installed copy was left untouched.`);
-    }
-    if (swapped && operations.swap && await operations.pathExists(appPath)) {
-      await operations.swap(appPath, previousAppPath);
-      await operations.remove(previousAppPath);
-      return;
-    }
-    if (await operations.pathExists(appPath)) await operations.remove(appPath);
-    await operations.move(previousAppPath, appPath);
-    return;
-  }
-  if (swapped && operations.swap && await operations.pathExists(appPath) && await operations.pathExists(nextAppPath)) {
-    await operations.swap(appPath, nextAppPath);
-    await operations.remove(nextAppPath);
-    return;
-  }
-  if (installed && await operations.pathExists(appPath)) await operations.remove(appPath);
 }
 
 /**
@@ -826,11 +844,6 @@ export async function reconcileAtomicInstallResidue(
   const nextExists = await operations.pathExists(nextAppPath);
 
   if (!journal) {
-    if (!targetExists && previousExists) {
-      await operations.move(previousAppPath, appPath);
-      if (nextExists) await operations.remove(nextAppPath);
-      return;
-    }
     if (previousExists || nextExists) {
       throw new Error(`Vigil found replacement residue for ${appPath} without a trustworthy transaction journal.`);
     }
@@ -844,7 +857,13 @@ export async function reconcileAtomicInstallResidue(
         && targetExists
         && await pathMatchesJournalInitial(appPath, journal, operations) === true;
     if (initialMatches) {
-      if (nextExists) await operations.remove(nextAppPath);
+      if (nextExists) {
+        if (operations.quarantinePartial) {
+          await operations.quarantinePartial(nextAppPath, `${nextAppPath}.${journal.id}.partial`);
+        } else {
+          await operations.remove(nextAppPath);
+        }
+      }
       await rm(journalPath, { force: true });
       await syncDirectory(dirname(journalPath));
       return;
@@ -852,29 +871,36 @@ export async function reconcileAtomicInstallResidue(
   }
 
   if (journal.phase === "verified" || journal.phase === "finalizing") {
+    await assertVerifiedAtomicInstallSidecars(nextAppPath, previousAppPath, journal, operations);
     if (!targetExists) {
       if (nextExists && await pathMatchesJournalCandidate(nextAppPath, journal, operations) === true) {
         await operations.move(nextAppPath, appPath);
-      } else if (previousExists) {
-        // A verified target should not disappear. Prefer the known recovery
-        // copy over leaving Vigil unavailable, and retain the journal until all
-        // cleanup below succeeds.
-        await operations.move(previousAppPath, appPath);
       } else {
-        throw new Error(`Vigil's verified replacement is missing at ${appPath}, and no recovery copy is available.`);
+        // Verification belongs to the candidate generation. Restoring an old
+        // previous copy under a verified journal would silently promote the
+        // wrong bytes, so preserve every generation for explicit recovery.
+        throw new Error(`Vigil's verified candidate is missing at ${appPath}; its recovery evidence was preserved.`);
       }
     }
+    await assertVerifiedAtomicInstallTopology(appPath, nextAppPath, previousAppPath, journal, operations);
     await operations.remove(previousAppPath);
+    await assertJournalCandidateAtTarget(appPath, journal, operations);
+    await assertJournalSidecarPinned(nextAppPath, journal, operations);
     await operations.remove(nextAppPath);
+    await assertJournalCandidateAtTarget(appPath, journal, operations);
     await rm(journalPath, { force: true });
     return;
   }
 
   if (previousExists) {
+    if (nextExists) await assertJournalSidecarPinned(nextAppPath, journal, operations);
+    const previousGeneration = await classifyJournalGeneration(previousAppPath, journal, operations);
+    if (previousGeneration !== "candidate" && previousGeneration !== "initial") {
+      throw new Error(`Vigil refused to use an unrecognized replacement sidecar at ${previousAppPath}; recovery evidence was preserved.`);
+    }
     if (targetExists) {
-      const targetIsCandidate = await pathMatchesJournalCandidate(appPath, journal, operations);
-      const previousIsCandidate = await pathMatchesJournalCandidate(previousAppPath, journal, operations);
-      if (targetIsCandidate === true && previousIsCandidate !== true) {
+      const targetGeneration = await classifyJournalGeneration(appPath, journal, operations);
+      if (targetGeneration === "candidate" && previousGeneration === "initial") {
         if (operations.swap) {
           await operations.swap(appPath, previousAppPath);
           await operations.remove(previousAppPath);
@@ -882,7 +908,7 @@ export async function reconcileAtomicInstallResidue(
           await operations.remove(appPath);
           await operations.move(previousAppPath, appPath);
         }
-      } else if (previousIsCandidate === true && targetIsCandidate !== true) {
+      } else if (previousGeneration === "candidate" && targetGeneration === "initial") {
         // A prior rollback already swapped the known-good generation back into
         // place and then lost power before deleting the displaced candidate.
         // Cleanup must be idempotent: never swap that candidate into service.
@@ -891,8 +917,8 @@ export async function reconcileAtomicInstallResidue(
         throw new Error(`Vigil cannot identify the interrupted candidate for ${appPath}; its recovery copies were preserved.`);
       }
     } else {
-      if (await pathMatchesJournalCandidate(previousAppPath, journal, operations) === true) {
-        throw new Error(`Vigil's known-good recovery copy is missing for the unverified replacement at ${appPath}.`);
+      if (previousGeneration !== "initial") {
+        throw new Error(`Vigil cannot prove the recovery copy at ${previousAppPath} is the original generation; recovery evidence was preserved.`);
       }
       await operations.move(previousAppPath, appPath);
     }
@@ -902,11 +928,13 @@ export async function reconcileAtomicInstallResidue(
   }
 
   if (targetExists && nextExists) {
-    const targetIsCandidate = await pathMatchesJournalCandidate(appPath, journal, operations);
-    const nextIsCandidate = await pathMatchesJournalCandidate(nextAppPath, journal, operations);
-    if (nextIsCandidate === true && targetIsCandidate !== true) {
+    const [targetGeneration, nextGeneration] = await Promise.all([
+      classifyJournalGeneration(appPath, journal, operations),
+      classifyJournalGeneration(nextAppPath, journal, operations)
+    ]);
+    if (nextGeneration === "candidate" && targetGeneration === "initial") {
       await operations.remove(nextAppPath);
-    } else if (targetIsCandidate === true && nextIsCandidate !== true) {
+    } else if (targetGeneration === "candidate" && nextGeneration === "initial") {
       if (operations.swap) {
         await operations.swap(appPath, nextAppPath);
         await operations.remove(nextAppPath);
@@ -929,28 +957,31 @@ export async function reconcileAtomicInstallResidue(
   }
 
   if (targetExists) {
-    const targetIsCandidate = await pathMatchesJournalCandidate(appPath, journal, operations);
-    if (targetIsCandidate === true) {
-      if (journal.hadPrevious) {
+    const targetGeneration = await classifyJournalGeneration(appPath, journal, operations);
+    if (targetGeneration === "candidate") {
+      if (journal.initialPresent !== false || journal.hadPrevious) {
         throw new Error(`Vigil's previous recovery copy is missing for the unverified replacement at ${appPath}.`);
       }
       await operations.remove(appPath);
-    } else if (targetIsCandidate === null && journal.phase !== "preparing" && journal.phase !== "prepared") {
-      throw new Error(`Vigil cannot prove that the canonical copy at ${appPath} predates the interrupted update.`);
+    } else if (targetGeneration !== "initial") {
+      throw new Error(`Vigil cannot prove that the canonical copy at ${appPath} is the exact initial generation; recovery evidence was preserved.`);
     }
     await rm(journalPath, { force: true });
     return;
   }
 
   if (nextExists) {
-    const nextIsCandidate = await pathMatchesJournalCandidate(nextAppPath, journal, operations);
-    if (journal.hadPrevious) {
+    const nextGeneration = await classifyJournalGeneration(nextAppPath, journal, operations);
+    if (journal.hadPrevious || journal.initialPresent === true) {
       throw new Error(`Vigil's canonical and previous copies are missing for the interrupted replacement at ${appPath}.`);
     }
-    if (nextIsCandidate !== true) {
+    if (nextGeneration !== "candidate") {
       throw new Error(`Vigil cannot identify the remaining replacement copy for ${appPath}.`);
     }
     await operations.remove(nextAppPath);
+  }
+  if (journal.initialPresent === true) {
+    throw new Error(`Vigil's initial generation is missing for the interrupted replacement at ${appPath}; recovery evidence was preserved.`);
   }
   await rm(journalPath, { force: true });
 }
@@ -959,32 +990,81 @@ async function pathMatchesJournalCandidate(
   path: string,
   journal: AtomicInstallJournal,
   operations: AtomicInstallOperations
-): Promise<boolean | null> {
-  if (!operations.identity
-    || !Number.isInteger(journal.candidateDevice)
-    || !Number.isInteger(journal.candidateInode)) return null;
-  try {
-    const identity = await operations.identity(path);
-    return identity.dev === journal.candidateDevice && identity.ino === journal.candidateInode;
-  } catch (error) {
-    if (isErrorCode(error, "ENOENT")) return false;
-    throw error;
+): Promise<boolean> {
+  return await classifyJournalGeneration(path, journal, operations) === "candidate";
+}
+
+async function assertJournalCandidateAtTarget(
+  appPath: string,
+  journal: AtomicInstallJournal,
+  operations: AtomicInstallOperations
+): Promise<void> {
+  const matches = await pathMatchesJournalCandidate(appPath, journal, operations);
+  if (matches !== true) {
+    throw new Error(`Vigil refused to commit a replacement whose exact canonical candidate could not be proved at ${appPath}; recovery evidence was preserved.`);
   }
+}
+
+async function assertJournalSidecarPinned(
+  path: string,
+  journal: AtomicInstallJournal,
+  operations: AtomicInstallOperations
+): Promise<void> {
+  if (!await operations.pathExists(path)) return;
+  const generation = await classifyJournalGeneration(path, journal, operations);
+  if (generation !== "candidate" && generation !== "initial") {
+    throw new Error(`Vigil refused to discard an unrecognized replacement sidecar at ${path}; recovery evidence was preserved.`);
+  }
+}
+
+async function assertVerifiedAtomicInstallSidecars(
+  nextAppPath: string,
+  previousAppPath: string,
+  journal: AtomicInstallJournal,
+  operations: AtomicInstallOperations
+): Promise<void> {
+  await assertJournalSidecarPinned(previousAppPath, journal, operations);
+  await assertJournalSidecarPinned(nextAppPath, journal, operations);
+}
+
+async function assertVerifiedAtomicInstallTopology(
+  appPath: string,
+  nextAppPath: string,
+  previousAppPath: string,
+  journal: AtomicInstallJournal,
+  operations: AtomicInstallOperations
+): Promise<void> {
+  await assertJournalCandidateAtTarget(appPath, journal, operations);
+  await assertVerifiedAtomicInstallSidecars(nextAppPath, previousAppPath, journal, operations);
 }
 
 async function pathMatchesJournalInitial(
   path: string,
   journal: AtomicInstallJournal,
   operations: AtomicInstallOperations
-): Promise<boolean | null> {
-  if (!operations.identity
-    || !Number.isInteger(journal.initialDevice)
-    || !Number.isInteger(journal.initialInode)) return null;
+): Promise<boolean> {
+  return await classifyJournalGeneration(path, journal, operations) === "initial";
+}
+
+type JournalGeneration = "candidate" | "initial" | "ambiguous" | "unrecognized";
+
+async function classifyJournalGeneration(
+  path: string,
+  journal: AtomicInstallJournal,
+  operations: AtomicInstallOperations
+): Promise<JournalGeneration> {
   try {
     const identity = await operations.identity(path);
-    return identity.dev === journal.initialDevice && identity.ino === journal.initialInode;
+    const candidate = identity.dev === journal.candidateDevice && identity.ino === journal.candidateInode;
+    const initial = journal.initialPresent === true
+      && identity.dev === journal.initialDevice
+      && identity.ino === journal.initialInode;
+    if (candidate && initial) return "ambiguous";
+    if (candidate) return "candidate";
+    if (initial) return "initial";
+    return "unrecognized";
   } catch (error) {
-    if (isErrorCode(error, "ENOENT")) return false;
+    if (isErrorCode(error, "ENOENT")) return "unrecognized";
     throw error;
   }
 }
@@ -1008,6 +1088,7 @@ async function readAtomicInstallJournal(
       && typeof value.phase === "string"
       && ["preparing", "prepared", "swapping", "backing-up", "installed", "verified", "rolling-back", "finalizing"].includes(value.phase)
       && typeof value.hadPrevious === "boolean"
+      && validAtomicInstallJournalIdentityShape(value)
       && typeof value.updatedAt === "string"
     ) return value as AtomicInstallJournal;
   } catch {
@@ -1016,6 +1097,26 @@ async function readAtomicInstallJournal(
   const archivePath = `${path}.invalid.${Date.now()}.${randomUUID()}`;
   await rename(path, archivePath);
   throw new Error(`Vigil found an invalid replacement journal for ${appPath}; recovery evidence was preserved at ${archivePath}.`);
+}
+
+function validAtomicInstallJournalIdentityShape(value: Partial<AtomicInstallJournal>): boolean {
+  const candidateComplete = validFileIdentity(value.candidateDevice, value.candidateInode);
+  const candidateAbsent = value.candidateDevice === undefined && value.candidateInode === undefined;
+  if (!candidateComplete && !(value.phase === "preparing" && candidateAbsent)) return false;
+  if (typeof value.initialPresent !== "boolean") return false;
+  const initialComplete = validFileIdentity(value.initialDevice, value.initialInode);
+  const initialAbsent = (value.initialDevice === undefined || value.initialDevice === null)
+    && (value.initialInode === undefined || value.initialInode === null);
+  if (value.initialPresent ? !initialComplete : !initialAbsent) return false;
+  if (value.hadPrevious && !value.initialPresent) return false;
+  return !candidateComplete
+    || !initialComplete
+    || value.candidateDevice !== value.initialDevice
+    || value.candidateInode !== value.initialInode;
+}
+
+function validFileIdentity(dev: unknown, ino: unknown): boolean {
+  return Number.isInteger(dev) && Number(dev) >= 0 && Number.isInteger(ino) && Number(ino) > 0;
 }
 
 async function writeAtomicInstallJournal(path: string, journal: AtomicInstallJournal): Promise<void> {
@@ -1088,6 +1189,9 @@ const defaultInstallOperations: AtomicInstallOperations = {
   async identity(path) {
     const value = await lstat(path);
     return { dev: value.dev, ino: value.ino };
+  },
+  async quarantinePartial(path, quarantinePath) {
+    await rename(path, quarantinePath);
   },
   async swap(left, right) {
     await atomicSwap(left, right);
@@ -1852,4 +1956,4 @@ function errorMessage(error: unknown): string {
 // Run only after every module-level dependency (including the default atomic
 // install operations) has been initialized. Starting above those declarations
 // leaves them in the temporal dead zone during a real packaged update.
-if (isDirectRun(import.meta.url)) await runUpdate();
+if (isDirectRun(import.meta.url)) await runPackagedUpdate();

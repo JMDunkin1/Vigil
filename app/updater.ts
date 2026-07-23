@@ -6,11 +6,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { link, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
+import { userInfo } from "node:os";
 import { fileURLToPath } from "node:url";
 import { plistStringForKey } from "../src/plist.js";
 import { sourceFingerprint } from "../scripts/source-fingerprint.mjs";
 import { gitExecutable } from "../scripts/git-executable.mjs";
 import { assertGuardianMaintenanceActive, guardianMaintenanceReadiness } from "../src/updateMaintenance.js";
+import { setupSystemGuardian } from "../src/guardianSetup.js";
 import {
   beginUpdateReceipt,
   failedUpdateReceiptSuperseded,
@@ -124,6 +126,7 @@ export interface VigilAppUpdateController {
 interface ControllerOptions {
   app: App;
   quitForUpdate(): void | Promise<void>;
+  setupGuardian?: typeof setupSystemGuardian;
 }
 
 interface GlobalUpdateRecoveryStatus {
@@ -136,7 +139,11 @@ interface GlobalUpdateRecoveryStatus {
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
-export function createVigilAppUpdateController({ app, quitForUpdate }: ControllerOptions): VigilAppUpdateController {
+export function createVigilAppUpdateController({
+  app,
+  quitForUpdate,
+  setupGuardian = setupSystemGuardian
+}: ControllerOptions): VigilAppUpdateController {
   let repoRoot = findRepoRoot(app);
   let appPath = packagedAppPath(repoRoot);
   const userDataDir = app.getPath("userData");
@@ -242,9 +249,10 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       && !recovery.hasManifest
       && (localCheckoutBuild || remoteCheckOk !== false);
     const supported = repo.ok && Boolean(scriptPath);
-    const updateAvailable = Boolean(checkOk && supported && maintenance.ready && (
+    const updateCandidateAvailable = Boolean(checkOk && supported && (
       localCheckoutBuild || shouldInstallRemoteUpdate(repo, appBundleOutdated, appMatchesUpstream)
     ));
+    const updateAvailable = updateCandidateAvailable;
     let displayPhase: string | null = lastUpdate?.phase || null;
     if (lastUpdateCorrectedComplete) displayPhase = "complete";
     if (orphanedAttempt) displayPhase = orphanedAttemptInstalled ? "complete" : "failed";
@@ -267,6 +275,7 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       recoveryAttemptId: recovery.attemptId,
       recoveryOutcome: recoveryOutcomeApplies ? recovery.outcome : null,
       updateAvailable,
+      updateCandidateAvailable,
       appBundleOutdated,
       repoRoot,
       appPath,
@@ -293,6 +302,9 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
       remoteCheckError: remoteCheck && !remoteCheck.ok ? "Remote check failed" : null,
       maintenanceReady: maintenance.ready,
       maintenanceMessage: maintenance.message,
+      maintenanceSetupRequired: maintenance.setupRequired,
+      maintenanceSetupSupported: maintenance.setupSupported,
+      maintenanceReason: maintenance.reason,
       logPath,
       lastUpdate,
       lastUpdateTargetInstalled,
@@ -316,6 +328,7 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
         activeAttemptStatus,
         remoteCheckError: remoteCheck && !remoteCheck.ok,
         maintenance,
+        updateCandidateAvailable,
         lastUpdate,
         lastUpdateCorrectedComplete,
         lastUpdateSuperseded,
@@ -399,7 +412,6 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
         const message = String(currentStatus.message || "Vigil must finish recovering the previous update before another can start.");
         return { ...currentStatus, ok: false, error: message };
       }
-      const localAttempt = currentStatus.localChanges === true;
       if (currentStatus.checkOk !== true) {
         return await failAttempt("The Vigil source repository could not be verified.");
       }
@@ -407,8 +419,37 @@ export function createVigilAppUpdateController({ app, quitForUpdate }: Controlle
         return await failAttempt("Updater script is missing from this Vigil build.");
       }
       if (currentStatus.maintenanceReady !== true) {
-        return await failAttempt(String(currentStatus.maintenanceMessage || "Vigil's protected update setup is not ready."));
+        if (currentStatus.updateCandidateAvailable !== true || currentStatus.maintenanceSetupSupported !== true) {
+          return await failAttempt(String(currentStatus.maintenanceMessage || "Vigil's protected update setup is not ready."));
+        }
+        const account = userInfo();
+        const uid = process.getuid?.();
+        if (!Number.isInteger(uid) || Number(uid) < 501) {
+          return await failAttempt("Vigil could not identify the signed-in account for protected update setup.");
+        }
+        const setupResult = await setupGuardian({
+          sourceAppPath: appPath,
+          targetAppPath: appPath,
+          targetHome: account.homedir,
+          targetUid: Number(uid),
+          targetUser: account.username
+        });
+        if (!setupResult.ok) {
+          return await failAttempt(setupResult.message || "Vigil update setup was canceled.");
+        }
+        currentStatus = await readStatusPayload({ ownedLockToken: updateLock.token });
+        if (currentStatus.checkOk !== true
+          || currentStatus.supported !== true
+          || currentStatus.maintenanceReady !== true
+          || currentStatus.updateCandidateAvailable !== true) {
+          return await failAttempt(String(
+            currentStatus.maintenanceMessage
+            || currentStatus.message
+            || "Vigil could not verify protected update setup after approval."
+          ));
+        }
       }
+      const localAttempt = currentStatus.localChanges === true;
       if (localAttempt) {
         await prepareLocalUpdateReceipt(statusPath, updateLock.token, currentStatus);
         receiptStarted = true;
@@ -1074,6 +1115,7 @@ export function updateMessage(
     activeAttemptStatus,
     remoteCheckError,
     maintenance,
+    updateCandidateAvailable = false,
     lastUpdate,
     lastUpdateCorrectedComplete,
     lastUpdateSuperseded,
@@ -1094,6 +1136,7 @@ export function updateMessage(
     activeAttemptStatus: LastUpdateStatus | null;
     remoteCheckError?: boolean | null;
     maintenance: Awaited<ReturnType<typeof guardianMaintenanceReadiness>>;
+    updateCandidateAvailable?: boolean;
     lastUpdate: LastUpdateStatus | null;
     lastUpdateCorrectedComplete: boolean;
     lastUpdateSuperseded: boolean;
@@ -1111,7 +1154,12 @@ export function updateMessage(
     return recoveryMessage || "Vigil preserved an interrupted update because automatic recovery needs attention.";
   }
   if (recoveryPending) return recoveryMessage || "Recovering the interrupted Vigil update";
-  if (!maintenance.ready) return maintenance.message || "Vigil's protected update setup is not ready.";
+  if (!maintenance.ready) {
+    if (maintenance.setupSupported && updateCandidateAvailable) {
+      return "One-time setup is needed; approve once and Vigil will continue the update automatically.";
+    }
+    return maintenance.message || "Vigil's protected update setup is not ready.";
+  }
   if (!repo.ok) return "Vigil could not verify its source repository";
   if (!sourceFingerprintOk) return "Vigil could not verify its exact source identity";
   if (localChanges) return "Local changes ready to run";

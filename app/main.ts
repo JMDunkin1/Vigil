@@ -31,6 +31,7 @@ const APP_SCHEME = "vigil-app";
 const APP_HOST = "app";
 const APP_URL = `${APP_SCHEME}://${APP_HOST}/`;
 const APP_UPDATE_STATE_CHANNEL = "vigil:app-update-state";
+const APP_UPDATE_DETAILS_CHANNEL = "vigil:show-app-update-details";
 const execFileAsync = promisify(execFile);
 const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 // Tray clicks refresh immediately; a slow background refresh keeps its label
@@ -66,8 +67,11 @@ interface AppUpdateActionState {
   checking: boolean;
   running: boolean;
   installable: boolean;
+  candidateAvailable: boolean;
   localChanges: boolean;
   maintenanceReady: boolean;
+  maintenanceSetupRequired: boolean;
+  maintenanceSetupSupported: boolean;
   recoveryPending: boolean;
   recoveryBlocked: boolean;
   supported: boolean;
@@ -113,7 +117,7 @@ let currentAppUrl: string | null = null;
 let revealWindowWhenReady = false;
 let appUpdateController: VigilAppUpdateController | null = null;
 let appUpdateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-let appUpdateOperation: "checking" | "starting" | null = null;
+let appUpdateOperation: "checking" | "setting-up" | "starting" | null = null;
 // Request versions invalidate snapshots captured before another surface starts
 // an operation; state revisions order the snapshots published to the renderer.
 let appUpdateRequestVersion = 0;
@@ -130,8 +134,11 @@ let appUpdateActionState: AppUpdateActionState = {
   checking: false,
   running: false,
   installable: false,
+  candidateAvailable: false,
   localChanges: false,
   maintenanceReady: true,
+  maintenanceSetupRequired: false,
+  maintenanceSetupSupported: false,
   recoveryPending: false,
   recoveryBlocked: false,
   supported: true,
@@ -1509,7 +1516,6 @@ function stopTrayRefresh(): void {
 function updateTrayMenu(appUrl: string, status: TrayStatus): void {
   lastTrayStatus = status;
   if (!tray) return;
-  const updateDetail = appUpdateActionDetail();
   const template: MenuItemConstructorOptions[] = [
     {
       label: "Open Vigil",
@@ -1518,8 +1524,8 @@ function updateTrayMenu(appUrl: string, status: TrayStatus): void {
       }
     },
     { type: "separator" },
-    { label: status.label, enabled: false },
-    { label: status.detail, enabled: false },
+    { label: shortTrayDetail(status.label), enabled: false },
+    { label: shortTrayDetail(status.detail), enabled: false },
     { type: "separator" },
     {
       label: status.panicActionLabel,
@@ -1528,14 +1534,7 @@ function updateTrayMenu(appUrl: string, status: TrayStatus): void {
         void startPanicLock(appUrl);
       }
     },
-    {
-      label: appUpdateActionLabel(),
-      enabled: canUseAppUpdateAction(),
-      click: () => {
-        void handleAppUpdateAction(appUrl);
-      }
-    },
-    ...(updateDetail ? [{ label: updateDetail, enabled: false } satisfies MenuItemConstructorOptions] : []),
+    trayAppUpdateMenuItem(appUrl),
     {
       label: "Reload Vigil",
       click: () => {
@@ -1561,19 +1560,44 @@ function refreshUpdateMenus(appUrl: string): void {
   if (lastTrayStatus) updateTrayMenu(appUrl, lastTrayStatus);
 }
 
-function appUpdateActionLabel(): string {
-  return nativeAppUpdateView().actionLabel;
+function trayAppUpdateMenuItem(appUrl: string): MenuItemConstructorOptions {
+  const view = nativeAppUpdateView();
+  const needsFullAppDetails = appUpdateActionState.checked
+    && !view.actionEnabled
+    && !view.running
+    && !appUpdateOperation;
+  if (needsFullAppDetails) {
+    return {
+      label: "App Update Details…",
+      click: () => {
+        showAppUpdateDetails(appUrl);
+      }
+    };
+  }
+  return {
+    label: view.actionLabel,
+    enabled: view.actionEnabled,
+    click: () => {
+      void handleAppUpdateAction(appUrl);
+    }
+  };
 }
 
-function appUpdateActionDetail(): string {
-  if (appUpdateOperation === "checking") return "Updates: checking...";
-  if (appUpdateOperation === "starting") return "Updates: starting...";
-  if (!appUpdateActionState.checked
-    && !appUpdateActionState.running
-    && !appUpdateActionState.recoveryPending
-    && !appUpdateActionState.recoveryBlocked) return "";
-  const message = nativeAppUpdateView().statusMessage;
-  return message ? `Updates: ${shortTrayDetail(message)}` : "";
+function showAppUpdateDetails(appUrl: string): void {
+  showVigilWindow(appUrl);
+  const window = mainWindow;
+  if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return;
+  const send = () => {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send(APP_UPDATE_DETAILS_CHANNEL);
+    }
+  };
+  if (window.webContents.isLoading()) window.webContents.once("did-finish-load", send);
+  else send();
+}
+
+function appUpdateActionLabel(): string {
+  return nativeAppUpdateView().actionLabel;
 }
 
 function canUseAppUpdateAction(): boolean {
@@ -1586,16 +1610,19 @@ function nativeAppUpdateView() {
     checkOk: appUpdateActionState.checkOk,
     supported: appUpdateActionState.supported,
     running: appUpdateActionState.running,
-    updateAvailable: appUpdateActionState.installable,
+    updateAvailable: appUpdateActionState.candidateAvailable,
     localChanges: appUpdateActionState.localChanges,
     maintenanceReady: appUpdateActionState.maintenanceReady,
+    maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+    maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
     recoveryPending: appUpdateActionState.recoveryPending,
     recoveryBlocked: appUpdateActionState.recoveryBlocked,
     phase: appUpdateActionState.phase,
     message: appUpdateActionState.message
   }, {
     checking: appUpdateOperation === "checking",
-    starting: appUpdateOperation === "starting"
+    starting: appUpdateOperation === "starting",
+    settingUp: appUpdateOperation === "setting-up"
   });
 }
 
@@ -1604,7 +1631,8 @@ async function handleAppUpdateAction(appUrl: string): Promise<void> {
     || appUpdateActionState.running
     || appUpdateActionState.recoveryPending
     || appUpdateActionState.recoveryBlocked) return;
-  if (appUpdateActionState.installable) {
+  if (appUpdateActionState.candidateAvailable
+    && (appUpdateActionState.maintenanceReady || appUpdateActionState.maintenanceSetupSupported)) {
     await startAppUpdate(appUrl);
     return;
   }
@@ -1673,8 +1701,11 @@ async function checkAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
     checking: true,
     running: false,
     installable: false,
+    candidateAvailable: false,
     localChanges: false,
     maintenanceReady: appUpdateActionState.maintenanceReady,
+    maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+    maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
     recoveryPending: false,
     recoveryBlocked: false,
     supported: appUpdateActionState.supported,
@@ -1698,8 +1729,11 @@ async function checkAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
       checking: false,
       running: false,
       installable: false,
+      candidateAvailable: false,
       localChanges: false,
-      maintenanceReady: true,
+      maintenanceReady: appUpdateActionState.maintenanceReady,
+      maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+      maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
       recoveryPending: false,
       recoveryBlocked: false,
       supported: appUpdateActionState.supported,
@@ -1725,21 +1759,33 @@ async function startAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
       || (appUpdateOperation === "checking" ? "Vigil is checking for updates." : "A Vigil update is already running.");
     return appUpdateStatePayload({ ok: false, error: message });
   }
+  if (!appUpdateActionState.candidateAvailable) {
+    const message = "Check for updates before starting a protected Vigil update.";
+    return appUpdateStatePayload({ ok: false, noUpdate: true, error: message, message });
+  }
   const requestVersion = ++appUpdateRequestVersion;
-  appUpdateOperation = "starting";
+  const settingUp = !appUpdateActionState.maintenanceReady
+    && appUpdateActionState.maintenanceSetupRequired
+    && appUpdateActionState.maintenanceSetupSupported;
+  appUpdateOperation = settingUp ? "setting-up" : "starting";
   appUpdateActionState = {
     checked: true,
     checking: false,
     running: true,
     installable: false,
-    localChanges: false,
-    maintenanceReady: true,
+    candidateAvailable: appUpdateActionState.candidateAvailable,
+    localChanges: appUpdateActionState.localChanges,
+    maintenanceReady: appUpdateActionState.maintenanceReady,
+    maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+    maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
     recoveryPending: false,
     recoveryBlocked: false,
     supported: appUpdateActionState.supported,
     checkOk: true,
-    phase: "starting",
-    message: "Vigil will quit, update, and reopen"
+    phase: settingUp ? "setting-up" : "starting",
+    message: settingUp
+      ? "Approve the one-time macOS prompt; Vigil will stay online and continue automatically."
+      : "Building latest changes in the background; Vigil stays active until the verified replacement is ready."
   };
   publishAppUpdateState(appUrl);
   let responseBase: Record<string, unknown> = {};
@@ -1757,8 +1803,11 @@ async function startAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
       checking: false,
       running: false,
       installable: false,
-      localChanges: false,
-      maintenanceReady: true,
+      candidateAvailable: appUpdateActionState.candidateAvailable,
+      localChanges: appUpdateActionState.localChanges,
+      maintenanceReady: appUpdateActionState.maintenanceReady,
+      maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+      maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
       recoveryPending: false,
       recoveryBlocked: false,
       supported: appUpdateActionState.supported,
@@ -1824,8 +1873,11 @@ async function refreshAppUpdateStateOnce(appUrl: string): Promise<Record<string,
       checking: false,
       running: appUpdateActionState.running,
       installable: false,
+      candidateAvailable: appUpdateActionState.candidateAvailable,
       localChanges: appUpdateActionState.localChanges,
       maintenanceReady: appUpdateActionState.maintenanceReady,
+      maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+      maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
       recoveryPending: appUpdateActionState.recoveryPending,
       recoveryBlocked: appUpdateActionState.recoveryBlocked,
       supported: appUpdateActionState.supported,
@@ -1843,13 +1895,17 @@ async function refreshAppUpdateStateOnce(appUrl: string): Promise<Record<string,
 function applyAppUpdateStatus(status: Record<string, unknown>): void {
   const installable = isInstallableAppUpdate(status);
   const recoveryBlocked = status.recoveryBlocked === true;
+  const candidateAvailable = status.updateCandidateAvailable === true || status.updateAvailable === true;
   appUpdateActionState = {
     checked: true,
     checking: false,
     running: Boolean(status.running),
     installable,
+    candidateAvailable,
     localChanges: Boolean(status.localChanges),
     maintenanceReady: status.maintenanceReady !== false,
+    maintenanceSetupRequired: status.maintenanceSetupRequired === true,
+    maintenanceSetupSupported: status.maintenanceSetupSupported === true,
     recoveryPending: status.recoveryPending === true && !recoveryBlocked,
     recoveryBlocked,
     supported: status.supported !== false,
@@ -1880,9 +1936,12 @@ function appUpdateStatePayload(base: Record<string, unknown> = {}): Record<strin
     checkOk: appUpdateActionState.checkOk,
     supported: appUpdateActionState.supported,
     running: appUpdateActionState.running,
-    updateAvailable: appUpdateActionState.installable,
+    updateAvailable: appUpdateActionState.candidateAvailable,
+    updateCandidateAvailable: appUpdateActionState.candidateAvailable,
     localChanges: appUpdateActionState.localChanges,
     maintenanceReady: appUpdateActionState.maintenanceReady,
+    maintenanceSetupRequired: appUpdateActionState.maintenanceSetupRequired,
+    maintenanceSetupSupported: appUpdateActionState.maintenanceSetupSupported,
     recoveryPending: appUpdateActionState.recoveryPending,
     recoveryBlocked: appUpdateActionState.recoveryBlocked,
     operation: appUpdateOperation,
@@ -2090,7 +2149,7 @@ function shortTrayText(value: string): string {
 }
 
 function shortTrayDetail(value: string): string {
-  return value.length <= 72 ? value : `${value.slice(0, 69)}...`;
+  return value.length <= 42 ? value : `${value.slice(0, 39)}...`;
 }
 
 function errorMessage(error: unknown): string {

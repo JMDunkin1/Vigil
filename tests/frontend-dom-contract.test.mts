@@ -58,17 +58,35 @@ assert.match(html, /Choose how the sacred portraits and app typography should fe
 assert.match(html, /<strong>Pixel Art<\/strong>/, "the existing sprite treatment must use a neutral medium-based name");
 assert.match(html, /<strong>Traditional<\/strong>/, "the icon-painting treatment must use its requested user-facing name");
 assert.match(html, /Aged sacred portraits, classical serif typography, and Christ Pantocrator/, "the Traditional option must describe its visual treatment and Christ portrait");
-assert.match(html, /id="saintAestheticStatus"[^>]*>Pixel Art active<\/p>/, "the default aesthetic status must use its user-facing name");
+assert.match(html, /id="saintAestheticStatus"[^>]*>Pixel Art active<\/span>/, "the default aesthetic status must use its user-facing name");
 assert.match(html, /id="saintBackdropEnabled"[^>]*type="checkbox"[^>]*role="switch"[^>]*checked/, "Appearance must offer an independent animated-backdrop switch that defaults on");
 assert.match(html, /<strong>Animated backdrop<\/strong>/, "the saint backdrop setting must have a clear user-facing name");
-assert.match(html, /halo, geometric orbits, symbols, and particles/, "the backdrop setting must describe every decorative layer it controls");
-assert.match(html, /id="saintBackdropStatus"[^>]*>On<\/p>/, "the animated backdrop must report its default state");
+assert.match(html, /Show geometric orbits, symbols, and particles/, "the backdrop setting must describe every decorative layer it controls");
+assert.doesNotMatch(html, /Animated backdrop[\s\S]*?Show the halo/, "the backdrop setting must not imply that it removes the saint's glow");
+assert.match(html, /id="saintBackdropStatus"[^>]*>On<\/span>/, "the animated backdrop must report its default state");
 assert.match(html, /aria-label="Browse sacred portraits"/, "portrait navigation must not describe Christ as a patron saint");
-const settingsMarkup = html.match(/<section id="view-rules"[\s\S]*?<section id="view-devices"/)?.[0] || "";
-const firstSettingsDisclosure = settingsMarkup.match(/<details class="settings-disclosure[^>]*>[\s\S]*?<\/summary>/)?.[0] || "";
-assert.match(firstSettingsDisclosure, />App icon</, "app icon must be the first settings disclosure");
-assert.doesNotMatch(firstSettingsDisclosure, /<details[^>]*\sopen(?:\s|>)/, "app icon must start collapsed like the other settings disclosures");
-assert.match(settingsMarkup, /id="settingsSearch"[^>]*type="search"[^>]*placeholder="Find a setting"/, "settings must expose one compact search control");
+const rulesViewStart = html.indexOf('<section id="view-rules"');
+const journalViewStart = html.indexOf('<section id="view-journal"');
+const protectionViewStart = html.indexOf('<section id="view-settings"');
+const devicesViewStart = html.indexOf('<section id="view-devices"');
+assert.ok(rulesViewStart >= 0 && journalViewStart > rulesViewStart, "the Rules settings source must precede the Journal view");
+assert.ok(protectionViewStart > journalViewStart && devicesViewStart > protectionViewStart, "the remaining settings sources must retain stable boundaries");
+const rulesSettingsMarkup = html.slice(rulesViewStart, journalViewStart);
+const protectionSettingsMarkup = html.slice(protectionViewStart, devicesViewStart);
+assert.match(rulesSettingsMarkup, /id="settingsSearch"[^>]*type="search"[^>]*placeholder="Find a setting"/, "settings must expose one compact search control");
+assert.match(rulesSettingsMarkup, /id="managedBlocklistSummary"/, "the Block list detail must report Vigil's effective managed policy");
+assert.match(
+  rulesSettingsMarkup,
+  /<form id="profileForm"[^>]*\shidden\b[^>]*aria-hidden="true"/,
+  "raw profile apps, sites, and URL patterns must remain an internal hidden control"
+);
+assert.match(rulesSettingsMarkup, /<select id="scheduleProfileId" name="profileId"/, "every schedule must explicitly select the ruleset it enforces");
+assert.match(rulesSettingsMarkup, /<section class="journal-security-panel panel"[^>]*>[\s\S]*?id="journalSecurityForm"/, "Journal security must live directly in Rules instead of a separate Settings category");
+assert.match(
+  protectionSettingsMarkup,
+  /<div class="settings-internal-fields" hidden aria-hidden="true">[\s\S]*?id="adultBlocklistPreloadLimit"[\s\S]*?id="adultBlocklistAllowlist"/,
+  "raw managed unsafe-content source and exception controls must stay hidden"
+);
 const settingsUiSource = await readFile("public/settings-ui.js", "utf8");
 const settingsAppSource = await readFile("public/app.js", "utf8");
 const saintAestheticStageSource = await readFile("public/saint-stage.js", "utf8");
@@ -79,16 +97,55 @@ const rankingViewSource = await readFile("public/ranking-view.js", "utf8");
 const extensionOptionsSource = await readFile("extension/options.js", "utf8");
 assert.doesNotMatch(extensionOptionsSource, /\nexport \{\};?\s*$/u, "the extension options page must load as a classic script");
 assert.match(rankingViewSource, /renderSites\(data\.usage\?\.topSites \|\| \[\]\)/u, "ranking should render tracked website activity instead of hiding it behind the browser app");
-assert.match(settingsUiSource, /wrapSettingsPanels\(\)/, "settings must turn large panels into focused subsections");
+assert.match(settingsUiSource, /wrapSettingsPanels\(\)/, "settings must turn source panels into focused details");
 assert.match(settingsUiSource, /form\.getAttribute\("id"\)/, "editor routing must use the form attribute instead of a shadowing named control");
-assert.match(settingsUiSource, /if \(sibling !== disclosure\)\s+sibling\.open = false/, "opening a settings category must close competing categories");
+const settingsCategoriesSource = settingsUiSource.match(/const CATEGORIES = \[([\s\S]*?)\];/)?.[1] || "";
+assert.deepEqual(
+  [...settingsCategoriesSource.matchAll(/label: "([^"]+)"/g)].map((match) => match[1]),
+  ["Rules", "Protection", "Devices", "Appearance"],
+  "Settings must expose exactly four semantic categories and must not restore a separate Journal tab"
+);
+assert.match(settingsUiSource, /nav\.setAttribute\("role", "tablist"\)/, "the Settings category row must identify itself as a tab list");
+assert.match(settingsUiSource, /disclosure\.setAttribute\("role", "tabpanel"\)/, "each Settings category must be exposed as a tab panel");
+assert.match(settingsUiSource, /button\.setAttribute\("role", "tab"\)/, "each Settings category control must use tab semantics");
+assert.match(settingsUiSource, /button\.setAttribute\("aria-controls", disclosure\.id\)/, "each Settings tab must name its controlled panel");
+assert.match(
+  settingsUiSource,
+  /\["ArrowRight", "ArrowLeft", "Home", "End"\][\s\S]*?event\.key === "ArrowRight"[\s\S]*?event\.key === "ArrowLeft"[\s\S]*?event\.key === "Home"[\s\S]*?event\.key === "End"/,
+  "horizontal Settings tabs must support Left, Right, Home, and End keyboard navigation"
+);
+assert.match(settingsUiSource, /main\.addEventListener\("click", \(\) => openSettingsDetail\(detail\)\)/, "each settings index row must open exactly one detail page");
+assert.match(
+  settingsUiSource,
+  /function openSettingsDetail[\s\S]*?index\.hidden = true[\s\S]*?sibling\.hidden = sibling !== detail[\s\S]*?classList\.add\("is-detail-open"\)/,
+  "opening a setting must replace the category index with one selected detail"
+);
+assert.match(
+  settingsUiSource,
+  /function closeCategoryDetail[\s\S]*?index\.hidden = false[\s\S]*?detail\.hidden = true[\s\S]*?classList\.remove\("is-detail-open"\)/,
+  "the detail Back action must restore the category index and hide every detail"
+);
+assert.match(settingsUiSource, /editor\.className = "settings-editor";[\s\S]*?editor\.hidden = true/, "collection forms must use one hidden inline editor instead of another disclosure layer");
+assert.doesNotMatch(settingsUiSource, /settings-subsection|createElement\("details"\)/, "the enhanced Settings UI must not generate nested disclosures");
 assert.match(settingsUiSource, /data-editor-for|dataset\.editorFor/, "New and Edit actions must target a single settings editor");
 assert.doesNotMatch(settingsUiSource, /addEventListener\("submit"/, "settings editors must not close before an asynchronous save succeeds");
-assert.match(settingsUiSource, /resetSettingsUi[\s\S]*querySelectorAll\("details"\)[\s\S]*disclosure\.open = false/, "leaving settings must collapse every expanded setting");
+assert.match(settingsUiSource, /resetSettingsUi[\s\S]*?\.settings-editor[\s\S]*?closeEditor\(editor\)[\s\S]*?\.settings-category[\s\S]*?closeCategoryDetail\(category, false\)/, "leaving Settings must close editors and return categories to their indexes");
 assert.match(settingsUiSource, /function resetSettingsUi\(\)[\s\S]*?clearSettingsSearch\(settingsRoot\);\s+selectCategory/, "leaving settings must clear the settings search and its hidden state");
-assert.match(settingsUiSource, /function selectCategory[\s\S]*?activeCategoryId = categoryId;\s+clearSettingsSearch\(settingsRoot\)/, "selecting a settings category must clear the active search filter");
-assert.match(settingsUiSource, /clearSettingsSearch[\s\S]*search\.value = ""[\s\S]*\.settings-category, \.settings-subsection, \.settings-nav-item[\s\S]*filtered\.hidden = false/, "clearing settings search must restore every element hidden by filtering");
-assert.match(settingsUiSource, /:scope > \.pill, :scope > #iconThemeStatus/, "the icon-theme status must move out of the hidden source summary");
+assert.match(settingsUiSource, /function selectCategory[\s\S]*?activeCategoryId = categoryId;\s+activeDetailId = null;\s+clearSettingsSearch\(settingsRoot\)/, "selecting a settings category must clear the active search filter");
+assert.match(settingsUiSource, /function revealAppUpdateSettings[\s\S]*?selectCategory\("protection", false\)[\s\S]*?openSettingsDetail\(detail, false\)[\s\S]*?#checkAppUpdate/u, "native update details must reveal and focus the update detail instead of merely opening Vigil's home view");
+assert.match(settingsAppSource, /subscribeDetails[\s\S]*?setView\("settings"\)[\s\S]*?revealAppUpdateSettings\(\)/u, "the renderer must route the tray's update-details request into Settings");
+assert.match(protectionSettingsMarkup, /id="appUpdatePanel"[^>]*aria-busy="false"/u, "the update surface must expose whether its one-button transaction is busy");
+assert.match(protectionSettingsMarkup, /id="appUpdateStatus"[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true"/u, "update phases must be announced without moving keyboard focus");
+assert.match(protectionSettingsMarkup, /<progress id="appUpdateProgress"[^>]*max="1"[^>]*aria-label="Vigil update progress"[^>]*hidden/u, "the updater must use a labelled indeterminate progress indicator instead of a fake percentage");
+assert.match(protectionSettingsMarkup, /id="checkAppUpdate"[^>]*aria-describedby="appUpdateStatus appUpdateHelp"/u, "the single update action must name its live status and one-time setup guidance");
+assert.match(settingsUiSource, /clearSettingsSearch[\s\S]*search\.value = ""[\s\S]*\.settings-category, \.settings-index-item, \.settings-nav-item[\s\S]*filtered\.hidden = false/, "clearing settings search must restore every category, index row, and tab hidden by filtering");
+assert.match(
+  settingsUiSource,
+  /for \(const child of \[\.\.\.header\.children\]\) \{\s*if \(child !== headingGroup\)\s*actions\.append\(child\)/,
+  "panel enhancement must preserve Agent Health progress and Guided Setup actions instead of deleting them"
+);
+assert.match(settingsUiSource, /actions\.append\(\.\.\.source\.children\)/, "preserved panel actions must remain available from their settings index row");
+assert.match(protectionSettingsMarkup, /id="setupProgress"[\s\S]*?id="openSetupAssistant"/, "Protection status must retain its progress and Guided Setup controls");
 assert.match(saintAestheticStageSource, /vigil-saint-aesthetic/, "the saint aesthetic must persist as a renderer-local preference");
 assert.match(saintAestheticStageSource, /document\.documentElement\.dataset\.saintAesthetic = aesthetic/, "the preference must project to a root styling hook");
 assert.match(saintAestheticStageSource, /serious\/.*\$\{id\}\.png|serious\//, "serious mode must resolve the separate saint asset set");
@@ -102,9 +159,8 @@ const seriousTypographyDeclaration = stylesSource.match(/:root\[data-saint-aesth
 assert.match(seriousTypographyDeclaration, /--font-body: Georgia, "Times New Roman", serif/, "serious mode must replace ordinary body copy typography");
 assert.match(seriousTypographyDeclaration, /--font-display: Georgia, "Times New Roman", serif/, "serious mode must replace formal display typography");
 assert.doesNotMatch(seriousTypographyDeclaration, /--font-mono:/, "serious mode must not globally replace every functional monospace surface");
-assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] \.settings-titlebar \.settings-titlecopy h2/, "serious mode must override the hard-coded modern Settings heading");
-assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] body\[data-active-view="settings"\] \.settings-disclosure > summary > span:first-child/, "serious mode must override modern Settings disclosure titles");
-assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] body\[data-active-view="settings"\] \.settings-disclosure > summary > \.pill/, "serious mode must override modern Settings status copy");
+assert.match(stylesSource, /body\[data-active-view="settings"\] \.settings-root,[\s\S]*?\.settings-root :is\(button, input, select, textarea\)\s*\{\s*font-family: var\(--font-body\)/, "all Settings copy and controls must inherit the active body typography token");
+assert.match(stylesSource, /body\[data-active-view="settings"\] \.settings-root :is\(h2, h3, strong\),[\s\S]*?\.settings-nav-item\s*\{\s*font-family: var\(--font-display\)/, "Settings titles, row labels, and tabs must share the active display typography token");
 assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] \.saint-info-eyebrow/, "serious mode must carry its type through portrait metadata");
 assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] #protectionLevelStatus/, "serious mode must carry its type through utility labels");
 assert.match(stylesSource, /\.protection-level-choice span\s*\{[^}]*font-family: var\(--font-mono\)/, "playful protection-level digits must retain their existing numeral face");
@@ -170,7 +226,7 @@ assert.doesNotMatch(
   /Approve Chrome Filter|Opening Chrome Filter profile|Chrome Filter profile opened/u,
   "Chrome SafeSearch setup must not direct users into a manual System Settings approval flow"
 );
-assert.match(html, />Export Chrome MDM Profile<\/button>/u);
+assert.match(html, />Export Chrome policy<\/button>/u, "the Settings action must use concise user-facing Chrome policy language");
 assert.match(extensionOptionsSource, /vigilUrl\("\/api\/health", localServer\)/u, "extension connection tests must use the companion-safe health route");
 assert.doesNotMatch(extensionOptionsSource, /vigilUrl\("\/api\/state", localServer\)/u, "extension connection tests must not probe the private app state route");
 const dayControlsSource = await readFile("public/day-controls.js", "utf8");
@@ -190,10 +246,10 @@ assert.match(sidebarMarkup, /id="brandHomeButton"[^>]*data-view-target="home"[^>
 const styles = await readFile("public/styles.css", "utf8");
 assert.match(styles, /\.toast\s*\{[^}]*position:\s*fixed;[^}]*top:\s*20px;/, "shared toast notifications must appear at the top of the viewport");
 assert.doesNotMatch(styles, /\.toast\s*\{[^}]*bottom:/, "shared toast notifications must never return to the bottom of the viewport");
-assert.match(styles, /\.settings-disclosure \+ \.settings-disclosure\s*\{[\s\S]*?margin-top:\s*16px;/, "adjacent settings disclosures must use the shared row spacing");
-assert.match(styles, /\.settings-disclosure\s*\{[\s\S]*?container-type:\s*inline-size;/, "settings disclosures must respond to their own available width");
-assert.match(styles, /grid-template-columns:\s*minmax\(min-content, max-content\) minmax\(0, 1fr\) auto;/, "settings titles must keep a readable intrinsic column before descriptions flex");
-assert.match(styles, /\.settings-subsection-body > \.list[\s\S]*?margin:\s*10px 0 0;/, "saved settings must appear as a compact list before their editor");
+assert.match(styles, /body\[data-active-view="settings"\] \.settings-category > summary\s*\{\s*display:\s*none;/, "source category disclosures must not appear as another visible navigation layer");
+assert.match(styles, /\.settings-index-item\s*\{[^}]*min-height:\s*74px;[^}]*display:\s*flex;/, "each Settings category must use one consistent row index");
+assert.match(styles, /\.settings-detail-header\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*42px minmax\(0, 1fr\)/, "every Settings destination must use the shared detail header and Back control layout");
+assert.match(styles, /\.settings-index\[hidden\],[\s\S]*?\.settings-editor\[hidden\][\s\S]*?display:\s*none !important;/, "inactive details and collection editors must not create visible nested layers");
 assert.match(styles, /\.day-custom-grid\[hidden\]\s*\{\s*display:\s*none;/, "custom weekday buttons must not consume space for preset schedules");
 assert.match(styles, /body\.sidebar-collapsed \.app-chrome\s*\{\s*display:\s*none;/, "collapsing must fully hide the sidebar instead of leaving an icon rail");
 assert.match(styles, /body\.sidebar-collapsed \.shell\s*\{\s*grid-column:\s*1;/, "collapsed content must occupy the first grid column without widening the viewport");
@@ -341,7 +397,8 @@ assert.match(
   "reduced-motion and coarse-pointer users must not receive the saint artwork hover scale"
 );
 assert.match(styles, /#view-home \.saint-artifact:hover:not\(:disabled\),[\s\S]*?#view-home \.saint-artifact:focus-visible\s*\{[\s\S]*?transform:\s*scale\(1\.012\);/, "hovering the saint composition must enlarge it slightly without cursor-driven translation or rotation");
-assert.match(styles, /:root\[data-saint-backdrop="off"\] #view-home :is\(\.saint-ambient, \.saint-halo, \.saint-symbol\)\s*\{[\s\S]*?display:\s*none;/, "turning off the backdrop must hide its geometry, halo, and saint-specific symbols while preserving the portrait");
+assert.match(styles, /:root\[data-saint-backdrop="off"\] #view-home :is\(\.saint-ambient, \.saint-symbol\)\s*\{[\s\S]*?display:\s*none;/, "turning off the backdrop must hide its geometry and saint-specific symbols while preserving the portrait");
+assert.doesNotMatch(styles, /data-saint-backdrop="off"[^\{]*\.saint-halo/, "turning off backdrop motion must preserve the saint's glow");
 assert.match(styles, /#view-home \.saint-artifact,[\s\S]*?#view-home \.saint-stage\[data-saint\] \.saint-artifact\s*\{[\s\S]*?width:\s*min\(720px, 100%\);/, "the patron composition must size from the usable stage instead of the full viewport");
 assert.match(styles, /\.saint-artifact:focus-visible\s*\{\s*outline:\s*none;/, "the saint button must not draw a rectangular focus artifact");
 assert.match(styles, /\.audio-desk\s*\{[\s\S]*?container:\s*audio-desk \/ inline-size;/, "the audio player must respond to its usable panel width");

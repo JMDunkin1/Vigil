@@ -15,6 +15,7 @@
     "build": "node scripts/prepare-build-dir.mjs && rm -rf dist/runtime && tsc -p tsconfig.json && node scripts/build-human-idle-helper.mjs && node dist/runtime/scripts/copy-assets.mjs && node dist/runtime/scripts/write-build-info.mjs",
     "build:mac": "npm run build && npm run package:mac",
     "package:mac": "node scripts/prepare-mac-output.mjs && node scripts/package-mac.mjs dir && node scripts/hide-mac-build.mjs",
+    "package:update-protocol-bridge": "npm run build && node dist/runtime/scripts/package-update-protocol-bridge.mjs",
     "dist:mac": "npm run build && npm run package:mac:dmg",
     "package:mac:dmg": "node scripts/prepare-mac-output.mjs && node scripts/package-mac.mjs dmg && node scripts/hide-mac-build.mjs",
     "package:extension": "npm run build && node scripts/package-browser-extension.mjs",

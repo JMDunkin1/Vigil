@@ -295,7 +295,7 @@ assert.match(
   "manual builds from temporary worktrees must retain the durable primary checkout pointer"
 );
 assert.ok(
-  updateScriptSource.indexOf("const defaultInstallOperations") < updateScriptSource.lastIndexOf("if (isDirectRun(import.meta.url)) await runUpdate()"),
+  updateScriptSource.indexOf("const defaultInstallOperations") < updateScriptSource.lastIndexOf("if (isDirectRun(import.meta.url)) await runPackagedUpdate()"),
   "the direct updater must start only after its default atomic install operations are initialized"
 );
 assert.match(updaterSource, /localCheckoutBuild \|\| remoteCheckOk !== false/u, "new local changes must remain runnable without a remote fetch");
@@ -304,6 +304,29 @@ assert.ok(
   updaterSource.indexOf("if (currentStatus.checkOk !== true)")
     < updaterSource.indexOf("await prepareLocalUpdateReceipt(statusPath, updateLock.token, currentStatus)"),
   "local receipt creation must follow repository, setup, and exact source-identity validation"
+);
+const guardianSetupIndex = updaterSource.indexOf("await setupGuardian({");
+const postSetupStatusIndex = updaterSource.indexOf(
+  "currentStatus = await readStatusPayload({ ownedLockToken: updateLock.token })",
+  guardianSetupIndex
+);
+const localReceiptIndex = updaterSource.indexOf(
+  "await prepareLocalUpdateReceipt(statusPath, updateLock.token, currentStatus)"
+);
+assert.ok(
+  guardianSetupIndex >= 0
+    && postSetupStatusIndex > guardianSetupIndex
+    && localReceiptIndex > postSetupStatusIndex,
+  "one-time guardian setup must complete and revalidate readiness before any local update receipt is committed"
+);
+assert.ok(
+  updaterSource.indexOf("if (!setupResult.ok)", guardianSetupIndex) < postSetupStatusIndex,
+  "canceling one-time setup must return before update state is revalidated or an update receipt can begin"
+);
+assert.match(
+  updaterSource,
+  /const updateCandidateAvailable = Boolean\(checkOk && supported && \([\s\S]*?\)\);[\s\S]*?const updateAvailable = updateCandidateAvailable/u,
+  "a verified candidate must remain visible while repairable guardian setup is pending"
 );
 assert.ok(
   updaterSource.indexOf("readStatusPayload({ checkRemote: true, ownedLockToken: updateLock.token })")
@@ -944,7 +967,13 @@ await verifyOriginalSurvivesMoveFailure("replacement", (source) => source.endsWi
 await verifyAtomicInstallResidueRecovery(true);
 await verifyAtomicInstallResidueRecovery(false);
 await verifyPreparingStageResidueRecovery();
+await verifyPartialCopyIsQuarantinedAndRetryable();
+await verifyIncompleteRollbackIdentityEvidenceFailsClosed();
 await verifyRollbackResidueRecoveryIsIdempotent();
+await verifyCompletedSwapReportedAsFailureRollsBackByIdentity();
+await verifyRacedPreviousGenerationIsPreserved();
+await verifyVerifiedGenerationRacesArePreserved();
+await verifyTargetOnlyUnverifiedIdentityRules();
 await verifyFinalizeResidueDoesNotBlockNextUpdate();
 await verifyUpdateStateRollback(false);
 await verifyUpdateStateRollback(true);
@@ -1012,6 +1041,10 @@ async function verifyOriginalSurvivesMoveFailure(
       },
       async remove(path) {
         await rm(path, { recursive: true, force: true });
+      },
+      async identity(path) {
+        const value = await lstat(path);
+        return { dev: value.dev, ino: value.ino };
       }
     };
   }
@@ -1066,17 +1099,21 @@ async function verifyAtomicInstallResidueRecovery(canonicalPresent: boolean): Pr
   const nextApp = `${installedApp}.vigil-next`;
   const journalPath = `${installedApp}.vigil-transaction.json`;
   try {
-    let candidateIdentity: { dev: number; ino: number } | null = null;
+    let candidateIdentity: { dev: number; ino: number };
     if (canonicalPresent) {
       await mkdir(installedApp, { recursive: true });
       await writeFile(join(installedApp, "version.txt"), "unverified-candidate");
       const candidateStat = await lstat(installedApp);
       candidateIdentity = { dev: candidateStat.dev, ino: candidateStat.ino };
+    } else {
+      await mkdir(nextApp, { recursive: true });
+      const candidateStat = await lstat(nextApp);
+      candidateIdentity = { dev: candidateStat.dev, ino: candidateStat.ino };
+      await rm(nextApp, { recursive: true });
     }
     await mkdir(previousApp, { recursive: true });
     await writeFile(join(previousApp, "version.txt"), "recoverable-previous");
-    await mkdir(nextApp, { recursive: true });
-    await writeFile(join(nextApp, "version.txt"), "abandoned-candidate");
+    const initialStat = await lstat(previousApp);
     await writeFile(journalPath, `${JSON.stringify({
       version: 2,
       id: "interrupted-update",
@@ -1085,8 +1122,11 @@ async function verifyAtomicInstallResidueRecovery(canonicalPresent: boolean): Pr
       previousPath: previousApp,
       phase: "installed",
       hadPrevious: true,
-      candidateDevice: candidateIdentity?.dev,
-      candidateInode: candidateIdentity?.ino,
+      initialPresent: true,
+      initialDevice: initialStat.dev,
+      initialInode: initialStat.ino,
+      candidateDevice: candidateIdentity.dev,
+      candidateInode: candidateIdentity.ino,
       updatedAt: new Date().toISOString()
     })}\n`);
 
@@ -1144,6 +1184,76 @@ async function verifyPreparingStageResidueRecovery(): Promise<void> {
   }
 }
 
+async function verifyPartialCopyIsQuarantinedAndRetryable(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "vigil-updater-partial-copy-"));
+  const builtApp = join(root, "built", "Vigil.app");
+  const installedApp = join(root, "installed", "Vigil.app");
+  const nextApp = `${installedApp}.vigil-next`;
+  const journalPath = `${installedApp}.vigil-transaction.json`;
+  const quarantined: string[] = [];
+  let copyAttempts = 0;
+  try {
+    await mkdir(builtApp, { recursive: true });
+    await mkdir(installedApp, { recursive: true });
+    await writeFile(join(builtApp, "version.txt"), "new");
+    await writeFile(join(installedApp, "version.txt"), "old");
+    const operations: AtomicInstallOperations = {
+      async pathExists(path) {
+        try {
+          await lstat(path);
+          return true;
+        } catch (error) {
+          if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return false;
+          throw error;
+        }
+      },
+      async copy(source, destination) {
+        copyAttempts += 1;
+        if (copyAttempts === 1) {
+          await mkdir(destination, { recursive: true });
+          await writeFile(join(destination, "partial.txt"), "incomplete clone");
+          throw new Error("simulated interrupted app clone");
+        }
+        await cp(source, destination, { recursive: true, preserveTimestamps: true });
+      },
+      async move(source, destination) {
+        await rename(source, destination);
+      },
+      async remove(path) {
+        await rm(path, { recursive: true, force: true });
+      },
+      async identity(path) {
+        const value = await lstat(path);
+        return { dev: value.dev, ino: value.ino };
+      },
+      async quarantinePartial(path, quarantinePath) {
+        await rename(path, quarantinePath);
+        quarantined.push(quarantinePath);
+      }
+    };
+
+    await assert.rejects(
+      atomicInstallBuiltApp(builtApp, installedApp, "", operations),
+      /simulated interrupted app clone/u
+    );
+    assert.equal(await readFile(join(installedApp, "version.txt"), "utf8"), "old");
+    assert.equal(existsSync(nextApp), false, "an unpinned partial copy must leave the canonical staging name");
+    assert.equal(existsSync(journalPath), false, "a quarantined pre-copy journal must not wedge retry");
+    assert.equal(quarantined.length, 1);
+    assert.equal(await readFile(join(quarantined[0], "partial.txt"), "utf8"), "incomplete clone",
+      "partial bytes must remain available as noncanonical diagnostic evidence");
+
+    const retry = await atomicInstallBuiltApp(builtApp, installedApp, "", operations);
+    await retry.markVerified();
+    await retry.finalize();
+    assert.equal(copyAttempts, 2, "quarantined residue must not block the immediate retry");
+    assert.equal(await readFile(join(installedApp, "version.txt"), "utf8"), "new");
+    assert.equal(existsSync(quarantined[0]), true, "successful retry must not silently erase quarantined evidence");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
 async function verifyRollbackResidueRecoveryIsIdempotent(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "vigil-updater-rollback-retry-"));
   const installedApp = join(root, "Vigil.app");
@@ -1158,6 +1268,7 @@ async function verifyRollbackResidueRecoveryIsIdempotent(): Promise<void> {
     const candidateStat = await lstat(installedApp);
     await mkdir(previousApp, { recursive: true });
     await writeFile(join(previousApp, "version.txt"), "known-good-previous");
+    const initialStat = await lstat(previousApp);
     await writeFile(journalPath, `${JSON.stringify({
       version: 2,
       id: "rollback-power-loss",
@@ -1166,6 +1277,9 @@ async function verifyRollbackResidueRecoveryIsIdempotent(): Promise<void> {
       previousPath: previousApp,
       phase: "rolling-back",
       hadPrevious: true,
+      initialPresent: true,
+      initialDevice: initialStat.dev,
+      initialInode: initialStat.ino,
       candidateDevice: candidateStat.dev,
       candidateInode: candidateStat.ino,
       updatedAt: new Date().toISOString()
@@ -1225,6 +1339,265 @@ async function verifyRollbackResidueRecoveryIsIdempotent(): Promise<void> {
   }
 }
 
+async function verifyIncompleteRollbackIdentityEvidenceFailsClosed(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "vigil-updater-incomplete-rollback-evidence-"));
+  const installedApp = join(root, "Vigil.app");
+  const previousApp = `${installedApp}.vigil-previous`;
+  const nextApp = `${installedApp}.vigil-next`;
+  const journalPath = `${installedApp}.vigil-transaction.json`;
+  try {
+    await mkdir(installedApp, { recursive: true });
+    await writeFile(join(installedApp, "version.txt"), "unverified-candidate");
+    const candidate = await lstat(installedApp);
+    await mkdir(previousApp, { recursive: true });
+    await writeFile(join(previousApp, "version.txt"), "unproven-previous");
+    await writeFile(journalPath, `${JSON.stringify({
+      version: 2,
+      id: "incomplete-rollback-evidence",
+      targetPath: installedApp,
+      nextPath: nextApp,
+      previousPath: previousApp,
+      phase: "rolling-back",
+      hadPrevious: true,
+      candidateDevice: candidate.dev,
+      candidateInode: candidate.ino,
+      updatedAt: new Date().toISOString()
+    })}\n`, { mode: 0o600 });
+
+    await assert.rejects(
+      reconcileAtomicInstallResidue(installedApp),
+      /invalid replacement journal/u,
+      "rollback must not infer that an unclassified previous sidecar is the initial generation"
+    );
+    assert.equal(await readFile(join(installedApp, "version.txt"), "utf8"), "unverified-candidate");
+    assert.equal(await readFile(join(previousApp, "version.txt"), "utf8"), "unproven-previous");
+    assert.equal((await readdir(root)).some((name) => name.startsWith("Vigil.app.vigil-transaction.json.invalid.")), true,
+      "invalid identity evidence must be archived while both generations remain untouched");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function verifyCompletedSwapReportedAsFailureRollsBackByIdentity(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "vigil-updater-unknown-swap-"));
+  const builtApp = join(root, "built", "Vigil.app");
+  const installedApp = join(root, "installed", "Vigil.app");
+  let swaps = 0;
+  try {
+    await mkdir(builtApp, { recursive: true });
+    await mkdir(installedApp, { recursive: true });
+    await writeFile(join(builtApp, "version.txt"), "new");
+    await writeFile(join(installedApp, "version.txt"), "old");
+    const operations = realIdentityOperations(async (left, right) => {
+      swaps += 1;
+      await exchangeDirectories(left, right);
+      if (swaps === 1) throw new Error("helper exited after completed exchange");
+    });
+    await assert.rejects(
+      atomicInstallBuiltApp(builtApp, installedApp, "", operations),
+      /helper exited after completed exchange/u
+    );
+    assert.equal(swaps, 2,
+      "an ambiguous helper error must be reconciled by the journal's observed generation identities");
+    assert.equal(await readFile(join(installedApp, "version.txt"), "utf8"), "old");
+    assert.equal(existsSync(`${installedApp}.vigil-next`), false);
+    assert.equal(existsSync(`${installedApp}.vigil-previous`), false);
+    assert.equal(existsSync(`${installedApp}.vigil-transaction.json`), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function verifyRacedPreviousGenerationIsPreserved(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "vigil-updater-raced-previous-"));
+  const builtApp = join(root, "built", "Vigil.app");
+  const installedApp = join(root, "installed", "Vigil.app");
+  const previousApp = `${installedApp}.vigil-previous`;
+  const journalPath = `${installedApp}.vigil-transaction.json`;
+  try {
+    await mkdir(builtApp, { recursive: true });
+    await mkdir(installedApp, { recursive: true });
+    await writeFile(join(builtApp, "version.txt"), "new");
+    await writeFile(join(installedApp, "version.txt"), "old");
+    const operations = realIdentityOperations(exchangeDirectories);
+    const installation = await atomicInstallBuiltApp(builtApp, installedApp, "", operations);
+    await rm(previousApp, { recursive: true, force: true });
+    await mkdir(previousApp, { recursive: true });
+    await writeFile(join(previousApp, "version.txt"), "raced-untrusted");
+
+    await assert.rejects(
+      installation.rollback(),
+      /cannot identify|cannot prove|recovery evidence was preserved/iu,
+      "rollback must never restore a path that no longer has the pinned initial inode"
+    );
+    assert.equal(await readFile(join(installedApp, "version.txt"), "utf8"), "new",
+      "the verified candidate generation must remain canonical when the rollback copy is ambiguous");
+    assert.equal(await readFile(join(previousApp, "version.txt"), "utf8"), "raced-untrusted",
+      "ambiguous evidence must be preserved for diagnosis instead of moved into service");
+    assert.equal(existsSync(journalPath), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function verifyVerifiedGenerationRacesArePreserved(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "vigil-updater-verified-race-"));
+  const builtApp = join(root, "built", "Vigil.app");
+  const installedApp = join(root, "installed", "Vigil.app");
+  const previousApp = `${installedApp}.vigil-previous`;
+  const journalPath = `${installedApp}.vigil-transaction.json`;
+  try {
+    await mkdir(builtApp, { recursive: true });
+    await mkdir(installedApp, { recursive: true });
+    await writeFile(join(builtApp, "version.txt"), "new");
+    await writeFile(join(installedApp, "version.txt"), "old");
+    const operations = realIdentityOperations(exchangeDirectories);
+    const installation = await atomicInstallBuiltApp(builtApp, installedApp, "", operations);
+    await installation.markVerified();
+
+    const savedPrevious = join(root, "verified-previous-preserved.app");
+    await rename(previousApp, savedPrevious);
+    await mkdir(previousApp, { recursive: true });
+    await writeFile(join(previousApp, "version.txt"), "unrecognized-sidecar");
+    await assert.rejects(
+      installation.finalize(),
+      /unrecognized replacement sidecar/u,
+      "verified cleanup must not delete a sidecar whose inode is not one of the pinned generations"
+    );
+    assert.equal(existsSync(previousApp), true);
+    assert.equal(existsSync(journalPath), true);
+
+    await rm(previousApp, { recursive: true, force: true });
+    await rename(savedPrevious, previousApp);
+    const displacedCandidate = join(root, "verified-candidate-preserved.app");
+    await rename(installedApp, displacedCandidate);
+    await mkdir(installedApp, { recursive: true });
+    await writeFile(join(installedApp, "version.txt"), "raced-canonical");
+    await assert.rejects(
+      reconcileAtomicInstallResidue(installedApp),
+      /exact canonical candidate|verified candidate/u,
+      "a verified phase string must not authorize cleanup around a replaced canonical inode"
+    );
+    assert.equal(await readFile(join(installedApp, "version.txt"), "utf8"), "raced-canonical");
+    assert.equal(existsSync(journalPath), true, "ambiguous verified evidence must remain durable");
+
+    await rm(installedApp, { recursive: true, force: true });
+    await assert.rejects(
+      reconcileAtomicInstallResidue(installedApp),
+      /verified candidate is missing/u,
+      "a missing verified candidate must never be replaced with an older previous generation"
+    );
+    assert.equal(existsSync(installedApp), false);
+    assert.equal(await readFile(join(previousApp, "version.txt"), "utf8"), "old",
+      "the exact old generation must remain a sidecar rather than being substituted as verified");
+    assert.equal(existsSync(journalPath), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function verifyTargetOnlyUnverifiedIdentityRules(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "vigil-updater-target-only-"));
+  const installedApp = join(root, "Vigil.app");
+  const nextApp = `${installedApp}.vigil-next`;
+  const previousApp = `${installedApp}.vigil-previous`;
+  const journalPath = `${installedApp}.vigil-transaction.json`;
+  try {
+    await mkdir(installedApp, { recursive: true });
+    await writeFile(join(installedApp, "version.txt"), "initial");
+    const initial = await lstat(installedApp);
+    const savedInitial = join(root, "saved-initial.app");
+    await rename(installedApp, savedInitial);
+    await mkdir(installedApp, { recursive: true });
+    await writeFile(join(installedApp, "version.txt"), "unknown");
+    const unknown = await lstat(installedApp);
+    await writeFile(journalPath, `${JSON.stringify({
+      version: 2,
+      id: "target-only-unknown",
+      targetPath: installedApp,
+      nextPath: nextApp,
+      previousPath: previousApp,
+      phase: "prepared",
+      hadPrevious: false,
+      initialPresent: true,
+      initialDevice: initial.dev,
+      initialInode: initial.ino,
+      candidateDevice: unknown.dev,
+      candidateInode: unknown.ino + 1,
+      updatedAt: new Date().toISOString()
+    })}\n`, { mode: 0o600 });
+    await assert.rejects(
+      reconcileAtomicInstallResidue(installedApp),
+      /exact initial generation/u,
+      "target-only recovery must not infer that every noncandidate directory is the initial app"
+    );
+    assert.equal(await readFile(join(installedApp, "version.txt"), "utf8"), "unknown");
+    assert.equal(existsSync(journalPath), true);
+
+    await rm(installedApp, { recursive: true, force: true });
+    await rm(journalPath, { force: true });
+    await mkdir(installedApp, { recursive: true });
+    await writeFile(join(installedApp, "version.txt"), "candidate-with-no-initial");
+    const candidate = await lstat(installedApp);
+    await writeFile(journalPath, `${JSON.stringify({
+      version: 2,
+      id: "target-only-new-install",
+      targetPath: installedApp,
+      nextPath: nextApp,
+      previousPath: previousApp,
+      phase: "installed",
+      hadPrevious: false,
+      initialPresent: false,
+      candidateDevice: candidate.dev,
+      candidateInode: candidate.ino,
+      updatedAt: new Date().toISOString()
+    })}\n`, { mode: 0o600 });
+    await reconcileAtomicInstallResidue(installedApp);
+    assert.equal(existsSync(installedApp), false,
+      "an exact unverified candidate may be removed only when the journal proves there was no initial app");
+    assert.equal(existsSync(journalPath), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+function realIdentityOperations(
+  swap: (left: string, right: string) => Promise<void>
+): AtomicInstallOperations {
+  return {
+    async pathExists(path) {
+      try {
+        await lstat(path);
+        return true;
+      } catch (error) {
+        if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return false;
+        throw error;
+      }
+    },
+    async copy(source, destination) {
+      await cp(source, destination, { recursive: true, preserveTimestamps: true });
+    },
+    async move(source, destination) {
+      await rename(source, destination);
+    },
+    async remove(path) {
+      await rm(path, { recursive: true, force: true });
+    },
+    async identity(path) {
+      const value = await lstat(path);
+      return { dev: value.dev, ino: value.ino };
+    },
+    swap
+  };
+}
+
+async function exchangeDirectories(left: string, right: string): Promise<void> {
+  const temporary = `${left}.test-exchange`;
+  await rename(left, temporary);
+  await rename(right, left);
+  await rename(temporary, right);
+}
+
 async function verifyFinalizeResidueDoesNotBlockNextUpdate(): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "vigil-updater-finalize-residue-"));
   const builtApp = join(root, "built", "Vigil.app");
@@ -1258,6 +1631,10 @@ async function verifyFinalizeResidueDoesNotBlockNextUpdate(): Promise<void> {
           throw new Error("simulated recovery-copy cleanup failure");
         }
         await rm(path, { recursive: true, force: true });
+      },
+      async identity(path) {
+        const value = await lstat(path);
+        return { dev: value.dev, ino: value.ino };
       }
     };
     const installation = await atomicInstallBuiltApp(builtApp, installedApp, "", operations);

@@ -8,7 +8,7 @@ import { createDistanceKeyUi } from "./distance-key-ui.js";
 import { detailBlock, progressBlock } from "./dom.js";
 import { createFocusSoundController } from "./focus-sound.js";
 import { daysText, formatDuration, lines, phaseTitle, progressText } from "./format.js";
-import { formHasUnsavedChanges, markFormSaved } from "./form-state.js";
+import { formHasUnsavedChanges, formRevision, markFormSaved, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
 import { createFormController } from "./forms.js";
 import { createHardeningPanel } from "./hardening-panel.js";
 import { shouldConfirmJournalDraftOnViewExit, shouldLockJournalOnViewExit } from "./journal-lock.js";
@@ -18,7 +18,7 @@ import { createRankingView } from "./ranking-view.js";
 import { createSaintStage } from "./saint-stage.js";
 import { bindSetupAssistant, renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
-import { enhanceSettingsUi, resetSettingsUi } from "./settings-ui.js";
+import { enhanceSettingsUi, resetSettingsUi, revealAppUpdateSettings } from "./settings-ui.js";
 import { createTrackingView } from "./tracking-view.js";
 import { $, $$, bindSidebarToggle, bindViewNavigation, errorMessage, initTheme, renderActiveView } from "./ui-shell.js";
 import { bindWindowResizeHandles } from "./window-resize.js";
@@ -57,6 +57,12 @@ interface VigilWindowActivityWindow extends Window {
   vigilWindowActivity?: VigilWindowActivityBridge;
 }
 
+interface VigilAppUpdateNavigationWindow extends Window {
+  vigilAppUpdate?: {
+    subscribeDetails?(listener: () => void): () => void;
+  };
+}
+
 type JournalEntryItem = NonNullable<NonNullable<IntentionalUseSummary["lifeLog"]>["entries"]>[number];
 
 interface JournalEntriesResponse extends UnknownRecord {
@@ -90,6 +96,7 @@ let protectionLevelRequestInFlight = false;
 let refreshCycle: Promise<void> | null = null;
 let refreshRequested = false;
 let nativeWindowActive: boolean | null = null;
+let selectedAppLockRequestId: string | null = null;
 const ACTIVE_STATE_POLL_MS = 3_000;
 const INACTIVE_STATE_POLL_MS = 30_000;
 const forms = createFormController({
@@ -149,6 +156,7 @@ function boot() {
   bindJournalSecuritySettings();
   bindIconThemeSettings();
   appUpdatePanel.bind();
+  bindAppUpdateDetailsNavigation();
   // Rehydrate the transaction journal after every app/window relaunch. The
   // replacement app can reopen while its updater still owns the lock, so an
   // in-memory "not checked" default is not authoritative.
@@ -168,6 +176,14 @@ function boot() {
   });
   void pollState();
   state.timer = setInterval(renderCountdowns, 1000);
+}
+
+function bindAppUpdateDetailsNavigation(): void {
+  const bridge = (window as VigilAppUpdateNavigationWindow).vigilAppUpdate;
+  bridge?.subscribeDetails?.(() => {
+    if (state.activeView !== "settings") setView("settings");
+    revealAppUpdateSettings();
+  });
 }
 
 function bindIconThemeSettings(): void {
@@ -297,7 +313,9 @@ function bindJournalUnlockGate(): void {
 }
 
 function bindJournalSecuritySettings(): void {
-  $("#journalSecurityForm").addEventListener("submit", (event) => {
+  const form = $("#journalSecurityForm") as unknown as HTMLFormElement;
+  trackFormChanges(form);
+  form.addEventListener("submit", (event) => {
     event.preventDefault();
     void saveJournalSecurity();
   });
@@ -338,12 +356,15 @@ async function unlockJournal(): Promise<void> {
 async function saveJournalSecurity(): Promise<void> {
   const save = $("#saveJournalSecurity");
   const status = $("#journalSecurityHelp");
+  const form = $("#journalSecurityForm") as unknown as HTMLFormElement;
+  const submittedRevision = formRevision(form);
   save.disabled = true;
   status.textContent = "Saving journal security…";
   try {
     await post("/api/intentional-use/journal/security", {
       autoLockMinutes: Number($("#journalAutoLockMinutes").value || 0)
     });
+    markFormSavedAtRevision(form, submittedRevision);
     status.textContent = "Saved. Unlock the journal again to continue.";
     toast("Journal security saved");
     await refresh();
@@ -405,7 +426,8 @@ function renderJournalSecurity(data: DashboardData): void {
   $("#journalSecurityStatus").textContent = journalSessionActive() ? "Unlocked" : "Locked";
   $("#journalSecurityStatus").className = journalSessionActive() ? "pill good" : "pill neutral";
   $("#lockJournalNow").disabled = !journalSessionActive();
-  if (document.activeElement !== $("#journalAutoLockMinutes")) {
+  const form = $("#journalSecurityForm") as unknown as HTMLFormElement;
+  if (!formHasUnsavedChanges(form)) {
     $("#journalAutoLockMinutes").value = String(vault.autoLockMinutes ?? 0);
   }
 }
@@ -516,7 +538,7 @@ function render() {
   appUpdatePanel.render();
   hardeningPanel.render(data);
   renderProfiles(data.state);
-  renderSchedules(data.state.schedules);
+  renderSchedules(data.state.schedules, data.state.profiles);
   renderGrayscale(data);
   renderLimits(data.limits.rules);
   renderAppLocks(data.appLocks.rules);
@@ -602,13 +624,32 @@ function renderOrbState(orbState: string): void {
 
 function renderProfiles(appState: DashboardState): void {
   const profiles = appState.profiles;
-  const activeId = appState.settings.activeProfileId;
-  state.selectedProfileId ||= activeId;
+  const configuredBaselineId = appState.settings.baselineProfileId || appState.settings.activeProfileId;
+  const baselineId = profiles.some((profile) => profile.id === configuredBaselineId)
+    ? configuredBaselineId
+    : profiles[0]?.id || "";
+  state.selectedProfileId = baselineId || null;
 
-  forms.fillSelect($("#profileSelect"), profiles, state.selectedProfileId);
+  const profileSelect = $("#profileSelect");
+  forms.fillSelect(profileSelect, profiles, state.selectedProfileId);
+  profileSelect.value = baselineId;
 
-  const profile = profiles.find((item) => item.id === state.selectedProfileId) || appState.activeProfile;
+  const scheduleForm = $("#scheduleForm");
+  const scheduleProfileSelect = $("#scheduleProfileId");
+  const previousBaselineId = scheduleProfileSelect.dataset.baselineProfileId || "";
+  const followsBaseline = !scheduleForm.elements.id.value
+    && (!scheduleProfileSelect.value || scheduleProfileSelect.value === previousBaselineId);
+  scheduleProfileSelect.dataset.baselineProfileId = baselineId;
+  forms.fillSelect(scheduleProfileSelect, profiles, baselineId);
+  if (followsBaseline) scheduleProfileSelect.value = baselineId;
+
+  const profile = profiles.find((item) => item.id === baselineId);
   if (!profile) return;
+  const activePolicyProfile = appState.activePolicy?.profile;
+  const managedSummary = $("#managedBlocklistSummary");
+  managedSummary.textContent = activePolicyProfile
+    ? `${activePolicyProfile.name} is enforced by the current session. ${profile.name} remains the default when no stronger session is active.`
+    : `${profile.name} is the always-on ruleset. Vigil also applies managed unsafe-content and permanent content-filter protection.`;
   const form = $("#profileForm");
   const trackedForm = form as unknown as HTMLFormElement;
   if (!formHasUnsavedChanges(trackedForm)) {
@@ -638,7 +679,7 @@ function renderProfiles(appState: DashboardState): void {
   } : null;
 }
 
-function renderSchedules(schedules: Schedule[]): void {
+function renderSchedules(schedules: Schedule[], profiles: DashboardState["profiles"]): void {
   const list = $("#scheduleList");
   list.replaceChildren();
   if (!schedules.length) {
@@ -646,14 +687,16 @@ function renderSchedules(schedules: Schedule[]): void {
     return;
   }
 
+  const profileNames = new Map(profiles.map((profile) => [profile.id, profile.name]));
   for (const schedule of schedules) {
     const row = document.createElement("div");
     row.className = "list-item";
     const wifi = schedule.wifiNetworks?.length ? ` | Wi-Fi: ${schedule.wifiNetworks.join(", ")}` : "";
     const commitment = schedule.commitmentLock ? " | commitment" : "";
+    const profileName = profileNames.get(schedule.profileId) || "Missing ruleset";
     const label = detailBlock(
       schedule.name,
-      `${schedule.start} to ${schedule.end} | ${daysText(schedule.days)}${wifi}${commitment} | ${schedule.enabled ? "on" : "off"}`
+      `${scheduleModeLabel(schedule.mode)} · ${profileName} | ${schedule.start} to ${schedule.end} | ${daysText(schedule.days)}${wifi}${commitment} | ${schedule.enabled ? "on" : "off"}`
     );
 
     const edit = document.createElement("button");
@@ -675,6 +718,14 @@ function renderSchedules(schedules: Schedule[]): void {
     row.append(label, edit, remove);
     list.append(row);
   }
+}
+
+function scheduleModeLabel(mode: string): string {
+  if (mode === "brick") return "Full lock";
+  if (mode === "sleep") return "Sleep";
+  if (mode === "rehab") return "Recovery";
+  if (mode === "focus") return "Focus";
+  return mode || "Focus";
 }
 
 function renderGrayscale(data: DashboardData): void {
@@ -791,15 +842,23 @@ function limitScopeText(rule: DashboardItem): string {
 function renderAppLocks(rules: DashboardItem[]): void {
   const list = $("#appLockList");
   list.replaceChildren();
-  let pendingChallenge = null;
+  const pendingRules = rules.filter((rule) => Boolean(rule.pendingRequest?.id));
+  const selectedRule = pendingRules.find((rule) => rule.pendingRequest?.id === selectedAppLockRequestId) || pendingRules[0] || null;
+  const nextRequestId = selectedRule?.pendingRequest?.id ? String(selectedRule.pendingRequest.id) : null;
+  const selectionChanged = nextRequestId !== selectedAppLockRequestId;
+  selectedAppLockRequestId = nextRequestId;
+  const sharedChallengeInput = $("#appLockChallengeInput");
+  const challengeOutput = $("#appLockChallenge");
+  const selectedChallenge = (selectedRule?.pendingRequest?.challenge as ChallengeSummary | null) || null;
+  if (selectionChanged) sharedChallengeInput.value = "";
+  renderTypingChallenge(challengeOutput, sharedChallengeInput, selectedChallenge);
+  if (selectedChallenge?.text) challengeOutput.textContent = `${selectedRule?.name || "App lock"} — type: ${selectedChallenge.text}`;
   if (!rules.length) {
     list.append(empty("No app locks saved"));
-    renderTypingChallenge($("#appLockChallenge"), $("#appLockChallengeInput"), null);
     return;
   }
 
   for (const rule of rules) {
-    if (!pendingChallenge && rule.pendingRequest?.challenge) pendingChallenge = rule.pendingRequest.challenge;
     const row = document.createElement("div");
     row.className = "list-item limit-item";
     const used = rule.usedToday || 0;
@@ -820,7 +879,15 @@ function renderAppLocks(rules: DashboardItem[]): void {
     const unlock = document.createElement("button");
     unlock.className = rule.pendingRequest ? "danger ghost" : "secondary";
     unlock.type = "button";
-    configureAppLockUnlockButton(unlock, rule);
+    configureAppLockUnlockButton(unlock, rule, {
+      selected: rule.pendingRequest?.id === selectedAppLockRequestId,
+      select: () => {
+        selectedAppLockRequestId = rule.pendingRequest?.id ? String(rule.pendingRequest.id) : null;
+        sharedChallengeInput.value = "";
+        renderAppLocks(rules);
+        if (rule.pendingRequest?.challenge?.text) $("#appLockChallengeInput").focus();
+      }
+    });
 
     const remove = document.createElement("button");
     remove.className = "ghost";
@@ -835,10 +902,13 @@ function renderAppLocks(rules: DashboardItem[]): void {
     row.append(label, edit, unlock, remove);
     list.append(row);
   }
-  renderTypingChallenge($("#appLockChallenge"), $("#appLockChallengeInput"), pendingChallenge);
 }
 
-function configureAppLockUnlockButton(button: HTMLButtonElement, rule: DashboardItem): void {
+function configureAppLockUnlockButton(
+  button: HTMLButtonElement,
+  rule: DashboardItem,
+  confirmation: { selected: boolean; select(): void }
+): void {
   if (rule.activeUnlock) {
     button.textContent = "Unlocked";
     button.disabled = true;
@@ -854,6 +924,11 @@ function configureAppLockUnlockButton(button: HTMLButtonElement, rule: Dashboard
   if (rule.pendingRequest) {
     const pendingRequest = rule.pendingRequest;
     const ms = new Date(pendingRequest.eligibleAt || "").getTime() - Date.now();
+    if (!confirmation.selected) {
+      button.textContent = ms > 0 ? `Review · ${Math.ceil(ms / 1000)}s` : "Review";
+      button.addEventListener("click", confirmation.select);
+      return;
+    }
     if (ms > 0) {
       button.textContent = `${Math.ceil(ms / 1000)}s`;
       button.disabled = true;
@@ -868,6 +943,7 @@ function configureAppLockUnlockButton(button: HTMLButtonElement, rule: Dashboard
           distanceKey: $("#appLockDistanceKey").value,
           challengeText: $("#appLockChallengeInput").value
         });
+        selectedAppLockRequestId = null;
         $("#appLockPasscode").value = "";
         $("#appLockDistanceKey").value = "";
         $("#appLockChallengeInput").value = "";
@@ -898,17 +974,23 @@ function renderIntentionalUse(intentionalUse: IntentionalUseSummary): void {
   const goal = intentionalUse.goal || {};
   const settings = state.data?.state.settings;
   if (!settings) return;
-  $("#intentionalUseEnabled").checked = settings.intentionalUseEnabled !== false;
   $("#intentionalUseStatus").textContent = settings.intentionalUseEnabled === false ? "Off" : `${intentionalUse.today?.pauses || 0} pauses today`;
   $("#intentionalUseStatus").className = settings.intentionalUseEnabled === false ? "pill neutral" : "pill good";
-  if (document.activeElement !== $("#intentionalGoalStatement")) $("#intentionalGoalStatement").value = goal.statement || "";
-  if (document.activeElement !== $("#intentionalGoalValues")) $("#intentionalGoalValues").value = (goal.values || []).join("\n");
-  if (document.activeElement !== $("#intentionalGoalReplacements")) $("#intentionalGoalReplacements").value = (goal.replacements || []).join("\n");
+  const goalForm = $("#intentionalGoalForm") as unknown as HTMLFormElement;
+  if (!formHasUnsavedChanges(goalForm)) {
+    $("#intentionalUseEnabled").checked = settings.intentionalUseEnabled !== false;
+    $("#intentionalGoalStatement").value = goal.statement || "";
+    $("#intentionalGoalValues").value = (goal.values || []).join("\n");
+    $("#intentionalGoalReplacements").value = (goal.replacements || []).join("\n");
+  }
 
   const accountability = intentionalUse.accountability || {};
-  $("#accountabilityEnabled").checked = Boolean(accountability.enabled);
-  if (document.activeElement !== $("#accountabilityPartner")) $("#accountabilityPartner").value = accountability.partnerName || "";
-  $("#accountabilityCadence").value = accountability.cadence || "weekly";
+  const accountabilityForm = $("#accountabilityForm") as unknown as HTMLFormElement;
+  if (!formHasUnsavedChanges(accountabilityForm)) {
+    $("#accountabilityEnabled").checked = Boolean(accountability.enabled);
+    $("#accountabilityPartner").value = accountability.partnerName || "";
+    $("#accountabilityCadence").value = accountability.cadence || "weekly";
+  }
   $("#accountabilityDigest").textContent = accountability.digest?.text || "";
   renderIntentionalRuleList(intentionalUse.rules || []);
 }

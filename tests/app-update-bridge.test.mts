@@ -12,6 +12,7 @@ interface Bridge {
   status(options?: { checkRemote?: boolean; instanceSecret?: string }): Promise<unknown>;
   start(): Promise<unknown>;
   subscribe?(listener: (status: unknown) => void): () => void;
+  subscribeDetails?(listener: () => void): () => void;
 }
 
 interface Invocation {
@@ -101,6 +102,15 @@ for (const listener of ipcListeners.get("vigil:app-update-state") || []) listene
 assert.equal(publishedBridgeStatus, publishedStatus);
 unsubscribeFromUpdateState();
 assert.equal(ipcListeners.get("vigil:app-update-state")?.size, 0, "unsubscribing must remove the exact IPC listener");
+let updateDetailsRequested = false;
+const unsubscribeFromUpdateDetails = preloadBridge.subscribeDetails?.(() => {
+  updateDetailsRequested = true;
+});
+assert.ok(unsubscribeFromUpdateDetails, "the update bridge should expose navigation for native update details");
+for (const listener of ipcListeners.get("vigil:show-app-update-details") || []) listener({});
+assert.equal(updateDetailsRequested, true);
+unsubscribeFromUpdateDetails();
+assert.equal(ipcListeners.get("vigil:show-app-update-details")?.size, 0, "unsubscribing must remove the exact details listener");
 const appearanceBridge = exposed.get("vigilAppearance") as AppearanceBridge | undefined;
 assert.ok(appearanceBridge, "preload should expose the icon appearance bridge");
 await appearanceBridge.getIconTheme();
@@ -162,6 +172,11 @@ assert.doesNotMatch(
   "the coordinator must not flatten a structured updater rejection into a generic failure"
 );
 assert.match(mainSource, /webContents\.send\(APP_UPDATE_STATE_CHANNEL, status\)/u, "coordinator state changes must be broadcast to Settings");
+assert.match(mainSource, /label: "App Update Details…"[\s\S]*?showAppUpdateDetails\(appUrl\)/u, "a blocked tray update action must open its explanation in Vigil");
+assert.match(mainSource, /webContents\.send\(APP_UPDATE_DETAILS_CHANNEL\)/u, "the native details action must route the open app to update settings");
+assert.doesNotMatch(mainSource, /function appUpdateActionDetail/u, "the tray must not render verbose updater diagnostics as native menu rows");
+assert.match(mainSource, /label: shortTrayDetail\(status\.label\)[\s\S]*?label: shortTrayDetail\(status\.detail\)/u, "dynamic status rows must stay compact enough for macOS to anchor the menu to its icon");
+assert.match(mainSource, /function shortTrayDetail[\s\S]*?value\.length <= 42/u, "tray diagnostics must have a bounded native-menu width");
 assert.match(mainSource, /recoveryPending: appUpdateActionState\.recoveryPending/u, "the coordinator must broadcast pending recovery state");
 assert.match(mainSource, /recoveryBlocked: appUpdateActionState\.recoveryBlocked/u, "the coordinator must broadcast blocked recovery state");
 assert.match(mainSource, /!appUpdateActionState\.running && !appUpdateActionState\.recoveryPending/u, "pending recovery must keep the coordinator polling");
@@ -266,7 +281,14 @@ Object.defineProperty(globalThis, "window", {
 });
 
 try {
-  for (const id of ["checkAppUpdate", "appUpdateStatus", "appUpdateMeta"]) {
+  for (const id of [
+    "checkAppUpdate",
+    "appUpdateStatus",
+    "appUpdateMeta",
+    "appUpdatePanel",
+    "appUpdateHelp",
+    "appUpdateProgress"
+  ]) {
     controls.set(`#${id}`, fakeControl(id === "checkAppUpdate" ? (listener) => {
       buttonClick = listener;
     } : undefined));
@@ -300,10 +322,12 @@ try {
   const pendingCheckResult = deferred<UnknownRecord>();
   nextRendererStatus = pendingCheckResult.promise;
   const pendingCheck = panel.refreshStatus(true);
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Checking for Updates...");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Checking for Updates…");
   assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  assert.equal(controls.get("#appUpdatePanel")?.getAttribute("aria-busy"), "true");
+  assert.equal(controls.get("#appUpdateProgress")?.hidden, false);
   panel.render();
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Checking for Updates...", "a dashboard render must not restore the cached action during a pending check");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Checking for Updates…", "a dashboard render must not restore the cached action during a pending check");
   assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
   pendingCheckResult.resolve(rendererStatus);
   await pendingCheck;
@@ -321,13 +345,13 @@ try {
     message: "Vigil will quit, update, and reopen",
     updateStateRevision: 10
   });
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update...", "a native start must immediately update Settings through the coordinator broadcast");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update…", "a native start must immediately update Settings through the coordinator broadcast");
   assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
   staleStatusResult.resolve({ ...rendererStatus, updateStateRevision: 9 });
   await staleStatusRequest;
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update...", "a status response captured before the native start must not overwrite its running state");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update…", "a status response captured before the native start must not overwrite its running state");
   publishRendererUpdate({ ...rendererStatus, running: false, operation: null, updateStateRevision: 9 });
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update...", "an older coordinator event must not overwrite the active revision");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update…", "an older coordinator event must not overwrite the active revision");
   publishRendererUpdate({ ...rendererStatus, running: false, operation: null, updateStateRevision: 11 });
   assert.equal(controls.get("#checkAppUpdate")?.textContent, "Install Update");
 
@@ -340,7 +364,7 @@ try {
     message: "Restoring the verified Vigil recovery copy.",
     updateStateRevision: 12
   });
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Recovering Vigil Update...");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Recovering Vigil Update…");
   assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
   assert.equal(controls.get("#appUpdateStatus")?.textContent, "Restoring the verified Vigil recovery copy.");
 
@@ -360,38 +384,124 @@ try {
   assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
   assert.equal(controls.get("#appUpdateStatus")?.textContent, "The preserved recovery evidence needs manual attention.");
 
+  const click = buttonClick as (() => void) | null;
+  assert.ok(click);
   rendererStatus = {
     ...rendererStatus,
+    ok: true,
+    checkOk: true,
     updateAvailable: false,
+    updateCandidateAvailable: false,
+    localChanges: false,
     maintenanceReady: false,
+    maintenanceSetupRequired: true,
+    maintenanceSetupSupported: true,
     recoveryPending: false,
     recoveryBlocked: false,
-    message: "Vigil's system guardian predates authenticated app updates."
+    message: "One-time setup is available when an update is ready"
   };
   await panel.refreshStatus(false);
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Update Setup Required");
-  assert.equal(controls.get("#checkAppUpdate")?.disabled, true, "an incompatible guardian must not offer an update that can only fail after rebuilding");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Check for Updates");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, false,
+    "legacy guardian setup readiness must not disable remote update discovery");
+  const statusCallsBeforeLegacyDiscovery = statusCalls;
+  const startCallsBeforeLegacyDiscovery = startCalls;
+  click();
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(statusCalls, statusCallsBeforeLegacyDiscovery + 1,
+    "the pre-candidate action must perform a remote update check");
+  assert.equal(checkedRemote, true);
+  assert.equal(startCalls, startCallsBeforeLegacyDiscovery,
+    "checking an auto-refreshable legacy guardian must not start setup before a candidate is verified");
+
   rendererStatus = {
     ...rendererStatus,
+    ok: true,
+    checkOk: true,
     updateAvailable: true,
-    maintenanceReady: true
+    updateCandidateAvailable: true,
+    localChanges: true,
+    maintenanceReady: false,
+    maintenanceSetupRequired: true,
+    maintenanceSetupSupported: true,
+    recoveryPending: false,
+    recoveryBlocked: false,
+    message: "One-time setup is needed"
+  };
+  await panel.refreshStatus(false);
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Enable & Run Latest");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, false, "a repairable legacy guardian must offer one setup-and-update action");
+  assert.match(String(controls.get("#appUpdateHelp")?.textContent), /one macOS password prompt/u);
+
+  const failedSetupResult = deferred<UnknownRecord>();
+  nextRendererStartResult = failedSetupResult.promise;
+  const startCallsBeforeSetup = startCalls;
+  click();
+  click();
+  assert.equal(startCalls, startCallsBeforeSetup + 1, "repeat clicks must not start a second administrator prompt");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Enabling Fast Updates…");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  assert.equal(controls.get("#appUpdatePanel")?.getAttribute("aria-busy"), "true");
+  assert.equal(controls.get("#appUpdateProgress")?.hidden, false);
+  assert.match(String(controls.get("#appUpdateProgress")?.getAttribute("aria-valuetext")), /Approve the macOS prompt once/u);
+  panel.render();
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Enabling Fast Updates…", "a dashboard render must not interrupt the one-time setup state");
+  failedSetupResult.resolve({
+    ...rendererStatus,
+    ok: false,
+    message: "The administrator approval was canceled."
+  });
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Retry Setup & Update");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, false);
+  assert.equal(controls.get("#appUpdateStatus")?.textContent, "The administrator approval was canceled.");
+
+  const successfulSetupResult = deferred<UnknownRecord>();
+  nextRendererStartResult = successfulSetupResult.promise;
+  click();
+  click();
+  assert.equal(startCalls, startCallsBeforeSetup + 2, "retrying setup must still remain one transaction per click cycle");
+  successfulSetupResult.resolve({
+    ...rendererStatus,
+    ok: true,
+    maintenanceReady: true,
+    maintenanceSetupRequired: false,
+    running: true,
+    updateAvailable: false,
+    updateCandidateAvailable: false,
+    phase: "building",
+    message: "Building local changes"
+  });
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Building Update…", "successful setup must continue directly into the build without another click");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+
+  rendererStatus = {
+    ...rendererStatus,
+    ok: true,
+    updateAvailable: true,
+    updateCandidateAvailable: true,
+    maintenanceReady: true,
+    maintenanceSetupRequired: false,
+    maintenanceSetupSupported: true,
+    running: false
   };
   await panel.refreshStatus(false);
 
-  const click = buttonClick as (() => void) | null;
-  assert.ok(click);
   const pendingStartResult = deferred<UnknownRecord>();
   nextRendererStartResult = pendingStartResult.promise;
+  const startCallsBeforeRegularUpdate = startCalls;
   click();
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update...");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update…");
   assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
   panel.render();
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update...", "a dashboard render must not restore the cached action during a pending start");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Starting Update…", "a dashboard render must not restore the cached action during a pending start");
   assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
   pendingStartResult.resolve(rendererStartResult);
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
-  assert.equal(startCalls, 1);
+  assert.equal(startCalls, startCallsBeforeRegularUpdate + 1);
   assert.equal(postCalls, 0);
+  const startCallsAfterRegularUpdate = startCalls;
 
   rendererStatus = {
     ok: true,
@@ -408,7 +518,7 @@ try {
   assert.equal(controls.get("#checkAppUpdate")?.textContent, "Check for Updates");
   click();
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
-  assert.equal(startCalls, 1, "a dirty checkout already represented by the app must not offer a rejected remote update");
+  assert.equal(startCalls, startCallsAfterRegularUpdate, "a dirty checkout already represented by the app must not offer a rejected remote update");
 
   rendererStatus = {
     ok: true,
@@ -429,11 +539,11 @@ try {
   };
   click();
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
-  assert.equal(startCalls, 2);
+  assert.equal(startCalls, startCallsAfterRegularUpdate + 1);
   assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 1_100));
   assert.equal(controls.get("#checkAppUpdate")?.disabled, false, "a completed or failed local build must refresh the cached running state");
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Run Local Changes");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Run Latest Changes");
 
   rendererStartResult = {
     ok: false,
@@ -445,13 +555,13 @@ try {
   const statusCallsBeforeActivePoll = statusCalls;
   click();
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
-  assert.equal(startCalls, 3);
+  assert.equal(startCalls, startCallsAfterRegularUpdate + 2);
   assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Updating Vigil...", "an already-running start result must preserve the active transaction state");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Updating Vigil…", "an already-running start result must preserve the active transaction state");
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 1_100));
   assert.ok(statusCalls > statusCallsBeforeActivePoll, "an already-running start result must continue polling updater status");
   assert.equal(controls.get("#checkAppUpdate")?.disabled, false);
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Run Local Changes");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Run Latest Changes");
   rendererStartResult = {
     ok: true,
     noUpdate: true,
@@ -509,9 +619,11 @@ try {
 
 function fakeControl(onClick?: (listener: () => void) => void): ControlElement {
   const classes = new Set<string>();
+  const attributes = new Map<string, string>();
   return {
     textContent: "",
     disabled: false,
+    hidden: false,
     classList: {
       add: (...tokens: string[]) => tokens.forEach((token) => classes.add(token)),
       remove: (...tokens: string[]) => tokens.forEach((token) => classes.delete(token)),
@@ -521,6 +633,15 @@ function fakeControl(onClick?: (listener: () => void) => void): ControlElement {
         else classes.delete(token);
         return enabled;
       }
+    },
+    setAttribute(name: string, value: string) {
+      attributes.set(name, value);
+    },
+    getAttribute(name: string) {
+      return attributes.get(name) ?? null;
+    },
+    removeAttribute(name: string) {
+      attributes.delete(name);
     },
     addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
       if (type !== "click" || !onClick) return;

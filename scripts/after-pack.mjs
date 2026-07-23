@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { localMacShellDescriptor, writeLocalMacShellMarker } from "./local-mac-shell.mjs";
 
 const execFileAsync = promisify(execFile);
 const UNUSED_PERMISSION_KEYS = [
@@ -24,4 +25,5 @@ export default async function afterPack(context) {
     "-replace", "NSAppTransportSecurity.NSAllowsArbitraryLoads", "-bool", "NO", infoPath
   ]);
   await execFileAsync("/usr/bin/plutil", ["-lint", infoPath]);
+  await writeLocalMacShellMarker(appPath, await localMacShellDescriptor(context.packager.projectDir));
 }
