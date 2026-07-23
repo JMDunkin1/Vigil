@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 
 const root = await sourceRoot();
 const mainSource = await readFile(join(root, "app", "main.ts"), "utf8");
+const packageSource = await readFile(join(root, "package.json"), "utf8");
 const serverSource = await readFile(join(root, "src", "server.ts"), "utf8");
 const beforeQuitStart = mainSource.indexOf('app.on("before-quit"');
 const beforeQuitEnd = mainSource.indexOf('\n});', beforeQuitStart);
@@ -60,16 +61,16 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function showVigilWindow\(appUrl: string\): void \{[\s\S]*?if \(shouldStayResident\(\)\) \{[\s\S]*?app\.setActivationPolicy\("regular"\);[\s\S]*?app\.show\(\);[\s\S]*?if \(!mainWindow\) createWindow\(appUrl\);[\s\S]*?mainWindow\.show\(\);/,
-  "an open resident window must enter regular macOS presentation before its native window is created or shown"
+  /function showVigilWindow\(appUrl: string\): void \{\s*if \(!mainWindow\) createWindow\(appUrl\);[\s\S]*?mainWindow\.show\(\);[\s\S]*?mainWindow\.focus\(\);\s*\}/,
+  "an open resident window must use Electron's ordinary native show and focus lifecycle"
 );
 const showWindowStart = mainSource.indexOf("function showVigilWindow");
 const showWindowEnd = mainSource.indexOf("\n}", showWindowStart);
 const showWindowSource = mainSource.slice(showWindowStart, showWindowEnd + 2);
-assert.doesNotMatch(showWindowSource, /app\.dock\?\.hide\(\)/, "opening Vigil must not demote the regular app back to accessory presentation");
-assert.ok(
-  showWindowSource.indexOf('app.setActivationPolicy("regular")') < showWindowSource.indexOf("createWindow(appUrl)"),
-  "Vigil must never create native window chrome while the packaged app is still using accessory presentation"
+assert.doesNotMatch(
+  showWindowSource,
+  /setActivationPolicy|app\.show\(\)|app\.hide\(\)/,
+  "showing Vigil must not mutate the process presentation policy"
 );
 assert.match(
   mainSource,
@@ -83,13 +84,18 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function hideVigilWindow\(\): void \{\s*mainWindow\?\.hide\(\);\s*if \(shouldStayResident\(\)\) \{\s*app\.hide\(\);\s*enforceMenuBarOnlyPresentation\(\);\s*\}\s*\}/,
-  "hiding Vigil must hide the visual app and restore its menu-bar-only presentation"
+  /function hideVigilWindow\(\): void \{\s*mainWindow\?\.hide\(\);\s*\}/,
+  "hiding Vigil must hide only its native window while enforcement remains resident"
 );
 assert.match(
+  packageSource,
+  /"extendInfo":\s*\{[\s\S]*?"LSUIElement":\s*true/,
+  "Vigil's own packaged Info.plist must declare its menu-bar-only identity"
+);
+assert.doesNotMatch(
   mainSource,
-  /function enforceMenuBarOnlyPresentation\(\): void \{\s*app\.setActivationPolicy\("accessory"\);\s*app\.dock\?\.hide\(\);\s*\}/,
-  "the resident macOS app must use accessory activation policy and remain absent from the Dock"
+  /setActivationPolicy|app\.dock\?\.(?:hide|show)\(\)/,
+  "Vigil must not mutate AppKit activation or Dock presentation at runtime"
 );
 assert.match(
   mainSource,
@@ -434,31 +440,20 @@ assert.match(
   /catch \(error\) \{[\s\S]*?await clearRuntimeReady\(appDataDir\(\)\);[\s\S]*?await stopOwnedRuntime\(\);[\s\S]*?await rollbackEmbeddedRuntimeSupervisor\(legacyAgent\);[\s\S]*?await restoreLegacyLoopbackAgent\(legacyAgent\);/,
   "failed embedded startup must clear readiness, stop partial runtime state, roll back a new supervisor, and restore the legacy service"
 );
-assert.match(mainSource, /fullscreenable:\s*true/, "Vigil must support true native macOS fullscreen");
-assert.match(mainSource, /titleBarStyle:\s*"hiddenInset"/, "Vigil must use the stable inset macOS title bar with native traffic lights");
-assert.match(mainSource, /trafficLightPosition:\s*\{ x:\s*18, y:\s*19 \}/, "integrated traffic lights must retain their intended position");
-assert.match(mainSource, /acceptFirstMouse:\s*true/, "the first click after Mission Control must reach Vigil's controls");
-assert.match(
-  mainSource,
-  /function restoreNativeWindowControls\(window: BrowserWindow\): void \{[\s\S]*?window\.setWindowButtonPosition\(\{ x: 18, y: 19 \}\);[\s\S]*?window\.setWindowButtonVisibility\(true\);/,
-  "showing Vigil must restore its native traffic-light controls"
-);
-assert.match(
-  showWindowSource,
-  /mainWindow\.show\(\);[\s\S]*?restoreNativeWindowControls\(mainWindow\);[\s\S]*?mainWindow\.focus\(\);/,
-  "native controls must be restored after the formerly hidden window becomes visible"
-);
-for (const event of ["ready-to-show", "show", "enter-full-screen", "leave-full-screen"]) {
-  assert.match(
-    mainSource,
-    new RegExp(`vigilWindow\\.on\\("${event}",[\\s\\S]*?restoreNativeWindowControls\\(vigilWindow\\)`),
-    `${event} must restore Vigil's native traffic lights`
-  );
-}
 assert.doesNotMatch(
   mainSource,
-  /vigilWindow\.on\("(?:focus|maximize|unmaximize)",\s*\(\)\s*=>\s*restoreNativeWindowControls/,
-  "ordinary native transitions must not rewrite the window while AppKit is animating it"
+  /titleBarStyle|trafficLightPosition|setWindowButtonPosition|setWindowButtonVisibility/,
+  "Vigil must use Electron's stock native title bar and traffic lights"
+);
+assert.doesNotMatch(
+  mainSource,
+  /acceptFirstMouse|fullscreenable|alwaysOnTop|setAlwaysOnTop|setVisibleOnAllWorkspaces/,
+  "Vigil must leave ordinary window, fullscreen, focus, and workspace behavior at Electron defaults"
+);
+assert.doesNotMatch(
+  mainSource,
+  /vigilWindow\.on\("(?:enter|leave)-full-screen"/,
+  "Vigil must not rewrite its window while AppKit is transitioning native fullscreen"
 );
 assert.doesNotMatch(mainSource, /setFullScreenable\(false\)|setFullScreen\(false\)/, "Vigil must never replace true fullscreen with macOS Zoom");
 assert.doesNotMatch(mainSource, /vigil:window-action|maximizedWindowControls/, "Vigil must not imitate native window controls in web content");

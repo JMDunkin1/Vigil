@@ -5,28 +5,77 @@ import { chmod, link, lstat, mkdir, open, readFile, realpath, rename, rm, writeF
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { isDirectRun } from "../src/directRun.js";
+import { parsePlist } from "../src/plist.js";
 import { verifyUpdateProtocolBridgeEquivalence } from "./package-update-protocol-bridge.mjs";
 import {
   SYSTEM_GUARDIAN_LABEL,
   SYSTEM_GUARDIAN_PLIST_PATH,
   SYSTEM_GUARDIAN_ROOT,
+  SYSTEM_GUARDIAN_SAFETY_ARG,
   SYSTEM_GUARDIAN_SCRIPT_PATH,
   systemGuardianPlist,
   systemGuardianScript
 } from "../src/systemGuardian.js";
 import {
   guardianScriptRevision,
+  LEGACY_SYSTEM_GUARDIAN_LABEL,
+  LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
+  LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+  LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
+  LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH,
+  PREVIOUS_SYSTEM_GUARDIAN_LABEL,
+  PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH,
+  PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+  PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
+  PREVIOUS_SYSTEM_GUARDIAN_REVISION,
+  PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH,
+  PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
+  SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
+  SYSTEM_GUARDIAN_MAINTENANCE_FILENAME,
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
   SYSTEM_GUARDIAN_REVISION,
   UPDATE_PACKAGED_APP_RECOVERY_PROTOCOL_REVISION,
   UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_KIND,
   UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_MAX_SECONDS,
-  UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH
+  UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH,
+  UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME
 } from "../src/updateMaintenance.js";
+import {
+  UPDATE_RECOVERY_MANIFEST_FILENAME,
+  UPDATE_RECOVERY_POLICY_FILENAME
+} from "../src/updateTransaction.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_TARGET_APP_PATH = "/Applications/Vigil.app";
 export const SYSTEM_GUARDIAN_STABILITY_MS = 500;
+export const PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256 = "2da645ad29084194b52d6d2d7f0505a83451a1cadb2628c12a14cf91dae6dafe";
+export const LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256 = "62f041926840824e15c76361d508ac224c3b92ba7312003329c410d83fcc8ea1";
+
+const COMMON_PREDECESSOR_DYNAMIC_ASSIGNMENTS = [
+  "target_uid",
+  "target_user",
+  "target_home",
+  "app_path",
+  "executable_path",
+  "process_pattern",
+  "supervisor_service",
+  "update_lock_path",
+  "maintenance_marker_path",
+  "global_update_manifest_path",
+  "global_update_policy_path"
+] as const;
+
+const PREVIOUS_GUARDIAN_DYNAMIC_ASSIGNMENTS = [
+  ...COMMON_PREDECESSOR_DYNAMIC_ASSIGNMENTS,
+  "bootstrap_worker_request_path",
+  "exact_main_command",
+  "exact_main_process_pattern",
+  "packaged_updater_script_path",
+  "local_updater_script_path",
+  "user_data_dir",
+  "update_status_path",
+  "update_log_path"
+] as const;
 
 export async function installSystemGuardian(argv = process.argv.slice(2)): Promise<void> {
   if (process.getuid?.() !== 0) {
@@ -41,6 +90,7 @@ export async function installSystemGuardian(argv = process.argv.slice(2)): Promi
   await validateGuardianRoot();
   const initialService = await inspectSystemGuardianService();
   await assertProtocolBootstrapMigrationState(options, initialService, plist);
+  const predecessor = options.authorizationOnly ? null : await runningPredecessorGuardian(options);
   const transactionId = `${process.pid}-${randomUUID()}`;
   if (options.authorizationOnly) {
     if (!options.bootstrapToken) throw new Error("Vigil cannot refresh an empty updater-protocol authorization.");
@@ -74,10 +124,11 @@ export async function installSystemGuardian(argv = process.argv.slice(2)): Promi
   let serviceBootstrapAttempted = false;
   try {
     await assertExpectedCurrentGuardian(options);
+    if (predecessor) await assertPredecessorGuardianContinuity(predecessor, options);
     const serviceBeforeActivation = await inspectSystemGuardianService();
     if (serviceBeforeActivation.loaded) {
       throw new Error(
-        "Vigil's parallel v3 guardian loaded while setup was being prepared. Its running files were left untouched."
+        "Vigil's parallel v4 guardian loaded while setup was being prepared. Its running files were left untouched."
       );
     }
     activationStarted = true;
@@ -86,11 +137,12 @@ export async function installSystemGuardian(argv = process.argv.slice(2)): Promi
     serviceBootstrapAttempted = true;
     await bootstrapSystemGuardian();
     await verifyActivatedFiles(files);
+    if (predecessor) await assertPredecessorGuardianContinuity(predecessor, options);
   } catch (error) {
     if (serviceBootstrapAttempted) {
       await discardStagedFiles(files).catch(() => undefined);
       throw new Error(
-        `${errorMessage(error)} Vigil preserved the new parallel guardian files and never stopped either guardian; launchd can finish starting the v3 service safely.`
+        `${errorMessage(error)} Vigil preserved the new parallel guardian files and never stopped any guardian; launchd can finish starting the v4 service safely.`
       );
     }
     const rollbackErrors: unknown[] = [];
@@ -285,7 +337,7 @@ async function assertProtocolBootstrapMigrationState(
 ): Promise<void> {
   if (options.authorizationOnly) {
     if (!service.loaded || !service.running) {
-      throw new Error("Vigil refused authorization-only setup because its parallel v3 guardian is not running.");
+      throw new Error("Vigil refused authorization-only setup because its parallel v4 guardian is not running.");
     }
     await assertLoadedGuardianTopology(service.output, expectedPlist);
     const installed = await readFile(SYSTEM_GUARDIAN_SCRIPT_PATH, "utf8");
@@ -293,12 +345,12 @@ async function assertProtocolBootstrapMigrationState(
     if (revision === null
       || revision < SYSTEM_GUARDIAN_REVISION
       || !installed.includes(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND)) {
-      throw new Error("Vigil refused authorization-only setup for a guardian without the required v3 protocol.");
+      throw new Error("Vigil refused authorization-only setup for a guardian without the required v4 protocol.");
     }
     return;
   }
   if (service.loaded) {
-    throw new Error("Vigil refused to restart a loaded guardian while adding the parallel v3 update boundary.");
+    throw new Error("Vigil refused to restart a loaded guardian while adding the parallel v4 update boundary.");
   }
 }
 
@@ -575,7 +627,7 @@ async function assertExpectedCurrentGuardian(options: InstallOptions): Promise<v
       if (isErrorCode(error, "ENOENT")) return;
       throw error;
     }
-    throw new Error("Vigil's parallel v3 guardian appeared after setup was authorized. Nothing was replaced.");
+    throw new Error("Vigil's parallel v4 guardian appeared after setup was authorized. Nothing was replaced.");
   }
   const value = await lstat(SYSTEM_GUARDIAN_SCRIPT_PATH);
   if (!value.isFile() || value.isSymbolicLink() || value.uid !== 0 || (value.mode & 0o022) !== 0) {
@@ -752,6 +804,37 @@ interface SystemGuardianServiceInspection {
   running: boolean;
 }
 
+interface RootOwnedFileIdentity {
+  birthtimeMs: number;
+  ctimeMs: number;
+  dev: number;
+  ino: number;
+  mode: number;
+  mtimeMs: number;
+  sha256: string;
+  size: number;
+}
+
+interface PredecessorGuardianIdentity {
+  label: string;
+  pid: number;
+  plist: RootOwnedFileIdentity;
+  plistPath: string;
+  script: RootOwnedFileIdentity;
+  scriptPath: string;
+}
+
+interface PredecessorProcessIdentity {
+  started: string;
+  startedEpochSeconds: number;
+}
+
+export interface PredecessorGuardianCandidate {
+  label: string;
+  plistPath: string;
+  scriptPath: string;
+}
+
 export interface GuardianRunningStabilityState {
   pid: number | null;
   since: number;
@@ -779,9 +862,11 @@ export function observeGuardianRunningStability(
   };
 }
 
-async function inspectSystemGuardianService(): Promise<SystemGuardianServiceInspection> {
+async function inspectSystemGuardianService(
+  label = SYSTEM_GUARDIAN_LABEL
+): Promise<SystemGuardianServiceInspection> {
   try {
-    const { stdout } = await execFileAsync("/bin/launchctl", ["print", `system/${SYSTEM_GUARDIAN_LABEL}`], {
+    const { stdout } = await execFileAsync("/bin/launchctl", ["print", `system/${label}`], {
       timeout: 5_000,
       maxBuffer: 1024 * 1024
     });
@@ -796,6 +881,538 @@ async function inspectSystemGuardianService(): Promise<SystemGuardianServiceInsp
     if (launchctlServiceMissing(error)) return { loaded: false, output: "", pid: null, running: false };
     throw error;
   }
+}
+
+async function runningPredecessorGuardian(options: InstallOptions): Promise<PredecessorGuardianIdentity> {
+  const candidates: PredecessorGuardianCandidate[] = [
+    {
+      label: PREVIOUS_SYSTEM_GUARDIAN_LABEL,
+      plistPath: PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH,
+      scriptPath: PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH
+    },
+    {
+      label: LEGACY_SYSTEM_GUARDIAN_LABEL,
+      plistPath: LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
+      scriptPath: LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH
+    }
+  ];
+  const failures: unknown[] = [];
+  for (const candidate of candidates) {
+    try {
+      const identity = await inspectPredecessorGuardian(candidate, options);
+      if (identity) return identity;
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  const detail = failures.map((error) => errorMessage(error)).filter(Boolean).join(" ");
+  throw new Error(
+    `Vigil refused to add its parallel v4 guardian without one exact, safe predecessor remaining loaded and running.${detail ? ` ${detail}` : ""}`
+  );
+}
+
+async function assertPredecessorGuardianContinuity(
+  expected: PredecessorGuardianIdentity,
+  options: InstallOptions
+): Promise<void> {
+  const observed = await inspectPredecessorGuardian(expected, options);
+  if (!observed
+    || observed.pid !== expected.pid
+    || !sameRootOwnedFileIdentity(observed.script, expected.script)
+    || !sameRootOwnedFileIdentity(observed.plist, expected.plist)) {
+    throw new Error(
+      "Vigil's predecessor guardian changed while the parallel v4 guardian was being prepared. No running guardian was stopped or replaced."
+    );
+  }
+}
+
+async function inspectPredecessorGuardian(
+  candidate: PredecessorGuardianCandidate,
+  options: InstallOptions
+): Promise<PredecessorGuardianIdentity | null> {
+  const service = await inspectSystemGuardianService(candidate.label);
+  if (!service.loaded) return null;
+  const processBefore = service.pid ? await predecessorProcessIdentity(service.pid, candidate) : null;
+  if (!service.running
+    || !service.pid
+    || !predecessorLaunchctlTopologyMatches(service.output, candidate)
+    || !processBefore) {
+    throw new Error(`Vigil's predecessor guardian ${candidate.label} is not running with its exact protected topology.`);
+  }
+  const [scriptFile, plistFile] = await Promise.all([
+    readPinnedRootOwnedFile(candidate.scriptPath, 1024 * 1024, 0o755),
+    readPinnedRootOwnedFile(candidate.plistPath, 1024 * 1024, 0o644)
+  ]);
+  const script = scriptFile.bytes.toString("utf8");
+  const plistText = plistFile.bytes.toString("utf8");
+  if (!rootOwnedFilePredatesProcess(scriptFile.identity, processBefore)
+    || !rootOwnedFilePredatesProcess(plistFile.identity, processBefore)) {
+    throw new Error(`Vigil's predecessor guardian ${candidate.label} did not start from its exact pinned files.`);
+  }
+  if (!predecessorGuardianContentMatches(script, plistText, candidate, options)) {
+    throw new Error(`Vigil's predecessor guardian ${candidate.label} does not protect this exact app and account.`);
+  }
+  const confirmedService = await inspectSystemGuardianService(candidate.label);
+  const processAfter = confirmedService.pid
+    ? await predecessorProcessIdentity(confirmedService.pid, candidate)
+    : null;
+  if (!confirmedService.loaded
+    || !confirmedService.running
+    || confirmedService.pid !== service.pid
+    || !predecessorLaunchctlTopologyMatches(confirmedService.output, candidate)
+    || !processAfter
+    || processAfter.started !== processBefore.started) {
+    throw new Error(`Vigil's predecessor guardian ${candidate.label} changed while its protected files were being verified.`);
+  }
+  return {
+    label: candidate.label,
+    pid: confirmedService.pid,
+    plist: plistFile.identity,
+    plistPath: candidate.plistPath,
+    script: scriptFile.identity,
+    scriptPath: candidate.scriptPath
+  };
+}
+
+export function predecessorLaunchctlTopologyMatches(
+  output: string,
+  candidate: PredecessorGuardianCandidate
+): boolean {
+  const guardianLogPath = join(SYSTEM_GUARDIAN_ROOT, "guardian.log");
+  const argumentsBlock = launchctlBlockEntries(output, "arguments");
+  const defaultEnvironment = launchctlBlockEntries(output, "default environment");
+  const environment = launchctlBlockEntries(output, "environment");
+  return launchctlFieldMatches(output, "path", candidate.plistPath)
+    && launchctlFieldMatches(output, "type", "LaunchDaemon")
+    && launchctlFieldMatches(output, "program", candidate.scriptPath)
+    && launchctlFieldMatches(output, "stdout path", guardianLogPath)
+    && launchctlFieldMatches(output, "stderr path", guardianLogPath)
+    && launchctlFieldMatches(output, "domain", "system")
+    && launchctlFieldMatches(output, "minimum runtime", "5")
+    && launchctlFieldMatches(output, "spawn type", "background (5)")
+    && launchctlFieldMatches(output, "properties", "keepalive | runatload | inferred program")
+    && JSON.stringify(argumentsBlock) === JSON.stringify([candidate.scriptPath, SYSTEM_GUARDIAN_SAFETY_ARG])
+    && JSON.stringify(defaultEnvironment) === JSON.stringify(["PATH => /usr/bin:/bin:/usr/sbin:/sbin"])
+    && JSON.stringify(environment?.sort()) === JSON.stringify([
+      "OSLogRateLimit => 64",
+      `XPC_SERVICE_NAME => ${candidate.label}`
+    ])
+    && !/^\s*(?:group|root directory|username|working directory) =/mu.test(output);
+}
+
+async function predecessorProcessIdentity(
+  pid: number,
+  candidate: PredecessorGuardianCandidate
+): Promise<PredecessorProcessIdentity | null> {
+  const expectedCommand = `/bin/zsh ${candidate.scriptPath} ${SYSTEM_GUARDIAN_SAFETY_ARG}`;
+  try {
+    const fields = await Promise.all([
+      "uid=",
+      "gid=",
+      "ppid=",
+      "comm=",
+      "command=",
+      "lstart="
+    ].map(async (field) => (await execFileAsync("/bin/ps", [
+      "-ww",
+      "-p",
+      String(pid),
+      "-o",
+      field
+    ], {
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024
+    })).stdout.trim()));
+    if (JSON.stringify(fields.slice(0, 5)) !== JSON.stringify(["0", "0", "1", "/bin/zsh", expectedCommand])) {
+      return null;
+    }
+    const startedEpochMs = Date.parse(fields[5]);
+    if (!Number.isFinite(startedEpochMs)) return null;
+    return {
+      started: fields[5],
+      startedEpochSeconds: Math.floor(startedEpochMs / 1_000)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function rootOwnedFilePredatesProcess(
+  file: RootOwnedFileIdentity,
+  processIdentity: PredecessorProcessIdentity
+): boolean {
+  const latestFileChangeSeconds = Math.floor(Math.max(file.birthtimeMs, file.ctimeMs, file.mtimeMs) / 1_000);
+  return Number.isFinite(latestFileChangeSeconds)
+    && latestFileChangeSeconds <= processIdentity.startedEpochSeconds;
+}
+
+function launchctlBlockEntries(output: string, name: string): string[] | null {
+  const lines = output.split("\n");
+  const start = lines.findIndex((line) => line.trim() === `${name} = {`);
+  if (start < 0) return null;
+  const end = lines.findIndex((line, index) => index > start && line.trim() === "}");
+  if (end < 0) return null;
+  return lines.slice(start + 1, end).map((line) => line.trim()).filter(Boolean);
+}
+
+export function predecessorGuardianContentMatches(
+  script: string,
+  plistText: string,
+  candidate: PredecessorGuardianCandidate,
+  options: Pick<InstallOptions, "appPath" | "targetHome" | "targetUid" | "targetUser">
+): boolean {
+  let plist: Record<string, unknown>;
+  try {
+    plist = parsePlist(plistText) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  const args = Array.isArray(plist.ProgramArguments) ? plist.ProgramArguments : [];
+  const executablePath = join(options.appPath, "Contents", "MacOS", "Vigil");
+  const exactMainCommand = `${executablePath} --vigil-background ${SYSTEM_GUARDIAN_SAFETY_ARG}`;
+  const updaterDirectory = join(options.targetHome, "Library", "Application Support", "Vigil", "updater");
+  const userDataDirectory = dirname(updaterDirectory);
+  const isPrevious = candidate.label === PREVIOUS_SYSTEM_GUARDIAN_LABEL
+    && candidate.plistPath === PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH
+    && candidate.scriptPath === PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH;
+  const isLegacy = candidate.label === LEGACY_SYSTEM_GUARDIAN_LABEL
+    && candidate.plistPath === LEGACY_SYSTEM_GUARDIAN_PLIST_PATH
+    && candidate.scriptPath === LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH;
+  const recoveryAuthorizationPath = isPrevious
+    ? PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH
+    : LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH;
+  const recoveryAuthorizationKind = isPrevious
+    ? PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND
+    : LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND;
+  const expectedPlistKeys = [
+    "KeepAlive",
+    "Label",
+    "ProcessType",
+    "ProgramArguments",
+    "RunAtLoad",
+    "StandardErrorPath",
+    "StandardOutPath",
+    "ThrottleInterval"
+  ];
+  const guardianLogPath = join(SYSTEM_GUARDIAN_ROOT, "guardian.log");
+  if ((!isPrevious && !isLegacy)
+    || (isPrevious && guardianScriptRevision(script) !== PREVIOUS_SYSTEM_GUARDIAN_REVISION)
+    || (isLegacy && guardianScriptRevision(script) !== null)) return false;
+  if (JSON.stringify(Object.keys(plist).sort()) !== JSON.stringify(expectedPlistKeys)
+    || plist.Label !== candidate.label
+    || plist.KeepAlive !== true
+    || plist.RunAtLoad !== true
+    || plist.ProcessType !== "Background"
+    || plist.ThrottleInterval !== 5
+    || plist.StandardErrorPath !== guardianLogPath
+    || plist.StandardOutPath !== guardianLogPath
+    || args.length !== 2
+    || args[0] !== candidate.scriptPath
+    || args[1] !== SYSTEM_GUARDIAN_SAFETY_ARG
+    || !scriptAssignmentMatches(script, "target_uid", String(options.targetUid))
+    || !scriptAssignmentMatches(script, "target_user", shellSingleQuote(options.targetUser))
+    || !scriptAssignmentMatches(script, "target_home", shellSingleQuote(options.targetHome))
+    || !scriptAssignmentMatches(script, "app_path", shellSingleQuote(options.appPath))
+    || !scriptAssignmentMatches(script, "executable_path", shellSingleQuote(executablePath))
+    || !scriptAssignmentMatches(
+      script,
+      "process_pattern",
+      shellSingleQuote(`^${regexEscape(executablePath)}($| )`)
+    )
+    || !scriptAssignmentMatches(
+      script,
+      "supervisor_service",
+      shellSingleQuote(`gui/${options.targetUid}/tech.caseline.vigil.supervisor`)
+    )
+    || !scriptAssignmentMatches(script, "update_lock_path", shellSingleQuote(join(updaterDirectory, "update.lock")))
+    || !scriptAssignmentMatches(
+      script,
+      "maintenance_marker_path",
+      shellSingleQuote(join(updaterDirectory, SYSTEM_GUARDIAN_MAINTENANCE_FILENAME))
+    )
+    || !scriptAssignmentMatches(script, "root_authorization_path", shellSingleQuote(SYSTEM_GUARDIAN_AUTHORIZATION_PATH))
+    || !scriptAssignmentMatches(script, "root_recovery_authorization_path", shellSingleQuote(recoveryAuthorizationPath))
+    || !scriptAssignmentMatches(
+      script,
+      "global_update_manifest_path",
+      shellSingleQuote(join(updaterDirectory, UPDATE_RECOVERY_MANIFEST_FILENAME))
+    )
+    || !scriptAssignmentMatches(
+      script,
+      "global_update_policy_path",
+      shellSingleQuote(join(updaterDirectory, UPDATE_RECOVERY_POLICY_FILENAME))
+    )
+    || (isPrevious
+      && !scriptAssignmentMatches(script, "exact_main_command", shellSingleQuote(exactMainCommand)))
+    || (isPrevious
+      && !scriptAssignmentMatches(
+        script,
+        "bootstrap_authorization_path",
+        shellSingleQuote(UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH)
+      ))
+    || (isPrevious
+      && !scriptAssignmentMatches(
+        script,
+        "bootstrap_claim_path",
+        shellSingleQuote(PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH)
+      ))
+    || (isPrevious
+      && !scriptAssignmentMatches(
+        script,
+        "bootstrap_worker_request_path",
+        shellSingleQuote(join(updaterDirectory, UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME))
+      ))
+    || (isPrevious
+      && !scriptAssignmentMatches(
+        script,
+        "exact_main_process_pattern",
+        shellSingleQuote(`^${regexEscape(exactMainCommand)}$`)
+      ))
+    || (isPrevious
+      && !scriptAssignmentMatches(
+        script,
+        "packaged_updater_script_path",
+        shellSingleQuote(join(options.appPath, "Contents", "Resources", "app.asar.unpacked", "dist", "runtime", "scripts", "update-packaged-app.mjs"))
+      ))
+    || (isPrevious
+      && !scriptAssignmentMatches(
+        script,
+        "local_updater_script_path",
+        shellSingleQuote(join(options.appPath, "Contents", "Resources", "app.asar.unpacked", "dist", "runtime", "scripts", "launch-local-app.mjs"))
+      ))
+    || (isPrevious && !scriptAssignmentMatches(script, "user_data_dir", shellSingleQuote(userDataDirectory)))
+    || (isPrevious
+      && !scriptAssignmentMatches(script, "update_status_path", shellSingleQuote(join(updaterDirectory, "update-status.json"))))
+    || (isPrevious
+      && !scriptAssignmentMatches(script, "update_log_path", shellSingleQuote(join(updaterDirectory, "update.log"))))
+    || !script.includes("# VIGIL SAFETY BOUNDARY:")
+    || !script.includes(recoveryAuthorizationKind)
+    || predecessorGuardianProgramFingerprint(script, isPrevious) !== (isPrevious
+      ? PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256
+      : LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256)
+    || !predecessorAvailabilityProgramMatches(script)) return false;
+  return true;
+}
+
+export function predecessorGuardianProgramFingerprint(script: string, previous: boolean): string {
+  const assignmentNames = previous
+    ? PREVIOUS_GUARDIAN_DYNAMIC_ASSIGNMENTS
+    : COMMON_PREDECESSOR_DYNAMIC_ASSIGNMENTS;
+  const lines = script.split("\n");
+  for (const name of assignmentNames) {
+    const indexes = lines.flatMap((line, index) => line.startsWith(`${name}=`) ? [index] : []);
+    if (indexes.length !== 1) return "";
+    lines[indexes[0]] = `${name}=<vigil-config>`;
+  }
+  return sha256(Buffer.from(lines.join("\n"), "utf8"));
+}
+
+export function predecessorAvailabilityProgramMatches(script: string): boolean {
+  const reopen = shellFunctionSection(script, "reopen_vigil");
+  const authorize = shellFunctionSection(script, "authorize_maintenance_request");
+  const writeAuthorization = shellFunctionSection(script, "write_maintenance_authorization");
+  const active = shellFunctionSection(script, "authenticated_maintenance_active");
+  const attestRecovery = shellFunctionSection(script, "attest_update_recovery");
+  const rootRecoveryPresent = shellFunctionSection(script, "root_recovery_attestation_present");
+  const attestedGeneration = shellFunctionSection(script, "attested_canonical_app_generation");
+  const authorizationWriter = authorize.includes('/bin/mv -f "$authorization_tmp" "$root_authorization_path"')
+    ? authorize
+    : writeAuthorization;
+  const loopStart = script.lastIndexOf("\nwhile true; do\n");
+  const loop = loopStart >= 0 ? script.slice(loopStart) : "";
+  const beforeLoop = loopStart >= 0 ? script.slice(0, loopStart) : "";
+  return guardianTopLevelControlFlowSafe(script)
+    && !/^\s*(?:break|continue|exit)(?:\s|$)/mu.test(script)
+    && /\n\}\s*$/u.test(beforeLoop)
+    && /^reopen_vigil\(\) \{\n\s*\/bin\/launchctl asuser "\$target_uid"[\s\S]*?\/usr\/bin\/sudo -H -u "\$target_user"[\s\S]*?\/usr\/bin\/open -gn "\$app_path" --args --vigil-background --vigil-safety-boundary-do-not-terminate-or-bootout\n\}\s*$/u.test(reopen)
+    && guardedMaintenanceRequestMatches(authorize)
+    && rootAuthorizationWriterMatches(authorizationWriter)
+    && authenticatedMaintenanceProgramMatches(active)
+    && /^attest_update_recovery\(\) \{\n\s*global_update_manifest_present \|\| \{ clear_recovery_attestation; return \$\?; \}[\s\S]*?private_target_file "\$global_update_manifest_path" 600 \|\| return 1[\s\S]*?bounded_root_copy "\$global_update_manifest_path" "\$manifest_snapshot" \|\| return 1[\s\S]*?attest_update_recovery_snapshot "\$manifest_snapshot"[\s\S]*?\/bin\/rm -f "\$manifest_snapshot"[\s\S]*?return "\$attestation_status"\n\}\s*$/u.test(attestRecovery)
+    && /^root_recovery_attestation_present\(\) \{\n\s*\[\[ -f "\$root_recovery_authorization_path" && ! -L "\$root_recovery_authorization_path" \]\] \|\| return 1[\s\S]*?stat -f '%u' "\$root_recovery_authorization_path"[\s\S]*?== "0" \]\] \|\| return 1[\s\S]*?stat -f '%Lp' "\$root_recovery_authorization_path"[\s\S]*?== "644" \]\] \|\| return 1[\s\S]*?kind\)" == "vigil-root-update-recovery-authorization-v[23]" \]\] \|\| return 1[\s\S]*?recoveryManifestPath\)" == "\$global_update_manifest_path" \]\] \|\| return 1[\s\S]*?recoveryPolicyPath\)" == "\$global_update_policy_path" \]\] \|\| return 1[\s\S]*?recoveryAppPath\)" == "\$app_path" \]\] \|\| return 1[\s\S]*?appInitialPresent\)" == "true" \]\]\n\}\s*$/u.test(rootRecoveryPresent)
+    && /^attested_canonical_app_generation\(\) \{\n\s*root_recovery_attestation_present \|\| return 1[\s\S]*?\[\[ -e "\$app_path" && ! -L "\$app_path" \]\] \|\| return 1[\s\S]*?stat -f '%d' "\$app_path"[\s\S]*?stat -f '%i' "\$app_path"[\s\S]*?for generation in Initial Target; do[\s\S]*?expected_dev[\s\S]*?expected_ino[\s\S]*?observed_dev[\s\S]*?observed_ino[\s\S]*?expected_commit[\s\S]*?expected_fingerprint[\s\S]*?app_content_matches "\$app_path"[\s\S]*?\|\| continue[\s\S]*?return 0[\s\S]*?done\s*return 1\n\}\s*$/u.test(attestedGeneration)
+    && availabilityLoopMatches(loop);
+}
+
+export function guardedMaintenanceRequestMatches(authorize: string): boolean {
+  return /^authorize_maintenance_request\(\) \{\n\s*local now="\$1"\s*\n\s*\[\[ -f "\$maintenance_marker_path" && ! -L "\$maintenance_marker_path" \]\] \|\| return 1/u.test(authorize)
+    && /\[\[ -f "\$update_lock_path" && ! -L "\$update_lock_path" \]\] \|\| return 1/u.test(authorize)
+    && /stat -f '%u' "\$maintenance_marker_path"[\s\S]*?== "\$target_uid" \]\] \|\| return 1/u.test(authorize)
+    && /stat -f '%u' "\$update_lock_path"[\s\S]*?== "\$target_uid" \]\] \|\| return 1/u.test(authorize)
+    && /marker_kind[\s\S]*?marker_token[\s\S]*?marker_pid[\s\S]*?marker_lock_path[\s\S]*?marker_expires[\s\S]*?lock_token[\s\S]*?lock_pid/u.test(authorize)
+    && /marker_kind" == "vigil-maintenance-request-v2" \]\] \|\| return 1/u.test(authorize)
+    && /marker_token" == "\$lock_token" \]\] \|\| return 1/u.test(authorize)
+    && /marker_pid" == <-> && "\$marker_pid" == "\$lock_pid" \]\] \|\| return 1/u.test(authorize)
+    && /marker_lock_path" == "\$update_lock_path" \]\] \|\| return 1/u.test(authorize)
+    && /marker_expires >= now/u.test(authorize);
+}
+
+export function rootAuthorizationWriterMatches(writer: string): boolean {
+  return /authorization_tmp/u.test(writer)
+    && /\/usr\/bin\/plutil -create xml1 "\$authorization_tmp" \|\| return 1/u.test(writer)
+    && /\/usr\/bin\/plutil -insert kind -string "vigil-root-maintenance-authorization-v2" "\$authorization_tmp" \|\| return 1/u.test(writer)
+    && /\/usr\/bin\/plutil -insert token -string "\$marker_token" "\$authorization_tmp" \|\| return 1/u.test(writer)
+    && /\/usr\/bin\/plutil -insert pid -integer "\$marker_pid" "\$authorization_tmp" \|\| return 1/u.test(writer)
+    && /\/usr\/bin\/plutil -insert lockPath -string "\$update_lock_path" "\$authorization_tmp" \|\| return 1/u.test(writer)
+    && /\/usr\/bin\/plutil -insert updaterExecutable -string "\$owner_executable" "\$authorization_tmp" \|\| return 1/u.test(writer)
+    && /\/usr\/bin\/plutil -insert updaterStarted -string "\$owner_started" "\$authorization_tmp" \|\| return 1/u.test(writer)
+    && /\/usr\/bin\/plutil -insert expiresAtEpoch -integer [^\n]+ "\$authorization_tmp" \|\| return 1/u.test(writer)
+    && /\/usr\/sbin\/chown 0:0 "\$authorization_tmp" \|\| return 1/u.test(writer)
+    && /\/bin\/chmod 0644 "\$authorization_tmp" \|\| return 1/u.test(writer)
+    && /\/bin\/mv -f "\$authorization_tmp" "\$root_authorization_path"\n\}\s*$/u.test(writer);
+}
+
+export function authenticatedMaintenanceProgramMatches(active: string): boolean {
+  const lines = active.split("\n");
+  const standaloneReturns = lines.flatMap((line, index) => /^\s*return\b/u.test(line) ? [index] : []);
+  const finalSuccess = standaloneReturns.at(-1);
+  const safeStandaloneReturns = finalSuccess !== undefined
+    && lines[finalSuccess].trim() === "return 0"
+    && standaloneReturns.slice(0, -1).every((index) =>
+      lines[index].trim() === "return $?"
+        && (lines[index - 1] || "").includes("process_identity_matches")
+    );
+  const guardedOwner = /owner_command" == "\$authorization_command" \]\] \|\| return 1[\s\S]*?process_identity_matches "\$marker_pid"[\s\S]*?\|\| return 1/u.test(active)
+    || /owner_command" == \*"--lock-path \$update_lock_path"\* \]\] \|\| return 1[\s\S]*?owner_command" == \*"--lock-token \$marker_token"\* \]\] \|\| return 1/u.test(active);
+  return /^authenticated_maintenance_active\(\) \{\n\s*local now="\$1"\s*\n\s*\[\[ -f "\$maintenance_marker_path" && ! -L "\$maintenance_marker_path" \]\] \|\| return 1/u.test(active)
+    && safeStandaloneReturns
+    && /\n\s*return 0\n\}\s*$/u.test(active)
+    && !/^\s*(?::|true)(?:\s|$)/mu.test(active)
+    && /\[\[ -f "\$maintenance_marker_path" && ! -L "\$maintenance_marker_path" \]\] \|\| return 1/u.test(active)
+    && /\[\[ -f "\$update_lock_path" && ! -L "\$update_lock_path" \]\] \|\| return 1/u.test(active)
+    && /\[\[ -f "\$root_authorization_path" && ! -L "\$root_authorization_path" \]\] \|\| return 1/u.test(active)
+    && /stat -f '%u' "\$maintenance_marker_path"[\s\S]*?== "\$target_uid" \]\] \|\| return 1/u.test(active)
+    && /stat -f '%u' "\$update_lock_path"[\s\S]*?== "\$target_uid" \]\] \|\| return 1/u.test(active)
+    && /stat -f '%u' "\$root_authorization_path"[\s\S]*?== "0" \]\] \|\| return 1/u.test(active)
+    && /marker_kind[\s\S]*?marker_token[\s\S]*?marker_pid[\s\S]*?marker_lock_path[\s\S]*?marker_expires[\s\S]*?lock_token[\s\S]*?lock_pid[\s\S]*?authorization_kind[\s\S]*?authorization_token[\s\S]*?authorization_pid[\s\S]*?authorization_lock_path[\s\S]*?authorization_executable[\s\S]*?authorization_started[\s\S]*?authorization_expires/u.test(active)
+    && /marker_kind" == "vigil-maintenance-request-v2" \]\] \|\| return 1/u.test(active)
+    && /marker_token" == "\$lock_token" \]\] \|\| return 1/u.test(active)
+    && /marker_pid" == <-> && "\$marker_pid" == "\$lock_pid" \]\] \|\| return 1/u.test(active)
+    && /marker_lock_path" == "\$update_lock_path" \]\] \|\| return 1/u.test(active)
+    && /authorization_kind" == "vigil-root-maintenance-authorization-v2" \]\] \|\| return 1/u.test(active)
+    && /authorization_token" == "\$marker_token" \]\] \|\| return 1/u.test(active)
+    && /authorization_pid" == "\$marker_pid" \]\] \|\| return 1/u.test(active)
+    && /authorization_lock_path" == "\$update_lock_path" \]\] \|\| return 1/u.test(active)
+    && /authorization_expires >= now/u.test(active)
+    && /owner_uid" == "\$target_uid" \]\] \|\| return 1/u.test(active)
+    && /owner_executable" == "\$authorization_executable" \]\] \|\| return 1/u.test(active)
+    && /owner_started" == "\$authorization_started" \]\] \|\| return 1/u.test(active)
+    && guardedOwner;
+}
+
+function guardianTopLevelControlFlowSafe(script: string): boolean {
+  let insideFunction = false;
+  for (const line of script.split("\n")) {
+    if (!insideFunction && /^[a-z_][a-z0-9_]*\(\) \{$/u.test(line)) {
+      insideFunction = true;
+      continue;
+    }
+    if (insideFunction) {
+      if (line === "}") insideFunction = false;
+      continue;
+    }
+    if (/^\s*(?:break|continue|exit|return)(?:\s|$)/u.test(line)) return false;
+  }
+  return !insideFunction;
+}
+
+export function availabilityLoopMatches(loop: string): boolean {
+  return /^\nwhile true; do\n\s*now=\$\(\/bin\/date \+%s\)\s*\n\s*app_running=false/u.test(loop)
+    && /app_running=false\s*supervisor_loaded=false\s*if \/usr\/bin\/pgrep -U "\$target_uid" -f "\$process_pattern"[^\n]*; then\s*app_running=true\s*offline_since=0\s*elif \[\[ "\$offline_since" -eq 0 \]\]; then\s*offline_since="\$now"\s*fi/u.test(loop)
+    && /if \/bin\/launchctl print "\$supervisor_service"[^\n]*; then\s*supervisor_loaded=true\s*fi/u.test(loop)
+    && /authorize_maintenance_request "\$now"[^\n]*\s*maintenance_active=false\s*if authenticated_maintenance_active "\$now"; then\s*maintenance_active=true\s*offline_since=0\s*if ! attest_update_recovery; then[\s\S]*?fi\s*elif ! global_update_manifest_present; then[\s\S]*?clear_recovery_attestation[^\n]*\s*fi/u.test(loop)
+    && /recovery_waiting=false\s*if \[\[ "\$maintenance_active" == false \]\] && global_update_manifest_present && root_recovery_attestation_present; then[\s\S]*?attested_canonical_app_generation \|\| recovery_waiting=true\s*fi/u.test(loop)
+    && /if \[\[ "\$recovery_waiting" == true \]\]; then\s*:[^\n]*\s*elif \[\[ "\$maintenance_active" == false && "\$supervisor_loaded" == false \]\]; then\s*reopen_vigil\s*elif \[\[ "\$maintenance_active" == false && "\$app_running" == false \]\] && \(\( now - offline_since >= 15 \)\); then[\s\S]*?reopen_vigil\s*offline_since="\$now"\s*fi\s*\/bin\/sleep 2\s*done\s*$/u.test(loop);
+}
+
+export function shellFunctionSection(script: string, name: string): string {
+  const marker = `\n${name}() {\n`;
+  const start = script.indexOf(marker);
+  if (start < 0) return "";
+  const end = script.indexOf("\n}\n", start + marker.length);
+  return end < 0 ? "" : script.slice(start + 1, end + 3);
+}
+
+function regexEscape(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+}
+
+async function readPinnedRootOwnedFile(
+  path: string,
+  maxBytes: number,
+  expectedMode: number
+): Promise<{ bytes: Buffer; identity: RootOwnedFileIdentity }> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()
+      || before.uid !== 0
+      || (before.mode & 0o022) !== 0
+      || (before.mode & 0o777) !== expectedMode
+      || before.size > maxBytes) {
+      throw new Error(`Vigil refused an unsafe predecessor guardian file at ${path}.`);
+    }
+    const bytes = await handle.readFile();
+    const [after, pathname] = await Promise.all([handle.stat(), lstat(path)]);
+    if (!pathname.isFile()
+      || pathname.isSymbolicLink()
+      || pathname.uid !== 0
+      || (pathname.mode & 0o022) !== 0
+      || (pathname.mode & 0o777) !== expectedMode
+      || before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.size !== after.size
+      || before.birthtimeMs !== after.birthtimeMs
+      || before.ctimeMs !== after.ctimeMs
+      || before.mtimeMs !== after.mtimeMs
+      || after.dev !== pathname.dev
+      || after.ino !== pathname.ino
+      || after.size !== pathname.size
+      || after.birthtimeMs !== pathname.birthtimeMs
+      || after.ctimeMs !== pathname.ctimeMs
+      || after.mtimeMs !== pathname.mtimeMs
+      || bytes.length !== after.size) {
+      throw new Error(`Vigil refused a changing predecessor guardian file at ${path}.`);
+    }
+    return {
+      bytes,
+      identity: {
+        birthtimeMs: after.birthtimeMs,
+        ctimeMs: after.ctimeMs,
+        dev: after.dev,
+        ino: after.ino,
+        mode: after.mode & 0o777,
+        mtimeMs: after.mtimeMs,
+        sha256: sha256(bytes),
+        size: after.size
+      }
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+function sameRootOwnedFileIdentity(left: RootOwnedFileIdentity, right: RootOwnedFileIdentity): boolean {
+  return left.birthtimeMs === right.birthtimeMs
+    && left.ctimeMs === right.ctimeMs
+    && left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.mtimeMs === right.mtimeMs
+    && left.sha256 === right.sha256
+    && left.size === right.size;
+}
+
+function launchctlFieldMatches(output: string, field: string, expected: string): boolean {
+  return output.split("\n").filter((line) => line.trim() === `${field} = ${expected}`).length === 1;
+}
+
+function scriptAssignmentMatches(script: string, name: string, expected: string): boolean {
+  return script.split("\n").filter((line) => line === `${name}=${expected}`).length === 1;
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
 async function assertLoadedGuardianTopology(serviceOutput: string, expectedPlist: string): Promise<void> {

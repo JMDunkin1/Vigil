@@ -17,6 +17,7 @@ import { constants } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { isDirectRun } from "../src/directRun.js";
+import { SYSTEM_GUARDIAN_LABEL } from "../src/systemGuardian.js";
 import { macSigningTimestamp, resolveMacSigningIdentity } from "./mac-signing-identity.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -436,8 +437,8 @@ function wrapperSource(kind: UpdateProtocolBridgeWrapperKind, payloadTreeSha256:
     `const { installSystemGuardian } = await import("${prefix}install-system-guardian.mjs");`,
     "await installSystemGuardian();",
     "console.log(process.argv.includes(\"--json\")",
-    "  ? JSON.stringify({ ok: true, label: \"tech.caseline.vigil.guardian.v3\", running: true })",
-    "  : \"Installed and started Vigil's v3 system guardian.\");",
+    `  ? JSON.stringify({ ok: true, label: ${JSON.stringify(SYSTEM_GUARDIAN_LABEL)}, running: true })`,
+    "  : \"Installed and started Vigil's v4 system guardian.\");",
     ""
   ].join("\n");
 }

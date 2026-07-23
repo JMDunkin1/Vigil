@@ -629,7 +629,7 @@ async function readPinnedRootAuthorization(path: string): Promise<{ bytes: Buffe
 async function assertGuardianReady(): Promise<void> {
   const readiness = await guardianMaintenanceReadiness();
   if (!readiness.ready || !readiness.guardianInstalled || readiness.reason !== "ready") {
-    throw new Error(readiness.message || "Vigil's v3 system guardian is not ready for the protocol bridge.");
+    throw new Error(readiness.message || "Vigil's v4 system guardian is not ready for the protocol bridge.");
   }
 }
 

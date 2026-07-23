@@ -7,7 +7,11 @@ import { fileURLToPath } from "node:url";
 import { isDirectRun } from "../src/directRun.js";
 import { acquireUpdaterLock } from "../app/updater.js";
 import { setupSystemGuardian } from "../src/guardianSetup.js";
-import { defaultUpdaterLockPath, waitForBootstrapWorkerAuthorization } from "../src/updateMaintenance.js";
+import {
+  PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
+  defaultUpdaterLockPath,
+  waitForBootstrapWorkerAuthorization
+} from "../src/updateMaintenance.js";
 import type { UpdateProtocolBootstrapResult } from "./bootstrap-update-protocol.mjs";
 import { updateProtocolBridgePayloadModulePath } from "./package-update-protocol-bridge.mjs";
 
@@ -170,7 +174,7 @@ async function runBootstrapViaInstalledRelay(
   try {
     const workerPid = await handshake;
     if (!relay.pid) throw new Error("Vigil's bootstrap relay process identity is unavailable.");
-    await waitForBootstrapWorkerAuthorization({
+    const authorizationRequest = {
       bootstrapToken: request.bootstrapToken,
       lockPath: lock.path,
       lockToken: lock.token,
@@ -179,7 +183,16 @@ async function runBootstrapViaInstalledRelay(
       expectedUpdateCommit: request.expectedUpdateCommit,
       workerPid,
       relayPid: relay.pid
-    }, 30_000);
+    };
+    await Promise.all([
+      waitForBootstrapWorkerAuthorization(authorizationRequest, 30_000),
+      waitForBootstrapWorkerAuthorization(
+        authorizationRequest,
+        30_000,
+        0,
+        PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH
+      )
+    ]);
     await lock.transferTo(workerPid);
   } catch (error) {
     transferError = error;

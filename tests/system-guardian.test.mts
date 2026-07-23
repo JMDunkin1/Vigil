@@ -2,14 +2,27 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, lstat, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { SYSTEM_GUARDIAN_LABEL, SYSTEM_GUARDIAN_SAFETY_ARG, systemGuardianPlist, systemGuardianScript } from "../src/systemGuardian.js";
+import {
+  SYSTEM_GUARDIAN_LABEL,
+  SYSTEM_GUARDIAN_PLIST_PATH as GENERATED_SYSTEM_GUARDIAN_PLIST_PATH,
+  SYSTEM_GUARDIAN_SAFETY_ARG,
+  SYSTEM_GUARDIAN_SCRIPT_PATH as GENERATED_SYSTEM_GUARDIAN_SCRIPT_PATH,
+  systemGuardianPlist,
+  systemGuardianScript
+} from "../src/systemGuardian.js";
 import { toPlist } from "../src/plist.js";
 import {
+  LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256,
+  PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256,
   SYSTEM_GUARDIAN_STABILITY_MS,
-  observeGuardianRunningStability
+  observeGuardianRunningStability,
+  predecessorAvailabilityProgramMatches,
+  predecessorGuardianContentMatches,
+  predecessorGuardianProgramFingerprint,
+  predecessorLaunchctlTopologyMatches
 } from "../scripts/install-system-guardian.mjs";
 import {
   SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
@@ -19,13 +32,21 @@ import {
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
   SYSTEM_GUARDIAN_SCRIPT_PATH,
+  PREVIOUS_SYSTEM_GUARDIAN_LABEL,
+  PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH,
+  PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
+  PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+  PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH,
+  PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
   LEGACY_SYSTEM_GUARDIAN_LABEL,
   LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
   LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
+  LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
   LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH,
   SYSTEM_GUARDIAN_REVISION,
   SYSTEM_GUARDIAN_REVISION_MARKER,
   SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX,
+  UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
   UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND,
   assertGuardianMaintenanceActive,
   beginGuardianMaintenance,
@@ -43,28 +64,435 @@ import {
 const sourceRoot = existsSync(join(process.cwd(), "scripts", "install-system-guardian.mts"))
   ? process.cwd()
   : resolve(process.cwd(), "..", "..");
-const [installerSource, packagedUpdaterSource, localUpdaterSource] = await Promise.all([
+const [installerSource, packagedUpdaterSource, localUpdaterSource, maintenanceSource, bridgePackagerSource] = await Promise.all([
   readFile(join(sourceRoot, "scripts", "install-system-guardian.mts"), "utf8"),
   readFile(join(sourceRoot, "scripts", "update-packaged-app.mts"), "utf8"),
-  readFile(join(sourceRoot, "scripts", "launch-local-app.mts"), "utf8")
+  readFile(join(sourceRoot, "scripts", "launch-local-app.mts"), "utf8"),
+  readFile(join(sourceRoot, "src", "updateMaintenance.ts"), "utf8"),
+  readFile(join(sourceRoot, "scripts", "package-update-protocol-bridge.mts"), "utf8")
 ]);
 
 assert.equal(SYSTEM_GUARDIAN_LABEL, UPDATE_MAINTENANCE_GUARDIAN_LABEL,
-  "the generator and readiness controller must agree on the parallel v3 label");
+  "the generator and readiness controller must agree on the parallel v4 label");
+assert.equal(GENERATED_SYSTEM_GUARDIAN_SCRIPT_PATH, SYSTEM_GUARDIAN_SCRIPT_PATH,
+  "the generator and readiness controller must agree on the parallel v4 script path");
+assert.equal(GENERATED_SYSTEM_GUARDIAN_PLIST_PATH, SYSTEM_GUARDIAN_PLIST_PATH,
+  "the generator and readiness controller must agree on the parallel v4 launchd path");
+assert.match(bridgePackagerSource, /import \{ SYSTEM_GUARDIAN_LABEL \} from "\.\.\/src\/systemGuardian\.js"/u,
+  "the signed bridge installer wrapper must use the canonical v4 service label");
+assert.notEqual(SYSTEM_GUARDIAN_LABEL, PREVIOUS_SYSTEM_GUARDIAN_LABEL,
+  "the v4 guardian must be added without replacing the loaded v3 guardian");
 assert.notEqual(SYSTEM_GUARDIAN_LABEL, LEGACY_SYSTEM_GUARDIAN_LABEL,
   "parallel setup must use a distinct launchd label and leave the legacy job untouched");
+assert.notEqual(SYSTEM_GUARDIAN_SCRIPT_PATH, PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH,
+  "parallel v4 setup must never replace the loaded v3 guardian script");
 assert.notEqual(SYSTEM_GUARDIAN_SCRIPT_PATH, LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH,
   "parallel setup must never replace the legacy guardian script");
+assert.notEqual(SYSTEM_GUARDIAN_PLIST_PATH, PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH,
+  "parallel v4 setup must never replace the loaded v3 launchd plist");
 assert.notEqual(SYSTEM_GUARDIAN_PLIST_PATH, LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
   "parallel setup must never replace the legacy launchd plist");
+assert.notEqual(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH, PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
+  "the v4 guardian must isolate recovery authorization from the loaded v3 guardian");
 assert.notEqual(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH, LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
   "the parallel guardian must use recovery authorization isolated from the legacy job");
+assert.notEqual(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND, PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+  "v4 recovery evidence must retain a distinct schema identity from v3");
+assert.notEqual(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND, LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+  "v4 recovery evidence must retain a distinct schema identity from the legacy guardian");
+assert.notEqual(UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH, PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
+  "the v4 guardian must isolate its strict bootstrap claim from the loaded v3 writer");
 assert.equal(guardianServiceAllowsParallelSetup({ loaded: true, running: false }, true), false,
-  "a loaded-but-not-running v3 service must never be replaced or restarted by setup");
+  "a loaded-but-not-running v4 service must never be replaced or restarted by setup");
 assert.equal(guardianServiceAllowsParallelSetup({ loaded: false, running: false }, true), true,
-  "an absent v3 service may be added alongside an independently safe legacy guardian");
+  "an absent v4 service may be added alongside an independently safe predecessor guardian");
 assert.equal(guardianServiceAllowsParallelSetup({ loaded: false, running: false }, false), false,
-  "an absent v3 service is insufficient without a safe guardian preserving availability during setup");
+  "an absent v4 service is insufficient without a safe guardian preserving availability during setup");
+assert.match(maintenanceSource, /legacyGuardianSupportsParallelMigration[\s\S]*?inspectLiveGuardianService\(guardian\.label\)[\s\S]*?service\.loaded && service\.running/u,
+  "parallel v4 setup must prove an exact predecessor guardian is still loaded and running");
+
+const predecessorOptions = {
+  appPath: "/Applications/Vigil.app",
+  targetHome: "/Users/test-user",
+  targetUid: 501,
+  targetUser: "test-user"
+};
+const legacyPredecessorScript = `#!/bin/zsh
+# VIGIL SAFETY BOUNDARY: keep enforcement online
+set -u
+target_uid=501
+target_user='test-user'
+target_home='/Users/test-user'
+app_path='/Applications/Vigil.app'
+executable_path='/Applications/Vigil.app/Contents/MacOS/Vigil'
+process_pattern='^/Applications/Vigil\\.app/Contents/MacOS/Vigil($| )'
+supervisor_service='gui/501/tech.caseline.vigil.supervisor'
+update_lock_path='/Users/test-user/Library/Application Support/Vigil/updater/update.lock'
+maintenance_marker_path='/Users/test-user/Library/Application Support/Vigil/updater/guardian-maintenance.json'
+root_authorization_path='/Library/Application Support/Vigil/System Guardian/maintenance-authorization.plist'
+root_recovery_authorization_path='${LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH}'
+global_update_manifest_path='/Users/test-user/Library/Application Support/Vigil/updater/update-recovery.json'
+global_update_policy_path='/Users/test-user/Library/Application Support/Vigil/updater/update-recovery-policy.json'
+offline_since=0
+# ${LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}
+reopen_vigil() {
+  /bin/launchctl asuser "$target_uid" /usr/bin/sudo -H -u "$target_user" /usr/bin/open -gn "$app_path" --args --vigil-background ${SYSTEM_GUARDIAN_SAFETY_ARG}
+}
+authorize_maintenance_request() {
+  local now="$1"
+  [[ -f "$maintenance_marker_path" && ! -L "$maintenance_marker_path" ]] || return 1
+  [[ -f "$update_lock_path" && ! -L "$update_lock_path" ]] || return 1
+  [[ "$(/usr/bin/stat -f '%u' "$maintenance_marker_path")" == "$target_uid" ]] || return 1
+  [[ "$(/usr/bin/stat -f '%u' "$update_lock_path")" == "$target_uid" ]] || return 1
+  local marker_kind="$(json_value "$maintenance_marker_path" kind)"
+  local marker_token="$(json_value "$maintenance_marker_path" token)"
+  local marker_pid="$(json_value "$maintenance_marker_path" pid)"
+  local marker_lock_path="$(json_value "$maintenance_marker_path" lockPath)"
+  local marker_expires="$(json_value "$maintenance_marker_path" expiresAtEpoch)"
+  local lock_token="$(json_value "$update_lock_path" token)"
+  local lock_pid="$(json_value "$update_lock_path" pid)"
+  [[ "$marker_kind" == "vigil-maintenance-request-v2" ]] || return 1
+  [[ -n "$marker_token" && "$marker_token" == "$lock_token" ]] || return 1
+  [[ "$marker_pid" == <-> && "$marker_pid" == "$lock_pid" ]] || return 1
+  [[ "$marker_lock_path" == "$update_lock_path" ]] || return 1
+  (( marker_expires >= now )) || return 1
+  local owner_executable="$executable_path"
+  local owner_started="$(/bin/ps -p "$marker_pid" -o lstart=)"
+  local authorization_tmp="${SYSTEM_GUARDIAN_AUTHORIZATION_PATH}.tmp.$$"
+  /usr/bin/plutil -create xml1 "$authorization_tmp" || return 1
+  /usr/bin/plutil -insert kind -string "vigil-root-maintenance-authorization-v2" "$authorization_tmp" || return 1
+  /usr/bin/plutil -insert token -string "$marker_token" "$authorization_tmp" || return 1
+  /usr/bin/plutil -insert pid -integer "$marker_pid" "$authorization_tmp" || return 1
+  /usr/bin/plutil -insert lockPath -string "$update_lock_path" "$authorization_tmp" || return 1
+  /usr/bin/plutil -insert updaterExecutable -string "$owner_executable" "$authorization_tmp" || return 1
+  /usr/bin/plutil -insert updaterStarted -string "$owner_started" "$authorization_tmp" || return 1
+  /usr/bin/plutil -insert expiresAtEpoch -integer "$marker_expires" "$authorization_tmp" || return 1
+  /usr/sbin/chown 0:0 "$authorization_tmp" || return 1
+  /bin/chmod 0644 "$authorization_tmp" || return 1
+  /bin/mv -f "$authorization_tmp" "$root_authorization_path"
+}
+authenticated_maintenance_active() {
+  local now="$1"
+  [[ -f "$maintenance_marker_path" && ! -L "$maintenance_marker_path" ]] || return 1
+  [[ -f "$update_lock_path" && ! -L "$update_lock_path" ]] || return 1
+  [[ -f "$root_authorization_path" && ! -L "$root_authorization_path" ]] || return 1
+  [[ "$(/usr/bin/stat -f '%u' "$maintenance_marker_path")" == "$target_uid" ]] || return 1
+  [[ "$(/usr/bin/stat -f '%u' "$update_lock_path")" == "$target_uid" ]] || return 1
+  [[ "$(/usr/bin/stat -f '%u' "$root_authorization_path")" == "0" ]] || return 1
+  local marker_kind="$(json_value "$maintenance_marker_path" kind)"
+  local marker_token="$(json_value "$maintenance_marker_path" token)"
+  local marker_pid="$(json_value "$maintenance_marker_path" pid)"
+  local marker_lock_path="$(json_value "$maintenance_marker_path" lockPath)"
+  local marker_expires="$(json_value "$maintenance_marker_path" expiresAtEpoch)"
+  local lock_token="$(json_value "$update_lock_path" token)"
+  local lock_pid="$(json_value "$update_lock_path" pid)"
+  local authorization_kind="$(json_value "$root_authorization_path" kind)"
+  local authorization_token="$(json_value "$root_authorization_path" token)"
+  local authorization_pid="$(json_value "$root_authorization_path" pid)"
+  local authorization_lock_path="$(json_value "$root_authorization_path" lockPath)"
+  local authorization_executable="$(json_value "$root_authorization_path" updaterExecutable)"
+  local authorization_started="$(json_value "$root_authorization_path" updaterStarted)"
+  local authorization_expires="$(json_value "$root_authorization_path" expiresAtEpoch)"
+  [[ "$marker_kind" == "vigil-maintenance-request-v2" ]] || return 1
+  [[ -n "$marker_token" && "$marker_token" == "$lock_token" ]] || return 1
+  [[ "$marker_pid" == <-> && "$marker_pid" == "$lock_pid" ]] || return 1
+  [[ "$marker_lock_path" == "$update_lock_path" ]] || return 1
+  [[ "$authorization_kind" == "vigil-root-maintenance-authorization-v2" ]] || return 1
+  [[ "$authorization_token" == "$marker_token" ]] || return 1
+  [[ "$authorization_pid" == "$marker_pid" ]] || return 1
+  [[ "$authorization_lock_path" == "$update_lock_path" ]] || return 1
+  (( authorization_expires >= now )) || return 1
+  local owner_uid="$(/bin/ps -p "$marker_pid" -o uid=)"
+  local owner_executable="$(/bin/ps -p "$marker_pid" -o comm=)"
+  local owner_started="$(/bin/ps -p "$marker_pid" -o lstart=)"
+  local owner_command="$(/bin/ps -p "$marker_pid" -o command=)"
+  [[ "$owner_uid" == "$target_uid" ]] || return 1
+  [[ "$owner_executable" == "$authorization_executable" ]] || return 1
+  [[ "$owner_started" == "$authorization_started" ]] || return 1
+  [[ "$owner_command" == *"--lock-path $update_lock_path"* ]] || return 1
+  [[ "$owner_command" == *"--lock-token $marker_token"* ]] || return 1
+  return 0
+}
+attest_update_recovery() {
+  global_update_manifest_present || { clear_recovery_attestation; return $?; }
+  private_target_file "$global_update_manifest_path" 600 || return 1
+  local manifest_snapshot="/tmp/recovery-manifest.$$"
+  bounded_root_copy "$global_update_manifest_path" "$manifest_snapshot" || return 1
+  attest_update_recovery_snapshot "$manifest_snapshot"
+  local attestation_status=$?
+  /bin/rm -f "$manifest_snapshot"
+  return "$attestation_status"
+}
+root_recovery_attestation_present() {
+  [[ -f "$root_recovery_authorization_path" && ! -L "$root_recovery_authorization_path" ]] || return 1
+  [[ "$(/usr/bin/stat -f '%u' "$root_recovery_authorization_path")" == "0" ]] || return 1
+  [[ "$(/usr/bin/stat -f '%Lp' "$root_recovery_authorization_path")" == "644" ]] || return 1
+  [[ "$(json_value "$root_recovery_authorization_path" kind)" == "${LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}" ]] || return 1
+  [[ "$(json_value "$root_recovery_authorization_path" recoveryManifestPath)" == "$global_update_manifest_path" ]] || return 1
+  [[ "$(json_value "$root_recovery_authorization_path" recoveryPolicyPath)" == "$global_update_policy_path" ]] || return 1
+  [[ "$(json_value "$root_recovery_authorization_path" recoveryAppPath)" == "$app_path" ]] || return 1
+  [[ "$(json_value "$root_recovery_authorization_path" appInitialPresent)" == "true" ]]
+}
+attested_canonical_app_generation() {
+  root_recovery_attestation_present || return 1
+  [[ -e "$app_path" && ! -L "$app_path" ]] || return 1
+  local observed_dev=$(/usr/bin/stat -f '%d' "$app_path")
+  local observed_ino=$(/usr/bin/stat -f '%i' "$app_path")
+  for generation in Initial Target; do
+    local expected_dev=$(json_value "$root_recovery_authorization_path" "app\${generation}Dev")
+    local expected_ino=$(json_value "$root_recovery_authorization_path" "app\${generation}Ino")
+    [[ "$observed_dev" == "$expected_dev" && "$observed_ino" == "$expected_ino" ]] || continue
+    local expected_commit=$(json_value "$root_recovery_authorization_path" "app\${generation}Commit")
+    local expected_fingerprint=$(json_value "$root_recovery_authorization_path" "app\${generation}Fingerprint")
+    app_content_matches "$app_path" "$expected_commit" "$expected_fingerprint" || continue
+    return 0
+  done
+  return 1
+}
+while true; do
+  now=$(/bin/date +%s)
+  app_running=false
+  supervisor_loaded=false
+  if /usr/bin/pgrep -U "$target_uid" -f "$process_pattern" >/dev/null 2>&1; then
+    app_running=true
+    offline_since=0
+  elif [[ "$offline_since" -eq 0 ]]; then
+    offline_since="$now"
+  fi
+  if /bin/launchctl print "$supervisor_service" >/dev/null 2>&1; then
+    supervisor_loaded=true
+  fi
+  authorize_maintenance_request "$now" >/dev/null 2>&1 || true
+  maintenance_active=false
+  if authenticated_maintenance_active "$now"; then
+    maintenance_active=true
+    offline_since=0
+    if ! attest_update_recovery; then
+      /usr/bin/printf '%s\n' "recovery pending" >&2
+    fi
+  elif ! global_update_manifest_present; then
+    clear_recovery_attestation >/dev/null 2>&1 || true
+  fi
+  recovery_waiting=false
+  if [[ "$maintenance_active" == false ]] && global_update_manifest_present && root_recovery_attestation_present; then
+    attested_canonical_app_generation || recovery_waiting=true
+  fi
+  if [[ "$recovery_waiting" == true ]]; then
+    : # Retry without reopening mid-swap.
+  elif [[ "$maintenance_active" == false && "$supervisor_loaded" == false ]]; then
+    reopen_vigil
+  elif [[ "$maintenance_active" == false && "$app_running" == false ]] && (( now - offline_since >= 15 )); then
+    reopen_vigil
+    offline_since="$now"
+  fi
+  /bin/sleep 2
+done
+`;
+const legacyPredecessorCandidate = {
+  label: LEGACY_SYSTEM_GUARDIAN_LABEL,
+  plistPath: LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
+  scriptPath: LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH
+};
+const legacyPredecessorPlist = toPlist({
+  Label: LEGACY_SYSTEM_GUARDIAN_LABEL,
+  ProgramArguments: [LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH, SYSTEM_GUARDIAN_SAFETY_ARG],
+  KeepAlive: true,
+  RunAtLoad: true,
+  ProcessType: "Background",
+  ThrottleInterval: 5,
+  StandardErrorPath: "/Library/Application Support/Vigil/System Guardian/guardian.log",
+  StandardOutPath: "/Library/Application Support/Vigil/System Guardian/guardian.log"
+});
+const legacyLaunchctlOutput = `system/${LEGACY_SYSTEM_GUARDIAN_LABEL} = {
+  path = ${LEGACY_SYSTEM_GUARDIAN_PLIST_PATH}
+  type = LaunchDaemon
+  state = running
+  program = ${LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH}
+  arguments = {
+    ${LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH}
+    ${SYSTEM_GUARDIAN_SAFETY_ARG}
+  }
+  stdout path = /Library/Application Support/Vigil/System Guardian/guardian.log
+  stderr path = /Library/Application Support/Vigil/System Guardian/guardian.log
+  default environment = {
+    PATH => /usr/bin:/bin:/usr/sbin:/sbin
+  }
+  environment = {
+    OSLogRateLimit => 64
+    XPC_SERVICE_NAME => ${LEGACY_SYSTEM_GUARDIAN_LABEL}
+  }
+  domain = system
+  minimum runtime = 5
+  spawn type = background (5)
+  pid = 123
+  properties = keepalive | runatload | inferred program
+}
+`;
+assert.equal(predecessorLaunchctlTopologyMatches(legacyLaunchctlOutput, legacyPredecessorCandidate), true,
+  "an exact root LaunchDaemon topology must qualify as the live predecessor");
+for (const weakenedTopology of [
+  legacyLaunchctlOutput.replace("minimum runtime = 5", "minimum runtime = 3600"),
+  legacyLaunchctlOutput.replace("domain = system", "username = test-user\n  domain = system"),
+  legacyLaunchctlOutput.replace("OSLogRateLimit => 64", "ATTACKER_OVERRIDE => 1\n    OSLogRateLimit => 64")
+]) {
+  assert.equal(predecessorLaunchctlTopologyMatches(weakenedTopology, legacyPredecessorCandidate), false,
+    "cached launchd semantics that differ from the exact root availability job must fail closed");
+}
+assert.equal(predecessorAvailabilityProgramMatches(legacyPredecessorScript), true,
+  "the structural validator must recognize a materially enforcing predecessor loop");
+assert.notEqual(
+  predecessorGuardianProgramFingerprint(legacyPredecessorScript, false),
+  LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256,
+  "a structurally plausible imitation must not match the exact known legacy program"
+);
+assert.equal(
+  predecessorGuardianContentMatches(
+    legacyPredecessorScript,
+    legacyPredecessorPlist,
+    legacyPredecessorCandidate,
+    predecessorOptions
+  ),
+  false,
+  "parallel setup must require an exact known predecessor template, not only plausible control flow"
+);
+const localUser = userInfo();
+const installedPredecessors = [
+  {
+    candidate: {
+      label: PREVIOUS_SYSTEM_GUARDIAN_LABEL,
+      plistPath: PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH,
+      scriptPath: PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH
+    },
+    fingerprint: PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256,
+    previous: true
+  },
+  {
+    candidate: legacyPredecessorCandidate,
+    fingerprint: LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256,
+    previous: false
+  }
+] as const;
+for (const installed of installedPredecessors) {
+  if (!existsSync(installed.candidate.scriptPath) || !existsSync(installed.candidate.plistPath)) continue;
+  const installedScript = await readFile(installed.candidate.scriptPath, "utf8");
+  const installedPlist = await readFile(installed.candidate.plistPath, "utf8");
+  assert.equal(predecessorGuardianProgramFingerprint(installedScript, installed.previous), installed.fingerprint,
+    "a locally installed known predecessor must match its pinned normalized template fingerprint");
+  assert.equal(
+    predecessorGuardianContentMatches(
+      installedScript,
+      installedPlist,
+      installed.candidate,
+      {
+        appPath: "/Applications/Vigil.app",
+        targetHome: localUser.homedir,
+        targetUid: localUser.uid,
+        targetUser: localUser.username
+      }
+    ),
+    true,
+    "the exact locally installed predecessor must remain eligible without being stopped or replaced"
+  );
+  assert.equal(
+    predecessorGuardianContentMatches(
+      installedScript,
+      installedPlist.replace("</dict>", "<key>UserName</key><string>test-user</string></dict>"),
+      installed.candidate,
+      {
+        appPath: "/Applications/Vigil.app",
+        targetHome: localUser.homedir,
+        targetUid: localUser.uid,
+        targetUser: localUser.username
+      }
+    ),
+    false,
+    "an otherwise exact predecessor plist must reject a non-root UserName override"
+  );
+  assert.equal(
+    predecessorGuardianContentMatches(
+      installedScript,
+      installedPlist.replace("<integer>5</integer>", "<integer>3600</integer>"),
+      installed.candidate,
+      {
+        appPath: "/Applications/Vigil.app",
+        targetHome: localUser.homedir,
+        targetUid: localUser.uid,
+        targetUser: localUser.username
+      }
+    ),
+    false,
+    "an otherwise exact predecessor plist must reject a weakened relaunch throttle"
+  );
+}
+assert.equal(
+  predecessorGuardianContentMatches(
+    legacyPredecessorScript
+      .replace(/while true; do[\s\S]*?done\n/u, "")
+      .replace(/authorize_maintenance_request\(\) \{[\s\S]*?\n\}/u, "authorize_maintenance_request() { :;\n}"),
+    legacyPredecessorPlist,
+    legacyPredecessorCandidate,
+    predecessorOptions
+  ),
+  false,
+  "an inert marker-only predecessor must not authorize the privileged availability window"
+);
+for (const [description, inertScript] of [
+  [
+    "an unconditional maintenance success",
+    legacyPredecessorScript.replace(
+      "authenticated_maintenance_active() {\n",
+      "authenticated_maintenance_active() {\n  return 0\n"
+    )
+  ],
+  [
+    "an early recovery-attestation failure",
+    legacyPredecessorScript.replace(
+      "root_recovery_attestation_present() {\n",
+      "root_recovery_attestation_present() {\n  return 1\n"
+    )
+  ],
+  [
+    "a dead availability loop",
+    legacyPredecessorScript.replace("while true; do\n", "while true; do\n  continue\n")
+  ],
+  [
+    "a disabled reopen function",
+    legacyPredecessorScript.replace("reopen_vigil() {\n", "reopen_vigil() {\n  return 1\n")
+  ],
+  [
+    "a top-level successful return",
+    legacyPredecessorScript.replace("set -u\n", "set -u\nreturn 0\n")
+  ],
+  [
+    "a successful return at the head of the availability loop",
+    legacyPredecessorScript.replace("while true; do\n", "while true; do\n  return 0\n")
+  ],
+  [
+    "an arithmetic successful return before full maintenance validation",
+    legacyPredecessorScript.replace(
+      'authenticated_maintenance_active() {\n  local now="$1"\n  [[ -f "$maintenance_marker_path" && ! -L "$maintenance_marker_path" ]] || return 1\n',
+      'authenticated_maintenance_active() {\n  local now="$1"\n  [[ -f "$maintenance_marker_path" && ! -L "$maintenance_marker_path" ]] || return 1\n  return "$((0))"\n'
+    )
+  ]
+] as const) {
+  assert.equal(
+    predecessorAvailabilityProgramMatches(inertScript),
+    false,
+    `${description} must fail the executable control-flow validator`
+  );
+  assert.notEqual(predecessorGuardianProgramFingerprint(inertScript, false), LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256,
+    `${description} must not match the pinned legacy program fingerprint`);
+}
+assert.equal(
+  predecessorGuardianContentMatches(
+    legacyPredecessorScript,
+    legacyPredecessorPlist.replace("<true/>", "<false/>"),
+    legacyPredecessorCandidate,
+    predecessorOptions
+  ),
+  false,
+  "a predecessor without KeepAlive must not authorize parallel installation"
+);
 
 const firstRunningObservation = observeGuardianRunningStability(
   { pid: null, since: 0 },
@@ -132,7 +560,7 @@ const oldControllerReadinessPredicate = (candidate: string): boolean => candidat
   && candidate.includes("vigil-root-update-recovery-authorization-v2")
   && candidate.includes(SYSTEM_GUARDIAN_AUTHORIZATION_PATH);
 assert.equal(oldControllerReadinessPredicate(script), true,
-  "a controller already loaded with the v2 readiness predicate must accept the hot-installed v3 guardian");
+  "a controller already loaded with the v2 readiness predicate must accept the hot-installed v4 guardian");
 assert.match(script, /READINESS-ONLY COMPATIBILITY MARKER[\s\S]*?vigil-root-update-recovery-authorization-v2/u,
   "the retired v2 literal must remain visibly scoped to readiness compatibility only");
 const recoveryAttestationFunction = shellFunction(script, "attest_update_recovery_snapshot");
@@ -163,7 +591,29 @@ assert.ok(script.includes(SYSTEM_GUARDIAN_AUTHORIZATION_PATH), "the user-owned r
 assert.ok(script.includes(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH), "durable recovery must be bound to separate root-owned attestation evidence");
 assert.match(script, /stat -f '%u' "\$root_authorization_path"[\s\S]*?== "0"/u, "only a root-owned authorization may suppress guardian repair");
 assert.match(script, /authorization_expires <= authorization_modified \+ 600/u, "the root-created suppression grant must remain time-bounded even if cleanup fails");
-assert.match(script, /granted_token[\s\S]*?return 0[\s\S]*?ps -p "\$marker_pid" -o comm=/u, "an existing grant must not be refreshed from a rewritten user request");
+assert.match(script, /granted_token[\s\S]*?authenticated_maintenance_active "\$now" && return 0[\s\S]*?legacy_maintenance_authorization_expires[\s\S]*?ps -p "\$marker_pid" -o comm=/u,
+  "a complete grant must remain one-shot while an exact sparse predecessor grant is revalidated before upgrade");
+assert.match(shellFunction(script, "legacy_maintenance_authorization_expires"), /for current_key in authorizationMode[\s\S]*?\[\[ -z[\s\S]*?expires <= modified \+ 600/u,
+  "v4 must upgrade only the sparse legacy schema within its original root-created deadline");
+assert.match(shellFunction(script, "authorize_maintenance_request"), /legacy_grant_expires < bootstrap_grant_expires[\s\S]*?legacy_grant_expires < normal_grant_expires/u,
+  "both bootstrap and normal upgrades must retain the predecessor grant's one-shot expiry");
+assert.match(maintenanceSource, /stableIdentity[\s\S]*?SYSTEM_GUARDIAN_AUTHORIZATION_STABILITY_MS[\s\S]*?readPinnedGuardianAuthorization/u,
+  "userland must observe one pinned full authorization generation across a guardian polling interval");
+assert.match(
+  maintenanceSource,
+  /readPinnedGuardianAuthorization[\s\S]*?handle\.readFile\(\)[\s\S]*?Promise\.all\(\[handle\.stat\(\), lstat\(path\)\]\)[\s\S]*?after\.ino !== pathname\.ino[\s\S]*?after\.mtimeMs !== pathname\.mtimeMs/u,
+  "a stable open authorization inode must still be the exact safe generation reachable through the live pathname"
+);
+assert.match(
+  maintenanceSource,
+  /recoveryAuthorizationRequirements[\s\S]*?inspectLiveGuardianService\(predecessor\.label\)[\s\S]*?launchctlOutputFieldMatches\(service\.output, "path"[\s\S]*?requirements\.push/u,
+  "activation must discover every still-loaded predecessor through its exact live launchd topology"
+);
+assert.match(
+  maintenanceSource,
+  /Promise\.all\(requirements\.map[\s\S]*?assertGuardianRecoveryAttestation/u,
+  "activation must wait for all current and predecessor recovery attestations as one barrier"
+);
 assert.match(script, /ps -p "\$marker_pid" -o ppid=/u, "root authorization must bind the updater to its live parent");
 assert.match(script, /unique_exact_main_pid\(\)[\s\S]*?pgrep -U "\$target_uid" -f "\$exact_main_process_pattern"[\s\S]*?matching_count" == "1"/u,
   "normal authorization must require one and only one exact background Vigil main process");
@@ -182,6 +632,28 @@ assert.match(script, /ps -p "\$marker_pid" -o uid=/u, "the guardian must verify 
 assert.match(script, /--lock-path \$update_lock_path[\s\S]*?--lock-token \$marker_token/u, "the live updater command must authenticate the exact lock path and token");
 assert.match(script, /attest_bootstrap_worker_request "\$now"[\s\S]*?authorize_maintenance_request "\$now"/u,
   "the root guardian must claim the exact bootstrap worker before setup may transfer the updater lock");
+assert.ok(script.includes(PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH),
+  "v4 must retain a distinct compatibility claim for the still-running v3 guardian");
+assert.match(
+  shellFunction(script, "attest_bootstrap_worker_request"),
+  /ensure_bootstrap_claim_at_path "\$previous_bootstrap_claim_path"[\s\S]*?ensure_bootstrap_claim_at_path "\$bootstrap_claim_path"[\s\S]*?previous_bootstrap_claim_matches[\s\S]*?bootstrap_claim_matches/u,
+  "the historical claim must be atomically verified before the isolated v4 go-signal"
+);
+assert.match(
+  shellFunction(script, "ensure_bootstrap_claim_at_path"),
+  /bootstrap_claim_matches_at_path[\s\S]*?bootstrap_claim_path_is_replaceable[\s\S]*?write_bootstrap_claim_at_path[\s\S]*?bootstrap_claim_matches_at_path/u,
+  "an exact same-token claim must be reused while a mismatch fails closed before atomic replacement"
+);
+assert.match(
+  shellFunction(script, "authorize_maintenance_request"),
+  /previous_bootstrap_claim_matches[\s\S]*?bootstrap_claim_matches[\s\S]*?previous_bootstrap_claim_expires[\s\S]*?previous_bootstrap_claim_expires < bootstrap_grant_expires/u,
+  "the shared bootstrap grant must require both claims and retain the shorter compatibility deadline"
+);
+assert.match(
+  shellFunction(script, "authenticated_maintenance_active"),
+  /for active_claim_path in "\$previous_bootstrap_claim_path" "\$bootstrap_claim_path"[\s\S]*?private_root_file "\$active_claim_path" 644/u,
+  "v4 must keep both the predecessor and current claim active throughout bootstrap maintenance"
+);
 assert.match(script, /bootstrap_processes_match_request\(\)[\s\S]*?expected_worker_command[\s\S]*?expected_relay_command[\s\S]*?worker_ppid" == "\$request_relay_pid"/u,
   "bootstrap authorization must independently match exact relay and worker commands and parentage");
 assert.match(script, /validate_bootstrap_authorization\(\)[\s\S]*?bridgeManifestSha256[\s\S]*?bridgeEquivalentTreeSha256[\s\S]*?bridgePayloadTreeSha256[\s\S]*?bridgeWrappersSha256[\s\S]*?bridgeBaselineBuildInfoSha256/u,
@@ -213,7 +685,7 @@ const recoveryAttestationCall = script.indexOf("if ! attest_update_recovery; the
 assert.ok(activeMaintenanceCheck >= 0 && recoveryAttestationCall > activeMaintenanceCheck,
   "only the updater PID/executable/start identity already bound to Vigil by the root grant may request durable recovery attestation");
 assert.match(script, new RegExp(`root_recovery_attestation_present\\(\\)[\\s\\S]*?stat -f '%u' "\\$root_recovery_authorization_path"[\\s\\S]*?== "0"[\\s\\S]*?${SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}`, "u"),
-  "only the separate root-owned v3 app attestation may influence availability arbitration");
+  "only the separate root-owned v4 app attestation may influence availability arbitration");
 assert.match(script, /attested_canonical_app_generation\(\)[\s\S]*?root_recovery_attestation_present[\s\S]*?stat -f '%d'[\s\S]*?stat -f '%i'[\s\S]*?for generation in Initial Target[\s\S]*?app_content_matches/u,
   "availability fallback must accept only a canonical app matching one exact root-attested generation");
 assert.match(script, /app_content_matches\(\)[\s\S]*?\[\[ -n "\$expected_commit" \|\| -n "\$expected_fingerprint" \]\] \|\| return 1/u,
@@ -374,6 +846,7 @@ const bootstrapClaimRoot = await mkdtemp(join(tmpdir(), "vigil-bootstrap-worker-
 try {
   const lockPath = join(bootstrapClaimRoot, "update.lock");
   const claimPath = join(bootstrapClaimRoot, "bootstrap-worker-claim.plist");
+  const previousClaimPath = join(bootstrapClaimRoot, "bootstrap-worker-claim-previous.plist");
   const now = Date.now();
   const request = {
     bootstrapToken: "12345678-1234-4123-8123-123456789abc",
@@ -387,7 +860,7 @@ try {
   };
   const workerRequest = await publishBootstrapWorkerAuthorizationRequest(request, now);
   assert.equal(workerRequest.requestPath, bootstrapWorkerRequestPath(lockPath));
-  await writeFile(claimPath, toPlist({
+  const exactClaim = toPlist({
     kind: UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND,
     bootstrapToken: request.bootstrapToken,
     lockPath: request.lockPath,
@@ -403,13 +876,29 @@ try {
     relayCommand: "exact installed relay command",
     bootstrapAuthorizationSha256: "b".repeat(64),
     expiresAtEpoch: Math.floor(now / 1_000) + 30
-  }), { mode: 0o644 });
+  });
+  await writeFile(claimPath, exactClaim, { mode: 0o644 });
   await waitForBootstrapWorkerAuthorization(
     request,
     25,
     process.getuid?.() ?? 0,
     claimPath
   );
+  await assert.rejects(
+    waitForBootstrapWorkerAuthorization(
+      request,
+      25,
+      process.getuid?.() ?? 0,
+      previousClaimPath
+    ),
+    /did not attest the bootstrap worker/u,
+    "the isolated v4 claim alone must not prove compatibility with the still-running predecessor"
+  );
+  await writeFile(previousClaimPath, exactClaim, { mode: 0o644 });
+  await Promise.all([
+    waitForBootstrapWorkerAuthorization(request, 25, process.getuid?.() ?? 0, previousClaimPath),
+    waitForBootstrapWorkerAuthorization(request, 25, process.getuid?.() ?? 0, claimPath)
+  ]);
   await assert.rejects(
     waitForBootstrapWorkerAuthorization(
       { ...request, relayPid: request.relayPid + 2 },
@@ -429,8 +918,17 @@ try {
 
 const stagedScriptValidation = installerSource.indexOf('execFileAsync("/bin/zsh", ["-n", files[0].stagedPath]');
 const stagedPlistValidation = installerSource.indexOf('execFileAsync("/usr/bin/plutil", ["-lint", files[1].stagedPath]');
+const predecessorCapture = installerSource.indexOf("await runningPredecessorGuardian(options)");
+const predecessorBeforeActivation = installerSource.indexOf(
+  "await assertPredecessorGuardianContinuity(predecessor, options)",
+  predecessorCapture
+);
 const liveActivation = installerSource.indexOf("for (const file of files) await activateStagedFile(file)");
 const parallelBootstrap = installerSource.indexOf("await bootstrapSystemGuardian()", liveActivation);
+const predecessorAfterBootstrap = installerSource.indexOf(
+  "await assertPredecessorGuardianContinuity(predecessor, options)",
+  predecessorBeforeActivation + 1
+);
 assert.ok(
   stagedScriptValidation >= 0
     && stagedPlistValidation > stagedScriptValidation
@@ -438,6 +936,25 @@ assert.ok(
     && parallelBootstrap > liveActivation,
   "parallel guardian candidates must be fully staged and validated before their new files or launchd job are touched"
 );
+assert.ok(
+  predecessorCapture >= 0
+    && predecessorBeforeActivation > predecessorCapture
+    && predecessorBeforeActivation < liveActivation
+    && predecessorAfterBootstrap > parallelBootstrap,
+  "the privileged helper must pin one exact predecessor and recheck the same identity before activation and after v4 is stable"
+);
+assert.match(installerSource, /runningPredecessorGuardian[\s\S]*?refused to add its parallel v4 guardian without one exact, safe predecessor/u,
+  "the privileged helper must fail closed when no exact predecessor preserves availability");
+assert.match(installerSource, /inspectPredecessorGuardian[\s\S]*?predecessorProcessIdentity\(service\.pid, candidate\)[\s\S]*?predecessorLaunchctlTopologyMatches\(service\.output, candidate\)/u,
+  "predecessor continuity must bind the complete cached launchd topology and root process identity");
+assert.match(installerSource, /predecessorProcessIdentity[\s\S]*?"uid="[\s\S]*?"gid="[\s\S]*?"ppid="[\s\S]*?"comm="[\s\S]*?"command="[\s\S]*?"lstart="[\s\S]*?\["0", "0", "1", "\/bin\/zsh", expectedCommand\]/u,
+  "the live predecessor must be the exact root-owned zsh process launched directly by launchd with a pinned start identity");
+assert.match(installerSource, /rootOwnedFilePredatesProcess\(scriptFile\.identity, processBefore\)[\s\S]*?rootOwnedFilePredatesProcess\(plistFile\.identity, processBefore\)[\s\S]*?processAfter\.started !== processBefore\.started/u,
+  "the exact root-owned script and plist must predate the same live process generation before and after their pinned reads");
+assert.match(installerSource, /confirmedService = await inspectSystemGuardianService\(candidate\.label\)[\s\S]*?confirmedService\.pid !== service\.pid/u,
+  "predecessor service continuity must bracket validation of its root-owned files");
+assert.match(installerSource, /readPinnedRootOwnedFile\(candidate\.scriptPath, 1024 \* 1024, 0o755\)[\s\S]*?readPinnedRootOwnedFile\(candidate\.plistPath, 1024 \* 1024, 0o644\)/u,
+  "a predecessor must retain executable script permissions and an immutable launchd configuration");
 assert.match(installerSource, /link\(file\.path, file\.backupPath\)[\s\S]*?backupStat\.ino !== previousStat\.ino[\s\S]*?file\.hadPrevious = true/u,
   "the installer must retain and verify each prior root-owned inode before replacement");
 assert.match(installerSource, /file\.hadPrevious = true[\s\S]*?rename\(file\.stagedPath, file\.path\)/u,
@@ -450,15 +967,15 @@ assert.doesNotMatch(installerSource, /runLaunchctl\(\["kickstart"|execFileAsync\
 assert.match(installerSource, /serviceBootstrapAttempted = true[\s\S]*?bootstrapSystemGuardian\(\)[\s\S]*?if \(serviceBootstrapAttempted\)[\s\S]*?preserved the new parallel guardian files/u,
   "an uncertain first start must preserve the safe parallel files for idempotent launchd retry without stopping the legacy guardian");
 assert.match(installerSource, /if \(options\.authorizationOnly\)[\s\S]*?installRootAuthorization[\s\S]*?return/u,
-  "an already-running v3 guardian must refresh only the expiring root bridge grant");
+  "an already-running v4 guardian must refresh only the expiring root bridge grant");
 assert.match(installerSource, /rollbackErrors\.length[\s\S]*?Recovery files were preserved/u, "failed rollback must preserve root-owned recovery files for inspection");
 assert.match(installerSource, /let cleanupSafe = false[\s\S]*?if \(rollbackErrors\.length\)[\s\S]*?Recovery evidence was preserved[\s\S]*?cleanupSafe = true[\s\S]*?if \(cleanupSafe\) await discardStagedFiles/u,
   "authorization backups must be discarded only after successful activation or successful rollback");
-assert.match(installerSource, /expectedCurrentScriptSha256 === "absent"[\s\S]*?isErrorCode\(error, "ENOENT"\)[\s\S]*?parallel v3 guardian appeared/u,
+assert.match(installerSource, /expectedCurrentScriptSha256 === "absent"[\s\S]*?isErrorCode\(error, "ENOENT"\)[\s\S]*?parallel v4 guardian appeared/u,
   "the first parallel install must accept only exact absence and reject a raced guardian path");
 assert.match(installerSource, /assertExpectedCurrentGuardian\(options\)[\s\S]*?stageRootOwnedFile[\s\S]*?assertExpectedCurrentGuardian\(options\)[\s\S]*?activateStagedFile/u, "the root helper must close the authorization-to-activation race over the new parallel guardian bytes or pinned absence");
 assert.match(installerSource, /assertExpectedCurrentGuardian\(options\)[\s\S]*?serviceBeforeActivation = await inspectSystemGuardianService\(\)[\s\S]*?if \(serviceBeforeActivation\.loaded\)[\s\S]*?activationStarted = true[\s\S]*?activateStagedFile/u,
-  "the root helper must re-check launchd immediately before activation and never replace files beneath a newly loaded v3 guardian");
+  "the root helper must re-check launchd immediately before activation and never replace files beneath a newly loaded v4 guardian");
 assert.match(installerSource, /codesign[\s\S]*?stagedSignatureBefore[\s\S]*?readPinnedRegularFile\(updaterScriptPath[\s\S]*?codesign[\s\S]*?stagedSignatureAfter[\s\S]*?sameCodeSignatureIdentity/u,
   "root bootstrap authorization must bracket signed build and updater reads with stable signature verification");
 assert.match(installerSource, /targetSignatureBefore[\s\S]*?readBootstrapBuildIdentity\(targetPath\)[\s\S]*?targetSignatureAfter[\s\S]*?sameCodeSignatureIdentity\(targetSignatureBefore, targetSignatureAfter\)[\s\S]*?targetSignatureAfter\.cdHash !== options\.expectedTargetCdHash/u,
@@ -595,6 +1112,24 @@ try {
   const startedAt = Date.now();
   await writeFile(authorizationPath, toPlist({
     kind: "vigil-root-maintenance-authorization-v2",
+    token,
+    pid: process.pid,
+    lockPath,
+    updaterExecutable: process.execPath,
+    updaterStarted: new Date(startedAt).toUTCString(),
+    expiresAtEpoch: Math.floor(startedAt / 1_000) + SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS
+  }), { mode: 0o644 });
+  let maintenanceSettled = false;
+  const maintenancePromise = beginGuardianMaintenance(lockPath, token, process.pid, startedAt, {
+    authorizationPath,
+    expectedAuthorizationUid: process.getuid?.() ?? 0
+  }).finally(() => { maintenanceSettled = true; });
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 250));
+  assert.equal(maintenanceSettled, false,
+    "a sparse predecessor grant must never authorize maintenance before v4 publishes a full stable generation");
+  const completeAuthorizationPath = `${authorizationPath}.complete`;
+  await writeFile(completeAuthorizationPath, toPlist({
+    kind: "vigil-root-maintenance-authorization-v2",
     authorizationMode: "normal",
     token,
     pid: process.pid,
@@ -612,10 +1147,8 @@ try {
     bootstrapAuthorizationSha256: "-",
     expiresAtEpoch: Math.floor(startedAt / 1_000) + SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS
   }), { mode: 0o644 });
-  const maintenance = await beginGuardianMaintenance(lockPath, token, process.pid, startedAt, {
-    authorizationPath,
-    expectedAuthorizationUid: process.getuid?.() ?? 0
-  });
+  await rename(completeAuthorizationPath, authorizationPath);
+  const maintenance = await maintenancePromise;
   const markerPath = guardianMaintenanceMarkerPath(lockPath);
   const payload = JSON.parse(await readFile(markerPath, "utf8")) as {
     expiresAtEpoch: number;
@@ -646,24 +1179,56 @@ try {
   );
   const recoveryPolicySha256 = "a".repeat(64);
   const recoveryManifestPath = join(markerRoot, "update-recovery.json");
+  const recoveryPolicyPath = join(markerRoot, "update-recovery-policy.json");
+  const recoveryApp = {
+    targetPath: "/Applications/Vigil.app",
+    initialPresent: true,
+    initialDev: "11",
+    initialIno: "12",
+    initialCommit: "1".repeat(40),
+    initialFingerprint: "2".repeat(64),
+    initialCdHash: authorizationOptions.expectedAppInitialCdHash,
+    targetDev: "21",
+    targetIno: "22",
+    targetCommit: "3".repeat(40),
+    targetFingerprint: "4".repeat(64),
+    targetCdHash: authorizationOptions.expectedAppTargetCdHash
+  };
   await writeFile(recoveryManifestPath, `${JSON.stringify({
     version: 1,
     attemptId: token,
     state: "pending",
     source: { initialCommit: "1".repeat(40), targetCommit: "1".repeat(40), syncPending: false },
+    app: recoveryApp,
+    recovery: { policyPath: recoveryPolicyPath, policySha256: recoveryPolicySha256 },
     immutableEvidence: "root-attested",
     timestamps: { startedAt: new Date(startedAt).toISOString() }
   })}\n`, { mode: 0o600 });
   const recoveryPendingManifestSha256 = await guardianRecoveryManifestSha256(recoveryManifestPath);
+  const recoveryAttestationBase = {
+    recoveryPolicySha256,
+    recoveryManifestPath,
+    recoveryPolicyPath,
+    recoveryAppPath: recoveryApp.targetPath,
+    appInitialPresent: true,
+    appInitialDev: recoveryApp.initialDev,
+    appInitialIno: recoveryApp.initialIno,
+    appInitialCommit: recoveryApp.initialCommit,
+    appInitialFingerprint: recoveryApp.initialFingerprint,
+    appTargetDev: recoveryApp.targetDev,
+    appTargetIno: recoveryApp.targetIno,
+    appTargetCommit: recoveryApp.targetCommit,
+    appTargetFingerprint: recoveryApp.targetFingerprint
+  };
   await assert.rejects(
     waitForGuardianRecoveryAuthorization(lockPath, token, recoveryPolicySha256, process.pid, authorizationOptions),
     /did not attest update recovery/u,
     "same-user transaction files without separate root attestation must not authorize activation"
   );
   await writeFile(authorizationOptions.recoveryAuthorizationPath, toPlist({
+    ...recoveryAttestationBase,
     kind: SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
     recoveryAttemptId: "forged-attempt",
-    recoveryPolicySha256,
     recoveryPendingManifestSha256,
     appInitialCdHash: authorizationOptions.expectedAppInitialCdHash,
     appTargetCdHash: authorizationOptions.expectedAppTargetCdHash
@@ -674,9 +1239,9 @@ try {
     "a forged attestation for another manifest attempt must fail closed"
   );
   await writeFile(authorizationOptions.recoveryAuthorizationPath, toPlist({
+    ...recoveryAttestationBase,
     kind: SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
     recoveryAttemptId: token,
-    recoveryPolicySha256,
     recoveryPendingManifestSha256: "b".repeat(64),
     appInitialCdHash: authorizationOptions.expectedAppInitialCdHash,
     appTargetCdHash: authorizationOptions.expectedAppTargetCdHash
@@ -687,9 +1252,9 @@ try {
     "a root file for a different immutable manifest must not authorize activation"
   );
   await writeFile(authorizationOptions.recoveryAuthorizationPath, toPlist({
+    ...recoveryAttestationBase,
     kind: SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
     recoveryAttemptId: token,
-    recoveryPolicySha256,
     recoveryPendingManifestSha256,
     appInitialCdHash: authorizationOptions.expectedAppInitialCdHash,
     appTargetCdHash: "e".repeat(40)
@@ -697,7 +1262,7 @@ try {
   await chmod(authorizationOptions.recoveryAuthorizationPath, 0o666);
   await assert.rejects(
     waitForGuardianRecoveryAuthorization(lockPath, token, recoveryPolicySha256, process.pid, authorizationOptions),
-    /does not match this update/u,
+    /did not attest update recovery/u,
     "a writable same-user recovery attestation must not authorize canonical activation"
   );
   await chmod(authorizationOptions.recoveryAuthorizationPath, 0o644);
@@ -707,9 +1272,9 @@ try {
     "a root attestation for a different signed target generation must fail closed"
   );
   await writeFile(authorizationOptions.recoveryAuthorizationPath, toPlist({
+    ...recoveryAttestationBase,
     kind: SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
     recoveryAttemptId: token,
-    recoveryPolicySha256,
     recoveryPendingManifestSha256,
     appInitialCdHash: authorizationOptions.expectedAppInitialCdHash,
     appTargetCdHash: authorizationOptions.expectedAppTargetCdHash
@@ -720,6 +1285,63 @@ try {
     recoveryPolicySha256,
     process.pid,
     authorizationOptions
+  );
+  const previousRecoveryAuthorizationPath = join(markerRoot, "update-recovery-authorization-v3.plist");
+  const legacyRecoveryAuthorizationPath = join(markerRoot, "update-recovery-authorization-v2.plist");
+  const coexistenceAuthorizationOptions = {
+    ...authorizationOptions,
+    recoveryAuthorizationRequirements: [
+      {
+        kind: SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+        label: SYSTEM_GUARDIAN_LABEL,
+        path: authorizationOptions.recoveryAuthorizationPath,
+        protocol: "pinned-pending" as const
+      },
+      {
+        kind: PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+        label: PREVIOUS_SYSTEM_GUARDIAN_LABEL,
+        path: previousRecoveryAuthorizationPath,
+        protocol: "pinned-pending" as const
+      },
+      {
+        kind: LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+        label: LEGACY_SYSTEM_GUARDIAN_LABEL,
+        path: legacyRecoveryAuthorizationPath,
+        protocol: "legacy-normalized" as const
+      }
+    ]
+  };
+  await writeFile(previousRecoveryAuthorizationPath, toPlist({
+    ...recoveryAttestationBase,
+    kind: PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+    recoveryAttemptId: token,
+    recoveryPendingManifestSha256,
+    appInitialCdHash: authorizationOptions.expectedAppInitialCdHash,
+    appTargetCdHash: authorizationOptions.expectedAppTargetCdHash
+  }), { mode: 0o644 });
+  await assert.rejects(
+    waitForGuardianRecoveryAuthorization(
+      lockPath,
+      token,
+      recoveryPolicySha256,
+      process.pid,
+      coexistenceAuthorizationOptions
+    ),
+    /did not attest update recovery/u,
+    "v4 and v3 attestations alone must not authorize activation while the legacy guardian is still live"
+  );
+  await writeFile(legacyRecoveryAuthorizationPath, toPlist({
+    ...recoveryAttestationBase,
+    kind: LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+    recoveryAttemptId: token,
+    recoveryManifestSha256: "5".repeat(64)
+  }), { mode: 0o644 });
+  await waitForGuardianRecoveryAuthorization(
+    lockPath,
+    token,
+    recoveryPolicySha256,
+    process.pid,
+    coexistenceAuthorizationOptions
   );
   await writeFile(authorizationPath, toPlist({
     kind: "vigil-root-maintenance-authorization-v2",

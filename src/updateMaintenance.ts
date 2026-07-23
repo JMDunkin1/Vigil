@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { lstat, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { parsePlist } from "./plist.js";
+import { UPDATE_RECOVERY_MANIFEST_FILENAME, UPDATE_RECOVERY_POLICY_FILENAME } from "./updateTransaction.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -12,29 +13,38 @@ export const UPDATE_LOCK_FILENAME = "update.lock";
 export const SYSTEM_GUARDIAN_MAINTENANCE_FILENAME = "guardian-maintenance.json";
 export const SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS = 10 * 60;
 export const SYSTEM_GUARDIAN_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/maintenance-authorization.plist";
-export const SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization-v3.plist";
+export const SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization-v4.plist";
 export const UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-authorization.json";
 export const UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_KIND = "vigil-root-update-protocol-bootstrap-authorization-v1";
 export const UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_MAX_SECONDS = 5 * 60;
-export const UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH = "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-worker-claim.plist";
+export const UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH = "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-worker-claim-v4.plist";
 export const UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND = "vigil-root-update-protocol-bootstrap-worker-claim-v1";
 export const UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME = "bootstrap-worker-request.json";
 export const UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_KIND = "vigil-update-protocol-bootstrap-worker-request-v1";
 export const UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS = 5 * 60;
-export const SYSTEM_GUARDIAN_SCRIPT_PATH = "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-v3-DO-NOT-TERMINATE.sh";
-export const SYSTEM_GUARDIAN_PLIST_PATH = "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.v3.plist";
-export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v3";
+export const SYSTEM_GUARDIAN_SCRIPT_PATH = "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-v4-DO-NOT-TERMINATE.sh";
+export const SYSTEM_GUARDIAN_PLIST_PATH = "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.v4.plist";
+export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v4";
+export const PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH = "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-v3-DO-NOT-TERMINATE.sh";
+export const PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH = "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.v3.plist";
+export const PREVIOUS_SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v3";
+export const PREVIOUS_SYSTEM_GUARDIAN_REVISION = 3;
+export const PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization-v3.plist";
+export const PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND = "vigil-root-update-recovery-authorization-v3";
+export const PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH = "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-worker-claim.plist";
 export const LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH = "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-DO-NOT-TERMINATE.sh";
 export const LEGACY_SYSTEM_GUARDIAN_PLIST_PATH = "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.plist";
 export const LEGACY_SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian";
 export const LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH = "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization.plist";
-export const SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND = "vigil-root-update-recovery-authorization-v3";
-export const SYSTEM_GUARDIAN_REVISION = 3;
+export const LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND = "vigil-root-update-recovery-authorization-v2";
+export const SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND = "vigil-root-update-recovery-authorization-v4";
+export const SYSTEM_GUARDIAN_REVISION = 4;
 export const SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX = "# vigil-system-guardian-revision=";
 export const SYSTEM_GUARDIAN_REVISION_MARKER = `${SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX}${SYSTEM_GUARDIAN_REVISION}`;
 export const UPDATE_PACKAGED_APP_RECOVERY_PROTOCOL_REVISION = 3;
-const SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS = 10_000;
+const SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS = 15_000;
 const SYSTEM_GUARDIAN_AUTHORIZATION_POLL_MS = 100;
+const SYSTEM_GUARDIAN_AUTHORIZATION_STABILITY_MS = 2_500;
 
 interface UpdateLockPayload {
   token?: unknown;
@@ -50,6 +60,7 @@ interface GuardianMaintenancePayload {
 }
 
 interface GuardianAuthorizationPayload {
+  [key: string]: unknown;
   kind?: unknown;
   token?: unknown;
   pid?: unknown;
@@ -68,9 +79,22 @@ interface GuardianAuthorizationPayload {
   bootstrapAuthorizationSha256?: unknown;
   expiresAtEpoch?: unknown;
   recoveryAttemptId?: unknown;
+  recoveryAppPath?: unknown;
+  recoveryManifestPath?: unknown;
+  recoveryManifestSha256?: unknown;
+  recoveryPolicyPath?: unknown;
   recoveryPolicySha256?: unknown;
   recoveryPendingManifestSha256?: unknown;
+  appInitialPresent?: unknown;
+  appInitialDev?: unknown;
+  appInitialIno?: unknown;
+  appInitialCommit?: unknown;
+  appInitialFingerprint?: unknown;
   appInitialCdHash?: unknown;
+  appTargetDev?: unknown;
+  appTargetIno?: unknown;
+  appTargetCommit?: unknown;
+  appTargetFingerprint?: unknown;
   appTargetCdHash?: unknown;
 }
 
@@ -128,6 +152,14 @@ export interface GuardianMaintenanceOptions {
   expectedAuthorizationUid?: number;
   expectedAppInitialCdHash?: string;
   expectedAppTargetCdHash?: string;
+  recoveryAuthorizationRequirements?: GuardianRecoveryAuthorizationRequirement[];
+}
+
+export interface GuardianRecoveryAuthorizationRequirement {
+  kind: string;
+  label: string;
+  path: string;
+  protocol: "pinned-pending" | "legacy-normalized";
 }
 
 export interface GuardianMaintenanceTransaction {
@@ -220,20 +252,20 @@ export async function guardianMaintenanceReadiness(
       const service = await inspectLiveGuardianService(options.guardianLabel || SYSTEM_GUARDIAN_LABEL);
       if (service.loaded) {
         return maintenanceNotReady(
-          "Vigil's parallel v3 system guardian is loaded with an incomplete on-disk installation. It was left untouched.",
+          "Vigil's parallel v4 system guardian is loaded with an incomplete on-disk installation. It was left untouched.",
           "incomplete"
         );
       }
       if (await legacyGuardianSupportsParallelMigration(expectedUid)) {
         return maintenanceNotReady(
-          "Vigil's parallel v3 system guardian must be added before installing this update. The legacy guardian stays online during setup.",
+          "Vigil's parallel v4 system guardian must be added before installing this update. Earlier guardians stay online during setup.",
           "outdated-revision",
           true
         );
       }
     } catch (error) {
       return maintenanceNotReady(
-        `Vigil could not inspect its parallel v3 system guardian service: ${errorMessage(error)}`,
+        `Vigil could not inspect its parallel v4 system guardian service: ${errorMessage(error)}`,
         "inspection-failed"
       );
     }
@@ -264,13 +296,13 @@ export async function guardianMaintenanceReadiness(
       );
       if (productionService.loaded && !productionService.running) {
         return maintenanceNotReady(
-          "Vigil's parallel v3 system guardian is loaded but not running. It was left untouched.",
+          "Vigil's parallel v4 system guardian is loaded but not running. It was left untouched.",
           "incomplete"
         );
       }
     } catch (error) {
       return maintenanceNotReady(
-        `Vigil could not inspect its parallel v3 system guardian service: ${errorMessage(error)}`,
+        `Vigil could not inspect its parallel v4 system guardian service: ${errorMessage(error)}`,
         "inspection-failed"
       );
     }
@@ -310,7 +342,7 @@ export async function guardianMaintenanceReadiness(
     }
     if (productionService && !productionService.running) {
         return maintenanceNotReady(
-          "Vigil's parallel v3 system guardian is installed but not yet running.",
+          "Vigil's parallel v4 system guardian is installed but not yet running.",
           "incomplete",
           productionSetupSupported
         );
@@ -355,49 +387,79 @@ async function currentGuardianFilesMissingOrIncomplete(
 }
 
 async function legacyGuardianSupportsParallelMigration(expectedUid: number): Promise<boolean> {
-  try {
-    const [script, plist, scriptStat, plistStat] = await Promise.all([
-      readFile(LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH, "utf8"),
-      readFile(LEGACY_SYSTEM_GUARDIAN_PLIST_PATH, "utf8"),
-      lstat(LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH),
-      lstat(LEGACY_SYSTEM_GUARDIAN_PLIST_PATH)
-    ]);
-    if (!scriptStat.isFile()
-      || scriptStat.isSymbolicLink()
-      || scriptStat.uid !== expectedUid
-      || (scriptStat.mode & 0o022) !== 0
-      || !plistStat.isFile()
-      || plistStat.isSymbolicLink()
-      || plistStat.uid !== expectedUid
-      || (plistStat.mode & 0o022) !== 0
-      || !script.includes("authorize_maintenance_request()")) return false;
-    const parsed = parsePlist(plist) as Record<string, unknown>;
-    const args = Array.isArray(parsed.ProgramArguments) ? parsed.ProgramArguments : [];
-    return parsed.Label === LEGACY_SYSTEM_GUARDIAN_LABEL
-      && args[0] === LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH
-      && parsed.KeepAlive === true
-      && parsed.RunAtLoad === true;
-  } catch {
-    return false;
+  for (const guardian of [
+    {
+      scriptPath: PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH,
+      plistPath: PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH,
+      label: PREVIOUS_SYSTEM_GUARDIAN_LABEL
+    },
+    {
+      scriptPath: LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH,
+      plistPath: LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
+      label: LEGACY_SYSTEM_GUARDIAN_LABEL
+    }
+  ]) {
+    try {
+      const [script, plist, scriptStat, plistStat] = await Promise.all([
+        readFile(guardian.scriptPath, "utf8"),
+        readFile(guardian.plistPath, "utf8"),
+        lstat(guardian.scriptPath),
+        lstat(guardian.plistPath)
+      ]);
+      if (!scriptStat.isFile()
+        || scriptStat.isSymbolicLink()
+        || scriptStat.uid !== expectedUid
+        || (scriptStat.mode & 0o022) !== 0
+        || !plistStat.isFile()
+        || plistStat.isSymbolicLink()
+        || plistStat.uid !== expectedUid
+        || (plistStat.mode & 0o022) !== 0
+        || !script.includes("authorize_maintenance_request()")) continue;
+      const parsed = parsePlist(plist) as Record<string, unknown>;
+      const args = Array.isArray(parsed.ProgramArguments) ? parsed.ProgramArguments : [];
+      if (parsed.Label === guardian.label
+        && args[0] === guardian.scriptPath
+        && parsed.KeepAlive === true
+        && parsed.RunAtLoad === true) {
+        const service = await inspectLiveGuardianService(guardian.label);
+        if (service.loaded && service.running) return true;
+      }
+    } catch {
+      // A different intact predecessor may still preserve availability.
+    }
   }
+  return false;
 }
 
-async function inspectLiveGuardianService(label: string): Promise<{ loaded: boolean; running: boolean }> {
+interface LiveGuardianServiceInspection {
+  loaded: boolean;
+  output: string;
+  pid: number | null;
+  running: boolean;
+}
+
+async function inspectLiveGuardianService(label: string): Promise<LiveGuardianServiceInspection> {
   try {
     const { stdout } = await execFileAsync("/bin/launchctl", ["print", `system/${label}`], {
       timeout: 5_000,
       maxBuffer: 256 * 1024,
       encoding: "utf8"
     });
+    const pid = Number(stdout.match(/^\s*pid = ([1-9]\d*)\s*$/mu)?.[1] || "");
     return {
       loaded: true,
-      running: /^\s*state = running\s*$/mu.test(stdout)
-        && /^\s*pid = [1-9]\d*\s*$/mu.test(stdout)
+      output: stdout,
+      pid: Number.isSafeInteger(pid) && pid > 0 ? pid : null,
+      running: /^\s*state = running\s*$/mu.test(stdout) && Number.isSafeInteger(pid) && pid > 0
     };
   } catch (error) {
-    if (launchctlServiceMissing(error)) return { loaded: false, running: false };
+    if (launchctlServiceMissing(error)) return { loaded: false, output: "", pid: null, running: false };
     throw error;
   }
+}
+
+function launchctlOutputFieldMatches(output: string, field: string, expected: string): boolean {
+  return output.split("\n").filter((line) => line.trim() === `${field} = ${expected}`).length === 1;
 }
 
 function launchctlServiceMissing(error: unknown): boolean {
@@ -713,12 +775,27 @@ async function waitForRootGuardianAuthorization(
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown = new Error("Vigil's system guardian did not authorize maintenance.");
+  let stableIdentity = "";
+  let stableSince = 0;
   do {
     try {
-      await assertRootGuardianAuthorization(authorizationPath, request, Date.now(), expectedUid);
-      return;
+      const observedAt = Date.now();
+      const identity = await assertRootGuardianAuthorization(
+        authorizationPath,
+        request,
+        observedAt,
+        expectedUid
+      );
+      if (identity !== stableIdentity) {
+        stableIdentity = identity;
+        stableSince = observedAt;
+      } else if (observedAt - stableSince >= SYSTEM_GUARDIAN_AUTHORIZATION_STABILITY_MS) {
+        return;
+      }
     } catch (error) {
       lastError = error;
+      stableIdentity = "";
+      stableSince = 0;
     }
     await new Promise<void>((resolve) => setTimeout(resolve, SYSTEM_GUARDIAN_AUTHORIZATION_POLL_MS));
   } while (Date.now() < deadline);
@@ -836,11 +913,8 @@ export async function waitForGuardianRecoveryAuthorization(
     options.expectedAppTargetCdHash,
     "target app CodeDirectory hash"
   );
-  const recoveryAuthorizationPath = options.recoveryAuthorizationPath
-    ?? SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH;
-  const recoveryPendingManifestSha256 = await guardianRecoveryManifestSha256(
-    join(dirname(lockPath), "update-recovery.json")
-  );
+  const manifest = await pendingRecoveryManifestEvidence(lockPath, lockToken, recoveryPolicySha256);
+  const requirements = await recoveryAuthorizationRequirements(options);
 
   const timeoutMs = options.authorizationTimeoutMs ?? SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
@@ -849,23 +923,16 @@ export async function waitForGuardianRecoveryAuthorization(
     try {
       const now = Date.now();
       await assertGuardianMaintenanceActive(lockPath, lockToken, ownerPid, now, options);
-      const [authorization, authorizationStat] = await Promise.all([
-        readGuardianAuthorization(recoveryAuthorizationPath),
-        lstat(recoveryAuthorizationPath)
-      ]);
-      if (!authorizationStat.isFile()
-        || authorizationStat.isSymbolicLink()
-        || authorizationStat.uid !== expectedUid
-        || (authorizationStat.mode & 0o777) !== 0o644
-        || authorization.kind !== SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND
-        || authorization.recoveryAttemptId !== lockToken
-        || authorization.recoveryPolicySha256 !== recoveryPolicySha256
-        || typeof authorization.recoveryPendingManifestSha256 !== "string"
-        || authorization.recoveryPendingManifestSha256 !== recoveryPendingManifestSha256
-        || authorization.appInitialCdHash !== expectedAppInitialCdHash
-        || authorization.appTargetCdHash !== expectedAppTargetCdHash) {
-        throw new Error("Vigil's system guardian recovery attestation does not match this update.");
-      }
+      await Promise.all(requirements.map(async (requirement) => {
+        await assertGuardianRecoveryAttestation(
+          requirement,
+          manifest,
+          recoveryPolicySha256,
+          expectedAppInitialCdHash,
+          expectedAppTargetCdHash,
+          expectedUid
+        );
+      }));
       return;
     } catch (error) {
       lastError = error;
@@ -873,6 +940,171 @@ export async function waitForGuardianRecoveryAuthorization(
     await new Promise<void>((resolveWait) => setTimeout(resolveWait, SYSTEM_GUARDIAN_AUTHORIZATION_POLL_MS));
   } while (Date.now() < deadline);
   throw new Error(`Vigil's system guardian did not attest update recovery: ${errorMessage(lastError)}`);
+}
+
+interface PendingRecoveryManifestEvidence {
+  app: Record<string, unknown>;
+  manifestPath: string;
+  pendingSha256: string;
+  policyPath: string;
+  targetAppPath: string;
+  token: string;
+}
+
+async function pendingRecoveryManifestEvidence(
+  lockPath: string,
+  lockToken: string,
+  recoveryPolicySha256: string
+): Promise<PendingRecoveryManifestEvidence> {
+  const manifestPath = join(dirname(lockPath), UPDATE_RECOVERY_MANIFEST_FILENAME);
+  const bytes = await readPinnedPrivateRecoveryManifest(manifestPath);
+  const payload = JSON.parse(bytes.toString("utf8")) as {
+    app?: unknown;
+    attemptId?: unknown;
+    recovery?: unknown;
+    state?: unknown;
+  };
+  const app = payload.app && typeof payload.app === "object" && !Array.isArray(payload.app)
+    ? payload.app as Record<string, unknown>
+    : null;
+  const recovery = payload.recovery && typeof payload.recovery === "object" && !Array.isArray(payload.recovery)
+    ? payload.recovery as Record<string, unknown>
+    : null;
+  const policyPath = join(dirname(lockPath), UPDATE_RECOVERY_POLICY_FILENAME);
+  const targetAppPath = String(app?.targetPath || "");
+  if (payload.attemptId !== lockToken
+    || payload.state !== "pending"
+    || !app
+    || app.initialPresent !== true
+    || !targetAppPath.startsWith("/")
+    || !recovery
+    || recovery.policyPath !== policyPath
+    || recovery.policySha256 !== recoveryPolicySha256) {
+    throw new Error("Vigil's pending recovery manifest does not match this protected update.");
+  }
+  return {
+    app,
+    manifestPath,
+    pendingSha256: createHash("sha256").update(bytes).digest("hex"),
+    policyPath,
+    targetAppPath,
+    token: lockToken
+  };
+}
+
+async function recoveryAuthorizationRequirements(
+  options: GuardianMaintenanceOptions
+): Promise<GuardianRecoveryAuthorizationRequirement[]> {
+  if (options.recoveryAuthorizationRequirements) {
+    return validatedRecoveryAuthorizationRequirements(options.recoveryAuthorizationRequirements);
+  }
+  if (options.recoveryAuthorizationPath) {
+    return [{
+      kind: SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+      label: SYSTEM_GUARDIAN_LABEL,
+      path: options.recoveryAuthorizationPath,
+      protocol: "pinned-pending"
+    }];
+  }
+  const requirements: GuardianRecoveryAuthorizationRequirement[] = [{
+    kind: SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+    label: SYSTEM_GUARDIAN_LABEL,
+    path: SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
+    protocol: "pinned-pending"
+  }];
+  for (const predecessor of [
+    {
+      kind: PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+      label: PREVIOUS_SYSTEM_GUARDIAN_LABEL,
+      path: PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
+      plistPath: PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH,
+      protocol: "pinned-pending" as const,
+      scriptPath: PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH
+    },
+    {
+      kind: LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
+      label: LEGACY_SYSTEM_GUARDIAN_LABEL,
+      path: LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
+      plistPath: LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
+      protocol: "legacy-normalized" as const,
+      scriptPath: LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH
+    }
+  ]) {
+    const service = await inspectLiveGuardianService(predecessor.label);
+    if (!service.loaded) continue;
+    if (!service.running
+      || !launchctlOutputFieldMatches(service.output, "path", predecessor.plistPath)
+      || !launchctlOutputFieldMatches(service.output, "program", predecessor.scriptPath)) {
+      throw new Error(
+        `Vigil refused update activation because predecessor guardian ${predecessor.label} has an unsafe live topology.`
+      );
+    }
+    requirements.push({
+      kind: predecessor.kind,
+      label: predecessor.label,
+      path: predecessor.path,
+      protocol: predecessor.protocol
+    });
+  }
+  return requirements;
+}
+
+function validatedRecoveryAuthorizationRequirements(
+  requirements: GuardianRecoveryAuthorizationRequirement[]
+): GuardianRecoveryAuthorizationRequirement[] {
+  const paths = new Set<string>();
+  if (!requirements.length) throw new Error("Vigil requires at least one guardian recovery attestation.");
+  for (const requirement of requirements) {
+    if (!requirement.path.startsWith("/")
+      || !requirement.kind.startsWith("vigil-root-update-recovery-authorization-")
+      || !requirement.label
+      || paths.has(requirement.path)) {
+      throw new Error("Vigil refused an invalid guardian recovery-attestation requirement.");
+    }
+    paths.add(requirement.path);
+  }
+  return requirements.map((requirement) => ({ ...requirement }));
+}
+
+async function assertGuardianRecoveryAttestation(
+  requirement: GuardianRecoveryAuthorizationRequirement,
+  manifest: PendingRecoveryManifestEvidence,
+  recoveryPolicySha256: string,
+  expectedAppInitialCdHash: string,
+  expectedAppTargetCdHash: string,
+  expectedUid: number
+): Promise<void> {
+  const { authorization } = await readPinnedGuardianAuthorization(requirement.path, expectedUid);
+  const appIdentityFields = [
+    ["appInitialDev", "initialDev"],
+    ["appInitialIno", "initialIno"],
+    ["appInitialCommit", "initialCommit"],
+    ["appInitialFingerprint", "initialFingerprint"],
+    ["appTargetDev", "targetDev"],
+    ["appTargetIno", "targetIno"],
+    ["appTargetCommit", "targetCommit"],
+    ["appTargetFingerprint", "targetFingerprint"]
+  ] as const;
+  const commonMismatch = authorization.kind !== requirement.kind
+    || authorization.recoveryAttemptId !== manifest.token
+    || authorization.recoveryPolicySha256 !== recoveryPolicySha256
+    || authorization.recoveryManifestPath !== manifest.manifestPath
+    || authorization.recoveryPolicyPath !== manifest.policyPath
+    || authorization.recoveryAppPath !== manifest.targetAppPath
+    || authorization.appInitialPresent !== true
+    || appIdentityFields.some(([authorizationKey, manifestKey]) => (
+      !String(manifest.app[manifestKey] ?? "")
+      || String(authorization[authorizationKey] ?? "") !== String(manifest.app[manifestKey])
+    ));
+  const protocolMismatch = requirement.protocol === "pinned-pending"
+    ? authorization.recoveryPendingManifestSha256 !== manifest.pendingSha256
+      || authorization.appInitialCdHash !== expectedAppInitialCdHash
+      || authorization.appTargetCdHash !== expectedAppTargetCdHash
+    : typeof authorization.recoveryManifestSha256 !== "string"
+      || !/^[a-f0-9]{64}$/u.test(authorization.recoveryManifestSha256);
+  if (commonMismatch || protocolMismatch) {
+    throw new Error(`Vigil's ${requirement.label} recovery attestation does not match this update.`);
+  }
 }
 
 /** Verify and capture one exact signed app generation without trusting bundle resources. */
@@ -924,21 +1156,39 @@ function exactCodeDirectoryHash(value: unknown, label: string): string {
 
 /** Hash the exact private pending-manifest bytes pinned by this updater. */
 export async function guardianRecoveryManifestSha256(manifestPath: string): Promise<string> {
+  return createHash("sha256").update(await readPinnedPrivateRecoveryManifest(manifestPath)).digest("hex");
+}
+
+async function readPinnedPrivateRecoveryManifest(manifestPath: string): Promise<Buffer> {
   const handle = await open(manifestPath, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    const manifest = await handle.stat();
+    const before = await handle.stat();
     const uid = process.getuid?.();
-    if (!manifest.isFile()
-      || (manifest.mode & 0o077) !== 0
-      || manifest.size > 256 * 1024
-      || (uid !== undefined && manifest.uid !== uid)) {
+    if (!before.isFile()
+      || (before.mode & 0o077) !== 0
+      || before.size > 256 * 1024
+      || (uid !== undefined && before.uid !== uid)) {
       throw new Error("Vigil's update recovery manifest is unsafe for root attestation.");
     }
     const bytes = await handle.readFile();
-    if (bytes.length !== manifest.size || bytes.length > 256 * 1024) {
+    const [after, pathname] = await Promise.all([handle.stat(), lstat(manifestPath)]);
+    if (before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.size !== after.size
+      || before.mtimeMs !== after.mtimeMs
+      || !pathname.isFile()
+      || pathname.isSymbolicLink()
+      || (pathname.mode & 0o077) !== 0
+      || (uid !== undefined && pathname.uid !== uid)
+      || after.dev !== pathname.dev
+      || after.ino !== pathname.ino
+      || after.size !== pathname.size
+      || after.mtimeMs !== pathname.mtimeMs
+      || bytes.length !== after.size
+      || bytes.length > 256 * 1024) {
       throw new Error("Vigil's update recovery manifest changed while it was being attested.");
     }
-    return createHash("sha256").update(bytes).digest("hex");
+    return bytes;
   } finally {
     await handle.close();
   }
@@ -949,11 +1199,12 @@ async function assertRootGuardianAuthorization(
   request: GuardianMaintenancePayload,
   now: number,
   expectedUid: number
-): Promise<void> {
-  const [authorization, authorizationStat] = await Promise.all([
-    readGuardianAuthorization(authorizationPath),
-    lstat(authorizationPath)
-  ]);
+): Promise<string> {
+  const {
+    authorization,
+    identity,
+    stat: authorizationStat
+  } = await readPinnedGuardianAuthorization(authorizationPath, expectedUid);
   const nowEpoch = Math.floor(now / 1_000);
   if (!authorizationStat.isFile() || authorizationStat.isSymbolicLink() || authorizationStat.uid !== expectedUid) {
     throw new Error("Vigil's system guardian authorization is not root-owned.");
@@ -997,6 +1248,7 @@ async function assertRootGuardianAuthorization(
   ) {
     throw new Error("Vigil's system guardian authorization does not match this updater.");
   }
+  return identity;
 }
 
 async function removeOwnedGuardianMaintenanceMarker(markerPath: string, lockToken: string, ownerPid: number): Promise<void> {
@@ -1018,6 +1270,47 @@ async function readJson<T>(path: string): Promise<T> {
 
 async function readGuardianAuthorization(path: string): Promise<GuardianAuthorizationPayload> {
   return parsePlist(await readFile(path, "utf8")) as GuardianAuthorizationPayload;
+}
+
+async function readPinnedGuardianAuthorization(path: string, expectedUid: number): Promise<{
+  authorization: GuardianAuthorizationPayload;
+  identity: string;
+  stat: Stats;
+}> {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()
+      || before.uid !== expectedUid
+      || (before.mode & 0o777) !== 0o644
+      || before.size > 64 * 1024) {
+      throw new Error("Vigil's system guardian authorization is not a safe regular file.");
+    }
+    const bytes = await handle.readFile();
+    const [after, pathname] = await Promise.all([handle.stat(), lstat(path)]);
+    if (before.dev !== after.dev
+      || before.ino !== after.ino
+      || before.size !== after.size
+      || before.mtimeMs !== after.mtimeMs
+      || !pathname.isFile()
+      || pathname.isSymbolicLink()
+      || pathname.uid !== expectedUid
+      || (pathname.mode & 0o777) !== 0o644
+      || after.dev !== pathname.dev
+      || after.ino !== pathname.ino
+      || after.size !== pathname.size
+      || after.mtimeMs !== pathname.mtimeMs
+      || bytes.length !== after.size) {
+      throw new Error("Vigil's system guardian authorization changed while it was being verified.");
+    }
+    return {
+      authorization: parsePlist(bytes) as GuardianAuthorizationPayload,
+      identity: `${after.dev}:${after.ino}:${after.size}:${after.mtimeMs}`,
+      stat: after
+    };
+  } finally {
+    await handle.close();
+  }
 }
 
 function isErrorCode(error: unknown, code: string): boolean {

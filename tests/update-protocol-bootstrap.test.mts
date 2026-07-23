@@ -55,10 +55,19 @@ assert.match(guardianSetupSource, /"--lock-path"[\s\S]*?"--lock-token"/u,
   "the signed worker command must expose the exact lock path and token to legacy supervisor authentication");
 assert.match(guardianSetupSource, /transferTo\(workerPid\)/u,
   "setup must transfer the held updater lock to the signed bridge worker");
+const bootstrapClaimWaits = [...guardianSetupSource.matchAll(/waitForBootstrapWorkerAuthorization\(/gu)]
+  .map((match) => match.index ?? -1);
+const bootstrapLockTransfer = guardianSetupSource.indexOf("lock.transferTo(workerPid)");
 assert.ok(
-  guardianSetupSource.indexOf("waitForBootstrapWorkerAuthorization({")
-    < guardianSetupSource.indexOf("lock.transferTo(workerPid)"),
-  "the root-owned exact relay/worker claim must exist before setup transfers lock ownership"
+  bootstrapClaimWaits.length === 2
+    && bootstrapLockTransfer >= 0
+    && bootstrapClaimWaits.every((index) => index < bootstrapLockTransfer),
+  "both current and predecessor root claims must exist before setup transfers lock ownership"
+);
+assert.match(
+  guardianSetupSource,
+  /waitForBootstrapWorkerAuthorization\([\s\S]*?waitForBootstrapWorkerAuthorization\([\s\S]*?PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH[\s\S]*?lock\.transferTo\(workerPid\)/u,
+  "the explicit historical compatibility claim must be validated before lock transfer"
 );
 assert.match(bootstrapSource, /publishBootstrapWorkerAuthorizationRequest[\s\S]*?waitForTransferredUpdaterLock/u,
   "the signed worker must publish its exact relay identity before waiting for lock transfer");
@@ -370,7 +379,7 @@ await assertPreinstallGateFailure(
 );
 await assertPreinstallGateFailure(
   { guardianErrorAtCall: 1 },
-  /v3 guardian not ready/u,
+  /v4 guardian not ready/u,
   "guardian-before",
   "continuation-before"
 );
@@ -384,8 +393,8 @@ await assertPreinstallGateFailure(
 const postInstallGuardianEvents: string[] = [];
 await assert.rejects(
   bootstrapUpdateProtocol(request, fakeOperations(postInstallGuardianEvents, { guardianErrorAtCall: 2 })),
-  /v3 guardian not ready/u,
-  "the guardian readiness gate must be rechecked against the live v3 guardian after activation"
+  /v4 guardian not ready/u,
+  "the guardian readiness gate must be rechecked against the live v4 guardian after activation"
 );
 assert.ok(postInstallGuardianEvents.indexOf("guardian-after") > postInstallGuardianEvents.indexOf("install"));
 assert.equal(postInstallGuardianEvents.includes("continuation-after"), false);
@@ -403,7 +412,7 @@ assert.ok(postInstallContinuationEvents.indexOf("rollback") > postInstallContinu
 const preMarkGuardianEvents: string[] = [];
 await assert.rejects(
   bootstrapUpdateProtocol(request, fakeOperations(preMarkGuardianEvents, { guardianErrorAtCall: 3 })),
-  /v3 guardian not ready/u,
+  /v4 guardian not ready/u,
   "guardian readiness must remain true at the final pre-mark boundary"
 );
 assert.ok(preMarkGuardianEvents.indexOf("guardian-premark") > preMarkGuardianEvents.indexOf("verify-premark-2"));
@@ -739,7 +748,7 @@ function fakeOperations(
         : guardianChecks === 2
           ? "guardian-after"
           : "guardian-premark");
-      if (options.guardianErrorAtCall === guardianChecks) throw new Error("v3 guardian not ready");
+      if (options.guardianErrorAtCall === guardianChecks) throw new Error("v4 guardian not ready");
     },
     async assertUpdateContinuation(observedSourceBuild, expectedUpdateCommit) {
       continuationChecks += 1;

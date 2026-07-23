@@ -319,23 +319,11 @@ app.on("window-all-closed", () => {
 });
 
 function showVigilWindow(appUrl: string): void {
-  // A packaged Vigil starts as an accessory app so it can live only in the
-  // menu bar. Promote it before creating or revealing the native window.
-  // Creating a hidden-title-bar BrowserWindow while AppKit still considers
-  // the process an accessory app can leave the window without traffic lights.
-  if (shouldStayResident()) {
-    app.setActivationPolicy("regular");
-    app.show();
-  }
   if (!mainWindow) createWindow(appUrl);
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
-  restoreNativeWindowControls(mainWindow);
   mainWindow.focus();
-  setImmediate(() => {
-    if (mainWindow && !mainWindow.isDestroyed()) restoreNativeWindowControls(mainWindow);
-  });
 }
 
 function revealVigilWindow(): void {
@@ -346,18 +334,8 @@ function revealVigilWindow(): void {
   showVigilWindow(currentAppUrl);
 }
 
-function restoreNativeWindowControls(window: BrowserWindow): void {
-  if (process.platform !== "darwin" || window.isDestroyed()) return;
-  window.setWindowButtonPosition({ x: 18, y: 19 });
-  window.setWindowButtonVisibility(true);
-}
-
 function hideVigilWindow(): void {
   mainWindow?.hide();
-  if (shouldStayResident()) {
-    app.hide();
-    enforceMenuBarOnlyPresentation();
-  }
 }
 
 function createWindow(appUrl: string): void {
@@ -369,12 +347,7 @@ function createWindow(appUrl: string): void {
     center: true,
     title: "Vigil",
     icon: iconAssetPath(`${selectedIconTheme}.png`),
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 18, y: 19 },
     backgroundColor: "#14191c",
-    alwaysOnTop: false,
-    fullscreenable: true,
-    acceptFirstMouse: true,
     webPreferences: {
       backgroundThrottling: true,
       contextIsolation: true,
@@ -394,26 +367,13 @@ function createWindow(appUrl: string): void {
     );
   };
 
-  vigilWindow.setAlwaysOnTop(false);
-  vigilWindow.setVisibleOnAllWorkspaces(false);
-  vigilWindow.on("ready-to-show", () => {
-    restoreNativeWindowControls(vigilWindow);
-    syncRendererActivity();
-  });
-  vigilWindow.on("show", () => {
-    restoreNativeWindowControls(vigilWindow);
-    syncRendererActivity();
-  });
+  vigilWindow.on("ready-to-show", syncRendererActivity);
+  vigilWindow.on("show", syncRendererActivity);
   vigilWindow.on("hide", syncRendererActivity);
   vigilWindow.on("focus", syncRendererActivity);
   vigilWindow.on("blur", syncRendererActivity);
   vigilWindow.on("minimize", syncRendererActivity);
   vigilWindow.on("restore", syncRendererActivity);
-  vigilWindow.on("enter-full-screen", () => {
-    restoreNativeWindowControls(vigilWindow);
-    setTimeout(() => restoreNativeWindowControls(vigilWindow), 250);
-  });
-  vigilWindow.on("leave-full-screen", () => restoreNativeWindowControls(vigilWindow));
 
   void vigilWindow.loadURL(appUrl);
   vigilWindow.webContents.on("did-finish-load", () => {
@@ -748,16 +708,12 @@ function rejectedAppUpdateRequest(error = "App update request origin was rejecte
 
 function configureMenuBarResidency(): void {
   if (!shouldStayResident()) return;
-  enforceMenuBarOnlyPresentation();
+  // The packaged app's LSUIElement declaration owns its menu-bar identity.
+  // Avoid changing AppKit's activation policy while Vigil is running.
   app.setLoginItemSettings({
     openAtLogin: true,
     openAsHidden: true
   });
-}
-
-function enforceMenuBarOnlyPresentation(): void {
-  app.setActivationPolicy("accessory");
-  app.dock?.hide();
 }
 
 function shouldShowWindowOnLaunch(): boolean {

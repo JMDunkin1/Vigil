@@ -10,6 +10,7 @@ import {
   UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH,
   UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND,
   UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
+  PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
   UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME,
   UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_KIND,
   UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS,
@@ -21,9 +22,9 @@ import {
   UPDATE_RECOVERY_POLICY_FILENAME
 } from "./updateTransaction.js";
 
-export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v3";
+export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v4";
 export const SYSTEM_GUARDIAN_ROOT = "/Library/Application Support/Vigil/System Guardian";
-export const SYSTEM_GUARDIAN_SCRIPT_PATH = join(SYSTEM_GUARDIAN_ROOT, "vigil-system-guardian-v3-DO-NOT-TERMINATE.sh");
+export const SYSTEM_GUARDIAN_SCRIPT_PATH = join(SYSTEM_GUARDIAN_ROOT, "vigil-system-guardian-v4-DO-NOT-TERMINATE.sh");
 export const SYSTEM_GUARDIAN_PLIST_PATH = `/Library/LaunchDaemons/${SYSTEM_GUARDIAN_LABEL}.plist`;
 export const SYSTEM_GUARDIAN_SAFETY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
 
@@ -53,7 +54,7 @@ ${SYSTEM_GUARDIAN_REVISION_MARKER}
 # same-user process or automation agent cannot take enforcement offline by
 # terminating the app and unloading its user LaunchAgent.
 # ${SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}
-# READINESS-ONLY COMPATIBILITY MARKER: controllers loaded before the v3
+# READINESS-ONLY COMPATIBILITY MARKER: controllers loaded before the v4
 # guardian refresh look for this literal before they may start the refreshed
 # updater. It is not an accepted recovery-authorization kind.
 # vigil-root-update-recovery-authorization-v2
@@ -71,6 +72,7 @@ root_authorization_path=${shellSingleQuote(SYSTEM_GUARDIAN_AUTHORIZATION_PATH)}
 root_recovery_authorization_path=${shellSingleQuote(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH)}
 bootstrap_authorization_path=${shellSingleQuote(UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH)}
 bootstrap_claim_path=${shellSingleQuote(UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH)}
+previous_bootstrap_claim_path=${shellSingleQuote(PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH)}
 bootstrap_worker_request_path=${shellSingleQuote(join(updaterDir, UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME))}
 global_update_manifest_path=${shellSingleQuote(recoveryManifestPath)}
 global_update_policy_path=${shellSingleQuote(recoveryPolicyPath)}
@@ -644,32 +646,33 @@ bootstrap_processes_match_request() {
   return 0
 }
 
-bootstrap_claim_matches() {
-  local now="$1"
-  local request_bootstrap_token="$2"
-  local request_lock_token="$3"
-  local request_source_app="$4"
-  local request_target_app="$5"
-  local request_expected_commit="$6"
-  local request_worker_pid="$7"
-  local request_relay_pid="$8"
-  private_root_file "$bootstrap_claim_path" 644 || return 1
-  local claim_modified=$(/usr/bin/stat -f '%m' "$bootstrap_claim_path" 2>/dev/null)
-  local claim_expires=$(json_value "$bootstrap_claim_path" expiresAtEpoch)
-  [[ "$(json_value "$bootstrap_claim_path" kind)" == "${UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND}" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" bootstrapToken)" == "$request_bootstrap_token" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" lockPath)" == "$update_lock_path" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" lockToken)" == "$request_lock_token" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" sourceAppPath)" == "$request_source_app" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" targetAppPath)" == "$request_target_app" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" expectedUpdateCommit)" == "$request_expected_commit" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" workerPid)" == "$request_worker_pid" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" relayPid)" == "$request_relay_pid" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" workerStarted)" == "$bootstrap_worker_started" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" workerCommand)" == "$bootstrap_worker_command" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" relayStarted)" == "$bootstrap_relay_started" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" relayCommand)" == "$bootstrap_relay_command" ]] || return 1
-  [[ "$(json_value "$bootstrap_claim_path" bootstrapAuthorizationSha256)" == "$bootstrap_authorization_sha" ]] || return 1
+bootstrap_claim_matches_at_path() {
+  local claim_path="$1"
+  local now="$2"
+  local request_bootstrap_token="$3"
+  local request_lock_token="$4"
+  local request_source_app="$5"
+  local request_target_app="$6"
+  local request_expected_commit="$7"
+  local request_worker_pid="$8"
+  local request_relay_pid="$9"
+  private_root_file "$claim_path" 644 || return 1
+  local claim_modified=$(/usr/bin/stat -f '%m' "$claim_path" 2>/dev/null)
+  local claim_expires=$(json_value "$claim_path" expiresAtEpoch)
+  [[ "$(json_value "$claim_path" kind)" == "${UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND}" ]] || return 1
+  [[ "$(json_value "$claim_path" bootstrapToken)" == "$request_bootstrap_token" ]] || return 1
+  [[ "$(json_value "$claim_path" lockPath)" == "$update_lock_path" ]] || return 1
+  [[ "$(json_value "$claim_path" lockToken)" == "$request_lock_token" ]] || return 1
+  [[ "$(json_value "$claim_path" sourceAppPath)" == "$request_source_app" ]] || return 1
+  [[ "$(json_value "$claim_path" targetAppPath)" == "$request_target_app" ]] || return 1
+  [[ "$(json_value "$claim_path" expectedUpdateCommit)" == "$request_expected_commit" ]] || return 1
+  [[ "$(json_value "$claim_path" workerPid)" == "$request_worker_pid" ]] || return 1
+  [[ "$(json_value "$claim_path" relayPid)" == "$request_relay_pid" ]] || return 1
+  [[ "$(json_value "$claim_path" workerStarted)" == "$bootstrap_worker_started" ]] || return 1
+  [[ "$(json_value "$claim_path" workerCommand)" == "$bootstrap_worker_command" ]] || return 1
+  [[ "$(json_value "$claim_path" relayStarted)" == "$bootstrap_relay_started" ]] || return 1
+  [[ "$(json_value "$claim_path" relayCommand)" == "$bootstrap_relay_command" ]] || return 1
+  [[ "$(json_value "$claim_path" bootstrapAuthorizationSha256)" == "$bootstrap_authorization_sha" ]] || return 1
   [[ "$claim_modified" == <-> && "$claim_expires" == <-> ]] || return 1
   (( claim_expires >= now && claim_expires <= claim_modified + ${UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS} )) || return 1
   process_identity_matches "$request_worker_pid" "$target_uid" "$request_relay_pid" "$bootstrap_worker_executable" "$bootstrap_worker_started" "$bootstrap_worker_command" || return 1
@@ -678,21 +681,27 @@ bootstrap_claim_matches() {
   process_identity_matches "$request_relay_pid" "$target_uid" "$relay_ppid" "$bootstrap_relay_executable" "$bootstrap_relay_started" "$bootstrap_relay_command"
 }
 
-write_bootstrap_claim() {
-  local now="$1"
-  local request_bootstrap_token="$2"
-  local request_lock_token="$3"
-  local request_source_app="$4"
-  local request_target_app="$5"
-  local request_expected_commit="$6"
-  local request_worker_pid="$7"
-  local request_relay_pid="$8"
-  local request_expires="$9"
-  local claim_expires=$(( now + ${UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS} ))
-  (( request_expires < claim_expires )) && claim_expires="$request_expires"
-  (( bootstrap_authorization_expires < claim_expires )) && claim_expires="$bootstrap_authorization_expires"
+bootstrap_claim_matches() {
+  bootstrap_claim_matches_at_path "$bootstrap_claim_path" "$@"
+}
+
+previous_bootstrap_claim_matches() {
+  bootstrap_claim_matches_at_path "$previous_bootstrap_claim_path" "$@"
+}
+
+write_bootstrap_claim_at_path() {
+  local claim_path="$1"
+  local now="$2"
+  local request_bootstrap_token="$3"
+  local request_lock_token="$4"
+  local request_source_app="$5"
+  local request_target_app="$6"
+  local request_expected_commit="$7"
+  local request_worker_pid="$8"
+  local request_relay_pid="$9"
+  local claim_expires="\${10}"
   (( claim_expires >= now )) || return 1
-  local claim_tmp="\${bootstrap_claim_path}.tmp.$$"
+  local claim_tmp="\${claim_path}.tmp.$$"
   /bin/rm -f "$claim_tmp"
   /usr/bin/plutil -create xml1 "$claim_tmp" || return 1
   /usr/bin/plutil -insert kind -string "${UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND}" "$claim_tmp" || return 1
@@ -727,7 +736,39 @@ write_bootstrap_claim() {
   /usr/bin/plutil -insert expiresAtEpoch -integer "$claim_expires" "$claim_tmp" || return 1
   /usr/sbin/chown 0:0 "$claim_tmp" || return 1
   /bin/chmod 0644 "$claim_tmp" || return 1
-  /bin/mv -f "$claim_tmp" "$bootstrap_claim_path"
+  /bin/mv -f "$claim_tmp" "$claim_path"
+}
+
+bootstrap_claim_path_is_replaceable() {
+  local claim_path="$1"
+  local request_bootstrap_token="$2"
+  if [[ -e "$claim_path" || -L "$claim_path" ]]; then
+    [[ -f "$claim_path" && ! -L "$claim_path" ]] || return 1
+    [[ "$(/usr/bin/stat -f '%u' "$claim_path" 2>/dev/null)" == "0" ]] || return 1
+    [[ "$(json_value "$claim_path" bootstrapToken)" != "$request_bootstrap_token" ]] || return 1
+  fi
+  return 0
+}
+
+ensure_bootstrap_claim_at_path() {
+  local claim_path="$1"
+  local now="$2"
+  local request_bootstrap_token="$3"
+  local request_lock_token="$4"
+  local request_source_app="$5"
+  local request_target_app="$6"
+  local request_expected_commit="$7"
+  local request_worker_pid="$8"
+  local request_relay_pid="$9"
+  local claim_expires="\${10}"
+  if bootstrap_claim_matches_at_path "$claim_path" "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"; then
+    return 0
+  fi
+  # A claim for this administrator-approved token is one-shot. A second
+  # matching-looking relay or worker PID must fail closed rather than replace it.
+  bootstrap_claim_path_is_replaceable "$claim_path" "$request_bootstrap_token" || return 1
+  write_bootstrap_claim_at_path "$claim_path" "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" "$claim_expires" || return 1
+  bootstrap_claim_matches_at_path "$claim_path" "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"
 }
 
 attest_bootstrap_worker_request() {
@@ -755,18 +796,51 @@ attest_bootstrap_worker_request() {
   (( request_expires >= now && request_expires <= request_modified + ${UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS} )) || return 1
   validate_bootstrap_authorization "$now" "$request_bootstrap_token" "$request_source_app" "$request_target_app" "$request_expected_commit" || return 1
   bootstrap_processes_match_request "$request_worker_pid" "$request_relay_pid" "$request_bootstrap_token" "$request_lock_token" "$request_expected_commit" || return 1
-  if [[ -e "$bootstrap_claim_path" || -L "$bootstrap_claim_path" ]]; then
-    if bootstrap_claim_matches "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"; then
-      return 0
+  local claim_expires=$(( now + ${UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS} ))
+  (( request_expires < claim_expires )) && claim_expires="$request_expires"
+  (( bootstrap_authorization_expires < claim_expires )) && claim_expires="$bootstrap_authorization_expires"
+  (( claim_expires >= now )) || return 1
+  local candidate_claim_path
+  for candidate_claim_path in "$previous_bootstrap_claim_path" "$bootstrap_claim_path"; do
+    if bootstrap_claim_matches_at_path "$candidate_claim_path" "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"; then
+      local candidate_claim_expires=$(json_value "$candidate_claim_path" expiresAtEpoch)
+      (( candidate_claim_expires < claim_expires )) && claim_expires="$candidate_claim_expires"
+    else
+      bootstrap_claim_path_is_replaceable "$candidate_claim_path" "$request_bootstrap_token" || return 1
     fi
-    # A claim for this administrator-approved token is one-shot. A second
-    # matching-looking relay or worker PID must fail closed rather than replace it.
-    [[ -f "$bootstrap_claim_path" && ! -L "$bootstrap_claim_path" ]] || return 1
-    [[ "$(/usr/bin/stat -f '%u' "$bootstrap_claim_path" 2>/dev/null)" == "0" ]] || return 1
-    [[ "$(json_value "$bootstrap_claim_path" bootstrapToken)" != "$request_bootstrap_token" ]] || return 1
-  fi
-  write_bootstrap_claim "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" "$request_expires" || return 1
-  bootstrap_claim_matches "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"
+  done
+  # The historical claim is the compatibility boundary for the still-running
+  # v3 guardian. Publish and validate it before the isolated v4 go-signal.
+  ensure_bootstrap_claim_at_path "$previous_bootstrap_claim_path" "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" "$claim_expires" || return 1
+  ensure_bootstrap_claim_at_path "$bootstrap_claim_path" "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" "$claim_expires" || return 1
+  previous_bootstrap_claim_matches "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" \
+    && bootstrap_claim_matches "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"
+}
+
+legacy_maintenance_authorization_expires() {
+  local now="$1"
+  local expected_token="$2"
+  local expected_pid="$3"
+  private_root_file "$root_authorization_path" 644 || return 1
+  [[ "$(json_value "$root_authorization_path" kind)" == "vigil-root-maintenance-authorization-v2" ]] || return 1
+  [[ "$(json_value "$root_authorization_path" token)" == "$expected_token" ]] || return 1
+  [[ "$(json_value "$root_authorization_path" pid)" == "$expected_pid" ]] || return 1
+  [[ "$(json_value "$root_authorization_path" lockPath)" == "$update_lock_path" ]] || return 1
+  [[ "$(json_value "$root_authorization_path" updaterExecutable)" == /* ]] || return 1
+  [[ -n "$(json_value "$root_authorization_path" updaterStarted)" ]] || return 1
+  # A sparse predecessor grant may be upgraded after the current guardian
+  # independently revalidates the live updater. Any partially populated newer
+  # schema is ambiguous and fails closed instead of being refreshed.
+  local current_key
+  for current_key in authorizationMode updaterCommand updaterScriptPath updaterScriptSha256 updaterAppCdHash parentPid parentExecutable parentStarted parentCommand bootstrapAuthorizationSha256; do
+    [[ -z "$(json_value "$root_authorization_path" "$current_key")" ]] || return 1
+  done
+  local expires=$(json_value "$root_authorization_path" expiresAtEpoch)
+  local modified=$(/usr/bin/stat -f '%m' "$root_authorization_path" 2>/dev/null)
+  [[ "$expires" == <-> && "$modified" == <-> ]] || return 1
+  (( expires >= now )) || return 1
+  (( expires <= modified + ${SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS} )) || return 1
+  /usr/bin/printf '%s' "$expires"
 }
 
 authorize_maintenance_request() {
@@ -797,12 +871,16 @@ authorize_maintenance_request() {
 
   # A root-created grant for this request is deliberately one-shot. Never
   # refresh its deadline, even if a same-UID process keeps rewriting the request.
+  # A loaded predecessor may have won the first-writer race with a sparse grant;
+  # v4 upgrades only that exact legacy schema and retains its original deadline.
+  local legacy_grant_expires=""
   if [[ -f "$root_authorization_path" && ! -L "$root_authorization_path" ]]; then
     local granted_token="$(json_value "$root_authorization_path" token)"
     local granted_pid="$(json_value "$root_authorization_path" pid)"
     local granted_lock_path="$(json_value "$root_authorization_path" lockPath)"
     if [[ "$granted_token" == "$marker_token" && "$granted_pid" == "$marker_pid" && "$granted_lock_path" == "$update_lock_path" ]]; then
-      return 0
+      authenticated_maintenance_active "$now" && return 0
+      legacy_grant_expires=$(legacy_maintenance_authorization_expires "$now" "$marker_token" "$marker_pid") || return 1
     fi
   fi
 
@@ -827,11 +905,16 @@ authorize_maintenance_request() {
   local request_relay_pid=$(json_value "$bootstrap_worker_request_path" relayPid)
   if [[ "$request_worker_pid" == "$marker_pid" && "$request_relay_pid" == "$owner_ppid" && "$request_lock_token" == "$marker_token" ]] \
     && attest_bootstrap_worker_request "$now" \
+    && previous_bootstrap_claim_matches "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" \
     && bootstrap_claim_matches "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"; then
     local bootstrap_grant_expires=$(( now + ${SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS} ))
     local bootstrap_claim_expires=$(json_value "$bootstrap_claim_path" expiresAtEpoch)
+    local previous_bootstrap_claim_expires=$(json_value "$previous_bootstrap_claim_path" expiresAtEpoch)
+    (( marker_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$marker_expires"
     (( bootstrap_authorization_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$bootstrap_authorization_expires"
     (( bootstrap_claim_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$bootstrap_claim_expires"
+    (( previous_bootstrap_claim_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$previous_bootstrap_claim_expires"
+    [[ "$legacy_grant_expires" == <-> ]] && (( legacy_grant_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$legacy_grant_expires"
     write_maintenance_authorization \
       "bootstrap" "$marker_token" "$marker_pid" \
       "$bootstrap_worker_executable" "$bootstrap_worker_started" "$bootstrap_worker_command" \
@@ -855,11 +938,14 @@ authorize_maintenance_request() {
   local updater_app_cdhash="\${signed_script_identity%%:*}"
   local updater_script_sha="\${signed_script_identity#*:}"
   [[ "\${#updater_app_cdhash}" -ge 40 && "\${#updater_script_sha}" -eq 64 ]] || return 1
+  local normal_grant_expires=$(( now + ${SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS} ))
+  (( marker_expires < normal_grant_expires )) && normal_grant_expires="$marker_expires"
+  [[ "$legacy_grant_expires" == <-> ]] && (( legacy_grant_expires < normal_grant_expires )) && normal_grant_expires="$legacy_grant_expires"
   write_maintenance_authorization \
     "normal" "$marker_token" "$marker_pid" "$owner_executable" "$owner_started" "$owner_command" \
     "$main_pid" "$executable_path" "$parent_started" "$exact_main_command" \
     "$updater_script_path" "$updater_script_sha" "$updater_app_cdhash" "-" \
-    "$(( now + ${SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS} ))"
+    "$normal_grant_expires"
 }
 
 authenticated_maintenance_active() {
@@ -931,22 +1017,25 @@ authenticated_maintenance_active() {
   process_identity_matches "$marker_pid" "$target_uid" "$owner_ppid" "$authorization_executable" "$authorization_started" "$authorization_command" || return 1
 
   if [[ "$authorization_mode" == "bootstrap" ]]; then
-    private_root_file "$bootstrap_claim_path" 644 || return 1
-    [[ "$(json_value "$bootstrap_claim_path" kind)" == "${UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND}" ]] || return 1
-    [[ "$(json_value "$bootstrap_claim_path" lockPath)" == "$update_lock_path" ]] || return 1
-    [[ "$(json_value "$bootstrap_claim_path" lockToken)" == "$marker_token" ]] || return 1
-    [[ "$(json_value "$bootstrap_claim_path" workerPid)" == "$marker_pid" ]] || return 1
-    [[ "$(json_value "$bootstrap_claim_path" workerStarted)" == "$authorization_started" ]] || return 1
-    [[ "$(json_value "$bootstrap_claim_path" workerCommand)" == "$authorization_command" ]] || return 1
-    [[ "$(json_value "$bootstrap_claim_path" relayPid)" == "$authorization_parent_pid" ]] || return 1
-    [[ "$(json_value "$bootstrap_claim_path" relayStarted)" == "$authorization_parent_started" ]] || return 1
-    [[ "$(json_value "$bootstrap_claim_path" relayCommand)" == "$authorization_parent_command" ]] || return 1
-    [[ "$(json_value "$bootstrap_claim_path" bootstrapAuthorizationSha256)" == "$authorization_bootstrap_sha" ]] || return 1
+    local active_claim_path
+    for active_claim_path in "$previous_bootstrap_claim_path" "$bootstrap_claim_path"; do
+      private_root_file "$active_claim_path" 644 || return 1
+      [[ "$(json_value "$active_claim_path" kind)" == "${UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND}" ]] || return 1
+      [[ "$(json_value "$active_claim_path" lockPath)" == "$update_lock_path" ]] || return 1
+      [[ "$(json_value "$active_claim_path" lockToken)" == "$marker_token" ]] || return 1
+      [[ "$(json_value "$active_claim_path" workerPid)" == "$marker_pid" ]] || return 1
+      [[ "$(json_value "$active_claim_path" workerStarted)" == "$authorization_started" ]] || return 1
+      [[ "$(json_value "$active_claim_path" workerCommand)" == "$authorization_command" ]] || return 1
+      [[ "$(json_value "$active_claim_path" relayPid)" == "$authorization_parent_pid" ]] || return 1
+      [[ "$(json_value "$active_claim_path" relayStarted)" == "$authorization_parent_started" ]] || return 1
+      [[ "$(json_value "$active_claim_path" relayCommand)" == "$authorization_parent_command" ]] || return 1
+      [[ "$(json_value "$active_claim_path" bootstrapAuthorizationSha256)" == "$authorization_bootstrap_sha" ]] || return 1
+      local claim_expires=$(json_value "$active_claim_path" expiresAtEpoch)
+      local claim_modified=$(/usr/bin/stat -f '%m' "$active_claim_path" 2>/dev/null)
+      [[ "$claim_expires" == <-> && "$claim_modified" == <-> ]] || return 1
+      (( claim_expires >= now && claim_expires <= claim_modified + ${UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS} )) || return 1
+    done
     [[ "$(sha256_file "$bootstrap_authorization_path")" == "$authorization_bootstrap_sha" ]] || return 1
-    local claim_expires=$(json_value "$bootstrap_claim_path" expiresAtEpoch)
-    local claim_modified=$(/usr/bin/stat -f '%m' "$bootstrap_claim_path" 2>/dev/null)
-    [[ "$claim_expires" == <-> && "$claim_modified" == <-> ]] || return 1
-    (( claim_expires >= now && claim_expires <= claim_modified + ${UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS} )) || return 1
     [[ "$owner_ppid" == "$authorization_parent_pid" ]] || return 1
     local relay_ppid=$(/bin/ps -p "$authorization_parent_pid" -o ppid= 2>/dev/null | /usr/bin/xargs)
     [[ "$relay_ppid" == <-> ]] || return 1

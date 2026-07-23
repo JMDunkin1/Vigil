@@ -110,7 +110,7 @@ assert.equal(
   "root authorization must pin the exact follow-on update that remains actionable after bridging"
 );
 assert.equal((bridgeAdminRequest as GuardianSetupAdminRequest | null)?.authorizationOnly, false,
-  "the first migration must add a parallel v3 guardian without replacing the running legacy guardian");
+  "the first migration must add a parallel v4 guardian without replacing the running legacy guardian");
 
 let absentGuardianAdminRequest: GuardianSetupAdminRequest | null = null;
 await setupSystemGuardian({
@@ -133,7 +133,7 @@ await setupSystemGuardian({
 assert.equal(
   (absentGuardianAdminRequest as GuardianSetupAdminRequest | null)?.expectedCurrentGuardianSha256,
   "absent",
-  "the first parallel-v3 install must pin the expected absence of its new script path"
+  "the first parallel-v4 install must pin the expected absence of its new script path"
 );
 
 let currentGuardianAdminCalls = 0;
@@ -157,7 +157,7 @@ const currentGuardianResult = await setupSystemGuardian({
   }));
 assert.equal(currentGuardianResult.ok, true);
 assert.equal(currentGuardianAdminCalls, 1,
-  "a current v3 guardian must support reauthorizing an expired or interrupted exact bridge");
+  "a current v4 guardian must support reauthorizing an expired or interrupted exact bridge");
 assert.equal(currentGuardianReadinessReads, 2,
   "authorization-only retry must recheck the still-running parallel guardian");
 assert.equal((currentGuardianAdminRequest as GuardianSetupAdminRequest | null)?.authorizationOnly, true,
