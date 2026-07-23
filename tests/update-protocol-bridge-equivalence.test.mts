@@ -7,6 +7,7 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile
@@ -90,6 +91,56 @@ try {
   const evidence = await verifyFixture();
   assert.equal(evidence.payloadTreeSha256, manifest.payloadTreeSha256);
   assert.equal(evidence.equivalentTreeSha256, manifest.equivalentTreeSha256);
+
+  const transactionRoot = join(root, "transaction");
+  const previousAppPath = join(transactionRoot, "Vigil.app.vigil-previous");
+  const nextAppPath = join(transactionRoot, "Vigil.app.vigil-next");
+  const partialAppPath = `${nextAppPath}.00000000-0000-4000-8000-000000000000.partial`;
+  await mkdir(transactionRoot, { recursive: true });
+  await rename(installedAppPath, previousAppPath);
+  await rename(candidateAppPath, nextAppPath);
+  try {
+    await assert.rejects(
+      verifyUpdateProtocolBridgeEquivalence(null, nextAppPath, { requireSignedSeal: false }),
+      /bridge candidate is not the exact Vigil\.app bundle/u
+    );
+    await assert.rejects(
+      verifyUpdateProtocolBridgeEquivalence(previousAppPath, nextAppPath, { requireSignedSeal: false }),
+      /bridge candidate is not the exact Vigil\.app bundle/u
+    );
+    const transactionEvidence = await verifyUpdateProtocolBridgeEquivalence(
+      previousAppPath,
+      nextAppPath,
+      { requireSignedSeal: false, allowAtomicInstallBundlePaths: true }
+    );
+    assert.deepEqual(transactionEvidence, evidence);
+  } finally {
+    await rename(previousAppPath, installedAppPath);
+    await rename(nextAppPath, candidateAppPath);
+  }
+  await rename(installedAppPath, previousAppPath);
+  try {
+    await assert.rejects(
+      verifyUpdateProtocolBridgeEquivalence(previousAppPath, candidateAppPath, { requireSignedSeal: false }),
+      /installed bridge baseline is not the exact Vigil\.app bundle/u
+    );
+  } finally {
+    await rename(previousAppPath, installedAppPath);
+  }
+  await rename(candidateAppPath, partialAppPath);
+  try {
+    await assert.rejects(
+      verifyUpdateProtocolBridgeEquivalence(
+        null,
+        partialAppPath,
+        { requireSignedSeal: false, allowAtomicInstallBundlePaths: true }
+      ),
+      /bridge candidate is not the exact Vigil\.app bundle/u,
+      "quarantined partial bundles must never be accepted as active transaction generations"
+    );
+  } finally {
+    await rename(partialAppPath, candidateAppPath);
+  }
 
   const candidateAsar = join(candidateAppPath, appAsarPath);
   await writeFile(candidateAsar, "tampered startup archive\n");

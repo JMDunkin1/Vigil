@@ -39,6 +39,14 @@ assert.match(bootstrapSource, /execFileAsync\("\/bin\/cp", \["-ac", source, dest
   "the one-time bundle staging copy should use an APFS clone when available");
 assert.match(bootstrapSource, /assertExactSignedGeneration\(\s*sourceAppPath, destination, signatures\.sourceCdHash, signatures\.sourceCdHash, sourceBuild\s*\)/u,
   "the cloned candidate must be signature- and build-pinned before atomic activation");
+const exactBridgeGenerationVerifier = bootstrapSource.match(
+  /async function assertExactBridgeGeneration\([\s\S]*?\n\}\n\nasync function exactBridgeGenerationMatches/u
+)?.[0] || "";
+assert.equal(
+  [...exactBridgeGenerationVerifier.matchAll(/\{ allowAtomicInstallBundlePaths: true \}/gu)].length,
+  2,
+  "both candidate and baseline branches must accept only the atomic bridge generation names during bootstrap"
+);
 assert.match(bootstrapSource, /captureAvailability[\s\S]*?AVAILABILITY_STABILITY_MS[\s\S]*?captureAvailability/u,
   "the same live app and supervisor identities must survive a bounded post-activation stability window");
 assert.match(bootstrapSource, /beginMaintenance\(lock\)[\s\S]*?installCandidate[\s\S]*?markVerified\(\)[\s\S]*?finalize\(\)[\s\S]*?maintenance\.release/u,
@@ -688,20 +696,23 @@ function fakeOperations(
         ? options.installedUpdaterCapability
         : updaterCapability;
     },
-    async verifyBridgeEquivalence(installedApp, candidateApp) {
+    async verifyBridgeEquivalence(installedApp, candidateApp, verificationOptions) {
       if (!installed) {
         events.push("verify-bridge-initial");
         assert.equal(installedApp, targetAppPath);
         assert.equal(candidateApp, sourceAppPath);
+        assert.equal(verificationOptions, undefined);
       } else if (candidateApp === sourceAppPath) {
         events.push("verify-bridge-source-premark");
         assert.equal(installedApp, null);
+        assert.equal(verificationOptions, undefined);
       } else {
         events.push(events.includes("verify-bridge-installed")
           ? "verify-bridge-installed-premark"
           : "verify-bridge-installed");
         assert.equal(installedApp, `${targetAppPath}.vigil-previous`);
         assert.equal(candidateApp, targetAppPath);
+        assert.deepEqual(verificationOptions, { allowAtomicInstallBundlePaths: true });
       }
       return bridgeEquivalence;
     },

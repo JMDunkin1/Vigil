@@ -260,9 +260,16 @@ export async function packageUpdateProtocolBridgeCandidate(options: {
 export async function verifyUpdateProtocolBridgeEquivalence(
   installedAppPath: string | null,
   candidateAppPath: string,
-  options: { requireSignedSeal?: boolean } = {}
+  options: {
+    requireSignedSeal?: boolean;
+    allowAtomicInstallBundlePaths?: boolean;
+  } = {}
 ): Promise<UpdateProtocolBridgeEquivalenceEvidence> {
-  const candidate = await exactAppDirectory(candidateAppPath, "bridge candidate");
+  const candidate = await exactAppDirectory(
+    candidateAppPath,
+    "bridge candidate",
+    options.allowAtomicInstallBundlePaths === true
+  );
   const { bytes: manifestBytes, manifest } = await readBridgeManifest(candidate);
   const payloadRoot = join(candidate, manifest.payloadRoot);
   const [candidateTree, payloadTree, candidateBuildInfo] = await Promise.all([
@@ -277,7 +284,11 @@ export async function verifyUpdateProtocolBridgeEquivalence(
   }
 
   if (installedAppPath !== null) {
-    const installed = await exactAppDirectory(installedAppPath, "installed bridge baseline");
+    const installed = await exactAppDirectory(
+      installedAppPath,
+      "installed bridge baseline",
+      options.allowAtomicInstallBundlePaths === true
+    );
     await assertNoBridgePayload(installed);
     const [baselineTree, baselineBuildInfo] = await Promise.all([
       protectedTree(installed),
@@ -998,9 +1009,18 @@ async function assertNoBridgePayload(appPath: string): Promise<void> {
   }
 }
 
-async function exactAppDirectory(path: string, label: string): Promise<string> {
+async function exactAppDirectory(
+  path: string,
+  label: string,
+  allowAtomicInstallBundlePaths = false
+): Promise<string> {
   const exact = await exactDirectory(path, label);
-  if (basename(exact) !== "Vigil.app") throw new Error(`Vigil's ${label} is not the exact Vigil.app bundle.`);
+  const name = basename(exact);
+  if (name !== "Vigil.app"
+    && !(allowAtomicInstallBundlePaths
+      && (name === "Vigil.app.vigil-next" || name === "Vigil.app.vigil-previous"))) {
+    throw new Error(`Vigil's ${label} is not the exact Vigil.app bundle.`);
+  }
   return exact;
 }
 

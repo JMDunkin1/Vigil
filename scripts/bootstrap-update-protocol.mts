@@ -128,7 +128,8 @@ export interface UpdateProtocolBootstrapOperations {
   readUpdaterCapability(appPath: string): Promise<BootstrapUpdaterCapability>;
   verifyBridgeEquivalence(
     installedAppPath: string | null,
-    candidateAppPath: string
+    candidateAppPath: string,
+    options?: { allowAtomicInstallBundlePaths?: boolean }
   ): Promise<UpdateProtocolBridgeEquivalenceEvidence>;
   assertBootstrapAuthorization(evidence: BootstrapAuthorizationEvidence): Promise<BootstrapAuthorizedTargetIdentity>;
   assertGuardianReady(): Promise<void>;
@@ -267,7 +268,8 @@ export async function bootstrapUpdateProtocol(
       operations.readUpdaterCapability(targetAppPath),
       operations.verifyBridgeEquivalence(
         alreadyInstalled ? null : `${targetAppPath}.vigil-previous`,
-        targetAppPath
+        targetAppPath,
+        { allowAtomicInstallBundlePaths: true }
       )
     ]);
     if (installedSignatures.sourceCdHash !== signatures.sourceCdHash
@@ -305,7 +307,8 @@ export async function bootstrapUpdateProtocol(
       operations.verifyBridgeEquivalence(null, sourceAppPath),
       operations.verifyBridgeEquivalence(
         alreadyInstalled ? null : `${targetAppPath}.vigil-previous`,
-        targetAppPath
+        targetAppPath,
+        { allowAtomicInstallBundlePaths: true }
       )
     ]);
     const preMarkSignatures = await operations.verifyMatchingApps(sourceAppPath, targetAppPath);
@@ -1124,8 +1127,16 @@ async function assertExactBridgeGeneration(
   expected: UpdateProtocolBridgeEquivalenceEvidence
 ): Promise<void> {
   const observed = bridgeCandidate
-    ? await verifyUpdateProtocolBridgeEquivalence(null, candidateAppPath)
-    : await verifyUpdateProtocolBridgeEquivalence(candidateAppPath, trustedBridgeAppPath);
+    ? await verifyUpdateProtocolBridgeEquivalence(
+      null,
+      candidateAppPath,
+      { allowAtomicInstallBundlePaths: true }
+    )
+    : await verifyUpdateProtocolBridgeEquivalence(
+      candidateAppPath,
+      trustedBridgeAppPath,
+      { allowAtomicInstallBundlePaths: true }
+    );
   if (!sameBridgeEquivalence(observed, expected)) {
     throw new Error("Vigil's bootstrap generation does not match its pinned A-equivalent bridge manifest.");
   }
