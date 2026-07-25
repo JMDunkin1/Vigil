@@ -38,12 +38,14 @@ import {
   PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
   PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
   PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH,
+  PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
   LEGACY_SYSTEM_GUARDIAN_LABEL,
   LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
   LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
   LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
   LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH,
+  LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   SYSTEM_GUARDIAN_REVISION,
   SYSTEM_GUARDIAN_REVISION_MARKER,
   SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX,
@@ -647,6 +649,19 @@ assert.match(script, /verified_signed_script_hash\(\)[\s\S]*?verified_code_direc
   "the exact updater wrapper must be hash-pinned between stable full-bundle signature checks");
 assert.match(script, /write_maintenance_authorization\(\)[\s\S]*?updaterCommand[\s\S]*?parentPid[\s\S]*?parentStarted[\s\S]*?parentCommand/u,
   "the root grant must retain the exact updater and parent process identities it observed");
+assert.match(
+  script,
+  new RegExp(
+    `authorization_mode" == "normal"[\\s\\S]*?previous_root_authorization_path[\\s\\S]*?legacy_root_authorization_path[\\s\\S]*?/bin/cp -P "\\$root_authorization_path"`,
+    "u"
+  ),
+  "normal maintenance must publish the exact v7 grant for still-running predecessor controllers"
+);
+assert.ok(
+  script.includes(PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH)
+    && script.includes(LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH),
+  "compatibility grants must target only the pinned predecessor authorization paths"
+);
 assert.match(script, /owner_executable" == "\$authorization_executable"/u, "active maintenance must remain bound to the updater executable root authorized");
 assert.match(script, /owner_started" == "\$authorization_started"/u, "PID reuse must not inherit a prior updater authorization");
 assert.match(script, /owner_command" == "\$authorization_command"/u, "argv substitution must not inherit a prior updater authorization");

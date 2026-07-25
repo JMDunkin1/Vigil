@@ -1,6 +1,8 @@
 import { dirname, join } from "node:path";
 import {
   SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
+  PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
+  LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS,
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
@@ -22,9 +24,9 @@ import {
   UPDATE_RECOVERY_POLICY_FILENAME
 } from "./updateTransaction.js";
 
-export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v6";
+export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v7";
 export const SYSTEM_GUARDIAN_ROOT = "/Library/Application Support/Vigil/System Guardian";
-export const SYSTEM_GUARDIAN_SCRIPT_PATH = join(SYSTEM_GUARDIAN_ROOT, "vigil-system-guardian-v6-DO-NOT-TERMINATE.sh");
+export const SYSTEM_GUARDIAN_SCRIPT_PATH = join(SYSTEM_GUARDIAN_ROOT, "vigil-system-guardian-v7-DO-NOT-TERMINATE.sh");
 export const SYSTEM_GUARDIAN_PLIST_PATH = `/Library/LaunchDaemons/${SYSTEM_GUARDIAN_LABEL}.plist`;
 export const SYSTEM_GUARDIAN_SAFETY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
 
@@ -69,6 +71,8 @@ supervisor_service=${shellSingleQuote(`gui/${config.targetUid}/${supervisorLabel
 update_lock_path=${shellSingleQuote(updateLockPath)}
 maintenance_marker_path=${shellSingleQuote(maintenanceMarkerPath)}
 root_authorization_path=${shellSingleQuote(SYSTEM_GUARDIAN_AUTHORIZATION_PATH)}
+previous_root_authorization_path=${shellSingleQuote(PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH)}
+legacy_root_authorization_path=${shellSingleQuote(LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH)}
 root_recovery_authorization_path=${shellSingleQuote(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH)}
 bootstrap_authorization_path=${shellSingleQuote(UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH)}
 bootstrap_claim_path=${shellSingleQuote(UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH)}
@@ -500,7 +504,23 @@ write_maintenance_authorization() {
   /usr/bin/plutil -insert expiresAtEpoch -integer "$grant_expires" "$authorization_tmp" || return 1
   /usr/sbin/chown 0:0 "$authorization_tmp" || return 1
   /bin/chmod 0644 "$authorization_tmp" || return 1
-  /bin/mv -f "$authorization_tmp" "$root_authorization_path"
+  /bin/mv -f "$authorization_tmp" "$root_authorization_path" || return 1
+  if [[ "$authorization_mode" == "normal" ]]; then
+    # A still-running predecessor app process may have loaded an older
+    # authorization pathname before this parallel guardian was installed.
+    # Publish byte-identical, root-owned compatibility grants so that process
+    # can authenticate its own transactional quit. The v7 grant remains the
+    # authority and all copies retain the same bounded deadline and identities.
+    local compatibility_path
+    for compatibility_path in "$previous_root_authorization_path" "$legacy_root_authorization_path"; do
+      local compatibility_tmp="\${compatibility_path}.tmp.$$"
+      /bin/rm -f "$compatibility_tmp"
+      /bin/cp -P "$root_authorization_path" "$compatibility_tmp" || return 1
+      /usr/sbin/chown 0:0 "$compatibility_tmp" || return 1
+      /bin/chmod 0644 "$compatibility_tmp" || return 1
+      /bin/mv -f "$compatibility_tmp" "$compatibility_path" || return 1
+    done
+  fi
 }
 
 validate_bootstrap_authorization() {
