@@ -320,6 +320,7 @@ app.on("window-all-closed", () => {
 });
 
 function showVigilWindow(appUrl: string): void {
+  showVigilDock();
   if (!mainWindow) createWindow(appUrl);
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
@@ -337,6 +338,17 @@ function revealVigilWindow(): void {
 
 function hideVigilWindow(): void {
   mainWindow?.hide();
+  hideVigilDock();
+}
+
+function showVigilDock(): void {
+  if (!shouldStayResident()) return;
+  void app.dock?.show();
+}
+
+function hideVigilDock(): void {
+  if (!shouldStayResident()) return;
+  app.dock?.hide();
 }
 
 function createWindow(appUrl: string): void {
@@ -392,7 +404,10 @@ function createWindow(appUrl: string): void {
   });
   vigilWindow.on("closed", () => {
     windowResizeSession = null;
-    if (mainWindow === vigilWindow) mainWindow = null;
+    if (mainWindow === vigilWindow) {
+      mainWindow = null;
+      hideVigilDock();
+    }
   });
 }
 
@@ -711,8 +726,10 @@ function rejectedAppUpdateRequest(error = "App update request origin was rejecte
 
 function configureMenuBarResidency(): void {
   if (!shouldStayResident()) return;
-  // Keep the menu-bar companion and login launch while retaining Vigil's
-  // ordinary Dock presence and native application identity.
+  // A resident launch starts as a menu-bar companion. Opening the main window
+  // restores its Dock tile; hiding or closing the window removes the tile
+  // without terminating enforcement.
+  hideVigilDock();
   app.setLoginItemSettings({
     openAtLogin: true,
     openAsHidden: true

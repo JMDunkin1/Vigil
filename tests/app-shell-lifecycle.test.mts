@@ -61,16 +61,8 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function showVigilWindow\(appUrl: string\): void \{\s*if \(!mainWindow\) createWindow\(appUrl\);[\s\S]*?mainWindow\.show\(\);[\s\S]*?mainWindow\.focus\(\);\s*\}/,
-  "an open resident window must use Electron's ordinary native show and focus lifecycle"
-);
-const showWindowStart = mainSource.indexOf("function showVigilWindow");
-const showWindowEnd = mainSource.indexOf("\n}", showWindowStart);
-const showWindowSource = mainSource.slice(showWindowStart, showWindowEnd + 2);
-assert.doesNotMatch(
-  showWindowSource,
-  /setActivationPolicy|app\.show\(\)|app\.hide\(\)/,
-  "showing Vigil must not mutate the process presentation policy"
+  /function showVigilWindow\(appUrl: string\): void \{\s*showVigilDock\(\);\s*if \(!mainWindow\) createWindow\(appUrl\);[\s\S]*?mainWindow\.show\(\);[\s\S]*?mainWindow\.focus\(\);\s*\}/,
+  "opening a resident window must restore its Dock tile before using Electron's native show and focus lifecycle"
 );
 assert.match(
   mainSource,
@@ -84,18 +76,33 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function hideVigilWindow\(\): void \{\s*mainWindow\?\.hide\(\);\s*\}/,
-  "hiding Vigil must hide only its native window while enforcement remains resident"
+  /function hideVigilWindow\(\): void \{\s*mainWindow\?\.hide\(\);\s*hideVigilDock\(\);\s*\}/,
+  "hiding Vigil must also remove its Dock tile while enforcement remains resident"
+);
+assert.match(
+  mainSource,
+  /function showVigilDock\(\): void \{\s*if \(!shouldStayResident\(\)\) return;\s*void app\.dock\?\.show\(\);\s*\}/,
+  "revealing packaged Vigil must restore its Dock tile"
+);
+assert.match(
+  mainSource,
+  /function hideVigilDock\(\): void \{\s*if \(!shouldStayResident\(\)\) return;\s*app\.dock\?\.hide\(\);\s*\}/,
+  "hidden packaged Vigil must remove its Dock tile without changing its resident lifecycle"
+);
+assert.match(
+  mainSource,
+  /function configureMenuBarResidency\(\): void \{\s*if \(!shouldStayResident\(\)\) return;[\s\S]*?hideVigilDock\(\);[\s\S]*?app\.setLoginItemSettings/,
+  "background Vigil launches must start without a Dock tile"
+);
+assert.match(
+  mainSource,
+  /vigilWindow\.on\("closed", \(\) => \{[\s\S]*?mainWindow = null;\s*hideVigilDock\(\);/,
+  "closing Vigil's last native window must remove its Dock tile"
 );
 assert.doesNotMatch(
   packageSource,
   /"LSUIElement"\s*:\s*true/,
-  "Vigil's packaged application identity must remain visible in the Dock"
-);
-assert.doesNotMatch(
-  mainSource,
-  /setActivationPolicy|app\.dock\?\.(?:hide|show)\(\)/,
-  "Vigil must not mutate AppKit activation or Dock presentation at runtime"
+  "Vigil must retain a normal application identity so opening its window can restore the Dock tile"
 );
 assert.match(
   mainSource,
