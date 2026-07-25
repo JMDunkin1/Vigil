@@ -465,7 +465,6 @@ function wrapperSource(
   if (kind === "updater") {
     return [
       "// Vigil signed update-protocol bridge wrapper v1",
-      "process.noAsar = true;",
       "import { realpathSync } from \"node:fs\";",
       "import { isAbsolute } from \"node:path\";",
       "import { fileURLToPath } from \"node:url\";",

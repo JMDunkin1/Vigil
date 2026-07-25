@@ -510,7 +510,7 @@ preserve_interruption() {
   local detected_at=$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')
   local temporary="\${interruption}.$$.tmp"
   /bin/rm -f "$temporary"
-  /usr/bin/plutil -create json "$temporary" || return 1
+  /usr/bin/plutil -create xml1 "$temporary" || return 1
   /usr/bin/plutil -insert version -integer ${RUNTIME_INTERRUPTION_VERSION} "$temporary" || { /bin/rm -f "$temporary"; return 1; }
   /usr/bin/plutil -insert id -string "$interruption_id" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
   /usr/bin/plutil -insert pid -integer "$stale_pid" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
@@ -519,6 +519,7 @@ preserve_interruption() {
   /usr/bin/plutil -insert transport -string "in-app" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
   /usr/bin/plutil -insert detectedAt -string "$detected_at" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
   /usr/bin/plutil -insert reason -string "$reason" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
+  /usr/bin/plutil -convert json "$temporary" || { /bin/rm -f "$temporary"; return 1; }
   /bin/chmod 0600 "$temporary" || { /bin/rm -f "$temporary"; return 1; }
   /bin/sync || { /bin/rm -f "$temporary"; return 1; }
   if [[ -e "$interruption" || -L "$interruption" ]]; then

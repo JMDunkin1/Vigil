@@ -277,6 +277,18 @@ try {
     "two-path recovery must prove one exact initial and one exact candidate before deleting either path or its journal"
   );
 
+  const interruptionCreate = script.indexOf('/usr/bin/plutil -create xml1 "$temporary"');
+  const interruptionFields = script.indexOf('/usr/bin/plutil -insert reason -string "$reason" "$temporary"', interruptionCreate);
+  const interruptionJson = script.indexOf('/usr/bin/plutil -convert json "$temporary"', interruptionFields);
+  const interruptionPublish = script.indexOf('/bin/mv -f "$temporary" "$interruption"', interruptionJson);
+  assert.ok(
+    interruptionCreate >= 0
+      && interruptionFields > interruptionCreate
+      && interruptionJson > interruptionFields
+      && interruptionPublish > interruptionJson,
+    "runtime interruption evidence must be assembled in a plutil-mutable format before conversion to JSON and publication"
+  );
+
   const malformedReadyBranch = script.indexOf('preserve_interruption "$$" "$invalid_started_at" "invalid-ready-record"');
   const malformedReadyArchive = script.indexOf("archive_invalid_ready", malformedReadyBranch);
   const malformedReadyRemoval = script.indexOf('/bin/rm -f "$ready"', malformedReadyArchive);

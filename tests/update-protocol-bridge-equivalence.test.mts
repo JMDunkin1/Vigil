@@ -81,10 +81,15 @@ try {
     const wrapper = updateProtocolBridgeWrapperSource(kind, manifest.payloadTreeSha256);
     const noAsar = wrapper.indexOf("process.noAsar = true;");
     const payloadImport = wrapper.indexOf("await import(");
-    assert.ok(
-      noAsar >= 0 && noAsar < payloadImport,
-      `the ${kind} wrapper must disable Electron's virtual ASAR filesystem before loading v3 code`
-    );
+    if (kind === "updater") {
+      assert.equal(noAsar, -1,
+        "an updater wrapper imported by normal Electron startup must not globally disable ASAR resolution");
+    } else {
+      assert.ok(
+        noAsar >= 0 && noAsar < payloadImport,
+        `the ${kind} wrapper must disable Electron's virtual ASAR filesystem before loading v3 code`
+      );
+    }
     assert.equal(
       await readFile(join(candidateAppPath, path), "utf8"),
       wrapper,
