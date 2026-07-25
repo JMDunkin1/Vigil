@@ -28,6 +28,7 @@ import {
   SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   SYSTEM_GUARDIAN_LABEL as UPDATE_MAINTENANCE_GUARDIAN_LABEL,
   SYSTEM_GUARDIAN_PLIST_PATH,
+  SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS,
   SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS,
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
@@ -78,6 +79,10 @@ assert.equal(GENERATED_SYSTEM_GUARDIAN_SCRIPT_PATH, SYSTEM_GUARDIAN_SCRIPT_PATH,
   "the generator and readiness controller must agree on the parallel v4 script path");
 assert.equal(GENERATED_SYSTEM_GUARDIAN_PLIST_PATH, SYSTEM_GUARDIAN_PLIST_PATH,
   "the generator and readiness controller must agree on the parallel v4 launchd path");
+assert.ok(
+  SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS >= 45_000,
+  "the client wait must cover heavyweight root bridge attestation plus the stable-authorization window"
+);
 assert.match(bridgePackagerSource, /import \{ SYSTEM_GUARDIAN_LABEL \} from "\.\.\/src\/systemGuardian\.js"/u,
   "the signed bridge installer wrapper must use the canonical v4 service label");
 assert.notEqual(SYSTEM_GUARDIAN_LABEL, PREVIOUS_SYSTEM_GUARDIAN_LABEL,

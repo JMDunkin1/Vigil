@@ -43,7 +43,12 @@ export const SYSTEM_GUARDIAN_REVISION = 5;
 export const SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX = "# vigil-system-guardian-revision=";
 export const SYSTEM_GUARDIAN_REVISION_MARKER = `${SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX}${SYSTEM_GUARDIAN_REVISION}`;
 export const UPDATE_PACKAGED_APP_RECOVERY_PROTOCOL_REVISION = 3;
-const SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS = 15_000;
+// Root bootstrap attestation re-hashes both signed app generations and the
+// closed bridge tree before publishing its grant. On slower or busy systems
+// that can consume most of the old 15-second client wait. Waiting longer does
+// not extend the root-created authorization deadline; it only lets the client
+// observe the existing bounded grant for the required stability window.
+export const SYSTEM_GUARDIAN_AUTHORIZATION_TIMEOUT_MS = 45_000;
 const SYSTEM_GUARDIAN_AUTHORIZATION_POLL_MS = 100;
 const SYSTEM_GUARDIAN_AUTHORIZATION_STABILITY_MS = 2_500;
 
@@ -809,6 +814,7 @@ async function waitForRootGuardianAuthorization(
       if (identity !== stableIdentity) {
         stableIdentity = identity;
         stableSince = observedAt;
+        lastError = new Error("Vigil's system guardian authorization appeared but did not remain stable long enough.");
       } else if (observedAt - stableSince >= SYSTEM_GUARDIAN_AUTHORIZATION_STABILITY_MS) {
         return;
       }
