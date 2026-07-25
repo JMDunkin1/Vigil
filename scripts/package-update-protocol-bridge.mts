@@ -385,6 +385,9 @@ export async function verifyUpdateProtocolBridgeEquivalence(
         installerWrapperGuardianLabel(wrapperText)
       )
       : wrapperSource(definition.kind, manifest.payloadTreeSha256);
+    const exactWrapperSources = definition.kind === "updater"
+      ? [expectedWrapper, legacyUpdaterWrapperSource(manifest.payloadTreeSha256)]
+      : [expectedWrapper];
     if (!stat.isFile()
       || stat.isSymbolicLink()
       || stat.nlink !== 1
@@ -392,7 +395,7 @@ export async function verifyUpdateProtocolBridgeEquivalence(
       || (stat.mode & 0o7777) !== record.mode
       || JSON.stringify(xattrs) !== JSON.stringify(record.xattrs)
       || sha256(bytes) !== record.sha256
-      || wrapperText !== expectedWrapper) {
+      || !exactWrapperSources.includes(wrapperText)) {
       throw new Error(`Vigil's bridge ${definition.kind} wrapper is not the exact signed v3 loader.`);
     }
     observedWrappers.push(record);
@@ -414,6 +417,18 @@ export async function verifyUpdateProtocolBridgeEquivalence(
     wrappersSha256: manifest.wrappersSha256,
     baselineBuildInfoSha256: manifest.baselineBuildInfoSha256
   };
+}
+
+function legacyUpdaterWrapperSource(payloadTreeSha256: string): string {
+  const prefix = `../../../../VigilUpdater/v3/${payloadTreeSha256}/scripts/`;
+  return [
+    "// Vigil signed update-protocol bridge wrapper v1",
+    "process.noAsar = true;",
+    `export const PACKAGED_UPDATE_RECOVERY_PROTOCOL_REVISION = ${PROTOCOL_REVISION};`,
+    `const { runPackagedUpdate } = await import("${prefix}update-packaged-app.mjs");`,
+    "await runPackagedUpdate();",
+    ""
+  ].join("\n");
 }
 
 /** Resolve one exact payload module after validating the closed bridge topology. */
