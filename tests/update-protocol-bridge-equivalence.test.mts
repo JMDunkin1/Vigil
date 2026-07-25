@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   assembleUpdateProtocolBridgeCandidate,
@@ -91,6 +92,11 @@ try {
     );
   }
   const installerWrapper = updateProtocolBridgeWrapperSource("installer", manifest.payloadTreeSha256);
+  const updaterModule = await import(`${pathToFileURL(join(candidateAppPath, updaterPath)).href}?bridge-import=1`);
+  assert.equal(typeof updaterModule.inspectInstalledUpdateTopology, "function",
+    "the updater bridge wrapper must preserve the module exports used during normal Electron startup");
+  assert.equal(typeof updaterModule.runPackagedUpdate, "function",
+    "the updater bridge wrapper must expose direct updater dispatch without running it when imported");
   assert.match(installerWrapper, /--read-only-preflight/u,
     "the bridge installer wrapper must preserve non-privileged setup preflight dispatch");
   assert.match(installerWrapper, /preflightSystemGuardianUpdateCompatibility/u,
@@ -303,6 +309,7 @@ async function createPayloadFixture(path: string): Promise<void> {
   await Promise.all([
     writeFile(join(path, "scripts", "update-packaged-app.mjs"), [
       "export const PACKAGED_UPDATE_RECOVERY_PROTOCOL_REVISION = 3;",
+      "export async function inspectInstalledUpdateTopology() { return { ok: true }; }",
       "export async function runPackagedUpdate() {}",
       ""
     ].join("\n")),

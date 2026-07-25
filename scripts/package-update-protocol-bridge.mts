@@ -451,9 +451,15 @@ function wrapperSource(
     return [
       "// Vigil signed update-protocol bridge wrapper v1",
       "process.noAsar = true;",
+      "import { realpathSync } from \"node:fs\";",
+      "import { isAbsolute } from \"node:path\";",
+      "import { fileURLToPath } from \"node:url\";",
       `export const PACKAGED_UPDATE_RECOVERY_PROTOCOL_REVISION = ${PROTOCOL_REVISION};`,
-      `const { runPackagedUpdate } = await import("${prefix}update-packaged-app.mjs");`,
-      "await runPackagedUpdate();",
+      `const payload = await import("${prefix}update-packaged-app.mjs");`,
+      "export const inspectInstalledUpdateTopology = payload.inspectInstalledUpdateTopology;",
+      "export const runPackagedUpdate = payload.runPackagedUpdate;",
+      "const directPath = process.argv[1] && isAbsolute(process.argv[1]) ? realpathSync(process.argv[1]) : \"\";",
+      "if (directPath === fileURLToPath(import.meta.url)) await runPackagedUpdate();",
       ""
     ].join("\n");
   }
