@@ -2,7 +2,8 @@
 
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { access, lstat, mkdtemp, open, readdir, readFile, readlink, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, lstat, mkdtemp, open, readdir, readFile, readlink, realpath, rmdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { resolveMacBuildVersion } from "./mac-build-version.mjs";
@@ -10,6 +11,11 @@ import { verifyEntitlementObject } from "./release-entitlements.mjs";
 
 if (process.platform !== "darwin") throw new Error("Developer ID releases must be built and verified on macOS.");
 const buildVersion = resolveMacBuildVersion(process.env, { requireExplicit: true });
+const releaseCommit = (await runCapture("git", ["rev-parse", "HEAD"])).trim().toLowerCase();
+if (!/^[a-f0-9]{40}$/u.test(releaseCommit)) throw new Error("The release commit could not be verified.");
+if ((await runCapture("git", ["status", "--porcelain=v1"])).trim()) {
+  throw new Error("Developer ID releases require a clean source checkout.");
+}
 await verifyPublishedBrowserCompanion();
 for (const name of ["CSC_LINK", "CSC_KEY_PASSWORD", "APPLE_API_KEY", "APPLE_API_KEY_ID", "APPLE_API_ISSUER", "APPLE_TEAM_ID"]) {
   if (!process.env[name]) throw new Error(`Missing required release secret: ${name}`);
@@ -32,46 +38,242 @@ await run("npx", [
   `-c.buildVersion=${buildVersion}`
 ]);
 
-const outputDir = join(process.cwd(), "dist", "mac.noindex");
+// The repository path is intentionally a symlink into the user's cache.
+// Resolve it once so every artifact pathname handed to trust tools is pinned
+// to the canonical release output directory.
+const outputDir = await realpath(join(process.cwd(), "dist", "mac.noindex"));
 const entries = await readdir(outputDir, { withFileTypes: true });
 const dmgNames = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".dmg")).map((entry) => entry.name).sort();
 if (dmgNames.length !== 1) throw new Error(`Expected exactly one release DMG, found ${dmgNames.length}.`);
 const dmgPath = join(outputDir, dmgNames[0]);
 await run("xcrun", ["stapler", "staple", dmgPath]);
-await run("xcrun", ["stapler", "validate", dmgPath]);
+const releaseVersion = String(process.env.npm_package_version || "");
+const releaseTeamIdentifier = String(process.env.APPLE_TEAM_ID || "");
+if (!/^[0-9]+(?:\.[0-9]+){1,2}(?:[-+][A-Za-z0-9.-]+)?$/u.test(releaseVersion)) {
+  throw new Error("The release version is missing or malformed.");
+}
+if (!/^[A-Z0-9]{10}$/u.test(releaseTeamIdentifier)) {
+  throw new Error("APPLE_TEAM_ID must be the exact ten-character signing team identifier.");
+}
+const initialDigest = await hashPinnedRegularFile(dmgPath, "release DMG");
+const releaseManifest = {
+  kind: "vigil-macos-release-v1",
+  schemaVersion: 1,
+  channel: "stable",
+  version: releaseVersion,
+  buildVersion,
+  commit: releaseCommit,
+  artifact: basename(dmgPath),
+  bytes: initialDigest.bytes,
+  sha256: initialDigest.sha256,
+  appIdentifier: "tech.caseline.vigil",
+  teamIdentifier: releaseTeamIdentifier
+};
+await Promise.all([
+  run("spctl", [
+    "--assess",
+    "--type", "open",
+    "--context", "context:primary-signature",
+    "--verbose=2",
+    dmgPath
+  ]),
+  run("xcrun", ["stapler", "validate", dmgPath])
+]);
+const trustedDigest = await hashPinnedRegularFile(dmgPath, "trusted release DMG");
+assertSameDigest(initialDigest, trustedDigest, "The trusted release DMG changed before it could be mounted.");
 
 const mountRoot = await mkdtemp(join(tmpdir(), "vigil-release-mount-"));
-let mounted = false;
+let attachAttempted = false;
+let releaseVerificationError;
 try {
+  attachAttempted = true;
   await run("hdiutil", ["attach", "-readonly", "-nobrowse", "-mountpoint", mountRoot, dmgPath]);
-  mounted = true;
   const mountedEntries = await readdir(mountRoot, { withFileTypes: true });
   const appPaths = mountedEntries
-    .filter((entry) => entry.isDirectory() && entry.name.endsWith(".app"))
+    .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && entry.name.endsWith(".app"))
     .map((entry) => join(mountRoot, entry.name));
   if (appPaths.length !== 1) throw new Error(`Expected exactly one release app on the mounted DMG, found ${appPaths.length}.`);
   const appPath = appPaths[0];
   await run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
   await run("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath]);
   await run("xcrun", ["stapler", "validate", appPath]);
+  await verifyReleaseAppManifest(appPath, releaseManifest);
   for (const signedPath of await discoverSignedCode(appPath)) await verifySignedPath(signedPath, signedPath.endsWith(".app"));
-} finally {
-  if (mounted) await run("hdiutil", ["detach", mountRoot]).catch(async () => await run("hdiutil", ["detach", "-force", mountRoot]));
-  await rm(mountRoot, { recursive: true, force: true });
+} catch (error) {
+  releaseVerificationError = error;
+}
+const releaseCleanupErrors = await cleanupReleaseMount({ attachAttempted, mountRoot });
+if (releaseVerificationError !== undefined) {
+  preservePrimaryError(releaseVerificationError, releaseCleanupErrors);
+  throw releaseVerificationError;
+}
+if (releaseCleanupErrors.length > 0) {
+  throw new AggregateError(releaseCleanupErrors, "The verified release DMG mount could not be safely cleaned up.");
 }
 
-const bytes = (await stat(dmgPath)).size;
-const sha256 = createHash("sha256").update(await readFile(dmgPath)).digest("hex");
+const finalDigest = await hashPinnedRegularFile(dmgPath, "verified release DMG");
+assertSameDigest(initialDigest, finalDigest, "The release DMG changed while its packaged app was being verified.");
 const manifestPath = join(outputDir, "release-checksums.json");
-await writeFile(manifestPath, `${JSON.stringify({
-  version: process.env.npm_package_version,
-  buildVersion,
-  artifact: basename(dmgPath),
-  bytes,
-  sha256
-}, null, 2)}\n`, { mode: 0o644 });
+await writeFile(manifestPath, `${JSON.stringify(releaseManifest, null, 2)}\n`, { mode: 0o644 });
 console.log(`Verified notarized release: ${dmgPath}`);
-console.log(`SHA-256: ${sha256}`);
+console.log(`SHA-256: ${releaseManifest.sha256}`);
+
+async function verifyReleaseAppManifest(appPath, manifest) {
+  const [info, signing, buildInfo] = await Promise.all([
+    parsePlist(join(appPath, "Contents", "Info.plist")),
+    runCapture("codesign", ["-dvvv", appPath]),
+    readPackagedBuildInfo(appPath)
+  ]);
+  if (info.CFBundleIdentifier !== manifest.appIdentifier) {
+    throw new Error("The packaged app identifier does not match the release manifest.");
+  }
+  if (info.CFBundleShortVersionString !== manifest.version || info.CFBundleVersion !== manifest.buildVersion) {
+    throw new Error("The packaged app version and build do not match the release manifest.");
+  }
+  const signedIdentifier = signing.match(/^Identifier=(.+)$/mu)?.[1]?.trim() || "";
+  const signedTeam = signing.match(/^TeamIdentifier=(.+)$/mu)?.[1]?.trim() || "";
+  const authorities = [...signing.matchAll(/^Authority=(.+)$/gmu)].map((match) => String(match[1] || "").trim());
+  if (signedIdentifier !== manifest.appIdentifier || signedTeam !== manifest.teamIdentifier) {
+    throw new Error("The packaged app code-signing identity does not match the release manifest.");
+  }
+  if (!authorities.some((authority) => authority.startsWith("Developer ID Application:"))) {
+    throw new Error("The packaged app is not signed by a Developer ID Application identity.");
+  }
+  if (buildInfo.commit !== manifest.commit || buildInfo.dirty !== false) {
+    throw new Error("The packaged app build metadata does not match the clean release commit.");
+  }
+}
+
+async function readPackagedBuildInfo(appPath) {
+  const path = join(
+    appPath,
+    "Contents",
+    "Resources",
+    "app.asar.unpacked",
+    "dist",
+    "runtime",
+    "build-info.json"
+  );
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch (error) {
+    throw new Error("The packaged app has no valid unpacked build metadata.", { cause: error });
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("The packaged app build metadata is malformed.");
+  }
+  return parsed;
+}
+
+async function hashPinnedRegularFile(path, label) {
+  const absolutePath = resolve(path);
+  const canonicalPath = await realpath(absolutePath);
+  if (canonicalPath !== absolutePath) throw new Error(`The ${label} must be a canonical regular file.`);
+  let digest;
+  let handle;
+  let primaryError;
+  try {
+    handle = await open(absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const before = await handle.stat();
+    if (!before.isFile() || before.size < 1 || before.size > 8 * 1024 * 1024 * 1024) {
+      throw new Error(`The ${label} must be a bounded nonempty regular file.`);
+    }
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let offset = 0;
+    while (offset < before.size) {
+      const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, before.size - offset), offset);
+      if (!bytesRead) throw new Error(`The ${label} ended while it was being hashed.`);
+      hash.update(buffer.subarray(0, bytesRead));
+      offset += bytesRead;
+    }
+    const [after, pathname] = await Promise.all([handle.stat(), lstat(absolutePath)]);
+    assertPinnedFileUnchanged(before, after, pathname, offset, label);
+    digest = { bytes: offset, sha256: hash.digest("hex") };
+  } catch (error) {
+    primaryError = error;
+  }
+  const closeErrors = [];
+  if (handle) {
+    try {
+      await handle.close();
+    } catch (error) {
+      closeErrors.push(new Error(`The ${label} file descriptor could not be closed.`, { cause: error }));
+    }
+  }
+  if (primaryError !== undefined) {
+    preservePrimaryError(primaryError, closeErrors);
+    throw primaryError;
+  }
+  if (closeErrors.length > 0) throw new AggregateError(closeErrors, `The ${label} file descriptor could not be closed.`);
+  if (!digest) throw new Error(`The ${label} digest was not produced.`);
+  return digest;
+}
+
+function assertPinnedFileUnchanged(before, after, pathname, bytesRead, label) {
+  if (!pathname.isFile()
+    || pathname.isSymbolicLink()
+    || before.dev !== after.dev
+    || before.ino !== after.ino
+    || before.size !== after.size
+    || before.birthtimeMs !== after.birthtimeMs
+    || before.ctimeMs !== after.ctimeMs
+    || before.mtimeMs !== after.mtimeMs
+    || after.dev !== pathname.dev
+    || after.ino !== pathname.ino
+    || after.size !== pathname.size
+    || after.birthtimeMs !== pathname.birthtimeMs
+    || after.ctimeMs !== pathname.ctimeMs
+    || after.mtimeMs !== pathname.mtimeMs
+    || bytesRead !== after.size) {
+    throw new Error(`The ${label} changed while it was being hashed.`);
+  }
+}
+
+function assertSameDigest(expected, actual, message) {
+  if (expected.bytes !== actual.bytes || expected.sha256 !== actual.sha256) throw new Error(message);
+}
+
+async function cleanupReleaseMount({ attachAttempted, mountRoot }) {
+  const cleanupErrors = [];
+  if (attachAttempted) {
+    try {
+      await run("hdiutil", ["detach", mountRoot]);
+    } catch {
+      try {
+        await run("hdiutil", ["detach", "-force", mountRoot]);
+      } catch (error) {
+        cleanupErrors.push(new Error("The release DMG could not be detached.", { cause: error }));
+      }
+    }
+  }
+  try {
+    await rmdir(mountRoot);
+  } catch (error) {
+    if (!isErrorCode(error, "ENOENT")) {
+      cleanupErrors.push(new Error(`The release mount directory ${mountRoot} could not be removed.`, { cause: error }));
+    }
+  }
+  return cleanupErrors;
+}
+
+function preservePrimaryError(primaryError, cleanupErrors) {
+  if (!(primaryError instanceof Error) || cleanupErrors.length === 0) return;
+  try {
+    Object.defineProperty(primaryError, "cleanupErrors", {
+      configurable: true,
+      enumerable: false,
+      value: cleanupErrors
+    });
+  } catch {
+    // Never replace the authoritative release failure with a cleanup detail.
+  }
+}
+
+function isErrorCode(error, code) {
+  return typeof error === "object" && error !== null && "code" in error && error.code === code;
+}
 
 async function verifyPublishedBrowserCompanion() {
   const [manifest, storeConfig, defaultsSource] = await Promise.all([

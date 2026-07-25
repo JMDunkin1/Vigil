@@ -116,7 +116,7 @@ async function main(): Promise<void> {
   let legacyAgent: LegacyAgentRecovery | null = null;
   let legacyAgentStopped = false;
   let parentExited = false;
-  log.write(`\n[${new Date().toISOString()}] Building local changes while Vigil process ${options.parentPid} keeps running.\n`);
+  log.write(`\n[${new Date().toISOString()}] Preparing local update preflight while Vigil process ${options.parentPid} keeps running.\n`);
   try {
     await waitForOwnedUpdaterLock(options.lockPath, options.lockToken);
     await reconcilePreviousLocalGlobalUpdate(options);
@@ -124,6 +124,25 @@ async function main(): Promise<void> {
     if (!maintenance.ready) {
       throw new Error(maintenance.message || "Vigil's protected update setup is not ready.");
     }
+    try {
+      legacyAgent = await captureLegacyLaunchAgentRecovery();
+    } catch (error) {
+      throw new Error(
+        `The legacy Vigil background service could not be prepared for rollback: ${errorMessage(error)} `
+        + "The running app was left in place and no build was started."
+      );
+    }
+    const expectedDataDir = legacyAgent?.dataDir
+      || process.env.VIGIL_DATA_DIR
+      || options.userDataDir;
+    recoveryPolicy = {
+      updaterDir: dirname(options.statusPath),
+      expectedAppPath: options.appPath,
+      repoRoot: options.repoRoot,
+      userDataDir: options.userDataDir,
+      expectedDataDir,
+      expectedRuntimePaths: []
+    };
     await localStatus(options, log, "building", "Building local Vigil changes");
     log.write(`[${new Date().toISOString()}] Building packaged Vigil from ${options.repoRoot}\n`);
     let exitCode: number | null = 1;
@@ -151,27 +170,6 @@ async function main(): Promise<void> {
       return;
     }
 
-    try {
-      legacyAgent = await captureLegacyLaunchAgentRecovery();
-    } catch (error) {
-      const message = `The legacy Vigil background service could not be prepared for rollback: ${errorMessage(error)} The running app was left in place.`;
-      log.write(`[${new Date().toISOString()}] ${message}\n`);
-      await safeLocalStatus(options, log, "failed", message, { error: message });
-      process.exitCode = 1;
-      return;
-    }
-
-    const expectedDataDir = legacyAgent?.dataDir
-      || process.env.VIGIL_DATA_DIR
-      || options.userDataDir;
-    recoveryPolicy = {
-      updaterDir: dirname(options.statusPath),
-      expectedAppPath: options.appPath,
-      repoRoot: options.repoRoot,
-      userDataDir: options.userDataDir,
-      expectedDataDir,
-      expectedRuntimePaths: []
-    };
     await localStatus(options, log, "installing-app", "Durably staging the verified local Vigil build");
     appPlan = await stageUpdateArtifactCandidate(
       recoveryPolicy,
@@ -354,6 +352,7 @@ async function localUpdateRecoveryBundleSource(options: Options): Promise<Update
     gitPath: await realpath(absoluteGit),
     scriptSourcePath: join(runtimeScriptsDir, "recover-update-transaction.mjs"),
     moduleSourcePath: join(runtimeScriptsDir, "..", "src", "updateTransaction.js"),
+    treeDigestModuleSourcePath: join(runtimeScriptsDir, "..", "src", "runtimeTreeDigest.js"),
     helperSourcePath: join(runtimeScriptsDir, "..", "bin", "vigil-atomic-swap")
   };
 }

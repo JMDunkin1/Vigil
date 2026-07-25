@@ -15,6 +15,7 @@ import {
 import type { FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { captureRuntimeTreeDigest } from "./runtimeTreeDigest.js";
 
 export const UPDATE_RECOVERY_VERSION = 1 as const;
 export const UPDATE_RECOVERY_MANIFEST_FILENAME = "update-recovery.json";
@@ -25,6 +26,7 @@ export const UPDATE_STATE_ROLLBACK_WAL_FILENAME = "state-rollback-wal.json";
 export const UPDATE_RECOVERY_RUNTIME_DIRNAME = "recovery-runtime";
 export const UPDATE_RECOVERY_SCRIPT_RELATIVE_PATH = "scripts/recover-update-transaction.mjs";
 export const UPDATE_RECOVERY_MODULE_RELATIVE_PATH = "src/updateTransaction.js";
+export const UPDATE_RECOVERY_TREE_DIGEST_MODULE_RELATIVE_PATH = "src/runtimeTreeDigest.js";
 export const UPDATE_RECOVERY_HELPER_RELATIVE_PATH = "bin/vigil-atomic-swap";
 export const UPDATE_RECOVERY_PACKAGE_RELATIVE_PATH = "package.json";
 
@@ -60,6 +62,8 @@ export type UpdateArtifactKind = "app" | "runtime";
 export interface UpdateArtifactIdentity {
   commit: string | null;
   fingerprint: string | null;
+  /** Deterministic full-tree digest for separately activated runtime artifacts. */
+  treeSha256?: string | null;
   /** Verified CodeDirectory hash for app bundles; null for unsigned or non-app artifacts. */
   cdHash?: string | null;
   dev: number | null;
@@ -74,11 +78,13 @@ export interface UpdateRecoveryArtifact {
   initialPresent: boolean;
   initialCommit: string | null;
   initialFingerprint: string | null;
+  initialTreeSha256?: string | null;
   initialCdHash?: string | null;
   initialDev: number | null;
   initialIno: number | null;
   targetCommit: string | null;
   targetFingerprint: string | null;
+  targetTreeSha256?: string | null;
   targetCdHash?: string | null;
   targetDev: number | null;
   targetIno: number | null;
@@ -110,6 +116,7 @@ export interface UpdateRecoveryManifest {
     packagePath: string;
     scriptPath: string;
     modulePath: string;
+    treeDigestModulePath?: string;
     helperPath: string;
   };
   timestamps: {
@@ -198,10 +205,12 @@ interface StagedArtifactJournal {
   initialPresent: boolean;
   initialCommit: string | null;
   initialFingerprint: string | null;
+  initialTreeSha256?: string | null;
   initialDevice: number | null;
   initialInode: number | null;
   candidateCommit?: string | null;
   candidateFingerprint?: string | null;
+  candidateTreeSha256?: string | null;
   candidateDevice?: number;
   candidateInode?: number;
   updatedAt: string;
@@ -224,6 +233,7 @@ export interface UpdateRecoveryBundleSource {
   gitPath: string;
   scriptSourcePath: string;
   moduleSourcePath: string;
+  treeDigestModuleSourcePath: string;
   helperSourcePath: string;
 }
 
@@ -243,10 +253,12 @@ export interface UpdateRecoveryPolicyFile {
     packagePath: string;
     scriptPath: string;
     modulePath: string;
+    treeDigestModulePath?: string;
     helperPath: string;
     packageSha256: string;
     scriptSha256: string;
     moduleSha256: string;
+    treeDigestModuleSha256?: string;
     helperSha256: string;
   };
   createdAt: string;
@@ -394,6 +406,7 @@ export async function stageUpdateArtifactCandidate(
       initialPresent: initialIdentity !== null,
       initialCommit: initialIdentity?.commit ?? null,
       initialFingerprint: initialIdentity?.fingerprint ?? null,
+      initialTreeSha256: initialIdentity?.treeSha256 ?? null,
       initialDevice: initialIdentity?.dev ?? null,
       initialInode: initialIdentity?.ino ?? null,
       updatedAt: now
@@ -408,6 +421,7 @@ export async function stageUpdateArtifactCandidate(
     const normalizedTarget = normalizedIdentity(targetIdentity, `${kind} staged candidate identity`);
     journal.candidateCommit = normalizedTarget.commit;
     journal.candidateFingerprint = normalizedTarget.fingerprint;
+    journal.candidateTreeSha256 = normalizedTarget.treeSha256;
     if (normalizedTarget.dev !== null && normalizedTarget.ino !== null) {
       journal.candidateDevice = normalizedTarget.dev;
       journal.candidateInode = normalizedTarget.ino;
@@ -632,6 +646,7 @@ export async function beginUpdateRecoveryTransaction(
         packagePath: recoveryPolicy.recoveryRuntime.packagePath,
         scriptPath: recoveryPolicy.recoveryRuntime.scriptPath,
         modulePath: recoveryPolicy.recoveryRuntime.modulePath,
+        treeDigestModulePath: recoveryPolicy.recoveryRuntime.treeDigestModulePath,
         helperPath: recoveryPolicy.recoveryRuntime.helperPath
       },
       timestamps: {
@@ -1279,6 +1294,7 @@ function classifyIdentity(
     ? {
         commit: artifact.initialCommit,
         fingerprint: artifact.initialFingerprint,
+        treeSha256: artifact.initialTreeSha256 ?? null,
         cdHash: artifact.initialCdHash ?? null,
         dev: artifact.initialDev,
         ino: artifact.initialIno
@@ -1287,6 +1303,7 @@ function classifyIdentity(
   const target = {
     commit: artifact.targetCommit,
     fingerprint: artifact.targetFingerprint,
+    treeSha256: artifact.targetTreeSha256 ?? null,
     cdHash: artifact.targetCdHash ?? null,
     dev: artifact.targetDev,
     ino: artifact.targetIno
@@ -1320,10 +1337,14 @@ function inodeMatches(expected: UpdateArtifactIdentity, observed: UpdateArtifact
 }
 
 function contentMatches(expected: UpdateArtifactIdentity, observed: UpdateArtifactIdentity): boolean {
-  const comparable = expected.commit !== null || expected.fingerprint !== null || expected.cdHash != null;
+  const comparable = expected.commit !== null
+    || expected.fingerprint !== null
+    || expected.treeSha256 != null
+    || expected.cdHash != null;
   if (!comparable) return false;
   if (expected.commit !== null && expected.commit !== observed.commit) return false;
   if (expected.fingerprint !== null && expected.fingerprint !== observed.fingerprint) return false;
+  if (expected.treeSha256 != null && expected.treeSha256 !== observed.treeSha256) return false;
   return expected.cdHash == null || expected.cdHash === observed.cdHash;
 }
 
@@ -1334,7 +1355,10 @@ function exactIdentityMatches(
   if (!observed) return false;
   const hasInode = expected.dev !== null && expected.ino !== null;
   if (hasInode && !inodeMatches(expected, observed)) return false;
-  const hasContent = expected.commit !== null || expected.fingerprint !== null || expected.cdHash != null;
+  const hasContent = expected.commit !== null
+    || expected.fingerprint !== null
+    || expected.treeSha256 != null
+    || expected.cdHash != null;
   if (hasContent && !contentMatches(expected, observed)) return false;
   return hasInode || hasContent;
 }
@@ -1599,9 +1623,10 @@ function validateStagedArtifactJournalForArtifact(
   const initial = stagedJournalInitialIdentity(journal);
   const candidate = stagedJournalCandidateIdentity(journal, journal.phase !== "preparing");
   const expectedInitial = artifact.initialPresent
-    ? {
+      ? {
         commit: artifact.initialCommit,
         fingerprint: artifact.initialFingerprint,
+        treeSha256: artifact.initialTreeSha256 ?? null,
         dev: artifact.initialDev,
         ino: artifact.initialIno
       }
@@ -1609,6 +1634,7 @@ function validateStagedArtifactJournalForArtifact(
   const expectedCandidate = {
     commit: artifact.targetCommit,
     fingerprint: artifact.targetFingerprint,
+    treeSha256: artifact.targetTreeSha256 ?? null,
     dev: artifact.targetDev,
     ino: artifact.targetIno
   };
@@ -1653,6 +1679,7 @@ function stagedJournalInitialIdentity(journal: StagedArtifactJournal): UpdateArt
   if (!journal.initialPresent) {
     if (journal.initialCommit !== null
       || journal.initialFingerprint !== null
+      || journal.initialTreeSha256 != null
       || journal.initialDevice !== null
       || journal.initialInode !== null) {
       throw new UpdateRecoveryValidationError("An absent initial staging generation carries an identity.");
@@ -1662,6 +1689,7 @@ function stagedJournalInitialIdentity(journal: StagedArtifactJournal): UpdateArt
   return normalizedIdentity({
     commit: journal.initialCommit,
     fingerprint: journal.initialFingerprint,
+    treeSha256: journal.initialTreeSha256 ?? null,
     dev: journal.initialDevice,
     ino: journal.initialInode
   }, "staging journal initial identity");
@@ -1674,6 +1702,7 @@ function stagedJournalCandidateIdentity(
   const values = [
     journal.candidateCommit,
     journal.candidateFingerprint,
+    journal.candidateTreeSha256,
     journal.candidateDevice,
     journal.candidateInode
   ];
@@ -1684,6 +1713,7 @@ function stagedJournalCandidateIdentity(
   return normalizedIdentity({
     commit: journal.candidateCommit ?? null,
     fingerprint: journal.candidateFingerprint ?? null,
+    treeSha256: journal.candidateTreeSha256 ?? null,
     dev: journal.candidateDevice ?? null,
     ino: journal.candidateInode ?? null
   }, "staging journal candidate identity");
@@ -1692,6 +1722,7 @@ function stagedJournalCandidateIdentity(
 function identitiesEqual(left: UpdateArtifactIdentity, right: UpdateArtifactIdentity): boolean {
   return left.commit === right.commit
     && left.fingerprint === right.fingerprint
+    && left.treeSha256 === right.treeSha256
     && left.dev === right.dev
     && left.ino === right.ino;
 }
@@ -1719,11 +1750,13 @@ function artifactFromPlan(plan: UpdateArtifactPlan, label: string): UpdateRecove
     initialPresent: initial !== null,
     initialCommit: initial?.commit ?? null,
     initialFingerprint: initial?.fingerprint ?? null,
+    initialTreeSha256: initial?.treeSha256 ?? null,
     initialCdHash: nullableCdHash(plan.initialCdHash, `${label} initial CodeDirectory hash`),
     initialDev: initial?.dev ?? null,
     initialIno: initial?.ino ?? null,
     targetCommit: target.commit,
     targetFingerprint: target.fingerprint,
+    targetTreeSha256: target.treeSha256 ?? null,
     targetCdHash: nullableCdHash(plan.targetCdHash, `${label} target CodeDirectory hash`),
     targetDev: target.dev,
     targetIno: target.ino
@@ -1757,10 +1790,15 @@ async function stageRecoveryRuntimeAndBuildPolicy(
   await verifyExecutableVersion(gitPath, "git");
   const scriptSourcePath = exactAbsolutePath(source.scriptSourcePath, "recovery CLI source");
   const moduleSourcePath = exactAbsolutePath(source.moduleSourcePath, "recovery module source");
+  const treeDigestModuleSourcePath = exactAbsolutePath(
+    source.treeDigestModuleSourcePath,
+    "recovery runtime-tree digest module source"
+  );
   const helperSourcePath = exactAbsolutePath(source.helperSourcePath, "recovery swap helper source");
-  const [script, module, helper] = await Promise.all([
+  const [script, module, treeDigestModule, helper] = await Promise.all([
     readPinnedRegularFile(scriptSourcePath, "recovery CLI source"),
     readPinnedRegularFile(moduleSourcePath, "recovery module source"),
+    readPinnedRegularFile(treeDigestModuleSourcePath, "recovery runtime-tree digest module source"),
     readPinnedRegularFile(helperSourcePath, "recovery swap helper source")
   ]);
   if ((helper.mode & 0o111) === 0) throw new UpdateRecoveryValidationError("The recovery swap helper source is not executable.");
@@ -1773,11 +1811,13 @@ async function stageRecoveryRuntimeAndBuildPolicy(
   await mkdir(join(nextRoot, "bin"), { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
   const nextScript = join(nextRoot, UPDATE_RECOVERY_SCRIPT_RELATIVE_PATH);
   const nextModule = join(nextRoot, UPDATE_RECOVERY_MODULE_RELATIVE_PATH);
+  const nextTreeDigestModule = join(nextRoot, UPDATE_RECOVERY_TREE_DIGEST_MODULE_RELATIVE_PATH);
   const nextHelper = join(nextRoot, UPDATE_RECOVERY_HELPER_RELATIVE_PATH);
   const nextPackage = join(nextRoot, UPDATE_RECOVERY_PACKAGE_RELATIVE_PATH);
   await writeFsyncedFile(nextPackage, RECOVERY_PACKAGE_BYTES, PRIVATE_FILE_MODE);
   await writeFsyncedFile(nextScript, script.bytes, PRIVATE_FILE_MODE);
   await writeFsyncedFile(nextModule, module.bytes, PRIVATE_FILE_MODE);
+  await writeFsyncedFile(nextTreeDigestModule, treeDigestModule.bytes, PRIVATE_FILE_MODE);
   await writeFsyncedFile(nextHelper, helper.bytes, 0o700);
   await Promise.all([
     syncDirectory(join(nextRoot, "scripts")),
@@ -1810,10 +1850,12 @@ async function stageRecoveryRuntimeAndBuildPolicy(
     packagePath: join(bundleRoot, UPDATE_RECOVERY_PACKAGE_RELATIVE_PATH),
     scriptPath: join(bundleRoot, UPDATE_RECOVERY_SCRIPT_RELATIVE_PATH),
     modulePath: join(bundleRoot, UPDATE_RECOVERY_MODULE_RELATIVE_PATH),
+    treeDigestModulePath: join(bundleRoot, UPDATE_RECOVERY_TREE_DIGEST_MODULE_RELATIVE_PATH),
     helperPath: join(bundleRoot, UPDATE_RECOVERY_HELPER_RELATIVE_PATH),
     packageSha256: sha256Bytes(RECOVERY_PACKAGE_BYTES),
     scriptSha256: sha256Bytes(script.bytes),
     moduleSha256: sha256Bytes(module.bytes),
+    treeDigestModuleSha256: sha256Bytes(treeDigestModule.bytes),
     helperSha256: sha256Bytes(helper.bytes)
   };
   const record: UpdateRecoveryPolicyFile = {
@@ -1891,10 +1933,14 @@ function validatedPolicyFile(value: unknown, expectedUpdaterDir: string): Update
   }
   const root = join(policy.updaterDir, UPDATE_RECOVERY_RUNTIME_DIRNAME);
   const runtime = record.recoveryRuntime;
+  const treeDigestModulePresent = runtime.treeDigestModulePath !== undefined
+    || runtime.treeDigestModuleSha256 !== undefined;
   if (runtime.root !== root
     || runtime.packagePath !== join(root, UPDATE_RECOVERY_PACKAGE_RELATIVE_PATH)
     || runtime.scriptPath !== join(root, UPDATE_RECOVERY_SCRIPT_RELATIVE_PATH)
     || runtime.modulePath !== join(root, UPDATE_RECOVERY_MODULE_RELATIVE_PATH)
+    || (treeDigestModulePresent
+      && runtime.treeDigestModulePath !== join(root, UPDATE_RECOVERY_TREE_DIGEST_MODULE_RELATIVE_PATH))
     || runtime.helperPath !== join(root, UPDATE_RECOVERY_HELPER_RELATIVE_PATH)) {
     throw new UpdateRecoveryValidationError("The stable recovery runtime paths are invalid.");
   }
@@ -1904,6 +1950,9 @@ function validatedPolicyFile(value: unknown, expectedUpdaterDir: string): Update
     ["package", runtime.packageSha256],
     ["script", runtime.scriptSha256],
     ["module", runtime.moduleSha256],
+    ...(treeDigestModulePresent
+      ? [["runtime-tree digest module", runtime.treeDigestModuleSha256] as const]
+      : []),
     ["helper", runtime.helperSha256]
   ] as const) {
     if (!isSha256(digest)) throw new UpdateRecoveryValidationError(`The recovery ${label} digest is invalid.`);
@@ -1945,6 +1994,13 @@ async function verifyRecoveryRuntimeFiles(record: UpdateRecoveryPolicyFile): Pro
     [record.recoveryRuntime.packagePath, record.recoveryRuntime.packageSha256, false],
     [record.recoveryRuntime.scriptPath, record.recoveryRuntime.scriptSha256, false],
     [record.recoveryRuntime.modulePath, record.recoveryRuntime.moduleSha256, false],
+    ...(record.recoveryRuntime.treeDigestModulePath && record.recoveryRuntime.treeDigestModuleSha256
+      ? [[
+          record.recoveryRuntime.treeDigestModulePath,
+          record.recoveryRuntime.treeDigestModuleSha256,
+          false
+        ] as const]
+      : []),
     [record.recoveryRuntime.helperPath, record.recoveryRuntime.helperSha256, true]
   ] as const;
   for (const [path, expectedHash, executable] of files) {
@@ -1973,6 +2029,8 @@ async function verifyManifestPolicyBinding(
     || loaded.record.recoveryRuntime.packagePath !== manifest.recovery.packagePath
     || loaded.record.recoveryRuntime.scriptPath !== manifest.recovery.scriptPath
     || loaded.record.recoveryRuntime.modulePath !== manifest.recovery.modulePath
+    || (loaded.record.recoveryRuntime.treeDigestModulePath ?? null)
+      !== (manifest.recovery.treeDigestModulePath ?? null)
     || loaded.record.recoveryRuntime.helperPath !== manifest.recovery.helperPath) {
     throw new UpdateRecoveryValidationError("The update recovery manifest and private recovery policy do not match.");
   }
@@ -1993,11 +2051,15 @@ function normalizedIdentity(identity: UpdateArtifactIdentity, label: string): Up
   const normalized: UpdateArtifactIdentity = {
     commit: nullableIdentifier(identity.commit, `${label} commit`),
     fingerprint: nullableIdentifier(identity.fingerprint, `${label} fingerprint`),
+    treeSha256: nullableTreeSha256(identity.treeSha256, `${label} tree SHA-256`),
     cdHash: nullableCdHash(identity.cdHash, `${label} CodeDirectory hash`),
     dev: nullableNonNegativeInteger(identity.dev, `${label} device`),
     ino: nullablePositiveInteger(identity.ino, `${label} inode`)
   };
-  const contentProof = normalized.commit !== null || normalized.fingerprint !== null || normalized.cdHash !== null;
+  const contentProof = normalized.commit !== null
+    || normalized.fingerprint !== null
+    || normalized.treeSha256 !== null
+    || normalized.cdHash !== null;
   const inodeProof = normalized.dev !== null && normalized.ino !== null;
   if (!contentProof && !inodeProof) {
     throw new UpdateRecoveryValidationError(`The ${label} has neither content nor inode identity.`);
@@ -2087,6 +2149,8 @@ function validateArtifactShape(value: unknown, label: string): asserts value is 
   for (const field of ["initialCommit", "initialFingerprint", "targetCommit", "targetFingerprint"] as const) {
     value[field] = nullableIdentifier(value[field] ?? null, `${label} ${field}`);
   }
+  value.initialTreeSha256 = nullableTreeSha256(value.initialTreeSha256, `${label} initial tree SHA-256`);
+  value.targetTreeSha256 = nullableTreeSha256(value.targetTreeSha256, `${label} target tree SHA-256`);
   value.initialCdHash = nullableCdHash(value.initialCdHash, `${label} initial CodeDirectory hash`);
   value.targetCdHash = nullableCdHash(value.targetCdHash, `${label} target CodeDirectory hash`);
   value.initialDev = nullableNonNegativeInteger(value.initialDev ?? null, `${label} initial device`);
@@ -2103,9 +2167,21 @@ function nullableCdHash(value: unknown, label: string): string | null {
   return value;
 }
 
+function nullableTreeSha256(value: unknown, label: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (!isSha256(value)) throw new UpdateRecoveryValidationError(`The ${label} is invalid.`);
+  return value;
+}
+
 function validateManifestIdentities(manifest: UpdateRecoveryManifest): void {
   for (const [label, artifact] of [["app", manifest.app], ...manifest.runtimes.map((runtime, index) => [`runtime ${index + 1}`, runtime] as const)] as const) {
-    const initialValues = [artifact.initialCommit, artifact.initialFingerprint, artifact.initialDev, artifact.initialIno];
+    const initialValues = [
+      artifact.initialCommit,
+      artifact.initialFingerprint,
+      artifact.initialTreeSha256 ?? null,
+      artifact.initialDev,
+      artifact.initialIno
+    ];
     if (!artifact.initialPresent && initialValues.some((value) => value !== null)) {
       throw new UpdateRecoveryValidationError(`The ${label} absent initial generation carries an identity.`);
     }
@@ -2113,6 +2189,7 @@ function validateManifestIdentities(manifest: UpdateRecoveryManifest): void {
       normalizedIdentity({
         commit: artifact.initialCommit,
         fingerprint: artifact.initialFingerprint,
+        treeSha256: artifact.initialTreeSha256 ?? null,
         dev: artifact.initialDev,
         ino: artifact.initialIno
       }, `${label} initial identity`);
@@ -2120,6 +2197,7 @@ function validateManifestIdentities(manifest: UpdateRecoveryManifest): void {
     normalizedIdentity({
       commit: artifact.targetCommit,
       fingerprint: artifact.targetFingerprint,
+      treeSha256: artifact.targetTreeSha256 ?? null,
       dev: artifact.targetDev,
       ino: artifact.targetIno
     }, `${label} target identity`);
@@ -2154,6 +2232,9 @@ function validateManifestPaths(manifest: UpdateRecoveryManifest, policy: UpdateR
     || manifest.recovery.packagePath !== join(expectedBundleRoot, UPDATE_RECOVERY_PACKAGE_RELATIVE_PATH)
     || manifest.recovery.scriptPath !== join(expectedBundleRoot, UPDATE_RECOVERY_SCRIPT_RELATIVE_PATH)
     || manifest.recovery.modulePath !== join(expectedBundleRoot, UPDATE_RECOVERY_MODULE_RELATIVE_PATH)
+    || (manifest.recovery.treeDigestModulePath !== undefined
+      && manifest.recovery.treeDigestModulePath
+        !== join(expectedBundleRoot, UPDATE_RECOVERY_TREE_DIGEST_MODULE_RELATIVE_PATH))
     || manifest.recovery.helperPath !== join(expectedBundleRoot, UPDATE_RECOVERY_HELPER_RELATIVE_PATH)) {
     throw new UpdateRecoveryValidationError("The recovery manifest stable runtime paths are invalid.");
   }
@@ -2816,12 +2897,15 @@ async function defaultIdentifyArtifact(path: string, kind: UpdateArtifactKind): 
     fingerprint = nullableIdentifier(info.sourceFingerprint, "build fingerprint");
     break;
   }
+  const treeSha256 = kind === "runtime"
+    ? (await captureRuntimeTreeDigest(path)).sha256
+    : null;
   const cdHash = kind === "app" ? await safeVerifiedAppCodeDirectoryHash(path) : null;
   const after = await lstat(path);
   if (after.isSymbolicLink() || after.dev !== value.dev || after.ino !== value.ino) {
     throw new UpdateRecoveryValidationError(`The ${kind} artifact at ${path} changed during identity capture.`);
   }
-  return { commit, fingerprint, cdHash, dev: value.dev, ino: value.ino };
+  return { commit, fingerprint, treeSha256, cdHash, dev: value.dev, ino: value.ino };
 }
 
 async function safeVerifiedAppCodeDirectoryHash(path: string): Promise<string | null> {

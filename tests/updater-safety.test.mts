@@ -54,9 +54,11 @@ assert.match(packageMacSource, /-c\.mac\.timestamp=\$\{timestamp\}/u, "local app
 assert.match(updateScriptSource, /join\(repoRoot, "scripts", "package-mac\.mjs"\)/u, "remote and local updates must share the universal signing and packaging policy");
 assert.match(updateScriptSource, /join\(outputPath, "mac-universal", "Vigil\.app"\)/u, "remote updates must install the fresh universal artifact");
 
-const preflightIndex = updaterSource.indexOf("await assertLocallyRebuildableApp(appPath)");
+const preflightIndex = updaterSource.indexOf("const sourcePreflight = await collectSourceUpdatePreflight({");
 const remoteQuitHandlerIndex = updaterSource.indexOf('process.on("SIGUSR2", requestQuit)');
-assert.ok(preflightIndex >= 0 && remoteQuitHandlerIndex > preflightIndex, "signature preflight must finish before the updater can ask the app to quit");
+assert.ok(preflightIndex >= 0 && remoteQuitHandlerIndex > preflightIndex,
+  "the complete named preflight, including strict signature verification, must finish before the updater can ask the app to quit");
+assert.match(updaterSource, /code: "vigil\.update\.app\.signature"[\s\S]*?assertLocallyRebuildableApp\(appPath\)/u);
 assert.match(
   updaterSource,
   /assertGuardianMaintenanceActive\([\s\S]*?await quitForUpdate\(\);[\s\S]*?process\.off\("SIGUSR2", requestQuit\)/u,
@@ -354,7 +356,11 @@ assert.match(
   /async function refreshTrayStatus[\s\S]*?if \(!appUpdateOperation\) await refreshRunningAppUpdate\(appUrl\)/u,
   "every replacement app launch and tray poll must rehydrate the durable updater state"
 );
-assert.match(updaterSource, /launchLocalChanges\(currentStatus, updateLock\)/u, "dirty source must use the local app launcher");
+assert.match(
+  updaterSource,
+  /launchLocalChanges\(currentStatus, updateLock, sourcePreflight\)/u,
+  "dirty source must use the local app launcher with the verified preflight toolchain"
+);
 assert.match(updaterSource, /"--app-path", appPath/u, "the local launcher must receive the installed app path for recovery");
 assert.match(updaterSource, /"--status-path", statusPath/u, "local and remote updates must share one durable receipt");
 assert.match(updaterSource, /"--expected-fingerprint", String\(currentStatus\.currentSourceFingerprint \|\| ""\)/u, "local builds must pin the selected source fingerprint");
@@ -479,8 +485,10 @@ assert.match(
 );
 assert.ok(
   localLauncherSource.indexOf("legacyAgent = await captureLegacyLaunchAgentRecovery()")
-    < localLauncherSource.indexOf('process.kill(options.parentPid, "SIGUSR2")'),
-  "local replacement must capture the legacy LaunchAgent before the candidate app can retire it"
+    < localLauncherSource.indexOf("exitCode = await buildLocalApp(")
+    && localLauncherSource.indexOf("exitCode = await buildLocalApp(")
+      < localLauncherSource.indexOf('process.kill(options.parentPid, "SIGUSR2")'),
+  "local replacement must capture rollback topology before building and before the candidate app can retire it"
 );
 assert.match(
   localLauncherSource,
@@ -850,6 +858,8 @@ try {
   assert.equal(await readFile(statusPath, "utf8"), priorBytes, "invalid local identity must preserve prior success evidence");
   await assert.rejects(
     prepareRemoteUpdateReceipt(statusPath, "invalid-remote-identity", {
+      checkOk: true,
+      remoteCheckOk: true,
       updateAvailable: true,
       currentCommit: "1".repeat(40),
       currentSourceFingerprint: "not-a-fingerprint",
@@ -859,6 +869,17 @@ try {
     "a remote attempt must not begin before its exact selected identities are verified"
   );
   assert.equal(await readFile(statusPath, "utf8"), priorBytes, "invalid remote identity must preserve prior success evidence");
+  await assert.rejects(
+    prepareRemoteUpdateReceipt(statusPath, "failed-fetch", {
+      checkOk: false,
+      remoteCheckOk: false,
+      remoteCheckError: "fatal: authentication failed",
+      updateAvailable: false
+    }),
+    /could not verify the remote update target.*authentication failed/u,
+    "a failed fetch must never be flattened into a successful no-update result"
+  );
+  assert.equal(await readFile(statusPath, "utf8"), priorBytes, "failed remote refresh must preserve prior success evidence");
   const noUpdate = await prepareRemoteUpdateReceipt(statusPath, "vanished-target", {
     ok: true,
     checkOk: true,
@@ -970,6 +991,11 @@ assert.match(
   updaterSource,
   /if \(!terminated && updaterLockTransferred\) \{[\s\S]*?preserveUpdateLock = true;[\s\S]*?if \(!handedOff && !preserveUpdateLock\) await updateLock\.release\(\)/u,
   "remote bootstrap failure must preserve a transferred lock until process-group termination is confirmed"
+);
+assert.match(
+  updaterSource,
+  /finally \{[\s\S]*?if \(!handedOff && !preserveUpdateLock && downloadedPrebuiltRelease\)[\s\S]*?if \(!handedOff && !preserveUpdateLock\) await updateLock\.release\(\)/u,
+  "an unconfirmed child owner must retain both its updater lock and private prebuilt candidate"
 );
 assert.match(
   updaterSource,

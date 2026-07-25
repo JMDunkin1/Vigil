@@ -15,12 +15,12 @@ assert.match(mainSource, /deriveAppUpdateViewState/u, "the native menu must cons
 assert.match(panelSource, /deriveAppUpdateViewState/u, "Settings must consume the shared updater view state");
 assert.match(
   mainSource,
-  /async function startAppUpdate[\s\S]*?!appUpdateActionState\.candidateAvailable[\s\S]*?return appUpdateStatePayload/u,
-  "native setup/update start must reject requests made before verified candidate discovery"
+  /const setupOnly = !appUpdateActionState\.maintenanceReady[\s\S]*?!appUpdateActionState\.candidateAvailable && !setupOnly/u,
+  "native start must permit guardian-only migration while still rejecting an update without a verified candidate"
 );
 assert.match(
   panelSource,
-  /const requestedAction = currentView\(\)\.actionKind[\s\S]*?requestedAction !== "update" && requestedAction !== "setup-update"/u,
+  /const requestedAction = currentView\(\)\.actionKind[\s\S]*?requestedAction !== "update" && requestedAction !== "setup"/u,
   "Settings must not invoke setup/update start from its discovery action"
 );
 
@@ -120,10 +120,11 @@ const setupAndUpdate = deriveAppUpdateViewState({
   localChanges: true,
   message: "One-time setup is needed"
 });
-assert.equal(setupAndUpdate.actionKind, "setup-update");
-assert.equal(setupAndUpdate.actionLabel, "Enable & Run Latest");
+assert.equal(setupAndUpdate.actionKind, "setup");
+assert.equal(setupAndUpdate.actionLabel, "Enable Fast Updates");
 assert.equal(setupAndUpdate.actionEnabled, true);
-assert.equal(setupAndUpdate.installable, true, "one button must continue from setup into the selected update");
+assert.equal(setupAndUpdate.installable, false,
+  "guardian migration must finish and pass postflight before the selected update becomes installable");
 assert.equal(setupAndUpdate.setupRequired, true);
 assert.equal(setupAndUpdate.statusMessage, "One-time setup is needed for fast updates.");
 
@@ -139,14 +140,14 @@ const legacyDiscovery = deriveAppUpdateViewState({
   updateCandidateAvailable: false,
   message: "One-time setup is available when an update is ready"
 });
-assert.equal(legacyDiscovery.actionKind, "check");
-assert.equal(legacyDiscovery.actionLabel, "Check for Updates");
+assert.equal(legacyDiscovery.actionKind, "setup");
+assert.equal(legacyDiscovery.actionLabel, "Enable Fast Updates");
 assert.equal(legacyDiscovery.actionEnabled, true,
-  "an auto-refreshable legacy guardian must not block remote candidate discovery");
+  "guardian migration must remain available even when no update candidate exists");
 assert.equal(legacyDiscovery.installable, false,
-  "setup and update must remain unavailable until discovery returns a verified candidate");
+  "guardian-only setup is not itself an app installation");
 assert.equal(legacyDiscovery.setupRequired, true);
-assert.match(legacyDiscovery.helpMessage, /setup only after it finds a verified update/u);
+assert.match(legacyDiscovery.helpMessage, /install and verify the compatible guardian/u);
 
 const settingUp = deriveAppUpdateViewState({
   ...setupAndUpdate,
@@ -170,8 +171,8 @@ const failedSetup = deriveAppUpdateViewState({
   localChanges: true,
   message: "The administrator approval was canceled."
 });
-assert.equal(failedSetup.actionKind, "setup-update");
-assert.equal(failedSetup.actionLabel, "Retry Setup & Update");
+assert.equal(failedSetup.actionKind, "setup");
+assert.equal(failedSetup.actionLabel, "Retry Fast Update Setup");
 assert.equal(failedSetup.actionEnabled, true);
 assert.equal(failedSetup.statusMessage, "The administrator approval was canceled.");
 

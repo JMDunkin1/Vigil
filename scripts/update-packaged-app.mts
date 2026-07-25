@@ -46,6 +46,15 @@ import type {
 } from "../src/updateTransaction.js";
 import { gitExecutable } from "./git-executable.mjs";
 import { isLocallyRebuildableSignature } from "./mac-signing-identity.mjs";
+import { reattestStagedPrebuiltRelease } from "../src/prebuiltRelease.js";
+import { cleanupDownloadedPrebuiltRelease } from "../src/prebuiltReleaseDownload.js";
+
+interface PrebuiltReleaseOptions {
+  root: string;
+  manifestPath: string;
+  stagedAppPath: string;
+  candidateCdHash: string;
+}
 
 interface Options {
   repoRoot: string;
@@ -59,13 +68,18 @@ interface Options {
   expectedInitialCommit: string;
   expectedBranch: string;
   expectedCommit: string;
+  prebuiltRelease: PrebuiltReleaseOptions | null;
   restart: boolean;
 }
 
 interface StagedBuild {
+  sourceKind: "source" | "prebuilt";
   root: string;
   repoRoot: string;
   builtAppPath: string;
+  builtRuntimePath: string;
+  runtimeTreeSha256: string | null;
+  candidateCdHash: string | null;
   expectedCommit: string;
   initialCommit: string;
   initialBranch: string | null;
@@ -82,6 +96,30 @@ interface LaunchAgentRecovery {
   plistMode: number;
   plistPath: string;
   uid: number;
+}
+
+export interface InstalledUpdateTopologyPreflight {
+  installedRuntimePath: string | null;
+  launchAgentLoaded: boolean;
+  replacementDataDirectory: string;
+}
+
+export async function inspectInstalledUpdateTopology(
+  repoRoot: string,
+  includeRuntime: boolean
+): Promise<InstalledUpdateTopologyPreflight> {
+  const launchAgent = await captureLoadedLaunchAgentRecovery();
+  const replacementDataDirectory = await replacementDataDir(
+    launchAgent !== null,
+    launchAgent?.plist
+  );
+  return {
+    installedRuntimePath: includeRuntime
+      ? await resolveInstalledRuntimeTarget(repoRoot)
+      : null,
+    launchAgentLoaded: launchAgent !== null,
+    replacementDataDirectory
+  };
 }
 
 export interface AppInstallation {
@@ -170,6 +208,7 @@ export async function runPackagedUpdate(): Promise<void> {
   let recoveryBundle: UpdateRecoveryBundleSource | null = null;
   let launchAgentTransition: LaunchAgentRecovery | null = null;
   let guardianMaintenance: GuardianMaintenanceTransaction | null = null;
+  let prebuiltCleanupRoot: string | null = null;
   let parentExited = false;
   let launchAgentWasLoaded = false;
   let launchAgentStopped = false;
@@ -177,6 +216,11 @@ export async function runPackagedUpdate(): Promise<void> {
 
   try {
     options = parseArgs(process.argv.slice(2));
+    // Retain the untrusted attempt root immediately so every later validation
+    // failure reaches the constrained cleanup routine. The path is never
+    // removed unless cleanupDownloadedPrebuiltRelease independently proves it
+    // belongs to this exact private updater directory.
+    prebuiltCleanupRoot = options.prebuiltRelease?.root || null;
     await mkdir(dirname(options.statusPath), { recursive: true });
     await mkdir(dirname(options.logPath), { recursive: true });
     log = createWriteStream(options.logPath, { flags: "a" });
@@ -188,7 +232,7 @@ export async function runPackagedUpdate(): Promise<void> {
     await assertOwnedUpdaterLock();
     await status("selecting", "Protected Vigil updater started");
     await reconcilePreviousGlobalUpdateWhileRuntimeIsLive();
-    await assertLocallyRebuildableApp();
+    if (!options.prebuiltRelease) await assertLocallyRebuildableApp();
 
     const maintenance = await guardianMaintenanceReadiness();
     if (!maintenance.ready) throw new Error(maintenance.message || "Vigil's protected update setup is not ready.");
@@ -197,9 +241,8 @@ export async function runPackagedUpdate(): Promise<void> {
     const dirty = (await capture("git", ["status", "--porcelain=v1"], { cwd: options.repoRoot })).trim().length > 0;
     if (dirty) throw new Error("Vigil source has uncommitted changes. Commit or stash them before installing an update.");
 
-    stagedBuild = await buildInIsolatedWorktree();
-
-    await assertActiveCheckoutUnchanged(stagedBuild);
+    // Finish the installed-topology preflight before npm, TypeScript, signing,
+    // or packaging begins. These checks do not stop either Vigil process.
     launchAgentTransition = await captureLoadedLaunchAgentRecovery();
     launchAgentWasLoaded = launchAgentTransition !== null;
     replacementDataDirectory = await replacementDataDir(
@@ -220,15 +263,35 @@ export async function runPackagedUpdate(): Promise<void> {
       expectedDataDir: replacementDataDirectory,
       expectedRuntimePaths: [installedRuntimePath]
     };
-    await status("installing-runtime", "Durably staging the rebuilt Vigil runtime");
+
+    if (options.prebuiltRelease) {
+      prebuiltCleanupRoot = await assertPrivatePrebuiltReleasePaths(options.prebuiltRelease);
+      stagedBuild = await preparePrebuiltRelease(prebuiltCleanupRoot);
+    } else {
+      stagedBuild = await buildInIsolatedWorktree();
+    }
+
+    await assertActiveCheckoutUnchanged(stagedBuild);
+    await status(
+      "installing-runtime",
+      stagedBuild.sourceKind === "prebuilt"
+        ? "Durably staging the verified signed Vigil runtime"
+        : "Durably staging the rebuilt Vigil runtime"
+    );
     runtimePlan = await stageUpdateArtifactCandidate(
       recoveryPolicy,
       options.lockToken,
-      join(stagedBuild.repoRoot, "dist", "runtime"),
+      stagedBuild.builtRuntimePath,
       installedRuntimePath,
       "runtime"
     );
-    await status("installing-app", "Durably staging the rebuilt Vigil app");
+    await assertPrebuiltRuntimeTreeBinding(stagedBuild, runtimePlan);
+    await status(
+      "installing-app",
+      stagedBuild.sourceKind === "prebuilt"
+        ? "Durably staging the verified signed Vigil app"
+        : "Durably staging the rebuilt Vigil app"
+    );
     appPlan = await stageUpdateArtifactCandidate(
       recoveryPolicy,
       options.lockToken,
@@ -237,7 +300,14 @@ export async function runPackagedUpdate(): Promise<void> {
       "app"
     );
     await bindAppPlanCodeDirectoryHashes(appPlan);
+    if (stagedBuild.candidateCdHash && appPlan.targetCdHash !== stagedBuild.candidateCdHash) {
+      throw new Error("The durable staged app does not match the parent-verified prebuilt release CodeDirectory hash.");
+    }
     await assertActiveCheckoutUnchanged(stagedBuild);
+    // This is the final potentially expensive operation before entering
+    // guardian maintenance. Re-hash the exact .vigil-next generation so no
+    // same-user mutation after staging can cross the availability boundary.
+    await assertPrebuiltRuntimeTreeBinding(stagedBuild, runtimePlan);
 
     guardianMaintenance = await beginGuardianMaintenance(options.lockPath, options.lockToken);
     await status("waiting", "Update ready; waiting for Vigil to quit");
@@ -303,7 +373,12 @@ export async function runPackagedUpdate(): Promise<void> {
     await assertAppPlanCodeDirectoryHashes(appPlan, true);
     await verifyInstalledAppBuild(stagedBuild.expectedCommit);
     if (!options.restart) throw new Error("Vigil app replacement verification requires --restart.");
-    await status("verifying", "Reopening and verifying the rebuilt Vigil app");
+    await status(
+      "verifying",
+      stagedBuild.sourceKind === "prebuilt"
+        ? "Reopening and verifying the signed Vigil release"
+        : "Reopening and verifying the rebuilt Vigil app"
+    );
     await openAndVerifyReplacement(replacementDataDirectory, launchAgentTransition?.context);
 
     // The candidate app repeats this transition after its own sustained,
@@ -397,6 +472,10 @@ export async function runPackagedUpdate(): Promise<void> {
       await cleanupStagedBuild(stagedBuild).catch((error) => {
         log?.write(`Could not clean up the staged update: ${errorMessage(error)}\n`);
       });
+    } else if (prebuiltCleanupRoot) {
+      await cleanupDownloadedPrebuiltRelease(prebuiltCleanupRoot, dirname(options.statusPath)).catch((error) => {
+        log?.write(`Could not clean up the downloaded signed release: ${errorMessage(error)}\n`);
+      });
     }
     if (typeof options !== "undefined") await releaseOwnedUpdaterLock();
     log?.end();
@@ -472,6 +551,7 @@ async function updateRecoveryBundleSource(): Promise<UpdateRecoveryBundleSource>
     gitPath: await realpath(absoluteGit),
     scriptSourcePath: join(runtimeScriptsDir, "recover-update-transaction.mjs"),
     moduleSourcePath: join(runtimeScriptsDir, "..", "src", "updateTransaction.js"),
+    treeDigestModuleSourcePath: join(runtimeScriptsDir, "..", "src", "runtimeTreeDigest.js"),
     helperSourcePath: join(runtimeScriptsDir, "..", "bin", "vigil-atomic-swap")
   };
 }
@@ -617,6 +697,118 @@ function artifactIdentitiesMatch(expected: UpdateArtifactIdentity, observed: Upd
   return updateArtifactIdentitiesExactlyMatch(expected, observed);
 }
 
+async function assertPrebuiltRuntimeTreeBinding(
+  stagedBuild: StagedBuild,
+  runtimePlan: UpdateArtifactPlan
+): Promise<void> {
+  if (stagedBuild.sourceKind !== "prebuilt") return;
+  const expectedTreeSha256 = stagedBuild.runtimeTreeSha256;
+  if (!expectedTreeSha256 || !/^[a-f0-9]{64}$/u.test(expectedTreeSha256)) {
+    throw new Error("The verified signed Vigil release is missing its embedded runtime-tree digest.");
+  }
+  if (runtimePlan.targetIdentity.treeSha256 !== expectedTreeSha256) {
+    throw new Error("The durably staged Vigil runtime does not reproduce the verified signed app runtime tree.");
+  }
+  const stagedPath = `${runtimePlan.targetPath}.vigil-next`;
+  const observed = await captureUpdateArtifactIdentity(stagedPath, "runtime");
+  if (!observed
+    || observed.treeSha256 !== expectedTreeSha256
+    || !updateArtifactIdentitiesExactlyMatch(runtimePlan.targetIdentity, observed)) {
+    throw new Error("The durably staged Vigil runtime changed after its signed-tree identity was captured.");
+  }
+}
+
+async function preparePrebuiltRelease(privateRoot: string): Promise<StagedBuild> {
+  const release = options.prebuiltRelease;
+  if (!release) throw new Error("The prebuilt release selection is missing.");
+  await status("staging", "Re-attesting the downloaded signed Vigil release");
+  const verified = await reattestStagedPrebuiltRelease({
+    expectedCandidateCdHash: release.candidateCdHash,
+    expectedCommit: options.expectedCommit,
+    installedAppPath: options.appPath,
+    manifestPath: release.manifestPath,
+    stagedAppPath: release.stagedAppPath
+  });
+  if (verified.manifest.commit !== options.expectedCommit
+    || verified.candidateCdHash !== release.candidateCdHash) {
+    throw new Error("The child updater could not reproduce the selected signed-release identity.");
+  }
+  const builtRuntimePath = join(
+    verified.stagedAppPath,
+    "Contents",
+    "Resources",
+    "app.asar.unpacked",
+    "dist",
+    "runtime"
+  );
+  const [runtimeRealPath, runtimeStat] = await Promise.all([
+    realpath(builtRuntimePath),
+    lstat(builtRuntimePath)
+  ]);
+  if (runtimeRealPath !== builtRuntimePath
+    || !runtimeStat.isDirectory()
+    || runtimeStat.isSymbolicLink()
+    || !runtimeRealPath.startsWith(`${verified.stagedAppPath}/`)) {
+    throw new Error("The signed release app has an unsafe embedded runtime path.");
+  }
+  await Promise.all([
+    verifyBuildInfo(
+      join(runtimeRealPath, "build-info.json"),
+      options.expectedCommit,
+      "prebuilt Vigil runtime"
+    ),
+    verifyBuildInfo(
+      join(verified.stagedAppPath, "Contents", "Resources", "app.asar.unpacked", "dist", "runtime", "build-info.json"),
+      options.expectedCommit,
+      "prebuilt Vigil app"
+    )
+  ]);
+  return {
+    sourceKind: "prebuilt",
+    root: privateRoot,
+    repoRoot: "",
+    builtAppPath: verified.stagedAppPath,
+    builtRuntimePath: runtimeRealPath,
+    runtimeTreeSha256: verified.runtimeTreeDigest.sha256,
+    candidateCdHash: verified.candidateCdHash,
+    expectedCommit: options.expectedCommit,
+    initialCommit: options.expectedInitialCommit,
+    initialBranch: expectedBranchName(options.expectedBranch)
+  };
+}
+
+async function assertPrivatePrebuiltReleasePaths(release: PrebuiltReleaseOptions): Promise<string> {
+  const updaterDir = resolve(dirname(options.statusPath));
+  const root = resolve(release.root);
+  const [updaterRealPath, rootRealPath, rootStat] = await Promise.all([
+    realpath(updaterDir),
+    realpath(root),
+    lstat(root)
+  ]);
+  const uid = process.getuid?.();
+  if (updaterRealPath !== updaterDir
+    || rootRealPath !== root
+    || dirname(root) !== updaterDir
+    || !basename(root).startsWith("prebuilt-download-")
+    || !rootStat.isDirectory()
+    || rootStat.isSymbolicLink()
+    || (uid !== undefined && rootStat.uid !== uid)
+    || (rootStat.mode & 0o777) !== 0o700) {
+    throw new Error("The prebuilt release is not in this updater attempt's private storage.");
+  }
+  for (const [path, label] of [
+    [release.manifestPath, "manifest"],
+    [release.stagedAppPath, "staged app"]
+  ] as const) {
+    const absolutePath = resolve(path);
+    const canonicalPath = await realpath(absolutePath);
+    if (canonicalPath !== absolutePath || !canonicalPath.startsWith(`${root}/`)) {
+      throw new Error(`The prebuilt release ${label} escaped its private download directory.`);
+    }
+  }
+  return root;
+}
+
 async function buildInIsolatedWorktree(): Promise<StagedBuild> {
   await status("selecting", "Verifying the selected Vigil update");
   const initialCommit = options.expectedInitialCommit;
@@ -672,9 +864,31 @@ async function buildInIsolatedWorktree(): Promise<StagedBuild> {
       expectedCommit,
       "staged Vigil app"
     );
-    return { root, repoRoot, builtAppPath, expectedCommit, initialCommit, initialBranch };
+    return {
+      sourceKind: "source",
+      root,
+      repoRoot,
+      builtAppPath,
+      builtRuntimePath: join(repoRoot, "dist", "runtime"),
+      runtimeTreeSha256: null,
+      candidateCdHash: null,
+      expectedCommit,
+      initialCommit,
+      initialBranch
+    };
   } catch (error) {
-    await cleanupStagedBuild({ root, repoRoot, builtAppPath: "", expectedCommit, initialCommit, initialBranch });
+    await cleanupStagedBuild({
+      sourceKind: "source",
+      root,
+      repoRoot,
+      builtAppPath: "",
+      builtRuntimePath: "",
+      runtimeTreeSha256: null,
+      candidateCdHash: null,
+      expectedCommit,
+      initialCommit,
+      initialBranch
+    });
     throw error;
   }
 }
@@ -1369,13 +1583,34 @@ export async function verifyBuildInfo(path: string, expectedCommit: string, labe
 
 async function assertLocallyRebuildableApp(): Promise<void> {
   if (!(await pathExists(options.appPath))) return;
-  const result = await run("/usr/bin/codesign", ["-dv", "--verbose=4", options.appPath], {
+  const identity = await run("/usr/bin/codesign", ["-dv", "--verbose=4", options.appPath], {
     allowFailure: true,
     capture: true
   });
-  const detail = `${result.stdout}\n${result.stderr}`;
-  if (!result.ok && /code object is not signed at all/iu.test(detail)) return;
-  if (!result.ok) throw new Error("Vigil could not verify the installed app signature, so the update was stopped.");
+  const detail = `${identity.stdout}\n${identity.stderr}`;
+  if (!identity.ok && /code object is not signed at all/iu.test(detail)) return;
+  if (!identity.ok) {
+    throw new Error(
+      `Vigil could not inspect the installed app signature, so the update was stopped: ${
+        identity.stderr || identity.stdout || "codesign returned no details"
+      }`
+    );
+  }
+  const verification = await run(
+    "/usr/bin/codesign",
+    ["--verify", "--deep", "--strict", "--verbose=2", options.appPath],
+    {
+      allowFailure: true,
+      capture: true
+    }
+  );
+  if (!verification.ok) {
+    throw new Error(
+      `The installed Vigil app failed strict code-signature verification: ${
+        verification.stderr || verification.stdout || "codesign returned no details"
+      }`
+    );
+  }
   if (!isLocallyRebuildableSignature(detail)) {
     throw new Error("This Vigil app has a distribution signature. Install a complete signed release instead of rebuilding it in place.");
   }
@@ -1634,6 +1869,10 @@ async function terminateInstalledApp(): Promise<void> {
 }
 
 async function cleanupStagedBuild(stagedBuild: StagedBuild): Promise<void> {
+  if (stagedBuild.sourceKind === "prebuilt") {
+    await cleanupDownloadedPrebuiltRelease(stagedBuild.root, dirname(options.statusPath));
+    return;
+  }
   if (await pathExists(stagedBuild.repoRoot)) {
     try {
       await run("git", ["worktree", "remove", "--force", stagedBuild.repoRoot], {
@@ -1955,6 +2194,19 @@ function parseArgs(args: string[]): Options {
   }
   const parentPid = Number(required(optionsMap, "parent-pid"));
   if (!Number.isInteger(parentPid) || parentPid <= 0) throw new Error("--parent-pid must be a positive process ID");
+  const prebuiltValues = {
+    root: optionsMap.get("prebuilt-root") || "",
+    manifestPath: optionsMap.get("prebuilt-manifest-path") || "",
+    stagedAppPath: optionsMap.get("prebuilt-app-path") || "",
+    candidateCdHash: optionsMap.get("prebuilt-cdhash") || ""
+  };
+  const prebuiltValueCount = Object.values(prebuiltValues).filter(Boolean).length;
+  if (prebuiltValueCount !== 0 && prebuiltValueCount !== Object.keys(prebuiltValues).length) {
+    throw new Error("The prebuilt release arguments must be supplied as one complete identity set.");
+  }
+  if (prebuiltValueCount > 0 && !/^[a-f0-9]{40,64}$/u.test(prebuiltValues.candidateCdHash)) {
+    throw new Error("--prebuilt-cdhash must be a valid CodeDirectory hash.");
+  }
   return {
     repoRoot: required(optionsMap, "repo-root"),
     appPath: required(optionsMap, "app-path"),
@@ -1967,6 +2219,7 @@ function parseArgs(args: string[]): Options {
     expectedInitialCommit: required(optionsMap, "expected-initial-commit"),
     expectedBranch: required(optionsMap, "expected-branch"),
     expectedCommit: required(optionsMap, "expected-commit"),
+    prebuiltRelease: prebuiltValueCount > 0 ? prebuiltValues : null,
     restart
   };
 }

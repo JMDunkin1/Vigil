@@ -16,7 +16,7 @@ export interface AppUpdateDisplayStatus {
   message?: unknown;
 }
 
-export type AppUpdateActionKind = "check" | "update" | "setup-update" | "none";
+export type AppUpdateActionKind = "check" | "update" | "setup" | "none";
 
 export interface AppUpdateViewState {
   actionKind: AppUpdateActionKind;
@@ -57,7 +57,7 @@ export function deriveAppUpdateViewState(
   );
 
   if (setupInProgress) {
-    const statusMessage = "Approve the macOS prompt once. Your update will continue automatically.";
+    const statusMessage = "Approve the macOS prompt once. Vigil will verify the new guardian before enabling updates.";
     return busyState({
       actionLabel: "Enabling Fast Updates…",
       helpMessage: "This is a one-time setup. Vigil stays active while macOS approves it.",
@@ -119,11 +119,11 @@ export function deriveAppUpdateViewState(
   const running = status.running === true;
   const candidateAvailable = status.updateCandidateAvailable === true || status.updateAvailable === true;
   const setupCanContinue = setupRequired && setupSupported;
-  const setupActionAvailable = setupCanContinue && candidateAvailable;
+  const setupActionAvailable = setupCanContinue;
   const installable = status.ok === true
     && status.checkOk !== false
     && supported
-    && (maintenanceReady || setupCanContinue)
+    && maintenanceReady
     && !recoveryPending
     && !recoveryBlocked
     && !running
@@ -164,8 +164,8 @@ export function deriveAppUpdateViewState(
     actionKind = "none";
     actionLabel = "Updates Unavailable";
   } else if (setupActionAvailable) {
-    actionKind = "setup-update";
-    actionLabel = status.ok === false ? "Retry Setup & Update" : "Enable & Run Latest";
+    actionKind = "setup";
+    actionLabel = status.ok === false ? "Retry Fast Update Setup" : "Enable Fast Updates";
   } else if ((!maintenanceReady || setupRequired) && !setupCanContinue) {
     actionKind = "none";
     actionLabel = "Update Setup Required";
@@ -274,11 +274,10 @@ function helpMessage({
   if (recoveryPending) return "Vigil is safely finishing the previous update transaction.";
   if (running) return "The current app keeps enforcing your rules until the replacement is ready.";
   if (!supported) return "This build does not include the protected updater.";
-  if (setupCanContinue && candidateAvailable) {
-    return "Approve one macOS password prompt. Vigil will enable fast updates and continue automatically.";
-  }
   if (setupCanContinue) {
-    return "Check for Updates first. Vigil starts one-time setup only after it finds a verified update.";
+    return candidateAvailable
+      ? "Approve one macOS password prompt. After Vigil verifies the new guardian, the selected update can install without another password."
+      : "Approve one macOS password prompt to install and verify the compatible guardian while Vigil stays online.";
   }
   if (!maintenanceReady) return "Protected update setup must be repaired before Vigil can replace the app.";
   if (candidateAvailable && localChanges) return "Vigil will build in the background, switch versions, and reopen automatically.";

@@ -1,0 +1,230 @@
+const commonDynamicAssignments = [
+  "target_uid",
+  "target_user",
+  "target_home",
+  "app_path",
+  "executable_path",
+  "process_pattern",
+  "supervisor_service",
+  "update_lock_path",
+  "maintenance_marker_path",
+  "global_update_manifest_path",
+  "global_update_policy_path"
+] as const;
+
+const exactMainDynamicAssignments = [
+  ...commonDynamicAssignments,
+  "bootstrap_worker_request_path",
+  "exact_main_command",
+  "exact_main_process_pattern",
+  "packaged_updater_script_path",
+  "local_updater_script_path",
+  "user_data_dir",
+  "update_status_path",
+  "update_log_path"
+] as const;
+
+const canonicalMainDynamicAssignments = [
+  ...commonDynamicAssignments,
+  "bootstrap_worker_request_path",
+  "exact_main_command",
+  "canonical_main_command",
+  "packaged_updater_script_path",
+  "local_updater_script_path",
+  "user_data_dir",
+  "update_status_path",
+  "update_log_path"
+] as const;
+
+export const HISTORICAL_GUARDIAN_PROTOCOL_FIXTURES = [
+  {
+    bootstrapClaimKind: null,
+    bootstrapClaimPath: null,
+    current: false,
+    dynamicAssignments: commonDynamicAssignments,
+    key: "legacy",
+    label: "tech.caseline.vigil.system-guardian",
+    maintenanceAuthorizationKind: "vigil-root-maintenance-authorization-v2",
+    maintenanceAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/maintenance-authorization.plist",
+    normalParentCommandPolicy: "vigil-executable",
+    plistPath: "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.plist",
+    programSha256: "62f041926840824e15c76361d508ac224c3b92ba7312003329c410d83fcc8ea1",
+    recoveryAuthorizationKind: "vigil-root-update-recovery-authorization-v2",
+    recoveryAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization.plist",
+    recoveryProtocol: "legacy-normalized",
+    revision: null,
+    scriptPath: "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-DO-NOT-TERMINATE.sh",
+    sourceCommit: "14a573d6b1eab8761e9427f06d9af80f49087f38"
+  },
+  {
+    bootstrapClaimKind: "vigil-root-update-protocol-bootstrap-worker-claim-v1",
+    bootstrapClaimPath: "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-worker-claim.plist",
+    current: false,
+    dynamicAssignments: exactMainDynamicAssignments,
+    key: "v3",
+    label: "tech.caseline.vigil.system-guardian.v3",
+    maintenanceAuthorizationKind: "vigil-root-maintenance-authorization-v2",
+    maintenanceAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/maintenance-authorization.plist",
+    normalParentCommandPolicy: "background-only",
+    plistPath: "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.v3.plist",
+    programSha256: "2da645ad29084194b52d6d2d7f0505a83451a1cadb2628c12a14cf91dae6dafe",
+    recoveryAuthorizationKind: "vigil-root-update-recovery-authorization-v3",
+    recoveryAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization-v3.plist",
+    recoveryProtocol: "pinned-pending",
+    revision: 3,
+    scriptPath: "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-v3-DO-NOT-TERMINATE.sh",
+    sourceCommit: "18573ecd076c2a2b486afb90df9793c21572a84d"
+  },
+  {
+    bootstrapClaimKind: "vigil-root-update-protocol-bootstrap-worker-claim-v1",
+    bootstrapClaimPath: "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-worker-claim-v4.plist",
+    current: false,
+    dynamicAssignments: exactMainDynamicAssignments,
+    key: "v4",
+    label: "tech.caseline.vigil.system-guardian.v4",
+    maintenanceAuthorizationKind: "vigil-root-maintenance-authorization-v2",
+    maintenanceAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/maintenance-authorization.plist",
+    normalParentCommandPolicy: "background-only",
+    plistPath: "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.v4.plist",
+    programSha256: "ee0be79b4c686c1d28e38ed8ca185e941e0dce2b2fe2eefd030625958e20b88d",
+    recoveryAuthorizationKind: "vigil-root-update-recovery-authorization-v4",
+    recoveryAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization-v4.plist",
+    recoveryProtocol: "pinned-pending",
+    revision: 4,
+    scriptPath: "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-v4-DO-NOT-TERMINATE.sh",
+    sourceCommit: "ba69fc5125d214a7c929f93207dcca1bdc448e9d"
+  },
+  {
+    bootstrapClaimKind: "vigil-root-update-protocol-bootstrap-worker-claim-v1",
+    bootstrapClaimPath: "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-worker-claim-v5.plist",
+    current: false,
+    dynamicAssignments: exactMainDynamicAssignments,
+    key: "v5",
+    label: "tech.caseline.vigil.system-guardian.v5",
+    maintenanceAuthorizationKind: "vigil-root-maintenance-authorization-v2",
+    maintenanceAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/maintenance-authorization-v5.plist",
+    normalParentCommandPolicy: "background-only",
+    plistPath: "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.v5.plist",
+    programSha256: "b69e4db8ac6e31145bb34ce075d00d70d086c201dae902053daa0aba12038468",
+    recoveryAuthorizationKind: "vigil-root-update-recovery-authorization-v5",
+    recoveryAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization-v5.plist",
+    recoveryProtocol: "pinned-pending",
+    revision: 5,
+    scriptPath: "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-v5-DO-NOT-TERMINATE.sh",
+    sourceCommit: "2017e7b82ed5648dce39e4d8df88f7bce8b83466"
+  },
+  {
+    bootstrapClaimKind: "vigil-root-update-protocol-bootstrap-worker-claim-v1",
+    bootstrapClaimPath: "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-worker-claim-v6.plist",
+    current: false,
+    dynamicAssignments: canonicalMainDynamicAssignments,
+    key: "v6",
+    label: "tech.caseline.vigil.system-guardian.v6",
+    maintenanceAuthorizationKind: "vigil-root-maintenance-authorization-v2",
+    maintenanceAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/maintenance-authorization-v6.plist",
+    normalParentCommandPolicy: "background-or-canonical",
+    plistPath: "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.v6.plist",
+    programSha256: "2ef7538db87511e723216ea6785a9ff49e60e29d2345a9a8e0b9ddd7c139a6ce",
+    recoveryAuthorizationKind: "vigil-root-update-recovery-authorization-v6",
+    recoveryAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization-v6.plist",
+    recoveryProtocol: "pinned-pending",
+    revision: 6,
+    scriptPath: "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-v6-DO-NOT-TERMINATE.sh",
+    sourceCommit: "e7d1f458442c7732b19e3cba4c0f33cca23823cf"
+  },
+  {
+    bootstrapClaimKind: "vigil-root-update-protocol-bootstrap-worker-claim-v1",
+    bootstrapClaimPath: "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-worker-claim-v7.plist",
+    current: false,
+    dynamicAssignments: canonicalMainDynamicAssignments,
+    key: "v7",
+    label: "tech.caseline.vigil.system-guardian.v7",
+    maintenanceAuthorizationKind: "vigil-root-maintenance-authorization-v2",
+    maintenanceAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/maintenance-authorization-v7.plist",
+    normalParentCommandPolicy: "background-or-canonical",
+    plistPath: "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.v7.plist",
+    programSha256: "dc6cfad5068be83786ef668dc4caff5e5f136c0d3b7953952c32dff90f508d1f",
+    recoveryAuthorizationKind: "vigil-root-update-recovery-authorization-v7",
+    recoveryAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization-v7.plist",
+    recoveryProtocol: "pinned-pending",
+    revision: 7,
+    scriptPath: "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-v7-DO-NOT-TERMINATE.sh",
+    sourceCommit: "6d762989c79615fbc7db609c3b314af7814bdeec"
+  },
+  {
+    bootstrapClaimKind: "vigil-root-update-protocol-bootstrap-worker-claim-v1",
+    bootstrapClaimPath: "/Library/Application Support/Vigil/System Guardian/update-protocol-bootstrap-worker-claim-v8.plist",
+    current: true,
+    dynamicAssignments: canonicalMainDynamicAssignments,
+    key: "v8",
+    label: "tech.caseline.vigil.system-guardian.v8",
+    maintenanceAuthorizationKind: "vigil-root-maintenance-authorization-v2",
+    maintenanceAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/maintenance-authorization-v8.plist",
+    normalParentCommandPolicy: "background-or-canonical",
+    plistPath: "/Library/LaunchDaemons/tech.caseline.vigil.system-guardian.v8.plist",
+    programSha256: null,
+    recoveryAuthorizationKind: "vigil-root-update-recovery-authorization-v8",
+    recoveryAuthorizationPath: "/Library/Application Support/Vigil/System Guardian/update-recovery-authorization-v8.plist",
+    recoveryProtocol: "pinned-pending",
+    revision: 8,
+    scriptPath: "/Library/Application Support/Vigil/System Guardian/vigil-system-guardian-v8-DO-NOT-TERMINATE.sh",
+    sourceCommit: null
+  }
+] as const;
+
+export const GUARDIAN_MIGRATION_CASE_FIXTURES = [
+  {
+    bootstrapClaim: false,
+    canonicalParentBlocked: false,
+    fixtureProgramSha256: "037e2d715c96e529108269620cb96c46bc0eac3029619402121b2c952996eab8",
+    fromKey: "legacy",
+    programBytes: 28_288,
+    recoveryProtocol: "legacy-normalized",
+    toKey: "v8"
+  },
+  {
+    bootstrapClaim: true,
+    canonicalParentBlocked: true,
+    fixtureProgramSha256: "4f366a2def02d170ed6f7c8581e6f67f0e2d96de35af2c7fc021607ca1bdbd5f",
+    fromKey: "v3",
+    programBytes: 68_943,
+    recoveryProtocol: "pinned-pending",
+    toKey: "v8"
+  },
+  {
+    bootstrapClaim: true,
+    canonicalParentBlocked: true,
+    fixtureProgramSha256: "a6b8a44f7750dfa0ad479d3ed3b7066584847fd83b45af0dccb6d8f5a8506147",
+    fromKey: "v4",
+    programBytes: 74_524,
+    recoveryProtocol: "pinned-pending",
+    toKey: "v8"
+  },
+  {
+    bootstrapClaim: true,
+    canonicalParentBlocked: true,
+    fixtureProgramSha256: "1061d7276428ec0871609c844a48fcdcac5251a212f57ae43c4a7a54d7971a92",
+    fromKey: "v5",
+    programBytes: 74_536,
+    recoveryProtocol: "pinned-pending",
+    toKey: "v8"
+  },
+  {
+    bootstrapClaim: true,
+    canonicalParentBlocked: false,
+    fixtureProgramSha256: "75ca1dd40696624aa24e2ddecbdedd23fa33337de7093db4734850578e1b8d50",
+    fromKey: "v6",
+    programBytes: 75_399,
+    recoveryProtocol: "pinned-pending",
+    toKey: "v8"
+  },
+  {
+    bootstrapClaim: true,
+    canonicalParentBlocked: false,
+    fixtureProgramSha256: "4ad88dd4258409076f6cfe04796fa0957756c19218ee7d2e27043bb48ff89128",
+    fromKey: "v7",
+    programBytes: 76_587,
+    recoveryProtocol: "pinned-pending",
+    toKey: "v8"
+  }
+] as const;

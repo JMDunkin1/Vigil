@@ -1,9 +1,10 @@
 import type { App } from "electron";
 import { isLocallyRebuildableSignature } from "../scripts/mac-signing-identity.mjs";
+import { inspectInstalledUpdateTopology } from "../scripts/update-packaged-app.mjs";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
-import { link, lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants, existsSync, readFileSync } from "node:fs";
+import { access, link, lstat, mkdir, open, readFile, realpath, rename, rm, stat, statfs, writeFile } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { userInfo } from "node:os";
@@ -12,7 +13,21 @@ import { plistStringForKey } from "../src/plist.js";
 import { sourceFingerprint } from "../scripts/source-fingerprint.mjs";
 import { gitExecutable } from "../scripts/git-executable.mjs";
 import { assertGuardianMaintenanceActive, guardianMaintenanceReadiness } from "../src/updateMaintenance.js";
-import { setupSystemGuardian } from "../src/guardianSetup.js";
+import {
+  preflightGuardianUpdateCompatibility,
+  setupSystemGuardian
+} from "../src/guardianSetup.js";
+import {
+  verifyAndStagePrebuiltRelease
+} from "../src/prebuiltRelease.js";
+import type { VerifiedPrebuiltRelease } from "../src/prebuiltRelease.js";
+import {
+  cleanupDownloadedPrebuiltRelease,
+  cleanupOrphanedPrebuiltDownloads,
+  configuredPrebuiltUpdateManifestUrl,
+  downloadPrebuiltRelease
+} from "../src/prebuiltReleaseDownload.js";
+import type { DownloadedPrebuiltRelease } from "../src/prebuiltReleaseDownload.js";
 import {
   beginUpdateReceipt,
   failedUpdateReceiptSuperseded,
@@ -32,6 +47,17 @@ import {
   readUpdateRecoveryPolicyFile
 } from "../src/updateTransaction.js";
 import type { UpdateRecoveryOutcome } from "../src/updateTransaction.js";
+import {
+  collectUpdatePreflight,
+  firstUpdatePreflightFailure,
+  updatePreflightFailureMessage
+} from "../src/updatePreflight.js";
+import type {
+  UpdatePreflightCheck,
+  UpdatePreflightCheckDefinition,
+  UpdatePreflightCheckResult,
+  UpdatePreflightReport
+} from "../src/updatePreflight.js";
 
 const UPDATE_STATUS_FILENAME = "update-status.json";
 const UPDATE_LOG_FILENAME = "update.log";
@@ -46,6 +72,7 @@ const EXEC_KILL_CONFIRMATION_MS = 2_000;
 const EXEC_TERMINATION_POLL_MS = 25;
 const UPDATER_BOOTSTRAP_TERMINATION_TIMEOUT_MS = 5_000;
 const UPDATER_BOOTSTRAP_TERMINATION_POLL_MS = 25;
+const MINIMUM_BUILD_FREE_BYTES = 2 * 1024 * 1024 * 1024;
 
 interface ExecResult {
   ok: boolean;
@@ -118,6 +145,17 @@ interface PinnedUpdaterLockSnapshot {
   payload: UpdateLockPayload | null;
 }
 
+interface SourceUpdatePreflight {
+  report: UpdatePreflightReport;
+  nodePath: string | null;
+  npmPath: string | null;
+}
+
+interface PreparedPrebuiltRelease {
+  download: DownloadedPrebuiltRelease;
+  verified: VerifiedPrebuiltRelease;
+}
+
 export interface VigilAppUpdateController {
   status(options?: { checkRemote?: boolean }): Promise<unknown>;
   start(): Promise<unknown>;
@@ -126,6 +164,7 @@ export interface VigilAppUpdateController {
 interface ControllerOptions {
   app: App;
   quitForUpdate(): void | Promise<void>;
+  maintenanceReadiness?: typeof guardianMaintenanceReadiness;
   setupGuardian?: typeof setupSystemGuardian;
 }
 
@@ -142,6 +181,7 @@ const moduleDir = dirname(fileURLToPath(import.meta.url));
 export function createVigilAppUpdateController({
   app,
   quitForUpdate,
+  maintenanceReadiness = guardianMaintenanceReadiness,
   setupGuardian = setupSystemGuardian
 }: ControllerOptions): VigilAppUpdateController {
   let repoRoot = findRepoRoot(app);
@@ -176,7 +216,7 @@ export function createVigilAppUpdateController({
       optionalStat(join(appPath, "Contents", "Resources", "app.asar")),
       readUpdateReceipt(statusPath),
       readActiveUpdaterLock(lockPath),
-      guardianMaintenanceReadiness(),
+      maintenanceReadiness(),
       readGlobalUpdateRecovery(updateDir)
     ]);
     const running = Boolean(activeLock && activeLock.token !== ownedLockToken);
@@ -299,7 +339,7 @@ export function createVigilAppUpdateController({
       appBundleModifiedAt: appStat?.mtime.toISOString() || null,
       remoteCheckedAt: checkRemote ? new Date().toISOString() : null,
       remoteCheckOk,
-      remoteCheckError: remoteCheck && !remoteCheck.ok ? "Remote check failed" : null,
+      remoteCheckError: remoteCheck && !remoteCheck.ok ? execResultDetail(remoteCheck) : null,
       maintenanceReady: maintenance.ready,
       maintenanceMessage: maintenance.message,
       maintenanceSetupRequired: maintenance.setupRequired,
@@ -382,18 +422,50 @@ export function createVigilAppUpdateController({
     let currentStatus: Record<string, unknown> = {};
     let updaterChild: ReturnType<typeof spawn> | null = null;
     let updaterLockTransferred = false;
-    const failAttempt = async (message: string): Promise<Record<string, unknown>> => {
+    let downloadedPrebuiltRelease: DownloadedPrebuiltRelease | null = null;
+    let preparedPrebuiltRelease: PreparedPrebuiltRelease | null = null;
+    const failAttempt = async (
+      message: string,
+      failure: UpdatePreflightCheck | null = null,
+      preflight: UpdatePreflightReport | null = null
+    ): Promise<Record<string, unknown>> => {
+      let finalMessage = message;
+      let finalFailure = failure;
+      if (!handedOff && !preserveUpdateLock && downloadedPrebuiltRelease) {
+        try {
+          await cleanupDownloadedPrebuiltRelease(downloadedPrebuiltRelease.root, updateDir);
+          downloadedPrebuiltRelease = null;
+          preparedPrebuiltRelease = null;
+        } catch (cleanupError) {
+          const cleanupDetail = `Prebuilt-release cleanup also failed: ${errorMessage(cleanupError)}`;
+          finalMessage = `${finalMessage} ${cleanupDetail}`;
+          finalFailure = finalFailure
+            ? {
+                ...finalFailure,
+                detail: finalFailure.detail
+                  ? `${finalFailure.detail} ${cleanupDetail}`
+                  : cleanupDetail
+              }
+            : {
+                code: "vigil.update.prebuilt.cleanup",
+                label: "Prebuilt release cleanup",
+                status: "fail",
+                message: finalMessage,
+                detail: cleanupDetail
+              };
+        }
+      }
       if (receiptStarted) {
         if (preserveUpdateLock) {
           await mergeWriteUpdateReceipt(statusPath, updateLock.token, {
             phase: "waiting",
-            message
+            message: finalMessage
           }).catch(() => undefined);
         } else {
           await mergeWriteUpdateReceipt(statusPath, updateLock.token, {
             phase: "failed",
-            message,
-            error: message
+            message: finalMessage,
+            error: finalMessage
           }).catch(() => undefined);
         }
       }
@@ -402,79 +474,270 @@ export function createVigilAppUpdateController({
         ok: false,
         running: preserveUpdateLock,
         phase: preserveUpdateLock ? "waiting" : "failed",
-        message,
-        error: message
+        message: finalMessage,
+        error: finalMessage,
+        errorCode: finalFailure?.code || "vigil.update.start.failed",
+        failedCheck: finalFailure?.label || "Updater start",
+        errorDetail: finalFailure?.detail || null,
+        preflight
       };
+    };
+    const failPreflight = async (preflight: SourceUpdatePreflight): Promise<Record<string, unknown>> => {
+      const failure = firstUpdatePreflightFailure(preflight.report);
+      const message = failure
+        ? updatePreflightFailureMessage(failure)
+        : "Vigil update preflight did not pass.";
+      const structuredGuardianFailure = guardianCheckFailure(
+        `${failure?.message || ""} ${failure?.detail || ""}`
+      );
+      return await failAttempt(message, structuredGuardianFailure || failure, preflight.report);
     };
     try {
       currentStatus = await readStatusPayload({ ownedLockToken: updateLock.token });
       if (currentStatus.recoveryPending === true || currentStatus.recoveryBlocked === true) {
         const message = String(currentStatus.message || "Vigil must finish recovering the previous update before another can start.");
-        return { ...currentStatus, ok: false, error: message };
+        return await failAttempt(message, {
+          code: "vigil.update.recovery.clear",
+          label: "Previous update recovery",
+          status: "fail",
+          message: "The previous Vigil update still requires recovery.",
+          detail: message
+        });
       }
-      if (currentStatus.checkOk !== true) {
-        return await failAttempt("The Vigil source repository could not be verified.");
+      try {
+        await cleanupOrphanedPrebuiltDownloads(updateDir);
+      } catch (error) {
+        const failure: UpdatePreflightCheck = {
+          code: "vigil.update.prebuilt.cleanup",
+          label: "Prebuilt release cleanup",
+          status: "fail",
+          message: "Vigil could not safely reconcile an earlier prebuilt-release download.",
+          detail: errorMessage(error)
+        };
+        return await failAttempt(updatePreflightFailureMessage(failure), failure);
       }
-      if (currentStatus.supported !== true || !scriptPath) {
-        return await failAttempt("Updater script is missing from this Vigil build.");
-      }
-      if (currentStatus.maintenanceReady !== true) {
-        if (currentStatus.updateCandidateAvailable !== true || currentStatus.maintenanceSetupSupported !== true) {
-          return await failAttempt(String(currentStatus.maintenanceMessage || "Vigil's protected update setup is not ready."));
-        }
+      const setupOnlyRequired = currentStatus.maintenanceReady !== true
+        && currentStatus.maintenanceSetupRequired === true
+        && currentStatus.maintenanceSetupSupported === true;
+      if (setupOnlyRequired) {
         const account = userInfo();
         const uid = process.getuid?.();
         if (!Number.isInteger(uid) || Number(uid) < 501) {
-          return await failAttempt("Vigil could not identify the signed-in account for protected update setup.");
+          return await failAttempt(
+            "Vigil could not identify the signed-in account for protected update setup.",
+            {
+              code: "vigil.guardian.setup.account",
+              label: "Guardian setup account",
+              status: "fail",
+              message: "The signed-in account could not be verified.",
+              detail: "No password, build, or installation was requested."
+            }
+          );
         }
         const setupResult = await setupGuardian({
           sourceAppPath: appPath,
           targetAppPath: appPath,
           targetHome: account.homedir,
           targetUid: Number(uid),
-          targetUser: account.username
+          targetUser: account.username,
+          // A setup click promises a usable follow-on update. Refuse during
+          // read-only preflight, before macOS can prompt, if a loaded
+          // predecessor requires Vigil's protected background launch.
+          requireNormalUpdateCompatibility: true
         });
         if (!setupResult.ok) {
-          return await failAttempt(setupResult.message || "Vigil update setup was canceled.");
+          const structuredGuardianFailure = guardianCheckFailure(setupResult.message);
+          return await failAttempt(
+            setupResult.message || "Vigil update setup was canceled.",
+            structuredGuardianFailure || {
+              code: setupResult.canceled
+                ? "vigil.guardian.setup.canceled"
+                : "vigil.guardian.setup.failed",
+              label: "Guardian setup",
+              status: "fail",
+              message: setupResult.message || "Guardian setup did not complete.",
+              detail: "Vigil stayed online. No build or installation was started."
+            }
+          );
         }
         currentStatus = await readStatusPayload({ ownedLockToken: updateLock.token });
-        if (currentStatus.checkOk !== true
-          || currentStatus.supported !== true
-          || currentStatus.maintenanceReady !== true
-          || currentStatus.updateCandidateAvailable !== true) {
-          return await failAttempt(String(
-            currentStatus.maintenanceMessage
-            || currentStatus.message
-            || "Vigil could not verify protected update setup after approval."
-          ));
+        if (currentStatus.maintenanceReady !== true) {
+          return await failAttempt(
+            String(
+              currentStatus.maintenanceMessage
+              || "Vigil could not verify protected update setup after approval."
+            ),
+            {
+              code: "vigil.guardian.setup.postflight",
+              label: "Guardian setup postflight",
+              status: "fail",
+              message: "The new guardian did not pass its post-setup readiness check.",
+              detail: String(currentStatus.maintenanceReason || currentStatus.maintenanceMessage || "Readiness remained false.")
+            }
+          );
+        }
+        return {
+          ...currentStatus,
+          ok: true,
+          running: false,
+          phase: "",
+          setupComplete: true,
+          message: currentStatus.updateCandidateAvailable === true
+            ? "Fast protected updates are ready. The selected update can now be installed without another password."
+            : "Fast protected updates are ready."
+        };
+      }
+      if (currentStatus.checkOk !== true) {
+        const detail = String(
+          currentStatus.repoError
+          || currentStatus.message
+          || "The Vigil source repository could not be verified."
+        );
+        return await failAttempt(detail, {
+          code: "vigil.update.repository.verified",
+          label: "Source repository",
+          status: "fail",
+          message: "Vigil could not verify its source repository.",
+          detail
+        });
+      }
+      if (currentStatus.supported !== true || !scriptPath) {
+        return await failAttempt("Updater script is missing from this Vigil build.", {
+          code: "vigil.update.updater.script",
+          label: "Packaged updater script",
+          status: "fail",
+          message: "The packaged Vigil updater script is missing.",
+          detail: scriptPath || "No updater script path was found in the signed app or runtime."
+        });
+      }
+
+      // Complete every non-privileged, non-building check before macOS can ask
+      // for an administrator password. Remote selection is refreshed first so
+      // a disappeared target or changed checkout never causes a needless
+      // guardian prompt.
+      const initiallyLocalAttempt = currentStatus.localChanges === true;
+      if (!initiallyLocalAttempt) {
+        currentStatus = await readStatusPayload({ checkRemote: true, ownedLockToken: updateLock.token });
+        if (currentStatus.remoteCheckOk !== true) {
+          const failure: UpdatePreflightCheck = {
+            code: "vigil.update.remote.fetch",
+            label: "Remote update refresh",
+            status: "fail",
+            message: "Vigil could not refresh the remote update target.",
+            detail: String(
+              currentStatus.remoteCheckError
+              || currentStatus.repoError
+              || "The Git fetch did not complete successfully."
+            )
+          };
+          return await failAttempt(updatePreflightFailureMessage(failure), failure);
+        }
+        if (currentStatus.checkOk !== true) {
+          const failure: UpdatePreflightCheck = {
+            code: "vigil.update.repository.verified",
+            label: "Source repository",
+            status: "fail",
+            message: "The source repository failed verification after the remote refresh.",
+            detail: String(
+              currentStatus.repoError
+              || currentStatus.message
+              || "The repository or source fingerprint check failed."
+            )
+          };
+          return await failAttempt(updatePreflightFailureMessage(failure), failure);
+        }
+        if (currentStatus.updateAvailable !== true) {
+          const noUpdate = await prepareRemoteUpdateReceipt(statusPath, updateLock.token, currentStatus);
+          return noUpdate.status;
+        }
+        let prebuiltManifestUrl: string | null;
+        try {
+          prebuiltManifestUrl = configuredPrebuiltUpdateManifestUrl();
+        } catch (error) {
+          const failure: UpdatePreflightCheck = {
+            code: "vigil.update.prebuilt.configuration",
+            label: "Prebuilt release configuration",
+            status: "fail",
+            message: "Vigil's configured prebuilt release URL is invalid.",
+            detail: errorMessage(error)
+          };
+          return await failAttempt(updatePreflightFailureMessage(failure), failure);
+        }
+        if (prebuiltManifestUrl) {
+          const targetCommit = String(currentStatus.upstreamCommit || "");
+          try {
+            const download = await downloadPrebuiltRelease({
+              manifestUrl: prebuiltManifestUrl,
+              selectedCommit: targetCommit,
+              storageRoot: updateDir
+            });
+            downloadedPrebuiltRelease = download;
+            preparedPrebuiltRelease = {
+              download,
+              verified: await verifyAndStagePrebuiltRelease({
+                artifactPath: download.artifactPath,
+                installedAppPath: appPath,
+                manifestPath: download.manifestPath,
+                stagingRoot: download.root
+              })
+            };
+            if (preparedPrebuiltRelease.verified.manifest.commit !== targetCommit) {
+              throw new Error("The verified signed release no longer matches the selected upstream commit.");
+            }
+          } catch (error) {
+            let detail = errorMessage(error);
+            if (downloadedPrebuiltRelease) {
+              try {
+                await cleanupDownloadedPrebuiltRelease(downloadedPrebuiltRelease.root, updateDir);
+                downloadedPrebuiltRelease = null;
+              } catch (cleanupError) {
+                detail = `${detail} Cleanup also failed: ${errorMessage(cleanupError)}`;
+              }
+            }
+            const failure: UpdatePreflightCheck = {
+              code: "vigil.update.prebuilt.verified",
+              label: "Prebuilt signed release",
+              status: "fail",
+              message: "Vigil could not verify the configured prebuilt signed release.",
+              detail
+            };
+            return await failAttempt(updatePreflightFailureMessage(failure), failure);
+          }
         }
       }
-      const localAttempt = currentStatus.localChanges === true;
+      const sourcePreflight = await collectSourceUpdatePreflight({
+        app,
+        appPath,
+        currentStatus,
+        localAttempt: initiallyLocalAttempt,
+        prebuiltRelease: preparedPrebuiltRelease,
+        repoRoot,
+        scriptPath: initiallyLocalAttempt ? localLauncherPath(repoRoot) : scriptPath,
+        updateDir
+      });
+      currentStatus = { ...currentStatus, preflight: sourcePreflight.report };
+      if (!sourcePreflight.report.ok) return await failPreflight(sourcePreflight);
+
+      if (currentStatus.maintenanceReady !== true) {
+        return await failAttempt(
+          String(currentStatus.maintenanceMessage || "Vigil's protected update setup is not ready."),
+          {
+            code: "vigil.guardian.readiness",
+            label: "Guardian readiness",
+            status: "fail",
+            message: "Protected update maintenance is not ready.",
+            detail: String(currentStatus.maintenanceReason || currentStatus.maintenanceMessage || "Guardian readiness remained false.")
+          }
+        );
+      }
+
+      const localAttempt = initiallyLocalAttempt;
       if (localAttempt) {
         await prepareLocalUpdateReceipt(statusPath, updateLock.token, currentStatus);
         receiptStarted = true;
-        const result = await launchLocalChanges(currentStatus, updateLock);
+        const result = await launchLocalChanges(currentStatus, updateLock, sourcePreflight);
         if (result.ok === true) handedOff = true;
         return result.ok === true ? result : await failAttempt(String(result.error || result.message || "The local Vigil update could not start."));
-      }
-      currentStatus = await readStatusPayload({ checkRemote: true, ownedLockToken: updateLock.token });
-      if (currentStatus.checkOk !== true || currentStatus.remoteCheckOk !== true) {
-        return await failAttempt("Vigil could not verify remote updates. Nothing was changed.");
-      }
-      if (currentStatus.localChanges) {
-        return await failAttempt("The Vigil source topology changed during the update check. Check again to use the protected local-build path.");
-      }
-      if (currentStatus.dirty) {
-        return await failAttempt("Commit or stash local changes before installing a Vigil update.");
-      }
-      if (Number(currentStatus.ahead || 0) > 0) {
-        return await failAttempt("The Vigil source topology changed during the update check. Check again before installing an update.");
-      }
-      if (currentStatus.supported !== true || !scriptPath) {
-        return await failAttempt("Updater script is missing from this Vigil build.");
-      }
-      if (currentStatus.maintenanceReady !== true) {
-        return await failAttempt(String(currentStatus.maintenanceMessage || "Vigil's protected update setup is not ready."));
       }
       const remotePreparation = await prepareRemoteUpdateReceipt(statusPath, updateLock.token, currentStatus);
       currentStatus = remotePreparation.status;
@@ -482,19 +745,9 @@ export function createVigilAppUpdateController({
         return currentStatus;
       }
       receiptStarted = true;
-      const [nodePath, npmPath] = await Promise.all([
-        findExecutable(repoRoot, "node", app.getPath("home")),
-        findExecutable(repoRoot, "npm", app.getPath("home"))
-      ]);
-      if (!nodePath || !npmPath) {
-        return await failAttempt("Node.js and npm are required to rebuild Vigil, but they were not found.");
-      }
-      const childEnv = updaterChildEnvironment(app.getPath("home"), nodePath, npmPath);
-      const updaterSyntax = await execFile(nodePath, ["--check", scriptPath], { cwd: repoRoot, timeoutMs: EXEC_TIMEOUT_MS });
-      if (!updaterSyntax.ok) {
-        return await failAttempt("The packaged Vigil updater failed its preflight check.");
-      }
-      await assertLocallyRebuildableApp(appPath);
+      const { nodePath, npmPath } = sourcePreflight;
+      if (!nodePath || (!preparedPrebuiltRelease && !npmPath)) return await failPreflight(sourcePreflight);
+      const childEnv = updaterChildEnvironment(app.getPath("home"), nodePath, npmPath || nodePath);
       await mergeWriteUpdateReceipt(statusPath, updateLock.token, {
         phase: "starting",
         message: "Launching the protected Vigil updater",
@@ -515,6 +768,14 @@ export function createVigilAppUpdateController({
         "--expected-commit", String(currentStatus.upstreamCommit || ""),
         "--restart"
       ];
+      if (preparedPrebuiltRelease) {
+        command.push(
+          "--prebuilt-root", preparedPrebuiltRelease.download.root,
+          "--prebuilt-manifest-path", preparedPrebuiltRelease.download.manifestPath,
+          "--prebuilt-app-path", preparedPrebuiltRelease.verified.stagedAppPath,
+          "--prebuilt-cdhash", preparedPrebuiltRelease.verified.candidateCdHash
+        );
+      }
       let quitAuthorizationInFlight = false;
       const requestQuit = () => {
         const childPid = updaterChild?.pid;
@@ -541,7 +802,7 @@ export function createVigilAppUpdateController({
           env: {
             ...childEnv,
             VIGIL_UPDATE_LAUNCHED_BY: "vigil-app",
-            VIGIL_UPDATE_NPM_PATH: npmPath
+            ...(npmPath ? { VIGIL_UPDATE_NPM_PATH: npmPath } : {})
           }
         });
         await childStarted(updaterChild);
@@ -560,8 +821,10 @@ export function createVigilAppUpdateController({
         ok: true,
         supported: true,
         running: true,
-        phase: "building",
-        message: "Building the Vigil update; Vigil will restart when ready.",
+        phase: preparedPrebuiltRelease ? "staging" : "building",
+        message: preparedPrebuiltRelease
+          ? "Installing the verified signed Vigil release; Vigil will restart when ready."
+          : "Building the Vigil update; Vigil will restart when ready.",
         logPath
       };
     } catch (error) {
@@ -578,21 +841,27 @@ export function createVigilAppUpdateController({
         preserveUpdateLock = true;
       }
       const message = errorMessage(failure) || "The updater process could not start.";
-      return await failAttempt(message);
+      return await failAttempt(message, guardianCheckFailure(message));
     } finally {
+      if (!handedOff && !preserveUpdateLock && downloadedPrebuiltRelease) {
+        await cleanupDownloadedPrebuiltRelease(downloadedPrebuiltRelease.root, updateDir).catch((error) => {
+          console.error("Vigil could not clean its private prebuilt-release download.", error);
+        });
+      }
       if (!handedOff && !preserveUpdateLock) await updateLock.release();
     }
   }
 
-  async function launchLocalChanges(currentStatus: Record<string, unknown>, updateLock: UpdaterLock): Promise<Record<string, unknown>> {
+  async function launchLocalChanges(
+    currentStatus: Record<string, unknown>,
+    updateLock: UpdaterLock,
+    sourcePreflight: SourceUpdatePreflight
+  ): Promise<Record<string, unknown>> {
     if (!/^[a-f0-9]{40}$/iu.test(String(currentStatus.currentCommit || ""))
       || !/^[a-f0-9]{64}$/iu.test(String(currentStatus.currentSourceFingerprint || ""))) {
       return { ...currentStatus, ok: false, error: "Vigil could not capture a stable identity for the local source. Nothing was changed." };
     }
-    const [nodePath, npmPath] = await Promise.all([
-      findExecutable(repoRoot, "node", app.getPath("home")),
-      findExecutable(repoRoot, "npm", app.getPath("home"))
-    ]);
+    const { nodePath, npmPath } = sourcePreflight;
     const launcherPath = localLauncherPath(repoRoot);
     if (!nodePath || !npmPath || !launcherPath) {
       return { ...currentStatus, ok: false, error: "Node.js, npm, and the local launcher are required to run Vigil changes." };
@@ -662,6 +931,663 @@ export function createVigilAppUpdateController({
   }
 }
 
+interface SelectedUpdateIdentity {
+  branch: string;
+  currentCommit: string;
+  localAttempt: boolean;
+  sourceFingerprint: string;
+  targetCommit: string;
+}
+
+interface CollectSourceUpdatePreflightOptions {
+  app: App;
+  appPath: string;
+  currentStatus: Record<string, unknown>;
+  expectedIdentity?: SelectedUpdateIdentity;
+  localAttempt: boolean;
+  prebuiltRelease?: PreparedPrebuiltRelease | null;
+  repoRoot: string;
+  scriptPath: string | null;
+  updateDir: string;
+}
+
+interface LiveSourceSelection {
+  identity: SelectedUpdateIdentity;
+  repo: RepoInfo;
+  sourceFingerprint: string;
+}
+
+function selectedUpdateIdentity(
+  status: Record<string, unknown>,
+  localAttempt: boolean
+): SelectedUpdateIdentity {
+  return {
+    branch: String(status.branch || ""),
+    currentCommit: String(status.currentCommit || ""),
+    localAttempt,
+    sourceFingerprint: String(status.currentSourceFingerprint || ""),
+    targetCommit: localAttempt
+      ? String(status.currentCommit || "")
+      : String(status.upstreamCommit || "")
+  };
+}
+
+function updateIdentitiesMatch(
+  expected: SelectedUpdateIdentity,
+  observed: SelectedUpdateIdentity
+): boolean {
+  return expected.branch === observed.branch
+    && expected.currentCommit === observed.currentCommit
+    && expected.localAttempt === observed.localAttempt
+    && expected.sourceFingerprint === observed.sourceFingerprint
+    && expected.targetCommit === observed.targetCommit;
+}
+
+async function readLiveSourceSelection(
+  repoRoot: string,
+  localAttempt: boolean
+): Promise<LiveSourceSelection> {
+  const [repo, fingerprint] = await Promise.all([
+    readRepoInfo(repoRoot),
+    sourceFingerprint(repoRoot)
+  ]);
+  if (!repo.ok) {
+    throw new Error(repo.error || "The live repository state could not be read.");
+  }
+  if (typeof fingerprint !== "string" || !/^[a-f0-9]{64}$/iu.test(fingerprint)) {
+    throw new Error("The live source fingerprint is missing or malformed.");
+  }
+  return {
+    repo,
+    sourceFingerprint: fingerprint,
+    identity: {
+      branch: repo.branch,
+      currentCommit: repo.head,
+      localAttempt,
+      sourceFingerprint: fingerprint,
+      targetCommit: localAttempt ? repo.head : repo.upstream || ""
+    }
+  };
+}
+
+async function collectSourceUpdatePreflight({
+  app,
+  appPath,
+  currentStatus,
+  expectedIdentity,
+  localAttempt,
+  prebuiltRelease = null,
+  repoRoot,
+  scriptPath,
+  updateDir
+}: CollectSourceUpdatePreflightOptions): Promise<SourceUpdatePreflight> {
+  const homeDir = app.getPath("home");
+  const [nodePath, npmPath] = await Promise.all([
+    findExecutable(repoRoot, "node", homeDir),
+    prebuiltRelease ? Promise.resolve(null) : findExecutable(repoRoot, "npm", homeDir)
+  ]);
+  const liveSelection = readLiveSourceSelection(repoRoot, localAttempt);
+  const installedTopology = inspectInstalledUpdateTopology(repoRoot, !localAttempt);
+  const selectedSnapshot = selectedUpdateIdentity(currentStatus, localAttempt);
+  const definitions: UpdatePreflightCheckDefinition[] = [
+    {
+      code: "vigil.update.recovery.clear",
+      label: "Previous update recovery",
+      run: () => currentStatus.recoveryPending === true || currentStatus.recoveryBlocked === true
+        ? {
+            status: "fail",
+            message: "The previous Vigil update still requires recovery.",
+            detail: String(currentStatus.message || "Recovery state is still active.")
+          }
+        : { message: "No previous update recovery blocks this attempt." }
+    },
+    {
+      code: "vigil.update.repository.verified",
+      label: "Source repository",
+      run: async () => {
+        if (currentStatus.checkOk !== true) {
+          return {
+            status: "fail",
+            message: "Vigil could not verify its source repository.",
+            detail: String(currentStatus.repoError || currentStatus.message || "Repository status check failed.")
+          };
+        }
+        const live = await liveSelection;
+        return {
+          message: "The live Vigil repository and source fingerprint are readable.",
+          detail: `Branch ${live.repo.branch}; HEAD ${live.repo.head}; fingerprint ${live.sourceFingerprint}.`
+        };
+      }
+    },
+    {
+      code: "vigil.update.candidate.available",
+      label: "Selected update candidate",
+      run: () => currentStatus.updateCandidateAvailable === true
+        ? { message: "The selected Vigil update candidate is still available." }
+        : {
+            status: "fail",
+            message: "The selected Vigil update is no longer available.",
+            detail: "Check for updates again; no password, build, or installation was started."
+          }
+    },
+    {
+      code: "vigil.update.source.identity",
+      label: "Selected source identity",
+      run: async () => {
+        const observedIdentity = (await liveSelection).identity;
+        const stable = /^[a-f0-9]{40}$/iu.test(observedIdentity.currentCommit)
+          && /^[a-f0-9]{40}$/iu.test(observedIdentity.targetCommit)
+          && /^[a-f0-9]{64}$/iu.test(observedIdentity.sourceFingerprint)
+          && updateIdentitiesMatch(selectedSnapshot, observedIdentity)
+          && (!expectedIdentity || updateIdentitiesMatch(expectedIdentity, observedIdentity));
+        return stable
+          ? { message: "The live branch, source commit, fingerprint, and target match the selected update exactly." }
+          : {
+            status: "fail",
+            message: "Vigil could not pin the exact selected source and target identity.",
+            detail: expectedIdentity
+              ? "The source or target changed after the first preflight."
+              : "The live branch, HEAD, source fingerprint, or upstream target changed after selection."
+          };
+      }
+    },
+    {
+      code: "vigil.update.source.topology",
+      label: "Source update topology",
+      run: async () => {
+        const live = await liveSelection;
+        if (localAttempt) {
+          return currentStatus.localChanges === true && live.repo.dirty
+            ? { message: "The update remains on the protected local-changes path." }
+            : {
+                status: "fail",
+                message: "The local source topology changed during preflight.",
+                detail: "Check for updates again before building."
+              };
+        }
+        if (live.repo.dirty) {
+          return {
+            status: "fail",
+            message: "The remote update is blocked by local source changes.",
+            detail: "Commit or stash local changes before installing the remote update."
+          };
+        }
+        if (live.repo.ahead > 0) {
+          return {
+            status: "fail",
+            message: "The source branch is ahead of or diverged from its upstream.",
+            detail: "Vigil only installs a remote source update through an exact fast-forward."
+          };
+        }
+        return { message: "The remote source topology is a clean fast-forward." };
+      }
+    },
+    {
+      code: "vigil.update.remote.fetch",
+      label: "Remote update refresh",
+      run: () => localAttempt || expectedIdentity || currentStatus.remoteCheckOk === true
+        ? { message: localAttempt ? "A remote refresh is not required for local changes." : "The selected remote target was refreshed." }
+        : {
+            status: "fail",
+            message: "Vigil could not refresh the remote update target.",
+            detail: String(currentStatus.remoteCheckError || "The Git fetch did not complete successfully.")
+          }
+    },
+    {
+      code: "vigil.update.updater.script",
+      label: "Packaged updater script",
+      run: async () => {
+        if (!scriptPath) {
+          return { status: "fail", message: "The packaged Vigil updater script is missing." };
+        }
+        const value = await lstat(scriptPath);
+        return value.isFile() && !value.isSymbolicLink()
+          ? { message: "The packaged updater is a regular signed-bundle file." }
+          : {
+              status: "fail",
+              message: "The packaged Vigil updater script has an unsafe filesystem type.",
+              detail: scriptPath
+            };
+      }
+    },
+    {
+      code: "vigil.update.tool.node",
+      label: "Node.js executable",
+      run: () => executableToolPreflight({
+        args: ["--version"],
+        commandPath: nodePath,
+        cwd: repoRoot,
+        label: "Node.js",
+        minimumVersion: [22, 6, 0],
+        missingDetail: "Install Node.js 22.6 or newer in a standard executable location before updating."
+      })
+    },
+    {
+      code: "vigil.update.tool.npm",
+      label: "npm executable",
+      run: () => prebuiltRelease
+        ? { message: "The verified prebuilt release does not require npm." }
+        : executableToolPreflight({
+            args: ["--version"],
+            commandPath: npmPath,
+            cwd: repoRoot,
+            env: nodePath && npmPath
+              ? updaterChildEnvironment(homeDir, nodePath, npmPath)
+              : undefined,
+            label: "npm",
+            missingDetail: "Install npm in a standard executable location before updating."
+          })
+    },
+    {
+      code: "vigil.update.updater.syntax",
+      label: "Packaged updater syntax",
+      run: async () => {
+        if (!nodePath || !scriptPath) {
+          return {
+            status: "blocked",
+            message: "Updater syntax could not be checked.",
+            detail: !nodePath ? "The Node.js prerequisite failed." : "The updater-script prerequisite failed."
+          };
+        }
+        const result = await execFile(nodePath, ["--check", scriptPath], {
+          cwd: repoRoot,
+          timeoutMs: EXEC_TIMEOUT_MS
+        });
+        return result.ok
+          ? { message: "The packaged updater passed Node.js syntax validation." }
+          : {
+              status: "fail",
+              message: "The packaged Vigil updater has invalid syntax.",
+              detail: execResultDetail(result)
+            };
+      }
+    },
+    {
+      code: "vigil.update.app.signature",
+      label: "Installed app signing mode",
+      run: async () => {
+        if (prebuiltRelease) {
+          return {
+            message: "The installed app and prebuilt candidate passed strict Developer ID continuity and notarization checks.",
+            detail: `Candidate CodeDirectory hash ${prebuiltRelease.verified.candidateCdHash}.`
+          };
+        }
+        await assertLocallyRebuildableApp(appPath);
+        return { message: "The installed app has a locally rebuildable signature." };
+      }
+    },
+    {
+      code: "vigil.update.guardian.command-compatibility",
+      label: "Guardian update-command compatibility",
+      run: async () => {
+        if (process.platform !== "darwin" || !app.isPackaged) {
+          return { message: "Guardian command compatibility is not applicable to this unpackaged development run." };
+        }
+        const account = userInfo();
+        const uid = process.getuid?.();
+        if (!Number.isInteger(uid) || Number(uid) < 501) {
+          return {
+            status: "fail",
+            message: "Vigil could not identify the signed-in account for guardian compatibility preflight.",
+            detail: "No build, password prompt, or quit request was started."
+          };
+        }
+        await preflightGuardianUpdateCompatibility({
+          appPath,
+          targetHome: account.homedir,
+          targetUid: Number(uid),
+          targetUser: account.username
+        });
+        return { message: "Every loaded guardian accepts this exact signed updater parent command." };
+      }
+    },
+    {
+      code: "vigil.update.source.target",
+      label: "Selected Git target",
+      run: async () => {
+        const observedIdentity = (await liveSelection).identity;
+        const targetCommit = observedIdentity.targetCommit;
+        const object = await execGit(repoRoot, ["cat-file", "-e", `${targetCommit}^{commit}`]);
+        if (!object.ok) {
+          return {
+            status: "fail",
+            message: "The exact selected Git target is unavailable locally.",
+            detail: execResultDetail(object)
+          };
+        }
+        if (!localAttempt) {
+          const ancestry = await execGit(repoRoot, [
+            "merge-base",
+            "--is-ancestor",
+            observedIdentity.currentCommit,
+            targetCommit
+          ]);
+          if (!ancestry.ok) {
+            return {
+              status: "fail",
+              message: "The selected remote target is not a fast-forward descendant.",
+              detail: execResultDetail(ancestry)
+            };
+          }
+        }
+        const requiredPaths = ["package.json", "package-lock.json", "scripts/package-mac.mjs"];
+        if (prebuiltRelease) {
+          if (prebuiltRelease.verified.manifest.commit !== targetCommit) {
+            return {
+              status: "fail",
+              message: "The signed release does not match the selected Git target.",
+              detail: `Manifest ${prebuiltRelease.verified.manifest.commit}; selected ${targetCommit}.`
+            };
+          }
+        } else if (localAttempt) {
+          for (const requiredPath of requiredPaths) {
+            const absolutePath = join(repoRoot, requiredPath);
+            let value: Awaited<ReturnType<typeof lstat>>;
+            try {
+              value = await lstat(absolutePath);
+            } catch (error) {
+              return {
+                status: "fail",
+                message: `The selected local source is missing ${requiredPath}.`,
+                detail: errorMessage(error)
+              };
+            }
+            if (!value.isFile() || value.isSymbolicLink()) {
+              return {
+                status: "fail",
+                message: `The selected local ${requiredPath} has an unsafe filesystem type.`,
+                detail: absolutePath
+              };
+            }
+            const contents = await readFile(absolutePath, "utf8");
+            if (!contents.trim()) {
+              return {
+                status: "fail",
+                message: `The selected local ${requiredPath} is empty.`,
+                detail: absolutePath
+              };
+            }
+            if (requiredPath.endsWith(".json")) {
+              try {
+                JSON.parse(contents);
+              } catch (error) {
+                return {
+                  status: "fail",
+                  message: `The selected local ${requiredPath} is not valid JSON.`,
+                  detail: errorMessage(error)
+                };
+              }
+            }
+          }
+        } else {
+          for (const requiredPath of requiredPaths) {
+            const required = await execGit(repoRoot, ["cat-file", "-e", `${targetCommit}:${requiredPath}`]);
+            if (!required.ok) {
+              return {
+                status: "fail",
+                message: `The selected update is missing ${requiredPath}.`,
+                detail: execResultDetail(required)
+              };
+            }
+          }
+        }
+        return {
+          message: prebuiltRelease
+            ? "The selected commit exactly matches the verified signed-release manifest."
+            : localAttempt
+            ? "The live working tree contains valid locked-build inputs."
+            : "The selected commit and required locked-build inputs are available."
+        };
+      }
+    },
+    {
+      code: "vigil.update.staging.directory",
+      label: "Updater staging directory",
+      run: async () => {
+        const value = await lstat(updateDir);
+        if (!value.isDirectory() || value.isSymbolicLink()) {
+          return {
+            status: "fail",
+            message: "The updater staging location is not a safe directory.",
+            detail: updateDir
+          };
+        }
+        await access(updateDir, constants.R_OK | constants.W_OK | constants.X_OK);
+        return { message: "The private updater staging directory is writable." };
+      }
+    },
+    {
+      code: "vigil.update.staging.space",
+      label: "Updater staging free space",
+      run: async () => {
+        const filesystem = await statfs(updateDir);
+        const availableBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
+        if (!Number.isFinite(availableBytes) || availableBytes < MINIMUM_BUILD_FREE_BYTES) {
+          return {
+            status: "fail",
+            message: "The update volume does not have enough free staging space.",
+            detail: `At least ${formatBytes(MINIMUM_BUILD_FREE_BYTES)} is required; ${formatBytes(availableBytes)} is available.`
+          };
+        }
+        return {
+          message: "The update volume has enough free staging space.",
+          detail: `${formatBytes(availableBytes)} available.`
+        };
+      }
+    },
+    {
+      code: "vigil.update.destination.app",
+      label: "Installed app destination",
+      run: async () => {
+        const destinationParent = dirname(appPath);
+        const parentStat = await lstat(destinationParent);
+        if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) {
+          return {
+            status: "fail",
+            message: "The installed-app parent is not a safe directory.",
+            detail: destinationParent
+          };
+        }
+        const canonicalParent = await realpath(destinationParent);
+        if (canonicalParent !== resolve(destinationParent)) {
+          return {
+            status: "fail",
+            message: "The installed-app parent resolves through an unexpected filesystem path.",
+            detail: `Selected ${destinationParent}; resolved ${canonicalParent}.`
+          };
+        }
+        await access(destinationParent, constants.W_OK | constants.X_OK);
+        try {
+          const appStat = await lstat(appPath);
+          if (!appStat.isDirectory() || appStat.isSymbolicLink()) {
+            return {
+              status: "fail",
+              message: "The installed Vigil destination is not a regular app directory.",
+              detail: appPath
+            };
+          }
+          const canonicalApp = await realpath(appPath);
+          if (canonicalApp !== resolve(appPath)) {
+            return {
+              status: "fail",
+              message: "The installed Vigil app resolves through an unexpected filesystem path.",
+              detail: `Selected ${appPath}; resolved ${canonicalApp}.`
+            };
+          }
+        } catch (error) {
+          if (!isErrorCode(error, "ENOENT")) throw error;
+        }
+        const residue: string[] = [];
+        for (const path of [
+          `${appPath}.vigil-next`,
+          `${appPath}.vigil-previous`,
+          `${appPath}.vigil-transaction.json`
+        ]) {
+          try {
+            await lstat(path);
+            residue.push(path);
+          } catch (error) {
+            if (!isErrorCode(error, "ENOENT")) throw error;
+          }
+        }
+        if (residue.length) {
+          return {
+            status: "fail",
+            message: "A previous app replacement left transaction sidecars at the destination.",
+            detail: residue.join(", ")
+          };
+        }
+        return { message: "The installed app destination is canonical, writable, and free of transaction residue." };
+      }
+    },
+    {
+      code: "vigil.update.destination.space",
+      label: "Installed app destination free space",
+      run: async () => {
+        const filesystem = await statfs(dirname(appPath));
+        const availableBytes = Number(filesystem.bavail) * Number(filesystem.bsize);
+        if (!Number.isFinite(availableBytes) || availableBytes < MINIMUM_BUILD_FREE_BYTES) {
+          return {
+            status: "fail",
+            message: "The installed-app volume does not have enough replacement space.",
+            detail: `At least ${formatBytes(MINIMUM_BUILD_FREE_BYTES)} is required; ${formatBytes(availableBytes)} is available.`
+          };
+        }
+        return {
+          message: "The installed-app volume has enough free replacement space.",
+          detail: `${formatBytes(availableBytes)} available.`
+        };
+      }
+    },
+    {
+      code: "vigil.update.installed.topology",
+      label: "Installed update topology",
+      run: async () => {
+        const topology = await installedTopology;
+        return {
+          message: "The loaded background service, recovery data directory, and installed runtime topology are ready.",
+          detail: [
+            topology.launchAgentLoaded ? "Legacy LaunchAgent recovery captured." : "No legacy LaunchAgent is loaded.",
+            `Data: ${topology.replacementDataDirectory}.`,
+            topology.installedRuntimePath ? `Runtime: ${topology.installedRuntimePath}.` : "No separate runtime swap is required."
+          ].join(" ")
+        };
+      }
+    }
+  ];
+  if (!localAttempt) {
+    definitions.push({
+      code: "vigil.update.runtime.target",
+      label: "Installed runtime target",
+      run: async () => {
+        const expectedRuntime = join(repoRoot, "dist.nosync", "runtime");
+        const observedRuntime = await realpath(join(repoRoot, "dist", "runtime"));
+        return observedRuntime === expectedRuntime
+          ? { message: "The installed runtime maps to its authorized canonical target." }
+          : {
+              status: "fail",
+              message: "The installed runtime target is outside its authorized update location.",
+              detail: `Expected ${expectedRuntime}; found ${observedRuntime}.`
+            };
+      }
+    });
+  }
+  const report = await collectUpdatePreflight(definitions);
+  return { report, nodePath, npmPath };
+}
+
+async function executableToolPreflight({
+  args,
+  commandPath,
+  cwd,
+  env,
+  label,
+  minimumVersion,
+  missingDetail
+}: {
+  args: string[];
+  commandPath: string | null;
+  cwd: string;
+  env?: NodeJS.ProcessEnv;
+  label: string;
+  minimumVersion?: readonly [number, number, number];
+  missingDetail: string;
+}): Promise<UpdatePreflightCheckResult> {
+  if (!commandPath) {
+    return {
+      status: "fail",
+      message: `${label} was not found for the protected source build.`,
+      detail: missingDetail
+    };
+  }
+  const value = await lstat(commandPath);
+  if (!value.isFile() || value.isSymbolicLink() || (value.mode & 0o111) === 0) {
+    return {
+      status: "fail",
+      message: `The canonical ${label} path is not an executable regular file.`,
+      detail: commandPath
+    };
+  }
+  await access(commandPath, constants.X_OK);
+  const result = await execFile(commandPath, args, {
+    cwd,
+    env,
+    timeoutMs: EXEC_TIMEOUT_MS
+  });
+  if (!result.ok) {
+    return {
+      status: "fail",
+      message: `${label} did not run successfully.`,
+      detail: execResultDetail(result)
+    };
+  }
+  const versionText = result.stdout.trim() || result.stderr.trim();
+  const parsed = /^v?(\d+)\.(\d+)(?:\.(\d+))?/u.exec(versionText);
+  if (!parsed) {
+    return {
+      status: "fail",
+      message: `${label} returned an unrecognized version.`,
+      detail: versionText || commandPath
+    };
+  }
+  const observed = [Number(parsed[1]), Number(parsed[2]), Number(parsed[3] || 0)] as const;
+  if (minimumVersion && compareVersionTuple(observed, minimumVersion) < 0) {
+    return {
+      status: "fail",
+      message: `${label} ${versionText} is too old for this Vigil build.`,
+      detail: `${commandPath}; required ${minimumVersion.join(".")} or newer.`
+    };
+  }
+  return {
+    message: `${label} ${versionText} is executable and compatible.`,
+    detail: commandPath
+  };
+}
+
+function compareVersionTuple(
+  left: readonly [number, number, number],
+  right: readonly [number, number, number]
+): number {
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
+
+function execResultDetail(result: ExecResult): string {
+  const detail = String(result.stderr || result.stdout || "The command exited without diagnostic output.")
+    .replace(/:\/\/[^/\s:@]+:[^/\s@]+@/gu, "://[redacted]@")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return detail.length <= 1_000 ? detail : `${detail.slice(0, 999)}…`;
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "an unknown amount";
+  const gibibytes = value / (1024 * 1024 * 1024);
+  return `${gibibytes.toFixed(gibibytes >= 10 ? 0 : 1)} GiB`;
+}
+
 export interface RemoteUpdateReceiptPreparation {
   started: boolean;
   status: Record<string, unknown>;
@@ -703,6 +1629,13 @@ export async function prepareRemoteUpdateReceipt(
   attemptId: string,
   selectedStatus: Record<string, unknown>
 ): Promise<RemoteUpdateReceiptPreparation> {
+  if (selectedStatus.checkOk !== true || selectedStatus.remoteCheckOk !== true) {
+    throw new Error(
+      `Vigil could not verify the remote update target. ${
+        String(selectedStatus.remoteCheckError || selectedStatus.repoError || "The Git refresh did not pass.")
+      }`
+    );
+  }
   if (selectedStatus.updateAvailable !== true) {
     return {
       started: false,
@@ -865,16 +1798,20 @@ async function readRepoInfo(repoRoot: string): Promise<RepoInfo> {
   const counts = upstream.ok
     ? await execGit(repoRoot, ["rev-list", "--left-right", "--count", "HEAD...@{u}"])
     : failedExec("This branch does not have an upstream.");
-  const failedChecks = [
+  const failedChecks = ([
     ["branch", branch],
     ["HEAD", head],
     ["working tree", status]
-  ].filter(([, result]) => !(result as ExecResult).ok).map(([label]) => label as string);
+  ] as const).filter(([, result]) => !result.ok);
   const ok = failedChecks.length === 0;
   const [aheadRaw, behindRaw] = counts.ok ? counts.stdout.trim().split(/\s+/) : ["0", "0"];
   return {
     ok,
-    error: ok ? null : `Could not verify repository ${failedChecks.join(", ")}.`,
+    error: ok
+      ? null
+      : failedChecks
+          .map(([label, result]) => `Repository ${label} check failed: ${execResultDetail(result)}`)
+          .join(" "),
     repoRoot,
     branch: branch.ok ? branch.stdout.trim() : "unknown",
     head: head.ok ? head.stdout.trim() : "",
@@ -1207,7 +2144,11 @@ async function findExecutable(repoRoot: string, command: string, homeDir: string
   if (!path || resolve(path) !== path || !existsSync(path)) return null;
   try {
     const canonicalPath = await realpath(path);
-    return resolve(canonicalPath) === canonicalPath && existsSync(canonicalPath) ? canonicalPath : null;
+    if (resolve(canonicalPath) !== canonicalPath || !existsSync(canonicalPath)) return null;
+    const value = await lstat(canonicalPath);
+    if (!value.isFile() || value.isSymbolicLink() || (value.mode & 0o111) === 0) return null;
+    await access(canonicalPath, constants.X_OK);
+    return canonicalPath;
   } catch {
     return null;
   }
@@ -1541,13 +2482,30 @@ function sameProcessStart(expected: string, observed: string): boolean {
 
 async function assertLocallyRebuildableApp(appPath: string): Promise<void> {
   if (!existsSync(appPath)) return;
-  const result = await execFile("/usr/bin/codesign", ["-dv", "--verbose=4", appPath], {
+  const identity = await execFile("/usr/bin/codesign", ["-dv", "--verbose=4", appPath], {
     cwd: dirname(appPath),
     timeoutMs: EXEC_TIMEOUT_MS
   });
-  const detail = `${result.stdout}\n${result.stderr}`;
-  if (!result.ok && /code object is not signed at all/iu.test(detail)) return;
-  if (!result.ok) throw new Error("Vigil could not verify the installed app signature, so the update was stopped before quitting.");
+  const detail = `${identity.stdout}\n${identity.stderr}`;
+  if (!identity.ok && /code object is not signed at all/iu.test(detail)) return;
+  if (!identity.ok) {
+    throw new Error(
+      `Vigil could not inspect the installed app signature. ${execResultDetail(identity)}`
+    );
+  }
+  const verification = await execFile(
+    "/usr/bin/codesign",
+    ["--verify", "--deep", "--strict", "--verbose=2", appPath],
+    {
+      cwd: dirname(appPath),
+      timeoutMs: EXEC_TIMEOUT_MS
+    }
+  );
+  if (!verification.ok) {
+    throw new Error(
+      `The installed Vigil app failed strict code-signature verification. ${execResultDetail(verification)}`
+    );
+  }
   if (!isLocallyRebuildableSignature(detail)) {
     throw new Error("This Vigil app has a distribution signature. Install a complete signed release instead of rebuilding it in place.");
   }
@@ -1568,6 +2526,21 @@ function isErrorCode(error: unknown, code: string): boolean {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+export function guardianCheckFailure(message: string): UpdatePreflightCheck | null {
+  const match = /(?:^|\s)check=([a-z0-9][a-z0-9.-]*)\s+detail=([\s\S]+)$/iu.exec(message.trim());
+  if (!match) return null;
+  const check = String(match[1] || "").trim();
+  const detail = String(match[2] || "").trim();
+  if (!check || !detail) return null;
+  return {
+    code: check,
+    label: `Guardian check ${check}`,
+    status: "fail",
+    message: message.trim(),
+    detail
+  };
 }
 
 function stringOrNull(value: unknown): string | null {

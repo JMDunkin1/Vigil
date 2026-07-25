@@ -406,18 +406,31 @@ try {
     message: "One-time setup is available when an update is ready"
   };
   await panel.refreshStatus(false);
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Check for Updates");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Enable Fast Updates");
   assert.equal(controls.get("#checkAppUpdate")?.disabled, false,
-    "legacy guardian setup readiness must not disable remote update discovery");
+    "guardian migration must remain available without an app update candidate");
   const statusCallsBeforeLegacyDiscovery = statusCalls;
   const startCallsBeforeLegacyDiscovery = startCalls;
+  const noCandidateSetupResult = deferred<UnknownRecord>();
+  nextRendererStartResult = noCandidateSetupResult.promise;
   click();
+  click();
+  assert.equal(startCalls, startCallsBeforeLegacyDiscovery + 1,
+    "repeat clicks must not duplicate guardian-only setup");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Enabling Fast Updates…");
+  noCandidateSetupResult.resolve({
+    ...rendererStatus,
+    ok: true,
+    maintenanceReady: true,
+    maintenanceSetupRequired: false,
+    updateAvailable: false,
+    updateCandidateAvailable: false,
+    message: "Fast protected updates are ready."
+  });
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
-  assert.equal(statusCalls, statusCallsBeforeLegacyDiscovery + 1,
-    "the pre-candidate action must perform a remote update check");
-  assert.equal(checkedRemote, true);
-  assert.equal(startCalls, startCallsBeforeLegacyDiscovery,
-    "checking an auto-refreshable legacy guardian must not start setup before a candidate is verified");
+  assert.equal(statusCalls, statusCallsBeforeLegacyDiscovery,
+    "guardian-only setup must not manufacture a remote update check");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Check for Updates");
 
   rendererStatus = {
     ...rendererStatus,
@@ -434,8 +447,8 @@ try {
     message: "One-time setup is needed"
   };
   await panel.refreshStatus(false);
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Enable & Run Latest");
-  assert.equal(controls.get("#checkAppUpdate")?.disabled, false, "a repairable legacy guardian must offer one setup-and-update action");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Enable Fast Updates");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, false, "a repairable legacy guardian must offer its migration action");
   assert.match(String(controls.get("#appUpdateHelp")?.textContent), /one macOS password prompt/u);
 
   const failedSetupResult = deferred<UnknownRecord>();
@@ -457,7 +470,7 @@ try {
     message: "The administrator approval was canceled."
   });
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Retry Setup & Update");
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Retry Fast Update Setup");
   assert.equal(controls.get("#checkAppUpdate")?.disabled, false);
   assert.equal(controls.get("#appUpdateStatus")?.textContent, "The administrator approval was canceled.");
 
@@ -471,15 +484,16 @@ try {
     ok: true,
     maintenanceReady: true,
     maintenanceSetupRequired: false,
-    running: true,
-    updateAvailable: false,
-    updateCandidateAvailable: false,
-    phase: "building",
-    message: "Building local changes"
+    running: false,
+    updateAvailable: true,
+    updateCandidateAvailable: true,
+    phase: "",
+    message: "Fast protected updates are ready."
   });
   await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
-  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Building Update…", "successful setup must continue directly into the build without another click");
-  assert.equal(controls.get("#checkAppUpdate")?.disabled, true);
+  assert.equal(controls.get("#checkAppUpdate")?.textContent, "Run Latest Changes",
+    "successful setup must expose the selected update without another password");
+  assert.equal(controls.get("#checkAppUpdate")?.disabled, false);
 
   rendererStatus = {
     ...rendererStatus,

@@ -1,8 +1,6 @@
 import { dirname, join } from "node:path";
 import {
   SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
-  PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
-  LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS,
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
@@ -12,7 +10,6 @@ import {
   UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH,
   UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND,
   UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
-  PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
   UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME,
   UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_KIND,
   UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_MAX_SECONDS,
@@ -20,14 +17,18 @@ import {
   guardianMaintenanceMarkerPath
 } from "./updateMaintenance.js";
 import {
+  CURRENT_GUARDIAN_PROTOCOL,
+  SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS
+} from "./guardianProtocol.js";
+import {
   UPDATE_RECOVERY_MANIFEST_FILENAME,
   UPDATE_RECOVERY_POLICY_FILENAME
 } from "./updateTransaction.js";
 
-export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v7";
+export const SYSTEM_GUARDIAN_LABEL = CURRENT_GUARDIAN_PROTOCOL.label;
 export const SYSTEM_GUARDIAN_ROOT = "/Library/Application Support/Vigil/System Guardian";
-export const SYSTEM_GUARDIAN_SCRIPT_PATH = join(SYSTEM_GUARDIAN_ROOT, "vigil-system-guardian-v7-DO-NOT-TERMINATE.sh");
-export const SYSTEM_GUARDIAN_PLIST_PATH = `/Library/LaunchDaemons/${SYSTEM_GUARDIAN_LABEL}.plist`;
+export const SYSTEM_GUARDIAN_SCRIPT_PATH = CURRENT_GUARDIAN_PROTOCOL.scriptPath;
+export const SYSTEM_GUARDIAN_PLIST_PATH = CURRENT_GUARDIAN_PROTOCOL.plistPath;
 export const SYSTEM_GUARDIAN_SAFETY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
 
 export interface SystemGuardianConfig {
@@ -50,13 +51,25 @@ export function systemGuardianScript(config: SystemGuardianConfig): string {
   const updaterDir = dirname(updateLockPath);
   const recoveryManifestPath = join(updaterDir, UPDATE_RECOVERY_MANIFEST_FILENAME);
   const recoveryPolicyPath = join(updaterDir, UPDATE_RECOVERY_POLICY_FILENAME);
+  const compatibilityAuthorizationPaths = [
+    ...new Set(SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS.map(
+      (protocol) => protocol.maintenanceAuthorizationPath
+    ))
+  ].filter((authorizationPath) => authorizationPath !== SYSTEM_GUARDIAN_AUTHORIZATION_PATH);
+  const bootstrapClaimPaths = [
+    ...new Set(
+      [...SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS, CURRENT_GUARDIAN_PROTOCOL]
+        .map((protocol) => protocol.bootstrapClaimPath)
+        .filter((claimPath): claimPath is string => claimPath !== null)
+    )
+  ];
   return `#!/bin/zsh
 ${SYSTEM_GUARDIAN_REVISION_MARKER}
 # VIGIL SAFETY BOUNDARY: this root-owned guardian exists specifically so a
 # same-user process or automation agent cannot take enforcement offline by
 # terminating the app and unloading its user LaunchAgent.
 # ${SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}
-# READINESS-ONLY COMPATIBILITY MARKER: controllers loaded before the v4
+# READINESS-ONLY COMPATIBILITY MARKER: older controllers
 # guardian refresh look for this literal before they may start the refreshed
 # updater. It is not an accepted recovery-authorization kind.
 # vigil-root-update-recovery-authorization-v2
@@ -71,12 +84,15 @@ supervisor_service=${shellSingleQuote(`gui/${config.targetUid}/${supervisorLabel
 update_lock_path=${shellSingleQuote(updateLockPath)}
 maintenance_marker_path=${shellSingleQuote(maintenanceMarkerPath)}
 root_authorization_path=${shellSingleQuote(SYSTEM_GUARDIAN_AUTHORIZATION_PATH)}
-previous_root_authorization_path=${shellSingleQuote(PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH)}
-legacy_root_authorization_path=${shellSingleQuote(LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH)}
+compatibility_root_authorization_paths=(
+  ${compatibilityAuthorizationPaths.map(shellSingleQuote).join("\n  ")}
+)
 root_recovery_authorization_path=${shellSingleQuote(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH)}
 bootstrap_authorization_path=${shellSingleQuote(UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH)}
 bootstrap_claim_path=${shellSingleQuote(UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH)}
-previous_bootstrap_claim_path=${shellSingleQuote(PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH)}
+bootstrap_claim_paths=(
+  ${bootstrapClaimPaths.map(shellSingleQuote).join("\n  ")}
+)
 bootstrap_worker_request_path=${shellSingleQuote(join(updaterDir, UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME))}
 global_update_manifest_path=${shellSingleQuote(recoveryManifestPath)}
 global_update_policy_path=${shellSingleQuote(recoveryPolicyPath)}
@@ -88,6 +104,14 @@ user_data_dir=${shellSingleQuote(join(config.targetHome, "Library", "Application
 update_status_path=${shellSingleQuote(join(updaterDir, "update-status.json"))}
 update_log_path=${shellSingleQuote(join(updaterDir, "update.log"))}
 offline_since=0
+last_guardian_check="guardian.recovery.not-started"
+last_guardian_detail="Recovery attestation has not run."
+
+guardian_check_failed() {
+  last_guardian_check="$1"
+  last_guardian_detail="$2"
+  return 1
+}
 
 reopen_vigil() {
   /bin/launchctl asuser "$target_uid" /usr/bin/sudo -H -u "$target_user" \
@@ -275,43 +299,43 @@ clear_recovery_attestation() {
 
 attest_update_recovery_snapshot() {
   local manifest_path="$1"
-  private_root_file "$manifest_path" 600 || return 1
+  private_root_file "$manifest_path" 600 || { guardian_check_failed "guardian.recovery.snapshot.private-root-file" "The root snapshot is missing, linked, has the wrong owner, or is not mode 600."; return 1; }
   local manifest_attempt=$(json_value "$manifest_path" attemptId)
   local manifest_state=$(json_value "$manifest_path" state)
   local manifest_policy_path=$(json_value "$manifest_path" recovery.policyPath)
   local policy_sha=$(json_value "$manifest_path" recovery.policySha256)
   local manifest_app_path=$(json_value "$manifest_path" app.targetPath)
-  [[ -n "$manifest_attempt" ]] || return 1
-  [[ "$manifest_state" == "pending" || "$manifest_state" == "commit-intent" || "$manifest_state" == "committed" || "$manifest_state" == "rolling-back" ]] || return 1
-  [[ "$manifest_policy_path" == "$global_update_policy_path" ]] || return 1
+  [[ -n "$manifest_attempt" ]] || { guardian_check_failed "guardian.recovery.manifest.attempt-id" "The recovery manifest has no attempt ID."; return 1; }
+  [[ "$manifest_state" == "pending" || "$manifest_state" == "commit-intent" || "$manifest_state" == "committed" || "$manifest_state" == "rolling-back" ]] || { guardian_check_failed "guardian.recovery.manifest.state" "The recovery manifest state is unsupported."; return 1; }
+  [[ "$manifest_policy_path" == "$global_update_policy_path" ]] || { guardian_check_failed "guardian.recovery.manifest.policy-path" "The recovery manifest does not name the exact protected policy path."; return 1; }
   local policy_sha_length=$(/usr/bin/printf '%s' "$policy_sha" | /usr/bin/wc -c | /usr/bin/xargs)
-  [[ "$policy_sha_length" == "64" && "$policy_sha" != *[^a-f0-9]* ]] || return 1
-  [[ "$manifest_app_path" == "$app_path" ]] || return 1
+  [[ "$policy_sha_length" == "64" && "$policy_sha" != *[^a-f0-9]* ]] || { guardian_check_failed "guardian.recovery.manifest.policy-sha256" "The recovery policy SHA-256 is missing or malformed."; return 1; }
+  [[ "$manifest_app_path" == "$app_path" ]] || { guardian_check_failed "guardian.recovery.manifest.app-path" "The recovery manifest does not target the canonical Vigil app."; return 1; }
   local existing_attempt=$(json_value "$root_recovery_authorization_path" recoveryAttemptId)
   if [[ -n "$existing_attempt" ]]; then
     if [[ "$existing_attempt" != "$manifest_attempt" ]]; then
-      clear_recovery_attestation || return 1
+      clear_recovery_attestation || { guardian_check_failed "guardian.recovery.authorization.clear-stale" "A stale root recovery authorization could not be removed safely."; return 1; }
       existing_attempt=""
     fi
   fi
   if [[ -n "$existing_attempt" ]]; then
-    [[ -f "$root_recovery_authorization_path" && ! -L "$root_recovery_authorization_path" ]] || return 1
-    [[ "$(/usr/bin/stat -f '%u' "$root_recovery_authorization_path" 2>/dev/null)" == "0" ]] || return 1
-    [[ "$(json_value "$root_recovery_authorization_path" kind)" == "${SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}" ]] || return 1
-    [[ "$(json_value "$root_recovery_authorization_path" recoveryPolicySha256)" == "$policy_sha" ]] || return 1
+    [[ -f "$root_recovery_authorization_path" && ! -L "$root_recovery_authorization_path" ]] || { guardian_check_failed "guardian.recovery.authorization.file" "The existing root recovery authorization is missing or linked."; return 1; }
+    [[ "$(/usr/bin/stat -f '%u' "$root_recovery_authorization_path" 2>/dev/null)" == "0" ]] || { guardian_check_failed "guardian.recovery.authorization.owner" "The existing recovery authorization is not root-owned."; return 1; }
+    [[ "$(json_value "$root_recovery_authorization_path" kind)" == "${SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}" ]] || { guardian_check_failed "guardian.recovery.authorization.kind" "The existing recovery authorization has an incompatible schema kind."; return 1; }
+    [[ "$(json_value "$root_recovery_authorization_path" recoveryPolicySha256)" == "$policy_sha" ]] || { guardian_check_failed "guardian.recovery.authorization.policy-sha256" "The existing recovery authorization names different policy bytes."; return 1; }
     local pending_manifest_sha=$(json_value "$root_recovery_authorization_path" recoveryPendingManifestSha256)
-    [[ "\${#pending_manifest_sha}" -eq 64 && "$pending_manifest_sha" != *[^a-f0-9]* ]] || return 1
-    attested_app_fields_match_manifest "$manifest_path"
-    return $?
+    [[ "\${#pending_manifest_sha}" -eq 64 && "$pending_manifest_sha" != *[^a-f0-9]* ]] || { guardian_check_failed "guardian.recovery.authorization.manifest-sha256" "The existing recovery authorization has no valid pending-manifest SHA-256."; return 1; }
+    attested_app_fields_match_manifest "$manifest_path" || { guardian_check_failed "guardian.recovery.authorization.app-fields" "The existing root app-generation fields do not match this manifest."; return 1; }
+    return 0
   fi
-  [[ "$(json_value "$manifest_path" state)" == "pending" ]] || return 1
-  [[ "$(json_value "$manifest_path" app.initialPresent)" == "true" ]] || return 1
-  app_identity_matches_manifest "$app_path" initial "$manifest_path" || return 1
-  app_identity_matches_manifest "$app_path.vigil-next" target "$manifest_path" || return 1
+  [[ "$(json_value "$manifest_path" state)" == "pending" ]] || { guardian_check_failed "guardian.recovery.new-attestation.state" "A new root attestation may be created only for a pending transaction."; return 1; }
+  [[ "$(json_value "$manifest_path" app.initialPresent)" == "true" ]] || { guardian_check_failed "guardian.recovery.app.initial-present" "The transaction does not record an installed initial app."; return 1; }
+  app_identity_matches_manifest "$app_path" initial "$manifest_path" || { guardian_check_failed "guardian.recovery.app.initial-identity" "The installed app does not match the manifest's exact initial identity."; return 1; }
+  app_identity_matches_manifest "$app_path.vigil-next" target "$manifest_path" || { guardian_check_failed "guardian.recovery.app.target-identity" "The staged app does not match the manifest's exact target identity."; return 1; }
   local pending_manifest_sha=$(sha256_file "$manifest_path")
-  [[ "\${#pending_manifest_sha}" -eq 64 && "$pending_manifest_sha" != *[^a-f0-9]* ]] || return 1
+  [[ "\${#pending_manifest_sha}" -eq 64 && "$pending_manifest_sha" != *[^a-f0-9]* ]] || { guardian_check_failed "guardian.recovery.manifest.snapshot-sha256" "The root manifest snapshot could not be hashed."; return 1; }
   local authorization_token=$(json_value "$root_authorization_path" token)
-  [[ "$authorization_token" == "$manifest_attempt" ]] || return 1
+  [[ "$authorization_token" == "$manifest_attempt" ]] || { guardian_check_failed "guardian.recovery.maintenance-token" "The root maintenance grant does not belong to this recovery attempt."; return 1; }
   local app_initial_dev=$(json_value "$manifest_path" app.initialDev)
   local app_initial_ino=$(json_value "$manifest_path" app.initialIno)
   local app_initial_commit=$(json_value "$manifest_path" app.initialCommit)
@@ -324,37 +348,39 @@ attest_update_recovery_snapshot() {
   local app_target_cdhash=$(json_value "$manifest_path" app.targetCdHash)
   local temporary="${SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH}.$$.tmp"
   /bin/rm -f "$temporary"
-  /usr/bin/plutil -create xml1 "$temporary" || return 1
-  /usr/bin/plutil -insert kind -string "${SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert recoveryAttemptId -string "$manifest_attempt" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert recoveryPolicySha256 -string "$policy_sha" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert recoveryPendingManifestSha256 -string "$pending_manifest_sha" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert recoveryManifestPath -string "$global_update_manifest_path" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert recoveryPolicyPath -string "$global_update_policy_path" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert recoveryAppPath -string "$app_path" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appInitialPresent -bool true "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appInitialDev -string "$app_initial_dev" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appInitialIno -string "$app_initial_ino" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appInitialCommit -string "$app_initial_commit" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appInitialFingerprint -string "$app_initial_fingerprint" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appInitialCdHash -string "$app_initial_cdhash" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appTargetDev -string "$app_target_dev" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appTargetIno -string "$app_target_ino" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appTargetCommit -string "$app_target_commit" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appTargetFingerprint -string "$app_target_fingerprint" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/bin/plutil -insert appTargetCdHash -string "$app_target_cdhash" "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /usr/sbin/chown 0:0 "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /bin/chmod 0644 "$temporary" || { /bin/rm -f "$temporary"; return 1; }
-  /bin/mv -f "$temporary" "$root_recovery_authorization_path"
+  /usr/bin/plutil -create xml1 "$temporary" || { guardian_check_failed "guardian.recovery.authorization.create" "The temporary root recovery plist could not be created."; return 1; }
+  /usr/bin/plutil -insert kind -string "${SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND}" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.kind" "The recovery authorization kind could not be encoded."; return 1; }
+  /usr/bin/plutil -insert recoveryAttemptId -string "$manifest_attempt" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.attempt-id" "The recovery attempt ID could not be encoded."; return 1; }
+  /usr/bin/plutil -insert recoveryPolicySha256 -string "$policy_sha" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.policy-sha256" "The recovery policy SHA-256 could not be encoded."; return 1; }
+  /usr/bin/plutil -insert recoveryPendingManifestSha256 -string "$pending_manifest_sha" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.manifest-sha256" "The recovery manifest SHA-256 could not be encoded."; return 1; }
+  /usr/bin/plutil -insert recoveryManifestPath -string "$global_update_manifest_path" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.manifest-path" "The recovery manifest path could not be encoded."; return 1; }
+  /usr/bin/plutil -insert recoveryPolicyPath -string "$global_update_policy_path" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.policy-path" "The recovery policy path could not be encoded."; return 1; }
+  /usr/bin/plutil -insert recoveryAppPath -string "$app_path" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.app-path" "The canonical app path could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appInitialPresent -bool true "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.initial-present" "The initial-app presence flag could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appInitialDev -string "$app_initial_dev" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.initial-dev" "The initial app device identity could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appInitialIno -string "$app_initial_ino" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.initial-ino" "The initial app inode identity could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appInitialCommit -string "$app_initial_commit" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.initial-commit" "The initial app commit could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appInitialFingerprint -string "$app_initial_fingerprint" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.initial-fingerprint" "The initial app fingerprint could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appInitialCdHash -string "$app_initial_cdhash" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.initial-cdhash" "The initial app CodeDirectory hash could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appTargetDev -string "$app_target_dev" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.target-dev" "The target app device identity could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appTargetIno -string "$app_target_ino" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.target-ino" "The target app inode identity could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appTargetCommit -string "$app_target_commit" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.target-commit" "The target app commit could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appTargetFingerprint -string "$app_target_fingerprint" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.target-fingerprint" "The target app fingerprint could not be encoded."; return 1; }
+  /usr/bin/plutil -insert appTargetCdHash -string "$app_target_cdhash" "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.write.target-cdhash" "The target app CodeDirectory hash could not be encoded."; return 1; }
+  /usr/sbin/chown 0:0 "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.owner" "The temporary recovery authorization could not be made root-owned."; return 1; }
+  /bin/chmod 0644 "$temporary" || { /bin/rm -f "$temporary"; guardian_check_failed "guardian.recovery.authorization.mode" "The temporary recovery authorization could not be set to mode 644."; return 1; }
+  /bin/mv -f "$temporary" "$root_recovery_authorization_path" || { guardian_check_failed "guardian.recovery.authorization.publish" "The root recovery authorization could not be published atomically."; return 1; }
 }
 
 attest_update_recovery() {
-  global_update_manifest_present || { clear_recovery_attestation; return $?; }
-  private_target_file "$global_update_manifest_path" 600 || return 1
+  last_guardian_check="guardian.recovery.start"
+  last_guardian_detail="Recovery attestation started."
+  global_update_manifest_present || { clear_recovery_attestation || guardian_check_failed "guardian.recovery.authorization.clear-without-manifest" "A stale recovery authorization could not be cleared."; return $?; }
+  private_target_file "$global_update_manifest_path" 600 || { guardian_check_failed "guardian.recovery.manifest.private-target-file" "The live recovery manifest is missing, linked, has the wrong owner, or is not mode 600."; return 1; }
   local copy_uuid=$(/usr/bin/uuidgen 2>/dev/null)
-  [[ -n "$copy_uuid" ]] || return 1
+  [[ -n "$copy_uuid" ]] || { guardian_check_failed "guardian.recovery.snapshot.uuid" "A unique root snapshot name could not be created."; return 1; }
   local manifest_snapshot="${SYSTEM_GUARDIAN_AUTHORIZATION_PATH}.recovery-manifest.$copy_uuid.tmp"
-  bounded_root_copy "$global_update_manifest_path" "$manifest_snapshot" || return 1
+  bounded_root_copy "$global_update_manifest_path" "$manifest_snapshot" || { guardian_check_failed "guardian.recovery.snapshot.copy" "The live manifest could not be copied into a bounded root-owned snapshot."; return 1; }
   attest_update_recovery_snapshot "$manifest_snapshot"
   local attestation_status=$?
   /bin/rm -f "$manifest_snapshot"
@@ -512,7 +538,7 @@ write_maintenance_authorization() {
     # can authenticate its own transactional quit. The v7 grant remains the
     # authority and all copies retain the same bounded deadline and identities.
     local compatibility_path
-    for compatibility_path in "$previous_root_authorization_path" "$legacy_root_authorization_path"; do
+    for compatibility_path in "\${compatibility_root_authorization_paths[@]}"; do
       local compatibility_tmp="\${compatibility_path}.tmp.$$"
       /bin/rm -f "$compatibility_tmp"
       /bin/cp -P "$root_authorization_path" "$compatibility_tmp" || return 1
@@ -721,8 +747,12 @@ bootstrap_claim_matches() {
   bootstrap_claim_matches_at_path "$bootstrap_claim_path" "$@"
 }
 
-previous_bootstrap_claim_matches() {
-  bootstrap_claim_matches_at_path "$previous_bootstrap_claim_path" "$@"
+all_bootstrap_claims_match() {
+  local active_claim_path
+  for active_claim_path in "\${bootstrap_claim_paths[@]}"; do
+    bootstrap_claim_matches_at_path "$active_claim_path" "$@" || return 1
+  done
+  return 0
 }
 
 write_bootstrap_claim_at_path() {
@@ -837,7 +867,7 @@ attest_bootstrap_worker_request() {
   (( bootstrap_authorization_expires < claim_expires )) && claim_expires="$bootstrap_authorization_expires"
   (( claim_expires >= now )) || return 1
   local candidate_claim_path
-  for candidate_claim_path in "$previous_bootstrap_claim_path" "$bootstrap_claim_path"; do
+  for candidate_claim_path in "\${bootstrap_claim_paths[@]}"; do
     if bootstrap_claim_matches_at_path "$candidate_claim_path" "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"; then
       local candidate_claim_expires=$(json_value "$candidate_claim_path" expiresAtEpoch)
       (( candidate_claim_expires < claim_expires )) && claim_expires="$candidate_claim_expires"
@@ -845,12 +875,13 @@ attest_bootstrap_worker_request() {
       bootstrap_claim_path_is_replaceable "$candidate_claim_path" "$request_bootstrap_token" || return 1
     fi
   done
-  # The historical claim is the compatibility boundary for the still-running
-  # v3 guardian. Publish and validate it before the isolated v4 go-signal.
-  ensure_bootstrap_claim_at_path "$previous_bootstrap_claim_path" "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" "$claim_expires" || return 1
-  ensure_bootstrap_claim_at_path "$bootstrap_claim_path" "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" "$claim_expires" || return 1
-  previous_bootstrap_claim_matches "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" \
-    && bootstrap_claim_matches "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"
+  # Every historical claim path is a compatibility boundary for a
+  # still-running predecessor guardian. Publish and validate the complete set
+  # before the isolated current-protocol go-signal.
+  for candidate_claim_path in "\${bootstrap_claim_paths[@]}"; do
+    ensure_bootstrap_claim_at_path "$candidate_claim_path" "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" "$claim_expires" || return 1
+  done
+  all_bootstrap_claims_match "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"
 }
 
 legacy_maintenance_authorization_expires() {
@@ -908,7 +939,8 @@ authorize_maintenance_request() {
   # A root-created grant for this request is deliberately one-shot. Never
   # refresh its deadline, even if a same-UID process keeps rewriting the request.
   # A loaded predecessor may have won the first-writer race with a sparse grant;
-  # v4 upgrades only that exact legacy schema and retains its original deadline.
+  # The current guardian upgrades only that exact legacy schema and retains its
+  # original deadline.
   local legacy_grant_expires=""
   if [[ -f "$root_authorization_path" && ! -L "$root_authorization_path" ]]; then
     local granted_token="$(json_value "$root_authorization_path" token)"
@@ -941,15 +973,17 @@ authorize_maintenance_request() {
   local request_relay_pid=$(json_value "$bootstrap_worker_request_path" relayPid)
   if [[ "$request_worker_pid" == "$marker_pid" && "$request_relay_pid" == "$owner_ppid" && "$request_lock_token" == "$marker_token" ]] \
     && attest_bootstrap_worker_request "$now" \
-    && previous_bootstrap_claim_matches "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid" \
-    && bootstrap_claim_matches "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"; then
+    && all_bootstrap_claims_match "$now" "$request_bootstrap_token" "$request_lock_token" "$request_source_app" "$request_target_app" "$request_expected_commit" "$request_worker_pid" "$request_relay_pid"; then
     local bootstrap_grant_expires=$(( now + ${SYSTEM_GUARDIAN_MAINTENANCE_MAX_SECONDS} ))
-    local bootstrap_claim_expires=$(json_value "$bootstrap_claim_path" expiresAtEpoch)
-    local previous_bootstrap_claim_expires=$(json_value "$previous_bootstrap_claim_path" expiresAtEpoch)
     (( marker_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$marker_expires"
     (( bootstrap_authorization_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$bootstrap_authorization_expires"
-    (( bootstrap_claim_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$bootstrap_claim_expires"
-    (( previous_bootstrap_claim_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$previous_bootstrap_claim_expires"
+    local candidate_claim_path
+    local candidate_claim_expires
+    for candidate_claim_path in "\${bootstrap_claim_paths[@]}"; do
+      candidate_claim_expires=$(json_value "$candidate_claim_path" expiresAtEpoch)
+      [[ "$candidate_claim_expires" == <-> ]] || return 1
+      (( candidate_claim_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$candidate_claim_expires"
+    done
     [[ "$legacy_grant_expires" == <-> ]] && (( legacy_grant_expires < bootstrap_grant_expires )) && bootstrap_grant_expires="$legacy_grant_expires"
     write_maintenance_authorization \
       "bootstrap" "$marker_token" "$marker_pid" \
@@ -1056,7 +1090,7 @@ authenticated_maintenance_active() {
 
   if [[ "$authorization_mode" == "bootstrap" ]]; then
     local active_claim_path
-    for active_claim_path in "$previous_bootstrap_claim_path" "$bootstrap_claim_path"; do
+    for active_claim_path in "\${bootstrap_claim_paths[@]}"; do
       private_root_file "$active_claim_path" 644 || return 1
       [[ "$(json_value "$active_claim_path" kind)" == "${UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_KIND}" ]] || return 1
       [[ "$(json_value "$active_claim_path" lockPath)" == "$update_lock_path" ]] || return 1
@@ -1126,7 +1160,8 @@ while true; do
     maintenance_active=true
     offline_since=0
     if ! attest_update_recovery; then
-      /usr/bin/printf '%s\n' "Vigil's root guardian could not attest the updater's durable recovery transaction yet." >&2
+      /usr/bin/printf '%s\n' \
+        "Vigil guardian check failed: check=$last_guardian_check detail=$last_guardian_detail" >&2
     fi
   elif ! global_update_manifest_present; then
     # No transaction remains to arbitrate. A stale root attestation must never

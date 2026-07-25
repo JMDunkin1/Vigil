@@ -27,7 +27,11 @@ async function sourceRoot(): Promise<string> {
 assert.match(script, /APPLE_API_KEY must point to a p8 file/u);
 assert.match(script, /resolveMacBuildVersion\(process\.env, \{ requireExplicit: true \}\)/u, "production releases must reject an omitted build number");
 assert.match(script, /-c\.buildVersion=\$\{buildVersion\}/u, "the validated build number must reach electron-builder");
-assert.match(script, /version: process\.env\.npm_package_version,\s*buildVersion,/u, "release evidence must record the exact macOS build number");
+assert.match(
+  script,
+  /const releaseVersion = String\(process\.env\.npm_package_version \|\| ""\);[\s\S]*?version: releaseVersion,\s*buildVersion,/u,
+  "release evidence must record the validated app version and exact macOS build number"
+);
 assert.match(script, /Expected exactly one release app/u);
 assert.match(script, /codesign[\s\S]*spctl[\s\S]*TeamIdentifier/u);
 assert.match(script, /--universal/u, "production releases must support both Intel and Apple silicon");
@@ -56,7 +60,11 @@ assert.match(script, /entry\.isSymbolicLink\(\)[\s\S]*verifySafeSymlink/u, "the 
 assert.match(script, /Symlink escapes the app bundle[\s\S]*Unexpected executable-code symlink/u, "unsafe, escaping, and unexpected executable symlinks must be rejected");
 assert.match(script, /\.app.*\.appex.*\.bundle.*\.framework.*\.plugin.*\.xpc/u, "code bundles in Resources, PlugIns, Library, and other locations must be recognized by type rather than parent path");
 assert.match(workflow, /release-checksums\.json/u);
-assert.match(docs, /checksum sidecar[\s\S]*not an automatic update feed/u);
+assert.match(
+  docs,
+  /VIGIL_PREBUILT_UPDATE_MANIFEST_URL[\s\S]*exact selected upstream commit[\s\S]*Gatekeeper[\s\S]*Developer ID continuity/u,
+  "release instructions must document the explicit, commit-bound prebuilt trust channel"
+);
 for (const entitlements of [mainEntitlements, childEntitlements]) {
   assert.match(entitlements, /com\.apple\.security\.cs\.allow-jit/u);
   assert.doesNotMatch(entitlements, /allow-unsigned-executable-memory|disable-library-validation/u);

@@ -55,6 +55,7 @@ const SOURCE_OTHER = "3333333333333333333333333333333333333333";
 
 try {
   await verifyExactNextCandidateIdentityIsActivatedWithoutRecopy();
+  await verifyRuntimeTreeDigestIsDurableAndRevalidated();
   await verifyInterruptedPrestageIsDurablyReconciled();
   await verifyPrestageTamperingAndMissingEvidenceFailClosed();
   await verifyPendingRollbackAndDurableStateWal();
@@ -86,6 +87,123 @@ try {
   console.log("update transaction recovery tests passed");
 } finally {
   await Promise.all(roots.map(async (root) => await rm(root, { recursive: true, force: true })));
+}
+
+async function verifyRuntimeTreeDigestIsDurableAndRevalidated(): Promise<void> {
+  const initialTreeSha256 = "a".repeat(64);
+  const targetTreeSha256 = "b".repeat(64);
+  const tamperedTreeSha256 = "c".repeat(64);
+
+  const stagedTamper = await createFixture("runtime-tree-staged-tamper", true);
+  const stagedRuntime = stagedTamper.input.runtimes![0]!;
+  stagedRuntime.initialIdentity = { ...stagedRuntime.initialIdentity!, treeSha256: initialTreeSha256 };
+  stagedRuntime.targetIdentity = { ...stagedRuntime.targetIdentity, treeSha256: targetTreeSha256 };
+  await writePreparedStagingJournal(
+    stagedTamper.policy,
+    stagedTamper.input.attemptId,
+    "runtime",
+    stagedRuntime
+  );
+  const stagedBaseIdentify = stagedTamper.operations.identifyArtifact;
+  const stagedDependencies: UpdateRecoveryDependencies = {
+    ...stagedTamper.dependencies,
+    operations: {
+      ...stagedTamper.operations,
+      async identifyArtifact(path, kind) {
+        const identity = await stagedBaseIdentify(path, kind);
+        if (!identity || kind !== "runtime") return identity;
+        const treeSha256 = identity.commit === "initial-runtime"
+          ? initialTreeSha256
+          : path.endsWith(".vigil-next")
+            ? tamperedTreeSha256
+            : targetTreeSha256;
+        return { ...identity, treeSha256 };
+      }
+    }
+  };
+  const validBeginDependencies: UpdateRecoveryDependencies = {
+    ...stagedDependencies,
+    operations: {
+      ...stagedDependencies.operations,
+      async identifyArtifact(path, kind) {
+        const identity = await stagedBaseIdentify(path, kind);
+        if (!identity || kind !== "runtime") return identity;
+        return {
+          ...identity,
+          treeSha256: identity.commit === "initial-runtime" ? initialTreeSha256 : targetTreeSha256
+        };
+      }
+    }
+  };
+  const manifest = await beginUpdateRecoveryTransaction(
+    stagedTamper.policy,
+    stagedTamper.input,
+    validBeginDependencies
+  );
+  assert.equal(manifest.runtimes[0]?.initialTreeSha256, initialTreeSha256);
+  assert.equal(manifest.runtimes[0]?.targetTreeSha256, targetTreeSha256,
+    "the durable recovery manifest must bind the exact signed runtime-tree digest");
+  await assert.rejects(
+    activateStagedUpdateArtifact(
+      stagedTamper.policy,
+      stagedTamper.input.attemptId,
+      stagedRuntime,
+      "runtime",
+      stagedDependencies
+    ),
+    /staged runtime candidate changed/u,
+    "activation must freshly revalidate .vigil-next against the durable tree digest"
+  );
+
+  const activatedTamper = await createFixture("runtime-tree-activated-tamper", true);
+  const activatedRuntime = activatedTamper.input.runtimes![0]!;
+  activatedRuntime.initialIdentity = { ...activatedRuntime.initialIdentity!, treeSha256: initialTreeSha256 };
+  activatedRuntime.targetIdentity = { ...activatedRuntime.targetIdentity, treeSha256: targetTreeSha256 };
+  await writePreparedStagingJournal(
+    activatedTamper.policy,
+    activatedTamper.input.attemptId,
+    "runtime",
+    activatedRuntime
+  );
+  let runtimeActivated = false;
+  const activatedBaseIdentify = activatedTamper.operations.identifyArtifact;
+  const activatedDependencies: UpdateRecoveryDependencies = {
+    ...activatedTamper.dependencies,
+    operations: {
+      ...activatedTamper.operations,
+      async identifyArtifact(path, kind) {
+        const identity = await activatedBaseIdentify(path, kind);
+        if (!identity || kind !== "runtime") return identity;
+        const expected = identity.commit === "initial-runtime" ? initialTreeSha256 : targetTreeSha256;
+        return {
+          ...identity,
+          treeSha256: runtimeActivated && path === activatedTamper.runtimePath
+            ? tamperedTreeSha256
+            : expected
+        };
+      },
+      async swapPaths(left, right) {
+        await activatedTamper.operations.swapPaths(left, right);
+        if (left === activatedTamper.runtimePath) runtimeActivated = true;
+      }
+    }
+  };
+  await beginUpdateRecoveryTransaction(
+    activatedTamper.policy,
+    activatedTamper.input,
+    activatedDependencies
+  );
+  await assert.rejects(
+    activateStagedUpdateArtifact(
+      activatedTamper.policy,
+      activatedTamper.input.attemptId,
+      activatedRuntime,
+      "runtime",
+      activatedDependencies
+    ),
+    /activated runtime does not retain/u,
+    "activation must freshly revalidate the canonical runtime after the exact staged inode is installed"
+  );
 }
 
 async function verifyExactNextCandidateIdentityIsActivatedWithoutRecopy(): Promise<void> {
@@ -876,6 +994,10 @@ async function verifyRelocatedCandidateUsesStableRecoveryHelper(): Promise<void>
     fileURLToPath(new URL("../src/updateTransaction.js", import.meta.url)),
     relocatedModulePath
   );
+  await cp(
+    fileURLToPath(new URL("../src/runtimeTreeDigest.js", import.meta.url)),
+    join(relocatedRoot, "src", "runtimeTreeDigest.js")
+  );
   const relocated = await import(
     `${pathToFileURL(relocatedModulePath).href}?fixture=${encodeURIComponent(fixture.input.attemptId)}`
   ) as typeof import("../src/updateTransaction.js");
@@ -1020,6 +1142,7 @@ async function verifyStableRecoveryCliExecutesAsEsm(): Promise<void> {
   fixture.input.source = { initialCommit: head, initialBranch: fixture.source.branch, targetCommit: head };
   fixture.input.recoveryBundle.scriptSourcePath = fileURLToPath(new URL("../scripts/recover-update-transaction.mjs", import.meta.url));
   fixture.input.recoveryBundle.moduleSourcePath = fileURLToPath(new URL("../src/updateTransaction.js", import.meta.url));
+  fixture.input.recoveryBundle.treeDigestModuleSourcePath = fileURLToPath(new URL("../src/runtimeTreeDigest.js", import.meta.url));
   await beginUpdateRecoveryTransaction(fixture.policy, fixture.input, fixture.dependencies);
   const loaded = await readUpdateRecoveryPolicyFile(join(fixture.policy.updaterDir, UPDATE_RECOVERY_POLICY_FILENAME));
   assert.deepEqual(
@@ -1076,10 +1199,12 @@ async function createFixture(name: string, includeRuntime: boolean): Promise<Fix
   const bundleSourceRoot = join(root, "bundle-source");
   const scriptSourcePath = join(bundleSourceRoot, "recover-update-transaction.mjs");
   const moduleSourcePath = join(bundleSourceRoot, "updateTransaction.js");
+  const treeDigestModuleSourcePath = join(bundleSourceRoot, "runtimeTreeDigest.js");
   const helperSourcePath = join(bundleSourceRoot, "vigil-atomic-swap");
   await mkdir(bundleSourceRoot, { recursive: true });
   await writeFile(scriptSourcePath, "// fixture recovery CLI\n");
   await writeFile(moduleSourcePath, "// fixture recovery module\n");
+  await writeFile(treeDigestModuleSourcePath, "// fixture runtime-tree digest module\n");
   await writeFile(helperSourcePath, [
     "#!/bin/sh",
     "set -eu",
@@ -1161,6 +1286,7 @@ async function createFixture(name: string, includeRuntime: boolean): Promise<Fix
       gitPath: await realpath("/usr/bin/git"),
       scriptSourcePath,
       moduleSourcePath,
+      treeDigestModuleSourcePath,
       helperSourcePath
     }
   };
@@ -1203,10 +1329,12 @@ async function writePreparedStagingJournal(
     initialPresent: initial !== null,
     initialCommit: initial?.commit ?? null,
     initialFingerprint: initial?.fingerprint ?? null,
+    initialTreeSha256: initial?.treeSha256 ?? null,
     initialDevice: initial?.dev ?? null,
     initialInode: initial?.ino ?? null,
     candidateCommit: candidate.commit,
     candidateFingerprint: candidate.fingerprint,
+    candidateTreeSha256: candidate.treeSha256 ?? null,
     candidateDevice: candidate.dev,
     candidateInode: candidate.ino,
     updatedAt: new Date().toISOString()

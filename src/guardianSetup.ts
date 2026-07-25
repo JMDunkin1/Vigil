@@ -37,6 +37,12 @@ export interface GuardianSetupRequest {
   targetUser: string;
   electronPath?: string;
   installerPath?: string;
+  /**
+   * Require the currently loaded predecessor guardians to accept an immediate
+   * update from this exact parent command. Guardian-only migrations leave this
+   * false so the new compatible guardian can be installed first.
+   */
+  requireNormalUpdateCompatibility?: boolean;
   protocolBootstrap?: {
     token: string;
     expectedUpdateCommit: string;
@@ -62,11 +68,21 @@ export interface GuardianSetupAdminRequest {
   protocolBootstrapToken: string | null;
   protocolBootstrapExpectedUpdateCommit: string | null;
   authorizationOnly: boolean;
+  requireNormalUpdateCompatibility: boolean;
 }
 
 export interface SignedSetupBundleIdentity {
   sourceCdHash: string;
   targetCdHash: string;
+}
+
+export interface GuardianUpdateCompatibilityRequest {
+  appPath: string;
+  targetHome: string;
+  targetUid: number;
+  targetUser: string;
+  electronPath?: string;
+  installerPath?: string;
 }
 
 export interface GuardianSetupOperations {
@@ -76,6 +92,7 @@ export interface GuardianSetupOperations {
   read(path: string): Promise<Buffer>;
   verifyMatchingSignedApps(sourceAppPath: string, targetAppPath: string): Promise<SignedSetupBundleIdentity>;
   assertProtectedAvailability(targetAppPath: string, targetUid: number): Promise<void>;
+  preflight(request: GuardianSetupAdminRequest): Promise<void>;
   runAdministrator(request: GuardianSetupAdminRequest): Promise<void>;
 }
 
@@ -150,20 +167,23 @@ export async function setupSystemGuardian(
 
   const signedBundles = await operations.verifyMatchingSignedApps(sourceAppPath, targetAppPath);
   await operations.assertProtectedAvailability(targetAppPath, request.targetUid);
+  const adminRequest: GuardianSetupAdminRequest = {
+    sourceAppPath,
+    targetAppPath,
+    targetHome: request.targetHome,
+    targetUid: request.targetUid,
+    targetUser: request.targetUser,
+    expectedCurrentGuardianSha256,
+    expectedSourceCdHash: signedBundles.sourceCdHash,
+    expectedTargetCdHash: signedBundles.targetCdHash,
+    protocolBootstrapToken: request.protocolBootstrap?.token || null,
+    protocolBootstrapExpectedUpdateCommit: request.protocolBootstrap?.expectedUpdateCommit || null,
+    authorizationOnly: initialReadiness.ready,
+    requireNormalUpdateCompatibility: request.requireNormalUpdateCompatibility === true
+  };
+  await operations.preflight(adminRequest);
   try {
-    await operations.runAdministrator({
-      sourceAppPath,
-      targetAppPath,
-      targetHome: request.targetHome,
-      targetUid: request.targetUid,
-      targetUser: request.targetUser,
-      expectedCurrentGuardianSha256,
-      expectedSourceCdHash: signedBundles.sourceCdHash,
-      expectedTargetCdHash: signedBundles.targetCdHash,
-      protocolBootstrapToken: request.protocolBootstrap?.token || null,
-      protocolBootstrapExpectedUpdateCommit: request.protocolBootstrap?.expectedUpdateCommit || null,
-      authorizationOnly: initialReadiness.ready
-    });
+    await operations.runAdministrator(adminRequest);
   } catch (error) {
     if (administratorPromptCanceled(error)) {
       return {
@@ -196,8 +216,65 @@ const defaultGuardianSetupOperations: GuardianSetupOperations = {
   read: (path) => readFile(path),
   verifyMatchingSignedApps,
   assertProtectedAvailability,
+  preflight: runGuardianInstallerPreflight,
   runAdministrator: runGuardianInstallerWithAdministratorPrivileges
 };
+
+/**
+ * Prove that every still-loaded historical guardian can attest a normal update
+ * from this exact running Vigil command. This is read-only and never enters an
+ * administrator transaction.
+ */
+export async function preflightGuardianUpdateCompatibility(
+  request: GuardianUpdateCompatibilityRequest
+): Promise<void> {
+  validateRequest({
+    sourceAppPath: request.appPath,
+    targetAppPath: request.appPath,
+    targetHome: request.targetHome,
+    targetUid: request.targetUid,
+    targetUser: request.targetUser
+  });
+  const appPath = await canonicalDirectory(request.appPath, "installed Vigil app", defaultGuardianSetupOperations);
+  if (appPath !== DEFAULT_TARGET_APP_PATH) {
+    throw new Error(`Vigil refused to inspect guardian compatibility for an unexpected app path at ${appPath}.`);
+  }
+  const electronPath = await canonicalRegularFile(
+    request.electronPath || join(appPath, DEFAULT_ELECTRON_RELATIVE_PATH),
+    "compatibility preflight executable",
+    defaultGuardianSetupOperations
+  );
+  const installerPath = await canonicalRegularFile(
+    request.installerPath || join(appPath, DEFAULT_INSTALLER_RELATIVE_PATH),
+    "compatibility preflight module",
+    defaultGuardianSetupOperations
+  );
+  assertDescendant(appPath, electronPath, "compatibility preflight executable");
+  assertDescendant(appPath, installerPath, "compatibility preflight module");
+  if (relative(appPath, electronPath) !== DEFAULT_ELECTRON_RELATIVE_PATH
+    || relative(appPath, installerPath) !== DEFAULT_INSTALLER_RELATIVE_PATH) {
+    throw new Error("Vigil refused to run update compatibility checks from unexpected app files.");
+  }
+  await defaultGuardianSetupOperations.verifyMatchingSignedApps(appPath, appPath);
+  await defaultGuardianSetupOperations.assertProtectedAvailability(appPath, request.targetUid);
+  await execFileAsync(electronPath, [
+    installerPath,
+    "--app", appPath,
+    "--home", request.targetHome,
+    "--uid", String(request.targetUid),
+    "--user", request.targetUser,
+    "--require-normal-update-compatibility", "true",
+    "--read-only-update-compatibility",
+    "--json"
+  ], {
+    timeout: ADMIN_TIMEOUT_MS,
+    maxBuffer: 1024 * 1024,
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1"
+    }
+  });
+}
 
 function validateRequest(request: GuardianSetupRequest): void {
   if (process.platform !== "darwin") throw new Error("Vigil's guardian setup is available only on macOS.");
@@ -325,6 +402,20 @@ export function locallyRebuildableSignaturesMatch(
     && target.authorities.includes(sourceLocalAuthority)
     && source.designatedRequirement
     && source.designatedRequirement === target.designatedRequirement) return true;
+  const sourceDeveloperIdAuthority = source.authorities.find((authority) =>
+    authority.startsWith("Developer ID Application:")
+  );
+  const targetDeveloperIdAuthority = target.authorities.find((authority) =>
+    authority.startsWith("Developer ID Application:")
+  );
+  if (sourceDeveloperIdAuthority
+    && sourceDeveloperIdAuthority === targetDeveloperIdAuthority
+    && source.identifier
+    && source.identifier === target.identifier
+    && source.teamIdentifier
+    && source.teamIdentifier === target.teamIdentifier
+    && source.designatedRequirement
+    && source.designatedRequirement === target.designatedRequirement) return true;
   const sourceDevelopmentAuthority = source.authorities.find((authority) => authority.startsWith("Apple Development:"));
   const targetDevelopmentAuthority = target.authorities.find((authority) => authority.startsWith("Apple Development:"));
   return Boolean(
@@ -374,11 +465,48 @@ async function runGuardianInstallerWithAdministratorPrivileges(request: Guardian
     request.expectedTargetCdHash,
     request.protocolBootstrapToken || "",
     request.protocolBootstrapExpectedUpdateCommit || "",
-    request.authorizationOnly ? "true" : "false"
+    request.authorizationOnly ? "true" : "false",
+    request.requireNormalUpdateCompatibility ? "true" : "false"
   ], {
     timeout: ADMIN_TIMEOUT_MS,
     maxBuffer: 1024 * 1024
   });
+}
+
+async function runGuardianInstallerPreflight(request: GuardianSetupAdminRequest): Promise<void> {
+  const electronPath = join(request.sourceAppPath, DEFAULT_ELECTRON_RELATIVE_PATH);
+  const installerPath = join(request.sourceAppPath, DEFAULT_INSTALLER_RELATIVE_PATH);
+  await execFileAsync(electronPath, [
+    installerPath,
+    ...guardianInstallerArguments(request),
+    "--read-only-preflight"
+  ], {
+    timeout: ADMIN_TIMEOUT_MS,
+    maxBuffer: 1024 * 1024,
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1"
+    }
+  });
+}
+
+function guardianInstallerArguments(request: GuardianSetupAdminRequest): string[] {
+  return [
+    "--source-app", request.sourceAppPath,
+    "--app", request.targetAppPath,
+    "--home", request.targetHome,
+    "--uid", String(request.targetUid),
+    "--user", request.targetUser,
+    "--expected-current-script-sha256", request.expectedCurrentGuardianSha256,
+    "--expected-source-cdhash", request.expectedSourceCdHash,
+    "--expected-target-cdhash", request.expectedTargetCdHash,
+    "--bootstrap-source-app", request.sourceAppPath,
+    "--bootstrap-token", request.protocolBootstrapToken || "",
+    "--bootstrap-expected-update-commit", request.protocolBootstrapExpectedUpdateCommit || "",
+    "--authorization-only", request.authorizationOnly ? "true" : "false",
+    "--require-normal-update-compatibility", request.requireNormalUpdateCompatibility ? "true" : "false",
+    "--json"
+  ];
 }
 
 export function administratorAppleScript(): string {
@@ -394,8 +522,9 @@ export function administratorAppleScript(): string {
   set bootstrapToken to item 9 of argv
   set bootstrapCommit to item 10 of argv
   set authorizationOnly to item 11 of argv
+  set requireNormalUpdateCompatibility to item 12 of argv
   set shellProgram to "set -eu; setup_root=$(/usr/bin/mktemp -d /private/var/tmp/tech.caseline.vigil.guardian-setup.XXXXXX); /bin/chmod 700 \\\"$setup_root\\\"; cleanup() { case \\\"$setup_root\\\" in /private/var/tmp/tech.caseline.vigil.guardian-setup.*) /bin/rm -rf \\\"$setup_root\\\" ;; esac; }; trap cleanup EXIT HUP INT TERM; stage_app=\\\"$setup_root/Vigil.app\\\"; /usr/bin/ditto --noqtn \\\"$1\\\" \\\"$stage_app\\\"; /usr/bin/codesign --verify --deep --strict \\\"$stage_app\\\"; staged_cdhash=$(/usr/bin/codesign -dv --verbose=4 \\\"$stage_app\\\" 2>&1 | /usr/bin/sed -n 's/^CDHash=//p'); /usr/bin/codesign --verify --deep --strict \\\"$2\\\"; target_cdhash=$(/usr/bin/codesign -dv --verbose=4 \\\"$2\\\" 2>&1 | /usr/bin/sed -n 's/^CDHash=//p'); if [ \\\"$staged_cdhash\\\" != \\\"$7\\\" ] || [ \\\"$target_cdhash\\\" != \\\"$8\\\" ]; then echo 'Vigil refused a signed app substitution during guardian setup.' >&2; exit 65; fi; /usr/bin/env ELECTRON_RUN_AS_NODE=1 \\\"$stage_app/Contents/MacOS/Vigil\\\" \\\"$stage_app/Contents/Resources/app.asar.unpacked/dist/runtime/scripts/install-system-guardian.mjs\\\" --source-app \\\"$stage_app\\\" --app \\\"$2\\\" --home \\\"$3\\\" --uid \\\"$4\\\" --user \\\"$5\\\" --expected-current-script-sha256 \\\"$6\\\" --expected-source-cdhash \\\"$7\\\" --expected-target-cdhash \\\"$8\\\" --json"
-  set shellProgram to shellProgram & " --bootstrap-source-app \\\"$1\\\" --bootstrap-token \\\"$9\\\" --bootstrap-expected-update-commit \\\"\${10}\\\" --authorization-only \\\"\${11}\\\""
+  set shellProgram to shellProgram & " --bootstrap-source-app \\\"$1\\\" --bootstrap-token \\\"$9\\\" --bootstrap-expected-update-commit \\\"\${10}\\\" --authorization-only \\\"\${11}\\\" --require-normal-update-compatibility \\\"\${12}\\\""
   set commandText to "/bin/sh -c " & quoted form of shellProgram & " vigil-guardian-setup"
   set commandText to commandText & " " & quoted form of sourceAppPath
   set commandText to commandText & " " & quoted form of targetAppPath
@@ -408,6 +537,7 @@ export function administratorAppleScript(): string {
   set commandText to commandText & " " & quoted form of bootstrapToken
   set commandText to commandText & " " & quoted form of bootstrapCommit
   set commandText to commandText & " " & quoted form of authorizationOnly
+  set commandText to commandText & " " & quoted form of requireNormalUpdateCompatibility
   do shell script commandText with administrator privileges with prompt "Vigil needs one-time administrator approval to enable fast protected updates. Vigil stays online."
 end run`;
 }

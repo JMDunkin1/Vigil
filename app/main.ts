@@ -1608,8 +1608,11 @@ async function handleAppUpdateAction(appUrl: string): Promise<void> {
     || appUpdateActionState.running
     || appUpdateActionState.recoveryPending
     || appUpdateActionState.recoveryBlocked) return;
-  if (appUpdateActionState.candidateAvailable
-    && (appUpdateActionState.maintenanceReady || appUpdateActionState.maintenanceSetupSupported)) {
+  const setupAvailable = !appUpdateActionState.maintenanceReady
+    && appUpdateActionState.maintenanceSetupRequired
+    && appUpdateActionState.maintenanceSetupSupported;
+  if ((appUpdateActionState.candidateAvailable && appUpdateActionState.maintenanceReady)
+    || setupAvailable) {
     await startAppUpdate(appUrl);
     return;
   }
@@ -1736,14 +1739,15 @@ async function startAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
       || (appUpdateOperation === "checking" ? "Vigil is checking for updates." : "A Vigil update is already running.");
     return appUpdateStatePayload({ ok: false, error: message });
   }
-  if (!appUpdateActionState.candidateAvailable) {
+  const setupOnly = !appUpdateActionState.maintenanceReady
+    && appUpdateActionState.maintenanceSetupRequired
+    && appUpdateActionState.maintenanceSetupSupported;
+  if (!appUpdateActionState.candidateAvailable && !setupOnly) {
     const message = "Check for updates before starting a protected Vigil update.";
     return appUpdateStatePayload({ ok: false, noUpdate: true, error: message, message });
   }
   const requestVersion = ++appUpdateRequestVersion;
-  const settingUp = !appUpdateActionState.maintenanceReady
-    && appUpdateActionState.maintenanceSetupRequired
-    && appUpdateActionState.maintenanceSetupSupported;
+  const settingUp = setupOnly;
   appUpdateOperation = settingUp ? "setting-up" : "starting";
   appUpdateActionState = {
     checked: true,
@@ -1761,7 +1765,7 @@ async function startAppUpdate(appUrl: string): Promise<Record<string, unknown>> 
     checkOk: true,
     phase: settingUp ? "setting-up" : "starting",
     message: settingUp
-      ? "Approve the one-time macOS prompt; Vigil will stay online and continue automatically."
+      ? "Approve the one-time macOS prompt; Vigil will stay online and verify the new guardian."
       : "Building latest changes in the background; Vigil stays active until the verified replacement is ready."
   };
   publishAppUpdateState(appUrl);

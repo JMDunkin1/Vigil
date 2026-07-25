@@ -45,7 +45,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
         if (requestInFlight) return;
         const view = currentView();
         if (!view.actionEnabled) return;
-        if (view.actionKind === "update" || view.actionKind === "setup-update") {
+        if (view.actionKind === "update" || view.actionKind === "setup") {
           void startUpdate();
           return;
         }
@@ -94,10 +94,10 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
   async function startUpdate(): Promise<void> {
     if (requestInFlight) return;
     const requestedAction = currentView().actionKind;
-    if (requestedAction !== "update" && requestedAction !== "setup-update") return;
+    if (requestedAction !== "update" && requestedAction !== "setup") return;
     const submittedVersion = ++requestVersion;
     requestInFlight = true;
-    visibleOperation = requestedAction === "setup-update" ? "setting-up" : "starting";
+    visibleOperation = requestedAction === "setup" ? "setting-up" : "starting";
     renderStatus(cached);
     try {
       const status = await requestStart();
@@ -106,7 +106,9 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
       toast(cached.noUpdate === true
         ? String(cached.message || "No newer Vigil update is available.")
         : cached.ok === true
-          ? "Vigil update started"
+          ? requestedAction === "setup"
+            ? "Fast protected updates are ready"
+            : "Vigil update started"
           : String(cached.message || cached.error || "Vigil update is already running"));
     } catch (error) {
       if (submittedVersion !== requestVersion) return;
@@ -209,7 +211,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     ].filter(Boolean).join(" · ") || "--";
     button.textContent = view.actionLabel;
     button.disabled = !view.actionEnabled;
-    const primaryAction = view.actionKind === "update" || view.actionKind === "setup-update";
+    const primaryAction = view.actionKind === "update" || view.actionKind === "setup";
     button.classList.toggle("primary", primaryAction);
     button.classList.toggle("secondary", !primaryAction);
   }

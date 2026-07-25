@@ -5,6 +5,14 @@ import { chmod, link, lstat, mkdir, open, readFile, realpath, rename, rm, writeF
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { isDirectRun } from "../src/directRun.js";
+import {
+  CURRENT_GUARDIAN_PROTOCOL,
+  GUARDIAN_PROTOCOL_V7,
+  LEGACY_GUARDIAN_PROTOCOL,
+  SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS,
+  guardianProtocolForTopology,
+  type GuardianProtocolDescriptor
+} from "../src/guardianProtocol.js";
 import { parsePlist } from "../src/plist.js";
 import { verifyUpdateProtocolBridgeEquivalence } from "./package-update-protocol-bridge.mjs";
 import {
@@ -18,20 +26,6 @@ import {
 } from "../src/systemGuardian.js";
 import {
   guardianScriptRevision,
-  LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
-  LEGACY_SYSTEM_GUARDIAN_LABEL,
-  LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
-  LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
-  LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
-  LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH,
-  PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
-  PREVIOUS_SYSTEM_GUARDIAN_LABEL,
-  PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH,
-  PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
-  PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
-  PREVIOUS_SYSTEM_GUARDIAN_REVISION,
-  PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH,
-  PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
   SYSTEM_GUARDIAN_MAINTENANCE_FILENAME,
   SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
   SYSTEM_GUARDIAN_REVISION,
@@ -49,34 +43,64 @@ import {
 const execFileAsync = promisify(execFile);
 const DEFAULT_TARGET_APP_PATH = "/Applications/Vigil.app";
 export const SYSTEM_GUARDIAN_STABILITY_MS = 500;
-export const PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256 = "2ef7538db87511e723216ea6785a9ff49e60e29d2345a9a8e0b9ddd7c139a6ce";
-export const LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256 = "62f041926840824e15c76361d508ac224c3b92ba7312003329c410d83fcc8ea1";
+export const PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256 = GUARDIAN_PROTOCOL_V7.programSha256!;
+export const LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256 = LEGACY_GUARDIAN_PROTOCOL.programSha256;
 
-const COMMON_PREDECESSOR_DYNAMIC_ASSIGNMENTS = [
-  "target_uid",
-  "target_user",
-  "target_home",
-  "app_path",
-  "executable_path",
-  "process_pattern",
-  "supervisor_service",
-  "update_lock_path",
-  "maintenance_marker_path",
-  "global_update_manifest_path",
-  "global_update_policy_path"
-] as const;
+export async function preflightSystemGuardian(argv = process.argv.slice(2)): Promise<void> {
+  const options = parseOptions(argv);
+  await validateSignedSetupSource(options);
+  const parentBefore = options.bootstrapToken
+    ? null
+    : await verifiedExactMainParentIdentity(options);
+  await assertExpectedCurrentGuardian(options);
+  const generatedScript = systemGuardianScript(options);
+  await execFileAsync("/bin/zsh", ["-n", "-c", generatedScript], {
+    timeout: 5_000,
+    maxBuffer: 1024 * 1024
+  });
+  parsePlist(systemGuardianPlist());
+  const initialService = await inspectSystemGuardianService();
+  await assertProtocolBootstrapMigrationState(options, initialService, systemGuardianPlist());
+  await assertCompatibilityDestinationsReady(options);
+  if (options.authorizationOnly) return;
+  if (initialService.loaded) {
+    throw new Error(
+      `Vigil preflight found ${SYSTEM_GUARDIAN_LABEL} already loaded; a loaded guardian is never replaced or restarted.`
+    );
+  }
+  const predecessors = await loadedPredecessorGuardians(options);
+  if (parentBefore) {
+    const parentAfter = await verifiedExactMainParentIdentity(options);
+    if (parentAfter.command !== parentBefore.command
+      || parentAfter.started !== parentBefore.started) {
+      throw new Error(
+        "Vigil guardian preflight failed: check=guardian.parent.continuity detail=The direct Vigil parent changed while guardian setup was being inspected."
+      );
+    }
+    assertNormalParentCommandPolicy(predecessors, options, parentAfter.command);
+  }
+}
 
-const PREVIOUS_GUARDIAN_DYNAMIC_ASSIGNMENTS = [
-  ...COMMON_PREDECESSOR_DYNAMIC_ASSIGNMENTS,
-  "bootstrap_worker_request_path",
-  "exact_main_command",
-  "canonical_main_command",
-  "packaged_updater_script_path",
-  "local_updater_script_path",
-  "user_data_dir",
-  "update_status_path",
-  "update_log_path"
-] as const;
+export async function preflightSystemGuardianUpdateCompatibility(
+  argv = process.argv.slice(2)
+): Promise<void> {
+  const options = parseOptions(argv);
+  const parentBefore = await verifiedExactMainParentIdentity(options);
+  await assertCurrentGuardianReadinessIfLoaded(options);
+  const predecessors = await loadedPredecessorGuardians(options, false);
+  const compatibilityOptions = {
+    ...options,
+    requireNormalUpdateCompatibility: true
+  };
+  const parentAfter = await verifiedExactMainParentIdentity(compatibilityOptions);
+  if (parentAfter.command !== parentBefore.command
+    || parentAfter.started !== parentBefore.started) {
+    throw new Error(
+      "Vigil guardian preflight failed: check=guardian.parent.continuity detail=The direct Vigil parent changed while update compatibility was being inspected."
+    );
+  }
+  assertNormalParentCommandPolicy(predecessors, compatibilityOptions, parentAfter.command);
+}
 
 export async function installSystemGuardian(argv = process.argv.slice(2)): Promise<void> {
   if (process.getuid?.() !== 0) {
@@ -91,7 +115,10 @@ export async function installSystemGuardian(argv = process.argv.slice(2)): Promi
   await validateGuardianRoot();
   const initialService = await inspectSystemGuardianService();
   await assertProtocolBootstrapMigrationState(options, initialService, plist);
-  const predecessor = options.authorizationOnly ? null : await runningPredecessorGuardian(options);
+  const predecessors = options.authorizationOnly
+    ? []
+    : await runningPredecessorGuardians(options);
+  await assertCompatibilityDestinationsReady(options);
   const transactionId = `${process.pid}-${randomUUID()}`;
   if (options.authorizationOnly) {
     if (!options.bootstrapToken) throw new Error("Vigil cannot refresh an empty updater-protocol authorization.");
@@ -125,25 +152,28 @@ export async function installSystemGuardian(argv = process.argv.slice(2)): Promi
   let serviceBootstrapAttempted = false;
   try {
     await assertExpectedCurrentGuardian(options);
-    if (predecessor) await assertPredecessorGuardianContinuity(predecessor, options);
+    await assertCompatibilityDestinationsReady(options);
+    await assertPredecessorGuardiansContinuity(predecessors, options);
     const serviceBeforeActivation = await inspectSystemGuardianService();
     if (serviceBeforeActivation.loaded) {
       throw new Error(
-        "Vigil's parallel v4 guardian loaded while setup was being prepared. Its running files were left untouched."
+        `Vigil's ${SYSTEM_GUARDIAN_LABEL} guardian loaded while setup was being prepared. Its running files were left untouched.`
       );
     }
     activationStarted = true;
     for (const file of files) await activateStagedFile(file);
     await verifyActivatedFiles(files);
+    await assertCompatibilityDestinationsReady(options);
+    await assertPredecessorGuardiansContinuity(predecessors, options);
     serviceBootstrapAttempted = true;
     await bootstrapSystemGuardian();
     await verifyActivatedFiles(files);
-    if (predecessor) await assertPredecessorGuardianContinuity(predecessor, options);
+    await assertPredecessorGuardiansContinuity(predecessors, options);
   } catch (error) {
     if (serviceBootstrapAttempted) {
       await discardStagedFiles(files).catch(() => undefined);
       throw new Error(
-        `${errorMessage(error)} Vigil preserved the new parallel guardian files and never stopped any guardian; launchd can finish starting the v4 service safely.`
+        `${errorMessage(error)} Vigil preserved the new ${SYSTEM_GUARDIAN_LABEL} files and never stopped any guardian; launchd can finish starting that service safely.`
       );
     }
     const rollbackErrors: unknown[] = [];
@@ -168,6 +198,50 @@ export async function installSystemGuardian(argv = process.argv.slice(2)): Promi
   }
 }
 
+async function assertCompatibilityDestinationsReady(options: InstallOptions): Promise<void> {
+  const authorizationPaths = new Set([
+    CURRENT_GUARDIAN_PROTOCOL.maintenanceAuthorizationPath,
+    ...SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS.map(
+      (protocol) => protocol.maintenanceAuthorizationPath
+    )
+  ]);
+  for (const authorizationPath of authorizationPaths) {
+    await assertReplaceableRootProtocolFile(
+      authorizationPath,
+      `maintenance authorization destination ${authorizationPath}`
+    );
+  }
+  if (!options.bootstrapToken) return;
+  const claimPaths = new Set(
+    [CURRENT_GUARDIAN_PROTOCOL, ...SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS]
+      .map((protocol) => protocol.bootstrapClaimPath)
+      .filter((claimPath): claimPath is string => claimPath !== null)
+  );
+  for (const claimPath of claimPaths) {
+    await assertReplaceableRootProtocolFile(
+      claimPath,
+      `bootstrap claim destination ${claimPath}`
+    );
+  }
+}
+
+async function assertReplaceableRootProtocolFile(path: string, label: string): Promise<void> {
+  try {
+    const value = await lstat(path);
+    if (!value.isFile()
+      || value.isSymbolicLink()
+      || value.uid !== 0
+      || (value.mode & 0o777) !== 0o644) {
+      throw new Error(
+        `Vigil guardian preflight failed: check=guardian.protocol.destination detail=The ${label} is not a root-owned mode-644 regular file.`
+      );
+    }
+  } catch (error) {
+    if (isErrorCode(error, "ENOENT")) return;
+    throw error;
+  }
+}
+
 interface InstallOptions {
   appPath: string;
   expectedCurrentScriptSha256: string | null;
@@ -182,6 +256,7 @@ interface InstallOptions {
   bootstrapToken: string | null;
   bootstrapExpectedUpdateCommit: string | null;
   authorizationOnly: boolean;
+  requireNormalUpdateCompatibility: boolean;
 }
 
 function parseOptions(argv: string[]): InstallOptions {
@@ -253,6 +328,13 @@ function parseOptions(argv: string[]): InstallOptions {
   if (authorizationOnly && !bootstrapToken) {
     throw new Error("Authorization-only guardian setup requires an updater-protocol bootstrap request.");
   }
+  const requireNormalUpdateCompatibilityValue = values.get("require-normal-update-compatibility");
+  if (requireNormalUpdateCompatibilityValue
+    && requireNormalUpdateCompatibilityValue !== "true"
+    && requireNormalUpdateCompatibilityValue !== "false") {
+    throw new Error("Pass true or false with --require-normal-update-compatibility.");
+  }
+  const requireNormalUpdateCompatibility = requireNormalUpdateCompatibilityValue === "true";
   return {
     appPath,
     expectedCurrentScriptSha256,
@@ -266,7 +348,8 @@ function parseOptions(argv: string[]): InstallOptions {
     bootstrapSourceAppPath,
     bootstrapToken,
     bootstrapExpectedUpdateCommit,
-    authorizationOnly
+    authorizationOnly,
+    requireNormalUpdateCompatibility
   };
 }
 
@@ -338,7 +421,7 @@ async function assertProtocolBootstrapMigrationState(
 ): Promise<void> {
   if (options.authorizationOnly) {
     if (!service.loaded || !service.running) {
-      throw new Error("Vigil refused authorization-only setup because its parallel v4 guardian is not running.");
+      throw new Error(`Vigil refused authorization-only setup because ${SYSTEM_GUARDIAN_LABEL} is not running.`);
     }
     await assertLoadedGuardianTopology(service.output, expectedPlist);
     const installed = await readFile(SYSTEM_GUARDIAN_SCRIPT_PATH, "utf8");
@@ -346,12 +429,12 @@ async function assertProtocolBootstrapMigrationState(
     if (revision === null
       || revision < SYSTEM_GUARDIAN_REVISION
       || !installed.includes(SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND)) {
-      throw new Error("Vigil refused authorization-only setup for a guardian without the required v4 protocol.");
+      throw new Error(`Vigil refused authorization-only setup because ${SYSTEM_GUARDIAN_LABEL} does not have protocol revision ${SYSTEM_GUARDIAN_REVISION}.`);
     }
     return;
   }
   if (service.loaded) {
-    throw new Error("Vigil refused to restart a loaded guardian while adding the parallel v4 update boundary.");
+    throw new Error(`Vigil refused to restart a loaded guardian while adding ${SYSTEM_GUARDIAN_LABEL}.`);
   }
 }
 
@@ -607,6 +690,16 @@ function locallyRebuildableSignaturesMatch(source: CodeSignatureIdentity, target
     && target.authorities.includes(sourceLocalAuthority)
     && source.designatedRequirement
     && source.designatedRequirement === target.designatedRequirement) return true;
+  const sourceDeveloperIdAuthority = source.authorities.find((authority) => authority.startsWith("Developer ID Application:"));
+  const targetDeveloperIdAuthority = target.authorities.find((authority) => authority.startsWith("Developer ID Application:"));
+  if (sourceDeveloperIdAuthority
+    && sourceDeveloperIdAuthority === targetDeveloperIdAuthority
+    && source.identifier
+    && source.identifier === target.identifier
+    && source.teamIdentifier
+    && source.teamIdentifier === target.teamIdentifier
+    && source.designatedRequirement
+    && source.designatedRequirement === target.designatedRequirement) return true;
   const sourceDevelopmentAuthority = source.authorities.find((authority) => authority.startsWith("Apple Development:"));
   const targetDevelopmentAuthority = target.authorities.find((authority) => authority.startsWith("Apple Development:"));
   return Boolean(
@@ -628,7 +721,7 @@ async function assertExpectedCurrentGuardian(options: InstallOptions): Promise<v
       if (isErrorCode(error, "ENOENT")) return;
       throw error;
     }
-    throw new Error("Vigil's parallel v4 guardian appeared after setup was authorized. Nothing was replaced.");
+    throw new Error(`Vigil's ${SYSTEM_GUARDIAN_LABEL} guardian appeared after setup was authorized. Nothing was replaced.`);
   }
   const value = await lstat(SYSTEM_GUARDIAN_SCRIPT_PATH);
   if (!value.isFile() || value.isSymbolicLink() || value.uid !== 0 || (value.mode & 0o022) !== 0) {
@@ -805,7 +898,7 @@ interface SystemGuardianServiceInspection {
   running: boolean;
 }
 
-interface RootOwnedFileIdentity {
+export interface RootOwnedFileIdentity {
   birthtimeMs: number;
   ctimeMs: number;
   dev: number;
@@ -816,11 +909,12 @@ interface RootOwnedFileIdentity {
   size: number;
 }
 
-interface PredecessorGuardianIdentity {
+export interface PredecessorGuardianIdentity {
   label: string;
   pid: number;
   plist: RootOwnedFileIdentity;
   plistPath: string;
+  processStarted: string;
   script: RootOwnedFileIdentity;
   scriptPath: string;
 }
@@ -884,47 +978,214 @@ async function inspectSystemGuardianService(
   }
 }
 
-async function runningPredecessorGuardian(options: InstallOptions): Promise<PredecessorGuardianIdentity> {
-  const candidates: PredecessorGuardianCandidate[] = [
-    {
-      label: PREVIOUS_SYSTEM_GUARDIAN_LABEL,
-      plistPath: PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH,
-      scriptPath: PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH
-    },
-    {
-      label: LEGACY_SYSTEM_GUARDIAN_LABEL,
-      plistPath: LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
-      scriptPath: LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH
-    }
-  ];
+async function assertCurrentGuardianReadinessIfLoaded(
+  options: InstallOptions
+): Promise<void> {
+  const candidate: PredecessorGuardianCandidate = {
+    label: CURRENT_GUARDIAN_PROTOCOL.label,
+    plistPath: CURRENT_GUARDIAN_PROTOCOL.plistPath,
+    scriptPath: CURRENT_GUARDIAN_PROTOCOL.scriptPath
+  };
+  const serviceBefore = await inspectSystemGuardianService(candidate.label);
+  if (!serviceBefore.loaded) return;
+  const processBefore = serviceBefore.pid
+    ? await predecessorProcessIdentity(serviceBefore.pid, candidate)
+    : null;
+  if (!serviceBefore.running
+    || !serviceBefore.pid
+    || !predecessorLaunchctlTopologyMatches(serviceBefore.output, candidate)
+    || !processBefore) {
+    throw new Error(
+      `Vigil guardian preflight failed: check=guardian.current.topology detail=${candidate.label} is loaded without its exact protected process and launchd topology.`
+    );
+  }
+  const [scriptFile, plistFile] = await Promise.all([
+    readPinnedRootOwnedFile(candidate.scriptPath, 1024 * 1024, 0o755),
+    readPinnedRootOwnedFile(candidate.plistPath, 1024 * 1024, 0o644)
+  ]);
+  if (scriptFile.bytes.toString("utf8") !== systemGuardianScript(options)
+    || plistFile.bytes.toString("utf8") !== systemGuardianPlist()
+    || !rootOwnedFilePredatesProcess(scriptFile.identity, processBefore)
+    || !rootOwnedFilePredatesProcess(plistFile.identity, processBefore)) {
+    throw new Error(
+      `Vigil guardian preflight failed: check=guardian.current.files detail=${candidate.label} is not running from the exact pinned guardian files in this signed app.`
+    );
+  }
+  const serviceAfter = await inspectSystemGuardianService(candidate.label);
+  const processAfter = serviceAfter.pid
+    ? await predecessorProcessIdentity(serviceAfter.pid, candidate)
+    : null;
+  if (!serviceAfter.loaded
+    || !serviceAfter.running
+    || serviceAfter.pid !== serviceBefore.pid
+    || !predecessorLaunchctlTopologyMatches(serviceAfter.output, candidate)
+    || !processAfter
+    || processAfter.started !== processBefore.started) {
+    throw new Error(
+      `Vigil guardian preflight failed: check=guardian.current.continuity detail=${candidate.label} changed while update compatibility was being inspected.`
+    );
+  }
+}
+
+async function runningPredecessorGuardians(
+  options: InstallOptions
+): Promise<PredecessorGuardianIdentity[]> {
+  const candidates: PredecessorGuardianCandidate[] = SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS.map(
+    ({ label, plistPath, scriptPath }) => ({ label, plistPath, scriptPath })
+  );
+  const predecessors: PredecessorGuardianIdentity[] = [];
   const failures: unknown[] = [];
   for (const candidate of candidates) {
     try {
       const identity = await inspectPredecessorGuardian(candidate, options);
-      if (identity) return identity;
+      if (identity) predecessors.push(identity);
     } catch (error) {
       failures.push(error);
     }
   }
+  if (failures.length) {
+    throw new Error(
+      `Vigil refused to add ${SYSTEM_GUARDIAN_LABEL} because ${
+        failures.length
+      } loaded predecessor guardian check(s) failed: ${failures.map(errorMessage).join(" ")}`
+    );
+  }
+  if (predecessors.length) return predecessors;
   const detail = failures.map((error) => errorMessage(error)).filter(Boolean).join(" ");
   throw new Error(
-    `Vigil refused to add its parallel v4 guardian without one exact, safe predecessor remaining loaded and running.${detail ? ` ${detail}` : ""}`
+    `Vigil refused to add ${SYSTEM_GUARDIAN_LABEL} without an exact, safe predecessor remaining loaded and running.${detail ? ` ${detail}` : ""}`
   );
 }
 
-async function assertPredecessorGuardianContinuity(
-  expected: PredecessorGuardianIdentity,
-  options: InstallOptions
-): Promise<void> {
-  const observed = await inspectPredecessorGuardian(expected, options);
-  if (!observed
-    || observed.pid !== expected.pid
-    || !sameRootOwnedFileIdentity(observed.script, expected.script)
-    || !sameRootOwnedFileIdentity(observed.plist, expected.plist)) {
+async function loadedPredecessorGuardians(
+  options: InstallOptions,
+  requireLoaded = true
+): Promise<GuardianProtocolDescriptor[]> {
+  const loaded: GuardianProtocolDescriptor[] = [];
+  const failures: unknown[] = [];
+  for (const protocol of SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS) {
+    try {
+      if (await inspectPredecessorGuardian(protocol, options)) loaded.push(protocol);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length) {
     throw new Error(
-      "Vigil's predecessor guardian changed while the parallel v4 guardian was being prepared. No running guardian was stopped or replaced."
+      `Vigil guardian preflight rejected ${failures.length} loaded predecessor guardian check(s): ${
+        failures.map(errorMessage).join(" ")
+      }`
     );
   }
+  if (requireLoaded && !loaded.length) {
+    throw new Error(
+      `Vigil guardian preflight failed: check=guardian.predecessor.running detail=No exact supported predecessor is loaded and running for ${SYSTEM_GUARDIAN_LABEL}.`
+    );
+  }
+  return loaded;
+}
+
+interface ExactMainParentIdentity {
+  command: string;
+  started: string;
+}
+
+async function verifiedExactMainParentIdentity(
+  options: InstallOptions
+): Promise<ExactMainParentIdentity> {
+  const executablePath = join(options.appPath, "Contents", "MacOS", "Vigil");
+  const canonicalCommand = executablePath;
+  const backgroundCommand = `${executablePath} --vigil-background ${SYSTEM_GUARDIAN_SAFETY_ARG}`;
+  const fields = await Promise.all([
+    "uid=",
+    "comm=",
+    "command=",
+    "lstart="
+  ].map(async (field) => (await execFileAsync("/bin/ps", [
+    "-ww",
+    "-p",
+    String(process.ppid),
+    "-o",
+    field
+  ], {
+    timeout: 5_000,
+    maxBuffer: 1024 * 1024
+  })).stdout.trim()));
+  if (fields[0] !== String(options.targetUid)
+    || fields[1] !== executablePath
+    || (fields[2] !== canonicalCommand && fields[2] !== backgroundCommand)
+    || !fields[3]) {
+    throw new Error(
+      "Vigil guardian preflight failed: check=guardian.parent.identity detail=The setup process is not a direct child of the exact canonical or protected-background Vigil main process."
+    );
+  }
+  return { command: fields[2], started: fields[3] };
+}
+
+function assertNormalParentCommandPolicy(
+  predecessors: readonly GuardianProtocolDescriptor[],
+  options: InstallOptions,
+  parentCommand: string
+): void {
+  const executablePath = join(options.appPath, "Contents", "MacOS", "Vigil");
+  const incompatible = normalParentCommandCompatibilityBlockers(
+    predecessors,
+    parentCommand,
+    executablePath,
+    options.requireNormalUpdateCompatibility
+  );
+  if (incompatible.length) {
+    throw new Error(
+      `Vigil guardian preflight failed: check=guardian.parent.command-compatibility detail=${
+        incompatible.map((protocol) => protocol.label).join(", ")
+      } require Vigil's protected background launch before they can attest this update. Retry after Vigil next starts through its protected background launcher. No password or build was requested.`
+    );
+  }
+}
+
+export function normalParentCommandCompatibilityBlockers(
+  predecessors: readonly GuardianProtocolDescriptor[],
+  parentCommand: string,
+  executablePath: string,
+  required: boolean
+): GuardianProtocolDescriptor[] {
+  return required && parentCommand === executablePath
+    ? predecessors.filter((protocol) => protocol.normalParentCommandPolicy === "background-only")
+    : [];
+}
+
+async function assertPredecessorGuardiansContinuity(
+  expected: readonly PredecessorGuardianIdentity[],
+  options: InstallOptions
+): Promise<void> {
+  if (!expected.length) return;
+  const observed = await runningPredecessorGuardians(options);
+  if (!predecessorGuardianIdentitySetsMatch(expected, observed)) {
+    throw new Error(
+      `Vigil's loaded predecessor guardian set changed while ${SYSTEM_GUARDIAN_LABEL} was being prepared. No running guardian was stopped or replaced.`
+    );
+  }
+}
+
+export function predecessorGuardianIdentitySetsMatch(
+  expected: readonly PredecessorGuardianIdentity[],
+  observed: readonly PredecessorGuardianIdentity[]
+): boolean {
+  if (expected.length !== observed.length
+    || new Set(expected.map(({ label }) => label)).size !== expected.length
+    || new Set(observed.map(({ label }) => label)).size !== observed.length) return false;
+  return expected.every((expectedGuardian) => {
+    const observedGuardian = observed.find(({ label }) => label === expectedGuardian.label);
+    return Boolean(
+      observedGuardian
+      && observedGuardian.pid === expectedGuardian.pid
+      && observedGuardian.processStarted === expectedGuardian.processStarted
+      && observedGuardian.plistPath === expectedGuardian.plistPath
+      && observedGuardian.scriptPath === expectedGuardian.scriptPath
+      && sameRootOwnedFileIdentity(observedGuardian.script, expectedGuardian.script)
+      && sameRootOwnedFileIdentity(observedGuardian.plist, expectedGuardian.plist)
+    );
+  });
 }
 
 async function inspectPredecessorGuardian(
@@ -970,6 +1231,7 @@ async function inspectPredecessorGuardian(
     pid: confirmedService.pid,
     plist: plistFile.identity,
     plistPath: candidate.plistPath,
+    processStarted: processAfter.started,
     script: scriptFile.identity,
     scriptPath: candidate.scriptPath
   };
@@ -1070,25 +1332,80 @@ export function predecessorGuardianContentMatches(
     return false;
   }
   const args = Array.isArray(plist.ProgramArguments) ? plist.ProgramArguments : [];
+  const protocol = guardianProtocolForTopology(candidate);
+  if (!protocol || protocol.current || !protocol.programSha256) return false;
   const executablePath = join(options.appPath, "Contents", "MacOS", "Vigil");
   const exactMainCommand = `${executablePath} --vigil-background ${SYSTEM_GUARDIAN_SAFETY_ARG}`;
   const updaterDirectory = join(options.targetHome, "Library", "Application Support", "Vigil", "updater");
   const userDataDirectory = dirname(updaterDirectory);
-  const isPrevious = candidate.label === PREVIOUS_SYSTEM_GUARDIAN_LABEL
-    && candidate.plistPath === PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH
-    && candidate.scriptPath === PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH;
-  const isLegacy = candidate.label === LEGACY_SYSTEM_GUARDIAN_LABEL
-    && candidate.plistPath === LEGACY_SYSTEM_GUARDIAN_PLIST_PATH
-    && candidate.scriptPath === LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH;
-  const recoveryAuthorizationPath = isPrevious
-    ? PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH
-    : LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH;
-  const maintenanceAuthorizationPath = isPrevious
-    ? PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH
-    : LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH;
-  const recoveryAuthorizationKind = isPrevious
-    ? PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND
-    : LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND;
+  const expectedDynamicAssignments: Readonly<Record<string, string>> = {
+    app_path: shellSingleQuote(options.appPath),
+    bootstrap_worker_request_path: shellSingleQuote(
+      join(updaterDirectory, UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME)
+    ),
+    canonical_main_command: shellSingleQuote(executablePath),
+    exact_main_command: shellSingleQuote(exactMainCommand),
+    exact_main_process_pattern: shellSingleQuote(`^${regexEscape(exactMainCommand)}$`),
+    executable_path: shellSingleQuote(executablePath),
+    global_update_manifest_path: shellSingleQuote(join(updaterDirectory, UPDATE_RECOVERY_MANIFEST_FILENAME)),
+    global_update_policy_path: shellSingleQuote(join(updaterDirectory, UPDATE_RECOVERY_POLICY_FILENAME)),
+    local_updater_script_path: shellSingleQuote(
+      join(
+        options.appPath,
+        "Contents",
+        "Resources",
+        "app.asar.unpacked",
+        "dist",
+        "runtime",
+        "scripts",
+        "launch-local-app.mjs"
+      )
+    ),
+    maintenance_marker_path: shellSingleQuote(
+      join(updaterDirectory, SYSTEM_GUARDIAN_MAINTENANCE_FILENAME)
+    ),
+    packaged_updater_script_path: shellSingleQuote(
+      join(
+        options.appPath,
+        "Contents",
+        "Resources",
+        "app.asar.unpacked",
+        "dist",
+        "runtime",
+        "scripts",
+        "update-packaged-app.mjs"
+      )
+    ),
+    process_pattern: shellSingleQuote(`^${regexEscape(executablePath)}($| )`),
+    supervisor_service: shellSingleQuote(`gui/${options.targetUid}/tech.caseline.vigil.supervisor`),
+    target_home: shellSingleQuote(options.targetHome),
+    target_uid: String(options.targetUid),
+    target_user: shellSingleQuote(options.targetUser),
+    update_lock_path: shellSingleQuote(join(updaterDirectory, "update.lock")),
+    update_log_path: shellSingleQuote(join(updaterDirectory, "update.log")),
+    update_status_path: shellSingleQuote(join(updaterDirectory, "update-status.json")),
+    user_data_dir: shellSingleQuote(userDataDirectory)
+  };
+  if (protocol.dynamicAssignments.some((name) => {
+    const expected = expectedDynamicAssignments[name];
+    return expected === undefined || !scriptAssignmentMatches(script, name, expected);
+  })) return false;
+  const bootstrapProtocolMatches = protocol.bootstrapClaimPath === null
+    ? protocol.bootstrapClaimKind === null
+    : Boolean(
+      protocol.bootstrapClaimKind
+      && scriptAssignmentMatches(
+        script,
+        "bootstrap_authorization_path",
+        shellSingleQuote(UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH)
+      )
+      && scriptAssignmentMatches(
+        script,
+        "bootstrap_claim_path",
+        shellSingleQuote(protocol.bootstrapClaimPath)
+      )
+      && script.includes(protocol.bootstrapClaimKind)
+    );
   const expectedPlistKeys = [
     "KeepAlive",
     "Label",
@@ -1100,10 +1417,8 @@ export function predecessorGuardianContentMatches(
     "ThrottleInterval"
   ];
   const guardianLogPath = join(SYSTEM_GUARDIAN_ROOT, "guardian.log");
-  if ((!isPrevious && !isLegacy)
-    || (isPrevious && guardianScriptRevision(script) !== PREVIOUS_SYSTEM_GUARDIAN_REVISION)
-    || (isLegacy && guardianScriptRevision(script) !== null)) return false;
-  if (JSON.stringify(Object.keys(plist).sort()) !== JSON.stringify(expectedPlistKeys)
+  if (guardianScriptRevision(script) !== protocol.revision
+    || JSON.stringify(Object.keys(plist).sort()) !== JSON.stringify(expectedPlistKeys)
     || plist.Label !== candidate.label
     || plist.KeepAlive !== true
     || plist.RunAtLoad !== true
@@ -1114,101 +1429,34 @@ export function predecessorGuardianContentMatches(
     || args.length !== 2
     || args[0] !== candidate.scriptPath
     || args[1] !== SYSTEM_GUARDIAN_SAFETY_ARG
-    || !scriptAssignmentMatches(script, "target_uid", String(options.targetUid))
-    || !scriptAssignmentMatches(script, "target_user", shellSingleQuote(options.targetUser))
-    || !scriptAssignmentMatches(script, "target_home", shellSingleQuote(options.targetHome))
-    || !scriptAssignmentMatches(script, "app_path", shellSingleQuote(options.appPath))
-    || !scriptAssignmentMatches(script, "executable_path", shellSingleQuote(executablePath))
-    || !scriptAssignmentMatches(
-      script,
-      "process_pattern",
-      shellSingleQuote(`^${regexEscape(executablePath)}($| )`)
-    )
-    || !scriptAssignmentMatches(
-      script,
-      "supervisor_service",
-      shellSingleQuote(`gui/${options.targetUid}/tech.caseline.vigil.supervisor`)
-    )
-    || !scriptAssignmentMatches(script, "update_lock_path", shellSingleQuote(join(updaterDirectory, "update.lock")))
-    || !scriptAssignmentMatches(
-      script,
-      "maintenance_marker_path",
-      shellSingleQuote(join(updaterDirectory, SYSTEM_GUARDIAN_MAINTENANCE_FILENAME))
-    )
     || !scriptAssignmentMatches(
       script,
       "root_authorization_path",
-      shellSingleQuote(maintenanceAuthorizationPath)
-    )
-    || !scriptAssignmentMatches(script, "root_recovery_authorization_path", shellSingleQuote(recoveryAuthorizationPath))
-    || !scriptAssignmentMatches(
-      script,
-      "global_update_manifest_path",
-      shellSingleQuote(join(updaterDirectory, UPDATE_RECOVERY_MANIFEST_FILENAME))
+      shellSingleQuote(protocol.maintenanceAuthorizationPath)
     )
     || !scriptAssignmentMatches(
       script,
-      "global_update_policy_path",
-      shellSingleQuote(join(updaterDirectory, UPDATE_RECOVERY_POLICY_FILENAME))
+      "root_recovery_authorization_path",
+      shellSingleQuote(protocol.recoveryAuthorizationPath)
     )
-    || (isPrevious
-      && !scriptAssignmentMatches(script, "exact_main_command", shellSingleQuote(exactMainCommand)))
-    || (isPrevious
-      && !scriptAssignmentMatches(
-        script,
-        "bootstrap_authorization_path",
-        shellSingleQuote(UPDATE_PROTOCOL_BOOTSTRAP_AUTHORIZATION_PATH)
-      ))
-    || (isPrevious
-      && !scriptAssignmentMatches(
-        script,
-        "bootstrap_claim_path",
-        shellSingleQuote(PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH)
-      ))
-    || (isPrevious
-      && !scriptAssignmentMatches(
-        script,
-        "bootstrap_worker_request_path",
-        shellSingleQuote(join(updaterDirectory, UPDATE_PROTOCOL_BOOTSTRAP_WORKER_REQUEST_FILENAME))
-      ))
-    || (isPrevious
-      && !scriptAssignmentMatches(
-        script,
-        "canonical_main_command",
-        shellSingleQuote(executablePath)
-      ))
-    || (isPrevious
-      && !scriptAssignmentMatches(
-        script,
-        "packaged_updater_script_path",
-        shellSingleQuote(join(options.appPath, "Contents", "Resources", "app.asar.unpacked", "dist", "runtime", "scripts", "update-packaged-app.mjs"))
-      ))
-    || (isPrevious
-      && !scriptAssignmentMatches(
-        script,
-        "local_updater_script_path",
-        shellSingleQuote(join(options.appPath, "Contents", "Resources", "app.asar.unpacked", "dist", "runtime", "scripts", "launch-local-app.mjs"))
-      ))
-    || (isPrevious && !scriptAssignmentMatches(script, "user_data_dir", shellSingleQuote(userDataDirectory)))
-    || (isPrevious
-      && !scriptAssignmentMatches(script, "update_status_path", shellSingleQuote(join(updaterDirectory, "update-status.json"))))
-    || (isPrevious
-      && !scriptAssignmentMatches(script, "update_log_path", shellSingleQuote(join(updaterDirectory, "update.log"))))
+    || !bootstrapProtocolMatches
     || !script.includes("# VIGIL SAFETY BOUNDARY:")
-    || !script.includes(recoveryAuthorizationKind)
-    || predecessorGuardianProgramFingerprint(script, isPrevious) !== (isPrevious
-      ? PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256
-      : LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256)
+    || !script.includes(protocol.maintenanceAuthorizationKind)
+    || !script.includes(protocol.recoveryAuthorizationKind)
+    || predecessorGuardianProgramFingerprint(script, protocol) !== protocol.programSha256
     || !predecessorAvailabilityProgramMatches(script)) return false;
   return true;
 }
 
-export function predecessorGuardianProgramFingerprint(script: string, previous: boolean): string {
-  const assignmentNames = previous
-    ? PREVIOUS_GUARDIAN_DYNAMIC_ASSIGNMENTS
-    : COMMON_PREDECESSOR_DYNAMIC_ASSIGNMENTS;
+export function predecessorGuardianProgramFingerprint(
+  script: string,
+  protocolOrPrevious: GuardianProtocolDescriptor | boolean
+): string {
+  const protocol = typeof protocolOrPrevious === "boolean"
+    ? (protocolOrPrevious ? GUARDIAN_PROTOCOL_V7 : LEGACY_GUARDIAN_PROTOCOL)
+    : protocolOrPrevious;
   const lines = script.split("\n");
-  for (const name of assignmentNames) {
+  for (const name of protocol.dynamicAssignments) {
     const indexes = lines.flatMap((line, index) => line.startsWith(`${name}=`) ? [index] : []);
     if (indexes.length !== 1) return "";
     lines[indexes[0]] = `${name}=<vigil-config>`;
@@ -1230,6 +1478,12 @@ export function predecessorAvailabilityProgramMatches(script: string): boolean {
   const loopStart = script.lastIndexOf("\nwhile true; do\n");
   const loop = loopStart >= 0 ? script.slice(loopStart) : "";
   const beforeLoop = loopStart >= 0 ? script.slice(0, loopStart) : "";
+  const rootRecoveryKind = rootRecoveryPresent.match(
+    /kind\)" == "(vigil-root-update-recovery-authorization-v\d+)"/u
+  )?.[1] || "";
+  const supportedRootRecoveryKind = SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS.some(
+    (protocol) => protocol.recoveryAuthorizationKind === rootRecoveryKind
+  );
   return guardianTopLevelControlFlowSafe(script)
     && !/^\s*(?:break|continue|exit)(?:\s|$)/mu.test(script)
     && /\n\}\s*$/u.test(beforeLoop)
@@ -1238,7 +1492,8 @@ export function predecessorAvailabilityProgramMatches(script: string): boolean {
     && rootAuthorizationWriterMatches(authorizationWriter)
     && authenticatedMaintenanceProgramMatches(active)
     && /^attest_update_recovery\(\) \{\n\s*global_update_manifest_present \|\| \{ clear_recovery_attestation; return \$\?; \}[\s\S]*?private_target_file "\$global_update_manifest_path" 600 \|\| return 1[\s\S]*?bounded_root_copy "\$global_update_manifest_path" "\$manifest_snapshot" \|\| return 1[\s\S]*?attest_update_recovery_snapshot "\$manifest_snapshot"[\s\S]*?\/bin\/rm -f "\$manifest_snapshot"[\s\S]*?return "\$attestation_status"\n\}\s*$/u.test(attestRecovery)
-    && /^root_recovery_attestation_present\(\) \{\n\s*\[\[ -f "\$root_recovery_authorization_path" && ! -L "\$root_recovery_authorization_path" \]\] \|\| return 1[\s\S]*?stat -f '%u' "\$root_recovery_authorization_path"[\s\S]*?== "0" \]\] \|\| return 1[\s\S]*?stat -f '%Lp' "\$root_recovery_authorization_path"[\s\S]*?== "644" \]\] \|\| return 1[\s\S]*?kind\)" == "vigil-root-update-recovery-authorization-v[23456]" \]\] \|\| return 1[\s\S]*?recoveryManifestPath\)" == "\$global_update_manifest_path" \]\] \|\| return 1[\s\S]*?recoveryPolicyPath\)" == "\$global_update_policy_path" \]\] \|\| return 1[\s\S]*?recoveryAppPath\)" == "\$app_path" \]\] \|\| return 1[\s\S]*?appInitialPresent\)" == "true" \]\]\n\}\s*$/u.test(rootRecoveryPresent)
+    && supportedRootRecoveryKind
+    && /^root_recovery_attestation_present\(\) \{\n\s*\[\[ -f "\$root_recovery_authorization_path" && ! -L "\$root_recovery_authorization_path" \]\] \|\| return 1[\s\S]*?stat -f '%u' "\$root_recovery_authorization_path"[\s\S]*?== "0" \]\] \|\| return 1[\s\S]*?stat -f '%Lp' "\$root_recovery_authorization_path"[\s\S]*?== "644" \]\] \|\| return 1[\s\S]*?kind\)" == "vigil-root-update-recovery-authorization-v\d+" \]\] \|\| return 1[\s\S]*?recoveryManifestPath\)" == "\$global_update_manifest_path" \]\] \|\| return 1[\s\S]*?recoveryPolicyPath\)" == "\$global_update_policy_path" \]\] \|\| return 1[\s\S]*?recoveryAppPath\)" == "\$app_path" \]\] \|\| return 1[\s\S]*?appInitialPresent\)" == "true" \]\]\n\}\s*$/u.test(rootRecoveryPresent)
     && /^attested_canonical_app_generation\(\) \{\n\s*root_recovery_attestation_present \|\| return 1[\s\S]*?\[\[ -e "\$app_path" && ! -L "\$app_path" \]\] \|\| return 1[\s\S]*?stat -f '%d' "\$app_path"[\s\S]*?stat -f '%i' "\$app_path"[\s\S]*?for generation in Initial Target; do[\s\S]*?expected_dev[\s\S]*?expected_ino[\s\S]*?observed_dev[\s\S]*?observed_ino[\s\S]*?expected_commit[\s\S]*?expected_fingerprint[\s\S]*?app_content_matches "\$app_path"[\s\S]*?\|\| continue[\s\S]*?return 0[\s\S]*?done\s*return 1\n\}\s*$/u.test(attestedGeneration)
     && availabilityLoopMatches(loop);
 }
@@ -1268,7 +1523,7 @@ export function rootAuthorizationWriterMatches(writer: string): boolean {
     && /\/usr\/bin\/plutil -insert expiresAtEpoch -integer [^\n]+ "\$authorization_tmp" \|\| return 1/u.test(writer)
     && /\/usr\/sbin\/chown 0:0 "\$authorization_tmp" \|\| return 1/u.test(writer)
     && /\/bin\/chmod 0644 "\$authorization_tmp" \|\| return 1/u.test(writer)
-    && /\/bin\/mv -f "\$authorization_tmp" "\$root_authorization_path"\n\}\s*$/u.test(writer);
+    && /\/bin\/mv -f "\$authorization_tmp" "\$root_authorization_path"(?: \|\| return 1)?\n[\s\S]*?\}\s*$/u.test(writer);
 }
 
 export function authenticatedMaintenanceProgramMatches(active: string): boolean {
@@ -1509,8 +1764,20 @@ function isErrorCode(error: unknown, code: string): boolean {
 }
 
 if (isDirectRun(import.meta.url)) {
-  await installSystemGuardian();
-  console.log(process.argv.includes("--json")
-    ? JSON.stringify({ ok: true, label: SYSTEM_GUARDIAN_LABEL, running: true })
-    : `Installed and started ${SYSTEM_GUARDIAN_LABEL}.`);
+  if (process.argv.includes("--read-only-update-compatibility")) {
+    await preflightSystemGuardianUpdateCompatibility();
+    console.log(process.argv.includes("--json")
+      ? JSON.stringify({ ok: true, label: SYSTEM_GUARDIAN_LABEL, updateCompatibility: true })
+      : `Update compatibility passed for ${SYSTEM_GUARDIAN_LABEL}.`);
+  } else if (process.argv.includes("--read-only-preflight")) {
+    await preflightSystemGuardian();
+    console.log(process.argv.includes("--json")
+      ? JSON.stringify({ ok: true, label: SYSTEM_GUARDIAN_LABEL, preflight: true })
+      : `Preflight passed for ${SYSTEM_GUARDIAN_LABEL}.`);
+  } else {
+    await installSystemGuardian();
+    console.log(process.argv.includes("--json")
+      ? JSON.stringify({ ok: true, label: SYSTEM_GUARDIAN_LABEL, running: true })
+      : `Installed and started ${SYSTEM_GUARDIAN_LABEL}.`);
+  }
 }

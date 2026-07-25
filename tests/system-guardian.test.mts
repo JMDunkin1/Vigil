@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, lstat, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { tmpdir, userInfo } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   SYSTEM_GUARDIAN_LABEL,
@@ -13,14 +13,19 @@ import {
   systemGuardianPlist,
   systemGuardianScript
 } from "../src/systemGuardian.js";
+import {
+  CURRENT_GUARDIAN_PROTOCOL,
+  SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS
+} from "../src/guardianProtocol.js";
 import { toPlist } from "../src/plist.js";
 import {
   LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256,
-  PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256,
   SYSTEM_GUARDIAN_STABILITY_MS,
+  normalParentCommandCompatibilityBlockers,
   observeGuardianRunningStability,
   predecessorAvailabilityProgramMatches,
   predecessorGuardianContentMatches,
+  predecessorGuardianIdentitySetsMatch,
   predecessorGuardianProgramFingerprint,
   predecessorLaunchctlTopologyMatches
 } from "../scripts/install-system-guardian.mjs";
@@ -38,14 +43,12 @@ import {
   PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
   PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
   PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH,
-  PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH,
   LEGACY_SYSTEM_GUARDIAN_LABEL,
   LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
   LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH,
   LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
   LEGACY_SYSTEM_GUARDIAN_SCRIPT_PATH,
-  LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   SYSTEM_GUARDIAN_REVISION,
   SYSTEM_GUARDIAN_REVISION_MARKER,
   SYSTEM_GUARDIAN_REVISION_MARKER_PREFIX,
@@ -377,75 +380,6 @@ assert.equal(
   false,
   "parallel setup must require an exact known predecessor template, not only plausible control flow"
 );
-const localUser = userInfo();
-const installedPredecessors = [
-  {
-    candidate: {
-      label: PREVIOUS_SYSTEM_GUARDIAN_LABEL,
-      plistPath: PREVIOUS_SYSTEM_GUARDIAN_PLIST_PATH,
-      scriptPath: PREVIOUS_SYSTEM_GUARDIAN_SCRIPT_PATH
-    },
-    fingerprint: PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256,
-    previous: true
-  },
-  {
-    candidate: legacyPredecessorCandidate,
-    fingerprint: LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256,
-    previous: false
-  }
-] as const;
-for (const installed of installedPredecessors) {
-  if (!existsSync(installed.candidate.scriptPath) || !existsSync(installed.candidate.plistPath)) continue;
-  const installedScript = await readFile(installed.candidate.scriptPath, "utf8");
-  const installedPlist = await readFile(installed.candidate.plistPath, "utf8");
-  assert.equal(predecessorGuardianProgramFingerprint(installedScript, installed.previous), installed.fingerprint,
-    "a locally installed known predecessor must match its pinned normalized template fingerprint");
-  assert.equal(
-    predecessorGuardianContentMatches(
-      installedScript,
-      installedPlist,
-      installed.candidate,
-      {
-        appPath: "/Applications/Vigil.app",
-        targetHome: localUser.homedir,
-        targetUid: localUser.uid,
-        targetUser: localUser.username
-      }
-    ),
-    true,
-    "the exact locally installed predecessor must remain eligible without being stopped or replaced"
-  );
-  assert.equal(
-    predecessorGuardianContentMatches(
-      installedScript,
-      installedPlist.replace("</dict>", "<key>UserName</key><string>test-user</string></dict>"),
-      installed.candidate,
-      {
-        appPath: "/Applications/Vigil.app",
-        targetHome: localUser.homedir,
-        targetUid: localUser.uid,
-        targetUser: localUser.username
-      }
-    ),
-    false,
-    "an otherwise exact predecessor plist must reject a non-root UserName override"
-  );
-  assert.equal(
-    predecessorGuardianContentMatches(
-      installedScript,
-      installedPlist.replace("<integer>5</integer>", "<integer>3600</integer>"),
-      installed.candidate,
-      {
-        appPath: "/Applications/Vigil.app",
-        targetHome: localUser.homedir,
-        targetUid: localUser.uid,
-        targetUser: localUser.username
-      }
-    ),
-    false,
-    "an otherwise exact predecessor plist must reject a weakened relaunch throttle"
-  );
-}
 assert.equal(
   predecessorGuardianContentMatches(
     legacyPredecessorScript
@@ -562,6 +496,132 @@ assert.equal(observeGuardianRunningStability(
   10_000
 ).stable, false, "the pre-kickstart PID can never satisfy replacement health verification");
 
+function testPredecessorIdentity(label: string, pid: number, seed: number) {
+  const fileIdentity = {
+    birthtimeMs: seed,
+    ctimeMs: seed + 1,
+    dev: 1,
+    ino: seed + 2,
+    mode: 0o755,
+    mtimeMs: seed + 3,
+    sha256: seed.toString(16).padStart(64, "0"),
+    size: seed + 4
+  };
+  return {
+    label,
+    pid,
+    plist: { ...fileIdentity, ino: fileIdentity.ino + 100, mode: 0o644 },
+    plistPath: `/Library/LaunchDaemons/${label}.plist`,
+    processStarted: `Mon Jul 20 12:00:${String(seed % 60).padStart(2, "0")} 2026`,
+    script: fileIdentity,
+    scriptPath: `/Library/Application Support/Vigil/System Guardian/${label}.sh`
+  };
+}
+
+const pinnedPredecessorIdentities = [
+  testPredecessorIdentity("tech.caseline.vigil.system-guardian.v7", 700, 70),
+  testPredecessorIdentity("tech.caseline.vigil.system-guardian.v6", 600, 60)
+];
+assert.equal(
+  predecessorGuardianIdentitySetsMatch(
+    pinnedPredecessorIdentities,
+    [...pinnedPredecessorIdentities].reverse()
+  ),
+  true,
+  "all pinned predecessor identities must remain valid independent of registry scan order"
+);
+assert.equal(
+  predecessorGuardianIdentitySetsMatch(
+    pinnedPredecessorIdentities,
+    pinnedPredecessorIdentities.slice(0, 1)
+  ),
+  false,
+  "a disappearing loaded predecessor must fail continuity"
+);
+assert.equal(
+  predecessorGuardianIdentitySetsMatch(
+    pinnedPredecessorIdentities,
+    [...pinnedPredecessorIdentities, testPredecessorIdentity("tech.caseline.vigil.system-guardian.v5", 500, 50)]
+  ),
+  false,
+  "a newly loaded predecessor must be revalidated rather than silently ignored"
+);
+assert.equal(
+  predecessorGuardianIdentitySetsMatch(
+    pinnedPredecessorIdentities,
+    [
+      { ...pinnedPredecessorIdentities[0], pid: pinnedPredecessorIdentities[0].pid + 1 },
+      pinnedPredecessorIdentities[1]
+    ]
+  ),
+  false,
+  "a relaunched predecessor process generation must fail continuity"
+);
+assert.equal(
+  predecessorGuardianIdentitySetsMatch(
+    pinnedPredecessorIdentities,
+    [
+      {
+        ...pinnedPredecessorIdentities[0],
+        processStarted: "Mon Jul 20 12:59:59 2026"
+      },
+      pinnedPredecessorIdentities[1]
+    ]
+  ),
+  false,
+  "PID reuse with a different process start identity must fail continuity"
+);
+assert.equal(
+  predecessorGuardianIdentitySetsMatch(
+    pinnedPredecessorIdentities,
+    [
+      {
+        ...pinnedPredecessorIdentities[0],
+        script: { ...pinnedPredecessorIdentities[0].script, sha256: "f".repeat(64) }
+      },
+      pinnedPredecessorIdentities[1]
+    ]
+  ),
+  false,
+  "changed predecessor program bytes must fail continuity"
+);
+
+const canonicalMainCommand = "/Applications/Vigil.app/Contents/MacOS/Vigil";
+const protectedBackgroundMainCommand = `${canonicalMainCommand} --vigil-background ${SYSTEM_GUARDIAN_SAFETY_ARG}`;
+const backgroundOnlyPredecessors = SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS.filter(
+  ({ normalParentCommandPolicy }) => normalParentCommandPolicy === "background-only"
+);
+assert.deepEqual(
+  normalParentCommandCompatibilityBlockers(
+    SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS,
+    canonicalMainCommand,
+    canonicalMainCommand,
+    true
+  ).map(({ key }) => key),
+  backgroundOnlyPredecessors.map(({ key }) => key),
+  "canonical updates must name every still-loaded background-only predecessor as a blocker"
+);
+assert.deepEqual(
+  normalParentCommandCompatibilityBlockers(
+    SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS,
+    protectedBackgroundMainCommand,
+    canonicalMainCommand,
+    true
+  ),
+  [],
+  "the exact protected-background main command remains compatible with every predecessor"
+);
+assert.deepEqual(
+  normalParentCommandCompatibilityBlockers(
+    SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS,
+    canonicalMainCommand,
+    canonicalMainCommand,
+    false
+  ),
+  [],
+  "standalone guardian setup must not claim that a future update is already in progress"
+);
+
 const script = systemGuardianScript({
   appPath: "/Applications/Vigil.app",
   targetHome: "/Users/test-user",
@@ -633,8 +693,13 @@ assert.match(
 );
 assert.match(
   maintenanceSource,
-  /Promise\.all\(requirements\.map[\s\S]*?assertGuardianRecoveryAttestation/u,
-  "activation must wait for all current and predecessor recovery attestations as one barrier"
+  /for \(const requirement of requirements\)[\s\S]*?await assertGuardianRecoveryAttestation/u,
+  "activation must inspect every current and predecessor recovery attestation in deterministic registry order"
+);
+assert.doesNotMatch(
+  maintenanceSource,
+  /Promise\.all\(requirements\.map/u,
+  "concurrent attestation failures must not make the reported guardian check nondeterministic"
 );
 assert.match(script, /ps -p "\$marker_pid" -o ppid=/u, "root authorization must bind the updater to its live parent");
 assert.match(script, /unique_exact_main_pid\(\)[\s\S]*?pgrep -U "\$target_uid" -f "\$process_pattern"[\s\S]*?candidate_command" == "\$exact_main_command" \|\| "\$candidate_command" == "\$canonical_main_command"[\s\S]*?matching_count" == "1"/u,
@@ -651,17 +716,29 @@ assert.match(script, /write_maintenance_authorization\(\)[\s\S]*?updaterCommand[
   "the root grant must retain the exact updater and parent process identities it observed");
 assert.match(
   script,
-  new RegExp(
-    `authorization_mode" == "normal"[\\s\\S]*?previous_root_authorization_path[\\s\\S]*?legacy_root_authorization_path[\\s\\S]*?/bin/cp -P "\\$root_authorization_path"`,
-    "u"
-  ),
+  /authorization_mode" == "normal"[\s\S]*?for compatibility_path in "\$\{compatibility_root_authorization_paths\[@\]\}"[\s\S]*?\/bin\/cp -P "\$root_authorization_path"/u,
   "normal maintenance must publish the exact v7 grant for still-running predecessor controllers"
 );
-assert.ok(
-  script.includes(PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH)
-    && script.includes(LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH),
-  "compatibility grants must target only the pinned predecessor authorization paths"
-);
+const expectedCompatibilityAuthorizationPaths = [
+  ...new Set(SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS.map(
+    (protocol) => protocol.maintenanceAuthorizationPath
+  ))
+].filter((authorizationPath) => authorizationPath !== SYSTEM_GUARDIAN_AUTHORIZATION_PATH);
+for (const authorizationPath of expectedCompatibilityAuthorizationPaths) {
+  assert.ok(script.includes(authorizationPath),
+    `compatibility grants must include pinned predecessor path ${authorizationPath}`);
+}
+const expectedBootstrapClaimPaths = [
+  ...new Set(
+    [...SUPPORTED_PREDECESSOR_GUARDIAN_PROTOCOLS, CURRENT_GUARDIAN_PROTOCOL]
+      .map((protocol) => protocol.bootstrapClaimPath)
+      .filter((claimPath): claimPath is string => claimPath !== null)
+  )
+];
+for (const claimPath of expectedBootstrapClaimPaths) {
+  assert.ok(script.includes(claimPath),
+    `bootstrap compatibility must include pinned claim path ${claimPath}`);
+}
 assert.match(script, /owner_executable" == "\$authorization_executable"/u, "active maintenance must remain bound to the updater executable root authorized");
 assert.match(script, /owner_started" == "\$authorization_started"/u, "PID reuse must not inherit a prior updater authorization");
 assert.match(script, /owner_command" == "\$authorization_command"/u, "argv substitution must not inherit a prior updater authorization");
@@ -670,11 +747,11 @@ assert.match(script, /--lock-path \$update_lock_path[\s\S]*?--lock-token \$marke
 assert.match(script, /attest_bootstrap_worker_request "\$now"[\s\S]*?authorize_maintenance_request "\$now"/u,
   "the root guardian must claim the exact bootstrap worker before setup may transfer the updater lock");
 assert.ok(script.includes(PREVIOUS_UPDATE_PROTOCOL_BOOTSTRAP_CLAIM_PATH),
-  "v4 must retain a distinct compatibility claim for the still-running v3 guardian");
+  "v7 must retain a distinct compatibility claim for a still-running predecessor guardian");
 assert.match(
   shellFunction(script, "attest_bootstrap_worker_request"),
-  /ensure_bootstrap_claim_at_path "\$previous_bootstrap_claim_path"[\s\S]*?ensure_bootstrap_claim_at_path "\$bootstrap_claim_path"[\s\S]*?previous_bootstrap_claim_matches[\s\S]*?bootstrap_claim_matches/u,
-  "the historical claim must be atomically verified before the isolated v4 go-signal"
+  /for candidate_claim_path in "\$\{bootstrap_claim_paths\[@\]\}"[\s\S]*?ensure_bootstrap_claim_at_path "\$candidate_claim_path"[\s\S]*?all_bootstrap_claims_match/u,
+  "every historical claim must be atomically verified before the isolated v7 go-signal"
 );
 assert.match(
   shellFunction(script, "ensure_bootstrap_claim_at_path"),
@@ -683,13 +760,13 @@ assert.match(
 );
 assert.match(
   shellFunction(script, "authorize_maintenance_request"),
-  /previous_bootstrap_claim_matches[\s\S]*?bootstrap_claim_matches[\s\S]*?previous_bootstrap_claim_expires[\s\S]*?previous_bootstrap_claim_expires < bootstrap_grant_expires/u,
-  "the shared bootstrap grant must require both claims and retain the shorter compatibility deadline"
+  /all_bootstrap_claims_match[\s\S]*?for candidate_claim_path in "\$\{bootstrap_claim_paths\[@\]\}"[\s\S]*?candidate_claim_expires < bootstrap_grant_expires/u,
+  "the shared bootstrap grant must require every claim and retain the shortest compatibility deadline"
 );
 assert.match(
   shellFunction(script, "authenticated_maintenance_active"),
-  /for active_claim_path in "\$previous_bootstrap_claim_path" "\$bootstrap_claim_path"[\s\S]*?private_root_file "\$active_claim_path" 644/u,
-  "v4 must keep both the predecessor and current claim active throughout bootstrap maintenance"
+  /for active_claim_path in "\$\{bootstrap_claim_paths\[@\]\}"[\s\S]*?private_root_file "\$active_claim_path" 644/u,
+  "v7 must keep every predecessor and current claim active throughout bootstrap maintenance"
 );
 assert.match(script, /bootstrap_processes_match_request\(\)[\s\S]*?expected_worker_command[\s\S]*?expected_relay_command[\s\S]*?worker_ppid" == "\$request_relay_pid"/u,
   "bootstrap authorization must independently match exact relay and worker commands and parentage");
@@ -953,18 +1030,94 @@ try {
   await rm(bootstrapClaimRoot, { recursive: true, force: true });
 }
 
-const stagedScriptValidation = installerSource.indexOf('execFileAsync("/bin/zsh", ["-n", files[0].stagedPath]');
-const stagedPlistValidation = installerSource.indexOf('execFileAsync("/usr/bin/plutil", ["-lint", files[1].stagedPath]');
-const predecessorCapture = installerSource.indexOf("await runningPredecessorGuardian(options)");
-const predecessorBeforeActivation = installerSource.indexOf(
-  "await assertPredecessorGuardianContinuity(predecessor, options)",
+const compatibilityPreflightStart = installerSource.indexOf(
+  "export async function preflightSystemGuardianUpdateCompatibility"
+);
+const compatibilityPreflightEnd = installerSource.indexOf(
+  "export async function installSystemGuardian",
+  compatibilityPreflightStart
+);
+const compatibilityPreflightSource = installerSource.slice(
+  compatibilityPreflightStart,
+  compatibilityPreflightEnd
+);
+assert.match(
+  compatibilityPreflightSource,
+  /parentBefore = await verifiedExactMainParentIdentity\(options\)[\s\S]*?assertCurrentGuardianReadinessIfLoaded\(options\)[\s\S]*?loadedPredecessorGuardians\(options, false\)[\s\S]*?requireNormalUpdateCompatibility: true[\s\S]*?parentAfter = await verifiedExactMainParentIdentity[\s\S]*?parentAfter\.started !== parentBefore\.started[\s\S]*?assertNormalParentCommandPolicy/u,
+  "the update-only preflight must bracket exact current/predecessor inspection with one stable direct main-process identity"
+);
+assert.doesNotMatch(
+  compatibilityPreflightSource,
+  /\b(?:mkdir|writeFile|rename|rm|stageRootOwnedFile|activateStagedFile|bootstrapSystemGuardian|runLaunchctl)\s*\(/u,
+  "the update-compatibility mode must remain read-only"
+);
+assert.match(
+  installerSource,
+  /assertCurrentGuardianReadinessIfLoaded[\s\S]*?predecessorLaunchctlTopologyMatches\(serviceBefore\.output[\s\S]*?readPinnedRootOwnedFile\(candidate\.scriptPath[\s\S]*?systemGuardianScript\(options\)[\s\S]*?processAfter\.started !== processBefore\.started/u,
+  "a loaded current guardian must retain exact launchd, process-generation, and signed-source file topology"
+);
+assert.match(
+  installerSource,
+  /if \(process\.argv\.includes\("--read-only-update-compatibility"\)\)[\s\S]*?preflightSystemGuardianUpdateCompatibility\(\)[\s\S]*?else if \(process\.argv\.includes\("--read-only-preflight"\)\)/u,
+  "the direct read-only compatibility mode must dispatch without reaching privileged installation"
+);
+assert.match(
+  installerSource,
+  /preflightSystemGuardian[\s\S]*?parentBefore = options\.bootstrapToken[\s\S]*?verifiedExactMainParentIdentity\(options\)[\s\S]*?if \(options\.authorizationOnly\) return[\s\S]*?if \(parentBefore\)[\s\S]*?parentAfter = await verifiedExactMainParentIdentity[\s\S]*?assertNormalParentCommandPolicy/u,
+  "ordinary setup preflight must bracket its exact main parent while bootstrap keeps its separately attested worker ancestry"
+);
+
+const privilegedInstallStart = installerSource.indexOf("export async function installSystemGuardian");
+const privilegedInstallEnd = installerSource.indexOf(
+  "async function assertCompatibilityDestinationsReady",
+  privilegedInstallStart
+);
+const privilegedInstallSource = installerSource.slice(privilegedInstallStart, privilegedInstallEnd);
+const firstGuardianStaging = privilegedInstallSource.indexOf("files.push(await stageRootOwnedFile");
+const stagedScriptValidation = privilegedInstallSource.indexOf('execFileAsync("/bin/zsh", ["-n", files[0].stagedPath]');
+const stagedPlistValidation = privilegedInstallSource.indexOf('execFileAsync("/usr/bin/plutil", ["-lint", files[1].stagedPath]');
+const predecessorCapture = privilegedInstallSource.indexOf("await runningPredecessorGuardians(options)");
+const firstCompatibilityValidation = privilegedInstallSource.indexOf(
+  "await assertCompatibilityDestinationsReady(options)",
   predecessorCapture
 );
-const liveActivation = installerSource.indexOf("for (const file of files) await activateStagedFile(file)");
-const parallelBootstrap = installerSource.indexOf("await bootstrapSystemGuardian()", liveActivation);
-const predecessorAfterBootstrap = installerSource.indexOf(
-  "await assertPredecessorGuardianContinuity(predecessor, options)",
-  predecessorBeforeActivation + 1
+const compatibilityBeforeActivation = privilegedInstallSource.indexOf(
+  "await assertCompatibilityDestinationsReady(options)",
+  stagedPlistValidation
+);
+const predecessorBeforeActivation = privilegedInstallSource.indexOf(
+  "await assertPredecessorGuardiansContinuity(predecessors, options)",
+  compatibilityBeforeActivation
+);
+const currentServiceBeforeActivation = privilegedInstallSource.indexOf(
+  "const serviceBeforeActivation = await inspectSystemGuardianService()",
+  predecessorBeforeActivation
+);
+const liveActivation = privilegedInstallSource.indexOf("for (const file of files) await activateStagedFile(file)");
+const firstActivatedFilesVerification = privilegedInstallSource.indexOf(
+  "await verifyActivatedFiles(files)",
+  liveActivation
+);
+const compatibilityBeforeBootstrap = privilegedInstallSource.indexOf(
+  "await assertCompatibilityDestinationsReady(options)",
+  firstActivatedFilesVerification
+);
+const predecessorBeforeBootstrap = privilegedInstallSource.indexOf(
+  "await assertPredecessorGuardiansContinuity(predecessors, options)",
+  compatibilityBeforeBootstrap
+);
+const bootstrapAttemptBoundary = privilegedInstallSource.indexOf(
+  "serviceBootstrapAttempted = true",
+  predecessorBeforeBootstrap
+);
+const parallelBootstrap = privilegedInstallSource.indexOf("await bootstrapSystemGuardian()", liveActivation);
+const secondActivatedFilesVerification = privilegedInstallSource.indexOf(
+  "await verifyActivatedFiles(files)",
+  parallelBootstrap
+);
+const predecessorAfterBootstrap = privilegedInstallSource.indexOf(
+  "await assertPredecessorGuardiansContinuity(predecessors, options)",
+  secondActivatedFilesVerification
 );
 assert.ok(
   stagedScriptValidation >= 0
@@ -975,13 +1128,52 @@ assert.ok(
 );
 assert.ok(
   predecessorCapture >= 0
-    && predecessorBeforeActivation > predecessorCapture
-    && predecessorBeforeActivation < liveActivation
-    && predecessorAfterBootstrap > parallelBootstrap,
-  "the privileged helper must pin one exact predecessor and recheck the same identity before activation and after v4 is stable"
+    && firstCompatibilityValidation > predecessorCapture
+    && firstCompatibilityValidation < firstGuardianStaging
+    && compatibilityBeforeActivation > stagedPlistValidation
+    && predecessorBeforeActivation > compatibilityBeforeActivation
+    && currentServiceBeforeActivation > predecessorBeforeActivation
+    && currentServiceBeforeActivation < liveActivation
+    && firstActivatedFilesVerification > liveActivation
+    && compatibilityBeforeBootstrap > firstActivatedFilesVerification
+    && predecessorBeforeBootstrap > compatibilityBeforeBootstrap
+    && bootstrapAttemptBoundary > predecessorBeforeBootstrap
+    && parallelBootstrap > bootstrapAttemptBoundary
+    && secondActivatedFilesVerification > parallelBootstrap
+    && predecessorAfterBootstrap > secondActivatedFilesVerification,
+  "the privileged helper must revalidate every predecessor and compatibility destination before staging, activation, launchd bootstrap, and final success"
 );
-assert.match(installerSource, /runningPredecessorGuardian[\s\S]*?refused to add its parallel v4 guardian without one exact, safe predecessor/u,
-  "the privileged helper must fail closed when no exact predecessor preserves availability");
+assert.equal(
+  [...privilegedInstallSource.matchAll(/await assertCompatibilityDestinationsReady\(options\)/gu)].length,
+  3,
+  "the privileged transaction must validate compatibility destinations at all three mutation boundaries"
+);
+assert.equal(
+  [...privilegedInstallSource.matchAll(/await assertPredecessorGuardiansContinuity\(predecessors, options\)/gu)].length,
+  3,
+  "the privileged transaction must retain every predecessor identity across activation and bootstrap"
+);
+const predecessorScannerStart = installerSource.indexOf("async function runningPredecessorGuardians");
+const predecessorScannerEnd = installerSource.indexOf(
+  "async function loadedPredecessorGuardians",
+  predecessorScannerStart
+);
+const predecessorScannerSource = installerSource.slice(predecessorScannerStart, predecessorScannerEnd);
+assert.match(
+  predecessorScannerSource,
+  /for \(const candidate of candidates\)[\s\S]*?if \(identity\) predecessors\.push\(identity\)[\s\S]*?if \(failures\.length\)[\s\S]*?if \(predecessors\.length\) return predecessors/u,
+  "the privileged helper must inspect the complete predecessor registry and reject any loaded predecessor failure"
+);
+assert.doesNotMatch(
+  predecessorScannerSource,
+  /if \(identity\) return identity/u,
+  "privileged validation must never stop after the first valid loaded predecessor"
+);
+assert.match(
+  installerSource,
+  /predecessorGuardianIdentitySetsMatch[\s\S]*?observedGuardian\.pid === expectedGuardian\.pid[\s\S]*?observedGuardian\.processStarted === expectedGuardian\.processStarted[\s\S]*?sameRootOwnedFileIdentity\(observedGuardian\.script[\s\S]*?sameRootOwnedFileIdentity\(observedGuardian\.plist/u,
+  "continuity must retain every loaded predecessor process generation and both exact root-owned files"
+);
 assert.match(installerSource, /inspectPredecessorGuardian[\s\S]*?predecessorProcessIdentity\(service\.pid, candidate\)[\s\S]*?predecessorLaunchctlTopologyMatches\(service\.output, candidate\)/u,
   "predecessor continuity must bind the complete cached launchd topology and root process identity");
 assert.match(installerSource, /predecessorProcessIdentity[\s\S]*?"uid="[\s\S]*?"gid="[\s\S]*?"ppid="[\s\S]*?"comm="[\s\S]*?"command="[\s\S]*?"lstart="[\s\S]*?\["0", "0", "1", "\/bin\/zsh", expectedCommand\]/u,
@@ -1001,14 +1193,14 @@ assert.match(installerSource, /if \(initialService\.loaded\)[\s\S]*?refused to r
   "setup must reject any attempt to replace or restart an already-loaded guardian");
 assert.doesNotMatch(installerSource, /runLaunchctl\(\["kickstart"|execFileAsync\("\/bin\/launchctl", \["bootout"/u,
   "parallel migration must never kickstart, signal, or unload either guardian");
-assert.match(installerSource, /serviceBootstrapAttempted = true[\s\S]*?bootstrapSystemGuardian\(\)[\s\S]*?if \(serviceBootstrapAttempted\)[\s\S]*?preserved the new parallel guardian files/u,
+assert.match(installerSource, /serviceBootstrapAttempted = true[\s\S]*?bootstrapSystemGuardian\(\)[\s\S]*?if \(serviceBootstrapAttempted\)[\s\S]*?preserved the new \$\{SYSTEM_GUARDIAN_LABEL\} files/u,
   "an uncertain first start must preserve the safe parallel files for idempotent launchd retry without stopping the legacy guardian");
 assert.match(installerSource, /if \(options\.authorizationOnly\)[\s\S]*?installRootAuthorization[\s\S]*?return/u,
   "an already-running v4 guardian must refresh only the expiring root bridge grant");
 assert.match(installerSource, /rollbackErrors\.length[\s\S]*?Recovery files were preserved/u, "failed rollback must preserve root-owned recovery files for inspection");
 assert.match(installerSource, /let cleanupSafe = false[\s\S]*?if \(rollbackErrors\.length\)[\s\S]*?Recovery evidence was preserved[\s\S]*?cleanupSafe = true[\s\S]*?if \(cleanupSafe\) await discardStagedFiles/u,
   "authorization backups must be discarded only after successful activation or successful rollback");
-assert.match(installerSource, /expectedCurrentScriptSha256 === "absent"[\s\S]*?isErrorCode\(error, "ENOENT"\)[\s\S]*?parallel v4 guardian appeared/u,
+assert.match(installerSource, /expectedCurrentScriptSha256 === "absent"[\s\S]*?isErrorCode\(error, "ENOENT"\)[\s\S]*?guardian appeared/u,
   "the first parallel install must accept only exact absence and reject a raced guardian path");
 assert.match(installerSource, /assertExpectedCurrentGuardian\(options\)[\s\S]*?stageRootOwnedFile[\s\S]*?assertExpectedCurrentGuardian\(options\)[\s\S]*?activateStagedFile/u, "the root helper must close the authorization-to-activation race over the new parallel guardian bytes or pinned absence");
 assert.match(installerSource, /assertExpectedCurrentGuardian\(options\)[\s\S]*?serviceBeforeActivation = await inspectSystemGuardianService\(\)[\s\S]*?if \(serviceBeforeActivation\.loaded\)[\s\S]*?activationStarted = true[\s\S]*?activateStagedFile/u,
@@ -1283,7 +1475,7 @@ try {
   }), { mode: 0o644 });
   await assert.rejects(
     waitForGuardianRecoveryAuthorization(lockPath, token, recoveryPolicySha256, process.pid, authorizationOptions),
-    /does not match this update/u,
+    /check=guardian\.recovery\..*?\.attempt-id/u,
     "a forged attestation for another manifest attempt must fail closed"
   );
   await writeFile(authorizationOptions.recoveryAuthorizationPath, toPlist({
@@ -1296,7 +1488,7 @@ try {
   }), { mode: 0o644 });
   await assert.rejects(
     waitForGuardianRecoveryAuthorization(lockPath, token, recoveryPolicySha256, process.pid, authorizationOptions),
-    /does not match this update/u,
+    /check=guardian\.recovery\..*?\.pending-manifest-sha256/u,
     "a root file for a different immutable manifest must not authorize activation"
   );
   await writeFile(authorizationOptions.recoveryAuthorizationPath, toPlist({
@@ -1316,7 +1508,7 @@ try {
   await chmod(authorizationOptions.recoveryAuthorizationPath, 0o644);
   await assert.rejects(
     waitForGuardianRecoveryAuthorization(lockPath, token, recoveryPolicySha256, process.pid, authorizationOptions),
-    /does not match this update/u,
+    /check=guardian\.recovery\..*?\.target-cdhash/u,
     "a root attestation for a different signed target generation must fail closed"
   );
   await writeFile(authorizationOptions.recoveryAuthorizationPath, toPlist({
@@ -1412,7 +1604,7 @@ try {
   }), { mode: 0o644 });
   await assert.rejects(
     assertGuardianMaintenanceActive(lockPath, token, process.pid, startedAt + 1_000, authorizationOptions),
-    /does not match this updater/u,
+    /check=guardian\.maintenance\.authorization\.token/u,
     "the app must not quit until the root guardian grant matches the exact updater"
   );
   await maintenance.release();

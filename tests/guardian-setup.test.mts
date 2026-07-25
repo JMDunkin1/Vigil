@@ -54,6 +54,7 @@ let readinessReads = 0;
 let availabilityChecks = 0;
 let signatureChecks = 0;
 let adminRequest: GuardianSetupAdminRequest | null = null;
+const setupEvents: string[] = [];
 const operations = fakeOperations({
   readiness: async () => readinessReads++ === 0 ? legacyReadiness : readyReadiness,
   verifyMatchingSignedApps: async () => {
@@ -61,7 +62,11 @@ const operations = fakeOperations({
     return { sourceCdHash, targetCdHash };
   },
   assertProtectedAvailability: async () => { availabilityChecks += 1; },
-  runAdministrator: async (value) => { adminRequest = value; }
+  preflight: async () => { setupEvents.push("preflight"); },
+  runAdministrator: async (value) => {
+    setupEvents.push("administrator");
+    adminRequest = value;
+  }
 });
 const result = await setupSystemGuardian(request, operations);
 assert.equal(result.ok, true);
@@ -70,6 +75,8 @@ assert.equal(result.readiness.reason, "ready");
 assert.equal(readinessReads, 2, "setup must verify readiness again after the privileged helper exits");
 assert.equal(signatureChecks, 1, "the setup and installed bundles must be matched before authorization");
 assert.equal(availabilityChecks, 2, "Vigil and its user supervisor must remain online across setup");
+assert.deepEqual(setupEvents, ["preflight", "administrator"],
+  "the exact privileged migration must pass read-only preflight before macOS requests a password");
 assert.ok(adminRequest, "legacy setup must request one native administrator transaction");
 assert.equal(
   (adminRequest as GuardianSetupAdminRequest).expectedCurrentGuardianSha256,
@@ -79,6 +86,23 @@ assert.equal(
 assert.equal((adminRequest as GuardianSetupAdminRequest).targetAppPath, "/Applications/Vigil.app");
 assert.equal((adminRequest as GuardianSetupAdminRequest).expectedSourceCdHash, sourceCdHash);
 assert.equal((adminRequest as GuardianSetupAdminRequest).expectedTargetCdHash, targetCdHash);
+assert.equal((adminRequest as GuardianSetupAdminRequest).requireNormalUpdateCompatibility, false,
+  "guardian-only migration must not claim that older canonical-parent protocols can authorize an immediate update");
+
+let blockedPreflightAdminCalls = 0;
+await assert.rejects(
+  setupSystemGuardian(request, fakeOperations({
+    preflight: async () => {
+      throw new Error(
+        "Vigil guardian preflight failed: check=guardian.predecessor.topology detail=The v5 guardian path is unsafe."
+      );
+    },
+    runAdministrator: async () => { blockedPreflightAdminCalls += 1; }
+  })),
+  /check=guardian\.predecessor\.topology.*v5 guardian path is unsafe/u,
+  "a deterministic predecessor blocker must be reported exactly before authentication"
+);
+assert.equal(blockedPreflightAdminCalls, 0, "failed preflight must never request an administrator password");
 
 const protocolBootstrapToken = "12345678-1234-4123-8123-123456789abc";
 const protocolBootstrapExpectedUpdateCommit = "c".repeat(40);
@@ -110,7 +134,7 @@ assert.equal(
   "root authorization must pin the exact follow-on update that remains actionable after bridging"
 );
 assert.equal((bridgeAdminRequest as GuardianSetupAdminRequest | null)?.authorizationOnly, false,
-  "the first migration must add a parallel v4 guardian without replacing the running legacy guardian");
+  "the first migration must add the current parallel guardian without replacing any running predecessor");
 
 let absentGuardianAdminRequest: GuardianSetupAdminRequest | null = null;
 await setupSystemGuardian({
@@ -133,7 +157,7 @@ await setupSystemGuardian({
 assert.equal(
   (absentGuardianAdminRequest as GuardianSetupAdminRequest | null)?.expectedCurrentGuardianSha256,
   "absent",
-  "the first parallel-v4 install must pin the expected absence of its new script path"
+  "the first current-protocol install must pin the expected absence of its new script path"
 );
 
 let currentGuardianAdminCalls = 0;
@@ -157,7 +181,7 @@ const currentGuardianResult = await setupSystemGuardian({
   }));
 assert.equal(currentGuardianResult.ok, true);
 assert.equal(currentGuardianAdminCalls, 1,
-  "a current v4 guardian must support reauthorizing an expired or interrupted exact bridge");
+  "a current guardian must support reauthorizing an expired or interrupted exact bridge");
 assert.equal(currentGuardianReadinessReads, 2,
   "authorization-only retry must recheck the still-running parallel guardian");
 assert.equal((currentGuardianAdminRequest as GuardianSetupAdminRequest | null)?.authorizationOnly, true,
@@ -176,7 +200,7 @@ await assert.rejects(
     runAdministrator: async () => { staleGuardianAdminCalls += 1; }
   })),
   /guardian setup required/iu,
-  "the bridge must fail closed if the single privileged transaction does not leave a v3-ready guardian"
+  "the bridge must fail closed if the single privileged transaction does not leave a current ready guardian"
 );
 assert.equal(staleGuardianAdminCalls, 1,
   "a failed readiness recheck must not loop into repeated administrator prompts");
@@ -245,6 +269,7 @@ assert.match(appleScript, /--expected-target-cdhash/u);
 assert.match(appleScript, /--bootstrap-source-app/u);
 assert.match(appleScript, /--bootstrap-token/u);
 assert.match(appleScript, /--bootstrap-expected-update-commit/u);
+assert.match(appleScript, /--require-normal-update-compatibility/u);
 const bootstrapShellLine = appleScript.split("\n")
   .find((line) => line.includes("set shellProgram to shellProgram &"));
 const bootstrapShellFragment = bootstrapShellLine?.match(/& "(.*)"$/u)?.[1]
@@ -261,6 +286,7 @@ const shellArguments = [
   targetCdHash,
   protocolBootstrapToken,
   protocolBootstrapExpectedUpdateCommit,
+  "false",
   "false"
 ];
 const { stdout: expandedBootstrapArguments } = await execFileAsync("/bin/sh", [
@@ -277,8 +303,10 @@ assert.deepEqual(expandedBootstrapArguments.trim().split("\n"), [
   "--bootstrap-expected-update-commit",
   protocolBootstrapExpectedUpdateCommit,
   "--authorization-only",
+  "false",
+  "--require-normal-update-compatibility",
   "false"
-], "the actual /bin/sh positional expansion must preserve the tenth commit argument exactly");
+], "the actual /bin/sh positional expansion must preserve the tenth commit and compatibility policy arguments exactly");
 if (process.platform === "darwin") {
   const compileRoot = await mkdtemp(join(tmpdir(), "vigil-guardian-applescript-"));
   try {
@@ -308,6 +336,56 @@ assert.equal(locallyRebuildableSignaturesMatch(
   signature({ authorities: ["Apple Development: Developer A"], teamIdentifier: "TEAM123" }),
   signature({ authorities: ["Apple Development: Developer B"], teamIdentifier: "TEAM999" })
 ), false, "unrelated Apple Development identities must not cross the root setup boundary");
+const developerIdRequirement = "identifier \"tech.caseline.vigil\" and anchor apple generic and certificate leaf[subject.OU] = TEAM123";
+const developerIdAuthority = "Developer ID Application: CaseLine LLC (TEAM123)";
+assert.equal(locallyRebuildableSignaturesMatch(
+  signature({
+    authorities: [developerIdAuthority, "Developer ID Certification Authority", "Apple Root CA"],
+    designatedRequirement: developerIdRequirement,
+    teamIdentifier: "TEAM123"
+  }),
+  signature({
+    authorities: [developerIdAuthority, "Developer ID Certification Authority", "Apple Root CA"],
+    designatedRequirement: developerIdRequirement,
+    teamIdentifier: "TEAM123"
+  })
+), true, "Developer ID releases with the same exact app trust identity must remain refreshable");
+for (const [label, target] of [
+  ["team", signature({
+    authorities: [developerIdAuthority],
+    designatedRequirement: developerIdRequirement,
+    teamIdentifier: "TEAM999"
+  })],
+  ["leaf authority", signature({
+    authorities: ["Developer ID Application: Impostor LLC (TEAM123)"],
+    designatedRequirement: developerIdRequirement,
+    teamIdentifier: "TEAM123"
+  })],
+  ["designated requirement", signature({
+    authorities: [developerIdAuthority],
+    designatedRequirement: `${developerIdRequirement} and certificate leaf[subject.CN] = \"Changed\"`,
+    teamIdentifier: "TEAM123"
+  })],
+  ["bundle identifier", signature({
+    authorities: [developerIdAuthority],
+    designatedRequirement: developerIdRequirement,
+    identifier: "tech.caseline.vigil.other",
+    teamIdentifier: "TEAM123"
+  })],
+  ["nonempty team", signature({
+    authorities: [developerIdAuthority],
+    designatedRequirement: developerIdRequirement
+  })]
+] as const) {
+  assert.equal(locallyRebuildableSignaturesMatch(
+    signature({
+      authorities: [developerIdAuthority],
+      designatedRequirement: developerIdRequirement,
+      teamIdentifier: "TEAM123"
+    }),
+    target
+  ), false, `Developer ID ${label} mismatches must not cross the root setup boundary`);
+}
 
 assert.equal(protectedAvailabilityIsRunning("state = running\npid = 321\n", "654\n"), true);
 assert.equal(protectedAvailabilityIsRunning("state = waiting\npid = 321\n", "654\n"), false,
@@ -326,6 +404,7 @@ function fakeOperations(overrides: Partial<GuardianSetupOperations> = {}): Guard
     read: async () => guardianBytes,
     verifyMatchingSignedApps: async () => ({ sourceCdHash, targetCdHash }),
     assertProtectedAvailability: async () => undefined,
+    preflight: async () => undefined,
     runAdministrator: async () => undefined,
     ...overrides
   };
@@ -355,11 +434,13 @@ function signature({
   adhoc = false,
   authorities = [],
   designatedRequirement = "",
+  identifier = "tech.caseline.vigil",
   teamIdentifier = ""
 }: {
   adhoc?: boolean;
   authorities?: string[];
   designatedRequirement?: string;
+  identifier?: string;
   teamIdentifier?: string;
 }) {
   return {
@@ -367,7 +448,7 @@ function signature({
     authorities,
     cdHash: sourceCdHash,
     designatedRequirement,
-    identifier: "tech.caseline.vigil",
+    identifier,
     teamIdentifier
   };
 }
