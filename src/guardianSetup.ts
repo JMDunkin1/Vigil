@@ -434,19 +434,38 @@ function validCdHash(value: string): boolean {
 
 async function assertProtectedAvailability(targetAppPath: string, targetUid: number): Promise<void> {
   const executablePath = join(targetAppPath, "Contents", "MacOS", "Vigil");
-  const { stdout: supervisorState } = await execFileAsync(
-    "/bin/launchctl",
-    ["print", `gui/${targetUid}/${SUPERVISOR_LABEL}`],
-    { timeout: 5_000 }
-  ).catch((error) => {
+  const [{ stdout: supervisorState }, { stdout: userDomainState }] = await Promise.all([
+    execFileAsync(
+      "/bin/launchctl",
+      ["print", `gui/${targetUid}/${SUPERVISOR_LABEL}`],
+      { timeout: 5_000, maxBuffer: 4 * 1024 * 1024 }
+    ),
+    execFileAsync(
+      "/bin/launchctl",
+      ["print", `gui/${targetUid}`],
+      { timeout: 5_000, maxBuffer: 4 * 1024 * 1024 }
+    )
+  ]).catch((error) => {
     throw new Error(`Vigil refused guardian setup because its app and restart supervisor are not both online: ${errorMessage(error)}`);
   });
+  const appServiceStates = await Promise.all(
+    protectedAppServiceLabels(userDomainState).map(async (label) => {
+      try {
+        const { stdout } = await execFileAsync(
+          "/bin/launchctl",
+          ["print", `gui/${targetUid}/${label}`],
+          { timeout: 5_000, maxBuffer: 4 * 1024 * 1024 }
+        );
+        return stdout;
+      } catch {
+        return "";
+      }
+    })
+  );
   if (!protectedAvailabilityIsRunning(
     supervisorState,
-    process.execPath,
-    process.getuid?.(),
-    executablePath,
-    targetUid
+    appServiceStates,
+    executablePath
   )) {
     throw new Error("Vigil refused guardian setup because its app and restart supervisor are not both running.");
   }
@@ -454,15 +473,25 @@ async function assertProtectedAvailability(targetAppPath: string, targetUid: num
 
 export function protectedAvailabilityIsRunning(
   supervisorState: string,
-  currentExecutablePath: string,
-  currentUid: number | undefined,
-  expectedExecutablePath: string,
-  expectedUid: number
+  appServiceStates: readonly string[],
+  expectedExecutablePath: string
 ): boolean {
   return /^\s*state = running\s*$/mu.test(supervisorState)
     && /^\s*pid = [1-9]\d*\s*$/mu.test(supervisorState)
-    && currentExecutablePath === expectedExecutablePath
-    && currentUid === expectedUid;
+    && appServiceStates.some((state) =>
+      /^\s*state = running\s*$/mu.test(state)
+      && /^\s*pid = [1-9]\d*\s*$/mu.test(state)
+      && /^\s*bundle id = tech\.caseline\.vigil\s*$/mu.test(state)
+      && new RegExp(`^\\s*program = ${regexEscape(expectedExecutablePath)}\\s*$`, "mu").test(state)
+    );
+}
+
+function protectedAppServiceLabels(userDomainState: string): string[] {
+  return [...new Set(
+    [...userDomainState.matchAll(
+      /^\s*\d+\s+\S+\s+(application\.tech\.caseline\.vigil\.[A-Za-z0-9._-]+)\s*$/gmu
+    )].map((match) => String(match[1] || ""))
+  )];
 }
 
 async function runGuardianInstallerWithAdministratorPrivileges(request: GuardianSetupAdminRequest): Promise<void> {
@@ -567,6 +596,10 @@ function commandErrorText(error: unknown): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "Unknown guardian setup error.");
+}
+
+function regexEscape(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function isErrorCode(error: unknown, code: string): boolean {

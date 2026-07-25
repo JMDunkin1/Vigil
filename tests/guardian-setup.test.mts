@@ -388,45 +388,53 @@ for (const [label, target] of [
 }
 
 const expectedExecutablePath = "/Applications/Vigil.app/Contents/MacOS/Vigil";
+const runningAppService = [
+  "state = running",
+  "bundle id = tech.caseline.vigil",
+  `program = ${expectedExecutablePath}`,
+  "pid = 654"
+].join("\n");
 assert.equal(protectedAvailabilityIsRunning(
   "state = running\npid = 321\n",
-  expectedExecutablePath,
-  501,
-  expectedExecutablePath,
-  501
+  [runningAppService],
+  expectedExecutablePath
 ), true);
 assert.equal(protectedAvailabilityIsRunning(
   "state = waiting\npid = 321\n",
-  expectedExecutablePath,
-  501,
-  expectedExecutablePath,
-  501
+  [runningAppService],
+  expectedExecutablePath
 ), false,
   "a merely loaded supervisor is not sufficient for guardian replacement");
 assert.equal(protectedAvailabilityIsRunning(
   "state = running\n",
-  expectedExecutablePath,
-  501,
-  expectedExecutablePath,
-  501
+  [runningAppService],
+  expectedExecutablePath
 ), false,
   "the supervisor must expose a live process id before guardian replacement");
 assert.equal(protectedAvailabilityIsRunning(
   "state = running\npid = 321\n",
-  "/private/tmp/Vigil.app/Contents/MacOS/Vigil",
-  501,
-  expectedExecutablePath,
-  501
+  [runningAppService.replace(expectedExecutablePath, "/private/tmp/Vigil.app/Contents/MacOS/Vigil")],
+  expectedExecutablePath
 ), false,
-  "the protected app must execute from the canonical installed path before guardian replacement");
+  "the protected launchd app service must execute from the canonical installed path");
 assert.equal(protectedAvailabilityIsRunning(
   "state = running\npid = 321\n",
-  expectedExecutablePath,
-  502,
-  expectedExecutablePath,
-  501
+  [runningAppService.replace("state = running", "state = exited")],
+  expectedExecutablePath
 ), false,
-  "the protected app must execute under the protected account before guardian replacement");
+  "a stopped launchd app service is not sufficient for guardian replacement");
+assert.equal(protectedAvailabilityIsRunning(
+  "state = running\npid = 321\n",
+  [runningAppService.replace("bundle id = tech.caseline.vigil", "bundle id = tech.caseline.impostor")],
+  expectedExecutablePath
+), false,
+  "the launchd app service must retain Vigil's exact bundle identity");
+assert.equal(protectedAvailabilityIsRunning(
+  "state = running\npid = 321\n",
+  [runningAppService.replace("pid = 654", "")],
+  expectedExecutablePath
+), false,
+  "the launchd app service must expose a live process id");
 
 function fakeOperations(overrides: Partial<GuardianSetupOperations> = {}): GuardianSetupOperations {
   let readinessCount = 0;
