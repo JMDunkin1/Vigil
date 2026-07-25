@@ -11,6 +11,25 @@ const { startVigilCompanionServer, startVigilRuntime } = await import("../src/se
 const { createLoopbackRuntimeProxy } = await import("../src/server/inAppTransport.js");
 const port = await unusedPort();
 const runtime = await startVigilRuntime({ port });
+let updateStatusCalls = 0;
+let updateStartCalls = 0;
+const appUpdate = {
+  async status(options: { checkRemote?: boolean } = {}) {
+    updateStatusCalls += 1;
+    return {
+      ok: true,
+      checkOk: true,
+      supported: true,
+      running: false,
+      updateAvailable: true,
+      remoteCheckedAt: options.checkRemote ? new Date().toISOString() : null
+    };
+  },
+  async start() {
+    updateStartCalls += 1;
+    return { ok: true, supported: true, running: true, phase: "starting" };
+  }
+};
 
 try {
   const health = await runtime.request({ path: "/api/health" });
@@ -40,7 +59,7 @@ try {
     "starting the in-app runtime must not open a localhost listener"
   );
 
-  await startVigilCompanionServer({ port });
+  await startVigilCompanionServer({ port, appUpdate });
   const proxy = createLoopbackRuntimeProxy(port);
   const proxiedHealth = await proxy.request({ path: "/api/health" });
   assert.equal(proxiedHealth.status, 200, "Electron must be able to reuse the verified development server without starting another runtime");
@@ -97,6 +116,27 @@ try {
   }
   const companionState = await fetch(`http://127.0.0.1:${port}/api/state`);
   assert.equal(companionState.status, 200, "the companion listener must preserve agent snapshots and iOS profile state reads");
+  const companionUpdateStatus = await fetch(`http://127.0.0.1:${port}/api/app-update/status?check=1`);
+  assert.equal(companionUpdateStatus.status, 200, "the companion listener must expose read-only protected updater status to agents");
+  assert.equal(recordValue(await companionUpdateStatus.json()).updateAvailable, true);
+  assert.equal(updateStatusCalls, 1);
+  const rejectedUpdateStart = await fetch(`http://127.0.0.1:${port}/api/app-update/start`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+  assert.equal(rejectedUpdateStart.status, 403, "agent update starts must retain the local mutation intent guard");
+  assert.equal(updateStartCalls, 0);
+  const companionUpdateStart = await fetch(`http://127.0.0.1:${port}/api/app-update/start`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Vigil-Intent": "vigil-app"
+    },
+    body: "{}"
+  });
+  assert.equal(companionUpdateStart.status, 202, "the companion listener must route agent requests into the protected app updater");
+  assert.equal(updateStartCalls, 1);
   const companionSettings = await fetch(`http://127.0.0.1:${port}/api/settings`, {
     method: "POST",
     headers: {

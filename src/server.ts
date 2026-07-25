@@ -797,6 +797,8 @@ function companionNetworkRouteAllowed(method: string, path: string): boolean {
   if (path === "/api/devices/usage") return method === "POST";
   if (path === "/api/health") return method === "GET";
   if (path === "/api/state") return method === "GET";
+  if (path === "/api/app-update/status") return method === "GET";
+  if (path === "/api/app-update/start") return method === "POST";
   if (path === "/api/account/signup") return method === "POST";
   if (COMPANION_CONFIGURATION_ROUTES.has(path)) return method === "POST";
   if (path === "/api/devices/ios/usb-profile-apply") return method === "POST";

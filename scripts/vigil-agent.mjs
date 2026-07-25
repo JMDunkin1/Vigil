@@ -22,19 +22,24 @@ const resources = Object.freeze({
 
 const contract = Object.freeze({
   name: "Vigil agent configuration interface",
-  version: 1,
+  version: 2,
   baseUrl,
   safety: [
     "All changes use Vigil's local HTTP API.",
     "Protected settings still require an active maintenance window.",
-    "Apply is additive or updating only; deletion is intentionally not exposed."
+    "Apply is additive or updating only; deletion is intentionally not exposed.",
+    "Updates use Vigil's existing authenticated guardian transaction; this interface cannot suspend protection directly.",
+    "The update command waits through the protected restart and verifies the selected build is installed."
   ],
   commands: {
     describe: "npm run agent -- describe",
     snapshot: "npm run agent -- snapshot",
     set: "npm run agent -- set <setting-key> <json-value>",
     applyFile: "npm run agent -- apply ./operations.json",
-    applyStdin: "cat operations.json | npm run agent -- apply -"
+    applyStdin: "cat operations.json | npm run agent -- apply -",
+    updateStatus: "npm run agent -- update-status",
+    updateCheck: "npm run agent -- update-check",
+    update: "npm run agent:update -- [--allow-local] [--timeout-seconds 1200]"
   },
   applyShape: {
     operations: [
@@ -52,6 +57,12 @@ try {
     write(contract);
   } else if (command === "snapshot") {
     write(configurationSnapshot(await request("/api/state")));
+  } else if (command === "update-status") {
+    write(await updateStatus(false));
+  } else if (command === "update-check") {
+    write(await updateStatus(true));
+  } else if (command === "update") {
+    write(await runProtectedUpdate(parseUpdateOptions(args)));
   } else if (command === "set") {
     const [key, rawValue] = args;
     if (!key || rawValue === undefined) fail("Usage: npm run agent -- set <setting-key> <json-value>");
@@ -88,6 +99,9 @@ try {
       "  npm run agent -- snapshot",
       "  npm run agent -- set <setting-key> <json-value>",
       "  npm run agent -- apply <file|->",
+      "  npm run agent -- update-status",
+      "  npm run agent -- update-check",
+      "  npm run agent:update -- [--allow-local] [--timeout-seconds 1200]",
       "",
       "Use describe for the machine-readable contract."
     ].join("\n") + "\n");
@@ -106,6 +120,235 @@ async function mutate(resource, values) {
     },
     body: JSON.stringify(values)
   });
+}
+
+async function runProtectedUpdate(options) {
+  const selected = await updateStatus(true);
+  assertUsableUpdateStatus(selected);
+  if (selected.running === true || selected.recoveryPending === true) {
+    return await waitForProtectedUpdate(selected, options);
+  }
+  if (selected.recoveryBlocked === true) {
+    throw new Error(selected.message || "Vigil cannot update until its protected recovery blocker is resolved.");
+  }
+  if (selected.localChanges === true && !options.allowLocal) {
+    throw new Error(
+      "Vigil selected a local checkout build instead of a standard remote update. Rerun with --allow-local only to install that exact checkout."
+    );
+  }
+  if (selected.updateAvailable !== true) {
+    return {
+      ok: true,
+      updated: false,
+      noUpdate: true,
+      phase: selected.phase || "",
+      message: selected.message || "Vigil is already current.",
+      status: selected
+    };
+  }
+
+  const target = selectedUpdateTarget(selected);
+  let started = await startProtectedUpdate();
+  if (started.setupComplete === true) {
+    const refreshed = await updateStatus(true);
+    assertUsableUpdateStatus(refreshed);
+    if (refreshed.localChanges === true && !options.allowLocal) {
+      throw new Error(
+        "Protected updater setup completed, but Vigil now selected a local checkout build. Rerun with --allow-local only if that checkout should be installed."
+      );
+    }
+    if (refreshed.updateAvailable !== true) {
+      return {
+        ok: true,
+        updated: false,
+        noUpdate: true,
+        setupComplete: true,
+        message: refreshed.message || "Protected updater setup completed; Vigil is already current.",
+        status: refreshed
+      };
+    }
+    started = await startProtectedUpdate();
+  }
+  if (started.ok !== true) {
+    throw new Error(started.error || started.message || "Vigil's protected update could not start.");
+  }
+  return await waitForProtectedUpdate({ ...selected, ...started }, options, target);
+}
+
+async function updateStatus(checkRemote) {
+  return await request(checkRemote ? "/api/app-update/status?check=1" : "/api/app-update/status");
+}
+
+async function startProtectedUpdate() {
+  return await request("/api/app-update/start", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Vigil-Intent": "vigil-app"
+    },
+    body: "{}"
+  });
+}
+
+async function waitForProtectedUpdate(initial, options, selectedTarget = selectedUpdateTarget(initial)) {
+  const deadline = Date.now() + options.timeoutSeconds * 1000;
+  let lastStatus = initial;
+  let observedTransaction = initial.running === true || activeUpdatePhase(initial.phase);
+  let unavailableSince = 0;
+  let lastHealthIssue = "";
+
+  while (Date.now() < deadline) {
+    await delay(options.pollMilliseconds);
+    try {
+      lastStatus = await updateStatus(false);
+      unavailableSince = 0;
+    } catch (error) {
+      if (!unavailableSince) unavailableSince = Date.now();
+      if (Date.now() - unavailableSince > options.maxUnavailableSeconds * 1000) {
+        throw new Error(
+          `Vigil did not return after its protected restart: ${error instanceof Error ? error.message : String(error)}`,
+          { cause: error }
+        );
+      }
+      continue;
+    }
+
+    if (lastStatus.running === true || lastStatus.recoveryPending === true || activeUpdatePhase(lastStatus.phase)) {
+      observedTransaction = true;
+      continue;
+    }
+    if (lastStatus.recoveryBlocked === true || lastStatus.phase === "failed") {
+      throw new Error(lastStatus.message || lastStatus.error || "Vigil's protected update failed.");
+    }
+    if (selectedTarget && installedTargetMatches(lastStatus, selectedTarget)) {
+      const health = await healthyRuntime();
+      if (!health.ok) {
+        lastHealthIssue = health.message;
+        continue;
+      }
+      return {
+        ok: true,
+        updated: true,
+        phase: "complete",
+        message: lastStatus.message || "Vigil updated and returned healthy.",
+        target: selectedTarget,
+        health: health.status,
+        status: lastStatus
+      };
+    }
+    if (observedTransaction && lastStatus.phase === "complete") {
+      const health = await healthyRuntime();
+      if (!health.ok) {
+        lastHealthIssue = health.message;
+        continue;
+      }
+      return {
+        ok: true,
+        updated: true,
+        phase: "complete",
+        message: lastStatus.message || "Vigil updated and returned healthy.",
+        target: selectedTarget,
+        health: health.status,
+        status: lastStatus
+      };
+    }
+  }
+
+  throw new Error(
+    `Vigil's protected update did not reach a verified terminal state within ${options.timeoutSeconds} seconds. `
+    + String(lastHealthIssue || lastStatus.message || "")
+  );
+}
+
+async function healthyRuntime() {
+  try {
+    const status = await request("/api/health");
+    const livenessOk = status?.liveness?.ok === true;
+    const readinessOk = status?.readiness?.ok === true;
+    if (livenessOk && readinessOk) return { ok: true, status };
+    const blockers = Array.isArray(status?.readiness?.blockers)
+      ? status.readiness.blockers.map(String).filter(Boolean).join(", ")
+      : "";
+    return {
+      ok: false,
+      status,
+      message: blockers
+        ? `The updated Vigil runtime is not ready: ${blockers}`
+        : "The updated Vigil runtime has not reported healthy readiness."
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: null,
+      message: `The updated Vigil runtime health check failed: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+}
+
+function selectedUpdateTarget(status) {
+  if (status.localChanges === true) {
+    const commit = cleanIdentifier(status.currentCommit, /^[a-f0-9]{40}$/iu);
+    const fingerprint = cleanIdentifier(status.currentSourceFingerprint, /^[a-f0-9]{64}$/iu);
+    return commit && fingerprint ? { kind: "local", commit, fingerprint } : null;
+  }
+  const commit = cleanIdentifier(status.upstreamCommit, /^[a-f0-9]{40}$/iu);
+  return commit ? { kind: "remote", commit } : null;
+}
+
+function installedTargetMatches(status, target) {
+  if (String(status.appCommit || "") !== target.commit) return false;
+  return target.kind !== "local" || String(status.appSourceFingerprint || "") === target.fingerprint;
+}
+
+function activeUpdatePhase(value) {
+  return ["starting", "building", "staging", "installing", "verifying", "restarting", "recovering", "waiting"].includes(String(value || ""));
+}
+
+function assertUsableUpdateStatus(status) {
+  if (!status || typeof status !== "object" || Array.isArray(status)) {
+    throw new Error("Vigil returned an invalid updater status.");
+  }
+  if (status.ok !== true || status.checkOk === false) {
+    throw new Error(status.error || status.message || status.remoteCheckError || "Vigil could not verify its update source.");
+  }
+  if (status.supported !== true) {
+    throw new Error(status.message || "This Vigil runtime does not support protected app updates.");
+  }
+}
+
+function parseUpdateOptions(args) {
+  let allowLocal = false;
+  let timeoutSeconds = 20 * 60;
+  let pollMilliseconds = 1_000;
+  let maxUnavailableSeconds = 90;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === "--allow-local") {
+      allowLocal = true;
+      continue;
+    }
+    if (["--timeout-seconds", "--poll-milliseconds", "--max-unavailable-seconds"].includes(argument)) {
+      const rawValue = args[++index];
+      if (rawValue === undefined) fail(`Missing value for ${argument}.`);
+      const value = Number(rawValue);
+      if (!Number.isFinite(value) || value <= 0) fail(`${argument} must be a positive number.`);
+      if (argument === "--timeout-seconds") timeoutSeconds = value;
+      if (argument === "--poll-milliseconds") pollMilliseconds = value;
+      if (argument === "--max-unavailable-seconds") maxUnavailableSeconds = value;
+      continue;
+    }
+    fail(`Unknown update option: ${argument}`);
+  }
+  return { allowLocal, timeoutSeconds, pollMilliseconds, maxUnavailableSeconds };
+}
+
+function cleanIdentifier(value, pattern) {
+  const text = String(value || "");
+  return pattern.test(text) ? text : "";
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function validateOperation(operation, index) {
