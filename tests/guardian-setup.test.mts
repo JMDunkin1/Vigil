@@ -387,13 +387,46 @@ for (const [label, target] of [
   ), false, `Developer ID ${label} mismatches must not cross the root setup boundary`);
 }
 
-assert.equal(protectedAvailabilityIsRunning("state = running\npid = 321\n", "654\n"), true);
-assert.equal(protectedAvailabilityIsRunning("state = waiting\npid = 321\n", "654\n"), false,
+const expectedExecutablePath = "/Applications/Vigil.app/Contents/MacOS/Vigil";
+assert.equal(protectedAvailabilityIsRunning(
+  "state = running\npid = 321\n",
+  expectedExecutablePath,
+  501,
+  expectedExecutablePath,
+  501
+), true);
+assert.equal(protectedAvailabilityIsRunning(
+  "state = waiting\npid = 321\n",
+  expectedExecutablePath,
+  501,
+  expectedExecutablePath,
+  501
+), false,
   "a merely loaded supervisor is not sufficient for guardian replacement");
-assert.equal(protectedAvailabilityIsRunning("state = running\n", "654\n"), false,
+assert.equal(protectedAvailabilityIsRunning(
+  "state = running\n",
+  expectedExecutablePath,
+  501,
+  expectedExecutablePath,
+  501
+), false,
   "the supervisor must expose a live process id before guardian replacement");
-assert.equal(protectedAvailabilityIsRunning("state = running\npid = 321\n", ""), false,
-  "the protected app itself must still be running before guardian replacement");
+assert.equal(protectedAvailabilityIsRunning(
+  "state = running\npid = 321\n",
+  "/private/tmp/Vigil.app/Contents/MacOS/Vigil",
+  501,
+  expectedExecutablePath,
+  501
+), false,
+  "the protected app must execute from the canonical installed path before guardian replacement");
+assert.equal(protectedAvailabilityIsRunning(
+  "state = running\npid = 321\n",
+  expectedExecutablePath,
+  502,
+  expectedExecutablePath,
+  501
+), false,
+  "the protected app must execute under the protected account before guardian replacement");
 
 function fakeOperations(overrides: Partial<GuardianSetupOperations> = {}): GuardianSetupOperations {
   let readinessCount = 0;

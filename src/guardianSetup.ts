@@ -434,22 +434,35 @@ function validCdHash(value: string): boolean {
 
 async function assertProtectedAvailability(targetAppPath: string, targetUid: number): Promise<void> {
   const executablePath = join(targetAppPath, "Contents", "MacOS", "Vigil");
-  const processPattern = `^${regexEscape(executablePath)}($| )`;
-  const [{ stdout: supervisorState }, { stdout: appPids }] = await Promise.all([
-    execFileAsync("/bin/launchctl", ["print", `gui/${targetUid}/${SUPERVISOR_LABEL}`], { timeout: 5_000 }),
-    execFileAsync("/usr/bin/pgrep", ["-U", String(targetUid), "-f", processPattern], { timeout: 5_000 })
-  ]).catch((error) => {
+  const { stdout: supervisorState } = await execFileAsync(
+    "/bin/launchctl",
+    ["print", `gui/${targetUid}/${SUPERVISOR_LABEL}`],
+    { timeout: 5_000 }
+  ).catch((error) => {
     throw new Error(`Vigil refused guardian setup because its app and restart supervisor are not both online: ${errorMessage(error)}`);
   });
-  if (!protectedAvailabilityIsRunning(supervisorState, appPids)) {
+  if (!protectedAvailabilityIsRunning(
+    supervisorState,
+    process.execPath,
+    process.getuid?.(),
+    executablePath,
+    targetUid
+  )) {
     throw new Error("Vigil refused guardian setup because its app and restart supervisor are not both running.");
   }
 }
 
-export function protectedAvailabilityIsRunning(supervisorState: string, appPids: string): boolean {
+export function protectedAvailabilityIsRunning(
+  supervisorState: string,
+  currentExecutablePath: string,
+  currentUid: number | undefined,
+  expectedExecutablePath: string,
+  expectedUid: number
+): boolean {
   return /^\s*state = running\s*$/mu.test(supervisorState)
     && /^\s*pid = [1-9]\d*\s*$/mu.test(supervisorState)
-    && appPids.split(/\s+/u).some((pid) => /^[1-9]\d*$/u.test(pid));
+    && currentExecutablePath === expectedExecutablePath
+    && currentUid === expectedUid;
 }
 
 async function runGuardianInstallerWithAdministratorPrivileges(request: GuardianSetupAdminRequest): Promise<void> {
@@ -550,10 +563,6 @@ function commandErrorText(error: unknown): string {
   if (!error || typeof error !== "object") return String(error || "Unknown guardian setup error.");
   const record = error as { message?: unknown; stderr?: unknown; stdout?: unknown };
   return `${String(record.stderr || "")}\n${String(record.stdout || "")}\n${String(record.message || "")}`.trim();
-}
-
-function regexEscape(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 }
 
 function errorMessage(error: unknown): string {
