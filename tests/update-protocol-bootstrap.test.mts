@@ -53,6 +53,11 @@ assert.match(bootstrapSource, /beginMaintenance\(lock\)[\s\S]*?installCandidate[
   "an authenticated maintenance marker must cover candidate installation through finalization");
 assert.match(
   bootstrapSource,
+  /beginGuardianMaintenance\([\s\S]*?authorizationPath: LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH[\s\S]*?allowLegacySparseAuthorization: true/u,
+  "the one-time bridge must accept the predecessor's root-owned sparse grant after all guardian claims bind the worker"
+);
+assert.match(
+  bootstrapSource,
   /assertNoRecoveryTransaction\(userDataDir\)[\s\S]*?beginMaintenance\(lock\)[\s\S]*?verifyMatchingApps\(sourceAppPath, targetAppPath\)/u,
   "the transferred root-attested worker must secure its bounded grant before repeated signed-tree verification can exhaust the claim"
 );
