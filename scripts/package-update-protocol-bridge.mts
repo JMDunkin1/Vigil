@@ -377,6 +377,14 @@ export async function verifyUpdateProtocolBridgeEquivalence(
       readFile(path),
       extendedAttributes(path, false)
     ]);
+    const wrapperText = bytes.toString("utf8");
+    const expectedWrapper = definition.kind === "installer"
+      ? wrapperSource(
+        definition.kind,
+        manifest.payloadTreeSha256,
+        installerWrapperGuardianLabel(wrapperText)
+      )
+      : wrapperSource(definition.kind, manifest.payloadTreeSha256);
     if (!stat.isFile()
       || stat.isSymbolicLink()
       || stat.nlink !== 1
@@ -384,7 +392,7 @@ export async function verifyUpdateProtocolBridgeEquivalence(
       || (stat.mode & 0o7777) !== record.mode
       || JSON.stringify(xattrs) !== JSON.stringify(record.xattrs)
       || sha256(bytes) !== record.sha256
-      || bytes.toString("utf8") !== wrapperSource(definition.kind, manifest.payloadTreeSha256)) {
+      || wrapperText !== expectedWrapper) {
       throw new Error(`Vigil's bridge ${definition.kind} wrapper is not the exact signed v3 loader.`);
     }
     observedWrappers.push(record);
@@ -433,7 +441,11 @@ export function updateProtocolBridgeWrapperSource(
   return wrapperSource(kind, payloadTreeSha256);
 }
 
-function wrapperSource(kind: UpdateProtocolBridgeWrapperKind, payloadTreeSha256: string): string {
+function wrapperSource(
+  kind: UpdateProtocolBridgeWrapperKind,
+  payloadTreeSha256: string,
+  guardianLabel = SYSTEM_GUARDIAN_LABEL
+): string {
   const prefix = `../../../../VigilUpdater/v3/${payloadTreeSha256}/scripts/`;
   if (kind === "updater") {
     return [
@@ -480,10 +492,18 @@ function wrapperSource(kind: UpdateProtocolBridgeWrapperKind, payloadTreeSha256:
     `const { installSystemGuardian } = await import("${prefix}install-system-guardian.mjs");`,
     "await installSystemGuardian();",
     "console.log(process.argv.includes(\"--json\")",
-    `  ? JSON.stringify({ ok: true, label: ${JSON.stringify(SYSTEM_GUARDIAN_LABEL)}, running: true })`,
+    `  ? JSON.stringify({ ok: true, label: ${JSON.stringify(guardianLabel)}, running: true })`,
     "  : \"Installed and started Vigil's v4 system guardian.\");",
     ""
   ].join("\n");
+}
+
+function installerWrapperGuardianLabel(wrapper: string): string {
+  const label = wrapper.match(/\? JSON\.stringify\(\{ ok: true, label: "([^"]+)", running: true \}\)/u)?.[1] || "";
+  if (!/^tech\.caseline\.vigil\.system-guardian\.v[1-9]\d*$/u.test(label)) {
+    throw new Error("Vigil's bridge installer wrapper has an invalid versioned guardian label.");
+  }
+  return label;
 }
 
 async function protectedTree(appPath: string): Promise<TreeEntry[]> {
