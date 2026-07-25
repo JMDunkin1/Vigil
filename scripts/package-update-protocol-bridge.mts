@@ -386,7 +386,11 @@ export async function verifyUpdateProtocolBridgeEquivalence(
       )
       : wrapperSource(definition.kind, manifest.payloadTreeSha256);
     const exactWrapperSources = definition.kind === "updater"
-      ? [expectedWrapper, legacyUpdaterWrapperSource(manifest.payloadTreeSha256)]
+      ? [
+          expectedWrapper,
+          legacyExportingUpdaterWrapperSource(manifest.payloadTreeSha256),
+          legacyUpdaterWrapperSource(manifest.payloadTreeSha256)
+        ]
       : [expectedWrapper];
     if (!stat.isFile()
       || stat.isSymbolicLink()
@@ -417,6 +421,13 @@ export async function verifyUpdateProtocolBridgeEquivalence(
     wrappersSha256: manifest.wrappersSha256,
     baselineBuildInfoSha256: manifest.baselineBuildInfoSha256
   };
+}
+
+function legacyExportingUpdaterWrapperSource(payloadTreeSha256: string): string {
+  return wrapperSource("updater", payloadTreeSha256).replace(
+    "// Vigil signed update-protocol bridge wrapper v1\n",
+    "// Vigil signed update-protocol bridge wrapper v1\nprocess.noAsar = true;\n"
+  );
 }
 
 function legacyUpdaterWrapperSource(payloadTreeSha256: string): string {
