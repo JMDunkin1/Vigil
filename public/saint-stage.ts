@@ -19,6 +19,7 @@ export type SaintAesthetic = "playful" | "serious";
 
 export const SAINT_AESTHETICS: readonly SaintAesthetic[] = ["playful", "serious"] as const;
 export const SAINT_AESTHETIC_STORAGE_KEY = "vigil-saint-aesthetic";
+export const SAINT_DECORATIONS_STORAGE_KEY = "vigil-saint-decorations";
 
 export const SAINT_PATRONS: readonly SaintPatron[] = [
   {
@@ -146,6 +147,14 @@ export function writeSaintAesthetic(storage: Pick<Storage, "setItem">, aesthetic
   storage.setItem(SAINT_AESTHETIC_STORAGE_KEY, aesthetic);
 }
 
+export function readSaintDecorations(storage: Pick<Storage, "getItem">): boolean {
+  return storage.getItem(SAINT_DECORATIONS_STORAGE_KEY) !== "off";
+}
+
+export function writeSaintDecorations(storage: Pick<Storage, "setItem">, visible: boolean): void {
+  storage.setItem(SAINT_DECORATIONS_STORAGE_KEY, visible ? "on" : "off");
+}
+
 export function createSaintStage() {
   const homeStage = required<HTMLElement>("#view-home .home-stage");
   const stage = required<HTMLElement>("#saintStage");
@@ -162,12 +171,15 @@ export function createSaintStage() {
   const infoSource = required<HTMLElement>("#saintInfoSource");
   const aestheticStatus = document.querySelector<HTMLElement>("#saintAestheticStatus");
   const aestheticInputs = [...document.querySelectorAll<HTMLInputElement>('input[name="saintAesthetic"]')];
+  const decorationsInput = document.querySelector<HTMLInputElement>("#saintDecorations");
   let aesthetic = storedSaintAesthetic();
+  let decorationsVisible = storedSaintDecorations();
   let selectedId = coerceStagePortraitId(storedStagePortraitId(), aesthetic);
   let pointerFrame: number | null = null;
 
   function bind(): void {
     setAesthetic(aesthetic, false);
+    setDecorationsVisible(decorationsVisible, false);
     stageButton.addEventListener("click", () => {
       select(nextStagePortraitId(selectedId, aesthetic));
     });
@@ -216,6 +228,9 @@ export function createSaintStage() {
         if (input.checked) setAesthetic(normalizeSaintAesthetic(input.value));
       });
     }
+    decorationsInput?.addEventListener("change", () => {
+      setDecorationsVisible(decorationsInput.checked);
+    });
     if (!motionAllowed()) return;
     homeStage.addEventListener("pointerenter", (event) => {
       if (event.pointerType === "touch") return;
@@ -269,6 +284,13 @@ export function createSaintStage() {
     if (aestheticStatus) aestheticStatus.textContent = `${aesthetic === "serious" ? "Traditional" : "Pixel Art"} active`;
     if (persist) storeSaintAesthetic(aesthetic);
     select(selectedId, persist, keepInfoOpen);
+  }
+
+  function setDecorationsVisible(visible: boolean, persist = true): void {
+    decorationsVisible = visible;
+    document.documentElement.dataset.saintDecorations = visible ? "on" : "off";
+    if (decorationsInput) decorationsInput.checked = visible;
+    if (persist) storeSaintDecorations(visible);
   }
 
   function openInfo(): void {
@@ -342,6 +364,21 @@ function storedSaintAesthetic(): SaintAesthetic {
 function storeSaintAesthetic(aesthetic: SaintAesthetic): void {
   try {
     writeSaintAesthetic(localStorage, aesthetic);
+  } catch {
+  }
+}
+
+function storedSaintDecorations(): boolean {
+  try {
+    return readSaintDecorations(localStorage);
+  } catch {
+    return true;
+  }
+}
+
+function storeSaintDecorations(visible: boolean): void {
+  try {
+    writeSaintDecorations(localStorage, visible);
   } catch {
   }
 }

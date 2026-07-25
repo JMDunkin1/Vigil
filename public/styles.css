@@ -8807,13 +8807,13 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
-.saint-backdrop-settings {
+.saint-decorations-settings {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
-.saint-backdrop-toggle {
+.saint-decorations-toggle {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -8826,23 +8826,23 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   cursor: pointer;
 }
 
-.saint-backdrop-toggle:hover {
+.saint-decorations-toggle:hover {
   background: color-mix(in srgb, var(--surface-strong) 44%, transparent);
 }
 
-.saint-backdrop-toggle strong,
-.saint-backdrop-toggle small {
+.saint-decorations-toggle strong,
+.saint-decorations-toggle small {
   display: block;
 }
 
-.saint-backdrop-toggle small {
+.saint-decorations-toggle small {
   margin-top: 4px;
   color: var(--muted);
   font-weight: 400;
   line-height: 1.35;
 }
 
-.saint-backdrop-toggle input {
+.saint-decorations-toggle input {
   width: 18px;
   height: 18px;
   min-height: 18px;
@@ -8850,7 +8850,17 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   margin: 0;
 }
 
-:root[data-saint-backdrop="off"] #view-home :is(.saint-ambient, .saint-symbol) {
+:root[data-saint-decorations="off"] #view-home :is(.saint-ambient, .saint-symbol) {
+  display: none;
+}
+
+:root[data-saint-decorations="off"] body[data-active-view="home"] {
+  background:
+    radial-gradient(circle at 78% -8%, color-mix(in srgb, var(--gold) 16%, transparent), transparent 32rem),
+    linear-gradient(180deg, var(--paper), var(--paper-2));
+}
+
+:root[data-saint-decorations="off"] body[data-active-view="home"]::after {
   display: none;
 }
 
@@ -9750,13 +9760,13 @@ body[data-active-view="settings"] .settings-detail .list-item button {
   font-family: var(--font-body);
 }
 
-.settings-detail.saint-backdrop-settings {
+.settings-detail.saint-decorations-settings {
   margin-top: 0;
   padding-top: 0;
   border-top: 0;
 }
 
-.settings-detail .saint-backdrop-toggle {
+.settings-detail .saint-decorations-toggle {
   margin: 0;
   border-radius: 12px;
   background: color-mix(in srgb, var(--surface-strong) 42%, transparent);

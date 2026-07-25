@@ -7,13 +7,16 @@ import {
   normalizeSaintAesthetic,
   previousStagePortraitId,
   readSaintAesthetic,
+  readSaintDecorations,
   SAINT_AESTHETICS,
   SAINT_AESTHETIC_STORAGE_KEY,
+  SAINT_DECORATIONS_STORAGE_KEY,
   SAINT_PATRONS,
   saintArtworkPath,
   SERIOUS_STAGE_PORTRAITS,
   stagePortraitsForAesthetic,
-  writeSaintAesthetic
+  writeSaintAesthetic,
+  writeSaintDecorations
 } from "../public/saint-stage.js";
 
 assert.deepEqual(
@@ -76,6 +79,13 @@ assert.equal(readSaintAesthetic(storage), "playful");
 writeSaintAesthetic(storage, "serious");
 assert.equal(preferences.get(SAINT_AESTHETIC_STORAGE_KEY), "serious");
 assert.equal(readSaintAesthetic(storage), "serious");
+assert.equal(readSaintDecorations(storage), true, "portrait decorations must remain visible by default");
+writeSaintDecorations(storage, false);
+assert.equal(preferences.get(SAINT_DECORATIONS_STORAGE_KEY), "off");
+assert.equal(readSaintDecorations(storage), false);
+writeSaintDecorations(storage, true);
+assert.equal(preferences.get(SAINT_DECORATIONS_STORAGE_KEY), "on");
+assert.equal(readSaintDecorations(storage), true);
 
 for (const aesthetic of SAINT_AESTHETICS) {
   for (const portrait of stagePortraitsForAesthetic(aesthetic)) {

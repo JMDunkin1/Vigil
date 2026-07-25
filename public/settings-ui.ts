@@ -85,7 +85,8 @@ const SECTION_TITLES: Record<string, string> = {
   "Journal security": "Journal lock",
   "Protection status": "Protection status",
   "Screen Color": "Grayscale",
-  "Visual style": "Portrait style"
+  "Visual style": "Portrait style",
+  "Portrait decorations": "Portrait decorations"
 };
 
 const SECTION_COPY: Record<string, string> = {
@@ -107,6 +108,7 @@ const SECTION_COPY: Record<string, string> = {
   "Screen Color": "Apply grayscale during soft blocks or on a recurring schedule.",
   "App icon": "Choose the icon used by Vigil and its menu-bar companion.",
   "Visual style": "Choose one consistent portrait and typography treatment.",
+  "Portrait decorations": "Choose whether decorative shapes appear around the sacred portraits.",
   iosForm: "Configure Vigil's managed iPhone filtering and focused-social controls.",
   iosMdmForm: "Configure a self-hosted APNs-backed MDM only when you use that delivery path."
 };

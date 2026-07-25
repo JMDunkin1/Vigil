@@ -149,7 +149,11 @@ assert.match(saintAestheticStageSource, /CHRIST_PANTOCRATOR[\s\S]*id: "christ"/,
 assert.match(saintAestheticStageSource, /SERIOUS_STAGE_PORTRAITS[\s\S]*CHRIST_PANTOCRATOR/, "Christ must belong only to the extended serious portrait set");
 assert.match(saintAestheticStageSource, /function setAesthetic[\s\S]*select\(selectedId, persist, keepInfoOpen\)/, "changing aesthetics must reselect a mode-valid portrait and refresh all stage metadata");
 assert.match(saintAestheticStageSource, /aesthetic === "serious" \? "Traditional" : "Pixel Art"/, "the runtime status must use the user-facing aesthetic names");
-assert.doesNotMatch(saintAestheticStageSource, /saintBackdrop|vigil-saint-backdrop/, "the removed portrait geometry must not retain renderer state");
+assert.match(html, /id="saintDecorations"[^>]*type="checkbox"[^>]*checked/, "portrait decorations must expose an enabled-by-default appearance toggle");
+assert.match(saintAestheticStageSource, /vigil-saint-decorations/, "the portrait decoration choice must persist as a renderer-local preference");
+assert.match(saintAestheticStageSource, /document\.documentElement\.dataset\.saintDecorations = visible \? "on" : "off"/, "the decoration preference must project to a root styling hook");
+assert.match(stylesSource, /:root\[data-saint-decorations="off"\] #view-home :is\(\.saint-ambient, \.saint-symbol\)\s*\{\s*display:\s*none;/, "disabling portrait decorations must hide both geometric and floating layers");
+assert.match(stylesSource, /:root\[data-saint-decorations="off"\] body\[data-active-view="home"\]\s*\{[\s\S]*?linear-gradient\(180deg, var\(--paper\), var\(--paper-2\)\);/, "disabling portrait decorations must remove the Home screen's diagonal geometric grid");
 const seriousTypographyDeclaration = stylesSource.match(/:root\[data-saint-aesthetic="serious"\]\s*\{([^}]*)\}/)?.[1] || "";
 assert.match(seriousTypographyDeclaration, /--font-body: Georgia, "Times New Roman", serif/, "serious mode must replace ordinary body copy typography");
 assert.match(seriousTypographyDeclaration, /--font-display: Georgia, "Times New Roman", serif/, "serious mode must replace formal display typography");
