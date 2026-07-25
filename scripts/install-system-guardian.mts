@@ -18,6 +18,7 @@ import {
 } from "../src/systemGuardian.js";
 import {
   guardianScriptRevision,
+  LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH,
   LEGACY_SYSTEM_GUARDIAN_LABEL,
   LEGACY_SYSTEM_GUARDIAN_PLIST_PATH,
   LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND,
@@ -48,7 +49,7 @@ import {
 const execFileAsync = promisify(execFile);
 const DEFAULT_TARGET_APP_PATH = "/Applications/Vigil.app";
 export const SYSTEM_GUARDIAN_STABILITY_MS = 500;
-export const PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256 = "ee0be79b4c686c1d28e38ed8ca185e941e0dce2b2fe2eefd030625958e20b88d";
+export const PREVIOUS_SYSTEM_GUARDIAN_PROGRAM_SHA256 = "b69e4db8ac6e31145bb34ce075d00d70d086c201dae902053daa0aba12038468";
 export const LEGACY_SYSTEM_GUARDIAN_PROGRAM_SHA256 = "62f041926840824e15c76361d508ac224c3b92ba7312003329c410d83fcc8ea1";
 
 const COMMON_PREDECESSOR_DYNAMIC_ASSIGNMENTS = [
@@ -1082,6 +1083,9 @@ export function predecessorGuardianContentMatches(
   const recoveryAuthorizationPath = isPrevious
     ? PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH
     : LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_PATH;
+  const maintenanceAuthorizationPath = isPrevious
+    ? PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH
+    : LEGACY_SYSTEM_GUARDIAN_AUTHORIZATION_PATH;
   const recoveryAuthorizationKind = isPrevious
     ? PREVIOUS_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND
     : LEGACY_SYSTEM_GUARDIAN_RECOVERY_AUTHORIZATION_KIND;
@@ -1134,7 +1138,7 @@ export function predecessorGuardianContentMatches(
     || !scriptAssignmentMatches(
       script,
       "root_authorization_path",
-      shellSingleQuote(PREVIOUS_SYSTEM_GUARDIAN_AUTHORIZATION_PATH)
+      shellSingleQuote(maintenanceAuthorizationPath)
     )
     || !scriptAssignmentMatches(script, "root_recovery_authorization_path", shellSingleQuote(recoveryAuthorizationPath))
     || !scriptAssignmentMatches(
@@ -1234,7 +1238,7 @@ export function predecessorAvailabilityProgramMatches(script: string): boolean {
     && rootAuthorizationWriterMatches(authorizationWriter)
     && authenticatedMaintenanceProgramMatches(active)
     && /^attest_update_recovery\(\) \{\n\s*global_update_manifest_present \|\| \{ clear_recovery_attestation; return \$\?; \}[\s\S]*?private_target_file "\$global_update_manifest_path" 600 \|\| return 1[\s\S]*?bounded_root_copy "\$global_update_manifest_path" "\$manifest_snapshot" \|\| return 1[\s\S]*?attest_update_recovery_snapshot "\$manifest_snapshot"[\s\S]*?\/bin\/rm -f "\$manifest_snapshot"[\s\S]*?return "\$attestation_status"\n\}\s*$/u.test(attestRecovery)
-    && /^root_recovery_attestation_present\(\) \{\n\s*\[\[ -f "\$root_recovery_authorization_path" && ! -L "\$root_recovery_authorization_path" \]\] \|\| return 1[\s\S]*?stat -f '%u' "\$root_recovery_authorization_path"[\s\S]*?== "0" \]\] \|\| return 1[\s\S]*?stat -f '%Lp' "\$root_recovery_authorization_path"[\s\S]*?== "644" \]\] \|\| return 1[\s\S]*?kind\)" == "vigil-root-update-recovery-authorization-v[234]" \]\] \|\| return 1[\s\S]*?recoveryManifestPath\)" == "\$global_update_manifest_path" \]\] \|\| return 1[\s\S]*?recoveryPolicyPath\)" == "\$global_update_policy_path" \]\] \|\| return 1[\s\S]*?recoveryAppPath\)" == "\$app_path" \]\] \|\| return 1[\s\S]*?appInitialPresent\)" == "true" \]\]\n\}\s*$/u.test(rootRecoveryPresent)
+    && /^root_recovery_attestation_present\(\) \{\n\s*\[\[ -f "\$root_recovery_authorization_path" && ! -L "\$root_recovery_authorization_path" \]\] \|\| return 1[\s\S]*?stat -f '%u' "\$root_recovery_authorization_path"[\s\S]*?== "0" \]\] \|\| return 1[\s\S]*?stat -f '%Lp' "\$root_recovery_authorization_path"[\s\S]*?== "644" \]\] \|\| return 1[\s\S]*?kind\)" == "vigil-root-update-recovery-authorization-v[2345]" \]\] \|\| return 1[\s\S]*?recoveryManifestPath\)" == "\$global_update_manifest_path" \]\] \|\| return 1[\s\S]*?recoveryPolicyPath\)" == "\$global_update_policy_path" \]\] \|\| return 1[\s\S]*?recoveryAppPath\)" == "\$app_path" \]\] \|\| return 1[\s\S]*?appInitialPresent\)" == "true" \]\]\n\}\s*$/u.test(rootRecoveryPresent)
     && /^attested_canonical_app_generation\(\) \{\n\s*root_recovery_attestation_present \|\| return 1[\s\S]*?\[\[ -e "\$app_path" && ! -L "\$app_path" \]\] \|\| return 1[\s\S]*?stat -f '%d' "\$app_path"[\s\S]*?stat -f '%i' "\$app_path"[\s\S]*?for generation in Initial Target; do[\s\S]*?expected_dev[\s\S]*?expected_ino[\s\S]*?observed_dev[\s\S]*?observed_ino[\s\S]*?expected_commit[\s\S]*?expected_fingerprint[\s\S]*?app_content_matches "\$app_path"[\s\S]*?\|\| continue[\s\S]*?return 0[\s\S]*?done\s*return 1\n\}\s*$/u.test(attestedGeneration)
     && availabilityLoopMatches(loop);
 }

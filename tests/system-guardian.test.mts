@@ -635,9 +635,11 @@ assert.match(
   "activation must wait for all current and predecessor recovery attestations as one barrier"
 );
 assert.match(script, /ps -p "\$marker_pid" -o ppid=/u, "root authorization must bind the updater to its live parent");
-assert.match(script, /unique_exact_main_pid\(\)[\s\S]*?pgrep -U "\$target_uid" -f "\$exact_main_process_pattern"[\s\S]*?matching_count" == "1"/u,
-  "normal authorization must require one and only one exact background Vigil main process");
-assert.match(script, /owner_ppid" == "\$main_pid"[\s\S]*?process_identity_matches "\$main_pid"[\s\S]*?"\$exact_main_command"[\s\S]*?unique_exact_main_pid/u,
+assert.match(script, /unique_exact_main_pid\(\)[\s\S]*?pgrep -U "\$target_uid" -f "\$process_pattern"[\s\S]*?candidate_command" == "\$exact_main_command" \|\| "\$candidate_command" == "\$canonical_main_command"[\s\S]*?matching_count" == "1"/u,
+  "normal authorization must require one and only one exact canonical or background Vigil main process");
+assert.match(script, /main_command_for_pid\(\)[\s\S]*?main_command" == "\$exact_main_command" \|\| "\$main_command" == "\$canonical_main_command"/u,
+  "normal authorization must accept the ordinary canonical launch without accepting script-bearing launcher commands");
+assert.match(script, /owner_ppid" == "\$main_pid"[\s\S]*?main_command_for_pid "\$main_pid"[\s\S]*?process_identity_matches "\$main_pid"[\s\S]*?"\$parent_command"[\s\S]*?unique_exact_main_pid/u,
   "normal authorization must bracket the updater's direct parent with exact PID/start/executable/command and uniqueness checks");
 assert.match(script, /normal_updater_script_for_command\(\)[\s\S]*?packaged_updater_script_path[\s\S]*?local_updater_script_path/u,
   "normal authorization must accept only the two fixed signed updater wrapper paths");

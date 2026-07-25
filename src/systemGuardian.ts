@@ -22,9 +22,9 @@ import {
   UPDATE_RECOVERY_POLICY_FILENAME
 } from "./updateTransaction.js";
 
-export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v5";
+export const SYSTEM_GUARDIAN_LABEL = "tech.caseline.vigil.system-guardian.v6";
 export const SYSTEM_GUARDIAN_ROOT = "/Library/Application Support/Vigil/System Guardian";
-export const SYSTEM_GUARDIAN_SCRIPT_PATH = join(SYSTEM_GUARDIAN_ROOT, "vigil-system-guardian-v5-DO-NOT-TERMINATE.sh");
+export const SYSTEM_GUARDIAN_SCRIPT_PATH = join(SYSTEM_GUARDIAN_ROOT, "vigil-system-guardian-v6-DO-NOT-TERMINATE.sh");
 export const SYSTEM_GUARDIAN_PLIST_PATH = `/Library/LaunchDaemons/${SYSTEM_GUARDIAN_LABEL}.plist`;
 export const SYSTEM_GUARDIAN_SAFETY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
 
@@ -42,7 +42,7 @@ export function systemGuardianScript(config: SystemGuardianConfig): string {
   const supervisorLabel = config.userSupervisorLabel || "tech.caseline.vigil.supervisor";
   const executablePattern = `^${regexEscape(executablePath)}($| )`;
   const exactMainCommand = `${executablePath} --vigil-background ${SYSTEM_GUARDIAN_SAFETY_ARG}`;
-  const exactMainProcessPattern = `^${regexEscape(exactMainCommand)}$`;
+  const canonicalMainCommand = executablePath;
   const updateLockPath = config.updateLockPath || defaultUpdaterLockPath(config.targetHome);
   const maintenanceMarkerPath = guardianMaintenanceMarkerPath(updateLockPath);
   const updaterDir = dirname(updateLockPath);
@@ -77,7 +77,7 @@ bootstrap_worker_request_path=${shellSingleQuote(join(updaterDir, UPDATE_PROTOCO
 global_update_manifest_path=${shellSingleQuote(recoveryManifestPath)}
 global_update_policy_path=${shellSingleQuote(recoveryPolicyPath)}
 exact_main_command=${shellSingleQuote(exactMainCommand)}
-exact_main_process_pattern=${shellSingleQuote(exactMainProcessPattern)}
+canonical_main_command=${shellSingleQuote(canonicalMainCommand)}
 packaged_updater_script_path=${shellSingleQuote(join(config.appPath, "Contents", "Resources", "app.asar.unpacked", "dist", "runtime", "scripts", "update-packaged-app.mjs"))}
 local_updater_script_path=${shellSingleQuote(join(config.appPath, "Contents", "Resources", "app.asar.unpacked", "dist", "runtime", "scripts", "launch-local-app.mjs"))}
 user_data_dir=${shellSingleQuote(join(config.targetHome, "Library", "Application Support", "Vigil"))}
@@ -369,8 +369,16 @@ root_recovery_attestation_present() {
 }
 
 unique_exact_main_pid() {
-  local matching_pids=$(/usr/bin/pgrep -U "$target_uid" -f "$exact_main_process_pattern" 2>/dev/null) || return 1
-  local matching_count=$(/usr/bin/printf '%s\n' "$matching_pids" | /usr/bin/awk 'NF { count += 1 } END { print count + 0 }')
+  local candidate_pids=$(/usr/bin/pgrep -U "$target_uid" -f "$process_pattern" 2>/dev/null) || return 1
+  local matching_pids=""
+  local candidate_pid
+  for candidate_pid in \${(f)candidate_pids}; do
+    local candidate_command=$(/bin/ps -ww -p "$candidate_pid" -o command= 2>/dev/null)
+    if [[ "$candidate_command" == "$exact_main_command" || "$candidate_command" == "$canonical_main_command" ]]; then
+      matching_pids+="$candidate_pid"$'\\n'
+    fi
+  done
+  local matching_count=$(/usr/bin/printf '%s' "$matching_pids" | /usr/bin/awk 'NF { count += 1 } END { print count + 0 }')
   [[ "$matching_count" == "1" ]] || return 1
   local main_pid=$(/usr/bin/printf '%s\n' "$matching_pids" | /usr/bin/awk 'NF { print $1; exit }')
   [[ "$main_pid" == <-> ]] || return 1
@@ -379,8 +387,16 @@ unique_exact_main_pid() {
   local main_command=$(/bin/ps -ww -p "$main_pid" -o command= 2>/dev/null)
   [[ "$main_uid" == "$target_uid" ]] || return 1
   [[ "$main_executable" == "$executable_path" ]] || return 1
-  [[ "$main_command" == "$exact_main_command" ]] || return 1
+  [[ "$main_command" == "$exact_main_command" || "$main_command" == "$canonical_main_command" ]] || return 1
   /usr/bin/printf '%s' "$main_pid"
+}
+
+main_command_for_pid() {
+  local main_pid="$1"
+  [[ "$main_pid" == <-> ]] || return 1
+  local main_command=$(/bin/ps -ww -p "$main_pid" -o command= 2>/dev/null)
+  [[ "$main_command" == "$exact_main_command" || "$main_command" == "$canonical_main_command" ]] || return 1
+  /usr/bin/printf '%s' "$main_command"
 }
 
 process_identity_matches() {
@@ -925,13 +941,15 @@ authorize_maintenance_request() {
   fi
 
   # Normal maintenance is authorized only when the updater is a direct child
-  # of the one unique exact background Vigil main process. A second Electron
+  # of the one unique exact Vigil main process. Both the canonical Finder/menu
+  # launch and the guardian's background launch are valid; a second Electron
   # launcher, node-mode relay, or script-bearing parent is never a main process.
   local main_pid=$(unique_exact_main_pid) || return 1
   [[ "$owner_ppid" == "$main_pid" ]] || return 1
   local parent_started="$(/bin/ps -p "$main_pid" -o lstart= 2>/dev/null | /usr/bin/xargs)"
+  local parent_command="$(main_command_for_pid "$main_pid")" || return 1
   [[ -n "$parent_started" ]] || return 1
-  process_identity_matches "$main_pid" "$target_uid" "$(/bin/ps -p "$main_pid" -o ppid= 2>/dev/null | /usr/bin/xargs)" "$executable_path" "$parent_started" "$exact_main_command" || return 1
+  process_identity_matches "$main_pid" "$target_uid" "$(/bin/ps -p "$main_pid" -o ppid= 2>/dev/null | /usr/bin/xargs)" "$executable_path" "$parent_started" "$parent_command" || return 1
   [[ "$(unique_exact_main_pid)" == "$main_pid" ]] || return 1
   local updater_script_path=$(normal_updater_script_for_command "$owner_executable" "$owner_command" "$main_pid" "$marker_token") || return 1
   local signed_script_identity=$(verified_signed_script_hash "$updater_script_path") || return 1
@@ -943,7 +961,7 @@ authorize_maintenance_request() {
   [[ "$legacy_grant_expires" == <-> ]] && (( legacy_grant_expires < normal_grant_expires )) && normal_grant_expires="$legacy_grant_expires"
   write_maintenance_authorization \
     "normal" "$marker_token" "$marker_pid" "$owner_executable" "$owner_started" "$owner_command" \
-    "$main_pid" "$executable_path" "$parent_started" "$exact_main_command" \
+    "$main_pid" "$executable_path" "$parent_started" "$parent_command" \
     "$updater_script_path" "$updater_script_sha" "$updater_app_cdhash" "-" \
     "$normal_grant_expires"
 }
@@ -1044,7 +1062,8 @@ authenticated_maintenance_active() {
   fi
 
   [[ "$authorization_bootstrap_sha" == "-" ]] || return 1
-  [[ "$authorization_parent_executable" == "$executable_path" && "$authorization_parent_command" == "$exact_main_command" ]] || return 1
+  [[ "$authorization_parent_executable" == "$executable_path" ]] || return 1
+  [[ "$authorization_parent_command" == "$exact_main_command" || "$authorization_parent_command" == "$canonical_main_command" ]] || return 1
   [[ "$authorization_script_path" == "$packaged_updater_script_path" || "$authorization_script_path" == "$local_updater_script_path" ]] || return 1
   # The exact main must be the direct parent when the grant is created. Once
   # that authenticated updater asks the app to exit, the root-pinned grant may
@@ -1055,7 +1074,7 @@ authenticated_maintenance_active() {
     [[ "$owner_ppid" == "$authorization_parent_pid" ]] || return 1
     local parent_ppid=$(/bin/ps -p "$authorization_parent_pid" -o ppid= 2>/dev/null | /usr/bin/xargs)
     [[ "$parent_ppid" == <-> ]] || return 1
-    process_identity_matches "$authorization_parent_pid" "$target_uid" "$parent_ppid" "$executable_path" "$authorization_parent_started" "$exact_main_command" || return 1
+    process_identity_matches "$authorization_parent_pid" "$target_uid" "$parent_ppid" "$executable_path" "$authorization_parent_started" "$authorization_parent_command" || return 1
     [[ "$(unique_exact_main_pid)" == "$authorization_parent_pid" ]] || return 1
   fi
   return 0
