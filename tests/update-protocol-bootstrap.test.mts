@@ -51,6 +51,11 @@ assert.match(bootstrapSource, /captureAvailability[\s\S]*?AVAILABILITY_STABILITY
   "the same live app and supervisor identities must survive a bounded post-activation stability window");
 assert.match(bootstrapSource, /beginMaintenance\(lock\)[\s\S]*?installCandidate[\s\S]*?markVerified\(\)[\s\S]*?finalize\(\)[\s\S]*?maintenance\.release/u,
   "an authenticated maintenance marker must cover candidate installation through finalization");
+assert.match(
+  bootstrapSource,
+  /assertNoRecoveryTransaction\(userDataDir\)[\s\S]*?beginMaintenance\(lock\)[\s\S]*?verifyMatchingApps\(sourceAppPath, targetAppPath\)/u,
+  "the transferred root-attested worker must secure its bounded grant before repeated signed-tree verification can exhaust the claim"
+);
 assert.match(guardianSetupSource, /"--lock-path"[\s\S]*?"--lock-token"/u,
   "the signed worker command must expose the exact lock path and token to legacy supervisor authentication");
 assert.match(guardianSetupSource, /transferTo\(workerPid\)/u,
@@ -311,6 +316,7 @@ assert.deepEqual(success, {
 assert.deepEqual(successEvents, [
   "lock",
   "no-recovery",
+  "maintenance-begin",
   "source-directory",
   "target-directory",
   "signed-origin",
@@ -324,7 +330,6 @@ assert.deepEqual(successEvents, [
   "guardian-before",
   "continuation-before",
   "availability-before",
-  "maintenance-begin",
   "install",
   "verify-installed",
   "read-installed-build",
@@ -355,6 +360,13 @@ assert.deepEqual(successEvents, [
 assert.equal(successEvents.filter((event) => event.startsWith("authorization-")).length, 2);
 assert.ok(successEvents.lastIndexOf("authorization-premark") < successEvents.indexOf("mark-verified"),
   "authorization must be checked at the pre-mark boundary and never after durable verification");
+const boundedClaimEvents: string[] = [];
+await bootstrapUpdateProtocol(request, fakeOperations(boundedClaimEvents, { maintenanceClaimEventBudget: 2 }));
+assert.deepEqual(
+  boundedClaimEvents.slice(0, 3),
+  ["lock", "no-recovery", "maintenance-begin"],
+  "a transferred worker must consume its short-lived root claim before any repeated bridge verification"
+);
 assert.match(bootstrapSource, /reconcileAtomicInstallResidue\([\s\S]*?alreadyInstalledCandidate/u,
   "an already-installed exact F retry must reconcile trusted residue without reinstalling F");
 assert.match(bootstrapSource, /quarantinePartial[\s\S]*?partial bootstrap bundle/u,
@@ -583,6 +595,7 @@ interface FakeOptions {
   continuationErrorAtCall?: number;
   guardianErrorAtCall?: number;
   installedUpdaterCapability?: BootstrapUpdaterCapability;
+  maintenanceClaimEventBudget?: number;
   recoveryError?: Error;
   signedOriginError?: Error;
   sourceUpdaterCapability?: BootstrapUpdaterCapability;
@@ -790,6 +803,10 @@ function fakeOperations(
       };
     },
     async beginMaintenance(lock) {
+      if (options.maintenanceClaimEventBudget !== undefined
+        && events.length > options.maintenanceClaimEventBudget) {
+        throw new Error("the short-lived root bootstrap claim expired before maintenance began");
+      }
       events.push("maintenance-begin");
       assert.equal(lock.token, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
       assert.equal(lock.ownerPid, process.pid);

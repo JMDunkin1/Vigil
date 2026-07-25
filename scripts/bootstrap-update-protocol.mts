@@ -206,6 +206,14 @@ export async function bootstrapUpdateProtocol(
   let failure: unknown = null;
   try {
     await operations.assertNoRecoveryTransaction(userDataDir);
+    // The root bootstrap claims are deliberately short-lived and already bind
+    // this exact relay, worker, lock, source app, target app, and follow-on
+    // commit before setup transfers lock ownership. Request the current
+    // guardian's fully bound maintenance grant immediately after transfer,
+    // before repeating the expensive signed-app and bridge-tree verification.
+    // The app remains online, and no candidate bytes can be installed until
+    // every verification below succeeds.
+    maintenance = await operations.beginMaintenance(lock);
     const sourceAppPath = await operations.canonicalDirectory(
       request.sourceAppPath, "bootstrap source app", request.targetUid, false
     );
@@ -254,7 +262,6 @@ export async function bootstrapUpdateProtocol(
     await operations.assertGuardianReady();
     await operations.assertUpdateContinuation(sourceBuild, evidence.expectedUpdateCommit);
     const before = await operations.captureAvailability(targetAppPath, request.targetUid, userDataDir);
-    maintenance = await operations.beginMaintenance(lock);
 
     installation = await operations.installCandidate(
       sourceAppPath,
