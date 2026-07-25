@@ -489,11 +489,23 @@ function wrapperSource(
   return [
     "// Vigil signed update-protocol bridge wrapper v1",
     "process.noAsar = true;",
-    `const { installSystemGuardian } = await import("${prefix}install-system-guardian.mjs");`,
-    "await installSystemGuardian();",
-    "console.log(process.argv.includes(\"--json\")",
-    `  ? JSON.stringify({ ok: true, label: ${JSON.stringify(guardianLabel)}, running: true })`,
-    "  : \"Installed and started Vigil's v4 system guardian.\");",
+    `const guardian = await import("${prefix}install-system-guardian.mjs");`,
+    "if (process.argv.includes(\"--read-only-update-compatibility\")) {",
+    "  await guardian.preflightSystemGuardianUpdateCompatibility();",
+    "  console.log(process.argv.includes(\"--json\")",
+    `    ? JSON.stringify({ ok: true, label: ${JSON.stringify(guardianLabel)}, updateCompatibility: true })`,
+    `    : "Update compatibility passed for ${guardianLabel}.");`,
+    "} else if (process.argv.includes(\"--read-only-preflight\")) {",
+    "  await guardian.preflightSystemGuardian();",
+    "  console.log(process.argv.includes(\"--json\")",
+    `    ? JSON.stringify({ ok: true, label: ${JSON.stringify(guardianLabel)}, preflight: true })`,
+    `    : "Preflight passed for ${guardianLabel}.");`,
+    "} else {",
+    "  await guardian.installSystemGuardian();",
+    "  console.log(process.argv.includes(\"--json\")",
+    `    ? JSON.stringify({ ok: true, label: ${JSON.stringify(guardianLabel)}, running: true })`,
+    "    : \"Installed and started Vigil's v4 system guardian.\");",
+    "}",
     ""
   ].join("\n");
 }

@@ -90,6 +90,16 @@ try {
       `the ${kind} wrapper must be the exact root-pinned v3 loader`
     );
   }
+  const installerWrapper = updateProtocolBridgeWrapperSource("installer", manifest.payloadTreeSha256);
+  assert.match(installerWrapper, /--read-only-preflight/u,
+    "the bridge installer wrapper must preserve non-privileged setup preflight dispatch");
+  assert.match(installerWrapper, /preflightSystemGuardianUpdateCompatibility/u,
+    "the bridge installer wrapper must preserve read-only predecessor compatibility dispatch");
+  assert.ok(
+    installerWrapper.indexOf("preflightSystemGuardian()")
+      < installerWrapper.indexOf("installSystemGuardian()"),
+    "the bridge installer wrapper must dispatch read-only preflight before privileged installation"
+  );
   const verifyFixture = () => verifyUpdateProtocolBridgeEquivalence(
     installedAppPath,
     candidateAppPath,
