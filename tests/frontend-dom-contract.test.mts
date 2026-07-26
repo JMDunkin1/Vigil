@@ -293,6 +293,7 @@ assert.equal(
 assert.doesNotMatch(protectionMarkup, /Scroll to choose|protection-level-scroll-hint/i, "the protection selector must not show a scroll instruction");
 assert.doesNotMatch(styles, /\.protection-level-control:hover:not\(\.is-settling\) \.protection-level-choice/, "hovering must not expand the protection selector");
 assert.match(styles, /\.protection-level-control\.is-open:not\(\.is-settling\) \.protection-level-choice/, "the protection selector must expand only in its explicit open state");
+assert.doesNotMatch(styles, /\.protection-level-control:has\(#protectionLevel:disabled\)[^{]*\{[^}]*cursor:\s*wait/, "applying a protection level must not flash a wait cursor");
 assert.match(styles, /\.protection-level-control:not\(\.is-open\) \.protection-level-choice:hover/, "the visible protection number must glow only when the orb itself is hovered");
 assert.match(styles, /\.protection-level-choice:hover span\s*\{[\s\S]*?text-shadow:/, "hovering a protection number must brighten the number itself");
 assert.doesNotMatch(styles, /:has\(\.protection-level-choice:hover\) \.protection-level-trace/, "highlighting a protection number must not make the connecting line glow");

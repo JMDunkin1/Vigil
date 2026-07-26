@@ -6841,10 +6841,6 @@ h3,
   transform: translateY(2px);
 }
 
-.protection-level-control:has(#protectionLevel:disabled) .protection-level-choice {
-  cursor: wait;
-}
-
 @media (max-width: 520px) {
   .protection-level-control { --protection-level-step: 72px; }
 
