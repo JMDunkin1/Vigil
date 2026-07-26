@@ -61,7 +61,8 @@
     "agent:update": "node scripts/vigil-agent.mjs update",
     "install:agent": "npm run build && node dist/runtime/scripts/install-launch-agent.mjs",
     "uninstall:agent": "npm run build && node dist/runtime/scripts/uninstall-launch-agent.mjs",
-    "install:system-guardian": "npm run build && sudo env PATH=\"$PATH\" node dist/runtime/scripts/install-system-guardian.mjs"
+    "install:system-guardian": "npm run build && sudo env PATH=\"$PATH\" node dist/runtime/scripts/install-system-guardian.mjs",
+    "retire:legacy-guardians": "npm run build && node dist/runtime/scripts/retire-legacy-guardians.mjs"
   },
   "engines": {
     "node": ">=22.6"
