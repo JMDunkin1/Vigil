@@ -318,6 +318,8 @@ assert.match(
 
 const appSource = await readFile("public/app.js", "utf8");
 assert.match(appSource, /!hasRuntimeStatus/, "the idle home screen must hide the redundant Ready and dash status row");
+assert.match(appSource, /persistentLevelSelection[\s\S]*?source === "protection-level"[\s\S]*?!persistentLevelSelection/, "persistent level selections must leave the homepage to the number control alone");
+assert.doesNotMatch(appSource, /Until changed/, "the homepage must not repeat persistent level state beneath the selected number");
 const rankingSource = await readFile("public/ranking-view.js", "utf8");
 assert.match(rankingSource, /Number\(data\.usage\?\.totalSeconds \|\| 0\) > 0/, "focus labels must require recorded usage instead of treating an empty usage object as activity");
 assert.match(rankingSource, /textEl\("strong", duration, \{ className: "ranking-week-duration" \}\),\s*el\("div", \{ className: "ranking-week-bar-stage" \}, bar\)/, "weekly duration labels must stay outside the variable-height bars");

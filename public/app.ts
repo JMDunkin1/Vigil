@@ -551,7 +551,9 @@ function renderHeader(appState: DashboardState, activeBlocks: UnknownRecord[] = 
   const active = appState.activePolicy;
   const session = appState.activeSession;
   const phase = active?.phase || appState.sessionPhase;
-  const hasRuntimeStatus = Boolean(active || session || activeBlocks.length);
+  const persistentLevelSelection = active?.session?.source === "protection-level"
+    || session?.source === "protection-level";
+  const hasRuntimeStatus = Boolean(active || session || activeBlocks.length) && !persistentLevelSelection;
   $("#homeRuntimeStatus").classList.toggle("hidden", active?.kind === "integrity" || !hasRuntimeStatus);
   let orbState = "idle";
   if (active?.kind === "integrity") {
@@ -1134,7 +1136,7 @@ function renderCountdowns(): void {
     return;
   }
   if (active?.session?.source === "protection-level") {
-    $("#sessionCountdown").textContent = "Until changed";
+    $("#sessionCountdown").textContent = "";
     if (appState) renderEmergency(appState);
     return;
   }
