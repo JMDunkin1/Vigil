@@ -789,11 +789,16 @@ function persistedAppPort(): string {
 
 function persistAppDataDir(dataDir: string): void {
   const path = appDataDirPreferencePath();
-  const temporaryPath = `${path}.tmp`;
+  const temporaryPath = `${path}.${process.pid}.tmp`;
   const port = validPortText(process.env.VIGIL_PORT);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(temporaryPath, `${JSON.stringify({ dataDir, ...(port ? { port } : {}) }, null, 2)}\n`, { mode: 0o600 });
-  renameSync(temporaryPath, path);
+  try {
+    writeFileSync(temporaryPath, `${JSON.stringify({ dataDir, ...(port ? { port } : {}) }, null, 2)}\n`, { mode: 0o600 });
+    renameSync(temporaryPath, path);
+  } catch (error) {
+    rmSync(temporaryPath, { force: true });
+    throw error;
+  }
 }
 
 function validPortText(value: unknown): string {

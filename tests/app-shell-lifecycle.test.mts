@@ -145,6 +145,11 @@ assert.ok(
 );
 assert.match(
   mainSource,
+  /const temporaryPath = `\$\{path\}\.\$\{process\.pid\}\.tmp`;[\s\S]*?writeFileSync\(temporaryPath[\s\S]*?renameSync\(temporaryPath, path\);[\s\S]*?rmSync\(temporaryPath, \{ force: true \}\);/,
+  "concurrent supervised launches must use process-private data-location temporary files and clean failed writes"
+);
+assert.match(
+  mainSource,
   /function embeddedRuntimeSupervisorPlist[\s\S]*?<key>KeepAlive<\/key>[\s\S]*?<key>PathState<\/key>[\s\S]*?<true\/>/,
   "the embedded app supervisor must ask launchd to restart Vigil while its supervision marker exists"
 );
