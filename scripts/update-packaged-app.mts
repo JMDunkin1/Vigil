@@ -2065,7 +2065,7 @@ async function run(
     const timeout = optionsForRun.timeoutMs ? setTimeout(() => {
       if (settled) return;
       timedOut = true;
-      log.write(`${command} ${args.join(" ")} timed out after ${optionsForRun.timeoutMs}ms; terminating its process group.\n`);
+      log?.write(`${command} ${args.join(" ")} timed out after ${optionsForRun.timeoutMs}ms; terminating its process group.\n`);
       stopChild(child.pid, "SIGTERM");
       terminationPoll = setInterval(finishTimedOutCommandWhenStopped, COMMAND_TERMINATION_POLL_MS);
       terminationGrace = setTimeout(() => {
@@ -2083,11 +2083,11 @@ async function run(
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       stdout += chunk;
-      log.write(chunk);
+      log?.write(chunk);
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
-      log.write(chunk);
+      log?.write(chunk);
     });
     child.on("error", (error) => {
       if (settled) return;

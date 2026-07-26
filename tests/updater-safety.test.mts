@@ -351,6 +351,14 @@ assert.ok(
   updateScriptSource.indexOf("const defaultInstallOperations") < updateScriptSource.lastIndexOf("if (isDirectRun(import.meta.url)) await runPackagedUpdate()"),
   "the direct updater must start only after its default atomic install operations are initialized"
 );
+assert.doesNotMatch(
+  updateScriptSource.slice(
+    updateScriptSource.indexOf("async function run("),
+    updateScriptSource.indexOf("function npmExecutable()")
+  ),
+  /(?<!\?)log\.write\(/u,
+  "read-only updater helpers imported by the live app must not require the direct updater's log stream"
+);
 assert.match(updaterSource, /localCheckoutBuild \|\| remoteCheckOk !== false/u, "new local changes must remain runnable without a remote fetch");
 assert.match(updaterSource, /if \(updateAvailable\) displayPhase = "available"/u, "current actionable topology must not inherit a historical terminal receipt phase");
 assert.ok(
