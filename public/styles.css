@@ -8846,7 +8846,7 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   margin: 0;
 }
 
-:root[data-saint-decorations="off"] #view-home :is(.saint-ambient, .saint-symbol) {
+:root[data-saint-decorations="off"] #view-home :is(.saint-ambient, .saint-halo, .saint-symbol) {
   display: none;
 }
 

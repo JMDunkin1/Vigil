@@ -152,7 +152,7 @@ assert.match(saintAestheticStageSource, /aesthetic === "serious" \? "Traditional
 assert.match(html, /id="saintDecorations"[^>]*type="checkbox"[^>]*checked/, "portrait decorations must expose an enabled-by-default appearance toggle");
 assert.match(saintAestheticStageSource, /vigil-saint-decorations/, "the portrait decoration choice must persist as a renderer-local preference");
 assert.match(saintAestheticStageSource, /document\.documentElement\.dataset\.saintDecorations = visible \? "on" : "off"/, "the decoration preference must project to a root styling hook");
-assert.match(stylesSource, /:root\[data-saint-decorations="off"\] #view-home :is\(\.saint-ambient, \.saint-symbol\)\s*\{\s*display:\s*none;/, "disabling portrait decorations must hide both geometric and floating layers");
+assert.match(stylesSource, /:root\[data-saint-decorations="off"\] #view-home :is\(\.saint-ambient, \.saint-halo, \.saint-symbol\)\s*\{\s*display:\s*none;/, "disabling portrait decorations must hide the geometric, spoked halo, and floating layers");
 assert.match(stylesSource, /:root\[data-saint-decorations="off"\] body\[data-active-view="home"\]\s*\{[\s\S]*?linear-gradient\(180deg, var\(--paper\), var\(--paper-2\)\);/, "disabling portrait decorations must remove the Home screen's diagonal geometric grid");
 const seriousTypographyDeclaration = stylesSource.match(/:root\[data-saint-aesthetic="serious"\]\s*\{([^}]*)\}/)?.[1] || "";
 assert.match(seriousTypographyDeclaration, /--font-body: Georgia, "Times New Roman", serif/, "serious mode must replace ordinary body copy typography");
