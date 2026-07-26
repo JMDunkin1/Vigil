@@ -1983,7 +1983,11 @@ async function run(
   } = {}
 ): Promise<{ ok: boolean; stdout: string; stderr: string }> {
   if (interrupted && !optionsForRun.ignoreInterruption) throw new Error("Vigil update was interrupted.");
-  const cwd = optionsForRun.cwd || options.repoRoot;
+  // This module is also imported by the live app for read-only installed
+  // topology preflight, before the direct updater CLI has parsed `options`.
+  // Keep those library calls independent of the CLI-only global while
+  // preserving the selected repository root once a packaged update is running.
+  const cwd = optionsForRun.cwd || options?.repoRoot || process.cwd();
   const executable = command === "git" ? await gitExecutable(cwd) : command;
   return await new Promise((resolveRun, rejectRun) => {
     let settled = false;

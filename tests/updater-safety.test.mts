@@ -276,6 +276,11 @@ assert.match(updaterSource, /await gitExecutable\(repoRoot\)/u, "repository veri
 assert.match(updaterSource, /const canonicalPath = await realpath\(path\)/u, "the updater must launch the canonical Node executable rather than a user-path symlink rejected by the root guardian");
 assert.match(updateScriptSource, /command === "git" \? await gitExecutable\(cwd\) : command/u, "the external updater must use the same verified Git binary");
 assert.match(
+  updateScriptSource,
+  /optionsForRun\.cwd \|\| options\?\.repoRoot \|\| process\.cwd\(\)/u,
+  "installed-topology preflight must not read CLI options before direct updater argument parsing"
+);
+assert.match(
   buildHumanIdleSource,
   /resolveDeveloperTools\(\)[\s\S]*?CommandLineTools\/usr\/bin[\s\S]*?XcodeDefault\.xctoolchain[\s\S]*?\/usr\/bin/u,
   "local rebuilds must bypass unusable Apple compiler shims after an Xcode update"
