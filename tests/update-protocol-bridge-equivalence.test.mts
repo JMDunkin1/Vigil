@@ -19,6 +19,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   assembleUpdateProtocolBridgeCandidate,
+  clearMachOCodeSignaturePadding,
   updateProtocolBridgeWrapperSource,
   verifyUpdateProtocolBridgeEquivalence
 } from "../scripts/package-update-protocol-bridge.mjs";
@@ -41,6 +42,18 @@ const appAsarPath = join("Contents", "Resources", "app.asar");
 const launcherPath = join("Contents", "MacOS", "Vigil");
 
 try {
+  const launcherWithResidualSignatureBytes = artificialMachO(32, 0x7a);
+  const normalizedLauncher = clearMachOCodeSignaturePadding(launcherWithResidualSignatureBytes);
+  assert.deepEqual(
+    normalizedLauncher.subarray(0, normalizedLauncher.length - 32),
+    launcherWithResidualSignatureBytes.subarray(0, launcherWithResidualSignatureBytes.length - 32),
+    "signature-residue normalization must not alter authenticated launcher bytes"
+  );
+  assert.ok(
+    normalizedLauncher.subarray(normalizedLauncher.length - 32).every((value) => value === 0),
+    "unused LC_CODE_SIGNATURE bytes must be cleared before bridge verification"
+  );
+
   await createBaselineFixture(installedAppPath);
   await createPayloadFixture(payloadPath);
   await Promise.all([
@@ -415,14 +428,15 @@ async function assertClosedPayloadRejections(): Promise<void> {
   );
 }
 
-function artificialMachO(): Buffer {
+function artificialMachO(signaturePaddingBytes = 0, signaturePaddingValue = 0): Buffer {
   const signatureOffset = 64;
   const codeDirectoryOffset = 28;
   const codeDirectoryLength = 64;
   const cmsOffset = codeDirectoryOffset + codeDirectoryLength;
   const cmsLength = 12;
   const signatureLength = cmsOffset + cmsLength;
-  const bytes = Buffer.alloc(signatureOffset + signatureLength);
+  const allocatedSignatureLength = signatureLength + signaturePaddingBytes;
+  const bytes = Buffer.alloc(signatureOffset + allocatedSignatureLength);
   bytes.writeUInt32BE(0xcffaedfe, 0);
   bytes.writeUInt32LE(0x01000007, 4);
   bytes.writeUInt32LE(3, 8);
@@ -434,7 +448,7 @@ function artificialMachO(): Buffer {
   bytes.writeUInt32LE(0x1d, 32);
   bytes.writeUInt32LE(16, 36);
   bytes.writeUInt32LE(signatureOffset, 40);
-  bytes.writeUInt32LE(signatureLength, 44);
+  bytes.writeUInt32LE(allocatedSignatureLength, 44);
   bytes.fill(0x11, 48, signatureOffset);
 
   bytes.writeUInt32BE(0xfade0cc0, signatureOffset);
@@ -465,5 +479,6 @@ function artificialMachO(): Buffer {
   bytes.writeUInt32BE(0xfade0b01, cms);
   bytes.writeUInt32BE(cmsLength, cms + 4);
   bytes.writeUInt32BE(1, cms + 8);
+  bytes.fill(signaturePaddingValue, signatureOffset + signatureLength);
   return bytes;
 }

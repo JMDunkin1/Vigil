@@ -305,6 +305,12 @@ export async function packageUpdateProtocolBridgeCandidate(options: {
     maxBuffer: 1024 * 1024,
     encoding: "utf8"
   });
+  const launcherPath = join(resolve(options.candidateAppPath), UPDATE_PROTOCOL_BRIDGE_LAUNCHER_RELATIVE_PATH);
+  const signedLauncher = await readFile(launcherPath);
+  const normalizedLauncher = clearMachOCodeSignaturePadding(signedLauncher);
+  if (!signedLauncher.equals(normalizedLauncher)) {
+    await writeFile(launcherPath, normalizedLauncher);
+  }
   await execFileAsync("/usr/bin/codesign", ["--verify", "--deep", "--strict", resolve(options.candidateAppPath)], {
     timeout: 30_000,
     maxBuffer: 1024 * 1024,
@@ -736,6 +742,78 @@ function assertSafeDirectoryNames(names: readonly string[], parent: string): voi
 
 function withoutMachOCodeSignatures(input: Buffer): Buffer {
   return comparableMachO(input, 0, input.length) || input;
+}
+
+/**
+ * codesign may reuse a larger preallocated LC_CODE_SIGNATURE region and leave
+ * the previous CMS bytes after the new SuperBlob's declared length. Those
+ * bytes are outside the signature semantics and are not authenticated by
+ * macOS. Clear only that exact unused region so the bridge neither rejects
+ * normal codesign output nor carries unauthenticated residue forward.
+ */
+export function clearMachOCodeSignaturePadding(input: Buffer): Buffer {
+  const output = Buffer.from(input);
+  let signatureCount = 0;
+  const visit = (base: number, size: number): boolean => {
+    if (size < 4 || base < 0 || base + size > output.length) return false;
+    const magic = output.readUInt32BE(base);
+    if (magic === 0xcafebabe || magic === 0xcafebabf) {
+      const is64 = magic === 0xcafebabf;
+      const count = output.readUInt32BE(base + 4);
+      const width = is64 ? 32 : 20;
+      if (count < 1 || count > 32 || 8 + count * width > size) return false;
+      for (let index = 0; index < count; index += 1) {
+        const entry = base + 8 + index * width;
+        const offset = is64 ? Number(output.readBigUInt64BE(entry + 8)) : output.readUInt32BE(entry + 8);
+        const sliceSize = is64 ? Number(output.readBigUInt64BE(entry + 16)) : output.readUInt32BE(entry + 12);
+        if (!Number.isSafeInteger(offset)
+          || !Number.isSafeInteger(sliceSize)
+          || offset < 0
+          || sliceSize < 1
+          || offset > size
+          || sliceSize > size - offset
+          || !visit(base + offset, sliceSize)) return false;
+      }
+      return true;
+    }
+    const little = magic === 0xcefaedfe || magic === 0xcffaedfe;
+    if (!little && magic !== 0xfeedface && magic !== 0xfeedfacf) return false;
+    const read32 = (offset: number): number =>
+      little ? output.readUInt32LE(offset) : output.readUInt32BE(offset);
+    const is64 = magic === 0xfeedfacf || magic === 0xcffaedfe;
+    const headerSize = is64 ? 32 : 28;
+    if (size < headerSize) return false;
+    const commandCount = read32(base + 16);
+    const commandBytes = read32(base + 20);
+    if (commandCount > 4096 || commandBytes > size - headerSize) return false;
+    let cursor = base + headerSize;
+    let foundSignature = false;
+    for (let index = 0; index < commandCount; index += 1) {
+      if (cursor + 8 > base + size) return false;
+      const command = read32(cursor);
+      const commandSize = read32(cursor + 4);
+      if (commandSize < 8 || cursor + commandSize > base + size) return false;
+      if (command === 0x1d && commandSize >= 16) {
+        if (foundSignature) return false;
+        foundSignature = true;
+        const dataOffset = read32(cursor + 8);
+        const dataSize = read32(cursor + 12);
+        if (dataOffset > size || dataSize > size - dataOffset || dataSize < 12) return false;
+        const signatureOffset = base + dataOffset;
+        if (output.readUInt32BE(signatureOffset) !== 0xfade0cc0) return false;
+        const superBlobLength = output.readUInt32BE(signatureOffset + 4);
+        if (superBlobLength < 12 || superBlobLength > dataSize) return false;
+        output.fill(0, signatureOffset + superBlobLength, signatureOffset + dataSize);
+        signatureCount += 1;
+      }
+      cursor += commandSize;
+    }
+    return cursor === base + headerSize + commandBytes && foundSignature;
+  };
+  if (!visit(0, output.length) || signatureCount < 1) {
+    throw new Error("Vigil refused to normalize an unrecognized signed launcher.");
+  }
+  return output;
 }
 
 function comparableMachO(
