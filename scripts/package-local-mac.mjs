@@ -25,7 +25,10 @@ import {
   localMacShellMarkerMatches,
   readLocalMacShellMarker
 } from "./local-mac-shell.mjs";
-import { isLocallyRebuildableSignature } from "./mac-signing-identity.mjs";
+import {
+  isLocallyRebuildableSignature,
+  resolveMacSigningIdentity
+} from "./mac-signing-identity.mjs";
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const APP_NAME = "Vigil.app";
@@ -50,8 +53,14 @@ if (await isDirectRun(import.meta.url, process.argv[1])) await main();
 async function main() {
   if (process.platform !== "darwin") throw new Error("The fast local Vigil packager is available only on macOS.");
   const options = parseArgs(process.argv.slice(2));
-  const descriptor = await localMacShellDescriptor(projectRoot);
-  const template = await assessFastLocalTemplate(options.templateAppPath, descriptor);
+  const templateSignature = await assessLocalTemplateSignature(options.templateAppPath);
+  const installedSigningIdentity = templateSignature.adhoc ? "-" : templateSignature.authority;
+  if (!installedSigningIdentity) {
+    throw new Error("The installed Vigil app does not expose a reusable signing authority.");
+  }
+  const signingIdentity = await resolveMacSigningIdentity(process.env, installedSigningIdentity);
+  const descriptor = await localMacShellDescriptor(projectRoot, { signingIdentity });
+  const template = await assessFastLocalTemplate(options.templateAppPath, descriptor, templateSignature);
   if (!template.compatible) {
     console.log(`Fast local package unavailable (${template.reason}); using the complete Electron packager.`);
     const fullStartedAt = Date.now();
@@ -59,7 +68,10 @@ async function main() {
       join(projectRoot, "scripts", "package-mac.mjs"),
       "dir",
       `-c.directories.output=${options.outputRoot}`
-    ], projectRoot, PACKAGING_TIMEOUT_MS);
+    ], projectRoot, PACKAGING_TIMEOUT_MS, {
+      ...process.env,
+      VIGIL_MAC_SIGNING_IDENTITY: descriptor.signingIdentity
+    });
     if (code !== 0) {
       process.exitCode = code ?? 1;
       return;
@@ -88,7 +100,15 @@ async function main() {
   );
 }
 
-export async function assessFastLocalTemplate(templateAppPath, expectedDescriptor) {
+export async function assessFastLocalTemplate(templateAppPath, expectedDescriptor, assessedSignature = null) {
+  const signature = assessedSignature || await assessLocalTemplateSignature(templateAppPath);
+  if (templateSigningIdentityDisposition(signature, expectedDescriptor.signingIdentity) === "fallback") {
+    return { compatible: false, reason: "the selected local signing identity changed" };
+  }
+  return await assessFastLocalShell(templateAppPath, expectedDescriptor, signature);
+}
+
+async function assessLocalTemplateSignature(templateAppPath) {
   const appStats = await lstat(templateAppPath);
   if (!appStats.isDirectory() || appStats.isSymbolicLink()) {
     throw new Error("The installed Vigil template is not a safe app directory.");
@@ -98,10 +118,13 @@ export async function assessFastLocalTemplate(templateAppPath, expectedDescripto
   if (signature.identifier !== APP_IDENTIFIER) {
     throw new Error("The installed Vigil template has an unexpected code-signing identifier.");
   }
-  if (templateSigningIdentityDisposition(signature, expectedDescriptor.signingIdentity) === "fallback") {
-    return { compatible: false, reason: "the selected local signing identity changed" };
+  if (!signature.locallyRebuildable) {
+    throw new Error("The installed Vigil template has a distribution signature that cannot be replaced by a local build.");
   }
+  return signature;
+}
 
+async function assessFastLocalShell(templateAppPath, expectedDescriptor, signature) {
   let marker;
   try {
     marker = await readLocalMacShellMarker(templateAppPath);
@@ -472,9 +495,9 @@ function required(values, key) {
   return value;
 }
 
-async function runInherited(command, args, cwd, timeoutMs) {
+async function runInherited(command, args, cwd, timeoutMs, environment = process.env) {
   return await new Promise((resolveRun, rejectRun) => {
-    const child = spawn(command, args, { cwd, env: process.env, stdio: "inherit" });
+    const child = spawn(command, args, { cwd, env: environment, stdio: "inherit" });
     const timeout = setTimeout(() => {
       child.kill("SIGTERM");
       rejectRun(new Error(`${basename(command)} timed out.`));

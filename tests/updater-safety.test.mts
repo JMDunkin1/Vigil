@@ -20,7 +20,10 @@ import {
 } from "../app/updater.js";
 import { localBuildIdentityMatches } from "../scripts/launch-local-app.mjs";
 import { gitExecutable, selectGitExecutable } from "../scripts/git-executable.mjs";
-import { macSigningTimestamp } from "../scripts/mac-signing-identity.mjs";
+import {
+  macSigningTimestamp,
+  selectMacSigningIdentity
+} from "../scripts/mac-signing-identity.mjs";
 import {
   atomicInstallBuiltApp,
   reconcileAtomicInstallResidue,
@@ -50,6 +53,26 @@ const execFile = promisify(execFileCallback);
 assert.equal(macSigningTimestamp("Vigil Local Code Signing"), "none", "local self-signing must not depend on Apple's timestamp service");
 assert.equal(macSigningTimestamp("Apple Development: Example"), "none", "local Apple Development signing must not wait on network timestamping");
 assert.equal(macSigningTimestamp("Developer ID Application: Example"), undefined, "distributable identities must retain normal timestamping");
+const mixedSigningIdentities = [
+  "Vigil Local Code Signing",
+  "Apple Development: Example"
+];
+assert.equal(
+  selectMacSigningIdentity(mixedSigningIdentities, "Vigil Local Code Signing"),
+  "Vigil Local Code Signing",
+  "an installed local identity must remain selected even when Apple Development is also available"
+);
+assert.equal(
+  selectMacSigningIdentity(mixedSigningIdentities, "Apple Development: Example"),
+  "Apple Development: Example",
+  "an installed Apple Development identity must remain selected when the local identity is also available"
+);
+assert.equal(selectMacSigningIdentity(mixedSigningIdentities, "-"), "-", "an ad-hoc installed app must remain ad-hoc");
+assert.throws(
+  () => selectMacSigningIdentity(mixedSigningIdentities, "Vigil Missing Signing Identity"),
+  /installed Vigil app uses Vigil Missing Signing Identity[\s\S]*not available/u,
+  "a missing installed identity must fail instead of rotating the app to another available certificate"
+);
 assert.match(packageMacSource, /-c\.mac\.timestamp=\$\{timestamp\}/u, "local app builds must pass the safe timestamp policy to electron-builder");
 assert.match(updateScriptSource, /join\(repoRoot, "scripts", "package-mac\.mjs"\)/u, "remote and local updates must share the universal signing and packaging policy");
 assert.match(updateScriptSource, /join\(outputPath, "mac-universal", "Vigil\.app"\)/u, "remote updates must install the fresh universal artifact");

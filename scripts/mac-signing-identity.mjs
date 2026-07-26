@@ -4,20 +4,41 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const LOCAL_SIGNING_IDENTITY = "Vigil Local Code Signing";
 
-export async function resolveMacSigningIdentity(env = process.env) {
+export async function resolveMacSigningIdentity(env = process.env, preferredIdentity = "") {
   const configured = env.VIGIL_MAC_SIGNING_IDENTITY?.trim();
-  if (configured) return configured;
+  const preferred = String(preferredIdentity || "").trim();
+  if (configured && preferred && configured !== preferred) {
+    throw new Error(
+      `Vigil refused to replace the installed signing identity ${preferred} with configured identity ${configured}.`
+    );
+  }
   if (process.platform !== "darwin") return "-";
 
   try {
     const { stdout } = await execFileAsync("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"]);
     const identities = [...stdout.matchAll(/^\s*\d+\)\s+[A-F0-9]+\s+"([^"]+)"/gmu)].map((match) => match[1]);
-    return identities.find((identity) => identity.startsWith("Apple Development:"))
-      || identities.find((identity) => identity === LOCAL_SIGNING_IDENTITY)
-      || "-";
-  } catch {
+    if (preferred) return selectMacSigningIdentity(identities, preferred);
+    if (configured) return configured;
+    return selectMacSigningIdentity(identities);
+  } catch (error) {
+    if (preferred) throw error;
+    if (configured) return configured;
     return "-";
   }
+}
+
+export function selectMacSigningIdentity(identities, preferredIdentity = "") {
+  const available = identities.map((identity) => String(identity || "").trim()).filter(Boolean);
+  const preferred = String(preferredIdentity || "").trim();
+  if (preferred) {
+    if (preferred === "-" || available.includes(preferred)) return preferred;
+    throw new Error(
+      `The installed Vigil app uses ${preferred}, but that signing identity is not available in the login keychain.`
+    );
+  }
+  return available.find((identity) => identity.startsWith("Apple Development:"))
+    || available.find((identity) => identity === LOCAL_SIGNING_IDENTITY)
+    || "-";
 }
 
 export function isLocallyRebuildableSignature(detail) {

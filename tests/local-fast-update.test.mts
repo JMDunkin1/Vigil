@@ -75,6 +75,16 @@ assert.match(
   /preparePayloadMachOFiles\(root, candidateAppPath, payloadRoot, descriptor\.signingIdentity\)/u,
   "native helpers must be reused only from the already verified clone, never from the mutable installed path"
 );
+assert.match(
+  packagerSource,
+  /assessLocalTemplateSignature\(options\.templateAppPath\)[\s\S]*?resolveMacSigningIdentity\(process\.env, installedSigningIdentity\)[\s\S]*?localMacShellDescriptor\(projectRoot, \{ signingIdentity \}\)/u,
+  "local packaging must select the exact installed signature before describing or rebuilding its reusable shell"
+);
+assert.match(
+  packagerSource,
+  /runInherited\(process\.execPath[\s\S]*?VIGIL_MAC_SIGNING_IDENTITY: descriptor\.signingIdentity/u,
+  "the complete-packager fallback must inherit the same installed signing identity as the fast path"
+);
 const assessedSignature: SignatureMetadata = {
   adhoc: false,
   authority: "Apple Development: Vigil",
