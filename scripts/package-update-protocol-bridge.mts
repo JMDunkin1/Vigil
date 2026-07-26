@@ -43,7 +43,12 @@ const STANDARD_RUNTIME_ROOT = join("Contents", "Resources", "app.asar.unpacked",
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const PROTOCOL_REVISION = 3;
 
-export type UpdateProtocolBridgeWrapperKind = "updater" | "setup" | "bootstrap" | "installer";
+export type UpdateProtocolBridgeWrapperKind =
+  | "controller"
+  | "updater"
+  | "setup"
+  | "bootstrap"
+  | "installer";
 
 export interface UpdateProtocolBridgeWrapperRecord {
   kind: UpdateProtocolBridgeWrapperKind;
@@ -96,6 +101,12 @@ interface TreeEntry {
 
 const WRAPPERS: readonly WrapperDefinition[] = [
   {
+    kind: "controller",
+    relativePath: join(STANDARD_RUNTIME_ROOT, "app", "updater.js"),
+    payloadModule: "app/updater.js",
+    mayBeAdded: false
+  },
+  {
     kind: "updater",
     relativePath: join(STANDARD_RUNTIME_ROOT, "scripts", "update-packaged-app.mjs"),
     payloadModule: "scripts/update-packaged-app.mjs",
@@ -123,8 +134,10 @@ const WRAPPERS: readonly WrapperDefinition[] = [
 
 /**
  * Clone installed generation A and add only the inert v3 payload, its strict
- * equivalence manifest, and four direct-invocation wrappers. Normal Electron
- * startup continues to load A's unchanged app.asar and build metadata.
+ * equivalence manifest, the direct-invocation wrappers, and one updater
+ * control-plane loader. Normal Electron startup retains A's unchanged
+ * app.asar, enforcement runtime, and build metadata while a subsequent launch
+ * can use the pinned target updater to escape a stale preflight implementation.
  */
 export async function assembleUpdateProtocolBridgeCandidate({
   installedAppPath,
@@ -494,7 +507,15 @@ function wrapperSource(
   payloadTreeSha256: string,
   guardianLabel = SYSTEM_GUARDIAN_LABEL
 ): string {
-  const prefix = `../../../../VigilUpdater/v3/${payloadTreeSha256}/scripts/`;
+  const payloadRoot = `../../../../VigilUpdater/v3/${payloadTreeSha256}/`;
+  const prefix = `${payloadRoot}scripts/`;
+  if (kind === "controller") {
+    return [
+      "// Vigil signed update-control-plane bridge wrapper v1",
+      `export * from "${payloadRoot}app/updater.js";`,
+      ""
+    ].join("\n");
+  }
   if (kind === "updater") {
     return [
       "// Vigil signed update-protocol bridge wrapper v1",

@@ -32,6 +32,7 @@ const payloadPath = join(root, "payload");
 const refreshedPayloadPath = join(root, "refreshed-payload");
 const standardRuntime = join("Contents", "Resources", "app.asar.unpacked", "dist", "runtime");
 const buildInfoPath = join(standardRuntime, "build-info.json");
+const controllerPath = join(standardRuntime, "app", "updater.js");
 const updaterPath = join(standardRuntime, "scripts", "update-packaged-app.mjs");
 const setupPath = join(standardRuntime, "scripts", "setup-system-guardian.mjs");
 const bootstrapPath = join(standardRuntime, "scripts", "bootstrap-update-protocol.mjs");
@@ -73,6 +74,7 @@ try {
   assert.equal(manifest.wrappers.find((record) => record.kind === "setup")?.baselinePresent, false);
   assert.equal(manifest.wrappers.find((record) => record.kind === "bootstrap")?.baselinePresent, false);
   for (const [kind, path] of [
+    ["controller", controllerPath],
     ["updater", updaterPath],
     ["setup", setupPath],
     ["bootstrap", bootstrapPath],
@@ -81,9 +83,9 @@ try {
     const wrapper = updateProtocolBridgeWrapperSource(kind, manifest.payloadTreeSha256);
     const noAsar = wrapper.indexOf("process.noAsar = true;");
     const payloadImport = wrapper.indexOf("await import(");
-    if (kind === "updater") {
+    if (kind === "controller" || kind === "updater") {
       assert.equal(noAsar, -1,
-        "an updater wrapper imported by normal Electron startup must not globally disable ASAR resolution");
+        `a ${kind} wrapper imported by normal Electron startup must not globally disable ASAR resolution`);
     } else {
       assert.ok(
         noAsar >= 0 && noAsar < payloadImport,
@@ -97,7 +99,12 @@ try {
     );
   }
   const installerWrapper = updateProtocolBridgeWrapperSource("installer", manifest.payloadTreeSha256);
+  const controllerModule = await import(
+    `${pathToFileURL(join(candidateAppPath, controllerPath)).href}?bridge-import=1`
+  );
   const updaterModule = await import(`${pathToFileURL(join(candidateAppPath, updaterPath)).href}?bridge-import=1`);
+  assert.equal(typeof controllerModule.createVigilAppUpdateController, "function",
+    "the controller bridge wrapper must expose the payload's complete updater control plane");
   assert.equal(typeof updaterModule.inspectInstalledUpdateTopology, "function",
     "the updater bridge wrapper must preserve the module exports used during normal Electron startup");
   assert.equal(typeof updaterModule.runPackagedUpdate, "function",
@@ -294,6 +301,10 @@ async function createBaselineFixture(appPath: string): Promise<void> {
     writeFile(join(appPath, "Contents", "Info.plist"), "<plist>A identity</plist>\n"),
     writeFile(join(appPath, appAsarPath), "A app archive\n"),
     writeFile(join(appPath, buildInfoPath), `${JSON.stringify(buildInfo)}\n`),
+    writeFile(
+      join(appPath, controllerPath),
+      "export function createVigilAppUpdateController() { return { status: async () => ({ generation: 'A' }) }; }\n"
+    ),
     writeFile(join(appPath, updaterPath), "legacy updater wrapper\n"),
     writeFile(join(appPath, installerPath), "legacy installer wrapper\n"),
     writeFile(join(appPath, standardRuntime, "app", "main.js"), "export const generation = 'A';\n"),
@@ -310,8 +321,15 @@ async function createBaselineFixture(appPath: string): Promise<void> {
 }
 
 async function createPayloadFixture(path: string): Promise<void> {
-  await mkdir(join(path, "scripts"), { recursive: true });
   await Promise.all([
+    mkdir(join(path, "app"), { recursive: true }),
+    mkdir(join(path, "scripts"), { recursive: true })
+  ]);
+  await Promise.all([
+    writeFile(
+      join(path, "app", "updater.js"),
+      "export function createVigilAppUpdateController() { return { status: async () => ({}) }; }\n"
+    ),
     writeFile(join(path, "scripts", "update-packaged-app.mjs"), [
       "export const PACKAGED_UPDATE_RECOVERY_PROTOCOL_REVISION = 3;",
       "export async function inspectInstalledUpdateTopology() { return { ok: true }; }",
