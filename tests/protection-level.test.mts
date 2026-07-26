@@ -110,9 +110,9 @@ assert.equal(await handleSessionApiRoute(request("/api/protection/level", { leve
 assert.equal(allowedLevelTwo.statusCodeValue, 200);
 assert.equal(state.activeSessions.computer?.profileId, SOFT_BLOCK_PROFILE_ID);
 assert.equal(state.activeSessions.phone?.profileId, SOFT_BLOCK_PROFILE_ID);
-assert.equal(state.activeSessions.computer?.canEndEarly, false);
-assert.equal(state.activeSessions.computer?.commitmentLock, true);
-assert.equal(state.activeSessions.computer?.emergencyUnlocksAllowed, false);
+assert.equal(state.activeSessions.computer?.canEndEarly, true);
+assert.equal(state.activeSessions.computer?.commitmentLock, false);
+assert.equal(state.activeSessions.computer?.emergencyUnlocksAllowed, true);
 assert.equal(state.activeSessions.computer?.source, "protection-level");
 assert.ok(new Date(state.activeSessions.computer?.endsAt || 0).getUTCFullYear() >= new Date().getUTCFullYear() + 99);
 assert.equal(queuedReasons.at(-1), "protection-level-2");
@@ -120,17 +120,9 @@ assert.equal(enforcedSessions.at(-1), state.activeSessions.computer?.id);
 assert.deepEqual(effectOrder.slice(-2), [`enforce:${state.activeSessions.computer?.id}`, "mdm:protection-level-2"]);
 
 state.maintenance.windows = [];
-const stickyLevelOne = response();
-assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 1 }), stickyLevelOne, context), true);
-assert.equal(stickyLevelOne.statusCodeValue, 423, "Soft Lock must not be casually reversible");
-
-const releaseRequest = requestMaintenanceWindow(state, "I intentionally want to leave the current Soft Lock.", new Date()).pending;
-assert.ok(releaseRequest);
-confirmMaintenanceWindow(state, releaseRequest.id, { challengeText: releaseRequest.challenge?.text }, new Date());
-
-const allowedLevelOne = response();
-assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 1 }), allowedLevelOne, context), true);
-assert.equal(allowedLevelOne.statusCodeValue, 200);
+const reversibleSoftLockLevelOne = response();
+assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 1 }), reversibleSoftLockLevelOne, context), true);
+assert.equal(reversibleSoftLockLevelOne.statusCodeValue, 200, "Soft Lock must remain directly reversible");
 assert.equal(state.activeSessions.computer, null);
 assert.equal(state.activeSessions.phone, null);
 assert.equal(queuedReasons.at(-1), "protection-level-1");

@@ -1673,10 +1673,19 @@ function migrateSessionProfileSnapshot(session: Session | null, profiles: Profil
   const profileId = session.profileSnapshot?.id || session.profileId;
   const fallback = profiles.find((profile) => profile.id === profileId);
   const profileSnapshot = session.profileSnapshot || fallback;
-  if (!profileSnapshot) return session;
-  if (!session.profileSnapshot && profileId !== SOFT_BLOCK_PROFILE_ID) return session;
+  const migrated = session.source === "protection-level"
+    && (profileId === SOFT_BLOCK_PROFILE_ID || profileId === BRICK_MODE_PROFILE_ID)
+    ? {
+        ...session,
+        canEndEarly: true,
+        commitmentLock: false,
+        emergencyUnlocksAllowed: true
+      }
+    : session;
+  if (!profileSnapshot) return migrated;
+  if (!session.profileSnapshot && profileId !== SOFT_BLOCK_PROFILE_ID) return migrated;
   return {
-    ...session,
+    ...migrated,
     profileSnapshot: sanitizeBuiltinProfile(profileSnapshot)
   };
 }

@@ -296,6 +296,9 @@ assert.match(styles, /\.protection-level-control\.is-open:not\(\.is-settling\) \
 assert.match(styles, /\.protection-level-control:not\(\.is-open\) \.protection-level-choice:hover/, "the visible protection number must glow only when the orb itself is hovered");
 assert.match(styles, /\.protection-level-choice:hover span\s*\{[\s\S]*?text-shadow:/, "hovering a protection number must brighten the number itself");
 assert.doesNotMatch(styles, /:has\(\.protection-level-choice:hover\) \.protection-level-trace/, "highlighting a protection number must not make the connecting line glow");
+const sidebarToggleLayer = Number(styles.match(/\.sidebar-toggle\s*\{[\s\S]*?z-index:\s*(\d+);/)?.[1] || 0);
+const toastLayer = Number(styles.match(/\.toast\s*\{[\s\S]*?z-index:\s*(\d+);/)?.[1] || 0);
+assert.ok(toastLayer > sidebarToggleLayer, "announcements must cover the fixed sidebar toggle instead of allowing it to punch through");
 const appEventsSource = await readFile("public/app-events.js", "utf8");
 assert.match(appEventsSource, /classList\.contains\(["']is-open["']\)/, "clicking the collapsed protection orb must open the selector before changing levels");
 assert.match(appEventsSource, /const releaseProtectionLevelSettle = \(\) => \{\s*protectionLevelControl\.classList\.remove\(["']is-settling["']\);\s*\};/, "the protection selector must always leave its settling state even while the selected dot stays hovered or focused");
