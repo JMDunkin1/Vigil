@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld("vigilAppUpdate", {
     checkRemote: options?.checkRemote === true
   }),
   start: () => ipcRenderer.invoke("vigil:app-update-start"),
+  relaunch: () => ipcRenderer.invoke("vigil:app-relaunch"),
   subscribe: (listener) => {
     if (typeof listener !== "function") return () => {};
     const handleUpdateState = (_event, status) => listener(status);

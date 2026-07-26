@@ -29,7 +29,8 @@ const contract = Object.freeze({
     "Protected settings still require an active maintenance window.",
     "Apply is additive or updating only; deletion is intentionally not exposed.",
     "Updates use Vigil's existing authenticated guardian transaction; this interface cannot suspend protection directly.",
-    "The update command waits through the protected restart and verifies the selected build is installed."
+    "The update command waits through the protected restart and verifies the selected build is installed.",
+    "Relaunch verifies restart supervision first and waits for a new live runtime generation."
   ],
   commands: {
     describe: "npm run agent -- describe",
@@ -39,7 +40,8 @@ const contract = Object.freeze({
     applyStdin: "cat operations.json | npm run agent -- apply -",
     updateStatus: "npm run agent -- update-status",
     updateCheck: "npm run agent -- update-check",
-    update: "npm run agent:update -- [--allow-local] [--timeout-seconds 1200]"
+    update: "npm run agent:update -- [--allow-local] [--timeout-seconds 1200]",
+    relaunch: "npm run agent:relaunch -- [--timeout-seconds 90]"
   },
   applyShape: {
     operations: [
@@ -63,6 +65,8 @@ try {
     write(await updateStatus(true));
   } else if (command === "update") {
     write(await runProtectedUpdate(parseUpdateOptions(args)));
+  } else if (command === "relaunch") {
+    write(await runProtectedRelaunch(parseRelaunchOptions(args)));
   } else if (command === "set") {
     const [key, rawValue] = args;
     if (!key || rawValue === undefined) fail("Usage: npm run agent -- set <setting-key> <json-value>");
@@ -102,6 +106,7 @@ try {
       "  npm run agent -- update-status",
       "  npm run agent -- update-check",
       "  npm run agent:update -- [--allow-local] [--timeout-seconds 1200]",
+      "  npm run agent:relaunch -- [--timeout-seconds 90]",
       "",
       "Use describe for the machine-readable contract."
     ].join("\n") + "\n");
@@ -188,6 +193,56 @@ async function startProtectedUpdate() {
     },
     body: "{}"
   });
+}
+
+async function runProtectedRelaunch(options) {
+  const before = await request("/api/health");
+  const previousStartedAt = String(before?.app?.startedAt || "");
+  if (!previousStartedAt || before?.liveness?.ok !== true) {
+    throw new Error("Vigil could not verify the current runtime generation before relaunch.");
+  }
+  const accepted = await request("/api/app-relaunch", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Vigil-Intent": "vigil-app"
+    },
+    body: "{}"
+  });
+  if (accepted?.ok !== true || accepted?.relaunching !== true) {
+    throw new Error(accepted?.error || accepted?.message || "Vigil did not accept the protected relaunch.");
+  }
+
+  const deadline = Date.now() + options.timeoutSeconds * 1000;
+  let observedUnavailable = false;
+  let lastIssue = "";
+  while (Date.now() < deadline) {
+    await delay(options.pollMilliseconds);
+    try {
+      const health = await request("/api/health");
+      const startedAt = String(health?.app?.startedAt || "");
+      if (health?.liveness?.ok === true && startedAt && startedAt !== previousStartedAt) {
+        return {
+          ok: true,
+          relaunched: true,
+          previousStartedAt,
+          startedAt,
+          observedUnavailable,
+          message: "Vigil relaunched under its restart supervisor and returned alive.",
+          health
+        };
+      }
+      lastIssue = startedAt === previousStartedAt
+        ? "The original Vigil runtime is still responding."
+        : "The replacement Vigil runtime has not reported liveness yet.";
+    } catch (error) {
+      observedUnavailable = true;
+      lastIssue = error instanceof Error ? error.message : String(error);
+    }
+  }
+  throw new Error(
+    `Vigil did not return as a new runtime generation within ${options.timeoutSeconds} seconds. ${lastIssue}`
+  );
 }
 
 async function waitForProtectedUpdate(initial, options, selectedTarget = selectedUpdateTarget(initial)) {
@@ -340,6 +395,25 @@ function parseUpdateOptions(args) {
     fail(`Unknown update option: ${argument}`);
   }
   return { allowLocal, timeoutSeconds, pollMilliseconds, maxUnavailableSeconds };
+}
+
+function parseRelaunchOptions(args) {
+  let timeoutSeconds = 90;
+  let pollMilliseconds = 250;
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (["--timeout-seconds", "--poll-milliseconds"].includes(argument)) {
+      const rawValue = args[++index];
+      if (rawValue === undefined) fail(`Missing value for ${argument}.`);
+      const value = Number(rawValue);
+      if (!Number.isFinite(value) || value <= 0) fail(`${argument} must be a positive number.`);
+      if (argument === "--timeout-seconds") timeoutSeconds = value;
+      if (argument === "--poll-milliseconds") pollMilliseconds = value;
+      continue;
+    }
+    fail(`Unknown relaunch option: ${argument}`);
+  }
+  return { timeoutSeconds, pollMilliseconds };
 }
 
 function cleanIdentifier(value, pattern) {

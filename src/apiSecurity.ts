@@ -22,7 +22,7 @@ const DEVICE_SYNC_API_PATHS = new Set([
 
 type HeaderBag = IncomingHttpHeaders | Headers | UnknownRecord | null | undefined;
 
-interface GuardResult {
+export interface GuardResult {
   ok: boolean;
   status?: number;
   error?: string;
@@ -35,7 +35,7 @@ export interface RequestTransportContext {
   trustedLoopback?: boolean;
 }
 
-interface GuardInput extends RequestTransportContext {
+export interface GuardInput extends RequestTransportContext {
   method?: string;
   path?: string;
   headers?: HeaderBag;
@@ -71,6 +71,15 @@ export function apiRequestGuard({ method = "GET", path = "", headers = {}, remot
   if (hostedAccountsEnabled()) return hostedMutationGuard({ method: normalizedMethod, headers });
 
   return localMutationGuard({ method: normalizedMethod, headers, remoteAddress, trustedLoopback });
+}
+
+export function localControlRequestGuard({
+  method = "POST",
+  headers = {},
+  remoteAddress = null,
+  trustedLoopback = false
+}: GuardInput): GuardResult {
+  return localMutationGuard({ method, headers, remoteAddress, trustedLoopback });
 }
 
 function hostedMutationGuard({ method = "GET", headers = {} }: GuardInput): GuardResult {

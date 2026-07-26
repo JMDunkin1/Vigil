@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { accountStatusFromGroups, parseGroups } from "../src/account.js";
-import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, EXTENSION_ID_HEADER, EXTENSION_TOKEN_HEADER, extensionCorsHeaders, extensionRequestGuard, extensionTrustSummary, isLoopbackHostHeader, isLoopbackRemoteAddress, isTrustedExtensionRequest, publicHostGuard } from "../src/apiSecurity.js";
+import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, EXTENSION_ID_HEADER, EXTENSION_TOKEN_HEADER, extensionCorsHeaders, extensionRequestGuard, extensionTrustSummary, isLoopbackHostHeader, isLoopbackRemoteAddress, isTrustedExtensionRequest, localControlRequestGuard, publicHostGuard } from "../src/apiSecurity.js";
 import { parseBoolean } from "../src/booleans.js";
 import { BUILT_IN_CHROME_EXTENSION_ID } from "../src/defaults.js";
 import { iosMdmReadiness, normalizeIosMdmSettings } from "../src/iosMdm.js";
@@ -91,6 +91,24 @@ assert.equal(apiRequestGuard({
     [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE
   }
 }).ok, true);
+assert.equal(localControlRequestGuard({
+  method: "POST",
+  remoteAddress: "127.0.0.1",
+  headers: {
+    host: "127.0.0.1:8787",
+    "content-type": "application/json",
+    [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE
+  }
+}).ok, true, "agent relaunch must accept only an exact local control request");
+assert.equal(localControlRequestGuard({
+  method: "POST",
+  remoteAddress: "203.0.113.20",
+  headers: {
+    host: "vigil.example.test",
+    "content-type": "application/json",
+    [CONTROL_INTENT_HEADER]: CONTROL_INTENT_VALUE
+  }
+}).ok, false, "agent relaunch must remain unavailable through a hosted or forwarded control surface");
 assert.equal(apiRequestGuard({
   method: "POST",
   path: "/api/settings",

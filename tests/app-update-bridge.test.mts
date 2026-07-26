@@ -11,6 +11,7 @@ import { atomicInstallBuiltApp } from "../scripts/update-packaged-app.mjs";
 interface Bridge {
   status(options?: { checkRemote?: boolean; instanceSecret?: string }): Promise<unknown>;
   start(): Promise<unknown>;
+  relaunch(): Promise<unknown>;
   subscribe?(listener: (status: unknown) => void): () => void;
   subscribeDetails?(listener: () => void): () => void;
 }
@@ -87,11 +88,14 @@ const preloadBridge = exposed.get("vigilAppUpdate") as Bridge | undefined;
 assert.ok(preloadBridge, "preload should expose the app update bridge");
 await preloadBridge.status({ checkRemote: true, instanceSecret: "must-not-cross-the-bridge" });
 await preloadBridge.start();
+await preloadBridge.relaunch();
 assert.equal(invocations[0]?.channel, "vigil:app-update-status");
 assert.deepEqual(Object.keys(invocations[0]?.args[0] as object), ["checkRemote"]);
 assert.equal((invocations[0]?.args[0] as { checkRemote?: unknown }).checkRemote, true);
 assert.equal(invocations[1]?.channel, "vigil:app-update-start");
 assert.equal(invocations[1]?.args.length, 0);
+assert.equal(invocations[2]?.channel, "vigil:app-relaunch");
+assert.equal(invocations[2]?.args.length, 0);
 let publishedBridgeStatus: unknown = null;
 const unsubscribeFromUpdateState = preloadBridge.subscribe?.((status) => {
   publishedBridgeStatus = status;
@@ -115,9 +119,9 @@ const appearanceBridge = exposed.get("vigilAppearance") as AppearanceBridge | un
 assert.ok(appearanceBridge, "preload should expose the icon appearance bridge");
 await appearanceBridge.getIconTheme();
 await appearanceBridge.setIconTheme("sacred-heart");
-assert.equal(invocations[2]?.channel, "vigil:icon-theme-get");
-assert.equal(invocations[3]?.channel, "vigil:icon-theme-set");
-assert.deepEqual(invocations[3]?.args, ["sacred-heart"]);
+assert.equal(invocations[3]?.channel, "vigil:icon-theme-get");
+assert.equal(invocations[4]?.channel, "vigil:icon-theme-set");
+assert.deepEqual(invocations[4]?.args, ["sacred-heart"]);
 const apiBridge = exposed.get("vigilApi") as ApiBridge | undefined;
 assert.ok(apiBridge, "preload should expose the private API bridge");
 await apiBridge.request("/api/state", {
@@ -125,8 +129,8 @@ await apiBridge.request("/api/state", {
   headers: { "Content-Type": "application/json" },
   body: "{}"
 });
-assert.equal(invocations[4]?.channel, "vigil:api-request");
-assert.equal(JSON.stringify(invocations[4]?.args), JSON.stringify([{
+assert.equal(invocations[5]?.channel, "vigil:api-request");
+assert.equal(JSON.stringify(invocations[5]?.args), JSON.stringify([{
   path: "/api/state",
   method: "POST",
   headers: { "Content-Type": "application/json" },
@@ -135,8 +139,8 @@ assert.equal(JSON.stringify(invocations[4]?.args), JSON.stringify([{
 const setupBridge = exposed.get("vigilSetup") as SetupBridge | undefined;
 assert.ok(setupBridge, "preload should expose the restricted setup bridge");
 await setupBridge.open("accessibility");
-assert.equal(invocations[5]?.channel, "vigil:setup-open");
-assert.deepEqual(invocations[5]?.args, ["accessibility"]);
+assert.equal(invocations[6]?.channel, "vigil:setup-open");
+assert.deepEqual(invocations[6]?.args, ["accessibility"]);
 assert.match(mainSource, /ipcMain\.handle\("vigil:api-request", handlePrivateApiRequest\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:setup-open", handleSetupOpen\)/u);
 assert.match(mainSource, /destination === "accessibility"[\s\S]*?isTrustedAccessibilityClient\(true\)[\s\S]*?Privacy_Accessibility/u);
@@ -159,6 +163,12 @@ assert.match(
 );
 assert.match(mainSource, /ipcMain\.handle\("vigil:app-update-status", handleAppUpdateStatus\)/u);
 assert.match(mainSource, /ipcMain\.handle\("vigil:app-update-start", handleAppUpdateStart\)/u);
+assert.match(mainSource, /ipcMain\.handle\("vigil:app-relaunch", handleAppRelaunch\)/u);
+assert.match(
+  mainSource,
+  /async function scheduleProtectedAppRelaunch[\s\S]*?assertEmbeddedRuntimeSupervisorArmedForUpdate\(\)[\s\S]*?quitForUpdate = true;[\s\S]*?app\.quit\(\)/u,
+  "manual relaunch must use the same verified restart-supervision boundary as an app update"
+);
 assert.match(mainSource, /handleAppUpdateStart[\s\S]*?return await startAppUpdate\(appUrl\)/u, "renderer starts must use the native app-wide coordinator");
 assert.match(mainSource, /handleAppUpdateStatus[\s\S]*?checkAppUpdate\(appUrl\)[\s\S]*?refreshRunningAppUpdate\(appUrl\)/u, "renderer status reads must use the native app-wide coordinator");
 assert.match(
@@ -228,14 +238,17 @@ try {
 const originalWindow = globalThis.window;
 const controls = new Map<string, ControlElement>();
 let buttonClick: (() => void) | null = null;
+let relaunchButtonClick: (() => void) | null = null;
 let getCalls = 0;
 let postCalls = 0;
 let statusCalls = 0;
 let startCalls = 0;
+let relaunchCalls = 0;
 const updateToasts: string[] = [];
 let checkedRemote: boolean | undefined;
 let nextRendererStatus: Promise<UnknownRecord> | null = null;
 let nextRendererStartResult: Promise<UnknownRecord> | null = null;
+let nextRendererRelaunchResult: Promise<UnknownRecord> | null = null;
 let rendererStateListener: ((status: unknown) => void) | null = null;
 let rendererStatus: UnknownRecord = {
   ok: true,
@@ -272,6 +285,15 @@ const rendererBridge = {
     }
     return rendererStartResult;
   },
+  async relaunch() {
+    relaunchCalls += 1;
+    if (nextRendererRelaunchResult) {
+      const result = nextRendererRelaunchResult;
+      nextRendererRelaunchResult = null;
+      return await result;
+    }
+    return { ok: true, relaunching: true, message: "Vigil is relaunching." };
+  },
   subscribe(listener: (status: unknown) => void) {
     rendererStateListener = listener;
     return () => {
@@ -288,15 +310,24 @@ Object.defineProperty(globalThis, "window", {
 try {
   for (const id of [
     "checkAppUpdate",
+    "relaunchVigil",
     "appUpdateStatus",
     "appUpdateMeta",
     "appUpdatePanel",
     "appUpdateHelp",
     "appUpdateProgress"
   ]) {
-    controls.set(`#${id}`, fakeControl(id === "checkAppUpdate" ? (listener) => {
-      buttonClick = listener;
-    } : undefined));
+    controls.set(`#${id}`, fakeControl(
+      id === "checkAppUpdate"
+        ? (listener) => {
+            buttonClick = listener;
+          }
+        : id === "relaunchVigil"
+          ? (listener) => {
+              relaunchButtonClick = listener;
+            }
+          : undefined
+    ));
   }
   const panel = createAppUpdatePanel({
     $: (selector) => {
@@ -627,6 +658,29 @@ try {
     "The preserved recovery evidence needs manual attention.",
     "a structured start rejection must retain exact recovery guidance instead of becoming a retryable generic error"
   );
+
+  rendererStatus = {
+    ok: true,
+    supported: true,
+    running: false,
+    recoveryPending: false,
+    recoveryBlocked: false,
+    updateAvailable: true,
+    message: "Installed app is behind this checkout"
+  };
+  await panel.refreshStatus(false);
+  const relaunchResult = deferred<UnknownRecord>();
+  nextRendererRelaunchResult = relaunchResult.promise;
+  const relaunchClick = relaunchButtonClick as (() => void) | null;
+  assert.ok(relaunchClick);
+  relaunchClick();
+  relaunchClick();
+  assert.equal(relaunchCalls, 1, "repeat clicks must not schedule duplicate protected relaunches");
+  assert.equal(controls.get("#relaunchVigil")?.textContent, "Relaunching Vigil…");
+  assert.equal(controls.get("#relaunchVigil")?.disabled, true);
+  relaunchResult.resolve({ ok: true, relaunching: true, message: "Vigil is relaunching under its restart supervisor." });
+  await new Promise<void>((resolveWait) => setTimeout(resolveWait, 0));
+  assert.equal(updateToasts.at(-1), "Vigil is relaunching under its restart supervisor.");
   panel.dispose();
   assert.equal(rendererStateListener, null, "disposing the panel must unsubscribe from coordinator state");
 } finally {

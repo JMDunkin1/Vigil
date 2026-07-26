@@ -16,6 +16,7 @@ interface AppUpdatePanelContext {
 interface VigilAppUpdateBridge {
   status(options?: { checkRemote?: boolean }): Promise<unknown>;
   start(): Promise<unknown>;
+  relaunch(): Promise<unknown>;
   subscribe?(listener: (status: unknown) => void): () => void;
 }
 
@@ -26,6 +27,7 @@ interface VigilAppUpdateWindow extends Window {
 export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppUpdatePanelContext) {
   let cached: UnknownRecord | null = null;
   let requestInFlight = false;
+  let relaunchInFlight = false;
   let visibleOperation: "checking" | "starting" | "setting-up" | null = null;
   let runningRefreshTimer: ReturnType<typeof setTimeout> | null = null;
   let requestVersion = 0;
@@ -51,6 +53,13 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
         }
         void refreshStatus(true);
       });
+      $("#relaunchVigil").addEventListener("click", () => {
+        if (requestInFlight || relaunchInFlight) return;
+        if (cached?.running === true
+          || cached?.recoveryPending === true
+          || cached?.recoveryBlocked === true) return;
+        void relaunchVigil();
+      });
     },
     refreshStatus,
     render() {
@@ -62,6 +71,7 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
   function dispose(): void {
     requestVersion += 1;
     requestInFlight = false;
+    relaunchInFlight = false;
     visibleOperation = null;
     unsubscribeFromState?.();
     unsubscribeFromState = null;
@@ -124,6 +134,26 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     }
   }
 
+  async function relaunchVigil(): Promise<void> {
+    const submittedVersion = ++requestVersion;
+    relaunchInFlight = true;
+    renderStatus(cached);
+    try {
+      const status = await requestRelaunch();
+      if (submittedVersion !== requestVersion) return;
+      cached = { ...(cached || {}), ...status };
+      toast(String(status.message || "Vigil is relaunching."));
+      renderStatus(cached);
+    } catch (error) {
+      if (submittedVersion !== requestVersion) return;
+      relaunchInFlight = false;
+      const message = errorMessage(error);
+      cached = failedStatus(message, cached, true);
+      toast(message);
+      renderStatus(cached);
+    }
+  }
+
   function acceptPublishedStatus(value: unknown): void {
     let status: UnknownRecord;
     try {
@@ -176,18 +206,34 @@ export function createAppUpdatePanel({ $, get, post, toast, errorMessage }: AppU
     return successfulResult(result, "Update could not start.");
   }
 
+  async function requestRelaunch(): Promise<UnknownRecord> {
+    const bridge = appUpdateBridge();
+    const result = bridge
+      ? await bridge.relaunch()
+      : await post<UnknownRecord>("/api/app-relaunch", {});
+    return successfulResult(result, "Vigil could not relaunch.");
+  }
+
   function renderStatus(status: UnknownRecord | null): void {
     const panel = $("#appUpdatePanel");
     const button = $("#checkAppUpdate");
+    const relaunchButton = $("#relaunchVigil");
     const progress = $("#appUpdateProgress");
     const view = currentView(status);
-    panel.setAttribute("aria-busy", String(view.busy));
+    panel.setAttribute("aria-busy", String(view.busy || relaunchInFlight));
     $("#appUpdateStatus").textContent = view.statusMessage;
     $("#appUpdateHelp").textContent = view.helpMessage;
     progress.hidden = !view.showProgress;
     progress.setAttribute("aria-hidden", String(!view.showProgress));
     if (view.progressLabel) progress.setAttribute("aria-valuetext", view.progressLabel);
     else progress.removeAttribute("aria-valuetext");
+    relaunchButton.textContent = relaunchInFlight ? "Relaunching Vigil…" : "Relaunch Vigil";
+    relaunchButton.disabled = relaunchInFlight
+      || requestInFlight
+      || view.busy
+      || status?.running === true
+      || status?.recoveryPending === true
+      || status?.recoveryBlocked === true;
     if (!status) {
       $("#appUpdateMeta").textContent = "--";
       button.textContent = view.actionLabel;

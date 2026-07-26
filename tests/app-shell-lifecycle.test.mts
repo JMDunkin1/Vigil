@@ -117,6 +117,16 @@ assert.match(
 );
 assert.match(
   mainSource,
+  /relaunchApp: async \(\) => \{\s*await scheduleProtectedAppRelaunch\(\);\s*\}/,
+  "the update controller must expose the supervisor-verified relaunch capability to trusted UI and agent surfaces"
+);
+assert.match(
+  mainSource,
+  /async function scheduleProtectedAppRelaunch\(\): Promise<void> \{[\s\S]*?await assertEmbeddedRuntimeSupervisorArmedForUpdate\(\);[\s\S]*?if \(!app\.isPackaged\) app\.relaunch\(\);[\s\S]*?quitForUpdate = true;[\s\S]*?app\.quit\(\);/,
+  "an installed-app relaunch must rely on the armed supervisor while development relaunch remains explicitly Electron-managed"
+);
+assert.match(
+  mainSource,
   /async function assertEmbeddedRuntimeSupervisorArmedForUpdate\(\): Promise<void> \{[\s\S]*?lstatSync\(markerPath\)[\s\S]*?marker\.isSymbolicLink\(\)[\s\S]*?readFileSync\(markerPath, "utf8"\) !== "enabled\\n"[\s\S]*?waitForLaunchctlServiceRunning\(uid, EMBEDDED_SUPERVISOR_LABEL\)/,
   "the update quit path must verify the private recovery marker and a stably running supervisor"
 );
@@ -127,7 +137,7 @@ assert.match(
 );
 assert.match(
   beforeQuitSource,
-  /catch \(error\) \{\s*if \(quitForUpdate\) \{\s*resumeEmbeddedRuntimeSupervisor\(\);\s*if \(runtimeStopped\) \{[\s\S]*?app\.exit\(1\);\s*return;\s*\}\s*quitForUpdate = false;\s*\}/,
+  /catch \(error\) \{\s*if \(quitForUpdate\) \{\s*resumeEmbeddedRuntimeSupervisor\(\);\s*if \(runtimeStopped\) \{[\s\S]*?app\.exit\(1\);\s*return;\s*\}\s*quitForUpdate = false;\s*appRelaunchScheduled = false;\s*\}/,
   "a failed update shutdown must exit under restored supervision if its embedded runtime has already stopped"
 );
 const dataDirectorySelectionIndex = mainSource.indexOf("configuredLaunchAgentDataDir() || persistedAppDataDir() || app.getPath(\"userData\")");

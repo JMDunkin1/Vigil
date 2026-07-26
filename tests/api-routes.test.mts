@@ -15,6 +15,7 @@ assert.equal(matchApiRoute("GET", "/api/extension/pairing")?.id, "extensionPairi
 assert.equal(matchApiRoute("GET", "/api/diagnostic/export")?.id, "diagnosticExport");
 assert.equal(matchApiRoute("GET", "/api/app-update/status")?.id, "appUpdateStatus");
 assert.equal(matchApiRoute("POST", "/api/app-update/start")?.id, "appUpdateStart");
+assert.equal(matchApiRoute("POST", "/api/app-relaunch")?.id, "appRelaunch");
 assert.equal(matchApiRoute("POST", "/api/session/preview")?.id, "sessionPreview");
 assert.equal(matchApiRoute("POST", "/api/session/start")?.domain, "sessions");
 assert.equal(matchApiRoute("POST", "/api/protection/level")?.id, "protectionLevel");
@@ -61,7 +62,7 @@ for (const route of API_ROUTES) {
 }
 assert.equal(domains.get("sessions"), 7);
 assert.equal(domains.get("diagnostics"), 1);
-assert.equal(domains.get("app"), 2);
+assert.equal(domains.get("app"), 3);
 assert.equal(domains.get("account"), 4);
 assert.equal(domains.get("devices"), 10);
 assert.equal(domains.get("grayscale"), 3);

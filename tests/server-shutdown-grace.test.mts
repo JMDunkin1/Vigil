@@ -23,7 +23,8 @@ const handle = await startVigilServer({
       markNetworkStatusStarted();
       return await networkStatusGate;
     },
-    async start() { return { ok: true }; }
+    async start() { return { ok: true }; },
+    async relaunch() { return { ok: true, relaunching: true }; }
   }
 });
 const socket = connect(handle.port, "127.0.0.1");
@@ -87,7 +88,8 @@ try {
         markInAppStatusStarted();
         return await inAppStatusGate;
       },
-      async start() { return { ok: true }; }
+      async start() { return { ok: true }; },
+      async relaunch() { return { ok: true, relaunching: true }; }
     }
   });
   const stalledInAppRequest = runtime.request({

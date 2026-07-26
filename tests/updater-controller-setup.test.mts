@@ -109,6 +109,27 @@ try {
   await rm(diagnosticRoot, { recursive: true, force: true });
 }
 
+const relaunchRoot = await realpath(await mkdtemp(join(tmpdir(), "vigil-controller-relaunch-")));
+try {
+  let relaunchCalls = 0;
+  const controller = createVigilAppUpdateController({
+    app: fakeApp(relaunchRoot),
+    maintenanceReadiness: async () => setupRequiredReadiness(true),
+    quitForUpdate: () => {
+      throw new Error("A manual relaunch must not impersonate an updater quit request.");
+    },
+    relaunchApp: () => {
+      relaunchCalls += 1;
+    }
+  });
+  const result = await controller.relaunch() as Record<string, unknown>;
+  assert.equal(result.ok, true);
+  assert.equal(result.relaunching, true);
+  assert.equal(relaunchCalls, 1, "a protected relaunch request must schedule exactly one app lifecycle transition");
+} finally {
+  await rm(relaunchRoot, { recursive: true, force: true });
+}
+
 assert.deepEqual(
   guardianCheckFailure("check=guardian.example.exact detail=the exact failed assertion"),
   {

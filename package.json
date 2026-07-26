@@ -58,6 +58,7 @@
     "seal:source": "npm run build && node dist/runtime/scripts/seal-source.mjs",
     "doctor": "npm run build && node dist/runtime/scripts/doctor.mjs",
     "agent": "node scripts/vigil-agent.mjs",
+    "agent:relaunch": "node scripts/vigil-agent.mjs relaunch",
     "agent:update": "node scripts/vigil-agent.mjs update",
     "install:agent": "npm run build && node dist/runtime/scripts/install-launch-agent.mjs",
     "uninstall:agent": "npm run build && node dist/runtime/scripts/uninstall-launch-agent.mjs",

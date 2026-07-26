@@ -13,6 +13,7 @@ const port = await unusedPort();
 const runtime = await startVigilRuntime({ port });
 let updateStatusCalls = 0;
 let updateStartCalls = 0;
+let updateRelaunchCalls = 0;
 const appUpdate = {
   async status(options: { checkRemote?: boolean } = {}) {
     updateStatusCalls += 1;
@@ -28,6 +29,10 @@ const appUpdate = {
   async start() {
     updateStartCalls += 1;
     return { ok: true, supported: true, running: true, phase: "starting" };
+  },
+  async relaunch() {
+    updateRelaunchCalls += 1;
+    return { ok: true, relaunching: true };
   }
 };
 
@@ -70,6 +75,22 @@ try {
   assert.match(malformedTargetResponse, /^HTTP\/1\.1 500 /u, "malformed request targets must receive a guarded error response");
   const companionHealth = await fetch(`http://127.0.0.1:${port}/api/health`);
   assert.equal(companionHealth.status, 200, "the companion listener must remain healthy after a malformed request target");
+  const rejectedRelaunch = await fetch(`http://127.0.0.1:${port}/api/app-relaunch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+  assert.equal(rejectedRelaunch.status, 403, "agent relaunch must reject a loopback request without explicit Vigil intent");
+  const acceptedRelaunch = await fetch(`http://127.0.0.1:${port}/api/app-relaunch`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Vigil-Intent": "vigil-app"
+    },
+    body: "{}"
+  });
+  assert.equal(acceptedRelaunch.status, 202, "the strict local agent surface must reach protected relaunch");
+  assert.equal(updateRelaunchCalls, 1);
   const companionPairing = await fetch(`http://127.0.0.1:${port}/api/extension/pairing`, {
     headers: { "X-Vigil-Extension-Token": "runtime-test-token" }
   });

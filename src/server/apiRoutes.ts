@@ -15,6 +15,7 @@ export const API_ROUTES = Object.freeze([
   { id: "diagnosticExport", domain: "diagnostics", methods: ["GET"], path: "/api/diagnostic/export" },
   { id: "appUpdateStatus", domain: "app", methods: ["GET"], path: "/api/app-update/status" },
   { id: "appUpdateStart", domain: "app", methods: ["POST"], path: "/api/app-update/start" },
+  { id: "appRelaunch", domain: "app", methods: ["POST"], path: "/api/app-relaunch" },
   { id: "settings", domain: "settings", methods: ["POST"], path: "/api/settings" },
   { id: "adultBlocklistSettings", domain: "hardening", methods: ["POST"], path: "/api/adult-blocklist/settings" },
   { id: "adultBlocklistRefresh", domain: "hardening", methods: ["POST"], path: "/api/adult-blocklist/refresh" },

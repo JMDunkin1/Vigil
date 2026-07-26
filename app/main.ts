@@ -127,6 +127,7 @@ let appUpdateRefreshInFlight: Promise<Record<string, unknown>> | null = null;
 let updateCandidateAttestationRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let updateCandidateAttestationLastError = "";
 let quitForUpdate = false;
+let appRelaunchScheduled = false;
 let startupComplete = false;
 let supervisorRepairInFlight: Promise<void> | null = null;
 let selectedIconTheme: IconTheme = DEFAULT_ICON_THEME;
@@ -181,6 +182,7 @@ ipcMain.handle("vigil:api-request", handlePrivateApiRequest);
 ipcMain.handle("vigil:journal-touch-id", handleJournalTouchId);
 ipcMain.handle("vigil:app-update-status", handleAppUpdateStatus);
 ipcMain.handle("vigil:app-update-start", handleAppUpdateStart);
+ipcMain.handle("vigil:app-relaunch", handleAppRelaunch);
 ipcMain.handle("vigil:icon-theme-get", handleIconThemeGet);
 ipcMain.handle("vigil:icon-theme-set", handleIconThemeSet);
 ipcMain.handle("vigil:setup-open", handleSetupOpen);
@@ -229,6 +231,9 @@ void app.whenReady().then(async () => {
         }
         quitForUpdate = true;
         app.quit();
+      },
+      relaunchApp: async () => {
+        await scheduleProtectedAppRelaunch();
       }
     });
     await ensureEmbeddedRuntimeSupervisor(legacyAgent);
@@ -310,6 +315,7 @@ app.on("before-quit", async (event) => {
         return;
       }
       quitForUpdate = false;
+      appRelaunchScheduled = false;
     }
     console.error("Vigil could not finish its graceful shutdown.", error);
   }
@@ -610,6 +616,12 @@ async function handleAppUpdateStart(event: IpcMainInvokeEvent): Promise<unknown>
   const appUrl = currentAppUrl;
   if (!appUrl) return rejectedAppUpdateRequest("The Vigil app updater is not ready.");
   return await startAppUpdate(appUrl);
+}
+
+async function handleAppRelaunch(event: IpcMainInvokeEvent): Promise<unknown> {
+  const controller = trustedAppUpdateController(event);
+  if (!controller) return rejectedAppUpdateRequest();
+  return await controller.relaunch();
 }
 
 function handleIconThemeGet(event: IpcMainInvokeEvent): Record<string, unknown> {
@@ -974,6 +986,17 @@ async function assertEmbeddedRuntimeSupervisorArmedForUpdate(): Promise<void> {
   }
   if (uid === undefined) throw new Error("Vigil could not identify the account that owns restart supervision.");
   await waitForLaunchctlServiceRunning(uid, EMBEDDED_SUPERVISOR_LABEL);
+}
+
+async function scheduleProtectedAppRelaunch(): Promise<void> {
+  if (appRelaunchScheduled) return;
+  await assertEmbeddedRuntimeSupervisorArmedForUpdate();
+  appRelaunchScheduled = true;
+  setTimeout(() => {
+    if (!app.isPackaged) app.relaunch();
+    quitForUpdate = true;
+    app.quit();
+  }, 350);
 }
 
 function resumeEmbeddedRuntimeSupervisor(): void {

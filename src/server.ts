@@ -745,7 +745,7 @@ async function dispatchRequest(
 
 const READ_ONLY_API_ROUTES = new Set([
   "accountSession", "accountSignup", "accountLogin", "accountLogout",
-  "health", "state", "ruleExplain", "diagnosticExport", "appUpdateStatus", "appUpdateStart", "extensionPairing",
+  "health", "state", "ruleExplain", "diagnosticExport", "appUpdateStatus", "appUpdateStart", "appRelaunch", "extensionPairing",
   "launchAgentInstall", "hostsApply", "safariFilterApply", "chromeSafeSearchApply"
 ]);
 
@@ -799,6 +799,7 @@ function companionNetworkRouteAllowed(method: string, path: string): boolean {
   if (path === "/api/state") return method === "GET";
   if (path === "/api/app-update/status") return method === "GET";
   if (path === "/api/app-update/start") return method === "POST";
+  if (path === "/api/app-relaunch") return method === "POST";
   if (path === "/api/account/signup") return method === "POST";
   if (COMPANION_CONFIGURATION_ROUTES.has(path)) return method === "POST";
   if (path === "/api/devices/ios/usb-profile-apply") return method === "POST";

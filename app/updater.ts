@@ -159,11 +159,13 @@ interface PreparedPrebuiltRelease {
 export interface VigilAppUpdateController {
   status(options?: { checkRemote?: boolean }): Promise<unknown>;
   start(): Promise<unknown>;
+  relaunch(): Promise<unknown>;
 }
 
 interface ControllerOptions {
   app: App;
   quitForUpdate(): void | Promise<void>;
+  relaunchApp?(): void | Promise<void>;
   maintenanceReadiness?: typeof guardianMaintenanceReadiness;
   setupGuardian?: typeof setupSystemGuardian;
 }
@@ -181,6 +183,7 @@ const moduleDir = dirname(fileURLToPath(import.meta.url));
 export function createVigilAppUpdateController({
   app,
   quitForUpdate,
+  relaunchApp,
   maintenanceReadiness = guardianMaintenanceReadiness,
   setupGuardian = setupSystemGuardian
 }: ControllerOptions): VigilAppUpdateController {
@@ -399,6 +402,44 @@ export function createVigilAppUpdateController({
       } finally {
         startInFlight = null;
       }
+    },
+    async relaunch() {
+      if (!relaunchApp) {
+        return {
+          ok: false,
+          relaunching: false,
+          message: "Protected app relaunch is available from the packaged Vigil app."
+        };
+      }
+      if (startInFlight) {
+        return {
+          ok: false,
+          relaunching: false,
+          running: true,
+          message: "Vigil cannot relaunch while an update is starting."
+        };
+      }
+      const currentStatus = await readStatusPayload();
+      if (currentStatus.running === true
+        || currentStatus.recoveryPending === true
+        || currentStatus.recoveryBlocked === true) {
+        return {
+          ...currentStatus,
+          ok: false,
+          relaunching: false,
+          message: String(
+            currentStatus.message
+            || "Vigil cannot relaunch while an update or recovery transaction is active."
+          )
+        };
+      }
+      await relaunchApp();
+      return {
+        ...currentStatus,
+        ok: true,
+        relaunching: true,
+        message: "Vigil is relaunching under its restart supervisor."
+      };
     }
   };
 
