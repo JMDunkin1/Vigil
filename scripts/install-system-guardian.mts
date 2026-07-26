@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { chmod, link, lstat, mkdir, open, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { designatedRequirementFromCodesignOutput } from "./mac-signing-identity.mjs";
 import { isDirectRun } from "../src/directRun.js";
 import {
   CURRENT_GUARDIAN_PROTOCOL,
@@ -677,7 +678,10 @@ async function codeSignatureIdentity(path: string): Promise<CodeSignatureIdentit
     adhoc: /^Signature=adhoc$/mu.test(stderr),
     authorities: [...stderr.matchAll(/^Authority=(.+)$/gmu)].map((match) => String(match[1] || "").trim()),
     cdHash: stderr.match(/^CDHash=([a-f0-9]+)$/imu)?.[1]?.toLowerCase() || "",
-    designatedRequirement: requirement.stderr.match(/^designated => (.+)$/mu)?.[1]?.trim() || "",
+    designatedRequirement: designatedRequirementFromCodesignOutput(
+      requirement.stdout,
+      requirement.stderr
+    ),
     identifier: stderr.match(/^Identifier=(.+)$/mu)?.[1]?.trim() || "",
     teamIdentifier: stderr.match(/^TeamIdentifier=(.+)$/mu)?.[1]?.trim() || ""
   };

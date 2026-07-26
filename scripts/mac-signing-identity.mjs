@@ -47,6 +47,16 @@ export function isLocallyRebuildableSignature(detail) {
     || new RegExp(`^Authority=${LOCAL_SIGNING_IDENTITY}$`, "mu").test(detail);
 }
 
+export function designatedRequirementFromCodesignOutput(stdout = "", stderr = "") {
+  const detail = `${String(stdout || "")}\n${String(stderr || "")}`;
+  return detail.match(/^designated => (.+)$/mu)?.[1]?.trim() || "";
+}
+
+export function signingIdentityFromCodesignDetail(detail) {
+  if (/\bSignature=adhoc\b/u.test(detail)) return "-";
+  return String(detail || "").match(/^Authority=(.+)$/mu)?.[1]?.trim() || "";
+}
+
 export function macSigningTimestamp(identity) {
   // Vigil's locally rebuilt apps are installed directly rather than distributed
   // after Developer ID notarization. Network timestamping every nested Electron

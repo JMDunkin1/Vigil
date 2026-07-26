@@ -4,6 +4,7 @@ import type { Stats } from "node:fs";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { designatedRequirementFromCodesignOutput } from "../scripts/mac-signing-identity.mjs";
 import {
   SYSTEM_GUARDIAN_LABEL,
   SYSTEM_GUARDIAN_SCRIPT_PATH,
@@ -386,7 +387,10 @@ async function codeSignatureDetails(path: string): Promise<CodeSignatureIdentity
     adhoc: /^Signature=adhoc$/mu.test(stderr),
     authorities: [...stderr.matchAll(/^Authority=(.+)$/gmu)].map((match) => String(match[1] || "").trim()),
     cdHash: stderr.match(/^CDHash=([a-f0-9]+)$/imu)?.[1]?.toLowerCase() || "",
-    designatedRequirement: requirement.stderr.match(/^designated => (.+)$/mu)?.[1]?.trim() || "",
+    designatedRequirement: designatedRequirementFromCodesignOutput(
+      requirement.stdout,
+      requirement.stderr
+    ),
     identifier: stderr.match(/^Identifier=(.+)$/mu)?.[1]?.trim() || "",
     teamIdentifier: stderr.match(/^TeamIdentifier=(.+)$/mu)?.[1]?.trim() || ""
   };

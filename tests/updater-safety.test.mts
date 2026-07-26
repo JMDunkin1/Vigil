@@ -21,8 +21,10 @@ import {
 import { localBuildIdentityMatches } from "../scripts/launch-local-app.mjs";
 import { gitExecutable, selectGitExecutable } from "../scripts/git-executable.mjs";
 import {
+  designatedRequirementFromCodesignOutput,
   macSigningTimestamp,
-  selectMacSigningIdentity
+  selectMacSigningIdentity,
+  signingIdentityFromCodesignDetail
 } from "../scripts/mac-signing-identity.mjs";
 import {
   atomicInstallBuiltApp,
@@ -53,6 +55,27 @@ const execFile = promisify(execFileCallback);
 assert.equal(macSigningTimestamp("Vigil Local Code Signing"), "none", "local self-signing must not depend on Apple's timestamp service");
 assert.equal(macSigningTimestamp("Apple Development: Example"), "none", "local Apple Development signing must not wait on network timestamping");
 assert.equal(macSigningTimestamp("Developer ID Application: Example"), undefined, "distributable identities must retain normal timestamping");
+const localRequirement = 'identifier "tech.caseline.vigil" and anchor trusted';
+assert.equal(
+  designatedRequirementFromCodesignOutput(`designated => ${localRequirement}\n`, "Executable=/Applications/Vigil.app"),
+  localRequirement,
+  "guardian signature checks must accept the macOS codesign requirement on stdout"
+);
+assert.equal(
+  designatedRequirementFromCodesignOutput("", `designated => ${localRequirement}\n`),
+  localRequirement,
+  "guardian signature checks must remain compatible with codesign versions that report requirements on stderr"
+);
+assert.equal(
+  signingIdentityFromCodesignDetail("Authority=Vigil Local Code Signing\nAuthority=Example Root\n"),
+  "Vigil Local Code Signing",
+  "protocol bridges must preserve the installed leaf signing identity"
+);
+assert.equal(
+  signingIdentityFromCodesignDetail("Signature=adhoc\nTeamIdentifier=not set\n"),
+  "-",
+  "protocol bridges must preserve an installed ad-hoc identity"
+);
 const mixedSigningIdentities = [
   "Vigil Local Code Signing",
   "Apple Development: Example"

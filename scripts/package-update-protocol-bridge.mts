@@ -18,7 +18,11 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { isDirectRun } from "../src/directRun.js";
 import { SYSTEM_GUARDIAN_LABEL } from "../src/systemGuardian.js";
-import { macSigningTimestamp, resolveMacSigningIdentity } from "./mac-signing-identity.mjs";
+import {
+  macSigningTimestamp,
+  resolveMacSigningIdentity,
+  signingIdentityFromCodesignDetail
+} from "./mac-signing-identity.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -256,7 +260,25 @@ export async function packageUpdateProtocolBridgeCandidate(options: {
   signingIdentity?: string;
 }): Promise<UpdateProtocolBridgeEquivalenceEvidence> {
   await assembleUpdateProtocolBridgeCandidate(options);
-  const identity = options.signingIdentity || await resolveMacSigningIdentity();
+  const { stderr: installedSignatureDetail } = await execFileAsync(
+    "/usr/bin/codesign",
+    ["-dv", "--verbose=4", resolve(options.installedAppPath)],
+    {
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+      encoding: "utf8"
+    }
+  );
+  const installedIdentity = signingIdentityFromCodesignDetail(installedSignatureDetail);
+  if (!installedIdentity) {
+    throw new Error("The installed Vigil app does not expose a reusable signing identity for its protocol bridge.");
+  }
+  const identity = await resolveMacSigningIdentity(
+    options.signingIdentity
+      ? { ...process.env, VIGIL_MAC_SIGNING_IDENTITY: options.signingIdentity }
+      : process.env,
+    installedIdentity
+  );
   const timestamp = macSigningTimestamp(identity);
   const args = [
     "--force",
