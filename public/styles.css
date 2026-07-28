@@ -9558,10 +9558,16 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
 
 .habit-activity-scroll {
   max-width: 100%;
+  direction: rtl;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
   padding: 4px 3px 8px;
   scrollbar-width: thin;
+}
+
+.habit-activity-grid,
+.habit-activity-months {
+  direction: ltr;
 }
 
 .habit-activity-grid {
@@ -9797,7 +9803,7 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
   }
 
   .habit-focus-actions {
-    width: min(680px, 90%);
+    width: min(600px, 82%);
     gap: 16px;
     margin-top: 23px;
   }

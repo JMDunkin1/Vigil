@@ -269,11 +269,13 @@ assert.match(trackingSource, /cell\.addEventListener\("click", \(\) => selectDat
 assert.match(styles, /\.habit-focus-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/, "Done and Missed must remain the only two equal primary choices");
 assert.match(
   styles,
-  /@media \(max-height: 650px\)\s*\{[\s\S]*?\.habit-focus\s*\{\s*min-height:\s*0;[\s\S]*?\.habit-focus-actions\s*\{[\s\S]*?width:\s*min\(680px, 90%\);[\s\S]*?\.habit-focus-skip,[\s\S]*?margin-top:\s*13px;/,
+  /@media \(max-height: 650px\)\s*\{[\s\S]*?\.habit-focus\s*\{\s*min-height:\s*0;[\s\S]*?\.habit-focus-actions\s*\{[\s\S]*?width:\s*min\(600px, 82%\);[\s\S]*?\.habit-focus-skip,[\s\S]*?margin-top:\s*13px;/,
   "short tracking windows must compact and inset the full check-in through Skip for now instead of forcing it below the fold"
 );
 assert.match(styles, /\.habit-activity-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(52,[\s\S]*?grid-template-rows:\s*repeat\(7,[\s\S]*?grid-auto-flow:\s*column/, "habit history must use the Codex-like 52-week by 7-day geometry");
 assert.match(styles, /\.habit-activity-scroll\s*\{[\s\S]*?overflow-x:\s*auto;/, "the annual grid must remain contained at compact window widths");
+assert.match(styles, /\.habit-activity-scroll\s*\{[^}]*direction:\s*rtl;/, "habit history must open on the newest dates at the right edge");
+assert.match(styles, /\.habit-activity-grid,\s*\.habit-activity-months\s*\{[^}]*direction:\s*ltr;/, "habit history content must preserve chronological left-to-right order while its viewport starts on the right");
 
 const protectionMarkup = html.match(/<div id="protectionLevelControl"[\s\S]*?<div[^>]*class="home-runtime-status"/)?.[0] || "";
 assert.match(protectionMarkup, /id="protectionLevelControl"[^>]*aria-expanded="false"/, "the protection selector must start collapsed");
