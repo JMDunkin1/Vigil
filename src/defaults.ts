@@ -326,34 +326,36 @@ const DEFAULT_EXPLICIT_COMIC_SITE_TERMS = [
   "mawha"
 ];
 
-const DEFAULT_EXPLICIT_COMIC_TERMS = [
-  "manhwa",
-  "mawha",
-  "manhua",
-  "webtoon",
-  "webtoons"
+export interface ExplicitContextualRule {
+  id: string;
+  contexts: readonly string[];
+  markers: readonly string[];
+}
+
+/**
+ * Contextual markers are intentionally not standalone block terms. Each marker
+ * is paired with one of the rule's content contexts in either order so broad
+ * words such as "uncensored" cannot block unrelated searches like song lyrics,
+ * interviews, or news.
+ */
+export const DEFAULT_EXPLICIT_CONTEXTUAL_RULES: readonly ExplicitContextualRule[] = [
+  {
+    id: "explicit-comics",
+    contexts: ["manhwa", "mawha", "manhua", "webtoon", "webtoons"],
+    markers: ["18", "18plus", "adult", "nsfw", "porn", "hentai", "lewd", "mature", "uncensored"]
+  }
 ];
 
-const DEFAULT_EXPLICIT_COMIC_RISK_MARKERS = [
-  "18",
-  "18plus",
-  "adult",
-  "nsfw",
-  "porn",
-  "hentai",
-  "lewd",
-  "mature",
-  "uncensored"
-];
-
-function combinedExplicitTerms(terms: readonly string[], markers: readonly string[]): string[] {
-  return terms.flatMap((term) => markers.flatMap((marker) => [`${marker}${term}`, `${term}${marker}`]));
+function contextualExplicitPatterns(rules: readonly ExplicitContextualRule[]): string[] {
+  return rules.flatMap((rule) => rule.contexts.flatMap((context) =>
+    rule.markers.flatMap((marker) => [`${marker}${context}`, `${context}${marker}`])
+  ));
 }
 
 export const DEFAULT_EXPLICIT_URL_PATTERNS = [
   ...DEFAULT_EXPLICIT_SEARCH_TERMS,
   ...DEFAULT_EXPLICIT_COMIC_SITE_TERMS,
-  ...combinedExplicitTerms(DEFAULT_EXPLICIT_COMIC_TERMS, DEFAULT_EXPLICIT_COMIC_RISK_MARKERS),
+  ...contextualExplicitPatterns(DEFAULT_EXPLICIT_CONTEXTUAL_RULES),
   "manhwa",
   "toongod",
   "reddit.com/r/gonewild",

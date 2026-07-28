@@ -7,7 +7,7 @@ import { appleContentFilterStatusFromRecord } from "../src/appleContentFilter.js
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
 import { blockedPageDisplayLabel, managedFilterAllowsVigilPages, safeExternalPageUrl } from "../src/blockedPageUrl.js";
 import { contentFilterEnabled, matchContentFilterUrl } from "../src/contentFilters.js";
-import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_URL_PATTERNS, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_CONTEXTUAL_RULES, DEFAULT_EXPLICIT_SEARCH_TERMS, DEFAULT_EXPLICIT_URL_PATTERNS, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../src/distanceKey.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { buildHostsBlock, managedBlockDomains } from "../src/hardening.js";
@@ -475,6 +475,9 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/learnprogramming/comments/demo"), false);
   assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("honeytoon"), true);
   assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("webtoon18"), true);
+  assert.equal(DEFAULT_EXPLICIT_CONTEXTUAL_RULES.some((rule) => rule.markers.includes("uncensored")), true);
+  assert.equal(DEFAULT_EXPLICIT_SEARCH_TERMS.includes("uncensored"), false);
+  assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("uncensored"), false);
   assert.equal(DEFAULT_ALWAYS_BANNED_URL_PATTERNS.includes("webtoons.com"), true);
   assert.equal(shouldBlockUrl(profileById(state, "normal"), "https://www.webtoons.com/en/"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=porn"), true);
@@ -482,6 +485,18 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockUrl(profile, "https://search.example/?q=mawha"), true);
   assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=webtoon%2018")?.pattern, "webtoon18");
   assert.equal(shouldBlockUrl(profile, "https://search.example/?q=18%2B+manhwa"), true);
+  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=uncensored+webtoon")?.pattern, "uncensoredwebtoon");
+  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=webtoon-uncensored")?.pattern, "webtoonuncensored");
+  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=uncensored%20manhua")?.pattern, "uncensoredmanhua");
+  for (const harmlessQuery of [
+    "uncensored",
+    "uncensored lyrics",
+    "uncensored interview",
+    "uncensored news",
+    "uncensored podcast"
+  ]) {
+    assert.equal(shouldBlockUrl(profile, `https://search.example/?q=${encodeURIComponent(harmlessQuery)}`), false);
+  }
   assert.equal(shouldBlockUrl(profile, "https://search.example/?q=webtoon+cooking"), false);
   assert.equal(shouldBlockUrl(profile, "https://search.example/?q=18"), false);
   assert.equal(shouldBlockUrl(profile, "https://example.com/archive/2018/report"), false);
