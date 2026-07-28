@@ -9797,6 +9797,7 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
   }
 
   .habit-focus-actions {
+    width: min(680px, 90%);
     gap: 16px;
     margin-top: 23px;
   }
