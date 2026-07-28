@@ -9317,7 +9317,6 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
 .habit-focus {
   min-height: clamp(560px, calc(100vh - 145px), 920px);
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .habit-focus-content {
@@ -9506,21 +9505,6 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
   margin-top: 42px;
   border-bottom: 1px solid var(--gold);
   border-radius: 0;
-}
-
-.habit-history-link {
-  justify-self: center;
-  margin-bottom: 31px;
-  padding: 8px 0 5px;
-  border-bottom: 1px solid var(--gold);
-  color: var(--gold-bright);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 0.9rem;
-  text-decoration: none;
-}
-
-.habit-history-link:hover {
-  color: var(--ink);
 }
 
 .habit-activity {
@@ -9746,10 +9730,6 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
     margin-top: 29px;
   }
 
-  .habit-history-link {
-    margin-bottom: 22px;
-  }
-
   .habit-activity-head {
     align-items: flex-start;
     flex-direction: column;
@@ -9759,5 +9739,92 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
   .habit-activity-tabs {
     width: 100%;
     justify-content: space-between;
+  }
+}
+
+@media (max-height: 650px) {
+  body[data-active-view="tracking"] .shell {
+    padding-top: 18px;
+  }
+
+  body[data-active-view="tracking"] .tracking-titlebar {
+    min-height: 62px;
+    padding: 3px 0 13px;
+  }
+
+  body[data-active-view="tracking"] .tracking-title-actions .secondary {
+    min-height: 40px;
+    padding-inline: 18px;
+    font-size: 0.82rem;
+  }
+
+  .habit-focus {
+    min-height: 0;
+  }
+
+  .habit-focus-content {
+    padding: 23px 0 17px;
+  }
+
+  .habit-focus-step {
+    gap: 8px;
+  }
+
+  .habit-focus-position {
+    font-size: 0.95rem;
+  }
+
+  .habit-focus-dots {
+    gap: 18px;
+  }
+
+  .habit-focus-dot {
+    width: 15px;
+    min-width: 15px;
+    height: 15px;
+    min-height: 15px;
+  }
+
+  .habit-focus-title {
+    margin-top: 23px;
+    font-size: clamp(2.7rem, 7vw, 3.35rem);
+  }
+
+  .habit-focus-description {
+    margin-top: 12px;
+    font-size: 0.95rem;
+    line-height: 1.35;
+  }
+
+  .habit-focus-actions {
+    gap: 16px;
+    margin-top: 23px;
+  }
+
+  .habit-focus-action {
+    min-height: 74px;
+    padding: 14px;
+    font-size: 1rem;
+  }
+
+  .habit-focus-skip,
+  .habit-focus-edit {
+    min-height: 32px;
+    margin-top: 13px;
+    font-size: 0.9rem;
+  }
+
+  .habit-focus-helper {
+    margin-top: 2px;
+    font-size: 0.72rem;
+  }
+
+  .habit-focus-complete .habit-focus-title,
+  .habit-focus-empty .habit-focus-title {
+    margin-top: 24px;
+  }
+
+  .habit-focus-complete .habit-focus-edit {
+    margin-top: 18px;
   }
 }

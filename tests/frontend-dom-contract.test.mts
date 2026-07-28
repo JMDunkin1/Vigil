@@ -249,7 +249,8 @@ assert.match(uiShellSource, /renderActiveView[\s\S]*window\.scrollTo\(0, 0\)/, "
 assert.doesNotMatch(styles, /@media \(max-width: 900px\)\s*\{\s*body\s*\{\s*display:\s*block/, "narrow windows must retain the sidebar grid");
 
 const trackingMarkup = html.match(/<section id="view-journal"[\s\S]*?<div class="journal-page journal-only"/)?.[0] || "";
-assert.match(trackingMarkup, /id="habitFocus"[\s\S]*?id="habitQuickCheckIn"[\s\S]*?id="habitViewHistory"/, "tracking must lead with the one-at-a-time habit decision and a quiet history link");
+assert.match(trackingMarkup, /id="habitFocus"[\s\S]*?id="habitQuickCheckIn"[\s\S]*?id="habitActivity"/, "tracking must lead with the one-at-a-time habit decision followed directly by activity");
+assert.doesNotMatch(trackingMarkup, /id="habitViewHistory"|class="habit-history-link"/, "tracking must not repeat the activity destination with a history link");
 assert.match(trackingMarkup, /id="habitActivity"[\s\S]*?id="habitActivityGrid"[\s\S]*?id="habitActivityMonths"/, "tracking history must use one compact activity grid with month labels");
 assert.equal([...trackingMarkup.matchAll(/data-activity-mode="(?:daily|weekly|cumulative)"/g)].length, 3, "habit activity must expose Daily, Weekly, and Cumulative modes");
 assert.match(trackingMarkup, /class="habit-activity-tabs" role="group"[\s\S]*?aria-pressed="true"/, "activity modes must use native toggle-button semantics");
@@ -266,6 +267,11 @@ assert.match(trackingSource, /cell\.setAttribute\("aria-label", activityAriaLabe
 assert.match(trackingSource, /cell\.disabled = future/, "future activity cells must not be interactive");
 assert.match(trackingSource, /cell\.addEventListener\("click", \(\) => selectDate\(date, true\)\)/, "daily history cells must preserve backdated editing through the focused check-in");
 assert.match(styles, /\.habit-focus-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/, "Done and Missed must remain the only two equal primary choices");
+assert.match(
+  styles,
+  /@media \(max-height: 650px\)\s*\{[\s\S]*?\.habit-focus\s*\{\s*min-height:\s*0;[\s\S]*?\.habit-focus-skip,[\s\S]*?margin-top:\s*13px;/,
+  "short tracking windows must compact the full check-in through Skip for now instead of forcing it below the fold"
+);
 assert.match(styles, /\.habit-activity-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(52,[\s\S]*?grid-template-rows:\s*repeat\(7,[\s\S]*?grid-auto-flow:\s*column/, "habit history must use the Codex-like 52-week by 7-day geometry");
 assert.match(styles, /\.habit-activity-scroll\s*\{[\s\S]*?overflow-x:\s*auto;/, "the annual grid must remain contained at compact window widths");
 
