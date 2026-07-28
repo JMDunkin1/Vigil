@@ -20,8 +20,24 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var serviceByWebView: [ObjectIdentifier: SocialService] = [:]
     private var messageBridges: [SocialService: ScriptMessageBridge] = [:]
     private var textInspections: [SocialService: [TextInspectionKey: TextInspection]] = [:]
+    private var mainDocumentIDs: [SocialService: String] = [:]
     private var mediaClassificationTasks: [MediaRequestKey: Task<Void, Never>] = [:]
-    private var mediaClassificationTokens: [MediaRequestKey: String] = [:]
+    private var mediaClassificationDeadlineTasks: [MediaRequestKey: Task<Void, Never>] = [:]
+    private var nativeMediaClassificationExecutions: Set<UUID> = []
+    private var activeMediaRequests: [MediaRequestKey: MediaClassificationRequest] = [:]
+    private var pendingMediaRequests: [MediaRequestKey: MediaClassificationRequest] = [:]
+    private var pendingMediaOrder: [MediaRequestKey] = []
+    private var latestMediaTokens: [MediaRequestKey: String] = [:]
+    private var latestMediaRequestIDs: [MediaRequestKey: UUID] = [:]
+    private var mediaRetryTasks: [MediaRequestKey: Task<Void, Never>] = [:]
+    private var surfaceStates: [SocialService: SocialSurfaceState] = [:]
+    private var webContentRecovery: [SocialService: WebContentRecoveryState] = [:]
+    private var refreshingServices: Set<SocialService> = []
+    private let mediaClassificationDeadlineNanoseconds: UInt64
+
+    private static let maximumConcurrentMediaClassifications = 4
+    private static let maximumPendingMediaClassifications = 12
+    private static let maximumMediaRetryTasks = 12
 
     init(
         defaults: UserDefaults = .standard,
@@ -30,7 +46,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         loadInitialPages: Bool = true,
         mediaClassifier: any MediaSafetyClassifying = AppleSensitiveMediaClassifier(),
         textClassifier: any PageTextSafetyClassifying = ConservativePageTextClassifier(),
-        unclassifiedMediaPolicy: UnclassifiedMediaPolicy? = nil
+        unclassifiedMediaPolicy: UnclassifiedMediaPolicy? = nil,
+        mediaClassificationDeadlineNanoseconds: UInt64 = 5_000_000_000
     ) {
         let configured = fixedService
             ?? (bundle.object(forInfoDictionaryKey: "VigilService") as? String).flatMap(SocialService.init(rawValue:))
@@ -42,11 +59,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.mediaClassifier = mediaClassifier
         self.textClassifier = textClassifier
         self.unclassifiedMediaPolicy = unclassifiedMediaPolicy ?? UnclassifiedMediaPolicy(bundle: bundle)
+        self.mediaClassificationDeadlineNanoseconds = max(1, mediaClassificationDeadlineNanoseconds)
         super.init()
         for service in SocialService.allCases {
             let key = audioPreferenceKey(service)
             audioPreferences[service] = defaults.object(forKey: key) == nil ? true : defaults.bool(forKey: key)
             health[service] = .loading
+            surfaceStates[service] = .unknown
         }
         if loadInitialPages { _ = webView(for: selectedService) }
     }
@@ -74,12 +93,20 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
         controller.add(bridge, name: "vigil")
         controller.addUserScript(WKUserScript(
-            source: DOMAdapters.contentFilterBootstrap(for: unclassifiedMediaPolicy),
+            source: DOMAdapters.documentStartScript(
+                unclassifiedMediaPolicy: unclassifiedMediaPolicy,
+                audioEnabled: audioEnabled(for: service)
+            ),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
         ))
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.frameSafetyScript(audioEnabled: audioEnabled(for: service)),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false
+        ))
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.frameRoutePolicyGuard(for: service),
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         ))
@@ -103,14 +130,28 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         webView.allowsBackForwardNavigationGestures = service.allowsBackForwardNavigationGestures
-        webView.allowsLinkPreview = true
-        webView.scrollView.alwaysBounceVertical = true
+        webView.allowsLinkPreview = false
+        webView.scrollView.alwaysBounceVertical = false
         webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         webView.scrollView.isDirectionalLockEnabled = service.usesDirectionalScrollLock
         webView.scrollView.keyboardDismissMode = .interactive
         let refreshControl = UIRefreshControl()
         refreshControl.addTarget(self, action: #selector(refreshWebView(_:)), for: .valueChanged)
+        refreshControl.isEnabled = false
         webView.scrollView.refreshControl = refreshControl
+        // UIKit enables vertical bounce when a refresh control is attached.
+        // Reassert the fail-closed state until the page reports a safe route.
+        webView.scrollView.alwaysBounceVertical = false
+        if service == .instagram {
+            let edgeBackGesture = UIScreenEdgePanGestureRecognizer(
+                target: self,
+                action: #selector(handleInstagramEdgeBack(_:))
+            )
+            edgeBackGesture.edges = .left
+            edgeBackGesture.maximumNumberOfTouches = 1
+            edgeBackGesture.delegate = self
+            webView.addGestureRecognizer(edgeBackGesture)
+        }
         #if DEBUG
         if #available(iOS 16.4, *) { webView.isInspectable = true }
         #endif
@@ -129,6 +170,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         darkChromePreferences[service] ?? fallback
     }
 
+    func reportedChromeIsDark(for service: SocialService) -> Bool? {
+        darkChromePreferences[service]
+    }
+
     func toggleAudio(for service: SocialService) {
         let enabled = !audioEnabled(for: service)
         audioPreferences[service] = enabled
@@ -138,7 +183,26 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func reload(_ service: SocialService) {
+        health[service] = .loading
+        setSurface(.unknown, for: service)
         webView(for: service).reload()
+    }
+
+    func retry(_ service: SocialService) {
+        reload(service)
+    }
+
+    func goHome(_ service: SocialService) {
+        let webView = webView(for: service)
+        cancelDocumentWork(for: service)
+        health[service] = .loading
+        setSurface(.unknown, for: service)
+        webView.load(URLRequest(url: service.homeURL))
+    }
+
+    func dismissHealth(for service: SocialService) {
+        guard case .advisory = health[service] else { return }
+        health[service] = .ready
     }
 
     func goBack(_ service: SocialService) {
@@ -156,11 +220,26 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     @objc private func refreshWebView(_ sender: UIRefreshControl) {
-        guard let webView = webViews.values.first(where: { $0.scrollView.refreshControl === sender }) else {
+        guard let webView = webViews.values.first(where: { $0.scrollView.refreshControl === sender }),
+              let service = service(for: webView),
+              surfaceStates[service]?.allowsRefresh == true else {
             sender.endRefreshing()
             return
         }
+        refreshingServices.insert(service)
+        setSurface(.unknown, for: service)
         webView.reload()
+    }
+
+    @objc private func handleInstagramEdgeBack(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        guard gesture.state == .ended,
+              let webView = gesture.view as? WKWebView,
+              service(for: webView) == .instagram,
+              webView.canGoBack else { return }
+        let translation = gesture.translation(in: webView)
+        let velocity = gesture.velocity(in: webView)
+        guard translation.x >= 52 || velocity.x >= 480 else { return }
+        webView.goBack()
     }
 
     private func handle(_ message: WKScriptMessage, service: SocialService) {
@@ -187,7 +266,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             switch body["state"] as? String {
             case "ready": health[service] = .ready
             case "unsupported": health[service] = .unsupported(detail)
-            case "degraded": health[service] = .degraded(detail)
+            case "degraded":
+                health[service] = isAdvisoryHealthMessage(detail)
+                    ? .advisory(detail)
+                    : .degraded(detail)
             default: health[service] = .loading
             }
         case "audio":
@@ -197,6 +279,25 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         case "appearance":
             guard let dark = body["dark"] as? Bool else { return }
             darkChromePreferences[service] = dark
+        case "surface":
+            guard let reportedService = body["service"] as? String,
+                  reportedService == service.rawValue,
+                  let route = body["route"] as? String,
+                  !route.isEmpty,
+                  route.utf8.count <= 64,
+                  let refreshEligible = body["refreshEligible"] as? Bool,
+                  let blocksRefresh = body["blocksRefresh"] as? Bool else {
+                setSurface(.unknown, for: service)
+                return
+            }
+            setSurface(
+                SocialSurfaceState(
+                    route: route,
+                    refreshEligible: refreshEligible,
+                    blocksRefresh: blocksRefresh
+                ),
+                for: service
+            )
         case "playback":
             guard service == .youtube,
                   let key = body["key"] as? String,
@@ -227,50 +328,40 @@ final class SocialWebViewStore: NSObject, ObservableObject {
               let id = body["id"] as? String, !id.isEmpty, id.utf8.count <= 64,
               let token = body["token"] as? String,
               !token.isEmpty, token.utf8.count <= 64 else { return }
+        if frame.isMainFrame {
+            registerMainDocument(documentID, for: service)
+        }
         let requestKey = MediaRequestKey(service: service, documentID: documentID, id: id)
-        let isReplacement = mediaClassificationTasks[requestKey] != nil
-        mediaClassificationTasks[requestKey]?.cancel()
-        guard isReplacement || mediaClassificationTasks.count < 24 else {
-            Task { [weak self] in
-                guard let self else { return }
-                await self.resolveMedia(
-                    documentID: documentID,
-                    id: id,
-                    token: token,
-                    verdict: .unknown,
-                    service: service,
-                    frame: frame
-                )
-            }
+        let request = MediaClassificationRequest(
+            requestID: UUID(),
+            key: requestKey,
+            token: token,
+            dataURL: body["dataURL"] as? String,
+            frame: frame
+        )
+        latestMediaTokens[requestKey] = token
+        latestMediaRequestIDs[requestKey] = request.requestID
+
+        if pendingMediaRequests[requestKey] != nil {
+            pendingMediaRequests[requestKey] = request
             return
         }
-        let dataURL = body["dataURL"] as? String
-        mediaClassificationTokens[requestKey] = token
-        let task = Task { [weak self] in
-            guard let self else { return }
-            guard !Task.isCancelled else { return }
-            let inlineData = await Task.detached(priority: .userInitiated) {
-                Self.decodeInlineMedia(dataURL)
-            }.value
-            guard !Task.isCancelled, self.mediaClassificationTokens[requestKey] == token else { return }
-            let verdict = if let inlineData {
-                await self.mediaClassifier.classify(imageData: inlineData)
-            } else {
-                ContentSafetyVerdict.unknown
-            }
-            guard !Task.isCancelled, self.mediaClassificationTokens[requestKey] == token else { return }
-            self.mediaClassificationTasks.removeValue(forKey: requestKey)
-            self.mediaClassificationTokens.removeValue(forKey: requestKey)
-            await self.resolveMedia(
-                documentID: documentID,
-                id: id,
-                token: token,
-                verdict: verdict,
-                service: service,
-                frame: frame
-            )
+
+        if pendingMediaRequests.count >= Self.maximumPendingMediaClassifications,
+           activeMediaRequests[requestKey] == nil {
+            scheduleMediaRetry(for: request)
+            return
         }
-        mediaClassificationTasks[requestKey] = task
+
+        if activeMediaRequests[requestKey] != nil {
+            pendingMediaRequests[requestKey] = request
+            pendingMediaOrder.append(requestKey)
+            return
+        }
+
+        pendingMediaRequests[requestKey] = request
+        pendingMediaOrder.append(requestKey)
+        pumpMediaClassifications()
     }
 
     nonisolated private static func decodeInlineMedia(_ dataURL: String?) -> Data? {
@@ -281,6 +372,219 @@ final class SocialWebViewStore: NSObject, ObservableObject {
               let data = Data(base64Encoded: String(dataURL[dataURL.index(after: comma)...])),
               data.count <= 4 * 1024 * 1024 else { return nil }
         return data
+    }
+
+    private func pumpMediaClassifications() {
+        while activeMediaRequests.count < Self.maximumConcurrentMediaClassifications {
+            guard let nextIndex = pendingMediaOrder.firstIndex(where: {
+                pendingMediaRequests[$0] != nil && activeMediaRequests[$0] == nil
+            }) else { return }
+            let key = pendingMediaOrder.remove(at: nextIndex)
+            guard let request = pendingMediaRequests.removeValue(forKey: key) else { continue }
+
+            // A classifier implementation is allowed to ignore cancellation. Keep
+            // those native executions bounded and fail closed instead of spawning
+            // an unbounded number of stale tasks after their logical slots expire.
+            guard nativeMediaClassificationExecutions.count
+                    < Self.maximumConcurrentMediaClassifications else {
+                resolveCurrentMediaWithoutClassification(request)
+                continue
+            }
+
+            activeMediaRequests[key] = request
+            nativeMediaClassificationExecutions.insert(request.requestID)
+            let classifier = mediaClassifier
+            let requestID = request.requestID
+            let dataURL = request.dataURL
+            let task = Task { [weak self] in
+                guard !Task.isCancelled else {
+                    self?.retireNativeMediaClassification(requestID)
+                    return
+                }
+                let inlineData = await Task.detached(priority: .userInitiated) {
+                    Self.decodeInlineMedia(dataURL)
+                }.value
+                guard !Task.isCancelled else {
+                    self?.retireNativeMediaClassification(requestID)
+                    return
+                }
+                let verdict = if let inlineData {
+                    await classifier.classify(imageData: inlineData)
+                } else {
+                    ContentSafetyVerdict.unknown
+                }
+                let wasCancelled = Task.isCancelled
+                await self?.nativeMediaClassificationReturned(
+                    for: key,
+                    requestID: requestID,
+                    verdict: verdict,
+                    wasCancelled: wasCancelled
+                )
+            }
+            mediaClassificationTasks[key] = task
+            let deadline = mediaClassificationDeadlineNanoseconds
+            mediaClassificationDeadlineTasks[key] = Task { [weak self] in
+                do {
+                    try await Task.sleep(nanoseconds: deadline)
+                } catch {
+                    return
+                }
+                guard let self, !Task.isCancelled else { return }
+                await self.expireMediaClassification(for: key, requestID: requestID)
+            }
+        }
+    }
+
+    private func nativeMediaClassificationReturned(
+        for key: MediaRequestKey,
+        requestID: UUID,
+        verdict: ContentSafetyVerdict,
+        wasCancelled: Bool
+    ) async {
+        nativeMediaClassificationExecutions.remove(requestID)
+        guard !wasCancelled,
+              let request = activeMediaRequests[key],
+              request.requestID == requestID else {
+            pumpMediaClassifications()
+            return
+        }
+        await finishMediaClassification(request, verdict: verdict)
+    }
+
+    private func retireNativeMediaClassification(_ requestID: UUID) {
+        nativeMediaClassificationExecutions.remove(requestID)
+        pumpMediaClassifications()
+    }
+
+    private func finishMediaClassification(
+        _ request: MediaClassificationRequest,
+        verdict: ContentSafetyVerdict
+    ) async {
+        guard activeMediaRequests[request.key]?.requestID == request.requestID else { return }
+        activeMediaRequests.removeValue(forKey: request.key)
+        mediaClassificationTasks.removeValue(forKey: request.key)
+        mediaClassificationDeadlineTasks.removeValue(forKey: request.key)?.cancel()
+
+        let shouldResolve = retireLatestMediaRequestIfCurrent(request)
+        pumpMediaClassifications()
+
+        guard shouldResolve else { return }
+        await resolveMedia(
+            documentID: request.key.documentID,
+            id: request.key.id,
+            token: request.token,
+            verdict: verdict,
+            service: request.key.service,
+            frame: request.frame
+        )
+    }
+
+    private func expireMediaClassification(
+        for key: MediaRequestKey,
+        requestID: UUID
+    ) async {
+        guard let request = activeMediaRequests[key],
+              request.requestID == requestID else { return }
+        mediaClassificationTasks.removeValue(forKey: key)?.cancel()
+        mediaClassificationDeadlineTasks.removeValue(forKey: key)
+        activeMediaRequests.removeValue(forKey: key)
+
+        let shouldResolve = retireLatestMediaRequestIfCurrent(request)
+        pumpMediaClassifications()
+
+        guard shouldResolve else { return }
+        await resolveMedia(
+            documentID: request.key.documentID,
+            id: request.key.id,
+            token: request.token,
+            verdict: .unknown,
+            service: request.key.service,
+            frame: request.frame
+        )
+    }
+
+    private func resolveCurrentMediaWithoutClassification(_ request: MediaClassificationRequest) {
+        guard retireLatestMediaRequestIfCurrent(request) else { return }
+        resolveMediaWithoutWaiting(request, verdict: .unknown)
+    }
+
+    private func retireLatestMediaRequestIfCurrent(
+        _ request: MediaClassificationRequest
+    ) -> Bool {
+        guard latestMediaRequestIDs[request.key] == request.requestID,
+              latestMediaTokens[request.key] == request.token else {
+            return false
+        }
+        latestMediaRequestIDs.removeValue(forKey: request.key)
+        latestMediaTokens.removeValue(forKey: request.key)
+        return true
+    }
+
+    private func scheduleMediaRetry(for request: MediaClassificationRequest) {
+        mediaRetryTasks[request.key]?.cancel()
+        mediaRetryTasks.removeValue(forKey: request.key)
+        guard mediaRetryTasks.count < Self.maximumMediaRetryTasks else {
+            resolveCurrentMediaWithoutClassification(request)
+            return
+        }
+
+        let task = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 650_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.mediaRetryTasks.removeValue(forKey: request.key)
+            guard self.retireLatestMediaRequestIfCurrent(request) else { return }
+            await self.resolveMedia(
+                documentID: request.key.documentID,
+                id: request.key.id,
+                token: request.token,
+                verdict: .unknown,
+                service: request.key.service,
+                frame: request.frame
+            )
+        }
+        mediaRetryTasks[request.key] = task
+    }
+
+    private func registerMainDocument(_ documentID: String, for service: SocialService) {
+        guard mainDocumentIDs[service] != documentID else { return }
+        cancelDocumentWork(for: service)
+        mainDocumentIDs[service] = documentID
+    }
+
+    private func cancelDocumentWork(for service: SocialService) {
+        let activeKeys = Set(
+            mediaClassificationTasks.keys.filter { $0.service == service }
+                + mediaClassificationDeadlineTasks.keys.filter { $0.service == service }
+                + activeMediaRequests.keys.filter { $0.service == service }
+        )
+        activeKeys.forEach {
+            mediaClassificationTasks[$0]?.cancel()
+            mediaClassificationTasks.removeValue(forKey: $0)
+            mediaClassificationDeadlineTasks[$0]?.cancel()
+            mediaClassificationDeadlineTasks.removeValue(forKey: $0)
+            activeMediaRequests.removeValue(forKey: $0)
+        }
+
+        let pendingKeys = pendingMediaRequests.keys.filter { $0.service == service }
+        pendingKeys.forEach {
+            pendingMediaRequests.removeValue(forKey: $0)
+        }
+        pendingMediaOrder.removeAll { $0.service == service }
+
+        let retryKeys = mediaRetryTasks.keys.filter { $0.service == service }
+        retryKeys.forEach {
+            mediaRetryTasks[$0]?.cancel()
+            mediaRetryTasks.removeValue(forKey: $0)
+        }
+        latestMediaTokens.keys.filter { $0.service == service }.forEach {
+            latestMediaTokens.removeValue(forKey: $0)
+        }
+        latestMediaRequestIDs.keys.filter { $0.service == service }.forEach {
+            latestMediaRequestIDs.removeValue(forKey: $0)
+        }
+        textInspections[service] = [:]
+        mainDocumentIDs.removeValue(forKey: service)
+        pumpMediaClassifications()
     }
 
     private func resolveMedia(
@@ -306,6 +610,25 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         )
     }
 
+    private func resolveMediaWithoutWaiting(
+        _ request: MediaClassificationRequest,
+        verdict: ContentSafetyVerdict
+    ) {
+        let resolvedVerdict = unclassifiedMediaPolicy.resolve(verdict)
+        guard let webView = webViews[request.key.service] else { return }
+        webView.callAsyncJavaScript(
+            "window.__vigilResolveMedia?.(documentID, id, token, verdict);",
+            arguments: [
+                "documentID": request.key.documentID,
+                "id": request.key.id,
+                "token": request.token,
+                "verdict": resolvedVerdict.rawValue
+            ],
+            in: request.frame,
+            in: .page
+        )
+    }
+
     private func handlePageText(_ body: [String: Any], service: SocialService, frame: WKFrameInfo) {
         guard let documentID = body["documentID"] as? String,
               !documentID.isEmpty, documentID.utf8.count <= 128,
@@ -316,6 +639,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
               let text = body["text"] as? String,
               text.utf8.count <= 96_000,
               total > 0, total <= 32, index >= 0, index < total else { return }
+        if frame.isMainFrame {
+            registerMainDocument(documentID, for: service)
+        }
         let truncated = body["wasTruncated"] as? Bool ?? true
         let inspectionKey = TextInspectionKey(documentID: documentID, revision: revision)
         var serviceInspections = textInspections[service] ?? [:]
@@ -358,6 +684,124 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         serviceByWebView[ObjectIdentifier(webView)]
     }
 
+    func setSurface(_ surface: SocialSurfaceState, for service: SocialService) {
+        surfaceStates[service] = surface
+        guard let scrollView = webViews[service]?.scrollView else { return }
+        let allowsRefresh = surface.allowsRefresh
+        scrollView.refreshControl?.isEnabled = allowsRefresh
+        scrollView.alwaysBounceVertical = allowsRefresh
+        if !allowsRefresh && !refreshingServices.contains(service) {
+            scrollView.refreshControl?.endRefreshing()
+        }
+    }
+
+    private func recordNavigationFailure(_ error: Error, for service: SocialService) {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+            return
+        }
+        // WebKit reports policy-driven frame replacements through its private
+        // compatibility domain/code rather than the public WKError.Code enum.
+        if nsError.domain == "WebKitErrorDomain", nsError.code == 102 {
+            return
+        }
+        health[service] = .degraded(error.localizedDescription)
+        setSurface(.unknown, for: service)
+    }
+
+    private func isAdvisoryHealthMessage(_ detail: String) -> Bool {
+        detail.localizedCaseInsensitiveContains("intentionally unavailable")
+            || detail.localizedCaseInsensitiveContains("signed out")
+    }
+
+    static func validatedPopupRequest(
+        _ request: URLRequest,
+        for service: SocialService
+    ) -> URLRequest? {
+        guard let url = request.url,
+              service.allowsNavigation(to: url),
+              !service.isRestrictedSurface(url) else { return nil }
+        return request
+    }
+
+    static func safeRecoveryURL(_ url: URL?, for service: SocialService) -> URL? {
+        guard let url,
+              service.allowsNavigation(to: url),
+              !service.isRestrictedSurface(url) else { return nil }
+        return url
+    }
+
+    private func restoreWebContentPositionIfNeeded(for service: SocialService, in webView: WKWebView) {
+        guard let recovery = webContentRecovery.removeValue(forKey: service),
+              webView.url == recovery.url else { return }
+        Task { @MainActor [weak webView] in
+            var expectedOffset = webView?.scrollView.contentOffset
+            // The second delay is relative to the first, so the restores occur
+            // approximately 180 ms and 850 ms after navigation completion.
+            for delay in [180_000_000, 670_000_000] as [UInt64] {
+                try? await Task.sleep(nanoseconds: delay)
+                guard let webView, webView.url == recovery.url else { return }
+                let scrollView = webView.scrollView
+                guard !scrollView.isTracking,
+                      !scrollView.isDragging,
+                      !scrollView.isDecelerating else { return }
+                if let expectedOffset {
+                    let distance = hypot(
+                        scrollView.contentOffset.x - expectedOffset.x,
+                        scrollView.contentOffset.y - expectedOffset.y
+                    )
+                    guard distance <= 12 else { return }
+                }
+                let minimumX = -scrollView.adjustedContentInset.left
+                let maximumX = max(
+                    minimumX,
+                    scrollView.contentSize.width - scrollView.bounds.width
+                        + scrollView.adjustedContentInset.right
+                )
+                let minimumY = -scrollView.adjustedContentInset.top
+                let maximumY = max(
+                    minimumY,
+                    scrollView.contentSize.height - scrollView.bounds.height
+                        + scrollView.adjustedContentInset.bottom
+                )
+                let restoredX = min(max(recovery.contentOffset.x, minimumX), maximumX)
+                let restoredY = min(max(recovery.contentOffset.y, minimumY), maximumY)
+                scrollView.setContentOffset(
+                    CGPoint(x: restoredX, y: restoredY),
+                    animated: false
+                )
+                expectedOffset = CGPoint(x: restoredX, y: restoredY)
+            }
+        }
+    }
+
+    private func updateAuxiliaryPageHealthIfNeeded(
+        for service: SocialService,
+        in webView: WKWebView
+    ) {
+        guard let url = webView.url,
+              let auxiliaryHealth = service.auxiliaryPageHealth(for: url) else { return }
+        health[service] = auxiliaryHealth
+        setSurface(.unknown, for: service)
+
+        guard service == .youtube, url.host?.lowercased() == "accounts.google.com" else { return }
+        webView.evaluateJavaScript(
+            #"""
+            (() => {
+              const text = String(document.body?.innerText || '').toLowerCase();
+              return /disallowed_useragent|this browser or app may not be secure|couldn.?t sign you in/.test(text);
+            })()
+            """#
+        ) { [weak self, weak webView] result, _ in
+            guard let self, let webView,
+                  result as? Bool == true,
+                  webView.url == url else { return }
+            self.health[service] = .unsupported(
+                "Google rejected embedded WebKit sign-in. This authentication path is unavailable in the YouTube companion."
+            )
+        }
+    }
+
     private func audioPreferenceKey(_ service: SocialService) -> String {
         "VigilSocial.audio.\(service.rawValue)"
     }
@@ -391,6 +835,35 @@ private struct MediaRequestKey: Hashable {
     let id: String
 }
 
+private struct MediaClassificationRequest {
+    let requestID: UUID
+    let key: MediaRequestKey
+    let token: String
+    let dataURL: String?
+    let frame: WKFrameInfo
+}
+
+struct SocialSurfaceState {
+    let route: String
+    let refreshEligible: Bool
+    let blocksRefresh: Bool
+
+    static let unknown = SocialSurfaceState(
+        route: "unknown",
+        refreshEligible: false,
+        blocksRefresh: true
+    )
+
+    var allowsRefresh: Bool {
+        refreshEligible && !blocksRefresh
+    }
+}
+
+private struct WebContentRecoveryState {
+    let url: URL
+    let contentOffset: CGPoint
+}
+
 extension SocialWebViewStore: WKNavigationDelegate {
     func webView(
         _ webView: WKWebView,
@@ -415,7 +888,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
             return
         }
         if service.isRestrictedSurface(url) {
-            health[service] = .degraded("That short-form surface is intentionally unavailable.")
+            health[service] = .advisory("That short-form surface is intentionally unavailable.")
             decisionHandler(.cancel, preferences)
             return
         }
@@ -423,13 +896,21 @@ extension SocialWebViewStore: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
-        if let service = service(for: webView) { health[service] = .loading }
+        guard let service = service(for: webView) else { return }
+        cancelDocumentWork(for: service)
+        if !refreshingServices.contains(service) {
+            health[service] = .loading
+        }
+        setSurface(.unknown, for: service)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
         guard let service = service(for: webView) else { return }
+        refreshingServices.remove(service)
         webView.scrollView.refreshControl?.endRefreshing()
+        updateAuxiliaryPageHealthIfNeeded(for: service, in: webView)
         webView.evaluateJavaScript(DOMAdapters.script(for: service, audioEnabled: audioEnabled(for: service)))
+        restoreWebContentPositionIfNeeded(for: service, in: webView)
     }
 
     func webView(
@@ -437,19 +918,43 @@ extension SocialWebViewStore: WKNavigationDelegate {
         didFailProvisionalNavigation navigation: WKNavigation?,
         withError error: Error
     ) {
+        if let service = service(for: webView) {
+            refreshingServices.remove(service)
+        }
         webView.scrollView.refreshControl?.endRefreshing()
-        if let service = service(for: webView) { health[service] = .degraded(error.localizedDescription) }
+        if let service = service(for: webView) {
+            recordNavigationFailure(error, for: service)
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation?, withError error: Error) {
+        if let service = service(for: webView) {
+            refreshingServices.remove(service)
+        }
         webView.scrollView.refreshControl?.endRefreshing()
-        if let service = service(for: webView) { health[service] = .degraded(error.localizedDescription) }
+        if let service = service(for: webView) {
+            recordNavigationFailure(error, for: service)
+        }
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         guard let service = service(for: webView) else { return }
+        cancelDocumentWork(for: service)
+        setSurface(.unknown, for: service)
         health[service] = .loading
-        webView.reload()
+        let safeURL = Self.safeRecoveryURL(webView.url, for: service)
+        if let safeURL {
+            webContentRecovery[service] = WebContentRecoveryState(
+                url: safeURL,
+                contentOffset: webView.scrollView.contentOffset
+            )
+            if webView.reload() == nil {
+                webView.load(URLRequest(url: safeURL))
+            }
+        } else {
+            webContentRecovery.removeValue(forKey: service)
+            webView.load(URLRequest(url: service.homeURL))
+        }
     }
 }
 
@@ -476,12 +981,25 @@ extension SocialWebViewStore: WKUIDelegate {
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
-        guard let service = service(for: webView), let request = navigationAction.request.url else { return nil }
-        guard service.allowsNavigation(to: request), !service.isRestrictedSurface(request) else {
-            return nil
-        }
-        webView.load(URLRequest(url: request))
+        guard let service = service(for: webView),
+              let request = Self.validatedPopupRequest(
+                  navigationAction.request,
+                  for: service
+              ) else { return nil }
+        webView.load(request)
         return nil
+    }
+}
+
+extension SocialWebViewStore: UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let edgeGesture = gestureRecognizer as? UIScreenEdgePanGestureRecognizer,
+              edgeGesture.edges == .left,
+              let webView = edgeGesture.view as? WKWebView,
+              service(for: webView) == .instagram,
+              webView.canGoBack else { return false }
+        let velocity = edgeGesture.velocity(in: webView)
+        return velocity.x > 0 && abs(velocity.x) > abs(velocity.y) * 1.15
     }
 }
 

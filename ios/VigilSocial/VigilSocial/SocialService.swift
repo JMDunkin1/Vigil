@@ -120,6 +120,28 @@ enum SocialService: String, CaseIterable, Identifiable {
         }
     }
 
+    func auxiliaryPageHealth(for url: URL) -> AdapterHealth? {
+        guard allowsNavigation(to: url),
+              let host = url.host?.lowercased(),
+              !isCanonicalAppHost(host) else { return nil }
+        switch self {
+        case .instagram:
+            if Self.host(host, matches: "facebook.com") {
+                return .advisory("Continue signing in with Facebook. You’ll return to Instagram after authorization.")
+            }
+            return .advisory("This allowed Instagram page uses its original web layout.")
+        case .youtube:
+            switch host {
+            case "accounts.google.com":
+                return .advisory("Continue signing in with Google. Embedded sign-in availability is controlled by Google.")
+            case "consent.youtube.com":
+                return .advisory("Review YouTube’s consent choices to continue.")
+            default:
+                return .advisory("Opening this link in YouTube.")
+            }
+        }
+    }
+
     private static func host(_ host: String, matches domain: String) -> Bool {
         host == domain || host.hasSuffix(".\(domain)")
     }
@@ -128,6 +150,7 @@ enum SocialService: String, CaseIterable, Identifiable {
 enum AdapterHealth: Equatable {
     case loading
     case ready
+    case advisory(String)
     case degraded(String)
     case unsupported(String)
 
@@ -135,7 +158,7 @@ enum AdapterHealth: Equatable {
         switch self {
         case .loading, .ready:
             nil
-        case let .degraded(detail), let .unsupported(detail):
+        case let .advisory(detail), let .degraded(detail), let .unsupported(detail):
             detail
         }
     }

@@ -121,6 +121,8 @@ const requiredAppsEnd = phoneSuiteSource.indexOf("];", requiredAppsStart);
 const requiredAppsSource = phoneSuiteSource.slice(requiredAppsStart, requiredAppsEnd);
 assert.match(requiredAppsSource, /tech\.caseline\.vigil\.instagram/u);
 assert.match(requiredAppsSource, /tech\.caseline\.vigil\.youtube/u);
+assert.match(requiredAppsSource, /service: "instagram"[\s\S]*?appIconSet: "InstagramAppIcon"/u);
+assert.match(requiredAppsSource, /service: "youtube"[\s\S]*?appIconSet: "YouTubeAppIcon"/u);
 assert.doesNotMatch(requiredAppsSource, /tech\.caseline\.vigil\.(?:browser|social|snapchat)/u);
 
 const buildPhoneAppsStart = phoneSuiteSource.indexOf("async function buildPhoneApps");
@@ -128,6 +130,7 @@ const buildPhoneAppsEnd = phoneSuiteSource.indexOf("async function hashAppBundle
 const buildPhoneAppsSource = phoneSuiteSource.slice(buildPhoneAppsStart, buildPhoneAppsEnd);
 assert.match(buildPhoneAppsSource, /for \(const social of REQUIRED_APPS\)/u);
 assert.match(buildPhoneAppsSource, /VIGIL_SERVICE=\$\{social\.service\}/u);
+assert.match(buildPhoneAppsSource, /SOCIAL_APP_ICON_SET=\$\{social\.appIconSet\}/u);
 assert.doesNotMatch(buildPhoneAppsSource, /VigilBrowser|browserDerived|VIGIL_SERVICE=combined/u);
 assert.match(
   buildPhoneAppsSource,

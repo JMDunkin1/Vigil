@@ -45,8 +45,8 @@ const PHONE_SOURCE_FILES = [
   "src/types.ts"
 ];
 const REQUIRED_APPS = [
-  { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", icon: "instagram.png", scheme: "vigil-instagram" },
-  { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", icon: "youtube.png", scheme: "vigil-youtube" }
+  { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram" },
+  { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube" }
 ];
 
 if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
@@ -477,7 +477,7 @@ async function buildPhoneApps(release, toolEnvironment = process.env) {
       `PRODUCT_BUNDLE_IDENTIFIER=${social.bundleId}`,
       `VIGIL_SERVICE=${social.service}`,
       `SOCIAL_APP_NAME=${social.name}`,
-      `SOCIAL_ICON_NAME=${social.icon}`,
+      `SOCIAL_APP_ICON_SET=${social.appIconSet}`,
       `SOCIAL_URL_SCHEME=${social.scheme}`,
       `MARKETING_VERSION=${release.version}`,
       `CURRENT_PROJECT_VERSION=${release.build}`
