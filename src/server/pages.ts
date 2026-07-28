@@ -20,6 +20,17 @@ export type BlockedPageResponse =
   | { status: 200; body: string }
   | { status: 302; location: string };
 
+const BLOCK_EXPLANATIONS: Record<string, string> = {
+  "adult-blocklist": "Vigil's adult-content blocklist blocks this page",
+  allowlist: "The active allowlist does not include this page",
+  "app-lock": "An active app lock blocks this page",
+  baseline: "A baseline Vigil protection blocks this page",
+  "browser-control": "Vigil's browser controls block this page",
+  "content-filter": "A Vigil content filter blocks this page",
+  limit: "An active usage limit blocks this page",
+  "url-pattern": "A saved URL rule blocks this page"
+};
+
 interface PauseBudget {
   budgetSeconds?: number;
   seconds?: number;
@@ -86,6 +97,26 @@ export function blockedPage(input: PageInput): string {
   const site = escapeHtml(url.searchParams.get("site") || "This target");
   const backUrl = safeBlockedPageEscapeUrl(input, url.searchParams.get("back"));
   const escapeUrl = backUrl || BLOCKED_PAGE_ESCAPE_FALLBACK;
+  const requestedKind = String(url.searchParams.get("kind") || "").toLowerCase();
+  const requestedUntil = String(url.searchParams.get("until") || "");
+  const active = activePolicy(structuredClone(input.state));
+  const activeMatchesRequest = Boolean(active && active.kind === requestedKind);
+  const integrityAlarm = active?.kind === "integrity"
+    && active.alarm
+    && typeof active.alarm === "object"
+    && !Array.isArray(active.alarm)
+    ? active.alarm as Record<string, unknown>
+    : null;
+  const integrityReason = integrityAlarm?.type === "state-seal"
+    ? "Vigil found a saved-state integrity mismatch."
+    : String(integrityAlarm?.detail || "Vigil found an integrity problem.");
+  const blockExplanation = active?.kind === "integrity"
+    ? `${integrityReason} This protection stays active ${active.endsAt || "until the integrity alarm is reviewed"}.`
+    : activeMatchesRequest && active
+      ? `${active.session.title || "A Vigil protection"} is active${active.endsAt ? ` until ${active.endsAt}` : ""}.`
+      : BLOCK_EXPLANATIONS[requestedKind]
+        ? `${BLOCK_EXPLANATIONS[requestedKind]}${requestedUntil ? ` until ${requestedUntil}` : ""}.`
+        : "A saved Vigil rule applies to this page.";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -99,6 +130,7 @@ export function blockedPage(input: PageInput): string {
     main { width: min(560px, 100%); }
     .eyebrow { margin: 0 0 12px; color: var(--primary-strong); font-size: .78rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
     h1 { max-width: 12ch; margin: 0; font: 700 clamp(2.75rem, 8vw, 5rem)/.98 Georgia, "Times New Roman", serif; letter-spacing: -.04em; text-wrap: balance; }
+    .reason { max-width: 48ch; margin: 22px 0 0; padding-left: 14px; border-left: 2px solid rgba(213, 161, 107, .52); color: #aaa398; font-size: .96rem; line-height: 1.6; }
     .escape-actions { margin-top: 32px; }
     .escape-actions a { min-height: 48px; display: inline-grid; place-items: center; padding: 0 22px; border-radius: 7px; color: #16120f; background: var(--primary); text-decoration: none; font-weight: 700; transition: background .15s ease, transform .15s ease; }
     .escape-actions a:hover { background: var(--primary-strong); }
@@ -111,6 +143,7 @@ export function blockedPage(input: PageInput): string {
   <main>
     <p class="eyebrow">Vigil</p>
     <h1>${site} is blocked.</h1>
+    <p class="reason">${escapeHtml(blockExplanation)}</p>
     <div class="escape-actions">
       <a id="leaveBlockedPage" href="${escapeHtml(escapeUrl)}">Go back</a>
     </div>
@@ -452,145 +485,87 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pause expired</title>
+  <title>Pause expired · Vigil</title>
   <style>${pausePageCss()}</style>
 </head>
-<body>
-  <main>
-    <p class="eyebrow">Vigil</p>
-    <h1>Pause expired.</h1>
-    <p>This intentional-use pause is no longer active. Open Vigil or try the site again if you still mean it.</p>
-    <a class="button" href="http://127.0.0.1:${port}">Open Vigil</a>
+<body data-vigil-intentional-use="1">
+  <main class="expired-shell">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">V</span><span>Vigil</span></div>
+    <p class="eyebrow">Pre-open pause</p>
+    <h1>That pause has expired.</h1>
+    <p class="lead">Try the site again if you still mean to open it, or review your Intentional Use rules in Vigil.</p>
+    <a class="button primary" href="http://127.0.0.1:${port}">Open Vigil</a>
   </main>
 </body>
 </html>`;
   }
 
   const pause = data.pause;
-  const goal = data.goal || {};
-  const budget = data.budget || {};
-  const context = data.context || {};
-  const replacements = (data.replacements || []).slice(0, 6);
-  const budgetText = budget.budgetSeconds
-    ? `${Math.round((budget.seconds || 0) / 60)} of ${Math.round(budget.budgetSeconds / 60)} min used today`
-    : "No daily budget set";
-  const buttons = replacements
-    .map((item) => `<button class="choice" type="button" data-replacement="${escapeHtml(item)}">${escapeHtml(item)}</button>`)
-    .join("");
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Intentional Use</title>
-  <style>${pausePageCss()}</style>
+  <title>Intentional Use · Vigil</title>
+  <style>${activePausePageCss()}</style>
 </head>
-<body>
-  <main>
-    <p class="eyebrow">Intentional Use</p>
-    <h1>Before ${escapeHtml(pause.targetLabel)}.</h1>
-    <p class="lead">${escapeHtml(goal.statement || "Use screens on purpose, not by reflex.")}</p>
-    <blockquote>“The measure of love is to love without measure.”<cite>Saint Augustine</cite></blockquote>
-    <div class="timer">
-      <strong id="countdown">${Math.max(0, data.waitSeconds || 0)}</strong>
-      <span>slow seconds</span>
-    </div>
-    <div class="grid">
-      <section>
-        <h2>Use this for</h2>
-        <input id="intention" type="text" autocomplete="off" placeholder="One clear reason">
-        <select id="mood">
-          <option value="">Current state</option>
-          <option>Focused</option>
-          <option>Bored</option>
-          <option>Tired</option>
-          <option>Anxious</option>
-          <option>Avoiding something</option>
-        </select>
-      </section>
-      <section>
-        <h2>Or switch to</h2>
-        <div class="choices">${buttons || '<button class="choice" type="button" data-replacement="Close this tab">Close this tab</button>'}</div>
-      </section>
-    </div>
-    <div class="meta">
-      <span>${escapeHtml(pause.ruleName)}</span>
-      <span>${escapeHtml(budgetText)}</span>
-      <span>${escapeHtml(context.message || "Normal pause")}</span>
-    </div>
-    <div class="actions">
-      <button id="skip" class="secondary" type="button">Use replacement</button>
-      <button id="continue" class="primary" type="button" disabled>Continue for ${Math.round(pause.sessionMinutes || 10)} min</button>
-    </div>
-    <p id="status" class="status">Breathe first. The continue button will unlock when the timer reaches zero.</p>
+<body data-vigil-intentional-use="1">
+  <main class="pause-shell">
+    <section class="pause-content" aria-label="Intentional pause">
+      <p class="prompt">Are you sure you want to open ${escapeHtml(pause.targetLabel)}?</p>
+      <button id="continue" type="button" disabled>Continue</button>
+      <p id="status" class="status" role="status" hidden></p>
+      <div class="timer" role="timer" aria-live="polite" aria-label="Seconds remaining">
+        <strong id="countdown">${Math.max(0, data.waitSeconds || 0)}</strong>
+      </div>
+    </section>
   </main>
   <script>
     const pageData = ${safeScriptJson({ requestId: pause.id, returnUrl: pause.returnUrl, waitSeconds: Math.max(0, data.waitSeconds || 0) })};
     const countdown = document.querySelector("#countdown");
     const continueButton = document.querySelector("#continue");
-    const skipButton = document.querySelector("#skip");
+    const timerElement = document.querySelector(".timer");
     const status = document.querySelector("#status");
-    const intention = document.querySelector("#intention");
-    const mood = document.querySelector("#mood");
-    let selectedReplacement = "";
     let remaining = pageData.waitSeconds || 0;
 
-    document.querySelectorAll(".choice").forEach((button) => {
-      button.addEventListener("click", () => {
-        selectedReplacement = button.dataset.replacement || button.textContent;
-        document.querySelectorAll(".choice").forEach((item) => item.classList.remove("selected"));
-        button.classList.add("selected");
-        status.textContent = "Replacement selected.";
-      });
-    });
-
-    const timer = setInterval(() => {
+    const countdownInterval = setInterval(() => {
       remaining = Math.max(0, remaining - 1);
       countdown.textContent = String(remaining);
       if (remaining <= 0) {
-        clearInterval(timer);
-        continueButton.disabled = false;
-        status.textContent = "Ready. Continue only if this still matches the reason you wrote.";
+        finishTimer();
       }
     }, 1000);
-    if (remaining <= 0) continueButton.disabled = false;
+    if (remaining <= 0) {
+      finishTimer();
+    }
 
     continueButton.addEventListener("click", async () => {
       continueButton.disabled = true;
       try {
         const result = await postJson("/api/intentional-use/pause/continue", {
           requestId: pageData.requestId,
-          intention: intention.value,
-          mood: mood.value
+          intention: "",
+          mood: ""
         });
-        status.textContent = "Intentional window opened.";
         if (result.returnUrl) {
-          setTimeout(() => { location.href = result.returnUrl; }, 350);
+          location.href = result.returnUrl;
         } else if (result.launch?.ok) {
-          status.textContent = "Intentional window opened in " + (result.pause?.app || result.pause?.targetLabel || "the app") + ".";
+          location.href = "http://127.0.0.1:${port}";
         } else {
-          setTimeout(() => { location.href = "http://127.0.0.1:${port}"; }, 350);
+          location.href = "http://127.0.0.1:${port}";
         }
       } catch (error) {
         status.textContent = error.message;
+        status.hidden = false;
         continueButton.disabled = false;
       }
     });
 
-    skipButton.addEventListener("click", async () => {
-      skipButton.disabled = true;
-      try {
-        await postJson("/api/intentional-use/pause/skip", {
-          requestId: pageData.requestId,
-          replacement: selectedReplacement || "Closed the loop",
-          mood: mood.value
-        });
-        status.textContent = "Nice. Keep the replacement small and concrete.";
-      } catch (error) {
-        status.textContent = error.message;
-        skipButton.disabled = false;
-      }
-    });
+    function finishTimer() {
+      clearInterval(countdownInterval);
+      timerElement.classList.add("complete");
+      continueButton.disabled = false;
+    }
 
     async function postJson(path, body) {
       const response = await fetch(path, {
@@ -607,41 +582,444 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
 </html>`;
 }
 
+function activePausePageCss() {
+  return `
+    :root {
+      color-scheme: dark;
+      --paper: #101111;
+      --ink: #f0ece5;
+      --muted: #aaa398;
+      --primary: #b77952;
+      --primary-strong: #d5a16b;
+      --focus: rgba(213, 161, 107, .28);
+      --timer-size: clamp(72px, 9vw, 88px);
+      --edge: clamp(30px, 7vh, 64px);
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { min-width: 0; min-height: 100%; background: var(--paper); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      overflow: hidden;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 50% 50%, rgba(183, 121, 82, .045), transparent 34rem),
+        linear-gradient(180deg, #0f1010, #141515);
+      font-family: Inter, "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button { font: inherit; }
+    .pause-shell {
+      min-height: 100vh;
+    }
+    .pause-content {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: grid;
+      place-content: center;
+      justify-items: center;
+      gap: 18px;
+      padding: 32px 156px;
+      text-align: center;
+    }
+    .prompt {
+      margin: 0;
+      color: var(--ink);
+      font-size: clamp(1.05rem, 2vw, 1.35rem);
+      font-weight: 620;
+      line-height: 1.4;
+      letter-spacing: -.025em;
+    }
+    .timer {
+      position: fixed;
+      bottom: var(--edge);
+      right: var(--edge);
+      width: var(--timer-size);
+      height: var(--timer-size);
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(213, 161, 107, .52);
+      border-radius: 999px;
+      background: radial-gradient(circle, rgba(183, 121, 82, .2), rgba(31, 31, 29, .94) 70%);
+      box-shadow:
+        0 0 0 12px rgba(183, 121, 82, .025),
+        0 18px 56px rgba(0, 0, 0, .32),
+        0 0 50px rgba(183, 121, 82, .08);
+      animation: timer-breathe 6s cubic-bezier(.65, 0, .35, 1) infinite;
+      will-change: transform;
+    }
+    .timer.complete {
+      animation: none;
+      transform: translateY(0);
+    }
+    .timer strong {
+      color: var(--ink);
+      font-size: clamp(1.55rem, 3.4vw, 2rem);
+      font-weight: 680;
+      line-height: 1;
+      letter-spacing: -.06em;
+    }
+    button {
+      min-width: 156px;
+      min-height: 50px;
+      border: 1px solid var(--primary);
+      border-radius: 999px;
+      padding: 0 24px;
+      color: #17130f;
+      background: var(--primary);
+      font-weight: 760;
+      cursor: pointer;
+      transition: background .16s ease, transform .16s ease;
+    }
+    button:hover:not(:disabled) {
+      background: var(--primary-strong);
+      transform: translateY(-1px);
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 3px;
+    }
+    .status {
+      max-width: 34ch;
+      margin: -12px 0 0;
+      color: var(--muted);
+      font-size: .78rem;
+      line-height: 1.5;
+    }
+    @keyframes timer-breathe {
+      0%, 100% {
+        transform: translateY(0);
+      }
+      50% {
+        transform: translateY(calc(-100vh + var(--edge) + var(--edge) + var(--timer-size)));
+      }
+    }
+    @media (max-width: 640px) {
+      .pause-content {
+        place-content: end center;
+        padding: 32px 32px calc(var(--edge) + var(--timer-size) + 42px);
+      }
+      .timer { right: 50%; transform: translateX(50%); }
+      .timer.complete { transform: translateX(50%); }
+      @keyframes timer-breathe {
+        0%, 100% {
+          transform: translate(50%, 0);
+        }
+        50% {
+          transform: translate(50%, calc(-100vh + var(--edge) + var(--edge) + var(--timer-size)));
+        }
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      button { transition: none; }
+      .timer { animation: none; }
+    }
+  `;
+}
+
 function pausePageCss() {
   return `
-    :root { color-scheme: dark; --ink: #f1eee4; --muted: #aeb3af; --gold: #d1a94d; --gold-soft: #f1d98f; --line: #5f4b2d; --panel: #101927; }
+    :root {
+      color-scheme: dark;
+      --paper: #101111;
+      --surface-strong: #222321;
+      --ink: #f0ece5;
+      --muted: #aaa398;
+      --line: #353532;
+      --line-strong: #575248;
+      --primary: #b77952;
+      --primary-strong: #d5a16b;
+      --accent-soft: rgba(183, 121, 82, .12);
+      --focus: rgba(213, 161, 107, .24);
+    }
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; font-family: Georgia, "Times New Roman", serif; color: var(--ink); background: radial-gradient(circle at 50% 18%, #18345b 0, #0a111d 44%, #05080e 100%); }
-    body::before { content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .2; background-image: linear-gradient(90deg, transparent 49%, #d1a94d22 50%, transparent 51%), linear-gradient(transparent 49%, #d1a94d12 50%, transparent 51%); background-size: 48px 48px; }
-    main { position: relative; width: min(760px, calc(100vw - 32px)); margin: 32px 0; padding: 34px; border: 1px solid var(--line); border-radius: 6px; background: linear-gradient(145deg, #142238f7, #0b121df7); box-shadow: 0 24px 80px #000b, inset 0 0 0 3px #080d15, inset 0 0 0 4px #6f5529; }
-    main::before { content: "✠"; float: right; display: grid; place-items: center; width: 42px; height: 42px; margin-left: 20px; border: 1px solid #8b6c34; color: var(--gold); background: #0a111c; font-size: 1.45rem; box-shadow: 4px 4px 0 #04070c; }
-    h1 { margin: 0 0 12px; font-size: clamp(2.25rem, 7vw, 3.75rem); line-height: .98; letter-spacing: -.035em; }
-    h2 { margin: 0 0 10px; color: #e8e3d5; font: 800 .8rem ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; }
-    p { color: var(--muted); line-height: 1.55; }
-    .eyebrow { margin: 0 0 8px; color: var(--gold); font: 900 .72rem ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .14em; }
-    .lead { max-width: 620px; margin-bottom: 14px; }
-    blockquote { max-width: 610px; margin: 16px 0 24px; padding: 12px 15px; border-left: 3px solid var(--gold); background: #080d15a8; color: #d8d5ca; font-style: italic; line-height: 1.45; }
-    blockquote cite { display: block; margin-top: 6px; color: #979e9a; font-size: .8rem; font-style: normal; }
-    .timer { width: 156px; height: 156px; border: 6px solid var(--gold); border-radius: 5px; display: grid; place-items: center; margin: 16px 0 24px; background: radial-gradient(circle, #172b48, #090f19); box-shadow: 5px 5px 0 #04070c, inset 0 0 0 3px #6a5128; }
-    .timer strong { display: block; color: var(--gold-soft); font: 800 3rem ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1; text-align: center; }
-    .timer span { display: block; color: #aeb3af; font: 800 .72rem ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .1em; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    section { border-top: 1px solid #4d402d; padding-top: 14px; }
-    input, select { width: 100%; min-height: 46px; border: 1px solid #554b3b; border-radius: 3px; padding: 0 12px; background: #080e17; color: var(--ink); font: 500 .94rem ui-sans-serif, system-ui, sans-serif; margin-bottom: 10px; }
-    input:focus, select:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
-    button, .button { min-height: 44px; border: 1px solid transparent; border-radius: 3px; padding: 0 15px; color: inherit; font: 900 .79rem ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; letter-spacing: .04em; cursor: pointer; text-decoration: none; display: inline-grid; place-items: center; box-shadow: 3px 3px 0 #04070c; }
-    button:disabled { opacity: .52; cursor: not-allowed; }
-    .primary { color: #120e07; background: var(--gold); border-color: #efd47f; }
-    .secondary, .choice, .button { color: #e6e3da; background: #1b293c; border-color: #40536d; }
-    .choices { display: grid; gap: 8px; }
-    .choice { justify-content: start; text-align: left; }
-    .choice.selected { color: #fff0b3; background: #3a2d16; border-color: var(--gold); outline: 1px solid var(--gold); }
-    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
-    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-    .meta span { border: 1px solid #4d4436; border-radius: 3px; padding: 7px 10px; color: #aeb3af; background: #090f18; font: .78rem ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .status { min-height: 24px; margin-top: 14px; color: #aeb3af; }
-    @media (max-width: 680px) { main { padding: 25px 20px; } h1 { font-size: 2.25rem; } .grid { grid-template-columns: 1fr; } .timer { width: 128px; height: 128px; } }
-    @media (prefers-reduced-motion: no-preference) { main::before { animation: vigil-cross 3s steps(2, end) infinite; } @keyframes vigil-cross { 50% { color: #fff0ad; transform: translateY(-2px); } } }
+    html { min-width: 0; background: var(--paper); }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: clamp(20px, 4vw, 52px);
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 72% 0%, rgba(183, 121, 82, .055), transparent 28rem),
+        linear-gradient(180deg, var(--paper), #131414);
+      font-family: Inter, "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select { font: inherit; }
+    button, .button {
+      min-height: 44px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      padding: 0 16px;
+      font-weight: 760;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform .16s ease, border-color .16s ease, background .16s ease, color .16s ease;
+    }
+    button:hover:not(:disabled), .button:hover { transform: translateY(-1px); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button:focus-visible, .button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 2px;
+    }
+    .breath-guide {
+      position: fixed;
+      z-index: 0;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .breath-wave {
+      position: absolute;
+      top: 100%;
+      right: 0;
+      left: 0;
+      height: 100%;
+      border-top: 1px solid rgba(213, 161, 107, .46);
+      background: linear-gradient(180deg, rgba(183, 121, 82, .08), rgba(183, 121, 82, .015) 42%, transparent);
+      box-shadow: 0 -14px 62px rgba(183, 121, 82, .12);
+      animation: breath-rise 6s cubic-bezier(.45, 0, .55, 1) infinite;
+      transition: opacity .6s ease;
+      will-change: transform;
+    }
+    .breath-guide.complete .breath-wave {
+      opacity: 0;
+      animation-play-state: paused;
+    }
+    .pause-shell, .expired-shell { position: relative; z-index: 1; }
+    .pause-shell { width: min(620px, 100%); margin: 0 auto; }
+    .expired-shell {
+      width: min(560px, 100%);
+      min-height: calc(100vh - clamp(40px, 8vw, 104px));
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: flex-start;
+      margin: 0 auto;
+    }
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: clamp(44px, 8vw, 72px);
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--ink);
+      font-size: .92rem;
+      font-weight: 780;
+      letter-spacing: -.02em;
+    }
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(213, 161, 107, .46);
+      border-radius: 9px;
+      color: var(--primary-strong);
+      background: var(--accent-soft);
+      font-size: .76rem;
+      font-weight: 850;
+    }
+    .feature-pill {
+      min-height: 30px;
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 12px;
+      color: var(--muted);
+      background: rgba(34, 35, 33, .72);
+      font-size: .74rem;
+      font-weight: 700;
+    }
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--primary-strong);
+      font: 800 .7rem "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(2.35rem, 7vw, 3.6rem);
+      font-weight: 680;
+      line-height: .98;
+      letter-spacing: -.055em;
+      text-wrap: balance;
+    }
+    h1 span { color: var(--primary-strong); }
+    .lead {
+      max-width: 620px;
+      margin: 12px 0 0;
+      color: var(--muted);
+      font-size: .94rem;
+      line-height: 1.55;
+    }
+    .timer {
+      width: 62px;
+      height: 62px;
+      flex: 0 0 62px;
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      border: 1px solid rgba(213, 161, 107, .42);
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(183, 121, 82, .12), rgba(34, 35, 33, .72) 68%);
+    }
+    .timer strong {
+      color: var(--ink);
+      font-size: 1.45rem;
+      font-weight: 680;
+      line-height: 1;
+      letter-spacing: -.06em;
+    }
+    .timer span {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: .57rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+    .intent-fields {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 176px;
+      gap: 7px 12px;
+      margin-top: 34px;
+    }
+    label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0;
+      color: var(--ink);
+      font-size: .76rem;
+      font-weight: 700;
+    }
+    .optional { color: var(--muted); font-size: .68rem; font-weight: 600; }
+    .intent-fields label[for="intention"] { grid-column: 1; grid-row: 1; }
+    .intent-fields #intention { grid-column: 1; grid-row: 2; }
+    .intent-fields label[for="mood"] { grid-column: 2; grid-row: 1; }
+    .intent-fields #mood { grid-column: 2; grid-row: 2; }
+    input, select {
+      width: 100%;
+      min-height: 44px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 9px 11px;
+      outline: none;
+      color: var(--ink);
+      background: var(--surface-strong);
+    }
+    input::placeholder { color: #77736c; }
+    input:focus-visible, select:focus-visible { border-color: var(--primary); }
+    .alternatives {
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+    }
+    .alternatives > p {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: .73rem;
+      font-weight: 650;
+    }
+    .choices {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+    .choice {
+      width: auto;
+      min-height: 34px;
+      justify-content: start;
+      border-color: var(--line);
+      border-radius: 999px;
+      padding: 0 10px;
+      color: var(--ink);
+      background: rgba(34, 35, 33, .68);
+      font-size: .7rem;
+      font-weight: 660;
+      text-align: left;
+    }
+    .choice:hover:not(:disabled) {
+      border-color: var(--line-strong);
+      background: var(--surface-strong);
+    }
+    .choice.selected {
+      border-color: var(--primary);
+      color: #f7e8d8;
+      background: var(--accent-soft);
+    }
+    .meta-line {
+      margin: 22px 0 0;
+      color: var(--muted);
+      font-size: .69rem;
+      line-height: 1.5;
+    }
+    .meta-line span { margin: 0 5px; color: var(--line-strong); }
+    .actions {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+      margin-top: 18px;
+    }
+    .primary {
+      border-color: var(--primary);
+      color: #17130f;
+      background: var(--primary);
+    }
+    .primary:hover:not(:disabled), .button.primary:hover { background: var(--primary-strong); }
+    .secondary, .button {
+      border-color: var(--line);
+      color: var(--ink);
+      background: var(--surface-strong);
+    }
+    .status {
+      min-height: 20px;
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: .7rem;
+      line-height: 1.45;
+    }
+    .expired-shell .brand { margin-bottom: 64px; }
+    .expired-shell h1 { max-width: 11ch; font-size: clamp(2.5rem, 8vw, 4.9rem); }
+    .expired-shell .button { margin-top: 24px; }
+    @keyframes breath-rise {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-100%); }
+    }
+    @media (max-width: 520px) {
+      body { padding: 22px 18px 32px; }
+      .page-header { margin-bottom: 38px; }
+      .intent-fields { grid-template-columns: 1fr; }
+      .intent-fields label[for="intention"],
+      .intent-fields #intention,
+      .intent-fields label[for="mood"],
+      .intent-fields #mood { grid-column: 1; grid-row: auto; }
+      .intent-fields label[for="mood"] { margin-top: 8px; }
+      .actions { grid-template-columns: 1fr; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      button, .button { transition: none; }
+      .breath-guide { display: none; }
+    }
   `;
 }
 

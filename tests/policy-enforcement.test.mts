@@ -19,7 +19,7 @@ import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanc
 import { buildSafariFilterProfile, safariFilterDenyMatch, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature, safariUrlFilterEnabled } from "../src/safariFilter.js";
 import { CHROME_PREFERENCE_DOMAINS, buildChromeSafeSearchProfile, chromeSafeSearchStatusFromRecord } from "../src/chromeSafeSearch.js";
 import { applySealVerificationToState, markStateSealed } from "../src/seal.js";
-import { blockedPage, blockedPageResponse } from "../src/server/pages.js";
+import { blockedPage, blockedPageResponse, pausePage } from "../src/server/pages.js";
 import { deleteProfile } from "../src/server/policyRoutes.js";
 import { updateSettings } from "../src/server/settingsRoutes.js";
 import { sanitizeDefaultFocusProfile, sanitizeFullBrickProfile, sanitizeSoftBlockProfile } from "../src/store.js";
@@ -601,6 +601,39 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.doesNotMatch(page, /Intentional break/);
   assert.doesNotMatch(page, /<blockquote>/);
   assert.doesNotMatch(page, /<section/);
+  assert.match(page, /A saved Vigil rule applies to this page/);
+
+  const integrityState = defaultState();
+  integrityState.integrity.stateSeal.tamperDetectedAt = now.toISOString();
+  integrityState.integrity.stateSeal.tamperDetail = "State file does not match its integrity seal.";
+  const integrityPage = blockedPage({
+    url: new URL("http://127.0.0.1:8787/blocked?site=youtube.com&mode=integrity&kind=integrity"),
+    state: integrityState
+  });
+  assert.match(integrityPage, /Vigil found a saved-state integrity mismatch/);
+  assert.match(integrityPage, /until the tamper alarm is cleared/);
+
+  const mismatchedPolicyState = defaultState();
+  const unrelatedFocusSession: Session = {
+    id: "unrelated-focus",
+    title: "Unrelated focus session",
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "light",
+    startedAt: new Date(now.getTime() - 60_000).toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60_000).toISOString(),
+    canEndEarly: true,
+    source: "manual"
+  };
+  mismatchedPolicyState.activeSession = unrelatedFocusSession;
+  mismatchedPolicyState.activeSessions.computer = unrelatedFocusSession;
+  const limitEndsAt = new Date(now.getTime() + 30 * 60_000).toISOString();
+  const limitPage = blockedPage({
+    url: new URL(`http://127.0.0.1:8787/blocked?site=Social&mode=time-limit&kind=limit&until=${encodeURIComponent(limitEndsAt)}`),
+    state: mismatchedPolicyState
+  });
+  assert.match(limitPage, /An active usage limit blocks this page until/);
+  assert.doesNotMatch(limitPage, /Unrelated focus session/);
 
   const blockedBackPage = blockedPage({
     url: new URL("http://127.0.0.1:8787/blocked?site=YouTube+Shorts&back=https%3A%2F%2Fwww.youtube.com%2Fshorts%2Fagain"),
@@ -648,6 +681,45 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     { address: "http://127.0.0.1:8787/?", pageTitle: "Vigil" },
     validLocalAllow
   ]), false, "even an empty query marker must not normalize into a managed allow-list root");
+}
+
+{
+  const state = defaultState();
+  const requestedAt = new Date();
+  state.intentionalUse.pauses.push({
+    id: "minimal-breathing-preview",
+    ruleId: "short-form-intent-template",
+    ruleName: "Short-form pause",
+    status: "pending",
+    requestedAt: requestedAt.toISOString(),
+    eligibleAt: new Date(requestedAt.getTime() + 12_000).toISOString(),
+    expiresAt: new Date(requestedAt.getTime() + 120_000).toISOString(),
+    frictionLevel: "standard",
+    delaySeconds: 12,
+    sessionMinutes: 10,
+    targetType: "site",
+    targetLabel: "x.com",
+    app: "",
+    hostname: "x.com",
+    returnUrl: "https://x.com/",
+    event: "navigation"
+  });
+  const page = pausePage({
+    url: new URL("http://127.0.0.1:8787/pause?requestId=minimal-breathing-preview"),
+    state
+  });
+  assert.match(page, /class="pause-content"/);
+  assert.match(page, /class="timer" role="timer"/);
+  assert.match(page, /animation: timer-breathe 6s cubic-bezier/);
+  assert.match(page, /Are you sure you want to open x\.com\?/);
+  assert.match(page, /<button id="continue" type="button" disabled>Continue<\/button>/);
+  assert.match(page, /continueButton\.disabled = false/);
+  assert.match(page, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.timer \{ animation: none; \}/);
+  assert.doesNotMatch(page, /top: 50%/);
+  assert.doesNotMatch(page, /What are you here to do/);
+  assert.doesNotMatch(page, /Current state/);
+  assert.doesNotMatch(page, /Choose alternative/);
+  assert.doesNotMatch(page, /Short-form pause<\/span>/);
 }
 
 {
