@@ -794,11 +794,11 @@ button:focus-visible {
 .setup-assistant {
   width: min(720px, calc(100vw - 36px));
   max-width: 720px;
-  max-height: min(760px, calc(100vh - 36px));
+  max-height: min(640px, calc(100vh - 36px));
   margin: auto;
   padding: 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--primary) 30%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
   border-radius: 22px;
   background: var(--surface-strong);
   color: var(--ink);
@@ -807,17 +807,18 @@ button:focus-visible {
 
 .setup-assistant::backdrop {
   background:
-    radial-gradient(circle at 72% 18%, rgba(20, 184, 166, 0.18), transparent 30rem),
-    rgba(5, 11, 14, 0.72);
+    radial-gradient(circle at 72% 18%, color-mix(in srgb, var(--accent-bright) 46%, transparent), transparent 32rem),
+    radial-gradient(circle at 18% 82%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 28rem),
+    rgba(24, 13, 8, 0.76);
   backdrop-filter: blur(10px);
 }
 
 .setup-assistant-shell {
   display: grid;
-  grid-template-rows: auto auto minmax(190px, 1fr) auto;
-  max-height: min(760px, calc(100vh - 36px));
+  grid-template-rows: auto auto auto auto;
+  max-height: min(640px, calc(100vh - 36px));
   background:
-    linear-gradient(145deg, color-mix(in srgb, var(--primary) 8%, transparent), transparent 46%),
+    linear-gradient(145deg, color-mix(in srgb, var(--accent) 12%, transparent), transparent 46%),
     var(--surface-strong);
 }
 
@@ -835,10 +836,10 @@ button:focus-visible {
   height: 64px;
   display: grid;
   place-items: center;
-  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--line));
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
   border-radius: 17px;
-  background: color-mix(in srgb, var(--primary) 11%, var(--surface));
-  box-shadow: 0 12px 30px color-mix(in srgb, var(--primary) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .setup-assistant-mark img {
@@ -921,14 +922,14 @@ button:focus-visible {
   width: 0;
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--primary), color-mix(in srgb, var(--primary) 62%, var(--blue)));
+  background: linear-gradient(90deg, var(--accent), var(--accent-bright));
   transition: width 220ms ease;
 }
 
 .setup-assistant-body {
   min-height: 0;
   overflow: auto;
-  padding: 26px 30px 30px;
+  padding: 24px 30px 28px;
 }
 
 .setup-assistant-card {

@@ -13,8 +13,6 @@ interface SetupItem {
   tier: SetupTier;
   actionTarget?: string;
   nativeDestination?: NativeSetupDestination;
-  explanation?: string;
-  privacyNote?: string;
 }
 
 interface SetupAssistantOptions {
@@ -105,9 +103,7 @@ function setupItems(data: DashboardData): SetupItem[] {
       action: launchAgentReady ? "Open Login Items" : launchAgent.embedded ? "Repair protection" : "Enable at login",
       tier: "core",
       actionTarget: launchAgentReady ? undefined : "installLaunchAgent",
-      nativeDestination: launchAgentReady ? "login-items" : undefined,
-      explanation: "Background protection keeps your chosen rules active when the window is hidden and restores enforcement after an unexpected interruption.",
-      privacyNote: "Closing the visible window hides Vigil; it does not turn off the protection you chose."
+      nativeDestination: launchAgentReady ? "login-items" : undefined
     },
     {
       id: "accessibility",
@@ -118,9 +114,7 @@ function setupItems(data: DashboardData): SetupItem[] {
         : (data.monitor?.ok ? "Foreground app detection is reporting healthy." : "Vigil is waiting for a healthy foreground-app check."),
       action: "Open Accessibility",
       tier: "core",
-      nativeDestination: "accessibility",
-      explanation: "Vigil needs this permission to recognize which app is in front and apply the schedule, limit, and usage rules you selected.",
-      privacyNote: "Foreground activity and usage history stay in Vigil's local data directory unless you explicitly export diagnostics."
+      nativeDestination: "accessibility"
     },
     {
       id: "network-block",
@@ -131,9 +125,7 @@ function setupItems(data: DashboardData): SetupItem[] {
         : "System network blocking is off, so this step is not required for the current setup.",
       action: networkEnabled ? "Apply Network Block" : "Not selected",
       tier: networkEnabled ? "core" : "recommended",
-      actionTarget: networkEnabled && !networkReady ? "applyHostsBlock" : undefined,
-      explanation: "System network protection makes whole-site blocks apply outside the browser companion as well.",
-      privacyNote: "macOS asks for an administrator password because this step updates protected network configuration. Vigil verifies the result afterward."
+      actionTarget: networkEnabled && !networkReady ? "applyHostsBlock" : undefined
     },
     {
       id: "safari-filter",
@@ -148,9 +140,7 @@ function setupItems(data: DashboardData): SetupItem[] {
         : "No Safari content-filter profile is required for the current rules.",
       action: safariFilter.required ? "Apply Safari Filter" : "Not required",
       tier: safariFilter.required ? "core" : "optional",
-      actionTarget: safariFilter.required && !safariReady ? "applySafariFilter" : undefined,
-      explanation: "When your current rules need Safari coverage, macOS installs a visible configuration profile and asks you to approve it.",
-      privacyNote: "The profile is generated locally from your rules. Approval always happens in macOS System Settings."
+      actionTarget: safariFilter.required && !safariReady ? "applySafariFilter" : undefined
     },
     {
       id: "extension",
@@ -161,9 +151,7 @@ function setupItems(data: DashboardData): SetupItem[] {
         : "Install the Vigil Companion for Chrome or another Chromium browser to enable page-level cleanup and path filters.",
       action: "Install Companion",
       tier: "recommended",
-      nativeDestination: "extension",
-      explanation: "The Vigil Companion adds page-level controls that a whole-site network block cannot provide. It is recommended when you use Chrome, Edge, Brave, or another Chromium browser.",
-      privacyNote: "The companion talks only to Vigil on this Mac. Its broad page access is used to evaluate your local rules and clean distracting page elements."
+      nativeDestination: "extension"
     },
     {
       id: "chrome-safe-search",
@@ -411,7 +399,7 @@ class SetupAssistantController {
     const total = coreItems(this.items).length;
     const progress = ((this.pageIndex + 1) / Math.max(1, this.pages.length)) * 100;
     requiredElement("#setupAssistantStep").textContent = `Step ${this.pageIndex + 1} of ${this.pages.length}`;
-    requiredElement("#setupAssistantReadiness").textContent = total ? `${ready}/${total} core protections verified` : "No core actions required";
+    requiredElement("#setupAssistantReadiness").textContent = total ? `${ready}/${total} ready` : "Ready";
     requiredElement("#setupAssistantProgressBar").style.width = `${progress}%`;
     requiredButton("#setupAssistantBack").hidden = this.pageIndex === 0;
     const nextButton = requiredButton("#setupAssistantNext");
@@ -430,9 +418,9 @@ class SetupAssistantController {
 
   private renderWelcome(): void {
     setAssistantHeading(
-      "Welcome to Vigil",
-      "Set up protection, one clear step at a time",
-      "Vigil verifies each permission and protection after you complete it. Nothing is marked ready just because a button was clicked."
+      "Quick setup",
+      "Set up Vigil",
+      "Click Continue to check each protection."
     );
     requiredElement("#setupAssistantBody").replaceChildren(el(
       "div",
@@ -441,23 +429,19 @@ class SetupAssistantController {
       el(
         "div",
         {},
-        textEl("h3", "What this setup will do"),
-        textEl("p", "We will verify background enforcement, foreground-app access, your selected network protection, and any required Safari coverage. Browser and iPhone enhancements remain clearly optional.")
-      ),
-      el(
-        "div",
-        { className: "setup-assistant-note" },
-        textEl("strong", "Local first"),
-        textEl("span", "Vigil stores rules, usage, and journal data on this Mac. The visible window can be hidden without taking background enforcement offline.")
+        textEl("h3", "One step at a time"),
+        textEl("p", "Vigil will confirm when each step is ready.")
       )
     ));
   }
 
   private renderItem(item: SetupItem): void {
     setAssistantHeading(
-      item.tier === "core" ? "Core protection" : "Recommended coverage",
+      item.tier === "core" ? "Required" : "Recommended",
       item.label,
-      item.explanation || item.detail
+      item.ok
+        ? "Ready. Click Continue."
+        : `Click ${item.action}, then return to Vigil.`
     );
     requiredElement("#setupAssistantBody").replaceChildren(el(
       "div",
@@ -466,14 +450,7 @@ class SetupAssistantController {
       el(
         "div",
         {},
-        textEl("h3", item.ok ? "Verified on this Mac" : "One action is still needed"),
-        textEl("p", item.detail)
-      ),
-      el(
-        "div",
-        { className: "setup-assistant-note" },
-        textEl("strong", item.ok ? "Ready" : "Why"),
-        textEl("span", item.privacyNote || (item.ok ? "Vigil will keep checking this protection for drift." : "Complete the action, return to Vigil, and use the live status above to confirm it worked."))
+        textEl("h3", item.ok ? "Ready on this Mac" : "Complete this step")
       )
     ));
   }
@@ -481,22 +458,23 @@ class SetupAssistantController {
   private renderSummary(): void {
     const ready = coreReady(this.items);
     setAssistantHeading(
-      ready ? "Setup verified" : "Setup saved",
-      ready ? "Vigil is ready to protect this Mac" : "Your remaining steps are easy to resume",
+      "Setup",
+      ready ? "Vigil is ready" : "Finish anytime",
       ready
-        ? "Core protection is online. Recommended browser, account, and iPhone hardening can be added from the checklist at any time."
-        : "Vigil remains online and will reopen this guide on a later launch. The checklist in Settings always shows the live result."
+        ? "Click Finish to start using Vigil."
+        : "Click Save for later. Vigil will keep checking your setup."
     );
-    const rows = this.items
-      .filter((item) => item.tier === "core" || item.id === "extension" || item.id === "standard-account" || item.id === "iphone")
-      .map((item) => el(
+    requiredElement("#setupAssistantBody").replaceChildren(el(
+      "div",
+      { className: `setup-assistant-card ${ready ? "is-ready" : ""}` },
+      textEl("span", ready ? "✓" : "•", { className: "setup-assistant-state-icon" }),
+      el(
         "div",
-        { className: `setup-assistant-summary-row ${item.ok ? "is-ready" : ""}` },
-        textEl("i", item.ok ? "✓" : "•"),
-        textEl("span", item.label),
-        textEl("em", item.ok ? "Ready" : item.tier === "core" ? "Needs action" : "Optional")
-      ));
-    requiredElement("#setupAssistantBody").replaceChildren(el("div", { className: "setup-assistant-summary" }, ...rows));
+        {},
+        textEl("h3", ready ? "Core protection is on" : "Your progress is saved"),
+        textEl("p", "Reopen Guided Setup from Settings whenever you need it.")
+      )
+    ));
   }
 
   private shouldAutoOpen(): boolean {
