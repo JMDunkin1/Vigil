@@ -503,31 +503,6 @@ export interface ReportSummary extends UnknownRecord {
     goal: number;
     days?: number;
   };
-  progression?: {
-    level: number;
-    title: string;
-    xp: number;
-    currentLevelXp: number;
-    nextLevelXp: number;
-    levelProgressPercent: number;
-    brainHealth: number;
-    brainState: string;
-    cleanDays: number;
-    replacementChoices: number;
-    continuedChoices: number;
-    journalEntries?: number;
-    behaviorCheckIns?: number;
-    recoveryCheckIns?: number;
-    sosStarts?: number;
-    setbacks?: number;
-    reflectionStreakDays?: number;
-    nextUnlock: string;
-    badges: Array<{
-      id: string;
-      label: string;
-      earned: boolean;
-    }>;
-  };
   focusScoreGoal: number;
   insights: string[];
   milestones: DashboardItem[];

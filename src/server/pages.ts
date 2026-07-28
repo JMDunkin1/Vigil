@@ -510,21 +510,23 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
   <style>${activePausePageCss()}</style>
 </head>
 <body data-vigil-intentional-use="1">
+  <div id="breathLine" class="breath-line" aria-hidden="true"></div>
   <main class="pause-shell">
     <section class="pause-content" aria-label="Intentional pause">
       <p class="prompt">Are you sure you want to open ${escapeHtml(pause.targetLabel)}?</p>
-      <button id="continue" type="button" disabled>Continue</button>
+      <button id="continue" class="countdown-control" type="button" aria-label="Seconds remaining" disabled>
+        <span id="countdown" aria-live="polite">${Math.max(0, data.waitSeconds || 0)}</span>
+        <span id="continueLabel" hidden>Continue</span>
+      </button>
       <p id="status" class="status" role="status" hidden></p>
-      <div class="timer" role="timer" aria-live="polite" aria-label="Seconds remaining">
-        <strong id="countdown">${Math.max(0, data.waitSeconds || 0)}</strong>
-      </div>
     </section>
   </main>
   <script>
     const pageData = ${safeScriptJson({ requestId: pause.id, returnUrl: pause.returnUrl, waitSeconds: Math.max(0, data.waitSeconds || 0) })};
     const countdown = document.querySelector("#countdown");
+    const continueLabel = document.querySelector("#continueLabel");
     const continueButton = document.querySelector("#continue");
-    const timerElement = document.querySelector(".timer");
+    const breathLine = document.querySelector("#breathLine");
     const status = document.querySelector("#status");
     let remaining = pageData.waitSeconds || 0;
 
@@ -563,7 +565,11 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
 
     function finishTimer() {
       clearInterval(countdownInterval);
-      timerElement.classList.add("complete");
+      breathLine.classList.add("complete");
+      countdown.hidden = true;
+      continueLabel.hidden = false;
+      continueButton.classList.add("ready");
+      continueButton.setAttribute("aria-label", "Continue");
       continueButton.disabled = false;
     }
 
@@ -587,13 +593,13 @@ function activePausePageCss() {
     :root {
       color-scheme: dark;
       --paper: #101111;
+      --paper-2: #161717;
       --ink: #f0ece5;
       --muted: #aaa398;
       --primary: #b77952;
       --primary-strong: #d5a16b;
       --focus: rgba(213, 161, 107, .28);
-      --timer-size: clamp(72px, 9vw, 88px);
-      --edge: clamp(30px, 7vh, 64px);
+      --edge: clamp(22px, 4vh, 42px);
     }
     * { box-sizing: border-box; }
     [hidden] { display: none !important; }
@@ -604,80 +610,92 @@ function activePausePageCss() {
       overflow: hidden;
       color: var(--ink);
       background:
-        radial-gradient(circle at 50% 50%, rgba(183, 121, 82, .045), transparent 34rem),
-        linear-gradient(180deg, #0f1010, #141515);
+        radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .08), transparent 34rem),
+        radial-gradient(circle at 28% 106%, rgba(157, 124, 88, .04), transparent 30rem),
+        linear-gradient(180deg, var(--paper), var(--paper-2));
       font-family: Inter, "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     button { font: inherit; }
     .pause-shell {
       min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 32px;
     }
     .pause-content {
       position: relative;
       z-index: 1;
-      min-height: 100vh;
-      display: grid;
-      place-content: center;
-      justify-items: center;
-      gap: 18px;
-      padding: 32px 156px;
-      text-align: center;
+      width: min(620px, 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 30px;
     }
     .prompt {
+      max-width: 13ch;
       margin: 0;
       color: var(--ink);
-      font-size: clamp(1.05rem, 2vw, 1.35rem);
-      font-weight: 620;
-      line-height: 1.4;
-      letter-spacing: -.025em;
+      font: 700 clamp(2.75rem, 7vw, 5rem)/.98 Georgia, "Times New Roman", serif;
+      letter-spacing: -.04em;
+      text-wrap: balance;
     }
-    .timer {
+    .breath-line {
       position: fixed;
+      z-index: 0;
+      right: clamp(14px, 1.6vw, 26px);
       bottom: var(--edge);
-      right: var(--edge);
-      width: var(--timer-size);
-      height: var(--timer-size);
+      left: clamp(14px, 1.6vw, 26px);
+      height: 4px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(213, 161, 107, .48), var(--primary-strong) 8%, var(--primary-strong) 92%, rgba(213, 161, 107, .48));
+      box-shadow:
+        0 0 0 1px rgba(213, 161, 107, .08),
+        0 0 30px rgba(183, 121, 82, .18);
+      animation: breath-line 6s cubic-bezier(.65, 0, .35, 1) infinite;
+      will-change: transform;
+    }
+    .breath-line.complete {
+      opacity: 0;
+      animation-play-state: paused;
+      transition: opacity .35s ease;
+    }
+    .countdown-control {
+      width: 76px;
+      min-width: 76px;
+      height: 76px;
       display: grid;
       place-items: center;
       border: 1px solid rgba(213, 161, 107, .52);
       border-radius: 999px;
-      background: radial-gradient(circle, rgba(183, 121, 82, .2), rgba(31, 31, 29, .94) 70%);
-      box-shadow:
-        0 0 0 12px rgba(183, 121, 82, .025),
-        0 18px 56px rgba(0, 0, 0, .32),
-        0 0 50px rgba(183, 121, 82, .08);
-      animation: timer-breathe 6s cubic-bezier(.65, 0, .35, 1) infinite;
-      will-change: transform;
-    }
-    .timer.complete {
-      animation: none;
-      transform: translateY(0);
-    }
-    .timer strong {
+      padding: 0;
       color: var(--ink);
-      font-size: clamp(1.55rem, 3.4vw, 2rem);
-      font-weight: 680;
+      background: radial-gradient(circle, rgba(183, 121, 82, .17), rgba(31, 31, 29, .94) 72%);
+      box-shadow: 0 0 38px rgba(183, 121, 82, .09);
+      font-weight: 720;
+      cursor: wait;
+      opacity: 1;
+      transition: width .28s ease, min-width .28s ease, height .28s ease, border-radius .28s ease, color .2s ease, background .2s ease, transform .16s ease;
+    }
+    .countdown-control #countdown {
+      font-size: 1.75rem;
       line-height: 1;
-      letter-spacing: -.06em;
+      letter-spacing: -.05em;
     }
-    button {
+    .countdown-control.ready {
+      width: 156px;
       min-width: 156px;
-      min-height: 50px;
-      border: 1px solid var(--primary);
-      border-radius: 999px;
-      padding: 0 24px;
-      color: #17130f;
+      height: 48px;
+      border-color: var(--primary);
+      border-radius: 7px;
+      color: #16120f;
       background: var(--primary);
-      font-weight: 760;
       cursor: pointer;
-      transition: background .16s ease, transform .16s ease;
     }
-    button:hover:not(:disabled) {
+    .countdown-control.ready:hover {
       background: var(--primary-strong);
       transform: translateY(-1px);
     }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    button:focus-visible {
+    .countdown-control:focus-visible {
       outline: 3px solid var(--focus);
       outline-offset: 3px;
     }
@@ -688,33 +706,22 @@ function activePausePageCss() {
       font-size: .78rem;
       line-height: 1.5;
     }
-    @keyframes timer-breathe {
+    @keyframes breath-line {
       0%, 100% {
         transform: translateY(0);
       }
       50% {
-        transform: translateY(calc(-100vh + var(--edge) + var(--edge) + var(--timer-size)));
+        transform: translateY(calc(-100vh + var(--edge) + var(--edge) + 4px));
       }
     }
-    @media (max-width: 640px) {
-      .pause-content {
-        place-content: end center;
-        padding: 32px 32px calc(var(--edge) + var(--timer-size) + 42px);
-      }
-      .timer { right: 50%; transform: translateX(50%); }
-      .timer.complete { transform: translateX(50%); }
-      @keyframes timer-breathe {
-        0%, 100% {
-          transform: translate(50%, 0);
-        }
-        50% {
-          transform: translate(50%, calc(-100vh + var(--edge) + var(--edge) + var(--timer-size)));
-        }
-      }
+    @media (max-width: 520px) {
+      .pause-shell { place-items: start; padding: 64px 24px; }
+      .pause-content { gap: 24px; }
+      .prompt { font-size: clamp(2.5rem, 12vw, 3.6rem); }
     }
     @media (prefers-reduced-motion: reduce) {
-      button { transition: none; }
-      .timer { animation: none; }
+      .countdown-control, .breath-line { transition: none; }
+      .breath-line { animation: none; }
     }
   `;
 }

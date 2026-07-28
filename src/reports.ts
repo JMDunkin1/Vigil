@@ -1,4 +1,4 @@
-import { dateKey, weekKey } from "./time.js";
+import { dateKey } from "./time.js";
 import { appMatchesAppTargets, hostMatchesSiteTargets } from "./policy.js";
 import { intentionalUseSummary } from "./intentionalUse.js";
 import { normalizeUsageDay, usageBlockedSeconds, usageDeviceScreenTimeSeconds, usageOpenCount } from "./usage.js";
@@ -45,38 +45,6 @@ interface Milestone {
   achieved: boolean;
 }
 
-interface ProgressionBadge {
-  id: string;
-  label: string;
-  earned: boolean;
-}
-
-interface ProgressionSummary {
-  level: number;
-  title: string;
-  xp: number;
-  currentLevelXp: number;
-  nextLevelXp: number;
-  levelProgressPercent: number;
-  brainHealth: number;
-  brainState: string;
-  cleanDays: number;
-  replacementChoices: number;
-  continuedChoices: number;
-  journalEntries: number;
-  behaviorCheckIns: number;
-  recoveryCheckIns: number;
-  sosStarts: number;
-  setbacks: number;
-  reflectionStreakDays: number;
-  standingScore: number;
-  standingTitle: string;
-  standingDirection: "rising" | "holding" | "falling";
-  armorTier: number;
-  nextUnlock: string;
-  badges: ProgressionBadge[];
-}
-
 interface Culprit {
   name: string;
   seconds: number;
@@ -104,8 +72,7 @@ export function focusReport(usage: UsageState, state: VigilState, now = new Date
   const bestDay = bestTrackedDay(currentDays);
   const worstDay = worstTrackedDay(currentDays);
   const intentionalUse = intentionalUseSummary(state, usage, now);
-  const progression = progressionSummary({ state, current, streak, allDays, intentionalUse, focusScoreGoal, now });
-  const milestones = buildMilestones({ state, current, streak, allDays, focusScoreGoal, progression });
+  const milestones = buildMilestones({ state, current, streak, allDays, focusScoreGoal });
 
   return {
     generatedAt: now.toISOString(),
@@ -127,7 +94,6 @@ export function focusReport(usage: UsageState, state: VigilState, now = new Date
     comparison: compareWeeks(current, previous),
     timeline: allDays,
     streak,
-    progression,
     milestones,
     intentionalUse,
     topCulprits,
@@ -219,13 +185,12 @@ function focusStreak(days: DayReport[], goal: number, today: Date): FocusStreak 
   };
 }
 
-function buildMilestones({ state, current, streak, allDays, focusScoreGoal, progression }: {
+function buildMilestones({ state, current, streak, allDays, focusScoreGoal }: {
   state: VigilState;
   current: WeekAggregate;
   streak: FocusStreak;
   allDays: DayReport[];
   focusScoreGoal: number;
-  progression: ProgressionSummary;
 }): Milestone[] {
   const enabledRules = [
     ...(state.schedules || []).filter((item) => item.enabled),
@@ -245,177 +210,8 @@ function buildMilestones({ state, current, streak, allDays, focusScoreGoal, prog
     milestone("low-distraction-week", "Low distraction week", current.trackedDays >= 3 && current.averageDailyDistractionSeconds <= 30 * 60),
     milestone("three-day-streak", "3 day streak", streak.days >= 3),
     milestone("seven-day-streak", "7 day streak", streak.days >= 7),
-    milestone("level-three", "Reach level 3", progression.level >= 3),
-    milestone("level-five", "Reach level 5", progression.level >= 5),
-    milestone("brain-health-80", "Brain health 80", progression.brainHealth >= 80),
     milestone("strong-week", "Strong week", current.trackedDays >= 5 && current.averageFocusScore >= focusScoreGoal)
   ];
-}
-
-function progressionSummary({ state, current, streak, allDays, intentionalUse, focusScoreGoal, now }: {
-  state: VigilState;
-  current: WeekAggregate;
-  streak: FocusStreak;
-  allDays: DayReport[];
-  intentionalUse: ReturnType<typeof intentionalUseSummary>;
-  focusScoreGoal: number;
-  now: Date;
-}): ProgressionSummary {
-  const trackedDays = allDays.filter((day) => day.tracked);
-  const cleanDays = trackedDays.filter((day) => day.distractingSeconds === 0).length;
-  const outcomes = state.intentionalUse?.outcomes || [];
-  const replacementChoices = outcomes.filter((item) => item.outcome === "skipped").length;
-  const continuedChoices = outcomes.filter((item) => item.outcome === "continued").length;
-  const journalEntries = state.intentionalUse?.journalEntries || [];
-  const behaviorCheckIns = state.intentionalUse?.behaviorCheckIns || [];
-  const recoveryCheckIns = state.intentionalUse?.recoveryCheckIns || [];
-  const sosSessions = state.intentionalUse?.sosSessions || [];
-  const currentWeek = weekKey(now);
-  const weeklyRecovery = recoveryCheckIns.filter((entry) => entry.weekKey === currentWeek);
-  const weeklySetbacks = weeklyRecovery.filter((entry) => entry.status === "setback").length;
-  const weeklyVictories = weeklyRecovery.filter((entry) => entry.status === "victory").length;
-  const reflectionStreak = reflectionStreakDays(state, now);
-  const xp = Math.max(0, Math.round(
-    trackedDays.reduce((total, day) => total + 30 + day.focusScore + (day.focusScore >= focusScoreGoal ? 50 : 0) + (day.distractingSeconds === 0 ? 30 : 0), 0)
-    + replacementChoices * 35
-    + continuedChoices * 8
-    + journalEntries.length * 20
-    + behaviorCheckIns.length * 15
-    + recoveryCheckIns.length * 18
-    + sosSessions.length * 12
-    + weeklyVictories * 25
-    + reflectionStreak * 10
-    + streak.days * 30
-    + current.trackedDays * 20
-  ));
-  const levelState = levelFromXp(xp);
-  const intentionalToday = intentionalUse.today || {};
-  const replacementRate = successRate(Number(intentionalToday.skipped || 0), Number(intentionalToday.continued || 0));
-  const pressurePenalty = Math.min(20, Math.round((current.averageDailyOpens || 0) * 1.5));
-  const brainHealth = clamp(
-    Math.round(
-      (current.trackedDays ? current.averageFocusScore : 50)
-      + Math.min(14, streak.days * 2)
-      + Math.round(replacementRate * 0.12)
-      + Math.min(8, weeklyVictories * 2)
-      - pressurePenalty
-      - Math.min(18, weeklySetbacks * 6)
-    ),
-    0,
-    100
-  );
-  const badges = [
-    badge("first-save", "First clean day", cleanDays >= 1),
-    badge("first-reflection", "First reflection", journalEntries.length >= 1),
-    badge("behavior-builder", "Behavior builder", behaviorCheckIns.length >= 5),
-    badge("daily-check-in", "3 recovery check-ins", recoveryCheckIns.length >= 3),
-    badge("sos-used", "SOS reset", sosSessions.length >= 1),
-    badge("reflection-streak", "3 day reflection", reflectionStreak >= 3),
-    badge("replacement-loop", "Replacement loop", replacementChoices >= 3),
-    badge("streak-3", "3 day streak", streak.days >= 3),
-    badge("streak-7", "7 day streak", streak.days >= 7),
-    badge("level-5", "Level 5", levelState.level >= 5)
-  ];
-  const standingDirection = previousStandingDirection(current, allDays);
-  const standing = standingFromScore(brainHealth);
-
-  return {
-    ...levelState,
-    brainHealth,
-    brainState: brainHealth >= 85 ? "Clear" : brainHealth >= 65 ? "Recovering" : brainHealth >= 40 ? "Fragile" : "Overloaded",
-    cleanDays,
-    replacementChoices,
-    continuedChoices,
-    journalEntries: journalEntries.length,
-    behaviorCheckIns: behaviorCheckIns.length,
-    recoveryCheckIns: recoveryCheckIns.length,
-    sosStarts: sosSessions.length,
-    setbacks: weeklySetbacks,
-    reflectionStreakDays: reflectionStreak,
-    standingScore: brainHealth,
-    standingTitle: standing.title,
-    standingDirection,
-    armorTier: standing.armorTier,
-    nextUnlock: nextUnlock({ streakDays: streak.days, cleanDays, level: levelState.level, replacementChoices, journalEntries: journalEntries.length, behaviorCheckIns: behaviorCheckIns.length, recoveryCheckIns: recoveryCheckIns.length, sosStarts: sosSessions.length }),
-    badges
-  };
-}
-
-function levelFromXp(xp: number) {
-  let level = 1;
-  let floor = 0;
-  let needed = 300;
-  while (xp >= floor + needed && level < 99) {
-    floor += needed;
-    level += 1;
-    needed = Math.round(needed * 1.22 + 60);
-  }
-  const currentLevelXp = Math.max(0, xp - floor);
-  const nextLevelXp = Math.max(1, needed);
-  return {
-    level,
-    title: levelTitle(level),
-    xp,
-    currentLevelXp,
-    nextLevelXp,
-    levelProgressPercent: Math.min(100, Math.max(4, Math.round((currentLevelXp / nextLevelXp) * 100)))
-  };
-}
-
-function levelTitle(level: number): string {
-  if (level >= 15) return "Defender of the Gate";
-  if (level >= 10) return "Banner Knight";
-  if (level >= 7) return "Knight of the Cross";
-  if (level >= 4) return "Armed Squire";
-  if (level >= 2) return "Page";
-  return "Pilgrim";
-}
-
-function standingFromScore(score: number): { title: string; armorTier: number } {
-  if (score >= 90) return { title: "Crusader Captain", armorTier: 5 };
-  if (score >= 75) return { title: "Banner Knight", armorTier: 4 };
-  if (score >= 60) return { title: "Knight Errant", armorTier: 3 };
-  if (score >= 40) return { title: "Squire", armorTier: 2 };
-  return { title: "Wayfaring Pilgrim", armorTier: 1 };
-}
-
-function previousStandingDirection(
-  current: WeekAggregate,
-  allDays: DayReport[]
-): "rising" | "holding" | "falling" {
-  const priorDays = allDays.slice(-14, -7);
-  const prior = aggregateWeek(priorDays);
-  if (!current.trackedDays || !prior.trackedDays) return "holding";
-  const delta = current.averageFocusScore - prior.averageFocusScore;
-  if (delta >= 4) return "rising";
-  if (delta <= -4) return "falling";
-  return "holding";
-}
-
-function nextUnlock({ streakDays, cleanDays, level, replacementChoices, journalEntries, behaviorCheckIns, recoveryCheckIns, sosStarts }: {
-  streakDays: number;
-  cleanDays: number;
-  level: number;
-  replacementChoices: number;
-  journalEntries?: number;
-  behaviorCheckIns?: number;
-  recoveryCheckIns?: number;
-  sosStarts?: number;
-}): string {
-  if ((journalEntries || 0) < 1) return "Write one reflection to unlock First reflection";
-  if ((recoveryCheckIns || 0) < 3) return `${3 - (recoveryCheckIns || 0)} more recovery check-in${3 - (recoveryCheckIns || 0) === 1 ? "" : "s"} to unlock 3 recovery check-ins`;
-  if ((sosStarts || 0) < 1) return "Start one SOS reset to unlock SOS reset";
-  if ((behaviorCheckIns || 0) < 1) return "Track one behavior to unlock Behavior tracked";
-  if (streakDays < 3) return `${3 - streakDays} more streak day${3 - streakDays === 1 ? "" : "s"} to unlock 3 day streak`;
-  if (replacementChoices < 3) return `${3 - replacementChoices} more replacement choice${3 - replacementChoices === 1 ? "" : "s"} to unlock Replacement loop`;
-  if (cleanDays < 3) return `${3 - cleanDays} more clean day${3 - cleanDays === 1 ? "" : "s"} to unlock Clean run`;
-  if (level < 5) return `Reach level 5 to unlock Builder status`;
-  if (streakDays < 7) return `${7 - streakDays} more streak day${7 - streakDays === 1 ? "" : "s"} to unlock 7 day streak`;
-  return "Next: keep the streak alive";
-}
-
-function badge(id: string, label: string, earned: boolean): ProgressionBadge {
-  return { id, label, earned };
 }
 
 function insights({ current, previous, topCulprits, streak, bestDay, worstDay, focusScoreGoal, intentionalUse }: {
@@ -449,23 +245,11 @@ function insights({ current, previous, topCulprits, streak, bestDay, worstDay, f
   }
   const stats = intentionalUse?.lifeLog?.stats;
   if (stats?.entriesThisWeek) output.push(`You logged ${stats.entriesThisWeek} reflection${stats.entriesThisWeek === 1 ? "" : "s"} this week.`);
-  if (stats?.behaviorCheckInsThisWeek) output.push(`${stats.behaviorCheckInsThisWeek} behavior check-in${stats.behaviorCheckInsThisWeek === 1 ? "" : "s"} are feeding your level progress this week.`);
+  if (stats?.behaviorCheckInsThisWeek) output.push(`${stats.behaviorCheckInsThisWeek} behavior check-in${stats.behaviorCheckInsThisWeek === 1 ? "" : "s"} recorded this week.`);
   if (streak.days > 0) output.push(`Current focus streak: ${streak.label}.`);
   if (bestDay) output.push(`${bestDay.label} is your strongest tracked day.`);
   if (worstDay && bestDay && worstDay.key !== bestDay.key) output.push(`${worstDay.label} is the day to tighten next.`);
   return output.slice(0, 5);
-}
-
-function reflectionStreakDays(state: VigilState, now: Date): number {
-  const days = new Set((state.intentionalUse?.journalEntries || []).map((entry) => dateKey(new Date(entry.entryDate || entry.createdAt))));
-  let count = 0;
-  const cursor = new Date(now);
-  cursor.setHours(0, 0, 0, 0);
-  while (days.has(dateKey(cursor))) {
-    count += 1;
-    cursor.setDate(cursor.getDate() - 1);
-  }
-  return count;
 }
 
 function projections() {
@@ -508,15 +292,6 @@ function milestone(id: string, label: string, achieved: boolean): Milestone {
 
 function sum(values: DayReport[], key: keyof Pick<DayReport, "totalSeconds" | "distractingSeconds" | "openCount" | "focusScore">): number {
   return values.reduce((total, item) => total + (item[key] || 0), 0);
-}
-
-function successRate(skipped: number, continued: number): number {
-  const total = skipped + continued;
-  return total ? Math.round((skipped / total) * 100) : 0;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
 }
 
 function startOfDay(date: Date): Date {

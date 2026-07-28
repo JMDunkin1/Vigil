@@ -43,6 +43,7 @@ import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-
     }
   });
   const report = focusReport(usage, state, new Date("2026-05-28T14:00:00-04:00"));
+  assert.equal("progression" in report, false, "usage reports must not restore rank-up progression data");
   assert.equal(report.currentWeek.totals.trackedDays, 2);
   assert.equal(report.topCulprits[0].name, "youtube.com");
   assert.equal(report.comparison.distractingPercentDelta, -50);

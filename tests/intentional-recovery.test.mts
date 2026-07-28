@@ -7,9 +7,7 @@ import {
   recordIntentionalRecoveryCheckIn,
   startIntentionalSosSession
 } from "../src/intentionalUse.js";
-import { focusReport } from "../src/reports.js";
 import { weekKey } from "../src/time.js";
-import type { UsageState } from "../src/types.js";
 
 const now = new Date("2026-06-03T12:00:00");
 const state = defaultState();
@@ -96,19 +94,4 @@ assert.match(digest.text, /Recovery check-ins: 3/);
 assert.match(digest.text, /SOS starts: 1/);
 assert.equal(digest.recovery.checkIns, 3);
 
-const usage: UsageState = {
-  "2026-06-03": {
-    totalSeconds: 1800,
-    apps: { Code: 1800 },
-    sites: {},
-    opens: { apps: { Code: 1 }, sites: {} },
-    devices: {},
-    updatedAt: now.toISOString()
-  }
-};
-const report = focusReport(usage, state, now);
-assert.equal(report.progression.recoveryCheckIns, 4);
-assert.equal(report.progression.sosStarts, 1);
-assert.equal(report.progression.setbacks, 1);
-assert.equal(report.progression.badges.some((badge) => badge.id === "daily-check-in" && badge.earned), true);
 assert.equal(state.intentionalUse.recoveryCheckIns.some((entry) => entry.weekKey !== weekKey(now)), true);

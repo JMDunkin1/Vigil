@@ -2553,7 +2553,7 @@ body[data-active-view="tracking"] #view-journal {
   #view-home .saint-symbol-two { right: 8px; }
 }
 
-/* Home, ranking, and native window integration */
+/* Home and native window integration */
 .electron-shell .app-chrome {
   padding-top: 48px;
 }
@@ -2897,7 +2897,7 @@ summary:focus-visible {
   font-size: 1.42rem;
 }
 
-/* Ranking stage */
+/* Home stage */
 .home-stage {
   min-height: 0;
   grid-template-columns: minmax(0, 1fr) minmax(210px, 250px);
@@ -3261,610 +3261,10 @@ body[data-lock-state="integrity"] .saint-halo {
   box-shadow: 0 0 48px rgba(143, 48, 46, 0.36);
 }
 
-.knight-avatar {
-  --armor: #8f918c;
-  --armor-light: #e2ded0;
-  --armor-shadow: #555a58;
-  --cloth: #6d3030;
-  --device: #bd9346;
-  position: relative;
-  width: 120px;
-  height: 168px;
-  filter: drop-shadow(0 11px 8px rgba(21, 17, 13, 0.38));
-  transition: filter 300ms ease, opacity 300ms ease;
-}
-
-.knight-avatar svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
-.knight-helm,
-.knight-tunic {
-  stroke: #343936;
-  stroke-width: 2.5;
-  stroke-linejoin: round;
-}
-
-.knight-visor {
-  fill: #353b39;
-  stroke: #272c2b;
-  stroke-width: 2;
-  stroke-linejoin: round;
-}
-
-.knight-helm-ridge,
-.knight-sword-edge,
-.knight-visor-slits {
-  fill: none;
-  stroke: rgba(255, 250, 231, 0.62);
-  stroke-width: 1.8;
-  stroke-linecap: round;
-}
-
-.knight-cape,
-.knight-surcoat,
-.knight-plume {
-  fill: var(--cloth);
-  stroke: color-mix(in srgb, var(--cloth) 68%, #201b18);
-  stroke-width: 2.5;
-  stroke-linejoin: round;
-}
-
-.knight-plume {
-  transform-box: fill-box;
-  transform-origin: right bottom;
-  animation: plumeBend 3.5s ease-in-out infinite;
-}
-
-.knight-sword,
-.knight-sword-guard,
-.knight-arm,
-.knight-leg {
-  stroke: #3c403d;
-  stroke-width: 4;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.knight-sword-guard {
-  fill: none;
-  stroke: var(--device);
-  stroke-width: 5;
-}
-
-.knight-arm,
-.knight-leg {
-  fill: none;
-  stroke: var(--armor-shadow);
-  stroke-width: 11;
-}
-
-.knight-boot {
-  fill: #34332e;
-  stroke: #22231f;
-  stroke-width: 2;
-  stroke-linejoin: round;
-}
-
-.knight-belt {
-  fill: none;
-  stroke: #352b22;
-  stroke-width: 5;
-}
-
-.knight-shield {
-  fill: var(--cloth);
-  stroke: var(--device);
-  stroke-width: 4;
-  stroke-linejoin: round;
-}
-
-.knight-shield-rim {
-  fill: none;
-  stroke: color-mix(in srgb, var(--device) 72%, transparent);
-  stroke-width: 1.5;
-}
-
-.knight-cross {
-  fill: color-mix(in srgb, var(--device) 82%, #f7e8bc);
-}
-
-.knight-avatar[data-rank-tier="penitent"] {
-  --armor: #69645d;
-  --armor-light: #9a9285;
-  --armor-shadow: #4e4a44;
-  --cloth: #57443e;
-  --device: #715736;
-  opacity: 0.8;
-  filter: grayscale(0.35) drop-shadow(0 10px 8px rgba(42, 31, 21, 0.2));
-}
-
-.knight-avatar[data-rank-tier="penitent"] .knight-plume {
-  opacity: 0.2;
-}
-
-.knight-avatar[data-rank-tier="pilgrim"] {
-  --armor: #7d807a;
-  --armor-light: #bbb9ad;
-  --armor-shadow: #555b58;
-  --cloth: #59615b;
-  --device: #83673b;
-}
-
-.knight-avatar[data-rank-tier="squire"] {
-  --armor: #777b79;
-  --armor-light: #c1c5bd;
-  --armor-shadow: #4d5656;
-  --cloth: #46616b;
-  --device: #a57b33;
-}
-
-.knight-avatar[data-rank-tier="knight"] {
-  --armor: #787f81;
-  --armor-light: #d8dad1;
-  --armor-shadow: #495155;
-  --cloth: #7e302e;
-  --device: #bd923f;
-  filter: drop-shadow(0 13px 12px rgba(112, 76, 30, 0.29));
-}
-
-.knight-avatar[data-rank-tier="banneret"] {
-  --armor: #8f9695;
-  --armor-light: #f1ede0;
-  --armor-shadow: #545e5d;
-  --cloth: #7a2528;
-  --device: #d9b454;
-  filter: drop-shadow(0 0 18px rgba(216, 182, 92, 0.4)) drop-shadow(0 13px 12px rgba(112, 76, 30, 0.3));
-}
-
 .emergency {
   grid-column: 1 / -1;
   grid-row: 4;
   border-top: 3px solid var(--oxblood);
-}
-
-/* Ranking — one weekly comparison, no explanatory clutter. */
-.ranking-dashboard {
-  width: 100%;
-  max-width: 1280px;
-  margin: 0 auto;
-  container: ranking / inline-size;
-}
-
-.ranking-titlebar,
-.ranking-section-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.ranking-titlebar {
-  min-height: 58px;
-  padding: 0 0 18px;
-  border-bottom: 1px solid var(--line);
-}
-
-.ranking-titlebar h2 {
-  margin: 0;
-  font-size: clamp(2rem, 3.1vw, 2.8rem);
-  line-height: 1;
-}
-
-.ranking-standing {
-  display: flex;
-  align-items: baseline;
-  gap: 0;
-  text-align: right;
-  white-space: nowrap;
-}
-
-.ranking-standing span,
-.ranking-standing strong {
-  display: block;
-  padding: 0 18px;
-  font-family: var(--font-body);
-  font-size: 0.82rem;
-  font-style: normal;
-  letter-spacing: -0.01em;
-}
-
-.ranking-standing span {
-  color: var(--accent-bright);
-  font-weight: 760;
-}
-
-.ranking-standing strong {
-  border-inline: 1px solid var(--line);
-  color: var(--ink);
-  font-size: 1rem;
-  font-weight: 760;
-}
-
-.ranking-vitals {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-  padding: 20px 0;
-}
-
-.ranking-vital {
-  min-width: 0;
-  min-height: 150px;
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  align-items: end;
-  gap: 8px;
-  padding: 23px 25px 22px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--surface-strong) 92%, transparent), color-mix(in srgb, var(--surface) 78%, transparent));
-  box-shadow: 0 15px 38px rgba(12, 12, 11, 0.12);
-}
-
-.ranking-vital span,
-.ranking-vital em {
-  color: var(--muted);
-  font-family: var(--font-body);
-  font-size: 0.82rem;
-  font-style: normal;
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-.ranking-vital span {
-  align-self: start;
-  color: var(--ink);
-  font-size: 0.9rem;
-  font-weight: 680;
-}
-
-.ranking-vital strong,
-.ranking-vital-primary strong {
-  max-width: 100%;
-  align-self: center;
-  color: var(--accent-bright);
-  font-family: var(--font-display);
-  font-size: clamp(2.35rem, 5.2cqi, 3.75rem);
-  font-weight: 760;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.06em;
-  line-height: 0.9;
-  overflow-wrap: anywhere;
-}
-
-.ranking-vital-primary strong {
-  color: var(--ink);
-}
-
-.ranking-lower {
-  display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(310px, 0.95fr);
-  gap: 16px;
-}
-
-.ranking-card {
-  min-width: 0;
-  min-height: 454px;
-  padding: 25px 26px 24px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background:
-    radial-gradient(circle at 96% 0%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 15rem),
-    color-mix(in srgb, var(--surface-strong) 90%, transparent);
-  box-shadow: 0 15px 38px rgba(12, 12, 11, 0.12);
-}
-
-.ranking-section-head h3 {
-  margin: 0;
-  color: var(--ink);
-  font-family: var(--font-display);
-  font-size: 1.18rem;
-  font-weight: 720;
-  letter-spacing: -0.025em;
-}
-
-.ranking-week {
-  height: 370px;
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 4px;
-  margin-top: 18px;
-}
-
-.ranking-week-day {
-  min-width: 0;
-  display: grid;
-  grid-template-rows: 48px 24px minmax(0, 1fr) 28px;
-  justify-items: center;
-  gap: 7px;
-}
-
-.ranking-week-score {
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.ranking-week-day.is-tracked .ranking-week-score {
-  border-color: var(--accent-bright);
-  color: var(--accent-bright);
-  box-shadow: inset 0 0 0 5px color-mix(in srgb, var(--accent) 7%, transparent);
-}
-
-.ranking-week-bar-stage {
-  position: relative;
-  width: 100%;
-  border-bottom: 1px solid var(--line);
-}
-
-.ranking-week-bar-stage::before {
-  content: "";
-  position: absolute;
-  inset: 0 50% 0 auto;
-  border-left: 1px dashed color-mix(in srgb, var(--line) 62%, transparent);
-}
-
-.ranking-week-duration {
-  min-width: 0;
-  align-self: center;
-  padding: 3px 7px;
-  border-radius: 999px;
-  color: var(--muted);
-  font-size: 0.68rem;
-  font-weight: 720;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.ranking-week-day.is-tracked .ranking-week-duration {
-  background: color-mix(in srgb, var(--accent) 11%, transparent);
-  color: var(--ink);
-}
-
-.ranking-week-bar {
-  position: absolute;
-  z-index: 1;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  overflow: visible;
-  pointer-events: none;
-}
-
-.ranking-week-bar-fill {
-  fill: var(--accent-bright);
-  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent) 18%, transparent));
-}
-
-.ranking-week-label {
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 650;
-}
-
-.ranking-week-day.is-tracked .ranking-week-label {
-  color: var(--ink);
-}
-
-.ranking-app-usage {
-  display: grid;
-  margin-top: 20px;
-}
-
-.ranking-site-head {
-  margin-top: 28px;
-  padding-top: 24px;
-  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
-}
-
-.ranking-app-row {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 13px;
-  min-height: 68px;
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
-}
-
-.ranking-app-index {
-  color: var(--muted);
-  font-size: 0.7rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.ranking-app-main {
-  min-width: 0;
-  display: grid;
-  gap: 8px;
-}
-
-.ranking-app-main strong {
-  overflow: hidden;
-  color: var(--ink);
-  font-size: 0.82rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ranking-app-track {
-  width: 100%;
-  height: 4px;
-  appearance: none;
-  overflow: hidden;
-  border: 0;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--line) 78%, transparent);
-}
-
-.ranking-app-track::-webkit-progress-bar {
-  background: color-mix(in srgb, var(--line) 78%, transparent);
-}
-
-.ranking-app-track::-webkit-progress-value {
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent), var(--accent-bright));
-}
-
-.ranking-app-row em {
-  color: var(--muted);
-  font-size: 0.76rem;
-  font-style: normal;
-  font-variant-numeric: tabular-nums;
-}
-
-.ranking-app-empty {
-  margin: 24px 0;
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
-@container ranking (max-width: 900px) {
-  .ranking-lower {
-    grid-template-columns: 1fr;
-  }
-
-  .ranking-card {
-    min-height: 420px;
-  }
-
-  .today-apps-section {
-    min-height: 0;
-  }
-}
-
-@container ranking (max-width: 760px) {
-  .ranking-titlebar {
-    align-items: center;
-    gap: 18px;
-  }
-
-  .ranking-standing {
-    align-items: baseline;
-    flex: 0 0 auto;
-    margin-left: auto;
-    text-align: right;
-  }
-
-  .ranking-standing span {
-    padding-left: 10px;
-  }
-
-  .ranking-vitals {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 10px;
-  }
-
-  .ranking-vital-primary {
-    grid-column: auto;
-  }
-
-  .ranking-vital {
-    min-height: 104px;
-    gap: 6px;
-    padding: 14px;
-  }
-
-  .ranking-vital span {
-    font-size: 0.72rem;
-  }
-
-  .ranking-vital em {
-    font-size: 0.68rem;
-  }
-
-  .ranking-vital strong,
-  .ranking-vital-primary strong {
-    font-size: clamp(1.55rem, 6cqi, 2.25rem);
-    overflow-wrap: normal;
-  }
-
-  .ranking-card {
-    padding-inline: 18px;
-  }
-}
-
-@container ranking (max-width: 520px) {
-  .ranking-vitals {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 7px;
-  }
-
-  .ranking-vital {
-    min-height: 94px;
-    gap: 5px;
-    padding: 11px;
-  }
-
-  .ranking-vital span {
-    font-size: 0.66rem;
-  }
-
-  .ranking-vital em {
-    font-size: 0.61rem;
-  }
-
-  .ranking-vital strong,
-  .ranking-vital-primary strong {
-    font-size: clamp(1.35rem, 6.2cqi, 1.8rem);
-  }
-
-  .ranking-standing strong {
-    border-right: 0;
-  }
-
-  .ranking-week {
-    height: 330px;
-  }
-
-  .ranking-week-score {
-    width: 34px;
-    height: 34px;
-    font-size: 0.68rem;
-  }
-
-  .ranking-week-duration {
-    max-width: 100%;
-    padding-inline: 4px;
-    font-size: 0.6rem;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-}
-
-/* Keep the complete weekly chart visible when the desktop window is at its
-   minimum height without changing its more spacious normal-size layout. */
-@media (max-height: 560px) {
-  .ranking-card {
-    min-height: 0;
-  }
-
-  .ranking-week-section {
-    padding-block: 16px 14px;
-  }
-
-  .ranking-week {
-    height: 200px;
-    margin-top: 12px;
-  }
-
-  .ranking-week-day {
-    grid-template-rows: 38px 20px minmax(0, 1fr) 22px;
-    gap: 4px;
-  }
 }
 
 /* Tracking and journal */
@@ -5006,16 +4406,6 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
   50% { transform: rotate(8deg) translateY(-3px); }
 }
 
-@keyframes bannerLift {
-  0%, 100% { transform: rotate(2deg) skewY(0); }
-  50% { transform: rotate(4deg) skewY(-3deg); }
-}
-
-@keyframes plumeBend {
-  0%, 100% { transform: rotate(-24deg); }
-  50% { transform: rotate(-17deg) scaleX(1.04); }
-}
-
 @media (max-width: 1120px) {
   body {
     grid-template-columns: 228px minmax(0, 1fr);
@@ -5106,14 +4496,6 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
     top: 62px;
     width: 128px;
     height: 128px;
-  }
-
-  .knight-avatar {
-    grid-row: 1 / span 2;
-    width: 104px;
-    height: 142px;
-    transform: scale(0.66);
-    transform-origin: left center;
   }
 
   .daily-checkin-head,
@@ -6309,9 +5691,6 @@ h2,
 h3,
 .brand-lockup h1,
 #protectionLevelLabel,
-.ranking-standing strong,
-.ranking-vital strong,
-.ranking-section-head h3,
 .audio-group-title h4,
 .saint-fallback {
   font-family: var(--font-display);
@@ -6993,16 +6372,12 @@ h3,
 }
 
 @media (max-width: 900px) {
-  .ranking-titlebar,
-  .ranking-section-head,
   .section-head,
   .device-form-head,
   .focused-social-head {
     min-width: 0;
   }
 
-  .ranking-titlebar > *,
-  .ranking-section-head > *,
   .section-head > *,
   .device-form-head > *,
   .focused-social-head > * {
@@ -7031,8 +6406,6 @@ h3,
 }
 
 @media (max-width: 720px) {
-  .ranking-titlebar,
-  .ranking-section-head,
   .section-head,
   .device-form-head,
   .focused-social-head {
@@ -7041,8 +6414,6 @@ h3,
     gap: 10px;
   }
 
-  .ranking-standing,
-  .ranking-section-head > span,
   .section-head > span {
     text-align: left;
   }

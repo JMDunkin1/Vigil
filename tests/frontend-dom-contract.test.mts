@@ -4,19 +4,7 @@ import { join } from "node:path";
 
 const html = await readFile("public/index.html", "utf8");
 
-assert.match(html, /<h2>Ranking<\/h2>/u);
-assert.match(html, />Screen time</u);
-assert.match(html, />Focus score</u);
-assert.match(html, />From last week</u);
-assert.match(html, /Daily focus score and combined Mac and iPhone screen time for this week/u);
-assert.doesNotMatch(html, />This week|>Your path|>Combined today|>Daily focus|>Combined screen time|>Seven-day wave|>The week's ascent/u, "ranking should not repeat explanatory labels around the same data");
-assert.doesNotMatch(html, /rankJourney|usageWave|journeyKnight/u, "ranking should use one combined weekly comparison instead of two competing charts");
-assert.doesNotMatch(html, />Devices included</u, "ranking should show only the three decision-useful headline statistics");
-assert.match(html, /id="totalUsageDevices">Mac</u, "screen time should name only devices that actually contributed usage");
-assert.match(html, /id="rankingAppUsage"/u, "ranking should show app activity");
-assert.match(html, /id="rankingSiteUsage"/u, "ranking should show website activity such as YouTube separately from its browser");
-assert.doesNotMatch(html, />iPhone today</u);
-assert.doesNotMatch(html, /knightState|clean days?/u, "ranking should not spend header space repeating the clean-day count");
+assert.doesNotMatch(html, /data-view-target="ranking"|data-view="ranking"|<h2>Ranking<\/h2>/u, "retired ranking navigation and markup must not return");
 const ids = [...html.matchAll(/\bid="([A-Za-z][\w:-]*)"/g)].map((match) => match[1]);
 const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
 assert.deepEqual([...new Set(duplicateIds)], [], "dashboard HTML must not contain duplicate IDs");
@@ -41,7 +29,7 @@ assert.deepEqual([...missing], [], "frontend code must not query dashboard IDs t
 assert.doesNotMatch(html, /tracking-legacy-surface|legacy-home-actions/, "retired hidden UI must not return");
 
 const navButtons = [...html.matchAll(/<button class="nav-tab[^>]*>[\s\S]*?<\/button>/g)].map((match) => match[0]);
-assert.equal(navButtons.length, 5, "primary navigation must keep all five destinations");
+assert.equal(navButtons.length, 4, "primary navigation must keep the four remaining destinations");
 for (const button of navButtons) {
   assert.match(button, /<svg class="nav-icon"[^>]*aria-hidden="true"/, "each primary destination must use the shared SVG icon system");
   assert.match(button, /<span class="nav-label">[^<]+<\/span>/, "each primary destination must retain a visible label");
@@ -89,10 +77,9 @@ const saintAestheticStageSource = await readFile("public/saint-stage.js", "utf8"
 const stylesSource = await readFile("public/styles.css", "utf8");
 const setupWizardSource = await readFile("public/setup-wizard.js", "utf8");
 const hardeningPanelSource = await readFile("public/hardening-panel.js", "utf8");
-const rankingViewSource = await readFile("public/ranking-view.js", "utf8");
 const extensionOptionsSource = await readFile("extension/options.js", "utf8");
 assert.doesNotMatch(extensionOptionsSource, /\nexport \{\};?\s*$/u, "the extension options page must load as a classic script");
-assert.match(rankingViewSource, /renderSites\(data\.usage\?\.topSites \|\| \[\]\)/u, "ranking should render tracked website activity instead of hiding it behind the browser app");
+assert.doesNotMatch(settingsAppSource, /ranking-view|createRankingView|rankingView/u, "the frontend must not initialize the retired ranking view");
 assert.match(settingsUiSource, /wrapSettingsPanels\(\)/, "settings must turn source panels into focused details");
 assert.match(settingsUiSource, /form\.getAttribute\("id"\)/, "editor routing must use the form attribute instead of a shadowing named control");
 const settingsCategoriesSource = settingsUiSource.match(/const CATEGORIES = \[([\s\S]*?)\];/)?.[1] || "";
@@ -321,17 +308,7 @@ const appSource = await readFile("public/app.js", "utf8");
 assert.match(appSource, /!hasRuntimeStatus/, "the idle home screen must hide the redundant Ready and dash status row");
 assert.match(appSource, /persistentLevelSelection[\s\S]*?source === "protection-level"[\s\S]*?!persistentLevelSelection/, "persistent level selections must leave the homepage to the number control alone");
 assert.doesNotMatch(appSource, /Until changed/, "the homepage must not repeat persistent level state beneath the selected number");
-const rankingSource = await readFile("public/ranking-view.js", "utf8");
-assert.match(rankingSource, /Number\(data\.usage\?\.totalSeconds \|\| 0\) > 0/, "focus labels must require recorded usage instead of treating an empty usage object as activity");
-assert.match(rankingSource, /textEl\("strong", duration, \{ className: "ranking-week-duration" \}\),\s*el\("div", \{ className: "ranking-week-bar-stage" \}, bar\)/, "weekly duration labels must stay outside the variable-height bars");
-assert.match(rankingSource, /function usageColumn[\s\S]*?createElementNS\("http:\/\/www\.w3\.org\/2000\/svg", "rect"\)[\s\S]*?fill\.setAttribute\("height", String\(height\)\)/, "each weekly bar must use CSP-safe SVG geometry derived from its own usage");
-assert.match(rankingSource, /el\("progress", \{[\s\S]*?className: "ranking-app-track",[\s\S]*?value: Math\.max\(3, \(seconds \/ max\) \* 100\)/, "each app and site bar must use a CSP-safe progress value derived from its own usage");
-assert.doesNotMatch(rankingSource, /attrs:\s*\{\s*style:/, "ranking charts must not rely on inline styles blocked by Vigil's content security policy");
-assert.match(styles, /\.ranking-week-bar\s*\{[^}]*inset:\s*0;[^}]*width:\s*100%;[^}]*height:\s*100%;/, "weekly SVG bars must fill the available chart stage so their geometry remains proportional");
-assert.match(styles, /\.ranking-dashboard\s*\{[^}]*container:\s*ranking \/ inline-size;/, "ranking must respond to its usable panel width rather than only the window width");
-assert.match(styles, /@container ranking \(max-width: 760px\)\s*\{[\s\S]*?\.ranking-vitals\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/, "ranking vitals must remain in one compact row at the minimum window size");
-assert.match(styles, /@container ranking \(max-width: 520px\)\s*\{[\s\S]*?\.ranking-vitals\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/, "the narrowest ranking layout must preserve the three-card strip above the chart");
-assert.match(styles, /@media \(max-height: 560px\)\s*\{[\s\S]*?\.ranking-card\s*\{[\s\S]*?min-height:\s*0;[\s\S]*?\.ranking-week\s*\{[\s\S]*?height:\s*200px;/, "the minimum-height window must shrink the weekly chart enough to keep its bottom visible");
+assert.doesNotMatch(styles, /\.ranking-|@container ranking|\.knight-/u, "retired ranking and rank-avatar styles must not return");
 
 const journalGateMarkup = html.match(/<section id="journalUnlockGate"[\s\S]*?<\/section>/)?.[0] || "";
 const journalPageMarkup = html.match(/<div class="journal-page journal-only"[\s\S]*?<div class="workspace two-column split-surface">/)?.[0] || "";

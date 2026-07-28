@@ -14,7 +14,6 @@ import { createHardeningPanel } from "./hardening-panel.js";
 import { shouldConfirmJournalDraftOnViewExit, shouldLockJournalOnViewExit } from "./journal-lock.js";
 import { createLifeLogView } from "./life-log-view.js";
 import { renderMinecraftAudioLibrary } from "./minecraft-audio-ui.js";
-import { createRankingView } from "./ranking-view.js";
 import { createSaintStage } from "./saint-stage.js";
 import { bindSetupAssistant, renderSetupWizard } from "./setup-wizard.js";
 import { renderPresetButtons } from "./preset-buttons.js";
@@ -128,7 +127,6 @@ const hardeningPanel = createHardeningPanel({
   }
 });
 const saintStage = createSaintStage();
-const rankingView = createRankingView();
 const trackingView = createTrackingView({ post, refresh, toast });
 const accountUi = createAccountUi();
 
@@ -528,7 +526,6 @@ function render() {
   renderPresetButtons(data.presets || [], toast);
   renderHeader(data.state, data.limits.activeBlocks);
   focusSound.render(data);
-  rankingView.render(data);
   renderJournalGate(data);
   renderJournalSecurity(data);
   renderIntentionalUse(data.intentionalUse);

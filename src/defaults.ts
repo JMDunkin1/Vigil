@@ -354,6 +354,8 @@ export const DEFAULT_EXPLICIT_URL_PATTERNS = [
   ...DEFAULT_EXPLICIT_SEARCH_TERMS,
   ...DEFAULT_EXPLICIT_COMIC_SITE_TERMS,
   ...combinedExplicitTerms(DEFAULT_EXPLICIT_COMIC_TERMS, DEFAULT_EXPLICIT_COMIC_RISK_MARKERS),
+  "manhwa",
+  "toongod",
   "reddit.com/r/gonewild",
   "reddit.com/r/nsfw",
   "reddit.com/r/porn",

@@ -709,12 +709,14 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     state
   });
   assert.match(page, /class="pause-content"/);
-  assert.match(page, /class="timer" role="timer"/);
-  assert.match(page, /animation: timer-breathe 6s cubic-bezier/);
+  assert.match(page, /id="breathLine" class="breath-line"/);
+  assert.match(page, /animation: breath-line 6s cubic-bezier/);
   assert.match(page, /Are you sure you want to open x\.com\?/);
-  assert.match(page, /<button id="continue" type="button" disabled>Continue<\/button>/);
+  assert.match(page, /<button id="continue" class="countdown-control"[^>]*disabled>/);
+  assert.match(page, /<span id="continueLabel" hidden>Continue<\/span>/);
+  assert.match(page, /continueButton\.classList\.add\("ready"\)/);
   assert.match(page, /continueButton\.disabled = false/);
-  assert.match(page, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.timer \{ animation: none; \}/);
+  assert.match(page, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.breath-line \{ animation: none; \}/);
   assert.doesNotMatch(page, /top: 50%/);
   assert.doesNotMatch(page, /What are you here to do/);
   assert.doesNotMatch(page, /Current state/);
