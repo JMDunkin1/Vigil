@@ -48,7 +48,8 @@ const JOURNAL_ENTRY_LIMIT = 250;
 const PLAN_LIST_LIMIT = 50;
 const PLAN_ITEM_LIMIT = 1000;
 const PLAN_BLOCK_LIMIT = 500;
-const BEHAVIOR_CHECK_IN_LIMIT = 500;
+const BEHAVIOR_CHECK_IN_MAX_AGE_DAYS = 400;
+const BEHAVIOR_CHECK_IN_LIMIT = 10_000;
 const RECOVERY_CHECK_IN_LIMIT = 500;
 const SOS_SESSION_LIMIT = 100;
 const RECOVERY_SETUP_RULE_ID = "porn-recovery-risk-pause";
@@ -117,7 +118,7 @@ export function normalizeIntentionalUse(current: Partial<IntentionalUseState> = 
     ledger: current.ledger && typeof current.ledger === "object" ? current.ledger : {},
     outcomes: Array.isArray(current.outcomes) ? current.outcomes.slice(0, OUTCOME_LIMIT) : [],
     behaviors: normalizeBehaviors(mergeSeededBehaviors(fresh.behaviors, current.behaviors)),
-    behaviorCheckIns: normalizeBehaviorCheckIns(current.behaviorCheckIns || fresh.behaviorCheckIns || []).slice(0, BEHAVIOR_CHECK_IN_LIMIT),
+    behaviorCheckIns: retainedBehaviorCheckIns(current.behaviorCheckIns || fresh.behaviorCheckIns || []),
     journalEntries: normalizeJournalEntries(current.journalEntries || fresh.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT),
     journalVault: normalizeJournalVaultState(current.journalVault || {}, fresh.journalVault || {}),
     planLists: normalizePlanLists(current.planLists || fresh.planLists || []).slice(0, PLAN_LIST_LIMIT),
@@ -348,7 +349,7 @@ export function recordIntentionalBehaviorCheckIn(state: VigilState, body: Intent
   if (journalEntryId) checkIn.journalEntryId = journalEntryId;
   if (existingIndex >= 0) state.intentionalUse.behaviorCheckIns.splice(existingIndex, 1);
   state.intentionalUse.behaviorCheckIns.unshift(checkIn);
-  state.intentionalUse.behaviorCheckIns = normalizeBehaviorCheckIns(state.intentionalUse.behaviorCheckIns).slice(0, BEHAVIOR_CHECK_IN_LIMIT);
+  state.intentionalUse.behaviorCheckIns = retainedBehaviorCheckIns(state.intentionalUse.behaviorCheckIns, now);
   return checkIn;
 }
 
@@ -756,7 +757,9 @@ function normalizeBehaviorDateKey(value: unknown, now: Date): string {
   const today = new Date(`${trackingDateKey(now)}T12:00:00`);
   const ageDays = Math.round((today.getTime() - parsed.getTime()) / 86_400_000);
   if (ageDays < 0) throw new IntentionalUseError("Future behavior check-ins are not allowed.");
-  if (ageDays > 400) throw new IntentionalUseError("Behavior check-ins can be backdated up to 400 days.");
+  if (ageDays > BEHAVIOR_CHECK_IN_MAX_AGE_DAYS) {
+    throw new IntentionalUseError(`Behavior check-ins can be backdated up to ${BEHAVIOR_CHECK_IN_MAX_AGE_DAYS} days.`);
+  }
   return requested;
 }
 
@@ -789,6 +792,16 @@ function normalizeBehaviorCheckIns(checkIns: unknown): IntentionalBehaviorCheckI
     .filter(isUnknownRecord)
     .map((checkIn) => normalizeBehaviorCheckIn(checkIn))
     .sort((a, b) => Date.parse(b.at || "") - Date.parse(a.at || ""));
+}
+
+function retainedBehaviorCheckIns(checkIns: unknown, now = new Date()): IntentionalBehaviorCheckIn[] {
+  const newestDateKey = trackingDateKey(now);
+  const oldestDate = trackingDay(now);
+  oldestDate.setDate(oldestDate.getDate() - BEHAVIOR_CHECK_IN_MAX_AGE_DAYS);
+  const oldestDateKey = dateKey(oldestDate);
+  return normalizeBehaviorCheckIns(checkIns)
+    .filter((checkIn) => checkIn.dateKey >= oldestDateKey && checkIn.dateKey <= newestDateKey)
+    .slice(0, BEHAVIOR_CHECK_IN_LIMIT);
 }
 
 function normalizeBehaviorCheckIn(checkIn: UnknownRecord): IntentionalBehaviorCheckIn {
@@ -1060,7 +1073,7 @@ function cleanupIntentionalUse(state: VigilState, now: Date): void {
     return grant.status === "active" && Date.parse(grant.until || "") > nowMs;
   });
   state.intentionalUse.outcomes = (state.intentionalUse.outcomes || []).slice(0, OUTCOME_LIMIT);
-  state.intentionalUse.behaviorCheckIns = (state.intentionalUse.behaviorCheckIns || []).slice(0, BEHAVIOR_CHECK_IN_LIMIT);
+  state.intentionalUse.behaviorCheckIns = retainedBehaviorCheckIns(state.intentionalUse.behaviorCheckIns || [], now);
   state.intentionalUse.journalEntries = (state.intentionalUse.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT);
   state.intentionalUse.planLists = normalizePlanLists(state.intentionalUse.planLists || []).slice(0, PLAN_LIST_LIMIT);
   state.intentionalUse.planItems = normalizePlanItems(state.intentionalUse.planItems || []).slice(0, PLAN_ITEM_LIMIT);

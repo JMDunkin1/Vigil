@@ -9,304 +9,82 @@ interface TrackingViewContext {
   toast(message: string): void;
 }
 
-type HabitStatus = "success" | "missed" | "unreported";
+export type HabitStatus = "success" | "missed" | "unreported";
+export type HabitActivityMode = "daily" | "weekly" | "cumulative";
+
+export interface HabitActivityCounts {
+  done: number;
+  missed: number;
+  unreported: number;
+  total: number;
+}
+
+const ACTIVITY_WEEKS = 52;
+const DAYS_PER_WEEK = 7;
 
 export function createTrackingView({ post, refresh, toast }: TrackingViewContext) {
-  const root = required<HTMLElement>("#habitCalendar");
-  const quickRoot = required<HTMLElement>("#habitQuickCheckIn");
-  const monthLabel = required<HTMLElement>("#habitCalendarMonth");
-  const statusLabel = required<HTMLElement>("#habitCalendarStatus");
-  const dateInput = required<HTMLInputElement>("#habitSelectedDate");
+  const focusSection = required<HTMLElement>("#habitFocus");
+  const focusRoot = required<HTMLElement>("#habitQuickCheckIn");
+  const activityRoot = required<HTMLElement>("#habitActivityGrid");
+  const activityMonths = required<HTMLElement>("#habitActivityMonths");
+  const activityStatus = required<HTMLElement>("#habitActivityStatus");
   const dialog = required<HTMLDialogElement>("#habitManagerDialog");
-  let selectedMonth = monthStart(trackingDay());
   let selectedDate = trackingDay();
   let selectedBehaviorId: string | null = null;
   let editableCompletedDateKey: string | null = null;
+  let activityMode: HabitActivityMode = "daily";
   let data: DashboardData | null = null;
   let saving = false;
 
   function bind(): void {
-    required<HTMLButtonElement>("#habitPreviousMonth").addEventListener("click", () => changeMonth(-1));
-    required<HTMLButtonElement>("#habitNextMonth").addEventListener("click", () => changeMonth(1));
-    required<HTMLButtonElement>("#habitCurrentMonth").addEventListener("click", () => {
-      selectedMonth = monthStart(trackingDay());
-      renderCalendar();
-      renderQuickCheckIn();
-    });
-    required<HTMLButtonElement>("#habitSelectedPrevious").addEventListener("click", () => changeSelectedDay(-1));
-    required<HTMLButtonElement>("#habitSelectedNext").addEventListener("click", () => changeSelectedDay(1));
-    required<HTMLButtonElement>("#habitSelectedToday").addEventListener("click", () => selectDate(trackingDay()));
-    dateInput.max = localDateKey(trackingDay());
-    dateInput.addEventListener("change", () => {
-      const date = dateFromKey(dateInput.value);
-      if (date) selectDate(date);
-    });
-    required<HTMLButtonElement>("#habitMarkRemainingDone").addEventListener("click", () => {
-      void saveSelectedDay("remaining-done");
-    });
-    required<HTMLButtonElement>("#habitClearSelectedDay").addEventListener("click", () => {
-      void saveSelectedDay("clear");
-    });
     required<HTMLButtonElement>("#habitManage").addEventListener("click", () => dialog.showModal());
     required<HTMLButtonElement>("#habitManagerClose").addEventListener("click", () => dialog.close());
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) dialog.close();
+    });
+    document.querySelectorAll<HTMLButtonElement>("[data-activity-mode]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const mode = activityModeFrom(button.dataset.activityMode);
+        if (!mode || mode === activityMode) return;
+        activityMode = mode;
+        renderActivity();
+      });
     });
     scheduleTrackingDayRollover();
   }
 
   function render(next: DashboardData): void {
     data = next;
-    renderCalendar();
-    renderQuickCheckIn();
+    renderFocus();
+    renderActivity();
   }
 
-  function changeMonth(amount: number): void {
-    selectedMonth = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + amount, 1);
-    renderCalendar();
-    renderQuickCheckIn();
-  }
-
-  function renderCalendar(): void {
-    monthLabel.textContent = selectedMonth.toLocaleDateString([], { month: "long", year: "numeric" });
-    root.replaceChildren();
-    const pulseRoot = required<HTMLElement>("#habitMonthPulse");
-    const monthRate = required<HTMLElement>("#habitMonthRate");
-    const monthDayCount = required<HTMLElement>("#habitMonthDayCount");
-    const monthTrend = required<SVGSVGElement>("#habitMonthTrend");
-    pulseRoot.replaceChildren();
-    monthTrend.replaceChildren();
-    const dates = datesInMonth(selectedMonth);
-    monthDayCount.textContent = `${dates.length} days`;
-    const lifeLog = data?.intentionalUse?.lifeLog;
-    const behaviors = (lifeLog?.behaviors || []).filter((behavior) => behavior.active !== false);
-    const checkIns = lifeLog?.calendar?.checkIns?.length
-      ? lifeLog.calendar.checkIns
-      : lifeLog?.habitCheckIns?.length
-        ? lifeLog.habitCheckIns
-        : (lifeLog?.recentCheckIns || []);
-
-    if (!behaviors.length) {
-      const empty = document.createElement("div");
-      empty.className = "habit-calendar-empty";
-      empty.append(
-        textNode("strong", "No habits yet"),
-        textNode("p", "Create a behavior below, then use this calendar to keep the chain visible.")
-      );
-      root.append(empty);
-      monthRate.textContent = "—";
-      statusLabel.textContent = "Create a habit to begin tracking.";
-      return;
-    }
-
-    const values = checkInMap(checkIns);
-    renderMonthPulse(pulseRoot, dates, behaviors, values);
-    const effectiveToday = trackingDay();
-    const today = effectiveToday.getTime();
-    const visibleDates = dates.filter((date) => date.getTime() <= today);
-    const monthStatuses = visibleDates.flatMap((date) => behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${localDateKey(date)}`))));
-    const reported = monthStatuses.filter((status) => status !== "unreported");
-    const completed = reported.filter((status) => status === "success").length;
-    monthRate.textContent = reported.length ? `${Math.round((completed / reported.length) * 100)}%` : "—";
-    renderTrend(monthTrend, visibleDates, behaviors, values);
-    const table = document.createElement("table");
-    table.className = "habit-calendar-table";
-    const head = document.createElement("thead");
-    const headRow = document.createElement("tr");
-    const habitHeading = document.createElement("th");
-    habitHeading.scope = "col";
-    habitHeading.textContent = "Habit";
-    headRow.append(habitHeading);
-    for (const date of dates) {
-      const heading = document.createElement("th");
-      heading.scope = "col";
-      heading.className = isSameDay(date, effectiveToday) ? "is-today" : "";
-      heading.textContent = String(date.getDate());
-      heading.title = date.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-      headRow.append(heading);
-    }
-    head.append(headRow);
-    table.append(head);
-
-    const body = document.createElement("tbody");
-    for (const behavior of behaviors) body.append(habitRow(behavior, dates, behaviors, values));
-    table.append(body);
-    root.append(table);
-
-    const hasCalendar = Boolean(lifeLog?.calendar?.checkIns || lifeLog?.habitCheckIns);
-    statusLabel.textContent = hasCalendar
-      ? "Click a day to mark it done or missed."
-      : "Recent check-ins are shown. Click a day to add a result.";
-  }
-
-  function renderMonthPulse(
-    pulseRoot: HTMLElement,
-    dates: Date[],
-    behaviors: DashboardItem[],
-    values: Map<string, HabitCalendarCheckIn>
-  ): void {
-    const effectiveToday = trackingDay();
-    const today = effectiveToday.getTime();
-    for (const date of dates) {
-      const key = localDateKey(date);
-      const statuses = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${key}`)));
-      const reported = statuses.filter((status) => status !== "unreported").length;
-      const done = statuses.filter((status) => status === "success").length;
-      const future = date.getTime() > today;
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = `habit-pulse-day${isSameDay(date, effectiveToday) ? " is-today" : ""}${future ? " is-future" : ""}${reported ? " has-data" : ""}`;
-      button.disabled = future;
-      button.dataset.reported = reported ? "true" : "false";
-      button.setAttribute("aria-label", `${date.toLocaleDateString([], { month: "long", day: "numeric" })}: ${done} done, ${reported - done} missed, ${behaviors.length - reported} not recorded`);
-      button.title = future ? "Future date" : `${done} done · ${reported - done} missed`;
-      const total = Math.max(behaviors.length, 1);
-      const bar = svgNode("svg", { class: "habit-pulse-bar", viewBox: `0 0 10 ${total}`, preserveAspectRatio: "none", "aria-hidden": "true" });
-      bar.append(
-        svgNode("rect", { class: "habit-pulse-track", x: 0, y: total - 0.15, width: 10, height: 0.15 }),
-        svgNode("rect", { class: "habit-pulse-missed", x: 0, y: total - reported, width: 10, height: reported - done }),
-        svgNode("rect", { class: "habit-pulse-done", x: 0, y: total - done, width: 10, height: done })
-      );
-      const label = document.createElement("span");
-      label.textContent = String(date.getDate());
-      button.append(bar, label);
-      button.addEventListener("click", () => selectDate(date));
-      pulseRoot.append(button);
-    }
-  }
-
-  function renderTrend(
-    svg: SVGSVGElement,
-    dates: Date[],
-    behaviors: DashboardItem[],
-    values: Map<string, HabitCalendarCheckIn>
-  ): void {
-    const width = 420;
-    const baseline = 91;
-    const points = dates.map((date, index) => {
-      const statuses = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${localDateKey(date)}`)));
-      const reported = statuses.filter((status) => status !== "unreported");
-      const completion = reported.length ? reported.filter((status) => status === "success").length / reported.length : 0;
-      const x = dates.length <= 1 ? 0 : (index / (dates.length - 1)) * width;
-      const y = baseline - completion * 72;
-      return { x, y };
-    });
-    if (!points.length) return;
-    const line = points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
-    const area = `${line} L${points.at(-1)?.x.toFixed(1)},${baseline} L0,${baseline} Z`;
-    svg.append(
-      svgNode("path", { class: "tracking-trend-area", d: area }),
-      svgNode("path", { class: "tracking-trend-line", d: line })
-    );
-    const last = points.at(-1);
-    if (last) svg.append(svgNode("circle", { class: "tracking-trend-point", cx: last.x, cy: last.y, r: 5 }));
-  }
-
-  function habitRow(
-    behavior: DashboardItem,
-    dates: Date[],
-    behaviors: DashboardItem[],
-    values: Map<string, HabitCalendarCheckIn>
-  ): HTMLTableRowElement {
-    const row = document.createElement("tr");
-    const label = document.createElement("th");
-    label.scope = "row";
-    label.textContent = behavior.name || "Habit";
-    label.title = behavior.description || behavior.replacement || behavior.name || "Habit";
-    row.append(label);
-
-    for (const date of dates) {
-      const dateKey = localDateKey(date);
-      const checkIn = values.get(`${behavior.id}:${dateKey}`);
-      const habitStatus = statusFor(checkIn);
-      const cell = document.createElement("td");
-      const button = document.createElement("button");
-      const effectiveToday = trackingDay();
-      const today = isSameDay(date, effectiveToday);
-      const future = date.getTime() > effectiveToday.getTime();
-      const locked = dateIsComplete(dateKey, behaviors, values) && editableCompletedDateKey !== dateKey;
-      button.type = "button";
-      button.className = `habit-day ${habitStatus}${today ? " is-today" : ""}${future ? " is-future" : ""}${locked ? " is-locked" : ""}`;
-      button.dataset.behaviorId = behavior.id;
-      button.dataset.dateKey = dateKey;
-      button.dataset.status = habitStatus;
-      button.textContent = habitStatus === "success" ? "✓" : habitStatus === "missed" ? "×" : "";
-      button.disabled = future || saving || locked;
-      button.setAttribute("aria-label", `${behavior.name || "Habit"}, ${date.toLocaleDateString()}, ${statusLabelFor(habitStatus)}${future ? ". Future dates cannot be recorded." : locked ? ". This completed day is locked against accidental changes." : ". Select to change this result."}`);
-      button.title = future ? "Future date" : locked ? "Completed day locked" : "Change this result";
-      button.addEventListener("click", () => {
-        selectedDate = dayStart(date);
-        void recordDate(behavior.id, dateKey, habitStatus);
-      });
-      cell.append(button);
-      row.append(cell);
-    }
-    return row;
-  }
-
-  async function recordDate(behaviorId: string, dateKey: string, current: HabitStatus): Promise<void> {
-    await saveHabitStatus(behaviorId, dateKey, current === "success" ? "missed" : "success");
-  }
-
-  function renderQuickCheckIn(): void {
-    const lifeLog = data?.intentionalUse?.lifeLog;
-    const behaviors = (lifeLog?.behaviors || []).filter((behavior) => behavior.active !== false);
-    const values = checkInMap(lifeLog?.calendar?.checkIns?.length
-      ? lifeLog.calendar.checkIns
-      : lifeLog?.habitCheckIns?.length
-        ? lifeLog.habitCheckIns
-        : (lifeLog?.recentCheckIns || []));
+  function renderFocus(): void {
+    const behaviors = activeBehaviors(data);
+    const values = checkInMap(habitCheckIns(data));
     const dateKey = localDateKey(selectedDate);
     const effectiveToday = trackingDay();
     const today = isSameDay(selectedDate, effectiveToday);
-    const title = required<HTMLElement>("#dailyCheckInTitle");
-    const progress = required<HTMLElement>("#dailyCheckInProgress");
-    const next = required<HTMLButtonElement>("#habitSelectedNext");
-    const finish = required<HTMLButtonElement>("#habitMarkRemainingDone");
-    const clear = required<HTMLButtonElement>("#habitClearSelectedDay");
-    const toolbar = required<HTMLElement>("#dailyCheckInToolbar");
-    const meter = required<HTMLProgressElement>("#dailyCheckInMeterBar");
-
-    title.textContent = today
-      ? "Today"
-      : selectedDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
-    dateInput.value = dateKey;
-    next.disabled = today || saving;
-    quickRoot.replaceChildren();
-    toolbar.hidden = false;
+    focusRoot.replaceChildren();
 
     if (!behaviors.length) {
-      progress.textContent = "No active habits";
-      meter.value = 0;
-      finish.disabled = true;
-      clear.disabled = true;
-      const empty = document.createElement("p");
-      empty.className = "habit-quick-empty";
-      empty.textContent = "Add a habit to begin.";
-      quickRoot.append(empty);
+      selectedBehaviorId = null;
+      focusRoot.append(focusEmptyState());
+      updateTodayStatus(behaviors, values, effectiveToday);
       return;
     }
 
     const statuses = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${dateKey}`)));
-    const recorded = statuses.filter((status) => status !== "unreported").length;
-    const done = statuses.filter((status) => status === "success").length;
-    const complete = recorded === behaviors.length;
+    const complete = statuses.every((status) => status !== "unreported");
     const locked = complete && editableCompletedDateKey !== dateKey;
-    meter.value = Math.round((recorded / behaviors.length) * 100);
-    meter.parentElement?.classList.toggle("is-complete", complete);
-    progress.textContent = complete
-      ? `${done} done · ${behaviors.length - done} missed · complete`
-      : `${recorded} of ${behaviors.length} recorded`;
-    finish.disabled = saving || complete;
-    clear.disabled = saving || recorded === 0;
 
     if (locked) {
-      toolbar.hidden = true;
       selectedBehaviorId = null;
-      quickRoot.append(completedDayCard(today, () => {
+      focusRoot.append(completedDayView(behaviors, statuses, selectedDate, today, () => {
         editableCompletedDateKey = dateKey;
-        renderCalendar();
-        renderQuickCheckIn();
+        selectedBehaviorId = behaviors[0].id;
+        renderFocus();
+        focusHabitHeading();
       }));
       updateTodayStatus(behaviors, values, effectiveToday);
       return;
@@ -315,110 +93,218 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     if (!selectedBehaviorId || !behaviors.some((behavior) => behavior.id === selectedBehaviorId)) {
       selectedBehaviorId = behaviors.find((_, index) => statuses[index] === "unreported")?.id || behaviors[0].id;
     }
+
     const selectedIndex = Math.max(0, behaviors.findIndex((behavior) => behavior.id === selectedBehaviorId));
     const behavior = behaviors[selectedIndex];
     const status = statuses[selectedIndex];
-    const pickerSelect = document.createElement("select");
-    pickerSelect.className = "habit-quick-select";
-    pickerSelect.setAttribute("aria-label", "Choose a habit to check in");
-    pickerSelect.disabled = saving;
-    behaviors.forEach((optionBehavior, index) => {
-      const option = document.createElement("option");
-      const optionStatus = statuses[index];
-      option.value = optionBehavior.id;
-      option.textContent = `${optionStatus === "success" ? "✓" : optionStatus === "missed" ? "×" : "○"} ${optionBehavior.name || "Habit"}`;
-      option.selected = optionBehavior.id === behavior.id;
-      pickerSelect.append(option);
-    });
-    pickerSelect.addEventListener("change", () => {
-      selectedBehaviorId = pickerSelect.value;
-      renderQuickCheckIn();
-    });
+    const content = document.createElement("div");
+    content.className = "habit-focus-editor";
 
-    const monthDates = datesInMonth(selectedMonth).filter((date) => date.getTime() <= effectiveToday.getTime());
-    const weekDates = datesInWeek(selectedDate);
-    const row = document.createElement("div");
-    row.className = `habit-quick-row habit-visual-card ${status}`;
-    const heading = document.createElement("div");
-    heading.className = "habit-card-heading";
-    heading.append(pickerSelect);
+    const step = document.createElement("div");
+    step.className = "habit-focus-step";
+    const position = document.createElement("p");
+    position.className = "habit-focus-position";
+    position.textContent = today
+      ? `Habit ${selectedIndex + 1} of ${behaviors.length}`
+      : `Habit ${selectedIndex + 1} of ${behaviors.length} · ${selectedDate.toLocaleDateString([], { month: "short", day: "numeric" })}`;
+    const dots = habitDots(behaviors, statuses, selectedIndex, (behaviorId) => {
+      selectedBehaviorId = behaviorId;
+      renderFocus();
+      focusRoot.querySelector<HTMLElement>(".habit-focus-dot.is-current")?.focus({ preventScroll: true });
+    }, saving);
+    step.append(position, dots);
 
-    const behaviorStatuses = monthDates.map((date) => statusFor(values.get(`${behavior.id}:${localDateKey(date)}`)));
-    const behaviorDone = behaviorStatuses.filter((value) => value === "success").length;
-    const behaviorRate = monthDates.length ? Math.round((behaviorDone / monthDates.length) * 100) : 0;
-    const metric = document.createElement("div");
-    metric.className = "habit-card-metric";
-    const metricTotal = document.createElement("strong");
-    metricTotal.textContent = String(behaviorDone);
-    const metricDays = document.createElement("small");
-    metricDays.textContent = ` / ${monthDates.length}`;
-    metricTotal.append(metricDays);
-    const metricRate = document.createElement("span");
-    metricRate.textContent = `${behaviorRate}%`;
-    metric.append(metricTotal, metricRate);
+    const heading = document.createElement("h2");
+    heading.id = "habitFocusTitle";
+    heading.className = "habit-focus-title";
+    heading.tabIndex = -1;
+    heading.textContent = behavior.name || "Habit";
+    const description = document.createElement("p");
+    description.className = "habit-focus-description";
+    description.textContent = behavior.description || behavior.replacement || "Take one honest moment and record today.";
 
-    const week = document.createElement("div");
-    week.className = "habit-week-grid";
-    for (const date of weekDates) {
-      const dayStatus = statusFor(values.get(`${behavior.id}:${localDateKey(date)}`));
-      const future = date.getTime() > effectiveToday.getTime();
-      const day = document.createElement("button");
-      day.type = "button";
-      day.className = `habit-week-day ${dayStatus}${isSameDay(date, selectedDate) ? " is-selected" : ""}`;
-      day.disabled = future || saving;
-      day.setAttribute("aria-label", `${behavior.name || "Habit"}, ${date.toLocaleDateString()}, ${statusLabelFor(dayStatus)}`);
-      day.title = future ? "Future date" : "Select this day";
-      const letter = document.createElement("span");
-      letter.textContent = date.toLocaleDateString([], { weekday: "narrow" });
-      const mark = document.createElement("i");
-      mark.textContent = dayStatus === "success" ? "✓" : dayStatus === "missed" ? "×" : "";
-      day.append(letter, mark);
-      day.addEventListener("click", () => selectDate(date));
-      week.append(day);
-    }
-
-    const controls = document.createElement("div");
-    controls.className = "habit-status-control";
-    controls.setAttribute("role", "group");
-    controls.setAttribute("aria-label", `${behavior.name || "Habit"} result`);
-    controls.append(
-      statusButton("Done", "success", status, () => saveHabitStatus(behavior.id, dateKey, status === "success" ? "unreported" : "success", status !== "success")),
-      statusButton("Missed", "missed", status, () => saveHabitStatus(behavior.id, dateKey, status === "missed" ? "unreported" : "missed", status !== "missed"))
+    const actions = document.createElement("div");
+    actions.className = "habit-focus-actions";
+    actions.setAttribute("role", "group");
+    actions.setAttribute("aria-label", `${behavior.name || "Habit"} result`);
+    actions.append(
+      focusStatusButton("Done", "success", status, () => {
+        void saveHabitStatus(
+          behavior.id,
+          dateKey,
+          status === "success" ? "unreported" : "success",
+          status !== "success"
+        );
+      }),
+      focusStatusButton("Missed", "missed", status, () => {
+        void saveHabitStatus(
+          behavior.id,
+          dateKey,
+          status === "missed" ? "unreported" : "missed",
+          status !== "missed"
+        );
+      })
     );
-    row.append(heading, metric, week, controls);
-    quickRoot.append(row);
 
+    const skip = document.createElement("button");
+    skip.type = "button";
+    skip.className = "habit-focus-skip";
+    skip.textContent = "Skip for now";
+    skip.disabled = saving || behaviors.length < 2;
+    skip.addEventListener("click", () => {
+      selectedBehaviorId = behaviors[(selectedIndex + 1) % behaviors.length].id;
+      renderFocus();
+      focusHabitHeading();
+    });
+
+    const helper = document.createElement("p");
+    helper.className = "habit-focus-helper";
+    helper.textContent = "Your choice advances to the next habit.";
+
+    content.append(step, heading, description, actions, skip, helper);
+    focusRoot.append(content);
     updateTodayStatus(behaviors, values, effectiveToday);
   }
 
-  function statusButton(label: string, value: HabitStatus, current: HabitStatus, onClick: () => Promise<void>): HTMLButtonElement {
+  function renderActivity(): void {
+    const behaviors = allBehaviors(data);
+    const checkIns = habitCheckIns(data);
+    const values = checkInMap(checkIns);
+    const effectiveToday = trackingDay();
+    const dates = habitActivityDates(effectiveToday);
+    const dailyCounts = dailyActivityCounts(dates, behaviors, checkIns, values, effectiveToday);
+    activityRoot.replaceChildren();
+    activityMonths.replaceChildren();
+    activityRoot.dataset.mode = activityMode;
+
+    document.querySelectorAll<HTMLButtonElement>("[data-activity-mode]").forEach((button) => {
+      const selected = button.dataset.activityMode === activityMode;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-pressed", String(selected));
+    });
+
+    if (!behaviors.length) {
+      activityRoot.setAttribute("aria-label", "Habit activity");
+      const empty = document.createElement("p");
+      empty.className = "habit-activity-empty";
+      empty.textContent = "Activity will appear here after you add a habit.";
+      activityRoot.append(empty);
+      activityStatus.textContent = "No habit activity yet.";
+      return;
+    }
+
+    activityRoot.setAttribute(
+      "aria-label",
+      `${activityModeLabel(activityMode)} habit activity from ${formatFullDate(dates[0])} through ${formatFullDate(effectiveToday)}`
+    );
+
+    const selectedKey = localDateKey(selectedDate);
+    const todayKey = localDateKey(effectiveToday);
+    const focusIndex = Math.max(0, dates.findIndex((date) => localDateKey(date) === selectedKey));
+
+    dates.forEach((date, index) => {
+      const dateKey = localDateKey(date);
+      const future = date.getTime() > effectiveToday.getTime();
+      const counts = aggregateHabitActivity(dailyCounts, index, activityMode);
+      const level = habitActivityLevel(counts);
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.className = [
+        "habit-activity-cell",
+        `level-${level}`,
+        counts.total === 0 ? "is-void" : "",
+        dateKey === todayKey ? "is-today" : "",
+        dateKey === selectedKey ? "is-selected" : "",
+        future ? "is-future" : ""
+      ].filter(Boolean).join(" ");
+      cell.dataset.activityIndex = String(index);
+      cell.dataset.level = String(level);
+      cell.disabled = future;
+      cell.tabIndex = !future && index === focusIndex ? 0 : -1;
+      cell.setAttribute("aria-label", activityAriaLabel(date, dates[0], counts, activityMode));
+      cell.title = activityTitle(date, dates[0], counts, activityMode);
+      cell.addEventListener("click", () => selectDate(date, true));
+      cell.addEventListener("keydown", (event) => moveActivityFocus(event, index, dates.length));
+      activityRoot.append(cell);
+    });
+
+    renderMonthLabels(dates, effectiveToday);
+    const selectedCounts = aggregateHabitActivity(dailyCounts, focusIndex, activityMode);
+    activityStatus.textContent = activityAriaLabel(dates[focusIndex], dates[0], selectedCounts, activityMode);
+  }
+
+  function renderMonthLabels(dates: Date[], effectiveToday: Date): void {
+    for (let weekIndex = 0; weekIndex < ACTIVITY_WEEKS; weekIndex += 1) {
+      const label = document.createElement("span");
+      const weekStartIndex = weekIndex * DAYS_PER_WEEK;
+      const week = dates.slice(weekStartIndex, weekStartIndex + DAYS_PER_WEEK);
+      const monthStart = week.find((date) => date.getDate() === 1);
+      if (weekIndex === 0 || (monthStart && monthStart.getTime() <= effectiveToday.getTime())) {
+        label.textContent = (monthStart || week[0]).toLocaleDateString([], { month: "short" });
+      }
+      activityMonths.append(label);
+    }
+  }
+
+  function moveActivityFocus(event: KeyboardEvent, index: number, length: number): void {
+    const todayIndex = habitActivityDates(trackingDay()).findIndex((date) => isSameDay(date, trackingDay()));
+    const targetIndex = activityFocusTarget(index, event.key, length, todayIndex);
+    if (targetIndex === index || targetIndex < 0 || targetIndex >= length) return;
+    const target = activityRoot.querySelector<HTMLButtonElement>(`[data-activity-index="${targetIndex}"]`);
+    if (!target || target.disabled) return;
+    event.preventDefault();
+    activityRoot.querySelectorAll<HTMLButtonElement>(".habit-activity-cell").forEach((cell) => {
+      cell.tabIndex = cell === target ? 0 : -1;
+    });
+    target.focus();
+  }
+
+  function selectDate(date: Date, revealFocus = false): void {
+    if (date.getTime() > trackingDay().getTime()) return;
+    selectedDate = dayStart(date);
+    selectedBehaviorId = null;
+    editableCompletedDateKey = null;
+    renderFocus();
+    renderActivity();
+    if (revealFocus) {
+      focusHabitHeading();
+      focusSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }
+
+  function focusStatusButton(
+    label: string,
+    value: Exclude<HabitStatus, "unreported">,
+    current: HabitStatus,
+    onClick: () => void
+  ): HTMLButtonElement {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `habit-status-option ${value}${current === value ? " is-selected" : ""}`;
-    const mark = document.createElement("span");
-    mark.className = "habit-status-mark";
-    mark.textContent = value === "success" ? "✓" : "×";
-    const text = document.createElement("span");
-    text.textContent = label;
-    button.append(mark, text);
+    button.className = `habit-focus-action ${value}${current === value ? " is-selected" : ""}`;
+    button.textContent = label;
     button.disabled = saving;
     button.setAttribute("aria-pressed", String(current === value));
     button.title = current === value ? `Clear ${label.toLowerCase()} result` : `Mark ${label.toLowerCase()}`;
-    button.addEventListener("click", () => void onClick());
+    button.addEventListener("click", onClick);
     return button;
   }
 
-  async function saveHabitStatus(behaviorId: string, dateKey: string, next: HabitStatus, advance = false): Promise<void> {
+  async function saveHabitStatus(
+    behaviorId: string,
+    dateKey: string,
+    next: HabitStatus,
+    advance = false
+  ): Promise<void> {
     if (saving) return;
     const nextBehaviorId = advance ? behaviorAfterCheckIn(behaviorId, dateKey) : null;
     saving = true;
-    renderQuickCheckIn();
+    renderFocus();
     try {
       await post("/api/intentional-use/behavior/check-in", {
         behaviorId,
         dateKey,
         ...(next === "unreported" ? { clear: true } : { value: next === "success" }),
-        note: "Habit calendar"
+        note: "Habit check-in"
       });
       editableCompletedDateKey = null;
       if (nextBehaviorId) selectedBehaviorId = nextBehaviorId;
@@ -428,63 +314,20 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       toast(error instanceof Error ? error.message : "Could not save habit check-in");
     } finally {
       saving = false;
-      renderCalendar();
-      renderQuickCheckIn();
+      renderFocus();
+      renderActivity();
+      focusHabitHeading();
     }
   }
 
-  async function saveSelectedDay(action: "remaining-done" | "clear"): Promise<void> {
-    if (saving) return;
-    const lifeLog = data?.intentionalUse?.lifeLog;
-    const behaviors = (lifeLog?.behaviors || []).filter((behavior) => behavior.active !== false);
-    const checkIns = lifeLog?.calendar?.checkIns?.length
-      ? lifeLog.calendar.checkIns
-      : lifeLog?.habitCheckIns?.length
-        ? lifeLog.habitCheckIns
-        : (lifeLog?.recentCheckIns || []);
-    const values = checkInMap(checkIns);
-    const dateKey = localDateKey(selectedDate);
-    const targets = action === "clear"
-      ? behaviors.filter((behavior) => statusFor(values.get(`${behavior.id}:${dateKey}`)) !== "unreported")
-      : behaviors.filter((behavior) => statusFor(values.get(`${behavior.id}:${dateKey}`)) === "unreported");
-    if (!targets.length) return;
-
-    saving = true;
-    renderQuickCheckIn();
-    try {
-      for (const behavior of targets) {
-        await post("/api/intentional-use/behavior/check-in", {
-          behaviorId: behavior.id,
-          dateKey,
-          ...(action === "clear" ? { clear: true } : { value: true }),
-          note: "Habit calendar quick entry"
-        });
-      }
-      toast(action === "clear" ? "Day cleared" : "Remaining habits marked done");
-      await refresh();
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "Could not update the day");
-      await refresh();
-    } finally {
-      saving = false;
-      renderCalendar();
-      renderQuickCheckIn();
-    }
-  }
-
-  function changeSelectedDay(amount: number): void {
-    const next = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate() + amount);
-    if (next.getTime() > trackingDay().getTime()) return;
-    selectDate(next);
-  }
-
-  function selectDate(date: Date): void {
-    selectedDate = dayStart(date);
-    selectedMonth = monthStart(date);
-    selectedBehaviorId = null;
-    editableCompletedDateKey = null;
-    renderCalendar();
-    renderQuickCheckIn();
+  function behaviorAfterCheckIn(behaviorId: string, dateKey: string): string | null {
+    const behaviors = activeBehaviors(data);
+    const currentIndex = behaviors.findIndex((behavior) => behavior.id === behaviorId);
+    if (currentIndex < 0) return null;
+    const values = checkInMap(habitCheckIns(data));
+    const statuses = behaviors.map((behavior) => statusFor(values.get(`${behavior.id}:${dateKey}`)));
+    const nextIndex = nextHabitIndex(statuses, currentIndex);
+    return nextIndex < 0 ? null : behaviors[nextIndex].id;
   }
 
   function scheduleTrackingDayRollover(): void {
@@ -492,66 +335,230 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     window.setTimeout(() => {
       const wasShowingToday = isSameDay(selectedDate, previousToday);
       const nextToday = trackingDay();
-      dateInput.max = localDateKey(nextToday);
       if (wasShowingToday) selectDate(nextToday);
       else {
-        renderCalendar();
-        renderQuickCheckIn();
+        renderFocus();
+        renderActivity();
       }
       scheduleTrackingDayRollover();
     }, millisecondsUntilTrackingDayRollover());
   }
 
-  function behaviorAfterCheckIn(behaviorId: string, dateKey: string): string | null {
-    const lifeLog = data?.intentionalUse?.lifeLog;
-    const behaviors = (lifeLog?.behaviors || []).filter((behavior) => behavior.active !== false);
-    const currentIndex = behaviors.findIndex((behavior) => behavior.id === behaviorId);
-    if (currentIndex < 0 || behaviors.length < 2) return behaviorId;
-    const values = checkInMap(lifeLog?.calendar?.checkIns?.length
-      ? lifeLog.calendar.checkIns
-      : lifeLog?.habitCheckIns?.length
-        ? lifeLog.habitCheckIns
-        : (lifeLog?.recentCheckIns || []));
-    for (let offset = 1; offset < behaviors.length; offset += 1) {
-      const candidate = behaviors[(currentIndex + offset) % behaviors.length];
-      if (statusFor(values.get(`${candidate.id}:${dateKey}`)) === "unreported") return candidate.id;
-    }
-    return behaviors[(currentIndex + 1) % behaviors.length].id;
+  function focusHabitHeading(): void {
+    focusRoot.querySelector<HTMLElement>(".habit-focus-title")?.focus({ preventScroll: true });
   }
 
   return { bind, render };
 }
 
-function completedDayCard(
+export function nextHabitIndex(statuses: HabitStatus[], currentIndex: number): number {
+  if (!statuses.length || currentIndex < 0 || currentIndex >= statuses.length) return -1;
+  if (statuses.length === 1) return currentIndex;
+  for (let offset = 1; offset < statuses.length; offset += 1) {
+    const candidate = (currentIndex + offset) % statuses.length;
+    if (statuses[candidate] === "unreported") return candidate;
+  }
+  return (currentIndex + 1) % statuses.length;
+}
+
+export function activityFocusTarget(
+  index: number,
+  key: string,
+  length: number,
+  todayIndex: number
+): number {
+  if (index < 0 || index >= length) return index;
+  const row = index % DAYS_PER_WEEK;
+  if (key === "ArrowUp") return row === 0 ? index : index - 1;
+  if (key === "ArrowDown") return row === DAYS_PER_WEEK - 1 ? index : index + 1;
+  if (key === "ArrowLeft") return index < DAYS_PER_WEEK ? index : index - DAYS_PER_WEEK;
+  if (key === "ArrowRight") return index + DAYS_PER_WEEK >= length ? index : index + DAYS_PER_WEEK;
+  if (key === "Home") return 0;
+  if (key === "End") return Math.min(length - 1, Math.max(0, todayIndex));
+  return index;
+}
+
+export function habitActivityDates(todayValue: Date): Date[] {
+  const currentWeekStart = dayStart(todayValue);
+  const mondayOffset = (currentWeekStart.getDay() + 6) % DAYS_PER_WEEK;
+  currentWeekStart.setDate(currentWeekStart.getDate() - mondayOffset - ((ACTIVITY_WEEKS - 1) * DAYS_PER_WEEK));
+  return Array.from({ length: ACTIVITY_WEEKS * DAYS_PER_WEEK }, (_, index) => {
+    return new Date(
+      currentWeekStart.getFullYear(),
+      currentWeekStart.getMonth(),
+      currentWeekStart.getDate() + index
+    );
+  });
+}
+
+export function aggregateHabitActivity(
+  daily: HabitActivityCounts[],
+  index: number,
+  mode: HabitActivityMode
+): HabitActivityCounts {
+  if (!daily.length || index < 0 || index >= daily.length) return emptyActivityCounts();
+  const start = mode === "daily" ? index : mode === "weekly" ? Math.max(0, index - 6) : 0;
+  return daily.slice(start, index + 1).reduce((total, counts) => ({
+    done: total.done + counts.done,
+    missed: total.missed + counts.missed,
+    unreported: total.unreported + counts.unreported,
+    total: total.total + counts.total
+  }), emptyActivityCounts());
+}
+
+export function habitActivityLevel(counts: HabitActivityCounts): number {
+  if (counts.total <= 0 || counts.done <= 0) return 0;
+  return Math.min(4, Math.max(1, Math.ceil((counts.done / counts.total) * 4)));
+}
+
+function dailyActivityCounts(
+  dates: Date[],
+  behaviors: DashboardItem[],
+  checkIns: HabitCalendarCheckIn[],
+  values: Map<string, HabitCalendarCheckIn>,
+  effectiveToday: Date
+): HabitActivityCounts[] {
+  const firstDateKey = localDateKey(dates[0]);
+  const todayKey = localDateKey(effectiveToday);
+  const behaviorWindows = new Map(behaviors.map((behavior) => [
+    behavior.id,
+    behaviorActivityWindow(behavior, checkIns, firstDateKey, todayKey)
+  ]));
+  return dates.map((date) => {
+    if (date.getTime() > effectiveToday.getTime()) return emptyActivityCounts();
+    const dateKey = localDateKey(date);
+    const counts = emptyActivityCounts();
+    for (const behavior of behaviors) {
+      const window = behaviorWindows.get(behavior.id) || { start: firstDateKey, end: todayKey };
+      if (dateKey < window.start || dateKey > window.end) continue;
+      counts.total += 1;
+      const status = statusFor(values.get(`${behavior.id}:${dateKey}`));
+      if (status === "success") counts.done += 1;
+      else if (status === "missed") counts.missed += 1;
+      else counts.unreported += 1;
+    }
+    return counts;
+  });
+}
+
+function behaviorActivityWindow(
+  behavior: DashboardItem,
+  checkIns: HabitCalendarCheckIn[],
+  fallback: string,
+  todayKey: string
+): { start: string; end: string } {
+  const checkInDateKeys: string[] = [];
+  const createdAt = dateKeyFromTimestamp(behavior.createdAt);
+  for (const checkIn of checkIns) {
+    if (String(checkIn.behaviorId || "") !== behavior.id) continue;
+    const checkInDateKey = String(checkIn.dateKey || dateKeyFromTimestamp(checkIn.at));
+    if (checkInDateKey) checkInDateKeys.push(checkInDateKey);
+  }
+  const earliest = [createdAt, ...checkInDateKeys].filter(Boolean).sort()[0] || fallback;
+  const start = earliest < fallback ? fallback : earliest;
+  if (behavior.active !== false) return { start, end: todayKey };
+  const updatedAt = dateKeyFromTimestamp(behavior.updatedAt);
+  const latest = [updatedAt, ...checkInDateKeys].filter(Boolean).sort().at(-1) || start;
+  const end = latest < start ? start : latest > todayKey ? todayKey : latest;
+  return { start, end };
+}
+
+function habitDots(
+  behaviors: DashboardItem[],
+  statuses: HabitStatus[],
+  selectedIndex: number,
+  select: (behaviorId: string) => void,
+  disabled = false
+): HTMLElement {
+  const dots = document.createElement("div");
+  dots.className = "habit-focus-dots";
+  dots.setAttribute("role", "group");
+  dots.setAttribute("aria-label", "Choose a habit");
+  behaviors.forEach((behavior, index) => {
+    const dot = document.createElement("button");
+    dot.type = "button";
+    dot.className = `habit-focus-dot ${statuses[index]}${index === selectedIndex ? " is-current" : ""}`;
+    dot.disabled = disabled;
+    dot.setAttribute("aria-label", `${behavior.name || `Habit ${index + 1}`}: ${statusLabelFor(statuses[index])}`);
+    dot.setAttribute("aria-pressed", String(index === selectedIndex));
+    dot.title = behavior.name || `Habit ${index + 1}`;
+    dot.addEventListener("click", () => select(behavior.id));
+    dots.append(dot);
+  });
+  return dots;
+}
+
+function completedDayView(
+  behaviors: DashboardItem[],
+  statuses: HabitStatus[],
+  selectedDate: Date,
   today: boolean,
   edit: () => void
 ): HTMLElement {
-  const card = document.createElement("section");
-  card.className = "habit-checkin-complete";
-  card.setAttribute("role", "status");
+  const content = document.createElement("div");
+  content.className = "habit-focus-editor habit-focus-complete";
+  content.setAttribute("role", "status");
 
-  const heading = document.createElement("strong");
-  heading.textContent = today
-    ? "You're done filling out your info for today."
-    : "You're done filling out your info for this day.";
+  const step = document.createElement("div");
+  step.className = "habit-focus-step";
+  const position = document.createElement("p");
+  position.className = "habit-focus-position";
+  position.textContent = today
+    ? `${behaviors.length} of ${behaviors.length} recorded`
+    : `${behaviors.length} of ${behaviors.length} recorded · ${selectedDate.toLocaleDateString([], { month: "short", day: "numeric" })}`;
+  const dots = habitDots(behaviors, statuses, -1, () => undefined, true);
+  step.append(position, dots);
 
+  const heading = document.createElement("h2");
+  heading.id = "habitFocusTitle";
+  heading.className = "habit-focus-title";
+  heading.tabIndex = -1;
+  heading.textContent = "All set.";
+  const description = document.createElement("p");
+  description.className = "habit-focus-description";
+  description.textContent = today
+    ? "You're done filling out your habits for today."
+    : "You're done filling out your habits for this day.";
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "habit-text-action compact";
+  button.className = "habit-focus-edit";
   button.textContent = today ? "Edit today's answers" : "Edit this day's answers";
   button.addEventListener("click", edit);
 
-  card.append(heading, button);
-  return card;
+  content.append(step, heading, description, button);
+  return content;
 }
 
-function dateIsComplete(
-  dateKey: string,
-  behaviors: DashboardItem[],
-  values: Map<string, HabitCalendarCheckIn>
-): boolean {
-  return behaviors.length > 0
-    && behaviors.every((behavior) => statusFor(values.get(`${behavior.id}:${dateKey}`)) !== "unreported");
+function focusEmptyState(): HTMLElement {
+  const content = document.createElement("div");
+  content.className = "habit-focus-editor habit-focus-empty";
+  const heading = document.createElement("h2");
+  heading.id = "habitFocusTitle";
+  heading.className = "habit-focus-title";
+  heading.tabIndex = -1;
+  heading.textContent = "No habits yet.";
+  const description = document.createElement("p");
+  description.className = "habit-focus-description";
+  description.textContent = "Use Manage habits to add the first one.";
+  content.append(heading, description);
+  return content;
+}
+
+function activeBehaviors(data: DashboardData | null): DashboardItem[] {
+  return allBehaviors(data).filter((behavior) => behavior.active !== false);
+}
+
+function allBehaviors(data: DashboardData | null): DashboardItem[] {
+  return data?.intentionalUse?.lifeLog?.behaviors || [];
+}
+
+function habitCheckIns(data: DashboardData | null): HabitCalendarCheckIn[] {
+  const lifeLog = data?.intentionalUse?.lifeLog;
+  return lifeLog?.calendar?.checkIns?.length
+    ? lifeLog.calendar.checkIns
+    : lifeLog?.habitCheckIns?.length
+      ? lifeLog.habitCheckIns
+      : (lifeLog?.recentCheckIns || []);
 }
 
 function updateTodayStatus(
@@ -584,31 +591,57 @@ function statusFor(checkIn: HabitCalendarCheckIn | undefined): HabitStatus {
 }
 
 function statusLabelFor(status: HabitStatus): string {
-  return status === "success" ? "successful" : status === "missed" ? "missed" : "not recorded";
+  return status === "success" ? "done" : status === "missed" ? "missed" : "not recorded";
 }
 
-function datesInMonth(value: Date): Date[] {
-  const year = value.getFullYear();
-  const month = value.getMonth();
-  const count = new Date(year, month + 1, 0).getDate();
-  return Array.from({ length: count }, (_, index) => new Date(year, month, index + 1));
+function activityModeFrom(value: string | undefined): HabitActivityMode | null {
+  return value === "daily" || value === "weekly" || value === "cumulative" ? value : null;
 }
 
-function datesInWeek(value: Date): Date[] {
-  const start = dayStart(value);
-  const mondayOffset = (start.getDay() + 6) % 7;
-  start.setDate(start.getDate() - mondayOffset);
-  return Array.from({ length: 7 }, (_, index) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + index));
+function activityModeLabel(mode: HabitActivityMode): string {
+  return mode === "daily" ? "Daily" : mode === "weekly" ? "Seven-day" : "Cumulative";
 }
 
-function svgNode(tag: string, attributes: Record<string, string | number>): SVGElement {
-  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
-  return node;
+function activityAriaLabel(
+  date: Date,
+  rangeStart: Date,
+  counts: HabitActivityCounts,
+  mode: HabitActivityMode
+): string {
+  const countsLabel = `${counts.done} habits done, ${counts.missed} missed, ${counts.unreported} not recorded, ${counts.total} total`;
+  if (mode === "daily") return `${formatFullDate(date)}: ${countsLabel}.`;
+  const start = mode === "weekly" ? addDays(date, -6, rangeStart) : rangeStart;
+  const period = mode === "weekly" ? "Seven-day habit activity" : "Cumulative habit activity";
+  return `${period} from ${formatFullDate(start)} through ${formatFullDate(date)}: ${countsLabel}.`;
 }
 
-function monthStart(value: Date): Date {
-  return new Date(value.getFullYear(), value.getMonth(), 1);
+function activityTitle(
+  date: Date,
+  rangeStart: Date,
+  counts: HabitActivityCounts,
+  mode: HabitActivityMode
+): string {
+  const countsLabel = `${counts.done} done · ${counts.missed} missed · ${counts.unreported} not recorded`;
+  if (mode === "daily") return `${formatShortDate(date)} · ${countsLabel}`;
+  const start = mode === "weekly" ? addDays(date, -6, rangeStart) : rangeStart;
+  return `${formatShortDate(start)}–${formatShortDate(date)} · ${countsLabel}`;
+}
+
+function addDays(value: Date, amount: number, minimum: Date): Date {
+  const next = new Date(value.getFullYear(), value.getMonth(), value.getDate() + amount);
+  return next.getTime() < minimum.getTime() ? minimum : next;
+}
+
+function formatFullDate(value: Date): string {
+  return value.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+}
+
+function formatShortDate(value: Date): string {
+  return value.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+
+function emptyActivityCounts(): HabitActivityCounts {
+  return { done: 0, missed: 0, unreported: 0, total: 0 };
 }
 
 function dayStart(value: Date): Date {
@@ -626,22 +659,9 @@ function localDateKey(value: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-function dateFromKey(value: string): Date | null {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!match) return null;
-  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
-  return localDateKey(date) === value ? date : null;
-}
-
 function dateKeyFromTimestamp(value: unknown): string {
   const date = value ? new Date(String(value)) : null;
   return date && !Number.isNaN(date.getTime()) ? localDateKey(date) : "";
-}
-
-function textNode(tag: "p" | "span" | "strong", text: string): HTMLElement {
-  const node = document.createElement(tag);
-  node.textContent = text;
-  return node;
 }
 
 function required<T extends Element>(selector: string): T {

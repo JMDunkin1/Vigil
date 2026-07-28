@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import { defaultState, NORMAL_PROFILE_ID } from "../src/defaults.js";
 import { intentionalUseSummary, normalizeIntentionalUse, recordIntentionalBehaviorCheckIn } from "../src/intentionalUse.js";
+import { trackingDateKey } from "../src/time.js";
 
 const now = new Date("2026-07-10T12:00:00-04:00");
 const state = defaultState();
@@ -97,3 +98,56 @@ assert.equal(summary.lifeLog.habitCheckIns.length, 1);
 assert.equal(summary.lifeLog.habitCheckIns[0].dateKey, "2026-07-09");
 assert.deepEqual(summary.lifeLog.entries, []);
 assert.equal(summary.lifeLog.entriesLocked, true);
+
+const annualNow = new Date(2026, 6, 28, 12);
+const annualState = defaultState();
+const annualBehaviorIds = annualState.intentionalUse.behaviors.map((behavior) => behavior.id);
+for (let offset = 0; offset <= 400; offset += 1) {
+  const date = new Date(annualNow.getFullYear(), annualNow.getMonth(), annualNow.getDate() - offset, 12);
+  const dateKey = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0")
+  ].join("-");
+  for (const behaviorId of annualBehaviorIds) {
+    recordIntentionalBehaviorCheckIn(annualState, { behaviorId, dateKey, value: true }, annualNow);
+  }
+}
+annualState.intentionalUse.behaviorCheckIns.push({
+  id: "outside-backdating-window",
+  behaviorId: "habit-reading",
+  behaviorName: "Reading",
+  value: 1,
+  note: "",
+  at: "2025-06-22T16:00:00.000Z",
+  dateKey: "2025-06-22",
+  weekKey: "2025-W25"
+});
+const annualSummary = intentionalUseSummary(annualState, {}, annualNow);
+assert.equal(annualSummary.lifeLog.habitCheckIns.length, 4 * 401, "the complete 400-day backdating window must retain every daily habit result");
+assert.equal(
+  annualSummary.lifeLog.habitCheckIns.some((checkIn) => checkIn.id === "outside-backdating-window"),
+  false,
+  "summary cleanup must prune check-ins outside the supported backdating window"
+);
+assert.equal(
+  annualSummary.lifeLog.habitCheckIns.some((checkIn) => checkIn.dateKey === "2025-06-23"),
+  true,
+  "the oldest valid backdated check-in must survive normalization and summary cleanup"
+);
+
+const retentionNow = new Date();
+const retentionDateKey = trackingDateKey(retentionNow);
+const bounded = normalizeIntentionalUse({
+  behaviorCheckIns: Array.from({ length: 10_001 }, (_, index) => ({
+    id: `bounded-${index}`,
+    behaviorId: "habit-reading",
+    behaviorName: "Reading",
+    value: 1,
+    note: "",
+    at: retentionNow.toISOString(),
+    dateKey: retentionDateKey,
+    weekKey: "current"
+  }))
+});
+assert.equal(bounded.behaviorCheckIns.length, 10_000, "age-based retention must retain an absolute storage safety ceiling");

@@ -796,63 +796,25 @@
         <span id="journalUnlockStatus" class="tiny-status" aria-live="polite"></span>
       </section>
 
-      <section class="tracking-overview tracking-only" aria-label="Monthly habit summary">
-        <header class="tracking-overview-head">
-          <strong id="habitCalendarMonth">This month</strong>
-          <div class="tracking-period-bar" aria-label="Choose a month">
-            <button id="habitPreviousMonth" class="habit-nav-arrow compact" type="button" aria-label="Previous month">&#8592;</button>
-            <button id="habitCurrentMonth" class="habit-text-action compact" type="button">This month</button>
-            <button id="habitNextMonth" class="habit-nav-arrow compact" type="button" aria-label="Next month">&#8594;</button>
-          </div>
-        </header>
-        <div class="tracking-metric-grid">
-          <article class="tracking-metric-card tracking-metric-primary">
-            <div class="tracking-metric-value"><strong id="habitMonthRate">—</strong><small>completed</small></div>
-            <svg id="habitMonthTrend" class="tracking-trend" viewBox="0 0 420 104" preserveAspectRatio="none" role="img" aria-label="Completion trend for this month"></svg>
-          </article>
-          <article class="tracking-metric-card tracking-metric-rhythm">
-            <span id="habitMonthDayCount" hidden>31 days</span>
-            <div id="habitMonthPulse" class="habit-month-pulse" aria-label="Daily completion for this month"></div>
-          </article>
-        </div>
+      <section id="habitFocus" class="habit-focus tracking-only" aria-label="Habit check-in">
+        <div id="habitQuickCheckIn" class="habit-focus-content" aria-live="polite"></div>
+        <a id="habitViewHistory" class="habit-history-link" href="#habitActivity">View history</a>
       </section>
 
-      <section class="daily-checkin tracking-only" aria-labelledby="dailyCheckInTitle">
-        <header class="tracking-section-heading daily-checkin-head">
-          <div>
-            <h2 id="dailyCheckInTitle">Today</h2>
-            <p id="dailyCheckInProgress" class="daily-checkin-progress">Nothing recorded yet</p>
-          </div>
-          <div class="daily-checkin-datebar" aria-label="Choose a day to check in">
-            <button id="habitSelectedPrevious" class="habit-nav-arrow compact" type="button" aria-label="Previous day">&#8592;</button>
-            <input id="habitSelectedDate" type="date" aria-label="Check-in date">
-            <button id="habitSelectedNext" class="habit-nav-arrow compact" type="button" aria-label="Next day">&#8594;</button>
-            <button id="habitSelectedToday" class="habit-text-action compact" type="button">Today</button>
+      <section id="habitActivity" class="habit-activity tracking-only" aria-labelledby="habitActivityTitle">
+        <header class="habit-activity-head">
+          <h2 id="habitActivityTitle">Habit activity</h2>
+          <div class="habit-activity-tabs" role="group" aria-label="Habit activity period">
+            <button class="habit-activity-tab is-selected" type="button" aria-pressed="true" data-activity-mode="daily">Daily</button>
+            <button class="habit-activity-tab" type="button" aria-pressed="false" data-activity-mode="weekly">Weekly</button>
+            <button class="habit-activity-tab" type="button" aria-pressed="false" data-activity-mode="cumulative">Cumulative</button>
           </div>
         </header>
-        <div class="daily-checkin-meter" aria-hidden="true"><progress id="dailyCheckInMeterBar" max="100" value="0"></progress></div>
-        <div id="habitQuickCheckIn" class="habit-quick-checkin" aria-live="polite"></div>
-        <div id="dailyCheckInToolbar" class="daily-checkin-toolbar">
-          <div>
-            <button id="habitMarkRemainingDone" class="secondary compact" type="button">Complete the rest</button>
-            <button id="habitClearSelectedDay" class="habit-text-action compact" type="button">Reset day</button>
-          </div>
+        <div class="habit-activity-scroll">
+          <div id="habitActivityGrid" class="habit-activity-grid" role="group" aria-label="Daily habit activity"></div>
+          <div id="habitActivityMonths" class="habit-activity-months" aria-hidden="true"></div>
         </div>
-
-        <details id="habitCalendarDetails" class="habit-calendar-details">
-          <summary>
-            <span>Detailed habit grid</span>
-          </summary>
-          <div class="habit-calendar-detail-body">
-            <div class="habit-calendar-legend" aria-label="Habit calendar legend">
-              <span><i class="habit-key success"></i>Done</span>
-              <span><i class="habit-key missed"></i>Missed</span>
-              <span><i class="habit-key unreported"></i>Not recorded</span>
-            </div>
-            <div id="habitCalendar" class="habit-calendar" aria-live="polite"></div>
-            <p id="habitCalendarStatus" class="tiny-status">Click a day to mark it done or missed.</p>
-          </div>
-        </details>
+        <p id="habitActivityStatus" class="sr-only" aria-live="polite"></p>
       </section>
 
       <div class="journal-page journal-only" data-journal-content>
