@@ -514,9 +514,9 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
   <main class="pause-shell">
     <section class="pause-content" aria-label="Intentional pause">
       <p class="prompt">Are you sure you want to open ${escapeHtml(pause.targetLabel)}?</p>
-      <button id="continue" class="countdown-control" type="button" aria-label="Seconds remaining" disabled>
+      <button id="continue" class="countdown-control" type="button" aria-label="${Math.max(0, data.waitSeconds || 0)} seconds remaining" disabled>
         <span id="countdown" aria-live="polite">${Math.max(0, data.waitSeconds || 0)}</span>
-        <span id="continueLabel" hidden>Continue</span>
+        <span id="continueLabel" aria-hidden="true">Continue</span>
       </button>
       <p id="status" class="status" role="status" hidden></p>
     </section>
@@ -528,17 +528,29 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
     const continueButton = document.querySelector("#continue");
     const breathLine = document.querySelector("#breathLine");
     const status = document.querySelector("#status");
-    let remaining = pageData.waitSeconds || 0;
+    const totalDurationMs = Math.max(0, (pageData.waitSeconds || 0) * 1000);
+    const timerStartedAt = performance.now();
+    const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let displayedRemaining = pageData.waitSeconds || 0;
+    let lineAnimation = null;
+    let timerFrame = 0;
+    let timerFinished = false;
 
-    const countdownInterval = setInterval(() => {
-      remaining = Math.max(0, remaining - 1);
-      countdown.textContent = String(remaining);
-      if (remaining <= 0) {
-        finishTimer();
-      }
-    }, 1000);
-    if (remaining <= 0) {
+    if (totalDurationMs <= 0) {
       finishTimer();
+    } else {
+      if (!reduceMotion) {
+        lineAnimation = breathLine.animate([
+          { transform: "translate3d(0, 0, 0)", filter: "brightness(1)", easing: "cubic-bezier(.45, 0, .55, 1)" },
+          { transform: "translate3d(0, calc(-100vh + var(--edge) + var(--edge) + 4px), 0)", filter: "brightness(1.18)", easing: "cubic-bezier(.45, 0, .55, 1)" },
+          { transform: "translate3d(0, 0, 0)", filter: "brightness(1)" }
+        ], {
+          duration: totalDurationMs,
+          fill: "forwards"
+        });
+        lineAnimation.startTime = timerStartedAt;
+      }
+      timerFrame = requestAnimationFrame(renderTimer);
     }
 
     continueButton.addEventListener("click", async () => {
@@ -563,14 +575,42 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
       }
     });
 
+    function renderTimer(now) {
+      const elapsedMs = Math.min(totalDurationMs, Math.max(0, now - timerStartedAt));
+      const elapsedRatio = elapsedMs / totalDurationMs;
+      const remaining = Math.max(0, Math.ceil((totalDurationMs - elapsedMs) / 1000));
+
+      if (remaining !== displayedRemaining) {
+        displayedRemaining = remaining;
+        countdown.textContent = String(remaining);
+        continueButton.setAttribute("aria-label", remaining + " seconds remaining");
+      }
+
+      if (elapsedRatio >= 1) {
+        finishTimer();
+      } else {
+        timerFrame = requestAnimationFrame(renderTimer);
+      }
+    }
+
     function finishTimer() {
-      clearInterval(countdownInterval);
+      if (timerFinished) return;
+      timerFinished = true;
+      cancelAnimationFrame(timerFrame);
+      if (lineAnimation) lineAnimation.cancel();
+      countdown.textContent = "0";
       breathLine.classList.add("complete");
-      countdown.hidden = true;
-      continueLabel.hidden = false;
-      continueButton.classList.add("ready");
+      countdown.setAttribute("aria-hidden", "true");
+      continueLabel.setAttribute("aria-hidden", "false");
+      continueButton.classList.add("finishing");
       continueButton.setAttribute("aria-label", "Continue");
-      continueButton.disabled = false;
+
+      const completionDelay = reduceMotion ? 0 : 420;
+      setTimeout(() => {
+        continueButton.classList.remove("finishing");
+        continueButton.classList.add("ready");
+        continueButton.disabled = false;
+      }, completionDelay);
     }
 
     async function postJson(path, body) {
@@ -651,42 +691,92 @@ function activePausePageCss() {
       box-shadow:
         0 0 0 1px rgba(213, 161, 107, .08),
         0 0 30px rgba(183, 121, 82, .18);
-      animation: breath-line 6s cubic-bezier(.65, 0, .35, 1) infinite;
-      will-change: transform;
+      transform: translate3d(0, 0, 0);
+      will-change: transform, opacity;
+    }
+    .breath-line::before {
+      content: "";
+      position: absolute;
+      top: 100%;
+      right: 3%;
+      left: 3%;
+      height: clamp(56px, 16vh, 180px);
+      pointer-events: none;
+      background: linear-gradient(180deg, rgba(213, 161, 107, .2), rgba(183, 121, 82, .07) 38%, transparent 100%);
+      filter: blur(14px);
+      opacity: .58;
+      transform: perspective(220px) rotateX(-12deg) scaleX(.94);
+      transform-origin: top center;
+    }
+    .breath-line::after {
+      content: "";
+      position: absolute;
+      inset: -3px 18%;
+      border-radius: inherit;
+      pointer-events: none;
+      background: rgba(239, 190, 137, .5);
+      filter: blur(8px);
+      opacity: .52;
     }
     .breath-line.complete {
       opacity: 0;
-      animation-play-state: paused;
-      transition: opacity .35s ease;
+      transition: opacity .6s cubic-bezier(.22, 1, .36, 1);
     }
     .countdown-control {
-      width: 76px;
-      min-width: 76px;
-      height: 76px;
+      position: relative;
+      isolation: isolate;
+      width: 156px;
+      min-width: 156px;
+      height: 48px;
       display: grid;
       place-items: center;
       border: 1px solid rgba(213, 161, 107, .52);
-      border-radius: 999px;
+      border-radius: 7px;
       padding: 0;
       color: var(--ink);
-      background: radial-gradient(circle, rgba(183, 121, 82, .17), rgba(31, 31, 29, .94) 72%);
+      overflow: hidden;
+      background: linear-gradient(135deg, rgba(183, 121, 82, .16), rgba(31, 31, 29, .96) 68%);
       box-shadow: 0 0 38px rgba(183, 121, 82, .09);
       font-weight: 720;
       cursor: wait;
       opacity: 1;
-      transition: width .28s ease, min-width .28s ease, height .28s ease, border-radius .28s ease, color .2s ease, background .2s ease, transform .16s ease;
+      transition: color .28s ease, background .28s ease, border-color .28s ease, box-shadow .35s ease, transform .2s ease;
+    }
+    .countdown-control > span {
+      grid-area: 1 / 1;
+      transition: opacity .28s ease, transform .42s cubic-bezier(.22, 1, .36, 1), filter .28s ease;
     }
     .countdown-control #countdown {
-      font-size: 1.75rem;
+      font-size: 1.35rem;
       line-height: 1;
       letter-spacing: -.05em;
     }
-    .countdown-control.ready {
-      width: 156px;
-      min-width: 156px;
-      height: 48px;
+    .countdown-control #continueLabel {
+      opacity: 0;
+      filter: blur(5px);
+      transform: translateY(-12px) scale(.94);
+    }
+    .countdown-control.finishing {
       border-color: var(--primary);
-      border-radius: 7px;
+      color: #16120f;
+      background: var(--primary);
+      box-shadow: 0 10px 34px rgba(183, 121, 82, .22);
+      animation: continue-arrival .42s cubic-bezier(.22, 1, .36, 1);
+    }
+    .countdown-control.finishing #countdown,
+    .countdown-control.ready #countdown {
+      opacity: 0;
+      filter: blur(5px);
+      transform: translateY(13px) scale(.9);
+    }
+    .countdown-control.finishing #continueLabel,
+    .countdown-control.ready #continueLabel {
+      opacity: 1;
+      filter: blur(0);
+      transform: translateY(0) scale(1);
+    }
+    .countdown-control.ready {
+      border-color: var(--primary);
       color: #16120f;
       background: var(--primary);
       cursor: pointer;
@@ -706,13 +796,10 @@ function activePausePageCss() {
       font-size: .78rem;
       line-height: 1.5;
     }
-    @keyframes breath-line {
-      0%, 100% {
-        transform: translateY(0);
-      }
-      50% {
-        transform: translateY(calc(-100vh + var(--edge) + var(--edge) + 4px));
-      }
+    @keyframes continue-arrival {
+      0% { transform: translateY(-5px) scaleX(.94); }
+      58% { transform: translateY(2px) scaleX(1.025); }
+      100% { transform: translateY(0) scaleX(1); }
     }
     @media (max-width: 520px) {
       .pause-shell { place-items: start; padding: 64px 24px; }
@@ -721,7 +808,8 @@ function activePausePageCss() {
     }
     @media (prefers-reduced-motion: reduce) {
       .countdown-control, .breath-line { transition: none; }
-      .breath-line { animation: none; }
+      .countdown-control.finishing { animation: none; }
+      .breath-line::before, .breath-line::after { display: none; }
     }
   `;
 }
