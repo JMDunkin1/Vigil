@@ -724,13 +724,20 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     state
   });
   assert.match(page, /class="pause-content"/);
+  assert.match(page, /id="breathGuide" class="breath-guide"/);
   assert.match(page, /id="breathLine" class="breath-line"/);
-  assert.match(page, /lineAnimation = breathLine\.animate\(/);
+  assert.equal((page.match(/class="breath-echo"/g) || []).length, 7);
+  assert.match(page, /lineAnimations = \[breathLine, \.\.\.breathEchoes\]\.map/);
+  assert.match(page, /const echoLagMs = Math\.min\(95, Math\.max\(42, totalDurationMs \/ 140\)\)/);
   assert.match(page, /duration: totalDurationMs/);
-  assert.match(page, /lineAnimation\.startTime = timerStartedAt/);
+  assert.match(page, /delay: index \* echoLagMs/);
+  assert.match(page, /animation\.startTime = timerStartedAt/);
   assert.match(page, /requestAnimationFrame\(renderTimer\)/);
-  assert.match(page, /translate3d\(0, calc\(-100vh \+ var\(--edge\) \+ var\(--edge\) \+ 4px\), 0\)/);
+  assert.match(page, /translate3d\(0, calc\(-100vh \+ var\(--edge\) \+ var\(--edge\) \+ 3px\), 0\)/);
   assert.match(page, /\.breath-line::before/);
+  assert.match(page, /\.breath-glint/);
+  assert.match(page, /\.breath-echo:nth-of-type\(8\)/);
+  assert.doesNotMatch(page, /height: clamp\(56px, 16vh, 180px\)/);
   assert.match(page, /Are you sure you want to open x\.com\?/);
   assert.match(page, /<button id="continue" class="countdown-control"[^>]*disabled>/);
   assert.match(page, /<span id="continueLabel" aria-hidden="true">Continue<\/span>/);

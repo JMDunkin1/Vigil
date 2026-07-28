@@ -510,7 +510,16 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
   <style>${activePausePageCss()}</style>
 </head>
 <body data-vigil-intentional-use="1">
-  <div id="breathLine" class="breath-line" aria-hidden="true"></div>
+  <div id="breathGuide" class="breath-guide" aria-hidden="true">
+    <div id="breathLine" class="breath-line"><span class="breath-glint"></span></div>
+    <div class="breath-echo"></div>
+    <div class="breath-echo"></div>
+    <div class="breath-echo"></div>
+    <div class="breath-echo"></div>
+    <div class="breath-echo"></div>
+    <div class="breath-echo"></div>
+    <div class="breath-echo"></div>
+  </div>
   <main class="pause-shell">
     <section class="pause-content" aria-label="Intentional pause">
       <p class="prompt">Are you sure you want to open ${escapeHtml(pause.targetLabel)}?</p>
@@ -526,13 +535,15 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
     const countdown = document.querySelector("#countdown");
     const continueLabel = document.querySelector("#continueLabel");
     const continueButton = document.querySelector("#continue");
+    const breathGuide = document.querySelector("#breathGuide");
     const breathLine = document.querySelector("#breathLine");
+    const breathEchoes = [...document.querySelectorAll(".breath-echo")];
     const status = document.querySelector("#status");
     const totalDurationMs = Math.max(0, (pageData.waitSeconds || 0) * 1000);
     const timerStartedAt = performance.now();
     const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
     let displayedRemaining = pageData.waitSeconds || 0;
-    let lineAnimation = null;
+    let lineAnimations = [];
     let timerFrame = 0;
     let timerFinished = false;
 
@@ -540,15 +551,20 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
       finishTimer();
     } else {
       if (!reduceMotion) {
-        lineAnimation = breathLine.animate([
-          { transform: "translate3d(0, 0, 0)", filter: "brightness(1)", easing: "cubic-bezier(.45, 0, .55, 1)" },
-          { transform: "translate3d(0, calc(-100vh + var(--edge) + var(--edge) + 4px), 0)", filter: "brightness(1.18)", easing: "cubic-bezier(.45, 0, .55, 1)" },
-          { transform: "translate3d(0, 0, 0)", filter: "brightness(1)" }
-        ], {
-          duration: totalDurationMs,
-          fill: "forwards"
+        const echoLagMs = Math.min(95, Math.max(42, totalDurationMs / 140));
+        lineAnimations = [breathLine, ...breathEchoes].map((line, index) => {
+          const animation = line.animate([
+            { transform: "translate3d(0, 0, 0)", filter: "brightness(1)", easing: "cubic-bezier(.45, 0, .55, 1)" },
+            { transform: "translate3d(0, calc(-100vh + var(--edge) + var(--edge) + 3px), 0)", filter: "brightness(1.14)", easing: "cubic-bezier(.45, 0, .55, 1)" },
+            { transform: "translate3d(0, 0, 0)", filter: "brightness(1)" }
+          ], {
+            duration: totalDurationMs,
+            delay: index * echoLagMs,
+            fill: "both"
+          });
+          animation.startTime = timerStartedAt;
+          return animation;
         });
-        lineAnimation.startTime = timerStartedAt;
       }
       timerFrame = requestAnimationFrame(renderTimer);
     }
@@ -597,9 +613,9 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
       if (timerFinished) return;
       timerFinished = true;
       cancelAnimationFrame(timerFrame);
-      if (lineAnimation) lineAnimation.cancel();
+      for (const animation of lineAnimations) animation.cancel();
       countdown.textContent = "0";
-      breathLine.classList.add("complete");
+      breathGuide.classList.add("complete");
       countdown.setAttribute("aria-hidden", "true");
       continueLabel.setAttribute("aria-hidden", "false");
       continueButton.classList.add("finishing");
@@ -679,48 +695,73 @@ function activePausePageCss() {
       letter-spacing: -.04em;
       text-wrap: balance;
     }
-    .breath-line {
+    .breath-guide {
       position: fixed;
       z-index: 0;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .breath-line,
+    .breath-echo {
+      position: fixed;
       right: clamp(14px, 1.6vw, 26px);
       bottom: var(--edge);
       left: clamp(14px, 1.6vw, 26px);
-      height: 4px;
+      height: 3px;
       border-radius: 999px;
+      transform: translate3d(0, 0, 0);
+      transform-origin: center;
+      will-change: transform, opacity, filter;
+    }
+    .breath-line {
+      z-index: 2;
       background: linear-gradient(90deg, rgba(213, 161, 107, .48), var(--primary-strong) 8%, var(--primary-strong) 92%, rgba(213, 161, 107, .48));
       box-shadow:
         0 0 0 1px rgba(213, 161, 107, .08),
-        0 0 30px rgba(183, 121, 82, .18);
-      transform: translate3d(0, 0, 0);
-      will-change: transform, opacity;
+        0 0 18px rgba(183, 121, 82, .18);
     }
     .breath-line::before {
       content: "";
       position: absolute;
-      top: 100%;
-      right: 3%;
-      left: 3%;
-      height: clamp(56px, 16vh, 180px);
-      pointer-events: none;
-      background: linear-gradient(180deg, rgba(213, 161, 107, .2), rgba(183, 121, 82, .07) 38%, transparent 100%);
-      filter: blur(14px);
-      opacity: .58;
-      transform: perspective(220px) rotateX(-12deg) scaleX(.94);
-      transform-origin: top center;
-    }
-    .breath-line::after {
-      content: "";
-      position: absolute;
-      inset: -3px 18%;
+      inset: -8px 2%;
       border-radius: inherit;
       pointer-events: none;
-      background: rgba(239, 190, 137, .5);
-      filter: blur(8px);
-      opacity: .52;
+      background: rgba(213, 161, 107, .18);
+      filter: blur(10px);
+      opacity: .68;
     }
-    .breath-line.complete {
+    .breath-glint {
+      position: absolute;
+      top: -1px;
+      bottom: -1px;
+      left: 8%;
+      width: 18%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, transparent, rgba(255, 225, 190, .92), transparent);
+      filter: blur(1px);
+      opacity: .72;
+      animation: glint-drift 3.8s cubic-bezier(.45, 0, .55, 1) infinite alternate;
+    }
+    .breath-echo {
+      z-index: 1;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(213, 161, 107, .5) 12%, rgba(213, 161, 107, .5) 88%, transparent);
+      opacity: .32;
+    }
+    .breath-echo:nth-of-type(3) { right: 3.5%; left: 3.5%; opacity: .25; }
+    .breath-echo:nth-of-type(4) { right: 5%; left: 5%; opacity: .19; filter: blur(.25px); }
+    .breath-echo:nth-of-type(5) { right: 7%; left: 7%; opacity: .14; filter: blur(.5px); }
+    .breath-echo:nth-of-type(6) { right: 9.5%; left: 9.5%; opacity: .1; filter: blur(.75px); }
+    .breath-echo:nth-of-type(7) { right: 12.5%; left: 12.5%; opacity: .07; filter: blur(1px); }
+    .breath-echo:nth-of-type(8) { right: 16%; left: 16%; opacity: .045; filter: blur(1.25px); }
+    .breath-guide.complete {
       opacity: 0;
-      transition: opacity .6s cubic-bezier(.22, 1, .36, 1);
+      transition: opacity .5s cubic-bezier(.22, 1, .36, 1);
+    }
+    @keyframes glint-drift {
+      from { transform: translateX(0) scaleX(.82); opacity: .42; }
+      to { transform: translateX(360%) scaleX(1.12); opacity: .82; }
     }
     .countdown-control {
       position: relative;
@@ -807,9 +848,9 @@ function activePausePageCss() {
       .prompt { font-size: clamp(2.5rem, 12vw, 3.6rem); }
     }
     @media (prefers-reduced-motion: reduce) {
-      .countdown-control, .breath-line { transition: none; }
+      .countdown-control, .breath-guide { transition: none; }
       .countdown-control.finishing { animation: none; }
-      .breath-line::before, .breath-line::after { display: none; }
+      .breath-line::before, .breath-glint, .breath-echo { display: none; }
     }
   `;
 }
