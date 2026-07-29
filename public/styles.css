@@ -4583,13 +4583,13 @@ h3,
   --trace-end: #bc624b;
   --protection-trace-inner: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--trace-start) 18%, var(--surface-strong)),
-    color-mix(in srgb, var(--trace-end) 18%, var(--surface-strong))
+    color-mix(in srgb, var(--trace-start) 18%, transparent),
+    color-mix(in srgb, var(--trace-end) 18%, transparent)
   );
   --protection-trace-outer: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--trace-start) 36%, var(--surface-strong)),
-    color-mix(in srgb, var(--trace-end) 36%, var(--surface-strong))
+    color-mix(in srgb, var(--trace-start) 36%, transparent),
+    color-mix(in srgb, var(--trace-end) 36%, transparent)
   );
   position: absolute;
   z-index: 0;

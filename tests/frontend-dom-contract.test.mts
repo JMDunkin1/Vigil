@@ -318,6 +318,7 @@ assert.doesNotMatch(styles, /:has\(\.protection-level-choice:hover\) \.protectio
 const protectionTraceStyles = styles.match(/\.protection-level-trace\s*\{[\s\S]*?\n\}/)?.[0] || "";
 assert.match(protectionTraceStyles, /height:\s*12px/, "the protection connector must use the thicker two-tier track");
 assert.match(protectionTraceStyles, /--protection-trace-inner:[\s\S]*?--protection-trace-outer:/, "the protection connector must define distinct inner and outer tracks");
+assert.match(protectionTraceStyles, /color-mix\(in srgb,\s*var\(--trace-start\)\s*18%,\s*transparent\)/, "the protection connector must preserve the button-color gradient without muddying it into the surface");
 assert.doesNotMatch(protectionTraceStyles, /repeating-linear-gradient|ribs|sheen/, "the protection connector must stay subdued and stripe-free");
 const sidebarToggleLayer = Number(styles.match(/\.sidebar-toggle\s*\{[\s\S]*?z-index:\s*(\d+);/)?.[1] || 0);
 const toastLayer = Number(styles.match(/\.toast\s*\{[\s\S]*?z-index:\s*(\d+);/)?.[1] || 0);
