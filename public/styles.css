@@ -3956,74 +3956,154 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
 }
 
 /* Journal writing surface */
-.journal-page {
-  width: min(900px, 100%);
-  margin-inline: auto;
+body[data-active-view="journal"] .shell {
+  width: 100%;
+  padding: 0;
+}
+
+body[data-active-view="journal"] #view-journal {
+  min-height: 100vh;
 }
 
 .journal-page {
-  padding: 8px clamp(4px, 3vw, 28px) 72px;
+  width: 100%;
+  min-height: 100vh;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: clamp(232px, 22vw, 292px) minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .journal-composer,
 .journal-archive {
   position: relative;
+  min-width: 0;
+}
+
+.journal-archive {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  background: color-mix(in srgb, var(--paper) 28%, transparent);
+}
+
+.journal-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: clamp(54px, 7vh, 72px) 22px 18px;
+}
+
+.journal-history-head h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(1.35rem, 2.2vw, 1.75rem);
+  line-height: 1;
+}
+
+.journal-history-head .secondary {
+  min-height: 32px;
+  padding-inline: 10px;
+  border-color: color-mix(in srgb, var(--gold) 56%, var(--line));
+  background: transparent;
+  color: var(--gold-bright);
+}
+
+.journal-history-head .secondary:hover:not(:disabled) {
+  border-color: var(--gold-bright);
+  background: color-mix(in srgb, var(--gold) 8%, transparent);
+  color: var(--ink);
+  transform: none;
+}
+
+.journal-search {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 22px 18px;
+  padding: 0 11px;
+  border: 1px solid color-mix(in srgb, var(--line) 92%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-strong) 34%, transparent);
+  color: var(--muted);
+}
+
+.journal-search:focus-within {
+  border-color: color-mix(in srgb, var(--gold) 58%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 9%, transparent);
+}
+
+.journal-search svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+
+.journal-search input {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+.journal-search input:focus {
+  outline: 0;
+  box-shadow: none;
+}
+
+.journal-search input::placeholder {
+  color: color-mix(in srgb, var(--muted) 78%, transparent);
 }
 
 .journal-composer {
-  padding: 18px 0 42px;
-  border-bottom: 1px solid var(--line);
-}
-
-.journal-composer::before {
-  content: none;
-}
-
-.journal-section-head {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 28px;
-}
-
-.journal-section-head h2,
-.journal-section-head p {
-  margin: 0;
-}
-
-.journal-section-head h2 {
-  color: var(--ink);
-  font-size: clamp(1.65rem, 3vw, 2.25rem);
-  line-height: 1.05;
-}
-
-.journal-section-head > p {
-  max-width: 280px;
-  color: var(--muted);
-  font-size: 0.78rem;
-  line-height: 1.55;
-  text-align: right;
+  min-height: 0;
+  overflow: auto;
+  padding: clamp(54px, 7vh, 72px) clamp(34px, 5vw, 70px) 34px;
 }
 
 .journal-form {
   display: grid;
+  grid-template-rows: auto auto minmax(260px, 1fr) auto;
+  min-height: calc(100vh - clamp(88px, 11vh, 112px));
 }
 
 .journal-form label {
   gap: 0;
 }
 
-.journal-form label > span {
+.journal-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding-bottom: 22px;
   color: var(--gold);
+  font-family: var(--font-mono);
   font-size: 0.7rem;
-  font-weight: 900;
-  letter-spacing: 0.13em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
+.journal-editor-head #journalEditorStatus {
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .journal-title-field {
-  padding-bottom: 18px;
+  padding-bottom: 20px;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
@@ -4038,21 +4118,25 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
 }
 
 .journal-form .journal-title-field input {
-  min-height: 66px;
-  padding-block: 12px 4px;
+  min-height: 58px;
+  padding-block: 4px 8px;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: clamp(1.55rem, 3.2vw, 2.2rem);
+  font-size: clamp(1.7rem, 3.2vw, 2.45rem);
   font-weight: 700;
   letter-spacing: -0.015em;
 }
 
 .journal-body-field {
+  min-height: 0;
+  display: grid;
   padding-top: 22px;
 }
 
 .journal-form .journal-body-field textarea {
-  min-height: 260px;
-  padding-block: 16px 22px;
+  width: 100%;
+  min-height: 100%;
+  resize: none;
+  padding-block: 10px 22px;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 1.05rem;
   line-height: 1.8;
@@ -4073,10 +4157,19 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
 }
 
 .journal-form-actions {
-  display: flex;
-  justify-content: end;
-  padding-top: 18px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 20px;
+  padding-top: 20px;
   border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.journal-word-count {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
 }
 
 .journal-form-actions .primary {
@@ -4090,110 +4183,180 @@ body[data-active-view="journal"]:has(#journalUnlockGate:not([hidden])) #view-jou
   color: #0e1515;
 }
 
-.journal-archive {
-  padding-top: 36px;
-}
-
-.journal-archive .journal-section-head {
-  margin-bottom: 6px;
-}
-
 .journal-entry-list {
-  display: grid;
-  gap: 0;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  border-top: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
 }
 
 .journal-entry-list .empty {
   border: 0;
-  border-top: 1px solid var(--line);
   border-radius: 0;
-  padding: 28px 0;
+  padding: 26px 22px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .journal-entry {
-  display: grid;
-  gap: 11px;
-  padding: 28px 0 24px;
+  position: relative;
   border: 0;
-  border-top: 1px solid var(--line);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 68%, transparent);
   border-radius: 0;
   background: transparent;
 }
 
-.journal-entry-head {
-  display: block;
+.journal-entry.is-selected {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--gold) 10%, transparent), transparent);
+  box-shadow: inset 2px 0 0 var(--gold-bright);
 }
 
-.journal-entry-head strong {
-  color: var(--ink);
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.25rem;
-  line-height: 1.25;
-}
-
-.journal-entry-body {
-  max-width: 72ch;
-  margin: 0;
-  color: color-mix(in srgb, var(--ink) 88%, var(--muted));
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 0.98rem;
-  line-height: 1.7;
-  white-space: pre-wrap;
-}
-
-.journal-entry-actions {
-  display: flex;
-  gap: 14px;
-  margin-top: 2px;
-}
-
-.journal-entry-actions button {
-  min-height: 28px;
-  padding: 0;
+.journal-entry-select {
+  width: 100%;
+  min-height: 0;
+  display: grid;
+  gap: 5px;
+  padding: 17px 42px 17px 22px;
   border: 0;
+  border-radius: 0;
   background: transparent;
+  color: inherit;
+  text-align: left;
   box-shadow: none;
-  color: var(--muted);
-  font-size: 0.7rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
-.journal-entry-actions button:hover:not(:disabled) {
-  background: transparent;
-  color: var(--ink);
+.journal-entry-select:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--gold) 5%, transparent);
   transform: none;
 }
 
-.journal-entry-actions .ghost:hover:not(:disabled) {
-  color: var(--red-strong);
+.journal-entry-date,
+.journal-entry-title,
+.journal-entry-preview {
+  display: block;
+  min-width: 0;
+  margin: 0;
 }
 
-@media (max-width: 720px) {
+.journal-entry-date {
+  color: var(--gold);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.journal-entry-title {
+  overflow: hidden;
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1rem;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.journal-entry-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--muted) 88%, transparent);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.journal-entry-actions {
+  position: absolute;
+  top: 14px;
+  right: 12px;
+}
+
+.journal-entry-actions button {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 0 2px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1;
+  opacity: 0;
+}
+
+.journal-entry:hover .journal-entry-actions button,
+.journal-entry:focus-within .journal-entry-actions button {
+  opacity: 1;
+}
+
+.journal-entry-actions button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 12%, transparent);
+  color: var(--red-strong);
+  transform: none;
+}
+
+@media (max-width: 1100px) {
   .journal-page {
-    padding-inline: 2px;
+    grid-template-columns: 232px minmax(0, 1fr);
   }
 
-  .journal-composer::before {
-    left: -10px;
+  .journal-history-head,
+  .journal-composer {
+    padding-top: 54px;
   }
 
-  .journal-section-head {
-    display: grid;
-    gap: 10px;
+  .journal-history-head {
+    align-items: stretch;
+    flex-direction: column;
   }
 
-  .journal-section-head > p {
-    max-width: none;
-    text-align: left;
-  }
-
-  .journal-form .journal-body-field textarea {
-    min-height: 260px;
-  }
-
-  .journal-form-actions .primary {
+  .journal-history-head .secondary {
     width: 100%;
+  }
+
+  .journal-composer {
+    padding-inline: 30px;
+  }
+}
+
+@media (max-width: 820px) {
+  .journal-page {
+    height: auto;
+    min-height: 100vh;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(230px, 34vh) minmax(66vh, auto);
+    overflow: visible;
+  }
+
+  .journal-archive {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .journal-history-head {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    padding: 28px 22px 16px;
+  }
+
+  .journal-search {
+    margin-bottom: 14px;
+  }
+
+  .journal-composer {
+    min-height: 66vh;
+    overflow: visible;
+    padding: 30px 24px 28px;
+  }
+
+  .journal-form {
+    min-height: calc(66vh - 58px);
   }
 }
 
@@ -4716,44 +4879,42 @@ html.app-inactive *::after {
 
 /* Listening room */
 #view-audio .view-head {
-  margin-bottom: 28px;
+  margin-bottom: 0;
 }
 
 .audio-desk {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 18px;
+  min-height: calc(100vh - 180px);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
   container: audio-desk / inline-size;
 }
 
 .audio-player {
-  position: relative;
+  position: sticky;
+  z-index: 8;
+  bottom: 0;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(110px, 14vw, 170px) minmax(180px, 260px);
+  grid-template-columns: minmax(210px, 0.85fr) minmax(280px, 2fr) auto;
   grid-template-areas: "title wave control";
-  column-gap: clamp(26px, 3vw, 48px);
+  column-gap: clamp(20px, 2.4vw, 38px);
   align-items: center;
   overflow: hidden;
-  padding: 24px 28px;
-  border: 1px solid rgba(221, 199, 143, 0.14);
-  border-top: 3px solid var(--gold-bright);
-  background:
-    radial-gradient(circle at 78% 8%, rgba(216, 182, 92, 0.17), transparent 17rem),
-    linear-gradient(145deg, #20231f, #111615 72%);
-  color: #f3ead6;
+  margin-top: auto;
+  padding: 15px 18px;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--gold) 74%, var(--line));
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  color: var(--ink);
   box-shadow:
-    inset 0 1px rgba(255, 255, 255, 0.035),
-    0 28px 68px rgba(17, 20, 18, 0.32);
+    inset 0 1px color-mix(in srgb, var(--ink) 3%, transparent),
+    0 -20px 52px color-mix(in srgb, #000 20%, transparent);
+  backdrop-filter: blur(18px);
 }
 
 .audio-player::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.23;
-  background: repeating-linear-gradient(116deg, transparent 0 26px, rgba(238, 209, 130, 0.08) 27px, transparent 28px 54px);
+  display: none;
 }
 
 .audio-player > * {
@@ -4763,13 +4924,14 @@ html.app-inactive *::after {
 
 .audio-player h2 {
   grid-area: title;
-  max-width: none;
+  overflow: hidden;
   margin: 0;
-  color: #fff9e9;
-  font-size: clamp(2rem, 3.3vw, 3.35rem);
-  line-height: 0.98;
-  letter-spacing: -0.04em;
-  text-shadow: 0 12px 32px rgba(0, 0, 0, 0.26);
+  color: var(--ink);
+  font-size: clamp(1rem, 1.55vw, 1.34rem);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .audio-attribution {
@@ -4802,13 +4964,13 @@ html.app-inactive *::after {
   grid-area: wave;
   position: relative;
   width: 100%;
-  max-width: 170px;
-  height: 54px;
+  max-width: none;
+  height: 46px;
   display: flex;
   align-items: center;
-  justify-self: end;
-  gap: 3px;
-  padding-block: 5px;
+  justify-self: stretch;
+  gap: 2px;
+  padding-block: 4px;
 }
 
 .audio-wave::before {
@@ -4831,8 +4993,8 @@ html.app-inactive *::after {
   width: 100%;
   height: 100%;
   border-radius: 99px;
-  background: linear-gradient(180deg, var(--accent-bright), color-mix(in srgb, var(--accent) 56%, #311c14));
-  opacity: 0.38;
+  background: linear-gradient(180deg, var(--accent-bright), color-mix(in srgb, var(--accent) 70%, #311c14));
+  opacity: 0.42;
   transform: scaleY(var(--wave-level, var(--wave-idle, 0.08)));
   transform-origin: center;
   will-change: transform;
@@ -4848,27 +5010,28 @@ html.app-inactive *::after {
 
 .audio-master-toggle {
   grid-area: control;
-  width: 100%;
-  min-height: 68px;
+  width: auto;
+  min-width: 142px;
+  min-height: 52px;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 15px;
+  justify-content: center;
+  gap: 12px;
   margin: 0;
-  padding: 0 18px;
-  border: 1px solid rgba(226, 198, 120, 0.33);
+  padding: 0 17px;
+  border: 1px solid color-mix(in srgb, var(--gold) 68%, var(--line));
   border-radius: 0;
-  background: rgba(255, 255, 255, 0.035);
-  color: #f6edda;
+  background: transparent;
+  color: var(--ink);
   text-align: left;
   box-shadow: none;
 }
 
 .audio-master-toggle:hover:not(:disabled),
 .audio-master-toggle[aria-pressed="true"] {
-  border-color: rgba(234, 209, 121, 0.78);
-  background: rgba(216, 182, 92, 0.13);
-  color: #fff9e9;
+  border-color: var(--gold-bright);
+  background: color-mix(in srgb, var(--gold) 10%, transparent);
+  color: var(--ink);
   transform: none;
 }
 
@@ -4881,10 +5044,10 @@ html.app-inactive *::after {
 
 .audio-play-symbol {
   position: relative;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
-  border: 1px solid rgba(234, 209, 121, 0.7);
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border: 1px solid color-mix(in srgb, var(--gold-bright) 78%, var(--line));
   border-radius: 50%;
 }
 
@@ -5050,12 +5213,15 @@ details[open] > summary .audio-disclosure-chevron {
 
 .audio-library {
   min-width: 0;
+  flex: 1 0 auto;
+  padding: 8px 0 34px;
 }
 
 .audio-library-grid {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 10px;
+  gap: 0;
+  border-top: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
 }
 
 .audio-library-group-wide {
@@ -5064,33 +5230,38 @@ details[open] > summary .audio-disclosure-chevron {
 
 .audio-library-group {
   min-width: 0;
-  border: 1px solid var(--line);
-  background: color-mix(in srgb, var(--surface-strong) 68%, transparent);
-  box-shadow: inset 2px 0 transparent;
+  border: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  background: transparent;
+  box-shadow: none;
   transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
 }
 
 .audio-library-group:hover,
 .audio-library-group[open],
 .audio-library-group[data-selected="true"] {
-  border-color: color-mix(in srgb, var(--gold) 58%, var(--line));
+  border-color: color-mix(in srgb, var(--gold) 54%, var(--line));
 }
 
 .audio-library-group[data-selected="true"] {
-  box-shadow: inset 2px 0 var(--gold);
+  box-shadow: none;
 }
 
 .audio-library-group[open] {
-  background: color-mix(in srgb, var(--surface-strong) 90%, transparent);
+  background: transparent;
+}
+
+.audio-library-group > summary:hover {
+  background: color-mix(in srgb, var(--gold) 4%, transparent);
 }
 
 .audio-group-title {
   display: flex;
-  min-height: 64px;
+  min-height: 72px;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 10px 18px;
+  padding: 10px 8px;
 }
 
 .audio-group-title > span:first-child {
@@ -5103,7 +5274,7 @@ details[open] > summary .audio-disclosure-chevron {
 .audio-group-title strong {
   color: var(--ink);
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.16rem;
+  font-size: clamp(1.06rem, 1.65vw, 1.3rem);
 }
 
 .audio-group-title small {
@@ -5124,7 +5295,7 @@ details[open] > summary .audio-disclosure-chevron {
 }
 
 .audio-library-group[open] .audio-group-title {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
 }
 
 .audio-track-list-columns {
@@ -5228,9 +5399,8 @@ details[open] > summary .audio-disclosure-chevron {
 
 @media (max-width: 1320px) {
   .audio-player {
-    grid-template-columns: minmax(0, 1fr) clamp(100px, 14vw, 150px) minmax(160px, 240px);
-    column-gap: 24px;
-    padding-inline: 24px;
+    grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1.6fr) auto;
+    column-gap: 20px;
   }
 
   .audio-track-list-columns {
@@ -5240,29 +5410,36 @@ details[open] > summary .audio-disclosure-chevron {
 
 @container audio-desk (max-width: 760px) {
   .audio-player {
-    grid-template-columns: minmax(0, 1fr) clamp(94px, 24cqi, 150px);
+    grid-template-columns: minmax(0, 1fr) auto;
     grid-template-areas:
-      "title wave"
-      "control control";
-    gap: 18px;
-    padding: 20px 22px 22px;
+      "title control"
+      "wave wave";
+    gap: 10px 18px;
+    padding: 12px 14px 10px;
   }
 
   .audio-player h2 {
-    max-width: none;
-    margin-top: 4px;
-    font-size: clamp(1.8rem, 7vw, 2.5rem);
+    font-size: clamp(0.96rem, 4cqi, 1.18rem);
   }
 
   .audio-master-toggle {
-    min-height: 56px;
+    min-width: 124px;
+    min-height: 44px;
+  }
+
+  .audio-wave {
+    height: 34px;
   }
 }
 
 @media (max-width: 900px) {
   #view-audio .view-head {
-    margin-bottom: 16px;
+    margin-bottom: 0;
     padding-bottom: 12px;
+  }
+
+  .audio-desk {
+    min-height: calc(100vh - 150px);
   }
 
   .audio-session-controls {
@@ -5280,7 +5457,7 @@ details[open] > summary .audio-disclosure-chevron {
   }
 
   .audio-player {
-    padding: 22px 18px 26px;
+    padding: 11px 10px 9px;
   }
 
   .audio-session-controls,
@@ -5294,8 +5471,8 @@ details[open] > summary .audio-disclosure-chevron {
   }
 
   .audio-group-title {
-    min-height: 58px;
-    padding-inline: 14px;
+    min-height: 62px;
+    padding-inline: 4px;
   }
 
   .audio-group-title > span:first-child {
@@ -5307,6 +5484,10 @@ details[open] > summary .audio-disclosure-chevron {
 @media (max-height: 700px) and (max-width: 900px) {
   #view-audio .view-head {
     margin-bottom: 10px;
+  }
+
+  .audio-desk {
+    min-height: calc(100vh - 128px);
   }
 
   .audio-volume-line {
@@ -9317,6 +9498,7 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
 .habit-focus {
   min-height: clamp(560px, calc(100vh - 145px), 920px);
   display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
 }
 
 .habit-focus-content {
@@ -9507,6 +9689,21 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
   border-radius: 0;
 }
 
+.habit-history-link {
+  justify-self: center;
+  margin-bottom: 31px;
+  padding: 8px 0 5px;
+  border-bottom: 1px solid var(--gold);
+  color: var(--gold-bright);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.habit-history-link:hover {
+  color: var(--ink);
+}
+
 .habit-activity {
   padding: 34px 0 58px;
   border-top: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
@@ -9558,16 +9755,10 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
 
 .habit-activity-scroll {
   max-width: 100%;
-  direction: rtl;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
   padding: 4px 3px 8px;
   scrollbar-width: thin;
-}
-
-.habit-activity-grid,
-.habit-activity-months {
-  direction: ltr;
 }
 
 .habit-activity-grid {
@@ -9736,6 +9927,10 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
     margin-top: 29px;
   }
 
+  .habit-history-link {
+    margin-bottom: 22px;
+  }
+
   .habit-activity-head {
     align-items: flex-start;
     flex-direction: column;
@@ -9748,90 +9943,297 @@ body[data-active-view="tracking"] .tracking-title-actions .secondary:hover:not(:
   }
 }
 
-@media (max-height: 650px) {
-  body[data-active-view="tracking"] .shell {
-    padding-top: 18px;
+/* Tracking — the selected day expands into the check-in inside the activity field. */
+body[data-active-view="tracking"] .habit-activity {
+  position: relative;
+  margin-top: clamp(32px, 5vw, 58px);
+  padding: clamp(26px, 3.5vw, 42px);
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 78% 46%, color-mix(in srgb, var(--gold) 5%, transparent), transparent 34%),
+    color-mix(in srgb, var(--surface) 22%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 3%, transparent);
+}
+
+body[data-active-view="tracking"] .habit-activity-head {
+  margin-bottom: clamp(26px, 3vw, 38px);
+}
+
+body[data-active-view="tracking"] .habit-activity-head h2 {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(1.25rem, 2vw, 1.65rem);
+  font-weight: 700;
+}
+
+body[data-active-view="tracking"] .habit-activity-tab {
+  position: relative;
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 600;
+}
+
+body[data-active-view="tracking"] .habit-activity-tab.is-selected::after {
+  position: absolute;
+  right: 0;
+  bottom: -5px;
+  left: 0;
+  height: 1px;
+  background: var(--gold-bright);
+  content: "";
+}
+
+body[data-active-view="tracking"] .habit-activity-scroll {
+  padding: 0 3px 8px;
+}
+
+body[data-active-view="tracking"] .habit-activity-months {
+  margin: 0 0 18px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(0.68rem, 1vw, 0.82rem);
+}
+
+.habit-activity-canvas {
+  position: relative;
+  width: 100%;
+  min-width: 620px;
+  height: clamp(510px, 54vw, 640px);
+  isolation: isolate;
+}
+
+body[data-active-view="tracking"] .habit-activity-grid {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  grid-template-columns: repeat(52, minmax(8px, 1fr));
+  grid-template-rows: repeat(7, minmax(34px, 1fr));
+  grid-auto-flow: column;
+  gap: clamp(3px, 0.45vw, 6px);
+  aspect-ratio: auto;
+}
+
+body[data-active-view="tracking"] .habit-activity-cell {
+  width: min(100%, 14px);
+  min-width: 7px;
+  justify-self: center;
+  border-radius: 50%;
+  transition: filter 130ms ease, box-shadow 130ms ease;
+}
+
+body[data-active-view="tracking"] .habit-activity-cell.is-today,
+body[data-active-view="tracking"] .habit-activity-cell.is-selected {
+  outline: 1px solid var(--gold-bright);
+  outline-offset: 3px;
+}
+
+body[data-active-view="tracking"] .habit-activity-cell.is-selected {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--gold) 10%, transparent);
+}
+
+body[data-active-view="tracking"] .habit-focus {
+  position: absolute;
+  z-index: 2;
+  top: 28%;
+  width: min(440px, 44%);
+  min-height: 0;
+  display: block;
+  border: 1px solid color-mix(in srgb, var(--gold) 82%, var(--line));
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--surface-strong) 96%, var(--paper)), color-mix(in srgb, var(--paper) 97%, var(--surface))),
+    var(--paper);
+  box-shadow:
+    0 20px 52px color-mix(in srgb, #000 38%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+body[data-active-view="tracking"] .habit-focus[data-anchor-zone="start"] {
+  left: 4%;
+}
+
+body[data-active-view="tracking"] .habit-focus[data-anchor-zone="middle"] {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+body[data-active-view="tracking"] .habit-focus[data-anchor-zone="end"] {
+  right: 0;
+}
+
+body[data-active-view="tracking"] .habit-focus::before {
+  position: absolute;
+  top: -10px;
+  width: 18px;
+  height: 18px;
+  border-top: 1px solid color-mix(in srgb, var(--gold) 82%, var(--line));
+  border-left: 1px solid color-mix(in srgb, var(--gold) 82%, var(--line));
+  background: color-mix(in srgb, var(--surface-strong) 96%, var(--paper));
+  content: "";
+  transform: rotate(45deg);
+}
+
+body[data-active-view="tracking"] .habit-focus[data-anchor-zone="start"]::before {
+  left: 54px;
+}
+
+body[data-active-view="tracking"] .habit-focus[data-anchor-zone="middle"]::before {
+  left: calc(50% - 9px);
+}
+
+body[data-active-view="tracking"] .habit-focus[data-anchor-zone="end"]::before {
+  right: -3px;
+}
+
+.habit-focus-connector {
+  position: absolute;
+  top: -49px;
+  width: 1px;
+  height: 39px;
+  background: linear-gradient(to top, var(--gold-bright), color-mix(in srgb, var(--gold) 16%, transparent));
+}
+
+.habit-focus-connector::before {
+  position: absolute;
+  top: -8px;
+  left: -5px;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--gold-bright);
+  border-radius: 50%;
+  background: var(--paper);
+  content: "";
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--gold) 10%, transparent);
+}
+
+body[data-active-view="tracking"] .habit-focus[data-anchor-zone="start"] .habit-focus-connector {
+  left: 63px;
+}
+
+body[data-active-view="tracking"] .habit-focus[data-anchor-zone="middle"] .habit-focus-connector {
+  left: 50%;
+}
+
+body[data-active-view="tracking"] .habit-focus[data-anchor-zone="end"] .habit-focus-connector {
+  right: 6px;
+}
+
+body[data-active-view="tracking"] .habit-focus-content {
+  min-width: 0;
+  display: block;
+  padding: clamp(28px, 3.5vw, 40px);
+}
+
+body[data-active-view="tracking"] .habit-focus-editor {
+  width: 100%;
+}
+
+body[data-active-view="tracking"] .habit-focus-step {
+  gap: 11px;
+}
+
+body[data-active-view="tracking"] .habit-focus-position {
+  font-size: clamp(0.76rem, 1vw, 0.88rem);
+}
+
+body[data-active-view="tracking"] .habit-focus-dots {
+  gap: 15px;
+}
+
+body[data-active-view="tracking"] .habit-focus-dot {
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
+  min-height: 14px;
+}
+
+body[data-active-view="tracking"] .habit-focus-title {
+  max-width: 100%;
+  margin: 25px 0 0;
+  font-size: clamp(2.1rem, 4.4vw, 3.35rem);
+  line-height: 1;
+}
+
+body[data-active-view="tracking"] .habit-focus-description,
+body[data-active-view="tracking"] .habit-focus-helper {
+  display: none;
+}
+
+body[data-active-view="tracking"] .habit-focus-actions {
+  width: 100%;
+  gap: 13px;
+  margin-top: 28px;
+}
+
+body[data-active-view="tracking"] .habit-focus-action {
+  min-height: 68px;
+  padding: 14px;
+  border-radius: 9px;
+  font-size: clamp(0.92rem, 1.4vw, 1.08rem);
+}
+
+body[data-active-view="tracking"] .habit-focus-skip,
+body[data-active-view="tracking"] .habit-focus-edit {
+  min-height: 32px;
+  margin-top: 15px;
+  font-size: 0.88rem;
+}
+
+body[data-active-view="tracking"] .habit-focus-complete .habit-focus-title,
+body[data-active-view="tracking"] .habit-focus-empty .habit-focus-title {
+  margin-top: 22px;
+}
+
+body[data-active-view="tracking"] .habit-focus-complete .habit-focus-edit {
+  margin-top: 22px;
+}
+
+@media (max-width: 800px) {
+  body[data-active-view="tracking"] .habit-activity {
+    padding: 26px 24px 32px;
   }
 
-  body[data-active-view="tracking"] .tracking-titlebar {
-    min-height: 62px;
-    padding: 3px 0 13px;
+  .habit-activity-canvas {
+    height: 560px;
   }
 
-  body[data-active-view="tracking"] .tracking-title-actions .secondary {
-    min-height: 40px;
-    padding-inline: 18px;
-    font-size: 0.82rem;
+  body[data-active-view="tracking"] .habit-focus {
+    top: 30%;
+    width: 390px;
   }
+}
 
-  .habit-focus {
-    min-height: 0;
-  }
-
-  .habit-focus-content {
-    padding: 23px 0 17px;
-  }
-
-  .habit-focus-step {
-    gap: 8px;
-  }
-
-  .habit-focus-position {
-    font-size: 0.95rem;
-  }
-
-  .habit-focus-dots {
-    gap: 18px;
-  }
-
-  .habit-focus-dot {
-    width: 15px;
-    min-width: 15px;
-    height: 15px;
-    min-height: 15px;
-  }
-
-  .habit-focus-title {
-    margin-top: 23px;
-    font-size: clamp(2.7rem, 7vw, 3.35rem);
-  }
-
-  .habit-focus-description {
-    margin-top: 12px;
-    font-size: 0.95rem;
-    line-height: 1.35;
-  }
-
-  .habit-focus-actions {
-    width: min(600px, 82%);
-    gap: 16px;
-    margin-top: 23px;
-  }
-
-  .habit-focus-action {
-    min-height: 74px;
-    padding: 14px;
-    font-size: 1rem;
-  }
-
-  .habit-focus-skip,
-  .habit-focus-edit {
-    min-height: 32px;
-    margin-top: 13px;
-    font-size: 0.9rem;
-  }
-
-  .habit-focus-helper {
-    margin-top: 2px;
-    font-size: 0.72rem;
-  }
-
-  .habit-focus-complete .habit-focus-title,
-  .habit-focus-empty .habit-focus-title {
+@media (max-width: 560px) {
+  body[data-active-view="tracking"] .habit-activity {
     margin-top: 24px;
+    padding: 22px 16px 26px;
+    border-radius: 16px;
   }
 
-  .habit-focus-complete .habit-focus-edit {
-    margin-top: 18px;
+  body[data-active-view="tracking"] .habit-activity-head {
+    gap: 13px;
+    margin-bottom: 24px;
+  }
+
+  body[data-active-view="tracking"] .habit-activity-scroll {
+    margin-inline: -4px;
+  }
+
+  body[data-active-view="tracking"] .habit-focus {
+    top: 29%;
+    width: 360px;
+  }
+
+  body[data-active-view="tracking"] .habit-focus-content {
+    padding: 26px;
+  }
+
+  body[data-active-view="tracking"] .habit-focus-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 25px;
+  }
+
+  body[data-active-view="tracking"] .habit-focus-action {
+    min-height: 64px;
   }
 }

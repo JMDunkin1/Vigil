@@ -201,6 +201,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const selectedKey = localDateKey(selectedDate);
     const todayKey = localDateKey(effectiveToday);
     const focusIndex = Math.max(0, dates.findIndex((date) => localDateKey(date) === selectedKey));
+    focusSection.dataset.anchorZone = activityAnchorZone(focusIndex);
 
     dates.forEach((date, index) => {
       const dateKey = localDateKey(date);
@@ -268,7 +269,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     renderActivity();
     if (revealFocus) {
       focusHabitHeading();
-      focusSection.scrollIntoView({ behavior: "smooth", block: "start" });
+      focusSection.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }
 
@@ -376,6 +377,13 @@ export function activityFocusTarget(
   if (key === "Home") return 0;
   if (key === "End") return Math.min(length - 1, Math.max(0, todayIndex));
   return index;
+}
+
+export function activityAnchorZone(index: number): "start" | "middle" | "end" {
+  const week = Math.max(0, Math.min(ACTIVITY_WEEKS - 1, Math.floor(index / DAYS_PER_WEEK)));
+  if (week < 18) return "start";
+  if (week < 35) return "middle";
+  return "end";
 }
 
 export function habitActivityDates(todayValue: Date): Date[] {

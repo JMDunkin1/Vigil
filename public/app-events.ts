@@ -54,12 +54,19 @@ export function bindAppEvents(context: AppEventsContext) {
   const accountabilityForm = $("#accountabilityForm") as unknown as HTMLFormElement;
   const keyholderForm = $("#keyholderForm") as unknown as HTMLFormElement;
   const distanceKeyForm = $("#distanceKeyForm") as unknown as HTMLFormElement;
+  const journalForm = $("#journalEntryForm") as unknown as HTMLFormElement;
   trackFormChanges(profileForm);
-  trackFormChanges($("#journalEntryForm") as unknown as HTMLFormElement);
+  trackFormChanges(journalForm);
   trackFormChanges(intentionalGoalForm);
   trackFormChanges(accountabilityForm);
   trackFormChanges(keyholderForm);
   trackFormChanges(distanceKeyForm);
+  journalForm.addEventListener("input", () => {
+    const body = String(new FormData(journalForm).get("body") || "").trim();
+    const words = body ? body.split(/\s+/u).length : 0;
+    $("#journalWordCount").textContent = `${words} word${words === 1 ? "" : "s"}`;
+    $("#journalEditorStatus").textContent = "Unsaved changes";
+  });
 
   $$("[data-scan-distance-key]").forEach((button) => {
     button.addEventListener("click", () => distanceKeyUi.openScanner(button.dataset.scanDistanceKey));

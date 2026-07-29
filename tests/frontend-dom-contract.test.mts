@@ -249,9 +249,9 @@ assert.match(uiShellSource, /renderActiveView[\s\S]*window\.scrollTo\(0, 0\)/, "
 assert.doesNotMatch(styles, /@media \(max-width: 900px\)\s*\{\s*body\s*\{\s*display:\s*block/, "narrow windows must retain the sidebar grid");
 
 const trackingMarkup = html.match(/<section id="view-journal"[\s\S]*?<div class="journal-page journal-only"/)?.[0] || "";
-assert.match(trackingMarkup, /id="habitFocus"[\s\S]*?id="habitQuickCheckIn"[\s\S]*?id="habitActivity"/, "tracking must lead with the one-at-a-time habit decision followed directly by activity");
-assert.doesNotMatch(trackingMarkup, /id="habitViewHistory"|class="habit-history-link"/, "tracking must not repeat the activity destination with a history link");
-assert.match(trackingMarkup, /id="habitActivity"[\s\S]*?id="habitActivityGrid"[\s\S]*?id="habitActivityMonths"/, "tracking history must use one compact activity grid with month labels");
+assert.match(trackingMarkup, /id="habitActivity"[\s\S]*?id="habitActivityMonths"[\s\S]*?id="habitActivityGrid"[\s\S]*?id="habitFocus"[\s\S]*?id="habitQuickCheckIn"/, "tracking must expand the one-at-a-time decision from inside the activity field");
+assert.match(trackingMarkup, /class="habit-activity-canvas"[\s\S]*?class="habit-focus-connector"/, "the selected activity day must visibly connect to its embedded check-in");
+assert.doesNotMatch(trackingMarkup, /id="habitViewHistory"/, "the integrated activity view must not retain a redundant history link");
 assert.equal([...trackingMarkup.matchAll(/data-activity-mode="(?:daily|weekly|cumulative)"/g)].length, 3, "habit activity must expose Daily, Weekly, and Cumulative modes");
 assert.match(trackingMarkup, /class="habit-activity-tabs" role="group"[\s\S]*?aria-pressed="true"/, "activity modes must use native toggle-button semantics");
 assert.doesNotMatch(trackingMarkup, /role="tab(?:list)?"/, "activity modes must not advertise an incomplete tab widget");
@@ -267,15 +267,9 @@ assert.match(trackingSource, /cell\.setAttribute\("aria-label", activityAriaLabe
 assert.match(trackingSource, /cell\.disabled = future/, "future activity cells must not be interactive");
 assert.match(trackingSource, /cell\.addEventListener\("click", \(\) => selectDate\(date, true\)\)/, "daily history cells must preserve backdated editing through the focused check-in");
 assert.match(styles, /\.habit-focus-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/, "Done and Missed must remain the only two equal primary choices");
-assert.match(
-  styles,
-  /@media \(max-height: 650px\)\s*\{[\s\S]*?\.habit-focus\s*\{\s*min-height:\s*0;[\s\S]*?\.habit-focus-actions\s*\{[\s\S]*?width:\s*min\(600px, 82%\);[\s\S]*?\.habit-focus-skip,[\s\S]*?margin-top:\s*13px;/,
-  "short tracking windows must compact and inset the full check-in through Skip for now instead of forcing it below the fold"
-);
 assert.match(styles, /\.habit-activity-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(52,[\s\S]*?grid-template-rows:\s*repeat\(7,[\s\S]*?grid-auto-flow:\s*column/, "habit history must use the Codex-like 52-week by 7-day geometry");
 assert.match(styles, /\.habit-activity-scroll\s*\{[\s\S]*?overflow-x:\s*auto;/, "the annual grid must remain contained at compact window widths");
-assert.match(styles, /\.habit-activity-scroll\s*\{[^}]*direction:\s*rtl;/, "habit history must open on the newest dates at the right edge");
-assert.match(styles, /\.habit-activity-grid,\s*\.habit-activity-months\s*\{[^}]*direction:\s*ltr;/, "habit history content must preserve chronological left-to-right order while its viewport starts on the right");
+assert.match(styles, /\.habit-focus\[data-anchor-zone="end"\]\s*\{[^}]*right:\s*0;/, "recent selected days must anchor their check-in against the latest activity column");
 
 const protectionMarkup = html.match(/<div id="protectionLevelControl"[\s\S]*?<div[^>]*class="home-runtime-status"/)?.[0] || "";
 assert.match(protectionMarkup, /id="protectionLevelControl"[^>]*aria-expanded="false"/, "the protection selector must start collapsed");
@@ -327,8 +321,10 @@ assert.doesNotMatch(journalGateMarkup, /type="password"|data-journal-unlock-meth
 assert.doesNotMatch(html, /<span class="pill neutral">Local<\/span>/, "the journal header must not show a redundant Local badge");
 assert.doesNotMatch(html, /<p class="eyebrow">Reflection<\/p>[\s\S]*?<h2>Journal<\/h2>/, "the journal must not repeat Reflection and Journal above the writing area");
 assert.doesNotMatch(journalPageMarkup, /Write it down|New Entry|Stored locally with access controls|Entries are not encrypted|Local Archive|Past entries/, "the journal must not include redundant headings or storage commentary");
-assert.match(journalPageMarkup, /name="title"[\s\S]*?name="body"[\s\S]*?>Save<\//, "the journal composer must contain Title, Entry, and Save in that order");
-assert.match(journalPageMarkup, /id="journalArchiveTitle">Archives<\//, "saved journal entries must appear under Archives");
+assert.match(journalPageMarkup, /id="journalArchiveTitle">Journal<[\s\S]*?id="journalEntrySearch"[\s\S]*?id="journalEntryList"[\s\S]*?id="journalEntryForm"/, "journal history must remain visible beside the editor");
+assert.match(journalPageMarkup, /id="journalNewEntry"[^>]*>New entry<\//, "journal history must expose an explicit new-entry action");
+assert.match(journalPageMarkup, /name="title"[\s\S]*?name="body"[\s\S]*?>Save entry<\//, "the journal composer must contain Title, Entry, and Save in that order");
+assert.match(styles, /\.journal-page\s*\{[^}]*grid-template-columns:\s*clamp\(232px,[^;]*292px\) minmax\(0, 1fr\);/, "journal history and editor must use the intended split layout");
 assert.match(styles, /\.journal-unlock-gate\s*\{[\s\S]*?width:\s*min\(620px, 100%\)/, "journal access must remain compact within the writing surface");
 assert.doesNotMatch(styles, /\.journal-unlock-gate\s*\{[^}]*border-block:/, "the journal unlock prompt must not be boxed in by divider lines");
 assert.match(styles, /body\[data-active-view="journal"\]:has\(#journalUnlockGate:not\(\[hidden\]\)\) \.shell\s*\{[^}]*padding-block:\s*0;/, "the locked journal must use the full height of its right-hand panel");
@@ -404,7 +400,9 @@ assert.doesNotMatch(audioMarkup, /focusSoundStatus|focusSoundCategory|focusSound
 const audioPlayerMarkup = audioMarkup.match(/<section id="audioPlayer"[\s\S]*?<\/section>/)?.[0] || "";
 assert.doesNotMatch(audioPlayerMarkup, /focusSoundAttribution/, "the large player card must end at the Listen control");
 assert.match(audioMarkup, /id="audioSoundLibrary"[\s\S]*?id="focusSoundAttribution"[^>]*hidden/, "recording details must live with the expandable sound library");
+assert.match(audioMarkup, /id="audioSoundLibrary"[\s\S]*?id="audioPlayer"/, "the compact sound library must precede the persistent player dock");
 assert.match(audioMarkup, /id="focusSoundWave" class="audio-wave"/, "the player should keep the compact live waveform");
+assert.equal([...audioPlayerMarkup.matchAll(/<span><\/span>/g)].length, 36, "the wide player dock must have enough analyser bars to carry the waveform across its width");
 const focusSoundSource = await readFile("public/focus-sound.js", "utf8");
 assert.match(focusSoundSource, /createAnalyser\(\)/, "the waveform must measure the playback signal instead of inventing motion");
 assert.match(focusSoundSource, /createMediaElementSource/, "long recordings must stream instead of remaining as fully decoded audio buffers");
@@ -413,7 +411,8 @@ assert.match(focusSoundSource, /waveformFrameIntervalMs\s*=\s*1000\s*\/\s*24/, "
 assert.match(focusSoundSource, /getFloatTimeDomainData/, "quiet passages must reduce the waveform using the signal's real loudness");
 assert.match(focusSoundSource, /getByteFrequencyData/, "each waveform bar must reflect the signal's real frequency shape");
 assert.doesNotMatch(styles, /@keyframes listeningWave|animation:\s*listeningWave/, "the waveform must not regress to a decorative loop");
-assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"title wave"[\s\S]*?"control control";/, "the compact waveform must stay at the top right above the full-width playback control");
+assert.match(styles, /\.audio-player\s*\{[\s\S]*?position:\s*sticky;[\s\S]*?bottom:\s*0;/, "the player must remain docked to the bottom edge while the sound library scrolls");
+assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"title control"[\s\S]*?"wave wave";/, "the compact player dock must keep its title and control together above the waveform");
 assert.match(appSource, /visibilitychange/, "the renderer must react when its window becomes hidden");
 assert.match(appSource, /vigilWindowActivity/, "the renderer must honor Electron's native focus state even when DOM focus reporting is stale");
 assert.match(appSource, /INACTIVE_STATE_POLL_MS\s*=\s*30_000/, "an inactive window must not rebuild the full dashboard every three seconds");

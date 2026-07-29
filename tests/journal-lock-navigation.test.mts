@@ -18,4 +18,4 @@ assert.match(html, /<option value="0" selected>When I leave Journal<\/option>/u)
 const appSource = await readFile("public/app.js", "utf8");
 assert.match(appSource, /shouldConfirmJournalDraftOnViewExit[\s\S]*?window\.confirm\("Leave Journal and discard your unsaved entry\?"\)/u);
 const appEventsSource = await readFile("public/app-events.js", "utf8");
-assert.match(appEventsSource, /trackFormChanges\(\$\("#journalEntryForm"\)/u);
+assert.match(appEventsSource, /const journalForm = \$\("#journalEntryForm"\)[\s\S]*?trackFormChanges\(journalForm\)/u);

@@ -151,6 +151,9 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     form.elements.id.value = entry.id;
     form.elements.title.value = entry.title || "";
     form.elements.body.value = entry.body || "";
+    $("#journalEditorDate").textContent = journalEntryDateLabel(entry);
+    $("#journalEditorStatus").textContent = "Editing entry";
+    updateJournalWordCount(form.elements.body.value);
     setView("journal");
     form.elements.title.focus();
   }
@@ -159,6 +162,14 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     const form = $("#journalEntryForm");
     form.reset();
     form.elements.id.value = "";
+    $("#journalEditorDate").textContent = "Today";
+    $("#journalEditorStatus").textContent = "New entry";
+    updateJournalWordCount("");
+  }
+
+  function updateJournalWordCount(body: string): void {
+    const words = body.trim() ? body.trim().split(/\s+/u).length : 0;
+    $("#journalWordCount").textContent = `${words} word${words === 1 ? "" : "s"}`;
   }
 
   function loadLimit(rule: DashboardItem): void {
@@ -295,6 +306,19 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     selectedValues,
     setSelectedOptions
   };
+}
+
+function journalEntryDateLabel(entry: DashboardItem): string {
+  const raw = String(entry.entryDate || entry.createdAt || "");
+  const date = new Date(raw);
+  if (!Number.isFinite(date.getTime())) return "Saved entry";
+  const sameYear = date.getFullYear() === new Date().getFullYear();
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    ...(sameYear ? {} : { year: "numeric" as const })
+  }).format(date);
 }
 
 export type FormController = ReturnType<typeof createFormController>;

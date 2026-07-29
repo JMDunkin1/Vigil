@@ -7,14 +7,15 @@ import { compactExtensionRuleSignature, evaluateExtensionCheck, extensionRuleSna
 import { activePolicy } from "../src/policy.js";
 import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.mjs";
 
-const [backgroundSource, contentSource, googleSafeSearchSource, staticRulesText, extensionManifestText, blockedPageSource, blockedPageScriptSource] = await Promise.all([
+const [backgroundSource, contentSource, googleSafeSearchSource, staticRulesText, extensionManifestText, blockedPageSource, blockedPageScriptSource, optionsPageSource] = await Promise.all([
   readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
   readFile(new URL("../extension/content.js", import.meta.url), "utf8"),
   readFile(new URL("../extension/google-safe-search.js", import.meta.url), "utf8"),
   readFile(new URL("../extension/rules.json", import.meta.url), "utf8"),
   readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
   readFile(new URL("../extension/blocked.html", import.meta.url), "utf8"),
-  readFile(new URL("../extension/blocked.js", import.meta.url), "utf8")
+  readFile(new URL("../extension/blocked.js", import.meta.url), "utf8"),
+  readFile(new URL("../extension/options.html", import.meta.url), "utf8")
 ]);
 const staticRules = JSON.parse(staticRulesText) as Array<Record<string, unknown>>;
 const extensionManifest = JSON.parse(extensionManifestText) as Record<string, unknown>;
@@ -66,6 +67,9 @@ assert.match(blockedPageScriptSource, /location\.replace\("about:blank"\)/u);
 assert.doesNotMatch(blockedPageSource, /history\.(?:back|go)/u);
 assert.doesNotMatch(blockedPageScriptSource, /history\.(?:back|go)/u);
 assert.doesNotMatch(blockedPageScriptSource, /\nexport \{\};?\s*$/u, "the blocked-page script must be emitted as a classic extension script");
+assert.match(optionsPageSource, /--primary: #b77952/u, "the companion options page must use Vigil's current copper accent");
+assert.match(optionsPageSource, /color-scheme: dark/u, "the companion options page must use the current charcoal surface");
+assert.doesNotMatch(optionsPageSource, /#126a6f|#f6f1e8|#fffcf4/u, "the companion options page must not return to the retired teal theme");
 const webAccessibleResources = extensionManifest.web_accessible_resources as Array<{ resources?: unknown }> | undefined;
 assert.equal(webAccessibleResources?.some((entry) => Array.isArray(entry.resources) && entry.resources.includes("blocked.html")), true);
 const contentScripts = extensionManifest.content_scripts as Array<{ js?: unknown }> | undefined;
@@ -80,6 +84,8 @@ assert.doesNotMatch(contentSource, /activateOfflineGuard/);
 assert.doesNotMatch(contentSource, /data-vigil-page-guard-state/);
 assert.match(contentSource, /root\?\.style\.setProperty\("visibility", "hidden", "important"\)/u);
 assert.match(contentSource, /visibility: visible !important/u);
+assert.match(contentSource, /background: #b77952/u, "the injected pause overlay must use Vigil's current copper action");
+assert.doesNotMatch(contentSource, /#18345b|#142238|#d1a94d/u, "the injected pause overlay must not return to the retired navy-and-gold theme");
 assert.match(compactExtensionRuleSignature("large canonical rule payload"), /^sha256:[a-f0-9]{64}$/u);
 assert.equal(
   compactExtensionRuleSignature(compactExtensionRuleSignature("large canonical rule payload")),

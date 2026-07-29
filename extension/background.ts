@@ -396,7 +396,7 @@ async function performCheckUrl(
       if (!overlayShown) await updateTab(tabId, { url: result.redirectUrl });
     }
   } else {
-    await setBadge(tabId, "", "#126a6f");
+    await setBadge(tabId, "", "#b77952");
   }
   void maybeSyncSiteBlocking();
   return result;

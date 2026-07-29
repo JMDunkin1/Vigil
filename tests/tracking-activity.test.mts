@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  activityAnchorZone,
   activityFocusTarget,
   aggregateHabitActivity,
   habitActivityDates,
@@ -68,6 +69,13 @@ assert.equal(activityFocusTarget(8, "ArrowLeft", 364, 359), 1);
 assert.equal(activityFocusTarget(8, "ArrowRight", 364, 359), 15);
 assert.equal(activityFocusTarget(8, "Home", 364, 359), 0);
 assert.equal(activityFocusTarget(8, "End", 364, 359), 359);
+
+assert.equal(activityAnchorZone(0), "start");
+assert.equal(activityAnchorZone(17 * 7), "start");
+assert.equal(activityAnchorZone(18 * 7), "middle");
+assert.equal(activityAnchorZone(34 * 7), "middle");
+assert.equal(activityAnchorZone(35 * 7), "end");
+assert.equal(activityAnchorZone(51 * 7 + 6), "end");
 
 function localDateKey(value: Date): string {
   const year = value.getFullYear();

@@ -454,7 +454,7 @@ function injectPageGuardStyle(): void {
       position: fixed;
       inset: 0;
       z-index: 2147483646;
-      background: #080d15;
+      background: #101111;
       pointer-events: auto;
       visibility: visible !important;
     }
@@ -593,7 +593,7 @@ function pauseOverlayCss() {
   return `
     :host {
       color-scheme: dark;
-      font-family: Georgia, "Times New Roman", serif;
+      font-family: Inter, "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * {
       box-sizing: border-box;
@@ -605,36 +605,39 @@ function pauseOverlayCss() {
       display: grid;
       place-items: center;
       padding: 24px;
-      background: radial-gradient(circle at 50% 18%, #18345b 0, #0a111d 44%, #05080e 100%);
+      background:
+        radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .08), transparent 34rem),
+        radial-gradient(circle at 28% 106%, rgba(157, 124, 88, .04), transparent 30rem),
+        linear-gradient(180deg, #101111, #161717);
     }
     .panel {
       width: min(720px, 100%);
       max-height: min(760px, calc(100vh - 48px));
       overflow: auto;
-      border: 1px solid #6a522b;
-      border-radius: 6px;
-      background: linear-gradient(145deg, #142238f7, #0b121df7);
-      color: #f1eee4;
-      box-shadow: 0 24px 80px rgba(0, 0, 0, .7), inset 0 0 0 3px #080d15, inset 0 0 0 4px #6f5529;
+      border: 1px solid #353532;
+      border-radius: 12px;
+      background: rgba(28, 29, 28, .96);
+      color: #f0ece5;
+      box-shadow: 0 28px 84px rgba(0, 0, 0, .44);
       padding: 28px;
     }
     .eyebrow {
       margin: 0 0 8px;
-      color: #d1a94d;
-      font-size: 12px;
-      font: 900 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #d5a16b;
+      font: 800 12px "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace;
       text-transform: uppercase;
-      letter-spacing: .14em;
+      letter-spacing: .12em;
     }
     h1 {
       margin: 0;
       font-size: 32px;
       line-height: 1.12;
-      font-weight: 800;
+      font-weight: 720;
+      letter-spacing: -.025em;
     }
     .lead {
       margin: 12px 0 20px;
-      color: #aeb3af;
+      color: #aaa398;
       font-size: 16px;
       line-height: 1.45;
     }
@@ -643,10 +646,10 @@ function pauseOverlayCss() {
       place-items: center;
       min-height: 120px;
       margin: 0 0 18px;
-      border: 5px solid #d1a94d;
-      border-radius: 5px;
-      background: radial-gradient(circle, #172b48, #090f19);
-      box-shadow: 5px 5px 0 #04070c, inset 0 0 0 3px #6a5128;
+      border: 1px solid rgba(213, 161, 107, .52);
+      border-radius: 12px;
+      background: radial-gradient(circle, rgba(183, 121, 82, .18), rgba(34, 35, 33, .88) 70%);
+      box-shadow: 0 18px 56px rgba(0, 0, 0, .28), 0 0 42px rgba(183, 121, 82, .08);
     }
     .timer strong {
       display: block;
@@ -655,7 +658,7 @@ function pauseOverlayCss() {
     }
     .timer span {
       display: block;
-      color: #aeb3af;
+      color: #aaa398;
       font-size: 12px;
       font-weight: 800;
       text-transform: uppercase;
@@ -667,7 +670,7 @@ function pauseOverlayCss() {
     }
     section {
       min-width: 0;
-      border-top: 1px solid #4d402d;
+      border-top: 1px solid #353532;
       padding-top: 14px;
     }
     h2 {
@@ -680,12 +683,18 @@ function pauseOverlayCss() {
       width: 100%;
       min-height: 44px;
       margin: 0 0 10px;
-      border: 1px solid #554b3b;
-      border-radius: 3px;
-      background: #080e17;
-      color: #f1eee4;
+      border: 1px solid #575248;
+      border-radius: 9px;
+      background: #151616;
+      color: #f0ece5;
       font: inherit;
       padding: 10px 12px;
+    }
+    input:focus-visible,
+    select:focus-visible,
+    button:focus-visible {
+      outline: 3px solid rgba(213, 161, 107, .24);
+      outline-offset: 2px;
     }
     .choices {
       display: grid;
@@ -694,30 +703,29 @@ function pauseOverlayCss() {
     button {
       min-height: 42px;
       border: 1px solid transparent;
-      border-radius: 3px;
-      font: 800 12px ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-weight: 800;
-      text-transform: uppercase;
-      letter-spacing: .04em;
+      border-radius: 9px;
+      font: inherit;
+      font-weight: 760;
       cursor: pointer;
-      box-shadow: 3px 3px 0 #04070c;
+      transition: transform .16s ease, border-color .16s ease, background .16s ease, color .16s ease;
     }
+    button:hover:not(:disabled) { transform: translateY(-1px); }
     button:disabled {
       cursor: not-allowed;
       opacity: .58;
     }
     .choice {
       width: 100%;
-      border-color: #40536d;
-      background: #1b293c;
-      color: #e6e3da;
+      border-color: #575248;
+      background: #222321;
+      color: #f0ece5;
       text-align: left;
       padding: 10px 12px;
     }
     .choice.selected {
-      border-color: #d1a94d;
-      background: #3a2d16;
-      color: #fff0b3;
+      border-color: #d5a16b;
+      background: rgba(183, 121, 82, .16);
+      color: #f0ece5;
     }
     .meta {
       display: flex;
@@ -726,10 +734,10 @@ function pauseOverlayCss() {
       margin: 18px 0;
     }
     .meta span {
-      border: 1px solid #4d4436;
-      border-radius: 3px;
-      background: #090f18;
-      color: #aeb3af;
+      border: 1px solid #353532;
+      border-radius: 999px;
+      background: rgba(34, 35, 33, .72);
+      color: #aaa398;
       font-size: 12px;
       font-weight: 750;
       padding: 7px 10px;
@@ -741,37 +749,37 @@ function pauseOverlayCss() {
       gap: 10px;
     }
     .primary {
-      border-color: #efd47f;
-      background: #d1a94d;
-      color: #120e07;
+      background: #b77952;
+      color: #16120f;
       padding: 10px 16px;
     }
+    .primary:hover:not(:disabled) { background: #d5a16b; }
     .secondary {
-      border-color: #40536d;
-      background: #1b293c;
-      color: #e6e3da;
+      border-color: #575248;
+      background: #222321;
+      color: #f0ece5;
       padding: 10px 14px;
     }
     .status {
       min-height: 22px;
       margin: 14px 0 0;
-      color: #aeb3af;
+      color: #aaa398;
       font-size: 14px;
       line-height: 1.4;
     }
     blockquote {
       margin: 14px 0 22px;
       padding: 11px 14px;
-      border-left: 3px solid #d1a94d;
-      background: #080d15a8;
-      color: #d8d5ca;
+      border-left: 2px solid rgba(213, 161, 107, .52);
+      background: rgba(183, 121, 82, .06);
+      color: #d7d0c5;
       font-style: italic;
       line-height: 1.45;
     }
     blockquote cite {
       display: block;
       margin-top: 6px;
-      color: #979e9a;
+      color: #aaa398;
       font-size: 12px;
       font-style: normal;
     }

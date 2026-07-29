@@ -16,6 +16,14 @@ interface LifeLogViewContext {
 
 export function createLifeLogView(context: LifeLogViewContext) {
   const { $, del, refresh, toast, forms, empty } = context;
+  let journalEntries: DashboardItem[] = [];
+
+  $("#journalEntrySearch").addEventListener("input", () => renderJournalEntries(journalEntries));
+  $("#journalNewEntry").addEventListener("click", () => {
+    forms.resetJournalForm();
+    renderJournalEntries(journalEntries);
+    $("#journalEntryForm").elements.title.focus();
+  });
 
   function renderLifeLog(intentionalUse: IntentionalUseSummary): void {
     const lifeLog = intentionalUse?.lifeLog || {};
@@ -75,41 +83,93 @@ export function createLifeLogView(context: LifeLogViewContext) {
   }
 
   function renderJournalEntries(entries: DashboardItem[]): void {
+    journalEntries = entries;
     const list = $("#journalEntryList");
     list.replaceChildren();
-    if (!entries.length) {
-      list.append(empty("No entries yet"));
+    const query = $("#journalEntrySearch").value.trim().toLocaleLowerCase();
+    const visibleEntries = query
+      ? entries.filter((entry) => journalEntrySearchText(entry).includes(query))
+      : entries;
+    if (!visibleEntries.length) {
+      list.append(empty(entries.length ? "No matching entries" : "No entries yet"));
       return;
     }
 
-    for (const entry of entries.slice(0, 12)) {
+    const selectedId = $("#journalEntryForm").elements.id.value;
+    for (const entry of visibleEntries) {
       const article = document.createElement("article");
       article.className = "journal-entry";
-      const head = el("div", { className: "journal-entry-head" }, textEl("strong", entry.title || "Untitled"));
-      const body = textEl("p", entry.body || "", { className: "journal-entry-body" });
-      const actions = el("div", { className: "journal-entry-actions" });
+      article.classList.toggle("is-selected", entry.id === selectedId);
 
-      const edit = document.createElement("button");
-      edit.className = "secondary compact";
-      edit.type = "button";
-      edit.textContent = "Edit";
-      edit.addEventListener("click", () => forms.loadJournalEntry(entry));
+      const date = journalEntryDateText(entry);
+      const title = entry.title || "Untitled entry";
+      const select = document.createElement("button");
+      select.className = "journal-entry-select";
+      select.type = "button";
+      select.setAttribute("aria-label", `Open ${title} from ${date}`);
+      if (entry.id === selectedId) select.setAttribute("aria-current", "true");
+      select.append(
+        textEl("span", date, { className: "journal-entry-date" }),
+        textEl("strong", title, { className: "journal-entry-title" }),
+        textEl("span", journalEntryPreview(entry), { className: "journal-entry-preview" })
+      );
+      select.addEventListener("click", () => {
+        forms.loadJournalEntry(entry);
+        renderJournalEntries(journalEntries);
+      });
+
+      const actions = el("div", { className: "journal-entry-actions" });
 
       const remove = document.createElement("button");
       remove.className = "ghost compact";
       remove.type = "button";
-      remove.textContent = "Delete";
+      remove.textContent = "×";
+      remove.setAttribute("aria-label", `Delete ${title}`);
+      remove.title = "Delete entry";
       remove.addEventListener("click", async () => {
         await del(`/api/intentional-use/journal/${encodeURIComponent(entry.id)}`);
+        if ($("#journalEntryForm").elements.id.value === entry.id) forms.resetJournalForm();
         toast("Entry deleted");
         await refresh();
       });
 
-      actions.append(edit, remove);
-      article.append(head, body, actions);
+      actions.append(remove);
+      article.append(select, actions);
       list.append(article);
     }
   }
 
   return { renderLifeLog };
+}
+
+function journalEntrySearchText(entry: DashboardItem): string {
+  return [
+    entry.title,
+    entry.body,
+    journalEntryDateText(entry)
+  ].map((value) => String(value || "").toLocaleLowerCase()).join(" ");
+}
+
+function journalEntryPreview(entry: DashboardItem): string {
+  const body = String(entry.body || "").replace(/\s+/gu, " ").trim();
+  return body || "No text yet";
+}
+
+function journalEntryDateText(entry: DashboardItem): string {
+  const raw = String(entry.entryDate || entry.createdAt || entry.updatedAt || "");
+  const date = new Date(raw);
+  if (!Number.isFinite(date.getTime())) return "Saved entry";
+
+  const today = new Date();
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const currentDay = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const difference = Math.round((currentDay - day) / 86_400_000);
+  if (difference === 0) return "Today";
+  if (difference === 1) return "Yesterday";
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    ...(date.getFullYear() === today.getFullYear() ? {} : { year: "numeric" as const })
+  }).format(date);
 }

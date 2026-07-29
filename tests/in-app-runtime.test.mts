@@ -107,6 +107,8 @@ try {
   const companionIndexHtml = await companionIndex.text();
   assert.match(companionIndexHtml, /<title>Open Vigil<\/title>/u);
   assert.match(companionIndexHtml, /Open Vigil from the menu bar/u);
+  assert.match(companionIndexHtml, /--primary: #b77952/u, "the handoff page must use Vigil's current copper accent");
+  assert.doesNotMatch(companionIndexHtml, /#18345b|#142238|#d1a94d/u, "the handoff page must not return to the retired navy-and-gold theme");
   assert.doesNotMatch(companionIndexHtml, /<script\b/u, "the restricted companion must not expose the interactive app shell");
   for (const path of ["/api/panic/start", "/api/protection/level"]) {
     const response = await fetch(`http://127.0.0.1:${port}${path}`, {

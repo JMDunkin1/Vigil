@@ -137,20 +137,6 @@
       </div>
 
       <div class="audio-desk">
-        <section id="audioPlayer" class="audio-player" aria-labelledby="focusSoundNowPlaying" data-playing="false">
-          <h2 id="focusSoundNowPlaying">Brown noise</h2>
-
-          <div id="focusSoundWave" class="audio-wave" aria-hidden="true">
-            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
-            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
-          </div>
-
-          <button id="focusSoundPlayButton" class="audio-master-toggle" type="button" aria-pressed="false" aria-label="Play Brown noise">
-            <span class="audio-play-symbol" aria-hidden="true"></span>
-            <strong id="focusSoundPlayLabel">Listen</strong>
-          </button>
-        </section>
-
         <section id="audioSoundLibrary" class="audio-library" aria-label="Sounds">
           <div class="audio-library-grid">
             <details class="audio-library-group audio-library-group-wide" aria-labelledby="sacredSoundsTitle">
@@ -230,6 +216,22 @@
             <a id="focusSoundSourceLink" href="https://commons.wikimedia.org/" target="_blank" rel="noopener noreferrer">Source</a>
             <a id="focusSoundLicenseLink" href="https://creativecommons.org/" target="_blank" rel="noopener noreferrer">License</a>
           </p>
+        </section>
+
+        <section id="audioPlayer" class="audio-player" aria-labelledby="focusSoundNowPlaying" data-playing="false">
+          <h2 id="focusSoundNowPlaying">Brown noise</h2>
+
+          <div id="focusSoundWave" class="audio-wave" aria-hidden="true">
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+          </div>
+
+          <button id="focusSoundPlayButton" class="audio-master-toggle" type="button" aria-pressed="false" aria-label="Play Brown noise">
+            <span class="audio-play-symbol" aria-hidden="true"></span>
+            <strong id="focusSoundPlayLabel">Listen</strong>
+          </button>
         </section>
       </div>
 
@@ -796,10 +798,6 @@
         <span id="journalUnlockStatus" class="tiny-status" aria-live="polite"></span>
       </section>
 
-      <section id="habitFocus" class="habit-focus tracking-only" aria-label="Habit check-in">
-        <div id="habitQuickCheckIn" class="habit-focus-content" aria-live="polite"></div>
-      </section>
-
       <section id="habitActivity" class="habit-activity tracking-only" aria-labelledby="habitActivityTitle">
         <header class="habit-activity-head">
           <h2 id="habitActivityTitle">Habit activity</h2>
@@ -810,37 +808,55 @@
           </div>
         </header>
         <div class="habit-activity-scroll">
-          <div id="habitActivityGrid" class="habit-activity-grid" role="group" aria-label="Daily habit activity"></div>
           <div id="habitActivityMonths" class="habit-activity-months" aria-hidden="true"></div>
+          <div class="habit-activity-canvas">
+            <div id="habitActivityGrid" class="habit-activity-grid" role="group" aria-label="Daily habit activity"></div>
+            <section id="habitFocus" class="habit-focus" aria-label="Habit check-in">
+              <div class="habit-focus-connector" aria-hidden="true"></div>
+              <div id="habitQuickCheckIn" class="habit-focus-content" aria-live="polite"></div>
+            </section>
+          </div>
         </div>
         <p id="habitActivityStatus" class="sr-only" aria-live="polite"></p>
       </section>
 
       <div class="journal-page journal-only" data-journal-content>
+        <aside class="journal-archive" aria-labelledby="journalArchiveTitle">
+          <header class="journal-history-head">
+            <h2 id="journalArchiveTitle">Journal</h2>
+            <button id="journalNewEntry" class="secondary compact" type="button">New entry</button>
+          </header>
+          <label class="journal-search">
+            <span class="sr-only">Search entries</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <circle cx="11" cy="11" r="6"></circle>
+              <path d="m16 16 4 4"></path>
+            </svg>
+            <input id="journalEntrySearch" type="search" placeholder="Search entries" autocomplete="off">
+          </label>
+          <div id="journalEntryList" class="journal-entry-list" aria-live="polite"></div>
+        </aside>
+
         <section class="journal-composer" aria-label="Journal entry">
           <form id="journalEntryForm" class="journal-form">
             <input name="id" type="hidden">
+            <header class="journal-editor-head">
+              <time id="journalEditorDate">Today</time>
+              <span id="journalEditorStatus">New entry</span>
+            </header>
             <label class="journal-title-field">
-              <span>Title</span>
-              <input name="title" type="text" maxlength="120" placeholder="Give this entry a title" required>
+              <span class="sr-only">Title</span>
+              <input name="title" type="text" maxlength="120" placeholder="Untitled entry" required>
             </label>
             <label class="journal-body-field">
-              <span>Entry</span>
+              <span class="sr-only">Entry</span>
               <textarea name="body" rows="10" maxlength="8000" placeholder="Start writing…" required></textarea>
             </label>
             <div class="journal-form-actions">
-              <button class="primary" type="submit">Save</button>
+              <span id="journalWordCount" class="journal-word-count">0 words</span>
+              <button class="primary" type="submit">Save entry</button>
             </div>
           </form>
-        </section>
-
-        <section class="journal-archive" aria-labelledby="journalArchiveTitle">
-          <header class="journal-section-head">
-            <div>
-              <h2 id="journalArchiveTitle">Archives</h2>
-            </div>
-          </header>
-          <div id="journalEntryList" class="journal-entry-list"></div>
         </section>
       </div>
 
