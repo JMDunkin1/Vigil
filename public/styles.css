@@ -4579,16 +4579,17 @@ h3,
 
 .protection-level-trace {
   --protection-trace-segment: calc(var(--protection-level-step) - var(--protection-orb-size));
-  --protection-trace-ribs: repeating-linear-gradient(
-    112deg,
-    rgba(255, 255, 255, 0.2) 0 2px,
-    transparent 2px 5px
+  --trace-start: #c98a57;
+  --trace-end: #bc624b;
+  --protection-trace-inner: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--trace-start) 18%, var(--surface-strong)),
+    color-mix(in srgb, var(--trace-end) 18%, var(--surface-strong))
   );
-  --protection-trace-sheen: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.28),
-    transparent 46%,
-    rgba(34, 13, 9, 0.28)
+  --protection-trace-outer: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--trace-start) 36%, var(--surface-strong)),
+    color-mix(in srgb, var(--trace-end) 36%, var(--surface-strong))
   );
   position: absolute;
   z-index: 0;
@@ -4598,12 +4599,11 @@ h3,
     var(--protection-level-step) + var(--protection-level-step) + var(--protection-level-step)
     - var(--protection-orb-size)
   );
-  height: 6px;
+  height: 12px;
   border-radius: 999px;
   background:
-    var(--protection-trace-sheen) center / var(--protection-trace-segment) 100% no-repeat,
-    var(--protection-trace-ribs) center / var(--protection-trace-segment) 100% no-repeat,
-    linear-gradient(90deg, #c98a57, #bc624b) center / var(--protection-trace-segment) 100% no-repeat;
+    var(--protection-trace-inner) center / var(--protection-trace-segment) 5px no-repeat,
+    var(--protection-trace-outer) center / var(--protection-trace-segment) 100% no-repeat;
   filter: none;
   opacity: 0;
   clip-path: inset(0 50%);
@@ -4622,9 +4622,8 @@ h3,
   height: 100%;
   border-radius: inherit;
   background:
-    var(--protection-trace-sheen),
-    var(--protection-trace-ribs),
-    linear-gradient(90deg, var(--trace-start), var(--trace-end));
+    var(--protection-trace-inner) center / 100% 5px no-repeat,
+    var(--protection-trace-outer) center / 100% 100% no-repeat;
 }
 
 .protection-level-trace::before {
