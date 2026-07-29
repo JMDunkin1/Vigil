@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
+import { truthy } from "./booleans.js";
 import { BUILT_IN_CHROME_EXTENSION_ID } from "./defaults.js";
 import type { UnknownRecord } from "./types.js";
 
@@ -300,7 +301,7 @@ function normalizedHost(value: unknown): string {
 }
 
 function hostedAccountsEnabled(): boolean {
-  return ["1", "true", "yes", "on"].includes(String(process.env.VIGIL_AUTH_ENABLED || "").trim().toLowerCase());
+  return truthy(process.env.VIGIL_AUTH_ENABLED);
 }
 
 function isDirectLoopbackRequest(

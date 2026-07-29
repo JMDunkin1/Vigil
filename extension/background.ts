@@ -241,6 +241,7 @@ interface SiteRuleRollbackState {
 
 type StorageDefaults = Record<string, unknown>;
 type StorageResult<T extends StorageDefaults> = T & Record<string, unknown>;
+type ApplicationPredicate = () => boolean | Promise<boolean>;
 
 void loadVigilConnection();
 void loadNoisePreference();
@@ -407,45 +408,21 @@ async function performCheckUrl(
       })
     });
   } catch {
-    await pulseFlagsReady;
-    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
-      return await supersedingCheckResult(tabId, generation, options);
-    }
-    await setBadge(tabId, "OFF", "#9b2f2f");
-    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
-      return await supersedingCheckResult(tabId, generation, options);
-    }
-    return offlineCheckResult();
+    return await completeOfflineCheck(tabId, generation, url, options);
   }
 
   if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
     return await supersedingCheckResult(tabId, generation, options);
   }
   if (!response.ok) {
-    await pulseFlagsReady;
-    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
-      return await supersedingCheckResult(tabId, generation, options);
-    }
-    await setBadge(tabId, "OFF", "#9b2f2f");
-    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
-      return await supersedingCheckResult(tabId, generation, options);
-    }
-    return { ...offlineCheckResult(), status: response.status };
+    return await completeOfflineCheck(tabId, generation, url, options, response.status);
   }
 
   let result: ExtensionCheckResult;
   try {
     result = await response.json() as ExtensionCheckResult;
   } catch {
-    await pulseFlagsReady;
-    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
-      return await supersedingCheckResult(tabId, generation, options);
-    }
-    await setBadge(tabId, "OFF", "#9b2f2f");
-    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
-      return await supersedingCheckResult(tabId, generation, options);
-    }
-    return offlineCheckResult();
+    return await completeOfflineCheck(tabId, generation, url, options);
   }
   if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
     return await supersedingCheckResult(tabId, generation, options);
@@ -545,6 +522,25 @@ function offlineCheckResult(): ExtensionCheckResult {
   return { ok: false, offline: true, ...cachedPulseFlags };
 }
 
+async function completeOfflineCheck(
+  tabId: number,
+  generation: number,
+  url: string,
+  options: CheckUrlOptions,
+  status?: number
+): Promise<ExtensionCheckResult> {
+  await pulseFlagsReady;
+  if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+    return await supersedingCheckResult(tabId, generation, options);
+  }
+  await setBadge(tabId, "OFF", "#9b2f2f");
+  if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+    return await supersedingCheckResult(tabId, generation, options);
+  }
+  const result = offlineCheckResult();
+  return status === undefined ? result : { ...result, status };
+}
+
 async function applyPulsePolicyIfCurrent(
   tabId: number,
   generation: number,
@@ -569,7 +565,7 @@ async function applyPulsePolicyIfCurrent(
 
 async function rememberPulseFlags(
   value: unknown,
-  shouldApply: () => boolean | Promise<boolean> = () => true
+  shouldApply: ApplicationPredicate = () => true
 ): Promise<boolean> {
   if (!isRecord(value)) return true;
   const next: PulseFlagSnapshot = {};
@@ -743,7 +739,7 @@ async function loadNoisePreference(): Promise<boolean> {
 
 async function syncNoiseBlocking(
   enabled: boolean,
-  shouldApply: () => boolean | Promise<boolean> = () => true
+  shouldApply: ApplicationPredicate = () => true
 ): Promise<boolean> {
   return await enqueueNoiseUpdate(async (revision) => {
     if (revision !== noiseUpdateRevision || !await shouldApply()) return false;
@@ -754,7 +750,7 @@ async function syncNoiseBlocking(
 async function applyNoiseBlocking(
   enabled: boolean,
   revision: number,
-  shouldApply: () => boolean | Promise<boolean> = () => true
+  shouldApply: ApplicationPredicate = () => true
 ): Promise<boolean> {
   if (!chrome.declarativeNetRequest?.updateDynamicRules) return false;
   let previousEnabled = noiseRulesEnabled;
@@ -911,7 +907,7 @@ async function syncSiteBlocking(
   entries: ServerRuleEntry[],
   contentEntries: ServerRuleEntry[] = [],
   allowlistEntries: ServerRuleEntry[] = [],
-  shouldApply: () => boolean | Promise<boolean> = () => true
+  shouldApply: ApplicationPredicate = () => true
 ): Promise<RuleSyncResult> {
   const application = siteRuleApplicationQueue.then(() => applySiteBlocking(
     entries,
@@ -927,7 +923,7 @@ async function applySiteBlocking(
   entries: ServerRuleEntry[],
   contentEntries: ServerRuleEntry[],
   allowlistEntries: ServerRuleEntry[],
-  shouldApply: () => boolean | Promise<boolean>
+  shouldApply: ApplicationPredicate
 ): Promise<RuleSyncResult> {
   if (!chrome.declarativeNetRequest?.updateDynamicRules) {
     return { ok: false, count: 0, signature: "", error: "Declarative Net Request is unavailable" };

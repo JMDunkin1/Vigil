@@ -15,6 +15,9 @@ import type { ActivePolicy, FocusedSocialSettings, IntentionalPause, Intentional
 export const EXTENSION_APP_NAME = "Browser Extension";
 export { compactExtensionRuleSignature } from "./extensionRuleSignature.js";
 
+const EXTENSION_SITE_RULE_LIMIT = 300;
+const EXTENSION_CONTENT_RULE_LIMIT = 200;
+
 type BrowserPolicy = Omit<Partial<ActivePolicy>, "session"> & {
   kind: string;
   appLock?: { id?: string };
@@ -62,7 +65,7 @@ export function extensionRuleSnapshot(state: VigilState, now = new Date()) {
   const sessionPolicy = activePolicy(state, now);
   const baseline = baselinePolicy(state, now, { device: "computer" });
 
-  if (baseline?.profile?.mode === "blocklist") {
+  if (baseline?.profile) {
     addRuleEntries(entries, baseline.profile.blockedSites, baseline, "baseline");
   }
 
@@ -98,8 +101,11 @@ export function extensionRuleSnapshot(state: VigilState, now = new Date()) {
 
   const dynamic = canonicalExtensionDynamicSnapshot({
     rules: [...entries.values()],
-    contentRules: contentRulesForPolicy(state, sessionPolicy || baseline, now),
-    allowlistRules: allowlistRulesForPolicy(sessionPolicy)
+    contentRules: contentRulesForPolicies(state, sessionPolicy, baseline, now),
+    allowlistRules: [
+      ...allowlistRulesForPolicy(sessionPolicy),
+      ...allowlistRulesForPolicy(baseline)
+    ]
   });
   return {
     ok: true,
@@ -149,10 +155,17 @@ export function extensionDynamicRuleSignature(snapshot: Partial<ExtensionDynamic
 }
 
 function canonicalExtensionDynamicSnapshot(snapshot: Partial<ExtensionDynamicSnapshot>): ExtensionDynamicSnapshot {
-  const rules = uniqueBy(snapshot.rules || [], (rule) => rule.domain)
+  // Select within Chrome's capacities before sorting so canonical output cannot
+  // alphabetically evict higher-priority enforcement rules.
+  const rules = uniqueBy(
+    [...(snapshot.rules || [])].sort((left, right) => rulePriority(right.reason) - rulePriority(left.reason)),
+    (rule) => rule.domain
+  )
+    .slice(0, EXTENSION_SITE_RULE_LIMIT)
     .sort((a, b) => a.domain.localeCompare(b.domain));
   const contentRules = uniqueBy(snapshot.contentRules || [], (rule) => String(rule.urlFilter || ""))
     .filter((rule) => Boolean(rule.urlFilter))
+    .slice(0, EXTENSION_CONTENT_RULE_LIMIT)
     .sort((a, b) => String(a.urlFilter).localeCompare(String(b.urlFilter)));
   const allowlistRules = uniqueBy((snapshot.allowlistRules || []).map((rule) => ({
     ...rule,
@@ -415,16 +428,26 @@ function addAdultBlocklistRuleEntries(entries: Map<string, ExtensionRule>, state
   }, "adult-blocklist");
 }
 
-function contentRulesForPolicy(state: VigilState, policy: ActivePolicy | null, now: Date): UrlRuleEntry[] {
-  if (!policy) return [];
-  const builtIn = contentFilterRuleEntries(state, policy).map((entry) => ({
+function contentRulesForPolicies(
+  state: VigilState,
+  active: ActivePolicy | null,
+  baseline: ActivePolicy | null,
+  now: Date
+): UrlRuleEntry[] {
+  const effective = active || baseline;
+  if (!effective) return [];
+  const builtIn = contentFilterRuleEntries(state, effective).map((entry) => ({
     ...entry,
     redirectUrl: blockedUrl(entry.label, {
-      ...policy,
+      ...effective,
       kind: "content-filter"
     }, safeBackUrl(state, {}, entry.fallbackUrl, null, now))
   }));
-  return [...builtIn, ...urlPatternRuleEntries(state, policy, now)];
+  return [
+    ...builtIn,
+    ...urlPatternRuleEntries(state, active, now),
+    ...urlPatternRuleEntries(state, baseline, now)
+  ];
 }
 
 function allowlistRulesForPolicy(policy: ActivePolicy | null): UrlRuleEntry[] {

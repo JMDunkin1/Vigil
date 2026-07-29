@@ -38,11 +38,6 @@ const elements = new Map<string, unknown>([
   ["#distanceScannerStatus", fakeElement()],
   ["#distanceScannerVideo", video]
 ]);
-const scanner = {
-  stream: null as MediaStream | null,
-  frame: null as number | null,
-  target: null
-};
 let scheduledFrames = 0;
 let detectorInstances = 0;
 const toasts: string[] = [];
@@ -74,8 +69,7 @@ try {
   const ui = createDistanceKeyUi({
     $: (selector: string) => elements.get(selector) as never,
     toast: (message: string) => toasts.push(message),
-    errorMessage: (error: unknown) => String(error),
-    scanner
+    errorMessage: (error: unknown) => String(error)
   });
 
   const opening = ui.openScanner("#target");
@@ -84,8 +78,6 @@ try {
   await opening;
 
   assert.equal(track.stopped, true, "a camera grant completed after close must be stopped immediately");
-  assert.equal(scanner.stream, null);
-  assert.equal(scanner.target, null);
   assert.equal(video.srcObject, null);
   assert.equal(videoPlayCalls, 0, "a stale camera grant must not restart video playback");
   assert.equal(detectorInstances, 0, "a stale camera grant must not start QR detection");

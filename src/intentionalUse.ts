@@ -55,6 +55,13 @@ const SOS_SESSION_LIMIT = 100;
 const RECOVERY_SETUP_RULE_ID = "porn-recovery-risk-pause";
 const RECOVERY_CHECK_IN_BEHAVIOR_ID = "daily-recovery-check-in";
 const RECOVERY_REPLACEMENT_BEHAVIOR_ID = "urge-replacement-loop";
+const PLAN_BLOCK_RETENTION_PRIORITY = {
+  required: 0,
+  active: 1,
+  future: 2,
+  incompleteHistory: 3,
+  completedHistory: 4
+} as const;
 const RECOVERY_RISK_SITES = [
   "x.com",
   "twitter.com",
@@ -92,6 +99,16 @@ interface IntentionalUseTimeOptions {
   segment?: { startedAt: Date; endedAt: Date };
 }
 
+interface PlanBlockNormalizationOptions {
+  state?: VigilState;
+  preserveUpdatedAt?: boolean;
+}
+
+interface PlanBlockRetentionOptions {
+  requiredId?: string;
+  normalizeEntries?: boolean;
+}
+
 interface BudgetSummary extends UnknownRecord {
   seconds: number;
   budgetSeconds: number;
@@ -111,8 +128,11 @@ interface PauseContext extends UnknownRecord {
 
 type IntentionalBody = UnknownRecord;
 
-export function normalizeIntentionalUse(current: Partial<IntentionalUseState> = {}, fresh: Partial<IntentionalUseState> = {}): IntentionalUseState {
-  const now = new Date();
+export function normalizeIntentionalUse(
+  current: Partial<IntentionalUseState> = {},
+  fresh: Partial<IntentionalUseState> = {},
+  now = new Date()
+): IntentionalUseState {
   return {
     ...fresh,
     ...current,
@@ -129,8 +149,8 @@ export function normalizeIntentionalUse(current: Partial<IntentionalUseState> = 
     planLists: normalizePlanLists(current.planLists || fresh.planLists || [], now).slice(0, PLAN_LIST_LIMIT),
     planItems: normalizePlanItems(current.planItems || fresh.planItems || [], now).slice(0, PLAN_ITEM_LIMIT),
     planBlocks: retainedPlanBlocks(current.planBlocks || fresh.planBlocks || [], now),
-    recoveryCheckIns: normalizeRecoveryCheckIns(current.recoveryCheckIns || fresh.recoveryCheckIns || []).slice(0, RECOVERY_CHECK_IN_LIMIT),
-    sosSessions: normalizeSosSessions(current.sosSessions || fresh.sosSessions || []).slice(0, SOS_SESSION_LIMIT),
+    recoveryCheckIns: normalizeRecoveryCheckIns(current.recoveryCheckIns || fresh.recoveryCheckIns || [], now).slice(0, RECOVERY_CHECK_IN_LIMIT),
+    sosSessions: normalizeSosSessions(current.sosSessions || fresh.sosSessions || [], now).slice(0, SOS_SESSION_LIMIT),
     accountability: {
       ...(fresh.accountability || {}),
       ...(current.accountability || {})
@@ -299,10 +319,13 @@ export function upsertIntentionalPlanBlock(state: VigilState, body: IntentionalB
   ensureIntentionalUse(state);
   const id = String(body.id || randomUUID());
   const existing = state.intentionalUse.planBlocks.find((block) => block.id === id);
-  const block = normalizePlanBlock(body, existing, id, now, state);
+  const block = normalizePlanBlock(body, existing, id, now, { state });
   if (existing) Object.assign(existing, block);
   else state.intentionalUse.planBlocks.unshift(block);
-  state.intentionalUse.planBlocks = retainedPlanBlocks(state.intentionalUse.planBlocks, now, block.id, false);
+  state.intentionalUse.planBlocks = retainedPlanBlocks(state.intentionalUse.planBlocks, now, {
+    requiredId: block.id,
+    normalizeEntries: false
+  });
   return block;
 }
 
@@ -364,7 +387,7 @@ export function recordIntentionalRecoveryCheckIn(state: VigilState, body: Intent
     at: now.toISOString(),
     dateKey: dateKey(now),
     weekKey: weekKey(now)
-  });
+  }, now);
   state.intentionalUse.recoveryCheckIns.unshift(checkIn);
   state.intentionalUse.recoveryCheckIns = state.intentionalUse.recoveryCheckIns.slice(0, RECOVERY_CHECK_IN_LIMIT);
   return checkIn;
@@ -812,26 +835,26 @@ function normalizeBehavior(
   };
 }
 
-function normalizeBehaviorCheckIns(checkIns: unknown): IntentionalBehaviorCheckIn[] {
+function normalizeBehaviorCheckIns(checkIns: unknown, now: Date): IntentionalBehaviorCheckIn[] {
   if (!Array.isArray(checkIns)) return [];
   return checkIns
     .filter(isUnknownRecord)
-    .map((checkIn) => normalizeBehaviorCheckIn(checkIn))
+    .map((checkIn) => normalizeBehaviorCheckIn(checkIn, now))
     .sort((a, b) => Date.parse(b.at || "") - Date.parse(a.at || ""));
 }
 
-function retainedBehaviorCheckIns(checkIns: unknown, now = new Date()): IntentionalBehaviorCheckIn[] {
+function retainedBehaviorCheckIns(checkIns: unknown, now: Date): IntentionalBehaviorCheckIn[] {
   const newestDateKey = trackingDateKey(now);
   const oldestDate = trackingDay(now);
   oldestDate.setDate(oldestDate.getDate() - BEHAVIOR_CHECK_IN_MAX_AGE_DAYS);
   const oldestDateKey = dateKey(oldestDate);
-  return normalizeBehaviorCheckIns(checkIns)
+  return normalizeBehaviorCheckIns(checkIns, now)
     .filter((checkIn) => checkIn.dateKey >= oldestDateKey && checkIn.dateKey <= newestDateKey)
     .slice(0, BEHAVIOR_CHECK_IN_LIMIT);
 }
 
-function normalizeBehaviorCheckIn(checkIn: UnknownRecord): IntentionalBehaviorCheckIn {
-  const at = safeIsoDate(checkIn.at) || new Date().toISOString();
+function normalizeBehaviorCheckIn(checkIn: UnknownRecord, now: Date): IntentionalBehaviorCheckIn {
+  const at = safeIsoDate(checkIn.at) || now.toISOString();
   return {
     id: String(checkIn.id || randomUUID()),
     behaviorId: String(checkIn.behaviorId || ""),
@@ -946,11 +969,18 @@ function normalizePlanBlocks(blocks: unknown, now = new Date()): IntentionalPlan
   if (!Array.isArray(blocks)) return [];
   return blocks
     .filter(isUnknownRecord)
-    .map((block) => normalizePlanBlock(block, block, String(block.id || randomUUID()), now, undefined, true))
+    .map((block) => normalizePlanBlock(block, block, String(block.id || randomUUID()), now, {
+      preserveUpdatedAt: true
+    }))
     .sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""));
 }
 
-function retainedPlanBlocks(blocks: unknown, now: Date, requiredId = "", normalizeEntries = true): IntentionalPlanBlock[] {
+function retainedPlanBlocks(
+  blocks: unknown,
+  now: Date,
+  options: PlanBlockRetentionOptions = {}
+): IntentionalPlanBlock[] {
+  const { requiredId = "", normalizeEntries = true } = options;
   const normalized = normalizeEntries
     ? normalizePlanBlocks(blocks, now)
     : (Array.isArray(blocks) ? [...blocks] as IntentionalPlanBlock[] : [])
@@ -958,25 +988,27 @@ function retainedPlanBlocks(blocks: unknown, now: Date, requiredId = "", normali
   if (normalized.length <= PLAN_BLOCK_LIMIT) return normalized;
   const nowMs = now.getTime();
   const ranked = [...normalized].sort((left, right) => {
-    const leftTier = planBlockRetentionTier(left, nowMs, requiredId);
-    const rightTier = planBlockRetentionTier(right, nowMs, requiredId);
-    if (leftTier !== rightTier) return leftTier - rightTier;
+    const leftPriority = planBlockRetentionPriority(left, nowMs, requiredId);
+    const rightPriority = planBlockRetentionPriority(right, nowMs, requiredId);
+    if (leftPriority !== rightPriority) return leftPriority - rightPriority;
     const leftStart = Date.parse(left.startsAt || "");
     const rightStart = Date.parse(right.startsAt || "");
-    return leftTier <= 2 ? leftStart - rightStart : rightStart - leftStart;
+    return leftPriority <= PLAN_BLOCK_RETENTION_PRIORITY.future
+      ? leftStart - rightStart
+      : rightStart - leftStart;
   });
   const retained = new Set(ranked.slice(0, PLAN_BLOCK_LIMIT));
   return normalized.filter((block) => retained.has(block));
 }
 
-function planBlockRetentionTier(block: IntentionalPlanBlock, nowMs: number, requiredId: string): number {
-  if (requiredId && block.id === requiredId) return 0;
+function planBlockRetentionPriority(block: IntentionalPlanBlock, nowMs: number, requiredId: string): number {
+  if (requiredId && block.id === requiredId) return PLAN_BLOCK_RETENTION_PRIORITY.required;
   const startsAt = Date.parse(block.startsAt || "");
   const endsAt = Date.parse(block.endsAt || "");
-  if (startsAt <= nowMs && endsAt > nowMs) return 1;
-  if (startsAt > nowMs) return 2;
-  if (!block.completed) return 3;
-  return 4;
+  if (startsAt <= nowMs && endsAt > nowMs) return PLAN_BLOCK_RETENTION_PRIORITY.active;
+  if (startsAt > nowMs) return PLAN_BLOCK_RETENTION_PRIORITY.future;
+  if (!block.completed) return PLAN_BLOCK_RETENTION_PRIORITY.incompleteHistory;
+  return PLAN_BLOCK_RETENTION_PRIORITY.completedHistory;
 }
 
 function normalizePlanBlock(
@@ -984,9 +1016,9 @@ function normalizePlanBlock(
   existing: Partial<IntentionalPlanBlock> = {},
   fallbackId: string = randomUUID(),
   now = new Date(),
-  state?: VigilState,
-  preserveUpdatedAt = false
+  options: PlanBlockNormalizationOptions = {}
 ): IntentionalPlanBlock {
+  const { state, preserveUpdatedAt = false } = options;
   const createdAt = existing.createdAt || now.toISOString();
   const startIso = safeIsoDate(body.startsAt) || safeIsoDate(existing.startsAt) || now.toISOString();
   const parsedStartMs = Date.parse(startIso);
@@ -1023,16 +1055,16 @@ function bodyValue(body: IntentionalBody, key: string, fallback: unknown): unkno
   return Object.hasOwn(body, key) ? body[key] : fallback;
 }
 
-function normalizeRecoveryCheckIns(checkIns: unknown): IntentionalRecoveryCheckIn[] {
+function normalizeRecoveryCheckIns(checkIns: unknown, now: Date): IntentionalRecoveryCheckIn[] {
   if (!Array.isArray(checkIns)) return [];
   return checkIns
     .filter(isUnknownRecord)
-    .map((checkIn) => normalizeRecoveryCheckIn(checkIn))
+    .map((checkIn) => normalizeRecoveryCheckIn(checkIn, now))
     .sort((a, b) => Date.parse(b.at || "") - Date.parse(a.at || ""));
 }
 
-function normalizeRecoveryCheckIn(checkIn: UnknownRecord): IntentionalRecoveryCheckIn {
-  const at = safeIsoDate(checkIn.at) || new Date().toISOString();
+function normalizeRecoveryCheckIn(checkIn: UnknownRecord, now: Date): IntentionalRecoveryCheckIn {
+  const at = safeIsoDate(checkIn.at) || now.toISOString();
   const kindValue = String(checkIn.kind || "");
   const statusValue = String(checkIn.status || "");
   const kind: IntentionalRecoveryKind = ["daily", "sos", "manual"].includes(kindValue) ? kindValue as IntentionalRecoveryKind : "daily";
@@ -1057,16 +1089,16 @@ function normalizeRecoveryCheckIn(checkIn: UnknownRecord): IntentionalRecoveryCh
   };
 }
 
-function normalizeSosSessions(sessions: unknown): IntentionalSosSession[] {
+function normalizeSosSessions(sessions: unknown, now: Date): IntentionalSosSession[] {
   if (!Array.isArray(sessions)) return [];
   return sessions
     .filter(isUnknownRecord)
-    .map((session) => normalizeSosSession(session))
+    .map((session) => normalizeSosSession(session, now))
     .sort((a, b) => Date.parse(b.startedAt || "") - Date.parse(a.startedAt || ""));
 }
 
-function normalizeSosSession(session: UnknownRecord): IntentionalSosSession {
-  const startedAt = safeIsoDate(session.startedAt) || new Date().toISOString();
+function normalizeSosSession(session: UnknownRecord, now: Date): IntentionalSosSession {
+  const startedAt = safeIsoDate(session.startedAt) || now.toISOString();
   return {
     id: String(session.id || randomUUID()),
     intent: normalizeSosIntent(session.intent),

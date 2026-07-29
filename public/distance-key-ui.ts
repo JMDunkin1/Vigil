@@ -1,17 +1,10 @@
 import { createDistanceKeyQrSvg } from "./distance-key-qr.js";
 import type { ControlElement } from "./app-model.js";
 
-interface DistanceScannerState {
-  stream: MediaStream | null;
-  frame: number | null;
-  target: ControlElement | null;
-}
-
 interface DistanceKeyUiContext {
   $: (selector: string) => ControlElement;
   toast(message: string): void;
   errorMessage(error: unknown): string;
-  scanner: DistanceScannerState;
 }
 
 interface BarcodeDetectorResult {
@@ -24,8 +17,10 @@ interface BarcodeDetectorConstructor {
 
 declare const BarcodeDetector: BarcodeDetectorConstructor;
 
-export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: DistanceKeyUiContext) {
+export function createDistanceKeyUi({ $, toast, errorMessage }: DistanceKeyUiContext) {
   let scannerGeneration = 0;
+  let scannerStream: MediaStream | null = null;
+  let scannerFrame: number | null = null;
 
   function showToken(token: string): void {
     const node = $("#distanceKeyToken");
@@ -58,7 +53,6 @@ export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: Distanc
     closeScanner();
     const generation = scannerGeneration;
     const isCurrent = () => scannerGeneration === generation;
-    scanner.target = target;
     $("#distanceScanner").classList.remove("hidden");
     $("#distanceScannerStatus").textContent = "Camera starting";
 
@@ -72,18 +66,19 @@ export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: Distanc
         for (const track of stream.getTracks()) track.stop();
         return;
       }
-      scanner.stream = stream;
+      scannerStream = stream;
+      const isCurrentStream = () => isCurrent() && scannerStream === stream;
       video.srcObject = stream;
       await video.play();
-      if (!isCurrent()) return;
+      if (!isCurrentStream()) return;
       const detector = new BarcodeDetector({ formats: ["qr_code"] });
       $("#distanceScannerStatus").textContent = "Point the camera at the printed distance key";
 
       const tick = async () => {
-        if (!isCurrent() || scanner.stream !== stream) return;
+        if (!isCurrentStream()) return;
         try {
           const codes = await detector.detect(video);
-          if (!isCurrent() || scanner.stream !== stream) return;
+          if (!isCurrentStream()) return;
           const value = normalizeDistanceKeyScan(codes[0]?.rawValue || "");
           if (value) {
             target.value = value;
@@ -95,9 +90,9 @@ export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: Distanc
           if (!isCurrent()) return;
           $("#distanceScannerStatus").textContent = "Scanning paused; adjust camera permission or type the key";
         }
-        if (isCurrent()) scanner.frame = requestAnimationFrame(tick);
+        if (isCurrentStream()) scannerFrame = requestAnimationFrame(tick);
       };
-      scanner.frame = requestAnimationFrame(tick);
+      scannerFrame = requestAnimationFrame(tick);
     } catch (error) {
       if (!isCurrent()) return;
       closeScanner();
@@ -107,13 +102,12 @@ export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: Distanc
 
   function closeScanner(): void {
     scannerGeneration += 1;
-    if (scanner.frame) cancelAnimationFrame(scanner.frame);
-    if (scanner.stream) {
-      for (const track of scanner.stream.getTracks()) track.stop();
+    if (scannerFrame) cancelAnimationFrame(scannerFrame);
+    if (scannerStream) {
+      for (const track of scannerStream.getTracks()) track.stop();
     }
-    scanner.stream = null;
-    scanner.frame = null;
-    scanner.target = null;
+    scannerStream = null;
+    scannerFrame = null;
     const video = $("#distanceScannerVideo") as unknown as HTMLVideoElement;
     if (video) video.srcObject = null;
     const scannerNode = $("#distanceScanner");

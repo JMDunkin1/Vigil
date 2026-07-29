@@ -309,13 +309,15 @@ function manageEngineHandoffSummary(
 export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicyTargets {
   const settings = currentIosSettings(state);
   const activePhonePolicy = activePolicy(state, now, { device: "phone" });
+  const baselinePhonePolicy = baselinePolicy(state, now, { device: "phone" });
   const activePhoneLimitBlocks = activeLimitBlocks(state, now, { device: "phone" });
   const limitOnly = !activePhonePolicy && activePhoneLimitBlocks.length > 0;
-  const policy = activePhonePolicy || baselinePolicy(state, now, { device: "phone" });
+  const policy = activePhonePolicy || baselinePhonePolicy;
   const profile = policy?.profile
     || profileById(state, settings.profileId || state.settings.activeProfileId)
     || state.profiles?.[0]
     || null;
+  const baselineProfile = baselinePhonePolicy?.profile;
   const focusedSocialEnforcementActive = Boolean(activePhonePolicy && profile?.id === SOFT_BLOCK_PROFILE_ID);
   const fullBrickActive = Boolean(activePhonePolicy && profile?.id === BRICK_MODE_PROFILE_ID);
   const fullLockoutActive = isFullLockoutPolicy(activePhonePolicy);
@@ -352,14 +354,16 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
   const profileAllowedSites = limitOnly
     ? []
     : profile?.allowedSites || [];
-  const profileBlockedSites = limitOnly
-    ? []
-    : profile?.blockedSites || [];
+  const profileBlockedSites = limitOnly ? [] : profile?.blockedSites || [];
+  const retainedBaselineBlockedSites = activePhonePolicy || limitOnly
+    ? baselineProfile?.blockedSites || []
+    : [];
   const activeLimitBundleIds = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.apps || []).filter(isLikelyIosBundleId));
   const activeLimitSites = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.sites || []));
-  const profilePatterns = limitOnly
-    ? []
-    : profile?.blockedUrlPatterns || [];
+  const profilePatterns = limitOnly ? [] : profile?.blockedUrlPatterns || [];
+  const retainedBaselinePatterns = activePhonePolicy || limitOnly
+    ? baselineProfile?.blockedUrlPatterns || []
+    : [];
   const focusedSocialSettings = normalizeFocusedSocialSettings(settings.focusedSocial);
   const socialDeniedUrls = focusedSocialEnforcementActive
     ? focusedSocialDeniedUrls(focusedSocialSettings)
@@ -371,19 +375,14 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     ...DEFAULT_EXPLICIT_SEARCH_TERMS,
     ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS
   ]);
-  const policyDeniedUrls = webMode === "allowlist"
-    ? uniqueUrls([
-      ...urlsFromSiteTargets(activeLimitSites),
-      ...urlsFromSiteTargets(profileBlockedSites),
-      ...urlsFromPatterns(profilePatterns),
-      ...urlsFromPatterns(socialDeniedUrls)
-    ])
-    : uniqueUrls([
-      ...urlsFromSiteTargets(activeLimitSites),
-      ...urlsFromSiteTargets(profileBlockedSites),
-      ...urlsFromPatterns(profilePatterns),
-      ...urlsFromPatterns(socialDeniedUrls)
-    ]);
+  const policyDeniedUrls = [
+    ...urlsFromSiteTargets(activeLimitSites),
+    ...urlsFromSiteTargets(profileBlockedSites),
+    ...urlsFromPatterns(profilePatterns),
+    ...urlsFromPatterns(socialDeniedUrls),
+    ...urlsFromSiteTargets(retainedBaselineBlockedSites),
+    ...urlsFromPatterns(retainedBaselinePatterns)
+  ];
   const adultDeniedUrls = urlsFromSiteTargets(adultBlocklistPreloadDomains(state));
   const deniedUrls = !settings.blockWeb && !fullLockoutActive
     ? []

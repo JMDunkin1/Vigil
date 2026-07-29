@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { ADULT_BLOCKLIST_SOURCES, clearAdultBlocklistCacheForTest, setAdultBlocklistDomainsForTest } from "../src/adultBlocklist.js";
 import { BRICK_MODE_PROFILE_ID, IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS, PANIC_LOCK_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDeviceUsageCredential, iosMdmDoctor, iosMdmQueuedPushEligible, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
-import { IOS_APP_STORE_BUNDLE_ID, IOS_PANIC_ALLOWED_APP_BUNDLE_IDS, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER, buildIosConfigurationProfile, iosProfileSummary } from "../src/iosProfiles.js";
+import { IOS_APP_STORE_BUNDLE_ID, IOS_PANIC_ALLOWED_APP_BUNDLE_IDS, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER, buildIosConfigurationProfile, iosPolicyTargets, iosProfileSummary } from "../src/iosProfiles.js";
 import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS } from "../src/socialFeatureFilters.js";
 import { activeLimitPolicy } from "../src/limits.js";
 import { parsePlist, plistData, toPlist } from "../src/plist.js";
@@ -344,6 +344,118 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
   assert.ok((webFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://youtube.com/"));
   assert.equal(webFilter?.AllowListBookmarks, undefined);
   assert.equal((webFilter?.DenyListURLs as unknown[]).includes("https://baseline-denied.test/"), true, "standalone time limits must preserve configured permanent URL blocks");
+}
+
+{
+  const state = defaultState();
+  state.deviceControls.ios.enabled = true;
+  const baseline = must(
+    profileById(state, state.settings.baselineProfileId),
+    "iPhone baseline profile"
+  );
+  baseline.mode = "allowlist";
+  baseline.blockedSites = ["baseline-policy-denied.test"];
+  baseline.blockedUrlPatterns = ["baseline-policy-path.test/private"];
+  baseline.allowedSites = ["baseline-policy-allowed.test"];
+  state.activeSessions.phone = {
+    id: "active-phone-projection",
+    title: "Active phone projection",
+    mode: "focus",
+    profileId: "active-phone-projection",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: {
+      id: "active-phone-projection",
+      name: "Active phone projection",
+      mode: "allowlist",
+      blockedApps: [],
+      blockedSites: ["active-phone-denied.test"],
+      blockedUrlPatterns: ["active-phone-path.test/private"],
+      allowedApps: [],
+      allowedSites: ["active-phone-allowed.test"]
+    }
+  };
+
+  const activeTargets = iosPolicyTargets(state, now);
+  assert.equal(activeTargets.deniedUrls.includes("https://baseline-policy-denied.test/"), true, "active phone policies must retain baseline site denies");
+  assert.equal(activeTargets.deniedUrls.includes("https://baseline-policy-path.test/private"), true, "active phone policies must retain baseline URL-pattern denies");
+  assert.equal(activeTargets.deniedUrls.includes("https://active-phone-denied.test/"), true);
+  assert.equal(activeTargets.deniedUrls.includes("https://active-phone-path.test/private"), true);
+  assert.equal(activeTargets.allowedUrls.includes("https://active-phone-allowed.test/"), true);
+  assert.equal(activeTargets.allowedUrls.includes("https://baseline-policy-allowed.test/"), false, "an active phone allowlist must not inherit baseline allowed sites");
+
+  state.activeSessions.phone = null;
+  state.limitBlocks = [{
+    id: "baseline-projection-phone-limit",
+    ruleId: "baseline-projection-phone-limit",
+    ruleName: "Baseline projection phone limit",
+    type: "time",
+    lockLevel: "deep",
+    apps: ["com.google.ios.youtube"],
+    sites: ["youtube.com"],
+    createdAt: now.toISOString(),
+    until: new Date(now.getTime() + 20 * 60_000).toISOString(),
+    deviceTargets: ["phone"]
+  }];
+  const limitTargets = iosPolicyTargets(state, now);
+  assert.equal(limitTargets.webMode, "denylist");
+  assert.equal(limitTargets.deniedUrls.includes("https://baseline-policy-denied.test/"), true, "standalone phone limits must retain baseline site denies");
+  assert.equal(limitTargets.deniedUrls.includes("https://baseline-policy-path.test/private"), true, "standalone phone limits must retain baseline URL-pattern denies");
+  assert.deepEqual(limitTargets.allowedUrls, [], "standalone phone limits must not inherit baseline allowed sites");
+}
+
+{
+  const state = defaultState();
+  state.deviceControls.ios.enabled = true;
+  const baseline = must(
+    profileById(state, state.settings.baselineProfileId),
+    "overflow baseline profile"
+  );
+  const baselineOverflowPatterns = Array.from(
+    { length: 400 },
+    (_, index) => `a-baseline-overflow-${String(index).padStart(3, "0")}.example.test/path`
+  );
+  baseline.blockedSites = [];
+  baseline.blockedUrlPatterns = baselineOverflowPatterns;
+  state.activeSessions.phone = {
+    id: "active-phone-cap-priority",
+    title: "Active phone cap priority",
+    mode: "focus",
+    profileId: "active-phone-cap-priority",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    deviceTargets: ["phone"],
+    profileSnapshot: {
+      id: "active-phone-cap-priority",
+      name: "Active phone cap priority",
+      mode: "allowlist",
+      blockedApps: [],
+      blockedSites: [],
+      blockedUrlPatterns: ["zzzz-active-priority.example.test/path"],
+      allowedApps: [],
+      allowedSites: ["active-phone-allowed.test"]
+    }
+  };
+
+  const targets = iosPolicyTargets(state, now);
+  assert.equal(targets.deniedUrls.length, 500, "active and baseline policy URLs must still obey Apple's deny-list cap");
+  assert.equal(
+    targets.deniedUrls.includes("https://zzzz-active-priority.example.test/path"),
+    true,
+    "active policy denies must be retained ahead of alphabetically earlier baseline overflow"
+  );
+  assert.equal(
+    targets.deniedUrls.includes(`https://${baselineOverflowPatterns.at(-1)}`),
+    false,
+    "baseline overflow must yield after active policy denies"
+  );
 }
 
 {

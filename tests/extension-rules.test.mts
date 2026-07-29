@@ -28,6 +28,10 @@ assert.match(backgroundSource, /chrome\.alarms/);
 assert.match(backgroundSource, /normalizedRuleUntil/);
 assert.match(backgroundSource, /PERSISTENT_RULE_UNTIL/);
 assert.match(backgroundSource, /vigilPulseFlags/);
+const backgroundSiteRuleLimit = 300;
+const backgroundContentRuleLimit = 200;
+assert.match(backgroundSource, /const SITE_BLOCK_RULE_LIMIT = 300;/u);
+assert.match(backgroundSource, /const CONTENT_BLOCK_RULE_LIMIT = 200;/u);
 assert.equal(staticRules.length, 4);
 assert.match(staticRulesText, /"safe"\s*,\s*"value": "active"/u);
 assert.match(staticRulesText, /"adlt"\s*,\s*"value": "strict"/u);
@@ -559,6 +563,98 @@ assert.ok(
 
 {
   const state = defaultState();
+  const baseline = must(
+    state.profiles.find((profile) => profile.id === state.settings.baselineProfileId),
+    "browser baseline profile"
+  );
+  baseline.mode = "allowlist";
+  baseline.blockedSites = ["baseline-only.test", "shared-policy.test"];
+  baseline.blockedUrlPatterns = ["baseline-path.test/private", "shared-policy.test/private"];
+  baseline.allowedSites = ["baseline-allowed.test"];
+
+  const idleRules = extensionRuleSnapshot(state, now);
+  assert.equal(idleRules.rules.some((rule) => rule.domain === "baseline-only.test"), true);
+  assert.equal(idleRules.contentRules.some((rule) => rule.urlFilter === "||baseline-path.test/private"), true);
+  assert.equal(
+    idleRules.allowlistRules.some((rule) => rule.excludedDomains?.includes("baseline-allowed.test")),
+    true,
+    "an idle baseline allowlist must be installed proactively"
+  );
+
+  state.activeSession = {
+    id: "active-browser-projection",
+    title: "Active browser projection",
+    mode: "focus",
+    profileId: "active-browser-projection",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    profileSnapshot: {
+      id: "active-browser-projection",
+      name: "Active browser projection",
+      mode: "blocklist",
+      blockedApps: [],
+      blockedSites: ["active-only.test", "shared-policy.test"],
+      blockedUrlPatterns: ["active-path.test/private", "shared-policy.test/private"],
+      allowedApps: [],
+      allowedSites: []
+    }
+  };
+
+  const rules = extensionRuleSnapshot(state, now);
+  assert.equal(rules.rules.some((rule) => rule.domain === "baseline-only.test"), true, "active sessions must retain baseline site denies");
+  assert.equal(rules.rules.some((rule) => rule.domain === "active-only.test"), true);
+  const sharedSite = must(rules.rules.find((rule) => rule.domain === "shared-policy.test"), "shared site rule");
+  assert.equal(sharedSite.reason, "session", "active site rules must take precedence over matching baseline rules");
+  assert.equal(sharedSite.until, state.activeSession.endsAt);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||baseline-path.test/private"), true, "active sessions must retain baseline URL-pattern denies");
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||active-path.test/private"), true);
+  const sharedPattern = must(
+    rules.contentRules.find((rule) => rule.urlFilter === "||shared-policy.test/private"),
+    "shared URL-pattern rule"
+  );
+  assert.equal(sharedPattern.until, state.activeSession.endsAt, "active URL-pattern rules must take precedence over matching baseline rules");
+  const baselineAllowlist = must(
+    rules.allowlistRules.find((rule) => rule.excludedDomains?.includes("baseline-allowed.test")),
+    "baseline browser allowlist rule"
+  );
+  assert.equal(baselineAllowlist.until, "", "the permanent baseline allowlist must remain permanent during an active session");
+}
+
+{
+  const state = defaultState();
+  state.settings.baselineProfileId = SOFT_BLOCK_PROFILE_ID;
+  state.activeSession = {
+    id: "active-with-soft-baseline",
+    title: "Active with Soft Lock baseline",
+    mode: "focus",
+    profileId: "active-with-soft-baseline",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    profileSnapshot: {
+      id: "active-with-soft-baseline",
+      name: "Active without Soft Lock filters",
+      mode: "blocklist",
+      blockedApps: [],
+      blockedSites: [],
+      blockedUrlPatterns: [],
+      allowedApps: [],
+      allowedSites: []
+    }
+  };
+
+  const rules = extensionRuleSnapshot(state, now);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/shorts"), true, "permanent content filters must remain active");
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), false, "baseline-only Soft Lock content filters must not leak into another active profile");
+}
+
+{
+  const state = defaultState();
   state.activeSession = null;
   state.appLocks = [{
     id: "extension-lock",
@@ -584,7 +680,12 @@ assert.ok(
   state.integrity.stateSeal.tamperDetail = "test integrity lockdown";
   const rules = extensionRuleSnapshot(state, now);
   assert.equal(rules.rules.some((rule) => rule.until === "until the tamper alarm is cleared"), true);
-  assert.equal(rules.contentRules.every((rule) => rule.until === "until the tamper alarm is cleared"), true);
+  assert.equal(rules.contentRules.some((rule) => rule.until === "until the tamper alarm is cleared"), true);
+  assert.equal(
+    rules.contentRules.every((rule) => ["", "until the tamper alarm is cleared"].includes(rule.until)),
+    true,
+    "integrity rules and permanent baseline rules must retain their respective lifetimes"
+  );
 }
 
 {
@@ -978,6 +1079,64 @@ assert.ok(
   ) as { count: number; signature: string };
   assert.equal(installedServerSnapshot.count, serverSnapshot.dynamicRuleCount);
   assert.equal(installedServerSnapshot.signature, serverSnapshot.dynamicRuleSignature);
+
+  const capacityNow = new Date();
+  const capacityState = defaultState();
+  capacityState.settings.adultBlocklistEnabled = false;
+  const capacityBaseline = must(
+    capacityState.profiles.find((profile) => profile.id === capacityState.settings.baselineProfileId),
+    "capacity-test baseline profile"
+  );
+  capacityBaseline.blockedSites = Array.from(
+    { length: backgroundSiteRuleLimit + 20 },
+    (_, index) => `aaa-baseline-site-${String(index).padStart(3, "0")}.test`
+  );
+  capacityBaseline.blockedUrlPatterns = Array.from(
+    { length: backgroundContentRuleLimit + 20 },
+    (_, index) => `aaa-baseline-content-${String(index).padStart(3, "0")}.test/private`
+  );
+  capacityState.activeSession = {
+    id: "capacity-priority",
+    title: "Capacity priority",
+    mode: "focus",
+    profileId: "capacity-priority",
+    lockLevel: "deep",
+    startedAt: capacityNow.toISOString(),
+    endsAt: new Date(capacityNow.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    profileSnapshot: {
+      id: "capacity-priority",
+      name: "Capacity priority",
+      mode: "blocklist",
+      blockedApps: [],
+      blockedSites: ["zzz-active-site.test"],
+      blockedUrlPatterns: ["zzz-active-content.test/private"],
+      allowedApps: [],
+      allowedSites: []
+    }
+  };
+  const capacitySnapshot = extensionRuleSnapshot(capacityState, capacityNow);
+  assert.equal(capacitySnapshot.rules.length, backgroundSiteRuleLimit);
+  assert.equal(capacitySnapshot.contentRules.length, backgroundContentRuleLimit);
+  assert.equal(capacitySnapshot.rules.at(-1)?.domain, "zzz-active-site.test",
+    "an active site rule must survive baseline overflow even when it sorts last");
+  assert.equal(capacitySnapshot.contentRules.at(-1)?.urlFilter, "||zzz-active-content.test/private",
+    "an active URL-pattern rule must survive baseline overflow even when it sorts last");
+  Object.assign(context, {
+    capacityRules: capacitySnapshot.rules,
+    capacityContentRules: capacitySnapshot.contentRules,
+    capacityAllowlistRules: capacitySnapshot.allowlistRules
+  });
+  const installedCapacitySnapshot = await runInContext(
+    "syncSiteBlocking(capacityRules, capacityContentRules, capacityAllowlistRules)",
+    context
+  ) as { ok: boolean; count: number; signature: string };
+  assert.equal(installedCapacitySnapshot.ok, true);
+  assert.equal(installedCapacitySnapshot.count, capacitySnapshot.dynamicRuleCount,
+    "the server count must describe the installable capacity-limited subset");
+  assert.equal(installedCapacitySnapshot.signature, capacitySnapshot.dynamicRuleSignature,
+    "the server signature must describe the installable capacity-limited subset");
 
   const persistentUntil = "until the tamper alarm is cleared";
   Object.assign(context, {

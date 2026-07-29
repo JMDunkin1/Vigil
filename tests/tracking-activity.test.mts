@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  applyActivityRovingFocus,
   activityAnchorZone,
   activityFocusTarget,
   aggregateHabitActivity,
@@ -9,7 +10,7 @@ import {
   habitActivityBarHeights,
   habitActivityDates,
   habitActivityLevel,
-  habitActivityPeriodStart,
+  habitActivityPeriod,
   nextHabitIndex,
   restoreActivityFocus,
   restoreHabitFocusControl,
@@ -35,20 +36,62 @@ assert.equal(leapDates.some((date) => localDateKey(date) === "2024-02-29"), true
 
 const partialWeekDates = habitActivityDates(new Date(2026, 6, 29, 12));
 const partialTodayIndex = partialWeekDates.findIndex((date) => localDateKey(date) === "2026-07-29");
+const partialMondayIndex = Math.floor(partialTodayIndex / 7) * 7;
+const partialCounts: HabitActivityCounts[] = partialWeekDates.map(() => ({
+  done: 0,
+  missed: 0,
+  unreported: 0,
+  total: 0
+}));
+for (let index = partialMondayIndex; index <= partialTodayIndex; index += 1) {
+  partialCounts[index] = { done: 1, missed: 0, unreported: 0, total: 1 };
+}
+const partialToday = new Date(2026, 6, 29);
+const currentPartialWeek = habitActivityPeriod(
+  partialWeekDates,
+  partialCounts,
+  partialTodayIndex,
+  "weekly",
+  partialToday
+);
 assert.equal(
-  localDateKey(habitActivityPeriodStart(partialWeekDates, partialTodayIndex, "weekly")),
+  localDateKey(currentPartialWeek.start),
   "2026-07-27",
   "the current partial week's announced range must begin on its Monday"
 );
 assert.equal(
-  localDateKey(habitActivityPeriodStart(partialWeekDates, 6, "weekly")),
+  currentPartialWeek.end.getTime(),
+  partialToday.getTime(),
+  "the current partial week's announced range must end exactly on today"
+);
+assert.deepEqual(currentPartialWeek.counts, { done: 3, missed: 0, unreported: 0, total: 3 });
+
+const historicalWeek = habitActivityPeriod(partialWeekDates, partialCounts, 6, "weekly", partialToday);
+assert.equal(
+  localDateKey(historicalWeek.start),
   localDateKey(partialWeekDates[0]),
   "a completed historical week must retain its full Monday-through-Sunday range"
 );
+assert.equal(localDateKey(historicalWeek.end), localDateKey(partialWeekDates[6]));
+
+const cumulativePeriod = habitActivityPeriod(
+  partialWeekDates,
+  partialCounts,
+  partialTodayIndex,
+  "cumulative",
+  partialToday
+);
 assert.equal(
-  localDateKey(habitActivityPeriodStart(partialWeekDates, partialTodayIndex, "cumulative")),
+  localDateKey(cumulativePeriod.start),
   localDateKey(partialWeekDates[0])
 );
+assert.equal(cumulativePeriod.end.getTime(), partialToday.getTime());
+assert.deepEqual(cumulativePeriod.counts, currentPartialWeek.counts);
+
+const dailyPeriod = habitActivityPeriod(partialWeekDates, partialCounts, partialTodayIndex, "daily", partialToday);
+assert.equal(dailyPeriod.start.getTime(), partialToday.getTime());
+assert.equal(dailyPeriod.end.getTime(), partialToday.getTime());
+assert.deepEqual(dailyPeriod.counts, { done: 1, missed: 0, unreported: 0, total: 1 });
 
 const daily: HabitActivityCounts[] = [
   { done: 0, missed: 0, unreported: 4, total: 4 },
@@ -176,6 +219,14 @@ try {
 
   const dayIdentity = captureActivityFocus(activityRoot);
   assert.deepEqual(dayIdentity, { kind: "day", value: String(arrowedDayIndex) });
+  const outsideActivity = new FakeActivityButton("day", 99);
+  (document as unknown as { activeElement: unknown }).activeElement = outsideActivity;
+  assert.equal(
+    captureActivityFocus(activityRoot),
+    null,
+    "activity rerenders must not capture or move focus that is outside the activity grid"
+  );
+  (document as unknown as { activeElement: unknown }).activeElement = oldArrowedDay;
   const selectedDayAfterRender = new FakeActivityButton("day", 8, 0);
   const arrowedDayAfterRender = new FakeActivityButton("day", arrowedDayIndex);
   const dayPeerAfterRender = new FakeActivityButton("day", 22);
@@ -187,6 +238,17 @@ try {
     "a rerender must preserve the arrowed daily cell as the sole roving tab stop"
   );
   assert.deepEqual(arrowedDayAfterRender.focusCalls, [{ preventScroll: true }]);
+
+  assert.equal(
+    applyActivityRovingFocus(activityRoot, ".habit-activity-cell", dayPeerAfterRender as unknown as HTMLButtonElement),
+    true
+  );
+  assert.deepEqual(
+    activityControls.map((button) => button.tabIndex),
+    [-1, -1, 0],
+    "keyboard navigation must use the same sole-tab-stop invariant as rerender restoration"
+  );
+  assert.deepEqual(dayPeerAfterRender.focusCalls, [{}]);
 
   const oldArrowedWeek = new FakeActivityButton("week", 12, 0);
   activityControls.splice(0, activityControls.length, oldArrowedWeek);

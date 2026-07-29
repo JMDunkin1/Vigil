@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { defaultState, NORMAL_PROFILE_ID } from "../src/defaults.js";
 import { intentionalUseSummary, normalizeIntentionalUse, recordIntentionalBehaviorCheckIn } from "../src/intentionalUse.js";
-import { trackingDateKey } from "../src/time.js";
+import { dateKey, trackingDateKey, weekKey } from "../src/time.js";
 
 const now = new Date("2026-07-10T12:00:00-04:00");
 const state = defaultState();
@@ -136,7 +136,7 @@ assert.equal(
   "the oldest valid backdated check-in must survive normalization and summary cleanup"
 );
 
-const retentionNow = new Date();
+const retentionNow = new Date("2026-07-10T12:00:00-04:00");
 const retentionDateKey = trackingDateKey(retentionNow);
 const bounded = normalizeIntentionalUse({
   behaviorCheckIns: Array.from({ length: 10_001 }, (_, index) => ({
@@ -149,5 +149,62 @@ const bounded = normalizeIntentionalUse({
     dateKey: retentionDateKey,
     weekKey: "current"
   }))
-});
+}, {}, retentionNow);
 assert.equal(bounded.behaviorCheckIns.length, 10_000, "age-based retention must retain an absolute storage safety ceiling");
+
+{
+  const normalizationNow = new Date("2026-07-10T12:34:56-04:00");
+  const normalized = normalizeIntentionalUse({
+    behaviorCheckIns: [{
+      id: "invalid-time-behavior",
+      behaviorId: "habit-reading",
+      behaviorName: "Reading",
+      value: 1,
+      note: "",
+      at: "invalid",
+      dateKey: "",
+      weekKey: ""
+    }],
+    recoveryCheckIns: [{
+      id: "invalid-time-recovery",
+      kind: "daily",
+      status: "clean",
+      mood: "",
+      urgeIntensity: 0,
+      stress: null,
+      sleepHours: null,
+      exerciseMinutes: null,
+      trigger: "",
+      action: "",
+      note: "",
+      at: "invalid",
+      dateKey: "",
+      weekKey: ""
+    }],
+    sosSessions: [{
+      id: "invalid-time-sos",
+      intent: "calm",
+      trigger: "",
+      urgeIntensity: 1,
+      reasonWhy: "",
+      replacement: "",
+      plan: [],
+      startedAt: "invalid",
+      dateKey: "",
+      weekKey: ""
+    }]
+  }, {}, normalizationNow);
+  const expectedTimestamp = normalizationNow.toISOString();
+  const expectedDateKey = dateKey(normalizationNow);
+  const expectedWeekKey = weekKey(normalizationNow);
+
+  assert.equal(normalized.behaviorCheckIns[0]?.at, expectedTimestamp);
+  assert.equal(normalized.behaviorCheckIns[0]?.dateKey, expectedDateKey);
+  assert.equal(normalized.behaviorCheckIns[0]?.weekKey, expectedWeekKey);
+  assert.equal(normalized.recoveryCheckIns[0]?.at, expectedTimestamp);
+  assert.equal(normalized.recoveryCheckIns[0]?.dateKey, expectedDateKey);
+  assert.equal(normalized.recoveryCheckIns[0]?.weekKey, expectedWeekKey);
+  assert.equal(normalized.sosSessions[0]?.startedAt, expectedTimestamp);
+  assert.equal(normalized.sosSessions[0]?.dateKey, expectedDateKey);
+  assert.equal(normalized.sosSessions[0]?.weekKey, expectedWeekKey);
+}

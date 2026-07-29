@@ -7,6 +7,7 @@ import { doctorRows, formatDoctorRows } from "../src/doctorReport.js";
 import { extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { assertFoolproofReadyForStrict, extensionDynamicRulesReady, extensionVersionReady, foolproofBlockers } from "../src/foolproof.js";
 import { clearIntegrityTamper, clearTrustedSourceSealDrift, detectClockTamper, detectHardeningDrift, detectRuntimeInterruption, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, protectedLockActive, syncAppleContentFilterLockdown } from "../src/integrityLockdown.js";
+import { upsertIntentionalPlanBlock } from "../src/intentionalUse.js";
 import { emergencyDelaySeconds, interventionSummary, recentBlockAttempts } from "../src/intervention.js";
 import { updateKeyholderSettings } from "../src/keyholder.js";
 import { activeLimitPolicy } from "../src/limits.js";
@@ -851,6 +852,28 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   assert.ok(gap);
   assert.equal(gap.lockdown, true);
   assert.equal(gap.overlap?.kind, "schedule");
+}
+
+{
+  const state = defaultState();
+  const detectedAt = new Date(2026, 4, 28, 12, 0, 0);
+  const observedAt = new Date(2026, 4, 28, 16, 0, 0);
+  upsertIntentionalPlanBlock(state, {
+    id: "offline-planner-block",
+    title: "Offline planner block",
+    startsAt: new Date(2026, 4, 28, 9, 0, 0).toISOString(),
+    endsAt: new Date(2026, 4, 28, 18, 0, 0).toISOString(),
+    profileId: "default",
+    lockLevel: "deep",
+    enabled: true,
+    deviceTargets: ["computer"]
+  }, observedAt);
+  const gap = detectRuntimeInterruption(state, {
+    id: "planner-runtime-interruption",
+    detectedAt: detectedAt.toISOString()
+  }, observedAt);
+  assert.equal(gap?.lockdown, true);
+  assert.equal(gap?.overlap?.kind, "planner");
 }
 
 {

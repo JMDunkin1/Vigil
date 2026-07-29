@@ -14,6 +14,9 @@ const RUNTIME_INTERRUPTION_FILENAME = "runtime-interruption.json";
 const RUNTIME_INTERRUPTION_VERSION = 1;
 const MAX_RUNTIME_INTERRUPTION_BYTES = 8 * 1024;
 const PRIVATE_FILE_MODE = 0o600;
+const RUNTIME_EVIDENCE_READ_FLAGS = constants.O_RDONLY
+  | (constants.O_NOFOLLOW || 0)
+  | (constants.O_NONBLOCK || 0);
 
 export interface RuntimeReadyRecord {
   pid: number;
@@ -821,10 +824,7 @@ async function readRuntimeInterruptionSnapshotAttempt(
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
     try {
-      handle = await open(
-        path,
-        constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)
-      );
+      handle = await open(path, RUNTIME_EVIDENCE_READ_FLAGS);
     } catch (error) {
       const code = fileErrorCode(error);
       if (code === "ENOENT") return { result: { status: "missing" } };
@@ -1000,7 +1000,7 @@ export async function quarantineRuntimeInterruption(dataDir: string, now = new D
   const timestamp = now.getTime();
   if (!Number.isFinite(timestamp)) throw new Error("Vigil cannot quarantine interruption evidence with an invalid timestamp.");
   const path = runtimeInterruptionPath(dataDir);
-  let metadata: Awaited<ReturnType<typeof lstat>>;
+  let metadata: Stats;
   try {
     metadata = await lstat(path);
   } catch (error) {
@@ -1013,12 +1013,7 @@ export async function quarantineRuntimeInterruption(dataDir: string, now = new D
   try {
     const movedMetadata = await lstat(evidencePath);
     await chmodPrivateIfSameSafeFile(evidencePath, movedMetadata);
-    const directory = await open(dataDir, constants.O_RDONLY);
-    try {
-      await directory.sync();
-    } finally {
-      await directory.close();
-    }
+    await syncDirectory(dataDir);
   } catch (error) {
     throw Object.assign(new Error(`Vigil quarantined invalid runtime interruption evidence at ${evidencePath}, but could not durably secure it.`), {
       cause: error,
@@ -1063,7 +1058,7 @@ function fileErrorCode(error: unknown): string {
 
 async function chmodPrivateIfSameSafeFile(
   path: string,
-  expected: Awaited<ReturnType<typeof lstat>>
+  expected: Stats
 ): Promise<void> {
   if (
     !expected.isFile()
@@ -1073,15 +1068,11 @@ async function chmodPrivateIfSameSafeFile(
   ) return;
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
-    handle = await open(
-      path,
-      constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)
-    );
+    handle = await open(path, RUNTIME_EVIDENCE_READ_FLAGS);
     const opened = await handle.stat();
     if (
       !opened.isFile()
-      || opened.dev !== expected.dev
-      || opened.ino !== expected.ino
+      || !sameFileIdentity(opened, expected)
       || opened.nlink !== 1
       || (typeof process.getuid === "function" && opened.uid !== process.getuid())
     ) return;

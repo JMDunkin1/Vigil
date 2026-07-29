@@ -9,15 +9,11 @@ type Control = {
 };
 
 class FakeAudioNode {
-  disconnected = false;
-
   connect<T>(target: T): T {
     return target;
   }
 
-  disconnect(): void {
-    this.disconnected = true;
-  }
+  disconnect(): void {}
 }
 
 class FakeGainNode extends FakeAudioNode {
@@ -36,6 +32,7 @@ class FakeAnalyserNode extends FakeAudioNode {
   minDecibels = -100;
   maxDecibels = -30;
   frequencyLevel = 220;
+  frequencyGradient = false;
   signalLevel = 0.12;
 
   constructor(context: FakeAudioContext) {
@@ -49,6 +46,12 @@ class FakeAnalyserNode extends FakeAudioNode {
   }
 
   getByteFrequencyData(data: Uint8Array): void {
+    if (this.frequencyGradient) {
+      for (let index = 0; index < data.length; index += 1) {
+        data[index] = Math.round(255 * index / Math.max(1, data.length - 1));
+      }
+      return;
+    }
     data.fill(this.frequencyLevel);
   }
 
@@ -356,10 +359,24 @@ try {
   assert.equal(playingLevel > 0.4, true, "a strong live signal must produce visibly tall spectrum bars");
 
   analysers[0].signalLevel = 0;
-  analysers[0].frequencyLevel = 0;
   for (let frame = 0; frame < 12; frame += 1) runAnimationFrame();
   const silentLevel = Number(waveLevels[0].get("--wave-level"));
-  assert.equal(silentLevel < 0.11, true, "silence must settle the spectrum close to its idle baseline");
+  assert.equal(
+    silentLevel < 0.11,
+    true,
+    "a silent time-domain signal must settle near idle even when the frequency bins remain nonzero"
+  );
+
+  analysers[0].signalLevel = 0.12;
+  analysers[0].frequencyGradient = true;
+  for (let frame = 0; frame < 3; frame += 1) runAnimationFrame();
+  const lowBandLevel = Number(waveLevels[0].get("--wave-level"));
+  const highBandLevel = Number(waveLevels.at(-1)?.get("--wave-level"));
+  assert.equal(
+    highBandLevel > lowBandLevel + 0.1,
+    true,
+    "live spectrum bars must reflect independently varying frequency bins"
+  );
 
   setReducedMotion(true);
   assert.equal(animationFrames.size, 0, "turning Reduce Motion on must stop an active waveform");

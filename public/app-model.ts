@@ -610,14 +610,10 @@ export interface UiState {
   selectedProfileId: string | null;
   selectedScheduleId: string | null;
   selectedGrayscaleScheduleId: string | null;
+  grayscaleSettingsSavePending: boolean;
   pendingEmergencyId: string | null;
   pendingMaintenanceId: string | null;
   timer: ReturnType<typeof setInterval> | null;
-  distanceScanner: {
-    stream: MediaStream | null;
-    frame: number | null;
-    target: ControlElement | null;
-  };
 }
 
 export interface SessionStartResponse {

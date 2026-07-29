@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
-import { isLoopbackHostHeader } from "./apiSecurity.js";
+import { truthy } from "./booleans.js";
 import { DATA_DIR } from "./store.js";
 import type { UnknownRecord } from "./types.js";
 
@@ -16,8 +16,6 @@ const AUTH_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
 const MAX_AUTH_ATTEMPT_KEYS = 2_048;
 const SENSITIVE_HOSTED_ADMIN_GET_PATHS = new Set([
   "/api/diagnostic/export",
-  "/api/devices/ios/mdm/doctor",
-  "/api/devices/ios/mdm/enrollment.mobileconfig",
   "/api/devices/ios/profile.mobileconfig"
 ]);
 
@@ -306,24 +304,8 @@ function cookieValue(header: string | undefined, key: string): string {
 }
 
 function assertFirstAdminBootstrapAuthorized(request: IncomingMessage): void {
-  if (hostedAccountsEnabled()) {
-    if (bootstrapTokenMatches(request)) return;
-    throw authError(403, "First administrator creation requires a valid bootstrap token in hosted mode.");
-  }
-  if (
-    isLoopbackHostHeader(request.headers.host)
-    && isLoopbackRemoteAddress(request.socket?.remoteAddress)
-  ) return;
   if (bootstrapTokenMatches(request)) return;
-  throw authError(403, "First administrator creation requires loopback access or a valid bootstrap token.");
-}
-
-function isLoopbackRemoteAddress(value: unknown): boolean {
-  const address = String(value || "").trim().toLowerCase();
-  if (address === "::1") return true;
-  const ipv4 = address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
-  return /^127(?:\.\d{1,3}){3}$/.test(ipv4)
-    && ipv4.split(".").slice(1).every((part) => Number(part) <= 255);
+  throw authError(403, "First administrator creation requires a valid bootstrap token in hosted mode.");
 }
 
 function bootstrapTokenMatches(request: IncomingMessage): boolean {
@@ -465,10 +447,6 @@ function derivePassword(password: string, salt: Buffer): Promise<Buffer> {
       else resolveValue(key);
     });
   });
-}
-
-function truthy(value: unknown): boolean {
-  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
 function isNodeErrorCode(error: unknown, code: string): boolean {

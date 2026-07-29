@@ -46,18 +46,18 @@ interface AppEventsContext {
 
 export async function drainLatestSettingsThroughRefresh<T>(
   takePending: () => T | null,
-  hasPending: () => boolean,
   save: (value: T) => Promise<void>,
   refresh: () => Promise<void>
 ): Promise<void> {
+  let value = takePending();
   while (true) {
-    let value = takePending();
     while (value !== null) {
       await save(value);
       value = takePending();
     }
     await refresh();
-    if (!hasPending()) return;
+    value = takePending();
+    if (value === null) return;
   }
 }
 
@@ -269,7 +269,7 @@ export function bindAppEvents(context: AppEventsContext) {
   });
   const saveGrayscaleSettings = async () => {
     pendingGrayscaleSettings = readGrayscaleSettings();
-    grayscaleSettingsForm.dataset.savePending = "true";
+    state.grayscaleSettingsSavePending = true;
     if (!grayscaleSettingsSavePromise) {
       grayscaleSettingsSavePromise = (async () => {
         try {
@@ -279,7 +279,6 @@ export function bindAppEvents(context: AppEventsContext) {
               pendingGrayscaleSettings = null;
               return body;
             },
-            () => pendingGrayscaleSettings !== null,
             async (body) => {
               try {
                 await post("/api/grayscale/settings", body);
@@ -292,7 +291,7 @@ export function bindAppEvents(context: AppEventsContext) {
           );
         } finally {
           grayscaleSettingsSavePromise = null;
-          delete grayscaleSettingsForm.dataset.savePending;
+          state.grayscaleSettingsSavePending = false;
         }
       })();
     }

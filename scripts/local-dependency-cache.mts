@@ -7,6 +7,8 @@ const CACHE_SCHEMA = 1;
 const CACHE_DIRECTORY = "local-dependencies-v1";
 const READY_FILENAME = "ready.json";
 const REQUIRED_PACKAGES = ["@electron/asar", "electron", "electron-builder", "typescript"] as const;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
+const UUID_V4_PATTERN = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
 
 export interface LocalDependencyCacheDescriptor {
   schema: 1;
@@ -132,16 +134,15 @@ export async function publishLocalDependencyCache(
 }
 
 export function localDependencyCacheRoot(updaterDir: string, key: string): string {
-  if (!/^[a-f0-9]{64}$/u.test(key)) throw new Error("Vigil's dependency cache key is invalid.");
+  if (!isSha256(key)) throw new Error("Vigil's dependency cache key is invalid.");
   return join(updaterDir, CACHE_DIRECTORY, key);
 }
 
 async function cleanupInvalidDependencyCaches(cacheParent: string, key: string): Promise<void> {
   const invalidCachePrefix = `${key}.invalid-`;
-  const uuidV4Pattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
   for (const entry of await readdir(cacheParent, { withFileTypes: true })) {
     if (!entry.name.startsWith(invalidCachePrefix)
-      || !uuidV4Pattern.test(entry.name.slice(invalidCachePrefix.length))) continue;
+      || !UUID_V4_PATTERN.test(entry.name.slice(invalidCachePrefix.length))) continue;
     await rm(join(cacheParent, entry.name), { recursive: true, force: true }).catch(() => undefined);
   }
 }
@@ -159,9 +160,9 @@ export function localDependencyCacheMarkerMatches(
     && marker.packageJsonSha256 === descriptor.packageJsonSha256
     && marker.packageLockSha256 === descriptor.packageLockSha256
     && marker.platform === descriptor.platform
-    && Boolean(marker.installedPackageLockSha256 && /^[a-f0-9]{64}$/u.test(marker.installedPackageLockSha256))
-    && Boolean(marker.nodeModulesTreeSha256 && /^[a-f0-9]{64}$/u.test(marker.nodeModulesTreeSha256))
-    && JSON.stringify(marker.packageVersions) === JSON.stringify(descriptor.packageVersions);
+    && isSha256(marker.installedPackageLockSha256)
+    && isSha256(marker.nodeModulesTreeSha256)
+    && sameStringRecord(marker.packageVersions, descriptor.packageVersions);
 }
 
 async function localDependencyCacheReady(
@@ -287,6 +288,21 @@ function currentUid(): number {
 
 function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && SHA256_PATTERN.test(value);
+}
+
+function sameStringRecord(
+  left: Record<string, string> | undefined,
+  right: Record<string, string>
+): boolean {
+  if (!left) return false;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length
+    && rightKeys.every((key) => left[key] === right[key]);
 }
 
 async function pathExists(path: string): Promise<boolean> {

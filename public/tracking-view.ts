@@ -19,6 +19,12 @@ export interface HabitActivityCounts {
   total: number;
 }
 
+interface HabitActivityPeriod {
+  start: Date;
+  end: Date;
+  counts: HabitActivityCounts;
+}
+
 export interface ActivityFocusIdentity {
   kind: "day" | "week";
   value: string;
@@ -240,12 +246,12 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
         cell.dataset.level = String(level);
         cell.disabled = future;
         cell.tabIndex = !future && index === focusIndex ? 0 : -1;
-        cell.setAttribute("aria-label", activityAriaLabel(date, dates[0], counts, activityMode));
+        cell.setAttribute("aria-label", activityAriaLabel(date, date, counts, activityMode));
         if (dateKey === selectedKey) {
           cell.setAttribute("aria-controls", "habitFocus");
           cell.setAttribute("aria-expanded", String(focusOpen));
         }
-        cell.title = activityTitle(date, dates[0], counts, activityMode);
+        cell.title = activityTitle(date, date, counts, activityMode);
         cell.addEventListener("click", () => selectDate(date, true));
         cell.addEventListener("keydown", (event) => moveActivityFocus(event, index, dates.length));
         activityRoot.append(cell);
@@ -256,13 +262,13 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
 
     activityRoot.append(focusSection);
     renderMonthLabels(dates, effectiveToday);
-    const selectedActivityIndex = activityMode === "daily"
-      ? focusIndex
-      : Math.min(dates.length - 1, (Math.floor(focusIndex / DAYS_PER_WEEK) * DAYS_PER_WEEK) + DAYS_PER_WEEK - 1);
-    const selectedCounts = aggregateHabitActivity(dailyCounts, selectedActivityIndex, activityMode);
-    const selectedPeriodEnd = earlierDate(dates[selectedActivityIndex], effectiveToday);
-    const selectedPeriodStart = habitActivityPeriodStart(dates, selectedActivityIndex, activityMode);
-    activityStatus.textContent = activityAriaLabel(selectedPeriodEnd, selectedPeriodStart, selectedCounts, activityMode);
+    const selectedPeriod = habitActivityPeriod(dates, dailyCounts, focusIndex, activityMode, effectiveToday);
+    activityStatus.textContent = activityAriaLabel(
+      selectedPeriod.end,
+      selectedPeriod.start,
+      selectedPeriod.counts,
+      activityMode
+    );
     restoreActivityFocus(activityRoot, focusedActivity);
   }
 
@@ -279,13 +285,9 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const todayIndex = Math.max(0, dates.findIndex((date) => isSameDay(date, effectiveToday)));
     const currentWeek = Math.floor(todayIndex / DAYS_PER_WEEK);
 
-    weeklyCounts.forEach((weekCounts, weekIndex) => {
+    heights.forEach((height, weekIndex) => {
       const activityIndex = Math.min(dates.length - 1, (weekIndex * DAYS_PER_WEEK) + DAYS_PER_WEEK - 1);
-      const periodEnd = earlierDate(dates[activityIndex], effectiveToday);
-      const periodStart = habitActivityPeriodStart(dates, activityIndex, barMode);
-      const counts = barMode === "weekly"
-        ? weekCounts
-        : aggregateHabitActivity(dailyCounts, activityIndex, "cumulative");
+      const period = habitActivityPeriod(dates, dailyCounts, activityIndex, barMode, effectiveToday);
       const bar = document.createElement("button");
       bar.type = "button";
       bar.className = [
@@ -296,19 +298,19 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       bar.dataset.activityWeek = String(weekIndex);
       bar.disabled = weekIndex > currentWeek;
       bar.tabIndex = weekIndex === selectedWeek ? 0 : -1;
-      bar.setAttribute("aria-label", activityAriaLabel(periodEnd, periodStart, counts, barMode));
+      bar.setAttribute("aria-label", activityAriaLabel(period.end, period.start, period.counts, barMode));
       if (weekIndex === selectedWeek) {
         bar.setAttribute("aria-controls", "habitFocus");
         bar.setAttribute("aria-expanded", String(focusOpen));
       }
-      bar.title = activityTitle(periodEnd, periodStart, counts, barMode);
+      bar.title = activityTitle(period.end, period.start, period.counts, barMode);
       for (let row = DAYS_PER_WEEK; row >= 1; row -= 1) {
         const segment = document.createElement("span");
-        segment.className = `habit-activity-bar-cell${row <= heights[weekIndex] ? " is-filled" : ""}`;
+        segment.className = `habit-activity-bar-cell${row <= height ? " is-filled" : ""}`;
         segment.setAttribute("aria-hidden", "true");
         bar.append(segment);
       }
-      bar.addEventListener("click", () => selectDate(periodEnd, true));
+      bar.addEventListener("click", () => selectDate(period.end, true));
       bar.addEventListener("keydown", (event) => moveActivityBarFocus(event, weekIndex, currentWeek));
       activityRoot.append(bar);
     });
@@ -333,12 +335,8 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const targetIndex = activityFocusTarget(index, event.key, length, todayIndex);
     if (targetIndex === index || targetIndex < 0 || targetIndex >= length) return;
     const target = activityRoot.querySelector<HTMLButtonElement>(`[data-activity-index="${targetIndex}"]`);
-    if (!target || target.disabled) return;
+    if (!applyActivityRovingFocus(activityRoot, ".habit-activity-cell", target)) return;
     event.preventDefault();
-    activityRoot.querySelectorAll<HTMLButtonElement>(".habit-activity-cell").forEach((cell) => {
-      cell.tabIndex = cell === target ? 0 : -1;
-    });
-    target.focus();
   }
 
   function moveActivityBarFocus(event: KeyboardEvent, weekIndex: number, currentWeek: number): void {
@@ -350,12 +348,8 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     else return;
     if (targetWeek === weekIndex) return;
     const target = activityRoot.querySelector<HTMLButtonElement>(`[data-activity-week="${targetWeek}"]`);
-    if (!target || target.disabled) return;
+    if (!applyActivityRovingFocus(activityRoot, ".habit-activity-bar", target)) return;
     event.preventDefault();
-    activityRoot.querySelectorAll<HTMLButtonElement>(".habit-activity-bar").forEach((bar) => {
-      bar.tabIndex = bar === target ? 0 : -1;
-    });
-    target.focus();
   }
 
   function selectDate(date: Date, revealFocus = false): void {
@@ -476,12 +470,23 @@ export function restoreActivityFocus(root: HTMLElement, identity: ActivityFocusI
   if (!identity) return;
   const attribute = identity.kind === "day" ? "data-activity-index" : "data-activity-week";
   const target = root.querySelector<HTMLButtonElement>(`[${attribute}="${identity.value}"]`);
-  if (!target || target.disabled) return;
   const peerSelector = identity.kind === "day" ? ".habit-activity-cell" : ".habit-activity-bar";
+  applyActivityRovingFocus(root, peerSelector, target, { preventScroll: true });
+}
+
+export function applyActivityRovingFocus(
+  root: HTMLElement,
+  peerSelector: ".habit-activity-cell" | ".habit-activity-bar",
+  target: HTMLButtonElement | null,
+  options?: FocusOptions
+): boolean {
+  if (!target || target.disabled) return false;
   root.querySelectorAll<HTMLButtonElement>(peerSelector).forEach((button) => {
     button.tabIndex = button === target ? 0 : -1;
   });
-  target.focus({ preventScroll: true });
+  if (options) target.focus(options);
+  else target.focus();
+  return true;
 }
 
 export function captureHabitFocusControl(
@@ -569,16 +574,28 @@ export function weeklyHabitActivity(daily: HabitActivityCounts[]): HabitActivity
   return output;
 }
 
-export function habitActivityPeriodStart(
+export function habitActivityPeriod(
   dates: Date[],
+  daily: HabitActivityCounts[],
   index: number,
-  mode: HabitActivityMode
-): Date {
+  mode: HabitActivityMode,
+  effectiveToday: Date
+): HabitActivityPeriod {
   if (!dates.length) throw new Error("Habit activity dates are required.");
   const boundedIndex = Math.max(0, Math.min(dates.length - 1, index));
-  if (mode === "daily") return dates[boundedIndex];
-  if (mode === "weekly") return dates[Math.floor(boundedIndex / DAYS_PER_WEEK) * DAYS_PER_WEEK];
-  return dates[0];
+  const endIndex = mode === "daily"
+    ? boundedIndex
+    : Math.min(dates.length - 1, (Math.floor(boundedIndex / DAYS_PER_WEEK) * DAYS_PER_WEEK) + DAYS_PER_WEEK - 1);
+  const startIndex = mode === "daily"
+    ? endIndex
+    : mode === "weekly"
+      ? Math.floor(endIndex / DAYS_PER_WEEK) * DAYS_PER_WEEK
+      : 0;
+  return {
+    start: dates[startIndex],
+    end: earlierDate(dates[endIndex], effectiveToday),
+    counts: aggregateHabitActivity(daily, endIndex, mode)
+  };
 }
 
 export function habitActivityBarHeights(
@@ -796,33 +813,26 @@ function activityModeLabel(mode: HabitActivityMode): string {
 }
 
 function activityAriaLabel(
-  date: Date,
-  rangeStart: Date,
+  periodEnd: Date,
+  periodStart: Date,
   counts: HabitActivityCounts,
   mode: HabitActivityMode
 ): string {
   const countsLabel = `${counts.done} habits done, ${counts.missed} missed, ${counts.unreported} not recorded, ${counts.total} total`;
-  if (mode === "daily") return `${formatFullDate(date)}: ${countsLabel}.`;
-  const start = mode === "weekly" ? addDays(date, -6, rangeStart) : rangeStart;
+  if (mode === "daily") return `${formatFullDate(periodEnd)}: ${countsLabel}.`;
   const period = mode === "weekly" ? "Seven-day habit activity" : "Cumulative habit activity";
-  return `${period} from ${formatFullDate(start)} through ${formatFullDate(date)}: ${countsLabel}.`;
+  return `${period} from ${formatFullDate(periodStart)} through ${formatFullDate(periodEnd)}: ${countsLabel}.`;
 }
 
 function activityTitle(
-  date: Date,
-  rangeStart: Date,
+  periodEnd: Date,
+  periodStart: Date,
   counts: HabitActivityCounts,
   mode: HabitActivityMode
 ): string {
   const countsLabel = `${counts.done} done · ${counts.missed} missed · ${counts.unreported} not recorded`;
-  if (mode === "daily") return `${formatShortDate(date)} · ${countsLabel}`;
-  const start = mode === "weekly" ? addDays(date, -6, rangeStart) : rangeStart;
-  return `${formatShortDate(start)}–${formatShortDate(date)} · ${countsLabel}`;
-}
-
-function addDays(value: Date, amount: number, minimum: Date): Date {
-  const next = new Date(value.getFullYear(), value.getMonth(), value.getDate() + amount);
-  return next.getTime() < minimum.getTime() ? minimum : next;
+  if (mode === "daily") return `${formatShortDate(periodEnd)} · ${countsLabel}`;
+  return `${formatShortDate(periodStart)}–${formatShortDate(periodEnd)} · ${countsLabel}`;
 }
 
 function formatFullDate(value: Date): string {

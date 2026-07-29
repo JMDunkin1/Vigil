@@ -225,6 +225,14 @@ try {
   )) as Record<string, unknown>;
   assert.equal(localDependencyCacheMarkerMatches(marker, descriptor), true);
   assert.equal(localDependencyCacheMarkerMatches({ ...marker, nodeVersion: "wrong" }, descriptor), false);
+  assert.equal(localDependencyCacheMarkerMatches({
+    ...marker,
+    packageVersions: Object.fromEntries(Object.entries(descriptor.packageVersions).reverse())
+  }, descriptor), true, "equivalent package-version maps must not depend on JSON property order");
+  assert.equal(localDependencyCacheMarkerMatches({
+    ...marker,
+    packageVersions: Object.fromEntries(Object.entries(descriptor.packageVersions).slice(1))
+  }, descriptor), false);
   await writeFile(
     join(localDependencyCacheRoot(updaterDir, descriptor.key), "node_modules", "typescript", "package.json"),
     `${JSON.stringify({ name: "typescript", version: "5.9.2", injected: true })}\n`

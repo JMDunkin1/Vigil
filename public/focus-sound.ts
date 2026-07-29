@@ -29,6 +29,7 @@ interface FocusSoundData {
   };
 }
 
+type FocusSettings = NonNullable<FocusSoundData["state"]["settings"]>;
 type FocusMode = "focus" | "relax" | "sleep" | "meditate";
 type FocusActivity = "deep-work" | "creative-flow" | "learning" | "light-work" | "motivation" | "recharge" | "destress" | "wind-down" | "power-nap" | "guided" | "unguided";
 const generatedPresetValues = ["brown-noise", "pink-noise", "white-noise", "binaural-beat", "isochronic-tone"] as const;
@@ -73,7 +74,7 @@ interface SyncOptions {
 
 interface FocusSettingsSnapshot {
   generation: number;
-  settings: NonNullable<FocusSoundData["state"]["settings"]>;
+  settings: FocusSettings;
 }
 
 interface WebAudioWindow extends Window {
@@ -118,11 +119,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
   let audioStartGeneration = 0;
   let renderGeneration = 0;
   let renderedOptions: SyncOptions | null = null;
-  let settingsGeneration = 0;
-  let acknowledgedSettingsGeneration = 0;
-  let desiredSettings: FocusSettingsSnapshot | null = null;
-  let pendingSettings: FocusSettingsSnapshot | null = null;
-  let settingsSavePromise: Promise<void> | null = null;
+  const settingsCoordinator = createFocusSettingsCoordinator(post);
   let blockedPreset: FocusPreset | null = null;
   let soundViewActive = false;
   const reducedMotionQuery = typeof window.matchMedia === "function"
@@ -151,13 +148,8 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
   function render(data: FocusSoundData) {
     const generation = ++renderGeneration;
     const settings = data.state.settings || {};
-    const savedOptions = focusOptions(settings);
-    if (desiredSettings
-      && desiredSettings.generation <= acknowledgedSettingsGeneration
-      && sameFocusOptions(savedOptions, focusOptions(desiredSettings.settings))) {
-      desiredSettings = null;
-    }
-    const requestedOptions = focusOptions(desiredSettings?.settings || settings);
+    settingsCoordinator.reconcile(settings);
+    const requestedOptions = focusOptions(settingsCoordinator.current() || settings);
     const options = requestedOptions.enabled && requestedOptions.preset === blockedPreset
       ? { ...requestedOptions, enabled: false }
       : requestedOptions;
@@ -180,7 +172,8 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
         if (generation === renderGeneration) renderFocusStudio(options, focusAudio);
       })
       .catch((error) => {
-        const desiredOptions = desiredSettings ? focusOptions(desiredSettings.settings) : null;
+        const desiredSettings = settingsCoordinator.current();
+        const desiredOptions = desiredSettings ? focusOptions(desiredSettings) : null;
         const currentPlaybackFailed = (!desiredOptions || samePlaybackRequest(options, desiredOptions))
           && (generation === renderGeneration
             || Boolean(renderedOptions && samePlaybackRequest(options, renderedOptions)));
@@ -199,7 +192,10 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
         renderFocusStudio(disabledOptions, focusAudio);
         toast(focusPlaybackErrorMessage(error));
         console.error("Focus sound playback failed", error);
-        void saveSettings().catch((persistError) => {
+        void settingsCoordinator.enqueue({
+          ...readFocusSettings(),
+          focusSoundEnabled: false
+        }).catch((persistError) => {
           toast(`Could not turn off failed sound playback: ${focusPlaybackErrorDetail(persistError)}`);
           console.error("Could not turn off failed sound playback", persistError);
         });
@@ -207,8 +203,12 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
   }
 
   async function saveSettings() {
+    await settingsCoordinator.enqueue(readFocusSettings());
+  }
+
+  function readFocusSettings(): FocusSettings {
     const mode = focusMode($("#focusSoundMode").value);
-    const settings = {
+    return {
       focusSoundEnabled: $("#focusSoundEnabled").checked,
       focusSoundMode: mode,
       focusSoundActivity: focusActivity($("#focusSoundActivity").value, mode),
@@ -219,33 +219,6 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
       focusSoundBreakMinutes: $("#focusSoundBreakMinutes").value,
       focusSoundVolume: $("#focusSoundVolume").value
     };
-    const snapshot = {
-      generation: ++settingsGeneration,
-      settings
-    };
-    desiredSettings = snapshot;
-    pendingSettings = snapshot;
-    if (!settingsSavePromise) {
-      settingsSavePromise = (async () => {
-        try {
-          while (pendingSettings) {
-            const snapshot = pendingSettings;
-            pendingSettings = null;
-            try {
-              await post("/api/settings", snapshot.settings);
-              acknowledgedSettingsGeneration = Math.max(acknowledgedSettingsGeneration, snapshot.generation);
-            } catch (error) {
-              if (pendingSettings) continue;
-              if (desiredSettings === snapshot) desiredSettings = null;
-              throw error;
-            }
-          }
-        } finally {
-          settingsSavePromise = null;
-        }
-      })();
-    }
-    await settingsSavePromise;
   }
 
   async function sync(options: SyncOptions) {
@@ -509,15 +482,60 @@ function samePlaybackRequest(left: SyncOptions, right: SyncOptions): boolean {
 }
 
 function sameFocusOptions(left: SyncOptions, right: SyncOptions): boolean {
-  return left.enabled === right.enabled
-    && left.mode === right.mode
-    && left.activity === right.activity
-    && left.preset === right.preset
-    && left.intensity === right.intensity
+  return samePlaybackRequest(left, right)
     && left.timerMode === right.timerMode
     && left.timerMinutes === right.timerMinutes
     && left.breakMinutes === right.breakMinutes
     && left.volume === right.volume;
+}
+
+function createFocusSettingsCoordinator(post: PostRequest) {
+  let generation = 0;
+  let acknowledgedGeneration = 0;
+  let desired: FocusSettingsSnapshot | null = null;
+  let pending: FocusSettingsSnapshot | null = null;
+  let savePromise: Promise<void> | null = null;
+
+  return {
+    current(): FocusSettings | null {
+      return desired?.settings || null;
+    },
+    reconcile(saved: FocusSettings): void {
+      if (
+        desired
+        && desired.generation <= acknowledgedGeneration
+        && sameFocusOptions(focusOptions(saved), focusOptions(desired.settings))
+      ) desired = null;
+    },
+    async enqueue(settings: FocusSettings): Promise<void> {
+      const snapshot = { generation: ++generation, settings };
+      desired = snapshot;
+      pending = snapshot;
+      if (!savePromise) {
+        savePromise = drainSettings();
+      }
+      await savePromise;
+    }
+  };
+
+  async function drainSettings(): Promise<void> {
+    try {
+      while (pending) {
+        const snapshot = pending;
+        pending = null;
+        try {
+          await post("/api/settings", snapshot.settings);
+          acknowledgedGeneration = Math.max(acknowledgedGeneration, snapshot.generation);
+        } catch (error) {
+          if (pending) continue;
+          if (desired === snapshot) desired = null;
+          throw error;
+        }
+      }
+    } finally {
+      savePromise = null;
+    }
+  }
 }
 
 function connectSoundProfile(context: AudioContext, profile: SoundProfile, master: GainNode, nodes: AudioNode[]): void {

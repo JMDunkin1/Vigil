@@ -494,9 +494,13 @@ const previousHostedEnv = {
   hosts: process.env.VIGIL_PUBLIC_HOSTS
 };
 try {
-  process.env.VIGIL_AUTH_ENABLED = "1";
+  process.env.VIGIL_AUTH_ENABLED = "y";
   process.env.VIGIL_PUBLIC_HOSTS = "vigil.example.test";
-  assert.equal(publicHostGuard({ path: "/", headers: { host: "vigil.example.test" } }).ok, true);
+  assert.equal(
+    publicHostGuard({ path: "/", headers: { host: "vigil.example.test" } }).ok,
+    true,
+    "hosted request guards must use the same accepted boolean values as account authentication"
+  );
   assert.equal(publicHostGuard({ path: "/api/state", headers: { host: "unknown.example.test" } }).ok, false);
   assert.equal(apiRequestGuard({
     method: "POST",

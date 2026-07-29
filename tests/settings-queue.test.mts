@@ -6,32 +6,24 @@ interface SettingsRevision {
 }
 
 let pending: SettingsRevision | null = { revision: 1 };
-let guardActive = true;
 const events: string[] = [];
 let refreshCount = 0;
 
-try {
-  await drainLatestSettingsThroughRefresh(
-    () => {
-      const value = pending;
-      pending = null;
-      return value;
-    },
-    () => pending !== null,
-    async (value) => {
-      assert.equal(guardActive, true, "poll rendering must remain guarded while a settings write is active");
-      events.push(`save:${value.revision}`);
-    },
-    async () => {
-      assert.equal(guardActive, true, "poll rendering must remain guarded through the confirming refresh");
-      refreshCount += 1;
-      events.push(`refresh:${refreshCount}`);
-      if (refreshCount === 1) pending = { revision: 2 };
-    }
-  );
-} finally {
-  guardActive = false;
-}
+await drainLatestSettingsThroughRefresh(
+  () => {
+    const value = pending;
+    pending = null;
+    return value;
+  },
+  async (value) => {
+    events.push(`save:${value.revision}`);
+  },
+  async () => {
+    refreshCount += 1;
+    events.push(`refresh:${refreshCount}`);
+    if (refreshCount === 1) pending = { revision: 2 };
+  }
+);
 
 assert.deepEqual(
   events,

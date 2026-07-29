@@ -280,16 +280,6 @@ assert.match(
 );
 assert.match(
   trackingSource,
-  /function captureActivityFocus\(root\)[\s\S]*?root\.contains\(active\)[\s\S]*?"habit-activity-cell"[\s\S]*?active\.dataset\.activityIndex[\s\S]*?"habit-activity-bar"[\s\S]*?active\.dataset\.activityWeek/,
-  "activity focus restoration must be scoped to an element that was already focused inside the activity grid"
-);
-assert.match(
-  trackingSource,
-  /function restoreActivityFocus\(root, identity\)[\s\S]*?peerSelector[\s\S]*?querySelectorAll\(peerSelector\)[\s\S]*?button\.tabIndex = button === target \? 0 : -1[\s\S]*?target\.focus\(\{ preventScroll: true \}\)/,
-  "restoring activity focus must also restore exactly one roving tab stop"
-);
-assert.match(
-  trackingSource,
   /const focusedControl = captureHabitFocusControl\(focusRoot\);[\s\S]*?focusRoot\.replaceChildren\(\);[\s\S]*?restoreHabitFocusControl\(focusRoot, focusedControl\);/,
   "polling must restore a surviving focused check-in control after rebuilding the compact editor"
 );
@@ -307,11 +297,6 @@ assert.match(styles, /\.habit-focus-actions\s*\{[\s\S]*?grid-template-columns:\s
 assert.match(styles, /faithful expandable-cell layout[\s\S]*?grid-template-columns:\s*repeat\(52,[\s\S]*?grid-template-rows:\s*repeat\(7,[\s\S]*?grid-auto-flow:\s*column/, "daily activity must use a 52-week by 7-day calendar");
 assert.match(styles, /\.habit-activity-grid\[data-mode="weekly"\],[\s\S]*?\.habit-activity-grid\[data-mode="cumulative"\][\s\S]*?grid-template-rows:\s*auto;/, "weekly and cumulative activity must switch to bottom-aligned magnitude columns");
 assert.match(trackingSource, /habitActivityBarHeights\(weeklyCounts, barMode\)/, "aggregated modes must derive visible bar heights from weekly and cumulative activity");
-assert.match(
-  trackingSource,
-  /const periodStart = habitActivityPeriodStart\(dates, activityIndex, barMode\);[\s\S]*?activityAriaLabel\(periodEnd, periodStart, counts, barMode\)/,
-  "weekly bar labels must use the represented calendar week's start rather than a rolling seven-day start"
-);
 assert.match(styles, /faithful expandable-cell layout[\s\S]*?\.habit-activity-scroll\s*\{[^}]*overflow:\s*visible;/, "the integrated activity field must not create a nested scrollbar");
 assert.match(styles, /\.habit-activity-cell\s*\{[\s\S]*?width:\s*min\(82%, 22px\)[\s\S]*?border-radius:\s*clamp\(2px, 0\.24cqw, 4px\)/, "activity cells must use the rounded-square treatment demonstrated by the supplied reference");
 assert.match(styles, /\.habit-focus\s*\{[\s\S]*?position:\s*absolute/, "opening the check-in must not reflow or move calendar cells");
@@ -361,14 +346,14 @@ assert.match(
 );
 assert.match(
   appEventsSource,
-  /grayscaleSettingsForm\.dataset\.savePending = ["']true["'][\s\S]*?drainLatestSettingsThroughRefresh[\s\S]*?finally[\s\S]*?delete grayscaleSettingsForm\.dataset\.savePending/u,
+  /state\.grayscaleSettingsSavePending = true[\s\S]*?drainLatestSettingsThroughRefresh[\s\S]*?finally[\s\S]*?state\.grayscaleSettingsSavePending = false/u,
   "grayscale polling must remain guarded through queue draining and its confirming refresh"
 );
 
 const appSource = await readFile("public/app.js", "utf8");
 assert.match(
   appSource,
-  /grayscaleSettingsForm["']\)\.dataset\.savePending !== ["']true["'][\s\S]*?grayscaleSoftBlockEnabled[\s\S]*?grayscalePreventManualChanges/u,
+  /if \(!state\.grayscaleSettingsSavePending\)[\s\S]*?grayscaleSoftBlockEnabled[\s\S]*?grayscalePreventManualChanges/u,
   "state polls must not overwrite grayscale controls while their combined payload is queued"
 );
 assert.match(appSource, /!hasRuntimeStatus/, "the idle home screen must hide the redundant Ready and dash status row");
@@ -473,12 +458,9 @@ assert.match(audioMarkup, /id="audioSoundLibrary"[\s\S]*?id="audioPlayer"/, "the
 assert.match(audioMarkup, /id="focusSoundWave" class="audio-wave"/, "the player should keep the compact live waveform");
 assert.equal([...audioPlayerMarkup.matchAll(/<span><\/span>/g)].length, 96, "the wide player dock must have enough analyser bars to carry the waveform across its width");
 const focusSoundSource = await readFile("public/focus-sound.js", "utf8");
-assert.match(focusSoundSource, /createAnalyser\(\)/, "the waveform must measure the playback signal instead of inventing motion");
 assert.match(focusSoundSource, /createMediaElementSource/, "long recordings must stream instead of remaining as fully decoded audio buffers");
 assert.match(focusSoundSource, /maximumDecodedAudioBuffers\s*=\s*1/, "the compatibility decoder must not retain every recording played during a long session");
 assert.match(focusSoundSource, /waveformFrameIntervalMs\s*=\s*1000\s*\/\s*24/, "the live waveform must not redraw its analyser and every bar at display refresh rate");
-assert.match(focusSoundSource, /getFloatTimeDomainData/, "quiet passages must reduce the waveform using the signal's real loudness");
-assert.match(focusSoundSource, /getByteFrequencyData/, "each waveform bar must reflect the signal's real frequency shape");
 assert.doesNotMatch(styles, /@keyframes listeningWave|animation:\s*listeningWave/, "the waveform must not regress to a decorative loop");
 assert.match(styles, /\.audio-player\s*\{[\s\S]*?position:\s*sticky;[\s\S]*?bottom:\s*0;/, "the player must remain docked to the bottom edge while the sound library scrolls");
 assert.match(styles, /@container audio-desk \(max-width: 760px\)\s*\{[\s\S]*?grid-template-areas:[\s\S]*?"title title"[\s\S]*?"wave control";/, "the compact player dock must keep its Listen control aligned with the waveform");

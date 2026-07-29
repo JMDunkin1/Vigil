@@ -52,7 +52,7 @@ interface ClockTamperSample {
 }
 
 interface ProtectedOverlap {
-  kind: string;
+  kind: "manual" | "limit" | "schedule" | "planner";
   id: string;
   name: string;
   startsAt?: string;
@@ -706,7 +706,7 @@ function protectedLockOverlaps(state: VigilState, startMs: number, endMs: number
     if (block.enabled === false || block.completed || block.lockLevel !== "deep") continue;
     if (rangesOverlap(startMs, endMs, Date.parse(block.startsAt || ""), Date.parse(block.endsAt || ""))) {
       overlaps.push({
-        kind: "schedule",
+        kind: "planner",
         id: block.id,
         name: block.title || "planner block",
         startsAt: block.startsAt,

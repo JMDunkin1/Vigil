@@ -75,14 +75,10 @@ const state: UiState = {
   selectedProfileId: null,
   selectedScheduleId: null,
   selectedGrayscaleScheduleId: null,
+  grayscaleSettingsSavePending: false,
   pendingEmergencyId: null,
   pendingMaintenanceId: null,
-  timer: null,
-  distanceScanner: {
-    stream: null,
-    frame: null,
-    target: null
-  }
+  timer: null
 };
 
 let viewBeforeSettings = "home";
@@ -105,7 +101,7 @@ const forms = createFormController({
 });
 const focusSound = createFocusSoundController({ $, post, toast });
 const appUpdatePanel = createAppUpdatePanel({ $, get, post, toast, errorMessage });
-const distanceKeyUi = createDistanceKeyUi({ $, toast, errorMessage, scanner: state.distanceScanner });
+const distanceKeyUi = createDistanceKeyUi({ $, toast, errorMessage });
 const devicePanel = createDevicePanel({ $, post, lines, toast, errorMessage, refresh });
 const lifeLogView = createLifeLogView({
   $,
@@ -734,7 +730,7 @@ function renderGrayscale(data: DashboardData): void {
     preventManualChanges?: boolean;
     devices?: Record<string, UnknownRecord & { desired?: boolean; label?: string; source?: string }>;
   };
-  if ($("#grayscaleSettingsForm").dataset.savePending !== "true") {
+  if (!state.grayscaleSettingsSavePending) {
     $("#grayscaleSoftBlockEnabled").checked = Boolean(grayscale.softBlockEnabled);
     $("#grayscalePreventManualChanges").checked = grayscale.preventManualChanges !== false;
   }
