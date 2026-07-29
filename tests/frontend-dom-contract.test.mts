@@ -318,8 +318,10 @@ assert.doesNotMatch(styles, /:has\(\.protection-level-choice:hover\) \.protectio
 const protectionTraceStyles = styles.match(/\.protection-level-trace\s*\{[\s\S]*?\n\}/)?.[0] || "";
 assert.match(protectionTraceStyles, /height:\s*12px/, "the protection connector must use the thicker two-tier track");
 assert.match(protectionTraceStyles, /--protection-trace-inner:[\s\S]*?--protection-trace-outer:/, "the protection connector must define distinct inner and outer tracks");
-assert.match(protectionTraceStyles, /color-mix\(in srgb,\s*var\(--trace-start\)\s*18%,\s*transparent\)/, "the protection connector must preserve the button-color gradient without muddying it into the surface");
+assert.match(protectionTraceStyles, /#e2ad72[\s\S]*?#c98a57[\s\S]*?#bc624b[\s\S]*?#ff7b81/, "the protection connector must use one continuous gradient following all four button colors");
+assert.doesNotMatch(styles, /\.protection-level-trace::(?:before|after)/, "the protection connector must not split its gradient into separate gap segments");
 assert.doesNotMatch(protectionTraceStyles, /repeating-linear-gradient|ribs|sheen/, "the protection connector must stay subdued and stripe-free");
+assert.match(protectionTraceStyles, /--protection-trace-mask-radius:[\s\S]*?-webkit-mask:\s*var\(--protection-trace-mask\)/, "the continuous connector must tuck beneath each outer button ring without showing through its center");
 const sidebarToggleLayer = Number(styles.match(/\.sidebar-toggle\s*\{[\s\S]*?z-index:\s*(\d+);/)?.[1] || 0);
 const toastLayer = Number(styles.match(/\.toast\s*\{[\s\S]*?z-index:\s*(\d+);/)?.[1] || 0);
 assert.ok(toastLayer > sidebarToggleLayer, "announcements must cover the fixed sidebar toggle instead of allowing it to punch through");
