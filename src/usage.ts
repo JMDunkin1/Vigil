@@ -1,4 +1,4 @@
-import { dateKey, parseClock } from "./time.js";
+import { dateKey, parseClock, splitSecondsAcrossLocalDays } from "./time.js";
 import { BROWSERS, DEVICE_TARGETS } from "./defaults.js";
 import { appMatchesAppTargets, hostMatchesSiteTargets, normalizeList } from "./policy.js";
 import type { DeviceTarget, Schedule, VigilState, Session, UsageBucket, UsageDay, UsageSample, UsageSegment, UsageState } from "./types.js";
@@ -58,6 +58,19 @@ export function recordUsage(
   options: UsageRecordingOptions = {}
 ): void {
   if (!sample?.app || !seconds || seconds < 0.25) return;
+  const slices = options.segment
+    ? splitSecondsAcrossLocalDays(seconds, options.segment.startedAt, options.segment.endedAt)
+    : [];
+  if (slices.length) {
+    for (const slice of slices) {
+      const day = ensureDay(usage, slice.dayKey);
+      const device = ensureDeviceDay(day, normalizeUsageDevice(options.device || sample.device));
+      incrementUsage(device, sample, slice.seconds);
+      recordUsageSegment(device, sample, slice);
+      recomputeDayTotals(day);
+    }
+    return;
+  }
   const day = ensureDay(usage, dateKey(now));
   const device = ensureDeviceDay(day, normalizeUsageDevice(options.device || sample.device));
   incrementUsage(device, sample, seconds);

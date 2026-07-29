@@ -9,7 +9,8 @@ const previous = {
   dataDir: process.env.VIGIL_DATA_DIR,
   auth: process.env.VIGIL_AUTH_ENABLED,
   signups: process.env.VIGIL_SIGNUPS_ENABLED,
-  bootstrap: process.env.VIGIL_BOOTSTRAP_TOKEN
+  bootstrap: process.env.VIGIL_BOOTSTRAP_TOKEN,
+  trustedProxies: process.env.VIGIL_TRUSTED_PROXY_IPS
 };
 
 try {
@@ -17,6 +18,7 @@ try {
   process.env.VIGIL_AUTH_ENABLED = "1";
   delete process.env.VIGIL_SIGNUPS_ENABLED;
   process.env.VIGIL_BOOTSTRAP_TOKEN = "local-bootstrap-secret";
+  process.env.VIGIL_TRUSTED_PROXY_IPS = "127.0.0.1";
   const auth = await import("../src/auth.js");
 
   assert.equal(auth.hostedSignupsEnabled(), false);
@@ -58,6 +60,11 @@ try {
   assert.match(james.cookie, /HttpOnly/);
   assert.match(james.cookie, /SameSite=Strict/);
   assert.match(james.cookie, /Secure/);
+  assert.doesNotMatch(
+    auth.signOutAccount(request({ "x-forwarded-proto": "https" }, "198.51.100.13")),
+    /Secure/,
+    "forwarded protocol headers must be ignored unless the socket peer is an explicitly trusted proxy"
+  );
 
   const jamesCookie = james.cookie.split(";", 1)[0] || "";
   const restored = await auth.accountSession(request({ cookie: jamesCookie }));
@@ -88,6 +95,52 @@ try {
     password: "a-secure-password"
   }, request({}, "198.51.100.10"));
   assert.equal(login.session.user?.role, "admin");
+
+  const successfulLoginIp = "198.51.100.18";
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await assert.rejects(auth.signInAccount({
+      email: `successful-spray-${attempt}@example.test`,
+      password: "definitely-wrong-password"
+    }, request({}, successfulLoginIp)), hasStatus(401, /incorrect/i));
+  }
+  const successfulLogin = await auth.signInAccount({
+    email: "member@example.test",
+    password: "another-secure-password"
+  }, request({}, successfulLoginIp));
+  assert.equal(successfulLogin.session.user?.role, "member");
+  await assert.rejects(auth.signInAccount({
+    email: "successful-spray-final@example.test",
+    password: "definitely-wrong-password"
+  }, request({}, successfulLoginIp)), hasStatus(429, /Too many account attempts/i));
+
+  const untrustedProxyIp = "198.51.100.40";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await assert.rejects(auth.signInAccount({
+      email: `untrusted-forwarded-${attempt}@example.test`,
+      password: "definitely-wrong-password"
+    }, request({ "x-forwarded-for": `203.0.113.${attempt + 1}` }, untrustedProxyIp)), hasStatus(401, /incorrect/i));
+  }
+  await assert.rejects(auth.signInAccount({
+    email: "untrusted-forwarded-final@example.test",
+    password: "definitely-wrong-password"
+  }, request({ "x-forwarded-for": "203.0.113.100" }, untrustedProxyIp)), hasStatus(429, /Too many account attempts/i));
+
+  const trustedClientIp = "198.51.100.50";
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await assert.rejects(auth.signInAccount({
+      email: `trusted-forwarded-${attempt}@example.test`,
+      password: "definitely-wrong-password"
+    }, request({ "x-forwarded-for": trustedClientIp })), hasStatus(401, /incorrect/i));
+  }
+  await assert.rejects(auth.signInAccount({
+    email: "trusted-forwarded-final@example.test",
+    password: "definitely-wrong-password"
+  }, request({ "x-forwarded-for": trustedClientIp })), hasStatus(429, /Too many account attempts/i));
+  const nextTrustedClient = await auth.signInAccount({
+    email: "member@example.test",
+    password: "another-secure-password"
+  }, request({ "x-forwarded-for": "198.51.100.51" }));
+  assert.equal(nextTrustedClient.session.user?.role, "member");
 
   const throttledLoginIp = "198.51.100.20";
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -148,6 +201,7 @@ try {
   restoreEnv("VIGIL_AUTH_ENABLED", previous.auth);
   restoreEnv("VIGIL_SIGNUPS_ENABLED", previous.signups);
   restoreEnv("VIGIL_BOOTSTRAP_TOKEN", previous.bootstrap);
+  restoreEnv("VIGIL_TRUSTED_PROXY_IPS", previous.trustedProxies);
   await rm(dataDir, { recursive: true, force: true });
 }
 

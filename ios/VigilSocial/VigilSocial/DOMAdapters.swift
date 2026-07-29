@@ -9,8 +9,29 @@ enum DOMAdapters {
         unclassifiedMediaPolicy: UnclassifiedMediaPolicy,
         audioEnabled: Bool
     ) -> String {
-        contentFilterBootstrap(for: unclassifiedMediaPolicy) + earlyMediaGate(audioEnabled: audioEnabled)
+        documentIdentityBootstrap
+            + contentFilterBootstrap(for: unclassifiedMediaPolicy)
+            + earlyMediaGate(audioEnabled: audioEnabled)
     }
+
+    private static let documentIdentityBootstrap = #"""
+    (() => {
+      if (typeof window.__vigilDocumentID === 'string' && window.__vigilDocumentID) return;
+      const documentID = (() => {
+        try { return crypto.randomUUID(); } catch (_) {}
+        return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      })();
+      try {
+        Object.defineProperty(window, '__vigilDocumentID', {
+          value: documentID,
+          writable: false,
+          configurable: false
+        });
+      } catch (_) {
+        window.__vigilDocumentID = documentID;
+      }
+    })();
+    """#
 
     static func contentFilterBootstrap(for unclassifiedMediaPolicy: UnclassifiedMediaPolicy) -> String {
         let unclassifiedMediaCSS = unclassifiedMediaPolicy.concealsUnclassifiedMedia ? #"""
@@ -1345,8 +1366,27 @@ enum DOMAdapters {
           const configuredAudioPreference = typeof earlyMediaGate?.audioPreferred === 'boolean'
             ? earlyMediaGate.audioPreferred
             : AUDIO_PREFERENCE;
+          const documentID = (() => {
+            const existing = String(window.__vigilDocumentID || '');
+            if (existing) return existing;
+            let generated = '';
+            try { generated = crypto.randomUUID(); } catch (_) {}
+            if (!generated) generated = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            try {
+              Object.defineProperty(window, '__vigilDocumentID', {
+                value: generated,
+                writable: false,
+                configurable: false
+              });
+            } catch (_) {
+              window.__vigilDocumentID = generated;
+            }
+            return generated;
+          })();
           const bridge = (payload) => {
-            try { window.webkit.messageHandlers.vigil.postMessage(payload); } catch (_) {}
+            try {
+              window.webkit.messageHandlers.vigil.postMessage({ ...payload, documentID });
+            } catch (_) {}
           };
           window.__vigilBridge = bridge;
 
@@ -1354,10 +1394,6 @@ enum DOMAdapters {
             window.__vigilCommonInstalled = true;
             window.__vigilAudioPreferred = configuredAudioPreference;
             earlyMediaGate?.setAudioPreference(window.__vigilAudioPreferred);
-            const documentID = (() => {
-              try { return crypto.randomUUID(); } catch (_) {}
-              return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-            })();
             const shadowDOM = window.__vigilShadowDOM || null;
             const inspectionRoots = new Set([document]);
             shadowDOM?.forEach((root) => inspectionRoots.add(root));

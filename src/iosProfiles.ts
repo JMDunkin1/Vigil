@@ -349,17 +349,17 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
       : uniqueStrings([...appBundleIds, ...IOS_GRAYSCALE_GUARD_BUNDLE_IDS]);
   }
 
-  const profileSites = limitOnly
+  const profileAllowedSites = limitOnly
     ? []
-    : webMode === "allowlist"
-    ? profile?.allowedSites || []
+    : profile?.allowedSites || [];
+  const profileBlockedSites = limitOnly
+    ? []
     : profile?.blockedSites || [];
   const activeLimitBundleIds = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.apps || []).filter(isLikelyIosBundleId));
   const activeLimitSites = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.sites || []));
-  const configuredProfilePatterns = !limitOnly && webMode !== "allowlist"
-    ? profile?.blockedUrlPatterns || []
-    : [];
-  const profilePatterns = configuredProfilePatterns;
+  const profilePatterns = limitOnly
+    ? []
+    : profile?.blockedUrlPatterns || [];
   const focusedSocialSettings = normalizeFocusedSocialSettings(settings.focusedSocial);
   const socialDeniedUrls = focusedSocialEnforcementActive
     ? focusedSocialDeniedUrls(focusedSocialSettings)
@@ -372,10 +372,15 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS
   ]);
   const policyDeniedUrls = webMode === "allowlist"
-    ? urlsFromPatterns(socialDeniedUrls)
+    ? uniqueUrls([
+      ...urlsFromSiteTargets(activeLimitSites),
+      ...urlsFromSiteTargets(profileBlockedSites),
+      ...urlsFromPatterns(profilePatterns),
+      ...urlsFromPatterns(socialDeniedUrls)
+    ])
     : uniqueUrls([
       ...urlsFromSiteTargets(activeLimitSites),
-      ...urlsFromSiteTargets(profileSites),
+      ...urlsFromSiteTargets(profileBlockedSites),
       ...urlsFromPatterns(profilePatterns),
       ...urlsFromPatterns(socialDeniedUrls)
     ]);
@@ -398,7 +403,7 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     ? [...IOS_PANIC_ALLOWED_URLS]
     : webMode === "allowlist"
     ? uniqueUrls([
-      ...urlsFromSiteTargets(profileSites),
+      ...urlsFromSiteTargets(profileAllowedSites),
       ...settings.allowedUrls,
       ...IOS_SOCIAL_COMPANION_ALLOWED_URLS
     ])

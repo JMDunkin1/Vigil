@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { defaultState, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { evaluateExtensionCheck } from "../src/extensionPolicy.js";
-import { accountabilityDigest, confirmIntentionalPause, intentionalUseDecision, intentionalUseSummary, skipIntentionalPause } from "../src/intentionalUse.js";
+import { accountabilityDigest, confirmIntentionalPause, intentionalUseDecision, intentionalUseSummary, recordIntentionalUseTime, skipIntentionalPause } from "../src/intentionalUse.js";
+import { dateKey } from "../src/time.js";
 import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
 
 {
@@ -153,4 +154,75 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   const digest = accountabilityDigest(state, usage, now);
   assert.match(digest.text, /Intentional pauses:/);
   assert.equal(digest.skipped, 1);
+}
+
+{
+  const decisionAt = (at: Date) => {
+    const state = defaultState();
+    state.intentionalUse.rules = [{
+      id: "monday-overnight",
+      name: "Monday overnight",
+      enabled: true,
+      frictionLevel: "gentle",
+      days: [1],
+      start: "22:00",
+      end: "02:00",
+      apps: ["Chess"],
+      sites: [],
+      delaySeconds: 0,
+      sessionMinutes: 5,
+      dailyBudgetMinutes: 0
+    }];
+    return intentionalUseDecision(state, { app: "Chess" }, { event: "mac-app" }, at);
+  };
+  const mondayLate = new Date(2026, 6, 27, 23, 0);
+  const tuesdayEarly = new Date(2026, 6, 28, 1, 0);
+  const mondayEarly = new Date(2026, 6, 27, 1, 0);
+  assert.equal(mondayLate.getDay(), 1);
+  assert.equal(tuesdayEarly.getDay(), 2);
+  assert.equal(decisionAt(mondayLate).shouldPause, true);
+  assert.equal(decisionAt(tuesdayEarly).shouldPause, true, "the after-midnight tail belongs to Monday's window");
+  assert.equal(decisionAt(mondayEarly).shouldPause, false, "Monday before dawn belongs to Sunday's window");
+}
+
+{
+  const state = defaultState();
+  const startedAt = new Date(2026, 6, 27, 23, 59, 55);
+  const endedAt = new Date(2026, 6, 28, 0, 0, 5);
+  state.intentionalUse.rules = [{
+    id: "midnight-grant-rule",
+    name: "Midnight grant rule",
+    enabled: true,
+    frictionLevel: "gentle",
+    days: [0, 1, 2, 3, 4, 5, 6],
+    start: "00:00",
+    end: "23:59",
+    apps: ["Chess"],
+    sites: [],
+    delaySeconds: 0,
+    sessionMinutes: 5,
+    dailyBudgetMinutes: 30
+  }];
+  state.intentionalUse.grants = [{
+    id: "midnight-grant",
+    pauseId: "midnight-pause",
+    ruleId: "midnight-grant-rule",
+    status: "active",
+    targetType: "app",
+    targetLabel: "Chess",
+    app: "Chess",
+    hostname: "",
+    createdAt: startedAt.toISOString(),
+    until: new Date(endedAt.getTime() + 60_000).toISOString(),
+    intention: "One game",
+    mood: "",
+    usedSeconds: 0
+  }];
+
+  recordIntentionalUseTime(state, { app: "Chess" }, 10, endedAt, {
+    segment: { startedAt, endedAt }
+  });
+  assert.equal(state.intentionalUse.ledger[dateKey(startedAt)]?.rules["midnight-grant-rule"]?.seconds, 5);
+  assert.equal(state.intentionalUse.ledger[dateKey(endedAt)]?.rules["midnight-grant-rule"]?.seconds, 5);
+  assert.equal(state.intentionalUse.grants[0]?.usedSeconds, 10);
 }

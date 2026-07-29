@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { verifyEntitlementObject } from "../scripts/release-entitlements.mjs";
+import { verifyEntitlementObject, verifyEntitlementSource } from "../scripts/release-entitlements.mjs";
 
 const root = await sourceRoot();
 
@@ -45,6 +45,24 @@ assert.doesNotThrow(() => verifyEntitlementObject(
   "true fixture",
   { requireJit: true }
 ));
+let blankEntitlementParseCalls = 0;
+await assert.doesNotReject(() => verifyEntitlementSource(
+  " \n",
+  "entitlement-free dylib",
+  {
+    allowOnlyJit: true,
+    parse: async () => {
+      blankEntitlementParseCalls += 1;
+      return {};
+    }
+  }
+));
+assert.equal(blankEntitlementParseCalls, 0, "entitlement-free Mach-O output must not be parsed as a plist");
+await assert.rejects(
+  () => verifyEntitlementSource("", "main app", { requireJit: true }),
+  /must grant allow-jit/u,
+  "an entitlement-free app bundle must still fail the JIT requirement"
+);
 assert.throws(
   () => verifyEntitlementObject(
     { "com.apple.security.cs.allow-jit": false },

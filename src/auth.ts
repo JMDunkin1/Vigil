@@ -1,6 +1,7 @@
 import { createHmac, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
+import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { isLoopbackHostHeader } from "./apiSecurity.js";
 import { DATA_DIR } from "./store.js";
@@ -148,7 +149,7 @@ export async function createAccount(body: UnknownRecord, request: IncomingMessag
     store.accounts.push(account);
     await saveAccounts(store);
     const result = await authenticatedResult(account, request);
-    clearAuthAttempts("signup", email, request);
+    clearAccountAuthAttempts("signup", email);
     return result;
   });
 }
@@ -164,7 +165,7 @@ export async function signInAccount(body: UnknownRecord, request: IncomingMessag
     throw authError(401, "Email or password is incorrect.");
   }
   const result = await authenticatedResult(account, request);
-  clearAuthAttempts("login", email, request);
+  clearAccountAuthAttempts("login", email);
   return result;
 }
 
@@ -291,8 +292,7 @@ function publicAccount(account: StoredAccount): PublicAccount {
 }
 
 function serializeCookie(token: string, request: IncomingMessage, maxAge: number): string {
-  const forwardedProto = String(request.headers["x-forwarded-proto"] || "").split(",")[0]?.trim().toLowerCase();
-  const secure = forwardedProto === "https" ? "; Secure" : "";
+  const secure = trustedForwardedHttps(request) ? "; Secure" : "";
   return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure}`;
 }
 
@@ -342,9 +342,8 @@ function recordAuthAttempt(kind: AuthAttemptKind, email: string, request: Incomi
   incrementAuthAttemptBucket(authAccountAttemptBuckets, authAccountAttemptKey(kind, email), now);
 }
 
-function clearAuthAttempts(kind: AuthAttemptKind, email: string, request: IncomingMessage): void {
+function clearAccountAuthAttempts(kind: AuthAttemptKind, email: string): void {
   authAccountAttemptBuckets.delete(authAccountAttemptKey(kind, email));
-  authIpAttemptBuckets.delete(authIpAttemptKey(kind, request));
 }
 
 function pruneAuthAttemptBuckets(now: number): void {
@@ -372,8 +371,7 @@ function incrementAuthAttemptBucket(buckets: Map<string, AuthAttemptBucket>, key
 }
 
 function authIpAttemptKey(kind: AuthAttemptKind, request: IncomingMessage): string {
-  const remoteAddress = String(request.socket?.remoteAddress || "unknown").trim().toLowerCase() || "unknown";
-  return `${kind}\u0000ip\u0000${remoteAddress}`;
+  return `${kind}\u0000ip\u0000${authClientAddress(request)}`;
 }
 
 function authAccountAttemptKey(kind: AuthAttemptKind, email: string): string {
@@ -383,6 +381,57 @@ function authAccountAttemptKey(kind: AuthAttemptKind, email: string): string {
 function requestHeader(request: IncomingMessage, name: string): string {
   const value = request.headers[name.toLowerCase()];
   return Array.isArray(value) ? value.join(",") : String(value || "");
+}
+
+function authClientAddress(request: IncomingMessage): string {
+  const remoteAddress = normalizedIpAddress(request.socket?.remoteAddress) || "unknown";
+  const trustedProxies = trustedProxyAddresses();
+  if (!trustedProxies.has(remoteAddress)) return remoteAddress;
+
+  const forwardedAddresses = requestHeader(request, "x-forwarded-for")
+    .split(",")
+    .map(normalizedIpAddress);
+  if (!forwardedAddresses.length || forwardedAddresses.some((address) => !address)) return remoteAddress;
+
+  for (let index = forwardedAddresses.length - 1; index >= 0; index -= 1) {
+    const address = forwardedAddresses[index] || "";
+    if (!trustedProxies.has(address)) return address;
+  }
+  return remoteAddress;
+}
+
+function trustedForwardedHttps(request: IncomingMessage): boolean {
+  const remoteAddress = normalizedIpAddress(request.socket?.remoteAddress);
+  if (!remoteAddress || !trustedProxyAddresses().has(remoteAddress)) return false;
+  const protocols = requestHeader(request, "x-forwarded-proto")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return protocols.length === 1 && protocols[0] === "https";
+}
+
+function trustedProxyAddresses(): Set<string> {
+  return new Set(
+    String(process.env.VIGIL_TRUSTED_PROXY_IPS || "")
+      .split(",")
+      .map(normalizedIpAddress)
+      .filter(Boolean)
+  );
+}
+
+function normalizedIpAddress(value: unknown): string {
+  let address = String(value || "").trim().toLowerCase();
+  if (address.startsWith("[") && address.endsWith("]")) address = address.slice(1, -1);
+  if (address.startsWith("::ffff:") && isIP(address.slice("::ffff:".length)) === 4) {
+    address = address.slice("::ffff:".length);
+  }
+  if (isIP(address) === 4) return address;
+  if (isIP(address) !== 6) return "";
+  try {
+    return new URL(`http://[${address}]/`).hostname.slice(1, -1);
+  } catch {
+    return "";
+  }
 }
 
 function cleanName(value: unknown): string {

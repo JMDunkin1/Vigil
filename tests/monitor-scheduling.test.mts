@@ -51,9 +51,20 @@ for (const component of ["grayscale", "grayscale-guard", "screen-lock", "process
   componentMonitor.setComponentHealth("frontmost", "");
   assert.equal(componentMonitor.status.ok, false, `a successful frontmost read must not clear ${component} health`);
   assert.equal(componentMonitor.status.componentErrors[component], `${component} failed`);
+  assert.deepEqual(
+    JSON.parse(componentMonitor.hardeningDriftMonitorFingerprint()),
+    { ok: true, accessibilityLikelyMissing: false },
+    `${component} health must not masquerade as foreground Accessibility drift`
+  );
   componentMonitor.setComponentHealth(component, "");
   assert.equal(componentMonitor.status.ok, true, `${component} health clears only after that component succeeds`);
 }
+componentMonitor.setComponentHealth("frontmost", "Foreground app detection failed");
+assert.deepEqual(
+  JSON.parse(componentMonitor.hardeningDriftMonitorFingerprint()),
+  { ok: false, accessibilityLikelyMissing: false },
+  "foreground detector failures must remain part of hardening attestation"
+);
 
 const unguardedGrayscaleState = defaultState();
 unguardedGrayscaleState.grayscale.preventManualChanges = false;

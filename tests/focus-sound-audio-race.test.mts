@@ -167,6 +167,7 @@ const originalConsoleError = console.error;
 const originalDateNow = Date.now;
 const toasts: string[] = [];
 const settingsPosts: Array<{ path: string; body: unknown }> = [];
+let settingsPostOverride: ((path: string, body: unknown) => Promise<unknown>) | null = null;
 const reducedMotionListeners = new Set<(event: MediaQueryListEvent) => void>();
 const reducedMotionQuery = {
   matches: true,
@@ -220,11 +221,115 @@ try {
       return control as unknown as HTMLElement & { checked: boolean; value: string };
     },
     post: async (path, body) => {
+      if (settingsPostOverride) return settingsPostOverride(path, body);
       settingsPosts.push({ path, body });
       return {};
     },
     toast: (message: string) => toasts.push(message)
   });
+
+  const staleFocusSettings = dataForPreset("brown-noise");
+  staleFocusSettings.state.settings.focusSoundEnabled = false;
+  focusSound.render(staleFocusSettings);
+  await settle();
+
+  const pendingSettingsResolves: Array<() => void> = [];
+  settingsPostOverride = (path, body) => {
+    settingsPosts.push({ path, body });
+    return new Promise<void>((resolve) => pendingSettingsResolves.push(resolve));
+  };
+  const mode = controls.get("#focusSoundMode");
+  const activity = controls.get("#focusSoundActivity");
+  const intensity = controls.get("#focusSoundIntensity");
+  assert.ok(mode && activity && intensity);
+  mode.value = "relax";
+  activity.value = "recharge";
+  const firstSettingsSave = focusSound.saveSettings();
+  await settle();
+
+  focusSound.render(staleFocusSettings);
+  await settle();
+  assert.equal(mode.value, "relax", "a stale poll must not overwrite a focus mode while its save is pending");
+  assert.equal(activity.value, "recharge");
+
+  mode.value = "focus";
+  activity.value = "deep-work";
+  const secondSettingsSave = focusSound.saveSettings();
+  focusSound.render(staleFocusSettings);
+  await settle();
+  assert.equal(mode.value, "focus");
+  assert.equal(
+    activity.value,
+    "deep-work",
+    "poll equality must not acknowledge a queued settings generation that has not reached the server"
+  );
+
+  const resolveFirstSettingsSave = pendingSettingsResolves.shift();
+  assert.ok(resolveFirstSettingsSave);
+  resolveFirstSettingsSave();
+  await settle();
+
+  const firstCommittedSettings = dataForPreset("brown-noise");
+  firstCommittedSettings.state.settings.focusSoundEnabled = false;
+  firstCommittedSettings.state.settings.focusSoundMode = "relax";
+  firstCommittedSettings.state.settings.focusSoundActivity = "recharge";
+  focusSound.render(firstCommittedSettings);
+  await settle();
+  assert.equal(mode.value, "focus");
+  assert.equal(
+    activity.value,
+    "deep-work",
+    "a poll for the first committed generation must not replace the newer in-flight generation"
+  );
+
+  intensity.value = "low";
+  const thirdSettingsSave = focusSound.saveSettings();
+  const resolveSecondSettingsSave = pendingSettingsResolves.shift();
+  assert.ok(resolveSecondSettingsSave);
+  resolveSecondSettingsSave();
+  await settle();
+
+  assert.deepEqual(
+    settingsPosts.map(({ body }) => {
+      const settings = body as Record<string, unknown>;
+      return {
+        mode: settings.focusSoundMode,
+        activity: settings.focusSoundActivity,
+        intensity: settings.focusSoundIntensity
+      };
+    }),
+    [
+      { mode: "relax", activity: "recharge", intensity: "medium" },
+      { mode: "focus", activity: "deep-work", intensity: "medium" },
+      { mode: "focus", activity: "deep-work", intensity: "low" }
+    ],
+    "queued focus settings must preserve each generation while earlier whole-settings saves are delayed"
+  );
+  focusSound.render(firstCommittedSettings);
+  await settle();
+  assert.equal(mode.value, "focus");
+  assert.equal(intensity.value, "low", "stale state must stay suppressed until the final desired snapshot is acknowledged");
+
+  const resolveThirdSettingsSave = pendingSettingsResolves.shift();
+  assert.ok(resolveThirdSettingsSave);
+  resolveThirdSettingsSave();
+  await Promise.all([firstSettingsSave, secondSettingsSave, thirdSettingsSave]);
+  settingsPostOverride = null;
+  settingsPosts.length = 0;
+
+  const savedFocusSettings = dataForPreset("brown-noise");
+  savedFocusSettings.state.settings.focusSoundEnabled = false;
+  savedFocusSettings.state.settings.focusSoundMode = "focus";
+  savedFocusSettings.state.settings.focusSoundActivity = "deep-work";
+  savedFocusSettings.state.settings.focusSoundIntensity = "low";
+  focusSound.render(savedFocusSettings);
+  await settle();
+
+  const muted = dataForPreset("rain");
+  muted.state.settings.focusSoundVolume = 0;
+  focusSound.render(muted);
+  await settle();
+  assert.equal(controls.get("#focusSoundVolume")?.value, "0", "a persisted zero volume must remain muted");
 
   focusSound.render(dataForPreset("rain"));
   focusSound.render(dataForPreset("rain"));
@@ -320,6 +425,11 @@ try {
   await settle();
   assert.equal(player.dataset.playing, "true");
 
+  const playbackFailureSettingsResolves: Array<() => void> = [];
+  settingsPostOverride = (path, body) => {
+    settingsPosts.push({ path, body });
+    return new Promise<void>((resolve) => playbackFailureSettingsResolves.push(resolve));
+  };
   failFetch("/audio/nature/forest-lawn-creek.ogg");
   await settle();
 
@@ -329,7 +439,44 @@ try {
   assert.equal(focusSound.isPlaying(), false, "failed playback must remain retryable without first disabling sound");
   assert.deepEqual(toasts, ["Could not play this sound: Could not load /audio/nature/forest-lawn-creek.ogg"], "the active playback failure must be visible to the user");
   assert.equal(controls.get("#focusSoundEnabled")?.checked, false, "failed playback must immediately show as disabled");
-  assert.deepEqual(settingsPosts, [{ path: "/api/settings", body: { focusSoundEnabled: false } }], "failed playback must be disabled in persisted settings");
+  assert.deepEqual(
+    settingsPosts.map(({ body }) => {
+      const settings = body as Record<string, unknown>;
+      return { enabled: settings.focusSoundEnabled, preset: settings.focusSoundPreset };
+    }),
+    [{ enabled: false, preset: "stream" }],
+    "failed playback must enqueue a complete disabled settings snapshot"
+  );
+
+  const preset = controls.get("#focusSoundPreset");
+  const enabled = controls.get("#focusSoundEnabled");
+  assert.ok(preset && enabled);
+  preset.value = "rain";
+  enabled.checked = true;
+  const newerPresetSave = focusSound.saveSettings();
+  const resolvePlaybackDisable = playbackFailureSettingsResolves.shift();
+  assert.ok(resolvePlaybackDisable);
+  resolvePlaybackDisable();
+  await settle();
+  assert.deepEqual(
+    settingsPosts.map(({ body }) => {
+      const settings = body as Record<string, unknown>;
+      return { enabled: settings.focusSoundEnabled, preset: settings.focusSoundPreset };
+    }),
+    [
+      { enabled: false, preset: "stream" },
+      { enabled: true, preset: "rain" }
+    ],
+    "a newer preset choice must be serialized after playback's automatic disable"
+  );
+  const resolveNewerPreset = playbackFailureSettingsResolves.shift();
+  assert.ok(resolveNewerPreset);
+  resolveNewerPreset();
+  await newerPresetSave;
+  settingsPostOverride = null;
+  focusSound.render(dataForPreset("rain"));
+  await settle();
+  settingsPosts.length = 0;
 
   focusSound.render(dataForPreset("stream"));
   focusSound.render(dataForPreset("stream"));
@@ -344,6 +491,50 @@ try {
   resolveFetch("/audio/nature/forest-lawn-creek.ogg");
   await settle();
   assert.equal(focusSound.isPlaying(), true, "an explicit retry must be able to recover after the asset becomes available");
+
+  focusSound.render(dataForPreset("bach-invention-8"));
+  await settle();
+  assert.equal(
+    pendingFetches.has("/audio/baroque/bach-invention-8-harpsichord.ogg"),
+    true,
+    "the old preset must still be loading when the newer choice is saved"
+  );
+  settingsPostOverride = (path, body) => {
+    settingsPosts.push({ path, body });
+    return new Promise<void>((resolve) => playbackFailureSettingsResolves.push(resolve));
+  };
+  preset.value = "rain";
+  enabled.checked = true;
+  const desiredPresetSave = focusSound.saveSettings();
+  await settle();
+
+  failFetch("/audio/baroque/bach-invention-8-harpsichord.ogg");
+  await settle();
+  assert.deepEqual(
+    settingsPosts.map(({ body }) => {
+      const settings = body as Record<string, unknown>;
+      return { enabled: settings.focusSoundEnabled, preset: settings.focusSoundPreset };
+    }),
+    [{ enabled: true, preset: "rain" }],
+    "an old playback rejection must not enqueue a disable after a newer enabled preset save"
+  );
+  assert.equal(enabled.checked, true, "an old playback rejection must not turn off the newer desired preset");
+  assert.equal(preset.value, "rain", "an old playback rejection must not replace the newer preset control");
+  assert.equal(nowPlaying.textContent, "Rain", "the studio must continue to represent the newer desired preset");
+  assert.equal(toasts.length, 1, "an old playback rejection must not surface as the current preset's failure");
+
+  const resolveDesiredPreset = playbackFailureSettingsResolves.shift();
+  assert.ok(resolveDesiredPreset);
+  resolveDesiredPreset();
+  await desiredPresetSave;
+  settingsPostOverride = null;
+  settingsPosts.length = 0;
+  focusSound.render(dataForPreset("rain"));
+  await settle();
+  if (pendingFetches.has("/audio/nature/rain.ogg")) {
+    resolveFetch("/audio/nature/rain.ogg");
+    await settle();
+  }
 
   focusSound.render(dataForPreset("bach-goldberg-aria"));
   await settle();

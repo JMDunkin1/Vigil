@@ -734,8 +734,10 @@ function renderGrayscale(data: DashboardData): void {
     preventManualChanges?: boolean;
     devices?: Record<string, UnknownRecord & { desired?: boolean; label?: string; source?: string }>;
   };
-  $("#grayscaleSoftBlockEnabled").checked = Boolean(grayscale.softBlockEnabled);
-  $("#grayscalePreventManualChanges").checked = grayscale.preventManualChanges !== false;
+  if ($("#grayscaleSettingsForm").dataset.savePending !== "true") {
+    $("#grayscaleSoftBlockEnabled").checked = Boolean(grayscale.softBlockEnabled);
+    $("#grayscalePreventManualChanges").checked = grayscale.preventManualChanges !== false;
+  }
 
   const mac = data.monitor.lastGrayscale || {};
   const computerText = mac.desired

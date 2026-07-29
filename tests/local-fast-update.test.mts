@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, readFile, readlink, rm, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, readlink, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -198,11 +198,13 @@ try {
   const firstSnapshot = join(cacheFixtureRoot, "snapshot-one");
   const secondSnapshot = join(cacheFixtureRoot, "snapshot-two");
   const thirdSnapshot = join(cacheFixtureRoot, "snapshot-three");
+  const replacementSnapshot = join(cacheFixtureRoot, "snapshot-replacement");
   const updaterDir = join(cacheFixtureRoot, "updater");
   await Promise.all([
     prepareDependencySnapshot(firstSnapshot, true),
     prepareDependencySnapshot(secondSnapshot, false),
     prepareDependencySnapshot(thirdSnapshot, false),
+    prepareDependencySnapshot(replacementSnapshot, true),
     mkdir(updaterDir, { recursive: true, mode: 0o700 })
   ]);
   const descriptor = await describeLocalDependencyCache(firstSnapshot, process.execPath, process.execPath);
@@ -231,6 +233,21 @@ try {
     await attachLocalDependencyCache(thirdSnapshot, updaterDir, descriptor),
     false,
     "metadata-preserving dependency-tree edits must invalidate a warm cache before any cached code executes"
+  );
+  const cacheParent = dirname(localDependencyCacheRoot(updaterDir, descriptor.key));
+  const staleInvalidName = `${descriptor.key}.invalid-11111111-1111-4111-8111-111111111111`;
+  const foreignKey = descriptor.key.startsWith("f") ? "e".repeat(64) : "f".repeat(64);
+  const foreignInvalidName = `${foreignKey}.invalid-22222222-2222-4222-8222-222222222222`;
+  await Promise.all([
+    mkdir(join(cacheParent, staleInvalidName)),
+    mkdir(join(cacheParent, foreignInvalidName))
+  ]);
+  await publishLocalDependencyCache(replacementSnapshot, updaterDir, descriptor);
+  assert.equal((await lstat(join(replacementSnapshot, "node_modules"))).isSymbolicLink(), true);
+  assert.deepEqual(
+    (await readdir(cacheParent)).sort(),
+    [descriptor.key, foreignInvalidName].sort(),
+    "a later publication must retry exact-key quarantine cleanup without deleting another cache key's residue"
   );
 } finally {
   await rm(cacheFixtureRoot, { recursive: true, force: true });

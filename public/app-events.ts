@@ -44,6 +44,23 @@ interface AppEventsContext {
   setProtectionLevel(level: number): Promise<void>;
 }
 
+export async function drainLatestSettingsThroughRefresh<T>(
+  takePending: () => T | null,
+  hasPending: () => boolean,
+  save: (value: T) => Promise<void>,
+  refresh: () => Promise<void>
+): Promise<void> {
+  while (true) {
+    let value = takePending();
+    while (value !== null) {
+      await save(value);
+      value = takePending();
+    }
+    await refresh();
+    if (!hasPending()) return;
+  }
+}
+
 export function bindAppEvents(context: AppEventsContext) {
   const { state, devicePanel, hardeningPanel, distanceKeyUi, focusSound, forms, post, refresh, toast, setProtectionLevel } = context;
 
@@ -245,35 +262,44 @@ export function bindAppEvents(context: AppEventsContext) {
   };
   let pendingGrayscaleSettings: GrayscaleSettingsPayload | null = null;
   let grayscaleSettingsSavePromise: Promise<void> | null = null;
+  const grayscaleSettingsForm = $("#grayscaleSettingsForm");
   const readGrayscaleSettings = (): GrayscaleSettingsPayload => ({
     softBlockEnabled: $("#grayscaleSoftBlockEnabled").checked,
     preventManualChanges: $("#grayscalePreventManualChanges").checked
   });
   const saveGrayscaleSettings = async () => {
     pendingGrayscaleSettings = readGrayscaleSettings();
+    grayscaleSettingsForm.dataset.savePending = "true";
     if (!grayscaleSettingsSavePromise) {
       grayscaleSettingsSavePromise = (async () => {
         try {
-          while (pendingGrayscaleSettings) {
-            const body = pendingGrayscaleSettings;
-            pendingGrayscaleSettings = null;
-            try {
-              await post("/api/grayscale/settings", body);
-              toast("Grayscale saved");
-            } catch (error) {
-              toast(errorMessage(error));
-            }
-            await refresh();
-          }
+          await drainLatestSettingsThroughRefresh(
+            () => {
+              const body = pendingGrayscaleSettings;
+              pendingGrayscaleSettings = null;
+              return body;
+            },
+            () => pendingGrayscaleSettings !== null,
+            async (body) => {
+              try {
+                await post("/api/grayscale/settings", body);
+                toast("Grayscale saved");
+              } catch (error) {
+                toast(errorMessage(error));
+              }
+            },
+            refresh
+          );
         } finally {
           grayscaleSettingsSavePromise = null;
+          delete grayscaleSettingsForm.dataset.savePending;
         }
       })();
     }
     await grayscaleSettingsSavePromise;
   };
 
-  $("#grayscaleSettingsForm").addEventListener("submit", async (event: Event) => {
+  grayscaleSettingsForm.addEventListener("submit", async (event: Event) => {
     event.preventDefault();
     await saveGrayscaleSettings();
   });

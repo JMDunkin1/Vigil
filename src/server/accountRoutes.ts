@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { accountSession, createAccount, hostedSignupsEnabled, signInAccount, signOutAccount } from "../auth.js";
+import { accountSession, createAccount, signInAccount, signOutAccount } from "../auth.js";
 import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
 
 export async function handleAccountApiRoute(
@@ -28,13 +28,11 @@ export async function handleAccountApiRoute(
     }
 
     if (method === "POST" && path === "/api/account/logout") {
-      sendJson(response, 200, {
-        hostedAccountsEnabled: true,
-        signupsEnabled: hostedSignupsEnabled(),
-        authenticated: false,
-        user: null,
-        mode: "hosted"
-      }, { "Cache-Control": "no-store", "Set-Cookie": signOutAccount(request) });
+      const current = await accountSession(request);
+      const signedOut = current.mode === "local"
+        ? current
+        : { ...current, authenticated: false, user: null };
+      sendJson(response, 200, signedOut, { "Cache-Control": "no-store", "Set-Cookie": signOutAccount(request) });
       return true;
     }
   } catch (error) {

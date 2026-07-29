@@ -221,6 +221,12 @@ for (const preset of ["Every day", "Weekdays", "Weekends", "Custom days"]) {
 }
 assert.match(dayControlsSource, /custom\.hidden = select\.value !== "custom"/, "the seven-day grid must stay hidden until Custom days is selected");
 assert.match(html, /id="accountButton"[^>]*aria-expanded="false"/, "the account button must expose its toggle state");
+const accountUiSource = await readFile("public/account-ui.js", "utf8");
+assert.match(
+  accountUiSource,
+  /post\(["']\/api\/account\/logout["'][\s\S]*?clearJournalSession\(\)[\s\S]*?window\.location\.reload\(\)/u,
+  "successful sign-out must clear the protected journal session before discarding renderer state"
+);
 const sidebarMarkup = html.match(/<aside class="app-chrome"[\s\S]*?<\/aside>/)?.[0] || "";
 assert.doesNotMatch(sidebarMarkup, /&#(?:8962|10016|10003|9835|10070|9881);/, "font-glyph sidebar icons must not return");
 assert.match(html, /id="sidebarToggle"[^>]*aria-controls="primarySidebar"[^>]*aria-expanded="true"/, "the sidebar must expose an explicit full-hide toggle");
@@ -249,7 +255,7 @@ assert.match(uiShellSource, /renderActiveView[\s\S]*window\.scrollTo\(0, 0\)/, "
 assert.doesNotMatch(styles, /@media \(max-width: 900px\)\s*\{\s*body\s*\{\s*display:\s*block/, "narrow windows must retain the sidebar grid");
 
 const trackingMarkup = html.match(/<section id="view-journal"[\s\S]*?<div class="journal-page journal-only"/)?.[0] || "";
-assert.match(trackingMarkup, /id="habitActivity"[\s\S]*?id="habitActivityMonths"[\s\S]*?id="habitActivityGrid"[\s\S]*?id="habitFocus"[\s\S]*?id="habitQuickCheckIn"/, "tracking must expand the one-at-a-time decision from inside the activity field");
+assert.match(trackingMarkup, /id="habitActivity"[\s\S]*?id="habitActivityGrid"[\s\S]*?id="habitFocus"[\s\S]*?id="habitQuickCheckIn"[\s\S]*?id="habitActivityMonths"/, "tracking must expand the one-at-a-time decision from inside the activity field and place month labels below it");
 assert.doesNotMatch(trackingMarkup, /habitFocusConnector|habit-focus-connector/, "the floating check-in must not retain a connector line");
 assert.doesNotMatch(trackingMarkup, /id="habitViewHistory"/, "the integrated activity view must not retain a redundant history link");
 assert.equal([...trackingMarkup.matchAll(/data-activity-mode="(?:daily|weekly|cumulative)"/g)].length, 3, "habit activity must expose Daily, Weekly, and Cumulative modes");
@@ -267,16 +273,56 @@ assert.match(trackingSource, /cell\.setAttribute\("aria-label", activityAriaLabe
 assert.match(trackingSource, /cell\.disabled = future/, "future activity cells must not be interactive");
 assert.match(trackingSource, /cell\.addEventListener\("click", \(\) => selectDate\(date, true\)\)/, "daily history cells must preserve backdated editing through the focused check-in");
 assert.match(trackingSource, /togglingSelectedDate[\s\S]*?focusOpen = !focusOpen/, "selecting the active activity cell again must close and reopen its check-in");
+assert.match(
+  trackingSource,
+  /const focusedActivity = captureActivityFocus\(activityRoot\);[\s\S]*?activityRoot\.replaceChildren\(\);[\s\S]*?restoreActivityFocus\(activityRoot, focusedActivity\);/,
+  "activity rerenders must restore a focused daily cell or aggregate bar after replacing the grid"
+);
+assert.match(
+  trackingSource,
+  /function captureActivityFocus\(root\)[\s\S]*?root\.contains\(active\)[\s\S]*?"habit-activity-cell"[\s\S]*?active\.dataset\.activityIndex[\s\S]*?"habit-activity-bar"[\s\S]*?active\.dataset\.activityWeek/,
+  "activity focus restoration must be scoped to an element that was already focused inside the activity grid"
+);
+assert.match(
+  trackingSource,
+  /function restoreActivityFocus\(root, identity\)[\s\S]*?peerSelector[\s\S]*?querySelectorAll\(peerSelector\)[\s\S]*?button\.tabIndex = button === target \? 0 : -1[\s\S]*?target\.focus\(\{ preventScroll: true \}\)/,
+  "restoring activity focus must also restore exactly one roving tab stop"
+);
+assert.match(
+  trackingSource,
+  /const focusedControl = captureHabitFocusControl\(focusRoot\);[\s\S]*?focusRoot\.replaceChildren\(\);[\s\S]*?restoreHabitFocusControl\(focusRoot, focusedControl\);/,
+  "polling must restore a surviving focused check-in control after rebuilding the compact editor"
+);
+for (const identity of [
+  /habitFocusControl = `habit:\$\{behaviorId\}:status:\$\{value\}`/,
+  /habitFocusControl = `habit:\$\{behavior\.id\}:skip`/,
+  /habitFocusControl = `habit:\$\{behavior\.id\}`/,
+  /habitFocusControl = `edit:\$\{localDateKey\(selectedDate\)\}`/
+]) {
+  assert.match(trackingSource, identity, "every interactive check-in action must have a stable focus identity");
+}
 assert.doesNotMatch(trackingSource, /positionFocusConnector|focusConnectorPath|style\.setProperty/, "the floating check-in must not calculate a connector or inject inline presentation");
 assert.match(trackingSource, /cell\.setAttribute\("aria-controls", "habitFocus"\)[\s\S]*?cell\.setAttribute\("aria-expanded", String\(focusOpen\)\)/, "the selected day must expose the embedded check-in as an accessible disclosure");
 assert.match(styles, /\.habit-focus-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/, "Done and Missed must remain the only two equal primary choices");
-assert.match(styles, /faithful expandable-cell layout[\s\S]*?grid-template-columns:\s*repeat\(28,[\s\S]*?grid-template-rows:\s*repeat\(13,[\s\S]*?grid-auto-flow:\s*column/, "the rendered activity field must fill the card with a stable, tightly packed year grid");
+assert.match(styles, /faithful expandable-cell layout[\s\S]*?grid-template-columns:\s*repeat\(52,[\s\S]*?grid-template-rows:\s*repeat\(7,[\s\S]*?grid-auto-flow:\s*column/, "daily activity must use a 52-week by 7-day calendar");
+assert.match(styles, /\.habit-activity-grid\[data-mode="weekly"\],[\s\S]*?\.habit-activity-grid\[data-mode="cumulative"\][\s\S]*?grid-template-rows:\s*auto;/, "weekly and cumulative activity must switch to bottom-aligned magnitude columns");
+assert.match(trackingSource, /habitActivityBarHeights\(weeklyCounts, barMode\)/, "aggregated modes must derive visible bar heights from weekly and cumulative activity");
+assert.match(
+  trackingSource,
+  /const periodStart = habitActivityPeriodStart\(dates, activityIndex, barMode\);[\s\S]*?activityAriaLabel\(periodEnd, periodStart, counts, barMode\)/,
+  "weekly bar labels must use the represented calendar week's start rather than a rolling seven-day start"
+);
 assert.match(styles, /faithful expandable-cell layout[\s\S]*?\.habit-activity-scroll\s*\{[^}]*overflow:\s*visible;/, "the integrated activity field must not create a nested scrollbar");
-assert.match(styles, /\.habit-activity-cell\s*\{[\s\S]*?width:\s*min\(76%, 18px\)[\s\S]*?border-radius:\s*clamp\(2px, 0\.24cqw, 4px\)/, "activity cells must use the larger rounded-square treatment demonstrated by the supplied reference");
+assert.match(styles, /\.habit-activity-cell\s*\{[\s\S]*?width:\s*min\(82%, 22px\)[\s\S]*?border-radius:\s*clamp\(2px, 0\.24cqw, 4px\)/, "activity cells must use the rounded-square treatment demonstrated by the supplied reference");
 assert.match(styles, /\.habit-focus\s*\{[\s\S]*?position:\s*absolute/, "opening the check-in must not reflow or move calendar cells");
 assert.match(styles, /faithful expandable-cell layout[\s\S]*?\.habit-activity\s*\{[^}]*overflow:\s*visible;/, "the floating check-in must be able to extend beyond the compact activity frame");
 assert.match(styles, /faithful expandable-cell layout[\s\S]*?\.habit-activity-canvas\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*0;/, "the activity frame must hug the calendar without reserving popup space");
 assert.match(styles, /\.habit-activity-cell\.is-today:not\(\.is-selected\)[\s\S]*?outline:\s*1px solid var\(--habit-done-strong\)[\s\S]*?\.habit-activity-cell\.is-selected[\s\S]*?outline:\s*2px solid var\(--gold-bright\)/, "today and the actively selected day must have distinct visual states");
+assert.match(
+  styles,
+  /\.habit-activity-bar:focus-visible,[\s\S]*?\.habit-activity-bar\.is-selected\s*\{[\s\S]*?outline:\s*2px solid var\(--gold-bright\)[\s\S]*?\.habit-activity-bar\.is-selected\s*\{[\s\S]*?box-shadow:/,
+  "aggregate bars must visibly identify both keyboard focus and the selected period"
+);
 assert.match(styles, /\.habit-focus::before\s*\{[^}]*display:\s*none;[^}]*content:\s*none;/, "the floating check-in must have a flat top edge without a pointer notch");
 assert.match(styles, /body\[data-active-view="tracking"\]\s*\{[^}]*overflow:\s*hidden;/, "the tracking view must not expose blank vertical overscroll");
 
@@ -313,8 +359,18 @@ assert.match(
   /\[data-focus-preset\][\s\S]*?focusSound\.restartTimer\(\)[\s\S]*?persistFocusSound\(true\)/,
   "choosing a library track must restart an expired finite timer before playback"
 );
+assert.match(
+  appEventsSource,
+  /grayscaleSettingsForm\.dataset\.savePending = ["']true["'][\s\S]*?drainLatestSettingsThroughRefresh[\s\S]*?finally[\s\S]*?delete grayscaleSettingsForm\.dataset\.savePending/u,
+  "grayscale polling must remain guarded through queue draining and its confirming refresh"
+);
 
 const appSource = await readFile("public/app.js", "utf8");
+assert.match(
+  appSource,
+  /grayscaleSettingsForm["']\)\.dataset\.savePending !== ["']true["'][\s\S]*?grayscaleSoftBlockEnabled[\s\S]*?grayscalePreventManualChanges/u,
+  "state polls must not overwrite grayscale controls while their combined payload is queued"
+);
 assert.match(appSource, /!hasRuntimeStatus/, "the idle home screen must hide the redundant Ready and dash status row");
 assert.match(appSource, /persistentLevelSelection[\s\S]*?source === "protection-level"[\s\S]*?!persistentLevelSelection/, "persistent level selections must leave the homepage to the number control alone");
 assert.doesNotMatch(appSource, /Until changed/, "the homepage must not repeat persistent level state beneath the selected number");

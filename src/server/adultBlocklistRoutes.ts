@@ -41,7 +41,7 @@ export async function handleAdultBlocklistApiRoute(
       const body = await readBody(request);
       assertProtectedEditAllowed(state, { kind: "settings" });
       const previousSource = adultBlocklistSource(state);
-      const keys = updateSettings(state.settings, body);
+      const keys = updateSettings(state.settings, body, state.profiles.map((profile) => profile.id));
       const sourceChanged = invalidateAdultBlocklistIfSourceChanged(state, previousSource);
       if (sourceChanged) keys.push("adultBlocklistSnapshot");
       const allowlistChanged = Object.hasOwn(body, "allowlist");

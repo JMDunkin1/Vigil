@@ -21,6 +21,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var messageBridges: [SocialService: ScriptMessageBridge] = [:]
     private var textInspections: [SocialService: [TextInspectionKey: TextInspection]] = [:]
     private var mainDocumentIDs: [SocialService: String] = [:]
+    private var mainDocumentGenerations: [SocialService: UInt64] = [:]
     private var mediaClassificationTasks: [MediaRequestKey: Task<Void, Never>] = [:]
     private var mediaClassificationDeadlineTasks: [MediaRequestKey: Task<Void, Never>] = [:]
     private var nativeMediaClassificationExecutions: Set<UUID> = []
@@ -260,6 +261,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let payload = message.body
         guard let body = payload as? [String: Any], let type = body["type"] as? String else { return }
         if !frame.isMainFrame && type != "mediaCandidate" && type != "pageText" { return }
+        if frame.isMainFrame, type == "health" || type == "surface" {
+            guard Self.isCurrentMainDocumentMessage(
+                body["documentID"],
+                currentDocumentID: mainDocumentIDs[service]
+            ) else { return }
+        }
         switch type {
         case "health":
             let detail = body["detail"] as? String ?? ""
@@ -329,7 +336,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
               let token = body["token"] as? String,
               !token.isEmpty, token.utf8.count <= 64 else { return }
         if frame.isMainFrame {
-            registerMainDocument(documentID, for: service)
+            guard Self.isCurrentMainDocumentMessage(
+                documentID,
+                currentDocumentID: mainDocumentIDs[service]
+            ) else { return }
         }
         let requestKey = MediaRequestKey(service: service, documentID: documentID, id: id)
         let request = MediaClassificationRequest(
@@ -545,12 +555,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         mediaRetryTasks[request.key] = task
     }
 
-    private func registerMainDocument(_ documentID: String, for service: SocialService) {
-        guard mainDocumentIDs[service] != documentID else { return }
-        cancelDocumentWork(for: service)
-        mainDocumentIDs[service] = documentID
-    }
-
     private func cancelDocumentWork(for service: SocialService) {
         let activeKeys = Set(
             mediaClassificationTasks.keys.filter { $0.service == service }
@@ -640,7 +644,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
               text.utf8.count <= 96_000,
               total > 0, total <= 32, index >= 0, index < total else { return }
         if frame.isMainFrame {
-            registerMainDocument(documentID, for: service)
+            guard Self.isCurrentMainDocumentMessage(
+                documentID,
+                currentDocumentID: mainDocumentIDs[service]
+            ) else { return }
         }
         let truncated = body["wasTruncated"] as? Bool ?? true
         let inspectionKey = TextInspectionKey(documentID: documentID, revision: revision)
@@ -682,6 +689,31 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     private func service(for webView: WKWebView) -> SocialService? {
         serviceByWebView[ObjectIdentifier(webView)]
+    }
+
+    static func isCurrentMainDocumentMessage(
+        _ documentID: Any?,
+        currentDocumentID: String?
+    ) -> Bool {
+        guard let documentID = documentID as? String,
+              !documentID.isEmpty,
+              documentID.utf8.count <= 128 else { return false }
+        return documentID == currentDocumentID
+    }
+
+    private func bindCommittedMainDocument(for service: SocialService, in webView: WKWebView) {
+        let generation = mainDocumentGenerations[service, default: 0]
+        webView.evaluateJavaScript("window.__vigilDocumentID") { [weak self, weak webView] value, _ in
+            Task { @MainActor in
+                guard let self, let webView,
+                      self.webViews[service] === webView,
+                      self.mainDocumentGenerations[service, default: 0] == generation,
+                      let documentID = value as? String,
+                      !documentID.isEmpty,
+                      documentID.utf8.count <= 128 else { return }
+                self.mainDocumentIDs[service] = documentID
+            }
+        }
     }
 
     func setSurface(_ surface: SocialSurfaceState, for service: SocialService) {
@@ -897,11 +929,17 @@ extension SocialWebViewStore: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
         guard let service = service(for: webView) else { return }
+        mainDocumentGenerations[service, default: 0] &+= 1
         cancelDocumentWork(for: service)
         if !refreshingServices.contains(service) {
             health[service] = .loading
         }
         setSurface(.unknown, for: service)
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
+        guard let service = service(for: webView) else { return }
+        bindCommittedMainDocument(for: service, in: webView)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {

@@ -84,9 +84,9 @@ export function createFormController({ $, $$, setView }: FormControllerContext) 
     form.elements.id.value = rule.id;
     form.elements.name.value = rule.name;
     form.elements.frictionLevel.value = rule.frictionLevel || "standard";
-    form.elements.delaySeconds.value = String(rule.delaySeconds || 12);
+    form.elements.delaySeconds.value = String(rule.delaySeconds ?? 12);
     form.elements.sessionMinutes.value = String(rule.sessionMinutes || 10);
-    form.elements.dailyBudgetMinutes.value = String(rule.dailyBudgetMinutes || 30);
+    form.elements.dailyBudgetMinutes.value = String(rule.dailyBudgetMinutes ?? 30);
     form.elements.start.value = rule.start || "00:00";
     form.elements.end.value = rule.end || "23:59";
     form.elements.apps.value = (rule.apps || []).join("\n");

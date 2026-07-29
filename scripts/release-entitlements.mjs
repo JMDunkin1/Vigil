@@ -19,3 +19,18 @@ export function verifyEntitlementObject(value, label, { requireJit = false, allo
     if (unexpected.length) throw new Error(`${label} emitted unexpected entitlement(s): ${unexpected.join(", ")}.`);
   }
 }
+
+export async function verifyEntitlementSource(
+  source,
+  label,
+  { requireJit = false, allowOnlyJit = false, parse } = {}
+) {
+  const text = String(source ?? "");
+  if (text.trim() && typeof parse !== "function") {
+    throw new Error(`${label} requires an entitlement parser.`);
+  }
+  const value = text.trim()
+    ? await parse(text)
+    : {};
+  verifyEntitlementObject(value, label, { requireJit, allowOnlyJit });
+}

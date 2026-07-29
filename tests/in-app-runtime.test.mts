@@ -191,9 +191,53 @@ try {
     body: JSON.stringify({ name: "Vigil Admin", email: "admin@example.test", password: "a-secure-password" })
   });
   assert.equal(acceptedBootstrap.status, 201, "the restricted companion must preserve a token-authenticated first-admin bootstrap path");
+  const accountCookie = String(acceptedBootstrap.headers.get("set-cookie") || "").split(";", 1)[0] || "";
+  assert.match(accountCookie, /^vigil_session=/u);
+  const companionSession = await fetch(`http://127.0.0.1:${port}/api/account/session`, {
+    headers: { Cookie: accountCookie }
+  });
+  assert.equal(companionSession.status, 200, "the reused development companion must expose hosted session reads");
+  assert.equal(recordValue(await companionSession.json()).authenticated, true);
+  const companionLogout = await fetch(`http://127.0.0.1:${port}/api/account/logout`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Cookie: accountCookie
+    },
+    body: "{}"
+  });
+  assert.equal(companionLogout.status, 200, "the reused development companion must expose hosted logout");
+  assert.equal(recordValue(await companionLogout.json()).authenticated, false);
+  const companionLogin = await fetch(`http://127.0.0.1:${port}/api/account/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "admin@example.test", password: "a-secure-password" })
+  });
+  assert.equal(companionLogin.status, 200, "the reused development companion must expose hosted login");
+  assert.equal(recordValue(await companionLogin.json()).authenticated, true);
   delete process.env.VIGIL_AUTH_ENABLED;
   delete process.env.VIGIL_SIGNUPS_ENABLED;
   delete process.env.VIGIL_BOOTSTRAP_TOKEN;
+  const localLogout = await fetch(`http://127.0.0.1:${port}/api/account/logout`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Vigil-Intent": "vigil-app"
+    },
+    body: "{}"
+  });
+  assert.equal(localLogout.status, 200);
+  const localLogoutBody = recordValue(await localLogout.json());
+  assert.deepEqual(
+    {
+      hostedAccountsEnabled: localLogoutBody.hostedAccountsEnabled,
+      authenticated: localLogoutBody.authenticated,
+      mode: localLogoutBody.mode,
+      role: recordValue(localLogoutBody.user).role
+    },
+    { hostedAccountsEnabled: false, authenticated: true, mode: "local", role: "admin" },
+    "local logout must retain canonical no-account local access semantics"
+  );
   for (const path of [
     "/api/profile",
     "/api/schedule",

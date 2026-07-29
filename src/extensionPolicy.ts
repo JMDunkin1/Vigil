@@ -66,7 +66,7 @@ export function extensionRuleSnapshot(state: VigilState, now = new Date()) {
     addRuleEntries(entries, baseline.profile.blockedSites, baseline, "baseline");
   }
 
-  if (sessionPolicy?.profile?.mode === "blocklist") {
+  if (sessionPolicy?.profile) {
     addRuleEntries(entries, sessionPolicy.profile.blockedSites, sessionPolicy, "session");
   }
 

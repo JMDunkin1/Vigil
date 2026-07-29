@@ -7,7 +7,14 @@ const CONNECTION_DEFAULTS = {
 };
 const manifest = chrome.runtime.getManifest();
 const tabMemory = new Map<number, string>();
+const tabDocumentIds = new Map<number, string>();
 const tabRequestGenerations = new Map<number, number>();
+const latestTabChecks = new Map<number, {
+  generation: number;
+  url: string;
+  documentId?: string;
+  request: Promise<ExtensionCheckResult>;
+}>();
 const inFlightChecks = new Map<string, Promise<ExtensionCheckResult>>();
 const recentCheckResults = new Map<string, { expiresAt: number; result: ExtensionCheckResult }>();
 const NOISE_RULE_START = 9100;
@@ -106,6 +113,15 @@ let scheduledRuleExpirySourceAt: number | null | undefined;
 let ruleExpiryAlarmGeneration = 0;
 let coldStartDynamicRulesPromise: Promise<chrome.declarativeNetRequest.Rule[] | null> | null = null;
 let cachedPulseFlags: PulseFlagSnapshot = {};
+let pulseFlagUpdateRevision = 0;
+let pulseFlagUpdateQueue: Promise<void> = Promise.resolve();
+let pulsePolicyApplicationQueue: Promise<void> = Promise.resolve();
+let noiseUpdateRevision = 0;
+let noiseUpdateQueue: Promise<void> = Promise.resolve();
+let siteRuleApplicationQueue: Promise<void> = Promise.resolve();
+let ruleSyncRequestedGeneration = 0;
+let ruleSyncInFlight: Promise<void> | null = null;
+let siteBlockingInitialization: Promise<void> | null = null;
 const pulseFlagsReady = loadPulseFlags();
 const RULE_SYNC_ALARM = "vigil-rule-sync";
 const RULE_EXPIRY_ALARM = "vigil-rule-expiry";
@@ -136,6 +152,7 @@ interface ExtensionMessage extends ExtensionPulseMessage, ExtensionPauseActionMe
 interface ExtensionCheckResult {
   ok?: boolean;
   skipped?: boolean;
+  stale?: boolean;
   blocked?: boolean;
   paused?: boolean;
   redirectUrl?: string;
@@ -148,6 +165,13 @@ interface ExtensionCheckResult {
 
 interface CheckUrlOptions {
   deferTabAction?: boolean;
+  documentId?: string;
+}
+
+interface TabRequestContext {
+  generation: number;
+  url: string;
+  documentId?: string;
 }
 
 interface PulseFlagSnapshot {
@@ -207,6 +231,14 @@ interface NormalizedSiteBlockingSnapshot extends RuleSyncResult {
   dynamicRules: chrome.declarativeNetRequest.Rule[];
 }
 
+interface SiteRuleRollbackState {
+  managedRules: chrome.declarativeNetRequest.Rule[];
+  storedSnapshot: unknown;
+  storedStatus: unknown;
+  signature: string;
+  count: number;
+}
+
 type StorageDefaults = Record<string, unknown>;
 type StorageResult<T extends StorageDefaults> = T & Record<string, unknown>;
 
@@ -226,9 +258,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 chrome.runtime.onInstalled.addListener(loadNoisePreference);
-chrome.runtime.onInstalled.addListener(syncSiteBlockingFromServer);
+chrome.runtime.onInstalled.addListener(initializeSiteBlocking);
 chrome.runtime.onStartup.addListener(loadNoisePreference);
-chrome.runtime.onStartup.addListener(syncSiteBlockingFromServer);
+chrome.runtime.onStartup.addListener(initializeSiteBlocking);
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || (!changes.vigilLocalServer && !changes.vigilExtensionToken)) return;
   void loadVigilConnection().then(() => syncSiteBlockingFromServer());
@@ -236,12 +268,17 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
-  void checkUrl(details.tabId, details.url, "navigation");
+  const documentId = normalizedDocumentId(details.documentId);
+  if (documentId) tabDocumentIds.set(details.tabId, documentId);
+  else tabDocumentIds.delete(details.tabId);
+  void checkUrl(details.tabId, details.url, "navigation", 0, "", { documentId });
 });
 
 chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
   if (details.frameId !== 0) return;
-  void checkUrl(details.tabId, details.url, "history");
+  const documentId = normalizedDocumentId(details.documentId);
+  if (documentId) tabDocumentIds.set(details.tabId, documentId);
+  void checkUrl(details.tabId, details.url, "history", 0, "", { documentId });
 });
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -256,7 +293,10 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse: (response?: unknown) => void) => {
   if (message?.type === "VIGIL_PULSE") {
-    void checkUrl(sender.tab?.id, message.url || "", message.reason || "heartbeat", message.seconds, message.title, { deferTabAction: true })
+    void checkUrl(sender.tab?.id, message.url || "", message.reason || "heartbeat", message.seconds, message.title, {
+      deferTabAction: true,
+      documentId: normalizedDocumentId(sender.documentId)
+    })
       .then((result) => sendResponse(result))
       .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
@@ -276,7 +316,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   tabMemory.delete(tabId);
+  tabDocumentIds.delete(tabId);
   tabRequestGenerations.delete(tabId);
+  latestTabChecks.delete(tabId);
   for (const key of inFlightChecks.keys()) {
     if (key.startsWith(`${tabId}:`)) inFlightChecks.delete(key);
   }
@@ -293,18 +335,26 @@ async function checkUrl(
   title = "",
   options: CheckUrlOptions = {}
 ): Promise<ExtensionCheckResult> {
-  if (!tabId || isSkippableUrl(url)) return skippedCheckResult();
+  if (tabId === undefined || isSkippableUrl(url)) return skippedCheckResult();
+  if (!await checkOriginIsCurrent(tabId, url, options.documentId)) {
+    return options.deferTabAction
+      ? await supersedingCheckResult(tabId, -1, options)
+      : skippedCheckResult();
+  }
   const key = duplicateCheckKey(tabId, url, event, seconds, options);
   if (key) {
     const running = inFlightChecks.get(key);
     if (running) return await running;
     const recent = recentCheckResults.get(key);
     if (recent && recent.expiresAt > Date.now()) {
-      return { ...recent.result, skipped: true };
+      return recent.result;
     }
   }
 
-  const request = performCheckUrl(tabId, url, event, seconds, title, options);
+  const generation = (tabRequestGenerations.get(tabId) || 0) + 1;
+  tabRequestGenerations.set(tabId, generation);
+  const request = performCheckUrl(tabId, url, event, seconds, title, options, generation);
+  latestTabChecks.set(tabId, { generation, url, documentId: options.documentId, request });
   if (key) inFlightChecks.set(key, request);
   try {
     const result = await request;
@@ -327,7 +377,7 @@ function duplicateCheckKey(
   options: CheckUrlOptions
 ): string | null {
   if (Number(seconds) > 0 || event === "heartbeat") return null;
-  return `${tabId}:${event}:${options.deferTabAction ? "defer" : "direct"}:${url}`;
+  return `${tabId}:${event}:${options.deferTabAction ? "defer" : "direct"}:${options.documentId || "unknown"}:${url}`;
 }
 
 async function performCheckUrl(
@@ -336,11 +386,9 @@ async function performCheckUrl(
   event: string,
   seconds: number,
   title: string,
-  options: CheckUrlOptions
+  options: CheckUrlOptions,
+  generation: number
 ): Promise<ExtensionCheckResult> {
-  const generation = (tabRequestGenerations.get(tabId) || 0) + 1;
-  tabRequestGenerations.set(tabId, generation);
-
   const previousUrl = tabMemory.get(tabId) || "";
   tabMemory.set(tabId, url);
 
@@ -360,16 +408,28 @@ async function performCheckUrl(
     });
   } catch {
     await pulseFlagsReady;
-    if (await isCurrentTabRequest(tabId, generation, url)) await setBadge(tabId, "OFF", "#9b2f2f");
+    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+      return await supersedingCheckResult(tabId, generation, options);
+    }
+    await setBadge(tabId, "OFF", "#9b2f2f");
+    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+      return await supersedingCheckResult(tabId, generation, options);
+    }
     return offlineCheckResult();
   }
 
-  if (!await isCurrentTabRequest(tabId, generation, url)) {
-    return skippedCheckResult();
+  if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+    return await supersedingCheckResult(tabId, generation, options);
   }
   if (!response.ok) {
     await pulseFlagsReady;
+    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+      return await supersedingCheckResult(tabId, generation, options);
+    }
     await setBadge(tabId, "OFF", "#9b2f2f");
+    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+      return await supersedingCheckResult(tabId, generation, options);
+    }
     return { ...offlineCheckResult(), status: response.status };
   }
 
@@ -378,46 +438,140 @@ async function performCheckUrl(
     result = await response.json() as ExtensionCheckResult;
   } catch {
     await pulseFlagsReady;
+    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+      return await supersedingCheckResult(tabId, generation, options);
+    }
     await setBadge(tabId, "OFF", "#9b2f2f");
+    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+      return await supersedingCheckResult(tabId, generation, options);
+    }
     return offlineCheckResult();
   }
-  await rememberPulseFlags(result);
-  if (typeof result.browserNoiseBlockingEnabled === "boolean") {
-    await syncNoiseBlocking(result.browserNoiseBlockingEnabled);
+  if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+    return await supersedingCheckResult(tabId, generation, options);
   }
-  if (!await isCurrentTabRequest(tabId, generation, url)) return skippedCheckResult();
+  const policyApplied = await applyPulsePolicyIfCurrent(tabId, generation, url, options.documentId, result);
+  if (!policyApplied || !await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+    return await supersedingCheckResult(tabId, generation, options);
+  }
   if (result.blocked && result.redirectUrl && url !== result.redirectUrl) {
     await setBadge(tabId, "LOCK", "#9b2f2f");
-    if (!options.deferTabAction) await updateTab(tabId, { url: result.redirectUrl });
+    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+      return await supersedingCheckResult(tabId, generation, options);
+    }
+    if (!options.deferTabAction) {
+      await updateTab(tabId, { url: result.redirectUrl });
+    }
   } else if (result.paused && result.redirectUrl && url !== result.redirectUrl) {
     await setBadge(tabId, "WAIT", "#b67618");
+    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+      return await supersedingCheckResult(tabId, generation, options);
+    }
     if (!options.deferTabAction) {
-      const overlayShown = await showPauseOverlay(tabId, result);
-      if (!overlayShown) await updateTab(tabId, { url: result.redirectUrl });
+      const overlay = await showPauseOverlay(tabId, result, {
+        generation,
+        url,
+        documentId: options.documentId
+      });
+      if (overlay === "stale") return await supersedingCheckResult(tabId, generation, options);
+      if (overlay === "unavailable") {
+        if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+          return await supersedingCheckResult(tabId, generation, options);
+        }
+        await updateTab(tabId, { url: result.redirectUrl });
+      }
     }
   } else {
     await setBadge(tabId, "", "#b77952");
+    if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
+      return await supersedingCheckResult(tabId, generation, options);
+    }
   }
   void maybeSyncSiteBlocking();
   return result;
 }
 
-async function isCurrentTabRequest(tabId: number, generation: number, url: string): Promise<boolean> {
+async function supersedingCheckResult(
+  tabId: number,
+  generation: number,
+  options: CheckUrlOptions
+): Promise<ExtensionCheckResult> {
+  if (!options.deferTabAction) return skippedCheckResult();
+  let followedGeneration = generation;
+  while (true) {
+    const latest = latestTabChecks.get(tabId);
+    if (!latest || latest.generation <= followedGeneration) return staleCheckResult();
+    followedGeneration = latest.generation;
+    if (!await checkOriginIsCurrent(tabId, latest.url, latest.documentId)) continue;
+    const result = await latest.request;
+    if (!result.skipped && !result.stale) return result;
+  }
+}
+
+async function isCurrentTabRequest(
+  tabId: number,
+  generation: number,
+  url: string,
+  documentId?: string
+): Promise<boolean> {
   if (tabRequestGenerations.get(tabId) !== generation) return false;
+  return await checkOriginIsCurrent(tabId, url, documentId)
+    && tabRequestGenerations.get(tabId) === generation;
+}
+
+async function checkOriginIsCurrent(tabId: number, url: string, documentId?: string): Promise<boolean> {
+  const trackedDocumentId = tabDocumentIds.get(tabId);
+  if (documentId && trackedDocumentId && documentId !== trackedDocumentId) return false;
   const currentTab = await getTab(tabId);
-  return tabRequestGenerations.get(tabId) === generation && currentTab?.url === url;
+  if (currentTab?.url !== url) return false;
+  const currentDocumentId = tabDocumentIds.get(tabId);
+  return !documentId || !currentDocumentId || documentId === currentDocumentId;
+}
+
+function normalizedDocumentId(value: unknown): string | undefined {
+  const documentId = String(value || "").trim();
+  return documentId && documentId.length <= 128 ? documentId : undefined;
 }
 
 function skippedCheckResult(): ExtensionCheckResult {
   return { ok: true, skipped: true, ...cachedPulseFlags };
 }
 
+function staleCheckResult(): ExtensionCheckResult {
+  return { ok: false, stale: true };
+}
+
 function offlineCheckResult(): ExtensionCheckResult {
   return { ok: false, offline: true, ...cachedPulseFlags };
 }
 
-async function rememberPulseFlags(value: unknown): Promise<void> {
-  if (!isRecord(value)) return;
+async function applyPulsePolicyIfCurrent(
+  tabId: number,
+  generation: number,
+  url: string,
+  documentId: string | undefined,
+  value: ExtensionCheckResult
+): Promise<boolean> {
+  const stillCurrent = () => isCurrentTabRequest(tabId, generation, url, documentId);
+  const application = pulsePolicyApplicationQueue.then(async () => {
+    await pulseFlagsReady;
+    if (!await stillCurrent()) return false;
+    if (!await rememberPulseFlags(value, stillCurrent)) return false;
+    if (!await stillCurrent()) return false;
+    if (typeof value.browserNoiseBlockingEnabled === "boolean") {
+      if (!await syncNoiseBlocking(value.browserNoiseBlockingEnabled, stillCurrent)) return false;
+    }
+    return await stillCurrent();
+  });
+  pulsePolicyApplicationQueue = application.then(() => undefined, () => undefined);
+  return await application;
+}
+
+async function rememberPulseFlags(
+  value: unknown,
+  shouldApply: () => boolean | Promise<boolean> = () => true
+): Promise<boolean> {
+  if (!isRecord(value)) return true;
   const next: PulseFlagSnapshot = {};
   if (typeof value.browserNoiseBlockingEnabled === "boolean") {
     next.browserNoiseBlockingEnabled = value.browserNoiseBlockingEnabled;
@@ -428,11 +582,22 @@ async function rememberPulseFlags(value: unknown): Promise<void> {
   if (Object.hasOwn(value, "focusedSocialCleanupSettings")) {
     next.focusedSocialCleanupSettings = value.focusedSocialCleanupSettings;
   }
-  if (!Object.keys(next).length) return;
-  const merged = { ...cachedPulseFlags, ...next };
-  if (JSON.stringify(merged) === JSON.stringify(cachedPulseFlags)) return;
-  cachedPulseFlags = merged;
-  await storageSet({ vigilPulseFlags: cachedPulseFlags });
+  if (!Object.keys(next).length) return true;
+  const revision = ++pulseFlagUpdateRevision;
+  const update = pulseFlagUpdateQueue.then(async () => {
+    if (revision !== pulseFlagUpdateRevision || !await shouldApply()) return false;
+    const previous = cachedPulseFlags;
+    const merged = { ...cachedPulseFlags, ...next };
+    if (JSON.stringify(merged) === JSON.stringify(cachedPulseFlags)) return true;
+    cachedPulseFlags = merged;
+    const stored = await storageSet({ vigilPulseFlags: merged });
+    if (stored && revision === pulseFlagUpdateRevision && await shouldApply()) return true;
+    cachedPulseFlags = previous;
+    if (stored) await storageSet({ vigilPulseFlags: previous });
+    return false;
+  });
+  pulseFlagUpdateQueue = update.then(() => undefined, () => undefined);
+  return await update;
 }
 
 async function loadPulseFlags(): Promise<void> {
@@ -481,21 +646,34 @@ function setBadge(tabId: number, text: string, color: string): Promise<boolean> 
   });
 }
 
-async function showPauseOverlay(tabId: number, result: ExtensionCheckResult): Promise<boolean> {
+async function showPauseOverlay(
+  tabId: number,
+  result: ExtensionCheckResult,
+  request: TabRequestContext
+): Promise<"shown" | "unavailable" | "stale"> {
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (!await isCurrentTabRequest(tabId, request.generation, request.url, request.documentId)) {
+      return "stale";
+    }
     const ok = await sendTabMessage(tabId, {
       type: "VIGIL_SHOW_PAUSE",
+      expectedUrl: request.url,
       result
-    });
-    if (ok) return true;
+    }, request.documentId);
+    if (!await isCurrentTabRequest(tabId, request.generation, request.url, request.documentId)) {
+      return "stale";
+    }
+    if (ok) return "shown";
     await delay(125);
   }
-  return false;
+  return await isCurrentTabRequest(tabId, request.generation, request.url, request.documentId)
+    ? "unavailable"
+    : "stale";
 }
 
-function sendTabMessage(tabId: number, message: Record<string, unknown>): Promise<boolean> {
+function sendTabMessage(tabId: number, message: Record<string, unknown>, documentId?: string): Promise<boolean> {
   return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, message, (response: unknown) => {
+    chrome.tabs.sendMessage(tabId, message, documentId ? { documentId } : {}, (response: unknown) => {
       void chrome.runtime.lastError;
       resolve(isRecord(response) && response.ok === true);
     });
@@ -542,26 +720,64 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function loadNoisePreference() {
-  const stored = await storageGet({ browserNoiseBlockingEnabled: false });
-  const enabled = Boolean(stored.browserNoiseBlockingEnabled);
-  if (noiseRulesEnabled === null) {
-    const installedRules = await coldStartDynamicRules();
-    if (
-      noiseRulesEnabled === null
-      && installedRules
-      && managedDynamicRulesCurrent(installedRules, enabled ? noiseRules() : [], NOISE_MANAGED_RULE_IDS)
-    ) {
-      noiseRulesEnabled = enabled;
-      return;
+async function loadNoisePreference(): Promise<boolean> {
+  return await enqueueNoiseUpdate(async (revision) => {
+    const stored = await storageGet({ browserNoiseBlockingEnabled: false });
+    if (revision !== noiseUpdateRevision) return false;
+    const enabled = Boolean(stored.browserNoiseBlockingEnabled);
+    if (noiseRulesEnabled === null) {
+      const installedRules = await coldStartDynamicRules();
+      if (
+        revision === noiseUpdateRevision
+        && noiseRulesEnabled === null
+        && installedRules
+        && managedDynamicRulesCurrent(installedRules, enabled ? noiseRules() : [], NOISE_MANAGED_RULE_IDS)
+      ) {
+        noiseRulesEnabled = enabled;
+        return true;
+      }
     }
-  }
-  await syncNoiseBlocking(enabled);
+    return await applyNoiseBlocking(enabled, revision);
+  });
 }
 
-async function syncNoiseBlocking(enabled: boolean): Promise<boolean> {
+async function syncNoiseBlocking(
+  enabled: boolean,
+  shouldApply: () => boolean | Promise<boolean> = () => true
+): Promise<boolean> {
+  return await enqueueNoiseUpdate(async (revision) => {
+    if (revision !== noiseUpdateRevision || !await shouldApply()) return false;
+    return await applyNoiseBlocking(enabled, revision, shouldApply);
+  });
+}
+
+async function applyNoiseBlocking(
+  enabled: boolean,
+  revision: number,
+  shouldApply: () => boolean | Promise<boolean> = () => true
+): Promise<boolean> {
   if (!chrome.declarativeNetRequest?.updateDynamicRules) return false;
-  if (noiseRulesEnabled === enabled) return true;
+  let previousEnabled = noiseRulesEnabled;
+  let requiresRepair = false;
+  if (previousEnabled === null) {
+    const installedRules = await currentDynamicRules();
+    if (revision !== noiseUpdateRevision || !await shouldApply()) return false;
+    if (!installedRules) {
+      // Never remove managed blocking rules when their current state cannot be
+      // verified. Enabling remains a safe repair and can be rolled back to the
+      // same fail-closed state if this request becomes stale.
+      if (!enabled) return false;
+      previousEnabled = true;
+      requiresRepair = true;
+    } else {
+      const fullyEnabled = managedDynamicRulesCurrent(installedRules, noiseRules(), NOISE_MANAGED_RULE_IDS);
+      const fullyDisabled = managedDynamicRulesCurrent(installedRules, [], NOISE_MANAGED_RULE_IDS);
+      previousEnabled = !fullyDisabled;
+      requiresRepair = !fullyEnabled && !fullyDisabled;
+    }
+    noiseRulesEnabled = previousEnabled;
+  }
+  if (previousEnabled === enabled && !requiresRepair) return true;
 
   const addRules = enabled ? noiseRules() : [];
   const ok = await updateDynamicRules({
@@ -571,8 +787,40 @@ async function syncNoiseBlocking(enabled: boolean): Promise<boolean> {
   if (!ok) return false;
 
   noiseRulesEnabled = enabled;
-  await storageSet({ browserNoiseBlockingEnabled: enabled });
-  return true;
+  if (revision !== noiseUpdateRevision || !await shouldApply()) {
+    await rollbackNoiseBlocking(previousEnabled);
+    return false;
+  }
+  const stored = await storageSet({ browserNoiseBlockingEnabled: enabled });
+  if (stored && revision === noiseUpdateRevision && await shouldApply()) return true;
+  await rollbackNoiseBlocking(previousEnabled, stored);
+  return false;
+}
+
+async function enqueueNoiseUpdate(
+  operation: (revision: number) => Promise<boolean>
+): Promise<boolean> {
+  const revision = ++noiseUpdateRevision;
+  const update = noiseUpdateQueue.then(() => operation(revision));
+  noiseUpdateQueue = update.then(() => undefined, () => undefined);
+  return await update;
+}
+
+async function rollbackNoiseBlocking(enabled: boolean, restoreStorage = false): Promise<void> {
+  const restored = await updateDynamicRules({
+    removeRuleIds: NOISE_RULE_IDS,
+    addRules: enabled ? noiseRules() : []
+  });
+  if (restored) noiseRulesEnabled = enabled;
+  if (restoreStorage) await storageSet({ browserNoiseBlockingEnabled: enabled });
+}
+
+function currentDynamicRules(): Promise<chrome.declarativeNetRequest.Rule[] | null> {
+  return new Promise((resolve) => {
+    chrome.declarativeNetRequest.getDynamicRules((rules) => {
+      resolve(chrome.runtime.lastError ? null : rules);
+    });
+  });
 }
 
 async function maybeSyncSiteBlocking() {
@@ -581,22 +829,63 @@ async function maybeSyncSiteBlocking() {
 }
 
 async function initializeSiteBlocking(): Promise<void> {
-  await Promise.all([loadVigilConnection(), pulseFlagsReady]);
-  await pruneStoredSiteBlocking();
-  await syncSiteBlockingFromServer();
+  if (siteBlockingInitialization) return await siteBlockingInitialization;
+  const initialization = (async () => {
+    await Promise.all([loadVigilConnection(), pulseFlagsReady]);
+    await pruneStoredSiteBlocking();
+    await syncSiteBlockingFromServer();
+  })();
+  const tracked = initialization.finally(() => {
+    if (siteBlockingInitialization === tracked) siteBlockingInitialization = null;
+  });
+  siteBlockingInitialization = tracked;
+  return await tracked;
 }
 
-async function syncSiteBlockingFromServer() {
+function syncSiteBlockingFromServer(): Promise<void> {
   lastRuleSyncAt = Date.now();
+  ruleSyncRequestedGeneration += 1;
+  if (ruleSyncInFlight) return ruleSyncInFlight;
+  const synchronization = runRuleSyncLoop();
+  const tracked = synchronization.finally(() => {
+    if (ruleSyncInFlight === tracked) ruleSyncInFlight = null;
+  });
+  ruleSyncInFlight = tracked;
+  return tracked;
+}
+
+async function runRuleSyncLoop(): Promise<void> {
+  let processedGeneration = 0;
+  while (processedGeneration < ruleSyncRequestedGeneration) {
+    const generation = ruleSyncRequestedGeneration;
+    await syncSiteBlockingFromServerOnce(generation);
+    processedGeneration = generation;
+  }
+}
+
+async function syncSiteBlockingFromServerOnce(generation: number): Promise<void> {
+  const stillLatest = () => generation === ruleSyncRequestedGeneration;
   try {
     const response = await fetchVigil(`/api/extension/rules?version=${encodeURIComponent(manifest.version)}`);
+    if (!stillLatest()) return;
     if (!response.ok) throw new Error(`rules ${response.status}`);
     const snapshot = await response.json() as RuleSnapshot;
-    await rememberPulseFlags(snapshot);
+    if (!stillLatest()) return;
+    await pulseFlagsReady;
+    if (!stillLatest()) return;
+    await rememberPulseFlags(snapshot, stillLatest);
+    if (!stillLatest()) return;
     if (typeof snapshot.browserNoiseBlockingEnabled === "boolean") {
-      await syncNoiseBlocking(snapshot.browserNoiseBlockingEnabled);
+      await syncNoiseBlocking(snapshot.browserNoiseBlockingEnabled, stillLatest);
     }
-    const result = await syncSiteBlocking(snapshot.rules || [], snapshot.contentRules || [], snapshot.allowlistRules || []);
+    if (!stillLatest()) return;
+    const result = await syncSiteBlocking(
+      snapshot.rules || [],
+      snapshot.contentRules || [],
+      snapshot.allowlistRules || [],
+      stillLatest
+    );
+    if (!stillLatest()) return;
     if (Number.isFinite(Number(snapshot.dynamicRuleCount)) && Number(snapshot.dynamicRuleCount) !== result.count) {
       result.ok = false;
       result.error = `Rule count mismatch: installed ${result.count}, expected ${Number(snapshot.dynamicRuleCount)}.`;
@@ -605,40 +894,171 @@ async function syncSiteBlockingFromServer() {
       result.ok = false;
       result.error = "Rule signature mismatch after client normalization.";
     }
+    if (!stillLatest()) return;
     if (result.ok) await clearRuleSyncFailureTelemetry(result.count);
     else await recordRuleSyncFailure(result.error || "Dynamic rule synchronization failed.");
+    if (!stillLatest()) return;
     await reportRuleSync(result);
   } catch (error) {
+    if (!stillLatest()) return;
     await pruneStoredSiteBlocking();
+    if (!stillLatest()) return;
     await recordRuleSyncFailure(error);
   }
 }
 
-async function syncSiteBlocking(entries: ServerRuleEntry[], contentEntries: ServerRuleEntry[] = [], allowlistEntries: ServerRuleEntry[] = []): Promise<RuleSyncResult> {
+async function syncSiteBlocking(
+  entries: ServerRuleEntry[],
+  contentEntries: ServerRuleEntry[] = [],
+  allowlistEntries: ServerRuleEntry[] = [],
+  shouldApply: () => boolean | Promise<boolean> = () => true
+): Promise<RuleSyncResult> {
+  const application = siteRuleApplicationQueue.then(() => applySiteBlocking(
+    entries,
+    contentEntries,
+    allowlistEntries,
+    shouldApply
+  ));
+  siteRuleApplicationQueue = application.then(() => undefined, () => undefined);
+  return await application;
+}
+
+async function applySiteBlocking(
+  entries: ServerRuleEntry[],
+  contentEntries: ServerRuleEntry[],
+  allowlistEntries: ServerRuleEntry[],
+  shouldApply: () => boolean | Promise<boolean>
+): Promise<RuleSyncResult> {
   if (!chrome.declarativeNetRequest?.updateDynamicRules) {
     return { ok: false, count: 0, signature: "", error: "Declarative Net Request is unavailable" };
   }
   const normalized = normalizedSiteBlockingSnapshot(entries, contentEntries, allowlistEntries);
-  scheduleRuleExpiry([...normalized.siteEntries, ...normalized.contentEntries, ...normalized.allowlistEntries]);
-  if (siteRulesSignature === normalized.signature) return normalized;
-  await storageSet({
+  if (!await shouldApply()) return supersededSiteRuleResult(normalized);
+  if (siteRulesSignature === normalized.signature) {
+    scheduleRuleExpiry([...normalized.siteEntries, ...normalized.contentEntries, ...normalized.allowlistEntries]);
+    return normalized;
+  }
+
+  const rollback = await captureSiteRuleRollbackState();
+  if (!rollback) {
+    return {
+      ...normalized,
+      ok: false,
+      error: "Current dynamic rules could not be verified before synchronization."
+    };
+  }
+  if (!await shouldApply()) return supersededSiteRuleResult(normalized);
+
+  const snapshotStored = await storageSet({
     siteBlockRuleSnapshot: {
       rules: normalized.siteEntries,
       contentRules: normalized.contentEntries,
       allowlistRules: normalized.allowlistEntries
     }
   });
+  if (!snapshotStored) {
+    return { ...normalized, ok: false, error: "Rule snapshot persistence failed." };
+  }
+  if (!await shouldApply()) {
+    const restored = await restoreSiteRuleState(rollback, false);
+    return supersededSiteRuleResult(normalized, restored);
+  }
 
   const ok = await updateDynamicRules({
     removeRuleIds: [...SITE_MANAGED_RULE_IDS],
     addRules: normalized.dynamicRules
   });
-  if (!ok) return { ...normalized, ok: false, error: "Dynamic rule update failed" };
+  if (!ok) {
+    const restored = await restoreSiteRuleState(rollback, false);
+    if (!await shouldApply()) {
+      return supersededSiteRuleResult(normalized, restored);
+    }
+    return {
+      ...normalized,
+      ok: false,
+      error: restored
+        ? "Dynamic rule update failed"
+        : "Dynamic rule update failed and the previous snapshot could not be restored."
+    };
+  }
+  if (!await shouldApply()) {
+    const restored = await restoreSiteRuleState(rollback, true);
+    return supersededSiteRuleResult(normalized, restored);
+  }
 
   siteRulesSignature = normalized.signature;
   siteRuleCount = normalized.count;
   await storageSet({ siteBlockRules: { count: normalized.count, syncedAt: new Date().toISOString() } });
+  if (!await shouldApply()) {
+    const restored = await restoreSiteRuleState(rollback, true);
+    return supersededSiteRuleResult(normalized, restored);
+  }
+  scheduleRuleExpiry([...normalized.siteEntries, ...normalized.contentEntries, ...normalized.allowlistEntries]);
   return normalized;
+}
+
+async function captureSiteRuleRollbackState(): Promise<SiteRuleRollbackState | null> {
+  const installedRules = await currentDynamicRules();
+  if (!installedRules) return null;
+  const stored = await storageGet({
+    siteBlockRuleSnapshot: null,
+    siteBlockRules: null
+  });
+  return {
+    managedRules: installedRules.filter((rule) => SITE_MANAGED_RULE_IDS.has(rule.id)),
+    storedSnapshot: stored.siteBlockRuleSnapshot,
+    storedStatus: stored.siteBlockRules,
+    signature: siteRulesSignature,
+    count: siteRuleCount
+  };
+}
+
+async function restoreSiteRuleState(rollback: SiteRuleRollbackState, restoreRules: boolean): Promise<boolean> {
+  let rulesRestored = !restoreRules;
+  if (restoreRules) {
+    for (let attempt = 0; attempt < 2 && !rulesRestored; attempt += 1) {
+      const applied = await updateDynamicRules({
+        removeRuleIds: [...SITE_MANAGED_RULE_IDS],
+        addRules: rollback.managedRules
+      });
+      if (!applied) continue;
+      const installedRules = await currentDynamicRules();
+      rulesRestored = Boolean(
+        installedRules
+        && managedDynamicRulesCurrent(installedRules, rollback.managedRules, SITE_MANAGED_RULE_IDS)
+      );
+    }
+  }
+
+  let storageRestored = false;
+  for (let attempt = 0; attempt < 2 && !storageRestored; attempt += 1) {
+    storageRestored = await storageSet({
+      siteBlockRuleSnapshot: rollback.storedSnapshot,
+      siteBlockRules: rollback.storedStatus
+    });
+  }
+
+  if (rulesRestored) {
+    siteRulesSignature = rollback.signature;
+    siteRuleCount = rollback.count;
+  } else {
+    // Never let an unverifiable rollback suppress the next repair attempt.
+    siteRulesSignature = "";
+  }
+  return rulesRestored && storageRestored;
+}
+
+function supersededSiteRuleResult(
+  normalized: NormalizedSiteBlockingSnapshot,
+  restored = true
+): RuleSyncResult {
+  return {
+    ...normalized,
+    ok: false,
+    error: restored
+      ? "Rule synchronization was superseded."
+      : "Rule synchronization was superseded and the previous rules could not be fully verified."
+  };
 }
 
 async function pruneStoredSiteBlocking(): Promise<void> {

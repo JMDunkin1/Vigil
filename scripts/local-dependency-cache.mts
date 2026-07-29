@@ -91,18 +91,21 @@ export async function publishLocalDependencyCache(
     readFile(join(sourceNodeModules, ".package-lock.json")).then(sha256),
     hashLocalDependencyTree(sourceNodeModules)
   ]);
-  const cacheParent = join(updaterDir, CACHE_DIRECTORY);
+  const cacheRoot = localDependencyCacheRoot(updaterDir, descriptor.key);
+  const cacheParent = dirname(cacheRoot);
   await mkdir(cacheParent, { recursive: true, mode: 0o700 });
   await chmod(cacheParent, 0o700);
   await assertPrivateDirectory(cacheParent, "dependency cache directory");
-  const cacheRoot = localDependencyCacheRoot(updaterDir, descriptor.key);
+  await cleanupInvalidDependencyCaches(cacheParent, descriptor.key);
   if (await pathExists(cacheRoot)) {
     if (await localDependencyCacheReady(cacheRoot, descriptor)) {
       await rm(sourceNodeModules, { recursive: true, force: true });
       await symlink(join(cacheRoot, "node_modules"), sourceNodeModules, "dir");
       return;
     }
-    await rename(cacheRoot, `${cacheRoot}.invalid-${randomUUID()}`);
+    const invalidCacheRoot = `${cacheRoot}.invalid-${randomUUID()}`;
+    await rename(cacheRoot, invalidCacheRoot);
+    await rm(invalidCacheRoot, { recursive: true, force: true }).catch(() => undefined);
   }
 
   const temporaryRoot = await mkdtemp(join(cacheParent, `.${descriptor.key}-`));
@@ -131,6 +134,16 @@ export async function publishLocalDependencyCache(
 export function localDependencyCacheRoot(updaterDir: string, key: string): string {
   if (!/^[a-f0-9]{64}$/u.test(key)) throw new Error("Vigil's dependency cache key is invalid.");
   return join(updaterDir, CACHE_DIRECTORY, key);
+}
+
+async function cleanupInvalidDependencyCaches(cacheParent: string, key: string): Promise<void> {
+  const invalidCachePrefix = `${key}.invalid-`;
+  const uuidV4Pattern = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/u;
+  for (const entry of await readdir(cacheParent, { withFileTypes: true })) {
+    if (!entry.name.startsWith(invalidCachePrefix)
+      || !uuidV4Pattern.test(entry.name.slice(invalidCachePrefix.length))) continue;
+    await rm(join(cacheParent, entry.name), { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 export function localDependencyCacheMarkerMatches(

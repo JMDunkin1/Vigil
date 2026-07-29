@@ -71,6 +71,11 @@ interface SyncOptions {
   volume: number;
 }
 
+interface FocusSettingsSnapshot {
+  generation: number;
+  settings: NonNullable<FocusSoundData["state"]["settings"]>;
+}
+
 interface WebAudioWindow extends Window {
   webkitAudioContext?: typeof AudioContext;
 }
@@ -113,6 +118,11 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
   let audioStartGeneration = 0;
   let renderGeneration = 0;
   let renderedOptions: SyncOptions | null = null;
+  let settingsGeneration = 0;
+  let acknowledgedSettingsGeneration = 0;
+  let desiredSettings: FocusSettingsSnapshot | null = null;
+  let pendingSettings: FocusSettingsSnapshot | null = null;
+  let settingsSavePromise: Promise<void> | null = null;
   let blockedPreset: FocusPreset | null = null;
   let soundViewActive = false;
   const reducedMotionQuery = typeof window.matchMedia === "function"
@@ -141,7 +151,13 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
   function render(data: FocusSoundData) {
     const generation = ++renderGeneration;
     const settings = data.state.settings || {};
-    const requestedOptions = focusOptions(settings);
+    const savedOptions = focusOptions(settings);
+    if (desiredSettings
+      && desiredSettings.generation <= acknowledgedSettingsGeneration
+      && sameFocusOptions(savedOptions, focusOptions(desiredSettings.settings))) {
+      desiredSettings = null;
+    }
+    const requestedOptions = focusOptions(desiredSettings?.settings || settings);
     const options = requestedOptions.enabled && requestedOptions.preset === blockedPreset
       ? { ...requestedOptions, enabled: false }
       : requestedOptions;
@@ -164,10 +180,13 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
         if (generation === renderGeneration) renderFocusStudio(options, focusAudio);
       })
       .catch((error) => {
-        const currentPlaybackFailed = generation === renderGeneration
-          || Boolean(renderedOptions && samePlaybackRequest(options, renderedOptions));
+        const desiredOptions = desiredSettings ? focusOptions(desiredSettings.settings) : null;
+        const currentPlaybackFailed = (!desiredOptions || samePlaybackRequest(options, desiredOptions))
+          && (generation === renderGeneration
+            || Boolean(renderedOptions && samePlaybackRequest(options, renderedOptions)));
         if (!currentPlaybackFailed) {
-          if (renderedOptions) renderFocusStudio(renderedOptions, focusAudio);
+          const studioOptions = desiredOptions || renderedOptions;
+          if (studioOptions) renderFocusStudio(studioOptions, focusAudio);
           console.error("Focus sound playback failed", error);
           return;
         }
@@ -180,7 +199,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
         renderFocusStudio(disabledOptions, focusAudio);
         toast(focusPlaybackErrorMessage(error));
         console.error("Focus sound playback failed", error);
-        void post("/api/settings", { focusSoundEnabled: false }).catch((persistError) => {
+        void saveSettings().catch((persistError) => {
           toast(`Could not turn off failed sound playback: ${focusPlaybackErrorDetail(persistError)}`);
           console.error("Could not turn off failed sound playback", persistError);
         });
@@ -189,7 +208,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
 
   async function saveSettings() {
     const mode = focusMode($("#focusSoundMode").value);
-    await post("/api/settings", {
+    const settings = {
       focusSoundEnabled: $("#focusSoundEnabled").checked,
       focusSoundMode: mode,
       focusSoundActivity: focusActivity($("#focusSoundActivity").value, mode),
@@ -199,7 +218,34 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
       focusSoundTimerMinutes: $("#focusSoundTimerMinutes").value,
       focusSoundBreakMinutes: $("#focusSoundBreakMinutes").value,
       focusSoundVolume: $("#focusSoundVolume").value
-    });
+    };
+    const snapshot = {
+      generation: ++settingsGeneration,
+      settings
+    };
+    desiredSettings = snapshot;
+    pendingSettings = snapshot;
+    if (!settingsSavePromise) {
+      settingsSavePromise = (async () => {
+        try {
+          while (pendingSettings) {
+            const snapshot = pendingSettings;
+            pendingSettings = null;
+            try {
+              await post("/api/settings", snapshot.settings);
+              acknowledgedSettingsGeneration = Math.max(acknowledgedSettingsGeneration, snapshot.generation);
+            } catch (error) {
+              if (pendingSettings) continue;
+              if (desiredSettings === snapshot) desiredSettings = null;
+              throw error;
+            }
+          }
+        } finally {
+          settingsSavePromise = null;
+        }
+      })();
+    }
+    await settingsSavePromise;
   }
 
   async function sync(options: SyncOptions) {
@@ -462,6 +508,18 @@ function samePlaybackRequest(left: SyncOptions, right: SyncOptions): boolean {
     && left.intensity === right.intensity;
 }
 
+function sameFocusOptions(left: SyncOptions, right: SyncOptions): boolean {
+  return left.enabled === right.enabled
+    && left.mode === right.mode
+    && left.activity === right.activity
+    && left.preset === right.preset
+    && left.intensity === right.intensity
+    && left.timerMode === right.timerMode
+    && left.timerMinutes === right.timerMinutes
+    && left.breakMinutes === right.breakMinutes
+    && left.volume === right.volume;
+}
+
 function connectSoundProfile(context: AudioContext, profile: SoundProfile, master: GainNode, nodes: AudioNode[]): void {
   if (profile.kind === "binaural") {
     connectBinauralProfile(context, profile, master, nodes);
@@ -644,7 +702,7 @@ function focusOptions(settings: FocusSoundData["state"]["settings"] = {}): SyncO
     timerMode: focusTimerMode(settings.focusSoundTimerMode),
     timerMinutes: clamp(Number(settings.focusSoundTimerMinutes || 50), 1, 480),
     breakMinutes: clamp(Number(settings.focusSoundBreakMinutes || 5), 1, 120),
-    volume: clamp(Number(settings.focusSoundVolume || 35), 0, 100)
+    volume: clamp(Number(settings.focusSoundVolume ?? 35), 0, 100)
   };
 }
 

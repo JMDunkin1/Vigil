@@ -19,6 +19,11 @@ export interface HabitActivityCounts {
   total: number;
 }
 
+export interface ActivityFocusIdentity {
+  kind: "day" | "week";
+  value: string;
+}
+
 const ACTIVITY_WEEKS = 52;
 const DAYS_PER_WEEK = 7;
 
@@ -48,6 +53,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
         const mode = activityModeFrom(button.dataset.activityMode);
         if (!mode || mode === activityMode) return;
         activityMode = mode;
+        if (mode !== "daily") focusOpen = false;
         renderActivity();
       });
     });
@@ -61,6 +67,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
   }
 
   function renderFocus(): void {
+    const focusedControl = captureHabitFocusControl(focusRoot);
     const behaviors = activeBehaviors(data);
     const values = checkInMap(habitCheckIns(data));
     const dateKey = localDateKey(selectedDate);
@@ -72,6 +79,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       selectedBehaviorId = null;
       focusRoot.append(focusEmptyState());
       updateTodayStatus(behaviors, values, effectiveToday);
+      restoreHabitFocusControl(focusRoot, focusedControl);
       return;
     }
 
@@ -88,6 +96,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
         focusHabitHeading();
       }));
       updateTodayStatus(behaviors, values, effectiveToday);
+      restoreHabitFocusControl(focusRoot, focusedControl);
       return;
     }
 
@@ -129,7 +138,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     actions.setAttribute("role", "group");
     actions.setAttribute("aria-label", `${behavior.name || "Habit"} result`);
     actions.append(
-      focusStatusButton("Done", "success", status, () => {
+      focusStatusButton("Done", "success", status, behavior.id, () => {
         void saveHabitStatus(
           behavior.id,
           dateKey,
@@ -137,7 +146,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
           status !== "success"
         );
       }),
-      focusStatusButton("Missed", "missed", status, () => {
+      focusStatusButton("Missed", "missed", status, behavior.id, () => {
         void saveHabitStatus(
           behavior.id,
           dateKey,
@@ -150,6 +159,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const skip = document.createElement("button");
     skip.type = "button";
     skip.className = "habit-focus-skip";
+    skip.dataset.habitFocusControl = `habit:${behavior.id}:skip`;
     skip.textContent = "Skip for now";
     skip.disabled = saving || behaviors.length < 2;
     skip.addEventListener("click", () => {
@@ -165,9 +175,11 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     content.append(step, heading, description, actions, skip, helper);
     focusRoot.append(content);
     updateTodayStatus(behaviors, values, effectiveToday);
+    restoreHabitFocusControl(focusRoot, focusedControl);
   }
 
   function renderActivity(): void {
+    const focusedActivity = captureActivityFocus(activityRoot);
     const behaviors = allBehaviors(data);
     const checkIns = habitCheckIns(data);
     const values = checkInMap(checkIns);
@@ -208,51 +220,110 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     focusSection.dataset.anchorZone = activityAnchorZone(focusIndex);
     focusSection.hidden = !focusOpen;
 
-    dates.forEach((date, index) => {
-      const dateKey = localDateKey(date);
-      const future = date.getTime() > effectiveToday.getTime();
-      const counts = aggregateHabitActivity(dailyCounts, index, activityMode);
-      const level = habitActivityLevel(counts);
-      const cell = document.createElement("button");
-      cell.type = "button";
-      cell.className = [
-        "habit-activity-cell",
-        `level-${level}`,
-        counts.total === 0 ? "is-void" : "",
-        dateKey === todayKey ? "is-today" : "",
-        dateKey === selectedKey ? "is-selected" : "",
-        future ? "is-future" : ""
-      ].filter(Boolean).join(" ");
-      cell.dataset.activityIndex = String(index);
-      cell.dataset.level = String(level);
-      cell.disabled = future;
-      cell.tabIndex = !future && index === focusIndex ? 0 : -1;
-      cell.setAttribute("aria-label", activityAriaLabel(date, dates[0], counts, activityMode));
-      if (dateKey === selectedKey) {
-        cell.setAttribute("aria-controls", "habitFocus");
-        cell.setAttribute("aria-expanded", String(focusOpen));
-      }
-      cell.title = activityTitle(date, dates[0], counts, activityMode);
-      cell.addEventListener("click", () => selectDate(date, true));
-      cell.addEventListener("keydown", (event) => moveActivityFocus(event, index, dates.length));
-      activityRoot.append(cell);
-    });
+    if (activityMode === "daily") {
+      dates.forEach((date, index) => {
+        const dateKey = localDateKey(date);
+        const future = date.getTime() > effectiveToday.getTime();
+        const counts = dailyCounts[index];
+        const level = habitActivityLevel(counts);
+        const cell = document.createElement("button");
+        cell.type = "button";
+        cell.className = [
+          "habit-activity-cell",
+          `level-${level}`,
+          counts.total === 0 ? "is-void" : "",
+          dateKey === todayKey ? "is-today" : "",
+          dateKey === selectedKey ? "is-selected" : "",
+          future ? "is-future" : ""
+        ].filter(Boolean).join(" ");
+        cell.dataset.activityIndex = String(index);
+        cell.dataset.level = String(level);
+        cell.disabled = future;
+        cell.tabIndex = !future && index === focusIndex ? 0 : -1;
+        cell.setAttribute("aria-label", activityAriaLabel(date, dates[0], counts, activityMode));
+        if (dateKey === selectedKey) {
+          cell.setAttribute("aria-controls", "habitFocus");
+          cell.setAttribute("aria-expanded", String(focusOpen));
+        }
+        cell.title = activityTitle(date, dates[0], counts, activityMode);
+        cell.addEventListener("click", () => selectDate(date, true));
+        cell.addEventListener("keydown", (event) => moveActivityFocus(event, index, dates.length));
+        activityRoot.append(cell);
+      });
+    } else {
+      renderActivityBars(dates, dailyCounts, effectiveToday, focusIndex);
+    }
 
     activityRoot.append(focusSection);
     renderMonthLabels(dates, effectiveToday);
-    const selectedCounts = aggregateHabitActivity(dailyCounts, focusIndex, activityMode);
-    activityStatus.textContent = activityAriaLabel(dates[focusIndex], dates[0], selectedCounts, activityMode);
+    const selectedActivityIndex = activityMode === "daily"
+      ? focusIndex
+      : Math.min(dates.length - 1, (Math.floor(focusIndex / DAYS_PER_WEEK) * DAYS_PER_WEEK) + DAYS_PER_WEEK - 1);
+    const selectedCounts = aggregateHabitActivity(dailyCounts, selectedActivityIndex, activityMode);
+    const selectedPeriodEnd = earlierDate(dates[selectedActivityIndex], effectiveToday);
+    const selectedPeriodStart = habitActivityPeriodStart(dates, selectedActivityIndex, activityMode);
+    activityStatus.textContent = activityAriaLabel(selectedPeriodEnd, selectedPeriodStart, selectedCounts, activityMode);
+    restoreActivityFocus(activityRoot, focusedActivity);
+  }
+
+  function renderActivityBars(
+    dates: Date[],
+    dailyCounts: HabitActivityCounts[],
+    effectiveToday: Date,
+    focusIndex: number
+  ): void {
+    const weeklyCounts = weeklyHabitActivity(dailyCounts);
+    const barMode = activityMode === "weekly" ? "weekly" : "cumulative";
+    const heights = habitActivityBarHeights(weeklyCounts, barMode);
+    const selectedWeek = Math.floor(focusIndex / DAYS_PER_WEEK);
+    const todayIndex = Math.max(0, dates.findIndex((date) => isSameDay(date, effectiveToday)));
+    const currentWeek = Math.floor(todayIndex / DAYS_PER_WEEK);
+
+    weeklyCounts.forEach((weekCounts, weekIndex) => {
+      const activityIndex = Math.min(dates.length - 1, (weekIndex * DAYS_PER_WEEK) + DAYS_PER_WEEK - 1);
+      const periodEnd = earlierDate(dates[activityIndex], effectiveToday);
+      const periodStart = habitActivityPeriodStart(dates, activityIndex, barMode);
+      const counts = barMode === "weekly"
+        ? weekCounts
+        : aggregateHabitActivity(dailyCounts, activityIndex, "cumulative");
+      const bar = document.createElement("button");
+      bar.type = "button";
+      bar.className = [
+        "habit-activity-bar",
+        weekIndex === selectedWeek ? "is-selected" : "",
+        weekIndex > currentWeek ? "is-future" : ""
+      ].filter(Boolean).join(" ");
+      bar.dataset.activityWeek = String(weekIndex);
+      bar.disabled = weekIndex > currentWeek;
+      bar.tabIndex = weekIndex === selectedWeek ? 0 : -1;
+      bar.setAttribute("aria-label", activityAriaLabel(periodEnd, periodStart, counts, barMode));
+      if (weekIndex === selectedWeek) {
+        bar.setAttribute("aria-controls", "habitFocus");
+        bar.setAttribute("aria-expanded", String(focusOpen));
+      }
+      bar.title = activityTitle(periodEnd, periodStart, counts, barMode);
+      for (let row = DAYS_PER_WEEK; row >= 1; row -= 1) {
+        const segment = document.createElement("span");
+        segment.className = `habit-activity-bar-cell${row <= heights[weekIndex] ? " is-filled" : ""}`;
+        segment.setAttribute("aria-hidden", "true");
+        bar.append(segment);
+      }
+      bar.addEventListener("click", () => selectDate(periodEnd, true));
+      bar.addEventListener("keydown", (event) => moveActivityBarFocus(event, weekIndex, currentWeek));
+      activityRoot.append(bar);
+    });
   }
 
   function renderMonthLabels(dates: Date[], effectiveToday: Date): void {
     let previousMonth = "";
-    for (const date of dates) {
-      if (date.getTime() > effectiveToday.getTime()) break;
-      const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
-      if (monthKey === previousMonth) continue;
-      previousMonth = monthKey;
+    for (let index = 0; index < ACTIVITY_WEEKS; index += 1) {
+      const date = dates[index * DAYS_PER_WEEK];
       const label = document.createElement("span");
-      label.textContent = date.toLocaleDateString([], { month: "short" });
+      const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+      if (monthKey !== previousMonth && date.getTime() <= effectiveToday.getTime()) {
+        previousMonth = monthKey;
+        label.textContent = date.toLocaleDateString([], { month: "short" });
+      }
       activityMonths.append(label);
     }
   }
@@ -270,13 +341,30 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     target.focus();
   }
 
+  function moveActivityBarFocus(event: KeyboardEvent, weekIndex: number, currentWeek: number): void {
+    let targetWeek = weekIndex;
+    if (event.key === "ArrowLeft") targetWeek = Math.max(0, weekIndex - 1);
+    else if (event.key === "ArrowRight") targetWeek = Math.min(currentWeek, weekIndex + 1);
+    else if (event.key === "Home") targetWeek = 0;
+    else if (event.key === "End") targetWeek = currentWeek;
+    else return;
+    if (targetWeek === weekIndex) return;
+    const target = activityRoot.querySelector<HTMLButtonElement>(`[data-activity-week="${targetWeek}"]`);
+    if (!target || target.disabled) return;
+    event.preventDefault();
+    activityRoot.querySelectorAll<HTMLButtonElement>(".habit-activity-bar").forEach((bar) => {
+      bar.tabIndex = bar === target ? 0 : -1;
+    });
+    target.focus();
+  }
+
   function selectDate(date: Date, revealFocus = false): void {
     if (date.getTime() > trackingDay().getTime()) return;
     const togglingSelectedDate = isSameDay(selectedDate, date);
     if (togglingSelectedDate && revealFocus) {
       focusOpen = !focusOpen;
       renderActivity();
-      activityRoot.querySelector<HTMLButtonElement>(".habit-activity-cell.is-selected")?.focus({ preventScroll: true });
+      activityRoot.querySelector<HTMLButtonElement>(".is-selected:is(.habit-activity-cell, .habit-activity-bar)")?.focus({ preventScroll: true });
       return;
     }
     selectedDate = dayStart(date);
@@ -295,11 +383,13 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     label: string,
     value: Exclude<HabitStatus, "unreported">,
     current: HabitStatus,
+    behaviorId: string,
     onClick: () => void
   ): HTMLButtonElement {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `habit-focus-action ${value}${current === value ? " is-selected" : ""}`;
+    button.dataset.habitFocusControl = `habit:${behaviorId}:status:${value}`;
     button.textContent = label;
     button.disabled = saving;
     button.setAttribute("aria-pressed", String(current === value));
@@ -370,6 +460,45 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
   return { bind, render };
 }
 
+export function captureActivityFocus(root: HTMLElement): ActivityFocusIdentity | null {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement) || !root.contains(active)) return null;
+  if (active.classList.contains("habit-activity-cell") && active.dataset.activityIndex) {
+    return { kind: "day", value: active.dataset.activityIndex };
+  }
+  if (active.classList.contains("habit-activity-bar") && active.dataset.activityWeek) {
+    return { kind: "week", value: active.dataset.activityWeek };
+  }
+  return null;
+}
+
+export function restoreActivityFocus(root: HTMLElement, identity: ActivityFocusIdentity | null): void {
+  if (!identity) return;
+  const attribute = identity.kind === "day" ? "data-activity-index" : "data-activity-week";
+  const target = root.querySelector<HTMLButtonElement>(`[${attribute}="${identity.value}"]`);
+  if (!target || target.disabled) return;
+  const peerSelector = identity.kind === "day" ? ".habit-activity-cell" : ".habit-activity-bar";
+  root.querySelectorAll<HTMLButtonElement>(peerSelector).forEach((button) => {
+    button.tabIndex = button === target ? 0 : -1;
+  });
+  target.focus({ preventScroll: true });
+}
+
+export function captureHabitFocusControl(
+  root: HTMLElement,
+  active: Element | null = document.activeElement
+): string | null {
+  if (!(active instanceof HTMLButtonElement) || !root.contains(active)) return null;
+  return active.dataset.habitFocusControl || null;
+}
+
+export function restoreHabitFocusControl(root: HTMLElement, identity: string | null): void {
+  if (!identity) return;
+  const target = [...root.querySelectorAll<HTMLButtonElement>("[data-habit-focus-control]")]
+    .find((button) => button.dataset.habitFocusControl === identity);
+  if (target && !target.disabled) target.focus({ preventScroll: true });
+}
+
 export function nextHabitIndex(statuses: HabitStatus[], currentIndex: number): number {
   if (!statuses.length || currentIndex < 0 || currentIndex >= statuses.length) return -1;
   if (statuses.length === 1) return currentIndex;
@@ -430,6 +559,42 @@ export function aggregateHabitActivity(
     unreported: total.unreported + counts.unreported,
     total: total.total + counts.total
   }), emptyActivityCounts());
+}
+
+export function weeklyHabitActivity(daily: HabitActivityCounts[]): HabitActivityCounts[] {
+  const output: HabitActivityCounts[] = [];
+  for (let index = 0; index < daily.length; index += DAYS_PER_WEEK) {
+    output.push(daily.slice(index, index + DAYS_PER_WEEK).reduce(sumActivityCounts, emptyActivityCounts()));
+  }
+  return output;
+}
+
+export function habitActivityPeriodStart(
+  dates: Date[],
+  index: number,
+  mode: HabitActivityMode
+): Date {
+  if (!dates.length) throw new Error("Habit activity dates are required.");
+  const boundedIndex = Math.max(0, Math.min(dates.length - 1, index));
+  if (mode === "daily") return dates[boundedIndex];
+  if (mode === "weekly") return dates[Math.floor(boundedIndex / DAYS_PER_WEEK) * DAYS_PER_WEEK];
+  return dates[0];
+}
+
+export function habitActivityBarHeights(
+  weekly: HabitActivityCounts[],
+  mode: Exclude<HabitActivityMode, "daily">
+): number[] {
+  let runningDone = 0;
+  const values = weekly.map((counts) => {
+    if (mode === "weekly") return counts.done;
+    runningDone += counts.done;
+    return runningDone;
+  });
+  const maximum = Math.max(0, ...values);
+  return values.map((value) => value <= 0 || maximum <= 0
+    ? 0
+    : Math.min(DAYS_PER_WEEK, Math.max(1, Math.ceil((value / maximum) * DAYS_PER_WEEK))));
 }
 
 export function habitActivityLevel(counts: HabitActivityCounts): number {
@@ -504,6 +669,7 @@ function habitDots(
     const dot = document.createElement("button");
     dot.type = "button";
     dot.className = `habit-focus-dot ${statuses[index]}${index === selectedIndex ? " is-current" : ""}`;
+    dot.dataset.habitFocusControl = `habit:${behavior.id}`;
     dot.disabled = disabled;
     dot.setAttribute("aria-label", `${behavior.name || `Habit ${index + 1}`}: ${statusLabelFor(statuses[index])}`);
     dot.setAttribute("aria-pressed", String(index === selectedIndex));
@@ -548,6 +714,7 @@ function completedDayView(
   const button = document.createElement("button");
   button.type = "button";
   button.className = "habit-focus-edit";
+  button.dataset.habitFocusControl = `edit:${localDateKey(selectedDate)}`;
   button.textContent = today ? "Edit today's answers" : "Edit this day's answers";
   button.addEventListener("click", edit);
 
@@ -668,6 +835,18 @@ function formatShortDate(value: Date): string {
 
 function emptyActivityCounts(): HabitActivityCounts {
   return { done: 0, missed: 0, unreported: 0, total: 0 };
+}
+
+function sumActivityCounts(total: HabitActivityCounts, counts: HabitActivityCounts): HabitActivityCounts {
+  total.done += counts.done;
+  total.missed += counts.missed;
+  total.unreported += counts.unreported;
+  total.total += counts.total;
+  return total;
+}
+
+function earlierDate(left: Date, right: Date): Date {
+  return left.getTime() <= right.getTime() ? left : right;
 }
 
 function dayStart(value: Date): Date {

@@ -1,6 +1,6 @@
-import { constants } from "node:fs";
+import { constants, type Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { link, lstat, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   UPDATE_RECOVERY_MANIFEST_FILENAME,
@@ -42,6 +42,22 @@ export type RuntimeInterruptionReadResult =
   | { status: "missing" }
   | { status: "valid"; record: RuntimeInterruptionRecord }
   | { status: "invalid"; reason: RuntimeInterruptionInvalidReason };
+
+export interface RuntimeInterruptionReadHooks {
+  afterOpen?(): Promise<void>;
+  afterRead?(): Promise<void>;
+}
+
+export interface RuntimeInterruptionClearHooks {
+  afterSnapshot?(): Promise<void>;
+}
+
+interface RuntimeInterruptionSnapshot {
+  result: RuntimeInterruptionReadResult;
+  dev?: number;
+  ino?: number;
+  raw?: Buffer;
+}
 
 export interface RuntimeSupervisorScriptOptions {
   markerPath: string;
@@ -753,34 +769,14 @@ export async function readRuntimeReady(dataDir: string): Promise<RuntimeReadyRec
   }
 }
 
-export async function readRuntimeInterruption(dataDir: string): Promise<RuntimeInterruptionReadResult> {
-  const path = runtimeInterruptionPath(dataDir);
-  let metadata: Awaited<ReturnType<typeof lstat>>;
-  try {
-    metadata = await lstat(path);
-  } catch (error) {
-    return fileErrorCode(error) === "ENOENT"
-      ? { status: "missing" }
-      : { status: "invalid", reason: "unreadable-file" };
-  }
-  if (
-    !metadata.isFile()
-    || metadata.isSymbolicLink()
-    || (metadata.mode & 0o077) !== 0
-    || (typeof process.getuid === "function" && metadata.uid !== process.getuid())
-  ) return { status: "invalid", reason: "unsafe-file" };
-  if (metadata.size > MAX_RUNTIME_INTERRUPTION_BYTES) {
-    return { status: "invalid", reason: "oversized-file" };
-  }
-  let raw: Buffer;
-  try {
-    raw = await readFile(path);
-  } catch {
-    return { status: "invalid", reason: "unreadable-file" };
-  }
-  if (raw.byteLength > MAX_RUNTIME_INTERRUPTION_BYTES) {
-    return { status: "invalid", reason: "oversized-file" };
-  }
+export async function readRuntimeInterruption(
+  dataDir: string,
+  hooks: RuntimeInterruptionReadHooks = {}
+): Promise<RuntimeInterruptionReadResult> {
+  return (await readRuntimeInterruptionSnapshot(runtimeInterruptionPath(dataDir), hooks)).result;
+}
+
+function parseRuntimeInterruption(raw: Buffer): RuntimeInterruptionReadResult {
   let value: Partial<RuntimeInterruptionRecord>;
   try {
     value = JSON.parse(raw.toString("utf8")) as Partial<RuntimeInterruptionRecord>;
@@ -804,6 +800,119 @@ export async function readRuntimeInterruption(dataDir: string): Promise<RuntimeI
   return { status: "valid", record: value as RuntimeInterruptionRecord };
 }
 
+async function readRuntimeInterruptionSnapshot(
+  path: string,
+  hooks: RuntimeInterruptionReadHooks = {}
+): Promise<RuntimeInterruptionSnapshot> {
+  // An atomic publisher can replace the canonical directory entry while a
+  // descriptor is being read. Retry once so callers observe the new canonical
+  // receipt instead of accepting bytes from a displaced inode.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const snapshot = await readRuntimeInterruptionSnapshotAttempt(path, hooks);
+    if (snapshot) return snapshot;
+  }
+  return { result: { status: "invalid", reason: "unreadable-file" } };
+}
+
+async function readRuntimeInterruptionSnapshotAttempt(
+  path: string,
+  hooks: RuntimeInterruptionReadHooks
+): Promise<RuntimeInterruptionSnapshot | null> {
+  let handle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    try {
+      handle = await open(
+        path,
+        constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)
+      );
+    } catch (error) {
+      const code = fileErrorCode(error);
+      if (code === "ENOENT") return { result: { status: "missing" } };
+      if (code === "ELOOP") return { result: { status: "invalid", reason: "unsafe-file" } };
+      return { result: { status: "invalid", reason: "unreadable-file" } };
+    }
+
+    let before: Stats;
+    try {
+      before = await handle.stat();
+    } catch {
+      return { result: { status: "invalid", reason: "unreadable-file" } };
+    }
+    await hooks.afterOpen?.();
+
+    let raw: Buffer | null = null;
+    let readFailed = false;
+    if (safeRuntimeInterruptionFile(before) && before.size <= MAX_RUNTIME_INTERRUPTION_BYTES) {
+      try {
+        raw = await handle.readFile();
+      } catch {
+        readFailed = true;
+      }
+      await hooks.afterRead?.();
+    }
+
+    let after: Stats;
+    let current: Stats;
+    try {
+      [after, current] = await Promise.all([handle.stat(), lstat(path)]);
+    } catch (error) {
+      return fileErrorCode(error) === "ENOENT"
+        ? null
+        : { result: { status: "invalid", reason: "unreadable-file" } };
+    }
+
+    if (!safeRuntimeInterruptionFile(current)) {
+      return { result: { status: "invalid", reason: "unsafe-file" } };
+    }
+    if (!sameFileIdentity(before, after) || !sameFileIdentity(after, current) || !sameStableFile(before, after)) {
+      return null;
+    }
+    if (!safeRuntimeInterruptionFile(after)) {
+      return { result: { status: "invalid", reason: "unsafe-file" } };
+    }
+    if (after.size > MAX_RUNTIME_INTERRUPTION_BYTES || (raw?.byteLength || 0) > MAX_RUNTIME_INTERRUPTION_BYTES) {
+      return {
+        result: { status: "invalid", reason: "oversized-file" },
+        dev: after.dev,
+        ino: after.ino
+      };
+    }
+    if (readFailed || !raw) {
+      return {
+        result: { status: "invalid", reason: "unreadable-file" },
+        dev: after.dev,
+        ino: after.ino
+      };
+    }
+    return {
+      result: parseRuntimeInterruption(raw),
+      dev: after.dev,
+      ino: after.ino,
+      raw
+    };
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+function safeRuntimeInterruptionFile(metadata: Stats): boolean {
+  return metadata.isFile()
+    && !metadata.isSymbolicLink()
+    && metadata.nlink === 1
+    && (metadata.mode & 0o077) === 0
+    && (typeof process.getuid !== "function" || metadata.uid === process.getuid());
+}
+
+function sameFileIdentity(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameStableFile(left: Stats, right: Stats): boolean {
+  return left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs;
+}
+
 export async function liveRuntimeReady(dataDir: string, startedAfter = 0): Promise<RuntimeReadyRecord | null> {
   const record = await readRuntimeReady(dataDir);
   if (!record || Date.parse(record.startedAt) < startedAfter || !processIsRunning(record.pid)) return null;
@@ -817,12 +926,69 @@ export async function clearRuntimeReady(dataDir: string, pid = process.pid): Pro
   await syncDirectory(dataDir);
 }
 
-export async function clearRuntimeInterruption(dataDir: string, expectedId: string): Promise<boolean> {
-  const result = await readRuntimeInterruption(dataDir);
-  if (result.status !== "valid" || result.record.id !== expectedId) return false;
-  await rm(runtimeInterruptionPath(dataDir), { force: true });
-  await syncDirectory(dataDir);
-  return true;
+export async function clearRuntimeInterruption(
+  dataDir: string,
+  expectedId: string,
+  hooks: RuntimeInterruptionClearHooks = {}
+): Promise<boolean> {
+  const path = runtimeInterruptionPath(dataDir);
+  const expected = await readRuntimeInterruptionSnapshot(path);
+  if (expected.result.status !== "valid" || expected.result.record.id !== expectedId) return false;
+  await hooks.afterSnapshot?.();
+
+  const movedPath = `${path}.conflict.${Date.now()}.${randomUUID()}`;
+  try {
+    await rename(path, movedPath);
+  } catch (error) {
+    if (fileErrorCode(error) === "ENOENT") return false;
+    throw error;
+  }
+
+  let movedEntryNeedsPreservation = true;
+  try {
+    const moved = await readRuntimeInterruptionSnapshot(movedPath);
+    const exactExpectedEntry = moved.result.status === "valid"
+      && moved.result.record.id === expectedId
+      && moved.dev === expected.dev
+      && moved.ino === expected.ino
+      && Boolean(moved.raw && expected.raw?.equals(moved.raw));
+    if (!exactExpectedEntry) {
+      await restoreOrPreserveRuntimeInterruption(path, movedPath);
+      movedEntryNeedsPreservation = false;
+      await syncDirectory(dataDir);
+      return false;
+    }
+
+    await rm(movedPath);
+    movedEntryNeedsPreservation = false;
+    await syncDirectory(dataDir);
+    return true;
+  } catch (error) {
+    if (!movedEntryNeedsPreservation) throw error;
+    try {
+      await restoreOrPreserveRuntimeInterruption(path, movedPath);
+      await syncDirectory(dataDir);
+    } catch (restoreError) {
+      throw Object.assign(new Error("Vigil could not restore runtime interruption evidence after acknowledgement failed."), {
+        cause: error,
+        restoreError
+      });
+    }
+    throw error;
+  }
+}
+
+async function restoreOrPreserveRuntimeInterruption(path: string, movedPath: string): Promise<void> {
+  try {
+    // link is an atomic no-replace restore. If a supervisor has already
+    // published another canonical receipt, leave this entry at its conflict
+    // path so neither piece of interruption evidence is overwritten.
+    await link(movedPath, path);
+  } catch (error) {
+    if (fileErrorCode(error) === "EEXIST") return;
+    throw error;
+  }
+  await rm(movedPath);
 }
 
 /**
@@ -907,7 +1073,10 @@ async function chmodPrivateIfSameSafeFile(
   ) return;
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
-    handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    handle = await open(
+      path,
+      constants.O_RDONLY | (constants.O_NOFOLLOW || 0) | (constants.O_NONBLOCK || 0)
+    );
     const opened = await handle.stat();
     if (
       !opened.isFile()

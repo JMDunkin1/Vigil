@@ -84,6 +84,11 @@ assert.doesNotMatch(contentSource, /activateOfflineGuard/);
 assert.doesNotMatch(contentSource, /data-vigil-page-guard-state/);
 assert.match(contentSource, /root\?\.style\.setProperty\("visibility", "hidden", "important"\)/u);
 assert.match(contentSource, /visibility: visible !important/u);
+assert.match(
+  contentSource,
+  /const generation = \+\+pulseGeneration[\s\S]*?if \(generation !== pulseGeneration\)\s*return;[\s\S]*?handlePulseResult\(result\)/u,
+  "stale pulse responses must not release a newer navigation guard"
+);
 assert.match(contentSource, /background: #b77952/u, "the injected pause overlay must use Vigil's current copper action");
 assert.doesNotMatch(contentSource, /#18345b|#142238|#d1a94d/u, "the injected pause overlay must not return to the retired navy-and-gold theme");
 assert.match(compactExtensionRuleSignature("large canonical rule payload"), /^sha256:[a-f0-9]{64}$/u);
@@ -96,6 +101,81 @@ assert.ok(
   contentSource.indexOf("focusedSocialCleanupEnabled === true") < contentSource.indexOf("result.offline === true"),
   "cached cleanup flags must be applied before an offline pulse releases the page guard"
 );
+
+{
+  const start = contentSource.indexOf("function handlePulseResult(");
+  const end = contentSource.indexOf("\nfunction patchHistory(", start);
+  assert.ok(start >= 0 && end > start, "the pulse-result handler must remain available for behavior tests");
+  const effects: string[] = [];
+  const context = createContext({
+    activePauseOverlay: null,
+    cleanupBrowserNoise() { effects.push("noise-on"); },
+    teardownYoutubeAutofillFriction() { effects.push("noise-off"); },
+    applyFocusedSocialCleanup() { effects.push("cleanup-on"); },
+    teardownFocusedSocialCleanup() { effects.push("cleanup-off"); },
+    releasePageGuard() { effects.push("release"); },
+    replaceLocation() { effects.push("redirect"); },
+    showPauseOverlay() { effects.push("pause"); return true; }
+  });
+  runInContext(contentSource.slice(start, end), context);
+  Object.assign(context, {
+    staleResult: {
+      stale: true,
+      browserNoiseBlockingEnabled: true,
+      focusedSocialCleanupEnabled: true,
+      blocked: true,
+      redirectUrl: "http://127.0.0.1:8787/blocked"
+    },
+    skippedResult: {
+      skipped: true,
+      browserNoiseBlockingEnabled: false,
+      focusedSocialCleanupEnabled: false
+    }
+  });
+  runInContext("handlePulseResult(staleResult); handlePulseResult(skippedResult);", context);
+  assert.deepEqual(
+    effects,
+    [],
+    "stale and skipped pulse outcomes must preserve the page guard and avoid every policy side effect"
+  );
+}
+
+{
+  const start = contentSource.indexOf("async function continueFromOverlay(");
+  const end = contentSource.indexOf("\nasync function skipFromOverlay(", start);
+  assert.ok(start >= 0 && end > start, "the pause continue handler must remain available for behavior tests");
+  const removals: boolean[] = [];
+  const resets: string[] = [];
+  const context = createContext({
+    activePauseOverlay: { requestId: "old-request" },
+    decision: { requestId: "old-request" },
+    button: { disabled: false },
+    sendPauseAction: async () => ({ ok: true }),
+    setOverlayStatus() {},
+    removePauseOverlay(resumeMedia: boolean) { removals.push(resumeMedia); },
+    resetAndPulse(reason: string) { resets.push(reason); },
+    errorMessage(error: unknown) { return String(error); }
+  });
+  runInContext(contentSource.slice(start, end), context);
+  const oldContinue = runInContext(
+    'continueFromOverlay(decision, "write the report", "Focused", button)',
+    context
+  ) as Promise<void>;
+  runInContext('activePauseOverlay = { requestId: "new-request" }', context);
+  await oldContinue;
+  assert.deepEqual(removals, [],
+    "an old continue response must not dismiss a newer pause overlay");
+  assert.deepEqual(resets, [],
+    "an old continue response must not reset and pulse beneath a newer pause overlay");
+
+  runInContext('activePauseOverlay = { requestId: "old-request" }; button.disabled = false', context);
+  await runInContext(
+    'continueFromOverlay(decision, "write the report", "Focused", button)',
+    context
+  );
+  assert.deepEqual(removals, [true], "the matching continue response should dismiss its own pause overlay");
+  assert.deepEqual(resets, ["activated"], "the matching continue response should refresh the active tab");
+}
 
 {
   type TestEvent = {
@@ -508,6 +588,20 @@ assert.ok(
 }
 
 {
+  function deferredValue<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((resolvePromise) => { resolve = resolvePromise; });
+    return { promise, resolve };
+  }
+
+  async function waitForCondition(predicate: () => boolean): Promise<void> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      if (predicate()) return;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    throw new Error("Timed out waiting for the extension VM condition.");
+  }
+
   const storage: Record<string, unknown> = {};
   const storageWrites: Array<Record<string, unknown>> = [];
   const dynamicRuleUpdates: Array<Record<string, unknown>> = [];
@@ -517,7 +611,20 @@ assert.ok(
   const installedAlarms = new Map<string, { name: string; periodInMinutes?: number; scheduledTime: number }>();
   let ruleFetchFailure = "";
   let dynamicRuleUpdateFailure = false;
+  let dynamicRuleReadFailure = false;
   let runtimeLastError: { message: string } | null = null;
+  let currentTabUrl = "https://example.com/";
+  let checkFetchOverride: (() => Promise<Response> | Response) | null = null;
+  const queuedRuleFetches: Array<Promise<Response>> = [];
+  let ruleFetchCount = 0;
+  let delayNextBadgeText = false;
+  let delayedBadgeTextCallback: (() => void) | null = null;
+  let delayNextTabMessage = false;
+  let delayedTabMessageCallback: ((response: unknown) => void) | null = null;
+  let delayNextDynamicRuleUpdate = false;
+  let delayedDynamicRuleUpdateCallback: (() => void) | null = null;
+  const tabUpdates: Array<{ tabId: number; change: unknown }> = [];
+  const tabMessages: Array<{ tabId: number; message: unknown; options: unknown }> = [];
   const event = () => ({ addListener() {} });
   const context = createContext({
     AbortController,
@@ -527,7 +634,13 @@ assert.ok(
     clearTimeout,
     console,
     fetch: async (url: string) => {
+      if (String(url).includes("/api/extension/check") && checkFetchOverride) {
+        return await checkFetchOverride();
+      }
       if (String(url).includes("/api/extension/rules?")) {
+        ruleFetchCount += 1;
+        const queued = queuedRuleFetches.shift();
+        if (queued) return await queued;
         if (ruleFetchFailure) throw new Error(ruleFetchFailure);
         return new Response(JSON.stringify({
           rules: [],
@@ -543,7 +656,14 @@ assert.ok(
     chrome: {
       action: {
         setBadgeBackgroundColor(_options: unknown, callback: () => void) { callback(); },
-        setBadgeText(_options: unknown, callback: () => void) { callback(); }
+        setBadgeText(_options: unknown, callback: () => void) {
+          if (delayNextBadgeText) {
+            delayNextBadgeText = false;
+            delayedBadgeTextCallback = callback;
+            return;
+          }
+          callback();
+        }
       },
       alarms: {
         create(name: string, options: Record<string, unknown>) {
@@ -576,9 +696,20 @@ assert.ok(
           const removeRuleIds = Array.isArray(options.removeRuleIds) ? options.removeRuleIds.map(Number) : [];
           installedDynamicRules = installedDynamicRules.filter((rule) => !removeRuleIds.includes(Number(rule.id)));
           if (Array.isArray(options.addRules)) installedDynamicRules.push(...options.addRules as Array<Record<string, unknown>>);
+          if (delayNextDynamicRuleUpdate) {
+            delayNextDynamicRuleUpdate = false;
+            delayedDynamicRuleUpdateCallback = callback;
+            return;
+          }
           callback();
         },
         getDynamicRules(callback: (rules: Array<Record<string, unknown>>) => void) {
+          if (dynamicRuleReadFailure) {
+            runtimeLastError = { message: "simulated dynamic-rule read failure" };
+            callback([]);
+            runtimeLastError = null;
+            return;
+          }
           callback(installedDynamicRules);
         }
       },
@@ -603,13 +734,29 @@ assert.ok(
         onChanged: event()
       },
       tabs: {
-        get(_tabId: number, callback: (tab: { url: string }) => void) { callback({ url: "https://example.com/" }); },
+        get(_tabId: number, callback: (tab: { url: string }) => void) { callback({ url: currentTabUrl }); },
         onActivated: event(),
         onRemoved: event(),
         onUpdated: event(),
         remove(_tabId: number, callback: () => void) { callback(); },
-        sendMessage(_tabId: number, _message: unknown, callback: (response: unknown) => void) { callback({ ok: true }); },
-        update(_tabId: number, _change: unknown, callback: () => void) { callback(); }
+        sendMessage(
+          tabId: number,
+          message: unknown,
+          options: unknown,
+          callback: (response: unknown) => void
+        ) {
+          tabMessages.push({ tabId, message, options });
+          if (delayNextTabMessage) {
+            delayNextTabMessage = false;
+            delayedTabMessageCallback = callback;
+            return;
+          }
+          callback({ ok: true });
+        },
+        update(tabId: number, change: unknown, callback: () => void) {
+          tabUpdates.push({ tabId, change });
+          callback();
+        }
       },
       webNavigation: {
         onCommitted: event(),
@@ -620,6 +767,177 @@ assert.ok(
   runInContext(backgroundSource.replace(/\nexport \{\};?\s*$/u, ""), context);
   await new Promise((resolve) => setTimeout(resolve, 0));
   dynamicRuleUpdates.length = 0;
+
+  const relayedDirectDecision = Promise.resolve({
+    ok: true,
+    blocked: true,
+    redirectUrl: "http://127.0.0.1:8787/blocked"
+  });
+  Object.assign(context, { relayedDirectDecision });
+  const relayedDeferredDecision = await runInContext(
+    `latestTabChecks.set(77, {
+       generation: 2,
+       url: "https://example.com/",
+       request: relayedDirectDecision
+     });
+     supersedingCheckResult(77, 1, { deferTabAction: true })`,
+    context
+  ) as Record<string, unknown>;
+  assert.equal(relayedDeferredDecision.blocked, true);
+  assert.equal(
+    relayedDeferredDecision.skipped,
+    undefined,
+    "a stale deferred content check must relay the newer direct decision instead of signaling allow"
+  );
+
+  runInContext(`
+    tabDocumentIds.set(78, "current-document");
+    tabMemory.set(78, "https://example.com/current");
+    tabRequestGenerations.set(78, 4);
+  `, context);
+  const rejectedOldDocument = await runInContext(
+    `checkUrl(
+       78,
+       "https://example.com/",
+       "heartbeat",
+       5,
+       "",
+       { deferTabAction: true, documentId: "old-document" }
+     )`,
+    context
+  ) as Record<string, unknown>;
+  assert.equal(rejectedOldDocument.stale, true);
+  assert.equal(runInContext("tabRequestGenerations.get(78)", context), 4,
+    "an old document pulse must be rejected before it increments the current tab generation");
+  assert.equal(runInContext("tabMemory.get(78)", context), "https://example.com/current",
+    "an old document pulse must not rewrite previous-URL memory");
+
+  const blockedUrl = "https://example.com/blocked-during-badge";
+  currentTabUrl = blockedUrl;
+  checkFetchOverride = () => new Response(JSON.stringify({
+    ok: true,
+    blocked: true,
+    redirectUrl: "http://127.0.0.1:8787/blocked"
+  }), { status: 200 });
+  delayNextBadgeText = true;
+  const tabUpdateCountBeforeStaleBadge = tabUpdates.length;
+  const delayedBlockedCheck = runInContext(
+    `checkUrl(79, ${JSON.stringify(blockedUrl)}, "navigation", 0, "", {})`,
+    context
+  ) as Promise<Record<string, unknown>>;
+  await waitForCondition(() => delayedBadgeTextCallback !== null);
+  currentTabUrl = "https://example.com/newer";
+  runInContext("tabRequestGenerations.set(79, (tabRequestGenerations.get(79) || 0) + 1)", context);
+  const finishDelayedBadge = must(
+    delayedBadgeTextCallback as (() => void) | null,
+    "delayed badge callback"
+  );
+  delayedBadgeTextCallback = null;
+  finishDelayedBadge();
+  const staleBlockedResult = await delayedBlockedCheck;
+  assert.equal(staleBlockedResult.skipped, true);
+  assert.equal(tabUpdates.length, tabUpdateCountBeforeStaleBadge,
+    "a check that becomes stale during badge rendering must not redirect the newer navigation");
+  checkFetchOverride = null;
+  currentTabUrl = "https://example.com/";
+
+  const pauseUrl = "https://example.com/pause-during-overlay";
+  currentTabUrl = pauseUrl;
+  runInContext('tabDocumentIds.set(81, "pause-document")', context);
+  checkFetchOverride = () => new Response(JSON.stringify({
+    ok: true,
+    paused: true,
+    requestId: "pause-request",
+    redirectUrl: "http://127.0.0.1:8787/blocked"
+  }), { status: 200 });
+  delayNextTabMessage = true;
+  const tabUpdateCountBeforeStalePause = tabUpdates.length;
+  const tabMessageCountBeforeStalePause = tabMessages.length;
+  const delayedPauseCheck = runInContext(
+    `checkUrl(
+       81,
+       ${JSON.stringify(pauseUrl)},
+       "navigation",
+       0,
+       "",
+       { documentId: "pause-document" }
+     )`,
+    context
+  ) as Promise<Record<string, unknown>>;
+  await waitForCondition(() => delayedTabMessageCallback !== null);
+  const pauseMessage = must(tabMessages[tabMessageCountBeforeStalePause], "targeted pause message");
+  assert.equal(recordValue(pauseMessage.message, "pause message").expectedUrl, pauseUrl,
+    "the pause content message must carry the URL it was checked for");
+  assert.equal(recordValue(pauseMessage.options, "pause message options").documentId, "pause-document",
+    "the pause content message must target the exact checked Chrome document");
+  currentTabUrl = "https://example.com/newer-pause";
+  runInContext(`
+    tabDocumentIds.set(81, "new-pause-document");
+    tabRequestGenerations.set(81, (tabRequestGenerations.get(81) || 0) + 1);
+  `, context);
+  const finishDelayedPauseMessage = must(
+    delayedTabMessageCallback as ((response: unknown) => void) | null,
+    "delayed pause message callback"
+  );
+  delayedTabMessageCallback = null;
+  finishDelayedPauseMessage({ ok: true });
+  const stalePauseResult = await delayedPauseCheck;
+  assert.equal(stalePauseResult.skipped, true);
+  assert.equal(tabUpdates.length, tabUpdateCountBeforeStalePause,
+    "an overlay response for an old document must not redirect the newer navigation");
+  checkFetchOverride = null;
+  currentTabUrl = "https://example.com/";
+
+  const delayedCheckJson = deferredValue<Record<string, unknown>>();
+  let delayedCheckJsonStarted = false;
+  const stalePolicyUrl = "https://example.com/stale-policy";
+  currentTabUrl = stalePolicyUrl;
+  runInContext('tabDocumentIds.set(80, "policy-document")', context);
+  checkFetchOverride = () => ({
+    ok: true,
+    status: 200,
+    json() {
+      delayedCheckJsonStarted = true;
+      return delayedCheckJson.promise;
+    }
+  } as Response);
+  const writesBeforeStalePolicy = storageWrites.length;
+  const ruleUpdatesBeforeStalePolicy = dynamicRuleUpdates.length;
+  const stalePolicyCheck = runInContext(
+    `checkUrl(
+       80,
+       ${JSON.stringify(stalePolicyUrl)},
+       "heartbeat",
+       5,
+       "",
+       { deferTabAction: true, documentId: "policy-document" }
+     )`,
+    context
+  ) as Promise<Record<string, unknown>>;
+  await waitForCondition(() => delayedCheckJsonStarted);
+  currentTabUrl = "https://example.com/current-policy";
+  runInContext(`
+    tabDocumentIds.set(80, "new-policy-document");
+    tabRequestGenerations.set(80, (tabRequestGenerations.get(80) || 0) + 1);
+  `, context);
+  delayedCheckJson.resolve({
+    ok: true,
+    browserNoiseBlockingEnabled: true,
+    focusedSocialCleanupEnabled: true
+  });
+  const stalePolicyResult = await stalePolicyCheck;
+  assert.equal(stalePolicyResult.stale, true);
+  assert.equal(
+    storageWrites.slice(writesBeforeStalePolicy).some((write) => (
+      Object.hasOwn(write, "vigilPulseFlags") || Object.hasOwn(write, "browserNoiseBlockingEnabled")
+    )),
+    false,
+    "a response that becomes stale while parsing must not persist pulse flags or noise state"
+  );
+  assert.equal(dynamicRuleUpdates.length, ruleUpdatesBeforeStalePolicy,
+    "a response that becomes stale while parsing must not mutate noise DNR rules");
+  checkFetchOverride = null;
+  currentTabUrl = "https://example.com/";
 
   const initialRuleSyncAlarmCreates = alarmCreates.filter((alarm) => alarm.name === "vigil-rule-sync").length;
   assert.equal(initialRuleSyncAlarmCreates, 1, "a missing periodic rule-sync alarm must be installed on worker start");
@@ -836,6 +1154,149 @@ assert.ok(
   const recoveredDynamicRuleStatus = recordValue(storage.siteBlockRules, "recovered dynamic-rule status");
   assert.equal(recoveredDynamicRuleStatus.error, undefined);
   assert.equal(recoveredDynamicRuleStatus.staleAt, undefined);
+
+  const oldRuleFetch = deferredValue<Response>();
+  const latestRuleFetch = deferredValue<Response>();
+  const persistentRuleUntil = "until the tamper alarm is cleared";
+  const oldServerRule = {
+    domain: "old-snapshot.example",
+    redirectUrl: "http://127.0.0.1:8787/blocked",
+    until: persistentRuleUntil
+  };
+  const latestServerRule = {
+    domain: "latest-snapshot.example",
+    redirectUrl: "http://127.0.0.1:8787/blocked",
+    until: persistentRuleUntil
+  };
+  const serverRuleResponse = (rule: typeof oldServerRule) => new Response(JSON.stringify({
+    rules: [rule],
+    contentRules: [],
+    allowlistRules: [],
+    dynamicRuleCount: 1,
+    dynamicRuleSignature: JSON.stringify({
+      site: [rule],
+      content: [],
+      allowlist: [],
+      localServerAllow: false
+    })
+  }), { status: 200 });
+  queuedRuleFetches.push(oldRuleFetch.promise, latestRuleFetch.promise);
+  const ruleFetchesBeforeLatestWins = ruleFetchCount;
+  const ruleWritesBeforeLatestWins = storageWrites.length;
+  const dynamicUpdatesBeforeLatestWins = dynamicRuleUpdates.length;
+  const firstRuleSync = runInContext("syncSiteBlockingFromServer()", context) as Promise<void>;
+  await waitForCondition(() => ruleFetchCount === ruleFetchesBeforeLatestWins + 1);
+  const secondRuleSync = runInContext("syncSiteBlockingFromServer()", context) as Promise<void>;
+  assert.equal(ruleFetchCount, ruleFetchesBeforeLatestWins + 1,
+    "overlapping rule-sync requests must share the active fetch");
+  oldRuleFetch.resolve(serverRuleResponse(oldServerRule));
+  await waitForCondition(() => ruleFetchCount === ruleFetchesBeforeLatestWins + 2);
+  latestRuleFetch.resolve(serverRuleResponse(latestServerRule));
+  await Promise.all([firstRuleSync, secondRuleSync]);
+  const latestWinsSnapshots = storageWrites.slice(ruleWritesBeforeLatestWins)
+    .filter((write) => Object.hasOwn(write, "siteBlockRuleSnapshot"));
+  assert.equal(latestWinsSnapshots.length, 1,
+    "a superseded rule response must not persist its snapshot");
+  assert.match(JSON.stringify(latestWinsSnapshots[0]), /latest-snapshot\.example/u);
+  assert.doesNotMatch(JSON.stringify(latestWinsSnapshots[0]), /old-snapshot\.example/u);
+  const latestWinsUpdates = dynamicRuleUpdates.slice(dynamicUpdatesBeforeLatestWins);
+  assert.equal(latestWinsUpdates.length, 1,
+    "only the latest overlapping server snapshot should reconcile managed DNR rules");
+  assert.match(JSON.stringify(latestWinsUpdates[0]), /latest-snapshot\.example/u);
+  assert.doesNotMatch(JSON.stringify(latestWinsUpdates[0]), /old-snapshot\.example/u);
+
+  const protectedBeforeStaleApply = {
+    domain: "protected-before-stale-apply.example",
+    redirectUrl: "http://127.0.0.1:8787/blocked",
+    until: persistentRuleUntil
+  };
+  Object.assign(context, { protectedBeforeStaleApply });
+  await runInContext("syncSiteBlocking([protectedBeforeStaleApply], [], [])", context);
+  const protectedSnapshot = JSON.stringify(storage.siteBlockRuleSnapshot);
+  assert.match(JSON.stringify(installedDynamicRules), /protected-before-stale-apply\.example/u);
+
+  dynamicRuleReadFailure = true;
+  const updatesBeforeUnverifiableReplacement = dynamicRuleUpdates.length;
+  const unverifiableReplacement = await runInContext(
+    "syncSiteBlocking([], [], [])",
+    context
+  ) as Record<string, unknown>;
+  dynamicRuleReadFailure = false;
+  assert.equal(unverifiableReplacement.ok, false);
+  assert.match(String(unverifiableReplacement.error || ""), /could not be verified/u);
+  assert.equal(dynamicRuleUpdates.length, updatesBeforeUnverifiableReplacement,
+    "an unverified current DNR state must be left untouched instead of accepting an un-restorable replacement");
+  assert.match(JSON.stringify(installedDynamicRules), /protected-before-stale-apply\.example/u);
+  assert.equal(JSON.stringify(storage.siteBlockRuleSnapshot), protectedSnapshot);
+
+  dynamicRuleUpdateFailure = true;
+  const failedReplacement = await runInContext(
+    "syncSiteBlocking([], [], [])",
+    context
+  ) as Record<string, unknown>;
+  dynamicRuleUpdateFailure = false;
+  assert.equal(failedReplacement.ok, false);
+  assert.equal(failedReplacement.error, "Dynamic rule update failed");
+  assert.match(JSON.stringify(installedDynamicRules), /protected-before-stale-apply\.example/u);
+  assert.equal(
+    JSON.stringify(storage.siteBlockRuleSnapshot),
+    protectedSnapshot,
+    "a failed DNR replacement must not leave storage pointing at rules Chrome never installed"
+  );
+
+  const emptyRuleResponse = new Response(JSON.stringify({
+    rules: [],
+    contentRules: [],
+    allowlistRules: [],
+    dynamicRuleCount: 0,
+    dynamicRuleSignature: JSON.stringify({
+      site: [],
+      content: [],
+      allowlist: [],
+      localServerAllow: false
+    })
+  }), { status: 200 });
+  const restoredLatestRule = {
+    domain: "restored-latest.example",
+    redirectUrl: "http://127.0.0.1:8787/blocked",
+    until: persistentRuleUntil
+  };
+  const pendingLatestApplyFetch = deferredValue<Response>();
+  const emptyRuleFetchPromise = Promise.resolve(emptyRuleResponse);
+  queuedRuleFetches.push(emptyRuleFetchPromise, pendingLatestApplyFetch.promise);
+  delayNextDynamicRuleUpdate = true;
+  const ruleFetchesBeforeStaleApply = ruleFetchCount;
+  const staleApplySync = runInContext("syncSiteBlockingFromServer()", context) as Promise<void>;
+  await waitForCondition(() => delayedDynamicRuleUpdateCallback !== null);
+  assert.doesNotMatch(
+    JSON.stringify(installedDynamicRules),
+    /protected-before-stale-apply\.example/u,
+    "the delayed stale application fixture must reach Chrome after removing the prior protected rules"
+  );
+
+  const latestApplySync = runInContext("syncSiteBlockingFromServer()", context) as Promise<void>;
+  const finishStaleDynamicRuleUpdate = must(
+    delayedDynamicRuleUpdateCallback as (() => void) | null,
+    "delayed stale dynamic-rule update"
+  );
+  delayedDynamicRuleUpdateCallback = null;
+  finishStaleDynamicRuleUpdate();
+  await waitForCondition(() => ruleFetchCount === ruleFetchesBeforeStaleApply + 2);
+  assert.match(
+    JSON.stringify(installedDynamicRules),
+    /protected-before-stale-apply\.example/u,
+    "a superseded in-flight application must restore the previously installed managed rules before waiting on the newer fetch"
+  );
+  assert.equal(
+    JSON.stringify(storage.siteBlockRuleSnapshot),
+    protectedSnapshot,
+    "a superseded in-flight application must restore the previous persisted snapshot"
+  );
+
+  pendingLatestApplyFetch.resolve(serverRuleResponse(restoredLatestRule));
+  await Promise.all([staleApplySync, latestApplySync]);
+  assert.match(JSON.stringify(installedDynamicRules), /restored-latest\.example/u);
+  assert.doesNotMatch(JSON.stringify(installedDynamicRules), /protected-before-stale-apply\.example/u);
 
   assert.equal(runInContext("normalizedRuleUntil(PERSISTENT_RULE_UNTIL)", context), persistentUntil);
   assert.equal(runInContext("duplicateCheckKey(1, 'https://example.com/', 'heartbeat', 5, {})", context), null);

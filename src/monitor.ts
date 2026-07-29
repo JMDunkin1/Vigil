@@ -1922,7 +1922,9 @@ export class Monitor implements MonitorHandle {
       recordUsage(this.usage, this.lastSample, accounting.countedSeconds, new Date(frame.now), {
         segment: { startedAt, endedAt }
       });
-      recordIntentionalUseTime(this.state, this.lastSample, accounting.countedSeconds);
+      recordIntentionalUseTime(this.state, this.lastSample, accounting.countedSeconds, new Date(frame.now), {
+        segment: { startedAt, endedAt }
+      });
     }
     this.status.lastIdleAccounting = this.idleAccountingStatus(frame, accounting);
     this.setComponentHealth("idle-usage", accounting.ok === false ? accounting.error || "Idle usage lookup failed" : "");
@@ -2894,7 +2896,7 @@ export class Monitor implements MonitorHandle {
 
   hardeningDriftMonitorFingerprint(): string {
     return JSON.stringify({
-      ok: this.status.ok,
+      ok: !this.status.componentErrors.frontmost,
       accessibilityLikelyMissing: this.status.accessibilityLikelyMissing
     });
   }

@@ -6,7 +6,7 @@ import { assertDistanceKey, updateDistanceKeySettings } from "../src/distanceKey
 import { doctorRows, formatDoctorRows } from "../src/doctorReport.js";
 import { extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { assertFoolproofReadyForStrict, extensionDynamicRulesReady, extensionVersionReady, foolproofBlockers } from "../src/foolproof.js";
-import { clearIntegrityTamper, clearTrustedSourceSealDrift, detectClockTamper, detectHardeningDrift, detectRuntimeInterruption, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, syncAppleContentFilterLockdown } from "../src/integrityLockdown.js";
+import { clearIntegrityTamper, clearTrustedSourceSealDrift, detectClockTamper, detectHardeningDrift, detectRuntimeInterruption, integrityLockdownActive, integrityLockdownPolicy, integrityRuntimeSummary, protectedLockActive, syncAppleContentFilterLockdown } from "../src/integrityLockdown.js";
 import { emergencyDelaySeconds, interventionSummary, recentBlockAttempts } from "../src/intervention.js";
 import { updateKeyholderSettings } from "../src/keyholder.js";
 import { activeLimitPolicy } from "../src/limits.js";
@@ -851,6 +851,78 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   assert.ok(gap);
   assert.equal(gap.lockdown, true);
   assert.equal(gap.overlap?.kind, "schedule");
+}
+
+{
+  const overrideCreatedAt = new Date(2026, 4, 28, 12, 0, 0);
+  const current = new Date(2026, 4, 28, 16, 0, 0);
+  const state = defaultState();
+  state.schedules = [{
+    id: "overridden-offline-work",
+    name: "Overridden Offline Work",
+    enabled: true,
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "deep",
+    days: TEST_DAYS,
+    start: "00:00",
+    end: "23:59",
+    wifiNetworks: []
+  }];
+  state.overrides = [{
+    id: "schedule-emergency-override",
+    scheduleId: "overridden-offline-work",
+    createdAt: overrideCreatedAt.toISOString(),
+    until: new Date(2026, 4, 28, 23, 59, 0).toISOString()
+  }];
+
+  assert.equal(protectedLockActive(state, current), false, "an authorized active schedule override must release protected-lock attestation");
+  const releasedGap = detectRuntimeInterruption(structuredClone(state), {
+    id: "overridden-schedule-runtime-interruption",
+    detectedAt: new Date(2026, 4, 28, 14, 0, 0).toISOString()
+  }, current);
+  assert.equal(releasedGap?.lockdown, false, "a runtime gap wholly after the schedule override must remain released");
+  const earlierGap = detectRuntimeInterruption(structuredClone(state), {
+    id: "pre-override-schedule-runtime-interruption",
+    detectedAt: new Date(2026, 4, 28, 10, 0, 0).toISOString()
+  }, current);
+  assert.equal(earlierGap?.lockdown, true, "a later override must not erase protected schedule time that preceded its authorization");
+}
+
+{
+  const overrideCreatedAt = new Date(2026, 4, 28, 12, 0, 0);
+  const current = new Date(2026, 4, 28, 16, 0, 0);
+  const state = defaultState();
+  state.limitBlocks = [{
+    id: "overridden-deep-limit",
+    ruleId: "overridden-limit-rule",
+    ruleName: "Overridden deep limit",
+    type: "time",
+    lockLevel: "deep",
+    apps: ["YouTube"],
+    sites: ["youtube.com"],
+    createdAt: new Date(2026, 4, 28, 9, 0, 0).toISOString(),
+    until: new Date(2026, 4, 28, 18, 0, 0).toISOString(),
+    progress: { seconds: 3600 }
+  }];
+  state.overrides = [{
+    id: "limit-emergency-override",
+    limitRuleId: "overridden-limit-rule",
+    createdAt: overrideCreatedAt.toISOString(),
+    until: new Date(2026, 4, 28, 18, 0, 0).toISOString()
+  }];
+
+  assert.equal(protectedLockActive(state, current), false, "an authorized active limit override must release protected-lock attestation");
+  const releasedGap = detectRuntimeInterruption(structuredClone(state), {
+    id: "overridden-limit-runtime-interruption",
+    detectedAt: new Date(2026, 4, 28, 14, 0, 0).toISOString()
+  }, current);
+  assert.equal(releasedGap?.lockdown, false, "a runtime gap wholly inside the limit override must remain released");
+  const earlierGap = detectRuntimeInterruption(structuredClone(state), {
+    id: "pre-override-limit-runtime-interruption",
+    detectedAt: new Date(2026, 4, 28, 10, 0, 0).toISOString()
+  }, current);
+  assert.equal(earlierGap?.lockdown, true, "a later limit override must not erase protected time that preceded its authorization");
 }
 
 {

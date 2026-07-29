@@ -1216,6 +1216,36 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(script.contains("sourceURL:"))
     }
 
+    func testMainDocumentBridgeIncludesTheDocumentStartIdentity() {
+        let documentStart = DOMAdapters.documentStartScript(
+            unclassifiedMediaPolicy: .conceal,
+            audioEnabled: true
+        )
+        let bridge = DOMAdapters.frameSafetyScript(audioEnabled: true)
+
+        XCTAssertTrue(documentStart.contains("Object.defineProperty(window, '__vigilDocumentID'"))
+        XCTAssertTrue(bridge.contains("const existing = String(window.__vigilDocumentID || '')"))
+        XCTAssertTrue(bridge.contains("postMessage({ ...payload, documentID })"))
+    }
+
+    @MainActor
+    func testMainDocumentMessageIdentityRejectsStaleDocumentsWithoutBreakingSPARoutes() {
+        let currentDocumentID = "document-generation-2"
+
+        XCTAssertTrue(SocialWebViewStore.isCurrentMainDocumentMessage(
+            currentDocumentID,
+            currentDocumentID: currentDocumentID
+        ))
+        XCTAssertFalse(SocialWebViewStore.isCurrentMainDocumentMessage(
+            "document-generation-1",
+            currentDocumentID: currentDocumentID
+        ))
+        XCTAssertFalse(SocialWebViewStore.isCurrentMainDocumentMessage(
+            nil,
+            currentDocumentID: currentDocumentID
+        ))
+    }
+
     func testAdaptersBoundInspectionWorkAndRetryUnclassifiedMedia() {
         let bootstrap = DOMAdapters.contentFilterBootstrap
         let common = DOMAdapters.frameSafetyScript(audioEnabled: true)

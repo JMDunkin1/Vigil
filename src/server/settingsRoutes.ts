@@ -22,7 +22,11 @@ type StringSettingKey = {
 }[keyof AppSettings];
 
 interface SettingMutation {
-  apply(settings: AppSettings, value: unknown): void;
+  apply(settings: AppSettings, value: unknown, context: SettingMutationContext): void;
+}
+
+interface SettingMutationContext {
+  profileIds: ReadonlySet<string>;
 }
 
 interface SettingsApiContext {
@@ -45,7 +49,7 @@ export async function handleSettingsApiRoute(
   }
 
   const previousAdultBlocklistSource = adultBlocklistSource(state);
-  const keys = updateSettings(state.settings, body);
+  const keys = updateSettings(state.settings, body, state.profiles.map((profile) => profile.id));
   if (invalidateAdultBlocklistIfSourceChanged(state, previousAdultBlocklistSource)) {
     keys.push("adultBlocklistSnapshot");
   }
@@ -60,15 +64,22 @@ export async function handleSettingsApiRoute(
   return true;
 }
 
-export function updateSettings(settings: AppSettings, body: UnknownRecord): string[] {
+export function updateSettings(
+  settings: AppSettings,
+  body: UnknownRecord,
+  profileIds: readonly string[] = []
+): string[] {
+  const draft = { ...settings };
+  const context: SettingMutationContext = { profileIds: new Set(profileIds) };
   const updated: string[] = [];
   for (const [key, value] of Object.entries(body || {})) {
     const mutation = settingMutation(key);
     if (!mutation) continue;
-    const before = (settings as unknown as UnknownRecord)[key];
-    mutation.apply(settings, value);
-    if (!Object.is(before, (settings as unknown as UnknownRecord)[key])) updated.push(key);
+    const before = (draft as unknown as UnknownRecord)[key];
+    mutation.apply(draft, value, context);
+    if (!Object.is(before, (draft as unknown as UnknownRecord)[key])) updated.push(key);
   }
+  Object.assign(settings, draft);
   return updated;
 }
 
@@ -155,6 +166,18 @@ function stringSetting<Key extends StringSettingKey>(key: Key): SettingMutation 
   };
 }
 
+function profileIdSetting<Key extends "activeProfileId" | "baselineProfileId">(key: Key): SettingMutation {
+  return {
+    apply(settings, value, context) {
+      const profileId = String(value || "").trim();
+      if (!profileId || !context.profileIds.has(profileId)) {
+        throw settingsError(`Unknown profile for ${key}.`);
+      }
+      settings[key] = profileId as AppSettings[Key];
+    }
+  };
+}
+
 function enumSetting<Key extends StringSettingKey>(
   key: Key,
   values: readonly string[]
@@ -162,9 +185,14 @@ function enumSetting<Key extends StringSettingKey>(
   return {
     apply(settings, value) {
       const text = String(value || "");
-      settings[key] = (values.includes(text) ? text : values[0]) as AppSettings[Key];
+      if (!values.includes(text)) throw settingsError(`Invalid value for ${key}.`);
+      settings[key] = text as AppSettings[Key];
     }
   };
+}
+
+function settingsError(message: string): Error & { status: number } {
+  return Object.assign(new Error(message), { status: 400 });
 }
 
 const SETTING_MUTATIONS = {
@@ -213,8 +241,8 @@ const SETTING_MUTATIONS = {
   intentionalUseEnabled: booleanSetting("intentionalUseEnabled"),
   baselineDailyMinutes: numberSetting("baselineDailyMinutes"),
   focusScoreGoal: numberSetting("focusScoreGoal"),
-  activeProfileId: stringSetting("activeProfileId"),
-  baselineProfileId: stringSetting("baselineProfileId"),
+  activeProfileId: profileIdSetting("activeProfileId"),
+  baselineProfileId: profileIdSetting("baselineProfileId"),
   foolproofModeEnabled: booleanSetting("foolproofModeEnabled"),
   appQuitEscalationSeconds: numberSetting("appQuitEscalationSeconds"),
   siteRedirectEnabled: booleanSetting("siteRedirectEnabled"),

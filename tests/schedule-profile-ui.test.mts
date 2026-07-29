@@ -23,6 +23,10 @@ assert.match(loadSchedule, /form\.elements\.lockLevel\.value = schedule\.lockLev
 const resetSchedule = section(formsSource, "function resetScheduleForm", "function resetGrayscaleScheduleForm");
 assert.match(resetSchedule, /dataset\.baselineProfileId/u, "new schedules must default to the configured baseline ruleset");
 
+const loadIntentionalRule = section(formsSource, "function loadIntentionalRule", "function resetIntentionalRuleForm");
+assert.match(loadIntentionalRule, /rule\.delaySeconds \?\? 12/u, "a saved zero-second intentional delay must survive form hydration");
+assert.match(loadIntentionalRule, /rule\.dailyBudgetMinutes \?\? 30/u, "a saved zero-minute intentional budget must survive form hydration");
+
 const renderProfiles = section(appSource, "function renderProfiles", "function renderSchedules");
 assert.match(renderProfiles, /settings\.baselineProfileId/u, "the ruleset selector must render from baselineProfileId");
 assert.match(renderProfiles, /fillSelect\(scheduleProfileSelect, profiles, baselineId\)/u, "available profiles must populate the schedule ruleset control");

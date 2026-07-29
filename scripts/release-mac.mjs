@@ -7,7 +7,7 @@ import { access, lstat, mkdtemp, open, readdir, readFile, readlink, realpath, rm
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { resolveMacBuildVersion } from "./mac-build-version.mjs";
-import { verifyEntitlementObject } from "./release-entitlements.mjs";
+import { verifyEntitlementObject, verifyEntitlementSource } from "./release-entitlements.mjs";
 
 if (process.platform !== "darwin") throw new Error("Developer ID releases must be built and verified on macOS.");
 const buildVersion = resolveMacBuildVersion(process.env, { requireExplicit: true });
@@ -297,7 +297,11 @@ async function verifyEntitlements(path) {
 }
 
 async function verifyEmittedEntitlements(source, label, requireJit) {
-  verifyEntitlementObject(await parsePlist("-", source), label, { requireJit, allowOnlyJit: true });
+  await verifyEntitlementSource(source, label, {
+    requireJit,
+    allowOnlyJit: true,
+    parse: (value) => parsePlist("-", value)
+  });
 }
 
 async function verifySignedPath(path, requireJit) {

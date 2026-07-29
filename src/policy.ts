@@ -613,12 +613,12 @@ function combineActiveProfiles(selected: Profile, profiles: Profile[]): Profile 
 
 function intersectAppTargets(lists: string[][]): string[] {
   if (!lists.length) return [];
-  return uniquePolicyTargets(lists[0]).filter((target) => lists.slice(1).every((list) => appMatchesAppTargets(target, list)));
+  return uniquePolicyTargets(lists.flat()).filter((target) => lists.every((list) => appMatchesAppTargets(target, list)));
 }
 
 function intersectSiteTargets(lists: string[][]): string[] {
   if (!lists.length) return [];
-  return uniquePolicyTargets(lists[0]).filter((target) => lists.slice(1).every((list) => hostMatchesSiteTargets(target, list)));
+  return uniquePolicyTargets(lists.flat()).filter((target) => lists.every((list) => hostMatchesSiteTargets(target, list)));
 }
 
 function uniquePolicyTargets(values: readonly unknown[]): string[] {
@@ -702,12 +702,13 @@ export function shouldBlockSite(profile: Profile, hostname: unknown): boolean {
   if (!hostname) return false;
   const host = normalizeHost(hostname);
   if (!host) return false;
+  if (hostMatchesSiteTargets(host, profile.blockedSites)) return true;
 
   if (profile.mode === "allowlist") {
     return !hostMatchesSiteTargets(host, profile.allowedSites);
   }
 
-  return hostMatchesSiteTargets(host, profile.blockedSites);
+  return false;
 }
 
 export function shouldBlockUrl(profile: Profile, value: unknown): boolean {

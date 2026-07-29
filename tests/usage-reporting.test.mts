@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { defaultState } from "../src/defaults.js";
 import { focusReport } from "../src/reports.js";
+import { dateKey } from "../src/time.js";
 import { recordOpen, recordUsage, syncDeviceUsageSnapshot, usageSummary } from "../src/usage.js";
 import type { UsageState } from "../src/types.js";
 import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-helpers.mjs";
@@ -17,6 +18,24 @@ import { clockTime, hasStatusError, now, TEST_DAYS, usageFixture } from "./test-
   assert.equal(day?.updatedAt, updatedAt, "an unchanged foreground sample must not rebuild aggregate usage data");
   assert.equal(day?.opens.apps.Safari, 1);
   assert.equal(day?.opens.sites["example.com"], 1);
+}
+
+{
+  const usage: UsageState = {};
+  const startedAt = new Date(2026, 6, 27, 23, 59, 55);
+  const endedAt = new Date(2026, 6, 28, 0, 0, 5);
+  recordUsage(usage, { app: "Codex" }, 10, endedAt, {
+    segment: { startedAt, endedAt }
+  });
+
+  const firstDay = usage[dateKey(startedAt)];
+  const secondDay = usage[dateKey(endedAt)];
+  assert.equal(firstDay?.totalSeconds, 5);
+  assert.equal(secondDay?.totalSeconds, 5);
+  assert.equal(firstDay?.devices.computer?.segments?.[0]?.startedAt, startedAt.toISOString());
+  assert.equal(firstDay?.devices.computer?.segments?.[0]?.endedAt, new Date(2026, 6, 28, 0, 0, 0).toISOString());
+  assert.equal(secondDay?.devices.computer?.segments?.[0]?.startedAt, new Date(2026, 6, 28, 0, 0, 0).toISOString());
+  assert.equal(secondDay?.devices.computer?.segments?.[0]?.endedAt, endedAt.toISOString());
 }
 
 {

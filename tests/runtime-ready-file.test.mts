@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { access, chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -49,6 +49,43 @@ try {
   assert.equal(await clearRuntimeInterruption(dataDir, id), true, "the exact acknowledged receipt may be cleared");
   assert.deepEqual(await readRuntimeInterruption(dataDir), { status: "missing" });
   assert.equal(await quarantineRuntimeInterruption(dataDir), null, "a vanished canonical receipt needs no quarantine");
+
+  const replacementStartedAt = "2026-07-21T15:00:01.000Z";
+  const replacementInterruption = {
+    ...interruption,
+    id: runtimeInterruptionId({ pid: 43, startedAt: replacementStartedAt }),
+    pid: 43,
+    startedAt: replacementStartedAt,
+    detectedAt: "2026-07-21T15:00:03.000Z"
+  };
+  await writeFile(interruptionPath, `${JSON.stringify(interruption)}\n`, { mode: 0o600 });
+  let replacedAfterOpen = false;
+  assert.deepEqual(await readRuntimeInterruption(dataDir, {
+    async afterOpen() {
+      if (replacedAfterOpen) return;
+      replacedAfterOpen = true;
+      const replacementPath = `${interruptionPath}.read-replacement`;
+      await writeFile(replacementPath, `${JSON.stringify(replacementInterruption)}\n`, { mode: 0o600 });
+      await rename(replacementPath, interruptionPath);
+    }
+  }), { status: "valid", record: replacementInterruption },
+  "a read must retry the current canonical receipt when its opened inode is atomically displaced");
+  assert.equal(await clearRuntimeInterruption(dataDir, replacementInterruption.id), true);
+
+  await writeFile(interruptionPath, `${JSON.stringify(interruption)}\n`, { mode: 0o600 });
+  assert.equal(await clearRuntimeInterruption(dataDir, id, {
+    async afterSnapshot() {
+      const replacementPath = `${interruptionPath}.clear-replacement`;
+      await writeFile(replacementPath, `${JSON.stringify(replacementInterruption)}\n`, { mode: 0o600 });
+      await rename(replacementPath, interruptionPath);
+    }
+  }), false, "acknowledgement must not clear a receipt that replaced the validated inode");
+  assert.deepEqual(
+    await readRuntimeInterruption(dataDir),
+    { status: "valid", record: replacementInterruption },
+    "a replacement receipt must remain canonical after a stale acknowledgement"
+  );
+  assert.equal(await clearRuntimeInterruption(dataDir, replacementInterruption.id), true);
 
   const invalidReadyReceipt = { ...interruption, reason: "invalid-ready-record" as const };
   await writeFile(interruptionPath, `${JSON.stringify(invalidReadyReceipt)}\n`, { mode: 0o600 });
@@ -108,6 +145,18 @@ try {
   assert.equal(await readFile(symlinkTarget, "utf8"), targetContents, "quarantine must not modify a symlink target");
   assert.equal((await stat(symlinkTarget)).mode & 0o777, targetMode, "quarantine must not chmod a symlink target");
   assert.deepEqual(await readRuntimeInterruption(dataDir), { status: "missing" });
+
+  if (await createFifoForTest(interruptionPath)) {
+    try {
+      assert.deepEqual(
+        await readRuntimeInterruptionInChild(dataDir),
+        { status: "invalid", reason: "unsafe-file" },
+        "a FIFO at the interruption path must fail closed without blocking startup"
+      );
+    } finally {
+      await rm(interruptionPath, { force: true });
+    }
+  }
 
   const script = buildRuntimeSupervisorScript({
     markerPath: "/Users/test/Library/Application Support/Vigil/supervisor/enabled",
@@ -492,4 +541,82 @@ async function pathExistsForTest(path: string): Promise<boolean> {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return false;
     throw error;
   }
+}
+
+async function createFifoForTest(path: string): Promise<boolean> {
+  if (process.platform === "win32") return false;
+  return await new Promise<boolean>((resolveCreate, rejectCreate) => {
+    const child = spawn("mkfifo", [path], { stdio: "ignore" });
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      rejectCreate(new Error("Timed out creating the runtime-interruption FIFO fixture."));
+    }, 2_000);
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if ("code" in error && error.code === "ENOENT") resolveCreate(false);
+      else rejectCreate(error);
+    });
+    child.once("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (code === 0) resolveCreate(true);
+      else rejectCreate(new Error(`mkfifo exited with status ${code}.`));
+    });
+  });
+}
+
+async function readRuntimeInterruptionInChild(dataDir: string): Promise<unknown> {
+  const moduleUrl = new URL("../src/runtimeReady.js", import.meta.url).href;
+  const source = [
+    `import { readRuntimeInterruption } from ${JSON.stringify(moduleUrl)};`,
+    `process.stdout.write(JSON.stringify(await readRuntimeInterruption(${JSON.stringify(dataDir)})));`
+  ].join("\n");
+  const child = spawn(process.execPath, ["--input-type=module", "--eval", source], {
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  return await new Promise<unknown>((resolveRead, rejectRead) => {
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    let timedOut = false;
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => { stdout += String(chunk); });
+    child.stderr?.on("data", (chunk) => { stderr += String(chunk); });
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, 2_000);
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      rejectRead(error);
+    });
+    child.once("close", (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (timedOut) {
+        rejectRead(new Error("Runtime-interruption FIFO read blocked past its two-second safety bound."));
+        return;
+      }
+      if (code !== 0) {
+        rejectRead(new Error(`Runtime-interruption FIFO reader exited with status ${code ?? signal}: ${stderr}`));
+        return;
+      }
+      try {
+        resolveRead(JSON.parse(stdout));
+      } catch (error) {
+        rejectRead(Object.assign(new Error(`Runtime-interruption FIFO reader emitted invalid JSON: ${stdout}`), { cause: error }));
+      }
+    });
+  });
 }

@@ -684,13 +684,21 @@ function protectedLockOverlaps(state: VigilState, startMs: number, endMs: number
   const overlaps = protectedSessionOverlaps(state, startMs, endMs);
 
   for (const block of state.limitBlocks || []) {
-    if (block.lockLevel === "deep" && rangesOverlap(startMs, endMs, Date.parse(block.createdAt || ""), Date.parse(block.until || ""))) {
+    const blockStartsAt = Date.parse(block.createdAt || "");
+    const blockEndsAt = Date.parse(block.until || "");
+    const overrides = (state.overrides || [])
+      .filter((override) => override.limitRuleId === block.ruleId)
+      .map((override) => [overrideStart(override.createdAt), Date.parse(override.until || "")] as const);
+    if (
+      block.lockLevel === "deep"
+      && rangeHasUncoveredOverlap(startMs, endMs, blockStartsAt, blockEndsAt, overrides)
+    ) {
       overlaps.push({ kind: "limit", id: block.id, name: block.ruleName || "limit block" });
     }
   }
 
   for (const schedule of state.schedules || []) {
-    const overlap = strictScheduleOverlap(schedule, startMs, endMs, state.environment?.wifiSsid || "");
+    const overlap = strictScheduleOverlap(state, schedule, startMs, endMs, state.environment?.wifiSsid || "");
     if (overlap) overlaps.push(overlap);
   }
 
@@ -735,7 +743,13 @@ function protectedSessionOverlaps(state: VigilState, startMs: number, endMs: num
   return overlaps;
 }
 
-function strictScheduleOverlap(schedule: Schedule, startMs: number, endMs: number, currentWifi = ""): ProtectedOverlap | null {
+function strictScheduleOverlap(
+  state: VigilState,
+  schedule: Schedule,
+  startMs: number,
+  endMs: number,
+  currentWifi = ""
+): ProtectedOverlap | null {
   if (!schedule?.enabled || schedule.lockLevel !== "deep") return null;
   if (!scheduleEnvironmentMatches(schedule, currentWifi)) return null;
 
@@ -750,7 +764,13 @@ function strictScheduleOverlap(schedule: Schedule, startMs: number, endMs: numbe
     if (!(schedule.days || []).includes(day.getDay())) continue;
 
     const window = scheduleWindowForStartDay(schedule, day);
-    if (rangesOverlap(startMs, endMs, window.startsAt, window.endsAt)) {
+    const overrides = (state.overrides || [])
+      .filter((override) => (
+        override.scheduleId === schedule.id
+        && Date.parse(override.until || "") >= window.endsAt
+      ))
+      .map((override) => [overrideStart(override.createdAt), window.endsAt] as const);
+    if (rangeHasUncoveredOverlap(startMs, endMs, window.startsAt, window.endsAt, overrides)) {
       return {
         kind: "schedule",
         id: schedule.id,
@@ -773,6 +793,43 @@ function scheduleWindowForStartDay(schedule: Schedule, day: Date): { startsAt: n
   endsAt.setHours(Math.floor(end / 60), end % 60, 0, 0);
   if (start > end) endsAt.setDate(endsAt.getDate() + 1);
   return { startsAt: startsAt.getTime(), endsAt: endsAt.getTime() };
+}
+
+function rangeHasUncoveredOverlap(
+  rangeStart: number,
+  rangeEnd: number,
+  protectedStart: number,
+  protectedEnd: number,
+  overrideRanges: readonly (readonly [number, number])[]
+): boolean {
+  if (![rangeStart, rangeEnd, protectedStart, protectedEnd].every(Number.isFinite)) return false;
+  const overlapStart = Math.max(rangeStart, protectedStart);
+  const overlapEnd = Math.min(rangeEnd, protectedEnd);
+  if (overlapStart >= overlapEnd) return false;
+
+  let coveredUntil = overlapStart;
+  const orderedOverrides = overrideRanges
+    .filter(([startsAt, endsAt]) => (
+      Number.isFinite(startsAt)
+      && Number.isFinite(endsAt)
+      && startsAt < endsAt
+      && rangesOverlap(overlapStart, overlapEnd, startsAt, endsAt)
+    ))
+    .sort((left, right) => left[0] - right[0]);
+  for (const [startsAt, endsAt] of orderedOverrides) {
+    if (endsAt <= coveredUntil) continue;
+    if (startsAt > coveredUntil) return true;
+    coveredUntil = Math.max(coveredUntil, endsAt);
+    if (coveredUntil >= overlapEnd) return false;
+  }
+  return coveredUntil < overlapEnd;
+}
+
+function overrideStart(value: unknown): number {
+  const createdAt = Date.parse(String(value || ""));
+  // Legacy overrides predate createdAt. They were historically treated as
+  // active for their whole retained lifetime, so preserve that behavior.
+  return Number.isFinite(createdAt) ? createdAt : 0;
 }
 
 function scheduleEnvironmentMatches(schedule: Schedule, currentWifi: string): boolean {

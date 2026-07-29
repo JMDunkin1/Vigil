@@ -12,7 +12,7 @@ import {
   normalizeLockLevel
 } from "./policy.js";
 import { normalizeTextList as normalizeTargets, normalizeWeekdays as normalizeDays } from "./normalizers.js";
-import { clampNumber, dateKey, normalizeClock, parseClock, trackingDateKey, trackingDay, weekKey } from "./time.js";
+import { clampNumber, dateKey, normalizeClock, parseClock, splitSecondsAcrossLocalDays, trackingDateKey, trackingDay, weekKey } from "./time.js";
 import { behaviorSummary, journalEntriesForWeek, plannerSummary, recoverySummary, reflectionStreakDays, sosPlan } from "./intentionalUseSummary.js";
 import { journalVaultSummary, normalizeJournalVaultState } from "./journalVault.js";
 import type {
@@ -88,6 +88,10 @@ interface IntentionalUseOptions extends UnknownRecord {
   returnUrl?: string;
 }
 
+interface IntentionalUseTimeOptions {
+  segment?: { startedAt: Date; endedAt: Date };
+}
+
 interface BudgetSummary extends UnknownRecord {
   seconds: number;
   budgetSeconds: number;
@@ -108,6 +112,7 @@ interface PauseContext extends UnknownRecord {
 type IntentionalBody = UnknownRecord;
 
 export function normalizeIntentionalUse(current: Partial<IntentionalUseState> = {}, fresh: Partial<IntentionalUseState> = {}): IntentionalUseState {
+  const now = new Date();
   return {
     ...fresh,
     ...current,
@@ -117,13 +122,13 @@ export function normalizeIntentionalUse(current: Partial<IntentionalUseState> = 
     grants: Array.isArray(current.grants) ? current.grants : [],
     ledger: current.ledger && typeof current.ledger === "object" ? current.ledger : {},
     outcomes: Array.isArray(current.outcomes) ? current.outcomes.slice(0, OUTCOME_LIMIT) : [],
-    behaviors: normalizeBehaviors(mergeSeededBehaviors(fresh.behaviors, current.behaviors)),
-    behaviorCheckIns: retainedBehaviorCheckIns(current.behaviorCheckIns || fresh.behaviorCheckIns || []),
-    journalEntries: normalizeJournalEntries(current.journalEntries || fresh.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT),
+    behaviors: normalizeBehaviors(mergeSeededBehaviors(fresh.behaviors, current.behaviors), now),
+    behaviorCheckIns: retainedBehaviorCheckIns(current.behaviorCheckIns || fresh.behaviorCheckIns || [], now),
+    journalEntries: normalizeJournalEntries(current.journalEntries || fresh.journalEntries || [], now).slice(0, JOURNAL_ENTRY_LIMIT),
     journalVault: normalizeJournalVaultState(current.journalVault || {}, fresh.journalVault || {}),
-    planLists: normalizePlanLists(current.planLists || fresh.planLists || []).slice(0, PLAN_LIST_LIMIT),
-    planItems: normalizePlanItems(current.planItems || fresh.planItems || []).slice(0, PLAN_ITEM_LIMIT),
-    planBlocks: normalizePlanBlocks(current.planBlocks || fresh.planBlocks || []).slice(0, PLAN_BLOCK_LIMIT),
+    planLists: normalizePlanLists(current.planLists || fresh.planLists || [], now).slice(0, PLAN_LIST_LIMIT),
+    planItems: normalizePlanItems(current.planItems || fresh.planItems || [], now).slice(0, PLAN_ITEM_LIMIT),
+    planBlocks: retainedPlanBlocks(current.planBlocks || fresh.planBlocks || [], now),
     recoveryCheckIns: normalizeRecoveryCheckIns(current.recoveryCheckIns || fresh.recoveryCheckIns || []).slice(0, RECOVERY_CHECK_IN_LIMIT),
     sosSessions: normalizeSosSessions(current.sosSessions || fresh.sosSessions || []).slice(0, SOS_SESSION_LIMIT),
     accountability: {
@@ -297,9 +302,7 @@ export function upsertIntentionalPlanBlock(state: VigilState, body: IntentionalB
   const block = normalizePlanBlock(body, existing, id, now, state);
   if (existing) Object.assign(existing, block);
   else state.intentionalUse.planBlocks.unshift(block);
-  state.intentionalUse.planBlocks = state.intentionalUse.planBlocks
-    .sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""))
-    .slice(0, PLAN_BLOCK_LIMIT);
+  state.intentionalUse.planBlocks = retainedPlanBlocks(state.intentionalUse.planBlocks, now, block.id, false);
   return block;
 }
 
@@ -563,13 +566,30 @@ export function activeIntentionalUseGrant(state: VigilState, sample: UsageSample
   }) || null;
 }
 
-export function recordIntentionalUseTime(state: VigilState, sample: UsageSample, seconds: number, now = new Date()): IntentionalGrant | null {
+export function recordIntentionalUseTime(
+  state: VigilState,
+  sample: UsageSample,
+  seconds: number,
+  now = new Date(),
+  options: IntentionalUseTimeOptions = {}
+): IntentionalGrant | null {
   if (!seconds || seconds < 0.25) return null;
   const grant = activeIntentionalUseGrant(state, sample, null, now);
   if (!grant) return null;
-  const dayRule = ensureRuleLedger(state, grant.ruleId, now);
-  dayRule.seconds = round((dayRule.seconds || 0) + seconds);
-  dayRule.targets[grant.targetLabel] = round((dayRule.targets[grant.targetLabel] || 0) + seconds);
+  const slices = options.segment
+    ? splitSecondsAcrossLocalDays(seconds, options.segment.startedAt, options.segment.endedAt)
+    : [];
+  const allocations = slices.length ? slices : [{
+    dayKey: dateKey(now),
+    seconds,
+    startedAt: now,
+    endedAt: now
+  }];
+  for (const allocation of allocations) {
+    const dayRule = ensureRuleLedger(state, grant.ruleId, allocation.startedAt);
+    dayRule.seconds = round((dayRule.seconds || 0) + allocation.seconds);
+    dayRule.targets[grant.targetLabel] = round((dayRule.targets[grant.targetLabel] || 0) + allocation.seconds);
+  }
   grant.usedSeconds = round((grant.usedSeconds || 0) + seconds);
   grant.lastSeenAt = now.toISOString();
   return grant;
@@ -730,11 +750,11 @@ function normalizeRules(rules: unknown): IntentionalUseRule[] {
     .map((rule) => normalizeIntentionalUseRule(rule, rule, String(rule.id || randomUUID())));
 }
 
-function normalizeBehaviors(behaviors: unknown): IntentionalBehavior[] {
+function normalizeBehaviors(behaviors: unknown, now = new Date()): IntentionalBehavior[] {
   if (!Array.isArray(behaviors)) return [];
   return behaviors
     .filter(isUnknownRecord)
-    .map((behavior) => normalizeBehavior(behavior, behavior, String(behavior.id || randomUUID())));
+    .map((behavior) => normalizeBehavior(behavior, behavior, String(behavior.id || randomUUID()), now, true));
 }
 
 function mergeSeededBehaviors(seedBehaviors: unknown, currentBehaviors: unknown): unknown[] {
@@ -763,7 +783,13 @@ function normalizeBehaviorDateKey(value: unknown, now: Date): string {
   return requested;
 }
 
-function normalizeBehavior(body: IntentionalBody = {}, existing: Partial<IntentionalBehavior> = {}, fallbackId: string = randomUUID(), now = new Date()): IntentionalBehavior {
+function normalizeBehavior(
+  body: IntentionalBody = {},
+  existing: Partial<IntentionalBehavior> = {},
+  fallbackId: string = randomUUID(),
+  now = new Date(),
+  preserveUpdatedAt = false
+): IntentionalBehavior {
   const direction = ["build", "reduce", "notice"].includes(String(body.direction || ""))
     ? body.direction as IntentionalBehavior["direction"]
     : existing.direction || "build";
@@ -782,7 +808,7 @@ function normalizeBehavior(body: IntentionalBody = {}, existing: Partial<Intenti
     replacement: String(body.replacement || existing.replacement || "").trim().slice(0, 160),
     active: body.active === undefined ? existing.active !== false : truthy(body.active),
     createdAt,
-    updatedAt: now.toISOString()
+    updatedAt: normalizedUpdatedAt(existing.updatedAt, createdAt, now, preserveUpdatedAt)
   };
 }
 
@@ -819,15 +845,21 @@ function normalizeBehaviorCheckIn(checkIn: UnknownRecord): IntentionalBehaviorCh
   };
 }
 
-function normalizeJournalEntries(entries: unknown): IntentionalJournalEntry[] {
+function normalizeJournalEntries(entries: unknown, now = new Date()): IntentionalJournalEntry[] {
   if (!Array.isArray(entries)) return [];
   return entries
     .filter(isUnknownRecord)
-    .map((entry) => normalizeJournalEntry(entry, entry, String(entry.id || randomUUID())))
+    .map((entry) => normalizeJournalEntry(entry, entry, String(entry.id || randomUUID()), now, true))
     .sort((a, b) => Date.parse(b.entryDate || b.createdAt || "") - Date.parse(a.entryDate || a.createdAt || ""));
 }
 
-function normalizeJournalEntry(body: IntentionalBody = {}, existing: Partial<IntentionalJournalEntry> = {}, fallbackId: string = randomUUID(), now = new Date()): IntentionalJournalEntry {
+function normalizeJournalEntry(
+  body: IntentionalBody = {},
+  existing: Partial<IntentionalJournalEntry> = {},
+  fallbackId: string = randomUUID(),
+  now = new Date(),
+  preserveUpdatedAt = false
+): IntentionalJournalEntry {
   const createdAt = existing.createdAt || now.toISOString();
   const entryDate = safeIsoDate(body.entryDate) || existing.entryDate || now.toISOString();
   return {
@@ -842,20 +874,26 @@ function normalizeJournalEntry(body: IntentionalBody = {}, existing: Partial<Int
     behaviorIds: normalizeTargets(body.behaviorIds ?? existing.behaviorIds).slice(0, 20),
     ruleIds: normalizeTargets(body.ruleIds ?? existing.ruleIds).slice(0, 20),
     createdAt,
-    updatedAt: now.toISOString(),
+    updatedAt: normalizedUpdatedAt(existing.updatedAt, createdAt, now, preserveUpdatedAt),
     entryDate
   };
 }
 
-function normalizePlanLists(lists: unknown): IntentionalPlanList[] {
+function normalizePlanLists(lists: unknown, now = new Date()): IntentionalPlanList[] {
   if (!Array.isArray(lists)) return [];
   return lists
     .filter(isUnknownRecord)
-    .map((list) => normalizePlanList(list, list, String(list.id || randomUUID())))
+    .map((list) => normalizePlanList(list, list, String(list.id || randomUUID()), now, true))
     .sort((a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name));
 }
 
-function normalizePlanList(body: IntentionalBody = {}, existing: Partial<IntentionalPlanList> = {}, fallbackId: string = randomUUID(), now = new Date()): IntentionalPlanList {
+function normalizePlanList(
+  body: IntentionalBody = {},
+  existing: Partial<IntentionalPlanList> = {},
+  fallbackId: string = randomUUID(),
+  now = new Date(),
+  preserveUpdatedAt = false
+): IntentionalPlanList {
   const createdAt = existing.createdAt || now.toISOString();
   return {
     id: String(body.id || existing.id || fallbackId),
@@ -864,15 +902,15 @@ function normalizePlanList(body: IntentionalBody = {}, existing: Partial<Intenti
     description: String(bodyValue(body, "description", existing.description || "")).trim().slice(0, 500),
     active: body.active === undefined ? existing.active !== false : truthy(body.active),
     createdAt,
-    updatedAt: now.toISOString()
+    updatedAt: normalizedUpdatedAt(existing.updatedAt, createdAt, now, preserveUpdatedAt)
   };
 }
 
-function normalizePlanItems(items: unknown): IntentionalPlanItem[] {
+function normalizePlanItems(items: unknown, now = new Date()): IntentionalPlanItem[] {
   if (!Array.isArray(items)) return [];
   return items
     .filter(isUnknownRecord)
-    .map((item) => normalizePlanItem(item, item, String(item.id || randomUUID())))
+    .map((item) => normalizePlanItem(item, item, String(item.id || randomUUID()), now, "", true))
     .sort((a, b) => Date.parse(b.updatedAt || b.createdAt || "") - Date.parse(a.updatedAt || a.createdAt || ""));
 }
 
@@ -881,7 +919,8 @@ function normalizePlanItem(
   existing: Partial<IntentionalPlanItem> = {},
   fallbackId: string = randomUUID(),
   now = new Date(),
-  fallbackListId = ""
+  fallbackListId = "",
+  preserveUpdatedAt = false
 ): IntentionalPlanItem {
   const createdAt = existing.createdAt || now.toISOString();
   const status = normalizePlanItemStatus(body.status || existing.status);
@@ -898,17 +937,46 @@ function normalizePlanItem(
     dueAt,
     tags: normalizeTargets(body.tags ?? existing.tags).slice(0, 20),
     createdAt,
-    updatedAt: now.toISOString(),
+    updatedAt: normalizedUpdatedAt(existing.updatedAt, createdAt, now, preserveUpdatedAt),
     completedAt
   };
 }
 
-function normalizePlanBlocks(blocks: unknown): IntentionalPlanBlock[] {
+function normalizePlanBlocks(blocks: unknown, now = new Date()): IntentionalPlanBlock[] {
   if (!Array.isArray(blocks)) return [];
   return blocks
     .filter(isUnknownRecord)
-    .map((block) => normalizePlanBlock(block, block, String(block.id || randomUUID())))
+    .map((block) => normalizePlanBlock(block, block, String(block.id || randomUUID()), now, undefined, true))
     .sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""));
+}
+
+function retainedPlanBlocks(blocks: unknown, now: Date, requiredId = "", normalizeEntries = true): IntentionalPlanBlock[] {
+  const normalized = normalizeEntries
+    ? normalizePlanBlocks(blocks, now)
+    : (Array.isArray(blocks) ? [...blocks] as IntentionalPlanBlock[] : [])
+      .sort((a, b) => Date.parse(a.startsAt || "") - Date.parse(b.startsAt || ""));
+  if (normalized.length <= PLAN_BLOCK_LIMIT) return normalized;
+  const nowMs = now.getTime();
+  const ranked = [...normalized].sort((left, right) => {
+    const leftTier = planBlockRetentionTier(left, nowMs, requiredId);
+    const rightTier = planBlockRetentionTier(right, nowMs, requiredId);
+    if (leftTier !== rightTier) return leftTier - rightTier;
+    const leftStart = Date.parse(left.startsAt || "");
+    const rightStart = Date.parse(right.startsAt || "");
+    return leftTier <= 2 ? leftStart - rightStart : rightStart - leftStart;
+  });
+  const retained = new Set(ranked.slice(0, PLAN_BLOCK_LIMIT));
+  return normalized.filter((block) => retained.has(block));
+}
+
+function planBlockRetentionTier(block: IntentionalPlanBlock, nowMs: number, requiredId: string): number {
+  if (requiredId && block.id === requiredId) return 0;
+  const startsAt = Date.parse(block.startsAt || "");
+  const endsAt = Date.parse(block.endsAt || "");
+  if (startsAt <= nowMs && endsAt > nowMs) return 1;
+  if (startsAt > nowMs) return 2;
+  if (!block.completed) return 3;
+  return 4;
 }
 
 function normalizePlanBlock(
@@ -916,7 +984,8 @@ function normalizePlanBlock(
   existing: Partial<IntentionalPlanBlock> = {},
   fallbackId: string = randomUUID(),
   now = new Date(),
-  state?: VigilState
+  state?: VigilState,
+  preserveUpdatedAt = false
 ): IntentionalPlanBlock {
   const createdAt = existing.createdAt || now.toISOString();
   const startIso = safeIsoDate(body.startsAt) || safeIsoDate(existing.startsAt) || now.toISOString();
@@ -946,7 +1015,7 @@ function normalizePlanBlock(
     commitmentLock: body.commitmentLock === undefined ? Boolean(existing.commitmentLock) : truthy(body.commitmentLock),
     deviceTargets: normalizeDeviceTargets(body.deviceTargets ?? existing.deviceTargets),
     createdAt,
-    updatedAt: now.toISOString()
+    updatedAt: normalizedUpdatedAt(existing.updatedAt, createdAt, now, preserveUpdatedAt)
   };
 }
 
@@ -1032,6 +1101,13 @@ function safeIsoDate(value: unknown): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function normalizedUpdatedAt(value: unknown, createdAt: string, now: Date, preserve: boolean): string {
+  if (!preserve) return now.toISOString();
+  const updatedAt = String(value || "");
+  if (Number.isFinite(Date.parse(updatedAt))) return updatedAt;
+  return safeIsoDate(createdAt) || now.toISOString();
+}
+
 function normalizePlanListKind(value: unknown): IntentionalPlanListKind {
   const kind = String(value || "").trim().toLowerCase();
   return ["todo", "watch", "read", "custom"].includes(kind) ? kind as IntentionalPlanListKind : "custom";
@@ -1075,9 +1151,9 @@ function cleanupIntentionalUse(state: VigilState, now: Date): void {
   state.intentionalUse.outcomes = (state.intentionalUse.outcomes || []).slice(0, OUTCOME_LIMIT);
   state.intentionalUse.behaviorCheckIns = retainedBehaviorCheckIns(state.intentionalUse.behaviorCheckIns || [], now);
   state.intentionalUse.journalEntries = (state.intentionalUse.journalEntries || []).slice(0, JOURNAL_ENTRY_LIMIT);
-  state.intentionalUse.planLists = normalizePlanLists(state.intentionalUse.planLists || []).slice(0, PLAN_LIST_LIMIT);
-  state.intentionalUse.planItems = normalizePlanItems(state.intentionalUse.planItems || []).slice(0, PLAN_ITEM_LIMIT);
-  state.intentionalUse.planBlocks = normalizePlanBlocks(state.intentionalUse.planBlocks || []).slice(0, PLAN_BLOCK_LIMIT);
+  state.intentionalUse.planLists = normalizePlanLists(state.intentionalUse.planLists || [], now).slice(0, PLAN_LIST_LIMIT);
+  state.intentionalUse.planItems = normalizePlanItems(state.intentionalUse.planItems || [], now).slice(0, PLAN_ITEM_LIMIT);
+  state.intentionalUse.planBlocks = retainedPlanBlocks(state.intentionalUse.planBlocks || [], now);
   state.intentionalUse.recoveryCheckIns = (state.intentionalUse.recoveryCheckIns || []).slice(0, RECOVERY_CHECK_IN_LIMIT);
   state.intentionalUse.sosSessions = (state.intentionalUse.sosSessions || []).slice(0, SOS_SESSION_LIMIT);
 }
@@ -1106,13 +1182,16 @@ function matchIntentionalUseUrlPattern(rule: IntentionalUseRule, url: string) {
 
 function ruleAppliesNow(rule: IntentionalUseRule, now: Date): boolean {
   const days = new Set(rule.days || []);
-  if (days.size && !days.has(now.getDay())) return false;
   const start = parseClock(rule.start || "00:00");
   const end = parseClock(rule.end || "23:59");
   const current = now.getHours() * 60 + now.getMinutes();
-  if (start === end) return true;
-  if (start < end) return current >= start && current < end;
-  return current >= start || current < end;
+  const day = now.getDay();
+  const appliesOn = (weekday: number) => !days.size || days.has(weekday);
+  if (start === end) return appliesOn(day);
+  if (start < end) return appliesOn(day) && current >= start && current < end;
+  if (current >= start) return appliesOn(day);
+  if (current < end) return appliesOn((day + 6) % 7);
+  return false;
 }
 
 function pendingPauseFor(state: VigilState, sample: UsageSample, rule: IntentionalUseRule, now: Date): IntentionalPause | null {

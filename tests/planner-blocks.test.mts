@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { addEvent } from "../src/store.js";
-import { completeIntentionalPlanBlock, intentionalUseSummary, upsertIntentionalPlanBlock, upsertIntentionalPlanItem, upsertIntentionalPlanList } from "../src/intentionalUse.js";
+import { addIntentionalJournalEntry, completeIntentionalPlanBlock, intentionalUseSummary, normalizeIntentionalUse, upsertIntentionalPlanBlock, upsertIntentionalPlanItem, upsertIntentionalPlanList } from "../src/intentionalUse.js";
 import { activePolicy } from "../src/policy.js";
 import { protectedEditBlockers } from "../src/protection.js";
 import { usageSummary } from "../src/usage.js";
@@ -47,6 +47,9 @@ const summary = intentionalUseSummary(state, {}, now);
 assert.equal(summary.lifeLog.planner.openItems, 1);
 assert.equal(summary.lifeLog.planner.activeBlocks[0]?.id, block.id);
 assert.equal(summary.lifeLog.planner.todayBlocks[0]?.title, "Homework");
+assert.equal(state.intentionalUse.planLists.find((entry) => entry.id === list.id)?.updatedAt, now.toISOString());
+assert.equal(state.intentionalUse.planItems.find((entry) => entry.id === item.id)?.updatedAt, now.toISOString());
+assert.equal(state.intentionalUse.planBlocks.find((entry) => entry.id === block.id)?.updatedAt, now.toISOString());
 
 addEvent(state, "planner_test_marker", {});
 const usage = usageSummary({}, state, now);
@@ -106,3 +109,53 @@ const overlapPolicy = activePolicy(overlapState, now, { device: "computer" });
 assert.equal(overlapPolicy?.kind, "schedule");
 assert.equal(overlapPolicy?.session.lockLevel, "deep");
 assert.equal(protectedEditBlockers(overlapState, { kind: "settings" }, now)[0]?.kind, "schedule");
+
+{
+  const cappedState = defaultState();
+  const historyStart = new Date("2026-01-01T00:00:00.000Z").getTime();
+  cappedState.intentionalUse.planBlocks = Array.from({ length: 500 }, (_, index) => ({
+    id: `history-${index}`,
+    title: `History ${index}`,
+    notes: "",
+    listId: "",
+    itemId: "",
+    startsAt: new Date(historyStart + index * 2 * 60 * 60 * 1000).toISOString(),
+    endsAt: new Date(historyStart + (index * 2 + 1) * 60 * 60 * 1000).toISOString(),
+    enabled: true,
+    completed: index !== 0,
+    mode: "focus",
+    profileId: "default",
+    lockLevel: "light",
+    commitmentLock: false,
+    deviceTargets: ["computer"],
+    createdAt: new Date(historyStart + index * 2 * 60 * 60 * 1000).toISOString(),
+    updatedAt: new Date(historyStart + (index * 2 + 1) * 60 * 60 * 1000).toISOString()
+  }));
+  const future = upsertIntentionalPlanBlock(cappedState, {
+    id: "new-future-block",
+    title: "New future block",
+    startsAt: "2026-06-05T15:00:00.000Z",
+    endsAt: "2026-06-05T16:00:00.000Z",
+    profileId: "default",
+    enabled: true,
+    deviceTargets: ["computer"]
+  }, now);
+
+  assert.equal(cappedState.intentionalUse.planBlocks.length, 500);
+  assert.equal(cappedState.intentionalUse.planBlocks.some((entry) => entry.id === future.id), true);
+  assert.equal(cappedState.intentionalUse.planBlocks.some((entry) => entry.id === "history-0"), true, "incomplete history should survive before completed history");
+  assert.equal(cappedState.intentionalUse.planBlocks.some((entry) => entry.id === "history-1"), false, "the oldest completed history should be trimmed");
+  assert.equal(cappedState.intentionalUse.planBlocks.some((entry) => entry.id === "history-499"), true);
+}
+
+{
+  const hydrationState = defaultState();
+  const editedAt = new Date("2025-12-15T12:34:56.000Z");
+  addIntentionalJournalEntry(hydrationState, {
+    id: "preserved-journal-time",
+    title: "Preserve this edit time",
+    body: "No read should make this look newly edited."
+  }, editedAt);
+  const hydrated = normalizeIntentionalUse(hydrationState.intentionalUse);
+  assert.equal(hydrated.journalEntries.find((entry) => entry.id === "preserved-journal-time")?.updatedAt, editedAt.toISOString());
+}

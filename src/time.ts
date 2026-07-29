@@ -5,6 +5,52 @@ export function dateKey(date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+export interface LocalDaySecondsSlice {
+  dayKey: string;
+  seconds: number;
+  startedAt: Date;
+  endedAt: Date;
+}
+
+export function splitSecondsAcrossLocalDays(
+  seconds: number,
+  startedAt: Date,
+  endedAt: Date
+): LocalDaySecondsSlice[] {
+  const totalSeconds = Number(seconds);
+  const startMs = startedAt.getTime();
+  const endMs = endedAt.getTime();
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0
+    || !Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return [];
+  }
+
+  const slices: LocalDaySecondsSlice[] = [];
+  const totalMs = endMs - startMs;
+  let cursorMs = startMs;
+  let allocatedSeconds = 0;
+  while (cursorMs < endMs) {
+    const cursor = new Date(cursorMs);
+    const nextMidnight = new Date(cursor);
+    nextMidnight.setHours(24, 0, 0, 0);
+    const sliceEndMs = Math.min(endMs, nextMidnight.getTime());
+    if (!Number.isFinite(sliceEndMs) || sliceEndMs <= cursorMs) return [];
+    const isLast = sliceEndMs === endMs;
+    const sliceSeconds = isLast
+      ? Math.max(0, totalSeconds - allocatedSeconds)
+      : totalSeconds * ((sliceEndMs - cursorMs) / totalMs);
+    slices.push({
+      dayKey: dateKey(cursor),
+      seconds: sliceSeconds,
+      startedAt: cursor,
+      endedAt: new Date(sliceEndMs)
+    });
+    allocatedSeconds += sliceSeconds;
+    cursorMs = sliceEndMs;
+  }
+  return slices;
+}
+
 export const TRACKING_DAY_ROLLOVER_HOUR = 3;
 
 export function trackingDay(date = new Date()): Date {

@@ -25,6 +25,8 @@ interface BarcodeDetectorConstructor {
 declare const BarcodeDetector: BarcodeDetectorConstructor;
 
 export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: DistanceKeyUiContext) {
+  let scannerGeneration = 0;
+
   function showToken(token: string): void {
     const node = $("#distanceKeyToken");
     node.textContent = token || "";
@@ -54,6 +56,8 @@ export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: Distanc
     }
 
     closeScanner();
+    const generation = scannerGeneration;
+    const isCurrent = () => scannerGeneration === generation;
     scanner.target = target;
     $("#distanceScanner").classList.remove("hidden");
     $("#distanceScannerStatus").textContent = "Camera starting";
@@ -64,16 +68,22 @@ export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: Distanc
         video: { facingMode: "environment" },
         audio: false
       });
+      if (!isCurrent()) {
+        for (const track of stream.getTracks()) track.stop();
+        return;
+      }
       scanner.stream = stream;
       video.srcObject = stream;
       await video.play();
+      if (!isCurrent()) return;
       const detector = new BarcodeDetector({ formats: ["qr_code"] });
       $("#distanceScannerStatus").textContent = "Point the camera at the printed distance key";
 
       const tick = async () => {
-        if (!scanner.stream) return;
+        if (!isCurrent() || scanner.stream !== stream) return;
         try {
           const codes = await detector.detect(video);
+          if (!isCurrent() || scanner.stream !== stream) return;
           const value = normalizeDistanceKeyScan(codes[0]?.rawValue || "");
           if (value) {
             target.value = value;
@@ -82,18 +92,21 @@ export function createDistanceKeyUi({ $, toast, errorMessage, scanner }: Distanc
             return;
           }
         } catch {
+          if (!isCurrent()) return;
           $("#distanceScannerStatus").textContent = "Scanning paused; adjust camera permission or type the key";
         }
-        scanner.frame = requestAnimationFrame(tick);
+        if (isCurrent()) scanner.frame = requestAnimationFrame(tick);
       };
       scanner.frame = requestAnimationFrame(tick);
     } catch (error) {
+      if (!isCurrent()) return;
       closeScanner();
       toast(errorMessage(error) || "Camera unavailable");
     }
   }
 
   function closeScanner(): void {
+    scannerGeneration += 1;
     if (scanner.frame) cancelAnimationFrame(scanner.frame);
     if (scanner.stream) {
       for (const track of scanner.stream.getTracks()) track.stop();

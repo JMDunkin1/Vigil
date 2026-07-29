@@ -1,4 +1,5 @@
 let lastPulseAt = Date.now();
+let pulseGeneration = 0;
 let activePauseOverlay: PauseOverlayState | null = null;
 let mediaLockActive = false;
 let pageGuardActive = false;
@@ -19,6 +20,8 @@ type HistoryMethod = "pushState" | "replaceState";
 
 interface PulseResponse {
   ok?: boolean;
+  skipped?: boolean;
+  stale?: boolean;
   blocked?: boolean;
   paused?: boolean;
   redirectUrl?: string;
@@ -79,6 +82,7 @@ interface PauseOverlayState {
 
 interface PauseMessage {
   type?: string;
+  expectedUrl?: string;
   result?: unknown;
 }
 
@@ -111,6 +115,10 @@ document.addEventListener("keydown", trapPageKeys, true);
 
 chrome.runtime.onMessage.addListener((message: PauseMessage, _sender, sendResponse: (response?: unknown) => void) => {
   if (message?.type !== "VIGIL_SHOW_PAUSE") return false;
+  if (message.expectedUrl && message.expectedUrl !== location.href) {
+    sendResponse({ ok: false, stale: true });
+    return false;
+  }
   sendResponse({ ok: showPauseOverlay(message.result) });
   return false;
 });
@@ -127,6 +135,7 @@ function sendPulse(reason: PulseReason, options: PulseOptions = {}): void {
   if (document.visibilityState !== "visible") return;
   if (!options.guard && !document.hasFocus()) return;
   if (options.guard) activatePageGuard();
+  const generation = ++pulseGeneration;
   const now = Date.now();
   const seconds = Math.max(1, Math.min(15, (now - lastPulseAt) / 1000));
   lastPulseAt = now;
@@ -139,10 +148,11 @@ function sendPulse(reason: PulseReason, options: PulseOptions = {}): void {
       seconds
     }, (result: PulseResponse | undefined) => {
       void chrome.runtime.lastError;
+      if (generation !== pulseGeneration) return;
       handlePulseResult(result);
     });
   } catch {
-    if (!activePauseOverlay) releasePageGuard();
+    if (generation === pulseGeneration && !activePauseOverlay) releasePageGuard();
   }
 }
 
@@ -151,6 +161,7 @@ function handlePulseResult(result: PulseResponse | undefined): void {
     if (!activePauseOverlay) releasePageGuard();
     return;
   }
+  if (result.stale === true || result.skipped === true) return;
   if (result.browserNoiseBlockingEnabled === true) {
     cleanupBrowserNoise();
   } else if (result.browserNoiseBlockingEnabled === false) {
@@ -330,6 +341,7 @@ async function continueFromOverlay(decision: PauseOverlayDecision, intention: st
       intention,
       mood
     });
+    if (activePauseOverlay?.requestId !== decision.requestId) return;
     removePauseOverlay(true);
     resetAndPulse("activated");
   } catch (error) {

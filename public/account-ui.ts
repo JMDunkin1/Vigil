@@ -1,4 +1,4 @@
-import { get, post } from "./api-client.js";
+import { clearJournalSession, get, post } from "./api-client.js";
 import { errorMessage } from "./ui-shell.js";
 
 interface AccountUser {
@@ -103,6 +103,8 @@ export function createAccountUi() {
       session = await post<AccountSession>("/api/account/logout", {});
       render();
       selectAuthPanel("signin");
+      clearJournalSession();
+      window.location.reload();
     } catch (error) {
       setStatus(errorMessage(error));
     } finally {

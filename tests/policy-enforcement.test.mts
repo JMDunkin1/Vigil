@@ -12,6 +12,7 @@ import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { buildHostsBlock, managedBlockDomains } from "../src/hardening.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "../src/keyholder.js";
+import { iosPolicyTargets } from "../src/iosProfiles.js";
 import { activeLimitBlocks, activeLimitPolicy, overrideLimitRules } from "../src/limits.js";
 import { shouldLockScreenForPolicy } from "../src/monitor.js";
 import { activePlannerBlock, activePolicy, activeSchedule, appMatchesAppTargets, clearSessionsById, emergencyUnlockAllowedForPolicy, expandAppTargets, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, isProcessSweepExemptApp, matchBlockedUrlPattern, matchStrictBrowserControlUrl, panicLockProfile, profileById, sessionPhase, shouldBlockAppForPolicy, shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
@@ -304,6 +305,120 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(policy.kind, "schedule");
   assert.equal(shouldBlockAppForPolicy(state, policy, "Discord"), true);
   assert.equal(shouldBlockSite(policy.profile, "reddit.com"), true);
+}
+
+{
+  const composedAllowlist = (manualLock: "light" | "deep", scheduleLock: "light" | "deep") => {
+    const state = defaultState();
+    state.profiles.push(
+      testProfile({
+        id: "broad-allowlist",
+        name: "Broad allowlist",
+        mode: "allowlist",
+        allowedSites: ["google.com"]
+      }),
+      testProfile({
+        id: "narrow-allowlist",
+        name: "Narrow allowlist",
+        mode: "allowlist",
+        allowedSites: ["mail.google.com"]
+      })
+    );
+    const manual: Session = {
+      id: "broad-manual",
+      title: "Broad manual",
+      mode: "focus",
+      profileId: "broad-allowlist",
+      lockLevel: manualLock,
+      startedAt: now.toISOString(),
+      endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+      canEndEarly: manualLock === "light",
+      source: "manual",
+      deviceTargets: ["computer"]
+    };
+    state.activeSession = manual;
+    state.activeSessions.computer = manual;
+    state.schedules = [{
+      id: "narrow-schedule",
+      name: "Narrow schedule",
+      enabled: true,
+      mode: "focus",
+      profileId: "narrow-allowlist",
+      lockLevel: scheduleLock,
+      commitmentLock: false,
+      days: TEST_DAYS,
+      start: "00:00",
+      end: "23:59",
+      wifiNetworks: [],
+      deviceTargets: ["computer"]
+    }];
+    return mustPolicy(activePolicy(state, now));
+  };
+
+  const broadSelected = composedAllowlist("deep", "light");
+  const narrowSelected = composedAllowlist("light", "deep");
+  assert.deepEqual(broadSelected.profile.allowedSites, ["mail.google.com"]);
+  assert.deepEqual(narrowSelected.profile.allowedSites, ["mail.google.com"]);
+  assert.equal(shouldBlockSite(broadSelected.profile, "mail.google.com"), false);
+  assert.equal(shouldBlockSite(broadSelected.profile, "calendar.google.com"), true);
+}
+
+{
+  const state = defaultState();
+  state.profiles.push(
+    testProfile({
+      id: "broad-composed-allowlist",
+      name: "Broad composed allowlist",
+      mode: "allowlist",
+      allowedSites: ["google.com"]
+    }),
+    testProfile({
+      id: "narrow-composed-denylist",
+      name: "Narrow composed denylist",
+      blockedSites: ["mail.google.com"],
+      blockedUrlPatterns: ["docs.google.com/private"]
+    })
+  );
+  const manual: Session = {
+    id: "broad-allowlist-manual",
+    title: "Broad allowlist manual",
+    mode: "focus",
+    profileId: "broad-composed-allowlist",
+    lockLevel: "deep",
+    startedAt: now.toISOString(),
+    endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+    canEndEarly: false,
+    source: "manual",
+    deviceTargets: ["computer", "phone"]
+  };
+  state.activeSession = manual;
+  state.activeSessions.computer = manual;
+  state.activeSessions.phone = manual;
+  state.schedules = [{
+    id: "narrow-deny-schedule",
+    name: "Narrow deny schedule",
+    enabled: true,
+    mode: "focus",
+    profileId: "narrow-composed-denylist",
+    lockLevel: "light",
+    commitmentLock: false,
+    days: TEST_DAYS,
+    start: "00:00",
+    end: "23:59",
+    wifiNetworks: [],
+    deviceTargets: ["computer", "phone"]
+  }];
+  state.deviceControls.ios.enabled = true;
+
+  const policy = mustPolicy(activePolicy(state, now));
+  assert.equal(policy.profile.mode, "allowlist");
+  assert.equal(shouldBlockSite(policy.profile, "docs.google.com"), false);
+  assert.equal(shouldBlockSite(policy.profile, "mail.google.com"), true);
+  assert.equal(shouldBlockUrl(policy.profile, "https://docs.google.com/private/report"), true);
+  assert.equal(extensionRuleSnapshot(state, now).rules.some((rule) => rule.domain === "mail.google.com"), true);
+  const iosTargets = iosPolicyTargets(state, now);
+  assert.equal(iosTargets.deniedUrls.includes("https://mail.google.com/"), true);
+  assert.equal(iosTargets.deniedUrls.includes("https://docs.google.com/private"), true);
 }
 
 {
