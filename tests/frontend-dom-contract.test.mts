@@ -316,8 +316,8 @@ assert.match(styles, /\.protection-level-control:not\(\.is-open\) \.protection-l
 assert.match(styles, /\.protection-level-choice:hover span\s*\{[\s\S]*?text-shadow:/, "hovering a protection number must brighten the number itself");
 const protectionGlowStyles = styles.match(/\.protection-level-choice::after\s*\{[\s\S]*?\n\}/)?.[0] || "";
 assert.match(protectionGlowStyles, /inset:\s*-28px/, "the protection button glow must remain close to the orb");
-assert.match(protectionGlowStyles, /transition:\s*opacity 140ms ease,\s*transform 160ms/, "the protection button glow must respond promptly");
-assert.match(styles, /\.protection-level-choice:hover::after\s*\{[^}]*transition-duration:\s*140ms,\s*160ms;/, "hovering a protection button must not use a delayed bloom");
+assert.match(protectionGlowStyles, /transition:\s*opacity 240ms ease,\s*transform 280ms/, "the protection button glow must respond at a deliberate pace");
+assert.match(styles, /\.protection-level-choice:hover::after\s*\{[^}]*transition-duration:\s*240ms,\s*280ms;/, "hovering a protection button must use the balanced bloom timing");
 assert.doesNotMatch(styles, /:has\(\.protection-level-choice:hover\) \.protection-level-trace/, "highlighting a protection number must not make the connecting line glow");
 const protectionTraceStyles = styles.match(/\.protection-level-trace\s*\{[\s\S]*?\n\}/)?.[0] || "";
 assert.match(protectionTraceStyles, /height:\s*12px/, "the protection connector must use the thicker two-tier track");
