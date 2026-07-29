@@ -16,3 +16,17 @@ Agents may perform a standard installed-app update without UI automation by runn
 npm run agent:update
 ```
 Your job is to help human flourishing by helping the user update and develop this app without lessening the meaningful, purpose-built restrictions.
+
+## iPhone supervision must finish the layout restore
+
+`scripts/supervise-ios-preserving-layout.mjs` temporarily restores two setup-state
+files before supervision. During that temporary phase the phone can appear to
+have lost its MDM profiles, Home Screen folders, or app layout. That phase is
+never a successful stopping point.
+
+If supervision succeeds or a command times out after the tiny setup-state
+restore, do not start a new enrollment and do not declare success. Resume with
+the same verified checkpoint and persistent supervisor keybag, complete the full
+checkpoint restore, verify/reapply supervision if the restore cleared it, pair
+with the supervisor keybag, and only then apply the Vigil profile. Never ask the
+user to manually rebuild the Home Screen layout while that checkpoint exists.

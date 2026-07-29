@@ -42,6 +42,14 @@ const PRE_SUPERVISION_RESTORE_ENTRIES = [
 ];
 const PRE_SUPERVISION_RESTORE_FILE_LABELS = PRE_SUPERVISION_RESTORE_ENTRIES.map((entry) => `${entry.domain}/${entry.relativePath}`);
 
+// SAFETY/RECOVERY INVARIANT:
+// restorePreSupervisionSetupState() intentionally leaves the phone in a
+// temporary state where MDM profiles and the Home Screen layout may appear
+// absent. Once that call begins, supervision alone is not completion. The same
+// verified checkpoint must be fully restored before Vigil is applied or success
+// is reported. If a probe times out after supervision, resume at
+// restoreCheckpoint(); never restart enrollment or ask the user to rebuild the
+// layout manually.
 const options = parseArgs(process.argv.slice(2));
 if (!options.confirm) {
   throw new Error([
@@ -89,6 +97,7 @@ await waitForCloudConfigurationCleared(udid, "after pre-supervision setup-state 
 console.log("Running no-erase supervision with the persistent Vigil supervisor identity.");
 await superviseDevice(udid, options.organization, supervisorKeybagPath);
 await waitForUsbDevice(udid, "after supervision", RECONNECT_TIMEOUT_MS);
+await waitForCloudConfigurationReadable(udid, "after supervision", RECONNECT_TIMEOUT_MS);
 const supervisedCloud = await readCloudConfiguration(udid);
 if (!isSupervisedCloud(supervisedCloud)) {
   throw new Error("iPhone supervision command completed, but the device still does not report IsSupervised=true. Stopping before backup restore/profile install.");

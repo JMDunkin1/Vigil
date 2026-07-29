@@ -69,14 +69,19 @@ issue_counts = {
     "missingPayloads": 0,
     "nonRegularPayloads": 0,
     "emptyPayloads": 0,
-    "sizeMismatches": 0,
     "invalidCiphertextShapes": 0,
     "decryptFailures": 0,
     "paddingFailures": 0,
-    "decryptedSizeMismatches": 0,
     "unreadablePayloads": 0,
 }
+observation_counts = {
+    # BackupAgent can snapshot a live SQLite payload before or after it archives
+    # that file's metadata. MobileBackup2 restores the real payload stream
+    # length, so a non-zero mismatch is useful diagnostics but not corruption.
+    "manifestSizeMismatches": 0,
+}
 samples = {key: [] for key in issue_counts}
+observation_samples = {key: [] for key in observation_counts}
 manifest_entries = 0
 manifest_files = 0
 payload_files_found = 0
@@ -88,6 +93,11 @@ def record_issue(kind, label):
     issue_counts[kind] += 1
     if len(samples[kind]) < 12:
         samples[kind].append(label)
+
+def record_observation(kind, label):
+    observation_counts[kind] += 1
+    if len(observation_samples[kind]) < 12:
+        observation_samples[kind].append(label)
 
 for entry in backup.iter_entries():
     manifest_entries += 1
@@ -141,8 +151,19 @@ for entry in backup.iter_entries():
     payload_bytes += actual_size
     if expected_size > 0 and actual_size <= 0:
         record_issue("emptyPayloads", label)
+    try:
+        with payload_path.open("rb") as payload_file:
+            if actual_size > 0:
+                if len(payload_file.read(1)) != 1:
+                    raise OSError("could not read first payload byte")
+                payload_file.seek(-1, 2)
+                if len(payload_file.read(1)) != 1:
+                    raise OSError("could not read final payload byte")
+    except OSError:
+        record_issue("unreadablePayloads", label)
+        continue
     if not backup.is_encrypted and actual_size != expected_size:
-        record_issue("sizeMismatches", f"{label} expected={expected_size} actual={actual_size}")
+        record_observation("manifestSizeMismatches", f"{label} expected={expected_size} actual={actual_size}")
     if backup.is_encrypted:
         if actual_size <= 0 or actual_size % 16 != 0:
             record_issue("invalidCiphertextShapes", f"{label} ciphertext={actual_size}")
@@ -173,7 +194,7 @@ for entry in backup.iter_entries():
             continue
         decrypted_size = actual_size - pad_length
         if decrypted_size != expected_size:
-            record_issue("decryptedSizeMismatches", f"{label} expected={expected_size} decrypted={decrypted_size}")
+            record_observation("manifestSizeMismatches", f"{label} expected={expected_size} decrypted={decrypted_size}")
 
 result = {
     "ok": not any(issue_counts.values()),
@@ -186,6 +207,8 @@ result = {
     "durationMs": round((time.monotonic() - started) * 1000),
     "issueCounts": issue_counts,
     "samples": {key: value for key, value in samples.items() if value},
+    "observationCounts": observation_counts,
+    "observationSamples": {key: value for key, value in observation_samples.items() if value},
 }
 print(json.dumps(result, sort_keys=True))
 if not result["ok"]:

@@ -12,6 +12,9 @@ interface PayloadValidationResult {
   encrypted: boolean;
   manifestEntries: number;
   manifestFiles: number;
+  observationCounts: {
+    manifestSizeMismatches: number;
+  };
   ok: boolean;
   payloadFilesFound: number;
 }
@@ -80,6 +83,18 @@ try {
   assert.equal(valid.manifestEntries, 3);
   assert.equal(valid.manifestFiles, 2);
   assert.equal(valid.payloadFilesFound, 2);
+  assert.equal(valid.observationCounts.manifestSizeMismatches, 0);
+
+  const liveDatabaseSnapshot = await createFixture("live-database-snapshot", {
+    entries: [{ fileId: dataFileId, path: "Library/live.sqlite", size: 1 }],
+    payloads: new Map([[dataFileId, Buffer.from("data")]])
+  });
+  const liveDatabase = await validateRestorableBackupPayload({
+    backupPath: liveDatabaseSnapshot,
+    pythonPath
+  });
+  assert.equal(liveDatabase.ok, true);
+  assert.equal(liveDatabase.observationCounts.manifestSizeMismatches, 1);
 
   const missingBackup = await createFixture("missing", {
     entries: [
