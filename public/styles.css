@@ -4578,7 +4578,9 @@ h3,
 }
 
 .protection-level-trace {
-  --protection-trace-mask-radius: calc(var(--protection-orb-size) * 0.5 - 3px);
+  /* The resting choices render at 90%, so carry the trace a few pixels under
+     their painted edge instead of ending at the unscaled button boundary. */
+  --protection-trace-mask-radius: calc(var(--protection-orb-size) * 0.45 - 3px);
   --protection-trace-mask: linear-gradient(
     90deg,
     transparent 0 var(--protection-trace-mask-radius),
@@ -4591,17 +4593,17 @@ h3,
   );
   --protection-trace-inner: linear-gradient(
     90deg,
-    color-mix(in srgb, #e2ad72 18%, transparent) 0%,
-    color-mix(in srgb, #c98a57 18%, transparent) 33.333%,
-    color-mix(in srgb, #bc624b 18%, transparent) 66.667%,
-    color-mix(in srgb, #ff7b81 18%, transparent) 100%
+    color-mix(in srgb, #e2ad72 10%, var(--surface-strong)) 0%,
+    color-mix(in srgb, #c98a57 10%, var(--surface-strong)) 33.333%,
+    color-mix(in srgb, #bc624b 10%, var(--surface-strong)) 66.667%,
+    color-mix(in srgb, #ff7b81 10%, var(--surface-strong)) 100%
   );
   --protection-trace-outer: linear-gradient(
     90deg,
-    color-mix(in srgb, #e2ad72 36%, transparent) 0%,
-    color-mix(in srgb, #c98a57 36%, transparent) 33.333%,
-    color-mix(in srgb, #bc624b 36%, transparent) 66.667%,
-    color-mix(in srgb, #ff7b81 36%, transparent) 100%
+    color-mix(in srgb, #e2ad72 36%, var(--line)) 0%,
+    color-mix(in srgb, #c98a57 36%, var(--line)) 33.333%,
+    color-mix(in srgb, #bc624b 36%, var(--line)) 66.667%,
+    color-mix(in srgb, #ff7b81 36%, var(--line)) 100%
   );
   position: absolute;
   z-index: 0;
