@@ -19,11 +19,13 @@ export function createLifeLogView(context: LifeLogViewContext) {
   let journalEntries: DashboardItem[] = [];
 
   $("#journalEntrySearch").addEventListener("input", () => renderJournalEntries(journalEntries));
+  $("#journalEntryForm").addEventListener("input", () => renderJournalEntries(journalEntries));
   $("#journalNewEntry").addEventListener("click", () => {
     forms.resetJournalForm();
     renderJournalEntries(journalEntries);
     $("#journalEntryForm").elements.title.focus();
   });
+  renderJournalEntries(journalEntries);
 
   function renderLifeLog(intentionalUse: IntentionalUseSummary): void {
     const lifeLog = intentionalUse?.lifeLog || {};
@@ -90,12 +92,38 @@ export function createLifeLogView(context: LifeLogViewContext) {
     const visibleEntries = query
       ? entries.filter((entry) => journalEntrySearchText(entry).includes(query))
       : entries;
-    if (!visibleEntries.length) {
-      list.append(empty(entries.length ? "No matching entries" : "No entries yet"));
+    const form = $("#journalEntryForm");
+    const selectedId = form.elements.id.value;
+    let renderedDraft = false;
+    if (!selectedId) {
+      const draftTitle = form.elements.title.value.trim() || "Untitled entry";
+      const draftBody = form.elements.body.value.trim();
+      const draftMatches = !query || `${draftTitle} ${draftBody} Today`.toLocaleLowerCase().includes(query);
+      if (draftMatches) {
+        const article = document.createElement("article");
+        article.className = "journal-entry journal-entry-draft is-selected";
+        const select = document.createElement("button");
+        select.className = "journal-entry-select";
+        select.type = "button";
+        select.setAttribute("aria-label", `Continue ${draftTitle}`);
+        select.setAttribute("aria-current", "true");
+        select.append(
+          textEl("span", "Today", { className: "journal-entry-date" }),
+          textEl("strong", draftTitle, { className: "journal-entry-title" }),
+          textEl("span", "›", { className: "journal-entry-chevron", attrs: { "aria-hidden": "true" } })
+        );
+        select.addEventListener("click", () => form.elements.title.focus());
+        article.append(select);
+        list.append(article);
+        renderedDraft = true;
+      }
+    }
+
+    if (!visibleEntries.length && !renderedDraft) {
+      list.append(empty("No matching entries"));
       return;
     }
 
-    const selectedId = $("#journalEntryForm").elements.id.value;
     for (const entry of visibleEntries) {
       const article = document.createElement("article");
       article.className = "journal-entry";
@@ -111,7 +139,8 @@ export function createLifeLogView(context: LifeLogViewContext) {
       select.append(
         textEl("span", date, { className: "journal-entry-date" }),
         textEl("strong", title, { className: "journal-entry-title" }),
-        textEl("span", journalEntryPreview(entry), { className: "journal-entry-preview" })
+        textEl("span", journalEntryPreview(entry), { className: "journal-entry-preview" }),
+        textEl("span", "›", { className: "journal-entry-chevron", attrs: { "aria-hidden": "true" } })
       );
       select.addEventListener("click", () => {
         forms.loadJournalEntry(entry);

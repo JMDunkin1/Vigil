@@ -405,6 +405,14 @@ export function bindAppEvents(context: AppEventsContext) {
     event.preventDefault();
     const form = event.currentTarget as HTMLFormElement;
     const body = formPayload(new FormData(form));
+    body.title = String(body.title || "").trim() || "Untitled entry";
+    body.body = String(body.body || "").trim();
+    if (!body.body) {
+      const bodyField = form.elements.namedItem("body");
+      if (bodyField instanceof HTMLElement) bodyField.focus();
+      toast("Write something before saving");
+      return;
+    }
     try {
       await post("/api/intentional-use/journal", body);
       toast("Entry saved");

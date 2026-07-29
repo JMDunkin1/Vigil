@@ -222,10 +222,14 @@
           <h2 id="focusSoundNowPlaying">Brown noise</h2>
 
           <div id="focusSoundWave" class="audio-wave" aria-hidden="true">
-            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
-            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
-            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
-            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+            <span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span>
           </div>
 
           <button id="focusSoundPlayButton" class="audio-master-toggle" type="button" aria-pressed="false" aria-label="Play Brown noise">
@@ -810,11 +814,11 @@
         <div class="habit-activity-scroll">
           <div id="habitActivityMonths" class="habit-activity-months" aria-hidden="true"></div>
           <div class="habit-activity-canvas">
-            <div id="habitActivityGrid" class="habit-activity-grid" role="group" aria-label="Daily habit activity"></div>
-            <section id="habitFocus" class="habit-focus" aria-label="Habit check-in">
-              <div class="habit-focus-connector" aria-hidden="true"></div>
-              <div id="habitQuickCheckIn" class="habit-focus-content" aria-live="polite"></div>
-            </section>
+            <div id="habitActivityGrid" class="habit-activity-grid" role="group" aria-label="Daily habit activity">
+              <section id="habitFocus" class="habit-focus" aria-label="Habit check-in">
+                <div id="habitQuickCheckIn" class="habit-focus-content" aria-live="polite"></div>
+              </section>
+            </div>
           </div>
         </div>
         <p id="habitActivityStatus" class="sr-only" aria-live="polite"></p>
@@ -824,7 +828,6 @@
         <aside class="journal-archive" aria-labelledby="journalArchiveTitle">
           <header class="journal-history-head">
             <h2 id="journalArchiveTitle">Journal</h2>
-            <button id="journalNewEntry" class="secondary compact" type="button">New entry</button>
           </header>
           <label class="journal-search">
             <span class="sr-only">Search entries</span>
@@ -834,6 +837,7 @@
             </svg>
             <input id="journalEntrySearch" type="search" placeholder="Search entries" autocomplete="off">
           </label>
+          <button id="journalNewEntry" class="journal-new-entry" type="button">New entry</button>
           <div id="journalEntryList" class="journal-entry-list" aria-live="polite"></div>
         </aside>
 
@@ -842,15 +846,15 @@
             <input name="id" type="hidden">
             <header class="journal-editor-head">
               <time id="journalEditorDate">Today</time>
-              <span id="journalEditorStatus">New entry</span>
+              <span id="journalEditorStatus" class="sr-only" aria-live="polite">New entry</span>
             </header>
             <label class="journal-title-field">
               <span class="sr-only">Title</span>
-              <input name="title" type="text" maxlength="120" placeholder="Untitled entry" required>
+              <input name="title" type="text" maxlength="120" placeholder="Untitled entry">
             </label>
             <label class="journal-body-field">
               <span class="sr-only">Entry</span>
-              <textarea name="body" rows="10" maxlength="8000" placeholder="Start writing…" required></textarea>
+              <textarea name="body" rows="10" maxlength="8000" placeholder="Start writing…"></textarea>
             </label>
             <div class="journal-form-actions">
               <span id="journalWordCount" class="journal-word-count">0 words</span>

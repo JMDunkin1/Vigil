@@ -35,6 +35,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
   let activityMode: HabitActivityMode = "daily";
   let data: DashboardData | null = null;
   let saving = false;
+  let focusOpen = true;
 
   function bind(): void {
     required<HTMLButtonElement>("#habitManage").addEventListener("click", () => dialog.showModal());
@@ -176,6 +177,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     activityRoot.replaceChildren();
     activityMonths.replaceChildren();
     activityRoot.dataset.mode = activityMode;
+    activityRoot.dataset.focusOpen = String(focusOpen);
 
     document.querySelectorAll<HTMLButtonElement>("[data-activity-mode]").forEach((button) => {
       const selected = button.dataset.activityMode === activityMode;
@@ -184,6 +186,8 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     });
 
     if (!behaviors.length) {
+      focusOpen = false;
+      focusSection.hidden = true;
       activityRoot.setAttribute("aria-label", "Habit activity");
       const empty = document.createElement("p");
       empty.className = "habit-activity-empty";
@@ -202,6 +206,7 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     const todayKey = localDateKey(effectiveToday);
     const focusIndex = Math.max(0, dates.findIndex((date) => localDateKey(date) === selectedKey));
     focusSection.dataset.anchorZone = activityAnchorZone(focusIndex);
+    focusSection.hidden = !focusOpen;
 
     dates.forEach((date, index) => {
       const dateKey = localDateKey(date);
@@ -223,26 +228,31 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       cell.disabled = future;
       cell.tabIndex = !future && index === focusIndex ? 0 : -1;
       cell.setAttribute("aria-label", activityAriaLabel(date, dates[0], counts, activityMode));
+      if (dateKey === selectedKey) {
+        cell.setAttribute("aria-controls", "habitFocus");
+        cell.setAttribute("aria-expanded", String(focusOpen));
+      }
       cell.title = activityTitle(date, dates[0], counts, activityMode);
       cell.addEventListener("click", () => selectDate(date, true));
       cell.addEventListener("keydown", (event) => moveActivityFocus(event, index, dates.length));
       activityRoot.append(cell);
     });
 
+    activityRoot.append(focusSection);
     renderMonthLabels(dates, effectiveToday);
     const selectedCounts = aggregateHabitActivity(dailyCounts, focusIndex, activityMode);
     activityStatus.textContent = activityAriaLabel(dates[focusIndex], dates[0], selectedCounts, activityMode);
   }
 
   function renderMonthLabels(dates: Date[], effectiveToday: Date): void {
-    for (let weekIndex = 0; weekIndex < ACTIVITY_WEEKS; weekIndex += 1) {
+    let previousMonth = "";
+    for (const date of dates) {
+      if (date.getTime() > effectiveToday.getTime()) break;
+      const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
+      if (monthKey === previousMonth) continue;
+      previousMonth = monthKey;
       const label = document.createElement("span");
-      const weekStartIndex = weekIndex * DAYS_PER_WEEK;
-      const week = dates.slice(weekStartIndex, weekStartIndex + DAYS_PER_WEEK);
-      const monthStart = week.find((date) => date.getDate() === 1);
-      if (weekIndex === 0 || (monthStart && monthStart.getTime() <= effectiveToday.getTime())) {
-        label.textContent = (monthStart || week[0]).toLocaleDateString([], { month: "short" });
-      }
+      label.textContent = date.toLocaleDateString([], { month: "short" });
       activityMonths.append(label);
     }
   }
@@ -262,9 +272,17 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
 
   function selectDate(date: Date, revealFocus = false): void {
     if (date.getTime() > trackingDay().getTime()) return;
+    const togglingSelectedDate = isSameDay(selectedDate, date);
+    if (togglingSelectedDate && revealFocus) {
+      focusOpen = !focusOpen;
+      renderActivity();
+      activityRoot.querySelector<HTMLButtonElement>(".habit-activity-cell.is-selected")?.focus({ preventScroll: true });
+      return;
+    }
     selectedDate = dayStart(date);
     selectedBehaviorId = null;
     editableCompletedDateKey = null;
+    focusOpen = true;
     renderFocus();
     renderActivity();
     if (revealFocus) {
