@@ -4578,32 +4578,26 @@ h3,
 }
 
 .protection-level-trace {
-  /* The resting choices render at 90%, so carry the trace a few pixels under
-     their painted edge instead of ending at the unscaled button boundary. */
-  --protection-trace-mask-radius: calc(var(--protection-orb-size) * 0.45 - 3px);
-  --protection-trace-mask: linear-gradient(
-    90deg,
-    transparent 0 var(--protection-trace-mask-radius),
-    black var(--protection-trace-mask-radius) calc(33.333% - var(--protection-trace-mask-radius)),
-    transparent calc(33.333% - var(--protection-trace-mask-radius)) calc(33.333% + var(--protection-trace-mask-radius)),
-    black calc(33.333% + var(--protection-trace-mask-radius)) calc(66.667% - var(--protection-trace-mask-radius)),
-    transparent calc(66.667% - var(--protection-trace-mask-radius)) calc(66.667% + var(--protection-trace-mask-radius)),
-    black calc(66.667% + var(--protection-trace-mask-radius)) calc(100% - var(--protection-trace-mask-radius)),
-    transparent calc(100% - var(--protection-trace-mask-radius)) 100%
-  );
+  /* Cut the trace around the rendered 90% choices. The fractional inset only
+     closes antialias seams; unlike the old straight mask, it cannot project a
+     rectangular end through the translucent button surface. */
+  --protection-trace-hole-radius: calc(var(--protection-orb-size) * 0.45 - 0.35px);
+  --protection-trace-hole-edge:
+    transparent calc(100% - 0.5px),
+    black calc(100% + 0.5px);
   --protection-trace-inner: linear-gradient(
     90deg,
-    color-mix(in srgb, #e2ad72 10%, var(--surface-strong)) 0%,
-    color-mix(in srgb, #c98a57 10%, var(--surface-strong)) 33.333%,
-    color-mix(in srgb, #bc624b 10%, var(--surface-strong)) 66.667%,
-    color-mix(in srgb, #ff7b81 10%, var(--surface-strong)) 100%
+    color-mix(in srgb, #e2ad72 8%, var(--surface-strong)) 0%,
+    color-mix(in srgb, #c98a57 8%, var(--surface-strong)) 33.333%,
+    color-mix(in srgb, #bc624b 8%, var(--surface-strong)) 66.667%,
+    color-mix(in srgb, #ff7b81 8%, var(--surface-strong)) 100%
   );
   --protection-trace-outer: linear-gradient(
     90deg,
-    color-mix(in srgb, #e2ad72 36%, var(--line)) 0%,
-    color-mix(in srgb, #c98a57 36%, var(--line)) 33.333%,
-    color-mix(in srgb, #bc624b 36%, var(--line)) 66.667%,
-    color-mix(in srgb, #ff7b81 36%, var(--line)) 100%
+    color-mix(in srgb, #e2ad72 18%, var(--surface-strong)) 0%,
+    color-mix(in srgb, #c98a57 18%, var(--surface-strong)) 33.333%,
+    color-mix(in srgb, #bc624b 18%, var(--surface-strong)) 66.667%,
+    color-mix(in srgb, #ff7b81 18%, var(--surface-strong)) 100%
   );
   position: absolute;
   z-index: 0;
@@ -4617,8 +4611,13 @@ h3,
   background:
     var(--protection-trace-inner) center / 100% 5px no-repeat,
     var(--protection-trace-outer) center / 100% 100% no-repeat;
-  -webkit-mask: var(--protection-trace-mask);
-  mask: var(--protection-trace-mask);
+  mask:
+    radial-gradient(circle var(--protection-trace-hole-radius) at 0% 50%, var(--protection-trace-hole-edge)),
+    radial-gradient(circle var(--protection-trace-hole-radius) at 33.333% 50%, var(--protection-trace-hole-edge)),
+    radial-gradient(circle var(--protection-trace-hole-radius) at 66.667% 50%, var(--protection-trace-hole-edge)),
+    radial-gradient(circle var(--protection-trace-hole-radius) at 100% 50%, var(--protection-trace-hole-edge));
+  mask-composite: intersect;
+  mask-repeat: no-repeat;
   filter: none;
   opacity: 0;
   clip-path: inset(0 50%);
