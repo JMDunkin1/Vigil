@@ -48,6 +48,12 @@ export function bindViewNavigation(onNavigate: (view?: string) => void): void {
 
 export function bindSidebarToggle(): void {
   const button = $("#sidebarToggle");
+  button.addEventListener("pointerdown", (event: PointerEvent) => {
+    // Electron preserves the focused element while the window is hidden. Do
+    // not let a mouse click leave this fixed control looking selected the next
+    // time the window opens; keyboard activation still receives normal focus.
+    if (event.isPrimary && event.button === 0) event.preventDefault();
+  });
   const setCollapsed = (collapsed: boolean) => {
     document.body.classList.toggle("sidebar-collapsed", collapsed);
     button.setAttribute("aria-expanded", String(!collapsed));

@@ -4529,13 +4529,13 @@ h3,
   z-index: 6;
   border-color: color-mix(in srgb, var(--level-color) 88%, white);
   box-shadow:
-    inset 0 0 0 6px color-mix(in srgb, var(--level-color) 34%, transparent),
-    0 0 0 3px color-mix(in srgb, var(--level-color) 48%, transparent),
-    0 0 29px color-mix(in srgb, var(--level-color) 78%, transparent),
-    0 0 65px color-mix(in srgb, var(--level-color) 48%, transparent),
-    0 18px 38px rgba(0, 0, 0, 0.34);
-  transform: translate(-50%, -50%) scale(1.2);
-  transition-duration: 800ms, 462ms, 646ms, 462ms, 954ms;
+    inset 0 0 0 5px color-mix(in srgb, var(--level-color) 28%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--level-color) 40%, transparent),
+    0 0 16px color-mix(in srgb, var(--level-color) 66%, transparent),
+    0 0 32px color-mix(in srgb, var(--level-color) 32%, transparent),
+    0 12px 28px rgba(0, 0, 0, 0.3);
+  transform: translate(-50%, -50%) scale(1.1);
+  transition-duration: 160ms, 120ms, 140ms, 120ms, 150ms;
 }
 
 .protection-level-readout {
@@ -4656,8 +4656,8 @@ h3,
     transform 800ms cubic-bezier(0.16, 1, 0.3, 1),
     opacity 462ms ease,
     filter 646ms ease,
-    border-color 338ms ease,
-    box-shadow 338ms ease;
+    border-color 140ms ease,
+    box-shadow 150ms ease;
 }
 
 .protection-level-choice::before {
@@ -4673,19 +4673,19 @@ h3,
   content: "";
   position: absolute;
   z-index: -1;
-  inset: -54px;
+  inset: -28px;
   border-radius: 50%;
   pointer-events: none;
   background: radial-gradient(
     circle,
-    color-mix(in srgb, var(--choice-color) 46%, transparent) 0%,
-    color-mix(in srgb, var(--choice-color) 22%, transparent) 30%,
-    transparent 70%
+    color-mix(in srgb, var(--choice-color) 40%, transparent) 0%,
+    color-mix(in srgb, var(--choice-color) 18%, transparent) 34%,
+    transparent 64%
   );
   opacity: 0;
-  filter: blur(7px);
-  transform: scale(0.58);
-  transition: opacity 338ms ease, transform 646ms cubic-bezier(0.16, 1, 0.3, 1);
+  filter: blur(4px);
+  transform: scale(0.72);
+  transition: opacity 140ms ease, transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .protection-level-choice span {
@@ -4694,7 +4694,7 @@ h3,
   font-size: clamp(1.15rem, 2.2vw, 1.35rem);
   font-weight: 800;
   line-height: 1;
-  transition: color 277ms ease, text-shadow 277ms ease;
+  transition: color 140ms ease, text-shadow 140ms ease;
 }
 
 .protection-level-choice:hover {
@@ -4703,20 +4703,20 @@ h3,
   box-shadow:
     inset 0 0 0 5px color-mix(in srgb, var(--choice-color) 22%, transparent),
     0 0 0 2px color-mix(in srgb, var(--choice-color) 32%, transparent),
-    0 0 24px color-mix(in srgb, var(--choice-color) 52%, transparent),
-    0 0 46px color-mix(in srgb, var(--choice-color) 30%, transparent),
-    0 14px 30px rgba(0, 0, 0, 0.28);
+    0 0 15px color-mix(in srgb, var(--choice-color) 48%, transparent),
+    0 0 30px color-mix(in srgb, var(--choice-color) 25%, transparent),
+    0 12px 26px rgba(0, 0, 0, 0.28);
 }
 
 .protection-level-choice:hover span {
   color: white;
-  text-shadow: 0 0 12px color-mix(in srgb, var(--choice-color) 88%, transparent);
+  text-shadow: 0 0 8px color-mix(in srgb, var(--choice-color) 78%, transparent);
 }
 
 .protection-level-choice:hover::after {
   opacity: 1;
-  transform: scale(1.062);
-  transition-duration: 492ms, 1000ms;
+  transform: scale(1);
+  transition-duration: 140ms, 160ms;
 }
 
 .protection-level-choice[data-protection-level-choice="1"] { --level-offset: -132px; --choice-color: #e2ad72; }
@@ -4762,12 +4762,13 @@ h3,
   opacity: 1;
   border-color: color-mix(in srgb, var(--choice-color) 92%, white);
   box-shadow:
-    inset 0 0 0 6px color-mix(in srgb, var(--choice-color) 34%, transparent),
-    0 0 0 3px color-mix(in srgb, var(--choice-color) 48%, transparent),
-    0 0 34px color-mix(in srgb, var(--choice-color) 82%, transparent),
-    0 0 76px color-mix(in srgb, var(--choice-color) 46%, transparent),
-    0 18px 38px rgba(0, 0, 0, 0.34);
-  transform: translate(calc(-50% + var(--level-offset)), -50%) scale(1.2);
+    inset 0 0 0 5px color-mix(in srgb, var(--choice-color) 28%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--choice-color) 40%, transparent),
+    0 0 18px color-mix(in srgb, var(--choice-color) 68%, transparent),
+    0 0 36px color-mix(in srgb, var(--choice-color) 30%, transparent),
+    0 12px 28px rgba(0, 0, 0, 0.3);
+  transform: translate(calc(-50% + var(--level-offset)), -50%) scale(1.1);
+  transition-duration: 160ms, 120ms, 140ms, 120ms, 150ms;
 }
 
 .protection-level-control.is-open:not(.is-settling) .protection-level-bloom:has(.protection-level-choice:hover) .protection-level-choice:not(:hover),
@@ -7937,61 +7938,6 @@ body[data-active-view="tracking"] .habit-activity-cell {
 
 body[data-active-view="tracking"] .habit-activity-cell:first-child {
   grid-row-start: auto;
-}
-
-body[data-active-view="tracking"] .habit-activity-grid[data-mode="weekly"],
-body[data-active-view="tracking"] .habit-activity-grid[data-mode="cumulative"] {
-  grid-template-columns: repeat(52, minmax(0, 1fr));
-  grid-template-rows: auto;
-  grid-auto-flow: row;
-}
-
-body[data-active-view="tracking"] .habit-activity-bar {
-  width: 100%;
-  min-width: 0;
-  display: grid;
-  grid-template-rows: repeat(7, clamp(24px, 3cqw, 34px));
-  align-items: center;
-  justify-items: center;
-  gap: clamp(2px, 0.3cqw, 5px);
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-body[data-active-view="tracking"] .habit-activity-bar:hover:not(:disabled) {
-  background: transparent;
-  filter: brightness(1.18);
-  transform: none;
-}
-
-body[data-active-view="tracking"] .habit-activity-bar:focus-visible,
-body[data-active-view="tracking"] .habit-activity-bar.is-selected {
-  position: relative;
-  z-index: 5;
-  outline: 2px solid var(--gold-bright);
-  outline-offset: 3px;
-}
-
-body[data-active-view="tracking"] .habit-activity-bar.is-selected {
-  box-shadow: 0 0 0 5px color-mix(in srgb, var(--gold) 11%, transparent);
-}
-
-body[data-active-view="tracking"] .habit-activity-bar-cell {
-  width: min(82%, 22px);
-  aspect-ratio: 1;
-  border-radius: clamp(2px, 0.24cqw, 4px);
-  background: color-mix(in srgb, var(--surface-strong) 73%, var(--paper));
-}
-
-body[data-active-view="tracking"] .habit-activity-bar-cell.is-filled {
-  background: var(--habit-done-strong);
-}
-
-body[data-active-view="tracking"] .habit-activity-bar.is-future {
-  opacity: 0.24;
 }
 
 body[data-active-view="tracking"] .habit-activity-cell.is-today:not(.is-selected) {

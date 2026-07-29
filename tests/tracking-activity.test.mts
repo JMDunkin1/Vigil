@@ -56,8 +56,8 @@ const currentPartialWeek = habitActivityPeriod(
 );
 assert.equal(
   localDateKey(currentPartialWeek.start),
-  "2026-07-27",
-  "the current partial week's announced range must begin on its Monday"
+  "2026-07-23",
+  "each Weekly history square must announce its trailing seven-day range"
 );
 assert.equal(
   currentPartialWeek.end.getTime(),
@@ -151,23 +151,24 @@ assert.equal(nextHabitIndex(["success", "missed", "success", "missed"], 1), 2, "
 assert.equal(nextHabitIndex(["unreported"], 0), 0);
 assert.equal(nextHabitIndex([], 0), -1);
 
-assert.equal(activityFocusTarget(0, "ArrowUp", 364, 359), 0, "Monday must not wrap to the prior Sunday");
-assert.equal(activityFocusTarget(6, "ArrowDown", 364, 359), 6, "Sunday must not wrap to the next Monday");
+assert.equal(activityFocusTarget(0, "ArrowUp", 364, 359), 0, "the first row must not wrap upward");
+assert.equal(activityFocusTarget(12, "ArrowDown", 364, 359), 12, "the thirteenth row must not wrap downward");
 assert.equal(activityFocusTarget(5, "ArrowLeft", 364, 359), 5, "the first column must not wrap left");
 assert.equal(activityFocusTarget(357, "ArrowRight", 364, 359), 357, "the last column must not wrap right");
 assert.equal(activityFocusTarget(8, "ArrowUp", 364, 359), 7);
 assert.equal(activityFocusTarget(8, "ArrowDown", 364, 359), 9);
-assert.equal(activityFocusTarget(8, "ArrowLeft", 364, 359), 1);
-assert.equal(activityFocusTarget(8, "ArrowRight", 364, 359), 15);
+assert.equal(activityFocusTarget(8, "ArrowLeft", 364, 359), 8);
+assert.equal(activityFocusTarget(13, "ArrowLeft", 364, 359), 0);
+assert.equal(activityFocusTarget(8, "ArrowRight", 364, 359), 21);
 assert.equal(activityFocusTarget(8, "Home", 364, 359), 0);
 assert.equal(activityFocusTarget(8, "End", 364, 359), 359);
 
 assert.equal(activityAnchorZone(0), "start");
-assert.equal(activityAnchorZone(17 * 7), "start");
-assert.equal(activityAnchorZone(18 * 7), "middle");
-assert.equal(activityAnchorZone(34 * 7), "middle");
-assert.equal(activityAnchorZone(35 * 7), "end");
-assert.equal(activityAnchorZone(51 * 7 + 6), "end");
+assert.equal(activityAnchorZone(9 * 13), "start");
+assert.equal(activityAnchorZone(10 * 13), "middle");
+assert.equal(activityAnchorZone(18 * 13), "middle");
+assert.equal(activityAnchorZone(19 * 13), "end");
+assert.equal(activityAnchorZone(27 * 13 + 12), "end");
 
 const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
 const originalElementConstructor = Object.getOwnPropertyDescriptor(globalThis, "HTMLElement");
@@ -179,12 +180,10 @@ try {
     tabIndex: number;
     readonly classList: { contains: (name: string) => boolean };
 
-    constructor(kind: "day" | "week", value: number, tabIndex = -1) {
+    constructor(value: number, tabIndex = -1) {
       this.tabIndex = tabIndex;
-      if (kind === "day") this.dataset.activityIndex = String(value);
-      else this.dataset.activityWeek = String(value);
-      const className = kind === "day" ? "habit-activity-cell" : "habit-activity-bar";
-      this.classList = { contains: (name) => name === className };
+      this.dataset.activityIndex = String(value);
+      this.classList = { contains: (name) => name === "habit-activity-cell" };
     }
 
     focus(options?: FocusOptions): void {
@@ -199,7 +198,7 @@ try {
   });
 
   const arrowedDayIndex = activityFocusTarget(8, "ArrowRight", 364, 359);
-  const oldArrowedDay = new FakeActivityButton("day", arrowedDayIndex, 0);
+  const oldArrowedDay = new FakeActivityButton(arrowedDayIndex, 0);
   const activityControls: FakeActivityButton[] = [oldArrowedDay];
   Object.defineProperty(globalThis, "document", {
     configurable: true,
@@ -219,7 +218,7 @@ try {
 
   const dayIdentity = captureActivityFocus(activityRoot);
   assert.deepEqual(dayIdentity, { kind: "day", value: String(arrowedDayIndex) });
-  const outsideActivity = new FakeActivityButton("day", 99);
+  const outsideActivity = new FakeActivityButton(99);
   (document as unknown as { activeElement: unknown }).activeElement = outsideActivity;
   assert.equal(
     captureActivityFocus(activityRoot),
@@ -227,9 +226,9 @@ try {
     "activity rerenders must not capture or move focus that is outside the activity grid"
   );
   (document as unknown as { activeElement: unknown }).activeElement = oldArrowedDay;
-  const selectedDayAfterRender = new FakeActivityButton("day", 8, 0);
-  const arrowedDayAfterRender = new FakeActivityButton("day", arrowedDayIndex);
-  const dayPeerAfterRender = new FakeActivityButton("day", 22);
+  const selectedDayAfterRender = new FakeActivityButton(8, 0);
+  const arrowedDayAfterRender = new FakeActivityButton(arrowedDayIndex);
+  const dayPeerAfterRender = new FakeActivityButton(22);
   activityControls.splice(0, activityControls.length, selectedDayAfterRender, arrowedDayAfterRender, dayPeerAfterRender);
   restoreActivityFocus(activityRoot, dayIdentity);
   assert.deepEqual(
@@ -250,21 +249,6 @@ try {
   );
   assert.deepEqual(dayPeerAfterRender.focusCalls, [{}]);
 
-  const oldArrowedWeek = new FakeActivityButton("week", 12, 0);
-  activityControls.splice(0, activityControls.length, oldArrowedWeek);
-  (document as unknown as { activeElement: unknown }).activeElement = oldArrowedWeek;
-  const weekIdentity = captureActivityFocus(activityRoot);
-  const selectedWeekAfterRender = new FakeActivityButton("week", 10, 0);
-  const arrowedWeekAfterRender = new FakeActivityButton("week", 12);
-  const weekPeerAfterRender = new FakeActivityButton("week", 13);
-  activityControls.splice(0, activityControls.length, selectedWeekAfterRender, arrowedWeekAfterRender, weekPeerAfterRender);
-  restoreActivityFocus(activityRoot, weekIdentity);
-  assert.deepEqual(
-    activityControls.map((button) => button.tabIndex),
-    [-1, 0, -1],
-    "a rerender must preserve the focused aggregate bar as the sole roving tab stop"
-  );
-  assert.deepEqual(arrowedWeekAfterRender.focusCalls, [{ preventScroll: true }]);
 } finally {
   if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument);
   else delete (globalThis as unknown as Record<string, unknown>).document;

@@ -240,6 +240,11 @@ assert.doesNotMatch(styles, /body:not\(\[data-active-view="home"\]\) \.app-chrom
 assert.match(styles, /\.brand-home\s*\{[^}]*background:\s*transparent;[^}]*font:\s*inherit;/, "the Home button must preserve the Vigil wordmark styling");
 const uiShellSource = await readFile("public/ui-shell.js", "utf8");
 assert.match(uiShellSource, /localStorage\.setItem\("vigil-sidebar-collapsed"/, "the explicit sidebar choice must persist");
+assert.match(
+  uiShellSource,
+  /button\.addEventListener\(["']pointerdown["'][\s\S]*?event\.isPrimary[\s\S]*?event\.button === 0[\s\S]*?event\.preventDefault\(\)/,
+  "mouse activation of the sidebar toggle must not leave a stale focus highlight when the window reopens"
+);
 assert.match(uiShellSource, /renderActiveView[\s\S]*window\.scrollTo\(0, 0\)/, "view navigation must reset the document scroll position");
 assert.doesNotMatch(styles, /@media \(max-width: 900px\)\s*\{\s*body\s*\{\s*display:\s*block/, "narrow windows must retain the sidebar grid");
 
@@ -265,7 +270,7 @@ assert.match(trackingSource, /togglingSelectedDate[\s\S]*?focusOpen = !focusOpen
 assert.match(
   trackingSource,
   /const focusedActivity = captureActivityFocus\(activityRoot\);[\s\S]*?activityRoot\.replaceChildren\(\);[\s\S]*?restoreActivityFocus\(activityRoot, focusedActivity\);/,
-  "activity rerenders must restore a focused daily cell or aggregate bar after replacing the grid"
+  "activity rerenders must restore the focused history cell after replacing the grid"
 );
 assert.match(
   trackingSource,
@@ -283,21 +288,16 @@ for (const identity of [
 assert.doesNotMatch(trackingSource, /positionFocusConnector|focusConnectorPath|style\.setProperty/, "the floating check-in must not calculate a connector or inject inline presentation");
 assert.match(trackingSource, /cell\.setAttribute\("aria-controls", "habitFocus"\)[\s\S]*?cell\.setAttribute\("aria-expanded", String\(focusOpen\)\)/, "the selected day must expose the embedded check-in as an accessible disclosure");
 assert.match(styles, /\.habit-focus-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/, "Done and Missed must remain the only two equal primary choices");
-assert.match(styles, /faithful expandable-cell layout[\s\S]*?grid-template-columns:\s*repeat\(28,[\s\S]*?grid-template-rows:\s*repeat\(13, auto\)[\s\S]*?grid-auto-flow:\s*column/, "daily activity must retain the dense 28-column by 13-row history layout");
-assert.match(styles, /\.habit-activity-grid\[data-mode="weekly"\],[\s\S]*?\.habit-activity-grid\[data-mode="cumulative"\][\s\S]*?grid-template-columns:\s*repeat\(52,[\s\S]*?grid-template-rows:\s*auto;/, "weekly and cumulative activity must switch to 52 bottom-aligned magnitude columns");
-assert.match(trackingSource, /habitActivityBarHeights\(weeklyCounts, barMode\)/, "aggregated modes must derive visible bar heights from weekly and cumulative activity");
-assert.match(styles, /\.habit-activity-bar\s*\{[\s\S]*?grid-template-rows:\s*repeat\(7, clamp\(24px, 3cqw, 34px\)\)/, "aggregate activity columns must retain a substantial vertical footprint");
+assert.match(styles, /faithful expandable-cell layout[\s\S]*?grid-template-columns:\s*repeat\(28,[\s\S]*?grid-template-rows:\s*repeat\(13, auto\)[\s\S]*?grid-auto-flow:\s*column/, "every activity mode must retain the dense 28-column by 13-row history layout");
+assert.match(trackingSource, /dates\.forEach\(\(date, index\) => \{[\s\S]*?habitActivityPeriod\(dates, dailyCounts, index, activityMode, effectiveToday\)[\s\S]*?activityRoot\.append\(cell\)/, "Daily, Weekly, and Cumulative must render through the same full-size history cells");
+assert.doesNotMatch(trackingSource, /renderActivityBars|habit-activity-bar/, "aggregate modes must not fall back to the retired compact bar renderer");
+assert.doesNotMatch(styles, /\.habit-activity-grid\[data-mode="(?:weekly|cumulative)"\]|\.habit-activity-bar/, "aggregate modes must not override the shared dense-square geometry");
 assert.match(styles, /faithful expandable-cell layout[\s\S]*?\.habit-activity-scroll\s*\{[^}]*overflow:\s*visible;/, "the integrated activity field must not create a nested scrollbar");
-assert.match(styles, /faithful expandable-cell layout[\s\S]*?\.habit-activity-cell\s*\{[\s\S]*?width:\s*min\(76%, 18px\)[\s\S]*?border-radius:\s*clamp\(2px, 0\.24cqw, 4px\)/, "daily activity cells must retain the old version's larger dense rounded-square treatment");
+assert.match(styles, /faithful expandable-cell layout[\s\S]*?\.habit-activity-cell\s*\{[\s\S]*?width:\s*min\(76%, 18px\)[\s\S]*?border-radius:\s*clamp\(2px, 0\.24cqw, 4px\)/, "every activity mode must retain the old version's larger dense rounded-square treatment");
 assert.match(styles, /\.habit-focus\s*\{[\s\S]*?position:\s*absolute/, "opening the check-in must not reflow or move calendar cells");
 assert.match(styles, /faithful expandable-cell layout[\s\S]*?\.habit-activity\s*\{[^}]*overflow:\s*visible;/, "the floating check-in must be able to extend beyond the compact activity frame");
 assert.match(styles, /faithful expandable-cell layout[\s\S]*?\.habit-activity-canvas\s*\{[^}]*height:\s*auto;[^}]*min-height:\s*0;/, "the activity frame must hug the calendar without reserving popup space");
 assert.match(styles, /\.habit-activity-cell\.is-today:not\(\.is-selected\)[\s\S]*?outline:\s*1px solid var\(--habit-done-strong\)[\s\S]*?\.habit-activity-cell\.is-selected[\s\S]*?outline:\s*2px solid var\(--gold-bright\)/, "today and the actively selected day must have distinct visual states");
-assert.match(
-  styles,
-  /\.habit-activity-bar:focus-visible,[\s\S]*?\.habit-activity-bar\.is-selected\s*\{[\s\S]*?outline:\s*2px solid var\(--gold-bright\)[\s\S]*?\.habit-activity-bar\.is-selected\s*\{[\s\S]*?box-shadow:/,
-  "aggregate bars must visibly identify both keyboard focus and the selected period"
-);
 assert.match(styles, /\.habit-focus::before\s*\{[^}]*display:\s*none;[^}]*content:\s*none;/, "the floating check-in must have a flat top edge without a pointer notch");
 assert.match(styles, /body\[data-active-view="tracking"\]\s*\{[^}]*overflow:\s*hidden;/, "the tracking view must not expose blank vertical overscroll");
 
@@ -314,6 +314,10 @@ assert.match(styles, /\.protection-level-control\.is-open:not\(\.is-settling\) \
 assert.doesNotMatch(styles, /\.protection-level-control:has\(#protectionLevel:disabled\)[^{]*\{[^}]*cursor:\s*wait/, "applying a protection level must not flash a wait cursor");
 assert.match(styles, /\.protection-level-control:not\(\.is-open\) \.protection-level-choice:hover/, "the visible protection number must glow only when the orb itself is hovered");
 assert.match(styles, /\.protection-level-choice:hover span\s*\{[\s\S]*?text-shadow:/, "hovering a protection number must brighten the number itself");
+const protectionGlowStyles = styles.match(/\.protection-level-choice::after\s*\{[\s\S]*?\n\}/)?.[0] || "";
+assert.match(protectionGlowStyles, /inset:\s*-28px/, "the protection button glow must remain close to the orb");
+assert.match(protectionGlowStyles, /transition:\s*opacity 140ms ease,\s*transform 160ms/, "the protection button glow must respond promptly");
+assert.match(styles, /\.protection-level-choice:hover::after\s*\{[^}]*transition-duration:\s*140ms,\s*160ms;/, "hovering a protection button must not use a delayed bloom");
 assert.doesNotMatch(styles, /:has\(\.protection-level-choice:hover\) \.protection-level-trace/, "highlighting a protection number must not make the connecting line glow");
 const protectionTraceStyles = styles.match(/\.protection-level-trace\s*\{[\s\S]*?\n\}/)?.[0] || "";
 assert.match(protectionTraceStyles, /height:\s*12px/, "the protection connector must use the thicker two-tier track");
@@ -321,7 +325,11 @@ assert.match(protectionTraceStyles, /--protection-trace-inner:[\s\S]*?--protecti
 assert.match(protectionTraceStyles, /#e2ad72[\s\S]*?#c98a57[\s\S]*?#bc624b[\s\S]*?#ff7b81/, "the protection connector must use one continuous gradient following all four button colors");
 assert.doesNotMatch(styles, /\.protection-level-trace::(?:before|after)/, "the protection connector must not split its gradient into separate gap segments");
 assert.doesNotMatch(protectionTraceStyles, /repeating-linear-gradient|ribs|sheen/, "the protection connector must stay subdued and stripe-free");
-assert.match(protectionTraceStyles, /--protection-trace-mask-radius:[\s\S]*?-webkit-mask:\s*var\(--protection-trace-mask\)/, "the continuous connector must tuck beneath each outer button ring without showing through its center");
+assert.match(
+  protectionTraceStyles,
+  /--protection-trace-hole-radius:[\s\S]*?mask:\s*[\s\S]*?at 0% 50%[\s\S]*?at 33\.333% 50%[\s\S]*?at 66\.667% 50%[\s\S]*?at 100% 50%[\s\S]*?mask-composite:\s*intersect/,
+  "the continuous connector must tuck beneath each outer button ring without showing through its center"
+);
 const sidebarToggleLayer = Number(styles.match(/\.sidebar-toggle\s*\{[\s\S]*?z-index:\s*(\d+);/)?.[1] || 0);
 const toastLayer = Number(styles.match(/\.toast\s*\{[\s\S]*?z-index:\s*(\d+);/)?.[1] || 0);
 assert.ok(toastLayer > sidebarToggleLayer, "announcements must cover the fixed sidebar toggle instead of allowing it to punch through");

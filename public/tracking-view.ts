@@ -26,12 +26,14 @@ interface HabitActivityPeriod {
 }
 
 export interface ActivityFocusIdentity {
-  kind: "day" | "week";
+  kind: "day";
   value: string;
 }
 
 const ACTIVITY_WEEKS = 52;
 const DAYS_PER_WEEK = 7;
+const ACTIVITY_GRID_COLUMNS = 28;
+const ACTIVITY_GRID_ROWS = 13;
 
 export function createTrackingView({ post, refresh, toast }: TrackingViewContext) {
   const focusSection = required<HTMLElement>("#habitFocus");
@@ -226,39 +228,35 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     focusSection.dataset.anchorZone = activityAnchorZone(focusIndex);
     focusSection.hidden = !focusOpen;
 
-    if (activityMode === "daily") {
-      dates.forEach((date, index) => {
-        const dateKey = localDateKey(date);
-        const future = date.getTime() > effectiveToday.getTime();
-        const counts = dailyCounts[index];
-        const level = habitActivityLevel(counts);
-        const cell = document.createElement("button");
-        cell.type = "button";
-        cell.className = [
-          "habit-activity-cell",
-          `level-${level}`,
-          counts.total === 0 ? "is-void" : "",
-          dateKey === todayKey ? "is-today" : "",
-          dateKey === selectedKey ? "is-selected" : "",
-          future ? "is-future" : ""
-        ].filter(Boolean).join(" ");
-        cell.dataset.activityIndex = String(index);
-        cell.dataset.level = String(level);
-        cell.disabled = future;
-        cell.tabIndex = !future && index === focusIndex ? 0 : -1;
-        cell.setAttribute("aria-label", activityAriaLabel(date, date, counts, activityMode));
-        if (dateKey === selectedKey) {
-          cell.setAttribute("aria-controls", "habitFocus");
-          cell.setAttribute("aria-expanded", String(focusOpen));
-        }
-        cell.title = activityTitle(date, date, counts, activityMode);
-        cell.addEventListener("click", () => selectDate(date, true));
-        cell.addEventListener("keydown", (event) => moveActivityFocus(event, index, dates.length));
-        activityRoot.append(cell);
-      });
-    } else {
-      renderActivityBars(dates, dailyCounts, effectiveToday, focusIndex);
-    }
+    dates.forEach((date, index) => {
+      const dateKey = localDateKey(date);
+      const future = date.getTime() > effectiveToday.getTime();
+      const period = habitActivityPeriod(dates, dailyCounts, index, activityMode, effectiveToday);
+      const level = habitActivityLevel(period.counts);
+      const cell = document.createElement("button");
+      cell.type = "button";
+      cell.className = [
+        "habit-activity-cell",
+        `level-${level}`,
+        period.counts.total === 0 ? "is-void" : "",
+        dateKey === todayKey ? "is-today" : "",
+        dateKey === selectedKey ? "is-selected" : "",
+        future ? "is-future" : ""
+      ].filter(Boolean).join(" ");
+      cell.dataset.activityIndex = String(index);
+      cell.dataset.level = String(level);
+      cell.disabled = future;
+      cell.tabIndex = !future && index === focusIndex ? 0 : -1;
+      cell.setAttribute("aria-label", activityAriaLabel(period.end, period.start, period.counts, activityMode));
+      if (dateKey === selectedKey) {
+        cell.setAttribute("aria-controls", "habitFocus");
+        cell.setAttribute("aria-expanded", String(focusOpen));
+      }
+      cell.title = activityTitle(period.end, period.start, period.counts, activityMode);
+      cell.addEventListener("click", () => selectDate(date, true));
+      cell.addEventListener("keydown", (event) => moveActivityFocus(event, index, dates.length));
+      activityRoot.append(cell);
+    });
 
     activityRoot.append(focusSection);
     renderMonthLabels(dates, effectiveToday);
@@ -270,50 +268,6 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
       activityMode
     );
     restoreActivityFocus(activityRoot, focusedActivity);
-  }
-
-  function renderActivityBars(
-    dates: Date[],
-    dailyCounts: HabitActivityCounts[],
-    effectiveToday: Date,
-    focusIndex: number
-  ): void {
-    const weeklyCounts = weeklyHabitActivity(dailyCounts);
-    const barMode = activityMode === "weekly" ? "weekly" : "cumulative";
-    const heights = habitActivityBarHeights(weeklyCounts, barMode);
-    const selectedWeek = Math.floor(focusIndex / DAYS_PER_WEEK);
-    const todayIndex = Math.max(0, dates.findIndex((date) => isSameDay(date, effectiveToday)));
-    const currentWeek = Math.floor(todayIndex / DAYS_PER_WEEK);
-
-    heights.forEach((height, weekIndex) => {
-      const activityIndex = Math.min(dates.length - 1, (weekIndex * DAYS_PER_WEEK) + DAYS_PER_WEEK - 1);
-      const period = habitActivityPeriod(dates, dailyCounts, activityIndex, barMode, effectiveToday);
-      const bar = document.createElement("button");
-      bar.type = "button";
-      bar.className = [
-        "habit-activity-bar",
-        weekIndex === selectedWeek ? "is-selected" : "",
-        weekIndex > currentWeek ? "is-future" : ""
-      ].filter(Boolean).join(" ");
-      bar.dataset.activityWeek = String(weekIndex);
-      bar.disabled = weekIndex > currentWeek;
-      bar.tabIndex = weekIndex === selectedWeek ? 0 : -1;
-      bar.setAttribute("aria-label", activityAriaLabel(period.end, period.start, period.counts, barMode));
-      if (weekIndex === selectedWeek) {
-        bar.setAttribute("aria-controls", "habitFocus");
-        bar.setAttribute("aria-expanded", String(focusOpen));
-      }
-      bar.title = activityTitle(period.end, period.start, period.counts, barMode);
-      for (let row = DAYS_PER_WEEK; row >= 1; row -= 1) {
-        const segment = document.createElement("span");
-        segment.className = `habit-activity-bar-cell${row <= height ? " is-filled" : ""}`;
-        segment.setAttribute("aria-hidden", "true");
-        bar.append(segment);
-      }
-      bar.addEventListener("click", () => selectDate(period.end, true));
-      bar.addEventListener("keydown", (event) => moveActivityBarFocus(event, weekIndex, currentWeek));
-      activityRoot.append(bar);
-    });
   }
 
   function renderMonthLabels(dates: Date[], effectiveToday: Date): void {
@@ -339,26 +293,13 @@ export function createTrackingView({ post, refresh, toast }: TrackingViewContext
     event.preventDefault();
   }
 
-  function moveActivityBarFocus(event: KeyboardEvent, weekIndex: number, currentWeek: number): void {
-    let targetWeek = weekIndex;
-    if (event.key === "ArrowLeft") targetWeek = Math.max(0, weekIndex - 1);
-    else if (event.key === "ArrowRight") targetWeek = Math.min(currentWeek, weekIndex + 1);
-    else if (event.key === "Home") targetWeek = 0;
-    else if (event.key === "End") targetWeek = currentWeek;
-    else return;
-    if (targetWeek === weekIndex) return;
-    const target = activityRoot.querySelector<HTMLButtonElement>(`[data-activity-week="${targetWeek}"]`);
-    if (!applyActivityRovingFocus(activityRoot, ".habit-activity-bar", target)) return;
-    event.preventDefault();
-  }
-
   function selectDate(date: Date, revealFocus = false): void {
     if (date.getTime() > trackingDay().getTime()) return;
     const togglingSelectedDate = isSameDay(selectedDate, date);
     if (togglingSelectedDate && revealFocus) {
       focusOpen = !focusOpen;
       renderActivity();
-      activityRoot.querySelector<HTMLButtonElement>(".is-selected:is(.habit-activity-cell, .habit-activity-bar)")?.focus({ preventScroll: true });
+      activityRoot.querySelector<HTMLButtonElement>(".habit-activity-cell.is-selected")?.focus({ preventScroll: true });
       return;
     }
     selectedDate = dayStart(date);
@@ -460,23 +401,18 @@ export function captureActivityFocus(root: HTMLElement): ActivityFocusIdentity |
   if (active.classList.contains("habit-activity-cell") && active.dataset.activityIndex) {
     return { kind: "day", value: active.dataset.activityIndex };
   }
-  if (active.classList.contains("habit-activity-bar") && active.dataset.activityWeek) {
-    return { kind: "week", value: active.dataset.activityWeek };
-  }
   return null;
 }
 
 export function restoreActivityFocus(root: HTMLElement, identity: ActivityFocusIdentity | null): void {
   if (!identity) return;
-  const attribute = identity.kind === "day" ? "data-activity-index" : "data-activity-week";
-  const target = root.querySelector<HTMLButtonElement>(`[${attribute}="${identity.value}"]`);
-  const peerSelector = identity.kind === "day" ? ".habit-activity-cell" : ".habit-activity-bar";
-  applyActivityRovingFocus(root, peerSelector, target, { preventScroll: true });
+  const target = root.querySelector<HTMLButtonElement>(`[data-activity-index="${identity.value}"]`);
+  applyActivityRovingFocus(root, ".habit-activity-cell", target, { preventScroll: true });
 }
 
 export function applyActivityRovingFocus(
   root: HTMLElement,
-  peerSelector: ".habit-activity-cell" | ".habit-activity-bar",
+  peerSelector: ".habit-activity-cell",
   target: HTMLButtonElement | null,
   options?: FocusOptions
 ): boolean {
@@ -521,20 +457,20 @@ export function activityFocusTarget(
   todayIndex: number
 ): number {
   if (index < 0 || index >= length) return index;
-  const row = index % DAYS_PER_WEEK;
+  const row = index % ACTIVITY_GRID_ROWS;
   if (key === "ArrowUp") return row === 0 ? index : index - 1;
-  if (key === "ArrowDown") return row === DAYS_PER_WEEK - 1 ? index : index + 1;
-  if (key === "ArrowLeft") return index < DAYS_PER_WEEK ? index : index - DAYS_PER_WEEK;
-  if (key === "ArrowRight") return index + DAYS_PER_WEEK >= length ? index : index + DAYS_PER_WEEK;
+  if (key === "ArrowDown") return row === ACTIVITY_GRID_ROWS - 1 ? index : index + 1;
+  if (key === "ArrowLeft") return index < ACTIVITY_GRID_ROWS ? index : index - ACTIVITY_GRID_ROWS;
+  if (key === "ArrowRight") return index + ACTIVITY_GRID_ROWS >= length ? index : index + ACTIVITY_GRID_ROWS;
   if (key === "Home") return 0;
   if (key === "End") return Math.min(length - 1, Math.max(0, todayIndex));
   return index;
 }
 
 export function activityAnchorZone(index: number): "start" | "middle" | "end" {
-  const week = Math.max(0, Math.min(ACTIVITY_WEEKS - 1, Math.floor(index / DAYS_PER_WEEK)));
-  if (week < 18) return "start";
-  if (week < 35) return "middle";
+  const column = Math.max(0, Math.min(ACTIVITY_GRID_COLUMNS - 1, Math.floor(index / ACTIVITY_GRID_ROWS)));
+  if (column < 10) return "start";
+  if (column < 19) return "middle";
   return "end";
 }
 
@@ -582,14 +518,11 @@ export function habitActivityPeriod(
   effectiveToday: Date
 ): HabitActivityPeriod {
   if (!dates.length) throw new Error("Habit activity dates are required.");
-  const boundedIndex = Math.max(0, Math.min(dates.length - 1, index));
-  const endIndex = mode === "daily"
-    ? boundedIndex
-    : Math.min(dates.length - 1, (Math.floor(boundedIndex / DAYS_PER_WEEK) * DAYS_PER_WEEK) + DAYS_PER_WEEK - 1);
+  const endIndex = Math.max(0, Math.min(dates.length - 1, index));
   const startIndex = mode === "daily"
     ? endIndex
     : mode === "weekly"
-      ? Math.floor(endIndex / DAYS_PER_WEEK) * DAYS_PER_WEEK
+      ? Math.max(0, endIndex - (DAYS_PER_WEEK - 1))
       : 0;
   return {
     start: dates[startIndex],
