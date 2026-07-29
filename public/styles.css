@@ -2770,11 +2770,6 @@ body[data-active-view="journal"] #view-journal {
   color: var(--muted);
 }
 
-.journal-search:focus-within {
-  border-color: color-mix(in srgb, var(--gold) 58%, var(--line));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 9%, transparent);
-}
-
 .journal-search svg {
   width: 17px;
   height: 17px;
@@ -2887,8 +2882,7 @@ body[data-active-view="journal"] #view-journal {
 .journal-form .journal-body-field textarea:focus {
   border: 0;
   box-shadow: none;
-  outline: 2px solid color-mix(in srgb, var(--gold) 38%, transparent);
-  outline-offset: 6px;
+  outline: none;
 }
 
 .journal-form-actions {

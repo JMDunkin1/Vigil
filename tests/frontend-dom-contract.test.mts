@@ -366,6 +366,8 @@ assert.match(journalPageMarkup, /id="journalNewEntry"[^>]*>New entry<\//, "journ
 assert.match(journalPageMarkup, /name="title"[\s\S]*?name="body"[\s\S]*?>Save entry<\//, "the journal composer must contain Title, Entry, and Save in that order");
 assert.match(styles, /\.journal-page\s*\{[^}]*grid-template-columns:\s*clamp\(150px, 29%, 300px\) minmax\(0, 1fr\);/, "journal history and editor must remain side by side at the real app window size");
 assert.doesNotMatch(styles, /@media \(max-width: 820px\)[\s\S]*?\.journal-page\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/, "the real Retina app window must never stack journal history above the editor");
+assert.match(styles, /\.journal-form \.journal-title-field input:focus,[\s\S]*?\.journal-form \.journal-body-field textarea:focus\s*\{[^}]*outline:\s*none;/, "journal writing fields must remain visually unboxed while editing");
+assert.doesNotMatch(styles, /\.journal-search:focus-within/, "journal search must not add a focus highlight box around the field");
 const lifeLogSource = await readFile("public/life-log-view.js", "utf8");
 assert.doesNotMatch(lifeLogSource, /journal-entry-draft/, "the journal history must not manufacture a saved-looking row for an empty draft");
 assert.match(lifeLogSource, /if \(query\)\s*list\.append\(empty\("No matching entries"\)\)/, "an empty journal history must stay blank unless a search has no matches");
