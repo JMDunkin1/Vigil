@@ -20,6 +20,7 @@
   --orb-a: #22d3ee;
   --orb-b: #14b8a6;
   --orb-c: #f59e0b;
+  --sidebar-toggle-safe-gutter: 64px;
 }
 
 :root[data-theme="dark"] {
@@ -190,6 +191,15 @@ body.sidebar-collapsed .sidebar-toggle {
   border-color: color-mix(in srgb, var(--accent) 36%, var(--line));
   background: color-mix(in srgb, var(--surface-strong) 92%, transparent);
   box-shadow: 0 5px 18px rgba(0, 0, 0, 0.3);
+}
+
+body.sidebar-collapsed .sidebar-toggle:hover:not(:disabled),
+body.sidebar-collapsed .sidebar-toggle:focus-visible {
+  color: color-mix(in srgb, var(--ink) 96%, white);
+  background: var(--surface-strong);
+  box-shadow:
+    0 0 0 3px var(--focus),
+    0 7px 20px rgba(0, 0, 0, 0.34);
 }
 
 body.sidebar-collapsed .sidebar-toggle svg {
@@ -1838,11 +1848,6 @@ button:focus-visible {
   overflow: visible;
 }
 
-#view-home .saint-stage::before,
-#view-home .saint-stage::after {
-  display: none;
-}
-
 #view-home .saint-artifact,
 #view-home .saint-stage[data-saint] .saint-artifact {
   width: min(420px, 88vw);
@@ -1872,23 +1877,6 @@ button:focus-visible {
 #view-home .saint-artifact:hover .saint-artwork,
 #view-home .saint-artifact:focus-visible .saint-artwork {
   filter: drop-shadow(0 19px 3px rgba(7, 9, 9, 0.4)) brightness(1.05);
-}
-
-#view-home .saint-halo {
-  top: 19%;
-  width: 116px;
-  height: 116px;
-  opacity: 0.62;
-}
-
-#view-home .saint-symbol-one {
-  left: calc(50% - 175px);
-  top: 48%;
-}
-
-#view-home .saint-symbol-two {
-  right: calc(50% - 175px);
-  top: 30%;
 }
 
 .protection-level-control {
@@ -2041,13 +2029,6 @@ button:focus-visible {
     height: min(294px, 41vh);
   }
 
-  #view-home .saint-halo {
-    width: 98px;
-    height: 98px;
-  }
-
-  #view-home .saint-symbol-one { left: 8px; }
-  #view-home .saint-symbol-two { right: 8px; }
 }
 
 /* Home and native window integration */
@@ -2172,6 +2153,13 @@ body {
 body[data-active-view="home"] {
   height: 100vh;
   overflow: hidden;
+  background:
+    radial-gradient(circle at 78% -8%, color-mix(in srgb, var(--gold) 16%, transparent), transparent 32rem),
+    linear-gradient(180deg, var(--paper), var(--paper-2));
+}
+
+body[data-active-view="home"]::after {
+  display: none;
 }
 
 body::after {
@@ -2427,9 +2415,6 @@ summary:focus-visible {
 }
 
 .saint-stage {
-  --saint-look-x: 0;
-  --saint-look-y: 0;
-  --saint-accent: #8b3d32;
   position: relative;
   z-index: 1;
   grid-column: 1;
@@ -2439,23 +2424,10 @@ summary:focus-visible {
   justify-items: center;
   gap: 14px;
   padding: 22px clamp(14px, 4vw, 42px) 20px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background:
-    linear-gradient(180deg, rgba(36, 63, 74, 0.09), transparent 32%),
-    radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--gold) 24%, transparent), transparent 17rem),
-    color-mix(in srgb, var(--surface-strong) 70%, transparent);
-  box-shadow: var(--shadow);
+  border: 0;
+  background: transparent;
   isolation: isolate;
-  overflow: hidden;
-}
-
-.saint-stage::before,
-.saint-stage::after {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  pointer-events: none;
+  overflow: visible;
 }
 
 .saint-info-popover {
@@ -2537,38 +2509,17 @@ summary:focus-visible {
   color: var(--ink);
 }
 
-.saint-stage::before {
-  inset: 10px;
-  border: 1px solid color-mix(in srgb, var(--gold) 32%, transparent);
-  border-radius: 10px;
-}
-
-.saint-stage::after {
-  inset: 0;
-  opacity: 0.22;
-  background-image:
-    linear-gradient(30deg, transparent 48%, color-mix(in srgb, var(--gold) 30%, transparent) 49% 51%, transparent 52%),
-    linear-gradient(-30deg, transparent 48%, color-mix(in srgb, var(--gold) 30%, transparent) 49% 51%, transparent 52%);
-  background-size: 36px 62px;
-  mask-image: linear-gradient(to bottom, black, transparent 62%);
-}
-
 .saint-artifact {
   position: relative;
   width: min(390px, 86%);
   min-height: 430px;
   padding: 0;
-  overflow: hidden;
-  border: 1px solid #6e5431;
-  border-radius: 190px 190px 18px 18px;
-  background:
-    radial-gradient(circle at 50% 32%, rgba(245, 214, 133, 0.44), transparent 22%),
-    linear-gradient(160deg, #5d7881, #263e48 46%, #141c20);
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: #f4dfaa;
-  box-shadow:
-    inset 0 0 0 6px rgba(224, 194, 116, 0.14),
-    inset 0 -60px 80px rgba(12, 15, 16, 0.42),
-    0 22px 52px rgba(48, 36, 23, 0.24);
+  box-shadow: none;
   transform: none;
   isolation: isolate;
 }
@@ -2582,24 +2533,6 @@ summary:focus-visible {
   filter: saturate(1.05) contrast(1.03) drop-shadow(0 16px 20px rgba(12, 12, 10, 0.3));
 }
 
-.saint-halo {
-  position: absolute;
-  z-index: 1;
-  top: 70px;
-  left: 50%;
-  width: 148px;
-  height: 148px;
-  border: 1px solid rgba(250, 222, 143, 0.7);
-  border-radius: 50%;
-  background:
-    repeating-conic-gradient(from 0deg, rgba(239, 202, 104, 0.72) 0 1deg, transparent 1deg 10deg),
-    radial-gradient(circle, rgba(247, 220, 144, 0.36), transparent 62%);
-  box-shadow: 0 0 45px rgba(222, 181, 74, 0.28);
-  transform: translateX(calc(-50% + var(--saint-look-x) * 3px)) translateY(calc(var(--saint-look-y) * 2px));
-  transition: transform 160ms ease-out;
-  animation: haloBreathe 5s ease-in-out infinite;
-}
-
 .saint-artwork {
   position: absolute;
   z-index: 3;
@@ -2610,7 +2543,7 @@ summary:focus-visible {
   object-fit: contain;
   object-position: center bottom;
   filter: saturate(0.94) contrast(1.03) drop-shadow(0 15px 18px rgba(12, 12, 10, 0.32));
-  transform: translateX(calc(-50% + var(--saint-look-x) * 7px)) translateY(calc(var(--saint-look-y) * 4px));
+  transform: translateX(-50%);
   transform-origin: 50% 100%;
   transition: transform 180ms ease-out, filter 200ms ease;
 }
@@ -2634,128 +2567,6 @@ summary:focus-visible {
 
 .saint-stage[data-art-missing="true"] .saint-fallback {
   display: flex;
-}
-
-.saint-symbol {
-  position: absolute;
-  z-index: 4;
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  color: #f0d587;
-  font-family: Georgia, serif;
-  font-size: 1.85rem;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.38);
-  pointer-events: none;
-}
-
-.saint-symbol-one {
-  left: 27px;
-  top: 42%;
-}
-
-.saint-symbol-two {
-  right: 29px;
-  top: 29%;
-}
-
-.saint-stage[data-saint="michael"] {
-  --saint-accent: #3f6676;
-}
-
-.saint-stage[data-saint="michael"] .saint-artifact {
-  background: radial-gradient(circle at 50% 28%, rgba(235, 211, 144, 0.42), transparent 22%), linear-gradient(155deg, #607f8b, #263f4a 48%, #10191d);
-}
-
-.saint-stage[data-saint="michael"] .saint-symbol-one::before { content: "⚔"; }
-.saint-stage[data-saint="michael"] .saint-symbol-two::before { content: "✦"; }
-.saint-stage[data-saint="michael"] .saint-symbol-one { animation: michaelSword 3.8s ease-in-out infinite; }
-.saint-stage[data-saint="michael"] .saint-symbol-two { animation: michaelStar 2.8s ease-in-out infinite; }
-
-.saint-stage[data-saint="augustine"] {
-  --saint-accent: #913e32;
-}
-
-.saint-stage[data-saint="augustine"] .saint-artifact {
-  background: radial-gradient(circle at 50% 28%, rgba(239, 189, 101, 0.42), transparent 24%), linear-gradient(155deg, #8d4b39, #4f2925 49%, #211718);
-}
-
-.saint-stage[data-saint="augustine"] .saint-symbol-one::before { content: "♥"; }
-.saint-stage[data-saint="augustine"] .saint-symbol-two::before { content: "▤"; }
-.saint-stage[data-saint="augustine"] .saint-symbol-one { animation: augustineHeart 2.2s ease-in-out infinite; }
-.saint-stage[data-saint="augustine"] .saint-symbol-two { animation: augustinePage 5s ease-in-out infinite; }
-
-.saint-stage[data-saint="mary"] {
-  --saint-accent: #385f82;
-}
-
-.saint-stage[data-saint="mary"] .saint-artifact {
-  background: radial-gradient(circle at 50% 26%, rgba(250, 225, 164, 0.48), transparent 23%), linear-gradient(155deg, #7698b3, #315a7a 47%, #172a3a);
-}
-
-.saint-stage[data-saint="mary"] .saint-symbol-one::before { content: "✦"; }
-.saint-stage[data-saint="mary"] .saint-symbol-two::before { content: "❋"; }
-.saint-stage[data-saint="mary"] .saint-symbol-one { animation: maryStar 3.2s ease-in-out infinite; }
-.saint-stage[data-saint="mary"] .saint-symbol-two { animation: maryCrown 4.8s ease-in-out infinite; }
-
-.saint-stage[data-saint="joseph"] {
-  --saint-accent: #6e6a45;
-}
-
-.saint-stage[data-saint="joseph"] .saint-artifact {
-  background: radial-gradient(circle at 50% 26%, rgba(239, 222, 169, 0.38), transparent 22%), linear-gradient(155deg, #7d8065, #454938 49%, #22271e);
-}
-
-.saint-stage[data-saint="joseph"] .saint-symbol-one::before { content: "⚜"; }
-.saint-stage[data-saint="joseph"] .saint-symbol-two::before { content: "✣"; }
-.saint-stage[data-saint="joseph"] .saint-symbol-one { animation: josephLily 4s ease-in-out infinite; }
-.saint-stage[data-saint="joseph"] .saint-symbol-two { animation: josephWork 3s steps(2, end) infinite; }
-
-.saint-stage[data-saint="thomas"] {
-  --saint-accent: #7f6133;
-}
-
-.saint-stage[data-saint="thomas"] .saint-artifact {
-  background: radial-gradient(circle at 50% 25%, rgba(243, 211, 125, 0.48), transparent 23%), linear-gradient(155deg, #9b7f50, #514225 47%, #231e16);
-}
-
-.saint-stage[data-saint="thomas"] .saint-symbol-one::before { content: "☀"; }
-.saint-stage[data-saint="thomas"] .saint-symbol-two::before { content: "✎"; }
-.saint-stage[data-saint="thomas"] .saint-symbol-one { animation: thomasSun 7s linear infinite; }
-.saint-stage[data-saint="thomas"] .saint-symbol-two { animation: thomasQuill 3.4s ease-in-out infinite; }
-
-.saint-stage[data-saint="benedict"] {
-  --saint-accent: #3e3a36;
-}
-
-.saint-stage[data-saint="benedict"] .saint-artifact {
-  background: radial-gradient(circle at 50% 24%, rgba(225, 203, 147, 0.34), transparent 21%), linear-gradient(155deg, #5e5a50, #34322e 48%, #171716);
-}
-
-.saint-stage[data-saint="benedict"] .saint-symbol-one::before { content: "✠"; }
-.saint-stage[data-saint="benedict"] .saint-symbol-two::before { content: "●"; }
-.saint-stage[data-saint="benedict"] .saint-symbol-one { animation: benedictMedal 6s linear infinite; }
-.saint-stage[data-saint="benedict"] .saint-symbol-two { animation: benedictRaven 4.2s ease-in-out infinite; }
-
-.saint-stage[data-saint="pio"] {
-  --saint-accent: #604637;
-}
-
-.saint-stage[data-saint="pio"] .saint-artifact {
-  background: radial-gradient(circle at 50% 24%, rgba(226, 194, 132, 0.34), transparent 21%), linear-gradient(155deg, #725543, #3d2d25 48%, #1b1512);
-}
-
-.saint-stage[data-saint="pio"] .saint-symbol-one::before { content: "✠"; }
-.saint-stage[data-saint="pio"] .saint-symbol-two::before { content: "◌"; }
-.saint-stage[data-saint="pio"] .saint-symbol-one { animation: pioCross 4.6s ease-in-out infinite; }
-.saint-stage[data-saint="pio"] .saint-symbol-two { animation: pioRosary 5.4s ease-in-out infinite; }
-
-body[data-lock-state="locked"] .saint-halo,
-body[data-lock-state="limit"] .saint-halo,
-body[data-lock-state="integrity"] .saint-halo {
-  border-color: rgba(224, 161, 90, 0.8);
-  box-shadow: 0 0 48px rgba(143, 48, 46, 0.36);
 }
 
 .emergency {
@@ -3396,80 +3207,6 @@ body[data-active-view="journal"] #view-journal {
   to { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes haloBreathe {
-  0%, 100% { opacity: 0.72; filter: brightness(0.92); }
-  50% { opacity: 1; filter: brightness(1.12); }
-}
-
-@keyframes michaelSword {
-  0%, 100% { transform: rotate(-12deg) translateY(0); }
-  50% { transform: rotate(-3deg) translateY(-7px); }
-}
-
-@keyframes michaelStar {
-  0%, 100% { opacity: 0.45; transform: scale(0.82); }
-  50% { opacity: 1; transform: scale(1.12); }
-}
-
-@keyframes augustineHeart {
-  0%, 100% { transform: scale(0.92); color: #efb264; }
-  40% { transform: scale(1.12); color: #f6d586; }
-}
-
-@keyframes augustinePage {
-  0%, 100% { transform: perspective(90px) rotateY(-7deg); }
-  50% { transform: perspective(90px) rotateY(8deg); }
-}
-
-@keyframes maryStar {
-  0%, 100% { opacity: 0.45; transform: translateY(2px) scale(0.8); }
-  50% { opacity: 1; transform: translateY(-6px) scale(1.1); }
-}
-
-@keyframes maryCrown {
-  0%, 100% { transform: rotate(-5deg); }
-  50% { transform: rotate(5deg) translateY(-4px); }
-}
-
-@keyframes josephLily {
-  0%, 100% { transform: rotate(-7deg); }
-  50% { transform: rotate(7deg) translateY(-5px); }
-}
-
-@keyframes josephWork {
-  0%, 100% { opacity: 0.54; }
-  50% { opacity: 1; }
-}
-
-@keyframes thomasSun {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes thomasQuill {
-  0%, 100% { transform: rotate(-18deg) translate(0); }
-  50% { transform: rotate(-10deg) translate(-5px, 4px); }
-}
-
-@keyframes benedictMedal {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes benedictRaven {
-  0%, 100% { transform: translate(0); }
-  45% { transform: translate(-9px, 4px); }
-  52% { transform: translate(-9px, 1px); }
-}
-
-@keyframes pioCross {
-  0%, 100% { opacity: 0.58; transform: translateY(1px) scale(0.92); }
-  50% { opacity: 1; transform: translateY(-4px) scale(1.06); }
-}
-
-@keyframes pioRosary {
-  0%, 100% { transform: rotate(-8deg); }
-  50% { transform: rotate(8deg) translateY(-3px); }
-}
-
 @media (max-width: 1120px) {
   body {
     grid-template-columns: 228px minmax(0, 1fr);
@@ -3553,12 +3290,6 @@ body[data-active-view="journal"] #view-journal {
     min-height: min(410px, 112vw);
   }
 
-  .saint-halo {
-    top: 62px;
-    width: 128px;
-    height: 128px;
-  }
-
   .journal-unlock-actions {
     grid-template-columns: 1fr;
   }
@@ -3587,8 +3318,7 @@ body[data-active-view="journal"] #view-journal {
     transform: none;
   }
 
-  .saint-artwork,
-  .saint-halo {
+  .saint-artwork {
     transform: translateX(-50%);
   }
 }
@@ -3607,8 +3337,7 @@ body[data-active-view="journal"] #view-journal {
     transition-duration: 0.01ms !important;
   }
 
-  .saint-artwork,
-  .saint-halo {
+  .saint-artwork {
     transform: translateX(-50%);
   }
 }
@@ -3622,107 +3351,6 @@ html.app-inactive *::after {
   animation: none !important;
   transition: none !important;
   will-change: auto !important;
-}
-
-/* Final sprite-stage direction: small 16-bit figures in a wide old-world scene. */
-.saint-artifact {
-  width: min(620px, 100%);
-  min-height: 342px;
-  border-radius: 12px;
-  background:
-    linear-gradient(180deg, transparent 0 68%, rgba(14, 18, 18, 0.34) 68% 70%, rgba(49, 42, 30, 0.72) 70%),
-    radial-gradient(circle at 50% 36%, rgba(235, 211, 144, 0.28), transparent 24%),
-    linear-gradient(160deg, #755744, #3a2922 54%, #18110f);
-}
-
-.saint-artwork {
-  bottom: 8px;
-  width: 306px;
-  height: 306px;
-  object-fit: contain;
-  object-position: center;
-  image-rendering: pixelated;
-  image-rendering: crisp-edges;
-  filter: drop-shadow(0 14px 2px rgba(7, 9, 9, 0.28));
-}
-
-.saint-artifact:hover .saint-artwork,
-.saint-artifact:focus-visible .saint-artwork {
-  filter: drop-shadow(0 16px 2px rgba(7, 9, 9, 0.34)) brightness(1.04);
-}
-
-.saint-halo {
-  top: 75px;
-  width: 108px;
-  height: 108px;
-  opacity: 0.58;
-}
-
-.saint-fallback {
-  inset: 70px 40px 25px;
-  font-size: 7rem;
-}
-
-.saint-symbol-one {
-  left: calc(50% - 150px);
-}
-
-.saint-symbol-two {
-  right: calc(50% - 150px);
-}
-
-.saint-stage[data-saint="michael"] .saint-artifact {
-  background: linear-gradient(180deg, transparent 0 68%, rgba(24, 15, 12, 0.36) 68% 70%, rgba(54, 38, 26, 0.76) 70%), radial-gradient(circle at 50% 35%, rgba(239, 198, 116, 0.34), transparent 25%), linear-gradient(155deg, #7a5a43, #3d2a22 54%, #18110f);
-}
-
-.saint-stage[data-saint="augustine"] .saint-artifact {
-  background: linear-gradient(180deg, transparent 0 68%, rgba(28, 17, 16, 0.36) 68% 70%, rgba(56, 37, 28, 0.76) 70%), radial-gradient(circle at 50% 35%, rgba(239, 189, 101, 0.3), transparent 25%), linear-gradient(155deg, #8d4b39, #4f2925 54%, #211718);
-}
-
-.saint-stage[data-saint="mary"] .saint-artifact {
-  background: linear-gradient(180deg, transparent 0 68%, rgba(17, 28, 39, 0.3) 68% 70%, rgba(47, 52, 58, 0.68) 70%), radial-gradient(circle at 50% 35%, rgba(250, 225, 164, 0.34), transparent 25%), linear-gradient(155deg, #7698b3, #315a7a 54%, #172a3a);
-}
-
-.saint-stage[data-saint="joseph"] .saint-artifact {
-  background: linear-gradient(180deg, transparent 0 68%, rgba(24, 29, 20, 0.32) 68% 70%, rgba(57, 50, 33, 0.72) 70%), radial-gradient(circle at 50% 35%, rgba(239, 222, 169, 0.28), transparent 25%), linear-gradient(155deg, #7d8065, #454938 54%, #22271e);
-}
-
-.saint-stage[data-saint="thomas"] .saint-artifact {
-  background: linear-gradient(180deg, transparent 0 68%, rgba(29, 25, 18, 0.34) 68% 70%, rgba(61, 49, 27, 0.74) 70%), radial-gradient(circle at 50% 35%, rgba(243, 211, 125, 0.32), transparent 25%), linear-gradient(155deg, #9b7f50, #514225 54%, #231e16);
-}
-
-.saint-stage[data-saint="benedict"] .saint-artifact {
-  background: linear-gradient(180deg, transparent 0 68%, rgba(20, 20, 19, 0.38) 68% 70%, rgba(46, 43, 36, 0.74) 70%), radial-gradient(circle at 50% 35%, rgba(225, 203, 147, 0.25), transparent 25%), linear-gradient(155deg, #5e5a50, #34322e 54%, #171716);
-}
-
-.saint-stage[data-saint="pio"] .saint-artifact {
-  background: linear-gradient(180deg, transparent 0 68%, rgba(24, 18, 15, 0.38) 68% 70%, rgba(53, 39, 31, 0.74) 70%), radial-gradient(circle at 50% 35%, rgba(226, 194, 132, 0.25), transparent 25%), linear-gradient(155deg, #725543, #3d2d25 54%, #1b1512);
-}
-
-@media (max-width: 720px) {
-  .saint-artifact {
-    width: 100%;
-    min-height: 314px;
-  }
-
-  .saint-artwork {
-    width: 276px;
-    height: 276px;
-  }
-
-  .saint-halo {
-    top: 69px;
-    width: 94px;
-    height: 94px;
-  }
-
-  .saint-symbol-one {
-    left: 16px;
-  }
-
-  .saint-symbol-two {
-    right: 16px;
-  }
 }
 
 /* Listening room */
@@ -3921,14 +3549,23 @@ body[data-active-view="audio"] .audio-player {
   text-align: left;
   box-shadow: none;
   transform: translateY(-10px);
+  transition: color 160ms ease, transform 160ms ease;
 }
 
 .audio-master-toggle:hover:not(:disabled),
 .audio-master-toggle[aria-pressed="true"] {
-  border-color: var(--gold-bright);
-  background: color-mix(in srgb, var(--gold) 10%, transparent);
+  border-color: transparent;
+  background: transparent;
   color: var(--ink);
+  box-shadow: none;
   transform: translateY(-10px);
+}
+
+.audio-master-toggle:focus-visible {
+  border-color: transparent;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
 }
 
 .audio-master-toggle strong {
@@ -3936,6 +3573,7 @@ body[data-active-view="audio"] .audio-player {
   font-size: 0.7rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  transition: color 160ms ease;
 }
 
 .audio-play-symbol {
@@ -3945,6 +3583,32 @@ body[data-active-view="audio"] .audio-player {
   flex: 0 0 28px;
   border: 1px solid color-mix(in srgb, var(--gold-bright) 78%, var(--line));
   border-radius: 50%;
+  background: transparent;
+  box-shadow: 0 0 0 0 transparent;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.audio-master-toggle:hover:not(:disabled) .audio-play-symbol,
+.audio-master-toggle:focus-visible .audio-play-symbol {
+  border-color: var(--gold-bright);
+  background: color-mix(in srgb, var(--gold) 9%, transparent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--gold) 12%, transparent),
+    0 0 16px color-mix(in srgb, var(--gold-bright) 16%, transparent);
+  transform: scale(1.045);
+}
+
+.audio-master-toggle:hover:not(:disabled) strong,
+.audio-master-toggle:focus-visible strong {
+  color: var(--gold-bright);
+}
+
+.audio-master-toggle:active:not(:disabled) .audio-play-symbol {
+  transform: scale(0.96);
 }
 
 .audio-play-symbol::before {
@@ -4319,6 +3983,14 @@ details[open] > summary .audio-disclosure-chevron {
   transform: none;
 }
 
+.account-rule {
+  flex: 0 0 auto;
+  width: 2px;
+  height: 38px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-bright) 82%, transparent);
+}
+
 .account-avatar {
   flex: 0 0 auto;
   width: 38px;
@@ -4596,8 +4268,8 @@ body:has(.account-dialog[open]:not(:modal)) .sidebar-account {
   --night-soft: #1a1b1a;
   --shadow: 0 24px 68px rgba(31, 29, 26, 0.16);
   --focus: rgba(169, 111, 76, 0.24);
-  --font-body: Inter, "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-display: "Avenir Next", Avenir, Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-body: Georgia, "Times New Roman", serif;
+  --font-display: Georgia, "Times New Roman", serif;
   --font-mono: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace;
 }
 
@@ -4737,45 +4409,6 @@ h3,
   background: radial-gradient(ellipse, color-mix(in srgb, var(--accent) 7%, transparent), transparent 68%);
 }
 
-.saint-stage {
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--accent) 4%, transparent), transparent 32%),
-    radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 17rem),
-    color-mix(in srgb, var(--surface-strong) 70%, transparent);
-}
-
-.saint-stage::before {
-  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
-}
-
-.saint-stage::after {
-  background-image:
-    linear-gradient(30deg, transparent 48%, color-mix(in srgb, var(--accent) 26%, transparent) 49% 51%, transparent 52%),
-    linear-gradient(-30deg, transparent 48%, color-mix(in srgb, var(--accent) 26%, transparent) 49% 51%, transparent 52%);
-}
-
-.saint-halo {
-  border-color: color-mix(in srgb, var(--accent-bright) 72%, transparent);
-  background:
-    repeating-conic-gradient(from 0deg, color-mix(in srgb, var(--accent-bright) 62%, transparent) 0 1deg, transparent 1deg 10deg),
-    radial-gradient(circle, color-mix(in srgb, var(--accent) 28%, transparent), transparent 62%);
-  box-shadow: 0 0 45px color-mix(in srgb, var(--accent) 24%, transparent);
-}
-
-.saint-symbol {
-  color: color-mix(in srgb, var(--accent-bright) 82%, #fff4df);
-}
-
-.saint-artifact:focus-visible {
-  outline: none;
-}
-
-.saint-artifact:focus-visible .saint-halo {
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--accent-bright) 62%, transparent),
-    0 0 48px color-mix(in srgb, var(--accent) 34%, transparent);
-}
-
 .protection-level-control {
   --level-color: var(--accent);
 }
@@ -4816,7 +4449,7 @@ h3,
 
 .audio-master-toggle:hover:not(:disabled),
 .audio-master-toggle[aria-pressed="true"] {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: transparent;
   color: #fff2e3;
 }
 
@@ -4951,7 +4584,18 @@ h3,
 }
 
 .protection-level-trace {
-  --protection-trace-color: color-mix(in srgb, var(--level-color) 48%, transparent);
+  --protection-trace-segment: calc(var(--protection-level-step) - var(--protection-orb-size));
+  --protection-trace-ribs: repeating-linear-gradient(
+    112deg,
+    rgba(255, 255, 255, 0.2) 0 2px,
+    transparent 2px 5px
+  );
+  --protection-trace-sheen: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.28),
+    transparent 46%,
+    rgba(34, 13, 9, 0.28)
+  );
   position: absolute;
   z-index: 0;
   top: 50%;
@@ -4960,15 +4604,12 @@ h3,
     var(--protection-level-step) + var(--protection-level-step) + var(--protection-level-step)
     - var(--protection-orb-size)
   );
-  height: 1px;
+  height: 6px;
   border-radius: 999px;
   background:
-    linear-gradient(var(--protection-trace-color), var(--protection-trace-color)) left center /
-      calc(var(--protection-level-step) - var(--protection-orb-size)) 100% no-repeat,
-    linear-gradient(var(--protection-trace-color), var(--protection-trace-color)) center /
-      calc(var(--protection-level-step) - var(--protection-orb-size)) 100% no-repeat,
-    linear-gradient(var(--protection-trace-color), var(--protection-trace-color)) right center /
-      calc(var(--protection-level-step) - var(--protection-orb-size)) 100% no-repeat;
+    var(--protection-trace-sheen) center / var(--protection-trace-segment) 100% no-repeat,
+    var(--protection-trace-ribs) center / var(--protection-trace-segment) 100% no-repeat,
+    linear-gradient(90deg, #c98a57, #bc624b) center / var(--protection-trace-segment) 100% no-repeat;
   filter: none;
   opacity: 0;
   clip-path: inset(0 50%);
@@ -4976,6 +4617,32 @@ h3,
   transition:
     clip-path 800ms cubic-bezier(0.22, 1, 0.36, 1),
     opacity 400ms ease;
+}
+
+.protection-level-trace::before,
+.protection-level-trace::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: var(--protection-trace-segment);
+  height: 100%;
+  border-radius: inherit;
+  background:
+    var(--protection-trace-sheen),
+    var(--protection-trace-ribs),
+    linear-gradient(90deg, var(--trace-start), var(--trace-end));
+}
+
+.protection-level-trace::before {
+  --trace-start: #e2ad72;
+  --trace-end: #c98a57;
+  left: 0;
+}
+
+.protection-level-trace::after {
+  --trace-start: #bc624b;
+  --trace-end: #ff7b81;
+  right: 0;
 }
 
 .protection-level-choice {
@@ -5364,14 +5031,6 @@ h3,
     white-space: nowrap;
   }
 }
-
-/* CSP-safe state projections: script changes attributes and native values, not inline style. */
-.saint-stage[data-look^="left-"] { --saint-look-x: -1; }
-.saint-stage[data-look^="right-"] { --saint-look-x: 1; }
-.saint-stage[data-look^="center-"] { --saint-look-x: 0; }
-.saint-stage[data-look$="-up"] { --saint-look-y: -1; }
-.saint-stage[data-look$="-down"] { --saint-look-y: 1; }
-.saint-stage[data-look$="-center"] { --saint-look-y: 0; }
 
 .distance-key-print { font-family: system-ui, sans-serif; margin: 32px; color: #16201d; }
 .distance-key-print main { width: min(420px, 100%); }
@@ -6403,9 +6062,7 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
 }
 
 #view-home .saint-stage {
-  --saint-scene-rgb: 191, 146, 77;
   width: min(860px, 100%);
-  perspective: 1000px;
   transform: translateY(-1px);
 }
 
@@ -6413,7 +6070,6 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
 #view-home .saint-stage[data-saint] .saint-artifact {
   width: min(720px, 100%);
   transform-origin: center;
-  transform-style: preserve-3d;
   transition:
     transform 540ms cubic-bezier(0.16, 1, 0.3, 1),
     filter 480ms ease;
@@ -6441,483 +6097,14 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   transform: translateX(-50%);
 }
 
-#view-home .saint-halo {
-  transform: translateX(-50%);
-  transition:
-    opacity 500ms ease,
-    filter 500ms ease,
-    box-shadow 500ms ease;
-}
-
-#view-home .saint-artifact:hover:not(:disabled) .saint-halo,
-#view-home .saint-artifact:focus-visible .saint-halo {
-  opacity: 0.94;
-  filter: brightness(1.18);
-  box-shadow:
-    0 0 34px rgba(var(--saint-scene-rgb), 0.28),
-    0 0 92px rgba(var(--saint-scene-rgb), 0.16);
-}
-
-.saint-ambient,
-.saint-geometry,
-.saint-orbit,
-.saint-particles {
-  position: absolute;
-  pointer-events: none;
-}
-
-.saint-ambient {
-  z-index: 0;
-  inset: -32px -48px -20px;
-  overflow: visible;
-  transform: translateZ(-24px);
-}
-
-.saint-geometry {
-  z-index: 1;
-  inset: 7% 8% 8%;
-  opacity: 0.08;
-  transition:
-    opacity 520ms ease,
-    transform 720ms cubic-bezier(0.16, 1, 0.3, 1),
-    filter 520ms ease;
-}
-
-.saint-orbit {
-  z-index: 2;
-  top: 50%;
-  left: 50%;
-  border: 1px solid rgba(var(--saint-scene-rgb), 0.18);
-  border-radius: 50%;
-  opacity: 0.2;
-  transition:
-    opacity 500ms ease,
-    border-color 500ms ease,
-    box-shadow 500ms ease;
-}
-
-.saint-orbit::before,
-.saint-orbit::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  width: 5px;
-  height: 5px;
-  border: 1px solid rgba(var(--saint-scene-rgb), 0.72);
-  background: color-mix(in srgb, rgb(var(--saint-scene-rgb)) 24%, var(--night));
-  box-shadow: 0 0 11px rgba(var(--saint-scene-rgb), 0.4);
-  transform: translateY(-50%) rotate(45deg);
-}
-
-.saint-orbit::before { left: -3px; }
-.saint-orbit::after { right: -3px; }
-
-.saint-particles {
-  z-index: 4;
-  inset: 0;
-}
-
-.saint-particles i {
-  --particle-delay: 0s;
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 5px;
-  height: 5px;
-  border: 1px solid rgba(var(--saint-scene-rgb), 0.55);
-  background: rgba(var(--saint-scene-rgb), 0.14);
-  box-shadow: 0 0 9px rgba(var(--saint-scene-rgb), 0.28);
-  opacity: 0.16;
-  transform: translate(-50%, -50%) rotate(45deg) scale(0.72);
-  transition: opacity 420ms ease, box-shadow 420ms ease;
-  animation: saintParticleDrift 5.8s ease-in-out var(--particle-delay) infinite;
-}
-
-.saint-particles i:nth-child(2) { --particle-delay: -0.8s; }
-.saint-particles i:nth-child(3) { --particle-delay: -1.6s; }
-.saint-particles i:nth-child(4) { --particle-delay: -2.4s; }
-.saint-particles i:nth-child(5) { --particle-delay: -3.2s; }
-.saint-particles i:nth-child(6) { --particle-delay: -4s; }
-.saint-particles i:nth-child(7) { --particle-delay: -4.8s; }
-
-#view-home .saint-symbol {
-  opacity: 0.2;
-  filter: saturate(0.7);
-  transition:
-    opacity 440ms ease,
-    filter 440ms ease,
-    text-shadow 440ms ease;
-}
-
 .saint-stage.is-switching-saint {
   animation: saintSceneArrive 720ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
-
-/* Michael: a cool defensive field with crossed blade geometry. */
-.saint-stage[data-saint="michael"] { --saint-scene-rgb: 100, 169, 198; }
-
-.saint-stage[data-saint="michael"] .saint-geometry {
-  background:
-    linear-gradient(58deg, transparent 49.65%, rgba(var(--saint-scene-rgb), 0.46) 49.8% 50.2%, transparent 50.35%),
-    linear-gradient(-58deg, transparent 49.65%, rgba(var(--saint-scene-rgb), 0.46) 49.8% 50.2%, transparent 50.35%),
-    repeating-conic-gradient(from 22.5deg at 50% 48%, rgba(var(--saint-scene-rgb), 0.18) 0 0.6deg, transparent 0.6deg 22.5deg);
-  clip-path: polygon(50% 2%, 87% 18%, 94% 62%, 50% 98%, 6% 62%, 13% 18%);
-}
-
-.saint-stage[data-saint="michael"] .saint-orbit-primary {
-  width: 430px;
-  height: 265px;
-  transform: translate(-50%, -50%) rotate(-12deg);
-  animation: michaelFieldOrbit 13s linear infinite;
-}
-
-.saint-stage[data-saint="michael"] .saint-orbit-secondary {
-  width: 310px;
-  height: 350px;
-  border-radius: 44% 56% 48% 52%;
-  transform: translate(-50%, -50%) rotate(18deg);
-  animation: michaelFieldOrbitReverse 17s linear infinite;
-}
-
-.saint-stage[data-saint="michael"] .saint-particles i:nth-child(1) { left: 18%; top: 31%; }
-.saint-stage[data-saint="michael"] .saint-particles i:nth-child(2) { left: 27%; top: 66%; }
-.saint-stage[data-saint="michael"] .saint-particles i:nth-child(3) { left: 38%; top: 20%; }
-.saint-stage[data-saint="michael"] .saint-particles i:nth-child(4) { left: 64%; top: 17%; }
-.saint-stage[data-saint="michael"] .saint-particles i:nth-child(5) { left: 76%; top: 36%; }
-.saint-stage[data-saint="michael"] .saint-particles i:nth-child(6) { left: 70%; top: 72%; }
-.saint-stage[data-saint="michael"] .saint-particles i:nth-child(7) { left: 42%; top: 82%; }
-.saint-stage[data-saint="michael"] .saint-symbol-one { left: 14%; top: 58%; }
-.saint-stage[data-saint="michael"] .saint-symbol-two { right: 15%; top: 24%; }
-
-/* Augustine: restless concentric lines resolving into a warm center. */
-.saint-stage[data-saint="augustine"] { --saint-scene-rgb: 205, 105, 77; }
-
-.saint-stage[data-saint="augustine"] .saint-geometry {
-  border-radius: 48%;
-  background:
-    radial-gradient(circle at 50% 46%, transparent 0 10%, rgba(var(--saint-scene-rgb), 0.44) 10.2% 10.7%, transparent 11% 18%, rgba(var(--saint-scene-rgb), 0.3) 18.2% 18.7%, transparent 19% 29%, rgba(var(--saint-scene-rgb), 0.22) 29.2% 29.7%, transparent 30%),
-    repeating-linear-gradient(8deg, transparent 0 19px, rgba(var(--saint-scene-rgb), 0.14) 20px, transparent 21px 31px);
-  mask-image: radial-gradient(ellipse at 50% 46%, black 8%, transparent 68%);
-  animation: augustineRestlessField 8s ease-in-out infinite;
-}
-
-.saint-stage[data-saint="augustine"] .saint-orbit-primary {
-  width: 390px;
-  height: 285px;
-  border-radius: 52% 48% 42% 58%;
-  transform: translate(-50%, -50%) rotate(9deg);
-  animation: augustineOrbitPrimary 20s linear infinite;
-}
-
-.saint-stage[data-saint="augustine"] .saint-orbit-secondary {
-  width: 245px;
-  height: 330px;
-  border-style: dashed;
-  transform: translate(-50%, -50%) rotate(-14deg);
-  animation: augustineOrbitSecondary 27s linear infinite;
-}
-
-.saint-stage[data-saint="augustine"] .saint-particles i { border-radius: 50% 50% 50% 0; }
-.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(1) { left: 21%; top: 72%; }
-.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(2) { left: 28%; top: 48%; }
-.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(3) { left: 35%; top: 29%; }
-.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(4) { left: 51%; top: 18%; }
-.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(5) { left: 69%; top: 31%; }
-.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(6) { left: 77%; top: 57%; }
-.saint-stage[data-saint="augustine"] .saint-particles i:nth-child(7) { left: 62%; top: 78%; }
-.saint-stage[data-saint="augustine"] .saint-symbol-one { left: 20%; top: 36%; }
-.saint-stage[data-saint="augustine"] .saint-symbol-two { right: 12%; top: 64%; }
-
-/* Mary: a sparse celestial canopy and slow elliptical star paths. */
-.saint-stage[data-saint="mary"] { --saint-scene-rgb: 115, 172, 222; }
-
-.saint-stage[data-saint="mary"] .saint-geometry {
-  inset: 2% 6% 16%;
-  background:
-    linear-gradient(24deg, transparent 49.7%, rgba(var(--saint-scene-rgb), 0.2) 49.9% 50.1%, transparent 50.3%),
-    linear-gradient(-19deg, transparent 49.7%, rgba(var(--saint-scene-rgb), 0.18) 49.9% 50.1%, transparent 50.3%),
-    radial-gradient(circle at 50% 54%, transparent 0 21%, rgba(var(--saint-scene-rgb), 0.3) 21.2% 21.6%, transparent 22% 36%, rgba(var(--saint-scene-rgb), 0.18) 36.2% 36.6%, transparent 37%);
-  clip-path: polygon(4% 8%, 96% 8%, 86% 72%, 50% 100%, 14% 72%);
-}
-
-.saint-stage[data-saint="mary"] .saint-orbit-primary {
-  width: 470px;
-  height: 190px;
-  top: 36%;
-  transform: translate(-50%, -50%) rotate(-5deg);
-  animation: marySkyOrbit 18s linear infinite;
-}
-
-.saint-stage[data-saint="mary"] .saint-orbit-secondary {
-  width: 310px;
-  height: 245px;
-  top: 39%;
-  border-style: dotted;
-  transform: translate(-50%, -50%) rotate(11deg);
-  animation: marySkyOrbit 22s linear infinite reverse;
-}
-
-.saint-stage[data-saint="mary"] .saint-particles i {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  animation-name: maryStarDrift;
-}
-.saint-stage[data-saint="mary"] .saint-particles i:nth-child(1) { left: 15%; top: 22%; }
-.saint-stage[data-saint="mary"] .saint-particles i:nth-child(2) { left: 29%; top: 13%; }
-.saint-stage[data-saint="mary"] .saint-particles i:nth-child(3) { left: 43%; top: 29%; }
-.saint-stage[data-saint="mary"] .saint-particles i:nth-child(4) { left: 55%; top: 10%; }
-.saint-stage[data-saint="mary"] .saint-particles i:nth-child(5) { left: 70%; top: 24%; }
-.saint-stage[data-saint="mary"] .saint-particles i:nth-child(6) { left: 83%; top: 15%; }
-.saint-stage[data-saint="mary"] .saint-particles i:nth-child(7) { left: 76%; top: 43%; }
-.saint-stage[data-saint="mary"] .saint-symbol-one { left: 10%; top: 25%; }
-.saint-stage[data-saint="mary"] .saint-symbol-two { right: 11%; top: 46%; }
-
-/* Joseph: measured carpenter lines, square joints, and grounded movement. */
-.saint-stage[data-saint="joseph"] { --saint-scene-rgb: 173, 157, 96; }
-
-.saint-stage[data-saint="joseph"] .saint-geometry {
-  inset: 12% 9% 7%;
-  background:
-    linear-gradient(90deg, transparent 49.8%, rgba(var(--saint-scene-rgb), 0.35) 49.9% 50.1%, transparent 50.2%),
-    linear-gradient(0deg, transparent 49.8%, rgba(var(--saint-scene-rgb), 0.3) 49.9% 50.1%, transparent 50.2%),
-    repeating-linear-gradient(90deg, transparent 0 53px, rgba(var(--saint-scene-rgb), 0.15) 54px, transparent 55px),
-    repeating-linear-gradient(0deg, transparent 0 43px, rgba(var(--saint-scene-rgb), 0.12) 44px, transparent 45px);
-  clip-path: polygon(8% 10%, 92% 10%, 92% 90%, 8% 90%);
-}
-
-.saint-stage[data-saint="joseph"] .saint-orbit-primary {
-  width: 390px;
-  height: 300px;
-  border-radius: 8px;
-  transform: translate(-50%, -50%) rotate(2deg);
-  animation: josephMeasuredFramePrimary 28s linear infinite;
-}
-
-.saint-stage[data-saint="joseph"] .saint-orbit-secondary {
-  width: 280px;
-  height: 350px;
-  border-radius: 5px;
-  transform: translate(-50%, -50%) rotate(-4deg);
-  animation: josephMeasuredFrameSecondary 36s linear infinite;
-}
-
-.saint-stage[data-saint="joseph"] .saint-particles i { border-radius: 1px; }
-.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(1) { left: 17%; top: 69%; }
-.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(2) { left: 27%; top: 79%; }
-.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(3) { left: 38%; top: 72%; }
-.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(4) { left: 57%; top: 82%; }
-.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(5) { left: 72%; top: 70%; }
-.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(6) { left: 82%; top: 76%; }
-.saint-stage[data-saint="joseph"] .saint-particles i:nth-child(7) { left: 76%; top: 56%; }
-.saint-stage[data-saint="joseph"] .saint-symbol-one { left: 13%; top: 32%; }
-.saint-stage[data-saint="joseph"] .saint-symbol-two { right: 15%; top: 68%; }
-
-/* Thomas: a precise scholastic diagram with rotating proofs. */
-.saint-stage[data-saint="thomas"] { --saint-scene-rgb: 207, 164, 83; }
-
-.saint-stage[data-saint="thomas"] .saint-geometry {
-  inset: 5% 7%;
-  border-radius: 50%;
-  background:
-    repeating-conic-gradient(from 0deg at 50% 48%, rgba(var(--saint-scene-rgb), 0.28) 0 0.45deg, transparent 0.45deg 30deg),
-    radial-gradient(circle at 50% 48%, transparent 0 16%, rgba(var(--saint-scene-rgb), 0.35) 16.2% 16.6%, transparent 17% 30%, rgba(var(--saint-scene-rgb), 0.25) 30.2% 30.6%, transparent 31% 44%, rgba(var(--saint-scene-rgb), 0.14) 44.2% 44.6%, transparent 45%);
-  animation: thomasDiagram 24s linear infinite;
-}
-
-.saint-stage[data-saint="thomas"] .saint-orbit-primary {
-  width: 410px;
-  height: 315px;
-  border-radius: 50% 12% 50% 12%;
-  transform: translate(-50%, -50%) rotate(45deg);
-  animation: thomasProofOrbit 16s linear infinite;
-}
-
-.saint-stage[data-saint="thomas"] .saint-orbit-secondary {
-  width: 285px;
-  height: 285px;
-  border-style: dashed;
-  transform: translate(-50%, -50%);
-  animation: thomasProofOrbit 12s linear infinite reverse;
-}
-
-.saint-stage[data-saint="thomas"] .saint-particles i { border-radius: 50%; }
-.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(1) { left: 50%; top: 8%; }
-.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(2) { left: 25%; top: 22%; }
-.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(3) { left: 18%; top: 54%; }
-.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(4) { left: 35%; top: 84%; }
-.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(5) { left: 67%; top: 84%; }
-.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(6) { left: 82%; top: 55%; }
-.saint-stage[data-saint="thomas"] .saint-particles i:nth-child(7) { left: 75%; top: 22%; }
-.saint-stage[data-saint="thomas"] .saint-symbol-one { left: 12%; top: 50%; }
-.saint-stage[data-saint="thomas"] .saint-symbol-two { right: 13%; top: 19%; }
-
-/* Benedict: a restrained medal seal with radial monastic order. */
-.saint-stage[data-saint="benedict"] { --saint-scene-rgb: 165, 150, 119; }
-
-.saint-stage[data-saint="benedict"] .saint-geometry {
-  inset: 8% 17%;
-  border-radius: 50%;
-  background:
-    linear-gradient(90deg, transparent 49.6%, rgba(var(--saint-scene-rgb), 0.38) 49.8% 50.2%, transparent 50.4%),
-    linear-gradient(0deg, transparent 49.6%, rgba(var(--saint-scene-rgb), 0.38) 49.8% 50.2%, transparent 50.4%),
-    repeating-conic-gradient(from 0deg, rgba(var(--saint-scene-rgb), 0.24) 0 0.5deg, transparent 0.5deg 15deg),
-    radial-gradient(circle, transparent 0 25%, rgba(var(--saint-scene-rgb), 0.3) 25.2% 25.7%, transparent 26% 43%, rgba(var(--saint-scene-rgb), 0.18) 43.2% 43.7%, transparent 44%);
-  animation: benedictSeal 30s linear infinite;
-}
-
-.saint-stage[data-saint="benedict"] .saint-orbit-primary {
-  width: 335px;
-  height: 335px;
-  border-width: 2px;
-  transform: translate(-50%, -50%);
-  animation: benedictSealOrbit 20s linear infinite;
-}
-
-.saint-stage[data-saint="benedict"] .saint-orbit-secondary {
-  width: 425px;
-  height: 270px;
-  border-style: dotted;
-  transform: translate(-50%, -50%);
-  animation: benedictSealOrbit 28s linear infinite reverse;
-}
-
-.saint-stage[data-saint="benedict"] .saint-particles i { border-radius: 50%; }
-.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(1) { left: 50%; top: 12%; }
-.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(2) { left: 28%; top: 22%; }
-.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(3) { left: 21%; top: 50%; }
-.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(4) { left: 31%; top: 76%; }
-.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(5) { left: 68%; top: 76%; }
-.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(6) { left: 79%; top: 49%; }
-.saint-stage[data-saint="benedict"] .saint-particles i:nth-child(7) { left: 71%; top: 22%; }
-.saint-stage[data-saint="benedict"] .saint-symbol-one { left: 17%; top: 20%; }
-.saint-stage[data-saint="benedict"] .saint-symbol-two { right: 18%; top: 61%; }
-
-/* Pio: rosary beads and an asymmetrical, incense-like current. */
-.saint-stage[data-saint="pio"] { --saint-scene-rgb: 187, 133, 87; }
-
-.saint-stage[data-saint="pio"] .saint-geometry {
-  inset: 4% 7% 6%;
-  border-radius: 48%;
-  background:
-    radial-gradient(ellipse at 57% 50%, transparent 0 24%, rgba(var(--saint-scene-rgb), 0.3) 24.2% 24.7%, transparent 25% 36%, rgba(var(--saint-scene-rgb), 0.2) 36.2% 36.7%, transparent 37%),
-    repeating-radial-gradient(ellipse at 42% 84%, transparent 0 29px, rgba(var(--saint-scene-rgb), 0.13) 30px, transparent 31px 49px);
-  mask-image: linear-gradient(118deg, transparent 3%, black 29% 82%, transparent 97%);
-  animation: pioIncenseField 11s ease-in-out infinite;
-}
-
-.saint-stage[data-saint="pio"] .saint-orbit-primary {
-  width: 360px;
-  height: 330px;
-  left: 57%;
-  border-style: dotted;
-  border-width: 2px;
-  transform: translate(-50%, -50%) rotate(-13deg);
-  animation: pioRosaryOrbit 19s linear infinite;
-}
-
-.saint-stage[data-saint="pio"] .saint-orbit-secondary {
-  width: 440px;
-  height: 225px;
-  left: 45%;
-  border-radius: 58% 42% 60% 40%;
-  transform: translate(-50%, -50%) rotate(16deg);
-  animation: pioIncenseOrbit 24s linear infinite;
-}
-
-.saint-stage[data-saint="pio"] .saint-particles i { border-radius: 50%; }
-.saint-stage[data-saint="pio"] .saint-particles i:nth-child(1) { left: 25%; top: 74%; }
-.saint-stage[data-saint="pio"] .saint-particles i:nth-child(2) { left: 22%; top: 52%; }
-.saint-stage[data-saint="pio"] .saint-particles i:nth-child(3) { left: 32%; top: 31%; }
-.saint-stage[data-saint="pio"] .saint-particles i:nth-child(4) { left: 48%; top: 18%; }
-.saint-stage[data-saint="pio"] .saint-particles i:nth-child(5) { left: 67%; top: 26%; }
-.saint-stage[data-saint="pio"] .saint-particles i:nth-child(6) { left: 78%; top: 45%; }
-.saint-stage[data-saint="pio"] .saint-particles i:nth-child(7) { left: 71%; top: 72%; }
-.saint-stage[data-saint="pio"] .saint-symbol-one { left: 15%; top: 63%; }
-.saint-stage[data-saint="pio"] .saint-symbol-two { right: 12%; top: 33%; }
 
 @keyframes saintSceneArrive {
   0% { opacity: 0.18; filter: blur(7px); transform: translateY(8px) scale(0.975); }
   58% { opacity: 1; filter: blur(0); transform: translateY(-3px) scale(1.008); }
   100% { opacity: 1; filter: none; transform: translateY(-1px) scale(1); }
-}
-
-@keyframes saintParticleDrift {
-  0%, 100% { transform: translate(-50%, -50%) rotate(45deg) scale(0.72); }
-  50% { transform: translate(calc(-50% + 4px), calc(-50% - 9px)) rotate(95deg) scale(1.08); }
-}
-
-@keyframes michaelFieldOrbit {
-  to { transform: translate(-50%, -50%) rotate(348deg); }
-}
-
-@keyframes michaelFieldOrbitReverse {
-  to { transform: translate(-50%, -50%) rotate(-342deg); }
-}
-
-@keyframes augustineRestlessField {
-  0%, 100% { transform: rotate(-1deg) scale(0.985); }
-  50% { transform: rotate(2deg) scale(1.025); }
-}
-
-@keyframes augustineOrbitPrimary {
-  from { transform: translate(-50%, -50%) rotate(9deg); }
-  to { transform: translate(-50%, -50%) rotate(369deg); }
-}
-
-@keyframes augustineOrbitSecondary {
-  from { transform: translate(-50%, -50%) rotate(-14deg); }
-  to { transform: translate(-50%, -50%) rotate(-374deg); }
-}
-
-@keyframes marySkyOrbit {
-  to { transform: translate(-50%, -50%) rotate(355deg); }
-}
-
-@keyframes maryStarDrift {
-  0%, 100% { opacity: 0.22; transform: translate(-50%, -50%) scale(0.65); }
-  50% { opacity: 0.9; transform: translate(calc(-50% + 3px), calc(-50% - 7px)) scale(1.35); }
-}
-
-@keyframes josephMeasuredFramePrimary {
-  from { transform: translate(-50%, -50%) rotate(2deg); }
-  to { transform: translate(-50%, -50%) rotate(362deg); }
-}
-
-@keyframes josephMeasuredFrameSecondary {
-  from { transform: translate(-50%, -50%) rotate(-4deg); }
-  to { transform: translate(-50%, -50%) rotate(-364deg); }
-}
-
-@keyframes thomasDiagram {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes thomasProofOrbit {
-  to { transform: translate(-50%, -50%) rotate(405deg); }
-}
-
-@keyframes benedictSeal {
-  to { transform: rotate(-360deg); }
-}
-
-@keyframes benedictSealOrbit {
-  to { transform: translate(-50%, -50%) rotate(360deg); }
-}
-
-@keyframes pioIncenseField {
-  0%, 100% { transform: skewX(-1deg) translateY(2px); }
-  50% { transform: skewX(3deg) translateY(-7px); }
-}
-
-@keyframes pioRosaryOrbit {
-  to { transform: translate(-50%, -50%) rotate(347deg); }
-}
-
-@keyframes pioIncenseOrbit {
-  0% { transform: translate(-50%, -50%) rotate(16deg) scale(0.97); }
-  50% { transform: translate(-50%, -50%) rotate(196deg) scale(1.04); }
-  100% { transform: translate(-50%, -50%) rotate(376deg) scale(0.97); }
 }
 
 @media (max-width: 720px) {
@@ -6930,22 +6117,14 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
     width: 100%;
   }
 
-  .saint-ambient {
-    inset-inline: 0;
-    overflow: hidden;
-    border-radius: 42%;
-    transform: scale(0.82) translateZ(-24px);
-  }
 }
 
 @media (hover: none), (pointer: coarse), (prefers-reduced-motion: reduce) {
-  #view-home .home-stage.is-pointer-active .saint-artifact,
   #view-home .saint-artifact:hover:not(:disabled),
   #view-home .saint-artifact:focus-visible {
     transform: none;
   }
 
-  #view-home .home-stage.is-pointer-active .saint-artwork,
   #view-home .saint-artifact:focus-visible .saint-artwork {
     transform: translateX(-50%);
   }
@@ -7001,137 +6180,44 @@ body[data-active-view="settings"] .settings-content button:not(.settings-nav-ite
   cursor: nesw-resize;
 }
 
-/* Sacred portrait preference: preserve the existing scene and swap only the
-   figure assets plus the cohesive typography selected in Appearance. */
-.saint-aesthetic-settings {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
-}
-
-.saint-decorations-settings {
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
-}
-
-.saint-decorations-toggle {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  min-height: 54px;
-  padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: transparent;
-  cursor: pointer;
-}
-
-.saint-decorations-toggle:hover {
-  background: color-mix(in srgb, var(--surface-strong) 44%, transparent);
-}
-
-.saint-decorations-toggle strong,
-.saint-decorations-toggle small {
-  display: block;
-}
-
-.saint-decorations-toggle small {
-  margin-top: 4px;
-  color: var(--muted);
-  font-weight: 400;
-  line-height: 1.35;
-}
-
-.saint-decorations-toggle input {
-  width: 18px;
-  height: 18px;
-  min-height: 18px;
-  flex: 0 0 18px;
-  margin: 0;
-}
-
-:root[data-saint-decorations="off"] #view-home :is(.saint-ambient, .saint-halo, .saint-symbol) {
-  display: none;
-}
-
-:root[data-saint-decorations="off"] body[data-active-view="home"] {
-  background:
-    radial-gradient(circle at 78% -8%, color-mix(in srgb, var(--gold) 16%, transparent), transparent 32rem),
-    linear-gradient(180deg, var(--paper), var(--paper-2));
-}
-
-:root[data-saint-decorations="off"] body[data-active-view="home"]::after {
-  display: none;
-}
-
-.saint-aesthetic-picker {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.saint-aesthetic-preview {
-  overflow: hidden;
-  padding: 3px;
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
-  border-radius: 13px;
-  background: var(--night-soft);
-}
-
-.saint-aesthetic-preview img {
-  object-fit: contain;
-  object-position: center;
-}
-
-:root[data-saint-aesthetic="serious"] {
-  --font-body: Georgia, "Times New Roman", serif;
-  --font-display: Georgia, "Times New Roman", serif;
-}
-
-:root[data-saint-aesthetic="serious"] .brand-lockup h1 {
+.brand-lockup h1 {
   letter-spacing: 0.055em;
 }
 
-:root[data-saint-aesthetic="serious"] .settings-titlebar .settings-titlecopy h2,
-:root[data-saint-aesthetic="serious"] body[data-active-view="settings"] .settings-disclosure > summary > span:first-child {
+.settings-titlebar .settings-titlecopy h2,
+body[data-active-view="settings"] .settings-disclosure > summary > span:first-child {
   font-family: var(--font-display);
   letter-spacing: 0.01em;
 }
 
-:root[data-saint-aesthetic="serious"] body[data-active-view="settings"] .settings-disclosure > summary > .pill,
-:root[data-saint-aesthetic="serious"] .eyebrow,
-:root[data-saint-aesthetic="serious"] .saint-info-eyebrow,
-:root[data-saint-aesthetic="serious"] .protection-level-scale,
-:root[data-saint-aesthetic="serious"] .home-runtime-status,
-:root[data-saint-aesthetic="serious"] .audio-track-row em,
-:root[data-saint-aesthetic="serious"] #protectionLevelStatus {
+body[data-active-view="settings"] .settings-disclosure > summary > .pill,
+.eyebrow,
+.saint-info-eyebrow,
+.protection-level-scale,
+.home-runtime-status,
+.audio-track-row em,
+#protectionLevelStatus {
   font-family: var(--font-body);
 }
 
-:root[data-saint-aesthetic="serious"] .protection-level-choice span {
+.protection-level-choice span {
   font-family: var(--font-display);
   font-variant-numeric: oldstyle-nums proportional-nums;
   font-feature-settings: "onum" 1, "pnum" 1;
 }
 
-:root[data-saint-aesthetic="serious"] #view-home .home-runtime-status {
+#view-home .home-runtime-status {
   font-weight: 700;
   letter-spacing: 0.11em;
 }
 
-:root[data-saint-aesthetic="serious"] #view-home .saint-info-popover h2,
-:root[data-saint-aesthetic="serious"] #view-home .saint-info-popover blockquote p {
+#view-home .saint-info-popover h2,
+#view-home .saint-info-popover blockquote p {
   font-family: var(--font-display);
 }
 
-:root[data-saint-aesthetic="serious"] #view-home .saint-artwork {
+#view-home .saint-artwork {
   image-rendering: auto;
-}
-
-@media (max-width: 680px) {
-  .saint-aesthetic-picker {
-    grid-template-columns: 1fr;
-  }
 }
 
 /* Settings: one category index and one detail page, with no nested disclosures. */
@@ -7939,10 +7025,6 @@ body[data-active-view="settings"] .settings-detail .list-item button {
   border: 0;
 }
 
-.settings-detail .saint-aesthetic-picker {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 .settings-detail .icon-theme-option {
   min-height: 84px;
   margin: 0;
@@ -7959,18 +7041,6 @@ body[data-active-view="settings"] .settings-detail .list-item button {
 
 .settings-detail .icon-theme-option :is(strong, small) {
   font-family: var(--font-body);
-}
-
-.settings-detail.saint-decorations-settings {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
-}
-
-.settings-detail .saint-decorations-toggle {
-  margin: 0;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-strong) 42%, transparent);
 }
 
 .settings-search-empty {
@@ -8017,8 +7087,7 @@ body[data-active-view="settings"] .settings-detail .list-item button {
     grid-template-columns: 1fr;
   }
 
-  .settings-detail .icon-theme-picker,
-  .settings-detail .saint-aesthetic-picker {
+  .settings-detail .icon-theme-picker {
     grid-template-columns: 1fr;
   }
 }
@@ -8865,7 +7934,7 @@ body[data-active-view="tracking"] .habit-activity-grid {
   height: auto;
   display: grid;
   grid-template-columns: repeat(52, minmax(0, 1fr));
-  grid-template-rows: repeat(7, auto);
+  grid-template-rows: repeat(7, clamp(24px, 3cqw, 34px));
   grid-auto-flow: column;
   gap: clamp(2px, 0.3cqw, 5px);
   aspect-ratio: auto;
@@ -8898,7 +7967,8 @@ body[data-active-view="tracking"] .habit-activity-bar {
   width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-rows: repeat(7, auto);
+  grid-template-rows: repeat(7, clamp(24px, 3cqw, 34px));
+  align-items: center;
   justify-items: center;
   gap: clamp(2px, 0.3cqw, 5px);
   padding: 0;
@@ -9086,4 +8156,20 @@ body[data-active-view="tracking"] .habit-focus-edit {
     font-size: 0.8rem;
   }
 
+}
+
+/* A fixed reveal control must never sit on top of scrolling content. Reserve a
+   slim utility gutter for it only while the navigation sidebar is hidden. */
+body.sidebar-collapsed .shell {
+  padding-left: max(
+    var(--sidebar-toggle-safe-gutter),
+    clamp(18px, 3.4vw, 52px)
+  );
+}
+
+body.sidebar-collapsed[data-active-view="audio"] {
+  --audio-shell-gutter: max(
+    var(--sidebar-toggle-safe-gutter),
+    clamp(24px, 4.4vw, 68px)
+  );
 }

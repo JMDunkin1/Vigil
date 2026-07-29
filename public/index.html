@@ -24,7 +24,7 @@
         <span class="nav-label">Tracking</span>
       </button>
       <button class="nav-tab" type="button" data-view-target="audio" aria-selected="false">
-        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 14.75v-2.5a7 7 0 0 1 14 0v2.5"/><path d="M5 14.25H4.25A1.25 1.25 0 0 0 3 15.5v2.25A1.25 1.25 0 0 0 4.25 19H6v-4.75ZM19 14.25h.75A1.25 1.25 0 0 1 21 15.5v2.25A1.25 1.25 0 0 1 19.75 19H18v-4.75ZM18 19a3 3 0 0 1-3 3h-2"/></svg>
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3.5 10v4M7.75 7.5v9M12 4.5v15M16.25 8.5v7M20.5 10.5v3"/></svg>
         <span class="nav-label">Audio</span>
       </button>
       <button class="nav-tab" type="button" data-view-target="journal" aria-selected="false">
@@ -34,7 +34,7 @@
     </nav>
     <div class="sidebar-account">
       <button id="accountButton" class="account-button" type="button" aria-haspopup="dialog" aria-controls="accountDialog" aria-expanded="false">
-        <span id="accountAvatar" class="account-avatar" aria-hidden="true">JD</span>
+        <span class="account-rule" aria-hidden="true"></span>
         <span class="account-identity">
           <strong id="accountName">James Dunkin</strong>
           <small id="accountRole">Admin account</small>
@@ -67,10 +67,7 @@
         </aside>
         <div id="saintStage" class="saint-stage" data-saint="michael">
           <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next sacred portrait" aria-haspopup="dialog" aria-controls="saintInfoPopover" aria-expanded="false">
-            <span class="saint-halo" aria-hidden="true"></span>
-            <span class="saint-symbol saint-symbol-one" aria-hidden="true"></span>
-            <span class="saint-symbol saint-symbol-two" aria-hidden="true"></span>
-            <img id="saintArtwork" class="saint-artwork" src="/art/saints/michael.png" alt="Saint Michael the Archangel" draggable="false">
+            <img id="saintArtwork" class="saint-artwork" src="/art/saints/traditional/michael.png" alt="Saint Michael the Archangel" draggable="false">
             <span id="saintFallback" class="saint-fallback" aria-hidden="true">M</span>
           </button>
         </div>
@@ -275,7 +272,7 @@
       </div>
 
       <details class="settings-disclosure icon-theme-settings">
-        <summary><span>App icon</span><em>Icon, portraits, and motion</em></summary>
+        <summary><span>App icon</span><em>App and menu-bar identity</em></summary>
         <div class="settings-disclosure-body">
           <section class="panel appearance-panel appearance-icon-panel">
             <div class="section-head">
@@ -305,46 +302,6 @@
             </fieldset>
             <p class="field-note">The menu-bar icon changes immediately. Finder and Spotlight update when the app is rebuilt.</p>
           </section>
-
-          <section class="panel appearance-panel saint-aesthetic-settings">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Portraits &amp; type</p>
-                <h2>Visual style</h2>
-              </div>
-              <span id="saintAestheticStatus" class="pill neutral" aria-live="polite">Pixel Art active</span>
-            </div>
-            <fieldset class="icon-theme-picker saint-aesthetic-picker">
-              <legend>Choose how the sacred portraits and app typography should feel</legend>
-              <label class="icon-theme-option">
-                <input type="radio" name="saintAesthetic" value="playful" checked>
-                <span class="icon-theme-preview saint-aesthetic-preview"><img src="/art/saints/michael.png" alt=""></span>
-                <span><strong>Pixel Art</strong><small>Sprite portraits with clean sans-serif typography</small></span>
-              </label>
-              <label class="icon-theme-option">
-                <input type="radio" name="saintAesthetic" value="serious">
-                <span class="icon-theme-preview saint-aesthetic-preview"><img src="/art/saints/serious/michael.png" alt=""></span>
-                <span><strong>Traditional</strong><small>Aged sacred portraits, classical serif typography, and Christ Pantocrator</small></span>
-              </label>
-            </fieldset>
-          </section>
-
-          <section class="panel appearance-panel saint-decorations-settings">
-            <div class="section-head">
-              <div>
-                <p class="eyebrow">Portraits</p>
-                <h2>Portrait decorations</h2>
-              </div>
-            </div>
-            <label class="saint-decorations-toggle">
-              <span>
-                <strong>Show decorations</strong>
-                <small>Display the geometric backdrop and floating symbols around the sacred portraits.</small>
-              </span>
-              <input id="saintDecorations" type="checkbox" checked>
-            </label>
-          </section>
-
         </div>
       </details>
 

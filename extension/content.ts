@@ -161,7 +161,13 @@ function handlePulseResult(result: PulseResponse | undefined): void {
     if (!activePauseOverlay) releasePageGuard();
     return;
   }
-  if (result.stale === true || result.skipped === true) return;
+  if (result.stale === true || result.skipped === true) {
+    // sendPulse already rejects callbacks from an older content-script pulse.
+    // A stale background check therefore cannot authorize or block this page,
+    // but it also must not strand the current page behind the navigation guard.
+    if (!activePauseOverlay) releasePageGuard();
+    return;
+  }
   if (result.browserNoiseBlockingEnabled === true) {
     cleanupBrowserNoise();
   } else if (result.browserNoiseBlockingEnabled === false) {

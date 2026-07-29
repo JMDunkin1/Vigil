@@ -377,6 +377,7 @@ export const DEFAULT_EXPLICIT_URL_PATTERNS = [
 
 export const DEFAULT_ALWAYS_BANNED_URL_PATTERNS = [
   ...PERMANENT_SOCIAL_URL_PATTERNS,
+  "findmyhotkey.com",
   "webtoons.com"
 ];
 

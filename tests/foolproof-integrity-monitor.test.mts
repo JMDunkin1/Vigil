@@ -778,6 +778,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
   assert.equal(integrityLockdownActive(state), true);
   const policy = mustPolicy(activePolicy(state, new Date(now.getTime() + 2000)));
   assert.equal(policy.kind, "integrity");
+  assert.equal(policy.session.id, "integrity:apple-content-filter-recovery");
   assert.equal(policy.session.title, "Apple content filter recovery");
   assert.equal(policy.endsAt, "until Apple Screen Time Limit Adult Websites and Content & Privacy Restrictions are turned back on");
   assert.equal(policy.profile.mode, "allowlist");

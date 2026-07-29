@@ -133,7 +133,6 @@ export function createAccountUi() {
     const role = user.role === "admin" ? "Admin account" : "Member account";
     setText("#accountName", user.name);
     setText("#accountRole", signedIn ? role : "Sign in");
-    setText("#accountAvatar", signedIn ? initials : "?");
     setText("#accountDialogName", user.name);
     setText("#accountDialogEmail", user.email || "Local administrator");
     setText("#accountDialogRole", role);

@@ -605,6 +605,7 @@ function blockedUrl(hostname: string, policy: BrowserPolicy, backUrl = ""): stri
     until: policy.endsAt || "",
     mode: policy.session?.mode || "focus",
     kind: policy.kind || "manual",
+    policyId: policy.session?.id || "",
     lockId,
     backUrl,
     port: PORT

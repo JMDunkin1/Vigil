@@ -11,7 +11,7 @@ import { daysText, formatDuration, lines, phaseTitle, progressText } from "./for
 import { formHasUnsavedChanges, formRevision, markFormSaved, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
 import { createFormController } from "./forms.js";
 import { createHardeningPanel } from "./hardening-panel.js";
-import { shouldConfirmJournalDraftOnViewExit, shouldLockJournalOnViewExit } from "./journal-lock.js";
+import { isBlankNewJournalDraft, shouldConfirmJournalDraftOnViewExit, shouldLockJournalOnViewExit } from "./journal-lock.js";
 import { createLifeLogView } from "./life-log-view.js";
 import { renderMinecraftAudioLibrary } from "./minecraft-audio-ui.js";
 import { createSaintStage } from "./saint-stage.js";
@@ -278,8 +278,17 @@ function setView(view?: string) {
     journalVault(state.data).autoLockMinutes,
     journalSessionActive()
   );
-  const journalForm = $("#journalEntryForm") as unknown as HTMLFormElement;
-  if (shouldConfirmJournalDraftOnViewExit(lockOnExit, formHasUnsavedChanges(journalForm))
+  const journalForm = $("#journalEntryForm");
+  const blankNewJournalDraft = isBlankNewJournalDraft(
+    journalForm.elements.id.value,
+    journalForm.elements.title.value,
+    journalForm.elements.body.value
+  );
+  if (shouldConfirmJournalDraftOnViewExit(
+    lockOnExit,
+    formHasUnsavedChanges(journalForm as unknown as HTMLFormElement),
+    blankNewJournalDraft
+  )
     && !window.confirm("Leave Journal and discard your unsaved entry?")) {
     return;
   }
@@ -336,7 +345,6 @@ async function unlockJournal(): Promise<void> {
       : response.session.expiresAt
       ? `Unlocked until ${new Date(response.session.expiresAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
       : "Unlocked";
-    toast("Journal unlocked");
     await refresh();
   } catch (error) {
     clearJournalSession();

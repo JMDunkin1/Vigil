@@ -1,0 +1,393 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1600" viewBox="0 0 1600 1600">
+  <defs>
+    <linearGradient id="pageGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#181410"/>
+      <stop offset=".45" stop-color="#0d0e0e"/>
+      <stop offset="1" stop-color="#11100f"/>
+    </linearGradient>
+    <linearGradient id="activeFill" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2a211b"/>
+      <stop offset="1" stop-color="#171412"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#000" flood-opacity=".35"/>
+    </filter>
+    <style>
+      .title { font: 700 42px Georgia, "Times New Roman", serif; fill: #f2e9dd; letter-spacing: -.5px; }
+      .subtitle { font: 500 17px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #9f9185; letter-spacing: .2px; }
+      .card-title { font: 700 24px Georgia, "Times New Roman", serif; fill: #eadfd2; }
+      .card-note { font: 500 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #8e7e72; }
+      .letter { font: 700 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #e4b47e; letter-spacing: 1px; }
+      .label { font: 600 13px Georgia, "Times New Roman", serif; fill: #a79485; }
+      .label-active { fill: #f0d4ae; }
+      .summary-kicker { font: 700 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #b68057; letter-spacing: 1.8px; }
+      .summary-title { font: 700 20px Georgia, "Times New Roman", serif; fill: #e8ddd0; }
+      .summary-copy { font: 500 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; fill: #938579; }
+      .icon { fill: none; stroke: #8d7261; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+      .icon-active { stroke: #e0a46b; }
+      .fine { stroke-width: 1.55; }
+      .bold { stroke-width: 2.35; }
+      .dot { fill: #8d7261; stroke: none; }
+      .dot-active { fill: #e0a46b; stroke: none; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1600" fill="url(#pageGlow)"/>
+  <circle cx="135" cy="46" r="230" fill="#8d522d" opacity=".05"/>
+  <circle cx="1500" cy="1130" r="300" fill="#c4884f" opacity=".035"/>
+
+  <g transform="translate(70 58)">
+    <text class="title" x="0" y="38">Vigil sidebar icon directions</text>
+    <text class="subtitle" x="2" y="72">Six coordinated families · same warm bronze linework · Audio shown in the selected state</text>
+    <path d="M0 94H1460" stroke="#3a2e25" stroke-width="1"/>
+    <path d="M0 94H214" stroke="#a66f48" stroke-width="2"/>
+  </g>
+
+  <!-- A: Cloister -->
+  <g transform="translate(70 180)" filter="url(#shadow)">
+    <rect width="700" height="285" rx="22" fill="#111210" stroke="#342a23"/>
+    <circle cx="35" cy="38" r="16" fill="#2b2019" stroke="#70513b"/>
+    <text class="letter" x="30" y="43">A</text>
+    <text class="card-title" x="63" y="43">Cloister</text>
+    <text class="card-note" x="63" y="66">Romanesque arches, soft corners, devotional calm</text>
+
+    <g transform="translate(24 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon" d="M3.8 11.2 12 4l8.2 7.2v8.1a1.3 1.3 0 0 1-1.3 1.3H5.1a1.3 1.3 0 0 1-1.3-1.3Z"/>
+        <path class="icon" d="M8.4 20.6v-5.2a3.6 3.6 0 0 1 7.2 0v5.2"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Home</text>
+    </g>
+
+    <g transform="translate(192 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <circle class="icon" cx="12" cy="12" r="8.6"/>
+        <path class="icon" d="m7.7 12.2 2.8 2.8 5.9-6.2"/>
+        <path class="icon fine" d="M12 1.9v1.5M22.1 12h-1.5M12 22.1v-1.5M1.9 12h1.5"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Tracking</text>
+    </g>
+
+    <g transform="translate(360 91)">
+      <rect width="148" height="166" rx="15" fill="url(#activeFill)" stroke="#7b5438" stroke-width="1.4"/>
+      <rect x="6" y="6" width="136" height="154" rx="11" fill="none" stroke="#3e2d23"/>
+      <path d="M1 22v122" stroke="#dda36b" stroke-width="3"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon icon-active" d="M5 15v-3.1a7 7 0 0 1 14 0V15"/>
+        <path class="icon icon-active" d="M5 14.2H4.3A1.3 1.3 0 0 0 3 15.5v2.2A1.3 1.3 0 0 0 4.3 19H6v-4.8ZM19 14.2h.7a1.3 1.3 0 0 1 1.3 1.3v2.2a1.3 1.3 0 0 1-1.3 1.3H18v-4.8Z"/>
+        <path class="icon icon-active" d="M18 19a3 3 0 0 1-3 3h-2"/>
+      </g>
+      <text class="label label-active" x="74" y="145" text-anchor="middle">Audio</text>
+    </g>
+
+    <g transform="translate(528 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon" d="M6 3.5h11.3a1.8 1.8 0 0 1 1.8 1.8v15.2H7a2.8 2.8 0 0 1-2.8-2.8V5.3A1.8 1.8 0 0 1 6 3.5Z"/>
+        <path class="icon" d="M4.2 17.7A2.8 2.8 0 0 1 7 14.9h12.1M8 7.7h7M8 11h5.4"/>
+        <path class="icon fine" d="M6.2 3.5v11.7"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Journal</text>
+    </g>
+  </g>
+
+  <!-- B: Watchkeeper -->
+  <g transform="translate(830 180)" filter="url(#shadow)">
+    <rect width="700" height="285" rx="22" fill="#111210" stroke="#342a23"/>
+    <circle cx="35" cy="38" r="16" fill="#2b2019" stroke="#70513b"/>
+    <text class="letter" x="30" y="43">B</text>
+    <text class="card-title" x="63" y="43">Watchkeeper</text>
+    <text class="card-note" x="63" y="66">Lantern and compass cues; alert without feeling harsh</text>
+
+    <g transform="translate(24 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon" d="M5 20.5V8.7L12 4l7 4.7v11.8Z"/>
+        <path class="icon" d="M8.3 20.5v-6.2h7.4v6.2M9.2 8.8h5.6"/>
+        <circle class="dot" cx="12" cy="8.8" r=".9"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Home</text>
+    </g>
+
+    <g transform="translate(192 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <circle class="icon" cx="12" cy="12" r="9"/>
+        <path class="icon" d="m9.1 14.8 2.2-5.3 5.3-2.2-2.2 5.3Z"/>
+        <circle class="dot" cx="11.85" cy="12.15" r="1"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Tracking</text>
+    </g>
+
+    <g transform="translate(360 91)">
+      <rect width="148" height="166" rx="15" fill="url(#activeFill)" stroke="#7b5438" stroke-width="1.4"/>
+      <rect x="6" y="6" width="136" height="154" rx="11" fill="none" stroke="#3e2d23"/>
+      <path d="M1 22v122" stroke="#dda36b" stroke-width="3"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon icon-active" d="M6 15.5v-4.3a6 6 0 0 1 12 0v4.3"/>
+        <path class="icon icon-active bold" d="M4.5 14.5v4M19.5 14.5v4"/>
+        <path class="icon icon-active fine" d="M8.2 8.2 12 5.4l3.8 2.8M18.7 19.5c-.8 1.6-2.3 2.5-4.7 2.5"/>
+        <circle class="dot-active" cx="12.8" cy="22" r=".9"/>
+      </g>
+      <text class="label label-active" x="74" y="145" text-anchor="middle">Audio</text>
+    </g>
+
+    <g transform="translate(528 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon" d="M5 4.5h13.8v16H6.8A2.8 2.8 0 0 1 4 17.7V5.5a1 1 0 0 1 1-1Z"/>
+        <path class="icon" d="M4 17.6A2.6 2.6 0 0 1 6.6 15h12.2M8 8h7.2M8 11h4.8"/>
+        <path class="icon fine" d="M16.3 4.5v4.2l-1.4-1-1.4 1V4.5"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Journal</text>
+    </g>
+  </g>
+
+  <!-- C: Engraved -->
+  <g transform="translate(70 495)" filter="url(#shadow)">
+    <rect width="700" height="285" rx="22" fill="#111210" stroke="#342a23"/>
+    <circle cx="35" cy="38" r="16" fill="#2b2019" stroke="#70513b"/>
+    <text class="letter" x="30" y="43">C</text>
+    <text class="card-title" x="63" y="43">Engraved Brass</text>
+    <text class="card-note" x="63" y="66">Fine ticks and small flourishes, like an old instrument panel</text>
+
+    <g transform="translate(24 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon fine" d="M3.5 11.2 12 4l8.5 7.2M4.8 10.1v10.4h14.4V10.1M9.2 20.5v-6h5.6v6"/>
+        <path class="icon" d="M3.2 20.5h17.6"/>
+        <circle class="dot" cx="12" cy="8" r=".8"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Home</text>
+    </g>
+
+    <g transform="translate(192 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <circle class="icon fine" cx="12" cy="12" r="8.7"/>
+        <circle class="icon fine" cx="12" cy="12" r="6.8" opacity=".65"/>
+        <path class="icon" d="m8.2 12.2 2.3 2.3 5.3-5.2"/>
+        <path class="icon fine" d="M12 1.8v2M22.2 12h-2M12 22.2v-2M1.8 12h2"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Tracking</text>
+    </g>
+
+    <g transform="translate(360 91)">
+      <rect width="148" height="166" rx="15" fill="url(#activeFill)" stroke="#7b5438" stroke-width="1.4"/>
+      <rect x="6" y="6" width="136" height="154" rx="11" fill="none" stroke="#3e2d23"/>
+      <path d="M1 22v122" stroke="#dda36b" stroke-width="3"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon icon-active fine" d="M5.3 14.5v-2.7a6.7 6.7 0 0 1 13.4 0v2.7"/>
+        <path class="icon icon-active" d="M4 14.2h2.6v5.1H4.7a1.2 1.2 0 0 1-1.2-1.2v-2.7A1.2 1.2 0 0 1 4.7 14.2ZM20 14.2h-2.6v5.1h1.9a1.2 1.2 0 0 0 1.2-1.2v-2.7a1.2 1.2 0 0 0-1.2-1.2Z"/>
+        <path class="icon icon-active fine" d="M7.4 7.1 6.2 5.9M16.6 7.1l1.2-1.2M18.1 20.3c-.9 1.1-2.1 1.7-3.8 1.7"/>
+        <circle class="dot-active" cx="13.4" cy="22" r=".75"/>
+      </g>
+      <text class="label label-active" x="74" y="145" text-anchor="middle">Audio</text>
+    </g>
+
+    <g transform="translate(528 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <rect class="icon fine" x="4.8" y="3.8" width="14.4" height="16.4" rx="1.7"/>
+        <path class="icon fine" d="M8 3.8v16.4M10.5 8h5.8M10.5 11.2h4.2M10.5 14.4h5.8"/>
+        <circle class="dot" cx="6.4" cy="7.2" r=".7"/>
+        <circle class="dot" cx="6.4" cy="16.8" r=".7"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Journal</text>
+    </g>
+  </g>
+
+  <!-- D: Quiet Geometric -->
+  <g transform="translate(830 495)" filter="url(#shadow)">
+    <rect width="700" height="285" rx="22" fill="#111210" stroke="#342a23"/>
+    <circle cx="35" cy="38" r="16" fill="#2b2019" stroke="#70513b"/>
+    <text class="letter" x="30" y="43">D</text>
+    <text class="card-title" x="63" y="43">Quiet Geometric</text>
+    <text class="card-note" x="63" y="66">Compact, modern forms with the same tactile bronze finish</text>
+
+    <g transform="translate(24 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon bold" d="M4 11 12 4.5 20 11v9H4Z"/>
+        <path class="icon bold" d="M9 20v-6h6v6"/>
+        <path class="icon fine" d="M8 8.2h8"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Home</text>
+    </g>
+
+    <g transform="translate(192 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon bold" d="m8 3.7 8-.1 4.4 6.6-2.3 7.6-7.6 2.5-6.7-4.2-.2-8Z"/>
+        <path class="icon bold" d="m7.8 12 2.8 2.8 5.8-6"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Tracking</text>
+    </g>
+
+    <g transform="translate(360 91)">
+      <rect width="148" height="166" rx="15" fill="url(#activeFill)" stroke="#7b5438" stroke-width="1.4"/>
+      <rect x="6" y="6" width="136" height="154" rx="11" fill="none" stroke="#3e2d23"/>
+      <path d="M1 22v122" stroke="#dda36b" stroke-width="3"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon icon-active bold" d="M5 15v-4a7 7 0 0 1 14 0v4"/>
+        <rect class="icon icon-active bold" x="3.8" y="14" width="3.2" height="5.5" rx=".7"/>
+        <rect class="icon icon-active bold" x="17" y="14" width="3.2" height="5.5" rx=".7"/>
+        <path class="icon icon-active bold" d="M17.8 19.5c-.5 1.7-1.8 2.5-4.1 2.5"/>
+      </g>
+      <text class="label label-active" x="74" y="145" text-anchor="middle">Audio</text>
+    </g>
+
+    <g transform="translate(528 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <rect class="icon bold" x="4.5" y="3.7" width="15" height="16.6" rx="2"/>
+        <path class="icon bold" d="M4.5 9h15M4.5 14.5h15"/>
+        <path class="icon fine" d="M8 6.3h8M8 11.8h5.5M8 17.3h7"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Journal</text>
+    </g>
+  </g>
+
+  <!-- E: Nocturne -->
+  <g transform="translate(70 810)" filter="url(#shadow)">
+    <rect width="700" height="285" rx="22" fill="#111210" stroke="#342a23"/>
+    <circle cx="35" cy="38" r="16" fill="#2b2019" stroke="#70513b"/>
+    <text class="letter" x="30" y="43">E</text>
+    <text class="card-title" x="63" y="43">Nocturne</text>
+    <text class="card-note" x="63" y="66">Subtle stars and orbit lines for the app’s late-night ritual feel</text>
+
+    <g transform="translate(24 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon fine" d="M4 11 12 4.2 20 11v9.5H4Z"/>
+        <path class="icon" d="M8.8 20.5v-6h6.4v6"/>
+        <path class="icon fine" d="m12 7.3.45 1.1 1.15.45-1.15.45-.45 1.1-.45-1.1-1.15-.45 1.15-.45Z"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Home</text>
+    </g>
+
+    <g transform="translate(192 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <circle class="icon fine" cx="12" cy="12" r="8.5"/>
+        <path class="icon fine" d="M4.7 9.8c4.4-2.5 10-2.7 14.6-.3M5.6 16.2c4 1.8 8.8 1.6 12.7-.6"/>
+        <path class="icon" d="m8.3 12.1 2.4 2.5 5.2-5.2"/>
+        <circle class="dot" cx="19.7" cy="8.8" r="1"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Tracking</text>
+    </g>
+
+    <g transform="translate(360 91)">
+      <rect width="148" height="166" rx="15" fill="url(#activeFill)" stroke="#7b5438" stroke-width="1.4"/>
+      <rect x="6" y="6" width="136" height="154" rx="11" fill="none" stroke="#3e2d23"/>
+      <path d="M1 22v122" stroke="#dda36b" stroke-width="3"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon icon-active fine" d="M5 15v-3.1a7 7 0 0 1 14 0V15"/>
+        <path class="icon icon-active" d="M3.8 14.2H6v5H4.8a1.3 1.3 0 0 1-1.3-1.3v-2.4a1.3 1.3 0 0 1 1.3-1.3ZM20.2 14.2H18v5h1.2a1.3 1.3 0 0 0 1.3-1.3v-2.4a1.3 1.3 0 0 0-1.3-1.3Z"/>
+        <path class="icon icon-active fine" d="M18 19c-.5 1.8-1.9 2.8-4.3 2.8"/>
+        <path class="icon icon-active fine" d="m12 3 .4 1 .9.4-.9.4-.4 1-.4-1-.9-.4.9-.4Z"/>
+      </g>
+      <text class="label label-active" x="74" y="145" text-anchor="middle">Audio</text>
+    </g>
+
+    <g transform="translate(528 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon fine" d="M5 4h13.6v16.3H7A2.8 2.8 0 0 1 4.2 17.5V4.8A.8.8 0 0 1 5 4Z"/>
+        <path class="icon fine" d="M4.2 17.5A2.5 2.5 0 0 1 6.7 15h11.9"/>
+        <path class="icon" d="M8 8h6.5M8 11h4.7"/>
+        <path class="icon fine" d="m16.4 8.8.4 1 .9.4-.9.4-.4 1-.4-1-.9-.4.9-.4Z"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Journal</text>
+    </g>
+  </g>
+
+  <!-- F: Heraldic -->
+  <g transform="translate(830 810)" filter="url(#shadow)">
+    <rect width="700" height="285" rx="22" fill="#111210" stroke="#342a23"/>
+    <circle cx="35" cy="38" r="16" fill="#2b2019" stroke="#70513b"/>
+    <text class="letter" x="30" y="43">F</text>
+    <text class="card-title" x="63" y="43">Heraldic</text>
+    <text class="card-note" x="63" y="66">Shielded, ceremonial shapes with a little more authority</text>
+
+    <g transform="translate(24 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon" d="M4 11 12 4l8 7v9.5H4Z"/>
+        <path class="icon" d="M8.7 20.5v-5.3a3.3 3.3 0 0 1 6.6 0v5.3"/>
+        <path class="icon fine" d="m10.4 6.1 1.6-2 1.6 2M7.2 10.2h9.6"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Home</text>
+    </g>
+
+    <g transform="translate(192 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon" d="M12 3.5c2.5 2 5.2 2.7 8 2.8v5.9c0 4.2-2.6 7-8 8.7-5.4-1.7-8-4.5-8-8.7V6.3c2.8-.1 5.5-.8 8-2.8Z"/>
+        <path class="icon" d="m8 12 2.5 2.6 5.7-5.8"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Tracking</text>
+    </g>
+
+    <g transform="translate(360 91)">
+      <rect width="148" height="166" rx="15" fill="url(#activeFill)" stroke="#7b5438" stroke-width="1.4"/>
+      <rect x="6" y="6" width="136" height="154" rx="11" fill="none" stroke="#3e2d23"/>
+      <path d="M1 22v122" stroke="#dda36b" stroke-width="3"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon icon-active" d="M5 15v-3.2a7 7 0 0 1 14 0V15"/>
+        <path class="icon icon-active" d="M5.8 13.8H4.6a1.2 1.2 0 0 0-1.2 1.2v3a1.2 1.2 0 0 0 1.2 1.2h1.2ZM18.2 13.8h1.2a1.2 1.2 0 0 1 1.2 1.2v3a1.2 1.2 0 0 1-1.2 1.2h-1.2Z"/>
+        <path class="icon icon-active fine" d="M8.4 8.8 12 6l3.6 2.8M18.2 19.2c-.8 1.8-2.2 2.7-4.5 2.7"/>
+        <path class="icon icon-active fine" d="M12 6V3.5M10.7 4.8h2.6"/>
+      </g>
+      <text class="label label-active" x="74" y="145" text-anchor="middle">Audio</text>
+    </g>
+
+    <g transform="translate(528 91)">
+      <rect width="148" height="166" rx="15" fill="#0d0f0e" stroke="#2d2520"/>
+      <g transform="translate(50 27) scale(2)">
+        <path class="icon" d="M5.2 4h12.4a1.6 1.6 0 0 1 1.6 1.6v14.7H7A2.8 2.8 0 0 1 4.2 17.5V5a1 1 0 0 1 1-1Z"/>
+        <path class="icon" d="M4.2 17.5A2.5 2.5 0 0 1 6.7 15h12.5M8.2 8h6.7M8.2 11.2h5"/>
+        <path class="icon fine" d="M16.6 4v5.3l-1.4-1-1.4 1V4"/>
+      </g>
+      <text class="label" x="74" y="145" text-anchor="middle">Journal</text>
+    </g>
+  </g>
+
+  <g transform="translate(70 1140)">
+    <circle cx="5" cy="0" r="4" fill="#d99f68"/>
+    <text class="subtitle" x="20" y="6">All concepts stay legible at the current 27 px sidebar size; exact strokes would be hand-tuned after you pick a family.</text>
+  </g>
+
+  <g transform="translate(70 1205)">
+    <rect width="1460" height="300" rx="24" fill="#121210" stroke="#342a23"/>
+    <text class="summary-kicker" x="34" y="44">QUICK READ</text>
+    <text class="card-title" x="34" y="79">How the directions differ</text>
+    <path d="M34 101H1426" stroke="#2f2721"/>
+
+    <g transform="translate(34 132)">
+      <circle cx="8" cy="8" r="8" fill="#2b2019" stroke="#70513b"/>
+      <text class="summary-title" x="28" y="15">Closest evolution</text>
+      <text class="summary-copy" x="0" y="48">A · Cloister keeps today’s familiar symbols,</text>
+      <text class="summary-copy" x="0" y="70">but gives them a more architectural soul.</text>
+    </g>
+
+    <g transform="translate(500 132)">
+      <circle cx="8" cy="8" r="8" fill="#2b2019" stroke="#70513b"/>
+      <text class="summary-title" x="28" y="15">Most crafted</text>
+      <text class="summary-copy" x="0" y="48">C · Engraved Brass best echoes the editorial,</text>
+      <text class="summary-copy" x="0" y="70">old-instrument quality of the wider app.</text>
+    </g>
+
+    <g transform="translate(966 132)">
+      <circle cx="8" cy="8" r="8" fill="#2b2019" stroke="#70513b"/>
+      <text class="summary-title" x="28" y="15">Most distinctive</text>
+      <text class="summary-copy" x="0" y="48">E · Nocturne turns Vigil’s late-night ritual</text>
+      <text class="summary-copy" x="0" y="70">mood into a subtle recurring motif.</text>
+    </g>
+
+    <path d="M34 245H1426" stroke="#2f2721"/>
+    <text class="card-note" x="34" y="274">B leans watchful · D leans clean and modern · F leans ceremonial and protective</text>
+  </g>
+</svg>

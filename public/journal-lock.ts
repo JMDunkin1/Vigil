@@ -12,7 +12,16 @@ export function shouldLockJournalOnViewExit(
 
 export function shouldConfirmJournalDraftOnViewExit(
   lockOnExit: boolean,
-  hasUnsavedDraft: boolean
+  hasUnsavedDraft: boolean,
+  isBlankNewDraft: boolean
 ): boolean {
-  return lockOnExit && hasUnsavedDraft;
+  return lockOnExit && hasUnsavedDraft && !isBlankNewDraft;
+}
+
+export function isBlankNewJournalDraft(
+  entryId: string,
+  title: string,
+  body: string
+): boolean {
+  return !entryId.trim() && !title.trim() && !body.trim();
 }

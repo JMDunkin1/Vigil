@@ -87,7 +87,7 @@ export function companionPage(): string {
 }
 
 export function blockedPageResponse(input: PageInput, _referrer = ""): BlockedPageResponse {
-  if (staleFocusBlock(input.url, input.state)) {
+  if (staleBlockedPageReceipt(input.url, input.state)) {
     const location = safeBlockedPageEscapeUrl(input, input.url.searchParams.get("back"));
     return location ? { status: 302, location } : { status: 200, body: blockedPage(input) };
   }
@@ -102,8 +102,14 @@ export function blockedPage(input: PageInput): string {
   const requestedKind = String(url.searchParams.get("kind") || "").toLowerCase();
   const requestedUntil = String(url.searchParams.get("until") || "");
   const active = activePolicy(structuredClone(input.state));
-  const activeMatchesRequest = Boolean(active && active.kind === requestedKind);
-  const integrityAlarm = active?.kind === "integrity"
+  const requestedPolicyId = String(url.searchParams.get("policyId") || "");
+  const activeMatchesRequest = Boolean(
+    active
+    && active.kind === requestedKind
+    && (!requestedPolicyId || requestedPolicyId === active.session.id)
+  );
+  const integrityAlarm = activeMatchesRequest
+    && active?.kind === "integrity"
     && active.alarm
     && typeof active.alarm === "object"
     && !Array.isArray(active.alarm)
@@ -112,7 +118,7 @@ export function blockedPage(input: PageInput): string {
   const integrityReason = integrityAlarm?.type === "state-seal"
     ? "Vigil found a saved-state integrity mismatch."
     : String(integrityAlarm?.detail || "Vigil found an integrity problem.");
-  const blockExplanation = active?.kind === "integrity"
+  const blockExplanation = activeMatchesRequest && active?.kind === "integrity"
     ? `${integrityReason} This protection stays active ${active.endsAt || "until the integrity alarm is reviewed"}.`
     : activeMatchesRequest && active
       ? `${active.session.title || "A Vigil protection"} is active${active.endsAt ? ` until ${active.endsAt}` : ""}.`
@@ -164,10 +170,11 @@ export function blockedPage(input: PageInput): string {
 </html>`;
 }
 
-function staleFocusBlock(url: URL, state: VigilState): boolean {
-  if (url.searchParams.get("mode") !== "focus") return false;
+function staleBlockedPageReceipt(url: URL, state: VigilState): boolean {
+  const requestedMode = url.searchParams.get("mode");
+  if (!["focus", "integrity"].includes(requestedMode || "")) return false;
   const policy = activePolicy(state);
-  if (!policy || policy.session.mode !== "focus") return true;
+  if (!policy || policy.session.mode !== requestedMode) return true;
   const policyId = url.searchParams.get("policyId");
   if (policyId && policyId !== policy.session.id) return true;
   const until = url.searchParams.get("until");

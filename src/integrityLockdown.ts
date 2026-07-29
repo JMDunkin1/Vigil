@@ -83,7 +83,9 @@ export function integrityLockdownPolicy(state: VigilState, now = new Date()): (A
   return {
     kind: "integrity",
     session: {
-      id: "integrity:tamper-lockdown",
+      id: contentFilterRecovery
+        ? "integrity:apple-content-filter-recovery"
+        : "integrity:tamper-lockdown",
       title: contentFilterRecovery ? "Apple content filter recovery" : "Integrity lockdown",
       mode: "integrity",
       profileId: contentFilterRecovery ? "apple-content-filter-recovery" : "integrity-lockdown",

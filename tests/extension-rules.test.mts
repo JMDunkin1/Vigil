@@ -139,8 +139,8 @@ assert.ok(
   runInContext("handlePulseResult(staleResult); handlePulseResult(skippedResult);", context);
   assert.deepEqual(
     effects,
-    [],
-    "stale and skipped pulse outcomes must preserve the page guard and avoid every policy side effect"
+    ["release", "release"],
+    "stale and skipped current-pulse outcomes must release the page guard without applying stale policy side effects"
   );
 }
 
@@ -457,6 +457,7 @@ assert.ok(
   const blockedRedirect = new URL(stringValue(blocked.redirectUrl, "blocked redirect URL"));
   assert.equal(blockedRedirect.pathname, "/blocked");
   assert.equal(blockedRedirect.searchParams.get("site"), "Reddit Popular");
+  assert.equal(blockedRedirect.searchParams.get("policyId"), "strict");
   const normalReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/learnprogramming/comments/demo", event: "navigation" }, now);
   assert.equal(normalReddit.blocked, false);
   assert.equal(normalReddit.paused, false);
@@ -681,6 +682,13 @@ assert.ok(
   const rules = extensionRuleSnapshot(state, now);
   assert.equal(rules.rules.some((rule) => rule.until === "until the tamper alarm is cleared"), true);
   assert.equal(rules.contentRules.some((rule) => rule.until === "until the tamper alarm is cleared"), true);
+  assert.equal(
+    rules.contentRules
+      .filter((rule) => rule.until === "until the tamper alarm is cleared")
+      .every((rule) => new URL(rule.redirectUrl).searchParams.get("policyId") === "integrity:tamper-lockdown"),
+    true,
+    "integrity content-rule receipts must identify the exact policy that generated them"
+  );
   assert.equal(
     rules.contentRules.every((rule) => ["", "until the tamper alarm is cleared"].includes(rule.until)),
     true,

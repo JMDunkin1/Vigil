@@ -94,33 +94,8 @@ export function createLifeLogView(context: LifeLogViewContext) {
       : entries;
     const form = $("#journalEntryForm");
     const selectedId = form.elements.id.value;
-    let renderedDraft = false;
-    if (!selectedId) {
-      const draftTitle = form.elements.title.value.trim() || "Untitled entry";
-      const draftBody = form.elements.body.value.trim();
-      const draftMatches = !query || `${draftTitle} ${draftBody} Today`.toLocaleLowerCase().includes(query);
-      if (draftMatches) {
-        const article = document.createElement("article");
-        article.className = "journal-entry journal-entry-draft is-selected";
-        const select = document.createElement("button");
-        select.className = "journal-entry-select";
-        select.type = "button";
-        select.setAttribute("aria-label", `Continue ${draftTitle}`);
-        select.setAttribute("aria-current", "true");
-        select.append(
-          textEl("span", "Today", { className: "journal-entry-date" }),
-          textEl("strong", draftTitle, { className: "journal-entry-title" }),
-          textEl("span", "›", { className: "journal-entry-chevron", attrs: { "aria-hidden": "true" } })
-        );
-        select.addEventListener("click", () => form.elements.title.focus());
-        article.append(select);
-        list.append(article);
-        renderedDraft = true;
-      }
-    }
-
-    if (!visibleEntries.length && !renderedDraft) {
-      list.append(empty("No matching entries"));
+    if (!visibleEntries.length) {
+      if (query) list.append(empty("No matching entries"));
       return;
     }
 

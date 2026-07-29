@@ -34,20 +34,16 @@ for (const button of navButtons) {
   assert.match(button, /<svg class="nav-icon"[^>]*aria-hidden="true"/, "each primary destination must use the shared SVG icon system");
   assert.match(button, /<span class="nav-label">[^<]+<\/span>/, "each primary destination must retain a visible label");
 }
+const audioNavButton = navButtons.find((button) => button.includes('data-view-target="audio"')) || "";
+assert.match(audioNavButton, /<path d="M3\.5 10v4M7\.75 7\.5v9M12 4\.5v15M16\.25 8\.5v7M20\.5 10\.5v3"\/>/, "Audio navigation must use the rounded waveform icon");
+assert.doesNotMatch(audioNavButton, /14\.75v-2\.5|A1\.25 1\.25/, "the retired headphone icon must not return");
 assert.match(html, /<svg class="settings-icon"[^>]*aria-hidden="true"/, "settings must use the shared rounded SVG treatment");
 assert.match(html, /name="appIconTheme" value="jerusalem-cross"/, "settings must offer the Jerusalem Cross icon");
 assert.match(html, /name="appIconTheme" value="sacred-heart"/, "settings must offer the Sacred Heart icon");
 assert.match(html, /name="appIconTheme" value="saint-michael"/, "settings must offer the Saint Michael icon");
-assert.match(html, /name="saintAesthetic" value="playful"/, "Appearance must offer the existing playful saint style");
-assert.match(html, /name="saintAesthetic" value="serious"/, "Appearance must offer the serious saint style");
-assert.match(html, /src="\/art\/saints\/michael\.png"/, "the playful style preview must use the existing saint artwork");
-assert.match(html, /src="\/art\/saints\/serious\/michael\.png"/, "the serious style preview must use the alternate saint artwork");
-assert.match(html, /Choose how the sacred portraits and app typography should feel/, "the aesthetic picker must describe a portrait set that can include Christ");
-assert.match(html, /<strong>Pixel Art<\/strong>/, "the existing sprite treatment must use a neutral medium-based name");
-assert.match(html, /<strong>Traditional<\/strong>/, "the icon-painting treatment must use its requested user-facing name");
-assert.match(html, /Aged sacred portraits, classical serif typography, and Christ Pantocrator/, "the Traditional option must describe its visual treatment and Christ portrait");
-assert.match(html, /id="saintAestheticStatus"[^>]*>Pixel Art active<\/span>/, "the default aesthetic status must use its user-facing name");
-assert.doesNotMatch(html, /saintBackdropEnabled|Animated backdrop/, "Appearance must not reintroduce the removed portrait geometry");
+assert.doesNotMatch(html, /saintAesthetic|Pixel Art|Portrait decorations|saintDecorations/, "Settings must not retain portrait style or decoration controls");
+assert.match(html, /id="saintArtwork"[^>]*src="\/art\/saints\/traditional\/michael\.png"/, "the home stage must load traditional artwork directly");
+assert.doesNotMatch(html, /saint-(?:halo|symbol|ambient|geometry|orbit|particles)/, "the home stage must not render portrait decorations");
 assert.match(html, /aria-label="Browse sacred portraits"/, "portrait navigation must not describe Christ as a patron saint");
 const rulesViewStart = html.indexOf('<section id="view-rules"');
 const journalViewStart = html.indexOf('<section id="view-journal"');
@@ -73,7 +69,7 @@ assert.match(
 );
 const settingsUiSource = await readFile("public/settings-ui.js", "utf8");
 const settingsAppSource = await readFile("public/app.js", "utf8");
-const saintAestheticStageSource = await readFile("public/saint-stage.js", "utf8");
+const saintPortraitStageSource = await readFile("public/saint-stage.js", "utf8");
 const stylesSource = await readFile("public/styles.css", "utf8");
 const setupWizardSource = await readFile("public/setup-wizard.js", "utf8");
 const hardeningPanelSource = await readFile("public/hardening-panel.js", "utf8");
@@ -129,30 +125,20 @@ assert.match(
 );
 assert.match(settingsUiSource, /actions\.append\(\.\.\.source\.children\)/, "preserved panel actions must remain available from their settings index row");
 assert.match(protectionSettingsMarkup, /id="setupProgress"[\s\S]*?id="openSetupAssistant"/, "Protection status must retain its progress and Guided Setup controls");
-assert.match(saintAestheticStageSource, /vigil-saint-aesthetic/, "the saint aesthetic must persist as a renderer-local preference");
-assert.match(saintAestheticStageSource, /document\.documentElement\.dataset\.saintAesthetic = aesthetic/, "the preference must project to a root styling hook");
-assert.match(saintAestheticStageSource, /serious\/.*\$\{id\}\.png|serious\//, "serious mode must resolve the separate saint asset set");
-assert.match(saintAestheticStageSource, /CHRIST_PANTOCRATOR[\s\S]*id: "christ"/, "serious mode must define the Christ Pantocrator bonus portrait");
-assert.match(saintAestheticStageSource, /SERIOUS_STAGE_PORTRAITS[\s\S]*CHRIST_PANTOCRATOR/, "Christ must belong only to the extended serious portrait set");
-assert.match(saintAestheticStageSource, /function setAesthetic[\s\S]*select\(selectedId, persist, keepInfoOpen\)/, "changing aesthetics must reselect a mode-valid portrait and refresh all stage metadata");
-assert.match(saintAestheticStageSource, /aesthetic === "serious" \? "Traditional" : "Pixel Art"/, "the runtime status must use the user-facing aesthetic names");
-assert.match(html, /id="saintDecorations"[^>]*type="checkbox"[^>]*checked/, "portrait decorations must expose an enabled-by-default appearance toggle");
-assert.match(saintAestheticStageSource, /vigil-saint-decorations/, "the portrait decoration choice must persist as a renderer-local preference");
-assert.match(saintAestheticStageSource, /document\.documentElement\.dataset\.saintDecorations = visible \? "on" : "off"/, "the decoration preference must project to a root styling hook");
-assert.match(stylesSource, /:root\[data-saint-decorations="off"\] #view-home :is\(\.saint-ambient, \.saint-halo, \.saint-symbol\)\s*\{\s*display:\s*none;/, "disabling portrait decorations must hide the geometric, spoked halo, and floating layers");
-assert.match(stylesSource, /:root\[data-saint-decorations="off"\] body\[data-active-view="home"\]\s*\{[\s\S]*?linear-gradient\(180deg, var\(--paper\), var\(--paper-2\)\);/, "disabling portrait decorations must remove the Home screen's diagonal geometric grid");
-const seriousTypographyDeclaration = stylesSource.match(/:root\[data-saint-aesthetic="serious"\]\s*\{([^}]*)\}/)?.[1] || "";
-assert.match(seriousTypographyDeclaration, /--font-body: Georgia, "Times New Roman", serif/, "serious mode must replace ordinary body copy typography");
-assert.match(seriousTypographyDeclaration, /--font-display: Georgia, "Times New Roman", serif/, "serious mode must replace formal display typography");
-assert.doesNotMatch(seriousTypographyDeclaration, /--font-mono:/, "serious mode must not globally replace every functional monospace surface");
+assert.doesNotMatch(saintPortraitStageSource, /aesthetic|vigil-saint-decorations|setDecorationsVisible/u, "the portrait runtime must not retain appearance modes or decoration preferences");
+assert.match(saintPortraitStageSource, /return `\/art\/saints\/traditional\/\$\{id\}\.png`/, "the portrait runtime must resolve only traditional artwork");
+assert.match(saintPortraitStageSource, /CHRIST_PANTOCRATOR[\s\S]*id: "christ"/, "the fixed portrait set must define Christ Pantocrator");
+assert.match(saintPortraitStageSource, /SAINT_STAGE_PORTRAITS[\s\S]*CHRIST_PANTOCRATOR/, "Christ must belong to the one fixed portrait rotation");
+assert.doesNotMatch(stylesSource, /saint-(?:halo|symbol|ambient|geometry|orbit|particles)|data-saint-(?:aesthetic|decorations)/, "portrait decorations and appearance-mode styling must be deleted");
+const fixedThemeDeclaration = stylesSource.match(/\/\* Ember theme:[\s\S]*?:root\s*\{([^}]*)\}/)?.[1] || "";
+assert.match(fixedThemeDeclaration, /--font-body: Georgia, "Times New Roman", serif/, "the fixed theme must use traditional body typography");
+assert.match(fixedThemeDeclaration, /--font-display: Georgia, "Times New Roman", serif/, "the fixed theme must use traditional display typography");
+assert.match(fixedThemeDeclaration, /--font-mono:/, "the fixed traditional theme must preserve functional monospace surfaces");
 assert.match(stylesSource, /body\[data-active-view="settings"\] \.settings-root,[\s\S]*?\.settings-root :is\(button, input, select, textarea\)\s*\{\s*font-family: var\(--font-body\)/, "all Settings copy and controls must inherit the active body typography token");
 assert.match(stylesSource, /body\[data-active-view="settings"\] \.settings-root :is\(h2, h3, strong\),[\s\S]*?\.settings-nav-item\s*\{\s*font-family: var\(--font-display\)/, "Settings titles, row labels, and tabs must share the active display typography token");
-assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] \.saint-info-eyebrow/, "serious mode must carry its type through portrait metadata");
-assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] #protectionLevelStatus/, "serious mode must carry its type through utility labels");
-assert.match(stylesSource, /\.protection-level-choice span\s*\{[^}]*font-family: var\(--font-mono\)/, "playful protection-level digits must retain their existing numeral face");
-assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] \.protection-level-choice span\s*\{[^}]*font-family: var\(--font-display\)[^}]*font-variant-numeric: oldstyle-nums proportional-nums/, "serious protection buttons must use old-style serif numerals");
-assert.match(stylesSource, /:root\[data-saint-aesthetic="serious"\] #view-home \.saint-artwork[\s\S]*image-rendering: auto/, "serious paintings must not inherit pixel-art rendering");
-assert.doesNotMatch(stylesSource, /:root\[data-saint-aesthetic="serious"\][^{]*\{[^}]*background:/, "the serious preference must not replace Vigil's existing backgrounds");
+assert.match(stylesSource, /\.saint-info-eyebrow,[\s\S]*?#protectionLevelStatus\s*\{\s*font-family: var\(--font-body\)/, "traditional typography must carry through portrait metadata and utility labels");
+assert.match(stylesSource, /\.protection-level-choice span\s*\{[^}]*font-family: var\(--font-display\)[^}]*font-variant-numeric: oldstyle-nums proportional-nums/, "protection buttons must use old-style serif numerals");
+assert.match(stylesSource, /#view-home \.saint-artwork\s*\{[^}]*image-rendering: auto/, "traditional paintings must use natural image rendering");
 assert.match(settingsAppSource, /previousView === "settings" && state\.activeView !== "settings"[\s\S]*resetSettingsUi\(\)/, "the settings reset must run only after navigating away");
 assert.match(
   setupWizardSource,
@@ -246,6 +232,9 @@ assert.match(styles, /\.day-custom-grid\[hidden\]\s*\{\s*display:\s*none;/, "cus
 assert.match(styles, /body\.sidebar-collapsed \.app-chrome\s*\{\s*display:\s*none;/, "collapsing must fully hide the sidebar instead of leaving an icon rail");
 assert.match(styles, /body\.sidebar-collapsed \.shell\s*\{\s*grid-column:\s*1;/, "collapsed content must occupy the first grid column without widening the viewport");
 assert.match(styles, /body\.sidebar-collapsed \.sidebar-toggle\s*\{[\s\S]*?visibility:\s*visible;[\s\S]*?opacity:\s*1;[\s\S]*?pointer-events:\s*auto;/, "the full-hide toggle must remain visible and clickable after the sidebar disappears");
+assert.match(styles, /--sidebar-toggle-safe-gutter:\s*64px;/, "the collapsed sidebar toggle must own a stable content-free gutter");
+assert.match(styles, /body\.sidebar-collapsed \.shell\s*\{[\s\S]*?padding-left:\s*max\(\s*var\(--sidebar-toggle-safe-gutter\),\s*clamp\(18px, 3\.4vw, 52px\)\s*\);/, "collapsed content must stay clear of the fixed sidebar toggle at every scroll position");
+assert.match(styles, /body\.sidebar-collapsed\[data-active-view="audio"\]\s*\{[\s\S]*?--audio-shell-gutter:\s*max\(\s*var\(--sidebar-toggle-safe-gutter\),\s*clamp\(24px, 4\.4vw, 68px\)\s*\);/, "the edge-to-edge audio layout must honor the collapsed sidebar toggle gutter");
 assert.doesNotMatch(styles, /maximized-window-controls/, "styles must not contain fake window controls");
 assert.doesNotMatch(styles, /body:not\(\[data-active-view="home"\]\) \.app-chrome/, "navigation must not automatically compact the sidebar away from Home");
 assert.match(styles, /\.brand-home\s*\{[^}]*background:\s*transparent;[^}]*font:\s*inherit;/, "the Home button must preserve the Vigil wordmark styling");
@@ -295,8 +284,10 @@ assert.doesNotMatch(trackingSource, /positionFocusConnector|focusConnectorPath|s
 assert.match(trackingSource, /cell\.setAttribute\("aria-controls", "habitFocus"\)[\s\S]*?cell\.setAttribute\("aria-expanded", String\(focusOpen\)\)/, "the selected day must expose the embedded check-in as an accessible disclosure");
 assert.match(styles, /\.habit-focus-actions\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/, "Done and Missed must remain the only two equal primary choices");
 assert.match(styles, /faithful expandable-cell layout[\s\S]*?grid-template-columns:\s*repeat\(52,[\s\S]*?grid-template-rows:\s*repeat\(7,[\s\S]*?grid-auto-flow:\s*column/, "daily activity must use a 52-week by 7-day calendar");
+assert.match(styles, /faithful expandable-cell layout[\s\S]*?grid-template-rows:\s*repeat\(7, clamp\(24px, 3cqw, 34px\)\)/, "daily activity rows must retain a substantial vertical footprint");
 assert.match(styles, /\.habit-activity-grid\[data-mode="weekly"\],[\s\S]*?\.habit-activity-grid\[data-mode="cumulative"\][\s\S]*?grid-template-rows:\s*auto;/, "weekly and cumulative activity must switch to bottom-aligned magnitude columns");
 assert.match(trackingSource, /habitActivityBarHeights\(weeklyCounts, barMode\)/, "aggregated modes must derive visible bar heights from weekly and cumulative activity");
+assert.match(styles, /\.habit-activity-bar\s*\{[\s\S]*?grid-template-rows:\s*repeat\(7, clamp\(24px, 3cqw, 34px\)\)/, "aggregate activity columns must match the daily grid's restored height");
 assert.match(styles, /faithful expandable-cell layout[\s\S]*?\.habit-activity-scroll\s*\{[^}]*overflow:\s*visible;/, "the integrated activity field must not create a nested scrollbar");
 assert.match(styles, /\.habit-activity-cell\s*\{[\s\S]*?width:\s*min\(82%, 22px\)[\s\S]*?border-radius:\s*clamp\(2px, 0\.24cqw, 4px\)/, "activity cells must use the rounded-square treatment demonstrated by the supplied reference");
 assert.match(styles, /\.habit-focus\s*\{[\s\S]*?position:\s*absolute/, "opening the check-in must not reflow or move calendar cells");
@@ -377,8 +368,9 @@ assert.match(journalPageMarkup, /name="title"[\s\S]*?name="body"[\s\S]*?>Save en
 assert.match(styles, /\.journal-page\s*\{[^}]*grid-template-columns:\s*clamp\(150px, 29%, 300px\) minmax\(0, 1fr\);/, "journal history and editor must remain side by side at the real app window size");
 assert.doesNotMatch(styles, /@media \(max-width: 820px\)[\s\S]*?\.journal-page\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/, "the real Retina app window must never stack journal history above the editor");
 const lifeLogSource = await readFile("public/life-log-view.js", "utf8");
-assert.match(lifeLogSource, /journal-entry-draft is-selected[\s\S]*?"Today"[\s\S]*?"Untitled entry"/, "an empty journal must still show the selected Today draft in its permanent history rail");
-assert.doesNotMatch(lifeLogSource, /No entries yet/, "the permanent journal history rail must never collapse into a generic empty state");
+assert.doesNotMatch(lifeLogSource, /journal-entry-draft/, "the journal history must not manufacture a saved-looking row for an empty draft");
+assert.match(lifeLogSource, /if \(query\)\s*list\.append\(empty\("No matching entries"\)\)/, "an empty journal history must stay blank unless a search has no matches");
+assert.doesNotMatch(lifeLogSource, /No entries yet/, "the permanent journal history rail must stay visually blank when there are no saved entries");
 assert.match(styles, /\.journal-unlock-gate\s*\{[\s\S]*?width:\s*min\(620px, 100%\)/, "journal access must remain compact within the writing surface");
 assert.doesNotMatch(styles, /\.journal-unlock-gate\s*\{[^}]*border-block:/, "the journal unlock prompt must not be boxed in by divider lines");
 assert.match(styles, /body\[data-active-view="journal"\]:has\(#journalUnlockGate:not\(\[hidden\]\)\) \.shell\s*\{[^}]*padding-block:\s*0;/, "the locked journal must use the full height of its right-hand panel");
@@ -421,23 +413,23 @@ const saintStageSource = await readFile("public/saint-stage.js", "utf8");
 assert.doesNotMatch(saintStageSource, /addEventListener\(["']dblclick["']/, "double-click must not open saint details");
 assert.match(saintStageSource, /addEventListener\(["']contextmenu["']/, "two-finger and right-click must open saint details");
 assert.doesNotMatch(saintStageSource, /event\.detail|clickTimer|setTimeout/, "every rapid left click must advance the saint immediately");
-assert.match(saintStageSource, /select\(previousStagePortraitId\(selectedId, aesthetic\), true, true\)/, "the open portrait card must browse backward within the active aesthetic without closing");
-assert.match(saintStageSource, /select\(nextStagePortraitId\(selectedId, aesthetic\), true, true\)/, "the open portrait card must browse forward within the active aesthetic without closing");
+assert.match(saintStageSource, /select\(previousStagePortraitId\(selectedId\), true, true\)/, "the open portrait card must browse backward without closing");
+assert.match(saintStageSource, /select\(nextStagePortraitId\(selectedId\), true, true\)/, "the open portrait card must browse forward without closing");
 assert.doesNotMatch(html, /saint-(?:ambient|geometry|orbit|particles)/, "the patron stage must not render geometric shapes behind sacred portraits");
 assert.doesNotMatch(html, /saint-cursor-aura/, "the Home screen must not render a glow that follows the cursor");
 assert.doesNotMatch(styles, /saint-cursor-aura|--saint-pointer-(?:x|y|distance)/, "cursor-following glow styles must stay removed");
 assert.match(styles, /#view-home \.home-stage::before\s*\{\s*display:\s*none;/, "the Home background must not retain a stationary oval tint around the cursor glow");
 assert.doesNotMatch(styles, /\.electron-shell \.saint-cursor-aura\s*\{\s*display:\s*none;/, "Electron must keep the cursor glow inside Vigil's real window");
 assert.doesNotMatch(saintStageSource, /vigilCursorAura|screenX|screenY/, "the Home stage must not drive a second native aura window");
-assert.doesNotMatch(styles, /is-pointer-active \.saint-(?:geometry|orbit|particles|symbol)/, "portrait decorations must not react to cursor movement");
+assert.doesNotMatch(saintStageSource, /pointermove|is-pointer-active|data\.look|dataset\.look/, "the fixed portrait stage must not retain cursor-driven motion state");
 assert.match(
   styles,
-  /@media \(hover: none\), \(pointer: coarse\), \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.home-stage\.is-pointer-active \.saint-artifact,[\s\S]*?\.saint-artifact:hover:not\(:disabled\)[\s\S]*?transform: none;/,
+  /@media \(hover: none\), \(pointer: coarse\), \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.saint-artifact:hover:not\(:disabled\)[\s\S]*?transform: none;/,
   "reduced-motion and coarse-pointer users must not receive the saint artwork hover scale"
 );
 assert.match(styles, /#view-home \.saint-artifact:hover:not\(:disabled\),[\s\S]*?#view-home \.saint-artifact:focus-visible\s*\{[\s\S]*?transform:\s*scale\(1\.012\);/, "hovering the saint composition must enlarge it slightly without cursor-driven translation or rotation");
 assert.match(styles, /#view-home \.saint-artifact,[\s\S]*?#view-home \.saint-stage\[data-saint\] \.saint-artifact\s*\{[\s\S]*?width:\s*min\(720px, 100%\);/, "the patron composition must size from the usable stage instead of the full viewport");
-assert.match(styles, /\.saint-artifact:focus-visible\s*\{\s*outline:\s*none;/, "the saint button must not draw a rectangular focus artifact");
+assert.doesNotMatch(styles, /\.saint-artifact:focus-visible\s*\{\s*outline:\s*none;/, "the saint button must retain a visible keyboard focus indicator");
 assert.match(styles, /\.audio-desk\s*\{[\s\S]*?container:\s*audio-desk \/ inline-size;/, "the audio player must respond to its usable panel width");
 
 const audioMarkup = html.match(/<section id="view-audio"[\s\S]*?<div class="audio-control-bridge"/)?.[0] || "";

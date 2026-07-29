@@ -593,7 +593,9 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(DEFAULT_EXPLICIT_CONTEXTUAL_RULES.some((rule) => rule.markers.includes("uncensored")), true);
   assert.equal(DEFAULT_EXPLICIT_SEARCH_TERMS.includes("uncensored"), false);
   assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("uncensored"), false);
+  assert.equal(DEFAULT_ALWAYS_BANNED_URL_PATTERNS.includes("findmyhotkey.com"), true);
   assert.equal(DEFAULT_ALWAYS_BANNED_URL_PATTERNS.includes("webtoons.com"), true);
+  assert.equal(shouldBlockUrl(profileById(state, "normal"), "https://findmyhotkey.com/"), true);
   assert.equal(shouldBlockUrl(profileById(state, "normal"), "https://www.webtoons.com/en/"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=porn"), true);
   assert.equal(shouldBlockUrl(profile, "https://duckduckgo.com/?q=hooneytoons"), true);
@@ -742,6 +744,13 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   });
   assert.match(integrityPage, /Vigil found a saved-state integrity mismatch/);
   assert.match(integrityPage, /until the tamper alarm is cleared/);
+
+  const contentFilterPageDuringIntegrity = blockedPage({
+    url: new URL("http://127.0.0.1:8787/blocked?site=YouTube+Shorts&mode=integrity&kind=content-filter&policyId=integrity%3Atamper-lockdown"),
+    state: integrityState
+  });
+  assert.match(contentFilterPageDuringIntegrity, /A Vigil content filter blocks this page/);
+  assert.doesNotMatch(contentFilterPageDuringIntegrity, /saved-state integrity mismatch/);
 
   const mismatchedPolicyState = defaultState();
   const unrelatedFocusSession: Session = {
@@ -896,6 +905,28 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   if (staleWithoutTarget.status === 200) {
     assert.match(staleWithoutTarget.body, /data-vigil-block-page="1"/);
     assert.match(staleWithoutTarget.body, /href="about:blank"/);
+  }
+
+  const staleIntegrityContent = blockedPageResponse({
+    url: new URL("http://127.0.0.1:8787/blocked?site=YouTube+Shorts&mode=integrity&kind=content-filter&policyId=integrity%3Atamper-lockdown&back=https%3A%2F%2Fwww.youtube.com%2F"),
+    state
+  });
+  assert.deepEqual(staleIntegrityContent, { status: 302, location: "https://www.youtube.com/" });
+
+  const changedIntegrityState = defaultState();
+  changedIntegrityState.integrity.runtime.hardeningDriftDetectedAt = now.toISOString();
+  changedIntegrityState.integrity.runtime.hardeningDriftIssues = [{
+    id: "apple-content-filter",
+    detail: "Apple content filter recovery"
+  }];
+  const supersededIntegrityContent = blockedPageResponse({
+    url: new URL("http://127.0.0.1:8787/blocked?site=YouTube+Shorts&mode=integrity&kind=content-filter&policyId=integrity%3Atamper-lockdown&back=https%3A%2F%2Fwww.youtube.com%2F"),
+    state: changedIntegrityState
+  });
+  assert.equal(supersededIntegrityContent.status, 200);
+  if (supersededIntegrityContent.status === 200) {
+    assert.match(supersededIntegrityContent.body, /A Vigil content filter blocks this page/);
+    assert.doesNotMatch(supersededIntegrityContent.body, /saved-state integrity mismatch/);
   }
 
   const profile = state.profiles[0];
