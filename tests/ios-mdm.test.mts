@@ -299,6 +299,8 @@ import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
     assert.equal(deniedUrls.length, 500, "Apple's built-in web filter deny list must never exceed 500 URLs");
     assert.equal(deniedUrls.includes("https://www.google.com/search?q=porn"), true, "permanent explicit-search protection must have first priority");
     assert.equal(deniedUrls.includes("https://youtube.com/shorts"), true, "permanent default protection must have first priority");
+    assert.equal(deniedUrls.includes("https://honeytoon.com/"), true, "named explicit comic sites must be retained ahead of the bulk adult preload");
+    assert.equal(deniedUrls.includes("https://toongod.org/"), true, "known Toongod domains must be retained ahead of the bulk adult preload");
     assert.equal(deniedUrls.includes(policyUrls.at(-1)), true, "policy URLs must be retained ahead of user and bulk adult entries");
     assert.equal(deniedUrls.includes(userUrls[0]), true, "user-configured URLs must be retained ahead of the bulk adult preload");
     assert.equal(deniedUrls.includes("https://adult-priority-0.bulk.test/"), false, "bulk adult entries must yield when higher-priority protections fill Apple's limit");

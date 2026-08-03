@@ -12,6 +12,15 @@ const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const RELEASE_PATH = join(ROOT, "ios", "phone-release.json");
 const DEFAULT_SERVER = "http://127.0.0.1:8787";
+const PHONE_BLOCKLIST_RESOURCE = "adult-blocklist.sdi";
+const EXPLICIT_CONTENT_POLICY_RESOURCE = "ExplicitContentPolicy.json";
+const EXPLICIT_CONTENT_POLICY_PATH = join(ROOT, "ios", "VigilSocial", "VigilSocial", EXPLICIT_CONTENT_POLICY_RESOURCE);
+const PHONE_BLOCKLIST_MAGIC = Buffer.from("SNTLIDX1", "ascii");
+const PHONE_BLOCKLIST_HEADER_BYTES = PHONE_BLOCKLIST_MAGIC.byteLength + 4;
+const MAX_PHONE_BLOCKLIST_BYTES = 32 * 1024 * 1024;
+const DEFAULT_ADULT_BLOCKLIST_SOURCE_ID = "blocklistproject-porn";
+const MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS = 600_000;
+const MINIMUM_CUSTOM_ADULT_BLOCKLIST_DOMAINS = 1_000;
 const PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
 const LAUNCHER_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-social-launchers";
 const LEGACY_BUNDLE_PREFIX = "tech.caseline.sentinel.";
@@ -25,12 +34,14 @@ const OBSOLETE_LAUNCHER_PROFILE_PROBLEM = "The obsolete Vigil social-launcher pr
 const PHONE_SOURCE_FILES = [
   "scripts/apply-ios-usb-profile.mjs",
   "scripts/build-ios-social-app.mts",
+  "scripts/generate-ios-content-policy.mts",
   "scripts/ios-phone-suite.mjs",
   "scripts/watch-ios-usb-profile.mjs",
   "src/adultBlocklist.ts",
   "src/adultBlocklistPhoneArtifact.ts",
   "src/contentFilters.ts",
   "src/defaults.ts",
+  "src/explicitContentPolicy.ts",
   "src/grayscale.ts",
   "src/iosMdm.ts",
   "src/iosMdmModel.ts",
@@ -56,22 +67,26 @@ if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
 
 async function main(selectedCommand, selectedOptions) {
   if (selectedCommand === "help") return printHelp();
+  await configureRuntimeDataDirectory();
   if (selectedCommand === "fingerprint") {
     const fingerprint = await implementationFingerprint();
     console.log(selectedOptions.json ? JSON.stringify(fingerprint, null, 2) : fingerprint.hash);
     return;
   }
   if (selectedCommand === "bump") {
+    await requireReadyPhoneBlocklist("create a phone release");
     const release = await bumpRelease(selectedOptions.bump, selectedOptions.force);
     console.log(`Vigil phone release is ${release.version} (${release.build}).`);
     return;
   }
   if (selectedCommand === "audit") {
+    const blocklist = await requireReadyPhoneBlocklist("complete the phone audit");
     const { developerDir, toolEnvironment } = await prepareAuditToolchain();
     console.log(`Apple toolchain: ${developerDir}`);
     await buildRuntime();
     const audit = await auditFourPolicies(toolEnvironment);
     printPolicyAudit(audit);
+    printBlocklistReadiness(blocklist);
     return;
   }
   if (selectedCommand === "update") {
@@ -83,6 +98,12 @@ async function main(selectedCommand, selectedOptions) {
   const report = await phoneStatus(selectedOptions, device, toolEnvironment);
   printStatus(report);
   if (selectedCommand === "check" && report.problems.length) process.exitCode = 1;
+}
+
+async function configureRuntimeDataDirectory() {
+  if (process.env.VIGIL_DATA_DIR) return;
+  const blocklistPath = await currentBlocklistPath();
+  if (blocklistPath) process.env.VIGIL_DATA_DIR = dirname(blocklistPath);
 }
 
 export function parseArguments(args) {
@@ -169,6 +190,229 @@ async function currentBlocklistPath() {
   return "";
 }
 
+export function inspectPhoneBlocklistBytes(value, path = "") {
+  const bytes = Buffer.from(value);
+  const failed = (error) => ({
+    ready: false,
+    path,
+    domainCount: 0,
+    snapshotHash: "",
+    payloadSha256: "",
+    artifactSha256: sha256(bytes),
+    bytes: bytes.byteLength,
+    generatedAt: "",
+    source: null,
+    error
+  });
+  if (bytes.byteLength > MAX_PHONE_BLOCKLIST_BYTES) return failed("artifact exceeds the 32 MiB phone limit");
+  if (bytes.byteLength < PHONE_BLOCKLIST_HEADER_BYTES
+    || !bytes.subarray(0, PHONE_BLOCKLIST_MAGIC.byteLength).equals(PHONE_BLOCKLIST_MAGIC)) {
+    return failed("artifact has an invalid format signature");
+  }
+  const metadataLength = bytes.readUInt32LE(PHONE_BLOCKLIST_MAGIC.byteLength);
+  const payloadOffset = PHONE_BLOCKLIST_HEADER_BYTES + metadataLength;
+  if (metadataLength < 1 || payloadOffset > bytes.byteLength) return failed("artifact metadata is truncated");
+  let metadata;
+  try {
+    metadata = JSON.parse(bytes.subarray(PHONE_BLOCKLIST_HEADER_BYTES, payloadOffset).toString("utf8"));
+  } catch {
+    return failed("artifact metadata is invalid JSON");
+  }
+  const payload = bytes.subarray(payloadOffset);
+  const sourceId = String(metadata?.source?.id || "");
+  const minimumDomains = sourceId === DEFAULT_ADULT_BLOCKLIST_SOURCE_ID
+    ? MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS
+    : MINIMUM_CUSTOM_ADULT_BLOCKLIST_DOMAINS;
+  const metadataValid = metadata?.formatVersion === 1
+    && metadata?.encoding === "blocked-reversed-domain-front-coding-v1"
+    && metadata?.blockSize === 64
+    && Number.isInteger(metadata?.domainCount)
+    && metadata.domainCount >= minimumDomains
+    && metadata.domainCount <= 2_000_000
+    && metadata?.payloadBytes === payload.byteLength
+    && sourceId.length > 0
+    && String(metadata?.source?.label || "").length > 0
+    && String(metadata?.source?.license || "").length > 0
+    && Number.isFinite(Date.parse(String(metadata?.generatedAt || "")))
+    && /^[a-f0-9]{64}$/u.test(String(metadata?.snapshotHash || ""))
+    && /^[a-f0-9]{64}$/u.test(String(metadata?.payloadSha256 || ""));
+  if (!metadataValid) {
+    const countDetail = Number.isInteger(metadata?.domainCount) && metadata.domainCount < minimumDomains
+      ? `; ${minimumDomains} domains are required for ${sourceId || "the configured source"}`
+      : "";
+    return failed(`artifact metadata does not satisfy the phone format contract${countDetail}`);
+  }
+  const payloadSha256 = sha256(payload);
+  if (payloadSha256 !== String(metadata.payloadSha256).toLowerCase()) return failed("artifact payload hash does not match its metadata");
+  if (!validatePhoneBlocklistPayload(payload, metadata.domainCount, metadata.blockSize)) {
+    return failed("artifact payload rows do not match the declared domain count and ordering");
+  }
+  return {
+    ready: true,
+    path,
+    domainCount: metadata.domainCount,
+    snapshotHash: String(metadata.snapshotHash).toLowerCase(),
+    payloadSha256,
+    artifactSha256: sha256(bytes),
+    bytes: bytes.byteLength,
+    generatedAt: String(metadata.generatedAt || ""),
+    source: metadata.source && typeof metadata.source === "object" ? metadata.source : null,
+    error: ""
+  };
+}
+
+function validatePhoneBlocklistPayload(payload, expectedCount, blockSize) {
+  let cursor = 0;
+  let count = 0;
+  let previous = "";
+  let globallyPrevious = "";
+  while (cursor < payload.byteLength) {
+    if (cursor + 2 > payload.byteLength) return false;
+    const prefixLength = payload[cursor];
+    const suffixLength = payload[cursor + 1];
+    cursor += 2;
+    if (count % blockSize === 0) previous = "";
+    if ((count % blockSize === 0 && prefixLength !== 0)
+      || prefixLength > previous.length
+      || cursor + suffixLength > payload.byteLength) return false;
+    const domain = previous.slice(0, prefixLength) + payload.subarray(cursor, cursor + suffixLength).toString("ascii");
+    if (!/^[a-z0-9.-]+$/u.test(domain) || (globallyPrevious && globallyPrevious >= domain)) return false;
+    cursor += suffixLength;
+    count += 1;
+    previous = domain;
+    globallyPrevious = domain;
+    if (count > expectedCount) return false;
+  }
+  return cursor === payload.byteLength && count === expectedCount;
+}
+
+export async function phoneBlocklistReadiness(explicitPath = "") {
+  const path = explicitPath ? resolve(explicitPath) : await currentBlocklistPath();
+  if (!path) {
+    return {
+      ready: false,
+      path: "",
+      domainCount: 0,
+      snapshotHash: "",
+      payloadSha256: "",
+      artifactSha256: "",
+      bytes: 0,
+      generatedAt: "",
+      source: null,
+      error: "no current adult-blocklist.sdi artifact exists"
+    };
+  }
+  try {
+    return inspectPhoneBlocklistBytes(await readFile(path), path);
+  } catch (error) {
+    return {
+      ready: false,
+      path,
+      domainCount: 0,
+      snapshotHash: "",
+      payloadSha256: "",
+      artifactSha256: "",
+      bytes: 0,
+      generatedAt: "",
+      source: null,
+      error: `artifact could not be read: ${error?.message || error}`
+    };
+  }
+}
+
+export function blocklistReadinessProblems(readiness, serverState = null) {
+  const problems = [];
+  if (!readiness?.ready) {
+    problems.push(`The phone adult blocklist is unavailable: ${readiness?.error || "unknown artifact error"}.`);
+    return problems;
+  }
+  const state = serverState?.state;
+  const enabled = state?.settings?.adultBlocklistEnabled !== false;
+  const live = state?.adultBlocklist;
+  if (state && enabled) {
+    const activeDomainCount = Number(live?.activeDomainCount || 0);
+    const liveHash = String(live?.hash || "").toLowerCase();
+    if (activeDomainCount < 1 || !/^[a-f0-9]{64}$/u.test(liveHash)) {
+      problems.push("The live adult blocklist is enabled but has zero verified active domains.");
+    } else {
+      if (activeDomainCount !== readiness.domainCount) {
+        problems.push(`The phone artifact contains ${readiness.domainCount} domains, but live state reports ${activeDomainCount} active domains.`);
+      }
+      if (liveHash !== readiness.snapshotHash) {
+        problems.push("The phone adult blocklist artifact does not match the current live snapshot hash.");
+      }
+      const configuredSourceId = String(state?.settings?.adultBlocklistSourceId || DEFAULT_ADULT_BLOCKLIST_SOURCE_ID);
+      const liveSourceId = String(live?.source?.id || "");
+      const artifactSourceId = String(readiness?.source?.id || "");
+      const sourceFields = ["id", "label", "url", "homepage", "license"];
+      const artifactMatchesLiveSource = sourceFields.every((field) => (
+        String(readiness?.source?.[field] || "") === String(live?.source?.[field] || "")
+      ));
+      if (liveSourceId !== configuredSourceId || artifactSourceId !== configuredSourceId || !artifactMatchesLiveSource) {
+        problems.push(`The phone adult blocklist source does not match the configured source (${configuredSourceId}).`);
+      }
+    }
+  }
+  return problems;
+}
+
+export function deployedBlocklistProblems(receipt, readiness, requiredBundleIds = REQUIRED_APPS.map((app) => app.bundleId)) {
+  if (!readiness?.ready) return [];
+  if (!receipt) return ["No deployment receipt proves that the installed phone apps contain the verified adult blocklist."];
+  const deployed = receipt.blocklist;
+  if (!deployed?.artifactSha256 || !deployed?.snapshotHash || !Number.isInteger(deployed?.domainCount)) {
+    return ["The deployment receipt predates bundled adult-blocklist verification; rebuild and redeploy the phone apps."];
+  }
+  const problems = [];
+  if (deployed.artifactSha256 !== readiness.artifactSha256
+    || deployed.snapshotHash !== readiness.snapshotHash
+    || deployed.domainCount !== readiness.domainCount) {
+    problems.push("The adult blocklist verified in the last phone deployment does not match the current artifact.");
+  }
+  const receipts = Array.isArray(receipt.apps) ? receipt.apps : [];
+  const unverifiedApps = requiredBundleIds.filter((bundleId) => {
+    const app = receipts.find((item) => item?.bundleId === bundleId);
+    return app?.blocklistArtifactSha256 !== deployed.artifactSha256
+      || app?.blocklistDomainCount !== deployed.domainCount;
+  });
+  if (unverifiedApps.length) {
+    problems.push(`The deployment receipt does not prove the bundled blocklist for: ${unverifiedApps.join(", ")}.`);
+  }
+  return problems;
+}
+
+function deployedExplicitContentPolicyProblems(receipt, expected, requiredBundleIds = REQUIRED_APPS.map((app) => app.bundleId)) {
+  if (!receipt) return ["No deployment receipt proves that the installed phone apps contain the generated explicit-content policy."];
+  if (receipt.explicitContentPolicy?.sha256 !== expected.sha256) {
+    return ["The deployment receipt does not match the current generated explicit-content policy."];
+  }
+  const receipts = Array.isArray(receipt.apps) ? receipt.apps : [];
+  const unverifiedApps = requiredBundleIds.filter((bundleId) => {
+    const app = receipts.find((item) => item?.bundleId === bundleId);
+    return app?.explicitContentPolicySha256 !== expected.sha256;
+  });
+  return unverifiedApps.length
+    ? [`The deployment receipt does not prove the bundled explicit-content policy for: ${unverifiedApps.join(", ")}.`]
+    : [];
+}
+
+async function requireReadyPhoneBlocklist(purpose) {
+  const readiness = await phoneBlocklistReadiness();
+  if (!readiness.ready) {
+    throw new Error(`Cannot ${purpose}: ${readiness.error}. Refresh the adult blocklist first.`);
+  }
+  const statePath = join(dirname(readiness.path), "state.json");
+  let serverState;
+  try {
+    serverState = { state: JSON.parse(await readFile(statePath, "utf8")) };
+  } catch (error) {
+    throw new Error(`Cannot ${purpose}: ${statePath} could not be read to verify the artifact against current state (${error?.message || error}).`, { cause: error });
+  }
+  const problems = blocklistReadinessProblems(readiness, serverState);
+  if (problems.length) throw new Error(`Cannot ${purpose}: ${problems.join(" ")}`);
+  return readiness;
+}
+
 async function readRelease() {
   const release = JSON.parse(await readFile(RELEASE_PATH, "utf8"));
   if (release.schemaVersion !== 1 || !/^\d+\.\d+\.\d+$/.test(release.version) || !Number.isInteger(release.build) || release.build < 1) {
@@ -227,9 +471,11 @@ export function preservedPolicyReceipt(receipt) {
 }
 
 async function phoneStatus(selectedOptions, device, toolEnvironment) {
-  const [release, fingerprint] = await Promise.all([
+  const [release, fingerprint, blocklist, explicitContentPolicy] = await Promise.all([
     readRelease(),
-    implementationFingerprint()
+    implementationFingerprint(),
+    phoneBlocklistReadiness(),
+    expectedExplicitContentPolicy()
   ]);
   const [appsResult, profileVerification, serverState] = await Promise.all([
     devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment),
@@ -277,7 +523,10 @@ async function phoneStatus(selectedOptions, device, toolEnvironment) {
     receiptFingerprint: receipt?.policyFingerprint,
     livePolicyFingerprint
   }));
-  return { release, fingerprint, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
+  problems.push(...blocklistReadinessProblems(blocklist, serverState));
+  problems.push(...deployedBlocklistProblems(receipt, blocklist));
+  problems.push(...deployedExplicitContentPolicyProblems(receipt, explicitContentPolicy));
+  return { release, fingerprint, blocklist, explicitContentPolicy, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
 }
 
 function printStatus(report) {
@@ -297,6 +546,10 @@ function printStatus(report) {
   }
   if (report.receipt?.policyFingerprint) console.log(`Last deployed policy: ${report.receipt.policyFingerprint.slice(0, 12)}`);
   if (report.livePolicyFingerprint) console.log(`Current live policy: ${report.livePolicyFingerprint.slice(0, 12)} • ${report.policyGenerationSource}`);
+  printBlocklistReadiness(report.blocklist);
+  console.log(`Bundled explicit-content policy: ${report.explicitContentPolicy.sha256.slice(0, 12)} • ${report.explicitContentPolicy.bytes.toLocaleString("en-US")} bytes`);
+  const signing = signingCapabilitySummary(report.receipt?.signingVariant);
+  console.log(`Last deployed signing: ${signing.variant} • ${signing.mediaCapability}`);
   console.log(`Live policy source: ${report.serverState ? (report.serverState.state?.deviceControls?.ios?.enabled ? "enabled" : "disabled") : "server unavailable"}`);
   if (!report.problems.length) console.log("Status: current");
   else {
@@ -306,6 +559,7 @@ function printStatus(report) {
 }
 
 async function updatePhone(selectedOptions) {
+  await requireReadyPhoneBlocklist("update the phone");
   let release = await readRelease();
   const fingerprint = await implementationFingerprint();
   if (release.sourceFingerprint !== fingerprint.hash) {
@@ -362,13 +616,46 @@ async function updatePhone(selectedOptions) {
     policyFingerprint,
     policyArtifactHash,
     signingVariant: build.signingVariant,
-    apps: build.apps.map((app) => ({ name: app.name, bundleId: app.bundleId, sha256: app.sha256 })),
+    signingCapabilities: build.signingCapabilities,
+    blocklist: build.blocklist,
+    explicitContentPolicy: build.explicitContentPolicy,
+    apps: build.apps.map((app) => ({
+      name: app.name,
+      bundleId: app.bundleId,
+      sha256: app.sha256,
+      signingCapabilities: app.signingCapabilities,
+      blocklistArtifactSha256: app.blocklist.artifactSha256,
+      blocklistDomainCount: app.blocklist.domainCount,
+      explicitContentPolicySha256: app.explicitContentPolicy.sha256
+    })),
     deployedAt: new Date().toISOString(),
     rebooted: false
   });
   const report = await phoneStatus(selectedOptions, device, toolEnvironment);
   printStatus(report);
   if (report.problems.length) process.exitCode = 1;
+}
+
+function printBlocklistReadiness(readiness) {
+  if (!readiness?.ready) {
+    console.log(`Phone adult blocklist: NOT READY • ${readiness?.error || "unknown artifact error"}`);
+    return;
+  }
+  const source = readiness.source?.label || readiness.source?.id || "unknown source";
+  console.log(`Phone adult blocklist: ${readiness.domainCount.toLocaleString("en-US")} domains • ${readiness.snapshotHash.slice(0, 12)} snapshot • ${readiness.artifactSha256.slice(0, 12)} artifact • ${source}`);
+}
+
+export function signingCapabilitySummary(variant) {
+  if (variant === "full-capabilities") {
+    return { variant, mediaCapability: "Sensitive Content Analysis entitled (conceal unclassified media)" };
+  }
+  if (variant === "personal-team-conservative") {
+    return { variant, mediaCapability: "Sensitive Content Analysis unavailable (reveal unclassified media)" };
+  }
+  if (variant === "mixed-capabilities") {
+    return { variant, mediaCapability: "capabilities differ by app; inspect the deployment receipt" };
+  }
+  return { variant: "unknown", mediaCapability: "no verified signing-capability receipt" };
 }
 
 async function buildRuntime() {
@@ -458,9 +745,10 @@ async function buildPhoneApps(release, toolEnvironment = process.env) {
   const root = join(ROOT, "data", "ios-phone-build", `${release.version}-${release.build}`);
   const personalTeamEntitlements = join(ROOT, "ios", "Shared", "PersonalTeam.entitlements");
   await mkdir(root, { recursive: true });
-  const blocklistPath = await currentBlocklistPath();
-  if (!blocklistPath) throw new Error("The adult blocklist artifact is missing. Refresh it before a Release phone build.");
-  const environment = { ...toolEnvironment, VIGIL_PHONE_BLOCKLIST: blocklistPath };
+  const blocklist = await requireReadyPhoneBlocklist("build a Release phone app");
+  await runQuiet(process.execPath, [join(ROOT, "dist", "runtime", "scripts", "generate-ios-content-policy.mjs")]);
+  const explicitContentPolicy = await expectedExplicitContentPolicy();
+  const environment = { ...toolEnvironment, VIGIL_PHONE_BLOCKLIST: blocklist.path };
   let reducedEntitlements = false;
   const apps = [];
   for (const social of REQUIRED_APPS) {
@@ -501,9 +789,94 @@ async function buildPhoneApps(release, toolEnvironment = process.env) {
       ], { cwd: ROOT, env: environment });
     }
     const path = join(derived, "Build", "Products", "Release-iphoneos", "VigilSocial.app");
-    apps.push({ ...social, path, sha256: await hashAppBundle(path) });
+    const bundledBlocklist = await verifyBundledPhoneBlocklist(path, blocklist);
+    const bundledExplicitContentPolicy = await verifyBundledExplicitContentPolicy(path, explicitContentPolicy);
+    const signingCapabilities = await signedAppCapabilities(path);
+    if (!reducedEntitlements && !signingCapabilities.sensitiveContentAnalysis) {
+      throw new Error(`${social.name} built without the requested Sensitive Content Analysis entitlement; refusing to label it as a full-capability build.`);
+    }
+    apps.push({
+      ...social,
+      path,
+      blocklist: bundledBlocklist,
+      explicitContentPolicy: bundledExplicitContentPolicy,
+      signingCapabilities,
+      sha256: await hashAppBundle(path)
+    });
   }
-  return { apps, signingVariant: reducedEntitlements ? "personal-team-conservative" : "full-capabilities" };
+  const capableApps = apps.filter((app) => app.signingCapabilities.sensitiveContentAnalysis).length;
+  const signingVariant = capableApps === apps.length
+    ? "full-capabilities"
+    : capableApps === 0 ? "personal-team-conservative" : "mixed-capabilities";
+  return {
+    apps,
+    signingVariant,
+    signingCapabilities: Object.fromEntries(apps.map((app) => [app.id, app.signingCapabilities])),
+    explicitContentPolicy,
+    blocklist: {
+      domainCount: blocklist.domainCount,
+      snapshotHash: blocklist.snapshotHash,
+      artifactSha256: blocklist.artifactSha256,
+      bytes: blocklist.bytes,
+      source: blocklist.source
+    }
+  };
+}
+
+async function expectedExplicitContentPolicy() {
+  const bytes = await readFile(EXPLICIT_CONTENT_POLICY_PATH);
+  let policy;
+  try {
+    policy = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error(`${EXPLICIT_CONTENT_POLICY_PATH} is not valid JSON.`);
+  }
+  if (policy?.schemaVersion !== 1
+    || !Array.isArray(policy?.phrases)
+    || !Array.isArray(policy?.terms)
+    || !Array.isArray(policy?.contextualRules)) {
+    throw new Error(`${EXPLICIT_CONTENT_POLICY_PATH} does not satisfy the generated classifier policy contract.`);
+  }
+  return { sha256: sha256(bytes), bytes: bytes.byteLength };
+}
+
+async function verifyBundledExplicitContentPolicy(appPath, expected) {
+  const resourcePath = join(appPath, EXPLICIT_CONTENT_POLICY_RESOURCE);
+  if (!await isFile(resourcePath)) {
+    throw new Error(`${basename(appPath)} does not contain ${EXPLICIT_CONTENT_POLICY_RESOURCE}; refusing to ship classifier rules that are only present in the source fingerprint.`);
+  }
+  const bytes = await readFile(resourcePath);
+  const actual = { sha256: sha256(bytes), bytes: bytes.byteLength };
+  if (actual.sha256 !== expected.sha256 || actual.bytes !== expected.bytes) {
+    throw new Error(`${basename(appPath)} contains a stale or substituted ${EXPLICIT_CONTENT_POLICY_RESOURCE}.`);
+  }
+  return actual;
+}
+
+async function verifyBundledPhoneBlocklist(appPath, expected) {
+  const resourcePath = join(appPath, PHONE_BLOCKLIST_RESOURCE);
+  if (!await isFile(resourcePath)) {
+    throw new Error(`${basename(appPath)} does not contain ${PHONE_BLOCKLIST_RESOURCE}; refusing to ship a release whose fingerprint promises an unused blocklist.`);
+  }
+  const actual = await phoneBlocklistReadiness(resourcePath);
+  if (!actual.ready) throw new Error(`${basename(appPath)} contains an invalid ${PHONE_BLOCKLIST_RESOURCE}: ${actual.error}.`);
+  if (actual.artifactSha256 !== expected.artifactSha256
+    || actual.snapshotHash !== expected.snapshotHash
+    || actual.domainCount !== expected.domainCount) {
+    throw new Error(`${basename(appPath)} contains a stale or substituted ${PHONE_BLOCKLIST_RESOURCE}.`);
+  }
+  return actual;
+}
+
+async function signedAppCapabilities(appPath) {
+  const { stdout, stderr } = await execFileAsync("/usr/bin/codesign", ["-d", "--entitlements", ":-", appPath], {
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024
+  });
+  const entitlements = `${stdout || ""}\n${stderr || ""}`;
+  return {
+    sensitiveContentAnalysis: /<key>com\.apple\.developer\.sensitivecontentanalysis\.client<\/key>\s*<true\s*\/>/u.test(entitlements)
+  };
 }
 
 async function hashAppBundle(root) {

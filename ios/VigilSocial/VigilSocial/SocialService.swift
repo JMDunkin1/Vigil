@@ -142,6 +142,13 @@ enum SocialService: String, CaseIterable, Identifiable {
         }
     }
 
+    func isUnsupportedEmbeddedAuthentication(_ url: URL) -> Bool {
+        guard self == .youtube,
+              url.scheme?.lowercased() == "https",
+              url.port == nil || url.port == 443 else { return false }
+        return url.host?.lowercased() == "accounts.google.com"
+    }
+
     private static func host(_ host: String, matches domain: String) -> Bool {
         host == domain || host.hasSuffix(".\(domain)")
     }

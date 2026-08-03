@@ -1,0 +1,20 @@
+{
+  "generatedAt": "2026-08-01T21:23:26.307Z",
+  "storefront": "US",
+  "services": [
+    {
+      "name": "Instagram",
+      "appStoreId": "389801252",
+      "version": "440.0.0",
+      "artworkUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a1/54/7a/a1547ad4-8df4-46e5-c8cf-a89b3945fce7/Prod-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/1024x1024bb.png",
+      "sha256": "e989aeace89ccf190ca075b543083561374d2b93250da14214b864482ab083f1"
+    },
+    {
+      "name": "YouTube",
+      "appStoreId": "544007664",
+      "version": "21.30.5",
+      "artworkUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/f9/e4/bc/f9e4bc3e-77f8-cac8-b9c3-c94f3e11176d/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/1024x1024bb.png",
+      "sha256": "3f8a28a70e395e11f237590cbb1fd5a6c1fb8c076f282ebe8e06e68c95f7a7c5"
+    }
+  ]
+}

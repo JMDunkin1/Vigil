@@ -1,0 +1,86 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 60;
+	objects = {
+/* Begin PBXBuildFile section */
+		110000000000000000000001 = {isa = PBXBuildFile; fileRef = 210000000000000000000001; };
+		110000000000000000000002 = {isa = PBXBuildFile; fileRef = 210000000000000000000002; };
+		110000000000000000000003 = {isa = PBXBuildFile; fileRef = 210000000000000000000003; };
+		110000000000000000000004 = {isa = PBXBuildFile; fileRef = 210000000000000000000004; };
+		110000000000000000000005 = {isa = PBXBuildFile; fileRef = 210000000000000000000005; };
+		110000000000000000000006 = {isa = PBXBuildFile; fileRef = 210000000000000000000009; };
+		110000000000000000000007 = {isa = PBXBuildFile; fileRef = 21000000000000000000000C; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
+		110000000000000000000008 = {isa = PBXBuildFile; fileRef = 21000000000000000000000D; };
+/* End PBXBuildFile section */
+/* Begin PBXContainerItemProxy section */
+		310000000000000000000001 = {isa = PBXContainerItemProxy; containerPortal = 910000000000000000000001; proxyType = 1; remoteGlobalIDString = 610000000000000000000002; remoteInfo = VigilURLFilterControl; };
+/* End PBXContainerItemProxy section */
+/* Begin PBXCopyFilesBuildPhase section */
+		410000000000000000000007 = {isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = Extensions; dstSubfolderSpec = 1; files = (110000000000000000000007, ); name = "Embed Foundation Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXCopyFilesBuildPhase section */
+/* Begin PBXFileReference section */
+		210000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VigilURLFilterHostApp.swift; sourceTree = "<group>"; };
+		210000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VigilURLFilterConfiguration.swift; sourceTree = "<group>"; };
+		210000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VigilURLFilterControlProvider.swift; sourceTree = "<group>"; };
+		210000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLFilterPrefilterArtifact.swift; sourceTree = "<group>"; };
+		210000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneBlocklist.swift; sourceTree = "<group>"; };
+		210000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		210000000000000000000007 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VigilURLFilterHost.entitlements; sourceTree = "<group>"; };
+		210000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		210000000000000000000009 = {isa = PBXFileReference; lastKnownFileType = text.plist.xcprivacy; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		21000000000000000000000A = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = VigilURLFilterControl.entitlements; sourceTree = "<group>"; };
+		21000000000000000000000B = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VigilURLFilterHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		21000000000000000000000C = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VigilURLFilterControl.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		21000000000000000000000D = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLFilterVerdict.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+/* Begin PBXFrameworksBuildPhase section */
+		410000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		410000000000000000000004 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+/* Begin PBXGroup section */
+		510000000000000000000001 = {isa = PBXGroup; children = (510000000000000000000002, 510000000000000000000003, 510000000000000000000004, 510000000000000000000005, 510000000000000000000006, ); sourceTree = "<group>"; };
+		510000000000000000000002 = {isa = PBXGroup; path = VigilURLFilterHost; sourceTree = "<group>"; children = (210000000000000000000001, 210000000000000000000002, 210000000000000000000006, 210000000000000000000007, 210000000000000000000009, ); };
+		510000000000000000000003 = {isa = PBXGroup; path = VigilURLFilterControl; sourceTree = "<group>"; children = (210000000000000000000003, 210000000000000000000008, 21000000000000000000000A, ); };
+		510000000000000000000004 = {isa = PBXGroup; path = Shared; sourceTree = "<group>"; children = (210000000000000000000004, 21000000000000000000000D, ); };
+		510000000000000000000005 = {isa = PBXGroup; name = RepositoryShared; path = ../Shared; sourceTree = "<group>"; children = (210000000000000000000005, ); };
+		510000000000000000000006 = {isa = PBXGroup; name = Products; sourceTree = "<group>"; children = (21000000000000000000000B, 21000000000000000000000C, ); };
+/* End PBXGroup section */
+/* Begin PBXNativeTarget section */
+		610000000000000000000001 = {isa = PBXNativeTarget; buildConfigurationList = 810000000000000000000002; buildPhases = (410000000000000000000001, 410000000000000000000002, 410000000000000000000003, 410000000000000000000007, ); buildRules = (); dependencies = (710000000000000000000001, ); name = VigilURLFilterHost; productName = VigilURLFilterHost; productReference = 21000000000000000000000B; productType = "com.apple.product-type.application"; };
+		610000000000000000000002 = {isa = PBXNativeTarget; buildConfigurationList = 810000000000000000000003; buildPhases = (410000000000000000000005, 410000000000000000000004, 410000000000000000000006, 410000000000000000000008, ); buildRules = (); dependencies = (); name = VigilURLFilterControl; productName = VigilURLFilterControl; productReference = 21000000000000000000000C; productType = "com.apple.product-type.extensionkit-extension"; };
+/* End PBXNativeTarget section */
+/* Begin PBXProject section */
+		910000000000000000000001 = {isa = PBXProject; attributes = {BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2660; LastUpgradeCheck = 2660; TargetAttributes = {610000000000000000000001 = {CreatedOnToolsVersion = 26.6; }; 610000000000000000000002 = {CreatedOnToolsVersion = 26.6; }; }; }; buildConfigurationList = 810000000000000000000001; compatibilityVersion = "Xcode 15.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base, ); mainGroup = 510000000000000000000001; productRefGroup = 510000000000000000000006; projectDirPath = ""; projectRoot = ""; targets = (610000000000000000000001, 610000000000000000000002, ); };
+/* End PBXProject section */
+/* Begin PBXResourcesBuildPhase section */
+		410000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (110000000000000000000006, ); runOnlyForDeploymentPostprocessing = 0; };
+		410000000000000000000006 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXResourcesBuildPhase section */
+/* Begin PBXShellScriptBuildPhase section */
+		410000000000000000000008 = {isa = PBXShellScriptBuildPhase; alwaysOutOfDate = 1; buildActionMask = 2147483647; files = (); inputPaths = (); name = "Copy URL Filter Artifacts"; outputPaths = (); runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh; shellScript = "/bin/sh \"$SRCROOT/copy-url-filter-artifacts.sh\"\n"; };
+/* End PBXShellScriptBuildPhase section */
+/* Begin PBXSourcesBuildPhase section */
+		410000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (110000000000000000000001, 110000000000000000000002, 110000000000000000000008, ); runOnlyForDeploymentPostprocessing = 0; };
+		410000000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (110000000000000000000003, 110000000000000000000004, 110000000000000000000005, ); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXSourcesBuildPhase section */
+/* Begin PBXTargetDependency section */
+		710000000000000000000001 = {isa = PBXTargetDependency; target = 610000000000000000000002; targetProxy = 310000000000000000000001; };
+/* End PBXTargetDependency section */
+/* Begin XCBuildConfiguration section */
+		B10000000000000000000001 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = NO; DEBUG_INFORMATION_FORMAT = dwarf; ENABLE_TESTABILITY = YES; GCC_OPTIMIZATION_LEVEL = 0; ONLY_ACTIVE_ARCH = YES; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; }; name = Debug; };
+		B10000000000000000000002 = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; COPY_PHASE_STRIP = YES; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; ENABLE_NS_ASSERTIONS = NO; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O"; }; name = Release; };
+		B10000000000000000000003 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = VigilURLFilterHost/VigilURLFilterHost.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 3RY7A22U4L; INFOPLIST_FILE = VigilURLFilterHost/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 26.0; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = tech.caseline.vigil.url-filter; PRODUCT_MODULE_NAME = VigilURLFilterHost; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		B10000000000000000000004 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = VigilURLFilterHost/VigilURLFilterHost.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 3RY7A22U4L; INFOPLIST_FILE = VigilURLFilterHost/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 26.0; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = tech.caseline.vigil.url-filter; PRODUCT_MODULE_NAME = VigilURLFilterHost; PRODUCT_NAME = "$(TARGET_NAME)"; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SUPPORTS_MACCATALYST = NO; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		B10000000000000000000005 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = VigilURLFilterControl/VigilURLFilterControl.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 3RY7A22U4L; INFOPLIST_FILE = VigilURLFilterControl/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 26.0; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = tech.caseline.vigil.url-filter.control; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		B10000000000000000000006 = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_ENTITLEMENTS = VigilURLFilterControl/VigilURLFilterControl.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 3RY7A22U4L; INFOPLIST_FILE = VigilURLFilterControl/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 26.0; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = tech.caseline.vigil.url-filter.control; PRODUCT_NAME = "$(TARGET_NAME)"; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+/* End XCBuildConfiguration section */
+/* Begin XCConfigurationList section */
+		810000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (B10000000000000000000001, B10000000000000000000002, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		810000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (B10000000000000000000003, B10000000000000000000004, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		810000000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (B10000000000000000000005, B10000000000000000000006, ); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = 910000000000000000000001;
+}

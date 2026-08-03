@@ -23,6 +23,12 @@ const QUICK_TIMEOUT_MS = 20_000;
 const INSTALL_TIMEOUT_MS = 120_000;
 const RESTORE_TIMEOUT_MS = 60 * 60 * 1000;
 
+// Never use this standalone restore after an iPhone is supervised. Even a
+// pruned system/settings restore can clear the supervision state. Layout records
+// must instead be included in the one pre-supervision restore described in
+// AGENTS.md, followed immediately (while the phone remains locked) by no-erase
+// supervision and Vigil profile verification.
+
 const options = parseArgs(process.argv.slice(2));
 await ensurePymobiledevice3();
 const udid = await resolveUsbDevice(options.udid);
@@ -78,8 +84,9 @@ await validateLayoutRestorePayload(payloadRoot, udid, options.password);
 await ensureRestorePairing(udid, options.supervisorKeybag);
 await restoreLayoutPayload(udid, payloadRoot, options.password);
 console.log([
-  "Vigil restored the selected iPhone Home Screen layout payload.",
-  "Unlock the iPhone and give SpringBoard a moment to reload app placement and widgets.",
+  "Vigil staged the selected iPhone Home Screen layout payload.",
+  "The restore intentionally deferred its reboot so Vigil and companion apps can be verified first.",
+  "Restart the iPhone once after all phone configuration work is complete to load the restored layout.",
   `Payload: ${payloadRoot}`
 ].join("\n"));
 
@@ -228,21 +235,55 @@ print(json.dumps({"entries": entries, "files": sorted(copied)}))
 }
 
 async function restoreLayoutPayload(udid, payloadRoot, password = "") {
-  await runPymobiledevice3([
-    "--reconnect",
-    "backup2",
-    "restore",
-    "--udid",
-    udid,
-    "--system",
-    "--settings",
-    "--no-remove",
-    "--skip-apps",
-    "--source",
-    udid,
-    ...passwordArgs(password),
-    payloadRoot
-  ], RESTORE_TIMEOUT_MS);
+  const script = `
+import asyncio
+import os
+import sys
+
+from pymobiledevice3.lockdown import create_using_usbmux
+from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service
+
+udid = sys.argv[1]
+payload_root = sys.argv[2]
+password = os.environ.get("PYIOSBACKUP_PASSWORD", "")
+
+async def main():
+    lockdown = await create_using_usbmux(serial=udid, autopair=True)
+    backup = Mobilebackup2Service(lockdown)
+
+    # Supervised pairing responses on current iOS can omit EscrowBag. The
+    # unlocked device still authorizes MobileBackup2 through that verified
+    # supervised session. Do not replace it with repeated interactive trust
+    # pairings: that can invalidate the supervisor pairing without producing
+    # the escrow token. This is intentionally the same service with only its
+    # optional StartService escrow attachment disabled.
+    backup._include_escrow_bag = False
+    try:
+        async with backup:
+            await backup.restore(
+                backup_directory=payload_root,
+                system=True,
+                reboot=False,
+                copy=True,
+                settings=True,
+                remove=False,
+                password=password,
+                source=udid,
+                skip_apps=True,
+            )
+    finally:
+        await lockdown.close()
+
+asyncio.run(main())
+`;
+  await execFileAsync(PYIOSBACKUP_PYTHON_PATH, ["-c", script, udid, payloadRoot], {
+    timeout: RESTORE_TIMEOUT_MS,
+    maxBuffer: 4 * 1024 * 1024,
+    env: {
+      ...process.env,
+      PYIOSBACKUP_PASSWORD: password
+    }
+  });
 }
 
 async function validateLayoutRestorePayload(payloadRoot, udid, password = "") {
@@ -332,10 +373,6 @@ async function listUsbDevices() {
   const { stdout } = await runPymobiledevice3(["usbmux", "list", "--usb"], QUICK_TIMEOUT_MS);
   const devices = JSON.parse(stdout.trim() || "[]");
   return Array.isArray(devices) ? devices : [];
-}
-
-function passwordArgs(password = "") {
-  return password ? ["--password", password] : [];
 }
 
 async function runPymobiledevice3(args, timeout) {

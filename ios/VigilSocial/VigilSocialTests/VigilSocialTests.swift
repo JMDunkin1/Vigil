@@ -1764,13 +1764,38 @@ final class VigilSocialTests: XCTestCase {
     }
 
     func testConservativeTextClassifierStillChecksBoundedTextWhenPageIsLong() async {
-        let classifier = ConservativePageTextClassifier()
+        let policy = ExplicitContentTextPolicy.load()
+        XCTAssertNotNil(policy, "The generated explicit-content policy must be bundled with the app target")
+        let classifier = ConservativePageTextClassifier(policy: policy)
         let truncated = await classifier.classify(pageText: "ordinary page", wasTruncated: true)
         let explicit = await classifier.classify(pageText: "contains explicit sexual content", wasTruncated: false)
+        let blockedBrand = await classifier.classify(pageText: "Continue reading on ToonGod", wasTruncated: false)
+        let contextual = await classifier.classify(pageText: "A mature webtoon series", wasTruncated: false)
         let ordinary = await classifier.classify(pageText: "ordinary page", wasTruncated: false)
+        let unrelatedAdult = await classifier.classify(pageText: "Adult learning and professional development", wasTruncated: false)
         XCTAssertEqual(truncated, .safe)
         XCTAssertEqual(explicit, .sensitive)
+        XCTAssertEqual(blockedBrand, .sensitive)
+        XCTAssertEqual(contextual, .sensitive)
         XCTAssertEqual(ordinary, .safe)
+        XCTAssertEqual(unrelatedAdult, .safe)
+    }
+
+    func testTextClassifierFailsClosedWhenGeneratedPolicyIsUnavailableOrIncomplete() async {
+        let missing = ConservativePageTextClassifier(policy: nil)
+        let incompletePolicy = ExplicitContentTextPolicy(
+            schemaVersion: ExplicitContentTextPolicy.currentSchemaVersion,
+            terms: ["porn"],
+            phrases: ["explicit sexual content"],
+            contextualRules: []
+        )
+
+        XCTAssertFalse(incompletePolicy.isUsable)
+        let missingVerdict = await missing.classify(pageText: "ordinary page", wasTruncated: false)
+        let incompleteVerdict = await ConservativePageTextClassifier(policy: incompletePolicy)
+            .classify(pageText: "ordinary page", wasTruncated: false)
+        XCTAssertEqual(missingVerdict, .unknown)
+        XCTAssertEqual(incompleteVerdict, .unknown)
     }
 
     func testInjectedMediaClassifierCanBeUsedWithoutAProductionModel() async {
@@ -1829,6 +1854,12 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(SocialService.instagram.isCanonicalAppHost("help.instagram.com"))
         XCTAssertTrue(SocialService.youtube.isCanonicalAppHost("m.youtube.com"))
         XCTAssertFalse(SocialService.youtube.isCanonicalAppHost("accounts.google.com"))
+        XCTAssertTrue(SocialService.youtube.isUnsupportedEmbeddedAuthentication(
+            try XCTUnwrap(URL(string: "https://accounts.google.com/ServiceLogin"))
+        ))
+        XCTAssertFalse(SocialService.youtube.isUnsupportedEmbeddedAuthentication(
+            try XCTUnwrap(URL(string: "https://m.youtube.com/signin"))
+        ))
     }
 
     func testEmbeddedNavigationRestoresRequiredServiceFramesWithoutBecomingABrowser() throws {
@@ -2349,9 +2380,7 @@ final class VigilSocialTests: XCTestCase {
         guard case .advisory = SocialService.instagram.auxiliaryPageHealth(for: facebook) else {
             return XCTFail("Facebook authorization must remain usable outside the loading overlay")
         }
-        guard case .advisory = SocialService.youtube.auxiliaryPageHealth(for: google) else {
-            return XCTFail("Google authorization must remain usable outside the loading overlay")
-        }
+        XCTAssertTrue(SocialService.youtube.isUnsupportedEmbeddedAuthentication(google))
         XCTAssertNil(SocialService.youtube.auxiliaryPageHealth(
             for: try XCTUnwrap(URL(string: "https://m.youtube.com/"))
         ))

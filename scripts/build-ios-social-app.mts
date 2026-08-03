@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDirectRun } from "../src/directRun.js";
+import { assertGeneratedIosContentPolicyCurrent } from "./generate-ios-content-policy.mjs";
 
 const project = "ios/VigilSocial/VigilSocial.xcodeproj";
 const valueOptions = new Set(["service", "configuration", "destination", "derived-data", "version", "build", "unclassified-media-policy"]);
@@ -125,6 +126,7 @@ async function main(): Promise<void> {
     process.stdout.write("Usage: npm run ios:social:build -- <instagram|youtube> [--configuration Debug|Release] [--destination value] [--derived-data path] [--version x.y.z] [--build number] [--unclassified-media-policy conceal|reveal-unclassified] [--unsigned]\n");
     return;
   }
+  await assertGeneratedIosContentPolicyCurrent();
   await run("xcodebuild", buildArguments(argv));
 }
 

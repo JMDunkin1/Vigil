@@ -17,16 +17,28 @@ npm run agent:update
 ```
 Your job is to help human flourishing by helping the user update and develop this app without lessening the meaningful, purpose-built restrictions.
 
-## iPhone supervision must finish the layout restore
+## iPhone supervision must preserve the layout in the same restore
 
-`scripts/supervise-ios-preserving-layout.mjs` temporarily restores two setup-state
-files before supervision. During that temporary phase the phone can appear to
-have lost its MDM profiles, Home Screen folders, or app layout. That phase is
-never a successful stopping point.
+The live-proven no-erase sequence for an already activated iPhone is:
 
-If supervision succeeds or a command times out after the tiny setup-state
-restore, do not start a new enrollment and do not declare success. Resume with
-the same verified checkpoint and persistent supervisor keybag, complete the full
-checkpoint restore, verify/reapply supervision if the restore cleared it, pair
-with the supervisor keybag, and only then apply the Vigil profile. Never ask the
-user to manually rebuild the Home Screen layout while that checkpoint exists.
+1. Deep-validate the existing checkpoint and its Home Screen records.
+2. While the phone is unlocked, create and save a normal trusted pairing record
+   that contains an `EscrowBag`. Keep the persistent Vigil supervisor keybag.
+3. Build one pruned restore payload containing both setup-state records and all
+   verified SpringBoard/Home Screen/widget layout records from that checkpoint.
+4. Restore that combined payload once. After the phone reconnects, **do not ask
+   the user to unlock it**: unlocking can regenerate the ordinary cloud
+   configuration before supervision is applied.
+5. Using the escrow-backed pairing session, wait for
+   `profile cloud-configuration` to return `null`, then immediately run
+   no-erase supervision with the same Vigil keybag.
+6. Verify `IsSupervised=true`, pair with the supervisor keybag, install the
+   signed non-removable Vigil profile, verify the exact live policy fingerprint,
+   and launch-test both Vigil companion apps. Only then may success be reported.
+
+Do not restore the full checkpoint after supervision: a `backup2 restore
+--system` of the checkpoint clears supervision and recreates the failure loop.
+Do not run the standalone Home Screen restore on a supervised phone for the same
+reason. Never start a new enrollment, repeat a restore, or ask the user to
+rebuild the Home Screen while the verified checkpoint exists. Find My may be
+turned back on only after every device-state check has passed.

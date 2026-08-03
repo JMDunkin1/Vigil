@@ -15,6 +15,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private let loadInitialPages: Bool
     private let mediaClassifier: any MediaSafetyClassifying
     private let textClassifier: any PageTextSafetyClassifying
+    private let phoneBlocklist: PhoneBlocklistIndex?
     private let unclassifiedMediaPolicy: UnclassifiedMediaPolicy
     private var webViews: [SocialService: WKWebView] = [:]
     private var serviceByWebView: [ObjectIdentifier: SocialService] = [:]
@@ -59,6 +60,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.loadInitialPages = loadInitialPages
         self.mediaClassifier = mediaClassifier
         self.textClassifier = textClassifier
+        self.phoneBlocklist = try? PhoneBlocklistIndex.loadBundled(bundle: bundle)
         self.unclassifiedMediaPolicy = unclassifiedMediaPolicy ?? UnclassifiedMediaPolicy(bundle: bundle)
         self.mediaClassificationDeadlineNanoseconds = max(1, mediaClassificationDeadlineNanoseconds)
         super.init()
@@ -746,6 +748,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             || detail.localizedCaseInsensitiveContains("signed out")
     }
 
+    private func isBlockedByPhoneBlocklist(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https", let host = url.host else { return false }
+        return phoneBlocklist?.matchingDomain(for: host) != nil
+    }
+
     static func validatedPopupRequest(
         _ request: URLRequest,
         for service: SocialService
@@ -908,6 +915,13 @@ extension SocialWebViewStore: WKNavigationDelegate {
             return
         }
 
+        if isBlockedByPhoneBlocklist(url) {
+            health[service] = .unsupported("Vigil blocked this site using the protected phone blocklist.")
+            setSurface(.unknown, for: service)
+            decisionHandler(.cancel, preferences)
+            return
+        }
+
         preferences.preferredContentMode = .mobile
 
         if navigationAction.targetFrame?.isMainFrame == false {
@@ -916,6 +930,14 @@ extension SocialWebViewStore: WKNavigationDelegate {
         }
 
         guard service.allowsNavigation(to: url) else {
+            decisionHandler(.cancel, preferences)
+            return
+        }
+        if service.isUnsupportedEmbeddedAuthentication(url) {
+            health[service] = .unsupported(
+                "Google does not permit YouTube account sign-in inside an embedded web view. YouTube remains available here while signed out."
+            )
+            setSurface(.unknown, for: service)
             decisionHandler(.cancel, preferences)
             return
         }

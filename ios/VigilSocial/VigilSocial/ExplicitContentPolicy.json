@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "terms": [
+    "adultfriendfinder",
+    "brazzers",
+    "cam4",
+    "chaturbate",
+    "fansly",
+    "gonewild",
+    "hentai",
+    "honeytoon",
+    "honeytoons",
+    "hooneytoon",
+    "hooneytoons",
+    "mawha",
+    "nsfw",
+    "onlyfans",
+    "porn",
+    "pornhub",
+    "porno",
+    "redtube",
+    "rule34",
+    "spankbang",
+    "stripchat",
+    "toongod",
+    "xhamster",
+    "xnxx",
+    "xvideos",
+    "xxx",
+    "youporn"
+  ],
+  "phrases": [
+    "explicit sexual content",
+    "hardcore pornography",
+    "nude photos",
+    "nude videos",
+    "pornographic content",
+    "sex videos",
+    "xxx videos"
+  ],
+  "contextualRules": [
+    {
+      "id": "explicit-comics",
+      "contexts": [
+        "manhua",
+        "manhwa",
+        "mawha",
+        "webtoon",
+        "webtoons"
+      ],
+      "markers": [
+        "adult",
+        "hentai",
+        "lewd",
+        "mature",
+        "nsfw",
+        "porn",
+        "uncensored"
+      ],
+      "maximumDistanceCharacters": 120
+    }
+  ]
+}

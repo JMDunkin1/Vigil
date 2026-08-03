@@ -34,9 +34,11 @@ assert.doesNotMatch(apply, /create-keybag/u);
 assert.doesNotMatch(apply, /["']supervise["']/u);
 
 assert.match(restore, /--yes-restore-layout/u);
-assert.match(restore, /backup2",\s*"restore"/u);
-assert.match(restore, /"--no-remove"/u);
-assert.match(restore, /"--skip-apps"/u);
+assert.match(restore, /Mobilebackup2Service/u);
+assert.match(restore, /backup\._include_escrow_bag = False/u);
+assert.match(restore, /reboot=False/u);
+assert.match(restore, /remove=False/u);
+assert.match(restore, /skip_apps=True/u);
 assert.match(restore, /pair-supervised/u);
 assert.match(
   restore,

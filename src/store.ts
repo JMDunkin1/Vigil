@@ -1273,7 +1273,10 @@ export function sanitizeSoftBlockProfile(profile: Profile): Profile {
       ? profile.description
       : "Blocks explicit sites and non-social short-form surfaces while leaving regular apps usable.",
     blockedApps: [],
-    blockedSites: (profile.blockedSites || []).filter((site) => !isInstagramSiteTarget(site) && !isRedditSiteTarget(site)),
+    blockedSites: uniqueList([
+      ...(profile.blockedSites || []).filter((site) => !isInstagramSiteTarget(site) && !isRedditSiteTarget(site)),
+      ...DEFAULT_EXPLICIT_BLOCKED_SITES
+    ]),
     blockedUrlPatterns,
     phoneAppBlocking: false,
     hostsUrlPatternBlocking: false

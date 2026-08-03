@@ -20,6 +20,23 @@ export function policyFreshnessProblems(options?: {
 }): string[];
 export function preservedPolicyReceipt(receipt: unknown): { policyFingerprint: string; policyArtifactHash: string };
 export function removalPasswordFromProfile(profile: unknown): string;
+export interface PhoneBlocklistReadiness {
+  ready: boolean;
+  path: string;
+  domainCount: number;
+  snapshotHash: string;
+  payloadSha256: string;
+  artifactSha256: string;
+  bytes: number;
+  generatedAt: string;
+  source: { id?: string; label?: string; url?: string; homepage?: string; license?: string } | null;
+  error: string;
+}
+export function inspectPhoneBlocklistBytes(value: Uint8Array, path?: string): PhoneBlocklistReadiness;
+export function phoneBlocklistReadiness(explicitPath?: string): Promise<PhoneBlocklistReadiness>;
+export function blocklistReadinessProblems(readiness: PhoneBlocklistReadiness, serverState?: unknown): string[];
+export function deployedBlocklistProblems(receipt: unknown, readiness: PhoneBlocklistReadiness, requiredBundleIds?: string[]): string[];
+export function signingCapabilitySummary(variant: unknown): { variant: string; mediaCapability: string };
 export function implementationFingerprint(): Promise<{
   hash: string;
   files: Array<{ path: string; bytes: number; sha256: string }>;

@@ -42,14 +42,20 @@ const PRE_SUPERVISION_RESTORE_ENTRIES = [
 ];
 const PRE_SUPERVISION_RESTORE_FILE_LABELS = PRE_SUPERVISION_RESTORE_ENTRIES.map((entry) => `${entry.domain}/${entry.relativePath}`);
 
-// SAFETY/RECOVERY INVARIANT:
-// restorePreSupervisionSetupState() intentionally leaves the phone in a
-// temporary state where MDM profiles and the Home Screen layout may appear
-// absent. Once that call begins, supervision alone is not completion. The same
-// verified checkpoint must be fully restored before Vigil is applied or success
-// is reported. If a probe times out after supervision, resume at
-// restoreCheckpoint(); never restart enrollment or ask the user to rebuild the
-// layout manually.
+// SAFETY/RECOVERY INVARIANT (live-proven on iOS 27, 2026-08-01):
+// A system/settings backup restore performed *after* no-erase supervision clears
+// supervision. Do not fix that by looping another full restore and supervision.
+// The safe flow is a single pre-supervision pruned restore containing setup state
+// AND the verified Home Screen records, made with a trusted pairing record whose
+// EscrowBag was saved before the restore. On reconnect, keep the phone locked,
+// wait for cloud-configuration to become null through that escrow session, and
+// supervise immediately. Then verify IsSupervised, pair-supervised, apply the
+// signed Vigil profile, and launch-test both companion apps. See AGENTS.md.
+//
+// IMPORTANT: the executable sequence below still contains the older two-restore
+// implementation and must be refactored to the invariant above before it is used
+// on another unsupervised phone. This warning is intentional: failing closed is
+// safer than changing the user's layout or clearing supervision again.
 const options = parseArgs(process.argv.slice(2));
 if (!options.confirm) {
   throw new Error([
@@ -74,6 +80,8 @@ if (isSupervisedCloud(initialCloud)) {
   if (!options.skipApplyProfile) await applyVigilProfile(udid, await requireSupervisorKeybag(options.supervisorKeybag));
   process.exit(0);
 }
+
+disableLegacyTwoRestoreEnrollment();
 
 await ensurePyiosbackupPython();
 const checkpointRoot = options.existingCheckpoint
@@ -686,4 +694,12 @@ function formatGib(bytes) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function disableLegacyTwoRestoreEnrollment() {
+  throw new Error([
+    "The legacy two-restore enrollment path is disabled because a post-supervision system restore clears supervision.",
+    "Refactor this command to the single combined pre-supervision restore documented in AGENTS.md before using it on an unsupervised iPhone.",
+    "No backup, restore, supervision, or profile mutation was started."
+  ].join("\n"));
 }

@@ -5,6 +5,9 @@ import { join, resolve } from "node:path";
 
 import {
   incrementVersion,
+  inspectPhoneBlocklistBytes,
+  blocklistReadinessProblems,
+  deployedBlocklistProblems,
   iosSdkSupportsDevice,
   isLegacyPhoneBundleIdentifier,
   isPhoneImplementationFile,
@@ -13,6 +16,7 @@ import {
   preservedPolicyReceipt,
   removalPasswordFromProfile
 } from "../scripts/ios-phone-suite.mjs";
+import { buildPhoneBlocklistArtifact } from "../src/adultBlocklistPhoneArtifact.js";
 
 const projectRoot = existsSync(join(process.cwd(), "scripts", "ios-phone-suite.mjs"))
   ? process.cwd()
@@ -51,6 +55,8 @@ assert.match(
   /"src\/iosProfiles\.ts"/u,
   "the phone suite must fingerprint the profile generator it deploys and audits"
 );
+assert.match(phoneSuiteSource.slice(phoneSourceFilesStart, phoneSourceFilesEnd), /"scripts\/generate-ios-content-policy\.mts"/u);
+assert.match(phoneSuiteSource.slice(phoneSourceFilesStart, phoneSourceFilesEnd), /"src\/explicitContentPolicy\.ts"/u);
 
 const preparePhoneStart = phoneSuiteSource.indexOf("async function preparePhoneToolchain(requested)");
 const preparePhoneEnd = phoneSuiteSource.indexOf("export function iosSdkSupportsDevice", preparePhoneStart);
@@ -137,6 +143,13 @@ assert.match(
   /CODE_SIGN_ENTITLEMENTS=\$\{personalTeamEntitlements\}[\s\S]*?VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified/u,
   "Personal Team fallback builds must explicitly reveal media that SCA cannot classify"
 );
+assert.match(
+  buildPhoneAppsSource,
+  /verifyBundledPhoneBlocklist\(path, blocklist\)[\s\S]*?verifyBundledExplicitContentPolicy\(path, explicitContentPolicy\)/u,
+  "Release builds must verify both generated enforcement artifacts inside every app bundle"
+);
+assert.match(phoneSuiteSource, /app\.blocklist\.artifactSha256/u);
+assert.match(phoneSuiteSource, /app\.explicitContentPolicy\.sha256/u);
 assert.match(
   phoneSuiteSource,
   /if \(\(obsoleteBeforeUpdate\.length \|\| obsoleteLauncherBeforeUpdate\) && !selectedOptions\.replaceLegacy\)[\s\S]*?Re-run with --replace-legacy/u,
@@ -231,3 +244,66 @@ assert.deepEqual(preservedPolicyReceipt({
   policyArtifactHash: "prior-artifact"
 });
 assert.deepEqual(preservedPolicyReceipt(null), { policyFingerprint: "", policyArtifactHash: "" });
+
+const testSource = {
+  id: "custom-test",
+  label: "Custom test source",
+  url: "https://example.test/list.txt",
+  homepage: "https://example.test/",
+  license: "test-only"
+};
+const testBlocklist = buildPhoneBlocklistArtifact({
+  domains: Array.from({ length: 1_000 }, (_, index) => `blocked-${index}.example.test`),
+  snapshotHash: "c".repeat(64),
+  generatedAt: "2026-08-01T00:00:00.000Z",
+  source: testSource
+});
+const readyBlocklist = inspectPhoneBlocklistBytes(testBlocklist.bytes, "/tmp/adult-blocklist.sdi");
+assert.equal(readyBlocklist.ready, true);
+assert.equal(readyBlocklist.domainCount, 1_000);
+assert.equal(readyBlocklist.snapshotHash, "c".repeat(64));
+assert.equal(readyBlocklist.source?.id, "custom-test");
+
+const undersizedDefaultBlocklist = buildPhoneBlocklistArtifact({
+  domains: ["blocked.example.test"],
+  snapshotHash: "d".repeat(64),
+  generatedAt: "2026-08-01T00:00:00.000Z",
+  source: { ...testSource, id: "blocklistproject-porn" }
+});
+const undersizedDefaultReadiness = inspectPhoneBlocklistBytes(undersizedDefaultBlocklist.bytes);
+assert.equal(undersizedDefaultReadiness.ready, false);
+assert.match(undersizedDefaultReadiness.error, /600000 domains are required/u);
+assert.equal(inspectPhoneBlocklistBytes(Buffer.from("not-an-index")).ready, false);
+
+const matchingLiveState = {
+  state: {
+    settings: { adultBlocklistEnabled: true, adultBlocklistSourceId: "custom-test" },
+    adultBlocklist: {
+      activeDomainCount: 1_000,
+      hash: "c".repeat(64),
+      source: testSource
+    }
+  }
+};
+assert.deepEqual(blocklistReadinessProblems(readyBlocklist, matchingLiveState), []);
+assert.match(
+  blocklistReadinessProblems(readyBlocklist, {
+    state: { settings: { adultBlocklistEnabled: true }, adultBlocklist: { activeDomainCount: 0, hash: "", source: null } }
+  }).join("\n"),
+  /zero verified active domains/u
+);
+assert.deepEqual(deployedBlocklistProblems(null, readyBlocklist, ["app.one"]), [
+  "No deployment receipt proves that the installed phone apps contain the verified adult blocklist."
+]);
+assert.deepEqual(deployedBlocklistProblems({
+  blocklist: {
+    artifactSha256: readyBlocklist.artifactSha256,
+    snapshotHash: readyBlocklist.snapshotHash,
+    domainCount: readyBlocklist.domainCount
+  },
+  apps: [{
+    bundleId: "app.one",
+    blocklistArtifactSha256: readyBlocklist.artifactSha256,
+    blocklistDomainCount: readyBlocklist.domainCount
+  }]
+}, readyBlocklist, ["app.one"]), []);

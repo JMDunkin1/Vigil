@@ -3,6 +3,7 @@ import {
   APP_NAME,
   BRICK_MODE_PROFILE_ID,
   DEFAULT_ALWAYS_BANNED_URL_PATTERNS,
+  DEFAULT_EXPLICIT_BLOCKED_SITES,
   DEFAULT_EXPLICIT_SEARCH_TERMS,
   DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS,
   DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
@@ -374,7 +375,7 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
   const permanentDeniedUrls = urlsFromPatterns([
     ...DEFAULT_EXPLICIT_SEARCH_TERMS,
     ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS
-  ]);
+  ]).concat(urlsFromSiteTargets(DEFAULT_EXPLICIT_BLOCKED_SITES));
   const policyDeniedUrls = [
     ...urlsFromSiteTargets(activeLimitSites),
     ...urlsFromSiteTargets(profileBlockedSites),

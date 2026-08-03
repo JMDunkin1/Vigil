@@ -7,7 +7,7 @@ import { appleContentFilterStatusFromRecord } from "../src/appleContentFilter.js
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
 import { blockedPageDisplayLabel, managedFilterAllowsVigilPages, safeExternalPageUrl } from "../src/blockedPageUrl.js";
 import { contentFilterEnabled, matchContentFilterUrl } from "../src/contentFilters.js";
-import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_CONTEXTUAL_RULES, DEFAULT_EXPLICIT_SEARCH_TERMS, DEFAULT_EXPLICIT_URL_PATTERNS, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_CONTEXTUAL_RULES, DEFAULT_EXPLICIT_SEARCH_TERMS, DEFAULT_EXPLICIT_URL_PATTERNS, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../src/distanceKey.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { buildHostsBlock, managedBlockDomains } from "../src/hardening.js";
@@ -1095,7 +1095,10 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     blockedUrlPatterns: ["instagram.com/explore", "instagram.com/reels", "reddit.com", "reddit.com/", "https://reddit.com/", "redd.it/"]
   });
   assert.deepEqual(migratedSoftProfile.blockedApps, []);
-  assert.deepEqual(migratedSoftProfile.blockedSites, ["pornhub.com"]);
+  assert.equal(migratedSoftProfile.blockedSites.length, DEFAULT_EXPLICIT_BLOCKED_SITES.length);
+  assert.equal(DEFAULT_EXPLICIT_BLOCKED_SITES.every((site) => migratedSoftProfile.blockedSites.includes(site)), true);
+  assert.equal(migratedSoftProfile.blockedSites.includes("instagram.com"), false);
+  assert.equal(migratedSoftProfile.blockedSites.includes("reddit.com"), false);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("instagram.com/explore"), false);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("reddit.com"), false);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("reddit.com/"), false);

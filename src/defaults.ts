@@ -277,6 +277,12 @@ export const DEFAULT_BLOCKED_SITES = [
 ];
 
 export const DEFAULT_EXPLICIT_BLOCKED_SITES = [
+  "honeytoon.com",
+  "toongod.app",
+  "toongod.cc",
+  "toongod.com.co",
+  "toongod.guru",
+  "toongod.org",
   "pornhub.com",
   "xvideos.com",
   "xnxx.com",
@@ -318,7 +324,7 @@ export const DEFAULT_EXPLICIT_SEARCH_TERMS = [
   "18-plus"
 ];
 
-const DEFAULT_EXPLICIT_COMIC_SITE_TERMS = [
+export const DEFAULT_EXPLICIT_COMIC_SITE_TERMS = [
   "honeytoon",
   "honeytoons",
   "hooneytoon",

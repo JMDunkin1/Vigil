@@ -23,6 +23,8 @@ const normal = state.profiles.find((profile) => profile.id === NORMAL_PROFILE_ID
 assert.ok(normal);
 assert.deepEqual(normal.blockedApps, []);
 assert.ok(normal.blockedSites.includes("pornhub.com"));
+assert.ok(normal.blockedSites.includes("honeytoon.com"));
+assert.ok(normal.blockedSites.includes("toongod.org"));
 assert.ok(normal.blockedUrlPatterns.includes("manhwa"));
 assert.ok(normal.blockedUrlPatterns.includes("toongod"));
 assert.ok(normal.blockedUrlPatterns.includes("youtube.com/shorts"));

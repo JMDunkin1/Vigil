@@ -1,0 +1,58 @@
+#!/usr/bin/env node
+
+import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
+const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const CATALOG = join(ROOT, "ios", "VigilSocial", "VigilSocial", "Assets.xcassets");
+const services = [
+  { name: "Instagram", id: "389801252", set: "InstagramAppIcon.appiconset", light: "instagram-light.png", dark: "instagram-dark.png", tinted: "instagram-tinted.png" },
+  { name: "YouTube", id: "544007664", set: "YouTubeAppIcon.appiconset", light: "youtube-light.png", dark: "youtube-dark.png", tinted: "youtube-tinted.png" }
+];
+
+const temporary = await mkdtemp(join(tmpdir(), "vigil-social-icons-"));
+try {
+  const provenance = { generatedAt: new Date().toISOString(), storefront: "US", services: [] };
+  for (const service of services) {
+    const lookup = await checkedJson(`https://itunes.apple.com/lookup?id=${service.id}&country=us`);
+    const item = lookup.results?.[0];
+    if (!item?.artworkUrl512) throw new Error(`${service.name} App Store artwork is unavailable.`);
+    const artworkUrl = item.artworkUrl512.replace(/\/512x512bb\.[a-z]+(?:\?.*)?$/i, "/1024x1024bb.png");
+    const bytes = await checkedBytes(artworkUrl);
+    const staged = join(temporary, service.light);
+    await writeFile(staged, bytes, { mode: 0o644 });
+    const { stdout } = await execFileAsync("/usr/bin/sips", ["-g", "pixelWidth", "-g", "pixelHeight", staged]);
+    if (!/pixelWidth:\s+1024/.test(stdout) || !/pixelHeight:\s+1024/.test(stdout)) {
+      throw new Error(`${service.name} artwork is not 1024×1024.`);
+    }
+    const destination = join(CATALOG, service.set, service.light);
+    await rename(staged, destination);
+    await writeFile(join(CATALOG, service.set, service.tinted), await readFile(join(CATALOG, service.set, service.dark)), { mode: 0o644 });
+    provenance.services.push({
+      name: service.name,
+      appStoreId: service.id,
+      version: String(item.version || ""),
+      artworkUrl,
+      sha256: createHash("sha256").update(bytes).digest("hex")
+    });
+  }
+  await writeFile(join(ROOT, "ios", "VigilSocial", "VigilSocial", "Icons", "app-store-artwork.json"), `${JSON.stringify(provenance, null, 2)}\n`, { mode: 0o644 });
+} finally {
+  await rm(temporary, { recursive: true, force: true });
+}
+
+async function checkedJson(url) {
+  return JSON.parse((await checkedBytes(url)).toString("utf8"));
+}
+
+async function checkedBytes(url) {
+  const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new Error(`Icon download failed: HTTP ${response.status}`);
+  return Buffer.from(await response.arrayBuffer());
+}

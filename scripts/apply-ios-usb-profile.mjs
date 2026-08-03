@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, chmod, mkdir, mkdtemp, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -230,17 +230,45 @@ async function validateProvidedProfile(inputPath) {
   if (!profile?.isFile() || profile.size <= 0) {
     throw new Error(`Provided iOS profile is missing or empty: ${path}`);
   }
-  await execFileAsync("/usr/bin/plutil", ["-lint", path], { timeout: 5000, maxBuffer: 1024 * 64 });
   return await profileHasPayloads(path) ? path : "";
 }
 
 async function profileHasPayloads(path) {
-  const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", path], {
-    timeout: 5000,
-    maxBuffer: 1024 * 1024
-  });
-  const profile = JSON.parse(stdout);
+  const profile = await readConfigurationProfile(path);
   return Array.isArray(profile?.PayloadContent) && profile.PayloadContent.length > 0;
+}
+
+async function readConfigurationProfile(path) {
+  try {
+    const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", path], {
+      timeout: 5000,
+      maxBuffer: 1024 * 1024
+    });
+    return JSON.parse(stdout);
+  } catch {
+    // Release profiles are CMS-signed. Decode the signature only for
+    // validation; install the original signed artifact unchanged.
+    const dir = await mkdtemp(join(tmpdir(), "vigil-ios-profile-decode-"));
+    const decodedPath = join(dir, "decoded.mobileconfig");
+    try {
+      const { stdout } = await execFileAsync("/usr/bin/security", ["cms", "-D", "-i", path], {
+        timeout: 10_000,
+        maxBuffer: 4 * 1024 * 1024
+      });
+      await writeFile(decodedPath, stdout, { mode: 0o600 });
+      const { stdout: json } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", decodedPath], {
+        timeout: 5000,
+        maxBuffer: 4 * 1024 * 1024
+      });
+      return JSON.parse(json);
+    } catch (signedProfileError) {
+      throw new Error(`Provided iOS profile is neither a readable plist nor a valid CMS-signed profile: ${path}`, {
+        cause: signedProfileError
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
 }
 
 async function vigilJson(path, options = {}) {

@@ -73,25 +73,128 @@ final class AppleSensitiveMediaClassifier: MediaSafetyClassifying, @unchecked Se
     }
 }
 
-/// A deliberately narrow text backstop. It identifies unambiguous phrases in
-/// the bounded text supplied by the page scanner. Truncation is retained so a
-/// richer injected classifier can apply a different policy.
+struct ExplicitContentTextPolicy: Codable, Equatable, Sendable {
+    static let currentSchemaVersion = 1
+    static let resourceName = "ExplicitContentPolicy"
+
+    struct ContextualRule: Codable, Equatable, Sendable {
+        let id: String
+        let contexts: [String]
+        let markers: [String]
+        let maximumDistanceCharacters: Int
+    }
+
+    let schemaVersion: Int
+    let terms: [String]
+    let phrases: [String]
+    let contextualRules: [ContextualRule]
+
+    static func load(bundle: Bundle = .main) -> Self? {
+        guard let url = bundle.url(forResource: resourceName, withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let policy = try? JSONDecoder().decode(Self.self, from: data),
+              policy.isUsable else { return nil }
+        return policy
+    }
+
+    var isUsable: Bool {
+        schemaVersion == Self.currentSchemaVersion
+            && terms.count >= 20
+            && phrases.count >= 7
+            && terms.allSatisfy(Self.isNormalizedValue)
+            && phrases.allSatisfy(Self.isNormalizedValue)
+            && contextualRules.allSatisfy { rule in
+                !rule.id.isEmpty
+                    && !rule.contexts.isEmpty
+                    && !rule.markers.isEmpty
+                    && (1...1_000).contains(rule.maximumDistanceCharacters)
+                    && rule.contexts.allSatisfy(Self.isNormalizedValue)
+                    && rule.markers.allSatisfy(Self.isNormalizedValue)
+            }
+    }
+
+    private static func isNormalizedValue(_ value: String) -> Bool {
+        !value.isEmpty
+            && value == value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
+/// Applies the generated policy shared with Vigil's navigation rules to the
+/// bounded text supplied by the page scanner. A missing, stale, or malformed
+/// policy is `.unknown`, which keeps the page concealed instead of silently
+/// falling back to a much smaller hard-coded phrase list.
 struct ConservativePageTextClassifier: PageTextSafetyClassifying {
-    private static let explicitPhrases = [
-        "pornographic content", "explicit sexual content", "hardcore pornography",
-        "nude photos", "nude videos", "sex videos", "xxx videos"
-    ]
+    private struct Token: Sendable {
+        let value: String
+        let offset: Int
+    }
+
+    private let policy: ExplicitContentTextPolicy?
+
+    init(policy: ExplicitContentTextPolicy? = ExplicitContentTextPolicy.load()) {
+        self.policy = policy
+    }
 
     func classify(pageText: String, wasTruncated: Bool) async -> ContentSafetyVerdict {
         _ = wasTruncated
-        let normalized = pageText
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-            .lowercased()
-        if Self.explicitPhrases.contains(where: normalized.contains) {
+        guard let policy, policy.isUsable else { return .unknown }
+        let normalized = Self.normalize(pageText)
+        let tokens = Self.tokens(normalized)
+        guard !tokens.isEmpty else { return .safe }
+
+        if policy.phrases.contains(where: { Self.containsPhrase($0, in: normalized) })
+            || policy.terms.contains(where: { Self.containsTerm($0, in: tokens) })
+            || policy.contextualRules.contains(where: { Self.matches($0, in: tokens) }) {
             return .sensitive
         }
+
         // The caller records truncation for diagnostics, but long feeds should
         // not become unusable solely because they exceed a bounded inspection.
         return .safe
+    }
+
+    private static func normalize(_ value: String) -> String {
+        let folded = value
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .lowercased()
+        let scalars = folded.unicodeScalars.map { scalar -> Character in
+            CharacterSet.alphanumerics.contains(scalar) ? Character(String(scalar)) : " "
+        }
+        return String(scalars).split(whereSeparator: \Character.isWhitespace).joined(separator: " ")
+    }
+
+    private static func tokens(_ normalized: String) -> [Token] {
+        var offset = 0
+        return normalized.split(separator: " ").map { substring in
+            let token = Token(value: String(substring), offset: offset)
+            offset += substring.count + 1
+            return token
+        }
+    }
+
+    private static func containsPhrase(_ phrase: String, in normalized: String) -> Bool {
+        let candidate = normalize(phrase)
+        return !candidate.isEmpty && " \(normalized) ".contains(" \(candidate) ")
+    }
+
+    private static func containsTerm(_ term: String, in tokens: [Token]) -> Bool {
+        let candidate = normalize(term)
+        guard !candidate.isEmpty else { return false }
+        if candidate == "porn" || candidate == "porno" {
+            return tokens.contains { $0.value.hasPrefix(candidate) }
+        }
+        return tokens.contains { $0.value == candidate }
+    }
+
+    private static func matches(_ rule: ExplicitContentTextPolicy.ContextualRule, in tokens: [Token]) -> Bool {
+        let contexts = Set(rule.contexts.map(normalize))
+        let markers = Set(rule.markers.map(normalize))
+        let contextOffsets = tokens.filter { contexts.contains($0.value) }.map(\.offset)
+        let markerOffsets = tokens.filter { markers.contains($0.value) }.map(\.offset)
+        return contextOffsets.contains { contextOffset in
+            markerOffsets.contains { markerOffset in
+                abs(contextOffset - markerOffset) <= rule.maximumDistanceCharacters
+            }
+        }
     }
 }
