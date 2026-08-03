@@ -23,7 +23,7 @@ import { quarantineRuntimeUsageCheckpoint, recoverRuntimeUsageCheckpoint, runtim
 import { assertDistanceKey, updateDistanceKeySettings } from "./distanceKey.js";
 import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated } from "./iosProfiles.js";
-import { requiredIosUrlFilterProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
+import { configuredIosPhoneProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
 import { exportManageEngineIosProfile } from "./manageEngineExport.js";
 import { parsePlist } from "./plist.js";
 import { normalizeLockLevel, profileById } from "./policy.js";
@@ -1043,7 +1043,7 @@ async function handleMdm(
 
   if (method === "GET" && path === "/mdm/policy.mobileconfig") {
     ensureIosRemovalPassword(requestState);
-    const profile = buildIosConfigurationProfile(requestState, new Date(), requiredIosUrlFilterProfileOptions(DATA_DIR));
+    const profile = buildIosConfigurationProfile(requestState, new Date(), configuredIosPhoneProfileOptions(DATA_DIR));
     markIosProfileGenerated(requestState);
     addEvent(requestState, "ios_public_profile_generated", { bytes: Buffer.byteLength(profile) });
     await saveState(requestState);

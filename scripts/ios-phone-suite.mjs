@@ -10,8 +10,11 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const APPLY_USB_PROFILE_SCRIPT = join(ROOT, "scripts", "apply-ios-usb-profile.mjs");
 const RELEASE_PATH = join(ROOT, "ios", "phone-release.json");
 const DEFAULT_SERVER = "http://127.0.0.1:8787";
+const IOS_PHONE_EDITION_FILENAME = "ios-phone-edition.json";
+const PHONE_EDITIONS = new Set(["personal", "enhanced"]);
 const PHONE_BLOCKLIST_RESOURCE = "adult-blocklist.sdi";
 const URL_FILTER_PREFILTER_RESOURCE = "url-filter-prefilter.vuf";
 const URL_FILTER_SERVICE_RESOURCE = "service.json";
@@ -71,7 +74,9 @@ const REQUIRED_SOCIAL_APPS = [
   { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" },
   { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" }
 ];
-const REQUIRED_APPS = [...REQUIRED_SOCIAL_APPS, URL_FILTER_APP];
+const appsForEdition = (edition) => edition === "enhanced"
+  ? [...REQUIRED_SOCIAL_APPS, URL_FILTER_APP]
+  : [...REQUIRED_SOCIAL_APPS];
 
 if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
   const { command, options } = parseArguments(process.argv.slice(2));
@@ -81,36 +86,39 @@ if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
 async function main(selectedCommand, selectedOptions) {
   if (selectedCommand === "help") return printHelp();
   await configureRuntimeDataDirectory();
+  const edition = await selectedPhoneEdition(selectedOptions.edition);
   if (selectedCommand === "fingerprint") {
-    const fingerprint = await implementationFingerprint();
+    const fingerprint = await implementationFingerprint(edition);
     console.log(selectedOptions.json ? JSON.stringify(fingerprint, null, 2) : fingerprint.hash);
     return;
   }
   if (selectedCommand === "bump") {
     const blocklist = await requireReadyPhoneBlocklist("create a phone release");
-    await requireReadyIosUrlFilter(blocklist, "create a phone release");
-    const release = await bumpRelease(selectedOptions.bump, selectedOptions.force);
-    console.log(`Vigil phone release is ${release.version} (${release.build}).`);
+    if (edition === "enhanced") await requireReadyIosUrlFilter(blocklist, "create an Enhanced phone release");
+    const release = await bumpRelease(selectedOptions.bump, selectedOptions.force, edition);
+    console.log(`Vigil ${editionLabel(edition)} phone release is ${release.version} (${release.build}).`);
     return;
   }
   if (selectedCommand === "audit") {
     const blocklist = await requireReadyPhoneBlocklist("complete the phone audit");
-    const urlFilter = await requireReadyIosUrlFilter(blocklist, "complete the phone audit");
+    const urlFilter = edition === "enhanced"
+      ? await requireReadyIosUrlFilter(blocklist, "complete the Enhanced phone audit")
+      : await iosUrlFilterReadiness(blocklist);
     const { developerDir, toolEnvironment } = await prepareAuditToolchain();
     console.log(`Apple toolchain: ${developerDir}`);
     await buildRuntime();
-    const audit = await auditFourPolicies(toolEnvironment, urlFilter.service);
-    printPolicyAudit(audit);
+    const audit = await auditFourPolicies(toolEnvironment, edition === "enhanced" ? urlFilter.service : null);
+    printPolicyAudit(audit, edition);
     printBlocklistReadiness(blocklist);
     return;
   }
   if (selectedCommand === "update") {
-    await updatePhone(selectedOptions);
+    await updatePhone({ ...selectedOptions, edition });
     return;
   }
   if (!["status", "check"].includes(selectedCommand)) throw new Error(`Unknown command: ${selectedCommand}`);
   const { device, toolEnvironment } = await preparePhoneToolchain(selectedOptions.device);
-  const report = await phoneStatus(selectedOptions, device, toolEnvironment);
+  const report = await phoneStatus(selectedOptions, device, toolEnvironment, edition);
   printStatus(report);
   if (selectedCommand === "check" && report.problems.length) process.exitCode = 1;
 }
@@ -121,6 +129,34 @@ async function configureRuntimeDataDirectory() {
   if (blocklistPath) process.env.VIGIL_DATA_DIR = dirname(blocklistPath);
 }
 
+async function selectedPhoneEdition(requested = "") {
+  if (requested) return requested;
+  const path = phoneEditionPath();
+  try {
+    const value = JSON.parse(await readFile(path, "utf8"));
+    if (value?.schemaVersion !== 1 || !PHONE_EDITIONS.has(value?.edition)) {
+      throw new Error(`iPhone edition configuration is invalid: ${path}`);
+    }
+    return value.edition;
+  } catch (error) {
+    if (error?.code === "ENOENT") return "personal";
+    throw error;
+  }
+}
+
+async function persistPhoneEdition(edition) {
+  if (!PHONE_EDITIONS.has(edition)) throw new Error(`Unknown phone edition: ${edition}`);
+  await atomicJsonWrite(phoneEditionPath(), { schemaVersion: 1, edition });
+}
+
+function phoneEditionPath() {
+  return join(process.env.VIGIL_DATA_DIR || join(ROOT, "data"), IOS_PHONE_EDITION_FILENAME);
+}
+
+function editionLabel(edition) {
+  return edition === "enhanced" ? "Enhanced" : "Personal";
+}
+
 export function parseArguments(args) {
   const values = [...args];
   const first = values[0] && !values[0].startsWith("-") ? values.shift() : "status";
@@ -128,8 +164,10 @@ export function parseArguments(args) {
   const options = {
     bump: "patch",
     device: "",
+    edition: "",
     force: false,
     json: false,
+    allowEditionDowngrade: false,
     noPolicy: false,
     replaceLegacy: false,
     server: DEFAULT_SERVER
@@ -139,16 +177,20 @@ export function parseArguments(args) {
     const value = values[index];
     if (value === "--device") options.device = requiredValue(values, ++index, value);
     else if (value.startsWith("--device=")) options.device = value.slice("--device=".length);
+    else if (value === "--edition") options.edition = requiredValue(values, ++index, value);
+    else if (value.startsWith("--edition=")) options.edition = value.slice("--edition=".length);
     else if (value === "--server") options.server = requiredValue(values, ++index, value).replace(/\/+$/, "");
     else if (value.startsWith("--server=")) options.server = value.slice("--server=".length).replace(/\/+$/, "");
     else if (value === "--no-policy") options.noPolicy = true;
     else if (value === "--replace-legacy") options.replaceLegacy = true;
+    else if (value === "--allow-edition-downgrade") options.allowEditionDowngrade = true;
     else if (value === "--force") options.force = true;
     else if (value === "--json") options.json = true;
     else if (["--help", "-h"].includes(value)) return { command: "help", options };
     else throw new Error(`Unknown option: ${value}`);
   }
   if (!/^(patch|minor|major)$/.test(options.bump)) throw new Error(`Unknown release bump: ${options.bump}`);
+  if (options.edition && !PHONE_EDITIONS.has(options.edition)) throw new Error(`Unknown phone edition: ${options.edition}`);
   return { command, options };
 }
 
@@ -158,33 +200,37 @@ function requiredValue(values, index, option) {
   return value;
 }
 
-export async function implementationFingerprint() {
+export async function implementationFingerprint(edition = "personal") {
+  if (!PHONE_EDITIONS.has(edition)) throw new Error(`Unknown phone edition: ${edition}`);
   const files = [];
   for (const path of PHONE_SOURCE_FILES) files.push(resolve(ROOT, path));
   files.push(...await filesBelow(join(ROOT, "ios"), isPhoneImplementationFile));
   const blocklistPath = await currentBlocklistPath();
   if (blocklistPath) files.push(blocklistPath);
-  const filterDirectory = urlFilterDirectory();
-  for (const path of [
-    join(filterDirectory, "manifest.json"),
-    join(filterDirectory, URL_FILTER_PREFILTER_RESOURCE),
-    join(filterDirectory, URL_FILTER_SERVICE_RESOURCE),
-    join(filterDirectory, "pir", "input.txtpb"),
-    join(filterDirectory, "pir", "url-config.json"),
-    join(filterDirectory, "pir", "service-config.json"),
-    join(filterDirectory, "pir", "deployment-manifest.json")
-  ]) {
-    if (await isFile(path)) files.push(path);
-  }
-  const pirDirectory = join(filterDirectory, "pir");
-  if (await isFile(join(pirDirectory, "processed-manifest.json"))) {
-    files.push(join(pirDirectory, "processed-manifest.json"));
-    for (const entry of await readdir(pirDirectory)) {
-      if (/^url-\d+\.(?:bin|params\.txtpb)$/u.test(entry)) files.push(join(pirDirectory, entry));
+  if (edition === "enhanced") {
+    const filterDirectory = urlFilterDirectory();
+    for (const path of [
+      join(filterDirectory, "manifest.json"),
+      join(filterDirectory, URL_FILTER_PREFILTER_RESOURCE),
+      join(filterDirectory, URL_FILTER_SERVICE_RESOURCE),
+      join(filterDirectory, "pir", "input.txtpb"),
+      join(filterDirectory, "pir", "url-config.json"),
+      join(filterDirectory, "pir", "service-config.json"),
+      join(filterDirectory, "pir", "deployment-manifest.json")
+    ]) {
+      if (await isFile(path)) files.push(path);
+    }
+    const pirDirectory = join(filterDirectory, "pir");
+    if (await isFile(join(pirDirectory, "processed-manifest.json"))) {
+      files.push(join(pirDirectory, "processed-manifest.json"));
+      for (const entry of await readdir(pirDirectory)) {
+        if (/^url-\d+\.(?:bin|params\.txtpb)$/u.test(entry)) files.push(join(pirDirectory, entry));
+      }
     }
   }
   const unique = [...new Set(files)].sort();
   const digest = createHash("sha256");
+  digest.update(`edition:${edition}\n`);
   const entries = [];
   for (const path of unique) {
     const bytes = await readFile(path);
@@ -193,7 +239,7 @@ export async function implementationFingerprint() {
     entries.push({ path: name, bytes: bytes.byteLength, sha256: hash });
     digest.update(name).update("\0").update(hash).update("\n");
   }
-  return { hash: digest.digest("hex"), files: entries, blocklistPath };
+  return { hash: digest.digest("hex"), edition, files: entries, blocklistPath };
 }
 
 export function isPhoneImplementationFile(path) {
@@ -217,8 +263,8 @@ async function filesBelow(root, include) {
 async function currentBlocklistPath() {
   const candidates = [
     process.env.VIGIL_PHONE_BLOCKLIST,
-    join(ROOT, "data", "adult-blocklist.sdi"),
-    join(homedir(), "Library", "Application Support", "Vigil", "adult-blocklist.sdi")
+    join(homedir(), "Library", "Application Support", "Vigil", "adult-blocklist.sdi"),
+    join(ROOT, "data", "adult-blocklist.sdi")
   ].filter(Boolean);
   for (const path of candidates) if (await isFile(path)) return resolve(path);
   return "";
@@ -556,7 +602,7 @@ export function blocklistReadinessProblems(readiness, serverState = null) {
   return problems;
 }
 
-export function deployedBlocklistProblems(receipt, readiness, requiredBundleIds = REQUIRED_APPS.map((app) => app.bundleId)) {
+export function deployedBlocklistProblems(receipt, readiness, requiredBundleIds = REQUIRED_SOCIAL_APPS.map((app) => app.bundleId)) {
   if (!readiness?.ready) return [];
   if (!receipt) return ["No deployment receipt proves that the installed phone apps contain the verified adult blocklist."];
   const deployed = receipt.blocklist;
@@ -613,28 +659,53 @@ async function requireReadyPhoneBlocklist(purpose) {
   return readiness;
 }
 
-async function readRelease() {
+async function readReleaseManifest() {
   const release = JSON.parse(await readFile(RELEASE_PATH, "utf8"));
-  if (release.schemaVersion !== 1 || !/^\d+\.\d+\.\d+$/.test(release.version) || !Number.isInteger(release.build) || release.build < 1) {
+  const commonValid = /^\d+\.\d+\.\d+$/.test(release.version)
+    && Number.isInteger(release.build)
+    && release.build >= 1
+    && Number.isFinite(Date.parse(String(release.releasedAt || "")));
+  const fingerprintsValid = release.schemaVersion === 2
+    && release.sourceFingerprints
+    && typeof release.sourceFingerprints === "object"
+    && [...PHONE_EDITIONS].every((edition) => {
+      const value = release.sourceFingerprints[edition];
+      return value === "" || /^[a-f0-9]{64}$/u.test(String(value || ""));
+    });
+  const legacyValid = release.schemaVersion === 1 && /^[a-f0-9]{64}$/u.test(String(release.sourceFingerprint || ""));
+  if (!commonValid || (!legacyValid && !fingerprintsValid)) {
     throw new Error(`Invalid phone release manifest: ${RELEASE_PATH}`);
   }
   return release;
 }
 
-async function bumpRelease(level = "patch", force = false) {
-  const release = await readRelease();
-  const fingerprint = await implementationFingerprint();
+async function readRelease(edition = "personal") {
+  const manifest = await readReleaseManifest();
+  const sourceFingerprint = manifest.schemaVersion === 2
+    ? String(manifest.sourceFingerprints[edition] || "")
+    : String(manifest.sourceFingerprint || "");
+  return { ...manifest, edition, sourceFingerprint };
+}
+
+async function bumpRelease(level = "patch", force = false, edition = "personal") {
+  const manifest = await readReleaseManifest();
+  const release = await readRelease(edition);
+  const fingerprint = await implementationFingerprint(edition);
   if (!force && release.sourceFingerprint === fingerprint.hash) return release;
   const version = incrementVersion(release.version, level);
+  const sourceFingerprints = manifest.schemaVersion === 2
+    ? { ...manifest.sourceFingerprints }
+    : { personal: "", enhanced: String(manifest.sourceFingerprint || "") };
+  sourceFingerprints[edition] = fingerprint.hash;
   const next = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     version,
     build: release.build + 1,
-    sourceFingerprint: fingerprint.hash,
+    sourceFingerprints,
     releasedAt: new Date().toISOString()
   };
   await atomicJsonWrite(RELEASE_PATH, next);
-  return next;
+  return { ...next, edition, sourceFingerprint: fingerprint.hash };
 }
 
 export function incrementVersion(version, level) {
@@ -670,10 +741,20 @@ export function preservedPolicyReceipt(receipt) {
   };
 }
 
-async function phoneStatus(selectedOptions, device, toolEnvironment) {
+export function receiptPhoneEdition(receipt) {
+  if (PHONE_EDITIONS.has(receipt?.edition)) return receipt.edition;
+  const apps = Array.isArray(receipt?.apps) ? receipt.apps : [];
+  const hasUrlFilterApp = apps.some((app) => app?.bundleId === URL_FILTER_APP.bundleId);
+  const hasVerifiedUrlFilter = receipt?.liveUrlFilterAudit?.status === "running"
+    && receipt?.liveUrlFilterAudit?.enabled === true
+    && receipt?.liveUrlFilterAudit?.failClosed === true;
+  return hasUrlFilterApp || hasVerifiedUrlFilter ? "enhanced" : "personal";
+}
+
+async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
   const [release, fingerprint, blocklist, explicitContentPolicy] = await Promise.all([
-    readRelease(),
-    implementationFingerprint(),
+    readRelease(edition),
+    implementationFingerprint(edition),
     phoneBlocklistReadiness(),
     expectedExplicitContentPolicy()
   ]);
@@ -690,7 +771,7 @@ async function phoneStatus(selectedOptions, device, toolEnvironment) {
   const livePolicyFingerprint = currentPolicy.fingerprint;
   const apps = appsResult.result?.apps || [];
   const profiles = profileVerification.profiles;
-  const requiredApps = REQUIRED_APPS.map((required) => {
+  const requiredApps = appsForEdition(edition).map((required) => {
     const installed = apps.find((app) => app.bundleIdentifier === required.bundleId);
     return { ...required, installed: installed ? { version: installed.version || "", build: installed.bundleVersion || "" } : null };
   });
@@ -698,6 +779,7 @@ async function phoneStatus(selectedOptions, device, toolEnvironment) {
   const lockProfile = profiles.find((profile) => profile.identifier === PROFILE_IDENTIFIER);
   const obsoleteLauncherProfile = profiles.find((profile) => profile.identifier === LAUNCHER_PROFILE_IDENTIFIER);
   const receipt = await readReceipt(device.udid || device.identifier);
+  const deployedEdition = receiptPhoneEdition(receipt);
   const problems = [];
   if (release.sourceFingerprint !== fingerprint.hash) problems.push("Phone-facing sources changed after the current release; bump and deploy a new phone release.");
   for (const app of requiredApps) {
@@ -717,6 +799,9 @@ async function phoneStatus(selectedOptions, device, toolEnvironment) {
   if (!serverState) problems.push(`The Vigil server at ${selectedOptions.server} is unavailable, so live policy freshness cannot be checked.`);
   else if (!livePolicyFingerprint) problems.push("The currently generated live policy could not be resolved for a freshness check.");
   if (receipt && receipt.release?.sourceFingerprint !== release.sourceFingerprint) problems.push("The last device receipt belongs to a different implementation fingerprint.");
+  if (receipt && deployedEdition !== edition) {
+    problems.push(`The phone receipt is for the ${editionLabel(deployedEdition)} edition, but status selected ${editionLabel(edition)}.`);
+  }
   if (receipt?.policyFingerprint && lockProfile && !profileName(lockProfile).includes(receipt.policyFingerprint.slice(0, 12))) {
     problems.push("The installed policy profile name does not match the last deployment receipt.");
   }
@@ -726,24 +811,26 @@ async function phoneStatus(selectedOptions, device, toolEnvironment) {
     livePolicyFingerprint
   }));
   problems.push(...blocklistReadinessProblems(blocklist, serverState));
-  problems.push(...deployedBlocklistProblems(receipt, blocklist));
+  problems.push(...deployedBlocklistProblems(receipt, blocklist, requiredApps.map((app) => app.bundleId)));
   problems.push(...deployedExplicitContentPolicyProblems(receipt, explicitContentPolicy));
-  if (!urlFilter.ready) problems.push(`The fail-closed iOS URL Filter is not deployable: ${urlFilter.error}.`);
-  else if (receipt?.urlFilter?.prefilterSha256 !== urlFilter.prefilter.sha256
-    || receipt?.urlFilter?.pirDatabaseSha256 !== urlFilter.prefilter.pirDatabaseSha256
-    || receipt?.urlFilter?.prefilterTag !== urlFilter.prefilter.tag) {
-    problems.push("The deployment receipt does not prove the current paired URL Filter prefilter and PIR database revision.");
+  if (edition === "enhanced") {
+    if (!urlFilter.ready) problems.push(`The fail-closed iOS URL Filter is not deployable: ${urlFilter.error}.`);
+    else if (receipt?.urlFilter?.prefilterSha256 !== urlFilter.prefilter.sha256
+      || receipt?.urlFilter?.pirDatabaseSha256 !== urlFilter.prefilter.pirDatabaseSha256
+      || receipt?.urlFilter?.prefilterTag !== urlFilter.prefilter.tag) {
+      problems.push("The deployment receipt does not prove the current paired URL Filter prefilter and PIR database revision.");
+    }
+    if (receipt && (receipt?.liveUrlFilterAudit?.status !== "running"
+      || receipt?.liveUrlFilterAudit?.enabled !== true
+      || receipt?.liveUrlFilterAudit?.failClosed !== true)) {
+      problems.push("The deployment receipt does not prove that iOS reached a running fail-closed URL Filter state.");
+    }
   }
-  if (receipt && (receipt?.liveUrlFilterAudit?.status !== "running"
-    || receipt?.liveUrlFilterAudit?.enabled !== true
-    || receipt?.liveUrlFilterAudit?.failClosed !== true)) {
-    problems.push("The deployment receipt does not prove that iOS reached a running fail-closed URL Filter state.");
-  }
-  return { release, fingerprint, blocklist, explicitContentPolicy, urlFilter, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
+  return { edition, release, fingerprint, blocklist, explicitContentPolicy, urlFilter, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
 }
 
 function printStatus(report) {
-  console.log(`Vigil phone ${report.release.version} (${report.release.build})`);
+  console.log(`Vigil ${editionLabel(report.edition)} phone ${report.release.version} (${report.release.build})`);
   console.log(`Implementation: ${report.release.sourceFingerprint === report.fingerprint.hash ? "released" : "CHANGED — release bump required"}`);
   console.log(`Device: ${report.device.name} • ${report.device.model} • iOS ${report.device.osVersion} • wired and paired`);
   console.log("Apps:");
@@ -760,7 +847,9 @@ function printStatus(report) {
   if (report.receipt?.policyFingerprint) console.log(`Last deployed policy: ${report.receipt.policyFingerprint.slice(0, 12)}`);
   if (report.livePolicyFingerprint) console.log(`Current live policy: ${report.livePolicyFingerprint.slice(0, 12)} • ${report.policyGenerationSource}`);
   printBlocklistReadiness(report.blocklist);
-  console.log(`System URL Filter: ${report.urlFilter.ready ? `${report.urlFilter.prefilter.domainCount.toLocaleString("en-US")} domains • ${report.urlFilter.prefilter.tag}` : `NOT READY • ${report.urlFilter.error}`}`);
+  console.log(report.edition === "enhanced"
+    ? `Enhanced system URL Filter: ${report.urlFilter.ready ? `${report.urlFilter.prefilter.domainCount.toLocaleString("en-US")} domains • ${report.urlFilter.prefilter.tag}` : `NOT READY • ${report.urlFilter.error}`}`
+    : "Enhanced system URL Filter: optional paid capability • not required by Personal edition");
   console.log(`Bundled explicit-content policy: ${report.explicitContentPolicy.sha256.slice(0, 12)} • ${report.explicitContentPolicy.bytes.toLocaleString("en-US")} bytes`);
   const signing = signingCapabilitySummary(report.receipt?.signingVariant);
   console.log(`Last deployed signing: ${signing.variant} • ${signing.mediaCapability}`);
@@ -773,27 +862,39 @@ function printStatus(report) {
 }
 
 async function updatePhone(selectedOptions) {
-  if (selectedOptions.noPolicy) {
-    throw new Error("--no-policy is incompatible with the required fail-closed iOS URL Filter; the app and its exact managed configuration must be deployed together.");
+  const edition = selectedOptions.edition;
+  if (selectedOptions.noPolicy && edition === "enhanced") {
+    throw new Error("--no-policy is incompatible with the Enhanced edition's fail-closed iOS URL Filter; the app and its exact managed configuration must be deployed together.");
   }
   const blocklist = await requireReadyPhoneBlocklist("update the phone");
-  const urlFilter = await requireReadyIosUrlFilter(blocklist, "update the phone");
-  let release = await readRelease();
-  const fingerprint = await implementationFingerprint();
+  const urlFilter = edition === "enhanced"
+    ? await requireReadyIosUrlFilter(blocklist, "update the Enhanced phone edition")
+    : await iosUrlFilterReadiness(blocklist);
+  let release = await readRelease(edition);
+  const fingerprint = await implementationFingerprint(edition);
   if (release.sourceFingerprint !== fingerprint.hash) {
-    release = await bumpRelease("patch");
-    console.log(`Phone-facing inputs changed; created release ${release.version} (${release.build}).`);
+    release = await bumpRelease("patch", false, edition);
+    console.log(`${editionLabel(edition)} phone inputs changed; created release ${release.version} (${release.build}).`);
   }
   const { device, developerDir, toolEnvironment } = await preparePhoneToolchain(selectedOptions.device);
-  console.log(`Updating ${device.name} to Vigil phone ${release.version} (${release.build}) without rebooting.`);
+  const deviceReceiptId = device.udid || device.identifier;
+  const previousReceipt = await readReceipt(deviceReceiptId);
+  const previousEdition = receiptPhoneEdition(previousReceipt);
+  if (previousReceipt && previousEdition === "enhanced" && edition === "personal" && !selectedOptions.allowEditionDowngrade) {
+    throw new Error("Refusing to replace an Enhanced phone deployment with Personal edition without --allow-edition-downgrade.");
+  }
+  if (selectedOptions.noPolicy && previousReceipt && previousEdition !== edition) {
+    throw new Error("An edition change must replace the matching configuration profile; --no-policy cannot be used.");
+  }
+  console.log(`Updating ${device.name} to Vigil ${editionLabel(edition)} phone ${release.version} (${release.build}) without rebooting.`);
   console.log(`Apple toolchain: ${developerDir}`);
   await buildRuntime();
-  const audit = await auditFourPolicies(toolEnvironment, urlFilter.service);
-  printPolicyAudit(audit);
-  const build = await buildPhoneApps(release, urlFilter, toolEnvironment);
+  const audit = await auditFourPolicies(toolEnvironment, edition === "enhanced" ? urlFilter.service : null);
+  printPolicyAudit(audit, edition);
+  const build = await buildPhoneApps(release, edition, urlFilter, toolEnvironment);
   const preparedPolicy = selectedOptions.noPolicy
     ? null
-    : await prepareCurrentPolicy(release, selectedOptions.server, urlFilter.service, toolEnvironment);
+    : await prepareCurrentPolicy(release, selectedOptions.server, edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition);
   const installedBeforeUpdate = await devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment);
   const obsoleteBeforeUpdate = (installedBeforeUpdate.result?.apps || [])
     .filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
@@ -818,19 +919,21 @@ async function updatePhone(selectedOptions) {
     await run("xcrun", ["devicectl", "device", "install", "app", "--device", device.identifier, app.path], { env: toolEnvironment });
   }
 
-  const deviceReceiptId = device.udid || device.identifier;
-  const previousReceipt = selectedOptions.noPolicy ? await readReceipt(deviceReceiptId) : null;
-  let { policyFingerprint, policyArtifactHash } = preservedPolicyReceipt(previousReceipt);
+  let { policyFingerprint, policyArtifactHash } = preservedPolicyReceipt(selectedOptions.noPolicy ? previousReceipt : null);
   let liveUrlFilterAudit = null;
   if (preparedPolicy) {
     ({ policyFingerprint, policyArtifactHash } = preparedPolicy);
     console.log(`Installing policy ${policyFingerprint.slice(0, 12)}…`);
-    await run("xcrun", ["devicectl", "device", "profile", "install", "--device", device.identifier, preparedPolicy.lockPath, "--type", "configuration", "--replace-existing"], { env: toolEnvironment });
-    liveUrlFilterAudit = await verifyLiveIosUrlFilter(device.identifier, urlFilter.service, toolEnvironment);
+    await installConfigurationProfileWhenUnlocked(device, preparedPolicy.lockPath, toolEnvironment);
+    if (edition === "enhanced") {
+      liveUrlFilterAudit = await verifyLiveIosUrlFilter(device.identifier, urlFilter.service, toolEnvironment);
+    }
+    await persistPhoneEdition(edition);
   }
 
   await writeReceipt(deviceReceiptId, {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    edition,
     device: { identifier: device.identifier, udid: device.udid, name: device.name, model: device.model, osVersion: device.osVersion },
     release,
     policyFingerprint,
@@ -853,7 +956,7 @@ async function updatePhone(selectedOptions) {
     deployedAt: new Date().toISOString(),
     rebooted: false
   });
-  const report = await phoneStatus(selectedOptions, device, toolEnvironment);
+  const report = await phoneStatus(selectedOptions, device, toolEnvironment, edition);
   printStatus(report);
   if (report.problems.length) process.exitCode = 1;
 }
@@ -956,22 +1059,22 @@ async function auditFourPolicies(toolEnvironment, urlFilterService) {
   return output;
 }
 
-function printPolicyAudit(audit) {
-  console.log("Four-level policy audit:");
+function printPolicyAudit(audit, edition) {
+  console.log(`${editionLabel(edition)} four-level policy audit:`);
   for (const level of audit) {
     console.log(`- ${level.title}: ${level.apps} apps • ${level.deniedUrls} denied URLs • ${level.allowedUrls} allowed URLs • ${level.sha256.slice(0, 12)}`);
   }
 }
 
-async function buildPhoneApps(release, urlFilter, toolEnvironment = process.env) {
-  const root = join(ROOT, "data", "ios-phone-build", `${release.version}-${release.build}`);
+async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = process.env) {
+  const root = join(ROOT, "data", "ios-phone-build", `${release.version}-${release.build}-${edition}`);
   const personalTeamEntitlements = join(ROOT, "ios", "Shared", "PersonalTeam.entitlements");
   await mkdir(root, { recursive: true });
   const blocklist = await requireReadyPhoneBlocklist("build a Release phone app");
   await runQuiet(process.execPath, [join(ROOT, "dist", "runtime", "scripts", "generate-ios-content-policy.mjs")]);
   const explicitContentPolicy = await expectedExplicitContentPolicy();
   const environment = { ...toolEnvironment, VIGIL_PHONE_BLOCKLIST: blocklist.path };
-  let reducedEntitlements = false;
+  let reducedEntitlements = edition === "personal";
   const apps = [];
   for (const social of REQUIRED_SOCIAL_APPS) {
     const derived = join(root, social.id);
@@ -1026,44 +1129,48 @@ async function buildPhoneApps(release, urlFilter, toolEnvironment = process.env)
       sha256: await hashAppBundle(path)
     });
   }
-  const filterDerived = join(root, URL_FILTER_APP.id);
-  console.log("Building required fail-closed URL Filter…");
-  await run("xcodebuild", [
-    "-project", "ios/VigilURLFilter/VigilURLFilter.xcodeproj",
-    "-scheme", "VigilURLFilterHost",
-    "-configuration", "Release",
-    "-destination", "generic/platform=iOS",
-    "-derivedDataPath", filterDerived,
-    "-allowProvisioningUpdates",
-    "build",
-    `MARKETING_VERSION=${release.version}`,
-    `CURRENT_PROJECT_VERSION=${release.build}`
-  ], {
-    cwd: ROOT,
-    env: {
-      ...environment,
-      VIGIL_URL_FILTER_PREFILTER: urlFilter.prefilter.path
+  let filterPrefilter = null;
+  if (edition === "enhanced") {
+    if (!urlFilter?.ready) throw new Error("Enhanced edition requires a ready fail-closed iOS URL Filter.");
+    const filterDerived = join(root, URL_FILTER_APP.id);
+    console.log("Building Enhanced fail-closed URL Filter…");
+    await run("xcodebuild", [
+      "-project", "ios/VigilURLFilter/VigilURLFilter.xcodeproj",
+      "-scheme", "VigilURLFilterHost",
+      "-configuration", "Release",
+      "-destination", "generic/platform=iOS",
+      "-derivedDataPath", filterDerived,
+      "-allowProvisioningUpdates",
+      "build",
+      `MARKETING_VERSION=${release.version}`,
+      `CURRENT_PROJECT_VERSION=${release.build}`
+    ], {
+      cwd: ROOT,
+      env: {
+        ...environment,
+        VIGIL_URL_FILTER_PREFILTER: urlFilter.prefilter.path
+      }
+    });
+    const filterPath = join(filterDerived, "Build", "Products", "Release-iphoneos", "VigilURLFilterHost.app");
+    const filterBlocklist = await verifyBundledPhoneBlocklist(
+      join(filterPath, "Extensions", "VigilURLFilterControl.appex"),
+      blocklist
+    );
+    filterPrefilter = await verifyBundledUrlFilterPrefilter(filterPath, urlFilter);
+    const filterCapabilities = await signedUrlFilterCapabilities(filterPath);
+    if (!filterCapabilities.urlFilterProvider) {
+      throw new Error("Vigil URL Filter built without Apple's url-filter-provider entitlement; refusing to install an inert app.");
     }
-  });
-  const filterPath = join(filterDerived, "Build", "Products", "Release-iphoneos", "VigilURLFilterHost.app");
-  const filterBlocklist = await verifyBundledPhoneBlocklist(
-    join(filterPath, "Extensions", "VigilURLFilterControl.appex"),
-    blocklist
-  );
-  const filterPrefilter = await verifyBundledUrlFilterPrefilter(filterPath, urlFilter);
-  const filterCapabilities = await signedUrlFilterCapabilities(filterPath);
-  if (!filterCapabilities.urlFilterProvider) {
-    throw new Error("Vigil URL Filter built without Apple's url-filter-provider entitlement; refusing to install an inert app.");
+    apps.push({
+      ...URL_FILTER_APP,
+      path: filterPath,
+      blocklist: filterBlocklist,
+      explicitContentPolicy: null,
+      signingCapabilities: filterCapabilities,
+      sha256: await hashAppBundle(filterPath),
+      urlFilter: filterPrefilter
+    });
   }
-  apps.push({
-    ...URL_FILTER_APP,
-    path: filterPath,
-    blocklist: filterBlocklist,
-    explicitContentPolicy: null,
-    signingCapabilities: filterCapabilities,
-    sha256: await hashAppBundle(filterPath),
-    urlFilter: filterPrefilter
-  });
   const capableApps = apps.filter((app) => app.signingCapabilities.sensitiveContentAnalysis).length;
   const socialAppCount = REQUIRED_SOCIAL_APPS.length;
   const signingVariant = capableApps === socialAppCount
@@ -1074,14 +1181,14 @@ async function buildPhoneApps(release, urlFilter, toolEnvironment = process.env)
     signingVariant,
     signingCapabilities: Object.fromEntries(apps.map((app) => [app.id, app.signingCapabilities])),
     explicitContentPolicy,
-    urlFilter: {
+    urlFilter: edition === "enhanced" ? {
       prefilterSha256: filterPrefilter.sha256,
       prefilterTag: filterPrefilter.tag,
       pirDatabaseRevision: filterPrefilter.pirDatabaseRevision,
       pirDatabaseSha256: filterPrefilter.pirDatabaseSha256,
       domainCount: filterPrefilter.domainCount,
       serviceURL: urlFilter.service.pirServerURL
-    },
+    } : null,
     blocklist: {
       domainCount: blocklist.domainCount,
       snapshotHash: blocklist.snapshotHash,
@@ -1195,6 +1302,70 @@ async function verifyLiveIosUrlFilter(deviceIdentifier, service, toolEnvironment
   throw new Error(`The installed iOS URL Filter did not reach an exact running fail-closed state: ${lastDetail}`);
 }
 
+async function installConfigurationProfileWhenUnlocked(device, profilePath, toolEnvironment, timeoutMilliseconds = 5 * 60 * 1000) {
+  const deadline = Date.now() + timeoutMilliseconds;
+  let announcedLocked = false;
+  const supervisorKeybagPath = await existingSupervisorKeybagPath();
+  let useProtectedSupervisorInstall = Boolean(device.udid && supervisorKeybagPath);
+  while (Date.now() < deadline) {
+    try {
+      const command = useProtectedSupervisorInstall ? process.execPath : "xcrun";
+      const args = useProtectedSupervisorInstall
+        ? [
+            APPLY_USB_PROFILE_SCRIPT,
+            "--profile", profilePath,
+            "--udid", device.udid,
+            "--supervisor-keybag", supervisorKeybagPath
+          ]
+        : [
+            "devicectl", "device", "profile", "install",
+            "--device", device.identifier,
+            profilePath,
+            "--type", "configuration",
+            "--replace-existing"
+          ];
+      const { stdout, stderr } = await execFileAsync(command, args, {
+        cwd: ROOT,
+        env: toolEnvironment,
+        timeout: useProtectedSupervisorInstall ? 150_000 : 30_000,
+        maxBuffer: 4 * 1024 * 1024
+      });
+      const detail = `${stdout || ""}${stderr || ""}`.trim();
+      if (detail) console.log(detail);
+      return;
+    } catch (error) {
+      const detail = `${error?.stdout || ""}\n${error?.stderr || ""}\n${error?.message || error}`;
+      if (useProtectedSupervisorInstall && /paired over USB but is not supervised/iu.test(detail)) {
+        useProtectedSupervisorInstall = false;
+        console.log("The iPhone is not supervised, so iOS will transfer the profile for confirmation in Settings.");
+        continue;
+      }
+      if (!/device is locked|MCInstallationErrorDomain error 4009|ProfileError: invalid response \{'Status': 'NotNow'\}/iu.test(detail)) {
+        throw new Error(`Configuration-profile installation failed: ${detail.trim()}`, { cause: error });
+      }
+      if (!announcedLocked) {
+        console.log("The iPhone is locked. Unlock it and leave its screen awake; Vigil will retry the profile without rebuilding.");
+        announcedLocked = true;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+    }
+  }
+  throw new Error("Timed out waiting for the iPhone to remain unlocked long enough to install the protected Vigil profile.");
+}
+
+async function existingSupervisorKeybagPath() {
+  const candidates = [
+    String(process.env.VIGIL_SUPERVISOR_KEYBAG || "").trim(),
+    process.env.VIGIL_DATA_DIR ? join(process.env.VIGIL_DATA_DIR, "vigil-supervisor.keybag") : "",
+    join(ROOT, "data", "vigil-supervisor.keybag")
+  ].filter(Boolean);
+  for (const path of [...new Set(candidates)]) {
+    const details = await stat(path).catch(() => null);
+    if (details?.isFile() && details.size > 0) return path;
+  }
+  return "";
+}
+
 async function signedAppCapabilities(appPath) {
   const { stdout, stderr } = await execFileAsync("/usr/bin/codesign", ["-d", "--entitlements", ":-", appPath], {
     timeout: 30_000,
@@ -1258,10 +1429,10 @@ async function profileSigningIdentity() {
   return match[1];
 }
 
-async function prepareCurrentPolicy(release, server, urlFilterService, toolEnvironment) {
+async function prepareCurrentPolicy(release, server, urlFilterService, toolEnvironment, edition) {
   const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(5000), null, urlFilterService);
   const policyFingerprint = sha256(profile);
-  const stamped = await stampProfile(profile, `Vigil iPhone Lock • ${release.version} (${release.build}) • ${policyFingerprint.slice(0, 12)}`);
+  const stamped = await stampProfile(profile, `Vigil iPhone Lock • ${editionLabel(edition)} • ${release.version} (${release.build}) • ${policyFingerprint.slice(0, 12)}`);
   const policyArtifactHash = sha256(stamped);
   const profileDir = join(ROOT, "data", "ios-phone-profiles");
   await mkdir(profileDir, { recursive: true });
@@ -1272,7 +1443,6 @@ async function prepareCurrentPolicy(release, server, urlFilterService, toolEnvir
 }
 
 async function buildCurrentPolicyFromLiveState(server, signal, suppliedServerState = null, urlFilterService = null) {
-  if (!urlFilterService) throw new Error("The required iOS URL Filter service configuration is unavailable.");
   const serverState = suppliedServerState || await downloadServerState(server, signal);
   const state = structuredClone(serverState.state);
   const ios = state?.deviceControls?.ios;
@@ -1282,15 +1452,42 @@ async function buildCurrentPolicyFromLiveState(server, signal, suppliedServerSta
     throw new Error("Vigil's hardened iPhone profile has no persisted removal password; refusing to generate an unrecoverable profile.");
   }
   if (ios.removalPasswordSet === true) {
-    const runningProfile = await downloadPolicy(server, signal);
-    const plistModule = await importFresh(join(ROOT, "dist", "runtime", "src", "plist.js"));
-    const removalPassword = removalPasswordFromProfile(plistModule.parsePlist(runningProfile.toString("utf8")));
+    let removalPassword;
+    try {
+      const runningProfile = await downloadPolicy(server, signal);
+      const plistModule = await importFresh(join(ROOT, "dist", "runtime", "src", "plist.js"));
+      removalPassword = removalPasswordFromProfile(plistModule.parsePlist(runningProfile.toString("utf8")));
+    } catch {
+      removalPassword = await localIosRemovalPassword();
+    }
     if (!removalPassword) throw new Error("The running Vigil profile did not expose its expected removal-password payload.");
     ios.removalPassword = removalPassword;
   }
 
   const profilesModule = await importFresh(join(ROOT, "dist", "runtime", "src", "iosProfiles.js"));
-  return Buffer.from(profilesModule.buildIosConfigurationProfile(state, new Date(), { urlFilter: urlFilterService }));
+  return Buffer.from(profilesModule.buildIosConfigurationProfile(
+    state,
+    new Date(),
+    urlFilterService ? { urlFilter: urlFilterService } : {}
+  ));
+}
+
+async function localIosRemovalPassword() {
+  const candidates = [
+    process.env.VIGIL_STATE_PATH,
+    process.env.VIGIL_DATA_DIR ? join(process.env.VIGIL_DATA_DIR, "state.json") : "",
+    join(homedir(), "Library", "Application Support", "Vigil", "state.json")
+  ].filter(Boolean);
+  for (const path of [...new Set(candidates)]) {
+    try {
+      const state = JSON.parse(await readFile(path, "utf8"));
+      const password = state?.deviceControls?.ios?.removalPassword;
+      if (typeof password === "string" && password.length >= 8) return password;
+    } catch {
+      // Try the next local state path without exposing protected profile data.
+    }
+  }
+  return "";
 }
 
 export function removalPasswordFromProfile(profile) {
@@ -1328,7 +1525,7 @@ async function fetchServerState(server) {
 }
 
 async function currentPolicyFingerprint(server, serverState, { allowCurrentRuntime, urlFilterService }) {
-  if (allowCurrentRuntime && serverState && urlFilterService) {
+  if (allowCurrentRuntime && serverState) {
     try {
       const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(3000), serverState, urlFilterService);
       return { fingerprint: sha256(profile), source: "current source + live state" };
@@ -1561,8 +1758,10 @@ Commands:
 
 Options:
   --device ID  Select a CoreDevice UUID, UDID, or device name
+  --edition NAME  Select personal or enhanced (default: persisted edition, initially personal)
   --server URL Vigil server used for live state and policy (default ${DEFAULT_SERVER})
   --no-policy  Update apps but do not replace configuration profiles
+  --allow-edition-downgrade  Explicitly permit Enhanced-to-Personal replacement
   --replace-legacy  Remove obsolete Sentinel/Browser/Social/Snapchat apps and the retired launcher profile
   --force      Force a version bump even if phone inputs are unchanged
   --json       JSON output for fingerprint`);

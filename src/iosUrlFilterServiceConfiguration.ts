@@ -6,6 +6,8 @@ export const IOS_URL_FILTER_HOST_BUNDLE_IDENTIFIER = "tech.caseline.vigil.url-fi
 export const IOS_URL_FILTER_CONTROL_PROVIDER_BUNDLE_IDENTIFIER = "tech.caseline.vigil.url-filter.control";
 export const IOS_URL_FILTER_USECASE_NAME = `${IOS_URL_FILTER_HOST_BUNDLE_IDENTIFIER}.url.filtering`;
 export const IOS_URL_FILTER_MINIMUM_FETCH_INTERVAL_SECONDS = 45 * 60;
+export const IOS_PHONE_EDITION_FILENAME = "ios-phone-edition.json";
+export type IosPhoneEdition = "personal" | "enhanced";
 
 export interface IosUrlFilterServiceConfiguration {
   schemaVersion: 1;
@@ -66,6 +68,36 @@ export function requiredIosUrlFilterProfileOptions(dataDirectory: string): { url
   } catch (error) {
     throw new Error(`The required fail-closed iOS URL Filter configuration is unavailable at ${path}.`, { cause: error });
   }
+}
+
+export function configuredIosPhoneEdition(dataDirectory: string): IosPhoneEdition {
+  const path = join(dataDirectory, IOS_PHONE_EDITION_FILENAME);
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? String(error.code || "") : "";
+    if (code === "ENOENT") return "personal";
+    throw new Error(`Cannot read iPhone edition configuration at ${path}.`, { cause: error });
+  }
+  const record = requiredRecord(value);
+  const edition = String(record.edition || "");
+  if (record.schemaVersion !== 1 || !isIosPhoneEdition(edition)) {
+    throw new Error(`iPhone edition configuration at ${path} is invalid.`);
+  }
+  return edition;
+}
+
+export function configuredIosPhoneProfileOptions(
+  dataDirectory: string
+): { edition: IosPhoneEdition; urlFilter?: IosUrlFilterServiceConfiguration } {
+  const edition = configuredIosPhoneEdition(dataDirectory);
+  if (edition === "enhanced") return { edition, ...requiredIosUrlFilterProfileOptions(dataDirectory) };
+  return { edition };
+}
+
+export function isIosPhoneEdition(value: unknown): value is IosPhoneEdition {
+  return value === "personal" || value === "enhanced";
 }
 
 function requiredRecord(value: unknown): Record<string, unknown> {

@@ -14,6 +14,7 @@ import {
   parseArguments,
   policyFreshnessProblems,
   preservedPolicyReceipt,
+  receiptPhoneEdition,
   removalPasswordFromProfile
 } from "../scripts/ios-phone-suite.mjs";
 import { buildPhoneBlocklistArtifact } from "../src/adultBlocklistPhoneArtifact.js";
@@ -25,15 +26,19 @@ const phoneSuiteSource = await readFile(join(projectRoot, "scripts", "ios-phone-
 
 assert.deepEqual(parseArguments([]), {
   command: "status",
-  options: { bump: "patch", device: "", force: false, json: false, noPolicy: false, replaceLegacy: false, server: "http://127.0.0.1:8787" }
+  options: { allowEditionDowngrade: false, bump: "patch", device: "", edition: "", force: false, json: false, noPolicy: false, replaceLegacy: false, server: "http://127.0.0.1:8787" }
 });
 assert.deepEqual(parseArguments(["update", "--device", "phone-1", "--no-policy", "--replace-legacy"]), {
   command: "update",
-  options: { bump: "patch", device: "phone-1", force: false, json: false, noPolicy: true, replaceLegacy: true, server: "http://127.0.0.1:8787" }
+  options: { allowEditionDowngrade: false, bump: "patch", device: "phone-1", edition: "", force: false, json: false, noPolicy: true, replaceLegacy: true, server: "http://127.0.0.1:8787" }
 });
+assert.equal(parseArguments(["update", "--edition", "personal"]).options.edition, "personal");
+assert.equal(parseArguments(["update", "--edition=enhanced"]).options.edition, "enhanced");
+assert.equal(parseArguments(["update", "--allow-edition-downgrade"]).options.allowEditionDowngrade, true);
 assert.equal(parseArguments(["bump", "minor"]).options.bump, "minor");
 assert.throws(() => parseArguments(["update", "--wat"]), /Unknown option/);
 assert.throws(() => parseArguments(["bump", "wat"]), /Unknown release bump/);
+assert.throws(() => parseArguments(["update", "--edition", "enterprise"]), /Unknown phone edition/);
 
 assert.equal(incrementVersion("1.2.3", "patch"), "1.2.4");
 assert.equal(incrementVersion("1.2.3", "minor"), "1.3.0");
@@ -74,13 +79,13 @@ assert.ok(
 );
 assert.match(
   phoneSuiteSource,
-  /if \(selectedCommand === "audit"\) \{[\s\S]*?requireReadyIosUrlFilter[\s\S]*?prepareAuditToolchain\(\)[\s\S]*?auditFourPolicies\(toolEnvironment, urlFilter\.service\)/u,
+  /if \(selectedCommand === "audit"\) \{[\s\S]*?edition === "enhanced"[\s\S]*?requireReadyIosUrlFilter[\s\S]*?prepareAuditToolchain\(\)[\s\S]*?auditFourPolicies\(toolEnvironment, edition === "enhanced" \? urlFilter\.service : null\)/u,
   "standalone four-level policy audits must select and use an Xcode tool environment"
 );
 assert.match(phoneSuiteSource, /PANIC_LOCK_PROFILE_ID[\s\S]*?title: "Panic"/u, "the phone audit must include Panic");
-assert.match(phoneSuiteSource, /console\.log\("Four-level policy audit:"\)/u);
+assert.match(phoneSuiteSource, /console\.log\(`\$\{editionLabel\(edition\)\} four-level policy audit:`\)/u);
 assert.equal(
-  (phoneSuiteSource.match(/await phoneStatus\(selectedOptions, device, toolEnvironment\)/gu) || []).length,
+  (phoneSuiteSource.match(/await phoneStatus\(selectedOptions, device, toolEnvironment, edition\)/gu) || []).length,
   2,
   "initial and post-update status must reuse the selected Xcode tool environment"
 );
@@ -130,7 +135,7 @@ assert.match(requiredAppsSource, /tech\.caseline\.vigil\.youtube/u);
 assert.match(requiredAppsSource, /service: "instagram"[\s\S]*?appIconSet: "InstagramAppIcon"/u);
 assert.match(requiredAppsSource, /service: "youtube"[\s\S]*?appIconSet: "YouTubeAppIcon"/u);
 assert.doesNotMatch(requiredAppsSource, /tech\.caseline\.vigil\.(?:browser|social|snapchat)/u);
-assert.match(phoneSuiteSource, /const REQUIRED_APPS = \[\.\.\.REQUIRED_SOCIAL_APPS, URL_FILTER_APP\]/u);
+assert.match(phoneSuiteSource, /const appsForEdition = \(edition\) => edition === "enhanced"[\s\S]*?REQUIRED_SOCIAL_APPS, URL_FILTER_APP/u);
 assert.match(phoneSuiteSource, /bundleId: "tech\.caseline\.vigil\.url-filter"/u);
 
 const buildPhoneAppsStart = phoneSuiteSource.indexOf("async function buildPhoneApps");
@@ -143,6 +148,7 @@ assert.match(buildPhoneAppsSource, /VIGIL_SERVICE=\$\{social\.service\}/u);
 assert.match(buildPhoneAppsSource, /SOCIAL_APP_ICON_SET=\$\{social\.appIconSet\}/u);
 assert.doesNotMatch(buildPhoneAppsSource, /VigilBrowser|browserDerived|VIGIL_SERVICE=combined/u);
 assert.match(buildPhoneAppsSource, /VigilURLFilter\/VigilURLFilter\.xcodeproj[\s\S]*?VigilURLFilterHost/u);
+assert.match(buildPhoneAppsSource, /if \(edition === "enhanced"\)/u);
 assert.match(buildPhoneAppsSource, /signedUrlFilterCapabilities[\s\S]*?urlFilterProvider/u);
 assert.match(
   buildPhoneAppsSource,
@@ -185,15 +191,33 @@ assert.match(
 );
 assert.match(phoneSuiteSource, /isMissingConfigurationProfileError\(detail\)/u);
 assert.match(phoneSuiteSource, /isUnsupportedConfigurationProfileError\(detail\)/u);
-const liveProfileInstall = phoneSuiteSource.match(/"profile", "install"[^\n]+/u)?.[0] || "";
-assert.match(liveProfileInstall, /lockPath/u);
-assert.doesNotMatch(liveProfileInstall, /launcher/u);
 assert.match(
   phoneSuiteSource,
-  /buildCurrentPolicyFromLiveState\(server,[\s\S]*?buildIosConfigurationProfile\(state, new Date\(\), \{ urlFilter: urlFilterService \}\)/u,
-  "updates must generate policy bytes with the freshly built profile code and current live state"
+  /installConfigurationProfileWhenUnlocked\(device, preparedPolicy\.lockPath, toolEnvironment\)/u
 );
-assert.match(phoneSuiteSource, /--no-policy is incompatible with the required fail-closed iOS URL Filter/u);
+assert.match(
+  phoneSuiteSource,
+  /async function installConfigurationProfileWhenUnlocked[\s\S]*?APPLY_USB_PROFILE_SCRIPT[\s\S]*?ProfileError: invalid response \\\{'Status': 'NotNow'\\\}[\s\S]*?setTimeout\(resolveWait, 1_000\)/u,
+  "a locked phone should pause at the protected profile boundary without rebuilding or downgrading"
+);
+assert.match(
+  phoneSuiteSource,
+  /paired over USB but is not supervised[\s\S]*?iOS will transfer the profile for confirmation in Settings/u,
+  "an unsupervised personal phone may fall back to Apple's user-confirmed profile transfer"
+);
+assert.match(
+  phoneSuiteSource,
+  /existingSupervisorKeybagPath\(\)[\s\S]*?VIGIL_SUPERVISOR_KEYBAG[\s\S]*?join\(ROOT, "data", "vigil-supervisor\.keybag"\)/u,
+  "a supervised update must locate the persistent key independently of the live-state directory"
+);
+assert.match(
+  phoneSuiteSource,
+  /buildCurrentPolicyFromLiveState\(server,[\s\S]*?urlFilterService \? \{ urlFilter: urlFilterService \} : \{\}/u,
+  "updates must generate edition-matched policy bytes with the freshly built profile code and current live state"
+);
+assert.match(phoneSuiteSource, /--no-policy is incompatible with the Enhanced edition's fail-closed iOS URL Filter/u);
+assert.match(phoneSuiteSource, /Refusing to replace an Enhanced phone deployment with Personal edition/u);
+assert.match(phoneSuiteSource, /await persistPhoneEdition\(edition\)/u);
 assert.doesNotMatch(phoneSuiteSource, /fetchLivePolicyFingerprint/u, "policy freshness must not fall back to potentially stale server bytes");
 assert.match(
   phoneSuiteSource,
@@ -252,6 +276,10 @@ assert.deepEqual(preservedPolicyReceipt({
   policyArtifactHash: "prior-artifact"
 });
 assert.deepEqual(preservedPolicyReceipt(null), { policyFingerprint: "", policyArtifactHash: "" });
+assert.equal(receiptPhoneEdition(null), "personal");
+assert.equal(receiptPhoneEdition({ edition: "personal" }), "personal");
+assert.equal(receiptPhoneEdition({ edition: "enhanced" }), "enhanced");
+assert.equal(receiptPhoneEdition({ apps: [{ bundleId: "tech.caseline.vigil.url-filter" }] }), "enhanced");
 
 const testSource = {
   id: "custom-test",

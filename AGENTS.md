@@ -17,6 +17,23 @@ npm run agent:update
 ```
 Your job is to help human flourishing by helping the user update and develop this app without lessening the meaningful, purpose-built restrictions.
 
+## The iPhone path must remain free and personal-project compatible
+
+Vigil is a personal project. The owner cannot pay for the Apple Developer
+Program or other recurring developer subscriptions. Agents must not make a
+paid Apple membership, a production-only entitlement, or paid hosted
+infrastructure a prerequisite for maintaining or updating the owner's phone.
+
+Use the strongest protections available with Xcode Personal Team signing and a
+locally managed supervised iPhone. Paid-only capabilities may exist as optional
+enhancements, but their absence must not block the supported personal-project
+phone release, policy generation, companion-app update, or verification path.
+Do not fabricate production service endpoints, bypass Apple's signing rules, or
+claim that a Personal Team build has entitlements it does not have. Preserve
+and verify the supervised non-removable profile, Apple's BuiltIn web filtering,
+priority deny rules, restrictions payload, and Personal Team-compatible Vigil
+companions instead.
+
 ## iPhone supervision must preserve the layout in the same restore
 
 The live-proven no-erase sequence for an already activated iPhone is:

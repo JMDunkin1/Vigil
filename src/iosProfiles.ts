@@ -19,7 +19,7 @@ import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, profileById } from "./policy.js";
 import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS, focusedSocialBlockedBundleIds, focusedSocialDeniedUrls, focusedSocialSummary, normalizeFocusedSocialSettings } from "./socialFeatureFilters.js";
 import type { IosManageEngineGeneration, IosSettings, VigilState, UnknownRecord } from "./types.js";
-import { requiredIosUrlFilterProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
+import { configuredIosPhoneProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
 import type { IosUrlFilterServiceConfiguration } from "./iosUrlFilterServiceConfiguration.js";
 
 export const IOS_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
@@ -311,14 +311,14 @@ function manageEngineHandoffSummary(
   let expectedProfileHash = "";
   try {
     const options = process.env.VIGIL_DATA_DIR
-      ? requiredIosUrlFilterProfileOptions(process.env.VIGIL_DATA_DIR)
+      ? configuredIosPhoneProfileOptions(process.env.VIGIL_DATA_DIR)
       : {};
     expectedProfileHash = createHash("sha256")
       .update(buildIosConfigurationProfile(state, now, options))
       .digest("hex");
   } catch {
-    // Summary generation remains read-only. Actual profile generation refuses
-    // to proceed until the required URL Filter service configuration is present.
+    // Summary generation remains read-only. Enhanced edition generation still
+    // fails closed if its required URL Filter service configuration is absent.
   }
   const currentGeneration = Boolean(active && generation?.profileHash === expectedProfileHash);
   return {

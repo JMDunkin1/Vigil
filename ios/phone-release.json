@@ -1,7 +1,10 @@
 {
-  "schemaVersion": 1,
-  "version": "0.3.17",
-  "build": 20,
-  "sourceFingerprint": "33c130da2542d9371f096f10b7c54e9d19cb3f7fafbbbb750be7b501ec3bd51b",
-  "releasedAt": "2026-08-03T19:27:36.222Z"
+  "schemaVersion": 2,
+  "version": "0.3.22",
+  "build": 25,
+  "sourceFingerprints": {
+    "personal": "cfdb67813cc345df03bbb19400db7104761bda5fa737461a11b753a255c37a34",
+    "enhanced": "33c130da2542d9371f096f10b7c54e9d19cb3f7fafbbbb750be7b501ec3bd51b"
+  },
+  "releasedAt": "2026-08-03T20:56:09.032Z"
 }

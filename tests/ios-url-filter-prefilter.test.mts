@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -13,7 +13,7 @@ import {
 import { buildPhoneBlocklistArtifact } from "../src/adultBlocklistPhoneArtifact.js";
 import { defaultState } from "../src/defaults.js";
 import { buildIosConfigurationProfile } from "../src/iosProfiles.js";
-import { parseIosUrlFilterServiceConfiguration } from "../src/iosUrlFilterServiceConfiguration.js";
+import { configuredIosPhoneEdition, configuredIosPhoneProfileOptions, parseIosUrlFilterServiceConfiguration } from "../src/iosUrlFilterServiceConfiguration.js";
 import { parsePlist } from "../src/plist.js";
 
 const appleSampleDomains = [
@@ -88,6 +88,20 @@ assert.deepEqual({ ...(plugin?.URLFilterParameters as Record<string, unknown>) }
   URLPrefilterFetchFrequency: 2700
 });
 assert.throws(() => parseIosUrlFilterServiceConfiguration({ ...service, prefilterFetchIntervalSeconds: 2699 }), /at least 2700/);
+
+const editionDirectory = await mkdtemp(join(tmpdir(), "vigil-ios-phone-edition-"));
+try {
+  assert.equal(configuredIosPhoneEdition(editionDirectory), "personal");
+  assert.deepEqual(configuredIosPhoneProfileOptions(editionDirectory), { edition: "personal" });
+  await writeFile(join(editionDirectory, "ios-phone-edition.json"), JSON.stringify({ schemaVersion: 1, edition: "enhanced" }));
+  assert.equal(configuredIosPhoneEdition(editionDirectory), "enhanced");
+  assert.throws(() => configuredIosPhoneProfileOptions(editionDirectory), /required fail-closed iOS URL Filter/u);
+  await mkdir(join(editionDirectory, "ios-url-filter"), { recursive: true });
+  await writeFile(join(editionDirectory, "ios-url-filter", "service.json"), JSON.stringify(service));
+  assert.equal(configuredIosPhoneProfileOptions(editionDirectory).urlFilter?.pirServerURL, "https://pir.example.test/");
+} finally {
+  await rm(editionDirectory, { recursive: true, force: true });
+}
 
 const snapshotHash = "a".repeat(64);
 const payloadSha256 = "b".repeat(64);

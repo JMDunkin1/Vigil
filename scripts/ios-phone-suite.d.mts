@@ -1,6 +1,8 @@
 export interface PhoneSuiteOptions {
+  allowEditionDowngrade: boolean;
   bump: "patch" | "minor" | "major";
   device: string;
+  edition: "" | "personal" | "enhanced";
   force: boolean;
   json: boolean;
   noPolicy: boolean;
@@ -19,6 +21,7 @@ export function policyFreshnessProblems(options?: {
   livePolicyFingerprint?: string;
 }): string[];
 export function preservedPolicyReceipt(receipt: unknown): { policyFingerprint: string; policyArtifactHash: string };
+export function receiptPhoneEdition(receipt: unknown): "personal" | "enhanced";
 export function removalPasswordFromProfile(profile: unknown): string;
 export interface PhoneBlocklistReadiness {
   ready: boolean;
@@ -37,8 +40,9 @@ export function phoneBlocklistReadiness(explicitPath?: string): Promise<PhoneBlo
 export function blocklistReadinessProblems(readiness: PhoneBlocklistReadiness, serverState?: unknown): string[];
 export function deployedBlocklistProblems(receipt: unknown, readiness: PhoneBlocklistReadiness, requiredBundleIds?: string[]): string[];
 export function signingCapabilitySummary(variant: unknown): { variant: string; mediaCapability: string };
-export function implementationFingerprint(): Promise<{
+export function implementationFingerprint(edition?: "personal" | "enhanced"): Promise<{
   hash: string;
+  edition: "personal" | "enhanced";
   files: Array<{ path: string; bytes: number; sha256: string }>;
   blocklistPath: string;
 }>;

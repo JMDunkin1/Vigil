@@ -1,5 +1,26 @@
 # Vigil phone maintenance
 
+## Personal and Enhanced editions
+
+Vigil has two explicit phone editions:
+
+- **Personal** is the default and requires no paid Apple membership. It installs
+  the supervised, removal-disallowed restrictions profile; Apple's BuiltIn
+  automatic adult-content filter; the 500 highest-priority explicit deny URLs;
+  and the fixed Instagram and YouTube companions with the exact bundled adult
+  blocklist and generated explicit-content policy. It deliberately uses the
+  conservative Personal Team entitlement set.
+- **Enhanced** contains every Personal protection and also requires the signed
+  Vigil system URL Filter, its matching Bloom prefilter/PIR database, public
+  HTTPS service, Privacy Pass issuer, deployment manifest, and Apple's
+  `url-filter-provider` entitlement. It refuses a partial or unreachable
+  deployment.
+
+The selected edition is persisted in private runtime data. A missing selection
+defaults to Personal. Enhanced never silently downgrades when its service is
+missing, and replacing an installed Enhanced receipt with Personal requires the
+explicit `--allow-edition-downgrade` flag.
+
 The phone has two independent kinds of freshness:
 
 - The implementation release in `ios/phone-release.json` covers the two fixed iOS companions, the four built-in policy generators, companion behavior, and the bundled adult blocklist. Instagram and YouTube carry the same marketing version and build number on the phone.
@@ -12,11 +33,13 @@ npm run ios:phone:status
 npm run ios:phone:check
 npm run ios:phone:audit
 npm run ios:phone:update
+npm run ios:phone:update:personal
+npm run ios:phone:update:enhanced
 ```
 
-`status` is read-only and explains drift. `check` reports the same state but exits nonzero when the phone or release is stale. If CoreDevice cannot inspect configuration profiles on the connected phone, both commands report profile verification as unavailable instead of treating the live policy as missing or crashing. `audit` builds the TypeScript runtime and validates generated Normal, Soft Lock, Full Brick, and Panic profiles. `update` bumps the patch/build only when implementation inputs changed, builds fixed Instagram and YouTube companions with that shared release, installs them in place, and replaces only the live policy profile. It does not build or install a Vigil browser, create Home Screen Web Clips, or reboot the phone.
+`status` is read-only and explains drift. `check` reports the same state but exits nonzero when the phone or release is stale. If CoreDevice cannot inspect configuration profiles on the connected phone, both commands report profile verification as unavailable instead of treating the live policy as missing or crashing. `audit` builds the TypeScript runtime and validates generated Normal, Soft Lock, Full Brick, and Panic profiles for the selected edition. `update` bumps the patch/build only when that edition's inputs changed, builds fixed Instagram and YouTube companions, installs them in place, and replaces only the live policy profile. Enhanced additionally builds, installs, and live-verifies Vigil URL Filter. It does not build or install a Vigil browser, create Home Screen Web Clips, or reboot the phone.
 
-The phone release and update commands now require a valid `adult-blocklist.sdi` before they can bump or mutate the phone. For the default Block List Project source, “valid” means at least 600,000 domains with intact format and payload hashes; a tiny test fixture cannot pass. Each built app must contain the exact artifact at its bundle root. The suite re-reads that bundled copy, compares its domain count, snapshot hash, and whole-artifact hash, and records the proof per app in the deployment receipt. The same gate checks that `ExplicitContentPolicy.json` is freshly generated and byte-identical inside both apps. `status` compares the adult artifact to the enabled live snapshot, reports the real domain count, source, and hashes, and reports whether both generated artifacts were proven by the last deployment.
+Both editions require a valid `adult-blocklist.sdi` before they can bump or mutate the phone. The live installed Vigil data copy takes priority over a stale repository copy. For the default Block List Project source, “valid” means at least 600,000 domains with intact format and payload hashes; a tiny test fixture cannot pass. Each built app must contain the exact artifact at its bundle root. The suite re-reads that bundled copy, compares its domain count, snapshot hash, and whole-artifact hash, and records the proof per app in the deployment receipt. The same gate checks that `ExplicitContentPolicy.json` is freshly generated and byte-identical inside both companions. `status` compares the adult artifact to the enabled live snapshot, reports the real domain count, source, and hashes, and reports whether both generated artifacts were proven by the last deployment.
 
 Adult-list refreshes retain cumulative and currently non-resolving domains, reject syntactically invalid rows, report unrecognized TLDs without deleting them, and remove only child rows already covered by a listed parent. The generated v2 artifact includes a protected precomputed sparse index; the iOS reader remains compatible with v1 artifacts while installed companions are rolled forward.
 
@@ -26,7 +49,7 @@ Xcode requires configuration profiles to have a CMS signature for command-line v
 
 When more than one Xcode is installed, the suite automatically selects an iOS SDK new enough for the connected phone instead of relying on the global `xcode-select` setting.
 
-The suite first attempts a full-capability build, which keeps unclassified media concealed. If a Personal Team cannot provision Apple's Sensitive Content Analysis entitlement, it retries with a reduced entitlement set and records `personal-team-conservative` in the deployment receipt. The suite inspects the entitlement on each signed app instead of inferring it from the requested build settings; a mixed result is recorded explicitly. That fallback keeps profile-based domain and URL rules and page-text inspection active, but reveals media that the unavailable analyzer cannot classify. A paid Apple development team is required for the fail-closed on-device media-analysis build.
+Personal always uses the conservative entitlement set and records `personal-team-conservative` in the deployment receipt. That keeps profile-based domain and URL rules and page-text inspection active, but reveals media that the unavailable Sensitive Content Analysis framework cannot classify. Enhanced first attempts the fuller companion capability set and inspects the actual signed entitlements instead of trusting requested build settings; a mixed result is recorded explicitly. Enhanced separately requires the system URL Filter entitlement and rejects an inert build.
 
 The update command writes a local, ignored deployment receipt under `data/ios-phone-deployments/`. The authoritative version remains observable on the phone through each app and in the stamped configuration-profile name.
 
@@ -34,11 +57,18 @@ Useful options:
 
 ```sh
 npm run ios:phone:status -- --device <CoreDevice UUID or iPhone UDID>
+npm run ios:phone:status -- --edition personal
+npm run ios:phone:status -- --edition enhanced
 npm run ios:phone:update -- --no-policy
 npm run ios:phone:update -- --server http://127.0.0.1:8787
 npm run ios:phone:update -- --replace-legacy
 npm run ios:phone:bump -- minor
 ```
+
+Personal Team provisioning profiles expire after seven days. Re-run the
+Personal update while the paired phone is connected before the companions
+expire. The supervised configuration profile is independent of that companion
+app signing window and remains installed.
 
 The supported companions are two independent fixed apps:
 

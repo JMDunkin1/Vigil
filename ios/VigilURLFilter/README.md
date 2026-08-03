@@ -1,8 +1,10 @@
 # Vigil iOS URL Filter
 
-This is Vigil's required system URL-filter path for iOS 26 and later. It uses
-Apple's `NEURLFilter` architecture and does not change supervision, restore a
-backup, or modify the phone's Home Screen.
+This is Vigil Enhanced edition's paid system URL-filter path for iOS 26 and
+later. It uses Apple's `NEURLFilter` architecture and does not change
+supervision, restore a backup, or modify the phone's Home Screen. Personal
+edition deliberately omits this plug-in and uses the supervised BuiltIn web
+filter, priority deny rules, restrictions, and fixed companions instead.
 
 ## Complete local path
 
@@ -19,14 +21,14 @@ backup, or modify the phone's Home Screen.
   minimum fetch interval, and `URLFilterFailClosed=true`. The bounded BuiltIn
   payload remains a simultaneous layer for Vigil's changing timed rules; it is
   not a fallback for the full adult-domain dataset.
-- The maintained phone release builds, signs, installs, receipts, and version-
+- The Enhanced phone release builds, signs, installs, receipts, and version-
   checks `tech.caseline.vigil.url-filter`. It verifies the provider entitlement,
   bundled artifacts, profile parameters, and paired PIR revision. `--no-policy`
   is rejected because installing the app without its exact managed
   configuration would create a partial deployment.
-- Server, MDM, and ManageEngine profile delivery require
-  `data/ios-url-filter/service.json`; they do not silently emit a BuiltIn-only
-  production profile when that configuration is absent.
+- Server, MDM, and ManageEngine delivery follow the persisted edition. Personal
+  emits the BuiltIn profile without this service. Enhanced requires
+  `data/ios-url-filter/service.json` and fails closed if it is absent or invalid.
 
 ## Generate and deploy the paired database
 
@@ -52,14 +54,15 @@ generated shard and parameter file, then run `npm run ios:url-filter:finalize`
 to hash and bind the processed outputs. Deploy those files and the generated
 `pir/deployment-manifest.json` behind the configured public HTTPS/OHTTP service,
 and keep the generated authentication token
-synchronized. Then run `npm run ios:phone:audit`; only a clean audit may proceed to
-`npm run ios:phone:update`.
+synchronized. Then run `npm run ios:phone:audit -- --edition enhanced`; only a
+clean audit may proceed to `npm run ios:phone:update:enhanced`.
 
 ## External production gate
 
 Apple's production URL Filter/OHTTP capability, service registration, public
 HTTPS deployment, and Privacy Pass issuer are account/infrastructure
 prerequisites. Development signing does not prove production eligibility.
-Vigil intentionally refuses release/update when those real values are absent or
-when any local hash/revision differs. There is no placeholder endpoint or
-downgrade path.
+Enhanced intentionally refuses release/update when those real values are absent
+or when any local hash/revision differs. There is no placeholder endpoint or
+implicit downgrade path. Personal remains independently releasable without
+these paid prerequisites.
