@@ -340,16 +340,28 @@ function renderAdultBlocklist(data: DashboardData, $: QueryElement): void {
   }
   customUrl.disabled = $("#adultBlocklistSourceId").value !== "custom";
   const domainCount = Number(adult.domainCount || 0);
+  const sourceDomainCount = Number(adult.sourceDomainCount || domainCount);
   const activeCount = Number(adult.activeDomainCount || 0);
   const preloadCount = Number(adult.preloadedDomainCount || 0);
+  const quality = adult.qualityAudit || {};
   const lastRefresh = adult.lastRefreshAt ? shortDate(String(adult.lastRefreshAt)) : "not refreshed";
   const freshness = adult.enabled === false ? lastRefresh : (adult.current ? lastRefresh : "needs refresh");
   $("#adultBlocklistStatus").textContent = adult.lastError
     ? String(adult.lastError)
     : (!adult.current && adult.detail ? String(adult.detail) : "")
-      || `${domainCount.toLocaleString()} domains loaded · ${activeCount.toLocaleString()} after protected exceptions`;
+      || `${domainCount.toLocaleString()} effective domains loaded · ${activeCount.toLocaleString()} after protected exceptions`;
   $("#adultBlocklistMeta").textContent = [
     String(adult.selectedSourceLabel || "Adult source"),
+    sourceDomainCount > domainCount ? `${sourceDomainCount.toLocaleString()} normalized source domains` : "",
+    Number(quality.suffixRedundantCount || 0) > 0
+      ? `${Number(quality.suffixRedundantCount).toLocaleString()} covered children compacted`
+      : "",
+    Number(quality.invalidLineCount || 0) > 0
+      ? `${Number(quality.invalidLineCount).toLocaleString()} invalid rows rejected`
+      : "",
+    quality.tldRegistryChecked && Number(quality.unrecognizedTldCount || 0) > 0
+      ? `${Number(quality.unrecognizedTldCount).toLocaleString()} unrecognized-TLD rows retained`
+      : "",
     `${preloadCount} preloaded for network layers`,
     freshness,
     adult.shortHash ? `hash ${adult.shortHash}` : ""

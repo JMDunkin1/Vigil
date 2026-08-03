@@ -9,6 +9,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var health: [SocialService: AdapterHealth] = [:]
     @Published private(set) var audioPreferences: [SocialService: Bool] = [:]
     @Published private(set) var darkChromePreferences: [SocialService: Bool] = [:]
+    @Published private(set) var youtubeSafariRequest: YouTubeSafariRequest
 
     let fixedService: SocialService
     private let defaults: UserDefaults
@@ -56,6 +57,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ?? .youtube
         self.fixedService = configured
         self.selectedService = configured
+        self.youtubeSafariRequest = YouTubeSafariRequest(url: SocialService.youtube.homeURL)
         self.defaults = defaults
         self.loadInitialPages = loadInitialPages
         self.mediaClassifier = mediaClassifier
@@ -70,12 +72,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             health[service] = .loading
             surfaceStates[service] = .unknown
         }
-        if loadInitialPages { _ = webView(for: selectedService) }
+        if loadInitialPages, selectedService != .youtube { _ = webView(for: selectedService) }
     }
 
     func select(_ service: SocialService) {
         guard service == fixedService else { return }
-        _ = webView(for: fixedService)
+        if fixedService != .youtube { _ = webView(for: fixedService) }
     }
 
     func open(_ url: URL) {
@@ -83,6 +85,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let scheme = url.scheme?.lowercased() ?? ""
         let destination = scheme == "vigilsocial" || scheme.hasPrefix("vigil-") ? service.homeURL : url
         guard service.allowsNavigation(to: destination), !service.isRestrictedSurface(destination) else { return }
+        if service == .youtube {
+            youtubeSafariRequest = YouTubeSafariRequest(url: destination)
+            return
+        }
         webView(for: fixedService).load(URLRequest(url: destination))
     }
 
@@ -97,6 +103,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         controller.add(bridge, name: "vigil")
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.documentStartScript(
+                for: service,
                 unclassifiedMediaPolicy: unclassifiedMediaPolicy,
                 audioEnabled: audioEnabled(for: service)
             ),
@@ -196,6 +203,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func goHome(_ service: SocialService) {
+        if service == .youtube {
+            youtubeSafariRequest = YouTubeSafariRequest(url: service.homeURL)
+            return
+        }
         let webView = webView(for: service)
         cancelDocumentWork(for: service)
         health[service] = .loading
@@ -969,6 +980,14 @@ extension SocialWebViewStore: WKNavigationDelegate {
         refreshingServices.remove(service)
         webView.scrollView.refreshControl?.endRefreshing()
         updateAuxiliaryPageHealthIfNeeded(for: service, in: webView)
+        if let url = webView.url, service.usesUnmodifiedAuthenticationDocument(url) {
+            if service.auxiliaryPageHealth(for: url) == nil {
+                health[service] = .ready
+            }
+            setSurface(.unknown, for: service)
+            restoreWebContentPositionIfNeeded(for: service, in: webView)
+            return
+        }
         webView.evaluateJavaScript(DOMAdapters.script(for: service, audioEnabled: audioEnabled(for: service)))
         restoreWebContentPositionIfNeeded(for: service, in: webView)
     }

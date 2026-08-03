@@ -25,7 +25,7 @@ initial.emergency.pending.push({
 await store.saveRuntimeSnapshot(initial, {});
 
 const { startVigilRuntime } = await import("../src/server.js");
-const runtime = await startVigilRuntime();
+const runtime = await startVigilRuntime({ systemEffects: "isolated" });
 const monitorBarrier = await runtime.request({
   method: "POST",
   path: "/api/settings",

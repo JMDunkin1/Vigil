@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "version": "0.3.13",
-  "build": 16,
-  "sourceFingerprint": "c23c8bc62a67a572c2cc99776b3b69b98ab048357bd64305754942076aeae0bf",
-  "releasedAt": "2026-08-03T18:51:35.652Z"
+  "version": "0.3.17",
+  "build": 20,
+  "sourceFingerprint": "33c130da2542d9371f096f10b7c54e9d19cb3f7fafbbbb750be7b501ec3bd51b",
+  "releasedAt": "2026-08-03T19:27:36.222Z"
 }

@@ -15,13 +15,15 @@ const services = {
     bundleId: "tech.caseline.vigil.instagram",
     name: "Instagram",
     appIconSet: "InstagramAppIcon",
-    scheme: "vigil-instagram"
+    scheme: "vigil-instagram",
+    buildScheme: "VigilInstagram"
   },
   youtube: {
     bundleId: "tech.caseline.vigil.youtube",
     name: "YouTube",
     appIconSet: "YouTubeAppIcon",
-    scheme: "vigil-youtube"
+    scheme: "vigil-youtube",
+    buildScheme: "VigilSocial"
   }
 } as const;
 
@@ -43,11 +45,11 @@ export function buildArguments(argv: string[]): string[] {
 
   const args = [
     "-project", project,
-    "-scheme", "VigilSocial",
+    "-scheme", service.buildScheme,
     "-configuration", options.configuration,
     "-destination", options.destination,
     "build",
-    `PRODUCT_BUNDLE_IDENTIFIER=${service.bundleId}`,
+    `VIGIL_APP_BUNDLE_IDENTIFIER=${service.bundleId}`,
     `VIGIL_SERVICE=${options.service}`,
     `SOCIAL_APP_NAME=${service.name}`,
     `SOCIAL_APP_ICON_SET=${service.appIconSet}`,

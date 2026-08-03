@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { ADULT_BLOCKLIST_SOURCES, clearAdultBlocklistCacheForTest, setAdultBlocklistDomainsForTest } from "../src/adultBlocklist.js";
 import { BRICK_MODE_PROFILE_ID, IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS, PANIC_LOCK_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDeviceUsageCredential, iosMdmDoctor, iosMdmQueuedPushEligible, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
@@ -9,7 +11,30 @@ import { parsePlist, plistData, toPlist } from "../src/plist.js";
 import { panicLockProfile, profileById } from "../src/policy.js";
 import type { UsageState } from "../src/types.js";
 import { syncDeviceUsageSnapshot } from "../src/usage.js";
+import { DATA_DIR } from "../src/store.js";
 import { must, now, recordValue, stringValue } from "./test-helpers.mjs";
+
+const testUrlFilterServicePath = join(DATA_DIR, "ios-url-filter", "service.json");
+const removeTestUrlFilterService = !existsSync(testUrlFilterServicePath);
+if (removeTestUrlFilterService) {
+  mkdirSync(join(DATA_DIR, "ios-url-filter"), { recursive: true });
+  writeFileSync(testUrlFilterServicePath, JSON.stringify({
+    schemaVersion: 1,
+    pirServerURL: "https://pir.example.test/",
+    privacyPassIssuerURL: "https://issuer.example.test/",
+    deploymentManifestURL: "https://pir.example.test/deployment.json",
+    authenticationToken: "test-authentication-token-0001",
+    hostBundleIdentifier: "tech.caseline.vigil.url-filter",
+    controlProviderBundleIdentifier: "tech.caseline.vigil.url-filter.control",
+    usecaseName: "tech.caseline.vigil.url-filter.url.filtering",
+    prefilterFetchIntervalSeconds: 2700,
+    prefilterTag: "test-prefilter",
+    pirDatabaseRevision: "test-pir",
+    pirDatabaseSha256: "a".repeat(64),
+    exactIndexSnapshotHash: "b".repeat(64)
+  }));
+  process.once("exit", () => rmSync(testUrlFilterServicePath, { force: true }));
+}
 
 {
   const state = defaultState();

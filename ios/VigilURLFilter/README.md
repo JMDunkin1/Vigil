@@ -1,60 +1,65 @@
-# Vigil iOS 26 URL Filter foundation
+# Vigil iOS URL Filter
 
-This isolated target is Vigil's system-wide path beyond the 500-entry managed
-web-filter list. It uses Apple's iOS 26 `NEURLFilter` architecture and does not
-change, restore, supervise, or update the connected phone.
+This is Vigil's required system URL-filter path for iOS 26 and later. It uses
+Apple's `NEURLFilter` architecture and does not change supervision, restore a
+backup, or modify the phone's Home Screen.
 
-## What is implemented
+## Complete local path
 
-- An ExtensionKit URL Filter control provider using the current Xcode 26 SDK
-  `fetchPrefilter(existingPrefilterTag:)` contract.
-- Apple's `url-filter-provider` Network Extension entitlement and
-  `com.apple.networkextension.url-filter-control` extension point.
-- A fail-closed `NEURLFilterManager` configuration helper.
-- A voluntary verdict helper for non-Apple networking clients that treats both
-  deny and unknown as blocked.
-- An integrity-checked artifact boundary: `url-filter-prefilter.vuf` carries a
-  SHA-256-checked Bloom bitset and is rejected unless its snapshot hash, exact
-  index payload hash, and domain count match `adult-blocklist.sdi`.
-- Debug builds may omit both artifacts but the provider then fails to start.
-  Release builds fail at build time if either artifact is absent.
+- `npm run ios:url-filter:prepare` decodes the integrity-checked
+  `adult-blocklist.sdi` and generates Apple's Bloom prefilter and PIR textpb
+  database from the same ordered domain set.
+- The generator matches Apple's published Swift Bloom implementation and test
+  vector byte-for-byte. The artifact records the exact-index snapshot and
+  payload hashes, PIR database hash and revision, Bloom parameters, and tag.
+- The ExtensionKit control provider rejects a missing, corrupt, or mismatched
+  exact index or prefilter. It stages the Bloom bitset as a protected temporary
+  file instead of loading another copy into the provider's heap.
+- The managed profile uses `FilterType=Plugin`, `FilterURLs=true`, a 45-minute
+  minimum fetch interval, and `URLFilterFailClosed=true`. The bounded BuiltIn
+  payload remains a simultaneous layer for Vigil's changing timed rules; it is
+  not a fallback for the full adult-domain dataset.
+- The maintained phone release builds, signs, installs, receipts, and version-
+  checks `tech.caseline.vigil.url-filter`. It verifies the provider entitlement,
+  bundled artifacts, profile parameters, and paired PIR revision. `--no-policy`
+  is rejected because installing the app without its exact managed
+  configuration would create a partial deployment.
+- Server, MDM, and ManageEngine profile delivery require
+  `data/ios-url-filter/service.json`; they do not silently emit a BuiltIn-only
+  production profile when that configuration is absent.
 
-The TypeScript packager in `src/iosUrlFilterPrefilter.ts` packages and validates
-a prefilter produced by the PIR service. It intentionally does **not** generate
-Bloom keys from domain names.
+## Generate and deploy the paired database
 
-## What remains external
-
-This is not production-ready until all of these exist:
-
-1. Apple grants the URL Filter/OHTTP capability for the production distribution
-   team and identifiers. Development-signed testing has different eligibility;
-   it does not prove App Store or managed-distribution approval.
-2. A production PIR service implements Apple's expected database and OHTTP
-   contracts. Its canonical URL keys must be the same keys used to construct the
-   Bloom prefilter. A local domain Bloom filter cannot safely substitute for it.
-3. The service supplies a matching prefilter, database revision, server URL,
-   optional Privacy Pass issuer URL, and short-lived authentication token.
-4. Device validation proves fail-closed behavior and exact live fingerprints
-   before this replaces any existing managed web-filter protection.
-
-Apple networking stacks (WebKit, CFNetwork, Network.framework) receive system
-verdicts. Apps using other networking stacks must voluntarily call
-`NEURLFilter.verdict(for:)` and honor deny/unknown results; Vigil cannot claim
-coverage for apps that bypass both paths.
-
-## Development validation
-
-With matching development artifacts available:
+First generate the prefilter and PIR inputs:
 
 ```sh
-VIGIL_PHONE_BLOCKLIST=/absolute/path/adult-blocklist.sdi \
-VIGIL_URL_FILTER_PREFILTER=/absolute/path/url-filter-prefilter.vuf \
-xcodebuild -project ios/VigilURLFilter/VigilURLFilter.xcodeproj \
-  -target VigilURLFilterHost -sdk iphonesimulator \
-  CODE_SIGNING_ALLOWED=NO build
+npm run ios:url-filter:prepare -- \
+  --pir-server-url https://your-pir-service.example/ \
+  --privacy-pass-issuer-url https://your-issuer.example/ \
+  --deployment-manifest-url https://your-pir-service.example/vigil-url-filter-deployment.json
 ```
 
-Do not install or enable the target until the PIR endpoint and artifact linkage
-are real. The host app contains no disable/remove operation because Vigil's
-continued enforcement is a safety boundary.
+This writes private files below `data/ios-url-filter/`:
+
+- `url-filter-prefilter.vuf` for the control provider;
+- `pir/input.txtpb`, `pir/url-config.json`, and `pir/service-config.json` for
+  Apple's `PIRProcessDatabase` and `PIRService` tools;
+- `service.json` for Vigil's app/profile/release path; and
+- `manifest.json`, which binds all hashes and revisions.
+
+Process `pir/input.txtpb` with Apple's `PIRProcessDatabase`, deploy every
+generated shard and parameter file, then run `npm run ios:url-filter:finalize`
+to hash and bind the processed outputs. Deploy those files and the generated
+`pir/deployment-manifest.json` behind the configured public HTTPS/OHTTP service,
+and keep the generated authentication token
+synchronized. Then run `npm run ios:phone:audit`; only a clean audit may proceed to
+`npm run ios:phone:update`.
+
+## External production gate
+
+Apple's production URL Filter/OHTTP capability, service registration, public
+HTTPS deployment, and Privacy Pass issuer are account/infrastructure
+prerequisites. Development signing does not prove production eligibility.
+Vigil intentionally refuses release/update when those real values are absent or
+when any local hash/revision differs. There is no placeholder endpoint or
+downgrade path.

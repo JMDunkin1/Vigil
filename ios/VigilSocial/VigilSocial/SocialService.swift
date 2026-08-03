@@ -109,6 +109,38 @@ enum SocialService: String, CaseIterable, Identifiable {
         return allowsNavigation(to: url) && !isRestrictedSurface(url)
     }
 
+    func usesUnmodifiedAuthenticationDocument(_ url: URL?) -> Bool {
+        guard self == .instagram,
+              let url,
+              url.scheme?.lowercased() == "https",
+              url.port == nil || url.port == 443,
+              let host = url.host?.lowercased() else { return false }
+        if Self.host(host, matches: "facebook.com") {
+            return allowsNavigation(to: url)
+        }
+        guard Self.host(host, matches: "instagram.com") else { return false }
+        let path = url.path.lowercased()
+        return [
+            "/accounts/login",
+            "/accounts/emailsignup",
+            "/accounts/signup",
+            "/accounts/password",
+            "/accounts/account_recovery",
+            "/accounts/onetap",
+            "/accounts/confirm",
+            "/accounts/challenge",
+            "/accounts/two_factor",
+            "/accounts/verification",
+            "/challenge",
+            "/checkpoint",
+            "/two_factor",
+            "/accounts/suspended",
+            "/accounts/disabled"
+        ].contains { prefix in
+            path == prefix || path.hasPrefix("\(prefix)/")
+        }
+    }
+
     func isRestrictedSurface(_ url: URL) -> Bool {
         guard allowsNavigation(to: url) else { return true }
         switch self {

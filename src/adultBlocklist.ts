@@ -28,11 +28,14 @@ export const ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH = join(DATA_DIR, "adult-blockli
 const VERSIONED_SNAPSHOT_PATTERN = /^adult-blocklist\.([a-f0-9]{64})\.json$/;
 export const ADULT_BLOCKLIST_CUSTOM_SOURCE_ID = "custom";
 export const ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT = 300;
-const SNAPSHOT_VERSION = 1;
+const SNAPSHOT_VERSION = 2;
 const FETCH_TIMEOUT_MS = 45_000;
 const MAX_FETCH_BYTES = 32 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const MIN_REFRESH_DOMAINS = 1000;
+const IANA_TLD_REGISTRY_URL = "https://data.iana.org/TLD/tlds-alpha-by-domain.txt";
+const IANA_TLD_FETCH_TIMEOUT_MS = 8_000;
+const IANA_TLD_MAX_BYTES = 128 * 1024;
 const BUILT_IN_EXPLICIT_SOURCE_ID = "vigil-explicit";
 const BUILT_IN_EXPLICIT_SOURCE_LABEL = "Vigil built-in explicit sites";
 const BUILT_IN_EXPLICIT_DOMAIN_SET = new Set(
@@ -49,7 +52,21 @@ interface AdultBlocklistSnapshot {
   domainCount: number;
   hash: string;
   source: AdultBlocklistSourceSnapshot;
+  audit?: AdultBlocklistQualityAudit;
   domains: string[];
+}
+
+export interface AdultBlocklistQualityAudit {
+  candidateLineCount: number;
+  invalidLineCount: number;
+  normalizedLineCount: number;
+  normalizedDomainCount: number;
+  exactDuplicateCount: number;
+  suffixRedundantCount: number;
+  compactedDomainCount: number;
+  tldRegistryChecked: boolean;
+  unrecognizedTldCount: number;
+  unrecognizedTldExamples: string[];
 }
 
 export interface AdultBlocklistRefreshPreparation {
@@ -82,6 +99,7 @@ export interface AdultBlocklistFetchTestHooks {
   maxBytes?: number;
   maxRedirects?: number;
   buildPhoneArtifact?: typeof buildPhoneBlocklistArtifact;
+  ianaTldRegistryText?: string | null;
 }
 
 export interface AdultBlocklistMatch extends UnknownRecord {
@@ -195,12 +213,14 @@ export async function prepareAdultBlocklistRefresh(
   const attemptedAt = now.toISOString();
   try {
     const text = await fetchSourceText(source.url, hooks);
-    const domains = parseAdultBlocklistDomains(text);
+    const tldRegistryText = await fetchIanaTldRegistryText(hooks);
+    const analyzed = analyzeAdultBlocklistText(text, tldRegistryText);
+    const domains = analyzed.domains;
     const minimumDomains = source.id === DEFAULT_ADULT_BLOCKLIST_SOURCE_ID
       ? MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS
       : MIN_REFRESH_DOMAINS;
-    if (domains.length < minimumDomains) {
-      throw new Error(`Adult blocklist refresh returned only ${domains.length} usable domains; ${minimumDomains} are required for ${source.label}.`);
+    if (analyzed.audit.normalizedDomainCount < minimumDomains) {
+      throw new Error(`Adult blocklist refresh returned only ${analyzed.audit.normalizedDomainCount} usable domains; ${minimumDomains} are required for ${source.label}.`);
     }
     const hash = domainHash(domains);
     const snapshot: AdultBlocklistSnapshot = {
@@ -209,6 +229,7 @@ export async function prepareAdultBlocklistRefresh(
       domainCount: domains.length,
       hash,
       source: sourceSnapshot(source),
+      audit: analyzed.audit,
       domains
     };
     return { attemptedAt, source: sourceSnapshot(source), snapshot, error: null };
@@ -239,6 +260,7 @@ export async function commitAdultBlocklistRefresh(
     const snapshotPath = adultBlocklistSnapshotPath(snapshot);
     (hooks.buildPhoneArtifact || buildPhoneBlocklistArtifact)({
       domains: activeAdultBlocklistDomains(state, snapshot.domains),
+      sourceDomainCount: snapshot.audit?.normalizedDomainCount || snapshot.domains.length,
       snapshotHash: snapshot.hash,
       generatedAt: snapshot.generatedAt,
       source: snapshot.source
@@ -275,6 +297,64 @@ export function parseAdultBlocklistDomains(text: unknown): string[] {
     output.push(domain);
   }
   return output.sort((a, b) => a.localeCompare(b));
+}
+
+export function compactAdultBlocklistDomains(values: readonly string[]): { domains: string[]; removedCount: number } {
+  const domains = uniqueDomains(values.map(normalizeAdultDomain).filter(Boolean));
+  const domainSet = new Set(domains);
+  const compacted = domains.filter((domain) => {
+    const labels = domain.split(".");
+    for (let index = 1; index < labels.length - 1; index += 1) {
+      if (domainSet.has(labels.slice(index).join("."))) return false;
+    }
+    return true;
+  });
+  return { domains: compacted, removedCount: domains.length - compacted.length };
+}
+
+export function analyzeAdultBlocklistText(
+  text: unknown,
+  ianaTldRegistryText: string | null = null
+): { domains: string[]; audit: AdultBlocklistQualityAudit } {
+  const seen = new Set<string>();
+  let candidateLineCount = 0;
+  let invalidLineCount = 0;
+  let normalizedLineCount = 0;
+  let exactDuplicateCount = 0;
+  for (const rawLine of String(text || "").split(/\r?\n/u)) {
+    const trimmed = rawLine.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("!") || trimmed.startsWith("[")) continue;
+    candidateLineCount += 1;
+    const domain = normalizeAdultDomain(rawLine);
+    if (!domain) {
+      invalidLineCount += 1;
+      continue;
+    }
+    normalizedLineCount += 1;
+    if (seen.has(domain)) exactDuplicateCount += 1;
+    else seen.add(domain);
+  }
+  const normalizedDomains = [...seen].sort((left, right) => left.localeCompare(right));
+  const compacted = compactAdultBlocklistDomains(normalizedDomains);
+  const registry = parseIanaTldRegistry(ianaTldRegistryText);
+  const unrecognizedTldDomains = registry
+    ? normalizedDomains.filter((domain) => !registry.has(domain.split(".").at(-1) || ""))
+    : [];
+  return {
+    domains: compacted.domains,
+    audit: {
+      candidateLineCount,
+      invalidLineCount,
+      normalizedLineCount,
+      normalizedDomainCount: normalizedDomains.length,
+      exactDuplicateCount,
+      suffixRedundantCount: compacted.removedCount,
+      compactedDomainCount: compacted.domains.length,
+      tldRegistryChecked: Boolean(registry),
+      unrecognizedTldCount: unrecognizedTldDomains.length,
+      unrecognizedTldExamples: unrecognizedTldDomains.slice(0, 10)
+    }
+  };
 }
 
 export function normalizeAdultDomain(value: unknown): string {
@@ -426,7 +506,9 @@ export function adultBlocklistSummary(state: VigilState) {
       ? runtimeDomainView(state, snapshot).allowlist.length
       : normalizeAdultDomainList(state.adultBlocklist?.allowlist || []).length,
     domainCount,
+    sourceDomainCount: snapshot?.audit?.normalizedDomainCount || domainCount,
     activeDomainCount: activeCount,
+    qualityAudit: snapshot?.audit || null,
     preloadLimit: adultBlocklistPreloadLimit(state),
     preloadedDomainCount: adultBlocklistPreloadDomains(state).length,
     hash,
@@ -510,6 +592,7 @@ export async function writeAdultBlocklistPhoneArtifact(
   if (!snapshot) throw new Error("A current adult blocklist snapshot is required before generating the phone artifact.");
   const artifact = buildPhoneBlocklistArtifact({
     domains: activeAdultBlocklistDomains(state, snapshot.domains),
+    sourceDomainCount: snapshot.audit?.normalizedDomainCount || snapshot.domains.length,
     snapshotHash: snapshot.hash,
     generatedAt: snapshot.generatedAt,
     source: snapshot.source
@@ -666,6 +749,20 @@ async function fetchSourceText(url: string, hooks: AdultBlocklistFetchTestHooks 
     throw new Error("Adult blocklist refresh exceeded the redirect limit.");
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function fetchIanaTldRegistryText(hooks: AdultBlocklistFetchTestHooks): Promise<string | null> {
+  if (hooks.ianaTldRegistryText !== undefined) return hooks.ianaTldRegistryText;
+  if (hooks.resolve || hooks.request) return null;
+  try {
+    return await fetchSourceText(IANA_TLD_REGISTRY_URL, {
+      timeoutMs: IANA_TLD_FETCH_TIMEOUT_MS,
+      maxBytes: IANA_TLD_MAX_BYTES,
+      maxRedirects: 1
+    });
+  } catch {
+    return null;
   }
 }
 
@@ -902,6 +999,7 @@ function loadAdultBlocklistSnapshotSync(path: string): AdultBlocklistSnapshot | 
         homepage: String(parsed.source?.homepage || ""),
         license: String(parsed.source?.license || "")
       },
+      audit: normalizedQualityAudit(parsed.audit, domains.length),
       domains
     };
     diskSnapshotCache.set(path, snapshot);
@@ -988,6 +1086,7 @@ function testSnapshot(
       homepage: source.homepage || "",
       license: source.license || "Test"
     },
+    audit: normalizedQualityAudit(undefined, normalized.length),
     domains: normalized
   };
 }
@@ -1024,6 +1123,39 @@ function domainHash(domains: string[]): string {
 
 function uniqueDomains(values: string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
+
+function parseIanaTldRegistry(value: string | null): Set<string> | null {
+  if (!value) return null;
+  const tlds = new Set(String(value)
+    .split(/\r?\n/u)
+    .map((line) => line.trim().toLowerCase())
+    .filter((line) => line && !line.startsWith("#") && /^[a-z0-9-]+$/u.test(line)));
+  return tlds.size >= 1_000 ? tlds : null;
+}
+
+function normalizedQualityAudit(
+  value: Partial<AdultBlocklistQualityAudit> | undefined,
+  domainCount: number
+): AdultBlocklistQualityAudit {
+  const integer = (candidate: unknown, fallback = 0) => Number.isSafeInteger(candidate) && Number(candidate) >= 0
+    ? Number(candidate)
+    : fallback;
+  const normalizedDomainCount = integer(value?.normalizedDomainCount, domainCount);
+  return {
+    candidateLineCount: integer(value?.candidateLineCount, normalizedDomainCount),
+    invalidLineCount: integer(value?.invalidLineCount),
+    normalizedLineCount: integer(value?.normalizedLineCount, normalizedDomainCount),
+    normalizedDomainCount,
+    exactDuplicateCount: integer(value?.exactDuplicateCount),
+    suffixRedundantCount: integer(value?.suffixRedundantCount, Math.max(0, normalizedDomainCount - domainCount)),
+    compactedDomainCount: domainCount,
+    tldRegistryChecked: value?.tldRegistryChecked === true,
+    unrecognizedTldCount: integer(value?.unrecognizedTldCount),
+    unrecognizedTldExamples: Array.isArray(value?.unrecognizedTldExamples)
+      ? value.unrecognizedTldExamples.map(normalizeAdultDomain).filter(Boolean).slice(0, 10)
+      : []
+  };
 }
 
 function isHostsSink(value: string): boolean {

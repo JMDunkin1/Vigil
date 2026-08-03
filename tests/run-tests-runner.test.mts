@@ -59,7 +59,7 @@ try {
   const isolatedSuite = join(fixtureRoot, "isolated-suite.mjs");
   await writeFile(
     isolatedSuite,
-    `import { writeFile } from "node:fs/promises";\nawait writeFile(${JSON.stringify(isolatedEnvMarker)}, process.env.VIGIL_DATA_DIR || "");\n`
+    `import { writeFile } from "node:fs/promises";\nawait writeFile(${JSON.stringify(isolatedEnvMarker)}, JSON.stringify({ dataDir: process.env.VIGIL_DATA_DIR || "", requireIsolation: process.env.VIGIL_REQUIRE_ISOLATED_RUNTIME || "" }));\n`
   );
   const isolated = await runSuites([isolatedSuite], {
     cwd: fixtureRoot,
@@ -69,7 +69,10 @@ try {
     log: () => {}
   });
   assert.equal(isolated.exitCode, 0);
-  assert.equal(await readFile(isolatedEnvMarker, "utf8"), join(isolatedDataRoot, "000"));
+  assert.deepEqual(JSON.parse(await readFile(isolatedEnvMarker, "utf8")), {
+    dataDir: join(isolatedDataRoot, "000"),
+    requireIsolation: "1"
+  });
 
   const hangingSuite = join(fixtureRoot, "04-hanging.mjs");
   await writeFile(hangingSuite, "setInterval(() => {}, 1_000);\n");

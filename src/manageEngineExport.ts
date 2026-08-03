@@ -10,7 +10,8 @@ import {
   ensureIosRemovalPassword,
   iosProfileSummary
 } from "./iosProfiles.js";
-import { saveState as defaultSaveState } from "./store.js";
+import { DATA_DIR, saveState as defaultSaveState } from "./store.js";
+import { requiredIosUrlFilterProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
 import type { VigilState } from "./types.js";
 
 export const MANAGEENGINE_IOS_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
@@ -133,7 +134,7 @@ async function exportManageEngineIosProfileUnlocked(
   prepareManageEngineState(exportState, options);
 
   const stateSaved = await persistRemovalPasswordForHardenedExport(savedState, exportState, options.saveState || defaultSaveState);
-  const profile = buildIosConfigurationProfile(exportState);
+  const profile = buildIosConfigurationProfile(exportState, new Date(), requiredIosUrlFilterProfileOptions(DATA_DIR));
   const profileHash = createHash("sha256").update(profile).digest("hex");
   const summary = buildManageEngineIosExportSummary(
     exportState,

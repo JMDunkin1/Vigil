@@ -14,11 +14,42 @@ public struct PhoneBlocklistMetadata: Codable, Sendable, Equatable {
     public let encoding: String
     public let blockSize: Int
     public let domainCount: Int
+    public let sourceDomainCount: Int?
     public let snapshotHash: String
+    public let indexSha256: String?
+    public let indexBytes: Int?
     public let payloadSha256: String
     public let payloadBytes: Int
     public let generatedAt: String
     public let source: PhoneBlocklistSource
+
+    public init(
+        formatVersion: Int,
+        encoding: String,
+        blockSize: Int,
+        domainCount: Int,
+        sourceDomainCount: Int? = nil,
+        snapshotHash: String,
+        indexSha256: String? = nil,
+        indexBytes: Int? = nil,
+        payloadSha256: String,
+        payloadBytes: Int,
+        generatedAt: String,
+        source: PhoneBlocklistSource
+    ) {
+        self.formatVersion = formatVersion
+        self.encoding = encoding
+        self.blockSize = blockSize
+        self.domainCount = domainCount
+        self.sourceDomainCount = sourceDomainCount
+        self.snapshotHash = snapshotHash
+        self.indexSha256 = indexSha256
+        self.indexBytes = indexBytes
+        self.payloadSha256 = payloadSha256
+        self.payloadBytes = payloadBytes
+        self.generatedAt = generatedAt
+        self.source = source
+    }
 }
 
 public enum PhoneBlocklistError: LocalizedError {
@@ -82,35 +113,64 @@ public final class PhoneBlocklistIndex: @unchecked Sendable {
             throw PhoneBlocklistError.invalidSignature
         }
         let metadataLength = Int(Self.readUInt32LE(data, offset: Self.magic.count))
-        let payloadOffset = Self.headerBytes + metadataLength
-        guard metadataLength > 0, payloadOffset <= data.count else { throw PhoneBlocklistError.invalidMetadata }
+        let bodyOffset = Self.headerBytes + metadataLength
+        guard metadataLength > 0, bodyOffset <= data.count else { throw PhoneBlocklistError.invalidMetadata }
 
         let decoder = JSONDecoder()
         guard let decodedMetadata = try? decoder.decode(
             PhoneBlocklistMetadata.self,
-            from: data.subdata(in: Self.headerBytes..<payloadOffset)
+            from: data.subdata(in: Self.headerBytes..<bodyOffset)
         ) else { throw PhoneBlocklistError.invalidMetadata }
-        guard decodedMetadata.formatVersion == 1,
-              decodedMetadata.encoding == "blocked-reversed-domain-front-coding-v1",
-              decodedMetadata.blockSize == Self.supportedBlockSize,
+        let versionOne = decodedMetadata.formatVersion == 1
+            && decodedMetadata.encoding == "blocked-reversed-domain-front-coding-v1"
+        let versionTwo = decodedMetadata.formatVersion == 2
+            && decodedMetadata.encoding == "blocked-reversed-domain-front-coding-v2"
+        let sourceDomainCount = decodedMetadata.sourceDomainCount ?? decodedMetadata.domainCount
+        guard decodedMetadata.blockSize == Self.supportedBlockSize,
               decodedMetadata.domainCount > 0,
               decodedMetadata.domainCount <= 2_000_000,
+              sourceDomainCount >= decodedMetadata.domainCount,
+              sourceDomainCount <= 2_000_000
+        else { throw PhoneBlocklistError.unsupportedFormat }
+        let indexByteCount = versionTwo ? (decodedMetadata.indexBytes ?? -1) : 0
+        let expectedIndexBytes = ((decodedMetadata.domainCount + Self.supportedBlockSize - 1) / Self.supportedBlockSize) * 4
+        guard indexByteCount >= 0, indexByteCount <= data.count - bodyOffset else {
+            throw PhoneBlocklistError.invalidMetadata
+        }
+        let payloadOffset = bodyOffset + indexByteCount
+        guard (versionOne || versionTwo),
+              versionOne || indexByteCount == expectedIndexBytes,
               decodedMetadata.payloadBytes == data.count - payloadOffset,
               decodedMetadata.source.id.isEmpty == false,
               decodedMetadata.source.label.isEmpty == false,
               decodedMetadata.source.license.isEmpty == false
         else { throw PhoneBlocklistError.unsupportedFormat }
 
+        let decodedIndex = data.subdata(in: bodyOffset..<payloadOffset)
+        if versionTwo {
+            guard let expectedIndexHash = decodedMetadata.indexSha256?.lowercased() else {
+                throw PhoneBlocklistError.invalidMetadata
+            }
+            let indexDigest = SHA256.hash(data: decodedIndex).map { String(format: "%02x", $0) }.joined()
+            guard indexDigest == expectedIndexHash else { throw PhoneBlocklistError.integrityFailure }
+        }
         let decodedPayload = data.subdata(in: payloadOffset..<data.count)
         let digest = SHA256.hash(data: decodedPayload).map { String(format: "%02x", $0) }.joined()
         guard digest == decodedMetadata.payloadSha256.lowercased() else {
             throw PhoneBlocklistError.integrityFailure
         }
-        let decodedBlocks = try Self.makeSparseIndex(
-            payload: decodedPayload,
-            domainCount: decodedMetadata.domainCount,
-            blockSize: decodedMetadata.blockSize
-        )
+        let decodedBlocks = versionTwo
+            ? try Self.makePrecomputedSparseIndex(
+                index: decodedIndex,
+                payload: decodedPayload,
+                domainCount: decodedMetadata.domainCount,
+                blockSize: decodedMetadata.blockSize
+            )
+            : try Self.makeSparseIndex(
+                payload: decodedPayload,
+                domainCount: decodedMetadata.domainCount,
+                blockSize: decodedMetadata.blockSize
+            )
         metadata = decodedMetadata
         payload = decodedPayload
         blocks = decodedBlocks
@@ -178,6 +238,39 @@ public final class PhoneBlocklistIndex: @unchecked Sendable {
             previous = row
         }
         guard cursor == payload.count, output.isEmpty == false else { throw PhoneBlocklistError.invalidPayload }
+        return output
+    }
+
+    private static func makePrecomputedSparseIndex(
+        index: Data,
+        payload: Data,
+        domainCount: Int,
+        blockSize: Int
+    ) throws -> [Block] {
+        let blockCount = (domainCount + blockSize - 1) / blockSize
+        guard index.count == blockCount * 4 else { throw PhoneBlocklistError.invalidPayload }
+        var output: [Block] = []
+        output.reserveCapacity(blockCount)
+        var previousOffset = -1
+        var previousFirstDomain = ""
+        for blockNumber in 0..<blockCount {
+            let payloadOffset = Int(readUInt32LE(index, offset: blockNumber * 4))
+            guard payloadOffset > previousOffset, payloadOffset < payload.count else {
+                throw PhoneBlocklistError.invalidPayload
+            }
+            var cursor = payloadOffset
+            guard let firstDomain = decodeRow(payload, cursor: &cursor, previous: ""),
+                  previousFirstDomain.isEmpty || previousFirstDomain < firstDomain
+            else { throw PhoneBlocklistError.invalidPayload }
+            output.append(Block(
+                payloadOffset: payloadOffset,
+                firstDomain: firstDomain,
+                entryCount: min(blockSize, domainCount - blockNumber * blockSize)
+            ))
+            previousOffset = payloadOffset
+            previousFirstDomain = firstDomain
+        }
+        guard output.first?.payloadOffset == 0 else { throw PhoneBlocklistError.invalidPayload }
         return output
     }
 

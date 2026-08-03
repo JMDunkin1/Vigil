@@ -10,6 +10,7 @@ import { parsePlist } from "../src/plist.js";
 import { detectManageEngineDeploymentState, exportManageEngineIosProfile, pinManageEngineCurrentGeneration, resolveManageEngineCurrentGeneration } from "../src/manageEngineExport.js";
 import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS } from "../src/socialFeatureFilters.js";
 import type { VigilState } from "../src/types.js";
+import { DATA_DIR } from "../src/store.js";
 import { recordValue } from "./test-helpers.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -21,6 +22,8 @@ const dataDir = await mkdtemp(join(tmpdir(), "vigil-manageengine-export-"));
 await chmod(dataDir, 0o755);
 
 try {
+  await writeTestUrlFilterService(dataDir);
+  await writeTestUrlFilterService(DATA_DIR);
   const usbApplySource = await readFile(join(projectRoot, "scripts", "apply-ios-usb-profile.mjs"), "utf8");
   assert.match(usbApplySource, /await pairSupervised\(udid, supervisorKeybagPath\);\s*await runPymobiledevice3\(\[\s*"profile",\s*"remove",\s*"--udid",\s*udid,\s*IOS_PROFILE_IDENTIFIER/s);
   assert.doesNotMatch(usbApplySource, /"profile",\s*"remove"[^\]]*"--keybag"/s);
@@ -68,7 +71,7 @@ try {
   assert.equal(restrictionsPayload?.allowListedAppBundleIDs, undefined);
   const baselineWebFilter = profile.PayloadContent
     .map((item) => recordValue(item, "profile payload"))
-    .find((payload) => payload.PayloadType === "com.apple.webcontent-filter");
+    .find((payload) => payload.PayloadType === "com.apple.webcontent-filter" && payload.FilterType === "BuiltIn");
   assert.ok(Array.isArray(baselineWebFilter?.DenyListURLs));
   assert.equal((baselineWebFilter?.DenyListURLs as unknown[]).includes("https://youtube.com/shorts"), true);
   const webClips = profile.PayloadContent
@@ -184,6 +187,26 @@ try {
   assert.equal((await readdir(failureRoot)).some((name) => name.startsWith(".blocked.mobileconfig.") && name.endsWith(".tmp")), false);
 } finally {
   await rm(dataDir, { recursive: true, force: true });
+}
+
+async function writeTestUrlFilterService(dataDirectory: string): Promise<void> {
+  const directory = join(dataDirectory, "ios-url-filter");
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "service.json"), JSON.stringify({
+    schemaVersion: 1,
+    pirServerURL: "https://pir.example.test/",
+    privacyPassIssuerURL: "https://issuer.example.test/",
+    deploymentManifestURL: "https://pir.example.test/deployment.json",
+    authenticationToken: "test-authentication-token-0001",
+    hostBundleIdentifier: "tech.caseline.vigil.url-filter",
+    controlProviderBundleIdentifier: "tech.caseline.vigil.url-filter.control",
+    usecaseName: "tech.caseline.vigil.url-filter.url.filtering",
+    prefilterFetchIntervalSeconds: 2700,
+    prefilterTag: "test-prefilter",
+    pirDatabaseRevision: "test-pir",
+    pirDatabaseSha256: "a".repeat(64),
+    exactIndexSnapshotHash: "b".repeat(64)
+  }));
 }
 
 {
@@ -358,13 +381,14 @@ try {
     assert.equal(summary.enforcementActive, false, "the second queued Level 1 export should win as a complete artifact set");
     const profile = recordValue(parsePlist(profileText), "overlap profile");
     assert.ok(Array.isArray(profile.PayloadContent));
-    assert.equal(profile.PayloadContent.length, 2);
-    const releasePayload = recordValue(profile.PayloadContent[0], "overlap Level 1 release payload");
+    assert.equal(profile.PayloadContent.length, 3);
+    const payloads = profile.PayloadContent.map((value) => recordValue(value, "overlap payload"));
+    const releasePayload = payloads.find((payload) => payload.PayloadType === "com.apple.applicationaccess")!;
     assert.equal(releasePayload.PayloadType, "com.apple.applicationaccess");
     assert.equal(releasePayload.allowAppInstallation, true);
     assert.equal(releasePayload.allowAppRemoval, true);
     assert.ok(Array.isArray(releasePayload.blockedAppBundleIDs));
-    const baselineFilter = recordValue(profile.PayloadContent[1], "overlap Level 1 web filter");
+    const baselineFilter = payloads.find((payload) => payload.PayloadType === "com.apple.webcontent-filter" && payload.FilterType === "BuiltIn")!;
     assert.equal(baselineFilter.PayloadType, "com.apple.webcontent-filter");
     assert.ok(Array.isArray(baselineFilter.DenyListURLs));
     assert.equal(Object.keys(initialPin.paths).some((path) => path.includes("social-launchers")), false);
@@ -461,6 +485,7 @@ try {
       mkdtemp(join(tmpdir(), "vigil-manageengine-child-a-")),
       mkdtemp(join(tmpdir(), "vigil-manageengine-child-b-"))
     ]);
+    await Promise.all(childDataDirs.map(writeTestUrlFilterService));
     try {
       const childPinPath = await pinFileForGeneration(overlapDir, basename(childPin.generationPath));
       const expiredChildLease = JSON.parse(await readFile(childPinPath, "utf8")) as { expiresAt: string };

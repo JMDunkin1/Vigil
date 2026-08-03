@@ -5,6 +5,7 @@ import NetworkExtension
 @available(iOS 26.0, *)
 private actor URLFilterArtifactStore {
     private var artifact: URLFilterPrefilterArtifact?
+    private var stagedBitsetURL: URL?
 
     func start() throws {
         artifact = try URLFilterPrefilterArtifact.loadBundled()
@@ -12,6 +13,10 @@ private actor URLFilterArtifactStore {
 
     func stop() {
         artifact = nil
+        if let stagedBitsetURL {
+            try? FileManager.default.removeItem(at: stagedBitsetURL)
+        }
+        stagedBitsetURL = nil
     }
 
     func prefilter(existingTag: String?) throws -> NEURLFilterPrefilter? {
@@ -23,7 +28,13 @@ private actor URLFilterArtifactStore {
             artifact = current
         }
         if existingTag == current.metadata.tag { return nil }
-        return current.systemPrefilter()
+        if let stagedBitsetURL {
+            try? FileManager.default.removeItem(at: stagedBitsetURL)
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vigil-url-prefilter-(current.metadata.bitsetSha256).bin", isDirectory: false)
+        stagedBitsetURL = url
+        return try current.systemPrefilter(stagedAt: url)
     }
 }
 

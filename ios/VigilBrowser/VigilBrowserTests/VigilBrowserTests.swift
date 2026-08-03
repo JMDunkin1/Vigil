@@ -314,5 +314,31 @@ final class VigilBrowserTests: XCTestCase {
             filter.decide(try XCTUnwrap(URL(string: "https://images.example.com/path"))),
             .block(reason: "This website is blocked by Vigil.")
         )
+
+        let sparseOffsets = Data([0, 0, 0, 0])
+        let sparseDigest = SHA256.hash(data: sparseOffsets).map { String(format: "%02x", $0) }.joined()
+        let versionTwoMetadata = PhoneBlocklistMetadata(
+            formatVersion: 2,
+            encoding: "blocked-reversed-domain-front-coding-v2",
+            blockSize: 64,
+            domainCount: 1,
+            sourceDomainCount: 2,
+            snapshotHash: "fixture-v2",
+            indexSha256: sparseDigest,
+            indexBytes: sparseOffsets.count,
+            payloadSha256: digest,
+            payloadBytes: payload.count,
+            generatedAt: "2026-08-03T00:00:00Z",
+            source: PhoneBlocklistSource(id: "fixture", label: "Fixture", url: "https://example.test/list", homepage: "https://example.test", license: "fixture-only")
+        )
+        let versionTwoMetadataData = try JSONEncoder().encode(versionTwoMetadata)
+        var versionTwoArtifact = Data("SNTLIDX1".utf8)
+        var versionTwoLength = UInt32(versionTwoMetadataData.count).littleEndian
+        withUnsafeBytes(of: &versionTwoLength) { versionTwoArtifact.append(contentsOf: $0) }
+        versionTwoArtifact.append(versionTwoMetadataData)
+        versionTwoArtifact.append(sparseOffsets)
+        versionTwoArtifact.append(payload)
+        let versionTwoIndex = try PhoneBlocklistIndex(data: versionTwoArtifact)
+        XCTAssertEqual(versionTwoIndex.matchingDomain(for: "images.example.com"), "example.com")
     }
 }

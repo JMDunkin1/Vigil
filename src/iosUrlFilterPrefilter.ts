@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { decodePhoneBlocklistArtifact } from "./adultBlocklistPhoneArtifact.js";
 
 const MAGIC = Buffer.from("VIGILUF1", "ascii");
 const HEADER_BYTES = MAGIC.byteLength + 4;
@@ -34,13 +35,98 @@ export interface DecodedIosUrlFilterPrefilter {
   bitset: Buffer;
 }
 
+export interface IosUrlFilterDataset {
+  prefilter: IosUrlFilterPrefilterArtifact;
+  pirDatabase: Buffer;
+  domainCount: number;
+  pirDatabaseSha256: string;
+}
+
+export const IOS_URL_FILTER_DEFAULT_FALSE_POSITIVE_TOLERANCE = 0.001;
+
+export function buildAppleUrlFilterBloom(input: {
+  values: readonly string[];
+  falsePositiveTolerance?: number;
+  murmurSeed: number;
+}): { bitset: Buffer; bitCount: number; hashCount: number; murmurSeed: number } {
+  if (!input.values.length) throw new Error("iOS URL Filter Bloom input cannot be empty.");
+  const tolerance = input.falsePositiveTolerance ?? IOS_URL_FILTER_DEFAULT_FALSE_POSITIVE_TOLERANCE;
+  if (!Number.isFinite(tolerance) || tolerance <= 0 || tolerance >= 1) {
+    throw new Error("iOS URL Filter false-positive tolerance must be greater than zero and less than one.");
+  }
+  const bitCount = Math.ceil(-(input.values.length * Math.log(tolerance)) / Math.pow(Math.LN2, 2));
+  if (!Number.isSafeInteger(bitCount) || bitCount < 1 || bitCount > 0xffff_ffff) {
+    throw new Error("iOS URL Filter Bloom bit count is outside Apple's UInt32 format.");
+  }
+  const hashCount = Math.ceil((bitCount / input.values.length) * Math.LN2);
+  if (!Number.isSafeInteger(hashCount) || hashCount < 1 || hashCount > 32) {
+    throw new Error("iOS URL Filter Bloom hash count is outside the supported range.");
+  }
+  const murmurSeed = requiredUInt32(input.murmurSeed, "Murmur seed");
+  const bitset = Buffer.alloc(Math.ceil(bitCount / 8));
+  for (const item of input.values) {
+    const value = Buffer.from(item, "utf8");
+    const fnv = fnv1a32(value);
+    const murmur = murmur3a32(value, murmurSeed);
+    for (let index = 0; index < hashCount; index += 1) {
+      const bit = ((fnv + Math.imul(index, murmur)) >>> 0) % bitCount;
+      bitset[bit >>> 3] |= 1 << (bit & 7);
+    }
+  }
+  return { bitset, bitCount, hashCount, murmurSeed };
+}
+
 /**
- * Packages a Bloom bitset produced by the matching PIR service.
+ * Generates Apple's URL Filter Bloom prefilter and PIR text-protobuf database
+ * from the same integrity-checked exact phone index.
  *
- * This function deliberately does not derive Bloom keys from domains. Apple's
- * URL Filter compares the prefilter against the PIR database's canonical keys;
- * inventing a local canonicalization would create false negatives. The PIR
- * backend must produce both the bitset and its database revision.
+ * The hashing and sizing rules intentionally match Apple's published
+ * SwiftBloomFilter sample. Generating both outputs in one operation prevents a
+ * stale PIR database from being paired with a newer on-device prefilter.
+ */
+export function buildIosUrlFilterDataset(input: {
+  exactIndex: Uint8Array;
+  falsePositiveTolerance?: number;
+  murmurSeed?: number;
+  generatedAt?: string;
+}): IosUrlFilterDataset {
+  const exactIndex = decodePhoneBlocklistArtifact(input.exactIndex);
+  const domains = exactIndex.reversedDomains.map(reverseDomainLabels);
+  const murmurSeed = input.murmurSeed ?? Number.parseInt(exactIndex.metadata.snapshotHash.slice(0, 8), 16);
+  const bloom = buildAppleUrlFilterBloom({
+    values: domains,
+    falsePositiveTolerance: input.falsePositiveTolerance,
+    murmurSeed
+  });
+  const pirRows: string[] = [];
+  pirRows.length = domains.length;
+
+  for (let row = 0; row < domains.length; row += 1) {
+    const domain = domains[row];
+    pirRows[row] = `rows {\n  keyword: ${JSON.stringify(domain)}\n  value: "1"\n}\n`;
+  }
+
+  const pirDatabase = Buffer.from(pirRows.join(""), "utf8");
+  const pirDatabaseSha256 = sha256(pirDatabase);
+  const revision = `vigil-${exactIndex.metadata.snapshotHash.slice(0, 16)}`;
+  const prefilter = packageIosUrlFilterPrefilter({
+    bitset: bloom.bitset,
+    tag: `${revision}-${pirDatabaseSha256.slice(0, 16)}`,
+    snapshotHash: exactIndex.metadata.snapshotHash,
+    exactIndexPayloadSha256: exactIndex.metadata.payloadSha256,
+    exactDomainCount: exactIndex.metadata.domainCount,
+    pirDatabaseRevision: revision,
+    bitCount: bloom.bitCount,
+    hashCount: bloom.hashCount,
+    murmurSeed: bloom.murmurSeed,
+    generatedAt: input.generatedAt ?? exactIndex.metadata.generatedAt
+  });
+  return { prefilter, pirDatabase, domainCount: domains.length, pirDatabaseSha256 };
+}
+
+/**
+ * Packages an Apple-compatible Bloom bitset with the metadata Vigil needs to
+ * prove that it matches the exact phone index and PIR database revision.
  */
 export function packageIosUrlFilterPrefilter(input: {
   bitset: Uint8Array;
@@ -212,4 +298,55 @@ function normalizedIsoDate(value: string): string {
 
 function sha256(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function reverseDomainLabels(value: string): string {
+  return value.split(".").reverse().join(".");
+}
+
+function fnv1a32(value: Uint8Array): number {
+  let hash = 0x811c9dc5;
+  for (const byte of value) hash = Math.imul(hash ^ byte, 0x01000193) >>> 0;
+  return hash;
+}
+
+function murmur3a32(value: Uint8Array, seed: number): number {
+  let hash = seed >>> 0;
+  const blockBytes = value.byteLength - (value.byteLength % 4);
+  for (let offset = 0; offset < blockBytes; offset += 4) {
+    let block = (value[offset]
+      | (value[offset + 1] << 8)
+      | (value[offset + 2] << 16)
+      | (value[offset + 3] << 24)) >>> 0;
+    block = Math.imul(block, 0xcc9e2d51) >>> 0;
+    block = rotateLeft32(block, 15);
+    block = Math.imul(block, 0x1b873593) >>> 0;
+    hash ^= block;
+    hash = rotateLeft32(hash, 13);
+    hash = (Math.imul(hash, 5) + 0xe6546b64) >>> 0;
+  }
+
+  let tail = 0;
+  const remainingBytes = value.byteLength - blockBytes;
+  if (remainingBytes >= 3) tail ^= value[blockBytes + 2] << 16;
+  if (remainingBytes >= 2) tail ^= value[blockBytes + 1] << 8;
+  if (remainingBytes >= 1) {
+    tail ^= value[blockBytes];
+    tail = Math.imul(tail, 0xcc9e2d51) >>> 0;
+    tail = rotateLeft32(tail, 15);
+    tail = Math.imul(tail, 0x1b873593) >>> 0;
+    hash ^= tail;
+  }
+
+  hash ^= value.byteLength;
+  hash ^= hash >>> 16;
+  hash = Math.imul(hash, 0x85ebca6b) >>> 0;
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0xc2b2ae35) >>> 0;
+  hash ^= hash >>> 16;
+  return hash >>> 0;
+}
+
+function rotateLeft32(value: number, bits: number): number {
+  return ((value << bits) | (value >>> (32 - bits))) >>> 0;
 }

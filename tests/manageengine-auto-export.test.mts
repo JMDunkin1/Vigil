@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { parsePlist } from "../src/plist.js";
@@ -13,11 +13,12 @@ const stateDir = join(dataRoot, "state");
 const manageEngineDir = join(dataRoot, "manageengine");
 process.env.VIGIL_DATA_DIR = stateDir;
 process.env.VIGIL_MANAGEENGINE_DIR = manageEngineDir;
+await writeTestUrlFilterService(stateDir);
 
 const { startVigilServer, stopVigilServer } = await import("../src/server.js");
 
 try {
-  const handle = await startVigilServer({ host: "127.0.0.1", port: 0 });
+  const handle = await startVigilServer({ host: "127.0.0.1", port: 0, systemEffects: "isolated" });
   const initialStateResponse = await fetch(`${handle.url}/api/state`);
   assert.equal(initialStateResponse.status, 200);
   const initialStatePayload = recordValue(await initialStateResponse.json(), "initial state payload");
@@ -117,6 +118,26 @@ try {
   } finally {
     await removeTemporaryData(dataRoot);
   }
+}
+
+async function writeTestUrlFilterService(dataDirectory: string): Promise<void> {
+  const directory = join(dataDirectory, "ios-url-filter");
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "service.json"), JSON.stringify({
+    schemaVersion: 1,
+    pirServerURL: "https://pir.example.test/",
+    privacyPassIssuerURL: "https://issuer.example.test/",
+    deploymentManifestURL: "https://pir.example.test/deployment.json",
+    authenticationToken: "test-authentication-token-0001",
+    hostBundleIdentifier: "tech.caseline.vigil.url-filter",
+    controlProviderBundleIdentifier: "tech.caseline.vigil.url-filter.control",
+    usecaseName: "tech.caseline.vigil.url-filter.url.filtering",
+    prefilterFetchIntervalSeconds: 2700,
+    prefilterTag: "test-prefilter",
+    pirDatabaseRevision: "test-pir",
+    pirDatabaseSha256: "a".repeat(64),
+    exactIndexSnapshotHash: "b".repeat(64)
+  }));
 }
 
 function manageEngineSummary(payload: Record<string, unknown>): Record<string, unknown> {

@@ -19,6 +19,8 @@ import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, profileById } from "./policy.js";
 import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS, focusedSocialBlockedBundleIds, focusedSocialDeniedUrls, focusedSocialSummary, normalizeFocusedSocialSettings } from "./socialFeatureFilters.js";
 import type { IosManageEngineGeneration, IosSettings, VigilState, UnknownRecord } from "./types.js";
+import { requiredIosUrlFilterProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
+import type { IosUrlFilterServiceConfiguration } from "./iosUrlFilterServiceConfiguration.js";
 
 export const IOS_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
 export const IOS_RETIRED_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-social-launchers";
@@ -232,7 +234,11 @@ export function publicIosSettings(ios: Partial<IosSettings> = {}) {
   };
 }
 
-export function buildIosConfigurationProfile(state: VigilState, now = new Date()): string {
+export function buildIosConfigurationProfile(
+  state: VigilState,
+  now = new Date(),
+  options: { urlFilter?: IosUrlFilterServiceConfiguration } = {}
+): string {
   const settings = currentIosSettings(state);
   const active = Boolean(settings.enabled);
   const targets = active ? iosPolicyTargets(state, now) : disabledPolicyTargets(settings);
@@ -241,6 +247,9 @@ export function buildIosConfigurationProfile(state: VigilState, now = new Date()
 
   const restrictions = restrictionsPayload(settings, targets);
   if (restrictions) payloads.push(restrictions);
+
+  const urlFilter = options.urlFilter ? urlFilterPayload(settings, options.urlFilter) : null;
+  if (urlFilter) payloads.push(urlFilter);
 
   const webFilter = webContentFilterPayload(settings, targets);
   if (webFilter) payloads.push(webFilter);
@@ -268,6 +277,29 @@ export function buildIosConfigurationProfile(state: VigilState, now = new Date()
   return toPlist(profile);
 }
 
+function urlFilterPayload(
+  settings: IosSettings,
+  service: IosUrlFilterServiceConfiguration
+): MobileConfigPayload | null {
+  if (!settings.enabled || !settings.blockWeb) return null;
+  return commonPayload("com.apple.webcontent-filter", "Vigil System URL Filter", "url-filter", {
+    FilterBrowsers: true,
+    FilterSockets: true,
+    FilterType: "Plugin",
+    FilterURLs: true,
+    PluginBundleID: service.hostBundleIdentifier,
+    UserDefinedName: "Vigil System URL Filter",
+    URLFilterParameters: {
+      PIRAuthenticationToken: service.authenticationToken,
+      PIRPrivacyPassIssuerURL: service.privacyPassIssuerURL,
+      PIRServerURL: service.pirServerURL,
+      URLFilterControlProviderBundleIdentifier: service.controlProviderBundleIdentifier,
+      URLFilterFailClosed: true,
+      URLPrefilterFetchFrequency: service.prefilterFetchIntervalSeconds
+    }
+  });
+}
+
 function manageEngineHandoffSummary(
   state: VigilState,
   settings: IosSettings,
@@ -276,9 +308,18 @@ function manageEngineHandoffSummary(
   now: Date
 ): UnknownRecord {
   const generation = normalizeIosManageEngineGeneration(settings.manageEngineGeneration);
-  const expectedProfileHash = createHash("sha256")
-    .update(buildIosConfigurationProfile(state, now))
-    .digest("hex");
+  let expectedProfileHash = "";
+  try {
+    const options = process.env.VIGIL_DATA_DIR
+      ? requiredIosUrlFilterProfileOptions(process.env.VIGIL_DATA_DIR)
+      : {};
+    expectedProfileHash = createHash("sha256")
+      .update(buildIosConfigurationProfile(state, now, options))
+      .digest("hex");
+  } catch {
+    // Summary generation remains read-only. Actual profile generation refuses
+    // to proceed until the required URL Filter service configuration is present.
+  }
   const currentGeneration = Boolean(active && generation?.profileHash === expectedProfileHash);
   return {
     preferred: true,

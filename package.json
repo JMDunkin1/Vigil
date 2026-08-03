@@ -49,6 +49,8 @@
     "ios:phone:bump": "node scripts/ios-phone-suite.mjs bump",
     "ios:content-policy:generate": "npm run build && node dist/runtime/scripts/generate-ios-content-policy.mjs --write",
     "ios:content-policy:check": "npm run build && node dist/runtime/scripts/generate-ios-content-policy.mjs",
+    "ios:url-filter:prepare": "npm run build && node dist/runtime/scripts/prepare-ios-url-filter.mjs",
+    "ios:url-filter:finalize": "npm run build && node dist/runtime/scripts/finalize-ios-url-filter.mjs",
     "ios:social:build": "npm run build && node dist/runtime/scripts/build-ios-social-app.mjs",
     "ios:social:test": "npm run build && npm run ios:social:test:runtime",
     "ios:social:test:runtime": "node dist/runtime/scripts/test-ios-social.mjs",

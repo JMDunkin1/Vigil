@@ -74,7 +74,7 @@ assert.ok(
 );
 assert.match(
   phoneSuiteSource,
-  /if \(selectedCommand === "audit"\) \{[\s\S]*?prepareAuditToolchain\(\)[\s\S]*?auditFourPolicies\(toolEnvironment\)/u,
+  /if \(selectedCommand === "audit"\) \{[\s\S]*?requireReadyIosUrlFilter[\s\S]*?prepareAuditToolchain\(\)[\s\S]*?auditFourPolicies\(toolEnvironment, urlFilter\.service\)/u,
   "standalone four-level policy audits must select and use an Xcode tool environment"
 );
 assert.match(phoneSuiteSource, /PANIC_LOCK_PROFILE_ID[\s\S]*?title: "Panic"/u, "the phone audit must include Panic");
@@ -122,7 +122,7 @@ for (const bundleIdentifier of [
 assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.instagram"), false);
 assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.youtube"), false);
 
-const requiredAppsStart = phoneSuiteSource.indexOf("const REQUIRED_APPS = [");
+const requiredAppsStart = phoneSuiteSource.indexOf("const REQUIRED_SOCIAL_APPS = [");
 const requiredAppsEnd = phoneSuiteSource.indexOf("];", requiredAppsStart);
 const requiredAppsSource = phoneSuiteSource.slice(requiredAppsStart, requiredAppsEnd);
 assert.match(requiredAppsSource, /tech\.caseline\.vigil\.instagram/u);
@@ -130,14 +130,20 @@ assert.match(requiredAppsSource, /tech\.caseline\.vigil\.youtube/u);
 assert.match(requiredAppsSource, /service: "instagram"[\s\S]*?appIconSet: "InstagramAppIcon"/u);
 assert.match(requiredAppsSource, /service: "youtube"[\s\S]*?appIconSet: "YouTubeAppIcon"/u);
 assert.doesNotMatch(requiredAppsSource, /tech\.caseline\.vigil\.(?:browser|social|snapchat)/u);
+assert.match(phoneSuiteSource, /const REQUIRED_APPS = \[\.\.\.REQUIRED_SOCIAL_APPS, URL_FILTER_APP\]/u);
+assert.match(phoneSuiteSource, /bundleId: "tech\.caseline\.vigil\.url-filter"/u);
 
 const buildPhoneAppsStart = phoneSuiteSource.indexOf("async function buildPhoneApps");
 const buildPhoneAppsEnd = phoneSuiteSource.indexOf("async function hashAppBundle", buildPhoneAppsStart);
 const buildPhoneAppsSource = phoneSuiteSource.slice(buildPhoneAppsStart, buildPhoneAppsEnd);
-assert.match(buildPhoneAppsSource, /for \(const social of REQUIRED_APPS\)/u);
+assert.match(buildPhoneAppsSource, /for \(const social of REQUIRED_SOCIAL_APPS\)/u);
+assert.match(buildPhoneAppsSource, /"-scheme", social\.buildScheme/u);
+assert.match(buildPhoneAppsSource, /VIGIL_APP_BUNDLE_IDENTIFIER=\$\{social\.bundleId\}/u);
 assert.match(buildPhoneAppsSource, /VIGIL_SERVICE=\$\{social\.service\}/u);
 assert.match(buildPhoneAppsSource, /SOCIAL_APP_ICON_SET=\$\{social\.appIconSet\}/u);
 assert.doesNotMatch(buildPhoneAppsSource, /VigilBrowser|browserDerived|VIGIL_SERVICE=combined/u);
+assert.match(buildPhoneAppsSource, /VigilURLFilter\/VigilURLFilter\.xcodeproj[\s\S]*?VigilURLFilterHost/u);
+assert.match(buildPhoneAppsSource, /signedUrlFilterCapabilities[\s\S]*?urlFilterProvider/u);
 assert.match(
   buildPhoneAppsSource,
   /CODE_SIGN_ENTITLEMENTS=\$\{personalTeamEntitlements\}[\s\S]*?VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified/u,
@@ -149,7 +155,7 @@ assert.match(
   "Release builds must verify both generated enforcement artifacts inside every app bundle"
 );
 assert.match(phoneSuiteSource, /app\.blocklist\.artifactSha256/u);
-assert.match(phoneSuiteSource, /app\.explicitContentPolicy\.sha256/u);
+assert.match(phoneSuiteSource, /app\.explicitContentPolicy\?\.sha256/u);
 assert.match(
   phoneSuiteSource,
   /if \(\(obsoleteBeforeUpdate\.length \|\| obsoleteLauncherBeforeUpdate\) && !selectedOptions\.replaceLegacy\)[\s\S]*?Re-run with --replace-legacy/u,
@@ -184,9 +190,11 @@ assert.match(liveProfileInstall, /lockPath/u);
 assert.doesNotMatch(liveProfileInstall, /launcher/u);
 assert.match(
   phoneSuiteSource,
-  /buildCurrentPolicyFromLiveState\(server,[\s\S]*?buildIosConfigurationProfile\(state, new Date\(\)\)/u,
+  /buildCurrentPolicyFromLiveState\(server,[\s\S]*?buildIosConfigurationProfile\(state, new Date\(\), \{ urlFilter: urlFilterService \}\)/u,
   "updates must generate policy bytes with the freshly built profile code and current live state"
 );
+assert.match(phoneSuiteSource, /--no-policy is incompatible with the required fail-closed iOS URL Filter/u);
+assert.doesNotMatch(phoneSuiteSource, /fetchLivePolicyFingerprint/u, "policy freshness must not fall back to potentially stale server bytes");
 assert.match(
   phoneSuiteSource,
   /const runningProfile = await downloadPolicy\(server, signal\)[\s\S]*?removalPasswordFromProfile/u,
@@ -263,6 +271,10 @@ assert.equal(readyBlocklist.ready, true);
 assert.equal(readyBlocklist.domainCount, 1_000);
 assert.equal(readyBlocklist.snapshotHash, "c".repeat(64));
 assert.equal(readyBlocklist.source?.id, "custom-test");
+const tamperedSparseIndex = Buffer.from(testBlocklist.bytes);
+const sparseIndexOffset = 12 + tamperedSparseIndex.readUInt32LE(8);
+tamperedSparseIndex[sparseIndexOffset] ^= 0xff;
+assert.equal(inspectPhoneBlocklistBytes(tamperedSparseIndex).ready, false);
 
 const undersizedDefaultBlocklist = buildPhoneBlocklistArtifact({
   domains: ["blocked.example.test"],

@@ -549,6 +549,33 @@ import { recordUsage } from "../src/usage.js";
 
 {
   const state = defaultState();
+  const blockedUrl = "https://www.google.com/search?q=porn";
+  let redirectAttempts = 0;
+  const monitor = new Monitor({
+    state,
+    usage: {},
+    externalEffectsEnabled: false,
+    browserRedirect: async () => {
+      redirectAttempts += 1;
+      return { ok: true, matched: true, redirectedTabCount: 1, method: "unexpected-test-redirect" };
+    }
+  });
+  monitor.readFrontmost = async () => ({
+    ok: true,
+    app: "Safari",
+    hostname: "google.com",
+    url: blockedUrl
+  });
+
+  assert.equal(await monitor.probeBrowserActivity(), true,
+    "an isolated runtime must still evaluate blocked browser activity");
+  await monitor.operationTail;
+  assert.equal(redirectAttempts, 0,
+    "an isolated test runtime must never redirect the developer's live browser");
+}
+
+{
+  const state = defaultState();
   const monitor = new Monitor({ state, usage: {} });
   const safe = { ok: true as const, app: "Safari", hostname: "example.com", url: "https://example.com/work" };
   const blocked = { ok: true as const, app: "Safari", hostname: "google.com", url: "https://www.google.com/search?q=porn" };

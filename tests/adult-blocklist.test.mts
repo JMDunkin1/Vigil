@@ -4,18 +4,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import {
+  analyzeAdultBlocklistText,
   assertSafeAdultBlocklistUrl,
   ADULT_BLOCKLIST_SOURCES,
   adultBlocklistPreloadDomains,
   adultBlocklistSource,
   adultBlocklistSummary,
   clearAdultBlocklistCacheForTest,
+  compactAdultBlocklistDomains,
   fetchAdultBlocklistSourceTextForTest,
   invalidateAdultBlocklistIfSourceChanged,
   matchAdultBlocklistHost,
   normalizeAdultDomain,
   normalizeAdultDomainList,
   parseAdultBlocklistDomains,
+  prepareAdultBlocklistRefresh,
   refreshAdultBlocklist,
   setAdultBlocklistDomainsForTest,
   setAdultBlocklistSnapshotCandidatesForTest,
@@ -141,6 +144,59 @@ await assert.rejects(
 );
 
 const testSource = ADULT_BLOCKLIST_SOURCES[0];
+
+{
+  const registry = ["TEST", ...Array.from({ length: 1_000 }, (_, index) => `TLD${index}`)].join("\n");
+  const analyzed = analyzeAdultBlocklistText(`
+# Comment
+0.0.0.0 exampleadult.test
+0.0.0.0 www.exampleadult.test
+0.0.0.0 child.exampleadult.test
+bad_domain
+orphan.unknownsuffix
+`, registry);
+  assert.deepEqual(analyzed.domains, ["exampleadult.test", "orphan.unknownsuffix"]);
+  assert.equal(analyzed.audit.candidateLineCount, 5);
+  assert.equal(analyzed.audit.invalidLineCount, 1);
+  assert.equal(analyzed.audit.normalizedLineCount, 4);
+  assert.equal(analyzed.audit.normalizedDomainCount, 3);
+  assert.equal(analyzed.audit.exactDuplicateCount, 1);
+  assert.equal(analyzed.audit.suffixRedundantCount, 1);
+  assert.equal(analyzed.audit.compactedDomainCount, 2);
+  assert.equal(analyzed.audit.tldRegistryChecked, true);
+  assert.equal(analyzed.audit.unrecognizedTldCount, 1);
+  assert.deepEqual(analyzed.audit.unrecognizedTldExamples, ["orphan.unknownsuffix"]);
+  assert.deepEqual(compactAdultBlocklistDomains([
+    "child.exampleadult.test",
+    "exampleadult.test",
+    "unrelated.test"
+  ]), {
+    domains: ["exampleadult.test", "unrelated.test"],
+    removedCount: 1
+  });
+}
+
+{
+  const state = defaultState();
+  state.settings.adultBlocklistSourceId = "custom";
+  state.settings.adultBlocklistCustomUrl = "https://source.example/custom.txt";
+  const sourceRows = [
+    ...Array.from({ length: 1_000 }, (_, index) => `adult-${index}.example`),
+    "root.example",
+    "child.root.example"
+  ].join("\n");
+  const preparation = await prepareAdultBlocklistRefresh(state, now, {
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    request: async () => pinnedResponse(200, [sourceRows]),
+    ianaTldRegistryText: null
+  });
+  assert.equal(preparation.error, null);
+  assert.equal(preparation.snapshot?.audit?.normalizedDomainCount, 1_002);
+  assert.equal(preparation.snapshot?.audit?.suffixRedundantCount, 1);
+  assert.equal(preparation.snapshot?.domainCount, 1_001);
+  assert.equal(preparation.snapshot?.domains.includes("child.root.example"), false);
+  assert.equal(preparation.snapshot?.domains.includes("root.example"), true);
+}
 
 {
   clearAdultBlocklistCacheForTest();

@@ -35,6 +35,7 @@ export { appQuitEscalationDecision, shouldAttemptBlockedBrowserRedirect, shouldL
 interface MonitorContext {
   state: VigilState;
   usage: UsageState;
+  externalEffectsEnabled?: boolean;
   runtimeInstanceId?: string;
   committedRevision?: () => number;
   browserActivityNow?: () => number;
@@ -651,10 +652,12 @@ export class Monitor implements MonitorHandle {
   // rollback: its purpose is to recover the mutation that just rolled back.
   pendingBrowserActivityMutations: Map<string, PendingBrowserActivityMutation>;
   browserRedirect: NonNullable<MonitorContext["browserRedirect"]>;
+  externalEffectsEnabled: boolean;
 
   constructor({
     state,
     usage,
+    externalEffectsEnabled,
     mutate,
     runtimeInstanceId,
     committedRevision,
@@ -675,6 +678,7 @@ export class Monitor implements MonitorHandle {
     // never reads a draft while a longer monitor transaction is awaiting I/O.
     this.committedState = state;
     this.committedUsage = usage;
+    this.externalEffectsEnabled = externalEffectsEnabled !== false;
     this.lastPollAt = Date.now();
     this.lastMonotonicAt = performance.now();
     this.lastSample = null;
@@ -976,7 +980,9 @@ export class Monitor implements MonitorHandle {
         immediateBlock.options,
         { state: this.committedState, usage: this.committedUsage }
       );
-      const result = await this.browserRedirect(candidate.app, redirectUrl, { currentUrl: candidate.url });
+      const result = this.externalEffectsEnabled
+        ? await this.browserRedirect(candidate.app, redirectUrl, { currentUrl: candidate.url })
+        : { ok: true, matched: false, redirectedTabCount: 0, method: "external-effects-isolated" };
       // Only the target-atomic redirect implementations can positively confirm
       // that the offending tab was replaced. A legacy/ambiguous `{ ok: true }`
       // result must retain the recovery tail instead of being treated as proof.
@@ -1548,6 +1554,9 @@ export class Monitor implements MonitorHandle {
         let result: UnknownRecord;
         let effectState: VigilState | null = null;
         if (!this.durableEffectApplicable(action, payload)) result = obsoleteEffectResult(action);
+        else if (!this.externalEffectsEnabled && action !== "session-enforcement" && action !== "policy-enforcement") {
+          result = { ok: true, skipped: "external-effects-isolated" };
+        }
         else if (action === "session-enforcement") result = await this.runImmediateEnforcement("session-start");
         else if (action === "policy-enforcement") result = await this.runImmediateEnforcement(String(payload.reason || "recovered-policy-enforcement"));
         else if (action === "lock-screen") result = await lockScreen();
@@ -1696,6 +1705,9 @@ export class Monitor implements MonitorHandle {
     operation: (attempt: number) => Promise<T>,
     commitResult?: (result: T, state: VigilState) => void
   ): Promise<T> {
+    if (!this.externalEffectsEnabled) {
+      return { ok: true, skipped: "external-effects-isolated" } as unknown as T;
+    }
     if (!this.activeAfterCommit) {
       const key = monitorEffectKey(kind, payload);
       try {

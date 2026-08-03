@@ -44,12 +44,8 @@ enum URLFilterPrefilterError: LocalizedError {
     }
 }
 
-/// A PIR-service-produced Bloom prefilter, linked to Vigil's exact `.sdi` index.
-///
-/// The bitset is intentionally treated as opaque. Its keys must use the same
-/// canonicalization as the corresponding Apple URL Filter PIR database. Vigil
-/// must not derive a replacement locally because mismatched keys can create
-/// false negatives.
+/// An Apple-compatible Bloom prefilter generated in the same transaction as
+/// the PIR database and linked to Vigil's exact `.sdi` index.
 struct URLFilterPrefilterArtifact: Sendable {
     private static let magic = Data("VIGILUF1".utf8)
     private static let headerBytes = 12
@@ -133,9 +129,10 @@ struct URLFilterPrefilterArtifact: Sendable {
     }
 
     @available(iOS 26.0, macOS 26.0, macCatalyst 26.0, *)
-    func systemPrefilter() -> NEURLFilterPrefilter {
-        NEURLFilterPrefilter(
-            data: .smallFilter(bitset),
+    func systemPrefilter(stagedAt url: URL) throws -> NEURLFilterPrefilter {
+        try bitset.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        return NEURLFilterPrefilter(
+            data: .temporaryFilepath(url),
             tag: metadata.tag,
             bitCount: metadata.bitCount,
             hashCount: metadata.hashCount,

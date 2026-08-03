@@ -49,14 +49,17 @@ export async function runSuites(suites: readonly string[], options: RunSuitesOpt
 
   for (const [index, suite] of suites.entries()) {
     log(`\n> ${relative(projectRoot, suite)}`);
-    const suiteEnv = options.dataRoot
-      ? {
-          ...process.env,
-          ...options.env,
-          VIGIL_BROWSER_ACTIVITY_WATCH: "0",
-          VIGIL_DATA_DIR: join(options.dataRoot, String(index).padStart(3, "0"))
-        }
-      : options.env;
+    const suiteEnv = {
+      ...process.env,
+      ...options.env,
+      VIGIL_REQUIRE_ISOLATED_RUNTIME: "1",
+      ...(options.dataRoot
+        ? {
+            VIGIL_BROWSER_ACTIVITY_WATCH: "0",
+            VIGIL_DATA_DIR: join(options.dataRoot, String(index).padStart(3, "0"))
+          }
+        : {})
+    };
     const code = await runNode(suite, { ...options, env: suiteEnv });
     results.push({ suite, code });
   }

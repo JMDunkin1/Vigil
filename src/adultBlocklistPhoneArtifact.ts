@@ -8,14 +8,17 @@ const HEADER_BYTES = MAGIC.byteLength + 4;
 const MAX_DOMAIN_COUNT = 2_000_000;
 export const PHONE_BLOCKLIST_BLOCK_SIZE = 64;
 export const MAX_PHONE_BLOCKLIST_BYTES = 32 * 1024 * 1024;
-export const PHONE_BLOCKLIST_FORMAT_VERSION = 1;
+export const PHONE_BLOCKLIST_FORMAT_VERSION = 2;
 
 export interface PhoneBlocklistMetadata {
   formatVersion: number;
-  encoding: "blocked-reversed-domain-front-coding-v1";
+  encoding: "blocked-reversed-domain-front-coding-v1" | "blocked-reversed-domain-front-coding-v2";
   blockSize: number;
   domainCount: number;
+  sourceDomainCount?: number;
   snapshotHash: string;
+  indexSha256?: string;
+  indexBytes?: number;
   payloadSha256: string;
   payloadBytes: number;
   generatedAt: string;
@@ -39,6 +42,7 @@ export interface DecodedPhoneBlocklist {
  */
 export function buildPhoneBlocklistArtifact(input: {
   domains: string[];
+  sourceDomainCount?: number;
   snapshotHash: string;
   generatedAt: string;
   source: AdultBlocklistSourceSnapshot;
@@ -48,15 +52,19 @@ export function buildPhoneBlocklistArtifact(input: {
   if (domains.length > MAX_DOMAIN_COUNT) throw new Error(`Phone blocklist exceeds ${MAX_DOMAIN_COUNT} domains.`);
 
   const reversedDomains = domains.map(reverseDomainLabels).sort(compareAscii);
-  const payload = encodeFrontCodedDomains(reversedDomains);
+  const encoded = encodeFrontCodedDomains(reversedDomains);
+  const index = encodeBlockOffsets(encoded.blockOffsets);
   const metadata: PhoneBlocklistMetadata = {
     formatVersion: PHONE_BLOCKLIST_FORMAT_VERSION,
-    encoding: "blocked-reversed-domain-front-coding-v1",
+    encoding: "blocked-reversed-domain-front-coding-v2",
     blockSize: PHONE_BLOCKLIST_BLOCK_SIZE,
     domainCount: reversedDomains.length,
+    sourceDomainCount: normalizedSourceDomainCount(input.sourceDomainCount, reversedDomains.length),
     snapshotHash: requiredSha256(input.snapshotHash, "snapshot hash"),
-    payloadSha256: sha256(payload),
-    payloadBytes: payload.byteLength,
+    indexSha256: sha256(index),
+    indexBytes: index.byteLength,
+    payloadSha256: sha256(encoded.payload),
+    payloadBytes: encoded.payload.byteLength,
     generatedAt: normalizedIsoDate(input.generatedAt),
     source: normalizedSource(input.source)
   };
@@ -64,7 +72,7 @@ export function buildPhoneBlocklistArtifact(input: {
   const header = Buffer.alloc(HEADER_BYTES);
   MAGIC.copy(header, 0);
   header.writeUInt32LE(metadataBytes.byteLength, MAGIC.byteLength);
-  const bytes = Buffer.concat([header, metadataBytes, payload]);
+  const bytes = Buffer.concat([header, metadataBytes, index, encoded.payload]);
   if (bytes.byteLength > MAX_PHONE_BLOCKLIST_BYTES) {
     throw new Error(`Phone blocklist artifact exceeds ${MAX_PHONE_BLOCKLIST_BYTES} bytes.`);
   }
@@ -78,18 +86,27 @@ export function decodePhoneBlocklistArtifact(value: Uint8Array): DecodedPhoneBlo
     throw new Error("Phone blocklist has an invalid format signature.");
   }
   const metadataLength = bytes.readUInt32LE(MAGIC.byteLength);
-  const payloadOffset = HEADER_BYTES + metadataLength;
-  if (metadataLength <= 0 || payloadOffset > bytes.byteLength) throw new Error("Phone blocklist metadata is truncated.");
+  const bodyOffset = HEADER_BYTES + metadataLength;
+  if (metadataLength <= 0 || bodyOffset > bytes.byteLength) throw new Error("Phone blocklist metadata is truncated.");
   let metadata: PhoneBlocklistMetadata;
   try {
-    metadata = JSON.parse(bytes.subarray(HEADER_BYTES, payloadOffset).toString("utf8")) as PhoneBlocklistMetadata;
+    metadata = JSON.parse(bytes.subarray(HEADER_BYTES, bodyOffset).toString("utf8")) as PhoneBlocklistMetadata;
   } catch {
     throw new Error("Phone blocklist metadata is invalid.");
   }
-  validateMetadata(metadata, bytes.byteLength - payloadOffset);
+  const indexBytes = metadata.formatVersion === 2 ? Number(metadata.indexBytes) : 0;
+  if (!Number.isSafeInteger(indexBytes) || indexBytes < 0) throw new Error("Phone blocklist index is invalid.");
+  const payloadOffset = bodyOffset + indexBytes;
+  if (!Number.isSafeInteger(payloadOffset) || payloadOffset > bytes.byteLength) throw new Error("Phone blocklist index is truncated.");
+  const index = bytes.subarray(bodyOffset, payloadOffset);
   const payload = bytes.subarray(payloadOffset);
+  validateMetadata(metadata, index.byteLength, payload.byteLength);
+  if (metadata.formatVersion === 2 && sha256(index) !== metadata.indexSha256) {
+    throw new Error("Phone blocklist sparse index integrity check failed.");
+  }
   if (sha256(payload) !== metadata.payloadSha256) throw new Error("Phone blocklist payload integrity check failed.");
   const reversedDomains = decodeFrontCodedDomains(payload, metadata.domainCount);
+  if (metadata.formatVersion === 2) validateBlockOffsets(index, payload, metadata.domainCount, metadata.blockSize);
   return { metadata, reversedDomains };
 }
 
@@ -119,18 +136,29 @@ export async function writePhoneBlocklistArtifactAtomically(path: string, artifa
   }
 }
 
-function encodeFrontCodedDomains(domains: string[]): Buffer {
+function encodeFrontCodedDomains(domains: string[]): { payload: Buffer; blockOffsets: number[] } {
   const chunks: Buffer[] = [];
+  const blockOffsets: number[] = [];
+  let payloadOffset = 0;
   let previous = "";
   for (let index = 0; index < domains.length; index += 1) {
     const domain = domains[index];
+    if (index % PHONE_BLOCKLIST_BLOCK_SIZE === 0) blockOffsets.push(payloadOffset);
     const prefixBytes = index % PHONE_BLOCKLIST_BLOCK_SIZE === 0 ? 0 : commonAsciiPrefix(previous, domain);
     const suffix = Buffer.from(domain.slice(prefixBytes), "ascii");
     if (prefixBytes > 255 || suffix.byteLength > 255) throw new Error("Phone blocklist domain is too long to encode.");
-    chunks.push(Buffer.from([prefixBytes, suffix.byteLength]), suffix);
+    const rowHeader = Buffer.from([prefixBytes, suffix.byteLength]);
+    chunks.push(rowHeader, suffix);
+    payloadOffset += rowHeader.byteLength + suffix.byteLength;
     previous = domain;
   }
-  return Buffer.concat(chunks);
+  return { payload: Buffer.concat(chunks), blockOffsets };
+}
+
+function encodeBlockOffsets(offsets: number[]): Buffer {
+  const bytes = Buffer.alloc(offsets.length * 4);
+  offsets.forEach((offset, index) => bytes.writeUInt32LE(offset, index * 4));
+  return bytes;
 }
 
 function decodeFrontCodedDomains(payload: Buffer, expectedCount: number): string[] {
@@ -233,14 +261,37 @@ function normalizedSource(source: AdultBlocklistSourceSnapshot): AdultBlocklistS
   return normalized;
 }
 
-function validateMetadata(metadata: PhoneBlocklistMetadata, actualPayloadBytes: number): void {
-  if (metadata.formatVersion !== PHONE_BLOCKLIST_FORMAT_VERSION
-    || metadata.encoding !== "blocked-reversed-domain-front-coding-v1"
-    || metadata.blockSize !== PHONE_BLOCKLIST_BLOCK_SIZE) {
+function normalizedSourceDomainCount(value: number | undefined, domainCount: number): number {
+  const sourceDomainCount = value === undefined ? domainCount : Number(value);
+  if (!Number.isSafeInteger(sourceDomainCount)
+    || sourceDomainCount < domainCount
+    || sourceDomainCount > MAX_DOMAIN_COUNT) {
+    throw new Error("Phone blocklist source domain count is invalid.");
+  }
+  return sourceDomainCount;
+}
+
+function validateMetadata(metadata: PhoneBlocklistMetadata, actualIndexBytes: number, actualPayloadBytes: number): void {
+  const versionOne = metadata.formatVersion === 1
+    && metadata.encoding === "blocked-reversed-domain-front-coding-v1";
+  const versionTwo = metadata.formatVersion === 2
+    && metadata.encoding === "blocked-reversed-domain-front-coding-v2";
+  if ((!versionOne && !versionTwo) || metadata.blockSize !== PHONE_BLOCKLIST_BLOCK_SIZE) {
     throw new Error("Phone blocklist format version is unsupported.");
   }
   if (!Number.isInteger(metadata.domainCount) || metadata.domainCount <= 0 || metadata.domainCount > MAX_DOMAIN_COUNT) {
     throw new Error("Phone blocklist domain count is invalid.");
+  }
+  normalizedSourceDomainCount(metadata.sourceDomainCount, metadata.domainCount);
+  if (versionOne && actualIndexBytes !== 0) throw new Error("Phone blocklist v1 index is invalid.");
+  if (versionTwo) {
+    const expectedIndexBytes = Math.ceil(metadata.domainCount / metadata.blockSize) * 4;
+    if (!Number.isInteger(metadata.indexBytes)
+      || metadata.indexBytes !== actualIndexBytes
+      || actualIndexBytes !== expectedIndexBytes) {
+      throw new Error("Phone blocklist sparse index size does not match its metadata.");
+    }
+    requiredSha256(metadata.indexSha256 || "", "sparse index hash");
   }
   if (!Number.isInteger(metadata.payloadBytes) || metadata.payloadBytes < 1 || metadata.payloadBytes !== actualPayloadBytes) {
     throw new Error("Phone blocklist payload size does not match its metadata.");
@@ -249,4 +300,31 @@ function validateMetadata(metadata: PhoneBlocklistMetadata, actualPayloadBytes: 
   requiredSha256(metadata.payloadSha256, "payload hash");
   normalizedIsoDate(metadata.generatedAt);
   normalizedSource(metadata.source);
+}
+
+function validateBlockOffsets(
+  index: Buffer,
+  payload: Buffer,
+  expectedCount: number,
+  blockSize: number
+): void {
+  let cursor = 0;
+  let count = 0;
+  let block = 0;
+  while (cursor < payload.byteLength && count < expectedCount) {
+    if (count % blockSize === 0) {
+      if (block * 4 + 4 > index.byteLength || index.readUInt32LE(block * 4) !== cursor) {
+        throw new Error("Phone blocklist sparse index does not match its payload.");
+      }
+      block += 1;
+    }
+    if (cursor + 2 > payload.byteLength) throw new Error("Phone blocklist payload is truncated.");
+    const suffixLength = payload[cursor + 1];
+    cursor += 2 + suffixLength;
+    if (cursor > payload.byteLength) throw new Error("Phone blocklist payload is truncated.");
+    count += 1;
+  }
+  if (cursor !== payload.byteLength || count !== expectedCount || block * 4 !== index.byteLength) {
+    throw new Error("Phone blocklist sparse index does not match its payload.");
+  }
 }

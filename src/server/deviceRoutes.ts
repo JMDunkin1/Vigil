@@ -5,7 +5,8 @@ import { buildIosMdmEnrollmentProfile, iosMdmDeviceUsageCredential, iosMdmDevice
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "../iosProfiles.js";
 import { activeLimitPolicy } from "../limits.js";
 import { assertProtectedEditAllowed } from "../protection.js";
-import { addEvent, saveState, saveUsage } from "../store.js";
+import { DATA_DIR, addEvent, saveState, saveUsage } from "../store.js";
+import { requiredIosUrlFilterProfileOptions } from "../iosUrlFilterServiceConfiguration.js";
 import type { VigilState, UnknownRecord, UsageBucket, UsageState } from "../types.js";
 import { normalizeUsageDay, syncDeviceUsageSnapshot, usageSummary } from "../usage.js";
 import { readBody, sendDownload, sendJson } from "./http.js";
@@ -159,7 +160,7 @@ export async function handleDeviceApiRoute(
 
   if (method === "GET" && path === "/api/devices/ios/profile.mobileconfig") {
     ensureIosRemovalPassword(state);
-    const profile = buildIosConfigurationProfile(state);
+    const profile = buildIosConfigurationProfile(state, new Date(), requiredIosUrlFilterProfileOptions(DATA_DIR));
     markIosProfileGenerated(state);
     addEvent(state, "ios_profile_generated", { bytes: Buffer.byteLength(profile) });
     await saveState(state);

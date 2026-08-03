@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "pirServerURL": "https://pir.example.com/",
+  "privacyPassIssuerURL": "https://issuer.example.com/",
+  "deploymentManifestURL": "https://pir.example.com/vigil-url-filter-deployment.json",
+  "authenticationToken": "replace-with-the-token-in-pir/service-config.json",
+  "hostBundleIdentifier": "tech.caseline.vigil.url-filter",
+  "controlProviderBundleIdentifier": "tech.caseline.vigil.url-filter.control",
+  "usecaseName": "tech.caseline.vigil.url-filter.url.filtering",
+  "prefilterFetchIntervalSeconds": 2700,
+  "prefilterTag": "copied-from-generated-manifest",
+  "pirDatabaseRevision": "copied-from-generated-manifest",
+  "pirDatabaseSha256": "copied-from-generated-manifest",
+  "exactIndexSnapshotHash": "copied-from-generated-manifest"
+}

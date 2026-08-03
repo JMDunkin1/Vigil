@@ -12,7 +12,7 @@ const [{ startVigilRuntime, startVigilServer }, store] = await Promise.all([
   import("../src/server.js"),
   import("../src/store.js")
 ]);
-const runtime = await startVigilRuntime({ port: 0 });
+const runtime = await startVigilRuntime({ port: 0, systemEffects: "isolated" });
 
 try {
   const initial = await currentState();
@@ -36,7 +36,7 @@ try {
     assert.equal(response.status, 500, "mutating profile-download GET must be coordinated in-app");
   });
 
-  const network = await startVigilServer({ port: 0 });
+  const network = await startVigilServer({ port: 0, systemEffects: "isolated" });
   await withStateWriteFailure(async () => {
     const response = await fetch(`${network.url}/api/extension/rules?version=1`, { headers: extensionHeaders() });
     assert.equal(response.status, 500, "mutating extension GET must be coordinated over the network transport");
@@ -90,7 +90,7 @@ try {
 
   await runtime.stop();
   await assert.rejects(runtime.request({ path: "/api/state" }), /not accepting|not initialized/u);
-  const restarted = await startVigilRuntime({ port: 0 });
+  const restarted = await startVigilRuntime({ port: 0, systemEffects: "isolated" });
   assert.equal((await restarted.request({ path: "/api/health" })).status, 200, "a fully stopped runtime must restart cleanly");
   await restarted.stop();
 } finally {

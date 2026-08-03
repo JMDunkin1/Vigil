@@ -23,8 +23,20 @@ const socialRootViewSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "RootView.swift"),
   "utf8"
 );
+const youtubeSafariSource = await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilSocial", "YouTubeSafariView.swift"),
+  "utf8"
+);
+const youtubeBlockerRules = JSON.parse(await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilYouTubeShortsBlocker", "blockerList.json"),
+  "utf8"
+)) as Array<{ action?: { type?: string; selector?: string }; trigger?: { "url-filter"?: string } }>;
 const socialProjectSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial.xcodeproj", "project.pbxproj"),
+  "utf8"
+);
+const youtubeBlockerInfo = await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilYouTubeShortsBlocker", "Info.plist"),
   "utf8"
 );
 const socialInfoPlistSource = await readFile(
@@ -44,12 +56,51 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
+  /YouTubeSafariView\(request: store\.youtubeSafariRequest\)/u,
+  "YouTube must use the Google-supported Safari surface instead of embedded WKWebView authentication"
+);
+assert.match(youtubeSafariSource, /SFSafariViewController/u);
+assert.match(youtubeSafariSource, /SFContentBlockerManager\.getStateOfContentBlocker/u);
+assert.match(youtubeSafariSource, /SFSafariSettings\.openExtensionsSettings/u,
+  "supported iOS releases must open the exact Safari extension settings pane");
+assert.match(youtubeSafariSource, /isFilterEnabled == true/u);
+assert.match(youtubeBlockerInfo, /<key>CFBundleIdentifier<\/key>\s*<string>\$\(PRODUCT_BUNDLE_IDENTIFIER\)<\/string>/u,
+  "the embedded blocker must publish the bundle identifier Xcode validates against its parent app");
+assert.match(socialProjectSource, /VIGIL_APP_BUNDLE_IDENTIFIER = tech\.caseline\.vigil\.youtube;/u,
+  "the blocker target needs a standalone default bundle prefix for tests and local builds");
+assert.equal(
+  youtubeBlockerRules.some((rule) => rule.action?.type === "block" && rule.trigger?.["url-filter"]?.includes("/shorts")),
+  true,
+  "direct YouTube Shorts documents must be blocked"
+);
+assert.equal(
+  youtubeBlockerRules.some((rule) => rule.action?.type === "block"
+    && rule.trigger?.["url-filter"]?.includes("reel_watch_sequence")
+  ) && youtubeBlockerRules.some((rule) => rule.action?.type === "block"
+    && rule.trigger?.["url-filter"]?.includes("reel_item_watch")),
+  true,
+  "YouTube's live Shorts sequence and item endpoints must be blocked even after same-document routing"
+);
+assert.equal(
+  youtubeBlockerRules.some((rule) => rule.action?.type === "css-display-none" && rule.action.selector?.includes("ytm-reel-shelf-renderer")),
+  true,
+  "mobile YouTube Shorts shelves must be removed"
+);
+assert.equal(
+  youtubeBlockerRules.some((rule) => rule.action?.type === "css-display-none"
+    && rule.action.selector?.includes("ytm-pivot-bar-item-renderer:nth-of-type(2)")),
+  true,
+  "mobile YouTube's current shadow-DOM pivot host for Shorts must be removed"
+);
+assert.match(
+  socialRootViewSource,
   /webView\.overrideUserInterfaceStyle = isDark \? \.dark : \.light/u,
   "reported page appearance must drive the embedded web view interface style"
 );
 
 const instagram = buildArguments(["instagram", "--unsigned", "--destination", "generic/platform=iOS Simulator"]);
-assert.ok(instagram.includes("PRODUCT_BUNDLE_IDENTIFIER=tech.caseline.vigil.instagram"));
+assert.equal(instagram[instagram.indexOf("-scheme") + 1], "VigilInstagram");
+assert.ok(instagram.includes("VIGIL_APP_BUNDLE_IDENTIFIER=tech.caseline.vigil.instagram"));
 assert.ok(instagram.includes("VIGIL_SERVICE=instagram"));
 assert.ok(instagram.includes("SOCIAL_APP_NAME=Instagram"));
 assert.ok(instagram.includes("SOCIAL_APP_ICON_SET=InstagramAppIcon"));
@@ -60,7 +111,8 @@ assert.ok(instagram.includes(`CURRENT_PROJECT_VERSION=${phoneRelease.build}`));
 assert.ok(instagram.includes("CODE_SIGNING_ALLOWED=NO"));
 
 const explicitVersion = buildArguments(["youtube", "--version", "2.4.1", "--build", "37"]);
-assert.ok(explicitVersion.includes("PRODUCT_BUNDLE_IDENTIFIER=tech.caseline.vigil.youtube"));
+assert.equal(explicitVersion[explicitVersion.indexOf("-scheme") + 1], "VigilSocial");
+assert.ok(explicitVersion.includes("VIGIL_APP_BUNDLE_IDENTIFIER=tech.caseline.vigil.youtube"));
 assert.ok(explicitVersion.includes("VIGIL_SERVICE=youtube"));
 assert.ok(explicitVersion.includes("SOCIAL_APP_NAME=YouTube"));
 assert.ok(explicitVersion.includes("SOCIAL_APP_ICON_SET=YouTubeAppIcon"));
@@ -98,10 +150,7 @@ assert.doesNotMatch(
   "the legacy plist PNG declaration must not override the compiled app icon catalog"
 );
 
-for (const [service, iconSet] of [
-  ["instagram", "InstagramAppIcon"],
-  ["youtube", "YouTubeAppIcon"]
-] as const) {
+for (const [service, iconSet] of [["youtube", "YouTubeAppIcon"]] as const) {
   const contents = JSON.parse(await readFile(
     join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Assets.xcassets", `${iconSet}.appiconset`, "Contents.json"),
     "utf8"
@@ -130,6 +179,21 @@ for (const [service, iconSet] of [
     `${service} must provide light, dark, and tinted iOS app icons`
   );
 }
+
+const instagramIconContents = JSON.parse(await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Assets.xcassets", "InstagramAppIcon.appiconset", "Contents.json"),
+  "utf8"
+)) as {
+  images: Array<{ appearances?: unknown; filename: string; idiom: string; platform: string; size: string }>;
+};
+assert.deepEqual(instagramIconContents.images, [
+  {
+    filename: "instagram-light.png",
+    idiom: "universal",
+    platform: "ios",
+    size: "1024x1024"
+  }
+], "Instagram must use only its exact full-color App Store master and let iOS derive system appearances");
 
 for (const platform of FOCUSED_SOCIAL_PLATFORMS) {
   if (platform.id !== "instagram" && platform.id !== "youtube") continue;

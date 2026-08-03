@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-01T21:23:26.307Z",
+  "generatedAt": "2026-08-03T18:58:08.820Z",
   "storefront": "US",
   "services": [
     {
@@ -12,9 +12,9 @@
     {
       "name": "YouTube",
       "appStoreId": "544007664",
-      "version": "21.30.5",
-      "artworkUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/f9/e4/bc/f9e4bc3e-77f8-cac8-b9c3-c94f3e11176d/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/1024x1024bb.png",
-      "sha256": "3f8a28a70e395e11f237590cbb1fd5a6c1fb8c076f282ebe8e06e68c95f7a7c5"
+      "version": "21.31.3",
+      "artworkUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/8e/43/35/8e43350e-2dad-ac27-13d4-71eac741cf80/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/1024x1024bb.png",
+      "sha256": "7df565526b508712363675335e56b5d4b0b00e5abdfe7aa07052551c1e2969ee"
     }
   ]
 }

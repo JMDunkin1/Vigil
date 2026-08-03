@@ -1,0 +1,35 @@
+[
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/shorts$",
+      "resource-type": ["document"]
+    },
+    "action": { "type": "block" }
+  },
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/shorts[/?#]",
+      "resource-type": ["document"]
+    },
+    "action": { "type": "block" }
+  },
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/youtubei/v1/reel/reel_watch_sequence"
+    },
+    "action": { "type": "block" }
+  },
+  {
+    "trigger": {
+      "url-filter": "youtube\\.com/youtubei/v1/reel/reel_item_watch"
+    },
+    "action": { "type": "block" }
+  },
+  {
+    "trigger": { "url-filter": "youtube\\.com" },
+    "action": {
+      "type": "css-display-none",
+      "selector": "a[href='/shorts'], a[href^='/shorts/'], a[href*='youtube.com/shorts'], [aria-label='Shorts'], [aria-label^='Shorts '], [is-shorts], ytm-reel-shelf-renderer, ytm-shorts-lockup-view-model, ytm-shorts-lockup-view-model-v2, ytm-rich-section-renderer:has(a[href*='/shorts']), ytm-pivot-bar-item-renderer:has(a[href*='/shorts']), ytm-pivot-bar-renderer ytm-pivot-bar-item-renderer:nth-of-type(2), ytm-pivot-bar-renderer > ytm-pivot-bar-item-renderer:nth-child(2), ytd-reel-shelf-renderer, ytd-rich-shelf-renderer[is-shorts], ytd-rich-section-renderer:has(a[href*='/shorts']), ytd-guide-entry-renderer:has(a[href*='/shorts']), ytd-mini-guide-entry-renderer:has(a[href*='/shorts']), yt-tab-shape:has(a[href*='/shorts'])"
+    }
+  }
+]

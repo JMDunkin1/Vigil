@@ -10,7 +10,7 @@ process.env.VIGIL_EXTENSION_TOKEN = "runtime-test-token";
 const { startVigilCompanionServer, startVigilRuntime } = await import("../src/server.js");
 const { createLoopbackRuntimeProxy } = await import("../src/server/inAppTransport.js");
 const port = await unusedPort();
-const runtime = await startVigilRuntime({ port });
+const runtime = await startVigilRuntime({ port, systemEffects: "isolated" });
 let updateStatusCalls = 0;
 let updateStartCalls = 0;
 let updateRelaunchCalls = 0;
@@ -64,7 +64,7 @@ try {
     "starting the in-app runtime must not open a localhost listener"
   );
 
-  await startVigilCompanionServer({ port, appUpdate });
+  await startVigilCompanionServer({ port, appUpdate, systemEffects: "isolated" });
   const proxy = createLoopbackRuntimeProxy(port);
   const proxiedHealth = await proxy.request({ path: "/api/health" });
   assert.equal(proxiedHealth.status, 200, "Electron must be able to reuse the verified development server without starting another runtime");

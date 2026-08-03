@@ -33,18 +33,17 @@ in a configuration profile.
 | 952,054-domain adult list | Full snapshot is available to Vigil's live URL matcher; OS/browser preload lists remain bounded | Compact `.sdi` can be bundled and used by Vigil-owned apps, but the profile cannot express the whole list | iOS 26 URL Filter with Bloom + PIR/OHTTP |
 | Text inspection | Browser/extension policy paths | VigilSocial scans the full bounded document, DOM mutations, open shadow roots, and periodic visible-page audits | Generated shared phrase/context policy in every companion release |
 | Image/video inspection | Browser-specific enforcement | Sensitive Content Analysis when the entitlement is provisioned; the current Personal Team fallback reveals unclassified media while retaining text/profile rules | Paid team/capability build that keeps unclassified media concealed |
-| YouTube | Browser extension modifies the normal site | Fixed `m.youtube.com` `WKWebView`; Shorts and configured surfaces are removed; Google embedded sign-in is unsupported | Keep the focused web companion reliable while signed out, or separately fund a native YouTube Data API client |
+| YouTube | Browser extension modifies the normal site | Fixed companion presents `m.youtube.com` in `SFSafariViewController`; Google sign-in is supported and the bundled Safari content blocker removes/blocks Shorts | Verify the signed-in Safari surface and fail-closed content-blocker state on the physical phone |
 
 ## What the comparison products establish
 
 SocialLite's public App Store listing establishes that a focused YouTube surface,
 Shorts removal, background audio, and Picture in Picture can be delivered in an
-iOS companion. It does not disclose its source code or prove a non-WebView
-architecture. Vigil already uses the practical public-web architecture: a
-persistent mobile `WKWebView` with route guards, DOM cleanup, playback recovery,
-and a narrow navigation allowlist. Do not spoof the user agent to work around
-Google's embedded OAuth rejection. Signed-out YouTube should remain usable and
-the app should report the sign-in limitation truthfully.
+iOS companion. It does not disclose its source code. Google's native-app OAuth
+documentation explicitly rejects `WKWebView` authentication and names
+`SFSafariViewController` as a supported option. Vigil therefore uses Apple's
+secure Safari view for YouTube and a bundled Safari content blocker for Shorts.
+It does not spoof a user agent or extract/transfer Safari credentials.
 
 SHIFT publicly describes a different large-list strategy: it blocks Safari and
 other browsers, then makes SHIFT Web the filtered browsing route. That explains
@@ -71,18 +70,14 @@ default artifact must fail `check` and every Release/update path. A Release app
 must contain the byte-identical `adult-blocklist.sdi` and generated explicit-text
 policy that the release fingerprint describes.
 
-### 2. Stabilize the current YouTube companion
+### 2. Verify the signed-in YouTube companion
 
-Verify signed-out Home, Search, Subscriptions, ordinary Watch pages, comments,
-related videos, fullscreen, and edge-back. Verify that Shorts is rejected for
-direct links, in-page history changes, popups, frames, and recovered routes.
-Treat Google account sign-in as unsupported in embedded WebKit; the recovery
-action must return to a working signed-out YouTube home.
-
-If signed-in subscriptions are a hard requirement, scope that as a separate
-native client using Google's supported OAuth flow and YouTube Data API. That is
-not a small WebView fix: it requires an OAuth client, API quota, a native browse
-and player surface, and a terms/compliance review.
+Enable `Vigil YouTube Shorts Filter` in Settings > Apps > Safari > Extensions,
+then verify Google account sign-in, Home, Search, Subscriptions, Library,
+ordinary Watch pages, comments, related videos, fullscreen, and edge-back.
+Verify that the companion refuses to open while the filter is disabled, Shorts
+links and shelves are absent, and direct `/shorts` documents are blocked. The
+YouTube target alone embeds the blocker; the Instagram target remains separate.
 
 ### 3. Exercise the 952,054-domain artifact locally
 

@@ -6,12 +6,15 @@ enum DOMAdapters {
     }
 
     static func documentStartScript(
+        for service: SocialService,
         unclassifiedMediaPolicy: UnclassifiedMediaPolicy,
         audioEnabled: Bool
     ) -> String {
-        documentIdentityBootstrap
+        authenticationDocumentGuard(for: service, body:
+            documentIdentityBootstrap
             + contentFilterBootstrap(for: unclassifiedMediaPolicy)
             + earlyMediaGate(audioEnabled: audioEnabled)
+        )
     }
 
     private static let documentIdentityBootstrap = #"""
@@ -1027,9 +1030,48 @@ enum DOMAdapters {
     }
 
     static func script(for service: SocialService, audioEnabled: Bool) -> String {
-        frameSafetyScript(audioEnabled: audioEnabled)
+        authenticationDocumentGuard(for: service, body:
+            frameSafetyScript(audioEnabled: audioEnabled)
             + frameRoutePolicyGuard(for: service)
             + controlsScript(for: service)
+        )
+    }
+
+    private static func authenticationDocumentGuard(for service: SocialService, body: String) -> String {
+        guard service == .instagram else { return body }
+        return #"""
+        (() => {
+          const vigilAuthenticationPath = (candidate) => {
+            let url;
+            try { url = new URL(candidate, location.href); } catch (_) { return false; }
+            if (url.protocol !== 'https:') return false;
+            const host = url.hostname.toLowerCase();
+            if (host === 'facebook.com' || host.endsWith('.facebook.com')) return true;
+            if (!(host === 'instagram.com' || host.endsWith('.instagram.com'))) return false;
+            const path = url.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+            return [
+              '/accounts/login', '/accounts/emailsignup', '/accounts/signup',
+              '/accounts/password', '/accounts/account_recovery', '/accounts/onetap',
+              '/accounts/confirm', '/accounts/challenge', '/accounts/two_factor',
+              '/accounts/verification', '/challenge', '/checkpoint', '/two_factor',
+              '/accounts/suspended', '/accounts/disabled'
+            ].some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+          };
+          if (vigilAuthenticationPath(location.href)) {
+            // Keep Meta's authentication and security-check environment pristine.
+            // If it completes with a same-document route change, reload once so the
+            // protected document-start policy is present before feed content renders.
+            const timer = setInterval(() => {
+              if (vigilAuthenticationPath(location.href)) return;
+              clearInterval(timer);
+              location.reload();
+            }, 250);
+            addEventListener('pagehide', () => clearInterval(timer), { once: true });
+            return;
+          }
+          GUARDED_BODY
+        })();
+        """#.replacingOccurrences(of: "GUARDED_BODY", with: body)
     }
 
     static func frameSafetyScript(audioEnabled: Bool) -> String {

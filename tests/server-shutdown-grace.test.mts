@@ -18,6 +18,7 @@ const networkStatusGate = new Promise<unknown>((resolve) => { finishNetworkStatu
 const handle = await startVigilServer({
   host: "127.0.0.1",
   port: 0,
+  systemEffects: "isolated",
   appUpdate: {
     async status() {
       markNetworkStatusStarted();
@@ -83,6 +84,7 @@ try {
   let finishInAppStatus = (_result: unknown) => {};
   const inAppStatusGate = new Promise<unknown>((resolve) => { finishInAppStatus = resolve; });
   const runtime = await startVigilRuntime({
+    systemEffects: "isolated",
     appUpdate: {
       async status() {
         markInAppStatusStarted();
@@ -103,14 +105,14 @@ try {
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(runtimeStopped, false, "shutdown must retain the old runtime while an admitted in-app request is active");
   await assert.rejects(
-    startVigilRuntime(),
+    startVigilRuntime({ systemEffects: "isolated" }),
     /stopping/u,
     "a replacement runtime must not start before admitted work is quiescent"
   );
   finishInAppStatus({ ok: true });
   assert.equal((await stalledInAppRequest).status, 200);
   await stoppingRuntime;
-  const restarted = await startVigilRuntime();
+  const restarted = await startVigilRuntime({ systemEffects: "isolated" });
   await restarted.stop();
 } finally {
   socket.destroy();

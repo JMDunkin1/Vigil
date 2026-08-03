@@ -2,7 +2,7 @@
 set -eu
 
 exact_source="${VIGIL_PHONE_BLOCKLIST:-$SRCROOT/../../data/adult-blocklist.sdi}"
-prefilter_source="${VIGIL_URL_FILTER_PREFILTER:-$SRCROOT/../../data/url-filter-prefilter.vuf}"
+prefilter_source="${VIGIL_URL_FILTER_PREFILTER:-$SRCROOT/../../data/ios-url-filter/url-filter-prefilter.vuf}"
 resources="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}"
 
 if [ -f "$exact_source" ] && [ -f "$prefilter_source" ]; then

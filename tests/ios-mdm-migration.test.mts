@@ -41,7 +41,7 @@ const oneTimeToken = enrollment.match(/token=([^<]+)/)?.[1] || "";
 await saveState(state);
 
 try {
-  const handle = await startVigilServer({ host: "127.0.0.1", port: 0 });
+  const handle = await startVigilServer({ host: "127.0.0.1", port: 0, systemEffects: "isolated" });
   const exchange = async (path: string, token: string, body: Record<string, unknown>) => {
     return await fetch(`${handle.url}${path}?token=${encodeURIComponent(token)}`, {
       method: "PUT",

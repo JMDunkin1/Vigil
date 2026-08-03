@@ -8,3 +8,8 @@ into its bundle under that name. Absence is explicit: `loadBundled()` returns
 The artifact metadata preserves the selected source's label, URL, homepage, and
 license. UI or distribution notices must continue to surface that attribution;
 generating the compact index does not relicense the source list.
+
+Format v2 stores a SHA-256-protected table of front-coded block offsets so an
+app can build its sparse lookup index without decoding every domain at startup.
+The reader continues to accept format v1 artifacts during rollout, while new
+artifacts are always generated as v2.

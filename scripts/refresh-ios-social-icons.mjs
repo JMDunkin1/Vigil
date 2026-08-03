@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,8 +12,8 @@ const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CATALOG = join(ROOT, "ios", "VigilSocial", "VigilSocial", "Assets.xcassets");
 const services = [
-  { name: "Instagram", id: "389801252", set: "InstagramAppIcon.appiconset", light: "instagram-light.png", dark: "instagram-dark.png", tinted: "instagram-tinted.png" },
-  { name: "YouTube", id: "544007664", set: "YouTubeAppIcon.appiconset", light: "youtube-light.png", dark: "youtube-dark.png", tinted: "youtube-tinted.png" }
+  { name: "Instagram", id: "389801252", set: "InstagramAppIcon.appiconset", light: "instagram-light.png" },
+  { name: "YouTube", id: "544007664", set: "YouTubeAppIcon.appiconset", light: "youtube-light.png" }
 ];
 
 const temporary = await mkdtemp(join(tmpdir(), "vigil-social-icons-"));
@@ -33,7 +33,6 @@ try {
     }
     const destination = join(CATALOG, service.set, service.light);
     await rename(staged, destination);
-    await writeFile(join(CATALOG, service.set, service.tinted), await readFile(join(CATALOG, service.set, service.dark)), { mode: 0o644 });
     provenance.services.push({
       name: service.name,
       appStoreId: service.id,

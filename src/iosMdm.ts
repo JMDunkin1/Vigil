@@ -3,6 +3,8 @@ import http2 from "node:http2";
 import type { ClientHttp2Session, ClientHttp2Stream, IncomingHttpHeaders } from "node:http2";
 import { APP_NAME, defaultState } from "./defaults.js";
 import { buildIosConfigurationProfile, IOS_PROFILE_IDENTIFIER, iosPolicyTargets } from "./iosProfiles.js";
+import { requiredIosUrlFilterProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
+import { DATA_DIR } from "./store.js";
 import { parseBoolean } from "./booleans.js";
 import { grayscaleDecision } from "./grayscale.js";
 import { clampInteger } from "./normalizers.js";
@@ -727,7 +729,7 @@ function policyCommandTemplate(state: VigilState, now: Date): Pick<MdmCommand, "
     };
   }
 
-  const profile = buildIosConfigurationProfile(state, now);
+  const profile = buildIosConfigurationProfile(state, now, requiredIosUrlFilterProfileOptions(DATA_DIR));
   return {
     requestType: "InstallProfile",
     profileBase64: Buffer.from(profile, "utf8").toString("base64")

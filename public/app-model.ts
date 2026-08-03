@@ -585,7 +585,20 @@ export interface DashboardData extends UnknownRecord {
       allowlist?: string[];
       allowlistCount?: number;
       domainCount?: number;
+      sourceDomainCount?: number;
       activeDomainCount?: number;
+      qualityAudit?: {
+        candidateLineCount?: number;
+        invalidLineCount?: number;
+        normalizedLineCount?: number;
+        normalizedDomainCount?: number;
+        exactDuplicateCount?: number;
+        suffixRedundantCount?: number;
+        compactedDomainCount?: number;
+        tldRegistryChecked?: boolean;
+        unrecognizedTldCount?: number;
+        unrecognizedTldExamples?: string[];
+      } | null;
       preloadLimit?: number;
       preloadedDomainCount?: number;
       shortHash?: string;

@@ -12,6 +12,7 @@ final class VigilSocialTests: XCTestCase {
             DOMAdapters.contentFilterBootstrap(for: .revealUnclassified),
             DOMAdapters.earlyMediaGate(audioEnabled: true),
             DOMAdapters.documentStartScript(
+                for: .instagram,
                 unclassifiedMediaPolicy: .conceal,
                 audioEnabled: false
             ),
@@ -134,6 +135,7 @@ final class VigilSocialTests: XCTestCase {
         ))
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.documentStartScript(
+                for: .instagram,
                 unclassifiedMediaPolicy: .conceal,
                 audioEnabled: true
             ),
@@ -265,6 +267,7 @@ final class VigilSocialTests: XCTestCase {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.documentStartScript(
+                for: .instagram,
                 unclassifiedMediaPolicy: .conceal,
                 audioEnabled: true
             ),
@@ -1218,6 +1221,7 @@ final class VigilSocialTests: XCTestCase {
 
     func testMainDocumentBridgeIncludesTheDocumentStartIdentity() {
         let documentStart = DOMAdapters.documentStartScript(
+            for: .instagram,
             unclassifiedMediaPolicy: .conceal,
             audioEnabled: true
         )
@@ -1632,7 +1636,7 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
-    func testInstagramHealthDistinguishesUsableSurfacesFromTextOnlyFailures() async throws {
+    func testInstagramAuthenticationSurfacesStayVisibleWithoutContentHooks() async throws {
         let fixtures: [(name: String, path: String, html: String)] = [
             (
                 "challenge",
@@ -1733,34 +1737,23 @@ final class VigilSocialTests: XCTestCase {
 
         let reachedExpectedStates = {
             guard stores.count == 6 else { return false }
-            guard case .unsupported = stores[0].health[.instagram],
-                  case .unsupported = stores[1].health[.instagram],
-                  case .unsupported = stores[2].health[.instagram],
-                  case .degraded = stores[3].health[.instagram],
-                  case .ready = stores[4].health[.instagram],
-                  case .ready = stores[5].health[.instagram] else { return false }
-            return true
+            return stores.allSatisfy { $0.health[.instagram] == .ready }
         }
         for _ in 0..<180 where !reachedExpectedStates() {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
 
-        guard case let .unsupported(challengeDetail) = stores[0].health[.instagram] else {
-            return XCTFail("A text-only challenge response must not be treated as usable UI")
+        XCTAssertTrue(reachedExpectedStates(), "Meta's authentication UI must remain visible, including its own errors")
+        for store in stores.prefix(5) {
+            let hooks = try await store.webView(for: .instagram).evaluateJavaScript(
+                "[Boolean(window.__vigilContentBootstrapInstalled), Boolean(window.__vigilEarlyMediaGate), Boolean(window.__vigilInstagramInstalled)]"
+            ) as? [Bool]
+            XCTAssertEqual(hooks, [false, false, false])
         }
-        XCTAssertTrue(challengeDetail.contains("did not provide usable verification controls"))
-        guard case .unsupported = stores[1].health[.instagram] else {
-            return XCTFail("A help-only challenge must not be treated as usable verification")
-        }
-        guard case .unsupported = stores[2].health[.instagram] else {
-            return XCTFail("An unrelated navigation control must not satisfy challenge health")
-        }
-        guard case let .degraded(loginErrorDetail) = stores[3].health[.instagram] else {
-            return XCTFail("A text-only login failure must not be treated as usable UI")
-        }
-        XCTAssertTrue(loginErrorDetail.contains("reported an error"))
-        XCTAssertEqual(stores[4].health[.instagram], .ready)
-        XCTAssertEqual(stores[5].health[.instagram], .ready)
+        let storyHooks = try await stores[5].webView(for: .instagram).evaluateJavaScript(
+            "[Boolean(window.__vigilContentBootstrapInstalled), Boolean(window.__vigilEarlyMediaGate), Boolean(window.__vigilInstagramInstalled)]"
+        ) as? [Bool]
+        XCTAssertEqual(storyHooks, [true, true, true])
     }
 
     func testConservativeTextClassifierStillChecksBoundedTextWhenPageIsLong() async {
@@ -1860,6 +1853,53 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(SocialService.youtube.isUnsupportedEmbeddedAuthentication(
             try XCTUnwrap(URL(string: "https://m.youtube.com/signin"))
         ))
+    }
+
+    func testOnlyInstagramAuthenticationDocumentsBypassContentInjection() throws {
+        for path in [
+            "/accounts/login/",
+            "/accounts/password/reset/",
+            "/accounts/account_recovery/",
+            "/accounts/onetap/",
+            "/accounts/challenge/",
+            "/accounts/verification/",
+            "/challenge/",
+            "/checkpoint/",
+            "/accounts/two_factor/"
+        ] {
+            XCTAssertTrue(SocialService.instagram.usesUnmodifiedAuthenticationDocument(
+                try XCTUnwrap(URL(string: "https://www.instagram.com\(path)"))
+            ))
+        }
+        XCTAssertTrue(SocialService.instagram.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://www.facebook.com/dialog/oauth?client_id=1"))
+        ))
+        XCTAssertFalse(SocialService.instagram.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://www.instagram.com/"))
+        ))
+        XCTAssertFalse(SocialService.instagram.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://www.instagram.com/direct/inbox/"))
+        ))
+        XCTAssertFalse(SocialService.instagram.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://www.facebook.com/"))
+        ))
+        XCTAssertFalse(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://accounts.google.com/ServiceLogin"))
+        ))
+
+        let instagramStart = DOMAdapters.documentStartScript(
+            for: .instagram,
+            unclassifiedMediaPolicy: .conceal,
+            audioEnabled: true
+        )
+        let youtubeStart = DOMAdapters.documentStartScript(
+            for: .youtube,
+            unclassifiedMediaPolicy: .conceal,
+            audioEnabled: true
+        )
+        XCTAssertTrue(instagramStart.contains("Keep Meta's authentication and security-check environment pristine"))
+        XCTAssertTrue(instagramStart.contains("location.reload()"))
+        XCTAssertFalse(youtubeStart.contains("vigilAuthenticationPath"))
     }
 
     func testEmbeddedNavigationRestoresRequiredServiceFramesWithoutBecomingABrowser() throws {
@@ -2606,6 +2646,7 @@ final class VigilSocialTests: XCTestCase {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.documentStartScript(
+                for: .instagram,
                 unclassifiedMediaPolicy: .conceal,
                 audioEnabled: audioEnabled
             ),
@@ -2688,6 +2729,7 @@ final class VigilSocialTests: XCTestCase {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.documentStartScript(
+                for: .instagram,
                 unclassifiedMediaPolicy: .conceal,
                 audioEnabled: audioEnabled
             ),
@@ -2829,6 +2871,7 @@ final class VigilSocialTests: XCTestCase {
         controller.add(messageHandler, name: "vigil")
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.documentStartScript(
+                for: .instagram,
                 unclassifiedMediaPolicy: .conceal,
                 audioEnabled: true
             ),

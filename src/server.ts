@@ -23,6 +23,7 @@ import { quarantineRuntimeUsageCheckpoint, recoverRuntimeUsageCheckpoint, runtim
 import { assertDistanceKey, updateDistanceKeySettings } from "./distanceKey.js";
 import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated } from "./iosProfiles.js";
+import { requiredIosUrlFilterProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
 import { exportManageEngineIosProfile } from "./manageEngineExport.js";
 import { parsePlist } from "./plist.js";
 import { normalizeLockLevel, profileById } from "./policy.js";
@@ -110,6 +111,7 @@ interface ServerOptions {
   host?: string;
   port?: number | string;
   appUpdate?: AppUpdateController | null;
+  systemEffects?: "live" | "isolated";
 }
 
 export interface VigilRuntimeHandle extends InAppTransport {}
@@ -208,6 +210,9 @@ async function startNetworkServer(
 export async function startVigilRuntime(options: ServerOptions = {}): Promise<VigilRuntimeHandle> {
   if (runtimeStopping) throw Object.assign(new Error("Vigil is stopping."), { status: 503 });
   if (!runtimeStarted) {
+    if (process.env.VIGIL_REQUIRE_ISOLATED_RUNTIME === "1" && options.systemEffects !== "isolated") {
+      throw new Error("Vigil test runtimes must set systemEffects to isolated.");
+    }
     activeHost = options.host || DEFAULT_HOST;
     activePort = Number(options.port ?? PORT);
     appUpdateController = options.appUpdate || null;
@@ -222,6 +227,7 @@ export async function startVigilRuntime(options: ServerOptions = {}): Promise<Vi
     monitor = startMonitor({
       state,
       usage,
+      externalEffectsEnabled: options.systemEffects !== "isolated",
       runtimeInstanceId: startedAt,
       runtimeUsageCheckpointEnabled: startupRecovery.runtimeUsageCheckpointEnabled,
       startupSnapshotPersisted: startupRecovery.snapshotPersisted,
@@ -1037,7 +1043,7 @@ async function handleMdm(
 
   if (method === "GET" && path === "/mdm/policy.mobileconfig") {
     ensureIosRemovalPassword(requestState);
-    const profile = buildIosConfigurationProfile(requestState);
+    const profile = buildIosConfigurationProfile(requestState, new Date(), requiredIosUrlFilterProfileOptions(DATA_DIR));
     markIosProfileGenerated(requestState);
     addEvent(requestState, "ios_public_profile_generated", { bytes: Buffer.byteLength(profile) });
     await saveState(requestState);

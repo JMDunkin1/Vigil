@@ -13,6 +13,16 @@ const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const RELEASE_PATH = join(ROOT, "ios", "phone-release.json");
 const DEFAULT_SERVER = "http://127.0.0.1:8787";
 const PHONE_BLOCKLIST_RESOURCE = "adult-blocklist.sdi";
+const URL_FILTER_PREFILTER_RESOURCE = "url-filter-prefilter.vuf";
+const URL_FILTER_SERVICE_RESOURCE = "service.json";
+const URL_FILTER_MAGIC = Buffer.from("VIGILUF1", "ascii");
+const URL_FILTER_HEADER_BYTES = URL_FILTER_MAGIC.byteLength + 4;
+const URL_FILTER_APP = {
+  id: "url-filter",
+  name: "Vigil URL Filter",
+  bundleId: "tech.caseline.vigil.url-filter",
+  controlProviderBundleId: "tech.caseline.vigil.url-filter.control"
+};
 const EXPLICIT_CONTENT_POLICY_RESOURCE = "ExplicitContentPolicy.json";
 const EXPLICIT_CONTENT_POLICY_PATH = join(ROOT, "ios", "VigilSocial", "VigilSocial", EXPLICIT_CONTENT_POLICY_RESOURCE);
 const PHONE_BLOCKLIST_MAGIC = Buffer.from("SNTLIDX1", "ascii");
@@ -46,6 +56,8 @@ const PHONE_SOURCE_FILES = [
   "src/iosMdm.ts",
   "src/iosMdmModel.ts",
   "src/iosProfiles.ts",
+  "src/iosUrlFilterPrefilter.ts",
+  "src/iosUrlFilterServiceConfiguration.ts",
   "src/limits.ts",
   "src/manageEngineExport.ts",
   "src/policy.ts",
@@ -55,10 +67,11 @@ const PHONE_SOURCE_FILES = [
   "src/store.ts",
   "src/types.ts"
 ];
-const REQUIRED_APPS = [
-  { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram" },
-  { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube" }
+const REQUIRED_SOCIAL_APPS = [
+  { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" },
+  { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" }
 ];
+const REQUIRED_APPS = [...REQUIRED_SOCIAL_APPS, URL_FILTER_APP];
 
 if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
   const { command, options } = parseArguments(process.argv.slice(2));
@@ -74,17 +87,19 @@ async function main(selectedCommand, selectedOptions) {
     return;
   }
   if (selectedCommand === "bump") {
-    await requireReadyPhoneBlocklist("create a phone release");
+    const blocklist = await requireReadyPhoneBlocklist("create a phone release");
+    await requireReadyIosUrlFilter(blocklist, "create a phone release");
     const release = await bumpRelease(selectedOptions.bump, selectedOptions.force);
     console.log(`Vigil phone release is ${release.version} (${release.build}).`);
     return;
   }
   if (selectedCommand === "audit") {
     const blocklist = await requireReadyPhoneBlocklist("complete the phone audit");
+    const urlFilter = await requireReadyIosUrlFilter(blocklist, "complete the phone audit");
     const { developerDir, toolEnvironment } = await prepareAuditToolchain();
     console.log(`Apple toolchain: ${developerDir}`);
     await buildRuntime();
-    const audit = await auditFourPolicies(toolEnvironment);
+    const audit = await auditFourPolicies(toolEnvironment, urlFilter.service);
     printPolicyAudit(audit);
     printBlocklistReadiness(blocklist);
     return;
@@ -149,6 +164,25 @@ export async function implementationFingerprint() {
   files.push(...await filesBelow(join(ROOT, "ios"), isPhoneImplementationFile));
   const blocklistPath = await currentBlocklistPath();
   if (blocklistPath) files.push(blocklistPath);
+  const filterDirectory = urlFilterDirectory();
+  for (const path of [
+    join(filterDirectory, "manifest.json"),
+    join(filterDirectory, URL_FILTER_PREFILTER_RESOURCE),
+    join(filterDirectory, URL_FILTER_SERVICE_RESOURCE),
+    join(filterDirectory, "pir", "input.txtpb"),
+    join(filterDirectory, "pir", "url-config.json"),
+    join(filterDirectory, "pir", "service-config.json"),
+    join(filterDirectory, "pir", "deployment-manifest.json")
+  ]) {
+    if (await isFile(path)) files.push(path);
+  }
+  const pirDirectory = join(filterDirectory, "pir");
+  if (await isFile(join(pirDirectory, "processed-manifest.json"))) {
+    files.push(join(pirDirectory, "processed-manifest.json"));
+    for (const entry of await readdir(pirDirectory)) {
+      if (/^url-\d+\.(?:bin|params\.txtpb)$/u.test(entry)) files.push(join(pirDirectory, entry));
+    }
+  }
   const unique = [...new Set(files)].sort();
   const digest = createHash("sha256");
   const entries = [];
@@ -210,26 +244,45 @@ export function inspectPhoneBlocklistBytes(value, path = "") {
     return failed("artifact has an invalid format signature");
   }
   const metadataLength = bytes.readUInt32LE(PHONE_BLOCKLIST_MAGIC.byteLength);
-  const payloadOffset = PHONE_BLOCKLIST_HEADER_BYTES + metadataLength;
-  if (metadataLength < 1 || payloadOffset > bytes.byteLength) return failed("artifact metadata is truncated");
+  const bodyOffset = PHONE_BLOCKLIST_HEADER_BYTES + metadataLength;
+  if (metadataLength < 1 || bodyOffset > bytes.byteLength) return failed("artifact metadata is truncated");
   let metadata;
   try {
-    metadata = JSON.parse(bytes.subarray(PHONE_BLOCKLIST_HEADER_BYTES, payloadOffset).toString("utf8"));
+    metadata = JSON.parse(bytes.subarray(PHONE_BLOCKLIST_HEADER_BYTES, bodyOffset).toString("utf8"));
   } catch {
     return failed("artifact metadata is invalid JSON");
   }
+  const indexBytes = metadata?.formatVersion === 2 ? Number(metadata?.indexBytes) : 0;
+  const payloadOffset = bodyOffset + indexBytes;
+  if (!Number.isSafeInteger(indexBytes) || indexBytes < 0 || payloadOffset > bytes.byteLength) {
+    return failed("artifact sparse index is truncated");
+  }
+  const index = bytes.subarray(bodyOffset, payloadOffset);
   const payload = bytes.subarray(payloadOffset);
   const sourceId = String(metadata?.source?.id || "");
   const minimumDomains = sourceId === DEFAULT_ADULT_BLOCKLIST_SOURCE_ID
     ? MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS
     : MINIMUM_CUSTOM_ADULT_BLOCKLIST_DOMAINS;
-  const metadataValid = metadata?.formatVersion === 1
-    && metadata?.encoding === "blocked-reversed-domain-front-coding-v1"
+  const versionOne = metadata?.formatVersion === 1
+    && metadata?.encoding === "blocked-reversed-domain-front-coding-v1";
+  const versionTwo = metadata?.formatVersion === 2
+    && metadata?.encoding === "blocked-reversed-domain-front-coding-v2";
+  const expectedIndexBytes = Math.ceil(Number(metadata?.domainCount || 0) / 64) * 4;
+  const sourceDomainCount = Number(metadata?.sourceDomainCount ?? metadata?.domainCount);
+  const metadataValid = (versionOne || versionTwo)
     && metadata?.blockSize === 64
     && Number.isInteger(metadata?.domainCount)
     && metadata.domainCount >= minimumDomains
     && metadata.domainCount <= 2_000_000
+    && Number.isSafeInteger(sourceDomainCount)
+    && sourceDomainCount >= metadata.domainCount
+    && sourceDomainCount <= 2_000_000
     && metadata?.payloadBytes === payload.byteLength
+    && (!versionOne || index.byteLength === 0)
+    && (!versionTwo || (index.byteLength === expectedIndexBytes
+      && metadata?.indexBytes === expectedIndexBytes
+      && /^[a-f0-9]{64}$/u.test(String(metadata?.indexSha256 || ""))
+      && sha256(index) === String(metadata.indexSha256).toLowerCase()))
     && sourceId.length > 0
     && String(metadata?.source?.label || "").length > 0
     && String(metadata?.source?.license || "").length > 0
@@ -247,6 +300,9 @@ export function inspectPhoneBlocklistBytes(value, path = "") {
   if (!validatePhoneBlocklistPayload(payload, metadata.domainCount, metadata.blockSize)) {
     return failed("artifact payload rows do not match the declared domain count and ordering");
   }
+  if (versionTwo && !validatePhoneBlocklistOffsets(index, payload, metadata.domainCount, metadata.blockSize)) {
+    return failed("artifact sparse index does not match its payload");
+  }
   return {
     ready: true,
     path,
@@ -259,6 +315,23 @@ export function inspectPhoneBlocklistBytes(value, path = "") {
     source: metadata.source && typeof metadata.source === "object" ? metadata.source : null,
     error: ""
   };
+}
+
+function validatePhoneBlocklistOffsets(index, payload, expectedCount, blockSize) {
+  let cursor = 0;
+  let count = 0;
+  let block = 0;
+  while (cursor < payload.byteLength && count < expectedCount) {
+    if (count % blockSize === 0) {
+      if (block * 4 + 4 > index.byteLength || index.readUInt32LE(block * 4) !== cursor) return false;
+      block += 1;
+    }
+    if (cursor + 2 > payload.byteLength) return false;
+    cursor += 2 + payload[cursor + 1];
+    if (cursor > payload.byteLength) return false;
+    count += 1;
+  }
+  return cursor === payload.byteLength && count === expectedCount && block * 4 === index.byteLength;
 }
 
 function validatePhoneBlocklistPayload(payload, expectedCount, blockSize) {
@@ -318,6 +391,133 @@ export async function phoneBlocklistReadiness(explicitPath = "") {
       error: `artifact could not be read: ${error?.message || error}`
     };
   }
+}
+
+function urlFilterDirectory() {
+  const dataDirectory = process.env.VIGIL_DATA_DIR || join(ROOT, "data");
+  return resolve(process.env.VIGIL_IOS_URL_FILTER_DIR || join(dataDirectory, "ios-url-filter"));
+}
+
+export async function iosUrlFilterReadiness(blocklist, explicitDirectory = "") {
+  const directory = resolve(explicitDirectory || urlFilterDirectory());
+  const failed = (error) => ({ ready: false, directory, error, service: null, prefilter: null });
+  try {
+    if (!blocklist?.ready) return failed("the exact phone blocklist is not ready");
+    const prefilterBytes = await readFile(join(directory, URL_FILTER_PREFILTER_RESOURCE));
+    if (prefilterBytes.byteLength < URL_FILTER_HEADER_BYTES
+      || !prefilterBytes.subarray(0, URL_FILTER_MAGIC.byteLength).equals(URL_FILTER_MAGIC)) {
+      return failed("the Bloom prefilter has an invalid format signature");
+    }
+    const metadataLength = prefilterBytes.readUInt32LE(URL_FILTER_MAGIC.byteLength);
+    const bitsetOffset = URL_FILTER_HEADER_BYTES + metadataLength;
+    if (metadataLength < 1 || bitsetOffset > prefilterBytes.byteLength) return failed("the Bloom prefilter metadata is truncated");
+    const metadata = JSON.parse(prefilterBytes.subarray(URL_FILTER_HEADER_BYTES, bitsetOffset).toString("utf8"));
+    const bitset = prefilterBytes.subarray(bitsetOffset);
+    if (metadata?.formatVersion !== 1
+      || metadata?.encoding !== "apple-neurlfilter-prefilter-bloom-v1"
+      || metadata?.snapshotHash !== blocklist.snapshotHash
+      || metadata?.exactIndexPayloadSha256 !== blocklist.payloadSha256
+      || metadata?.exactDomainCount !== blocklist.domainCount
+      || metadata?.bitsetBytes !== bitset.byteLength
+      || metadata?.bitsetSha256 !== sha256(bitset)) {
+      return failed("the Bloom prefilter is invalid or does not match the exact phone blocklist");
+    }
+    const service = JSON.parse(await readFile(join(directory, URL_FILTER_SERVICE_RESOURCE), "utf8"));
+    const urls = [service?.pirServerURL, service?.privacyPassIssuerURL, service?.deploymentManifestURL]
+      .map((value) => new URL(String(value || "")));
+    const serviceValid = service?.schemaVersion === 1
+      && urls.every((url) => url.protocol === "https:" && url.hostname && !url.username && !url.password && !url.search && !url.hash)
+      && typeof service?.authenticationToken === "string" && service.authenticationToken.trim().length >= 16
+      && service?.hostBundleIdentifier === URL_FILTER_APP.bundleId
+      && service?.controlProviderBundleIdentifier === URL_FILTER_APP.controlProviderBundleId
+      && service?.usecaseName === `${URL_FILTER_APP.bundleId}.url.filtering`
+      && Number.isSafeInteger(service?.prefilterFetchIntervalSeconds)
+      && service.prefilterFetchIntervalSeconds >= 45 * 60
+      && service?.prefilterTag === metadata.tag
+      && service?.pirDatabaseRevision === metadata.pirDatabaseRevision
+      && service?.exactIndexSnapshotHash === metadata.snapshotHash
+      && /^[a-f0-9]{64}$/u.test(String(service?.pirDatabaseSha256 || ""));
+    if (!serviceValid) return failed("service.json is invalid or does not match the generated Bloom/PIR revision");
+    const pirDatabase = await readFile(join(directory, "pir", "input.txtpb"));
+    if (sha256(pirDatabase) !== service.pirDatabaseSha256) {
+      return failed("the local PIR database does not match service.json");
+    }
+    const processed = JSON.parse(await readFile(join(directory, "pir", "processed-manifest.json"), "utf8"));
+    const sourceManifest = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8"));
+    if (processed?.schemaVersion !== 1
+      || processed?.exactIndexSnapshotHash !== metadata.snapshotHash
+      || processed?.pirDatabaseRevision !== metadata.pirDatabaseRevision
+      || processed?.pirDatabaseSha256 !== service.pirDatabaseSha256
+      || processed?.shardCount !== sourceManifest?.shardCount
+      || !Array.isArray(processed?.shards)
+      || processed.shards.length !== processed.shardCount) {
+      return failed("the processed PIR shard manifest is missing, stale, or mismatched");
+    }
+    for (const [index, shard] of processed.shards.entries()) {
+      if (shard?.id !== index) return failed("the processed PIR shard manifest is not contiguous");
+      for (const key of ["database", "parameters"]) {
+        const entry = shard?.[key];
+        if (!entry || typeof entry.file !== "string" || !/^[A-Za-z0-9._-]+$/u.test(entry.file)) {
+          return failed("the processed PIR shard manifest contains an invalid filename");
+        }
+        const bytes = await readFile(join(directory, "pir", entry.file));
+        if (entry.bytes !== bytes.byteLength || entry.sha256 !== sha256(bytes)) {
+          return failed(`processed PIR shard ${entry.file} failed its integrity check`);
+        }
+      }
+    }
+    const deploymentManifest = JSON.parse(await readFile(join(directory, "pir", "deployment-manifest.json"), "utf8"));
+    if (deploymentManifest?.schemaVersion !== 1
+      || deploymentManifest?.exactIndexSnapshotHash !== metadata.snapshotHash
+      || deploymentManifest?.prefilterTag !== metadata.tag
+      || deploymentManifest?.pirDatabaseRevision !== metadata.pirDatabaseRevision
+      || deploymentManifest?.pirDatabaseSha256 !== service.pirDatabaseSha256
+      || deploymentManifest?.shardCount !== processed.shardCount
+      || !Array.isArray(deploymentManifest?.shards)
+      || JSON.stringify(deploymentManifest.shards) !== JSON.stringify(processed.shards)) {
+      return failed("the public deployment manifest is stale or does not match the processed PIR shards");
+    }
+    return {
+      ready: true,
+      directory,
+      error: "",
+      service,
+      deploymentManifest,
+      prefilter: {
+        path: join(directory, URL_FILTER_PREFILTER_RESOURCE),
+        sha256: sha256(prefilterBytes),
+        bytes: prefilterBytes.byteLength,
+        tag: metadata.tag,
+        pirDatabaseRevision: metadata.pirDatabaseRevision,
+        pirDatabaseSha256: service.pirDatabaseSha256,
+        domainCount: metadata.exactDomainCount
+      }
+    };
+  } catch (error) {
+    return failed(error?.message || String(error));
+  }
+}
+
+async function requireReadyIosUrlFilter(blocklist, purpose) {
+  const readiness = await iosUrlFilterReadiness(blocklist);
+  if (!readiness.ready) {
+    throw new Error(`Cannot ${purpose}: the required fail-closed iOS URL Filter is not deployable (${readiness.error}). Run npm run ios:url-filter:prepare with the production PIR and Privacy Pass HTTPS endpoints.`);
+  }
+  let published;
+  try {
+    const response = await fetch(readiness.service.deploymentManifestURL, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000)
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    published = await response.json();
+  } catch (error) {
+    throw new Error(`Cannot ${purpose}: the published URL Filter deployment manifest is unreachable (${error?.message || error}).`, { cause: error });
+  }
+  if (JSON.stringify(published) !== JSON.stringify(readiness.deploymentManifest)) {
+    throw new Error(`Cannot ${purpose}: the published URL Filter deployment manifest does not match the exact local prefilter and processed PIR shards.`);
+  }
+  return readiness;
 }
 
 export function blocklistReadinessProblems(readiness, serverState = null) {
@@ -381,7 +581,7 @@ export function deployedBlocklistProblems(receipt, readiness, requiredBundleIds 
   return problems;
 }
 
-function deployedExplicitContentPolicyProblems(receipt, expected, requiredBundleIds = REQUIRED_APPS.map((app) => app.bundleId)) {
+function deployedExplicitContentPolicyProblems(receipt, expected, requiredBundleIds = REQUIRED_SOCIAL_APPS.map((app) => app.bundleId)) {
   if (!receipt) return ["No deployment receipt proves that the installed phone apps contain the generated explicit-content policy."];
   if (receipt.explicitContentPolicy?.sha256 !== expected.sha256) {
     return ["The deployment receipt does not match the current generated explicit-content policy."];
@@ -477,13 +677,15 @@ async function phoneStatus(selectedOptions, device, toolEnvironment) {
     phoneBlocklistReadiness(),
     expectedExplicitContentPolicy()
   ]);
+  const urlFilter = await iosUrlFilterReadiness(blocklist);
   const [appsResult, profileVerification, serverState] = await Promise.all([
     devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment),
     configurationProfileStatus(device.identifier, toolEnvironment),
     fetchServerState(selectedOptions.server)
   ]);
   const currentPolicy = await currentPolicyFingerprint(selectedOptions.server, serverState, {
-    allowCurrentRuntime: release.sourceFingerprint === fingerprint.hash
+    allowCurrentRuntime: release.sourceFingerprint === fingerprint.hash,
+    urlFilterService: urlFilter.ready ? urlFilter.service : null
   });
   const livePolicyFingerprint = currentPolicy.fingerprint;
   const apps = appsResult.result?.apps || [];
@@ -526,7 +728,18 @@ async function phoneStatus(selectedOptions, device, toolEnvironment) {
   problems.push(...blocklistReadinessProblems(blocklist, serverState));
   problems.push(...deployedBlocklistProblems(receipt, blocklist));
   problems.push(...deployedExplicitContentPolicyProblems(receipt, explicitContentPolicy));
-  return { release, fingerprint, blocklist, explicitContentPolicy, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
+  if (!urlFilter.ready) problems.push(`The fail-closed iOS URL Filter is not deployable: ${urlFilter.error}.`);
+  else if (receipt?.urlFilter?.prefilterSha256 !== urlFilter.prefilter.sha256
+    || receipt?.urlFilter?.pirDatabaseSha256 !== urlFilter.prefilter.pirDatabaseSha256
+    || receipt?.urlFilter?.prefilterTag !== urlFilter.prefilter.tag) {
+    problems.push("The deployment receipt does not prove the current paired URL Filter prefilter and PIR database revision.");
+  }
+  if (receipt && (receipt?.liveUrlFilterAudit?.status !== "running"
+    || receipt?.liveUrlFilterAudit?.enabled !== true
+    || receipt?.liveUrlFilterAudit?.failClosed !== true)) {
+    problems.push("The deployment receipt does not prove that iOS reached a running fail-closed URL Filter state.");
+  }
+  return { release, fingerprint, blocklist, explicitContentPolicy, urlFilter, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
 }
 
 function printStatus(report) {
@@ -547,6 +760,7 @@ function printStatus(report) {
   if (report.receipt?.policyFingerprint) console.log(`Last deployed policy: ${report.receipt.policyFingerprint.slice(0, 12)}`);
   if (report.livePolicyFingerprint) console.log(`Current live policy: ${report.livePolicyFingerprint.slice(0, 12)} • ${report.policyGenerationSource}`);
   printBlocklistReadiness(report.blocklist);
+  console.log(`System URL Filter: ${report.urlFilter.ready ? `${report.urlFilter.prefilter.domainCount.toLocaleString("en-US")} domains • ${report.urlFilter.prefilter.tag}` : `NOT READY • ${report.urlFilter.error}`}`);
   console.log(`Bundled explicit-content policy: ${report.explicitContentPolicy.sha256.slice(0, 12)} • ${report.explicitContentPolicy.bytes.toLocaleString("en-US")} bytes`);
   const signing = signingCapabilitySummary(report.receipt?.signingVariant);
   console.log(`Last deployed signing: ${signing.variant} • ${signing.mediaCapability}`);
@@ -559,7 +773,11 @@ function printStatus(report) {
 }
 
 async function updatePhone(selectedOptions) {
-  await requireReadyPhoneBlocklist("update the phone");
+  if (selectedOptions.noPolicy) {
+    throw new Error("--no-policy is incompatible with the required fail-closed iOS URL Filter; the app and its exact managed configuration must be deployed together.");
+  }
+  const blocklist = await requireReadyPhoneBlocklist("update the phone");
+  const urlFilter = await requireReadyIosUrlFilter(blocklist, "update the phone");
   let release = await readRelease();
   const fingerprint = await implementationFingerprint();
   if (release.sourceFingerprint !== fingerprint.hash) {
@@ -570,12 +788,12 @@ async function updatePhone(selectedOptions) {
   console.log(`Updating ${device.name} to Vigil phone ${release.version} (${release.build}) without rebooting.`);
   console.log(`Apple toolchain: ${developerDir}`);
   await buildRuntime();
-  const audit = await auditFourPolicies(toolEnvironment);
+  const audit = await auditFourPolicies(toolEnvironment, urlFilter.service);
   printPolicyAudit(audit);
-  const build = await buildPhoneApps(release, toolEnvironment);
+  const build = await buildPhoneApps(release, urlFilter, toolEnvironment);
   const preparedPolicy = selectedOptions.noPolicy
     ? null
-    : await prepareCurrentPolicy(release, selectedOptions.server, toolEnvironment);
+    : await prepareCurrentPolicy(release, selectedOptions.server, urlFilter.service, toolEnvironment);
   const installedBeforeUpdate = await devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment);
   const obsoleteBeforeUpdate = (installedBeforeUpdate.result?.apps || [])
     .filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
@@ -603,10 +821,12 @@ async function updatePhone(selectedOptions) {
   const deviceReceiptId = device.udid || device.identifier;
   const previousReceipt = selectedOptions.noPolicy ? await readReceipt(deviceReceiptId) : null;
   let { policyFingerprint, policyArtifactHash } = preservedPolicyReceipt(previousReceipt);
+  let liveUrlFilterAudit = null;
   if (preparedPolicy) {
     ({ policyFingerprint, policyArtifactHash } = preparedPolicy);
     console.log(`Installing policy ${policyFingerprint.slice(0, 12)}…`);
     await run("xcrun", ["devicectl", "device", "profile", "install", "--device", device.identifier, preparedPolicy.lockPath, "--type", "configuration", "--replace-existing"], { env: toolEnvironment });
+    liveUrlFilterAudit = await verifyLiveIosUrlFilter(device.identifier, urlFilter.service, toolEnvironment);
   }
 
   await writeReceipt(deviceReceiptId, {
@@ -619,6 +839,8 @@ async function updatePhone(selectedOptions) {
     signingCapabilities: build.signingCapabilities,
     blocklist: build.blocklist,
     explicitContentPolicy: build.explicitContentPolicy,
+    urlFilter: build.urlFilter,
+    liveUrlFilterAudit,
     apps: build.apps.map((app) => ({
       name: app.name,
       bundleId: app.bundleId,
@@ -626,7 +848,7 @@ async function updatePhone(selectedOptions) {
       signingCapabilities: app.signingCapabilities,
       blocklistArtifactSha256: app.blocklist.artifactSha256,
       blocklistDomainCount: app.blocklist.domainCount,
-      explicitContentPolicySha256: app.explicitContentPolicy.sha256
+      explicitContentPolicySha256: app.explicitContentPolicy?.sha256 || null
     })),
     deployedAt: new Date().toISOString(),
     rebooted: false
@@ -663,7 +885,7 @@ async function buildRuntime() {
   await run("npm", ["run", "build"], { cwd: ROOT });
 }
 
-async function auditFourPolicies(toolEnvironment) {
+async function auditFourPolicies(toolEnvironment, urlFilterService) {
   const defaultsModule = await importFresh(join(ROOT, "dist", "runtime", "src", "defaults.js"));
   const policyModule = await importFresh(join(ROOT, "dist", "runtime", "src", "policy.js"));
   const profilesModule = await importFresh(join(ROOT, "dist", "runtime", "src", "iosProfiles.js"));
@@ -714,7 +936,7 @@ async function auditFourPolicies(toolEnvironment) {
         profileSnapshot: policyModule.profileById(state, level.id)
       };
     }
-    const profile = profilesModule.buildIosConfigurationProfile(state, now);
+    const profile = profilesModule.buildIosConfigurationProfile(state, now, { urlFilter: urlFilterService });
     const summary = profilesModule.iosProfileSummary(state, now);
     const path = join(auditDir, `${level.id}.mobileconfig`);
     await writeFile(path, profile, { mode: 0o600 });
@@ -741,7 +963,7 @@ function printPolicyAudit(audit) {
   }
 }
 
-async function buildPhoneApps(release, toolEnvironment = process.env) {
+async function buildPhoneApps(release, urlFilter, toolEnvironment = process.env) {
   const root = join(ROOT, "data", "ios-phone-build", `${release.version}-${release.build}`);
   const personalTeamEntitlements = join(ROOT, "ios", "Shared", "PersonalTeam.entitlements");
   await mkdir(root, { recursive: true });
@@ -751,18 +973,18 @@ async function buildPhoneApps(release, toolEnvironment = process.env) {
   const environment = { ...toolEnvironment, VIGIL_PHONE_BLOCKLIST: blocklist.path };
   let reducedEntitlements = false;
   const apps = [];
-  for (const social of REQUIRED_APPS) {
+  for (const social of REQUIRED_SOCIAL_APPS) {
     const derived = join(root, social.id);
     console.log(`Building ${social.name} companion…`);
     const socialArguments = [
       "-project", "ios/VigilSocial/VigilSocial.xcodeproj",
-      "-scheme", "VigilSocial",
+      "-scheme", social.buildScheme,
       "-configuration", "Release",
       "-destination", "generic/platform=iOS",
       "-derivedDataPath", derived,
       "-allowProvisioningUpdates",
       "build",
-      `PRODUCT_BUNDLE_IDENTIFIER=${social.bundleId}`,
+      `VIGIL_APP_BUNDLE_IDENTIFIER=${social.bundleId}`,
       `VIGIL_SERVICE=${social.service}`,
       `SOCIAL_APP_NAME=${social.name}`,
       `SOCIAL_APP_ICON_SET=${social.appIconSet}`,
@@ -804,8 +1026,47 @@ async function buildPhoneApps(release, toolEnvironment = process.env) {
       sha256: await hashAppBundle(path)
     });
   }
+  const filterDerived = join(root, URL_FILTER_APP.id);
+  console.log("Building required fail-closed URL Filter…");
+  await run("xcodebuild", [
+    "-project", "ios/VigilURLFilter/VigilURLFilter.xcodeproj",
+    "-scheme", "VigilURLFilterHost",
+    "-configuration", "Release",
+    "-destination", "generic/platform=iOS",
+    "-derivedDataPath", filterDerived,
+    "-allowProvisioningUpdates",
+    "build",
+    `MARKETING_VERSION=${release.version}`,
+    `CURRENT_PROJECT_VERSION=${release.build}`
+  ], {
+    cwd: ROOT,
+    env: {
+      ...environment,
+      VIGIL_URL_FILTER_PREFILTER: urlFilter.prefilter.path
+    }
+  });
+  const filterPath = join(filterDerived, "Build", "Products", "Release-iphoneos", "VigilURLFilterHost.app");
+  const filterBlocklist = await verifyBundledPhoneBlocklist(
+    join(filterPath, "Extensions", "VigilURLFilterControl.appex"),
+    blocklist
+  );
+  const filterPrefilter = await verifyBundledUrlFilterPrefilter(filterPath, urlFilter);
+  const filterCapabilities = await signedUrlFilterCapabilities(filterPath);
+  if (!filterCapabilities.urlFilterProvider) {
+    throw new Error("Vigil URL Filter built without Apple's url-filter-provider entitlement; refusing to install an inert app.");
+  }
+  apps.push({
+    ...URL_FILTER_APP,
+    path: filterPath,
+    blocklist: filterBlocklist,
+    explicitContentPolicy: null,
+    signingCapabilities: filterCapabilities,
+    sha256: await hashAppBundle(filterPath),
+    urlFilter: filterPrefilter
+  });
   const capableApps = apps.filter((app) => app.signingCapabilities.sensitiveContentAnalysis).length;
-  const signingVariant = capableApps === apps.length
+  const socialAppCount = REQUIRED_SOCIAL_APPS.length;
+  const signingVariant = capableApps === socialAppCount
     ? "full-capabilities"
     : capableApps === 0 ? "personal-team-conservative" : "mixed-capabilities";
   return {
@@ -813,6 +1074,14 @@ async function buildPhoneApps(release, toolEnvironment = process.env) {
     signingVariant,
     signingCapabilities: Object.fromEntries(apps.map((app) => [app.id, app.signingCapabilities])),
     explicitContentPolicy,
+    urlFilter: {
+      prefilterSha256: filterPrefilter.sha256,
+      prefilterTag: filterPrefilter.tag,
+      pirDatabaseRevision: filterPrefilter.pirDatabaseRevision,
+      pirDatabaseSha256: filterPrefilter.pirDatabaseSha256,
+      domainCount: filterPrefilter.domainCount,
+      serviceURL: urlFilter.service.pirServerURL
+    },
     blocklist: {
       domainCount: blocklist.domainCount,
       snapshotHash: blocklist.snapshotHash,
@@ -866,6 +1135,64 @@ async function verifyBundledPhoneBlocklist(appPath, expected) {
     throw new Error(`${basename(appPath)} contains a stale or substituted ${PHONE_BLOCKLIST_RESOURCE}.`);
   }
   return actual;
+}
+
+async function verifyBundledUrlFilterPrefilter(appPath, expected) {
+  const resourcePath = join(appPath, "Extensions", "VigilURLFilterControl.appex", URL_FILTER_PREFILTER_RESOURCE);
+  if (!await isFile(resourcePath)) {
+    throw new Error(`${basename(appPath)} does not contain the required ${URL_FILTER_PREFILTER_RESOURCE}.`);
+  }
+  const bytes = await readFile(resourcePath);
+  if (sha256(bytes) !== expected.prefilter.sha256) {
+    throw new Error(`${basename(appPath)} contains a stale or substituted URL Filter prefilter.`);
+  }
+  return { ...expected.prefilter };
+}
+
+async function signedUrlFilterCapabilities(appPath) {
+  const extensionPath = join(appPath, "Extensions", "VigilURLFilterControl.appex");
+  const { stdout, stderr } = await execFileAsync("/usr/bin/codesign", ["-d", "--entitlements", ":-", extensionPath], {
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024
+  });
+  const entitlements = `${stdout || ""}\n${stderr || ""}`;
+  return {
+    sensitiveContentAnalysis: false,
+    urlFilterProvider: /<string>url-filter-provider<\/string>/u.test(entitlements)
+  };
+}
+
+async function verifyLiveIosUrlFilter(deviceIdentifier, service, toolEnvironment) {
+  const directory = await mkdtemp(join(tmpdir(), "vigil-live-url-filter-"));
+  const destination = join(directory, "vigil-url-filter-audit.json");
+  const expectedTokenHash = sha256(Buffer.from(service.authenticationToken, "utf8"));
+  let lastDetail = "the host app did not publish a status audit";
+  try {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await runQuiet("xcrun", ["devicectl", "device", "process", "launch", "--device", deviceIdentifier, "--terminate-existing", URL_FILTER_APP.bundleId], { env: toolEnvironment });
+      await rm(destination, { force: true });
+      try {
+        await runQuiet("xcrun", ["devicectl", "device", "copy", "from", "--device", deviceIdentifier, "--source", "Documents/vigil-url-filter-audit.json", "--destination", destination, "--domain-type", "appDataContainer", "--domain-identifier", URL_FILTER_APP.bundleId], { env: toolEnvironment });
+        const audit = JSON.parse(await readFile(destination, "utf8"));
+        const matches = audit?.status === "running"
+          && audit?.enabled === true
+          && audit?.failClosed === true
+          && audit?.prefilterFetchInterval === service.prefilterFetchIntervalSeconds
+          && audit?.pirServerURL === service.pirServerURL
+          && audit?.privacyPassIssuerURL === service.privacyPassIssuerURL
+          && audit?.authenticationTokenSha256 === expectedTokenHash
+          && audit?.controlProviderBundleIdentifier === service.controlProviderBundleIdentifier;
+        if (matches) return audit;
+        lastDetail = `status=${audit?.status || "unknown"}, enabled=${String(audit?.enabled)}, failClosed=${String(audit?.failClosed)}, lastError=${audit?.lastDisconnectError || "none"}`;
+      } catch (error) {
+        lastDetail = error?.message || String(error);
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+  throw new Error(`The installed iOS URL Filter did not reach an exact running fail-closed state: ${lastDetail}`);
 }
 
 async function signedAppCapabilities(appPath) {
@@ -931,8 +1258,8 @@ async function profileSigningIdentity() {
   return match[1];
 }
 
-async function prepareCurrentPolicy(release, server, toolEnvironment) {
-  const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(5000));
+async function prepareCurrentPolicy(release, server, urlFilterService, toolEnvironment) {
+  const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(5000), null, urlFilterService);
   const policyFingerprint = sha256(profile);
   const stamped = await stampProfile(profile, `Vigil iPhone Lock • ${release.version} (${release.build}) • ${policyFingerprint.slice(0, 12)}`);
   const policyArtifactHash = sha256(stamped);
@@ -944,7 +1271,8 @@ async function prepareCurrentPolicy(release, server, toolEnvironment) {
   return { lockPath, policyFingerprint, policyArtifactHash };
 }
 
-async function buildCurrentPolicyFromLiveState(server, signal, suppliedServerState = null) {
+async function buildCurrentPolicyFromLiveState(server, signal, suppliedServerState = null, urlFilterService = null) {
+  if (!urlFilterService) throw new Error("The required iOS URL Filter service configuration is unavailable.");
   const serverState = suppliedServerState || await downloadServerState(server, signal);
   const state = structuredClone(serverState.state);
   const ios = state?.deviceControls?.ios;
@@ -962,7 +1290,7 @@ async function buildCurrentPolicyFromLiveState(server, signal, suppliedServerSta
   }
 
   const profilesModule = await importFresh(join(ROOT, "dist", "runtime", "src", "iosProfiles.js"));
-  return Buffer.from(profilesModule.buildIosConfigurationProfile(state, new Date()));
+  return Buffer.from(profilesModule.buildIosConfigurationProfile(state, new Date(), { urlFilter: urlFilterService }));
 }
 
 export function removalPasswordFromProfile(profile) {
@@ -999,26 +1327,16 @@ async function fetchServerState(server) {
   }
 }
 
-async function fetchLivePolicyFingerprint(server) {
-  try {
-    return sha256(await downloadPolicy(server, AbortSignal.timeout(3000)));
-  } catch {
-    return "";
-  }
-}
-
-async function currentPolicyFingerprint(server, serverState, { allowCurrentRuntime }) {
-  if (allowCurrentRuntime && serverState) {
+async function currentPolicyFingerprint(server, serverState, { allowCurrentRuntime, urlFilterService }) {
+  if (allowCurrentRuntime && serverState && urlFilterService) {
     try {
-      const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(3000), serverState);
+      const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(3000), serverState, urlFilterService);
       return { fingerprint: sha256(profile), source: "current source + live state" };
     } catch {
-      // A read-only status check can still report the running server's profile;
-      // update itself never falls back and therefore cannot install stale bytes.
+      return { fingerprint: "", source: "exact generation failed" };
     }
   }
-  const fingerprint = await fetchLivePolicyFingerprint(server);
-  return { fingerprint, source: fingerprint ? "running-server fallback" : "unavailable" };
+  return { fingerprint: "", source: "exact generation unavailable" };
 }
 
 async function prepareAuditToolchain() {

@@ -8,9 +8,17 @@ struct RootView: View {
 
     var body: some View {
         let service = store.selectedService
+        if service == .youtube {
+            YouTubeSafariView(request: store.youtubeSafariRequest)
+        } else {
+            filteredWebView(service: service)
+        }
+    }
+
+    private func filteredWebView(service: SocialService) -> some View {
         let reportedIsDark = store.reportedChromeIsDark(for: service)
         let isDark = reportedIsDark ?? (colorScheme == .dark)
-        ZStack {
+        return ZStack {
             (isDark ? Color.black : Color.white)
                 .ignoresSafeArea()
 

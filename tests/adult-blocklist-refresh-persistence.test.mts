@@ -17,7 +17,7 @@ const [
   import("../src/adultBlocklist.js"),
   import("../src/defaults.js")
 ]);
-const runtime = await startVigilRuntime({ port: 0 });
+const runtime = await startVigilRuntime({ port: 0, systemEffects: "isolated" });
 
 for (const error of [new Error("obsolete source fetch failed"), null]) {
   const staleState = defaultState();
@@ -99,7 +99,7 @@ try {
     startedAt: null,
     nextAttemptAt: null
   }] });
-  const recoveredRuntime = await startVigilRuntime();
+  const recoveredRuntime = await startVigilRuntime({ systemEffects: "isolated" });
   assert.equal((await loadRuntimeOutbox()).length, 0, "obsolete cleanup recovery must complete without retrying after the snapshot is cleared");
   assert.deepEqual(
     await readFile(ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH),

@@ -18,6 +18,8 @@ npm run ios:phone:update
 
 The phone release and update commands now require a valid `adult-blocklist.sdi` before they can bump or mutate the phone. For the default Block List Project source, “valid” means at least 600,000 domains with intact format and payload hashes; a tiny test fixture cannot pass. Each built app must contain the exact artifact at its bundle root. The suite re-reads that bundled copy, compares its domain count, snapshot hash, and whole-artifact hash, and records the proof per app in the deployment receipt. The same gate checks that `ExplicitContentPolicy.json` is freshly generated and byte-identical inside both apps. `status` compares the adult artifact to the enabled live snapshot, reports the real domain count, source, and hashes, and reports whether both generated artifacts were proven by the last deployment.
 
+Adult-list refreshes retain cumulative and currently non-resolving domains, reject syntactically invalid rows, report unrecognized TLDs without deleting them, and remove only child rows already covered by a listed parent. The generated v2 artifact includes a protected precomputed sparse index; the iOS reader remains compatible with v1 artifacts while installed companions are rolled forward.
+
 Documentation, tests, and the retired `ios/VigilBrowser` project are excluded from the implementation fingerprint. On an unsupervised personal iPhone, Apple transfers profiles but still requires their installation to be confirmed in Settings; rerun `status` or `check` after confirming them.
 
 Xcode requires configuration profiles to have a CMS signature for command-line validation and installation. The suite uses the first local code-signing identity, or `VIGIL_IOS_PROFILE_SIGNING_IDENTITY` when set.

@@ -163,7 +163,7 @@ const { prepareStrictPreflightEvidenceForRequest, startVigilServer, stopVigilSer
   await coordinator.drain();
 }
 
-const handle = await startVigilServer({ host: "127.0.0.1", port: 0 });
+const handle = await startVigilServer({ host: "127.0.0.1", port: 0, systemEffects: "isolated" });
 const socket = createConnection({ host: "127.0.0.1", port: handle.port });
 let slowJsonSocket: ReturnType<typeof createConnection> | null = null;
 
