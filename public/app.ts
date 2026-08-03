@@ -1,5 +1,6 @@
 import { clearJournalSession, del, get, journalSessionActive, post, storeJournalSession } from "./api-client.js";
 import { createAccountUi } from "./account-ui.js";
+import { createActivityView } from "./activity-view.js";
 import { createAppUpdatePanel } from "./app-update.js";
 import { renderAppLockDays, renderGrayscaleScheduleDays, renderIntentionalDays, renderLimitDays, renderScheduleDays } from "./day-controls.js";
 import { createDevicePanel } from "./device-panel.js";
@@ -123,6 +124,7 @@ const hardeningPanel = createHardeningPanel({
   }
 });
 const saintStage = createSaintStage();
+const activityView = createActivityView();
 const trackingView = createTrackingView({ post, refresh, toast });
 const accountUi = createAccountUi();
 
@@ -530,6 +532,7 @@ function render() {
   renderPresetButtons(data.presets || [], toast);
   renderHeader(data.state, data.limits.activeBlocks);
   focusSound.render(data);
+  activityView.render(data);
   renderJournalGate(data);
   renderJournalSecurity(data);
   renderIntentionalUse(data.intentionalUse);

@@ -829,15 +829,25 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
-    func testInstagramUserRequestedVideoRestoresAudioAfterSafetyHold() async throws {
+    func testInstagramUsesNativeMediaWithoutContentClassification() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.documentStartScript(
                 for: .instagram,
                 unclassifiedMediaPolicy: .conceal,
-                audioEnabled: true
+                audioEnabled: true,
+                contentSafetyEnabled: false
             ),
             injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.installedFrameSafetyScript(
+                for: .instagram,
+                audioEnabled: true,
+                contentSafetyEnabled: false
+            ),
+            injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         ))
         let configuration = WKWebViewConfiguration()
@@ -861,21 +871,27 @@ final class VigilSocialTests: XCTestCase {
         )
         await fulfillment(of: [loaded], timeout: 5)
 
-        let muteStates = try await webView.evaluateJavaScript(
+        let mediaState = try await webView.evaluateJavaScript(
             """
             (() => {
               const video = document.getElementById('video');
-              window.__vigilEarlyMediaGate.allow(video, false);
-              const beforeRequest = video.muted;
-              window.__vigilEarlyMediaGate.hold(video);
-              window.__vigilEarlyMediaGate.requestAudiblePlayback(video);
-              window.__vigilEarlyMediaGate.allow(video, false);
-              return { beforeRequest, afterRequest: video.muted };
+              return {
+                muted: video.muted,
+                defaultMuted: video.defaultMuted,
+                compatibilityInstalled: window.__vigilInstagramCompatibilityInstalled === true,
+                contentBootstrapInstalled: window.__vigilContentBootstrapInstalled === true,
+                earlyMediaGateInstalled: Boolean(window.__vigilEarlyMediaGate),
+                mediaCandidateHookInstalled: typeof window.__vigilResolveMedia === 'function'
+              };
             })()
             """
         ) as? [String: Any]
-        XCTAssertEqual(muteStates?["beforeRequest"] as? Bool, true)
-        XCTAssertEqual(muteStates?["afterRequest"] as? Bool, false)
+        XCTAssertEqual(mediaState?["muted"] as? Bool, false)
+        XCTAssertEqual(mediaState?["defaultMuted"] as? Bool, false)
+        XCTAssertEqual(mediaState?["compatibilityInstalled"] as? Bool, true)
+        XCTAssertEqual(mediaState?["contentBootstrapInstalled"] as? Bool, false)
+        XCTAssertEqual(mediaState?["earlyMediaGateInstalled"] as? Bool, false)
+        XCTAssertEqual(mediaState?["mediaCandidateHookInstalled"] as? Bool, false)
     }
 
     @MainActor
@@ -1964,12 +1980,6 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(SocialService.instagram.isCanonicalAppHost("help.instagram.com"))
         XCTAssertTrue(SocialService.youtube.isCanonicalAppHost("m.youtube.com"))
         XCTAssertFalse(SocialService.youtube.isCanonicalAppHost("accounts.google.com"))
-        XCTAssertFalse(SocialService.youtube.isUnsupportedEmbeddedAuthentication(
-            try XCTUnwrap(URL(string: "https://accounts.google.com/ServiceLogin"))
-        ))
-        XCTAssertFalse(SocialService.youtube.isUnsupportedEmbeddedAuthentication(
-            try XCTUnwrap(URL(string: "https://m.youtube.com/signin"))
-        ))
     }
 
     func testAuthenticationDocumentsBypassContentInjection() throws {
@@ -2036,7 +2046,7 @@ final class VigilSocialTests: XCTestCase {
         })
         XCTAssertTrue(youtubeStart.contains("host === 'accounts.google.com'"))
         XCTAssertTrue(youtubeStart.contains("host === 'consent.youtube.com'"))
-        XCTAssertTrue(youtubeStart.contains("keep Vigil's content scripts completely out"))
+        XCTAssertTrue(youtubeStart.contains("content scripts completely out of that credential surface"))
     }
 
     func testEmbeddedNavigationRestoresRequiredServiceFramesWithoutBecomingABrowser() throws {
@@ -2058,7 +2068,7 @@ final class VigilSocialTests: XCTestCase {
         for service in SocialService.allCases {
             XCTAssertEqual(service.homeURL.scheme, "https")
         }
-        XCTAssertEqual(SocialService.instagram.homeURL.path, "/accounts/login")
+        XCTAssertEqual(SocialService.instagram.homeURL.path, "/")
         XCTAssertEqual(SocialService.youtube.homeURL.path, "/")
     }
 
@@ -2300,7 +2310,7 @@ final class VigilSocialTests: XCTestCase {
 
     func testInstagramAdapterPreservesSiteLayoutAndMatchesIndependentNativeControls() {
         let script = DOMAdapters.script(for: .instagram, audioEnabled: true)
-        XCTAssertFalse(script.contains("max-width: none"))
+        XCTAssertFalse(script.contains("body { max-width: none"))
         XCTAssertFalse(script.contains("touch-action: pan-x pan-y"))
         XCTAssertTrue(script.contains("['reels', 'explore', 'suggested', 'shopping', 'ads']"))
         XCTAssertTrue(script.contains("data-vigil-feature-reels=\"blocked\""))
@@ -2317,6 +2327,68 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("__vigilAudioPreferred = configuredAudioPreference"))
         XCTAssertTrue(script.contains("vigilMutedByPreference"))
         XCTAssertFalse(script.contains("window.__vigilAudioPreferred && hasGesture"))
+        XCTAssertTrue(script.contains("data-vigil-instagram-comments-sheet=\"true\""))
+        XCTAssertTrue(script.contains("height: 52dvh !important"))
+        XCTAssertTrue(script.contains("const isInstagramCommentsDialog"))
+        XCTAssertTrue(script.contains("normalizeCommentSheets()"))
+    }
+
+    @MainActor
+    func testInstagramCommentsUseABottomHalfSheet() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.controlsScript(for: .instagram),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let window = UIWindow(frame: webView.frame)
+        let viewController = UIViewController()
+        viewController.view.addSubview(webView)
+        window.rootViewController = viewController
+        window.isHidden = false
+        defer { window.isHidden = true }
+
+        let loaded = expectation(description: "Instagram comments fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            """
+            <html><body>
+              <main><article><button>Open comments</button></article></main>
+              <section id="comments" role="dialog" aria-label="Comments"
+                style="position:fixed;inset:0;width:100vw;height:100vh">
+                <h2>Comments</h2>
+                <textarea placeholder="Add a comment…"></textarea>
+              </section>
+            </body></html>
+            """,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/p/fixture/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+        try await waitForJavaScriptCondition(
+            "document.getElementById('comments')?.dataset.vigilInstagramCommentsSheet === 'true'",
+            in: webView
+        )
+
+        let geometry = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const rect = document.getElementById('comments').getBoundingClientRect();
+              return { top: rect.top, bottom: rect.bottom, viewport: innerHeight };
+            })()
+            """
+        ) as? [String: Any]
+        let top = try XCTUnwrap(geometry?["top"] as? Double)
+        let bottom = try XCTUnwrap(geometry?["bottom"] as? Double)
+        let viewport = try XCTUnwrap(geometry?["viewport"] as? Double)
+        XCTAssertEqual(bottom, viewport, accuracy: 2)
+        XCTAssertGreaterThan(top, viewport * 0.4)
     }
 
     @MainActor
@@ -2485,6 +2557,28 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramShellMatchesYouTubeRestrictionLevelWithoutMediaClassifier() {
+        let store = SocialWebViewStore(
+            defaults: UserDefaults(suiteName: #function)!,
+            fixedService: .instagram,
+            loadInitialPages: false
+        )
+        let scripts = store.webView(for: .instagram)
+            .configuration.userContentController.userScripts
+
+        XCTAssertEqual(scripts.count, 4)
+        XCTAssertFalse(scripts[0].source.contains("vigil-content-safety-style"))
+        XCTAssertFalse(scripts[0].source.contains("__vigilEarlyMediaGate"))
+        XCTAssertTrue(scripts[1].source.contains("__vigilInstagramCompatibilityInstalled"))
+        XCTAssertFalse(scripts[1].source.contains("mediaCandidate"))
+        XCTAssertFalse(scripts[1].source.contains("pageText"))
+        XCTAssertTrue(scripts[2].source.contains("__vigilFrameRoutePolicyInstalled"))
+        XCTAssertTrue(scripts[2].source.contains("/reels"))
+        XCTAssertTrue(scripts[3].source.contains("__vigilPolicyProbeInstalled"))
+        XCTAssertTrue(scripts[3].source.contains("data-vigil-feature-reels"))
+    }
+
+    @MainActor
     func testNativeShellUsesFailClosedRefreshAndInstagramEdgeBack() {
         let store = SocialWebViewStore(
             defaults: UserDefaults(suiteName: #function)!,
@@ -2557,7 +2651,6 @@ final class VigilSocialTests: XCTestCase {
         guard case .advisory = SocialService.instagram.auxiliaryPageHealth(for: facebook) else {
             return XCTFail("Facebook authorization must remain usable outside the loading overlay")
         }
-        XCTAssertFalse(SocialService.youtube.isUnsupportedEmbeddedAuthentication(google))
         guard case .advisory = SocialService.youtube.auxiliaryPageHealth(for: google) else {
             return XCTFail("Google authorization must remain usable outside the loading overlay")
         }

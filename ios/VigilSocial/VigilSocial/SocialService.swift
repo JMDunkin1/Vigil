@@ -23,9 +23,11 @@ enum SocialService: String, CaseIterable, Identifiable {
     var homeURL: URL {
         switch self {
         case .instagram:
-            // The public root is a marketing shell on signed-out mobile WebKit.
-            // Authenticated sessions are redirected back to the feed by Instagram.
-            URL(string: "https://www.instagram.com/accounts/login/")!
+            // Go straight to the feed for an existing session. Instagram will
+            // route signed-out users to its login surface itself; starting on
+            // /accounts/login forced signed-in users through an avoidable
+            // redirect plus the protected-document transition reload.
+            URL(string: "https://www.instagram.com/")!
         case .youtube:
             URL(string: "https://m.youtube.com/")!
         }
@@ -174,10 +176,6 @@ enum SocialService: String, CaseIterable, Identifiable {
                 return .advisory("Opening this link in YouTube.")
             }
         }
-    }
-
-    func isUnsupportedEmbeddedAuthentication(_ url: URL) -> Bool {
-        false
     }
 
     private static func host(_ host: String, matches domain: String) -> Bool {

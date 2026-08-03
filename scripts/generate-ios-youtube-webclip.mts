@@ -13,7 +13,7 @@ const defaultOutputPath = join(
   projectRoot,
   "data",
   "ios-experiments",
-  "vigil-youtube-webclip-test.mobileconfig"
+  "vigil-youtube-webclip.mobileconfig"
 );
 
 const outputPath = resolve(outputArgument(process.argv.slice(2)) || defaultOutputPath);
@@ -24,9 +24,9 @@ await writeFile(outputPath, buildIosYouTubeWebClipExperimentProfile(), {
 });
 
 console.log([
-  `Wrote removable YouTube Web Clip test profile: ${outputPath}`,
+  `Wrote full-screen YouTube Web Clip profile: ${outputPath}`,
   `Identifier: ${IOS_YOUTUBE_WEB_CLIP_EXPERIMENT_PROFILE_IDENTIFIER}`,
-  "This additive profile does not replace or weaken Vigil's iPhone enforcement profile."
+  "This additive profile works with Vigil's installed Safari Shorts-filter helper."
 ].join("\n"));
 
 function outputArgument(values: string[]): string {

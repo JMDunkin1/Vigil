@@ -7,7 +7,7 @@ Vigil has two explicit phone editions:
 - **Personal** is the default and requires no paid Apple membership. It installs
   the supervised, removal-disallowed restrictions profile; Apple's BuiltIn
   automatic adult-content filter; the 500 highest-priority explicit deny URLs;
-  and the fixed Instagram and YouTube companions with the exact bundled adult
+  and the fixed Instagram companion with the exact bundled adult
   blocklist and generated explicit-content policy. It deliberately uses the
   conservative Personal Team entitlement set.
 - **Enhanced** contains every Personal protection and also requires the signed
@@ -23,7 +23,7 @@ explicit `--allow-edition-downgrade` flag.
 
 The phone has two independent kinds of freshness:
 
-- The implementation release in `ios/phone-release.json` covers the two fixed iOS companions, the four built-in policy generators, companion behavior, and the bundled adult blocklist. Instagram and YouTube carry the same marketing version and build number on the phone.
+- The implementation release in `ios/phone-release.json` covers the fixed iOS companion, the four built-in policy generators, companion behavior, and the bundled adult blocklist.
 - The live policy fingerprint covers the configuration generated from Vigil's current state. It can change without an implementation release when a session, limit, blocklist setting, or Normal/Soft Lock/Full Brick/Panic policy changes.
 
 Use these commands from the repository root:
@@ -37,9 +37,9 @@ npm run ios:phone:update:personal
 npm run ios:phone:update:enhanced
 ```
 
-`status` is read-only and explains drift. `check` reports the same state but exits nonzero when the phone or release is stale. If CoreDevice cannot inspect configuration profiles on the connected phone, both commands report profile verification as unavailable instead of treating the live policy as missing or crashing. `audit` builds the TypeScript runtime and validates generated Normal, Soft Lock, Full Brick, and Panic profiles for the selected edition. `update` bumps the patch/build only when that edition's inputs changed, builds fixed Instagram and YouTube companions, installs them in place, and replaces only the live policy profile. Enhanced additionally builds, installs, and live-verifies Vigil URL Filter. It does not build or install a Vigil browser, create Home Screen Web Clips, or reboot the phone.
+`status` is read-only and explains drift. `check` reports the same state but exits nonzero when the phone or release is stale. If CoreDevice cannot inspect configuration profiles on the connected phone, both commands report profile verification as unavailable instead of treating the live policy as missing or crashing. `audit` builds the TypeScript runtime and validates generated Normal, Soft Lock, Full Brick, and Panic profiles for the selected edition. `update` bumps the patch/build only when that edition's inputs changed, builds the fixed Instagram companion (which contains the YouTube Safari blocker), installs it in place, and replaces only the live policy profile. Enhanced additionally builds, installs, and live-verifies Vigil URL Filter. It does not build or install a Vigil browser, create Home Screen Web Clips, or reboot the phone.
 
-Both editions require a valid `adult-blocklist.sdi` before they can bump or mutate the phone. The live installed Vigil data copy takes priority over a stale repository copy. For the default Block List Project source, “valid” means at least 600,000 domains with intact format and payload hashes; a tiny test fixture cannot pass. Each built app must contain the exact artifact at its bundle root. The suite re-reads that bundled copy, compares its domain count, snapshot hash, and whole-artifact hash, and records the proof per app in the deployment receipt. The same gate checks that `ExplicitContentPolicy.json` is freshly generated and byte-identical inside both companions. `status` compares the adult artifact to the enabled live snapshot, reports the real domain count, source, and hashes, and reports whether both generated artifacts were proven by the last deployment.
+Both editions require a valid `adult-blocklist.sdi` before they can bump or mutate the phone. The live installed Vigil data copy takes priority over a stale repository copy. For the default Block List Project source, “valid” means at least 600,000 domains with intact format and payload hashes; a tiny test fixture cannot pass. Each built app must contain the exact artifact at its bundle root. The suite re-reads that bundled copy, compares its domain count, snapshot hash, and whole-artifact hash, and records the proof per app in the deployment receipt. The same gate checks that `ExplicitContentPolicy.json` is freshly generated and byte-identical inside the companion. `status` compares the adult artifact to the enabled live snapshot, reports the real domain count, source, and hashes, and reports whether both generated artifacts were proven by the last deployment.
 
 Adult-list refreshes retain cumulative and currently non-resolving domains, reject syntactically invalid rows, report unrecognized TLDs without deleting them, and remove only child rows already covered by a listed parent. The generated v2 artifact includes a protected precomputed sparse index; the iOS reader remains compatible with v1 artifacts while installed companions are rolled forward.
 
@@ -70,13 +70,12 @@ Personal update while the paired phone is connected before the companions
 expire. The supervised configuration profile is independent of that companion
 app signing window and remains installed.
 
-The supported companions are two independent fixed apps:
+The supported companion is one fixed app:
 
-- `tech.caseline.vigil.instagram` displays as Instagram and cannot switch to another service.
-- `tech.caseline.vigil.youtube` displays as YouTube and cannot switch to another service.
+- `tech.caseline.vigil.instagram` displays as Instagram, cannot switch to another service, and also carries the Safari blocker used by the full-screen YouTube Web Clip.
 
 Snapchat remains subject to the managed phone policy but is not built as a Vigil companion. Browser restrictions are likewise delivered by the managed phone policy rather than through a dedicated Vigil browser app.
 
-Obsolete `tech.caseline.sentinel.*`, `tech.caseline.vigil.browser`, `tech.caseline.vigil.social`, and `tech.caseline.vigil.snapchat` installations are reported but never silently removed. The retired `tech.caseline.vigil.ios-social-launchers` configuration profile is also reported because its Web Clips would duplicate the two installed companion icons. The current Instagram and YouTube bundle identifiers are not obsolete and are updated in place. Use `--replace-legacy` only when you intentionally want to uninstall the obsolete bundles and remove the retired launcher profile; app-local data from uninstalled bundles cannot be recovered.
+Obsolete `tech.caseline.sentinel.*`, `tech.caseline.vigil.browser`, `tech.caseline.vigil.social`, `tech.caseline.vigil.snapchat`, and `tech.caseline.vigil.youtube` installations are reported but never silently removed. The retired `tech.caseline.vigil.ios-social-launchers` configuration profile is also reported because its Web Clips would duplicate the installed surfaces. Instagram is updated in place. Use `--replace-legacy` only when you intentionally want to uninstall obsolete bundles and remove the retired launcher profile; app-local data from uninstalled bundles cannot be recovered.
 
-ManageEngine exports now contain the live policy and its JSON summary only. The summary lists the two fixed companion labels and bundle identifiers as installed apps; no social-launcher profile or managed Web Clip payload is generated or assigned. A successful export removes stale local `vigil-social-launchers.mobileconfig` and `vigil-social-launchers.summary.json` compatibility artifacts so they cannot be uploaded accidentally.
+ManageEngine exports now contain the live policy and its JSON summary only. The summary lists the fixed companion label and bundle identifier as an installed app; no social-launcher profile or managed Web Clip payload is generated or assigned. A successful export removes stale local `vigil-social-launchers.mobileconfig` and `vigil-social-launchers.summary.json` compatibility artifacts so they cannot be uploaded accidentally.

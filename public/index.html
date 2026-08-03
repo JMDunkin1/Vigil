@@ -19,6 +19,10 @@
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3.75 10.5 12 3.75l8.25 6.75v8.25a1.5 1.5 0 0 1-1.5 1.5H5.25a1.5 1.5 0 0 1-1.5-1.5Z"/><path d="M9 20.25v-6h6v6"/></svg>
         <span class="nav-label">Home</span>
       </button>
+      <button class="nav-tab" type="button" data-view-target="activity" aria-selected="false">
+        <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4.5 19.5V14h3v5.5M10.5 19.5V9h3v10.5M16.5 19.5V4.5h3v15"/><path d="M3.5 19.5h17"/></svg>
+        <span class="nav-label">Activity</span>
+      </button>
       <button class="nav-tab" type="button" data-view-target="tracking" aria-selected="false">
         <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.75"/><path d="m7.75 12.25 2.75 2.75 5.75-6"/></svg>
         <span class="nav-label">Tracking</span>
@@ -126,6 +130,59 @@
         </details>
       </div>
 
+    </section>
+
+    <section id="view-activity" class="view activity-dashboard" data-view="activity" hidden>
+      <header class="activity-titlebar view-head">
+        <div>
+          <p class="eyebrow">Usage</p>
+          <h2>Activity</h2>
+        </div>
+        <p class="view-intro">Screen time and focus across this Mac and your connected iPhone.</p>
+      </header>
+
+      <div class="activity-vitals" aria-label="Today's activity">
+        <article class="activity-vital activity-vital-primary">
+          <span>Screen time</span>
+          <strong id="totalUsageToday">--</strong>
+          <em id="totalUsageDevices">Mac</em>
+        </article>
+        <article class="activity-vital">
+          <span>Focus score</span>
+          <strong id="activityFocusScore">--</strong>
+          <em id="activityFocusScoreLabel">No score yet</em>
+        </article>
+        <article class="activity-vital">
+          <span>From last week</span>
+          <strong id="activityDistractionTrend">--</strong>
+          <em>distraction time</em>
+        </article>
+      </div>
+
+      <div class="activity-detail-grid">
+        <section class="activity-card activity-week-section" aria-labelledby="activityWeekTitle">
+          <div class="activity-section-head">
+            <h3 id="activityWeekTitle">Focus &amp; screen time</h3>
+            <span>This week</span>
+          </div>
+          <div id="activityWeek" class="activity-week" role="img" aria-label="Daily focus score and combined Mac and iPhone screen time for this week"></div>
+        </section>
+
+        <section class="activity-card activity-breakdown" aria-label="Today's usage breakdown">
+          <div class="activity-usage-section" aria-labelledby="activityAppsTitle">
+            <div class="activity-section-head">
+              <h3 id="activityAppsTitle">Time by app</h3>
+            </div>
+            <div id="activityAppUsage" class="activity-usage-list"></div>
+          </div>
+          <div class="activity-usage-section activity-site-section" aria-labelledby="activitySitesTitle">
+            <div class="activity-section-head">
+              <h3 id="activitySitesTitle">Time by website</h3>
+            </div>
+            <div id="activitySiteUsage" class="activity-usage-list"></div>
+          </div>
+        </section>
+      </div>
     </section>
 
     <section id="view-audio" class="view" data-view="audio" hidden>

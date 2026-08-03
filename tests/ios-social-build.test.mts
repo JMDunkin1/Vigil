@@ -57,8 +57,20 @@ assert.match(
 assert.match(
   socialRootViewSource,
   /SocialWebView\([\s\S]*?webView: store\.webView\(for: service\)/u,
-  "the fixed companions must render their protected persistent WKWebView"
+  "Instagram must render its protected persistent WKWebView"
 );
+assert.match(
+  socialRootViewSource,
+  /if service == \.youtube \{\s*YouTubeFilterHostView\(\)/u,
+  "the YouTube extension host must not render a browser surface"
+);
+assert.match(
+  socialRootViewSource,
+  /if service == \.instagram \{\s*YouTubeContentBlockerGate\(isDark: isDark\)/u,
+  "Instagram must verify the migrated YouTube blocker before the old helper app is removed"
+);
+assert.match(socialRootViewSource, /SFContentBlockerManager\.getStateOfContentBlocker/u);
+assert.match(socialRootViewSource, /SFSafariSettings\.openExtensionsSettings/u);
 assert.doesNotMatch(
   socialRootViewSource,
   /YouTubeSafariView\(request: store\.youtubeSafariRequest\)/u,
@@ -66,8 +78,8 @@ assert.doesNotMatch(
 );
 assert.match(
   socialWebViewStoreSource,
-  /configuration\.websiteDataStore = \.default\(\)/u,
-  "YouTube sign-in cookies must persist in the companion's first-party WebKit data store"
+  /if loadInitialPages, selectedService != \.youtube/u,
+  "the YouTube filter host must not create or load a WKWebView"
 );
 assert.match(youtubeSafariSource, /SFSafariViewController/u);
 assert.match(
@@ -98,6 +110,16 @@ assert.match(youtubeBlockerInfo, /<key>CFBundleIdentifier<\/key>\s*<string>\$\(P
   "the embedded blocker must publish the bundle identifier Xcode validates against its parent app");
 assert.match(socialProjectSource, /VIGIL_APP_BUNDLE_IDENTIFIER = tech\.caseline\.vigil\.youtube;/u,
   "the blocker target needs a standalone default bundle prefix for tests and local builds");
+assert.match(
+  socialProjectSource,
+  /D60000000000000000000001 \/\* VigilInstagram \*\/[\s\S]*?D40000000000000000000004 \/\* Embed App Extensions \*\/[\s\S]*?D70000000000000000000001 \/\* PBXTargetDependency \*\//u,
+  "Instagram must carry the YouTube content blocker before the standalone YouTube helper can be removed"
+);
+assert.match(
+  socialProjectSource,
+  /D1000000000000000000000F \/\* VigilYouTubeShortsBlocker\.appex in Embed App Extensions \*\//u,
+  "Instagram must copy the signed content blocker into its app bundle"
+);
 assert.equal(
   youtubeBlockerRules.some((rule) => rule.action?.type === "block" && rule.trigger?.["url-filter"]?.includes("/shorts")),
   true,
@@ -144,7 +166,7 @@ const explicitVersion = buildArguments(["youtube", "--version", "2.4.1", "--buil
 assert.equal(explicitVersion[explicitVersion.indexOf("-scheme") + 1], "VigilSocial");
 assert.ok(explicitVersion.includes("VIGIL_APP_BUNDLE_IDENTIFIER=tech.caseline.vigil.youtube"));
 assert.ok(explicitVersion.includes("VIGIL_SERVICE=youtube"));
-assert.ok(explicitVersion.includes("SOCIAL_APP_NAME=YouTube"));
+assert.ok(explicitVersion.includes("SOCIAL_APP_NAME=YouTube Filter"));
 assert.ok(explicitVersion.includes("SOCIAL_APP_ICON_SET=YouTubeAppIcon"));
 assert.ok(explicitVersion.includes("SOCIAL_URL_SCHEME=vigil-youtube"));
 assert.ok(explicitVersion.includes("MARKETING_VERSION=2.4.1"));
@@ -228,7 +250,9 @@ assert.deepEqual(instagramIconContents.images, [
 for (const platform of FOCUSED_SOCIAL_PLATFORMS) {
   if (platform.id !== "instagram" && platform.id !== "youtube") continue;
   const filename = `${platform.id}.png`;
-  const canonical = await readFile(join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Icons", filename));
+  const canonical = await readFile(platform.id === "youtube"
+    ? join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Icons", "youtube-webclip.png")
+    : join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Icons", filename));
   const packaged = await readFile(join(runtimeRoot, "public", "art", "social", filename));
   assert.equal(packaged.equals(canonical), true, `${platform.id} runtime icon should match its canonical Xcode asset`);
 }

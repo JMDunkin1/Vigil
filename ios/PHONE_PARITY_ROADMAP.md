@@ -8,8 +8,9 @@ The Mac and iPhone do not currently enforce the same policy through the same
 mechanism. The Mac can consult Vigil's complete adult-domain snapshot during a
 browser navigation. The installed iPhone profile uses Apple's built-in web
 content filter, whose explicit deny list is intentionally kept below 500
-entries. Vigil's fixed Instagram and YouTube companions add full-document text
-and media inspection, but that inspection only applies inside those companions.
+entries. Vigil's fixed Instagram companion adds full-document text and media
+inspection, while the YouTube Web Clip uses the Safari content blocker carried
+by Instagram.
 
 The selected adult source now contains 952,054 active domains and has a compact
 phone artifact. Shipping that artifact is necessary, but it does not by itself
@@ -33,17 +34,16 @@ in a configuration profile.
 | 952,054-domain adult list | Full snapshot is available to Vigil's live URL matcher; OS/browser preload lists remain bounded | Compact `.sdi` can be bundled and used by Vigil-owned apps, but the profile cannot express the whole list | iOS 26 URL Filter with Bloom + PIR/OHTTP |
 | Text inspection | Browser/extension policy paths | VigilSocial scans the full bounded document, DOM mutations, open shadow roots, and periodic visible-page audits | Generated shared phrase/context policy in every companion release |
 | Image/video inspection | Browser-specific enforcement | Sensitive Content Analysis when the entitlement is provisioned; the current Personal Team fallback reveals unclassified media while retaining text/profile rules | Paid team/capability build that keeps unclassified media concealed |
-| YouTube | Browser extension modifies the normal site | Fixed companion presents `m.youtube.com` in `SFSafariViewController`; Google sign-in is supported and the bundled Safari content blocker removes/blocks Shorts | Verify the signed-in Safari surface and fail-closed content-blocker state on the physical phone |
+| YouTube | Browser extension modifies the normal site | A full-screen Web Clip named `YouTube` supplies the signed-in surface. Instagram contains the Safari Shorts/content-blocker extension, avoiding a second YouTube icon | Verify the Web Clip's signed-in surface and the enabled content blocker on the physical phone |
 
 ## What the comparison products establish
 
-SocialLite's public App Store listing establishes that a focused YouTube surface,
-Shorts removal, background audio, and Picture in Picture can be delivered in an
-iOS companion. It does not disclose its source code. Google's native-app OAuth
-documentation explicitly rejects `WKWebView` authentication and names
-`SFSafariViewController` as a supported option. Vigil therefore uses Apple's
-secure Safari view for YouTube and a bundled Safari content blocker for Shorts.
-It does not spoof a user agent or extract/transfer Safari credentials.
+SocialLite's public material establishes that a focused YouTube surface, Shorts
+removal, background audio, and Picture in Picture can be delivered in an iOS
+companion, but it does not disclose its source code or exact sign-in mechanism.
+Vigil uses the physically verified full-screen Web Clip for the YouTube surface.
+The native Instagram package does not load YouTube; it is also the containing
+app required to deliver the Safari content blocker.
 
 SHIFT publicly describes a different large-list strategy: it blocks Safari and
 other browsers, then makes SHIFT Web the filtered browsing route. That explains
@@ -70,7 +70,7 @@ default artifact must fail `check` and every Release/update path. A Release app
 must contain the byte-identical `adult-blocklist.sdi` and generated explicit-text
 policy that the release fingerprint describes.
 
-### 2. Verify the signed-in YouTube companion
+### 2. Verify the signed-in YouTube Web Clip
 
 Enable `Vigil YouTube Shorts Filter` in Settings > Apps > Safari > Extensions,
 then verify Google account sign-in, Home, Search, Subscriptions, Library,
@@ -81,7 +81,7 @@ YouTube target alone embeds the blocker; the Instagram target remains separate.
 
 ### 3. Exercise the 952,054-domain artifact locally
 
-Build both companions and verify the bundled artifact hashes before installing
+Build the companion and verify the bundled artifact hashes before installing
 anything. Exercise parent-domain and subdomain matches, malformed/corrupt index
 rejection, and allowlist behavior. Keep the supervised profile as the fallback
 for explicit URLs and Apple's automatic adult classification.

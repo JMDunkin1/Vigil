@@ -120,21 +120,19 @@ for (const bundleIdentifier of [
   "tech.caseline.sentinel.youtube",
   "tech.caseline.vigil.browser",
   "tech.caseline.vigil.social",
-  "tech.caseline.vigil.snapchat"
+  "tech.caseline.vigil.snapchat",
+  "tech.caseline.vigil.youtube"
 ]) {
   assert.equal(isLegacyPhoneBundleIdentifier(bundleIdentifier), true, `${bundleIdentifier} should be treated as obsolete`);
 }
 assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.instagram"), false);
-assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.youtube"), false);
 
 const requiredAppsStart = phoneSuiteSource.indexOf("const REQUIRED_SOCIAL_APPS = [");
 const requiredAppsEnd = phoneSuiteSource.indexOf("];", requiredAppsStart);
 const requiredAppsSource = phoneSuiteSource.slice(requiredAppsStart, requiredAppsEnd);
 assert.match(requiredAppsSource, /tech\.caseline\.vigil\.instagram/u);
-assert.match(requiredAppsSource, /tech\.caseline\.vigil\.youtube/u);
 assert.match(requiredAppsSource, /service: "instagram"[\s\S]*?appIconSet: "InstagramAppIcon"/u);
-assert.match(requiredAppsSource, /service: "youtube"[\s\S]*?appIconSet: "YouTubeAppIcon"/u);
-assert.doesNotMatch(requiredAppsSource, /tech\.caseline\.vigil\.(?:browser|social|snapchat)/u);
+assert.doesNotMatch(requiredAppsSource, /tech\.caseline\.vigil\.(?:browser|social|snapchat|youtube)/u);
 assert.match(phoneSuiteSource, /const appsForEdition = \(edition\) => edition === "enhanced"[\s\S]*?REQUIRED_SOCIAL_APPS, URL_FILTER_APP/u);
 assert.match(phoneSuiteSource, /bundleId: "tech\.caseline\.vigil\.url-filter"/u);
 

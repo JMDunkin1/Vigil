@@ -8,15 +8,19 @@ enum DOMAdapters {
     static func documentStartScript(
         for service: SocialService,
         unclassifiedMediaPolicy: UnclassifiedMediaPolicy,
-        audioEnabled: Bool
+        audioEnabled: Bool,
+        contentSafetyEnabled: Bool = true
     ) -> String {
-        authenticationDocumentGuard(for: service, body:
+        let safetyBootstrap = contentSafetyEnabled
+            ? contentFilterBootstrap(for: unclassifiedMediaPolicy)
+                + earlyMediaGate(
+                    audioEnabled: audioEnabled,
+                    preferAudibleVideo: service == .instagram
+                )
+            : ""
+        return authenticationDocumentGuard(for: service, body:
             documentIdentityBootstrap
-            + contentFilterBootstrap(for: unclassifiedMediaPolicy)
-            + earlyMediaGate(
-                audioEnabled: audioEnabled,
-                preferAudibleVideo: service == .instagram
-            )
+            + safetyBootstrap
         )
     }
 
@@ -1064,9 +1068,15 @@ enum DOMAdapters {
             .replacingOccurrences(of: "PREFER_AUDIBLE_VIDEO", with: audibleVideoPreference)
     }
 
-    static func script(for service: SocialService, audioEnabled: Bool) -> String {
+    static func script(
+        for service: SocialService,
+        audioEnabled: Bool,
+        contentSafetyEnabled: Bool = true
+    ) -> String {
         authenticationDocumentGuard(for: service, body:
-            frameSafetyScript(audioEnabled: audioEnabled)
+            (contentSafetyEnabled
+                ? frameSafetyScript(audioEnabled: audioEnabled)
+                : instagramCompatibilityScript(audioEnabled: audioEnabled))
             + frameRoutePolicyGuard(for: service)
             + controlsScript(for: service)
         )
@@ -1130,8 +1140,17 @@ enum DOMAdapters {
         common(audioEnabled: audioEnabled)
     }
 
-    static func installedFrameSafetyScript(for service: SocialService, audioEnabled: Bool) -> String {
-        authenticationDocumentGuard(for: service, body: frameSafetyScript(audioEnabled: audioEnabled))
+    static func installedFrameSafetyScript(
+        for service: SocialService,
+        audioEnabled: Bool,
+        contentSafetyEnabled: Bool = true
+    ) -> String {
+        authenticationDocumentGuard(
+            for: service,
+            body: contentSafetyEnabled
+                ? frameSafetyScript(audioEnabled: audioEnabled)
+                : instagramCompatibilityScript(audioEnabled: audioEnabled)
+        )
     }
 
     static func controlsScript(for service: SocialService) -> String {
@@ -1462,6 +1481,142 @@ enum DOMAdapters {
         """#
             .replacingOccurrences(of: "FEATURE_KEYS", with: featureKeys)
             .replacingOccurrences(of: "ALLOWED_HOSTS", with: allowedHosts)
+    }
+
+    private static func instagramCompatibilityScript(audioEnabled: Bool) -> String {
+        let preference = audioEnabled ? "true" : "false"
+        return #"""
+        (() => {
+          const configuredAudioPreference = AUDIO_PREFERENCE;
+          const documentID = (() => {
+            const existing = String(window.__vigilDocumentID || '');
+            if (existing) return existing;
+            let generated = '';
+            try { generated = crypto.randomUUID(); } catch (_) {}
+            if (!generated) generated = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            try {
+              Object.defineProperty(window, '__vigilDocumentID', {
+                value: generated,
+                writable: false,
+                configurable: false
+              });
+            } catch (_) {
+              window.__vigilDocumentID = generated;
+            }
+            return generated;
+          })();
+          const bridge = (payload) => {
+            try {
+              window.webkit.messageHandlers.vigil.postMessage({ ...payload, documentID });
+            } catch (_) {}
+          };
+          window.__vigilBridge = bridge;
+          bridge({ type: 'documentReady' });
+
+          if (window.__vigilInstagramCompatibilityInstalled) {
+            window.__vigilSetAudioPreference?.(configuredAudioPreference);
+            return;
+          }
+          window.__vigilInstagramCompatibilityInstalled = true;
+          window.__vigilAudioPreferred = configuredAudioPreference;
+
+          const mediaRoots = new Set();
+          const mediaWithin = (root) => {
+            if (!root?.querySelectorAll) return [];
+            return [
+              ...(root instanceof HTMLMediaElement ? [root] : []),
+              ...root.querySelectorAll('video, audio')
+            ];
+          };
+          const applyAudioPreference = (media) => {
+            if (!(media instanceof HTMLMediaElement)) return;
+            if (!window.__vigilAudioPreferred) {
+              if (media.dataset.vigilMutedByPreference !== 'true') {
+                media.dataset.vigilMutedByPreference = 'true';
+                media.dataset.vigilPreviousMuted = String(media.muted);
+                media.dataset.vigilPreviousDefaultMuted = String(media.defaultMuted);
+              }
+              media.defaultMuted = true;
+              media.muted = true;
+              return;
+            }
+            if (media.dataset.vigilMutedByPreference === 'true') {
+              media.muted = media.dataset.vigilPreviousMuted === 'true';
+              media.defaultMuted = media.dataset.vigilPreviousDefaultMuted === 'true';
+              delete media.dataset.vigilMutedByPreference;
+              delete media.dataset.vigilPreviousMuted;
+              delete media.dataset.vigilPreviousDefaultMuted;
+            } else if (media.dataset.vigilInstagramAudioInitialized !== 'true') {
+              // Match the companion's audio-on default without continuously
+              // overriding Instagram's own subsequent tap-to-mute behavior.
+              media.dataset.vigilInstagramAudioInitialized = 'true';
+              media.defaultMuted = false;
+              media.muted = false;
+            }
+          };
+          const scanMedia = (root) => mediaWithin(root).forEach(applyAudioPreference);
+          const installMediaRoot = (root) => {
+            if (!root?.addEventListener || mediaRoots.has(root)) return;
+            mediaRoots.add(root);
+            const target = root === document ? document.documentElement : root;
+            if (!target) return;
+            new MutationObserver((records) => {
+              records.forEach((record) => record.addedNodes?.forEach((node) => {
+                if (node instanceof Element || node instanceof DocumentFragment) scanMedia(node);
+              }));
+            }).observe(target, { childList: true, subtree: true });
+            scanMedia(root);
+          };
+          installMediaRoot(document);
+          window.__vigilShadowDOM?.subscribe(installMediaRoot);
+
+          window.__vigilSetAudioPreference = (enabled) => {
+            window.__vigilAudioPreferred = Boolean(enabled);
+            mediaRoots.forEach(scanMedia);
+            bridge({ type: 'audio', enabled: Boolean(enabled) });
+          };
+          window.__vigilPauseAllMedia = () => {
+            mediaRoots.forEach((root) => mediaWithin(root).forEach((media) => media.pause()));
+          };
+
+          let lastAppearance = null;
+          let appearanceScheduled = false;
+          const reportAppearance = () => {
+            appearanceScheduled = false;
+            const colors = [document.body, document.documentElement]
+              .filter(Boolean)
+              .map((element) => getComputedStyle(element).backgroundColor)
+              .filter((value) => value && value !== 'transparent' && value !== 'rgba(0, 0, 0, 0)');
+            let dark = matchMedia('(prefers-color-scheme: dark)').matches;
+            for (const value of colors) {
+              const match = value.match(/rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)/i);
+              if (!match) continue;
+              const red = Number(match[1]);
+              const green = Number(match[2]);
+              const blue = Number(match[3]);
+              dark = (red * 0.2126 + green * 0.7152 + blue * 0.0722) < 128;
+              break;
+            }
+            if (lastAppearance === dark) return;
+            lastAppearance = dark;
+            bridge({ type: 'appearance', dark });
+          };
+          const scheduleAppearance = () => {
+            if (appearanceScheduled) return;
+            appearanceScheduled = true;
+            requestAnimationFrame(reportAppearance);
+          };
+          new MutationObserver(scheduleAppearance).observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['class', 'style', 'data-theme']
+          });
+          matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', scheduleAppearance);
+          addEventListener('pageshow', scheduleAppearance);
+          scheduleAppearance();
+        })();
+        """#.replacingOccurrences(of: "AUDIO_PREFERENCE", with: preference)
     }
 
     private static func common(audioEnabled: Bool) -> String {
@@ -3475,6 +3630,22 @@ enum DOMAdapters {
         a[href^="instagram:"] {
           display: none !important;
         }
+        [data-vigil-instagram-comments-sheet="true"] {
+          position: fixed !important;
+          inset: auto 0 0 0 !important;
+          width: 100% !important;
+          min-width: 0 !important;
+          max-width: none !important;
+          height: 52vh !important;
+          height: 52dvh !important;
+          min-height: 0 !important;
+          max-height: 52vh !important;
+          max-height: 52dvh !important;
+          margin: 0 !important;
+          transform: none !important;
+          overflow: hidden !important;
+          border-radius: 18px 18px 0 0 !important;
+        }
       `;
       document.documentElement.appendChild(style);
 
@@ -3510,6 +3681,43 @@ enum DOMAdapters {
         const label = String(node.textContent || node.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim().toLowerCase();
         return label === expected;
       });
+
+      const isInstagramCommentsDialog = (dialog) => {
+        if (!(dialog instanceof Element) || !visibleElement(dialog)) return false;
+        const ownLabel = String(dialog.getAttribute('aria-label') || '')
+          .replace(/\s+/g, ' ').trim().toLowerCase();
+        if (ownLabel === 'comments' || ownLabel.startsWith('comments ')) return true;
+        if (dialog.querySelector(
+          'textarea[placeholder*="comment" i], input[placeholder*="comment" i], '
+          + '[aria-label*="add a comment" i]'
+        )) return true;
+        let inspected = 0;
+        for (const heading of dialog.querySelectorAll('h1, h2, h3, [role="heading"]')) {
+          inspected += 1;
+          const label = String(heading.textContent || heading.getAttribute('aria-label') || '')
+            .replace(/\s+/g, ' ').trim().toLowerCase();
+          if (label === 'comments') return true;
+          if (inspected >= 12) break;
+        }
+        return false;
+      };
+      const normalizeCommentSheets = () => {
+        document.querySelectorAll('[data-vigil-instagram-comments-sheet]').forEach((dialog) => {
+          if (!isInstagramCommentsDialog(dialog)) {
+            dialog.removeAttribute('data-vigil-instagram-comments-sheet');
+          }
+        });
+        let inspected = 0;
+        for (const dialog of document.querySelectorAll(
+          '[role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"]:not([aria-hidden="true"])'
+        )) {
+          inspected += 1;
+          if (isInstagramCommentsDialog(dialog)) {
+            dialog.dataset.vigilInstagramCommentsSheet = 'true';
+          }
+          if (inspected >= 12) break;
+        }
+      };
 
       const routeFeature = (value) => {
         try {
@@ -4019,6 +4227,7 @@ enum DOMAdapters {
         if (normalizeNavigation || elementsWithin(root, 'a[href^="/reels"], a[href^="/direct"]').length) {
           normalizeBottomNavigation();
         }
+        normalizeCommentSheets();
       };
       let reconcileScheduled = false;
       let fullReconcileRequested = false;

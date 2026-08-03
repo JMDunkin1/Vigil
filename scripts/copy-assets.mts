@@ -5,7 +5,14 @@ import { fileURLToPath } from "node:url";
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const projectRoot = dirname(dirname(runtimeRoot));
 const ignoredSourceExtensions = new Set([".ts", ".mts"]);
-const socialIconNames = ["instagram.png", "youtube.png", "snapchat.png"];
+const socialIcons = [
+  { name: "instagram.png", source: ["Icons", "instagram.png"] },
+  {
+    name: "youtube.png",
+    source: ["Icons", "youtube-webclip.png"]
+  },
+  { name: "snapchat.png", source: ["Icons", "snapchat.png"] }
+];
 
 await copyProjectFile("package.json");
 await copyProjectFile("app/preload.cjs");
@@ -33,10 +40,12 @@ async function copyAssetDir(path: string): Promise<void> {
 }
 
 async function copySocialIcons(): Promise<void> {
-  const sourceDir = join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Icons");
+  const sourceDir = join(projectRoot, "ios", "VigilSocial", "VigilSocial");
   const destinationDir = join(runtimeRoot, "public", "art", "social");
   await mkdir(destinationDir, { recursive: true });
-  await Promise.all(socialIconNames.map((name) => cp(join(sourceDir, name), join(destinationDir, name))));
+  await Promise.all(socialIcons.map(({ name, source }) => (
+    cp(join(sourceDir, ...source), join(destinationDir, name))
+  )));
 }
 
 async function makeExtensionScriptsClassic(): Promise<void> {

@@ -1,11 +1,12 @@
 # VigilSocial parity contract
 
-VigilSocial contains two fixed companions. Instagram renders the current mobile
-website in a persistent `WKWebView` with Vigil's content-safety and focused-
-social policy. YouTube uses `SFSafariViewController`, the Google-supported
-signed-in browser surface, with a bundled Safari content blocker that removes
-Shorts. A mismatch caused by Vigil outside the intentional differences below is
-a bug.
+VigilSocial contains an Instagram companion that also hosts the YouTube Safari
+content blocker. Instagram
+renders its current mobile website in a persistent `WKWebView` with Vigil's
+content-safety and focused-social policy. The user-facing YouTube surface is a
+full-screen Web Clip named `YouTube`; no separate YouTube helper app is needed.
+A mismatch caused by Vigil outside the
+intentional differences below is a bug.
 
 The practical target is:
 
@@ -41,9 +42,8 @@ These differences must not be removed to improve visual parity.
 The companion architecture cannot reproduce private native component trees,
 caches, or gesture recognizers. In particular:
 
-- Google rejects OAuth inside embedded WebKit. YouTube therefore uses
-  `SFSafariViewController`; sign-in persists while its cookies and page contents
-  remain inaccessible to Vigil.
+- YouTube sign-in and cookies belong to Safari's full-screen Web Clip surface.
+  Vigil neither spoofs the user agent nor imports credentials.
 - YouTube's native miniplayer drag/pinch gestures, Cast integration, uploads,
   editing, notifications, and native prefetch pipeline are not available from
   `m.youtube.com`.
@@ -100,12 +100,11 @@ its major navigation, story/player, or icon presentation.
 ### YouTube
 
 - Home, Search, Subscriptions, ordinary Watch, comments, and related content.
-- Google sign-in succeeds through the supported Safari surface and persists on
-  relaunch.
+- Google sign-in succeeds in the full-screen Web Clip and persists on relaunch.
 - Horizontal topic shelves, progress scrubbing, fullscreen transitions, and
   edge-back.
 - Thumbnail and player preload under rapid scrolling.
-- The companion refuses to open YouTube until its content blocker is enabled.
+- Direct Shorts routes and Shorts UI remain blocked by the companion adapter.
 - Shorts stays absent from navigation and shelves; direct/deep `/shorts` links
   are blocked or recovered to Home.
 

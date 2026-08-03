@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 const html = await readFile("public/index.html", "utf8");
 
-assert.doesNotMatch(html, /data-view-target="ranking"|data-view="ranking"|<h2>Ranking<\/h2>/u, "retired ranking navigation and markup must not return");
+assert.doesNotMatch(html, /data-view-target="ranking"|data-view="ranking"|<h2>Ranking<\/h2>/u, "retired rank and progression UI must not return");
+assert.match(html, /data-view-target="activity"[\s\S]*?<span class="nav-label">Activity<\/span>/u, "screen-time reporting must have a dedicated Activity destination");
+assert.match(html, /data-view="activity"[\s\S]*?id="totalUsageToday"[\s\S]*?id="activityFocusScore"[\s\S]*?id="activityWeek"[\s\S]*?id="activityAppUsage"[\s\S]*?id="activitySiteUsage"/u, "Activity must expose screen time, focus score, weekly history, and app and website breakdowns");
+assert.doesNotMatch(html, /knightStanding|knightRank|XP|Badges/u, "Activity must not restore ranks, XP, or badges");
 const ids = [...html.matchAll(/\bid="([A-Za-z][\w:-]*)"/g)].map((match) => match[1]);
 const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
 assert.deepEqual([...new Set(duplicateIds)], [], "dashboard HTML must not contain duplicate IDs");
@@ -29,7 +32,7 @@ assert.deepEqual([...missing], [], "frontend code must not query dashboard IDs t
 assert.doesNotMatch(html, /tracking-legacy-surface|legacy-home-actions/, "retired hidden UI must not return");
 
 const navButtons = [...html.matchAll(/<button class="nav-tab[^>]*>[\s\S]*?<\/button>/g)].map((match) => match[0]);
-assert.equal(navButtons.length, 4, "primary navigation must keep the four remaining destinations");
+assert.equal(navButtons.length, 5, "primary navigation must include the restored Activity destination");
 for (const button of navButtons) {
   assert.match(button, /<svg class="nav-icon"[^>]*aria-hidden="true"/, "each primary destination must use the shared SVG icon system");
   assert.match(button, /<span class="nav-label">[^<]+<\/span>/, "each primary destination must retain a visible label");
@@ -365,6 +368,9 @@ assert.match(appSource, /!hasRuntimeStatus/, "the idle home screen must hide the
 assert.match(appSource, /persistentLevelSelection[\s\S]*?source === "protection-level"[\s\S]*?!persistentLevelSelection/, "persistent level selections must leave the homepage to the number control alone");
 assert.doesNotMatch(appSource, /Until changed/, "the homepage must not repeat persistent level state beneath the selected number");
 assert.doesNotMatch(styles, /\.ranking-|@container ranking|\.knight-/u, "retired ranking and rank-avatar styles must not return");
+const activitySource = await readFile("public/activity-view.js", "utf8");
+assert.match(activitySource, /usage\?\.totalSeconds[\s\S]*?usage\?\.focusScore[\s\S]*?currentWeek\?\.days[\s\S]*?usage\?\.topApps[\s\S]*?usage\?\.topSites/u, "Activity must render the existing usage and weekly report data");
+assert.doesNotMatch(activitySource, /progression|brainHealth|knightStanding|knightRank|\bbadges?\b|\bXP\b/u, "Activity rendering must remain independent of progression mechanics");
 
 const journalGateMarkup = html.match(/<section id="journalUnlockGate"[\s\S]*?<\/section>/)?.[0] || "";
 const journalPageMarkup = html.match(/<div class="journal-page journal-only"[\s\S]*?<div class="workspace two-column split-surface">/)?.[0] || "";

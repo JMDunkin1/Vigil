@@ -83,12 +83,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             health[service] = .loading
             surfaceStates[service] = .unknown
         }
-        if loadInitialPages { _ = webView(for: selectedService) }
+        if loadInitialPages, selectedService != .youtube { _ = webView(for: selectedService) }
     }
 
     func select(_ service: SocialService) {
         guard service == fixedService else { return }
-        _ = webView(for: fixedService)
+        if fixedService != .youtube { _ = webView(for: fixedService) }
     }
 
     func open(_ url: URL) {
@@ -96,6 +96,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let scheme = url.scheme?.lowercased() ?? ""
         let destination = scheme == "vigilsocial" || scheme.hasPrefix("vigil-") ? service.homeURL : url
         guard service.allowsNavigation(to: destination), !service.isRestrictedSurface(destination) else { return }
+        guard service != .youtube else { return }
         webView(for: fixedService).load(URLRequest(url: destination))
     }
 
@@ -112,7 +113,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             source: DOMAdapters.documentStartScript(
                 for: service,
                 unclassifiedMediaPolicy: unclassifiedMediaPolicy,
-                audioEnabled: audioEnabled(for: service)
+                audioEnabled: audioEnabled(for: service),
+                contentSafetyEnabled: service != .instagram
             ),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
@@ -120,7 +122,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.installedFrameSafetyScript(
                 for: service,
-                audioEnabled: audioEnabled(for: service)
+                audioEnabled: audioEnabled(for: service),
+                contentSafetyEnabled: service != .instagram
             ),
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
@@ -1018,7 +1021,11 @@ extension SocialWebViewStore: WKNavigationDelegate {
             restoreWebContentPositionIfNeeded(for: service, in: webView)
             return
         }
-        webView.evaluateJavaScript(DOMAdapters.script(for: service, audioEnabled: audioEnabled(for: service)))
+        webView.evaluateJavaScript(DOMAdapters.script(
+            for: service,
+            audioEnabled: audioEnabled(for: service),
+            contentSafetyEnabled: service != .instagram
+        ))
         restoreWebContentPositionIfNeeded(for: service, in: webView)
     }
 

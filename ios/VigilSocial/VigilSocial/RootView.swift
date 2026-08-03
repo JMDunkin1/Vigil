@@ -1,3 +1,4 @@
+import SafariServices
 import SwiftUI
 import WebKit
 
@@ -8,7 +9,11 @@ struct RootView: View {
 
     var body: some View {
         let service = store.selectedService
-        filteredWebView(service: service)
+        if service == .youtube {
+            YouTubeFilterHostView()
+        } else {
+            filteredWebView(service: service)
+        }
     }
 
     private func filteredWebView(service: SocialService) -> some View {
@@ -30,6 +35,10 @@ struct RootView: View {
                 service: service,
                 isDark: isDark
             )
+
+            if service == .instagram {
+                YouTubeContentBlockerGate(isDark: isDark)
+            }
         }
             .preferredColorScheme(reportedIsDark.map { $0 ? .dark : .light })
             .onChange(of: scenePhase) { _, phase in
@@ -91,6 +100,124 @@ struct RootView: View {
                 dismissAction: nil
             )
         }
+    }
+}
+
+private struct YouTubeContentBlockerGate: View {
+    let isDark: Bool
+    @StateObject private var health = YouTubeContentBlockerHealth()
+
+    var body: some View {
+        Group {
+            if health.isEnabled == false {
+                VStack(spacing: 18) {
+                    Image(systemName: "shield.slash")
+                        .font(.system(size: 34, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    VStack(spacing: 8) {
+                        Text("Enable the YouTube filter")
+                            .font(.headline)
+                        Text(health.errorMessage ?? "Vigil moved the YouTube Shorts blocker into Instagram so the old helper app can be removed. Enable Vigil YouTube Shorts Filter in Safari Extensions once.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    Button("Open Safari Extension Settings") { health.openSettings() }
+                        .buttonStyle(.borderedProminent)
+                    Button("Check Again") { health.refresh() }
+                        .buttonStyle(.bordered)
+                }
+                .padding(28)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .foregroundStyle(isDark ? Color.white : Color.black)
+                .background((isDark ? Color.black : Color.white).ignoresSafeArea())
+            }
+        }
+        .task { health.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            health.refresh()
+        }
+    }
+}
+
+@MainActor
+private final class YouTubeContentBlockerHealth: ObservableObject {
+    @Published private(set) var isEnabled: Bool?
+    @Published private(set) var errorMessage: String?
+
+    private var identifier: String? {
+        YouTubeSafariSession.contentBlockerIdentifier(appBundleIdentifier: Bundle.main.bundleIdentifier)
+    }
+
+    func refresh() {
+        guard let identifier else {
+            isEnabled = false
+            errorMessage = "This build is missing the YouTube filter identifier."
+            return
+        }
+        SFContentBlockerManager.getStateOfContentBlocker(withIdentifier: identifier) { [weak self] state, error in
+            Task { @MainActor in
+                guard let self else { return }
+                if let error {
+                    self.isEnabled = false
+                    self.errorMessage = "The YouTube filter could not be checked: \(error.localizedDescription)"
+                    print("Vigil YouTube content blocker enabled: false (\(error.localizedDescription))")
+                    return
+                }
+                guard state?.isEnabled == true else {
+                    self.isEnabled = false
+                    self.errorMessage = nil
+                    print("Vigil YouTube content blocker enabled: false")
+                    return
+                }
+                do {
+                    try await SFContentBlockerManager.reloadContentBlocker(withIdentifier: identifier)
+                    self.isEnabled = true
+                    self.errorMessage = nil
+                    print("Vigil YouTube content blocker enabled: true")
+                } catch {
+                    self.isEnabled = false
+                    self.errorMessage = "The YouTube filter could not load: \(error.localizedDescription)"
+                    print("Vigil YouTube content blocker enabled: false (\(error.localizedDescription))")
+                }
+            }
+        }
+    }
+
+    func openSettings() {
+        guard let identifier else { return }
+        if #available(iOS 26.2, *) {
+            SFSafariSettings.openExtensionsSettings(forIdentifiers: [identifier]) { [weak self] error in
+                Task { @MainActor in
+                    self?.errorMessage = error.map { "Safari extension settings could not be opened: \($0.localizedDescription)" }
+                }
+            }
+            return
+        }
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+}
+
+private struct YouTubeFilterHostView: View {
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            VStack(spacing: 16) {
+                Image(systemName: "checkmark.shield.fill")
+                    .font(.system(size: 44, weight: .semibold))
+                    .foregroundStyle(.red)
+                Text("YouTube filter is active")
+                    .font(.headline)
+                Text("Use the YouTube icon on your Home Screen. This helper only keeps Shorts blocked in Safari.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 320)
+            }
+            .padding(28)
+        }
+        .preferredColorScheme(.dark)
     }
 }
 

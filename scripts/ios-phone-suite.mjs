@@ -40,7 +40,8 @@ const LEGACY_BUNDLE_PREFIX = "tech.caseline.sentinel.";
 const OBSOLETE_VIGIL_PHONE_BUNDLE_IDS = new Set([
   "tech.caseline.vigil.browser",
   "tech.caseline.vigil.social",
-  "tech.caseline.vigil.snapchat"
+  "tech.caseline.vigil.snapchat",
+  "tech.caseline.vigil.youtube"
 ]);
 const OBSOLETE_APPS_PROBLEM_PREFIX = "Obsolete phone apps remain installed:";
 const OBSOLETE_LAUNCHER_PROFILE_PROBLEM = "The obsolete Vigil social-launcher profile remains installed; use --replace-legacy to remove its duplicate Home Screen icons.";
@@ -71,8 +72,7 @@ const PHONE_SOURCE_FILES = [
   "src/types.ts"
 ];
 const REQUIRED_SOCIAL_APPS = [
-  { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" },
-  { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" }
+  { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" }
 ];
 const appsForEdition = (edition) => edition === "enhanced"
   ? [...REQUIRED_SOCIAL_APPS, URL_FILTER_APP]
@@ -1762,7 +1762,7 @@ Options:
   --server URL Vigil server used for live state and policy (default ${DEFAULT_SERVER})
   --no-policy  Update apps but do not replace configuration profiles
   --allow-edition-downgrade  Explicitly permit Enhanced-to-Personal replacement
-  --replace-legacy  Remove obsolete Sentinel/Browser/Social/Snapchat apps and the retired launcher profile
+  --replace-legacy  Remove obsolete Sentinel/Browser/Social/Snapchat/YouTube-helper apps and the retired launcher profile
   --force      Force a version bump even if phone inputs are unchanged
   --json       JSON output for fingerprint`);
 }
