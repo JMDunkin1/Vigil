@@ -49,6 +49,9 @@ if (!isSupervisedCloud(cloud)) {
 }
 
 const profilePath = options.profile ? await validateProvidedProfile(options.profile) : await prepareAndDownloadActiveProfile();
+const installedProfileIdentifier = profilePath && options.profile
+  ? await configurationProfileIdentifier(profilePath)
+  : IOS_PROFILE_IDENTIFIER;
 await ensureProfileAccess(udid, supervisorKeybagPath);
 if (!profilePath) {
   await removeProfile(udid, supervisorKeybagPath);
@@ -64,14 +67,14 @@ if (!profilePath) {
   process.exit(0);
 }
 await installProfile(udid, profilePath, supervisorKeybagPath);
-const installed = await profileInstalled(udid, supervisorKeybagPath);
+const installed = await profileInstalled(udid, supervisorKeybagPath, installedProfileIdentifier);
 if (!installed) {
-  throw new Error(`Vigil profile install command completed, but ${IOS_PROFILE_IDENTIFIER} was not found in the device profile list.`);
+  throw new Error(`Vigil profile install command completed, but ${installedProfileIdentifier} was not found in the device profile list.`);
 }
 
 console.log([
   `Vigil iPhone profile applied over USB to ${udid}.`,
-  `Profile: ${IOS_PROFILE_IDENTIFIER}`,
+  `Profile: ${installedProfileIdentifier}`,
   `Supervisor keybag: ${supervisorKeybagPath}`
 ].join("\n"));
 
@@ -238,13 +241,18 @@ async function profileHasPayloads(path) {
   return Array.isArray(profile?.PayloadContent) && profile.PayloadContent.length > 0;
 }
 
+async function configurationProfileIdentifier(path) {
+  const profile = await readConfigurationProfile(path);
+  const identifier = String(profile?.PayloadIdentifier || "").trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9.-]*$/u.test(identifier)) {
+    throw new Error(`Provided iOS profile has an invalid or missing PayloadIdentifier: ${path}`);
+  }
+  return identifier;
+}
+
 async function readConfigurationProfile(path) {
   try {
-    const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", path], {
-      timeout: 5000,
-      maxBuffer: 1024 * 1024
-    });
-    return JSON.parse(stdout);
+    return await readUnsignedConfigurationProfile(path);
   } catch {
     // Release profiles are CMS-signed. Decode the signature only for
     // validation; install the original signed artifact unchanged.
@@ -256,11 +264,7 @@ async function readConfigurationProfile(path) {
         maxBuffer: 4 * 1024 * 1024
       });
       await writeFile(decodedPath, stdout, { mode: 0o600 });
-      const { stdout: json } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", decodedPath], {
-        timeout: 5000,
-        maxBuffer: 4 * 1024 * 1024
-      });
-      return JSON.parse(json);
+      return await readUnsignedConfigurationProfile(decodedPath);
     } catch (signedProfileError) {
       throw new Error(`Provided iOS profile is neither a readable plist nor a valid CMS-signed profile: ${path}`, {
         cause: signedProfileError
@@ -269,6 +273,27 @@ async function readConfigurationProfile(path) {
       await rm(dir, { recursive: true, force: true });
     }
   }
+}
+
+async function readUnsignedConfigurationProfile(path) {
+  await execFileAsync("/usr/bin/plutil", ["-lint", path], {
+    timeout: 5000,
+    maxBuffer: 1024 * 1024
+  });
+  const [{ stdout: identifier }, { stdout: payloadContent }] = await Promise.all([
+    execFileAsync("/usr/bin/plutil", ["-extract", "PayloadIdentifier", "raw", "-o", "-", path], {
+      timeout: 5000,
+      maxBuffer: 1024 * 1024
+    }),
+    execFileAsync("/usr/bin/plutil", ["-extract", "PayloadContent", "xml1", "-o", "-", path], {
+      timeout: 5000,
+      maxBuffer: 4 * 1024 * 1024
+    })
+  ]);
+  return {
+    PayloadIdentifier: identifier.trim(),
+    PayloadContent: /<array>\s*<dict>/u.test(payloadContent) ? [{}] : []
+  };
 }
 
 async function vigilJson(path, options = {}) {
@@ -410,7 +435,7 @@ async function removeProfile(udid, supervisorKeybagPath) {
   ], QUICK_TIMEOUT_MS);
 }
 
-async function profileInstalled(udid, supervisorKeybagPath = "") {
+async function profileInstalled(udid, supervisorKeybagPath = "", profileIdentifier = IOS_PROFILE_IDENTIFIER) {
   const initial = await runPymobiledevice3(["profile", "list", "--udid", udid], QUICK_TIMEOUT_MS, { reject: false });
   let stdout = initial.stdout;
   if (initial.code !== 0 && isProtectedPairingError(initial)) {
@@ -421,7 +446,7 @@ async function profileInstalled(udid, supervisorKeybagPath = "") {
     throw new Error(`${initial.stdout}\n${initial.stderr}`.trim());
   }
   const profiles = JSON.parse(stdout);
-  return Boolean(profiles?.ProfileMetadata?.[IOS_PROFILE_IDENTIFIER]);
+  return Boolean(profiles?.ProfileMetadata?.[profileIdentifier]);
 }
 
 function isProtectedPairingError(result) {

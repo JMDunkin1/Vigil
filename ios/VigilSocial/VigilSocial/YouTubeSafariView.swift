@@ -13,41 +13,43 @@ struct YouTubeSafariView: View {
     var body: some View {
         ZStack {
             Color(.systemBackground).ignoresSafeArea()
-            VStack(spacing: 20) {
-                Image(systemName: session.isFilterEnabled == false ? "shield.slash" : "play.rectangle.fill")
-                    .font(.system(size: 44, weight: .semibold))
-                    .foregroundStyle(session.isFilterEnabled == false ? Color.orange : Color.red)
+            if session.isPreparingInitialPresentation {
+                YouTubeLaunchPlaceholder()
+            } else {
+                VStack(spacing: 20) {
+                    Image(systemName: session.isFilterEnabled == false ? "shield.slash" : "play.rectangle.fill")
+                        .font(.system(size: 44, weight: .semibold))
+                        .foregroundStyle(session.isFilterEnabled == false ? Color.orange : Color.red)
 
-                VStack(spacing: 8) {
-                    Text(session.isFilterEnabled == false ? "Enable the YouTube filter" : "YouTube without Shorts")
-                        .font(.title3.weight(.semibold))
-                    Text(message)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                }
+                    VStack(spacing: 8) {
+                        Text(session.isFilterEnabled == false ? "Enable the YouTube filter" : "YouTube without Shorts")
+                            .font(.title3.weight(.semibold))
+                        Text(message)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
 
-                if session.isFilterEnabled == false {
-                    Button("Open Safari Extension Settings") { session.openSettings() }
-                        .buttonStyle(.borderedProminent)
-                    Button("Check Again") { session.refreshFilterState(andOpen: request.url) }
-                        .buttonStyle(.bordered)
-                } else if session.isFilterEnabled == true, !session.isPresentingYouTube {
-                    Button("Open YouTube") { session.open(request.url) }
-                        .buttonStyle(.borderedProminent)
-                } else {
-                    ProgressView()
-                }
+                    if session.isFilterEnabled == false {
+                        Button("Open Safari Extension Settings") { session.openSettings() }
+                            .buttonStyle(.borderedProminent)
+                        Button("Check Again") { session.refreshFilterState(andOpen: request.url) }
+                            .buttonStyle(.bordered)
+                    } else {
+                        Button("Open YouTube") { session.open(request.url) }
+                            .buttonStyle(.borderedProminent)
+                    }
 
-                if let error = session.errorMessage {
-                    Text(error)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .multilineTextAlignment(.center)
+                    if let error = session.errorMessage {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .multilineTextAlignment(.center)
+                    }
                 }
+                .padding(28)
+                .frame(maxWidth: 520)
             }
-            .padding(28)
-            .frame(maxWidth: 520)
 
             YouTubeSafariPresentationAnchor(session: session)
                 .frame(width: 0, height: 0)
@@ -57,6 +59,7 @@ struct YouTubeSafariView: View {
         .onChange(of: request.id) { _, _ in session.refreshFilterState(andOpen: request.url) }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             session.refreshFilterState(andOpen: nil)
+            session.applicationDidBecomeActive()
         }
     }
 
@@ -64,7 +67,16 @@ struct YouTubeSafariView: View {
         if session.isFilterEnabled == false {
             return "In Settings, open Apps › Safari › Extensions and enable Vigil YouTube Shorts Filter. The companion stays closed until its Shorts protection is active."
         }
-        return "YouTube opens in Apple’s secure Safari view, where Google sign-in is supported. Vigil removes Shorts links, blocks direct Shorts pages and reel data, and leaves Safari’s Back button available."
+        return "YouTube opens in Apple’s secure Safari view, where Google sign-in is supported. Vigil removes Shorts links, blocks direct Shorts pages and reel data. Apple keeps the standard browser controls visible; they collapse as you scroll."
+    }
+}
+
+private struct YouTubeLaunchPlaceholder: View {
+    var body: some View {
+        Image(systemName: "play.rectangle.fill")
+            .font(.system(size: 44, weight: .semibold))
+            .foregroundStyle(Color.red)
+            .accessibilityLabel("Opening YouTube")
     }
 }
 
@@ -72,12 +84,21 @@ struct YouTubeSafariView: View {
 final class YouTubeSafariSession: NSObject, ObservableObject, @preconcurrency SFSafariViewControllerDelegate {
     @Published private(set) var isFilterEnabled: Bool?
     @Published private(set) var isPresentingYouTube = false
+    @Published private(set) var hasPresentedYouTube = false
     @Published private(set) var errorMessage: String?
 
     private weak var presentationAnchor: UIViewController?
     private weak var safariViewController: SFSafariViewController?
     private var pendingURL: URL?
+    private var prewarmedOrigin: String?
+    private var prewarmingToken: SFSafariViewController.PrewarmingToken?
     private var filterStateGeneration: UInt64 = 0
+    private var presentationAnchorHasAppeared = false
+    private var pendingPresentationTask: Task<Void, Never>?
+
+    var isPreparingInitialPresentation: Bool {
+        isFilterEnabled != false && (!hasPresentedYouTube || isPresentingYouTube)
+    }
 
     static func contentBlockerIdentifier(appBundleIdentifier: String?) -> String? {
         appBundleIdentifier.map { "\($0).shorts-blocker" }
@@ -85,11 +106,31 @@ final class YouTubeSafariSession: NSObject, ObservableObject, @preconcurrency SF
 
     func attach(to viewController: UIViewController) {
         presentationAnchor = viewController
-        presentPendingURLIfPossible()
+    }
+
+    func presentationAnchorDidAppear(_ viewController: UIViewController) {
+        presentationAnchor = viewController
+        presentationAnchorHasAppeared = true
+        schedulePendingPresentation()
+    }
+
+    func presentationAnchorDidDisappear(_ viewController: UIViewController) {
+        guard presentationAnchor === viewController else { return }
+        presentationAnchorHasAppeared = false
+        pendingPresentationTask?.cancel()
+        pendingPresentationTask = nil
+    }
+
+    func applicationDidBecomeActive() {
+        schedulePendingPresentation()
     }
 
     func refreshFilterState(andOpen url: URL?) {
-        if let url { pendingURL = validatedYouTubeURL(url) }
+        if let url {
+            let validatedURL = validatedYouTubeURL(url)
+            pendingURL = validatedURL
+            prewarmConnection(to: validatedURL)
+        }
         filterStateGeneration &+= 1
         let generation = filterStateGeneration
         guard let identifier = Self.contentBlockerIdentifier(appBundleIdentifier: Bundle.main.bundleIdentifier) else {
@@ -117,7 +158,7 @@ final class YouTubeSafariSession: NSObject, ObservableObject, @preconcurrency SF
                     guard self.filterStateGeneration == generation else { return }
                     self.errorMessage = nil
                     self.isFilterEnabled = true
-                    self.presentPendingURLIfPossible()
+                    self.schedulePendingPresentation()
                 } catch {
                     guard self.filterStateGeneration == generation else { return }
                     self.isFilterEnabled = false
@@ -129,8 +170,10 @@ final class YouTubeSafariSession: NSObject, ObservableObject, @preconcurrency SF
     }
 
     func open(_ url: URL) {
-        pendingURL = validatedYouTubeURL(url)
-        presentPendingURLIfPossible()
+        let validatedURL = validatedYouTubeURL(url)
+        pendingURL = validatedURL
+        prewarmConnection(to: validatedURL)
+        schedulePendingPresentation()
     }
 
     func openSettings() {
@@ -153,10 +196,15 @@ final class YouTubeSafariSession: NSObject, ObservableObject, @preconcurrency SF
     private func presentPendingURLIfPossible() {
         guard isFilterEnabled == true,
               let anchor = presentationAnchor,
-              anchor.viewIfLoaded?.window != nil,
+              presentationAnchorHasAppeared,
+              UIApplication.shared.applicationState == .active,
+              let windowScene = anchor.viewIfLoaded?.window?.windowScene,
+              windowScene.activationState == .foregroundActive,
+              anchor.presentedViewController == nil,
               let url = pendingURL,
               !isPresentingYouTube else { return }
         pendingURL = nil
+        prewarmConnection(to: url)
 
         let configuration = SFSafariViewController.Configuration()
         configuration.barCollapsingEnabled = true
@@ -166,11 +214,25 @@ final class YouTubeSafariSession: NSObject, ObservableObject, @preconcurrency SF
         controller.modalPresentationStyle = .fullScreen
         controller.preferredControlTintColor = UIColor(red: 1, green: 0, blue: 0.2, alpha: 1)
         safariViewController = controller
+        hasPresentedYouTube = true
         isPresentingYouTube = true
         anchor.present(controller, animated: true)
     }
 
+    private func schedulePendingPresentation() {
+        guard pendingPresentationTask == nil else { return }
+        pendingPresentationTask = Task { @MainActor [weak self] in
+            // Let SwiftUI finish the host controller's appearance transition
+            // before asking the out-of-process Safari service to create a scene.
+            await Task.yield()
+            guard !Task.isCancelled, let self else { return }
+            self.pendingPresentationTask = nil
+            self.presentPendingURLIfPossible()
+        }
+    }
+
     private func dismissYouTubeIfPresented() {
+        finishPrewarming()
         guard let controller = safariViewController else {
             isPresentingYouTube = false
             return
@@ -188,8 +250,41 @@ final class YouTubeSafariSession: NSObject, ObservableObject, @preconcurrency SF
         return url
     }
 
+    private func prewarmConnection(to url: URL) {
+        #if targetEnvironment(simulator)
+        // iOS 27 Simulator can retain a prewarmed SafariViewService across an
+        // app rebuild. Presenting that stale service gives SafariServices a nil
+        // client application and aborts in _SFLocationManager. A real device
+        // keeps the launch optimization; simulator builds favor reliability.
+        return
+        #else
+        guard let scheme = url.scheme?.lowercased(),
+              let host = url.host?.lowercased() else { return }
+        let origin = "\(scheme)://\(host):\(url.port ?? (scheme == "https" ? 443 : 80))"
+        guard prewarmingToken == nil || prewarmedOrigin != origin else { return }
+        finishPrewarming()
+        prewarmedOrigin = origin
+        prewarmingToken = SFSafariViewController.prewarmConnections(to: [url])
+        #endif
+    }
+
+    private func finishPrewarming() {
+        prewarmingToken?.invalidate()
+        prewarmingToken = nil
+        prewarmedOrigin = nil
+    }
+
+    func safariViewController(
+        _ controller: SFSafariViewController,
+        didCompleteInitialLoad didLoadSuccessfully: Bool
+    ) {
+        guard safariViewController === controller else { return }
+        finishPrewarming()
+    }
+
     func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
         if safariViewController === controller { safariViewController = nil }
+        finishPrewarming()
         isPresentingYouTube = false
     }
 }
@@ -199,7 +294,12 @@ private struct YouTubeSafariPresentationAnchor: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> PresentationAnchorViewController {
         let controller = PresentationAnchorViewController()
-        controller.onAppear = { [weak session] controller in session?.attach(to: controller) }
+        controller.onAppear = { [weak session] controller in
+            session?.presentationAnchorDidAppear(controller)
+        }
+        controller.onDisappear = { [weak session] controller in
+            session?.presentationAnchorDidDisappear(controller)
+        }
         return controller
     }
 
@@ -210,9 +310,15 @@ private struct YouTubeSafariPresentationAnchor: UIViewControllerRepresentable {
 
 private final class PresentationAnchorViewController: UIViewController {
     var onAppear: ((UIViewController) -> Void)?
+    var onDisappear: ((UIViewController) -> Void)?
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         onAppear?(self)
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        onDisappear?(self)
     }
 }

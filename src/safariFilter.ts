@@ -10,6 +10,7 @@ import { CONTENT_FILTER_RULES, contentFilterEnabled } from "./contentFilters.js"
 import { DATA_DIR } from "./store.js";
 import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, normalizeHost, normalizeUrlPattern } from "./policy.js";
+import { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 import type { ActivePolicy, VigilState } from "./types.js";
 
 export const SAFARI_FILTER_PROFILE_ID = "tech.caseline.vigil.safari-url-filter";
@@ -19,7 +20,12 @@ export const SAFARI_FILTER_PROFILE_PATH = join(DATA_DIR, "vigil-safari-url-filte
 
 const execFileAsync = promisify(execFile);
 const URL_LIMIT = 500;
-const SAFARI_FILTER_SIGNATURE_VERSION = 3;
+const SAFARI_FILTER_SIGNATURE_VERSION = 4;
+const PRIORITY_BLOCKED_SITE_KEYS = new Set([
+  ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES,
+  ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES
+].map(normalizeHost));
+const HTTP_PRIORITY_BLOCKED_SITE_KEYS = new Set(DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES.map(normalizeHost));
 
 export interface SafariFilterUrlTarget {
   url: string;
@@ -76,15 +82,19 @@ function managedFilterMatchCandidates(url: URL): string[] {
   const seeds = [url.toString(), ...url.searchParams.values()];
   for (const seed of seeds) {
     let decoded = seed.toLowerCase();
-    candidates.push(decoded);
+    candidates.push(decoded, normalizeAppleWww(decoded));
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const next = decodePercentRuns(decoded).toLowerCase();
       if (next === decoded) break;
-      candidates.push(next);
+      candidates.push(next, normalizeAppleWww(next));
       decoded = next;
     }
   }
   return [...new Set(candidates)];
+}
+
+function normalizeAppleWww(value: string): string {
+  return value.replace(/(https?:\/\/)www\./giu, "$1");
 }
 
 function decodePercentRuns(value: string): string {
@@ -107,6 +117,7 @@ export function safariFilterTargets(state: VigilState, now = new Date()): Safari
 
   for (const item of policies) {
     for (const site of item.profile?.blockedSites || []) {
+      if (PRIORITY_BLOCKED_SITE_KEYS.has(normalizeHost(site))) continue;
       targets.push(...siteTargetUrls(site, `${item.kind}:site`));
     }
     for (const pattern of item.profile?.blockedUrlPatterns || []) {
@@ -119,6 +130,23 @@ export function safariFilterTargets(state: VigilState, now = new Date()): Safari
       for (const filter of rule.urlFilters) {
         targets.push(...contentFilterTargetUrls(filter, `content-filter:${rule.id}`));
       }
+    }
+  }
+
+  for (const site of [...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES]) {
+    const host = normalizeHost(site);
+    if (!isPublicHost(host)) continue;
+    targets.push({
+      url: `https://${host}/`,
+      source: "priority-domain",
+      pathSpecific: false
+    });
+    if (HTTP_PRIORITY_BLOCKED_SITE_KEYS.has(host)) {
+      targets.push({
+        url: `http://${host}/`,
+        source: "priority-domain",
+        pathSpecific: false
+      });
     }
   }
 

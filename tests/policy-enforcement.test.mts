@@ -7,7 +7,7 @@ import { appleContentFilterStatusFromRecord } from "../src/appleContentFilter.js
 import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
 import { blockedPageDisplayLabel, managedFilterAllowsVigilPages, safeExternalPageUrl } from "../src/blockedPageUrl.js";
 import { contentFilterEnabled, matchContentFilterUrl } from "../src/contentFilters.js";
-import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_CONTEXTUAL_RULES, DEFAULT_EXPLICIT_SEARCH_TERMS, DEFAULT_EXPLICIT_URL_PATTERNS, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_CONTEXTUAL_RULES, DEFAULT_EXPLICIT_SEARCH_TERMS, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../src/distanceKey.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { buildHostsBlock, managedBlockDomains } from "../src/hardening.js";
@@ -579,6 +579,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockSite(profile, "redd.it"), false);
   assert.equal(shouldBlockSite(profile, "fb.com"), true);
   assert.equal(shouldBlockSite(profile, "docs.google.com"), false);
+  assert.equal(shouldBlockSite(profile, "www.croxyproxy.com"), true);
+  assert.equal(shouldBlockSite(profile, "wildlife.adult"), true);
   assert.equal(expandSiteTargets(["youtube.com"]).includes("youtu.be"), true);
   assert.equal(hostMatchesSiteTargets("mobile.twitter.com", ["x.com"]), true);
   assert.equal(shouldBlockSite(testProfile({ mode: "allowlist", allowedSites: ["youtube.com"], blockedSites: [] }), "youtu.be"), false);
@@ -959,6 +961,9 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(baselineUrls.includes("https://www.pornhub.com/"), true);
   assert.equal(baselineUrls.includes("https://youtube.com/shorts"), true);
   assert.equal(baselineUrls.includes("https://snapchat.com/spotlight"), true);
+  assert.equal(baselineUrls.includes("https://croxyproxy.com/"), true);
+  assert.equal(baselineUrls.includes("http://anonymouse.com/"), true, "confirmed plain-HTTP proxies need a Safari filter entry");
+  assert.equal(baselineUrls.includes("http://croxyproxy.com/"), false, "HTTPS-only priority sites should not spend a second Safari filter slot");
   const baselineProfileText = buildSafariFilterProfile(state, now);
   assert.match(baselineProfileText, /<key>siteAllowList<\/key>/);
   assert.match(baselineProfileText, /<key>address<\/key>\s*<string>http:\/\/127\.0\.0\.1:8787\/<\/string>/);
@@ -995,12 +1000,17 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(urls.includes("https://www.youtube.com/watch"), false);
   assert.equal(
     safariFilterDenyMatch(state, "https://www.youtube.com/watch?next=https%3A%2F%2Fwww.youtube.com%2Fshorts%2Fabc", now),
-    "https://www.youtube.com/shorts"
+    "https://youtube.com/shorts"
   );
   assert.equal(
     safariFilterDenyMatch(state, "https://www.youtube.com/%ZZ?next=https%253A%252F%252Fwww.youtube.com%252Fshorts%252Fabc", now),
-    "https://www.youtube.com/shorts",
+    "https://youtube.com/shorts",
     "malformed escapes must not suppress bounded decoding of nested denied URLs"
+  );
+  assert.equal(
+    safariFilterDenyMatch(state, "https://unknown-proxy.example/https://www.youtube.com/shorts/abc", now),
+    "https://youtube.com/shorts",
+    "embedded proxy paths must normalize nested www hosts before matching"
   );
   assert.equal(safariFilterPathDenyUrls(state, now).some((url) => url.includes("/shorts")), true);
   const signature = safariFilterPolicySignature(state, now);
@@ -1079,7 +1089,11 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     blockedSites: ["youtube.com", "reddit.com", "redd.it"],
     blockedUrlPatterns: ["reddit.com", "reddit.com/", "https://reddit.com/", "redd.it/", "reddit.com/r/popular"]
   });
-  assert.deepEqual(migratedDefaultProfile.blockedSites, ["youtube.com"]);
+  assert.equal(migratedDefaultProfile.blockedSites.includes("youtube.com"), true);
+  assert.equal(migratedDefaultProfile.blockedSites.includes("croxyproxy.com"), true);
+  assert.equal(migratedDefaultProfile.blockedSites.includes("wildlife.adult"), true);
+  assert.equal(migratedDefaultProfile.blockedSites.includes("reddit.com"), false);
+  assert.equal(migratedDefaultProfile.blockedSites.includes("redd.it"), false);
   assert.equal(migratedDefaultProfile.hostsUrlPatternBlocking, false);
   assert.equal(migratedDefaultProfile.blockedUrlPatterns.includes("reddit.com"), false);
   assert.equal(migratedDefaultProfile.blockedUrlPatterns.includes("reddit.com/"), false);
@@ -1095,8 +1109,10 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     blockedUrlPatterns: ["instagram.com/explore", "instagram.com/reels", "reddit.com", "reddit.com/", "https://reddit.com/", "redd.it/"]
   });
   assert.deepEqual(migratedSoftProfile.blockedApps, []);
-  assert.equal(migratedSoftProfile.blockedSites.length, DEFAULT_EXPLICIT_BLOCKED_SITES.length);
+  assert.equal(migratedSoftProfile.blockedSites.length, DEFAULT_EXPLICIT_BLOCKED_SITES.length + DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.length + DEFAULT_FILTER_BYPASS_BLOCKED_SITES.length);
   assert.equal(DEFAULT_EXPLICIT_BLOCKED_SITES.every((site) => migratedSoftProfile.blockedSites.includes(site)), true);
+  assert.equal(DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.every((site) => migratedSoftProfile.blockedSites.includes(site)), true);
+  assert.equal(DEFAULT_FILTER_BYPASS_BLOCKED_SITES.every((site) => migratedSoftProfile.blockedSites.includes(site)), true);
   assert.equal(migratedSoftProfile.blockedSites.includes("instagram.com"), false);
   assert.equal(migratedSoftProfile.blockedSites.includes("reddit.com"), false);
   assert.equal(migratedSoftProfile.blockedUrlPatterns.includes("instagram.com/explore"), false);

@@ -812,6 +812,73 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramMigratesLegacyMutedPreferenceToAudioEnabled() throws {
+        let suite = #function
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        defaults.set(false, forKey: "VigilSocial.audio.instagram")
+
+        let store = SocialWebViewStore(
+            defaults: defaults,
+            fixedService: .instagram,
+            loadInitialPages: false
+        )
+
+        XCTAssertTrue(store.audioEnabled(for: .instagram))
+        XCTAssertTrue(defaults.bool(forKey: "VigilSocial.audio.instagram"))
+    }
+
+    @MainActor
+    func testInstagramUserRequestedVideoRestoresAudioAfterSafetyHold() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.documentStartScript(
+                for: .instagram,
+                unclassifiedMediaPolicy: .conceal,
+                audioEnabled: true
+            ),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let window = UIWindow(frame: webView.frame)
+        let viewController = UIViewController()
+        viewController.view.addSubview(webView)
+        window.rootViewController = viewController
+        window.isHidden = false
+        defer { window.isHidden = true }
+        let loaded = expectation(description: "Instagram startup mute fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            "<html><body><video id='video' muted></video></body></html>",
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+
+        let muteStates = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const video = document.getElementById('video');
+              window.__vigilEarlyMediaGate.allow(video, false);
+              const beforeRequest = video.muted;
+              window.__vigilEarlyMediaGate.hold(video);
+              window.__vigilEarlyMediaGate.requestAudiblePlayback(video);
+              window.__vigilEarlyMediaGate.allow(video, false);
+              return { beforeRequest, afterRequest: video.muted };
+            })()
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(muteStates?["beforeRequest"] as? Bool, true)
+        XCTAssertEqual(muteStates?["afterRequest"] as? Bool, false)
+    }
+
+    @MainActor
     func testHeadAutoplayIsHeldUntilSafeWithAudioEnabled() async throws {
         let webView = try await loadHeadAutoplayFixture(audioEnabled: true)
 
@@ -1230,6 +1297,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(documentStart.contains("Object.defineProperty(window, '__vigilDocumentID'"))
         XCTAssertTrue(bridge.contains("const existing = String(window.__vigilDocumentID || '')"))
         XCTAssertTrue(bridge.contains("postMessage({ ...payload, documentID })"))
+        XCTAssertTrue(bridge.contains("bridge({ type: 'documentReady' })"))
     }
 
     @MainActor
@@ -1256,9 +1324,11 @@ final class VigilSocialTests: XCTestCase {
         let youtube = DOMAdapters.script(for: .youtube, audioEnabled: true)
 
         XCTAssertTrue(bootstrap.contains("data-vigil-background-subtree-pending"))
-        XCTAssertTrue(common.contains("rootMargin: '900px'"))
+        XCTAssertTrue(common.contains("rootMargin: '1500px 0px'"))
         XCTAssertTrue(common.contains("typeof window.IntersectionObserver === 'function'"))
         XCTAssertTrue(common.contains("pendingBackgroundTrees"))
+        XCTAssertTrue(common.contains("const visualTreeContains = (ancestor, candidate)"))
+        XCTAssertTrue(common.contains("pendingJob.dirty = true"))
         XCTAssertTrue(common.contains("document.createTreeWalker"))
         XCTAssertTrue(common.contains("let budget = 80"))
         XCTAssertFalse(common.contains("[node, ...node.querySelectorAll('*')]"))
@@ -1601,6 +1671,53 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(store.health[.instagram], .ready)
     }
 
+    @MainActor
+    func testInstagramKeepsUsableSurfaceVisibleDuringWarmDocumentNavigation() async throws {
+        let suite = #function
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let store = SocialWebViewStore(
+            defaults: defaults,
+            fixedService: .instagram,
+            loadInitialPages: false
+        )
+        let webView = store.webView(for: .instagram)
+        let window = UIWindow(frame: webView.frame)
+        let viewController = UIViewController()
+        viewController.view.addSubview(webView)
+        window.rootViewController = viewController
+        window.isHidden = false
+        defer {
+            webView.navigationDelegate = nil
+            webView.stopLoading()
+            window.isHidden = true
+        }
+
+        webView.loadHTMLString(
+            """
+            <html><body><main><article style="display:block;width:360px;height:220px">
+              <a href="/p/audit/" style="display:block;width:120px;height:44px">Post</a>
+            </article></main></body></html>
+            """,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/"))
+        )
+        for _ in 0..<80 where store.health[.instagram] != .ready {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(store.health[.instagram], .ready)
+
+        webView.loadHTMLString(
+            "<html><body><main>Loading…</main></body></html>",
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/direct/inbox/"))
+        )
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertEqual(
+            store.health[.instagram],
+            .ready,
+            "A warm protected navigation must not replace Instagram with the full-screen loading overlay"
+        )
+    }
+
     func testInstagramHealthWaitsForUsableRouteContentAndDetectsBrokenChallenges() {
         let instagram = DOMAdapters.script(for: .instagram, audioEnabled: true)
 
@@ -1847,7 +1964,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(SocialService.instagram.isCanonicalAppHost("help.instagram.com"))
         XCTAssertTrue(SocialService.youtube.isCanonicalAppHost("m.youtube.com"))
         XCTAssertFalse(SocialService.youtube.isCanonicalAppHost("accounts.google.com"))
-        XCTAssertTrue(SocialService.youtube.isUnsupportedEmbeddedAuthentication(
+        XCTAssertFalse(SocialService.youtube.isUnsupportedEmbeddedAuthentication(
             try XCTUnwrap(URL(string: "https://accounts.google.com/ServiceLogin"))
         ))
         XCTAssertFalse(SocialService.youtube.isUnsupportedEmbeddedAuthentication(
@@ -1855,7 +1972,7 @@ final class VigilSocialTests: XCTestCase {
         ))
     }
 
-    func testOnlyInstagramAuthenticationDocumentsBypassContentInjection() throws {
+    func testAuthenticationDocumentsBypassContentInjection() throws {
         for path in [
             "/accounts/login/",
             "/accounts/password/reset/",
@@ -1883,8 +2000,17 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(SocialService.instagram.usesUnmodifiedAuthenticationDocument(
             try XCTUnwrap(URL(string: "https://www.facebook.com/"))
         ))
-        XCTAssertFalse(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
+        XCTAssertTrue(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
             try XCTUnwrap(URL(string: "https://accounts.google.com/ServiceLogin"))
+        ))
+        XCTAssertTrue(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://consent.youtube.com/m"))
+        ))
+        XCTAssertFalse(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://accounts.google.com.example.com/ServiceLogin"))
+        ))
+        XCTAssertFalse(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://m.youtube.com/signin"))
         ))
 
         let instagramStart = DOMAdapters.documentStartScript(
@@ -1897,9 +2023,20 @@ final class VigilSocialTests: XCTestCase {
             unclassifiedMediaPolicy: .conceal,
             audioEnabled: true
         )
+        let instagramEndScripts = [
+            DOMAdapters.installedFrameSafetyScript(for: .instagram, audioEnabled: true),
+            DOMAdapters.installedFrameRoutePolicyGuard(for: .instagram),
+            DOMAdapters.installedControlsScript(for: .instagram)
+        ]
         XCTAssertTrue(instagramStart.contains("Keep Meta's authentication and security-check environment pristine"))
+        XCTAssertTrue(instagramStart.contains("__vigilAuthenticationTransitionWatchdogInstalled"))
         XCTAssertTrue(instagramStart.contains("location.reload()"))
-        XCTAssertFalse(youtubeStart.contains("vigilAuthenticationPath"))
+        XCTAssertTrue(instagramEndScripts.allSatisfy {
+            $0.contains("Keep Meta's authentication and security-check environment pristine")
+        })
+        XCTAssertTrue(youtubeStart.contains("host === 'accounts.google.com'"))
+        XCTAssertTrue(youtubeStart.contains("host === 'consent.youtube.com'"))
+        XCTAssertTrue(youtubeStart.contains("keep Vigil's content scripts completely out"))
     }
 
     func testEmbeddedNavigationRestoresRequiredServiceFramesWithoutBecomingABrowser() throws {
@@ -2420,7 +2557,10 @@ final class VigilSocialTests: XCTestCase {
         guard case .advisory = SocialService.instagram.auxiliaryPageHealth(for: facebook) else {
             return XCTFail("Facebook authorization must remain usable outside the loading overlay")
         }
-        XCTAssertTrue(SocialService.youtube.isUnsupportedEmbeddedAuthentication(google))
+        XCTAssertFalse(SocialService.youtube.isUnsupportedEmbeddedAuthentication(google))
+        guard case .advisory = SocialService.youtube.auxiliaryPageHealth(for: google) else {
+            return XCTFail("Google authorization must remain usable outside the loading overlay")
+        }
         XCTAssertNil(SocialService.youtube.auxiliaryPageHealth(
             for: try XCTUnwrap(URL(string: "https://m.youtube.com/"))
         ))

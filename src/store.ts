@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gzip, gunzip } from "node:zlib";
 import { preserveCorruptStateEvidence } from "./corruptStateEvidence.js";
-import { BRICK_MODE_PROFILE_ID, DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID, DEFAULT_ALLOWED_APPS, DEFAULT_ALLOWED_SITES, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_BLOCKED_SITES, DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_SHORT_FORM_URL_PATTERNS, FULL_BRICK_BLOCKED_APPS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT, DEFAULT_ADULT_BLOCKLIST_SOURCE_ID, DEFAULT_ALLOWED_APPS, DEFAULT_ALLOWED_SITES, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_BLOCKED_SITES, DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, DEFAULT_SHORT_FORM_URL_PATTERNS, FULL_BRICK_BLOCKED_APPS, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "./defaults.js";
 import { normalizeIntentionalUse } from "./intentionalUse.js";
 import { decryptJournalEntries, encryptJournalEntries, hasEncryptedJournalEntries } from "./journalEncryption.js";
 import { resolveDefaultDataDir } from "./dataPaths.js";
@@ -1275,7 +1275,9 @@ export function sanitizeSoftBlockProfile(profile: Profile): Profile {
     blockedApps: [],
     blockedSites: uniqueList([
       ...(profile.blockedSites || []).filter((site) => !isInstagramSiteTarget(site) && !isRedditSiteTarget(site)),
-      ...DEFAULT_EXPLICIT_BLOCKED_SITES
+      ...DEFAULT_EXPLICIT_BLOCKED_SITES,
+      ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES,
+      ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES
     ]),
     blockedUrlPatterns,
     phoneAppBlocking: false,
@@ -1284,10 +1286,18 @@ export function sanitizeSoftBlockProfile(profile: Profile): Profile {
 }
 
 export function sanitizeDefaultFocusProfile(profile: Profile): Profile {
-  return sanitizeRedditUrlPolicyProfile(profile, {
+  const sanitized = sanitizeRedditUrlPolicyProfile(profile, {
     blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
     hostsUrlPatternBlocking: false
   });
+  return {
+    ...sanitized,
+    blockedSites: uniqueList([
+      ...(sanitized.blockedSites || []),
+      ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES,
+      ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES
+    ])
+  };
 }
 
 function sanitizeNormalProfile(profile: Profile): Profile {
@@ -1295,7 +1305,7 @@ function sanitizeNormalProfile(profile: Profile): Profile {
     ...profile,
     description: "Normal use with permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Stories protection.",
     blockedApps: [],
-    blockedSites: [...DEFAULT_EXPLICIT_BLOCKED_SITES],
+    blockedSites: [...DEFAULT_EXPLICIT_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES],
     blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS],
     phoneAppBlocking: false,
     hostsUrlPatternBlocking: false
@@ -1309,7 +1319,7 @@ export function sanitizeFullBrickProfile(profile: Profile): Profile {
     mode: "blocklist",
     description: "Removes social apps and blocks social sites while leaving unrelated work and system apps alone.",
     blockedApps: [...FULL_BRICK_BLOCKED_APPS],
-    blockedSites: [...DEFAULT_BLOCKED_SITES],
+    blockedSites: [...DEFAULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES],
     blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
     allowedApps: [...DEFAULT_ALLOWED_APPS],
     allowedSites: [...DEFAULT_ALLOWED_SITES],

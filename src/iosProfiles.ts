@@ -5,8 +5,11 @@ import {
   DEFAULT_ALWAYS_BANNED_URL_PATTERNS,
   DEFAULT_EXPLICIT_BLOCKED_SITES,
   DEFAULT_EXPLICIT_SEARCH_TERMS,
+  DEFAULT_FILTER_BYPASS_BLOCKED_SITES,
+  DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES,
   DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS,
   DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
+  DEFAULT_PRIORITY_ADULT_BLOCKED_SITES,
   IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS,
   SOFT_BLOCK_PROFILE_ID,
   defaultState
@@ -16,7 +19,7 @@ import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { grayscaleDecision, IOS_GRAYSCALE_GUARD_BUNDLE_IDS } from "./grayscale.js";
 import { activeLimitBlocks } from "./limits.js";
 import { toPlist } from "./plist.js";
-import { activePolicy, baselinePolicy, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, profileById } from "./policy.js";
+import { activePolicy, baselinePolicy, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, normalizeHost, profileById } from "./policy.js";
 import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS, focusedSocialBlockedBundleIds, focusedSocialDeniedUrls, focusedSocialSummary, normalizeFocusedSocialSettings } from "./socialFeatureFilters.js";
 import type { IosManageEngineGeneration, IosSettings, VigilState, UnknownRecord } from "./types.js";
 import { configuredIosPhoneProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
@@ -33,9 +36,16 @@ export const IOS_PANIC_ALLOWED_APP_BUNDLE_IDS = [
   "com.apple.mobilephone"
 ];
 const MAX_DENY_URLS = 500;
+const MIN_BULK_ADULT_DENY_URLS = 6;
+const MIN_PRIORITY_DOMAIN_BREADTH = 200;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_ID_KEYS = new Set(IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS.map((value) => value.toLowerCase()));
 const IOS_EXPLICIT_SEARCH_TERM_KEYS = new Set(DEFAULT_EXPLICIT_SEARCH_TERMS.map(normalizedExplicitSearchTerm));
+const IOS_PRIORITY_BLOCKED_SITE_KEYS = new Set([
+  ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES,
+  ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES
+].map(normalizeHost));
+const IOS_HTTP_PRIORITY_BLOCKED_SITE_KEYS = new Set(DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES.map(normalizeHost));
 const IOS_EXPLICIT_SEARCH_URL_PREFIXES = [
   "https://www.google.com/search?q=",
   "https://www.bing.com/search?q=",
@@ -396,9 +406,9 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
   const profileAllowedSites = limitOnly
     ? []
     : profile?.allowedSites || [];
-  const profileBlockedSites = limitOnly ? [] : profile?.blockedSites || [];
+  const profileBlockedSites = withoutPriorityBlockedSites(limitOnly ? [] : profile?.blockedSites || []);
   const retainedBaselineBlockedSites = activePhonePolicy || limitOnly
-    ? baselineProfile?.blockedSites || []
+    ? withoutPriorityBlockedSites(baselineProfile?.blockedSites || [])
     : [];
   const activeLimitBundleIds = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.apps || []).filter(isLikelyIosBundleId));
   const activeLimitSites = uniqueStrings(activePhoneLimitBlocks.flatMap((block) => block.sites || []));
@@ -425,6 +435,10 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     ...urlsFromSiteTargets(retainedBaselineBlockedSites),
     ...urlsFromPatterns(retainedBaselinePatterns)
   ];
+  const priorityDeniedUrls = priorityUrlsFromSiteTargets([
+    ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES,
+    ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES
+  ]);
   const adultDeniedUrls = urlsFromSiteTargets(adultBlocklistPreloadDomains(state));
   const deniedUrls = !settings.blockWeb && !fullLockoutActive
     ? []
@@ -432,10 +446,11 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     ? []
     : enforcementActive && webMode === "allowlist"
     ? prioritizedDenyUrls(permanentDeniedUrls, policyDeniedUrls)
-    : prioritizedDenyUrls(
+    : prioritizedDenyUrlsWithAdultReserve(
       permanentDeniedUrls,
       policyDeniedUrls,
       settings.deniedUrls,
+      priorityDeniedUrls,
       adultDeniedUrls
     );
   let allowedUrls = !enforcementActive || (!settings.blockWeb && !fullLockoutActive)
@@ -688,8 +703,13 @@ function urlsFromSiteTargets(values: readonly unknown[]): string[] {
 
 function deliveredAdultBlocklistDomainCount(state: VigilState, deniedUrls: readonly string[]): number {
   const deliveredUrls = new Set(deniedUrls.map((url) => url.toLowerCase()));
-  return adultBlocklistPreloadDomains(state).filter((domain) =>
+  const adultDomains = [...new Set([
+    ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES,
+    ...adultBlocklistPreloadDomains(state)
+  ])];
+  return adultDomains.filter((domain) =>
     urlsFromSiteTargets([domain]).some((url) => deliveredUrls.has(url.toLowerCase()))
+      || deliveredUrls.has(`https://${normalizeHost(domain)}/`)
   ).length;
 }
 
@@ -698,6 +718,22 @@ function urlsFromPatterns(values: readonly unknown[]): string[] {
     const explicitSearchUrls = urlsForExplicitSearchTerm(value);
     return explicitSearchUrls.length ? explicitSearchUrls : urlsFromInput(value);
   });
+}
+
+function priorityUrlsFromSiteTargets(values: readonly unknown[]): string[] {
+  const domains = uniqueUrls(values.map((value) => normalizeHost(value)).filter(Boolean));
+  const breadthUrls = domains.map((domain) => `https://${domain}/`);
+  const httpProxyUrls = domains
+    .filter((domain) => IOS_HTTP_PRIORITY_BLOCKED_SITE_KEYS.has(domain))
+    .map((domain) => `http://${domain}/`);
+  // Guarantee the requested couple-hundred-domain breadth first, then harden
+  // confirmed plain-HTTP proxies before spending remaining slots on lower-risk
+  // VPN distributors at the tail of the curated list.
+  return uniqueUrls([
+    ...breadthUrls.slice(0, MIN_PRIORITY_DOMAIN_BREADTH),
+    ...httpProxyUrls,
+    ...breadthUrls.slice(MIN_PRIORITY_DOMAIN_BREADTH)
+  ]);
 }
 
 function urlsForExplicitSearchTerm(value: unknown): string[] {
@@ -764,13 +800,36 @@ function prioritizedDenyUrls(...priorityGroups: ReadonlyArray<readonly unknown[]
   return uniqueUrls(priorityGroups.flat()).slice(0, MAX_DENY_URLS);
 }
 
+function prioritizedDenyUrlsWithAdultReserve(
+  permanentUrls: readonly unknown[],
+  policyUrls: readonly unknown[],
+  userUrls: readonly unknown[],
+  priorityDomainUrls: readonly unknown[],
+  adultUrls: readonly unknown[]
+): string[] {
+  const higherPriority = uniqueUrls([...permanentUrls, ...policyUrls, ...userUrls]);
+  const alreadyCovered = new Set([...higherPriority, ...priorityDomainUrls].map((url) => String(url).toLowerCase()));
+  const novelAdultUrls = uniqueUrls(adultUrls).filter((url) => !alreadyCovered.has(url.toLowerCase()));
+  const adultReserve = Math.min(MIN_BULK_ADULT_DENY_URLS, novelAdultUrls.length);
+  const priorityDomainBudget = Math.max(0, MAX_DENY_URLS - higherPriority.length - adultReserve);
+  return uniqueUrls([
+    ...higherPriority,
+    ...priorityDomainUrls.slice(0, priorityDomainBudget),
+    ...novelAdultUrls
+  ]).slice(0, MAX_DENY_URLS);
+}
+
 function iosUrlHostVariants(host: string): string[] {
   const normalized = String(host || "").trim().toLowerCase();
   if (!normalized) return [];
-  const variants = [normalized];
-  const labels = normalized.split(".").filter(Boolean);
-  if (!normalized.startsWith("www.") && labels.length === 2) variants.push(`www.${normalized}`);
-  return [...new Set(variants)];
+  // Apple's BuiltIn filter treats a leading www label as equivalent to the
+  // bare host, so emitting both consumes scarce deny-list capacity without
+  // increasing coverage.
+  return [normalized];
+}
+
+function withoutPriorityBlockedSites(values: readonly string[]): string[] {
+  return values.filter((value) => !IOS_PRIORITY_BLOCKED_SITE_KEYS.has(normalizeHost(value)));
 }
 
 function uniqueStrings(values: readonly unknown[]): string[] {

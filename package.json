@@ -56,6 +56,7 @@
     "ios:social:build": "npm run build && node dist/runtime/scripts/build-ios-social-app.mjs",
     "ios:social:test": "npm run build && npm run ios:social:test:runtime",
     "ios:social:test:runtime": "node dist/runtime/scripts/test-ios-social.mjs",
+    "ios:youtube:webclip:generate": "npm run build && node dist/runtime/scripts/generate-ios-youtube-webclip.mjs",
     "ios:manageengine:export": "npm run build && node dist/runtime/scripts/export-manageengine-ios-profile.mjs",
     "ios:manageengine:apply-enrollment-window": "npm run ios:manageengine:export -- --enrollment-window && node scripts/watch-ios-usb-profile.mjs --profile data/manageengine/vigil-manageengine-enrollment-window.mobileconfig",
     "ios:mdm:identity": "npm run build && node dist/runtime/scripts/generate-ios-mdm-identity.mjs",

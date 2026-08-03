@@ -56,10 +56,40 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
+  /SocialWebView\([\s\S]*?webView: store\.webView\(for: service\)/u,
+  "the fixed companions must render their protected persistent WKWebView"
+);
+assert.doesNotMatch(
+  socialRootViewSource,
   /YouTubeSafariView\(request: store\.youtubeSafariRequest\)/u,
-  "YouTube must use the Google-supported Safari surface instead of embedded WKWebView authentication"
+  "YouTube must not add SafariViewController chrome around the active companion surface"
+);
+assert.match(
+  socialWebViewStoreSource,
+  /configuration\.websiteDataStore = \.default\(\)/u,
+  "YouTube sign-in cookies must persist in the companion's first-party WebKit data store"
 );
 assert.match(youtubeSafariSource, /SFSafariViewController/u);
+assert.match(
+  youtubeSafariSource,
+  /if session\.isPreparingInitialPresentation \{\s*YouTubeLaunchPlaceholder\(\)/u,
+  "the initial blocker check should use a quiet launch placeholder instead of looking like a redirect"
+);
+assert.match(
+  youtubeSafariSource,
+  /SFSafariViewController\.prewarmConnections\(to: \[url\]\)/u,
+  "the signed-in YouTube surface should prewarm its initial connection while the blocker is verified"
+);
+assert.match(
+  youtubeSafariSource,
+  /#if targetEnvironment\(simulator\)[\s\S]*?return[\s\S]*?#else[\s\S]*?SFSafariViewController\.prewarmConnections/u,
+  "simulator builds must not retain a stale prewarmed SafariViewService across companion rebuilds"
+);
+assert.match(
+  youtubeSafariSource,
+  /windowScene\.activationState == \.foregroundActive/u,
+  "SafariViewService presentation must wait until the companion scene is fully active"
+);
 assert.match(youtubeSafariSource, /SFContentBlockerManager\.getStateOfContentBlocker/u);
 assert.match(youtubeSafariSource, /SFSafariSettings\.openExtensionsSettings/u,
   "supported iOS releases must open the exact Safari extension settings pane");

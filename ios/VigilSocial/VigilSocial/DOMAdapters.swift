@@ -13,7 +13,10 @@ enum DOMAdapters {
         authenticationDocumentGuard(for: service, body:
             documentIdentityBootstrap
             + contentFilterBootstrap(for: unclassifiedMediaPolicy)
-            + earlyMediaGate(audioEnabled: audioEnabled)
+            + earlyMediaGate(
+                audioEnabled: audioEnabled,
+                preferAudibleVideo: service == .instagram
+            )
         )
     }
 
@@ -468,11 +471,16 @@ enum DOMAdapters {
             .replacingOccurrences(of: "UNCLASSIFIED_MEDIA_POLICY", with: policy)
     }
 
-    static func earlyMediaGate(audioEnabled: Bool) -> String {
+    static func earlyMediaGate(
+        audioEnabled: Bool,
+        preferAudibleVideo: Bool = false
+    ) -> String {
         let preference = audioEnabled ? "true" : "false"
+        let audibleVideoPreference = preferAudibleVideo ? "true" : "false"
         return #"""
     (() => {
       const configuredAudioPreference = AUDIO_PREFERENCE;
+      const preferAudibleVideo = PREFER_AUDIBLE_VIDEO;
       if (window.__vigilEarlyMediaGate) {
         window.__vigilEarlyMediaGate.setAudioPreference(configuredAudioPreference);
         return;
@@ -500,6 +508,7 @@ enum DOMAdapters {
       const audioContextPrototypeMethods = new WeakMap();
       const audioContextWrappers = new Map();
       let audioPreferred = configuredAudioPreference;
+      let audibleVideoSessionRequested = false;
       let eligibilityResolver = null;
       let audioContextEligibilityResolver = null;
 
@@ -524,6 +533,7 @@ enum DOMAdapters {
           resumeWhenSafe: false,
           settingMute: false,
           mutedExplicitlySet: false,
+          userMuteIntent: false,
           desiredMuted: readProperty(media, mutedProperty, () => media.hasAttribute('muted')),
           desiredDefaultMuted: readProperty(
             media,
@@ -534,9 +544,11 @@ enum DOMAdapters {
         states.set(media, state);
         return state;
       };
-      const desiredRuntimeMute = (state) => (
-        state.mutedExplicitlySet ? state.desiredMuted : state.desiredDefaultMuted
-      );
+      const desiredRuntimeMute = (media, state) => {
+        if (preferAudibleVideo && media instanceof HTMLVideoElement
+            && audibleVideoSessionRequested && !state.userMuteIntent) return false;
+        return state.mutedExplicitlySet ? state.desiredMuted : state.desiredDefaultMuted;
+      };
       const setPhysicalMute = (media, state, muted) => {
         state.settingMute = true;
         try {
@@ -574,7 +586,7 @@ enum DOMAdapters {
         setPhysicalMute(
           media,
           state,
-          audioPreferred ? desiredRuntimeMute(state) : true
+          audioPreferred ? desiredRuntimeMute(media, state) : true
         );
         const shouldResume = resumeRememberedIntent
           && state.resumeWhenSafe
@@ -854,11 +866,22 @@ enum DOMAdapters {
           setPhysicalMute(
             media,
             state,
-            audioPreferred ? desiredRuntimeMute(state) : true
+            audioPreferred ? desiredRuntimeMute(media, state) : true
           );
         } else {
           setPhysicalMute(media, state, true);
         }
+        return true;
+      };
+      const requestAudiblePlayback = (media) => {
+        if (!preferAudibleVideo || !audioPreferred
+            || !(media instanceof HTMLVideoElement)) return false;
+        const state = stateFor(media);
+        if (state.userMuteIntent) return false;
+        audibleVideoSessionRequested = true;
+        state.mutedExplicitlySet = true;
+        state.desiredMuted = false;
+        if (state.allowed) setPhysicalMute(media, state, false);
         return true;
       };
       const setAudioPreference = (enabled) => {
@@ -922,6 +945,7 @@ enum DOMAdapters {
           writable: playDescriptor?.writable ?? true,
           value: function vigilGuardedPlay(...argumentsList) {
             const state = stateFor(this);
+            if (navigator.userActivation?.isActive) requestAudiblePlayback(this);
             if (!state.allowed && isEligible(this)) allow(this, false);
             if (!state.allowed) {
               this.dataset.vigilPlaybackRequested = 'true';
@@ -956,7 +980,15 @@ enum DOMAdapters {
               }
               state.mutedExplicitlySet = true;
               state.desiredMuted = Boolean(value);
-              descriptor.set.call(this, state.allowed && audioPreferred ? Boolean(value) : true);
+              if (preferAudibleVideo && this instanceof HTMLVideoElement
+                  && state.allowed && navigator.userActivation?.isActive) {
+                state.userMuteIntent = Boolean(value);
+                audibleVideoSessionRequested = !Boolean(value);
+              }
+              descriptor.set.call(
+                this,
+                state.allowed && audioPreferred ? desiredRuntimeMute(this, state) : true
+              );
             }
           });
         } catch (_) {}
@@ -988,6 +1020,7 @@ enum DOMAdapters {
         hold,
         allow,
         applyAudioPreference,
+        requestAudiblePlayback,
         setAudioPreference,
         refreshAudioContexts,
         suspendAudioContexts(discardIntent = false) {
@@ -1026,7 +1059,9 @@ enum DOMAdapters {
       });
       addEventListener('pagehide', () => suspendAllAudioContexts(true, false));
     })();
-    """#.replacingOccurrences(of: "AUDIO_PREFERENCE", with: preference)
+    """#
+            .replacingOccurrences(of: "AUDIO_PREFERENCE", with: preference)
+            .replacingOccurrences(of: "PREFER_AUDIBLE_VIDEO", with: audibleVideoPreference)
     }
 
     static func script(for service: SocialService, audioEnabled: Bool) -> String {
@@ -1038,6 +1073,21 @@ enum DOMAdapters {
     }
 
     private static func authenticationDocumentGuard(for service: SocialService, body: String) -> String {
+        if service == .youtube {
+            return #"""
+            (() => {
+              let url;
+              try { url = new URL(location.href); } catch (_) { return; }
+              const host = url.hostname.toLowerCase();
+              // Match SocialLite's public description: load Google's own sign-in
+              // document as an ordinary first-party web page and keep Vigil's
+              // content scripts completely out of that credential surface.
+              if (url.protocol === 'https:'
+                  && (host === 'accounts.google.com' || host === 'consent.youtube.com')) return;
+              GUARDED_BODY
+            })();
+            """#.replacingOccurrences(of: "GUARDED_BODY", with: body)
+        }
         guard service == .instagram else { return body }
         return #"""
         (() => {
@@ -1061,6 +1111,8 @@ enum DOMAdapters {
             // Keep Meta's authentication and security-check environment pristine.
             // If it completes with a same-document route change, reload once so the
             // protected document-start policy is present before feed content renders.
+            if (window.__vigilAuthenticationTransitionWatchdogInstalled) return;
+            window.__vigilAuthenticationTransitionWatchdogInstalled = true;
             const timer = setInterval(() => {
               if (vigilAuthenticationPath(location.href)) return;
               clearInterval(timer);
@@ -1078,8 +1130,16 @@ enum DOMAdapters {
         common(audioEnabled: audioEnabled)
     }
 
+    static func installedFrameSafetyScript(for service: SocialService, audioEnabled: Bool) -> String {
+        authenticationDocumentGuard(for: service, body: frameSafetyScript(audioEnabled: audioEnabled))
+    }
+
     static func controlsScript(for service: SocialService) -> String {
         lockdownProbe(service) + serviceScript(service)
+    }
+
+    static func installedControlsScript(for service: SocialService) -> String {
+        authenticationDocumentGuard(for: service, body: controlsScript(for: service))
     }
 
     static func frameRoutePolicyGuard(for service: SocialService) -> String {
@@ -1302,6 +1362,10 @@ enum DOMAdapters {
             .replacingOccurrences(of: "FALLBACK_PATH", with: fallbackPath)
     }
 
+    static func installedFrameRoutePolicyGuard(for service: SocialService) -> String {
+        authenticationDocumentGuard(for: service, body: frameRoutePolicyGuard(for: service))
+    }
+
     private static func lockdownProbe(_ service: SocialService) -> String {
         let featureKeys: String
         let allowedHosts: String
@@ -1431,6 +1495,10 @@ enum DOMAdapters {
             } catch (_) {}
           };
           window.__vigilBridge = bridge;
+          // Bind the native store before health, surface, text, or media events
+          // can arrive. Fast cache-backed documents can otherwise publish their
+          // one deduplicated ready event before didCommit's async identity read.
+          bridge({ type: 'documentReady' });
 
           if (!window.__vigilCommonInstalled) {
             window.__vigilCommonInstalled = true;
@@ -2055,7 +2123,7 @@ enum DOMAdapters {
                   entry.target.dataset.vigilNearViewport = String(entry.isIntersecting);
                   if (entry.isIntersecting) queueMedia(entry.target, true);
                 });
-              }, { rootMargin: '900px', threshold: 0.01 });
+              }, { rootMargin: '1500px 0px', threshold: 0.01 });
             }
 
             let responsiveMediaRefreshScheduled = false;
@@ -2225,6 +2293,19 @@ enum DOMAdapters {
               delete marker.dataset.vigilBackgroundSubtreePending;
               delete marker.dataset.vigilContentSubtreePending;
             };
+            const visualTreeContains = (ancestor, candidate) => {
+              if (ancestor === candidate) return true;
+              if (ancestor === document) {
+                return candidate instanceof Element && candidate.getRootNode() === document;
+              }
+              if (isShadowInspectionRoot(ancestor)) {
+                return candidate === ancestor
+                  || (candidate instanceof Element && candidate.getRootNode() === ancestor);
+              }
+              return ancestor instanceof Element
+                && candidate instanceof Element
+                && ancestor.contains(candidate);
+            };
             const firstVisualTreeElement = (root, walker) => (
               root instanceof Element ? root : walker.nextNode()
             );
@@ -2342,6 +2423,20 @@ enum DOMAdapters {
             const queueBackgroundTree = (node) => {
               if (!(node instanceof Element || node === document || isShadowInspectionRoot(node))
                   || !isConnectedInspectionRoot(node)) return;
+              for (const [pendingRoot, pendingJob] of pendingBackgroundTrees) {
+                if (!visualTreeContains(pendingRoot, node)) continue;
+                // The pending ancestor already conceals this subtree. Mark its
+                // pass dirty so a mutation behind the iterator is revisited
+                // without scheduling a duplicate descendant walk.
+                pendingJob.dirty = true;
+                requestBackgroundWork();
+                return;
+              }
+              for (const pendingRoot of [...pendingBackgroundTrees.keys()]) {
+                if (!visualTreeContains(node, pendingRoot)) continue;
+                pendingBackgroundTrees.delete(pendingRoot);
+                clearVisualTreePending(pendingRoot);
+              }
               // One ancestor marker fail-closes the complete subtree immediately.
               // A TreeWalker then inspects a bounded number of descendants per
               // idle slice instead of allocating and mutating a full query result.
@@ -2675,7 +2770,18 @@ enum DOMAdapters {
                 const media = event.target instanceof Element
                   ? event.target.closest('video, audio')
                   : null;
-                if (media) applyAudioPreference(media);
+                if (media) {
+                  if (event.isTrusted) {
+                    // Let Instagram's own tap-to-mute handler record an explicit
+                    // choice before supplying the audible-session fallback.
+                    queueMicrotask(() => {
+                      earlyMediaGate?.requestAudiblePlayback(media);
+                      applyAudioPreference(media);
+                    });
+                  } else {
+                    applyAudioPreference(media);
+                  }
+                }
               }, true);
               root.addEventListener('play', (event) => {
                 const media = event.target;

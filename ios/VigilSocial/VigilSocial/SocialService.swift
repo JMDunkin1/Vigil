@@ -110,11 +110,13 @@ enum SocialService: String, CaseIterable, Identifiable {
     }
 
     func usesUnmodifiedAuthenticationDocument(_ url: URL?) -> Bool {
-        guard self == .instagram,
-              let url,
+        guard let url,
               url.scheme?.lowercased() == "https",
               url.port == nil || url.port == 443,
               let host = url.host?.lowercased() else { return false }
+        if self == .youtube {
+            return host == "accounts.google.com" || host == "consent.youtube.com"
+        }
         if Self.host(host, matches: "facebook.com") {
             return allowsNavigation(to: url)
         }
@@ -175,10 +177,7 @@ enum SocialService: String, CaseIterable, Identifiable {
     }
 
     func isUnsupportedEmbeddedAuthentication(_ url: URL) -> Bool {
-        guard self == .youtube,
-              url.scheme?.lowercased() == "https",
-              url.port == nil || url.port == 443 else { return false }
-        return url.host?.lowercased() == "accounts.google.com"
+        false
     }
 
     private static func host(_ host: String, matches domain: String) -> Bool {

@@ -8,11 +8,7 @@ struct RootView: View {
 
     var body: some View {
         let service = store.selectedService
-        if service == .youtube {
-            YouTubeSafariView(request: store.youtubeSafariRequest)
-        } else {
-            filteredWebView(service: service)
-        }
+        filteredWebView(service: service)
     }
 
     private func filteredWebView(service: SocialService) -> some View {

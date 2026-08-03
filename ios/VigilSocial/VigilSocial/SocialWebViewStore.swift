@@ -24,6 +24,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var textInspections: [SocialService: [TextInspectionKey: TextInspection]] = [:]
     private var mainDocumentIDs: [SocialService: String] = [:]
     private var mainDocumentGenerations: [SocialService: UInt64] = [:]
+    private var servicesWithUsableContent: Set<SocialService> = []
     private var mediaClassificationTasks: [MediaRequestKey: Task<Void, Never>] = [:]
     private var mediaClassificationDeadlineTasks: [MediaRequestKey: Task<Void, Never>] = [:]
     private var nativeMediaClassificationExecutions: Set<UUID> = []
@@ -68,16 +69,26 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         super.init()
         for service in SocialService.allCases {
             let key = audioPreferenceKey(service)
-            audioPreferences[service] = defaults.object(forKey: key) == nil ? true : defaults.bool(forKey: key)
+            if service == .instagram {
+                // The fixed Instagram shell no longer exposes the old native
+                // audio toggle. Do not let a legacy off value strand every
+                // future session in a muted state with no way to recover.
+                audioPreferences[service] = true
+                defaults.set(true, forKey: key)
+            } else {
+                audioPreferences[service] = defaults.object(forKey: key) == nil
+                    ? true
+                    : defaults.bool(forKey: key)
+            }
             health[service] = .loading
             surfaceStates[service] = .unknown
         }
-        if loadInitialPages, selectedService != .youtube { _ = webView(for: selectedService) }
+        if loadInitialPages { _ = webView(for: selectedService) }
     }
 
     func select(_ service: SocialService) {
         guard service == fixedService else { return }
-        if fixedService != .youtube { _ = webView(for: fixedService) }
+        _ = webView(for: fixedService)
     }
 
     func open(_ url: URL) {
@@ -85,10 +96,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let scheme = url.scheme?.lowercased() ?? ""
         let destination = scheme == "vigilsocial" || scheme.hasPrefix("vigil-") ? service.homeURL : url
         guard service.allowsNavigation(to: destination), !service.isRestrictedSurface(destination) else { return }
-        if service == .youtube {
-            youtubeSafariRequest = YouTubeSafariRequest(url: destination)
-            return
-        }
         webView(for: fixedService).load(URLRequest(url: destination))
     }
 
@@ -111,17 +118,20 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             forMainFrameOnly: false
         ))
         controller.addUserScript(WKUserScript(
-            source: DOMAdapters.frameSafetyScript(audioEnabled: audioEnabled(for: service)),
+            source: DOMAdapters.installedFrameSafetyScript(
+                for: service,
+                audioEnabled: audioEnabled(for: service)
+            ),
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         ))
         controller.addUserScript(WKUserScript(
-            source: DOMAdapters.frameRoutePolicyGuard(for: service),
+            source: DOMAdapters.installedFrameRoutePolicyGuard(for: service),
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         ))
         controller.addUserScript(WKUserScript(
-            source: DOMAdapters.controlsScript(for: service),
+            source: DOMAdapters.installedControlsScript(for: service),
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         ))
@@ -203,10 +213,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func goHome(_ service: SocialService) {
-        if service == .youtube {
-            youtubeSafariRequest = YouTubeSafariRequest(url: service.homeURL)
-            return
-        }
         let webView = webView(for: service)
         cancelDocumentWork(for: service)
         health[service] = .loading
@@ -281,10 +287,22 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ) else { return }
         }
         switch type {
+        case "documentReady":
+            guard frame.isMainFrame,
+                  let documentID = body["documentID"] as? String,
+                  !documentID.isEmpty,
+                  documentID.utf8.count <= 128 else { return }
+            if let currentDocumentID = mainDocumentIDs[service] {
+                guard currentDocumentID == documentID else { return }
+            } else {
+                mainDocumentIDs[service] = documentID
+            }
         case "health":
             let detail = body["detail"] as? String ?? ""
             switch body["state"] as? String {
-            case "ready": health[service] = .ready
+            case "ready":
+                servicesWithUsableContent.insert(service)
+                health[service] = .ready
             case "unsupported": health[service] = .unsupported(detail)
             case "degraded":
                 health[service] = isAdvisoryHealthMessage(detail)
@@ -729,6 +747,18 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
     }
 
+    private func scheduleNavigationHealthTimeout(for service: SocialService, generation: UInt64) {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            guard let self,
+                  self.mainDocumentGenerations[service, default: 0] == generation,
+                  self.health[service] == .loading else { return }
+            self.health[service] = .degraded(
+                "\(service.displayName) is taking too long to finish loading. Your session is still available; try again or return Home."
+            )
+        }
+    }
+
     func setSurface(_ surface: SocialSurfaceState, for service: SocialService) {
         surfaceStates[service] = surface
         guard let scrollView = webViews[service]?.scrollView else { return }
@@ -944,14 +974,6 @@ extension SocialWebViewStore: WKNavigationDelegate {
             decisionHandler(.cancel, preferences)
             return
         }
-        if service.isUnsupportedEmbeddedAuthentication(url) {
-            health[service] = .unsupported(
-                "Google does not permit YouTube account sign-in inside an embedded web view. YouTube remains available here while signed out."
-            )
-            setSurface(.unknown, for: service)
-            decisionHandler(.cancel, preferences)
-            return
-        }
         if service.isRestrictedSurface(url) {
             health[service] = .advisory("That short-form surface is intentionally unavailable.")
             decisionHandler(.cancel, preferences)
@@ -963,11 +985,18 @@ extension SocialWebViewStore: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
         guard let service = service(for: webView) else { return }
         mainDocumentGenerations[service, default: 0] &+= 1
+        let generation = mainDocumentGenerations[service, default: 0]
         cancelDocumentWork(for: service)
-        if !refreshingServices.contains(service) {
+        // Once a protected page has been presented, keep the web surface visible
+        // during ordinary Instagram document navigations. The document-start
+        // policy still hides unclassified page/media content fail-closed, while
+        // avoiding a full-screen loading takeover for stories and Direct.
+        if !refreshingServices.contains(service),
+           !servicesWithUsableContent.contains(service) {
             health[service] = .loading
         }
         setSurface(.unknown, for: service)
+        scheduleNavigationHealthTimeout(for: service, generation: generation)
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
@@ -982,6 +1011,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
         updateAuxiliaryPageHealthIfNeeded(for: service, in: webView)
         if let url = webView.url, service.usesUnmodifiedAuthenticationDocument(url) {
             if service.auxiliaryPageHealth(for: url) == nil {
+                servicesWithUsableContent.insert(service)
                 health[service] = .ready
             }
             setSurface(.unknown, for: service)

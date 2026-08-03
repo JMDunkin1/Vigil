@@ -1,5 +1,8 @@
 import type { DeviceTarget, VigilState } from "./types.js";
+import { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 import { PERMANENT_SOCIAL_URL_PATTERNS, defaultFocusedSocialSettings } from "./socialFeatureFilters.js";
+
+export { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 
 export const APP_NAME = "Vigil";
 export const PORT = Number(process.env.VIGIL_PORT || 8787);
@@ -595,7 +598,7 @@ export function defaultState(): VigilState {
         mode: "blocklist",
         description: "Blocks social media apps and sites while keeping everything else usable.",
         blockedApps: DEFAULT_BLOCKED_APPS,
-        blockedSites: DEFAULT_BLOCKED_SITES,
+        blockedSites: [...DEFAULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES],
         blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES],
@@ -607,7 +610,7 @@ export function defaultState(): VigilState {
         mode: "blocklist",
         description: "Normal use with permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Stories protection.",
         blockedApps: [],
-        blockedSites: DEFAULT_EXPLICIT_BLOCKED_SITES,
+        blockedSites: [...DEFAULT_EXPLICIT_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES],
         blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES],
@@ -620,7 +623,7 @@ export function defaultState(): VigilState {
         mode: "blocklist",
         description: "Blocks explicit sites and non-social short-form surfaces while leaving regular apps usable.",
         blockedApps: [],
-        blockedSites: DEFAULT_EXPLICIT_BLOCKED_SITES,
+        blockedSites: [...DEFAULT_EXPLICIT_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES],
         blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES],
@@ -633,7 +636,7 @@ export function defaultState(): VigilState {
         mode: "blocklist",
         description: "Removes social apps and blocks social sites while leaving unrelated work and system apps alone.",
         blockedApps: [...FULL_BRICK_BLOCKED_APPS],
-        blockedSites: [...DEFAULT_BLOCKED_SITES],
+        blockedSites: [...DEFAULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES],
         blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS],
         allowedApps: [...DEFAULT_ALLOWED_APPS],
         allowedSites: [...DEFAULT_ALLOWED_SITES]

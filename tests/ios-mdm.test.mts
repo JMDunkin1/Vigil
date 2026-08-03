@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ADULT_BLOCKLIST_SOURCES, clearAdultBlocklistCacheForTest, setAdultBlocklistDomainsForTest } from "../src/adultBlocklist.js";
-import { BRICK_MODE_PROFILE_ID, IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS, PANIC_LOCK_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS, NORMAL_PROFILE_ID, PANIC_LOCK_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDeviceUsageCredential, iosMdmDoctor, iosMdmQueuedPushEligible, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
 import { IOS_APP_STORE_BUNDLE_ID, IOS_PANIC_ALLOWED_APP_BUNDLE_IDS, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER, buildIosConfigurationProfile, iosPolicyTargets, iosProfileSummary } from "../src/iosProfiles.js";
 import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS } from "../src/socialFeatureFilters.js";
@@ -34,6 +34,58 @@ if (removeTestUrlFilterService) {
     exactIndexSnapshotHash: "b".repeat(64)
   }));
   process.once("exit", () => rmSync(testUrlFilterServicePath, { force: true }));
+}
+
+{
+  const state = defaultState();
+  state.deviceControls.ios.enabled = true;
+  state.settings.adultBlocklistEnabled = false;
+  const targets = iosPolicyTargets(state, now);
+  const allPrioritySites = [...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES];
+  assert.equal(allPrioritySites.length >= 200, true, "the Personal priority overlay should cover a couple hundred high-risk domains");
+  assert.equal(allPrioritySites.every((site) => targets.deniedUrls.includes(`https://${site}/`)), true);
+  assert.equal(targets.deniedUrls.includes("http://croxyproxy.com/"), false, "HTTPS-only proxy roots preserve capacity for modern services");
+  assert.equal(targets.deniedUrls.includes("http://anonymouse.com/"), true, "confirmed plain-HTTP proxies need a second scheme entry");
+  assert.equal(DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES.every((site) => targets.deniedUrls.includes(`http://${site}/`)), true);
+  assert.equal(targets.deniedUrls.includes("https://www.croxyproxy.com/"), false, "Apple's www normalization makes this twin redundant");
+  assert.ok(targets.deniedUrls.length <= 500);
+}
+
+{
+  const prioritySites = [...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES];
+  for (const [label, profileId, active] of [
+    ["Normal", NORMAL_PROFILE_ID, false],
+    ["Soft Block", SOFT_BLOCK_PROFILE_ID, true],
+    ["Brick Mode", BRICK_MODE_PROFILE_ID, true]
+  ] as const) {
+    const state = defaultState();
+    state.deviceControls.ios.enabled = true;
+    if (active) {
+      state.activeSessions.phone = {
+        id: `priority-overlay-${profileId}`,
+        title: label,
+        mode: "focus",
+        profileId,
+        lockLevel: "deep",
+        startedAt: now.toISOString(),
+        endsAt: new Date(now.getTime() + 60 * 60 * 1000).toISOString(),
+        canEndEarly: false,
+        source: "manual",
+        deviceTargets: ["phone"],
+        profileSnapshot: profileById(state, profileId)
+      };
+    } else {
+      state.settings.baselineProfileId = profileId;
+    }
+    const targets = iosPolicyTargets(state, now);
+    const deliveredPrioritySites = prioritySites.filter((site) => targets.deniedUrls.includes(`https://${site}/`));
+    assert.equal(deliveredPrioritySites.length >= 200, true, `${label} should retain at least 200 curated high-risk domains`);
+    assert.equal(targets.deniedUrls.includes("https://croxyproxy.com/"), true, `${label} should retain a direct web proxy`);
+    assert.equal(targets.deniedUrls.includes("https://browser.lol/"), true, `${label} should retain a remote browser`);
+    assert.equal(targets.deniedUrls.includes("https://invidious.f5.si/"), true, `${label} should retain an alternate video frontend`);
+    assert.equal(targets.deniedUrls.includes("https://protonvpn.com/"), true, `${label} should retain a free VPN distributor`);
+    assert.ok(targets.deniedUrls.length <= 500);
+  }
 }
 
 {
@@ -295,7 +347,7 @@ if (removeTestUrlFilterService) {
   );
   try {
     const summary = iosProfileSummary(state, now);
-    assert.equal(summary.protection.knownSiteDomainCount, 5, "phone count must describe only adult domains embedded in its profile");
+    assert.equal(summary.protection.knownSiteDomainCount, 5 + DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.length, "phone count must describe every adult domain embedded in its profile");
     assert.notEqual(summary.protection.knownSiteDomainCount, 300, "phone count must not reuse the full desktop blocklist count");
   } finally {
     clearAdultBlocklistCacheForTest();
@@ -520,7 +572,7 @@ if (removeTestUrlFilterService) {
   assert.ok(webFilter, "custom Shorts profile should include a web filter");
   assert.ok(Array.isArray(webFilter.DenyListURLs), "custom Shorts profile should include denied URLs");
   assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts"), true);
-  assert.equal(webFilter.DenyListURLs.includes("https://www.youtube.com/shorts"), true);
+  assert.equal(webFilter.DenyListURLs.includes("https://www.youtube.com/shorts"), false, "Apple normalizes bare and www hosts, so the redundant twin must not consume a slot");
   assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts/"), true, "permanent Shorts variants must survive custom profile snapshots");
 }
 
