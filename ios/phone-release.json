@@ -1,10 +1,10 @@
 {
   "schemaVersion": 2,
-  "version": "0.3.26",
-  "build": 29,
+  "version": "0.3.27",
+  "build": 30,
   "sourceFingerprints": {
-    "personal": "bbdf989365a56d246e870d713336978be08eb332784b26f8dbfb1aa238f607dc",
+    "personal": "0e0afe3fbe480362ec23f0247e4047f4cc273415da9875cc7601d03ec2e82898",
     "enhanced": "33c130da2542d9371f096f10b7c54e9d19cb3f7fafbbbb750be7b501ec3bd51b"
   },
-  "releasedAt": "2026-08-03T22:52:45.698Z"
+  "releasedAt": "2026-08-03T23:08:25.767Z"
 }
