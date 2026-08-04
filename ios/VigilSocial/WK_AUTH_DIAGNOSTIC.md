@@ -68,9 +68,12 @@ the three-flag YouTube-entry invocation:
 ```
 
 The suffix flag does nothing without both the primary diagnostic and auto-load
-flags. It never replaces `customUserAgent`, is unavailable in Release builds,
-and is visibly labelled unsupported in the diagnostic UI and logs. It is not a
-supported Google sign-in path and must never become the production default.
+flags. The diagnostic flag is unavailable in Release builds, never replaces
+`customUserAgent`, and is visibly labelled unsupported in the diagnostic UI and
+logs. The production YouTube-only WK configuration now independently applies
+the same documented suffix as an intentional unsupported compatibility
+exception. That does not make it a Google-supported sign-in path, and this
+credential-free diagnostic did not validate authenticated success.
 
 Run it from the `VigilSocial` scheme in a simulator Debug build. Do not enter
 account credentials: press **Load YouTube sign-in route**, observe Google's

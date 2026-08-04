@@ -70,5 +70,7 @@ additionally requested an `accounts.youtube.com` subframe outside the probe's
 single exact `accounts/SetSID` exception, so the strict allowlist cancelled it.
 Because the probe intentionally records no paths and no credentials were used,
 the trace neither identifies that subframe route nor demonstrates successful
-authentication. The suffix remains an unsupported diagnostic observation, not
-a production recommendation.
+authentication. The diagnostic flag remains Debug-only. The production
+YouTube-only WK configuration now independently uses the same documented
+suffix as an intentional unsupported compatibility exception, but this trace
+did not justify that product decision or validate authenticated success.
