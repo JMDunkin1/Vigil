@@ -150,6 +150,28 @@ assert.match(youtubeWKAuthDiagnosticSource, /^#if DEBUG/u,
   "the WKWebView authentication probe must compile only in Debug builds");
 assert.match(socialAppSource, /#if DEBUG[\s\S]*?YouTubeWKAuthDiagnosticActivation\.isRequested/u,
   "the WKWebView authentication probe must require an explicit Debug launch argument");
+assert.match(
+  youtubeWKAuthDiagnosticSource,
+  /autoLoadArgument = "--vigil-youtube-wk-auth-diagnostic-autoload"[\s\S]*?arguments\.contains\(optInArgument\) && arguments\.contains\(autoLoadArgument\)/u,
+  "automatic loading must require a second explicit argument in addition to the primary diagnostic opt-in"
+);
+assert.match(socialAppSource, /YouTubeWKAuthDiagnosticView\([\s\S]*?shouldAutoLoad/u,
+  "the Debug-only app route must explicitly pass the double-opt-in auto-load decision");
+assert.match(
+  youtubeWKAuthDiagnosticSource,
+  /youtubeEntryArgument = "--vigil-youtube-wk-auth-diagnostic-youtube-entry"[\s\S]*?https:\/\/m\.youtube\.com\/signin/u,
+  "the probe should offer a separately gated first-party YouTube sign-in entry route"
+);
+assert.match(
+  youtubeWKAuthDiagnosticSource,
+  /url\.absoluteString == "about:blank"[\s\S]*?return permitsAboutBlankSubframe/u,
+  "about:blank must remain blocked except when the delegate identifies a subframe"
+);
+assert.match(
+  youtubeWKAuthDiagnosticSource,
+  /didReceiveServerRedirectForProvisionalNavigation[\s\S]*?safeHostLabel/u,
+  "the probe should record server redirects using sanitized host labels only"
+);
 assert.match(youtubeWKAuthDiagnosticSource, /websiteDataStore\s*=\s*\.default\(\)/u,
   "the probe should test WebKit's ordinary persistent data store");
 assert.match(youtubeWKAuthDiagnosticSource, /accounts\.google\.com\/ServiceLogin\?service=youtube/u,
@@ -161,8 +183,16 @@ assert.match(
 );
 assert.match(youtubeWKAuthDiagnosticSource, /webView\.customUserAgent = nil/u,
   "the probe must retain WebKit's truthful user-agent identity");
-assert.doesNotMatch(youtubeWKAuthDiagnosticSource, /applicationNameForUserAgent\s*=/u,
-  "the probe must not append a browser or product identity to WebKit's user agent");
+assert.match(
+  youtubeWKAuthDiagnosticSource,
+  /if useUnsupportedSafariSuffix[\s\S]*?applicationNameForUserAgent = "Version\/17\.0 Safari\/605\.1\.15"/u,
+  "the documented unsupported Safari suffix must remain inside its explicit diagnostic variant"
+);
+assert.match(
+  youtubeWKAuthDiagnosticSource,
+  /usesUnsupportedSafariSuffix[\s\S]*?shouldAutoLoad\(arguments: arguments\) && arguments\.contains\(safariSuffixArgument\)/u,
+  "the unsupported Safari suffix must require both the primary and auto-load diagnostic opt-ins"
+);
 assert.doesNotMatch(youtubeWKAuthDiagnosticSource, /preferredContentMode\s*=/u,
   "the probe must not force a desktop or mobile content mode that could alter WebKit's default identity");
 assert.doesNotMatch(

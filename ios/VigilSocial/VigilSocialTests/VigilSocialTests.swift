@@ -5253,6 +5253,41 @@ final class VigilSocialTests: XCTestCase {
             "VigilSocial",
             YouTubeWKAuthDiagnosticActivation.optInArgument
         ]))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticActivation.shouldAutoLoad(arguments: [
+            "VigilSocial",
+            YouTubeWKAuthDiagnosticActivation.autoLoadArgument
+        ]))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticActivation.shouldAutoLoad(arguments: [
+            "VigilSocial",
+            YouTubeWKAuthDiagnosticActivation.optInArgument
+        ]))
+        XCTAssertTrue(YouTubeWKAuthDiagnosticActivation.shouldAutoLoad(arguments: [
+            "VigilSocial",
+            YouTubeWKAuthDiagnosticActivation.optInArgument,
+            YouTubeWKAuthDiagnosticActivation.autoLoadArgument
+        ]))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticActivation.startsAtYouTube(arguments: [
+            "VigilSocial",
+            YouTubeWKAuthDiagnosticActivation.optInArgument,
+            YouTubeWKAuthDiagnosticActivation.youtubeEntryArgument
+        ]))
+        XCTAssertTrue(YouTubeWKAuthDiagnosticActivation.startsAtYouTube(arguments: [
+            "VigilSocial",
+            YouTubeWKAuthDiagnosticActivation.optInArgument,
+            YouTubeWKAuthDiagnosticActivation.autoLoadArgument,
+            YouTubeWKAuthDiagnosticActivation.youtubeEntryArgument
+        ]))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticActivation.usesUnsupportedSafariSuffix(arguments: [
+            "VigilSocial",
+            YouTubeWKAuthDiagnosticActivation.optInArgument,
+            YouTubeWKAuthDiagnosticActivation.safariSuffixArgument
+        ]))
+        XCTAssertTrue(YouTubeWKAuthDiagnosticActivation.usesUnsupportedSafariSuffix(arguments: [
+            "VigilSocial",
+            YouTubeWKAuthDiagnosticActivation.optInArgument,
+            YouTubeWKAuthDiagnosticActivation.autoLoadArgument,
+            YouTubeWKAuthDiagnosticActivation.safariSuffixArgument
+        ]))
     }
 
     @MainActor
@@ -5264,6 +5299,15 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(configuration.userContentController.userScripts.isEmpty)
         XCTAssertNil(configuration.applicationNameForUserAgent)
         XCTAssertNil(session.webView.customUserAgent)
+
+        let suffixSession = YouTubeWKAuthDiagnosticSession(
+            useUnsupportedSafariSuffix: true
+        )
+        XCTAssertEqual(
+            suffixSession.webView.configuration.applicationNameForUserAgent,
+            "Version/17.0 Safari/605.1.15"
+        )
+        XCTAssertNil(suffixSession.webView.customUserAgent)
     }
 
     @MainActor
@@ -5293,6 +5337,12 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: try XCTUnwrap(
             URL(string: "https://accounts.google.com:8443/ServiceLogin")
         )))
+        let aboutBlank = try XCTUnwrap(URL(string: "about:blank"))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: aboutBlank))
+        XCTAssertTrue(YouTubeWKAuthDiagnosticSession.allowsNavigation(
+            to: aboutBlank,
+            permitsAboutBlankSubframe: true
+        ))
     }
     #endif
 

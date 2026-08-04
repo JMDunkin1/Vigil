@@ -5,9 +5,24 @@ import WebKit
 
 enum YouTubeWKAuthDiagnosticActivation {
     static let optInArgument = "--vigil-youtube-wk-auth-diagnostic"
+    static let autoLoadArgument = "--vigil-youtube-wk-auth-diagnostic-autoload"
+    static let youtubeEntryArgument = "--vigil-youtube-wk-auth-diagnostic-youtube-entry"
+    static let safariSuffixArgument = "--vigil-youtube-wk-auth-diagnostic-safari-suffix"
 
     static func isRequested(arguments: [String]) -> Bool {
         arguments.contains(optInArgument)
+    }
+
+    static func shouldAutoLoad(arguments: [String]) -> Bool {
+        arguments.contains(optInArgument) && arguments.contains(autoLoadArgument)
+    }
+
+    static func startsAtYouTube(arguments: [String]) -> Bool {
+        shouldAutoLoad(arguments: arguments) && arguments.contains(youtubeEntryArgument)
+    }
+
+    static func usesUnsupportedSafariSuffix(arguments: [String]) -> Bool {
+        shouldAutoLoad(arguments: arguments) && arguments.contains(safariSuffixArgument)
     }
 }
 
@@ -25,19 +40,36 @@ final class YouTubeWKAuthDiagnosticSession: NSObject, ObservableObject {
     private static let signInURL = URL(
         string: "https://accounts.google.com/ServiceLogin?service=youtube"
     )!
+    private static let youtubeSignInURL = URL(string: "https://m.youtube.com/signin")!
 
     @Published private(set) var events: [Event] = []
 
     let webView: WKWebView
+    private let startURL: URL
 
-    override init() {
+    init(
+        autoLoad: Bool = false,
+        startAtYouTube: Bool = false,
+        useUnsupportedSafariSuffix: Bool = false
+    ) {
+        startURL = startAtYouTube ? Self.youtubeSignInURL : Self.signInURL
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.userContentController = WKUserContentController()
+        let agentLabel: String
+        if useUnsupportedSafariSuffix {
+            // TinyTube documents this Safari-looking application-name suffix as
+            // an unsupported workaround. Keep it inside this explicit Debug
+            // experiment; the default and every Release build remain truthful.
+            configuration.applicationNameForUserAgent = "Version/17.0 Safari/605.1.15"
+            agentLabel = "unsupported-safari-suffix"
+        } else {
+            agentLabel = "default-webkit"
+        }
 
         webView = WKWebView(frame: .zero, configuration: configuration)
-        // Any custom user agent or application-name suffix would alter the
-        // experiment. Keep WebKit's truthful default identity intact.
+        // Never replace WebKit's user agent. The explicit comparison above may
+        // append only its documented suffix; the default identity stays intact.
         webView.customUserAgent = nil
         webView.allowsBackForwardNavigationGestures = true
         webView.allowsLinkPreview = false
@@ -45,12 +77,16 @@ final class YouTubeWKAuthDiagnosticSession: NSObject, ObservableObject {
         super.init()
         webView.navigationDelegate = self
         webView.uiDelegate = self
-        record("ready agent=default-webkit store=persistent scripts=none")
+        record("ready agent=\(agentLabel) store=persistent scripts=none")
+        if autoLoad {
+            record("autoload enabled=true")
+            loadSignInRoute()
+        }
     }
 
     func loadSignInRoute() {
-        record("requested host=\(Self.safeHostLabel(for: Self.signInURL))")
-        webView.load(URLRequest(url: Self.signInURL))
+        record("requested host=\(Self.safeHostLabel(for: startURL))")
+        webView.load(URLRequest(url: startURL))
     }
 
     func reload() {
@@ -67,7 +103,10 @@ final class YouTubeWKAuthDiagnosticSession: NSObject, ObservableObject {
         record("stopped")
     }
 
-    static func allowsNavigation(to url: URL) -> Bool {
+    static func allowsNavigation(to url: URL, permitsAboutBlankSubframe: Bool = false) -> Bool {
+        if url.absoluteString == "about:blank" {
+            return permitsAboutBlankSubframe
+        }
         if url.scheme?.lowercased() == "https",
            url.port == nil || url.port == 443,
            url.host?.lowercased() == "accounts.youtube.com" {
@@ -123,11 +162,15 @@ extension YouTubeWKAuthDiagnosticSession: WKNavigationDelegate {
         }
 
         let host = Self.safeHostLabel(for: url)
+        let isSubframe = navigationAction.targetFrame?.isMainFrame == false
         let frame = navigationAction.targetFrame == nil
             ? "popup"
-            : navigationAction.targetFrame?.isMainFrame == true ? "main" : "subframe"
+            : isSubframe ? "subframe" : "main"
         let kind = Self.navigationKind(navigationAction.navigationType)
-        guard Self.allowsNavigation(to: url) else {
+        guard Self.allowsNavigation(
+            to: url,
+            permitsAboutBlankSubframe: isSubframe
+        ) else {
             record("cancelled host=\(host) frame=\(frame) kind=\(kind) reason=allowlist")
             decisionHandler(.cancel, preferences)
             return
@@ -150,6 +193,13 @@ extension YouTubeWKAuthDiagnosticSession: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
         record("finished host=\(Self.safeHostLabel(for: webView.url))")
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation?
+    ) {
+        record("server-redirect host=\(Self.safeHostLabel(for: webView.url))")
     }
 
     func webView(
@@ -191,14 +241,32 @@ extension YouTubeWKAuthDiagnosticSession: WKUIDelegate {
 }
 
 struct YouTubeWKAuthDiagnosticView: View {
-    @StateObject private var session = YouTubeWKAuthDiagnosticSession()
+    @StateObject private var session: YouTubeWKAuthDiagnosticSession
+    private let usesUnsupportedSafariSuffix: Bool
+
+    init(
+        autoLoad: Bool = false,
+        startAtYouTube: Bool = false,
+        useUnsupportedSafariSuffix: Bool = false
+    ) {
+        usesUnsupportedSafariSuffix = useUnsupportedSafariSuffix
+        _session = StateObject(
+            wrappedValue: YouTubeWKAuthDiagnosticSession(
+                autoLoad: autoLoad,
+                startAtYouTube: startAtYouTube,
+                useUnsupportedSafariSuffix: useUnsupportedSafariSuffix
+            )
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 Label("Debug-only YouTube sign-in probe", systemImage: "stethoscope")
                     .font(.headline)
-                Text("Pristine WebKit user agent")
+                Text(usesUnsupportedSafariSuffix
+                    ? "Unsupported Safari-suffix comparison"
+                    : "Pristine WebKit user agent")
                     .font(.subheadline.weight(.semibold))
                 Text("This probe records host names, response codes, and navigation types only. It never reads cookies, page text, form values, or credentials. You do not need to enter credentials; stop when Google shows its result.")
                     .font(.footnote)

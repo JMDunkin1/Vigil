@@ -9,7 +9,8 @@ Safety properties:
 - The code is compiled only in `DEBUG` builds.
 - It appears only when the YouTube target receives the explicit
   `--vigil-youtube-wk-auth-diagnostic` launch argument.
-- It starts without loading a page and requires a deliberate button press.
+- By default it starts without loading a page and requires a deliberate button
+  press. Credential-free simulator tracing requires a second explicit opt-in.
 - It uses WebKit's persistent default website-data store but never enumerates,
   exports, prints, or copies cookies.
 - It installs no user scripts or native message bridge on any page.
@@ -18,19 +19,58 @@ Safety properties:
   errors, form values, and credentials are excluded.
 - Navigation remains restricted to Vigil's existing YouTube and Google-auth
   allowlist plus YouTube's exact `accounts.youtube.com/accounts/SetSID` session
-  handoff endpoint. Shorts routes remain blocked.
+  handoff endpoint. `about:blank` is permitted only for a subframe; main-frame
+  and popup navigation remain strict. Shorts routes remain blocked.
 - It never opens Safari or another app.
 
-The harness leaves WebKit's user agent untouched. Enable it with this launch
-argument:
+By default, the harness leaves WebKit's user agent untouched. Enable it with
+this launch argument:
 
 ```text
 --vigil-youtube-wk-auth-diagnostic
 ```
 
-There is intentionally no custom-user-agent or application-name variant.
-Spoofing or modifying browser identity would violate the parity contract and
-would not establish a supported Google sign-in path.
+For a credential-free simulator trace, pass both that argument and the
+separate auto-load opt-in:
+
+```text
+--vigil-youtube-wk-auth-diagnostic
+--vigil-youtube-wk-auth-diagnostic-autoload
+```
+
+The auto-load flag does nothing without the primary diagnostic flag. It loads
+only the public YouTube `ServiceLogin` entry document; it does not submit a
+form or interact with the page.
+
+To exercise YouTube's own first-party entry point instead of beginning directly
+at Google, add a third route selector:
+
+```text
+--vigil-youtube-wk-auth-diagnostic
+--vigil-youtube-wk-auth-diagnostic-autoload
+--vigil-youtube-wk-auth-diagnostic-youtube-entry
+```
+
+That route begins at `https://m.youtube.com/signin` and follows ordinary server
+redirects through the same host-only logger. The route selector does nothing
+unless both diagnostic and auto-load flags are also present.
+
+See `WK_AUTH_DIAGNOSTIC_TRACE.md` for the credential-free iOS 27 simulator
+result and its deliberately limited interpretation.
+
+TinyTube publicly documents an unsupported comparison configuration that adds
+`Version/17.0 Safari/605.1.15` through WebKit's
+`applicationNameForUserAgent`. It can be tested only by adding a fourth flag to
+the three-flag YouTube-entry invocation:
+
+```text
+--vigil-youtube-wk-auth-diagnostic-safari-suffix
+```
+
+The suffix flag does nothing without both the primary diagnostic and auto-load
+flags. It never replaces `customUserAgent`, is unavailable in Release builds,
+and is visibly labelled unsupported in the diagnostic UI and logs. It is not a
+supported Google sign-in path and must never become the production default.
 
 Run it from the `VigilSocial` scheme in a simulator Debug build. Do not enter
 account credentials: press **Load YouTube sign-in route**, observe Google's

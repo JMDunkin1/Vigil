@@ -12,7 +12,18 @@ struct VigilSocialApp: App {
                    YouTubeWKAuthDiagnosticActivation.isRequested(
                     arguments: ProcessInfo.processInfo.arguments
                    ) {
-                    YouTubeWKAuthDiagnosticView()
+                    YouTubeWKAuthDiagnosticView(
+                        autoLoad: YouTubeWKAuthDiagnosticActivation.shouldAutoLoad(
+                            arguments: ProcessInfo.processInfo.arguments
+                        ),
+                        startAtYouTube: YouTubeWKAuthDiagnosticActivation.startsAtYouTube(
+                            arguments: ProcessInfo.processInfo.arguments
+                        ),
+                        useUnsupportedSafariSuffix:
+                            YouTubeWKAuthDiagnosticActivation.usesUnsupportedSafariSuffix(
+                                arguments: ProcessInfo.processInfo.arguments
+                            )
+                    )
                 } else {
                     RootView(store: store)
                 }
