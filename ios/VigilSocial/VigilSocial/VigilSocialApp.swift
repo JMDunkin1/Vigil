@@ -6,8 +6,21 @@ struct VigilSocialApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(store: store)
-            .onOpenURL { store.open($0) }
+            Group {
+                #if DEBUG
+                if store.fixedService == .youtube,
+                   YouTubeWKAuthDiagnosticActivation.isRequested(
+                    arguments: ProcessInfo.processInfo.arguments
+                   ) {
+                    YouTubeWKAuthDiagnosticView()
+                } else {
+                    RootView(store: store)
+                }
+                #else
+                RootView(store: store)
+                #endif
+            }
+                .onOpenURL { store.open($0) }
         }
     }
 }

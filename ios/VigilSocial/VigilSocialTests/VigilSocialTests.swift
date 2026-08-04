@@ -5245,6 +5245,57 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(contentScripts[0]["all_frames"] as? Bool, false)
     }
 
+    #if DEBUG
+    func testYouTubeWKAuthDiagnosticRequiresExplicitLaunchOptIn() {
+        XCTAssertFalse(YouTubeWKAuthDiagnosticActivation.isRequested(arguments: []))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticActivation.isRequested(arguments: ["VigilSocial"]))
+        XCTAssertTrue(YouTubeWKAuthDiagnosticActivation.isRequested(arguments: [
+            "VigilSocial",
+            YouTubeWKAuthDiagnosticActivation.optInArgument
+        ]))
+    }
+
+    @MainActor
+    func testYouTubeWKAuthDiagnosticUsesPristinePersistentScriptlessWebKit() {
+        let session = YouTubeWKAuthDiagnosticSession()
+        let configuration = session.webView.configuration
+
+        XCTAssertTrue(configuration.websiteDataStore.isPersistent)
+        XCTAssertTrue(configuration.userContentController.userScripts.isEmpty)
+        XCTAssertNil(configuration.applicationNameForUserAgent)
+        XCTAssertNil(session.webView.customUserAgent)
+    }
+
+    @MainActor
+    func testYouTubeWKAuthDiagnosticLogsOnlySanitizedHostsAndKeepsShortsBlocked() throws {
+        let sensitive = try XCTUnwrap(URL(
+            string: "https://accounts.google.com/ServiceLogin/private/email@example.com?code=secret#token"
+        ))
+        let label = YouTubeWKAuthDiagnosticSession.safeHostLabel(for: sensitive)
+
+        XCTAssertEqual(label, "accounts.google.com")
+        XCTAssertFalse(label.contains("private"))
+        XCTAssertFalse(label.contains("email"))
+        XCTAssertFalse(label.contains("secret"))
+        XCTAssertTrue(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: sensitive))
+        XCTAssertTrue(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/SetSID?ssdc=private")
+        )))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/Other")
+        )))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://m.youtube.com/shorts/audit")
+        )))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://example.com/ServiceLogin")
+        )))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.google.com:8443/ServiceLogin")
+        )))
+    }
+    #endif
+
     private func youtubeInteractionExtensionSource() throws -> String {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

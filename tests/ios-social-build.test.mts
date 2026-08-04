@@ -31,6 +31,14 @@ const youtubeSafariSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "YouTubeSafariView.swift"),
   "utf8"
 );
+const youtubeWKAuthDiagnosticSource = await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilSocial", "YouTubeWKAuthDiagnostic.swift"),
+  "utf8"
+);
+const socialAppSource = await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilSocial", "VigilSocialApp.swift"),
+  "utf8"
+);
 const youtubeBlockerRules = JSON.parse(await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilYouTubeShortsBlocker", "blockerList.json"),
   "utf8"
@@ -137,6 +145,30 @@ assert.match(
   socialWebViewStoreSource,
   /if loadInitialPages, selectedService != \.youtube/u,
   "the YouTube filter host must not create or load a WKWebView"
+);
+assert.match(youtubeWKAuthDiagnosticSource, /^#if DEBUG/u,
+  "the WKWebView authentication probe must compile only in Debug builds");
+assert.match(socialAppSource, /#if DEBUG[\s\S]*?YouTubeWKAuthDiagnosticActivation\.isRequested/u,
+  "the WKWebView authentication probe must require an explicit Debug launch argument");
+assert.match(youtubeWKAuthDiagnosticSource, /websiteDataStore\s*=\s*\.default\(\)/u,
+  "the probe should test WebKit's ordinary persistent data store");
+assert.match(youtubeWKAuthDiagnosticSource, /accounts\.google\.com\/ServiceLogin\?service=youtube/u,
+  "the probe must exercise Google's first-party YouTube ServiceLogin document without private OAuth configuration");
+assert.match(
+  youtubeWKAuthDiagnosticSource,
+  /host\?\.lowercased\(\) == "accounts\.youtube\.com"[\s\S]*?url\.path == "\/accounts\/SetSID"/u,
+  "the probe must narrowly permit YouTube's first-party post-authentication session handoff"
+);
+assert.match(youtubeWKAuthDiagnosticSource, /webView\.customUserAgent = nil/u,
+  "the probe must retain WebKit's truthful user-agent identity");
+assert.doesNotMatch(youtubeWKAuthDiagnosticSource, /applicationNameForUserAgent\s*=/u,
+  "the probe must not append a browser or product identity to WebKit's user agent");
+assert.doesNotMatch(youtubeWKAuthDiagnosticSource, /preferredContentMode\s*=/u,
+  "the probe must not force a desktop or mobile content mode that could alter WebKit's default identity");
+assert.doesNotMatch(
+  youtubeWKAuthDiagnosticSource,
+  /addUserScript|evaluateJavaScript|httpCookieStore|HTTPCookie|UIApplication\.shared\.open/u,
+  "the probe must not inject scripts, inspect cookies/page content, or open Safari"
 );
 assert.match(youtubeSafariSource, /SFSafariViewController/u);
 assert.match(
