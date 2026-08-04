@@ -1407,13 +1407,16 @@ enum DOMAdapters {
     private static func lockdownProbe(_ service: SocialService) -> String {
         let featureKeys: String
         let allowedHosts: String
+        let priorityFeature: String
         switch service {
         case .instagram:
             featureKeys = "['reels', 'explore', 'suggested', 'shopping', 'ads']"
             allowedHosts = "['instagram.com', 'www.instagram.com']"
+            priorityFeature = "reels"
         case .youtube:
             featureKeys = "['home', 'explore', 'suggested', 'ads']"
             allowedHosts = "['youtube.com', 'www.youtube.com', 'm.youtube.com']"
+            priorityFeature = "home"
         }
         return #"""
         (() => {
@@ -1422,9 +1425,10 @@ enum DOMAdapters {
           const allowedHosts = ALLOWED_HOSTS;
           if (!allowedHosts.includes(pageHost)) return;
           window.__vigilPolicyProbeInstalled = true;
-          let request = 0;
           const featureKeys = FEATURE_KEYS;
+          const priorityFeature = 'PRIORITY_FEATURE';
           const blockedFeatures = new Map(featureKeys.map((key) => [key, null]));
+          const inFlightProbes = new Map();
           const publish = (key, blocked) => {
             if (!blockedFeatures.has(key)) return;
             const normalized = Boolean(blocked);
@@ -1446,16 +1450,18 @@ enum DOMAdapters {
           });
           document.documentElement.dataset.vigilPolicyTier = 'soft';
 
-          const probe = async () => {
-            const current = ++request;
+          const probeFeature = (key) => {
+            if (!featureKeys.includes(key)) return Promise.resolve();
+            const existing = inFlightProbes.get(key);
+            if (existing) return existing;
             if (!navigator.onLine) {
-              featureKeys.forEach((key) => publish(key, true));
-              return;
+              publish(key, true);
+              return Promise.resolve();
             }
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 6000);
-            try {
-              const probes = featureKeys.map(async (key) => {
+            const task = (async () => {
+              const controller = new AbortController();
+              const timeout = setTimeout(() => controller.abort(), 6000);
+              try {
                 const requestedURL = new URL('/', location.origin);
                 requestedURL.searchParams.set('__vigil_feature', key);
                 try {
@@ -1476,22 +1482,23 @@ enum DOMAdapters {
                     && responseURL.protocol === 'https:'
                     && isServiceHost
                     && responseURL.searchParams.get('__vigil_feature') === key;
-                  if (current === request) publish(key, !accepted);
+                  publish(key, !accepted);
                 } catch (_) {
-                  if (current === request) publish(key, true);
+                  publish(key, true);
                 }
-              });
-              // Publish each feature as soon as its own sentinel resolves. A slow
-              // optional probe must not leave unrelated available surfaces hidden.
-              await Promise.allSettled(probes);
-            } catch (_) {
-              // The managed device filter rejects feature probes before they
-              // reach the service. Network uncertainty also fails restrictive.
-              if (current === request) featureKeys.forEach((key) => publish(key, true));
-            } finally {
-              clearTimeout(timeout);
-            }
+              } finally {
+                clearTimeout(timeout);
+              }
+            })();
+            inFlightProbes.set(key, task);
+            task.finally(() => {
+              if (inFlightProbes.get(key) === task) inFlightProbes.delete(key);
+            });
+            return task;
           };
+          const probe = (requestedFeatures = featureKeys) => Promise.allSettled(
+            [...new Set(requestedFeatures)].map(probeFeature)
+          );
           let initialProbeStarted = false;
           let initialProbeRequest = 0;
           const runInitialProbe = () => {
@@ -1500,7 +1507,7 @@ enum DOMAdapters {
             if (initialProbeRequest && typeof cancelIdleCallback === 'function') {
               cancelIdleCallback(initialProbeRequest);
             }
-            probe();
+            probe(featureKeys.filter((key) => key !== priorityFeature));
           };
           const scheduleInitialProbe = () => {
             if (initialProbeStarted || initialProbeRequest) return;
@@ -1510,6 +1517,11 @@ enum DOMAdapters {
               initialProbeRequest = setTimeout(runInitialProbe, 500);
             }
           };
+          // Reels/Home is the primary navigation destination and its control is
+          // fail-closed while pending. Resolve that one sentinel immediately;
+          // waiting for the service's load event made the control disappear for
+          // several seconds on an otherwise usable page.
+          probe([priorityFeature]);
           if (document.readyState === 'complete') scheduleInitialProbe();
           else addEventListener('load', scheduleInitialProbe, { once: true });
           // A stalled third-party resource must not leave feature availability
@@ -1517,18 +1529,29 @@ enum DOMAdapters {
           // this bounded startup grace lets Instagram's own first load win.
           setTimeout(scheduleInitialProbe, 5000);
           addEventListener('online', () => {
-            if (initialProbeStarted) probe();
-            else scheduleInitialProbe();
+            probe([priorityFeature]);
+            if (initialProbeStarted) {
+              probe(featureKeys.filter((key) => key !== priorityFeature));
+            } else scheduleInitialProbe();
           });
           addEventListener('focus', () => {
-            if (initialProbeStarted) probe();
-            else scheduleInitialProbe();
+            probe([priorityFeature]);
+            if (!initialProbeStarted) scheduleInitialProbe();
           });
-          setInterval(probe, 15000);
+          // Revalidate one feature per tick instead of sending a burst of every
+          // sentinel every 15 seconds. The OS deny rules still guard the actual
+          // routes, while the companion keeps each DOM toggle fresh without
+          // competing continuously with Story and Reel media requests.
+          let periodicProbeIndex = featureKeys.length > 1 ? 1 : 0;
+          setInterval(() => {
+            probe([featureKeys[periodicProbeIndex]]);
+            periodicProbeIndex = (periodicProbeIndex + 1) % featureKeys.length;
+          }, 15000);
         })();
         """#
             .replacingOccurrences(of: "FEATURE_KEYS", with: featureKeys)
             .replacingOccurrences(of: "ALLOWED_HOSTS", with: allowedHosts)
+            .replacingOccurrences(of: "PRIORITY_FEATURE", with: priorityFeature)
     }
 
     private static func instagramCompatibilityScript(audioEnabled: Bool) -> String {
@@ -4369,13 +4392,14 @@ enum DOMAdapters {
       const reelsScrollContainers = new Set();
       const reelsCards = new Set();
       const reelsMetadata = new Set();
+      const reelsMetadataByCard = new WeakMap();
       const reelsRepostProxies = new Set();
       const reelsMetadataListeners = new WeakSet();
       const reelsLayoutListeners = new WeakSet();
       let reelsNormalizationScheduled = false;
       let reelsNormalizationTimer = 0;
       let lastReelsNormalizationAt = -Infinity;
-      const minimumReelsNormalizationInterval = 160;
+      const minimumReelsNormalizationInterval = 320;
 
       let reelsWarmLink = null;
       const warmReelsRoute = () => {
@@ -5009,7 +5033,12 @@ enum DOMAdapters {
           card.dataset.vigilInstagramReelsCard = 'true';
           card.style.removeProperty('--vigil-instagram-reels-card-height');
           card.style.removeProperty('--vigil-instagram-reels-bottom-clearance');
-          const metadata = reelMetadataFor(card);
+          let metadata = reelsMetadataByCard.get(card);
+          if (!(metadata instanceof Element)
+              || !metadata.isConnected || !card.contains(metadata)) {
+            metadata = reelMetadataFor(card);
+            if (metadata) reelsMetadataByCard.set(card, metadata);
+          }
           if (metadata) {
             nextMetadata.add(metadata);
             metadata.dataset.vigilInstagramReelsMetadata = 'true';
@@ -5026,7 +5055,7 @@ enum DOMAdapters {
           }
           reconcileRepostControl(card);
           installReelLayoutListener(container);
-          if (processedCards >= 5 || inspected >= 160) break;
+          if (processedCards >= 3 || inspected >= 160) break;
         }
         reelsScrollContainers.forEach((container) => {
           if (nextContainers.has(container)) return;
@@ -6020,8 +6049,25 @@ enum DOMAdapters {
       let fullReconcileRequested = false;
       const reconcileRoots = new Set();
       const scheduleReconcile = (root = null, full = false) => {
-        if (full) fullReconcileRequested = true;
-        if (root instanceof Element) reconcileRoots.add(root);
+        if (full) {
+          fullReconcileRequested = true;
+          reconcileRoots.clear();
+        }
+        if (root instanceof Element && !fullReconcileRequested) {
+          let covered = false;
+          for (const existing of reconcileRoots) {
+            if (existing.contains(root)) {
+              covered = true;
+              break;
+            }
+            if (root.contains(existing)) reconcileRoots.delete(existing);
+          }
+          if (!covered) reconcileRoots.add(root);
+          if (reconcileRoots.size >= 24) {
+            fullReconcileRequested = true;
+            reconcileRoots.clear();
+          }
+        }
         if (reconcileScheduled) return;
         reconcileScheduled = true;
         requestAnimationFrame(() => {
@@ -6104,7 +6150,6 @@ enum DOMAdapters {
       });
       document.addEventListener('__vigilPolicyFeaturesChanged', () => {
         scheduleReconcile(null, true);
-        scheduleReelsWarmup();
         scheduleHealth(450);
       });
       const instagramRouteChanged = () => {
@@ -6125,7 +6170,15 @@ enum DOMAdapters {
       window.visualViewport?.addEventListener('resize', scheduleReelSurfaceNormalization, {
         passive: true
       });
-      scheduleReelsWarmup();
+      // A speculative Reels document competes with Instagram's initial feed
+      // resources on a cold connection. Keep pointer-down warming immediate,
+      // but do background warming only after the first page has fully loaded
+      // and enjoyed an additional quiet window.
+      const scheduleBackgroundReelsWarmup = () => {
+        setTimeout(scheduleReelsWarmup, 4000);
+      };
+      if (document.readyState === 'complete') scheduleBackgroundReelsWarmup();
+      else addEventListener('load', scheduleBackgroundReelsWarmup, { once: true });
       // The adapter and its fail-closed feature CSS are installed by this point.
       // Inspect the already-present shell immediately instead of adding a fixed
       // half-second to every cold launch.

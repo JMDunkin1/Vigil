@@ -8,6 +8,9 @@
 
   const MINI_ATTRIBUTE = 'data-vigil-youtube-miniplayer';
   const SHELL_ID = 'vigil-youtube-miniplayer-shell';
+  const HIDDEN_HANDLE_ID = 'vigil-youtube-miniplayer-handle';
+  const HISTORY_STATE_KEY = '__vigilYouTubeMiniplayer';
+  const HISTORY_MARKER_KIND = 'vigil-youtube-miniplayer-history-v1';
   const STYLE_ID = 'vigil-youtube-parity-style';
   const WATCH_SELECTOR = 'ytm-watch, ytd-watch-flexy, [page-subtype="watch"]';
   const PLAYER_SELECTOR = 'ytm-player, ytd-player, #player-container-id, #player';
@@ -18,16 +21,53 @@
   const FORM_CONTROL_SELECTOR = 'a, input, textarea, select';
   const EDGE_GESTURE_WIDTH = 24;
   const html = document.documentElement;
+  const miniPointers = new Map();
 
   let gesture = null;
+  let pinchGesture = null;
   let miniPlayer = null;
   let miniVideo = null;
   let miniVideoID = '';
+  let miniWatchURL = '';
+  let miniOriginMarker = null;
+  let miniSessionID = '';
+  let miniRouteIndex = null;
+  let miniRouteURLs = [];
+  let miniObservedHistoryLength = 0;
+  let miniOriginalPushState = null;
+  let miniOriginalReplaceState = null;
+  let miniInstalledPushState = null;
+  let miniInstalledReplaceState = null;
+  let miniHistoryMutationSerial = 0;
+  let miniOriginHistoryMarkerWritten = false;
+  let miniWasPlaying = false;
+  let miniEndedHandler = null;
+  let hiddenPlayerWasPlaying = false;
+  let restoreMode = null;
+  let restoreTargetURL = '';
+  let restoreGeneration = 0;
+  let restoreFallbackStartURL = '';
+  let restoreFallbackMutationSerial = 0;
+  let pendingDestinationWatch = false;
+  let miniTapTimer = 0;
+  let restoreFallbackTimer = 0;
+  let restoreSettleTimer = 0;
+  let restoreSettleAttempts = 0;
+  let restoreCandidateWatch = null;
+  let restoreCandidateSince = 0;
+  let browseTransitionTimer = 0;
+  let browseTransitionAttempts = 0;
+  let lastMiniTapAt = 0;
+  let suppressShellClickUntil = 0;
+  let ignoreMediaPauseUntil = 0;
+  let routePlaybackTransitionUntil = 0;
+  let routePauseAllowance = 0;
+  let lastPlaybackResumeAttemptAt = 0;
   let lastRoute = location.href;
   let suppressPlayerClickUntil = 0;
 
-  const decodedPathname = () => {
-    let pathname = String(location.pathname || '/');
+  const decodedPath = value => {
+    let pathname = String(value || '/');
     for (let pass = 0; pass < 3; pass += 1) {
       try {
         const decoded = decodeURIComponent(pathname);
@@ -40,15 +80,18 @@
     return pathname.replace(/\\+/g, '/').toLowerCase();
   };
 
-  const isShortsRoute = () => /(?:^|\/)shorts(?:\/|$)/.test(decodedPathname());
+  const decodedPathname = () => decodedPath(location.pathname);
+  const isShortsPath = pathname => /(?:^|\/)shorts(?:\/|$)/.test(decodedPath(pathname));
+  const isShortsRoute = () => isShortsPath(location.pathname);
   const isWatchRoute = () => decodedPathname() === '/watch';
+  const focusedEntryURL = 'https://m.youtube.com/feed/subscriptions';
 
   const recoverFromShorts = () => {
     if (!isShortsRoute()) return false;
     try {
-      location.replace('https://m.youtube.com/');
+      location.replace(focusedEntryURL);
     } catch {
-      location.href = 'https://m.youtube.com/';
+      location.href = focusedEntryURL;
     }
     return true;
   };
@@ -59,33 +102,26 @@
   style.id = STYLE_ID;
   style.textContent = `
     html[${MINI_ATTRIBUTE}="true"] {
-      --vigil-youtube-mini-height: 64px;
-      --vigil-youtube-mini-bottom: calc(env(safe-area-inset-bottom, 0px) + 58px);
-      scroll-padding-bottom: calc(var(--vigil-youtube-mini-height) + var(--vigil-youtube-mini-bottom) + 12px) !important;
-    }
-    html[${MINI_ATTRIBUTE}="true"] body {
-      padding-bottom: calc(var(--vigil-youtube-mini-height) + 72px) !important;
+      --vigil-youtube-mini-width: clamp(176px, 56vw, 224px);
+      --vigil-youtube-mini-bottom: calc(env(safe-area-inset-bottom, 0px) + 68px);
     }
     html[${MINI_ATTRIBUTE}="true"] [data-vigil-youtube-active-player="true"] {
-      position: fixed !important;
-      z-index: 2147483646 !important;
-      left: 8px !important;
-      right: auto !important;
-      top: auto !important;
-      bottom: var(--vigil-youtube-mini-bottom) !important;
-      width: 114px !important;
-      height: var(--vigil-youtube-mini-height) !important;
-      min-width: 114px !important;
-      min-height: var(--vigil-youtube-mini-height) !important;
-      max-width: 114px !important;
-      max-height: var(--vigil-youtube-mini-height) !important;
+      position: absolute !important;
+      z-index: 0 !important;
+      inset: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+      max-width: none !important;
+      max-height: none !important;
       margin: 0 !important;
-      border-radius: 10px 0 0 10px !important;
+      border-radius: inherit !important;
       overflow: hidden !important;
       background: #000 !important;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, .34) !important;
-      transform: translate3d(var(--vigil-mini-drag-x, 0px), var(--vigil-mini-drag-y, 0px), 0) !important;
-      transition: transform 180ms ease, opacity 180ms ease !important;
+      box-shadow: none !important;
+      transform: none !important;
+      transition: none !important;
       touch-action: none !important;
     }
     html[${MINI_ATTRIBUTE}="true"] [data-vigil-youtube-active-player="true"] video {
@@ -116,53 +152,74 @@
       all: initial;
       box-sizing: border-box;
       position: fixed;
-      z-index: 2147483645;
-      left: 8px;
-      right: 8px;
-      bottom: calc(env(safe-area-inset-bottom, 0px) + 58px);
-      height: 64px;
-      display: flex;
-      align-items: center;
-      padding: 0 6px 0 122px;
-      border-radius: 10px;
+      z-index: 2147483646;
+      right: 12px;
+      bottom: var(--vigil-youtube-mini-bottom);
+      width: var(--vigil-youtube-mini-width);
+      aspect-ratio: 16 / 9;
+      display: block;
+      padding: 0;
+      border: 0;
+      border-radius: 12px;
       overflow: hidden;
       color: #fff;
-      background: rgba(28, 28, 30, .98);
+      background: #000;
       box-shadow: 0 8px 24px rgba(0, 0, 0, .34);
-      font: 500 13px/1.25 -apple-system, BlinkMacSystemFont, sans-serif;
       -webkit-user-select: none;
       user-select: none;
       touch-action: none;
-      transform: translate3d(var(--vigil-mini-drag-x, 0px), var(--vigil-mini-drag-y, 0px), 0);
-      transition: transform 180ms ease, opacity 180ms ease;
+      transition: width 180ms ease, height 180ms ease, opacity 180ms ease;
     }
-    #${SHELL_ID} .vigil-youtube-mini-title {
-      all: initial;
-      box-sizing: border-box;
-      min-width: 0;
-      flex: 1;
-      overflow: hidden;
-      color: #fff;
-      font: 500 13px/1.25 -apple-system, BlinkMacSystemFont, sans-serif;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+    #${SHELL_ID}[data-size="large"] {
+      --vigil-youtube-mini-width: min(calc(100vw - 24px), 344px);
     }
     #${SHELL_ID} button {
       all: initial;
       box-sizing: border-box;
-      width: 42px;
-      height: 56px;
+      position: absolute;
+      z-index: 2;
+      top: 7px;
+      width: 36px;
+      height: 36px;
       display: grid;
       place-items: center;
       color: #fff;
-      font: 500 24px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+      border-radius: 50%;
+      background: rgba(0, 0, 0, .62);
+      font: 600 20px/1 -apple-system, BlinkMacSystemFont, sans-serif;
       text-align: center;
       -webkit-tap-highlight-color: transparent;
     }
+    #${SHELL_ID} .vigil-youtube-mini-play { left: 7px; }
+    #${SHELL_ID} .vigil-youtube-mini-close { right: 7px; }
     #${SHELL_ID} button:focus-visible {
       outline: 2px solid #fff;
-      outline-offset: -4px;
-      border-radius: 8px;
+      outline-offset: 2px;
+    }
+    #${HIDDEN_HANDLE_ID} {
+      all: initial;
+      box-sizing: border-box;
+      position: fixed;
+      z-index: 2147483646;
+      top: var(--vigil-youtube-hidden-top, 55%);
+      width: 30px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      color: #fff;
+      background: rgba(20, 20, 20, .96);
+      box-shadow: 0 6px 18px rgba(0, 0, 0, .34);
+      font: 600 26px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #${HIDDEN_HANDLE_ID}[data-side="left"] {
+      left: 0;
+      border-radius: 0 12px 12px 0;
+    }
+    #${HIDDEN_HANDLE_ID}[data-side="right"] {
+      right: 0;
+      border-radius: 12px 0 0 12px;
     }
     :is(ytm-player, ytd-player),
     :is(ytm-player, ytd-player) :is(video, .html5-video-container, .ytp-cued-thumbnail-overlay-image) {
@@ -170,7 +227,7 @@
     }
     @media (prefers-reduced-motion: reduce) {
       html[${MINI_ATTRIBUTE}="true"] [data-vigil-youtube-active-player="true"],
-      #${SHELL_ID} { transition: none !important; }
+      #${SHELL_ID}, #${HIDDEN_HANDLE_ID} { transition: none !important; }
     }
   `;
 
@@ -247,61 +304,632 @@
       || buttonRect.height < playerRect.height * .72;
   };
 
-  const titleText = () => {
-    const metadata = document.querySelector('meta[name="title"], meta[property="og:title"]');
-    const heading = document.querySelector(`${WATCH_SELECTOR} h1, ytm-watch-metadata h1, h1.title`);
-    return String(heading?.textContent || metadata?.content || document.title || 'YouTube')
-      .replace(/\s+-\s+YouTube\s*$/i, '')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 160) || 'YouTube';
+  const blocksMiniInteraction = (target, point) => {
+    if (!target) return true;
+    if (target.closest('.vigil-youtube-mini-play, .vigil-youtube-mini-close')) return true;
+    return Boolean(miniPlayer?.contains(target) && blocksPlayerGesture(target, miniPlayer, point || {}));
   };
 
-  const relatedSurface = () => document.querySelector([
-    'ytm-single-column-watch-next-results-renderer',
-    'ytm-item-section-renderer:has(ytm-video-with-context-renderer)',
-    'ytd-watch-next-secondary-results-renderer',
-    '#related'
-  ].join(','));
+  const canDecorateHistoryState = state => {
+    if (!state || typeof state !== 'object' || Array.isArray(state)) return false;
+    if (Object.prototype.toString.call(state) !== '[object Object]') return false;
+    const prototype = Object.getPrototypeOf(state);
+    if (prototype === null || prototype === Object.prototype) return true;
+    const constructor = prototype.constructor;
+    // WKWebView can expose structured-cloned route dictionaries through a
+    // platform realm whose Object constructor is not reference-equal to this
+    // script's Object. Keep those records eligible without flattening Date,
+    // Map, Set, Array, or other tagged structured-clone values.
+    return constructor == null || constructor.name === 'Object';
+  };
+
+  const isMiniHistoryMarker = marker => Boolean(
+    marker && typeof marker === 'object'
+      && marker.kind === HISTORY_MARKER_KIND
+      && typeof marker.session === 'string'
+      && Number.isInteger(marker.index)
+      && typeof marker.hadPrevious === 'boolean'
+  );
+
+  const currentMiniHistoryMarker = () => {
+    const state = history.state;
+    if (!canDecorateHistoryState(state)) return null;
+    const marker = state[HISTORY_STATE_KEY];
+    return isMiniHistoryMarker(marker) ? marker : null;
+  };
+
+  const decoratedMiniHistoryState = (state, index) => {
+    if (!canDecorateHistoryState(state)) return null;
+    const nextState = { ...state };
+    const existing = state[HISTORY_STATE_KEY];
+    const activeMarker = isMiniHistoryMarker(existing) && existing.session === miniSessionID
+      ? existing
+      : null;
+    const hadPrevious = activeMarker
+      ? activeMarker.hadPrevious
+      : Object.prototype.hasOwnProperty.call(state, HISTORY_STATE_KEY);
+    const marker = {
+      kind: HISTORY_MARKER_KIND,
+      session: miniSessionID,
+      index,
+      hadPrevious
+    };
+    if (hadPrevious) marker.previous = activeMarker ? activeMarker.previous : existing;
+    nextState[HISTORY_STATE_KEY] = marker;
+    return nextState;
+  };
+
+  const restoredMiniHistoryState = state => {
+    if (!canDecorateHistoryState(state)) return null;
+    const marker = state[HISTORY_STATE_KEY];
+    if (!isMiniHistoryMarker(marker)) return null;
+    const nextState = { ...state };
+    if (marker.hadPrevious) nextState[HISTORY_STATE_KEY] = marker.previous;
+    else delete nextState[HISTORY_STATE_KEY];
+    return nextState;
+  };
+
+  const installMiniHistoryTracking = () => {
+    if (miniOriginalPushState || miniOriginalReplaceState) return;
+    miniOriginalPushState = history.pushState;
+    miniOriginalReplaceState = history.replaceState;
+    const originalPushState = miniOriginalPushState;
+    const originalReplaceState = miniOriginalReplaceState;
+    miniInstalledPushState = function pushVigilMiniState(state, title, url) {
+      if (!miniSessionID) return originalPushState.call(this, state, title, url);
+      const nextIndex = Number.isInteger(miniRouteIndex)
+        ? miniRouteIndex + 1
+        : null;
+      const nextState = Number.isInteger(nextIndex) && canDecorateHistoryState(state)
+        ? decoratedMiniHistoryState(state, nextIndex) || state
+        : state;
+      const result = originalPushState.call(this, nextState, title, url);
+      miniHistoryMutationSerial += 1;
+      if (Number.isInteger(nextIndex)) {
+        miniRouteIndex = nextIndex;
+        miniRouteURLs = miniRouteURLs.slice(0, nextIndex);
+        miniRouteURLs[nextIndex] = location.href;
+      } else miniRouteIndex = null;
+      miniObservedHistoryLength = history.length;
+      return result;
+    };
+    miniInstalledReplaceState = function replaceVigilMiniState(state, title, url) {
+      if (!miniSessionID) return originalReplaceState.call(this, state, title, url);
+      const marker = currentMiniHistoryMarker();
+      const trackedIndex = Number.isInteger(miniRouteIndex)
+          && miniRouteURLs[miniRouteIndex] === location.href
+        ? miniRouteIndex
+        : null;
+      const index = marker?.session === miniSessionID ? marker.index : trackedIndex;
+      const nextState = Number.isInteger(index) && canDecorateHistoryState(state)
+        ? decoratedMiniHistoryState(state, index) || state
+        : state;
+      const result = originalReplaceState.call(this, nextState, title, url);
+      miniHistoryMutationSerial += 1;
+      if (Number.isInteger(index)) {
+        miniRouteIndex = index;
+        miniRouteURLs[index] = location.href;
+      } else miniRouteIndex = null;
+      return result;
+    };
+    history.pushState = miniInstalledPushState;
+    history.replaceState = miniInstalledReplaceState;
+  };
+
+  const uninstallMiniHistoryTracking = () => {
+    if (miniOriginalPushState && history.pushState === miniInstalledPushState) {
+      history.pushState = miniOriginalPushState;
+    }
+    if (miniOriginalReplaceState && history.replaceState === miniInstalledReplaceState) {
+      history.replaceState = miniOriginalReplaceState;
+    }
+    miniOriginalPushState = null;
+    miniOriginalReplaceState = null;
+    miniInstalledPushState = null;
+    miniInstalledReplaceState = null;
+  };
+
+  const writeMiniHistoryMarker = index => {
+    if (!miniSessionID || !Number.isInteger(index)) return false;
+    const nextState = decoratedMiniHistoryState(history.state, index);
+    if (!nextState) return false;
+    const replaceState = miniOriginalReplaceState || history.replaceState;
+    try {
+      replaceState.call(history, nextState, '', location.href);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const clearCurrentMiniHistoryMarker = () => {
+    const marker = currentMiniHistoryMarker();
+    if (!marker || marker.session !== miniSessionID) return;
+    const nextState = restoredMiniHistoryState(history.state);
+    if (!nextState) return;
+    const replaceState = miniOriginalReplaceState || history.replaceState;
+    try { replaceState.call(history, nextState, '', location.href); } catch {}
+  };
+
+  const clearStaleMiniHistoryMarkers = () => {
+    for (let pass = 0; pass < 4; pass += 1) {
+      const marker = currentMiniHistoryMarker();
+      if (!marker || marker.session === miniSessionID) return;
+      const nextState = restoredMiniHistoryState(history.state);
+      if (!nextState) return;
+      const replaceState = miniOriginalReplaceState || history.replaceState;
+      try { replaceState.call(history, nextState, '', location.href); } catch { return; }
+    }
+  };
+
+  const reconcilePopRouteIndex = ({
+    currentLength, observedLength, routeIndex, currentURL, routeURLs, markerIndex
+  }) => {
+    if (!Number.isInteger(routeIndex) || currentLength !== observedLength) return null;
+    if (Number.isInteger(markerIndex)) {
+      // A traversal must change entries. An equal marker can only be stale or
+      // copied by a router that retained the native pushState function.
+      return markerIndex !== routeIndex ? markerIndex : null;
+    }
+    const candidates = routeURLs
+      .map((url, index) => (url === currentURL && index !== routeIndex ? index : -1))
+      .filter(index => index >= 0);
+    return candidates.length === 1 ? candidates[0] : null;
+  };
+
+  const syncMiniHistoryRoute = event => {
+    const marker = currentMiniHistoryMarker();
+    const currentURL = location.href;
+    const isPopState = event?.type === 'popstate';
+    const markerIndex = marker?.session === miniSessionID
+        && miniRouteURLs[marker.index] === currentURL
+      ? marker.index
+      : null;
+    if (isPopState) {
+      // Reconcile traversals before considering growth. If history grew
+      // without our wrapper observing it, no Back distance is safe to infer.
+      miniRouteIndex = reconcilePopRouteIndex({
+        currentLength: history.length,
+        observedLength: miniObservedHistoryLength,
+        routeIndex: miniRouteIndex,
+        currentURL,
+        routeURLs: miniRouteURLs,
+        markerIndex
+      });
+      miniObservedHistoryLength = history.length;
+      return;
+    }
+    if (Number.isInteger(miniRouteIndex)
+        && history.length > miniObservedHistoryLength) {
+      // On non-traversal events, growth is the strongest signal. A page
+      // router can cache native pushState and copy the prior entry's marker.
+      const nextIndex = miniRouteIndex + history.length - miniObservedHistoryLength;
+      miniRouteURLs = miniRouteURLs.slice(0, nextIndex);
+      miniRouteURLs[nextIndex] = currentURL;
+      miniRouteIndex = nextIndex;
+      writeMiniHistoryMarker(nextIndex);
+    } else if (history.length === miniObservedHistoryLength
+        && Number.isInteger(miniRouteIndex)
+        && miniRouteURLs[miniRouteIndex] === currentURL) {
+      // The wrapped page router already recorded this route.
+    } else {
+      // A cached native replaceState or unobserved router mutation cannot be
+      // placed safely. Fall back to the saved Watch URL rather than risk a
+      // Back operation that leaves YouTube.
+      miniRouteIndex = null;
+    }
+    miniObservedHistoryLength = history.length;
+  };
+
+  const markRoutePlaybackTransition = () => {
+    routePlaybackTransitionUntil = performance.now() + 350;
+    routePauseAllowance = 1;
+  };
+
+  const pauseMiniVideoInternally = () => {
+    ignoreMediaPauseUntil = performance.now() + 800;
+    try { miniVideo?.pause(); } catch {}
+  };
+
+  const handleMiniVideoPlay = event => {
+    if (event.currentTarget !== miniVideo) return;
+    miniWasPlaying = true;
+    syncPlayButton();
+  };
+
+  const handleMiniVideoPause = event => {
+    if (event.currentTarget !== miniVideo) return;
+    const now = performance.now();
+    if (now <= routePlaybackTransitionUntil && routePauseAllowance > 0) {
+      routePauseAllowance -= 1;
+    } else if (now > ignoreMediaPauseUntil) {
+      miniWasPlaying = false;
+    }
+    syncPlayButton();
+  };
+
+  const maintainMiniPlayback = () => {
+    if (!html.hasAttribute(MINI_ATTRIBUTE)
+        || html.hasAttribute('data-vigil-youtube-miniplayer-hidden')
+        || !miniWasPlaying || !miniVideo?.paused || miniVideo.ended) return;
+    const now = performance.now();
+    if (now - lastPlaybackResumeAttemptAt < 700) return;
+    lastPlaybackResumeAttemptAt = now;
+    try {
+      const result = miniVideo.play();
+      if (result && typeof result.catch === 'function') result.catch(() => {});
+    } catch {}
+  };
 
   const clearDrag = () => {
-    for (const element of [miniPlayer, document.getElementById(SHELL_ID)]) {
-      element?.style.removeProperty('--vigil-mini-drag-x');
-      element?.style.removeProperty('--vigil-mini-drag-y');
-      element?.style.removeProperty('opacity');
-    }
+    document.getElementById(SHELL_ID)?.style.removeProperty('opacity');
   };
 
   const setDrag = (x, y) => {
     const shell = document.getElementById(SHELL_ID);
-    for (const element of [miniPlayer, shell]) {
-      if (!element) continue;
-      element.style.setProperty('--vigil-mini-drag-x', `${x}px`);
-      element.style.setProperty('--vigil-mini-drag-y', `${y}px`);
-      if (Math.abs(x) > 18) {
-        element.style.opacity = String(Math.max(.25, 1 - Math.abs(x) / Math.max(innerWidth, 320)));
-      }
+    const start = gesture?.startRect;
+    if (!shell || !start) return;
+    const maximumLeft = Math.max(8, innerWidth - start.width - 8);
+    const maximumTop = Math.max(8, innerHeight - start.height - 8);
+    const left = Math.max(8, Math.min(maximumLeft, start.left + x));
+    const top = Math.max(8, Math.min(maximumTop, start.top + y));
+    shell.style.left = `${left}px`;
+    shell.style.top = `${top}px`;
+    shell.style.right = 'auto';
+    shell.style.bottom = 'auto';
+    if (Math.abs(x) > 18) {
+      shell.style.opacity = String(Math.max(.4, 1 - Math.abs(x) / Math.max(innerWidth, 320)));
     }
   };
 
-  const destroyShell = () => {
+  const destroyMiniChrome = () => {
+    document.getElementById(HIDDEN_HANDLE_ID)?.remove();
     document.getElementById(SHELL_ID)?.remove();
   };
 
-  const exitMiniPlayer = () => {
+  const resetMiniState = () => {
+    clearTimeout(miniTapTimer);
+    clearTimeout(restoreFallbackTimer);
+    clearTimeout(restoreSettleTimer);
+    clearTimeout(browseTransitionTimer);
+    miniTapTimer = 0;
+    restoreFallbackTimer = 0;
+    restoreSettleTimer = 0;
+    restoreSettleAttempts = 0;
+    restoreCandidateWatch = null;
+    restoreCandidateSince = 0;
+    browseTransitionTimer = 0;
+    browseTransitionAttempts = 0;
+    lastMiniTapAt = 0;
+    restoreGeneration += 1;
+    restoreMode = null;
+    restoreTargetURL = '';
+    restoreFallbackStartURL = '';
+    restoreFallbackMutationSerial = 0;
+    pendingDestinationWatch = false;
+    miniPointers.clear();
+    pinchGesture = null;
+    miniOriginMarker?.remove();
+    miniOriginMarker = null;
     clearDrag();
     html.removeAttribute(MINI_ATTRIBUTE);
+    html.removeAttribute('data-vigil-youtube-miniplayer-hidden');
     miniPlayer?.removeAttribute('data-vigil-youtube-active-player');
+    if (miniVideo) {
+      miniVideo.removeEventListener('play', handleMiniVideoPlay);
+      miniVideo.removeEventListener('pause', handleMiniVideoPause);
+      if (miniEndedHandler) miniVideo.removeEventListener('ended', miniEndedHandler);
+    }
+    miniEndedHandler = null;
+    clearCurrentMiniHistoryMarker();
+    uninstallMiniHistoryTracking();
     miniPlayer = null;
     miniVideo = null;
     miniVideoID = '';
-    destroyShell();
+    miniWatchURL = '';
+    miniSessionID = '';
+    miniRouteIndex = null;
+    miniRouteURLs = [];
+    miniObservedHistoryLength = 0;
+    miniHistoryMutationSerial = 0;
+    miniOriginHistoryMarkerWritten = false;
+    miniWasPlaying = false;
+    hiddenPlayerWasPlaying = false;
+    ignoreMediaPauseUntil = 0;
+    routePlaybackTransitionUntil = 0;
+    routePauseAllowance = 0;
+    lastPlaybackResumeAttemptAt = 0;
+  };
+
+  const isRenderedWatchSurface = watch => {
+    if (!(watch instanceof Element) || watch.closest('[hidden]')) return false;
+    for (let node = watch; node instanceof Element; node = node.parentElement) {
+      const computed = getComputedStyle(node);
+      if (computed.display === 'none' || computed.visibility === 'hidden') return false;
+    }
+    const rect = watch.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) return true;
+    return Array.from(watch.querySelectorAll('ytm-player, ytd-player, video, h1'))
+      .some(candidate => {
+        const candidateRect = candidate.getBoundingClientRect();
+        return candidateRect.width > 0 && candidateRect.height > 0;
+      });
+  };
+
+  const renderedWatchSurface = () => Array.from(document.querySelectorAll(WATCH_SELECTOR))
+    .find(isRenderedWatchSurface) || null;
+
+  const settledWatchSurface = () => {
+    const watch = renderedWatchSurface();
+    if (!watch) {
+      restoreCandidateWatch = null;
+      restoreCandidateSince = 0;
+      return null;
+    }
+    if (watch !== restoreCandidateWatch) {
+      restoreCandidateWatch = watch;
+      restoreCandidateSince = performance.now();
+      return null;
+    }
+    return performance.now() - restoreCandidateSince >= 240 ? watch : null;
+  };
+
+  const beginRestoreMode = (mode, targetURL = '') => {
+    clearTimeout(restoreFallbackTimer);
+    clearTimeout(restoreSettleTimer);
+    restoreFallbackTimer = 0;
+    restoreSettleTimer = 0;
+    restoreGeneration += 1;
+    restoreMode = mode;
+    restoreTargetURL = targetURL;
+    restoreSettleAttempts = 0;
+    restoreCandidateWatch = null;
+    restoreCandidateSince = 0;
+    restoreFallbackStartURL = mode === 'fallback' ? location.href : '';
+    restoreFallbackMutationSerial = miniHistoryMutationSerial;
+    pendingDestinationWatch = false;
+    return restoreGeneration;
+  };
+
+  const cancelRestoreMode = () => {
+    clearTimeout(restoreFallbackTimer);
+    clearTimeout(restoreSettleTimer);
+    restoreFallbackTimer = 0;
+    restoreSettleTimer = 0;
+    restoreGeneration += 1;
+    restoreMode = null;
+    restoreTargetURL = '';
+    restoreFallbackStartURL = '';
+    restoreFallbackMutationSerial = 0;
+    restoreSettleAttempts = 0;
+    restoreCandidateWatch = null;
+    restoreCandidateSince = 0;
+  };
+
+  const originRestoreMatches = () => {
+    if (restoreMode !== 'origin'
+        || miniRouteIndex !== 0
+        || miniRouteURLs[0] !== miniWatchURL
+        || location.href !== miniWatchURL) return false;
+    if (!miniOriginHistoryMarkerWritten) return true;
+    const marker = currentMiniHistoryMarker();
+    return marker?.session === miniSessionID && marker.index === 0;
+  };
+
+  const fallbackNavigationObserved = () => restoreMode === 'fallback'
+    && (miniHistoryMutationSerial > restoreFallbackMutationSerial
+      || location.href !== restoreFallbackStartURL);
+
+  const restoreRouteMatches = () => {
+    if (!isWatchRoute() || videoID() !== miniVideoID) return false;
+    if (restoreMode === 'origin') return originRestoreMatches();
+    if (restoreMode === 'fallback') return fallbackNavigationObserved();
+    return restoreMode === 'current';
+  };
+
+  const restorePlayerHost = watch => {
+    if (!miniPlayer || !isRenderedWatchSurface(watch)) return false;
+    const originWatch = miniOriginMarker?.parentElement?.closest(WATCH_SELECTOR);
+    if (miniOriginMarker?.isConnected && miniOriginMarker.parentNode
+        && originWatch === watch) {
+      miniOriginMarker.parentNode.insertBefore(miniPlayer, miniOriginMarker);
+      miniOriginMarker.remove();
+      miniOriginMarker = null;
+      return true;
+    }
+    const replacement = Array.from(watch.querySelectorAll('ytm-player, ytd-player'))
+      .find(candidate => candidate !== miniPlayer);
+    if (replacement) replacement.replaceWith(miniPlayer);
+    else watch.prepend(miniPlayer);
+    return true;
+  };
+
+  const resumeRestoredPlayback = video => {
+    if (!video) return;
+    const resume = () => {
+      if (!video.isConnected || !video.paused || video.ended) return;
+      try {
+        const result = video.play();
+        if (result && typeof result.catch === 'function') result.catch(() => {});
+      } catch {}
+    };
+    requestAnimationFrame(resume);
+    setTimeout(resume, 140);
+  };
+
+  const finishRestore = () => {
+    if (!restoreMode || !miniPlayer || !isWatchRoute() || videoID() !== miniVideoID) {
+      return false;
+    }
+    if (!restoreRouteMatches()) {
+      if (restoreMode === 'origin') navigateToSavedWatch();
+      return false;
+    }
+    const watch = settledWatchSurface();
+    if (!watch || !restorePlayerHost(watch)) return false;
+    const restoredVideo = miniVideo;
+    const shouldResume = miniWasPlaying && !restoredVideo?.ended;
+    const shell = document.getElementById(SHELL_ID);
+    document.getElementById(HIDDEN_HANDLE_ID)?.remove();
+    shell?.remove();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    resetMiniState();
+    if (shouldResume) resumeRestoredPlayback(restoredVideo);
+    return true;
+  };
+
+  const finishDestinationWatchHandoff = () => {
+    if (!pendingDestinationWatch || !miniPlayer || !isWatchRoute()
+        || videoID() === miniVideoID) return false;
+    const watch = settledWatchSurface();
+    if (!watch) return false;
+    const replacement = Array.from(watch.querySelectorAll('ytm-player, ytd-player'))
+      .find(candidate => candidate !== miniPlayer);
+    if (replacement) {
+      releaseMiniPlayer(true);
+      return true;
+    }
+    if (!restorePlayerHost(watch)) return false;
+    const destinationVideo = miniVideo;
+    const shouldResume = miniWasPlaying && !destinationVideo?.ended;
+    destroyMiniChrome();
+    resetMiniState();
+    if (shouldResume) resumeRestoredPlayback(destinationVideo);
+    return true;
+  };
+
+  const scheduleFinishRestore = () => {
+    if ((!restoreMode && !pendingDestinationWatch) || !miniPlayer) return false;
+    if (restoreSettleTimer) return true;
+    const delay = restoreSettleAttempts === 0 ? 0 : 50;
+    const generation = restoreGeneration;
+    restoreSettleTimer = setTimeout(() => {
+      restoreSettleTimer = 0;
+      if (generation !== restoreGeneration) {
+        scheduleFinishRestore();
+        return;
+      }
+      const finished = restoreMode
+        ? finishRestore()
+        : finishDestinationWatchHandoff();
+      if (finished) return;
+      if (generation !== restoreGeneration) {
+        scheduleFinishRestore();
+        return;
+      }
+      if ((!restoreMode && !pendingDestinationWatch) || !miniPlayer
+          || !isWatchRoute()) return;
+      restoreSettleAttempts += 1;
+      if (restoreSettleAttempts < 24) scheduleFinishRestore();
+    }, delay);
+    return true;
+  };
+
+  const fallbackWatchURL = () => {
+    if (!miniWatchURL) return '';
+    try {
+      const destination = new URL(miniWatchURL);
+      const position = Number(miniVideo?.currentTime || 0);
+      if (Number.isFinite(position) && position >= 2 && !destination.searchParams.has('t')) {
+        destination.searchParams.set('t', `${Math.floor(position)}s`);
+      }
+      return destination.href;
+    } catch {
+      return miniWatchURL;
+    }
+  };
+
+  const armSavedWatchFallback = generation => {
+    if (generation !== restoreGeneration
+        || (restoreMode !== 'origin' && restoreMode !== 'current')) return false;
+    clearTimeout(restoreFallbackTimer);
+    restoreFallbackTimer = setTimeout(() => {
+      if (generation === restoreGeneration
+          && (restoreMode === 'origin' || restoreMode === 'current')) {
+        navigateToSavedWatch();
+      }
+    }, 1200);
+    return true;
+  };
+
+  const navigateToSavedWatch = () => {
+    if (restoreMode === 'fallback') return true;
+    const destination = fallbackWatchURL();
+    if (!destination) return false;
+    const generation = beginRestoreMode('fallback', destination);
+    const link = document.createElement('a');
+    link.href = restoreTargetURL;
+    link.className = 'yt-simple-endpoint';
+    link.hidden = true;
+    link.setAttribute('aria-hidden', 'true');
+    (document.body || document.documentElement).append(link);
+    try { link.click(); } catch {}
+    link.remove();
+    clearTimeout(restoreFallbackTimer);
+    restoreFallbackTimer = setTimeout(() => {
+      if (restoreMode === 'fallback' && generation === restoreGeneration) {
+        location.assign(restoreTargetURL);
+      }
+    }, 1200);
+    scheduleFinishRestore();
+    return true;
+  };
+
+  const restoreMiniPlayer = () => {
+    if (!miniPlayer || !miniWatchURL) return false;
+    if (restoreMode) return true;
+    markRoutePlaybackTransition();
+    document.getElementById(HIDDEN_HANDLE_ID)?.remove();
+    const shell = document.getElementById(SHELL_ID);
+    if (shell) shell.style.display = '';
+    html.removeAttribute('data-vigil-youtube-miniplayer-hidden');
+    if (isWatchRoute() && videoID() === miniVideoID) {
+      const generation = beginRestoreMode('current');
+      scheduleFinishRestore();
+      armSavedWatchFallback(generation);
+      return true;
+    }
+
+    const trackedIndex = Number.isInteger(miniRouteIndex)
+        && miniRouteIndex > 0
+        && miniRouteURLs[0] === miniWatchURL
+        && miniRouteURLs[miniRouteIndex] === location.href
+      ? miniRouteIndex
+      : null;
+    if (!Number.isInteger(trackedIndex)) return navigateToSavedWatch();
+    const generation = beginRestoreMode('origin');
+    try { history.go(-trackedIndex); } catch { return navigateToSavedWatch(); }
+    armSavedWatchFallback(generation);
+    return true;
+  };
+
+  const releaseMiniPlayer = (pauseVideo = false) => {
+    const video = miniVideo;
+    const player = miniPlayer;
+    if (pauseVideo) {
+      if (video === miniVideo) pauseMiniVideoInternally();
+      else try { video?.pause(); } catch {}
+    }
+    if (player && document.getElementById(SHELL_ID)?.contains(player)) player.remove();
+    destroyMiniChrome();
+    resetMiniState();
+  };
+
+  const exitMiniPlayer = () => {
+    if (!miniPlayer) return;
+    if (isWatchRoute() && videoID() === miniVideoID) {
+      const generation = restoreMode
+        ? restoreGeneration
+        : beginRestoreMode('current');
+      scheduleFinishRestore();
+      armSavedWatchFallback(generation);
+      return;
+    }
+    releaseMiniPlayer(true);
   };
 
   const dismissMiniPlayer = () => {
-    const video = miniVideo;
-    exitMiniPlayer();
-    try { video?.pause(); } catch {}
+    releaseMiniPlayer(true);
   };
 
   const syncPlayButton = () => {
@@ -317,22 +945,161 @@
     event.stopPropagation();
     if (!miniVideo) return;
     try {
-      if (miniVideo.paused) void miniVideo.play();
-      else miniVideo.pause();
+      if (miniVideo.paused) {
+        miniWasPlaying = true;
+        const result = miniVideo.play();
+        if (result && typeof result.catch === 'function') result.catch(() => {});
+      } else {
+        miniWasPlaying = false;
+        pauseMiniVideoInternally();
+      }
     } catch {}
     setTimeout(syncPlayButton, 0);
   };
 
+  const toggleMiniSize = () => {
+    const shell = document.getElementById(SHELL_ID);
+    if (!shell) return false;
+    const next = shell.dataset.size === 'large' ? 'small' : 'large';
+    shell.dataset.size = next;
+    shell.style.removeProperty('left');
+    shell.style.removeProperty('top');
+    shell.style.removeProperty('right');
+    shell.style.removeProperty('bottom');
+    shell.style.removeProperty('width');
+    return true;
+  };
+
+  const handleMiniTap = () => {
+    const now = performance.now();
+    if (lastMiniTapAt > 0 && now - lastMiniTapAt <= 320) {
+      clearTimeout(miniTapTimer);
+      miniTapTimer = 0;
+      lastMiniTapAt = 0;
+      toggleMiniSize();
+      return;
+    }
+    lastMiniTapAt = now;
+    clearTimeout(miniTapTimer);
+    miniTapTimer = setTimeout(() => {
+      miniTapTimer = 0;
+      lastMiniTapAt = 0;
+      restoreMiniPlayer();
+    }, 340);
+  };
+
+  const showHiddenMiniPlayer = () => {
+    const shell = document.getElementById(SHELL_ID);
+    document.getElementById(HIDDEN_HANDLE_ID)?.remove();
+    if (!shell) return;
+    shell.style.display = '';
+    shell.style.opacity = '';
+    html.removeAttribute('data-vigil-youtube-miniplayer-hidden');
+    if (hiddenPlayerWasPlaying) {
+      try {
+        const result = miniVideo?.play();
+        if (result && typeof result.catch === 'function') result.catch(() => {});
+      } catch {}
+    }
+    hiddenPlayerWasPlaying = false;
+  };
+
+  const hideMiniPlayer = side => {
+    const shell = document.getElementById(SHELL_ID);
+    if (!shell || !miniVideo) return;
+    const rect = shell.getBoundingClientRect();
+    hiddenPlayerWasPlaying = !miniVideo.paused && !miniVideo.ended;
+    pauseMiniVideoInternally();
+    shell.style.display = 'none';
+    shell.style.opacity = '';
+    html.setAttribute('data-vigil-youtube-miniplayer-hidden', side);
+    document.getElementById(HIDDEN_HANDLE_ID)?.remove();
+    const handle = document.createElement('button');
+    handle.id = HIDDEN_HANDLE_ID;
+    handle.type = 'button';
+    handle.dataset.side = side;
+    handle.textContent = side === 'left' ? '›' : '‹';
+    handle.setAttribute('aria-label', 'Show miniplayer');
+    handle.style.setProperty(
+      '--vigil-youtube-hidden-top',
+      `${Math.max(12, Math.min(innerHeight - 64, rect.top + rect.height / 2 - 26))}px`
+    );
+    handle.addEventListener('click', showHiddenMiniPlayer, true);
+    document.documentElement.append(handle);
+  };
+
+  const normalizedNavigationLabel = value => String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+
+  const navigationControl = label => {
+    const normalized = normalizedNavigationLabel(label);
+    for (const item of document.querySelectorAll(
+      'ytm-pivot-bar-item-renderer, ytd-guide-entry-renderer, ytd-mini-guide-entry-renderer'
+    )) {
+      if (normalizedNavigationLabel(item.textContent) !== normalized) continue;
+      return item.querySelector('a, button, [role="tab"]') || item;
+    }
+    if (normalized === 'home') {
+      const watchHome = document.querySelector([
+        'button[role="link"][aria-label="YouTube Home"]',
+        'ytm-home-logo button[role="link"]',
+        'a[aria-label="YouTube Home"]'
+      ].join(','));
+      if (watchHome instanceof HTMLElement) return watchHome;
+    }
+    const href = normalized === 'home' ? '/' : '/feed/subscriptions';
+    return document.querySelector(`a[href="${href}"], a[aria-label="${label}"]`);
+  };
+
+  const activateBrowseSurface = () => {
+    const homePolicy = html.getAttribute('data-vigil-feature-home');
+    const label = homePolicy === 'blocked' || homePolicy === 'pending'
+      ? 'Subscriptions'
+      : 'Home';
+    const path = decodedPathname();
+    if ((label === 'Home' && (path === '/' || path === ''))
+        || (label === 'Subscriptions'
+          && (path === '/feed/subscriptions' || path.startsWith('/feed/subscriptions/')))) {
+      return true;
+    }
+    const control = navigationControl(label);
+    if (!(control instanceof HTMLElement)) return false;
+    markRoutePlaybackTransition();
+    try { control.click(); } catch { return false; }
+    return true;
+  };
+
+  const ensureBrowseSurface = () => {
+    clearTimeout(browseTransitionTimer);
+    browseTransitionTimer = 0;
+    if (!html.hasAttribute(MINI_ATTRIBUTE) || restoreMode) return;
+    if (!isWatchRoute()) {
+      browseTransitionAttempts = 0;
+      return;
+    }
+    browseTransitionAttempts += 1;
+    activateBrowseSurface();
+    if (browseTransitionAttempts >= 12) {
+      // Never strand a floating player over the Watch page if YouTube has not
+      // rendered a usable browse control. Restore the full player so the next
+      // swipe can retry against a settled navigation surface.
+      const generation = beginRestoreMode('current');
+      scheduleFinishRestore();
+      armSavedWatchFallback(generation);
+      return;
+    }
+    browseTransitionTimer = setTimeout(ensureBrowseSurface, 140);
+  };
+
   const createShell = () => {
-    destroyShell();
+    destroyMiniChrome();
     const shell = document.createElement('div');
     shell.id = SHELL_ID;
+    shell.dataset.size = 'small';
     shell.setAttribute('role', 'group');
     shell.setAttribute('aria-label', 'YouTube miniplayer');
-
-    const title = document.createElement('div');
-    title.className = 'vigil-youtube-mini-title';
-    title.textContent = titleText();
 
     const play = document.createElement('button');
     play.className = 'vigil-youtube-mini-play';
@@ -350,12 +1117,15 @@
       dismissMiniPlayer();
     }, true);
 
-    shell.append(title, play, close);
+    shell.append(miniPlayer, play, close);
     shell.addEventListener('click', event => {
-      if (event.target.closest('button')) return;
-      exitMiniPlayer();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    });
+      const target = event.target instanceof Element ? event.target : null;
+      if (blocksMiniInteraction(target, event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (performance.now() < suppressShellClickUntil) return;
+      handleMiniTap();
+    }, true);
     document.documentElement.append(shell);
     syncPlayButton();
   };
@@ -365,21 +1135,38 @@
     const video = mainVideo();
     const player = playerForVideo(video);
     if (!video || !player || videoIsFullscreen(video)) return false;
+    if (html.hasAttribute(MINI_ATTRIBUTE)) return true;
     installStyle();
-    exitMiniPlayer();
     miniVideo = video;
     miniPlayer = player;
     miniVideoID = videoID();
+    miniWatchURL = location.href;
+    miniSessionID = globalThis.crypto?.randomUUID?.()
+      || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    clearStaleMiniHistoryMarkers();
+    miniRouteIndex = 0;
+    miniRouteURLs = [location.href];
+    miniObservedHistoryLength = history.length;
+    miniHistoryMutationSerial = 0;
+    miniOriginHistoryMarkerWritten = false;
+    installMiniHistoryTracking();
+    miniOriginHistoryMarkerWritten = writeMiniHistoryMarker(0);
+    miniWasPlaying = !video.paused && !video.ended;
+    browseTransitionAttempts = 0;
+    markRoutePlaybackTransition();
+    miniOriginMarker = document.createComment('Vigil YouTube player origin');
+    miniPlayer.parentNode?.insertBefore(miniOriginMarker, miniPlayer);
     miniPlayer.setAttribute('data-vigil-youtube-active-player', 'true');
     html.setAttribute(MINI_ATTRIBUTE, 'true');
     createShell();
-    video.addEventListener('play', syncPlayButton);
-    video.addEventListener('pause', syncPlayButton);
-    video.addEventListener('ended', dismissMiniPlayer, { once: true });
-    requestAnimationFrame(() => {
-      const related = relatedSurface();
-      if (related) related.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    });
+    video.addEventListener('play', handleMiniVideoPlay);
+    video.addEventListener('pause', handleMiniVideoPause);
+    const sessionID = miniSessionID;
+    miniEndedHandler = () => {
+      if (miniSessionID === sessionID && miniVideo === video) dismissMiniPlayer();
+    };
+    video.addEventListener('ended', miniEndedHandler, { once: true });
+    requestAnimationFrame(ensureBrowseSurface);
     return true;
   };
 
@@ -406,11 +1193,11 @@
 
     if (html.getAttribute(MINI_ATTRIBUTE) === 'true') {
       if (!shell && !activePlayer) return;
-      if (target?.closest('button')) return;
+      if (blocksMiniInteraction(target, point)) return;
       gesture = {
         mode: 'mini', startX: point.clientX, startY: point.clientY,
         lastX: point.clientX, lastY: point.clientY, startedAt: performance.now(), moved: false,
-        pointerID
+        pointerID, startRect: (shell || miniPlayer).getBoundingClientRect()
       };
       return;
     }
@@ -456,13 +1243,8 @@
 
     if (Math.max(Math.abs(dx), Math.abs(dy)) < 8) return;
     gesture.moved = true;
-    if (Math.abs(dx) > Math.abs(dy) * 1.15) {
-      event.preventDefault();
-      setDrag(dx, 0);
-    } else if (dy < 0) {
-      event.preventDefault();
-      setDrag(0, Math.max(-32, dy));
-    }
+    event.preventDefault();
+    setDrag(dx, dy);
   };
 
   const endGesture = (event, point, pointerID = null) => {
@@ -488,10 +1270,11 @@
         player.style.transition = originalTransition;
         player.style.transform = originalTransform;
       }, 190);
-      if (dy >= 72 || verticalVelocity >= 520) {
+      const verticalDominant = Math.abs(dy) > Math.abs(dx) * 1.15;
+      if (verticalDominant && (dy >= 72 || verticalVelocity >= 520)) {
         suppressPlayerClickUntil = performance.now() + 500;
         enterMiniPlayer();
-      } else if (dy <= -72 || verticalVelocity <= -520) {
+      } else if (verticalDominant && (dy <= -72 || verticalVelocity <= -520)) {
         // Invoke YouTube's own fullscreen control before suppressing the
         // synthetic click iOS may emit after the completed swipe.
         enterFullscreen(video);
@@ -500,12 +1283,17 @@
       return;
     }
 
+    const startRect = gesture.startRect;
     resetGesture();
-    if (Math.abs(dx) >= 76 || Math.abs(horizontalVelocity) >= 650) {
-      dismissMiniPlayer();
-    } else if (dy <= -34 || !moved) {
-      exitMiniPlayer();
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    suppressShellClickUntil = performance.now() + 500;
+    const horizontalHide = Math.abs(dx) >= Math.max(76, (startRect?.width || 160) * .45)
+      || (Math.abs(horizontalVelocity) >= 850 && Math.abs(dx) > Math.abs(dy));
+    if (horizontalHide) {
+      hideMiniPlayer(dx < 0 ? 'left' : 'right');
+    } else if (dy <= -34 && Math.abs(dy) > Math.abs(dx)) {
+      restoreMiniPlayer();
+    } else if (!moved) {
+      handleMiniTap();
     }
   };
 
@@ -514,20 +1302,87 @@
     resetGesture();
   };
 
+  const pointerDistance = points => {
+    const [first, second] = points;
+    return Math.hypot(second.x - first.x, second.y - first.y);
+  };
+
+  const beginPinchGesture = () => {
+    const shell = document.getElementById(SHELL_ID);
+    const points = [...miniPointers.values()];
+    if (!shell || points.length !== 2) return false;
+    const rect = shell.getBoundingClientRect();
+    pinchGesture = {
+      startDistance: Math.max(1, pointerDistance(points)),
+      startWidth: rect.width,
+      centerX: rect.left + rect.width / 2,
+      centerY: rect.top + rect.height / 2
+    };
+    gesture = null;
+    clearTimeout(miniTapTimer);
+    miniTapTimer = 0;
+    lastMiniTapAt = 0;
+    return true;
+  };
+
+  const resizeForPinch = event => {
+    if (!pinchGesture || miniPointers.size < 2) return false;
+    const shell = document.getElementById(SHELL_ID);
+    if (!shell) return false;
+    const distance = pointerDistance([...miniPointers.values()].slice(0, 2));
+    const maximum = Math.max(176, Math.min(344, innerWidth - 24));
+    const width = Math.max(176, Math.min(maximum,
+      pinchGesture.startWidth * distance / pinchGesture.startDistance));
+    const height = width * 9 / 16;
+    const left = Math.max(8, Math.min(innerWidth - width - 8, pinchGesture.centerX - width / 2));
+    const top = Math.max(8, Math.min(innerHeight - height - 8, pinchGesture.centerY - height / 2));
+    shell.dataset.size = 'custom';
+    shell.style.width = `${width}px`;
+    shell.style.left = `${left}px`;
+    shell.style.top = `${top}px`;
+    shell.style.right = 'auto';
+    shell.style.bottom = 'auto';
+    event.preventDefault();
+    return true;
+  };
+
   if ('PointerEvent' in window) {
     document.addEventListener('pointerdown', event => {
-      if (!event.isPrimary || (event.pointerType && event.pointerType !== 'touch')) return;
+      if (event.pointerType && event.pointerType !== 'touch') return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (html.hasAttribute(MINI_ATTRIBUTE)
+          && target?.closest(`#${SHELL_ID}`)
+          && !blocksMiniInteraction(target, event)) {
+        miniPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (miniPointers.size === 2 && beginPinchGesture()) return;
+      }
+      if (!event.isPrimary) return;
       beginGesture(event, event, event.pointerId);
     }, { capture: true, passive: true });
     document.addEventListener('pointermove', event => {
+      if (miniPointers.has(event.pointerId)) {
+        miniPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (resizeForPinch(event)) return;
+      }
       if (!event.isPrimary) return;
       moveGesture(event, event, event.pointerId);
     }, { capture: true, passive: false });
     document.addEventListener('pointerup', event => {
+      const wasPinching = Boolean(pinchGesture);
+      miniPointers.delete(event.pointerId);
+      if (wasPinching) {
+        if (miniPointers.size < 2) pinchGesture = null;
+        suppressShellClickUntil = performance.now() + 500;
+        return;
+      }
       if (!event.isPrimary) return;
       endGesture(event, event, event.pointerId);
     }, { capture: true, passive: true });
-    document.addEventListener('pointercancel', event => cancelGesture(event.pointerId), true);
+    document.addEventListener('pointercancel', event => {
+      miniPointers.delete(event.pointerId);
+      if (miniPointers.size < 2) pinchGesture = null;
+      cancelGesture(event.pointerId);
+    }, true);
   } else {
     const touchPoint = event => event.changedTouches?.[0] || event.touches?.[0] || null;
     document.addEventListener('touchstart', event => {
@@ -561,36 +1416,103 @@
     let destination;
     try { destination = new URL(link.href, location.href); } catch { return; }
     if (allowedHosts.has(destination.hostname.toLowerCase())
-      && /(?:^|\/)shorts(?:\/|$)/.test(destination.pathname.toLowerCase())) {
+      && isShortsPath(destination.pathname)) {
       event.preventDefault();
       event.stopImmediatePropagation();
-      location.assign('https://m.youtube.com/');
+      if (html.hasAttribute(MINI_ATTRIBUTE)) activateBrowseSurface();
+      else location.assign(focusedEntryURL);
+    } else if (html.hasAttribute(MINI_ATTRIBUTE)
+        && allowedHosts.has(destination.hostname.toLowerCase())) {
+      markRoutePlaybackTransition();
     }
   }, true);
 
-  const routeAudit = () => {
+  const routeAudit = event => {
     if (recoverFromShorts()) return;
+    if (!html.hasAttribute(MINI_ATTRIBUTE)) clearStaleMiniHistoryMarkers();
     const route = location.href;
     if (route === lastRoute) {
-      if (html.hasAttribute(MINI_ATTRIBUTE) && !miniVideo?.isConnected) exitMiniPlayer();
+      if (html.hasAttribute(MINI_ATTRIBUTE) && event?.type === 'popstate') {
+        syncMiniHistoryRoute(event);
+        if (restoreMode === 'origin' && !originRestoreMatches()) {
+          navigateToSavedWatch();
+          return;
+        }
+      }
+      if (restoreMode || pendingDestinationWatch) {
+        scheduleFinishRestore();
+        return;
+      }
+      if (html.hasAttribute(MINI_ATTRIBUTE) && !miniVideo?.isConnected) releaseMiniPlayer(true);
+      else maintainMiniPlayback();
       return;
     }
     const previousVideoID = miniVideoID;
     lastRoute = route;
     if (!html.hasAttribute(MINI_ATTRIBUTE)) return;
-    if (isWatchRoute() && videoID() !== previousVideoID) {
-      exitMiniPlayer();
+    markRoutePlaybackTransition();
+    syncMiniHistoryRoute(event);
+    if (restoreMode === 'origin' && event?.type === 'popstate'
+        && !originRestoreMatches()) {
+      navigateToSavedWatch();
+      return;
+    }
+    if (isWatchRoute() && videoID() === previousVideoID) {
+      if (!restoreMode) {
+        const generation = beginRestoreMode('current');
+        armSavedWatchFallback(generation);
+      }
+      pendingDestinationWatch = false;
+      scheduleFinishRestore();
+    } else if (isWatchRoute() && videoID() !== previousVideoID) {
+      if (restoreMode === 'origin' || restoreMode === 'fallback') {
+        // A restore traversal that reached another video did not reach its
+        // verified origin. Keep restore ownership and use the saved Watch URL;
+        // do not misclassify the wrong page as an intentional handoff.
+        navigateToSavedWatch();
+      } else {
+        if (restoreMode === 'current') cancelRestoreMode();
+        pendingDestinationWatch = true;
+        restoreSettleAttempts = 0;
+        restoreCandidateWatch = null;
+        restoreCandidateSince = 0;
+        scheduleFinishRestore();
+      }
     } else if (!miniVideo?.isConnected) {
-      exitMiniPlayer();
+      releaseMiniPlayer(true);
+    } else {
+      if (restoreMode === 'current') cancelRestoreMode();
+      pendingDestinationWatch = false;
+      maintainMiniPlayback();
     }
   };
 
   installStyle();
-  new MutationObserver(routeAudit).observe(document.documentElement, {
+  const mutationChangesPlayerTopology = mutation => {
+    const selector = `${WATCH_SELECTOR}, ${PLAYER_SELECTOR}, video`;
+    return [...mutation.addedNodes, ...mutation.removedNodes].some(node => (
+      node instanceof Element && (node.matches(selector) || node.querySelector(selector))
+    ));
+  };
+
+  new MutationObserver(mutations => {
+    if ((restoreMode || pendingDestinationWatch)
+        && mutations.some(mutationChangesPlayerTopology)) {
+      restoreCandidateSince = performance.now();
+    }
+    routeAudit();
+  }).observe(document.documentElement, {
     childList: true, subtree: true
   });
   addEventListener('popstate', routeAudit, true);
   addEventListener('pageshow', routeAudit, true);
+  for (const name of [
+    'yt-navigate-finish', 'yt-page-data-updated',
+    'state-navigateend', 'state-navigatecomplete', '__vigilRouteChanged'
+  ]) {
+    addEventListener(name, routeAudit, true);
+    document.addEventListener(name, routeAudit, true);
+  }
   setInterval(routeAudit, 400);
 
   Object.defineProperty(window, '__vigilYouTubeParityTest', {
@@ -600,6 +1522,11 @@
       enterMiniPlayer,
       exitMiniPlayer,
       dismissMiniPlayer,
+      restoreMiniPlayer,
+      handleMiniTap,
+      toggleMiniSize,
+      activateBrowseSurface,
+      reconcilePopRouteIndexForTest: reconcilePopRouteIndex,
       enterFullscreen,
       playerForVideo,
       isShortsRoute,

@@ -36,7 +36,11 @@ enum SocialService: String, CaseIterable, Identifiable {
             // redirect plus the protected-document transition reload.
             URL(string: "https://www.instagram.com/")!
         case .youtube:
-            URL(string: "https://m.youtube.com/")!
+            // Home recommendations are blocked by default, so opening `/`
+            // forces the policy adapter to perform a second navigation after
+            // its sentinel resolves. Subscriptions is already the managed Web
+            // Clip entry point and remains usable when Home is allowed.
+            URL(string: "https://m.youtube.com/feed/subscriptions")!
         }
     }
 

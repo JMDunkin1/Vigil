@@ -62,6 +62,18 @@ struct RootView: View {
         switch health {
         case .ready:
             EmptyView()
+        case .loading where service == .youtube:
+            // YouTube's document-start scripts already conceal unclassified or
+            // restricted content before its first paint. Keep the WKWebView on
+            // screen while it loads instead of covering it until the page's
+            // separate health probe eventually reports a usable DOM surface.
+            EmptyView()
+        case .loading where service == .instagram:
+            // Instagram's WKWebView starts loading during store creation and
+            // its document-end adapter remains responsible for health and
+            // feature enforcement. Do not cover that live surface while the
+            // adapter waits for Instagram to expose a recognizable shell.
+            EmptyView()
         case .loading:
             SocialHealthOverlay(
                 title: "Loading \(service.displayName)",
@@ -161,9 +173,9 @@ private struct YouTubeContentBlockerGate: View {
                 }
             }
         }
-        .task { health.refresh() }
+        .task { health.scheduleInitialRefresh() }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
-            health.refresh()
+            health.scheduleInitialRefresh()
         }
     }
 }
@@ -176,6 +188,8 @@ private final class YouTubeContentBlockerHealth: ObservableObject {
     @Published private(set) var controlsErrorMessage: String?
     private var isRefreshing = false
     private var controlsStateGeneration: UInt64 = 0
+    private var initialRefreshTask: Task<Void, Never>?
+    private var completedInitialRefresh = false
 
     private var filterIdentifier: String? {
         YouTubeSafariSession.contentBlockerIdentifier(appBundleIdentifier: Bundle.main.bundleIdentifier)
@@ -183,6 +197,24 @@ private final class YouTubeContentBlockerHealth: ObservableObject {
 
     private var controlsIdentifier: String? {
         YouTubeSafariSession.interactionExtensionIdentifier(appBundleIdentifier: Bundle.main.bundleIdentifier)
+    }
+
+    func scheduleInitialRefresh() {
+        guard completedInitialRefresh else {
+            guard initialRefreshTask == nil else { return }
+            initialRefreshTask = Task { @MainActor [weak self] in
+                // These Safari-extension checks are unrelated to rendering
+                // Instagram. Let WebKit claim the cold-launch CPU/I/O window
+                // first; the installed extensions remain active meanwhile.
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard !Task.isCancelled, let self else { return }
+                self.initialRefreshTask = nil
+                self.completedInitialRefresh = true
+                self.refresh()
+            }
+            return
+        }
+        refresh()
     }
 
     func refresh() {

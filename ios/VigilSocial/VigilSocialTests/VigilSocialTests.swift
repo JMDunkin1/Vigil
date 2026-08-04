@@ -5,6 +5,9 @@ import WebKit
 @testable import VigilSocial
 
 final class VigilSocialTests: XCTestCase {
+    @MainActor
+    private static var retainedYouTubeMiniplayerFixtures: [(UIWindow, WKWebView)] = []
+
     func testGeneratedJavaScriptParses() throws {
         let context = try XCTUnwrap(JSContext())
         let scripts = [
@@ -1991,6 +1994,47 @@ final class VigilSocialTests: XCTestCase {
         ))
     }
 
+    func testWarmInstagramHealthGapsStayNonBlocking() {
+        XCTAssertTrue(SocialWebViewStore.isRecoverableInstagramHealthReport(
+            "Instagram has not loaded a usable story surface yet.",
+            service: .instagram,
+            hadUsableContent: true
+        ))
+        XCTAssertTrue(SocialWebViewStore.isRecoverableInstagramHealthReport(
+            "Instagram reported an error instead of a usable Reels surface.",
+            service: .instagram,
+            hadUsableContent: true
+        ))
+        XCTAssertFalse(SocialWebViewStore.isRecoverableInstagramHealthReport(
+            "Instagram has not loaded a usable story surface yet.",
+            service: .instagram,
+            hadUsableContent: false
+        ))
+        XCTAssertFalse(SocialWebViewStore.isRecoverableInstagramHealthReport(
+            "YouTube has not loaded a usable watch surface yet.",
+            service: .youtube,
+            hadUsableContent: true
+        ))
+    }
+
+    func testWarmInstagramPreservesItsSurfaceThroughTransientNetworkFailures() {
+        XCTAssertTrue(SocialWebViewStore.shouldPreserveInstagramSurface(
+            after: NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost),
+            service: .instagram,
+            hadUsableContent: true
+        ))
+        XCTAssertFalse(SocialWebViewStore.shouldPreserveInstagramSurface(
+            after: NSError(domain: NSURLErrorDomain, code: NSURLErrorNetworkConnectionLost),
+            service: .instagram,
+            hadUsableContent: false
+        ))
+        XCTAssertFalse(SocialWebViewStore.shouldPreserveInstagramSurface(
+            after: NSError(domain: NSURLErrorDomain, code: NSURLErrorSecureConnectionFailed),
+            service: .instagram,
+            hadUsableContent: true
+        ))
+    }
+
     @MainActor
     func testInstagramAuthenticationSurfacesStayVisibleWithoutContentHooks() async throws {
         let fixtures: [(name: String, path: String, html: String)] = [
@@ -2359,7 +2403,7 @@ final class VigilSocialTests: XCTestCase {
             XCTAssertEqual(service.homeURL.scheme, "https")
         }
         XCTAssertEqual(SocialService.instagram.homeURL.path, "/")
-        XCTAssertEqual(SocialService.youtube.homeURL.path, "/")
+        XCTAssertEqual(SocialService.youtube.homeURL.path, "/feed/subscriptions")
     }
 
     func testYouTubeAdapterBlocksShortsAndPersistsPlayback() {
@@ -2624,8 +2668,9 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("scroll-snap-type: y mandatory !important"))
         XCTAssertTrue(script.contains("scroll-snap-stop: always !important"))
         XCTAssertTrue(script.contains("overscroll-behavior-y: contain !important"))
-        XCTAssertTrue(script.contains("const minimumReelsNormalizationInterval = 160"))
-        XCTAssertTrue(script.contains("processedCards >= 5"))
+        XCTAssertTrue(script.contains("const minimumReelsNormalizationInterval = 320"))
+        XCTAssertTrue(script.contains("const reelsMetadataByCard = new WeakMap()"))
+        XCTAssertTrue(script.contains("processedCards >= 3"))
         XCTAssertTrue(script.contains("link.rel = 'prefetch'"))
         XCTAssertTrue(script.contains("const reconcileRepostControl"))
         XCTAssertFalse(script.contains("scrollBy({"))
@@ -4421,15 +4466,19 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(youtube.contains("__vigilYouTubeInstalled"))
     }
 
-    func testPolicyProbeDefersStartupTrafficWhileFeaturesRemainFailClosed() {
+    func testPolicyProbePrioritizesPrimaryNavigationAndBoundsBackgroundTraffic() {
         let script = DOMAdapters.controlsScript(for: .instagram)
 
         XCTAssertTrue(script.contains(
             "document.documentElement.setAttribute(`data-vigil-feature-${key}`, 'pending')"
         ))
+        XCTAssertTrue(script.contains("const priorityFeature = 'reels'"))
+        XCTAssertTrue(script.contains("probe([priorityFeature]);"))
         XCTAssertTrue(script.contains("addEventListener('load', scheduleInitialProbe, { once: true })"))
         XCTAssertTrue(script.contains("requestIdleCallback(runInitialProbe, { timeout: 1200 })"))
         XCTAssertTrue(script.contains("setTimeout(scheduleInitialProbe, 5000)"))
+        XCTAssertTrue(script.contains("probe([featureKeys[periodicProbeIndex]])"))
+        XCTAssertFalse(script.contains("setInterval(probe, 15000)"))
         XCTAssertTrue(script.contains(
             "[data-vigil-feature-reels=\"blocked\"], [data-vigil-feature-reels=\"pending\"]"
         ))
@@ -5137,7 +5186,10 @@ final class VigilSocialTests: XCTestCase {
         viewController.view.addSubview(webView)
         window.rootViewController = viewController
         window.isHidden = false
-        defer { window.isHidden = true }
+        defer {
+            window.isHidden = true
+            Self.retainedYouTubeMiniplayerFixtures.append((window, webView))
+        }
 
         let loaded = expectation(description: "YouTube interaction fixture loaded")
         let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
@@ -5149,14 +5201,47 @@ final class VigilSocialTests: XCTestCase {
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <meta name="title" content="Fixture ordinary video">
                 <style>
-                  html, body { margin: 0; }
+                  html, body { margin: 0; min-height: 100%; }
+                  [hidden] { display: none !important; }
                   ytm-player, #player-container-id, #player, video { display: block; width: 390px; height: 220px; background: black; }
                   ytm-single-column-watch-next-results-renderer { display: block; height: 1200px; }
+                  #fixture-home-content, #fixture-other-content { min-height: 1100px; padding: 72px 20px 100px; }
+                  #fixture-home-action { width: 160px; height: 44px; }
+                  #fixture-navigation {
+                    position: fixed;
+                    z-index: 100;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    height: 52px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    background: white;
+                  }
+                  #fixture-navigation a, #fixture-navigation button {
+                    width: 96px;
+                    height: 44px;
+                    display: grid;
+                    place-items: center;
+                  }
                 </style>
               </head>
               <body>
-                <ytm-watch>
-                  <ytm-player>
+                <nav id="fixture-navigation" aria-label="YouTube navigation">
+                  <button id="fixture-home-control" role="link" aria-label="YouTube Home">Home</button>
+                  <a id="fixture-other-control" href="/results?search_query=fixture">Search</a>
+                  <a id="fixture-watch-control" href="/watch?v=ordinary-video">Watch</a>
+                </nav>
+                <main id="fixture-home-content" hidden>
+                  <h1>Home</h1>
+                  <button id="fixture-home-action" type="button">Open home content</button>
+                  <a id="fixture-encoded-shorts" href="/s%68orts/encoded-fixture">Encoded Shorts</a>
+                  <a id="fixture-double-encoded-shorts" href="/%2573horts/double-encoded-fixture">Double-encoded Shorts</a>
+                </main>
+                <main id="fixture-other-content" hidden><h1>Search results</h1></main>
+                <ytm-watch id="fixture-watch-content">
+                  <ytm-player id="fixture-player">
                     <div id="player-container-id">
                       <div id="player">
                         <video playsinline></video>
@@ -5170,9 +5255,150 @@ final class VigilSocialTests: XCTestCase {
                 </ytm-watch>
                 <script>
                   window.__vigilFixtureFullscreenClicks = 0;
+                  window.__vigilFixtureHomeControlClicks = 0;
+                  window.__vigilFixtureHomeContentClicks = 0;
+                  window.__vigilFixturePauseCalls = 0;
+                  window.__vigilFixturePopRoutes = [];
+                  window.__vigilFixtureGoCalls = [];
+                  window.__vigilFixtureShellClicks = 0;
+                  window.__vigilFixtureFallbackClicks = 0;
+                  window.__vigilFixtureFallbackStateInput = '';
+                  window.__vigilFixtureRestoreRouteIndex = 0;
+                  window.__vigilFixtureDuplicateWatchActive = false;
+                  window.__vigilFixtureDuplicateWatchAccepted = false;
+
+                  const fixtureNativeHistoryReplaceState = history.replaceState.bind(history);
+                  const fixtureVideo = document.querySelector('video');
+                  const fixtureNativePause = fixtureVideo.pause.bind(fixtureVideo);
+                  fixtureVideo.pause = () => {
+                    window.__vigilFixturePauseCalls += 1;
+                    fixtureNativePause();
+                  };
+                  new MutationObserver(() => {
+                    if (window.__vigilFixtureDuplicateWatchActive
+                        && window.__vigilFixtureFallbackClicks === 0
+                        && document.getElementById('fixture-watch-content').contains(
+                          document.getElementById('fixture-player')
+                        )) {
+                      window.__vigilFixtureDuplicateWatchAccepted = true;
+                    }
+                  }).observe(document.getElementById('fixture-watch-content'), {
+                    childList: true,
+                    subtree: true
+                  });
+
                   document.querySelector('.ytp-fullscreen-button').addEventListener('click', () => {
                     window.__vigilFixtureFullscreenClicks += 1;
                   });
+
+                  const renderFixtureRoute = () => {
+                    const isHome = location.pathname === '/';
+                    const isWatch = location.pathname === '/watch';
+                    document.getElementById('fixture-home-content').hidden = !isHome;
+                    document.getElementById('fixture-other-content').hidden = isHome || isWatch;
+                    document.getElementById('fixture-watch-content').hidden = !isWatch;
+                    document.documentElement.dataset.fixtureRoute = isHome
+                      ? 'home'
+                      : (isWatch ? 'watch' : 'other');
+                  };
+                  const announceFixtureRoute = () => {
+                    document.dispatchEvent(new Event('yt-navigate-finish'));
+                  };
+
+                  document.getElementById('fixture-home-control').addEventListener('click', event => {
+                    event.preventDefault();
+                    window.__vigilFixtureHomeControlClicks += 1;
+                    if (location.pathname !== '/') {
+                      history.pushState({ fixture: 'home' }, '', '/');
+                    }
+                    renderFixtureRoute();
+                    announceFixtureRoute();
+                  });
+                  document.getElementById('fixture-home-action').addEventListener('click', () => {
+                    window.__vigilFixtureHomeContentClicks += 1;
+                  });
+                  const installFixtureRoute = (controlID, state, destination) => {
+                    document.getElementById(controlID).addEventListener('click', event => {
+                      event.preventDefault();
+                      history.pushState({ fixture: state }, '', destination);
+                      renderFixtureRoute();
+                      announceFixtureRoute();
+                    });
+                  };
+                  installFixtureRoute(
+                    'fixture-other-control',
+                    'other',
+                    '/results?search_query=fixture'
+                  );
+                  installFixtureRoute(
+                    'fixture-watch-control',
+                    'watch',
+                    '/watch?v=ordinary-video'
+                  );
+                  document.addEventListener('click', event => {
+                    const link = event.target instanceof Element
+                      ? event.target.closest('a.yt-simple-endpoint[href]')
+                      : null;
+                    if (!(link instanceof HTMLAnchorElement) || !link.hidden) return;
+                    const destination = new URL(link.href, location.href);
+                    if (destination.pathname !== '/watch') return;
+                    event.preventDefault();
+                    window.__vigilFixtureDuplicateWatchActive = false;
+                    window.__vigilFixtureFallbackClicks += 1;
+                    window.__vigilFixtureFallbackStateInput = 'fallback-watch';
+                    history.pushState(
+                      { fixture: window.__vigilFixtureFallbackStateInput },
+                      '',
+                      `${destination.pathname}${destination.search}`
+                    );
+                    renderFixtureRoute();
+                    announceFixtureRoute();
+                  });
+                  addEventListener('popstate', () => {
+                    window.__vigilFixturePopRoutes.push(`${location.pathname}${location.search}`);
+                    renderFixtureRoute();
+                    announceFixtureRoute();
+                  });
+                  window.__vigilFixturePopTo = (destination, state = null) => {
+                    fixtureNativeHistoryReplaceState(
+                      state || {
+                        fixture: destination.startsWith('/watch') ? 'watch' : 'home'
+                      },
+                      '',
+                      destination
+                    );
+                    dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+                  };
+                  window.__vigilFixtureBackToHome = () => {
+                    const state = { fixture: 'home' };
+                    const marker = history.state?.__vigilYouTubeMiniplayer;
+                    if (marker && typeof marker === 'object') {
+                      state.__vigilYouTubeMiniplayer = { ...marker, index: 1 };
+                    }
+                    window.__vigilFixturePopTo('/', state);
+                  };
+                  const fixtureNativeHistoryGo = history.go.bind(history);
+                  history.go = delta => {
+                    window.__vigilFixtureGoCalls.push(delta);
+                    if (delta < 0) {
+                      const state = { fixture: 'watch' };
+                      const marker = history.state?.__vigilYouTubeMiniplayer;
+                      if (marker && typeof marker === 'object') {
+                        state.__vigilYouTubeMiniplayer = {
+                          ...marker,
+                          index: window.__vigilFixtureRestoreRouteIndex
+                        };
+                      }
+                      window.__vigilFixtureDuplicateWatchActive =
+                        window.__vigilFixtureRestoreRouteIndex !== 0;
+                      window.__vigilFixturePopTo('/watch?v=ordinary-video', state);
+                      return;
+                    }
+                    fixtureNativeHistoryGo(delta);
+                  };
+                  history.replaceState({ fixture: 'watch' }, '', location.href);
+                  window.__vigilFixtureWatchHistoryState = history.state?.fixture || '';
+                  renderFixtureRoute();
                 </script>
               </body>
             </html>
@@ -5180,12 +5406,46 @@ final class VigilSocialTests: XCTestCase {
             baseURL: try XCTUnwrap(URL(string: "https://m.youtube.com/watch?v=ordinary-video"))
         )
         await fulfillment(of: [loaded], timeout: 5)
+        webView.navigationDelegate = nil
         try await waitForJavaScriptCondition(
             "window.__vigilYouTubeParityTest != null",
             in: webView
         )
 
-        let blockedEdgeSwipe = try await webView.evaluateJavaScript(
+        let unsafePopGrowthIsRejected = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            window.__vigilYouTubeParityTest.reconcilePopRouteIndexForTest({
+              currentLength: 3,
+              observedLength: 2,
+              routeIndex: 1,
+              currentURL: 'https://m.youtube.com/',
+              routeURLs: [
+                'https://m.youtube.com/watch?v=ordinary-video',
+                'https://m.youtube.com/'
+              ],
+              markerIndex: null
+            }) === null
+              && window.__vigilYouTubeParityTest.reconcilePopRouteIndexForTest({
+                currentLength: 2,
+                observedLength: 2,
+                routeIndex: 1,
+                currentURL: 'https://m.youtube.com/',
+                routeURLs: [
+                  'https://m.youtube.com/watch?v=ordinary-video',
+                  'https://m.youtube.com/'
+                ],
+                markerIndex: 1
+              }) === null
+            """,
+            in: webView
+        ) as? Bool
+        XCTAssertEqual(
+            unsafePopGrowthIsRejected,
+            true,
+            "Unobserved growth or copied equal-index markers must invalidate Back traversal"
+        )
+
+        let blockedEdgeSwipe = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
             (() => {
               const video = document.querySelector('video');
@@ -5198,11 +5458,12 @@ final class VigilSocialTests: XCTestCase {
               send('pointerup', 5, 160);
               return document.documentElement.dataset.vigilYoutubeMiniplayer === 'true';
             })()
-            """
+            """,
+            in: webView
         ) as? Bool
         XCTAssertEqual(blockedEdgeSwipe, false, "The iOS edge-back region must win over the player gesture")
 
-        let blockedSeekSwipe = try await webView.evaluateJavaScript(
+        let blockedSeekSwipe = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
             (() => {
               const seek = document.getElementById('seek');
@@ -5215,11 +5476,46 @@ final class VigilSocialTests: XCTestCase {
               send('pointerup', 190, 290);
               return document.documentElement.dataset.vigilYoutubeMiniplayer === 'true';
             })()
-            """
+            """,
+            in: webView
         ) as? Bool
         XCTAssertEqual(blockedSeekSwipe, false, "Progress scrubbing must not start the miniplayer")
 
-        let fullscreenClicks = try await webView.evaluateJavaScript(
+        let diagonalGestureState = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            (() => {
+              const video = document.querySelector('video');
+              const swipe = (pointerId, startX, startY, endX, endY) => {
+                const send = (type, x, y) => video.dispatchEvent(new PointerEvent(type, {
+                  bubbles: true, cancelable: true, pointerId, pointerType: 'touch',
+                  isPrimary: true, clientX: x, clientY: y
+                }));
+                send('pointerdown', startX, startY);
+                send('pointermove', endX, endY);
+                send('pointerup', endX, endY);
+              };
+              swipe(82, 100, 70, 275, 150);
+              swipe(83, 290, 170, 105, 80);
+              return {
+                inactive: !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer'),
+                fullscreenClicks: window.__vigilFixtureFullscreenClicks,
+                route: location.pathname,
+                gestureMarkerRemoved: !document.querySelector('[data-vigil-youtube-gesture-player="true"]')
+              };
+            })()
+            """,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(diagonalGestureState?["inactive"] as? Bool, true)
+        XCTAssertEqual(
+            diagonalGestureState?["fullscreenClicks"] as? Int,
+            0,
+            "Horizontal-dominant player swipes must not minimize or enter fullscreen"
+        )
+        XCTAssertEqual(diagonalGestureState?["route"] as? String, "/watch")
+        XCTAssertEqual(diagonalGestureState?["gestureMarkerRemoved"] as? Bool, true)
+
+        let fullscreenClicks = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
             (() => {
               const video = document.querySelector('video');
@@ -5232,11 +5528,12 @@ final class VigilSocialTests: XCTestCase {
               send('pointerup', 190, 60);
               return window.__vigilFixtureFullscreenClicks;
             })()
-            """
+            """,
+            in: webView
         ) as? Int
         XCTAssertEqual(fullscreenClicks, 1, "Swipe-up should retain ordinary-video fullscreen parity")
 
-        let entered = try await webView.evaluateJavaScript(
+        webView.evaluateJavaScript(
             """
             (() => {
               const video = document.querySelector('video');
@@ -5247,83 +5544,908 @@ final class VigilSocialTests: XCTestCase {
               send('pointerdown', 190, 60);
               send('pointermove', 190, 160);
               send('pointerup', 190, 160);
-              return document.documentElement.dataset.vigilYoutubeMiniplayer === 'true';
+              return true;
             })()
+            """,
+            completionHandler: nil
+        )
+        try await waitForJavaScriptCondition(
             """
-        ) as? Bool
-        XCTAssertEqual(entered, true, "A real pointer-event swipe path must enter the miniplayer")
-        let miniState = try await webView.evaluateJavaScript(
+            document.documentElement.dataset.vigilYoutubeMiniplayer === 'true'
+              && location.pathname === '/'
+              && document.documentElement.dataset.fixtureRoute === 'home'
+              && document.getElementById('vigil-youtube-miniplayer-shell') != null
+            """,
+            in: webView
+        )
+        let miniState = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
-            ({
-              active: document.documentElement.dataset.vigilYoutubeMiniplayer === 'true',
-              player: document.querySelector('[data-vigil-youtube-active-player="true"]') != null,
-              playerTag: document.querySelector('[data-vigil-youtube-active-player="true"]')?.tagName || '',
-              shell: document.getElementById('vigil-youtube-miniplayer-shell')?.getAttribute('aria-label') || '',
-              close: document.querySelector('#vigil-youtube-miniplayer-shell .vigil-youtube-mini-close')?.getAttribute('aria-label') || ''
-            })
-            """
+            (() => {
+              const shell = document.getElementById('vigil-youtube-miniplayer-shell');
+              const player = document.querySelector('[data-vigil-youtube-active-player="true"]');
+              const rect = shell?.getBoundingClientRect();
+              const viewportWidth = innerWidth || document.documentElement.clientWidth;
+              const viewportHeight = innerHeight || document.documentElement.clientHeight;
+              const rightGap = rect ? viewportWidth - rect.right : Infinity;
+              const bottomGap = rect ? viewportHeight - rect.bottom : Infinity;
+              return {
+                active: document.documentElement.dataset.vigilYoutubeMiniplayer === 'true',
+                route: location.pathname,
+                playerConnected: player?.isConnected === true,
+                playerInShell: Boolean(shell && player && shell.contains(player)),
+                playerTag: player?.tagName || '',
+                shell: shell?.getAttribute('aria-label') || '',
+                close: shell?.querySelector('.vigil-youtube-mini-close')?.getAttribute('aria-label') || '',
+                compact: Boolean(rect && rect.width > 0 && rect.width <= viewportWidth * 0.65),
+                rightAnchored: rightGap >= -1 && rightGap <= 24,
+                bottomAnchored: bottomGap >= -1 && bottomGap <= 160,
+                homeVisible: !document.getElementById('fixture-home-content').hidden,
+                watchHidden: document.getElementById('fixture-watch-content').hidden
+              };
+            })()
+            """,
+            in: webView
         ) as? [String: Any]
         XCTAssertEqual(miniState?["active"] as? Bool, true)
-        XCTAssertEqual(miniState?["player"] as? Bool, true)
+        XCTAssertEqual(miniState?["route"] as? String, "/", "Swipe-down should return to Home")
+        XCTAssertEqual(miniState?["playerConnected"] as? Bool, true)
+        XCTAssertEqual(miniState?["playerInShell"] as? Bool, true)
         XCTAssertEqual(miniState?["playerTag"] as? String, "YTM-PLAYER", "The unclipped outer player host must move")
         XCTAssertEqual(miniState?["shell"] as? String, "YouTube miniplayer")
         XCTAssertEqual(miniState?["close"] as? String, "Close miniplayer")
+        XCTAssertEqual(miniState?["compact"] as? Bool, true, "The miniplayer must not span the viewport like a bar")
+        XCTAssertEqual(miniState?["rightAnchored"] as? Bool, true)
+        XCTAssertEqual(miniState?["bottomAnchored"] as? Bool, true)
+        XCTAssertEqual(miniState?["homeVisible"] as? Bool, true)
+        XCTAssertEqual(miniState?["watchHidden"] as? Bool, true)
 
-        let tapRestored = try await webView.evaluateJavaScript(
+        let homeInteraction = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
             (() => {
-              const shell = document.getElementById('vigil-youtube-miniplayer-shell');
-              const send = (type) => shell.dispatchEvent(new PointerEvent(type, {
-                bubbles: true, cancelable: true, pointerId: 10, pointerType: 'touch',
-                isPrimary: true, clientX: 190, clientY: 760
-              }));
-              send('pointerdown');
-              send('pointerup');
-              return !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer');
-            })()
-            """
-        ) as? Bool
-        XCTAssertEqual(tapRestored, true, "Tapping the miniplayer should restore the ordinary player")
-
-        let reentered = try await webView.evaluateJavaScript(
-            "window.__vigilYouTubeParityTest.enterMiniPlayer()"
-        ) as? Bool
-        XCTAssertEqual(reentered, true)
-        let dismissed = try await webView.evaluateJavaScript(
-            """
-            (() => {
-              const shell = document.getElementById('vigil-youtube-miniplayer-shell');
-              const send = (type, x) => shell.dispatchEvent(new PointerEvent(type, {
-                bubbles: true, cancelable: true, pointerId: 11, pointerType: 'touch',
-                isPrimary: true, clientX: x, clientY: 760
-              }));
-              send('pointerdown', 180);
-              send('pointermove', 300);
-              send('pointerup', 300);
+              const dispatchHitClick = element => {
+                const rect = element.getBoundingClientRect();
+                const target = document.elementFromPoint(
+                  rect.left + rect.width / 2,
+                  rect.top + rect.height / 2
+                );
+                const hit = target === element || element.contains(target);
+                target?.dispatchEvent(new MouseEvent('click', {
+                  bubbles: true, cancelable: true, view: window
+                }));
+                return hit;
+              };
+              const controlClicks = window.__vigilFixtureHomeControlClicks;
+              const contentClicks = window.__vigilFixtureHomeContentClicks;
+              const controlHit = dispatchHitClick(document.getElementById('fixture-home-control'));
+              const contentHit = dispatchHitClick(document.getElementById('fixture-home-action'));
+              const player = document.querySelector('[data-vigil-youtube-active-player="true"]');
               return {
-                inactive: !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer'),
-                pathname: location.pathname
+                controlHit,
+                contentHit,
+                controlClicked: window.__vigilFixtureHomeControlClicks === controlClicks + 1,
+                contentClicked: window.__vigilFixtureHomeContentClicks === contentClicks + 1,
+                active: document.documentElement.dataset.vigilYoutubeMiniplayer === 'true',
+                playerConnected: player?.isConnected === true,
+                route: location.pathname
               };
             })()
-            """
+            """,
+            in: webView
         ) as? [String: Any]
-        XCTAssertEqual(dismissed?["inactive"] as? Bool, true)
-        XCTAssertEqual(dismissed?["pathname"] as? String, "/watch", "Dismiss must not unexpectedly navigate Home")
+        XCTAssertEqual(homeInteraction?["controlHit"] as? Bool, true)
+        XCTAssertEqual(homeInteraction?["contentHit"] as? Bool, true)
+        XCTAssertEqual(homeInteraction?["controlClicked"] as? Bool, true)
+        XCTAssertEqual(homeInteraction?["contentClicked"] as? Bool, true)
+        XCTAssertEqual(homeInteraction?["active"] as? Bool, true)
+        XCTAssertEqual(homeInteraction?["playerConnected"] as? Bool, true)
+        XCTAssertEqual(homeInteraction?["route"] as? String, "/")
 
-        _ = try await webView.evaluateJavaScript(
-            "window.__vigilYouTubeParityTest.enterMiniPlayer()"
+        let encodedShortsState = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            (() => {
+              const links = [
+                document.getElementById('fixture-encoded-shorts'),
+                document.getElementById('fixture-double-encoded-shorts')
+              ];
+              const blockedClicks = links.map(link => !link.dispatchEvent(new MouseEvent('click', {
+                bubbles: true, cancelable: true, composed: true, view: window
+              })));
+              return {
+                blocked: blockedClicks.every(Boolean),
+                browseActivated: location.pathname === '/',
+                active: document.documentElement.dataset.vigilYoutubeMiniplayer === 'true',
+                route: `${location.pathname}${location.search}`
+              };
+            })()
+            """,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(encodedShortsState?["blocked"] as? Bool, true)
+        XCTAssertEqual(encodedShortsState?["browseActivated"] as? Bool, true)
+        XCTAssertEqual(encodedShortsState?["active"] as? Bool, true)
+        XCTAssertEqual(
+            encodedShortsState?["route"] as? String,
+            "/",
+            "Encoded Shorts links must be blocked without leaving the browse surface"
         )
-        _ = try await webView.evaluateJavaScript(
-            "window.__vigilYouTubeParityTest.exitMiniPlayer()"
+
+        webView.evaluateJavaScript(
+            """
+            (() => {
+              document.getElementById('fixture-other-control').click();
+              return `${location.pathname}${location.search}`;
+            })()
+            """,
+            completionHandler: nil
         )
-        let restored = try await webView.evaluateJavaScript(
+        try await waitForJavaScriptCondition(
+            """
+            document.documentElement.dataset.fixtureRoute === 'other'
+              && document.documentElement.dataset.vigilYoutubeMiniplayer === 'true'
+              && document.querySelector('[data-vigil-youtube-active-player="true"]')?.isConnected === true
+            """,
+            in: webView
+        )
+        webView.evaluateJavaScript(
+            "window.__vigilFixtureBackToHome()",
+            completionHandler: nil
+        )
+        try await waitForJavaScriptCondition(
+            """
+            location.pathname === '/'
+              && document.documentElement.dataset.fixtureRoute === 'home'
+              && document.documentElement.dataset.vigilYoutubeMiniplayer === 'true'
+            """,
+            in: webView
+        )
+
+        webView.evaluateJavaScript(
+            """
+            (() => {
+              const shell = document.getElementById('vigil-youtube-miniplayer-shell');
+              window.__vigilFixtureShellClicks += 1;
+              if (!shell) return false;
+              window.__vigilYouTubeParityTest.handleMiniTap();
+              return true;
+            })()
+            """,
+            completionHandler: nil
+        )
+        try await waitForJavaScriptCondition(
+            """
+            location.pathname === '/watch'
+              && location.search === '?v=ordinary-video'
+              && document.documentElement.dataset.fixtureRoute === 'watch'
+              && !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer')
+              && document.getElementById('vigil-youtube-miniplayer-shell') == null
+              && document.getElementById('fixture-player')?.isConnected === true
+              && document.getElementById('fixture-watch-content').contains(document.getElementById('fixture-player'))
+            """,
+            in: webView
+        )
+        let watchState = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            ({
+              route: location.pathname,
+              watchVisible: !document.getElementById('fixture-watch-content').hidden,
+              homeHidden: document.getElementById('fixture-home-content').hidden,
+              playerConnected: document.getElementById('fixture-player')?.isConnected === true,
+              playerInWatch: document.getElementById('fixture-watch-content').contains(document.getElementById('fixture-player')),
+              playerInactive: !document.getElementById('fixture-player').hasAttribute('data-vigil-youtube-active-player'),
+              historyState: history.state?.fixture || '',
+              expectedHistoryState: window.__vigilFixtureWatchHistoryState,
+              popRoutes: window.__vigilFixturePopRoutes.join('|'),
+              fallbackClicks: window.__vigilFixtureFallbackClicks
+            })
+            """,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(watchState?["route"] as? String, "/watch", "Tapping the miniplayer should restore the watch route")
+        XCTAssertEqual(watchState?["watchVisible"] as? Bool, true)
+        XCTAssertEqual(watchState?["homeHidden"] as? Bool, true)
+        XCTAssertEqual(watchState?["playerConnected"] as? Bool, true)
+        XCTAssertEqual(watchState?["playerInWatch"] as? Bool, true)
+        XCTAssertEqual(watchState?["playerInactive"] as? Bool, true)
+        XCTAssertEqual(
+            watchState?["historyState"] as? String,
+            watchState?["expectedHistoryState"] as? String
+        )
+        XCTAssertEqual(
+            watchState?["popRoutes"] as? String,
+            "/|/watch?v=ordinary-video",
+            "Restore must traverse exactly to the Watch origin without overshooting it"
+        )
+        XCTAssertEqual(
+            watchState?["fallbackClicks"] as? Int,
+            0,
+            "A verified SPA route stack should restore without a duplicate Watch navigation"
+        )
+
+        webView.evaluateJavaScript(
+            "window.__vigilYouTubeParityTest.enterMiniPlayer()",
+            completionHandler: nil
+        )
+        try await waitForJavaScriptCondition(
+            """
+            document.documentElement.dataset.vigilYoutubeMiniplayer === 'true'
+              && location.pathname === '/'
+            """,
+            in: webView
+        )
+        webView.evaluateJavaScript(
+            """
+            (() => {
+              document.getElementById('fixture-watch-control').click();
+              return `${location.pathname}${location.search}`;
+            })()
+            """,
+            completionHandler: nil
+        )
+        try await waitForJavaScriptCondition(
+            """
+            location.pathname === '/watch'
+              && location.search === '?v=ordinary-video'
+              && document.documentElement.dataset.fixtureRoute === 'watch'
+              && !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer')
+              && document.getElementById('vigil-youtube-miniplayer-shell') == null
+              && document.getElementById('fixture-watch-content').contains(document.getElementById('fixture-player'))
+            """,
+            in: webView
+        )
+        let sameWatchState = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            ({
+              playerConnected: document.getElementById('fixture-player')?.isConnected === true,
+              playerInactive: !document.getElementById('fixture-player').hasAttribute('data-vigil-youtube-active-player'),
+              route: `${location.pathname}${location.search}`,
+              historyState: history.state?.fixture || '',
+              expectedHistoryState: window.__vigilFixtureWatchHistoryState
+            })
+            """,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(sameWatchState?["playerConnected"] as? Bool, true)
+        XCTAssertEqual(sameWatchState?["playerInactive"] as? Bool, true)
+        XCTAssertEqual(sameWatchState?["route"] as? String, "/watch?v=ordinary-video")
+        XCTAssertEqual(
+            sameWatchState?["historyState"] as? String,
+            sameWatchState?["expectedHistoryState"] as? String
+        )
+
+        webView.evaluateJavaScript(
+            "window.__vigilYouTubeParityTest.enterMiniPlayer()",
+            completionHandler: nil
+        )
+        try await waitForJavaScriptCondition(
+            """
+            document.documentElement.dataset.vigilYoutubeMiniplayer === 'true'
+              && location.pathname === '/'
+            """,
+            in: webView
+        )
+        webView.evaluateJavaScript(
+            """
+            (() => {
+              window.__vigilFixtureRestoreRouteIndex = 2;
+              window.__vigilFixtureDuplicateWatchActive = false;
+              window.__vigilFixtureDuplicateWatchAccepted = false;
+              history.pushState(
+                { fixture: 'duplicate-watch' },
+                '',
+                '/watch?v=ordinary-video'
+              );
+              history.pushState({ fixture: 'duplicate-home' }, '', '/');
+              window.__vigilYouTubeParityTest.restoreMiniPlayer();
+            })()
+            """,
+            completionHandler: nil
+        )
+        try await waitForJavaScriptCondition(
+            """
+            location.pathname === '/watch'
+              && location.search === '?v=ordinary-video'
+              && !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer')
+              && document.getElementById('fixture-watch-content').contains(
+                document.getElementById('fixture-player')
+              )
+              && window.__vigilFixtureFallbackClicks === 1
+            """,
+            in: webView
+        )
+        let duplicateRestoreState = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            (() => {
+              window.__vigilFixtureRestoreRouteIndex = 0;
+              return {
+                duplicateAccepted: window.__vigilFixtureDuplicateWatchAccepted,
+                fallbackClicks: window.__vigilFixtureFallbackClicks,
+                lastGo: window.__vigilFixtureGoCalls.at(-1),
+                route: `${location.pathname}${location.search}`,
+                fallbackStateInput: window.__vigilFixtureFallbackStateInput,
+                playerInactive: !document.getElementById('fixture-player')
+                  .hasAttribute('data-vigil-youtube-active-player')
+              };
+            })()
+            """,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(
+            duplicateRestoreState?["duplicateAccepted"] as? Bool,
+            false,
+            "Tap restore must not accept a newer duplicate entry for the same video"
+        )
+        XCTAssertEqual(duplicateRestoreState?["fallbackClicks"] as? Int, 1)
+        XCTAssertEqual(duplicateRestoreState?["lastGo"] as? Int, -3)
+        XCTAssertEqual(
+            duplicateRestoreState?["route"] as? String,
+            "/watch?v=ordinary-video"
+        )
+        XCTAssertEqual(
+            duplicateRestoreState?["fallbackStateInput"] as? String,
+            "fallback-watch"
+        )
+        XCTAssertEqual(duplicateRestoreState?["playerInactive"] as? Bool, true)
+
+        webView.evaluateJavaScript(
+            "window.__vigilYouTubeParityTest.enterMiniPlayer()",
+            completionHandler: nil
+        )
+        try await waitForJavaScriptCondition(
+            """
+            document.documentElement.dataset.vigilYoutubeMiniplayer === 'true'
+              && location.pathname === '/'
+            """,
+            in: webView
+        )
+        let horizontalRoute = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            (() => {
+              const shell = document.getElementById('vigil-youtube-miniplayer-shell');
+              const rect = shell.getBoundingClientRect();
+              const send = (type, x) => shell.dispatchEvent(new PointerEvent(type, {
+                bubbles: true, cancelable: true, pointerId: 11, pointerType: 'touch',
+                isPrimary: true, clientX: x, clientY: rect.top + rect.height / 2
+              }));
+              send('pointerdown', rect.left + 24);
+              send('pointermove', rect.left + 124);
+              send('pointerup', rect.left + 124);
+              return location.pathname;
+            })()
+            """,
+            in: webView
+        ) as? String
+        XCTAssertEqual(horizontalRoute, "/", "Horizontal miniplayer gestures must remain on the browse route")
+        try await waitForJavaScriptCondition(
+            """
+            location.pathname === '/'
+              && document.documentElement.hasAttribute('data-vigil-youtube-miniplayer-hidden')
+              && document.getElementById('vigil-youtube-miniplayer-handle') != null
+            """,
+            in: webView
+        )
+        let hiddenState = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            ({
+              active: document.documentElement.dataset.vigilYoutubeMiniplayer === 'true',
+              hidden: document.documentElement.hasAttribute('data-vigil-youtube-miniplayer-hidden'),
+              handle: document.getElementById('vigil-youtube-miniplayer-handle')?.getAttribute('aria-label') || '',
+              route: location.pathname,
+              homeVisible: !document.getElementById('fixture-home-content').hidden
+            })
+            """,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(hiddenState?["active"] as? Bool, true)
+        XCTAssertEqual(hiddenState?["hidden"] as? Bool, true)
+        XCTAssertEqual(hiddenState?["handle"] as? String, "Show miniplayer")
+        XCTAssertEqual(hiddenState?["route"] as? String, "/")
+        XCTAssertEqual(hiddenState?["homeVisible"] as? Bool, true)
+
+        let closed = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            (() => {
+              document.getElementById('vigil-youtube-miniplayer-handle').click();
+              window.__vigilFixturePauseCallsBeforeClose = window.__vigilFixturePauseCalls;
+              document.querySelector('#vigil-youtube-miniplayer-shell .vigil-youtube-mini-close').click();
+              return true;
+            })()
+            """,
+            in: webView
+        ) as? Bool
+        XCTAssertEqual(closed, true)
+        try await waitForJavaScriptCondition(
+            """
+            !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer')
+              && document.getElementById('vigil-youtube-miniplayer-shell') == null
+            """,
+            in: webView
+        )
+        let closedState = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            ({
+              inactive: !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer'),
+              shellRemoved: document.getElementById('vigil-youtube-miniplayer-shell') == null,
+              playerInactive: document.querySelector('[data-vigil-youtube-active-player="true"]') == null,
+              playerRemoved: document.getElementById('fixture-player') == null,
+              paused: window.__vigilFixturePauseCalls > window.__vigilFixturePauseCallsBeforeClose,
+              route: location.pathname,
+              homeVisible: !document.getElementById('fixture-home-content').hidden
+            })
+            """,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(closedState?["inactive"] as? Bool, true)
+        XCTAssertEqual(closedState?["shellRemoved"] as? Bool, true)
+        XCTAssertEqual(closedState?["playerInactive"] as? Bool, true)
+        XCTAssertEqual(closedState?["playerRemoved"] as? Bool, true)
+        XCTAssertEqual(closedState?["paused"] as? Bool, true)
+        XCTAssertEqual(closedState?["route"] as? String, "/", "Close should leave the user browsing Home")
+        XCTAssertEqual(closedState?["homeVisible"] as? Bool, true)
+
+        _ = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            "window.__vigilYouTubeParityTest.exitMiniPlayer()",
+            in: webView
+        )
+        let restored = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
             !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer')
               && document.getElementById('vigil-youtube-miniplayer-shell') == null
               && document.querySelector('[data-vigil-youtube-active-player="true"]') == null
-            """
+              && location.pathname === '/'
+            """,
+            in: webView
         ) as? Bool
         XCTAssertEqual(restored, true)
+    }
+
+    @MainActor
+    func testYouTubeInteractionExtensionPreservesPlatformNormalizedHistoryState() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: try youtubeInteractionExtensionSource(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.allowsInlineMediaPlayback = true
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let window = UIWindow(frame: webView.frame)
+        let viewController = UIViewController()
+        viewController.view.addSubview(webView)
+        window.rootViewController = viewController
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            Self.retainedYouTubeMiniplayerFixtures.append((window, webView))
+        }
+
+        let loaded = expectation(description: "YouTube fallback-history fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            """
+            <html>
+              <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                  [hidden] { display: none !important; }
+                  ytm-watch, ytm-player, #player, video {
+                    display: block;
+                    width: 390px;
+                    min-height: 220px;
+                    background: black;
+                  }
+                </style>
+              </head>
+              <body>
+                <button id="fixture-home-control" role="link" aria-label="YouTube Home">Home</button>
+                <main id="fixture-home" hidden><h1>Home</h1></main>
+                <ytm-watch id="fixture-watch">
+                  <ytm-player id="fixture-player"><div id="player"><video playsinline></video></div></ytm-player>
+                  <h1>Fallback history fixture</h1>
+                </ytm-watch>
+                <script>
+                  window.__vigilFixtureFallbackClicks = 0;
+                  window.__vigilFixturePopRoutes = [];
+                  window.__vigilFixtureTraversalCalls = [];
+                  window.__vigilFixtureOriginHistoryState = null;
+
+                  const fixtureNativeHistoryGo = history.go.bind(history);
+                  const fixtureNativeHistoryBack = history.back.bind(history);
+                  const fixtureNativeHistoryReplaceState = history.replaceState.bind(history);
+                  history.go = delta => {
+                    window.__vigilFixtureTraversalCalls.push(`go:${delta}`);
+                    if (delta < 0 && typeof window.__vigilFixturePopTo === 'function') {
+                      window.__vigilFixturePopTo('/watch?v=ordinary-video');
+                      return;
+                    }
+                    return fixtureNativeHistoryGo(delta);
+                  };
+                  history.back = () => {
+                    window.__vigilFixtureTraversalCalls.push('back');
+                    return fixtureNativeHistoryBack();
+                  };
+
+                  const fixtureHistorySignature = state => {
+                    if (state === null) return 'null';
+                    if (Array.isArray(state)) return `array:${JSON.stringify(state)}`;
+                    if (state instanceof Date) return `date:${state.toISOString()}`;
+                    if (state instanceof Map) {
+                      return `map:${JSON.stringify(Array.from(state.entries()))}`;
+                    }
+                    return `${typeof state}:${JSON.stringify(state)}`;
+                  };
+                  const fixtureHistoryFactories = {
+                    null: () => null,
+                    primitive: () => 'fixture-primitive',
+                    array: () => ['fixture', 7, { nested: true }],
+                    date: () => new Date('2026-08-04T12:34:56.000Z'),
+                    map: () => new Map([
+                      ['alpha', 1],
+                      ['nested', { ok: true }]
+                    ])
+                  };
+
+                  const renderFixtureRoute = () => {
+                    const isWatch = location.pathname === '/watch';
+                    document.getElementById('fixture-home').hidden = isWatch;
+                    document.getElementById('fixture-watch').hidden = !isWatch;
+                    document.documentElement.dataset.fixtureRoute = isWatch ? 'watch' : 'home';
+                  };
+                  const announceFixtureRoute = () => {
+                    document.dispatchEvent(new Event('yt-navigate-finish'));
+                  };
+                  document.getElementById('fixture-home-control').addEventListener('click', event => {
+                    event.preventDefault();
+                    history.pushState({ fixture: 'home' }, '', '/');
+                    renderFixtureRoute();
+                    announceFixtureRoute();
+                  });
+                  document.addEventListener('click', event => {
+                    const link = event.target instanceof Element
+                      ? event.target.closest('a.yt-simple-endpoint[href]')
+                      : null;
+                    if (!(link instanceof HTMLAnchorElement)) return;
+                    const destination = new URL(link.href, location.href);
+                    if (destination.pathname !== '/watch') return;
+                    event.preventDefault();
+                    window.__vigilFixtureFallbackClicks += 1;
+                    history.pushState(
+                      { fixture: 'fallback-watch' },
+                      '',
+                      `${destination.pathname}${destination.search}`
+                    );
+                    renderFixtureRoute();
+                    announceFixtureRoute();
+                  });
+                  addEventListener('popstate', () => {
+                    window.__vigilFixturePopRoutes.push(`${location.pathname}${location.search}`);
+                    renderFixtureRoute();
+                    announceFixtureRoute();
+                  });
+                  window.__vigilFixturePopTo = destination => {
+                    fixtureNativeHistoryReplaceState(
+                      window.__vigilFixtureOriginHistoryState,
+                      '',
+                      destination
+                    );
+                    dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+                  };
+                  window.__vigilFixturePrepareHistoryCase = name => {
+                    const state = fixtureHistoryFactories[name]();
+                    history.replaceState(state, '', '/watch?v=ordinary-video');
+                    window.__vigilFixtureOriginHistoryState = history.state;
+                    window.__vigilFixtureExpectedHistorySignature = fixtureHistorySignature(history.state);
+                    window.__vigilFixtureFallbackBaseline = window.__vigilFixtureFallbackClicks;
+                    window.__vigilFixturePopBaseline = window.__vigilFixturePopRoutes.length;
+                    window.__vigilFixtureTraversalCalls = [];
+                    renderFixtureRoute();
+                    return window.__vigilFixtureExpectedHistorySignature;
+                  };
+                  window.__vigilFixtureHistoryStateIsPreserved = () =>
+                    fixtureHistorySignature(history.state)
+                      === window.__vigilFixtureExpectedHistorySignature;
+                  renderFixtureRoute();
+                </script>
+              </body>
+            </html>
+            """,
+            baseURL: try XCTUnwrap(URL(string: "https://m.youtube.com/watch?v=ordinary-video"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+        webView.navigationDelegate = nil
+        try await waitForJavaScriptCondition(
+            "window.__vigilYouTubeParityTest != null",
+            in: webView
+        )
+
+        // WKWebView currently normalizes these top-level History values to
+        // null. Preserve what the platform actually stores while the optional
+        // marker falls back to the verified in-memory SPA route stack.
+        let cases = ["null", "primitive", "array", "date", "map"]
+        for historyCase in cases {
+            let preparedSignature = try await evaluateJavaScriptRetryingKnownGestureTransition(
+                "window.__vigilFixturePrepareHistoryCase('\(historyCase)')",
+                in: webView
+            ) as? String
+            let platformSignature = try XCTUnwrap(preparedSignature)
+
+            webView.evaluateJavaScript(
+                "window.__vigilYouTubeParityTest.enterMiniPlayer()",
+                completionHandler: nil
+            )
+            try await waitForJavaScriptCondition(
+                """
+                location.pathname === '/'
+                  && document.documentElement.dataset.fixtureRoute === 'home'
+                  && document.documentElement.dataset.vigilYoutubeMiniplayer === 'true'
+                """,
+                in: webView
+            )
+
+            webView.evaluateJavaScript(
+                "window.__vigilYouTubeParityTest.restoreMiniPlayer()",
+                completionHandler: nil
+            )
+            try await waitForJavaScriptCondition(
+                """
+                location.pathname === '/watch'
+                  && location.search === '?v=ordinary-video'
+                  && document.documentElement.dataset.fixtureRoute === 'watch'
+                  && !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer')
+                  && document.getElementById('fixture-watch').contains(document.getElementById('fixture-player'))
+                  && window.__vigilFixtureFallbackClicks === window.__vigilFixtureFallbackBaseline
+                """,
+                in: webView
+            )
+            let fallbackState = try await evaluateJavaScriptRetryingKnownGestureTransition(
+                """
+                ({
+                  fallbackCount: window.__vigilFixtureFallbackClicks
+                    - window.__vigilFixtureFallbackBaseline,
+                  traversalCalls: window.__vigilFixtureTraversalCalls.join('|'),
+                  popCount: window.__vigilFixturePopRoutes.length
+                    - window.__vigilFixturePopBaseline,
+                  route: `${location.pathname}${location.search}`,
+                  playerConnected: document.getElementById('fixture-player')?.isConnected === true
+                })
+                """,
+                in: webView
+            ) as? [String: Any]
+            XCTAssertEqual(fallbackState?["fallbackCount"] as? Int, 0)
+            XCTAssertEqual(fallbackState?["traversalCalls"] as? String, "go:-1")
+            XCTAssertEqual(fallbackState?["popCount"] as? Int, 1)
+            XCTAssertEqual(fallbackState?["route"] as? String, "/watch?v=ordinary-video")
+            XCTAssertEqual(fallbackState?["playerConnected"] as? Bool, true)
+
+            let preservedState = try await evaluateJavaScriptRetryingKnownGestureTransition(
+                """
+                ({
+                  signature: fixtureHistorySignature(history.state),
+                  preserved: window.__vigilFixtureHistoryStateIsPreserved(),
+                  markerAbsent: !(history.state && typeof history.state === 'object'
+                    && Object.prototype.hasOwnProperty.call(
+                      history.state,
+                      '__vigilYouTubeMiniplayer'
+                    ))
+                })
+                """,
+                in: webView
+            ) as? [String: Any]
+            XCTAssertEqual(preservedState?["signature"] as? String, platformSignature)
+            XCTAssertEqual(preservedState?["preserved"] as? Bool, true)
+            XCTAssertEqual(preservedState?["markerAbsent"] as? Bool, true)
+        }
+
+    }
+
+    @MainActor
+    func testYouTubeInteractionExtensionWaitsForReplacementWatchBeforeRestore() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: try youtubeInteractionExtensionSource(),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.allowsInlineMediaPlayback = true
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let window = UIWindow(frame: webView.frame)
+        let viewController = UIViewController()
+        viewController.view.addSubview(webView)
+        window.rootViewController = viewController
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            Self.retainedYouTubeMiniplayerFixtures.append((window, webView))
+        }
+
+        let loaded = expectation(description: "YouTube replacement-Watch fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            """
+            <html>
+              <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                  [hidden] { display: none !important; }
+                  ytm-watch, ytm-player, #player, video {
+                    display: block;
+                    width: 390px;
+                    min-height: 220px;
+                    background: black;
+                  }
+                </style>
+              </head>
+              <body>
+                <button id="fixture-home-control" role="link" aria-label="YouTube Home">Home</button>
+                <main id="fixture-home" hidden><h1>Home</h1></main>
+                <main id="fixture-route-root">
+                  <ytm-watch id="fixture-outgoing-watch" data-owner="outgoing">
+                    <ytm-player id="fixture-player"><div id="player"><video playsinline></video></div></ytm-player>
+                    <h1>Outgoing Watch</h1>
+                  </ytm-watch>
+                </main>
+                <script>
+                  window.__vigilFixtureNewWatchRendered = false;
+                  window.__vigilFixturePlayerEnteredOutgoingDuringRestore = false;
+                  window.__vigilFixtureFallbackClicks = 0;
+                  window.__vigilFixtureGoCalls = [];
+                  window.__vigilFixtureOutgoingWatch = document.getElementById('fixture-outgoing-watch');
+                  new MutationObserver(() => {
+                    if (document.documentElement.dataset.fixtureRoute === 'watch-outgoing'
+                        && window.__vigilFixtureOutgoingWatch.contains(
+                          document.getElementById('fixture-player')
+                        )) {
+                      window.__vigilFixturePlayerEnteredOutgoingDuringRestore = true;
+                    }
+                  }).observe(window.__vigilFixtureOutgoingWatch, {
+                    childList: true,
+                    subtree: true
+                  });
+
+                  const announceFixtureRoute = () => {
+                    document.dispatchEvent(new Event('yt-navigate-finish'));
+                  };
+                  const fixtureNativeHistoryReplaceState = history.replaceState.bind(history);
+                  window.__vigilFixturePopTo = destination => {
+                    const state = { fixture: 'watch' };
+                    const marker = history.state?.__vigilYouTubeMiniplayer;
+                    if (marker && typeof marker === 'object') {
+                      state.__vigilYouTubeMiniplayer = { ...marker, index: 0 };
+                    }
+                    fixtureNativeHistoryReplaceState(state, '', destination);
+                    dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+                  };
+                  const fixtureNativeHistoryGo = history.go.bind(history);
+                  history.go = delta => {
+                    window.__vigilFixtureGoCalls.push(delta);
+                    if (delta < 0) {
+                      window.__vigilFixturePopTo('/watch?v=ordinary-video');
+                      return;
+                    }
+                    fixtureNativeHistoryGo(delta);
+                  };
+                  document.getElementById('fixture-home-control').addEventListener('click', event => {
+                    event.preventDefault();
+                    history.pushState({ fixture: 'home' }, '', '/');
+                    document.getElementById('fixture-home').hidden = false;
+                    window.__vigilFixtureOutgoingWatch.hidden = true;
+                    document.documentElement.dataset.fixtureRoute = 'home';
+                    announceFixtureRoute();
+                  });
+                  document.addEventListener('click', event => {
+                    const link = event.target instanceof Element
+                      ? event.target.closest('a.yt-simple-endpoint[href]')
+                      : null;
+                    if (!(link instanceof HTMLAnchorElement) || !link.hidden) return;
+                    event.preventDefault();
+                    window.__vigilFixtureFallbackClicks += 1;
+                    const destination = new URL(link.href, location.href);
+                    window.__vigilFixturePopTo(`${destination.pathname}${destination.search}`);
+                  });
+                  addEventListener('popstate', () => {
+                    if (location.pathname !== '/watch') return;
+                    const outgoingWatch = window.__vigilFixtureOutgoingWatch;
+                    document.getElementById('fixture-home').hidden = true;
+                    outgoingWatch.hidden = false;
+                    document.documentElement.dataset.fixtureRoute = 'watch-outgoing';
+                    announceFixtureRoute();
+                    setTimeout(() => {
+                      const newWatch = document.createElement('ytm-watch');
+                      newWatch.id = 'fixture-new-watch';
+                      newWatch.dataset.owner = 'new';
+                      newWatch.innerHTML = `
+                        <ytm-player id="fixture-replacement-player"></ytm-player>
+                        <h1>Newly rendered Watch</h1>
+                      `;
+                      outgoingWatch.replaceWith(newWatch);
+                      window.__vigilFixtureNewWatchRendered = true;
+                      document.documentElement.dataset.fixtureRoute = 'watch';
+                      announceFixtureRoute();
+                    }, 80);
+                  });
+                  history.replaceState({ fixture: 'watch' }, '', location.href);
+                  document.documentElement.dataset.fixtureRoute = 'watch';
+                </script>
+              </body>
+            </html>
+            """,
+            baseURL: try XCTUnwrap(URL(string: "https://m.youtube.com/watch?v=ordinary-video"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+        webView.navigationDelegate = nil
+        try await waitForJavaScriptCondition(
+            "window.__vigilYouTubeParityTest != null",
+            in: webView
+        )
+
+        webView.evaluateJavaScript(
+            "window.__vigilYouTubeParityTest.enterMiniPlayer()",
+            completionHandler: nil
+        )
+        try await waitForJavaScriptCondition(
+            """
+            location.pathname === '/'
+              && document.documentElement.dataset.fixtureRoute === 'home'
+              && document.documentElement.dataset.vigilYoutubeMiniplayer === 'true'
+            """,
+            in: webView
+        )
+        webView.evaluateJavaScript(
+            "window.__vigilYouTubeParityTest.restoreMiniPlayer()",
+            completionHandler: nil
+        )
+        try await waitForJavaScriptCondition(
+            """
+            window.__vigilFixtureNewWatchRendered === true
+              && document.documentElement.dataset.fixtureRoute === 'watch'
+              && !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer')
+              && document.getElementById('fixture-new-watch')?.contains(
+                document.getElementById('fixture-player')
+              ) === true
+              && document.querySelectorAll('ytm-player, ytd-player').length === 1
+              && window.__vigilFixtureFallbackClicks === 0
+            """,
+            in: webView
+        )
+        let restoredState = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            ({
+              route: `${location.pathname}${location.search}`,
+              outgoingDisconnected: window.__vigilFixtureOutgoingWatch.isConnected === false,
+              skippedOutgoing: !window.__vigilFixturePlayerEnteredOutgoingDuringRestore,
+              newOwner: document.getElementById('fixture-player')
+                ?.closest('ytm-watch, ytd-watch-flexy')?.dataset.owner || '',
+              playerConnected: document.getElementById('fixture-player')?.isConnected === true,
+              replacementRemoved: document.getElementById('fixture-replacement-player') == null,
+              playerCount: document.querySelectorAll('ytm-player, ytd-player').length,
+              shellRemoved: document.getElementById('vigil-youtube-miniplayer-shell') == null,
+              fallbackClicks: window.__vigilFixtureFallbackClicks,
+              goCalls: window.__vigilFixtureGoCalls.join('|')
+            })
+            """,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(restoredState?["route"] as? String, "/watch?v=ordinary-video")
+        XCTAssertEqual(restoredState?["outgoingDisconnected"] as? Bool, true)
+        XCTAssertEqual(restoredState?["skippedOutgoing"] as? Bool, true)
+        XCTAssertEqual(restoredState?["newOwner"] as? String, "new")
+        XCTAssertEqual(restoredState?["playerConnected"] as? Bool, true)
+        XCTAssertEqual(restoredState?["replacementRemoved"] as? Bool, true)
+        XCTAssertEqual(restoredState?["playerCount"] as? Int, 1)
+        XCTAssertEqual(restoredState?["shellRemoved"] as? Bool, true)
+        XCTAssertEqual(restoredState?["fallbackClicks"] as? Int, 0)
+        XCTAssertEqual(restoredState?["goCalls"] as? String, "-1")
     }
 
     @MainActor
@@ -5345,7 +6467,11 @@ final class VigilSocialTests: XCTestCase {
         context.evaluateScript("new Function(source)")
         XCTAssertNil(context.exception, context.exception?.toString() ?? "YouTube interaction script did not parse")
         XCTAssertTrue(source.contains("recoverFromShorts"))
-        XCTAssertTrue(source.contains("location.replace('https://m.youtube.com/')"))
+        XCTAssertTrue(source.contains(
+            "const focusedEntryURL = 'https://m.youtube.com/feed/subscriptions'"
+        ))
+        XCTAssertTrue(source.contains("location.replace(focusedEntryURL)"))
+        XCTAssertTrue(source.contains("location.assign(focusedEntryURL)"))
         XCTAssertTrue(source.contains("event.stopImmediatePropagation()"))
         XCTAssertFalse(source.contains("accounts.google.com"))
 
@@ -5504,20 +6630,105 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    private func evaluateJavaScriptWithCompletion(
+        _ source: String,
+        in webView: WKWebView
+    ) async throws -> Any? {
+        try await withCheckedThrowingContinuation { continuation in
+            webView.evaluateJavaScript(source) { value, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: value)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func evaluateJavaScriptRetryingKnownGestureTransition(
+        _ source: String,
+        in webView: WKWebView
+    ) async throws -> Any? {
+        var lastTransientFailure: Error?
+        for _ in 0..<120 {
+            do {
+                return try await evaluateJavaScriptWithCompletion(source, in: webView)
+            } catch {
+                guard isKnownGestureDeinitTransition(error) else {
+                    throw error
+                }
+                lastTransientFailure = error
+                try await Task.sleep(nanoseconds: 50_000_000)
+            }
+        }
+        throw NSError(
+            domain: "VigilSocialTests",
+            code: 3,
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                Gesture transition retries were exhausted for JavaScript: \(source). \
+                Last failure: \(String(describing: lastTransientFailure))
+                """
+            ]
+        )
+    }
+
+    private func isKnownGestureDeinitTransition(_ error: Error) -> Bool {
+        let description = String(describing: error)
+        return description.contains("InvalidTransition {")
+            && description.contains("phase: idle")
+            && description.contains("targetPhase: failed(deinit)")
+    }
+
+    @MainActor
     private func waitForJavaScriptCondition(
         _ condition: String,
         in webView: WKWebView
     ) async throws {
+        var transientFailureCount = 0
+        var lastTransientFailure = ""
         for _ in 0..<120 {
-            if try await webView.evaluateJavaScript(condition) as? Bool == true {
-                return
+            do {
+                if try await evaluateJavaScriptWithCompletion(condition, in: webView) as? Bool == true {
+                    return
+                }
+            } catch {
+                guard isKnownGestureDeinitTransition(error) else {
+                    throw error
+                }
+                transientFailureCount += 1
+                lastTransientFailure = String(describing: error)
             }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
+        let diagnostic = try? await evaluateJavaScriptWithCompletion(
+            """
+            JSON.stringify({
+              href: location.href,
+              route: document.documentElement.dataset.fixtureRoute || '',
+              mini: document.documentElement.dataset.vigilYoutubeMiniplayer || '',
+              historyLength: history.length,
+              historyState: history.state,
+              popRoutes: window.__vigilFixturePopRoutes || [],
+              traversalCalls: window.__vigilFixtureTraversalCalls || [],
+              goCalls: window.__vigilFixtureGoCalls || [],
+              shellClicks: window.__vigilFixtureShellClicks || 0
+            })
+            """,
+            in: webView
+        )
         throw NSError(
             domain: "VigilSocialTests",
             code: 2,
-            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for JavaScript condition: \(condition)"]
+            userInfo: [
+                NSLocalizedDescriptionKey: """
+                Timed out waiting for JavaScript condition: \(condition). \
+                Known transient gesture failures: \(transientFailureCount). \
+                Last transient failure: \(lastTransientFailure). \
+                Diagnostic: \(String(describing: diagnostic))
+                """
+            ]
         )
     }
 
@@ -5583,13 +6794,20 @@ private final class FixtureScriptMessageHandler: NSObject, WKScriptMessageHandle
 
 private final class FixtureNavigationDelegate: NSObject, WKNavigationDelegate {
     private let completion: () -> Void
+    private var completed = false
 
     init(completion: @escaping () -> Void) {
         self.completion = completion
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+    private func completeOnce() {
+        guard !completed else { return }
+        completed = true
         completion()
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        completeOnce()
     }
 
     func webView(
@@ -5597,7 +6815,7 @@ private final class FixtureNavigationDelegate: NSObject, WKNavigationDelegate {
         didFail navigation: WKNavigation?,
         withError error: Error
     ) {
-        completion()
+        completeOnce()
     }
 }
 

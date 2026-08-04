@@ -94,6 +94,16 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
+  /case \.loading where service == \.youtube:\s*(?:\/\/[^\n]*\n\s*)+EmptyView\(\)/u,
+  "YouTube launch must expose its already protected WKWebView immediately instead of waiting behind the generic health overlay"
+);
+assert.match(
+  socialRootViewSource,
+  /case \.loading where service == \.instagram:\s*\/\/[\s\S]*?EmptyView\(\)\s*case \.loading:/u,
+  "Instagram startup must expose its already-loading WKWebView instead of covering it with a protected-session spinner"
+);
+assert.match(
+  socialRootViewSource,
   /webViewSafeAreaEdges: Edge\.Set = service == \.instagram\s*\? \[\.top, \.bottom\]\s*: \.bottom/u,
   "Instagram must keep one invariant full-screen WKWebView frame across route changes"
 );
@@ -149,12 +159,32 @@ assert.doesNotMatch(
 );
 assert.match(socialWebViewStoreSource, /if loadInitialPages \{ _ = webView\(for: selectedService\) \}/u,
   "the fixed YouTube target must create and load its persistent WKWebView");
+assert.match(
+  socialWebViewStoreSource,
+  /webViews\[service\] = webView[\s\S]*?webView\.load\(URLRequest\(url: service\.homeURL\)\)[\s\S]*?let refreshControl = UIRefreshControl\(\)/u,
+  "cold-launch navigation must begin before nonessential scroll chrome is configured"
+);
+assert.match(
+  socialRootViewSource,
+  /Task\.sleep\(nanoseconds: 400_000_000\)[\s\S]*?self\.refresh\(\)/u,
+  "unrelated Safari-extension state checks must yield the initial CPU and I/O window to Instagram"
+);
+assert.match(
+  socialDOMAdaptersSource,
+  /setTimeout\(scheduleReelsWarmup, 4000\)[\s\S]*?addEventListener\('load', scheduleBackgroundReelsWarmup/u,
+  "speculative Reels fetching must wait until the initial Instagram page is fully loaded"
+);
 assert.doesNotMatch(socialWebViewStoreSource, /guard service != \.youtube|selectedService != \.youtube/u,
   "YouTube navigation must not retain the retired no-WK early returns");
 assert.match(
   socialServiceSource,
   /unsupportedSafariApplicationNameSuffix = "Version\/17\.0 Safari\/605\.1\.15"/u,
   "the unsupported competitor compatibility suffix must remain explicit and centralized"
+);
+assert.match(
+  socialServiceSource,
+  /case \.youtube:[\s\S]{0,420}URL\(string: "https:\/\/m\.youtube\.com\/feed\/subscriptions"\)!/u,
+  "YouTube must start on Subscriptions instead of loading a blocked recommendations page and redirecting"
 );
 assert.match(
   socialWebViewStoreSource,

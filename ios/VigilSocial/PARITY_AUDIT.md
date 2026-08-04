@@ -55,11 +55,12 @@ caches, or gesture recognizers. In particular:
   not replace `customUserAgent`, does not import Safari credentials, and may
   stop working whenever Google changes its policy or detection. Instagram and
   the default diagnostic path retain WebKit's truthful identity.
-- Vigil reproduces the ordinary-watch swipe-down miniplayer, tap/swipe-up
-  restore, and horizontal-dismiss gestures by reusing the exact YouTube parity
-  script in the WK companion and Safari extension. Pinch-specific native player
-  transitions, Cast integration, uploads, editing, notifications, and the
-  native prefetch pipeline are not available from `m.youtube.com`.
+- Vigil reproduces the ordinary-watch swipe-down miniplayer as a movable
+  floating player above the browse surface. Tap or swipe up restores Watch;
+  double-tap or pinch resizes it; and a horizontal swipe edge-hides it behind a
+  restore handle. Private native player transitions, Cast integration, uploads,
+  editing, notifications, and the native prefetch pipeline are not available
+  from `m.youtube.com`.
 - Instagram's native prefetch cache, notification integration, and private
   story/feed component behavior are not available through its mobile website.
 
@@ -133,9 +134,13 @@ its major navigation, story/player, or icon presentation.
   exposes Google's failure truthfully. No credential import is permitted.
 - Horizontal topic shelves, progress scrubbing, fullscreen transitions, and
   edge-back.
-- Swipe down on an ordinary video to keep it playing in a miniplayer while
-  related content is browsed; tap or swipe up to restore it, and swipe sideways
-  or use Close to dismiss it.
+- Swipe down on an ordinary video to return to Home or the policy-allowed browse
+  surface while playback continues in a compact corner miniplayer. Navigation
+  and browse content remain usable beneath it.
+- Drag the miniplayer to reposition it, double-tap or pinch to resize it, swipe
+  horizontally to edge-hide it behind a restore handle, tap or swipe up to
+  restore Watch, and use Close to stop playback while staying on the browse
+  surface.
 - Miniplayer gestures do not steal progress scrubbing, fullscreen controls,
   buttons, links, or iOS edge-back.
 - Thumbnail and player preload under rapid scrolling.

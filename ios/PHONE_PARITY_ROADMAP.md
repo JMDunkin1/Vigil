@@ -86,9 +86,12 @@ On the physical phone, start sign-in from YouTube's site-generated route and
 verify Google account sign-in, relaunch persistence, Home, Search,
 Subscriptions, Library, ordinary Watch pages, comments, related videos,
 fullscreen, and edge-back. On ordinary videos, verify swipe-down minimizes
-playback while browsing continues, tap or swipe-up restores it, and a sideways
-swipe or Close dismisses it. Verify that Shorts links and shelves remain absent
-and direct `/shorts` documents recover to Home.
+playback into a floating corner player and returns to Home (or the policy-allowed
+browse surface) with navigation still usable. Verify drag repositioning,
+double-tap and pinch resizing, horizontal edge-hide and handle restore, tap or
+swipe-up Watch restore, and Close stopping playback without leaving browse.
+Verify that Shorts links and shelves remain absent and direct `/shorts`
+documents recover to the focused browse surface.
 
 Use `npm run ios:youtube:develop` for routine YouTube parity work. It performs an
 Personal Team update of both fixed companions and the freshly generated

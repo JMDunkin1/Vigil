@@ -183,6 +183,20 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        webViews[service] = webView
+        serviceByWebView[ObjectIdentifier(webView)] = service
+        messageBridges[service] = bridge
+        if service == .youtube, youtubeParitySource == nil {
+            health[service] = .unsupported(
+                "This YouTube build is missing its ordinary-watch gesture policy."
+            )
+        } else if loadInitialPages {
+            // Navigation runs in WebKit's processes. Start it before finishing
+            // the local scroll/gesture chrome so those independent setup paths
+            // overlap during a cold launch.
+            webView.load(URLRequest(url: service.homeURL))
+        }
+
         webView.allowsBackForwardNavigationGestures = service.allowsBackForwardNavigationGestures
         webView.allowsLinkPreview = false
         webView.scrollView.alwaysBounceVertical = false
@@ -199,16 +213,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         #if DEBUG
         if #available(iOS 16.4, *) { webView.isInspectable = true }
         #endif
-        webViews[service] = webView
-        serviceByWebView[ObjectIdentifier(webView)] = service
-        messageBridges[service] = bridge
-        if service == .youtube, youtubeParitySource == nil {
-            health[service] = .unsupported(
-                "This YouTube build is missing its ordinary-watch gesture policy."
-            )
-            return webView
-        }
-        if loadInitialPages { webView.load(URLRequest(url: service.homeURL)) }
         return webView
     }
 
@@ -373,6 +377,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             case "unsupported": health[service] = .unsupported(detail)
             case "degraded":
                 health[service] = isAdvisoryHealthMessage(detail)
+                    || Self.isRecoverableInstagramHealthReport(
+                        detail,
+                        service: service,
+                        hadUsableContent: servicesWithUsableContent.contains(service)
+                    )
                     ? .advisory(detail)
                     : .degraded(detail)
             default: health[service] = .loading
@@ -922,8 +931,47 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if nsError.domain == "WebKitErrorDomain", nsError.code == 102 {
             return
         }
+        if Self.shouldPreserveInstagramSurface(
+            after: nsError,
+            service: service,
+            hadUsableContent: servicesWithUsableContent.contains(service)
+        ) {
+            health[service] = .advisory(
+                "Instagram briefly lost its connection. The page you were using is still open."
+            )
+            return
+        }
         health[service] = .degraded(error.localizedDescription)
         setSurface(.unknown, for: service)
+    }
+
+    nonisolated static func isRecoverableInstagramHealthReport(
+        _ detail: String,
+        service: SocialService,
+        hadUsableContent: Bool
+    ) -> Bool {
+        guard service == .instagram, hadUsableContent else { return false }
+        return detail.localizedCaseInsensitiveContains("has not loaded a usable")
+            || detail.localizedCaseInsensitiveContains("reported an error instead of a usable")
+    }
+
+    nonisolated static func shouldPreserveInstagramSurface(
+        after error: NSError,
+        service: SocialService,
+        hadUsableContent: Bool
+    ) -> Bool {
+        guard service == .instagram,
+              hadUsableContent,
+              error.domain == NSURLErrorDomain else { return false }
+        return [
+            NSURLErrorTimedOut,
+            NSURLErrorCannotFindHost,
+            NSURLErrorCannotConnectToHost,
+            NSURLErrorNetworkConnectionLost,
+            NSURLErrorDNSLookupFailed,
+            NSURLErrorResourceUnavailable,
+            NSURLErrorNotConnectedToInternet
+        ].contains(error.code)
     }
 
     private func isAdvisoryHealthMessage(_ detail: String) -> Bool {
