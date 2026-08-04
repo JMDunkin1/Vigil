@@ -615,7 +615,7 @@ export function blocklistReadinessProblems(readiness, serverState = null) {
   return problems;
 }
 
-export function deployedBlocklistProblems(receipt, readiness, requiredBundleIds = REQUIRED_SOCIAL_APPS.map((app) => app.bundleId)) {
+export function deployedBlocklistProblems(receipt, readiness, requiredBundleIds = [URL_FILTER_APP.bundleId]) {
   if (!readiness?.ready) return [];
   if (!receipt) return ["No deployment receipt proves that the installed phone apps contain the verified adult blocklist."];
   const deployed = receipt.blocklist;
@@ -824,9 +824,9 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
     livePolicyFingerprint
   }));
   problems.push(...blocklistReadinessProblems(blocklist, serverState));
-  problems.push(...deployedBlocklistProblems(receipt, blocklist, requiredApps.map((app) => app.bundleId)));
   problems.push(...deployedExplicitContentPolicyProblems(receipt, explicitContentPolicy));
   if (edition === "enhanced") {
+    problems.push(...deployedBlocklistProblems(receipt, blocklist, [URL_FILTER_APP.bundleId]));
     if (!urlFilter.ready) problems.push(`The fail-closed iOS URL Filter is not deployable: ${urlFilter.error}.`);
     else if (receipt?.urlFilter?.prefilterSha256 !== urlFilter.prefilter.sha256
       || receipt?.urlFilter?.pirDatabaseSha256 !== urlFilter.prefilter.pirDatabaseSha256
@@ -968,8 +968,8 @@ async function updatePhone(selectedOptions) {
       bundleId: app.bundleId,
       sha256: app.sha256,
       signingCapabilities: app.signingCapabilities,
-      blocklistArtifactSha256: app.blocklist.artifactSha256,
-      blocklistDomainCount: app.blocklist.domainCount,
+      blocklistArtifactSha256: app.blocklist?.artifactSha256 || null,
+      blocklistDomainCount: app.blocklist?.domainCount || null,
       explicitContentPolicySha256: app.explicitContentPolicy?.sha256 || null,
       youtubeInteractionExtension: app.youtubeInteractionExtension || null,
       youtubeInteractionExtensionSha256: app.youtubeInteractionExtension?.sha256 || null
@@ -1135,7 +1135,6 @@ async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = pro
       ], { cwd: ROOT, env: environment });
     }
     const path = join(derived, "Build", "Products", "Release-iphoneos", "VigilSocial.app");
-    const bundledBlocklist = await verifyBundledPhoneBlocklist(path, blocklist);
     const bundledExplicitContentPolicy = await verifyBundledExplicitContentPolicy(path, explicitContentPolicy);
     const youtubeInteractionExtension = social.id === "instagram"
       ? await verifyBundledYouTubeInteractionExtension(path, social.bundleId)
@@ -1147,7 +1146,7 @@ async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = pro
     apps.push({
       ...social,
       path,
-      blocklist: bundledBlocklist,
+      blocklist: null,
       explicitContentPolicy: bundledExplicitContentPolicy,
       youtubeInteractionExtension,
       signingCapabilities,

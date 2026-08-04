@@ -10,12 +10,13 @@
   const SHELL_ID = 'vigil-youtube-miniplayer-shell';
   const STYLE_ID = 'vigil-youtube-parity-style';
   const WATCH_SELECTOR = 'ytm-watch, ytd-watch-flexy, [page-subtype="watch"]';
-  const PLAYER_SELECTOR = 'ytm-player, #player-container-id, #player, ytd-player';
+  const PLAYER_SELECTOR = 'ytm-player, ytd-player, #player-container-id, #player';
   const SEEK_CONTROL_SELECTOR = [
     '[role="slider"]', '[aria-valuenow]', 'input[type="range"]',
     '.ytp-progress-bar', '.ytp-progress-list', '.ytp-scrubber-container'
   ].join(',');
-  const INTERACTIVE_SELECTOR = `${SEEK_CONTROL_SELECTOR}, button, a, input, textarea, select`;
+  const FORM_CONTROL_SELECTOR = 'a, input, textarea, select';
+  const EDGE_GESTURE_WIDTH = 24;
   const html = document.documentElement;
 
   let gesture = null;
@@ -23,6 +24,7 @@
   let miniVideo = null;
   let miniVideoID = '';
   let lastRoute = location.href;
+  let suppressPlayerClickUntil = 0;
 
   const decodedPathname = () => {
     let pathname = String(location.pathname || '/');
@@ -92,6 +94,18 @@
       object-fit: cover !important;
     }
     html[${MINI_ATTRIBUTE}="true"] [data-vigil-youtube-active-player="true"] :is(
+      #player-container-id, #player, .html5-video-player, .html5-video-container
+    ) {
+      position: absolute !important;
+      inset: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+      max-width: none !important;
+      max-height: none !important;
+    }
+    html[${MINI_ATTRIBUTE}="true"] [data-vigil-youtube-active-player="true"] :is(
       .ytp-chrome-bottom, .ytp-chrome-top, .ytp-gradient-bottom, .ytp-gradient-top,
       .ytp-pause-overlay, .ytp-ce-element, .ytp-cued-thumbnail-overlay,
       .ytp-spinner, .ytp-bezel, .ytp-paid-content-overlay
@@ -118,7 +132,7 @@
       font: 500 13px/1.25 -apple-system, BlinkMacSystemFont, sans-serif;
       -webkit-user-select: none;
       user-select: none;
-      touch-action: pan-y;
+      touch-action: none;
       transform: translate3d(var(--vigil-mini-drag-x, 0px), var(--vigil-mini-drag-y, 0px), 0);
       transition: transform 180ms ease, opacity 180ms ease;
     }
@@ -149,6 +163,10 @@
       outline: 2px solid #fff;
       outline-offset: -4px;
       border-radius: 8px;
+    }
+    :is(ytm-player, ytd-player),
+    :is(ytm-player, ytd-player) :is(video, .html5-video-container, .ytp-cued-thumbnail-overlay-image) {
+      touch-action: pan-x pinch-zoom !important;
     }
     @media (prefers-reduced-motion: reduce) {
       html[${MINI_ATTRIBUTE}="true"] [data-vigil-youtube-active-player="true"],
@@ -183,7 +201,50 @@
 
   const playerForVideo = video => {
     if (!video) return null;
-    return video.closest(PLAYER_SELECTOR) || video.parentElement;
+    // Move the outer player host. Moving the inner #player leaves it clipped
+    // by ytm-player's overflow/transform containment on the live mobile site.
+    return video.closest('ytm-player')
+      || video.closest('ytd-player')
+      || video.closest('#player-container-id')
+      || video.closest('#player')
+      || video.parentElement;
+  };
+
+  const videoIsFullscreen = video => Boolean(
+    document.fullscreenElement
+      || document.webkitFullscreenElement
+      || video?.webkitDisplayingFullscreen
+  );
+
+  const enterFullscreen = video => {
+    if (!video || videoIsFullscreen(video)) return false;
+    const player = playerForVideo(video);
+    const control = player?.querySelector(
+      '.ytp-fullscreen-button, button[aria-label*="full screen" i], button[title*="full screen" i]'
+    );
+    try {
+      if (control instanceof HTMLElement) control.click();
+      else if (typeof video.webkitEnterFullscreen === 'function') video.webkitEnterFullscreen();
+      else if (typeof video.requestFullscreen === 'function') void video.requestFullscreen();
+      else return false;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const blocksPlayerGesture = (target, player, point) => {
+    if (!target || !player || !point) return true;
+    if (target.closest(SEEK_CONTROL_SELECTOR) || target.closest(FORM_CONTROL_SELECTOR)) return true;
+    const button = target.closest('button, [role="button"]');
+    if (!button || !player.contains(button)) return false;
+    const buttonRect = button.getBoundingClientRect();
+    const playerRect = player.getBoundingClientRect();
+    // YouTube sometimes implements the whole video canvas as an invisible
+    // button. Preserve real, compact controls but do not let that full-player
+    // hit target make the swipe unreachable.
+    return buttonRect.width < playerRect.width * .72
+      || buttonRect.height < playerRect.height * .72;
   };
 
   const titleText = () => {
@@ -237,20 +298,10 @@
     destroyShell();
   };
 
-  const goToBrowseSurface = () => {
-    const home = document.querySelector('a[href="/"], ytm-pivot-bar-item-renderer a[href="/"]');
-    if (home instanceof HTMLElement) {
-      home.click();
-      return;
-    }
-    location.assign('https://m.youtube.com/');
-  };
-
   const dismissMiniPlayer = () => {
     const video = miniVideo;
     exitMiniPlayer();
     try { video?.pause(); } catch {}
-    goToBrowseSurface();
   };
 
   const syncPlayButton = () => {
@@ -310,10 +361,10 @@
   };
 
   const enterMiniPlayer = () => {
-    if (!isWatchRoute() || isShortsRoute() || document.fullscreenElement) return false;
+    if (!isWatchRoute() || isShortsRoute()) return false;
     const video = mainVideo();
     const player = playerForVideo(video);
-    if (!video || !player) return false;
+    if (!video || !player || videoIsFullscreen(video)) return false;
     installStyle();
     exitMiniPlayer();
     miniVideo = video;
@@ -347,12 +398,8 @@
     clearDrag();
   };
 
-  const touchPoint = event => event.changedTouches?.[0] || event.touches?.[0] || null;
-
-  document.addEventListener('touchstart', event => {
-    if (event.touches.length !== 1 || recoverFromShorts()) return;
-    const point = touchPoint(event);
-    if (!point) return;
+  const beginGesture = (event, point, pointerID = null) => {
+    if (!point || recoverFromShorts()) return;
     const target = event.target instanceof Element ? event.target : null;
     const shell = target?.closest(`#${SHELL_ID}`);
     const activePlayer = miniPlayer && (target === miniPlayer || miniPlayer.contains(target));
@@ -362,39 +409,45 @@
       if (target?.closest('button')) return;
       gesture = {
         mode: 'mini', startX: point.clientX, startY: point.clientY,
-        lastX: point.clientX, lastY: point.clientY, startedAt: performance.now(), moved: false
+        lastX: point.clientX, lastY: point.clientY, startedAt: performance.now(), moved: false,
+        pointerID
       };
       return;
     }
 
-    if (!isWatchRoute() || document.fullscreenElement || target?.closest(INTERACTIVE_SELECTOR)) return;
     const video = mainVideo();
     const player = playerForVideo(video);
-    if (!video || !player || !(target === player || player.contains(target))) return;
+    if (!isWatchRoute() || videoIsFullscreen(video)
+        || point.clientX <= EDGE_GESTURE_WIDTH
+        || point.clientX >= innerWidth - EDGE_GESTURE_WIDTH
+        || !video || !player
+        || !(target === player || player.contains(target))
+        || blocksPlayerGesture(target, player, point)) return;
     player.setAttribute('data-vigil-youtube-gesture-player', 'true');
     gesture = {
       mode: 'full', player, startX: point.clientX, startY: point.clientY,
       lastX: point.clientX, lastY: point.clientY, startedAt: performance.now(), moved: false,
-      originalTransform: player.style.transform, originalTransition: player.style.transition
+      originalTransform: player.style.transform, originalTransition: player.style.transition,
+      pointerID, video
     };
-  }, { capture: true, passive: true });
+  };
 
-  document.addEventListener('touchmove', event => {
-    if (!gesture || event.touches.length !== 1) return;
-    const point = touchPoint(event);
-    if (!point) return;
+  const moveGesture = (event, point, pointerID = null) => {
+    if (!gesture || !point || (gesture.pointerID != null && gesture.pointerID !== pointerID)) return;
     const dx = point.clientX - gesture.startX;
     const dy = point.clientY - gesture.startY;
     gesture.lastX = point.clientX;
     gesture.lastY = point.clientY;
 
     if (gesture.mode === 'full') {
-      if (dy < 0 || Math.abs(dy) < Math.abs(dx) * 1.15) return;
-      if (dy >= 10) {
+      if (Math.abs(dy) < Math.abs(dx) * 1.15) return;
+      if (Math.abs(dy) >= 10) {
         gesture.moved = true;
         event.preventDefault();
-        const progress = Math.min(dy, 150);
-        const scale = Math.max(.76, 1 - progress / 625);
+        const progress = Math.max(-72, Math.min(dy, 150));
+        const scale = dy >= 0
+          ? Math.max(.76, 1 - progress / 625)
+          : Math.min(1.04, 1 + Math.abs(progress) / 1800);
         gesture.player.style.transition = 'none';
         gesture.player.style.transform = `translate3d(0, ${progress}px, 0) scale(${scale})`;
       }
@@ -410,11 +463,10 @@
       event.preventDefault();
       setDrag(0, Math.max(-32, dy));
     }
-  }, { capture: true, passive: false });
+  };
 
-  document.addEventListener('touchend', event => {
-    if (!gesture) return;
-    const point = touchPoint(event);
+  const endGesture = (event, point, pointerID = null) => {
+    if (!gesture || (gesture.pointerID != null && gesture.pointerID !== pointerID)) return;
     const dx = (point?.clientX ?? gesture.lastX) - gesture.startX;
     const dy = (point?.clientY ?? gesture.lastY) - gesture.startY;
     const elapsed = Math.max(1, performance.now() - gesture.startedAt);
@@ -425,6 +477,7 @@
 
     if (mode === 'full') {
       const player = gesture.player;
+      const video = gesture.video;
       const originalTransform = gesture.originalTransform;
       const originalTransition = gesture.originalTransition;
       player.style.transition = 'transform 180ms ease';
@@ -435,7 +488,15 @@
         player.style.transition = originalTransition;
         player.style.transform = originalTransform;
       }, 190);
-      if (dy >= 72 || verticalVelocity >= 520) enterMiniPlayer();
+      if (dy >= 72 || verticalVelocity >= 520) {
+        suppressPlayerClickUntil = performance.now() + 500;
+        enterMiniPlayer();
+      } else if (dy <= -72 || verticalVelocity <= -520) {
+        // Invoke YouTube's own fullscreen control before suppressing the
+        // synthetic click iOS may emit after the completed swipe.
+        enterFullscreen(video);
+        suppressPlayerClickUntil = performance.now() + 500;
+      }
       return;
     }
 
@@ -446,15 +507,55 @@
       exitMiniPlayer();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  }, { capture: true, passive: true });
+  };
 
-  document.addEventListener('touchcancel', resetGesture, true);
+  const cancelGesture = (pointerID = null) => {
+    if (gesture?.pointerID != null && gesture.pointerID !== pointerID) return;
+    resetGesture();
+  };
+
+  if ('PointerEvent' in window) {
+    document.addEventListener('pointerdown', event => {
+      if (!event.isPrimary || (event.pointerType && event.pointerType !== 'touch')) return;
+      beginGesture(event, event, event.pointerId);
+    }, { capture: true, passive: true });
+    document.addEventListener('pointermove', event => {
+      if (!event.isPrimary) return;
+      moveGesture(event, event, event.pointerId);
+    }, { capture: true, passive: false });
+    document.addEventListener('pointerup', event => {
+      if (!event.isPrimary) return;
+      endGesture(event, event, event.pointerId);
+    }, { capture: true, passive: true });
+    document.addEventListener('pointercancel', event => cancelGesture(event.pointerId), true);
+  } else {
+    const touchPoint = event => event.changedTouches?.[0] || event.touches?.[0] || null;
+    document.addEventListener('touchstart', event => {
+      if (event.touches.length !== 1) return;
+      beginGesture(event, touchPoint(event));
+    }, { capture: true, passive: true });
+    document.addEventListener('touchmove', event => {
+      if (event.touches.length !== 1) return;
+      moveGesture(event, touchPoint(event));
+    }, { capture: true, passive: false });
+    document.addEventListener('touchend', event => endGesture(event, touchPoint(event)), {
+      capture: true, passive: true
+    });
+    document.addEventListener('touchcancel', () => cancelGesture(), true);
+  }
+
   document.addEventListener('fullscreenchange', () => {
     if (document.fullscreenElement) exitMiniPlayer();
   });
 
   document.addEventListener('click', event => {
     const target = event.target instanceof Element ? event.target : null;
+    if (performance.now() < suppressPlayerClickUntil
+        && target?.closest(PLAYER_SELECTOR)) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return;
+    }
     const link = target?.closest('a[href]');
     if (!(link instanceof HTMLAnchorElement)) return;
     let destination;
@@ -470,7 +571,10 @@
   const routeAudit = () => {
     if (recoverFromShorts()) return;
     const route = location.href;
-    if (route === lastRoute) return;
+    if (route === lastRoute) {
+      if (html.hasAttribute(MINI_ATTRIBUTE) && !miniVideo?.isConnected) exitMiniPlayer();
+      return;
+    }
     const previousVideoID = miniVideoID;
     lastRoute = route;
     if (!html.hasAttribute(MINI_ATTRIBUTE)) return;
@@ -495,6 +599,9 @@
     value: Object.freeze({
       enterMiniPlayer,
       exitMiniPlayer,
+      dismissMiniPlayer,
+      enterFullscreen,
+      playerForVideo,
       isShortsRoute,
       isWatchRoute
     })

@@ -895,6 +895,91 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramAudioOnDefaultSynchronizesItsMuteControl() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.documentStartScript(
+                for: .instagram,
+                unclassifiedMediaPolicy: .conceal,
+                audioEnabled: true,
+                contentSafetyEnabled: false
+            ),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.installedFrameSafetyScript(
+                for: .instagram,
+                audioEnabled: true,
+                contentSafetyEnabled: false
+            ),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let loaded = expectation(description: "Instagram audio indicator fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            #"""
+            <html><body>
+              <article>
+                <video id="video" muted></video>
+                <button id="mute" aria-label="Unmute">Unmute</button>
+              </article>
+              <script>
+                const video = document.getElementById('video');
+                const mute = document.getElementById('mute');
+                let interfaceMuted = true;
+                window.__vigilFixtureMuteClicks = 0;
+                mute.addEventListener('click', () => {
+                  window.__vigilFixtureMuteClicks += 1;
+                  interfaceMuted = !interfaceMuted;
+                  video.muted = interfaceMuted;
+                  mute.setAttribute('aria-label', interfaceMuted ? 'Unmute' : 'Mute');
+                  mute.textContent = interfaceMuted ? 'Unmute' : 'Mute';
+                });
+              </script>
+            </body></html>
+            """#,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/reels/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+
+        var state = try await webView.evaluateJavaScript(
+            """
+            ({
+              muted: document.getElementById('video').muted,
+              label: document.getElementById('mute').getAttribute('aria-label'),
+              muteClicks: window.__vigilFixtureMuteClicks
+            })
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(state?["muted"] as? Bool, false)
+        XCTAssertEqual(state?["label"] as? String, "Mute")
+        XCTAssertEqual(state?["muteClicks"] as? Int, 1)
+
+        _ = try await webView.evaluateJavaScript("document.getElementById('mute').click()")
+        state = try await webView.evaluateJavaScript(
+            """
+            ({
+              muted: document.getElementById('video').muted,
+              label: document.getElementById('mute').getAttribute('aria-label'),
+              muteClicks: window.__vigilFixtureMuteClicks
+            })
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(state?["muted"] as? Bool, true)
+        XCTAssertEqual(state?["label"] as? String, "Unmute")
+        XCTAssertEqual(state?["muteClicks"] as? Int, 2)
+    }
+
+    @MainActor
     func testInstagramSuspendsOnlyPlayingMediaAndResumesOnlyVisibleConnectedMedia() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
@@ -1899,6 +1984,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(instagram.contains("has not loaded a usable ${healthRouteLabel(route)} surface yet"))
         XCTAssertTrue(instagram.contains("if (healthRelevant) scheduleHealth(450)"))
         XCTAssertTrue(instagram.contains("__vigilPageVerdictChanged"))
+        XCTAssertTrue(instagram.contains("scheduleHealth(0);"))
         XCTAssertTrue(instagram.contains("setTimeout(() => scheduleHealth(0, true), 7000)"))
         XCTAssertFalse(instagram.contains(
             "window.__vigilBridge({ type: 'health', state: 'ready', detail: '' });"
@@ -2468,6 +2554,15 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("height: 52dvh !important"))
         XCTAssertTrue(script.contains("const isInstagramCommentsDialog"))
         XCTAssertTrue(script.contains("normalizeCommentSheets()"))
+        XCTAssertTrue(script.contains("scroll-snap-type: y mandatory !important"))
+        XCTAssertTrue(script.contains("scroll-snap-stop: always !important"))
+        XCTAssertTrue(script.contains("overscroll-behavior-y: contain !important"))
+        XCTAssertTrue(script.contains("const minimumReelsNormalizationInterval = 160"))
+        XCTAssertTrue(script.contains("processedCards >= 5"))
+        XCTAssertTrue(script.contains("link.rel = 'prefetch'"))
+        XCTAssertTrue(script.contains("const reconcileRepostControl"))
+        XCTAssertFalse(script.contains("scrollBy({"))
+        XCTAssertFalse(script.contains("scrollTop = target"))
     }
 
     @MainActor
@@ -2676,7 +2771,11 @@ final class VigilSocialTests: XCTestCase {
         viewController.view.addSubview(webView)
         window.rootViewController = viewController
         window.isHidden = false
-        defer { window.isHidden = true }
+        defer {
+            webView.navigationDelegate = nil
+            webView.stopLoading()
+            window.isHidden = true
+        }
 
         let loaded = expectation(description: "Reels geometry fixture loaded")
         let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
@@ -2691,6 +2790,8 @@ final class VigilSocialTests: XCTestCase {
                 .card{position:relative;width:390px;height:780px;scroll-snap-align:start}
                 .visual{display:block;width:390px;height:620px}
                 .metadata{position:absolute;left:12px;bottom:0;width:280px;height:96px}
+                .actions{position:absolute;right:8px;bottom:72px;width:52px;height:240px;display:flex;flex-direction:column}
+                .actions button{display:block;width:48px;height:48px}
                 #bottom-nav{position:fixed;left:0;right:0;bottom:0;height:64px;background:#111}
               </style>
               <script>
@@ -2707,6 +2808,11 @@ final class VigilSocialTests: XCTestCase {
                     <a href="/royaluser/">royaluser</a>
                     <span> Full-resolution description text.</span>
                     <button id="read-caption" aria-expanded="false">Read caption</button>
+                  </div>
+                  <div id="actions" class="actions">
+                    <button aria-label="Like">Like</button>
+                    <button aria-label="Comment">Comment</button>
+                    <button id="share" aria-label="Share">Share</button>
                   </div>
                 </article>
                 <article id="second" class="card">
@@ -2729,6 +2835,29 @@ final class VigilSocialTests: XCTestCase {
                   window.__vigilFixtureCaptionClicks += 1;
                   document.getElementById('read-caption').setAttribute('aria-expanded', 'true');
                 });
+                window.__vigilFixtureRepostClicks = 0;
+                document.getElementById('share').addEventListener('click', () => {
+                  const dialog = document.createElement('div');
+                  dialog.id = 'share-sheet';
+                  dialog.setAttribute('role', 'dialog');
+                  dialog.style.cssText = 'position:fixed;left:20px;top:80px;width:300px;height:300px';
+                  const repost = document.createElement('button');
+                  repost.setAttribute('aria-label', 'Repost');
+                  repost.style.cssText = 'display:block;width:120px;height:48px';
+                  repost.addEventListener('click', () => {
+                    window.__vigilFixtureRepostClicks += 1;
+                    const state = document.createElement('button');
+                    state.setAttribute('aria-label', 'Remove repost');
+                    state.style.cssText = 'display:block;width:48px;height:48px';
+                    document.getElementById('actions').insertBefore(
+                      state,
+                      document.getElementById('share')
+                    );
+                    dialog.remove();
+                  });
+                  dialog.appendChild(repost);
+                  document.body.appendChild(dialog);
+                });
               </script>
             </body></html>
             """#,
@@ -2736,7 +2865,7 @@ final class VigilSocialTests: XCTestCase {
         )
         await fulfillment(of: [loaded], timeout: 5)
         try await waitForJavaScriptCondition(
-            "document.getElementById('first')?.dataset.vigilInstagramReelsCard === 'true'",
+            "document.getElementById('first')?.dataset.vigilInstagramReelsCard === 'true' && Boolean(document.querySelector('[data-vigil-instagram-repost-proxy=\"true\"]'))",
             in: webView
         )
 
@@ -2754,6 +2883,11 @@ final class VigilSocialTests: XCTestCase {
               return {
                 scrollMarked: scroller.dataset.vigilInstagramReelsScroll === 'true',
                 snapType: getComputedStyle(scroller).scrollSnapType,
+                snapStop: getComputedStyle(card).scrollSnapStop,
+                snapAlign: getComputedStyle(card).scrollSnapAlign,
+                scrollBehavior: getComputedStyle(scroller).scrollBehavior,
+                overscrollY: getComputedStyle(scroller).overscrollBehaviorY,
+                overflowAnchor: getComputedStyle(scroller).overflowAnchor,
                 cardHeight: cardRect.height,
                 navTop: nav.getBoundingClientRect().top,
                 metadataMarked: metadata.dataset.vigilInstagramReelsMetadata === 'true',
@@ -2763,6 +2897,7 @@ final class VigilSocialTests: XCTestCase {
                 imageLoading: image.loading,
                 imagePriority: image.getAttribute('fetchpriority') || '',
                 videoPreload: video.preload,
+                repostProxy: Boolean(document.querySelector('[data-vigil-instagram-repost-proxy="true"]')),
                 preconnected: [...document.querySelectorAll('link[rel="preconnect"]')].some((link) =>
                   link.href === 'https://scontent.test.cdninstagram.com/'
                 )
@@ -2770,20 +2905,42 @@ final class VigilSocialTests: XCTestCase {
             })()
             """
         ) as? [String: Any]
-        XCTAssertEqual(initial?["scrollMarked"] as? Bool, true)
+        XCTAssertEqual(initial?["scrollMarked"] as? Bool, true, "Reels scroller was not marked")
         XCTAssertTrue((initial?["snapType"] as? String)?.contains("mandatory") == true)
+        XCTAssertEqual(initial?["snapStop"] as? String, "always")
+        XCTAssertEqual(initial?["snapAlign"] as? String, "start")
+        XCTAssertEqual(initial?["scrollBehavior"] as? String, "auto")
+        XCTAssertEqual(initial?["overscrollY"] as? String, "contain")
+        XCTAssertEqual(initial?["overflowAnchor"] as? String, "none")
         XCTAssertEqual(
             try XCTUnwrap(initial?["cardHeight"] as? Double),
             try XCTUnwrap(initial?["navTop"] as? Double),
             accuracy: 2
         )
-        XCTAssertEqual(initial?["metadataMarked"] as? Bool, true)
-        XCTAssertEqual(initial?["metadataInside"] as? Bool, true)
+        XCTAssertEqual(initial?["metadataMarked"] as? Bool, true, "Reel metadata was not identified")
+        XCTAssertEqual(initial?["metadataInside"] as? Bool, true, "Fixture metadata escaped its card")
         XCTAssertEqual(initial?["imageSizes"] as? String, "390px")
         XCTAssertEqual(initial?["sourceSizes"] as? String, "390px")
         XCTAssertEqual(initial?["imageLoading"] as? String, "eager")
         XCTAssertEqual(initial?["videoPreload"] as? String, "auto")
-        XCTAssertEqual(initial?["preconnected"] as? Bool, true)
+        XCTAssertEqual(initial?["repostProxy"] as? Bool, true, "Repost fallback was not installed")
+        XCTAssertEqual(initial?["preconnected"] as? Bool, true, "Reel CDN was not preconnected")
+
+        _ = try await webView.evaluateJavaScript(
+            "document.querySelector('[data-vigil-instagram-repost-proxy=\"true\"] > button').click()"
+        )
+        try await waitForJavaScriptCondition(
+            "window.__vigilFixtureRepostClicks === 1",
+            in: webView
+        )
+        let preCaptionInteractions = try await webView.evaluateJavaScript(
+            "({ captionClicks: window.__vigilFixtureCaptionClicks, mediaClicks: window.__vigilFixtureMediaClicks })"
+        ) as? [String: Any]
+        XCTAssertEqual(
+            preCaptionInteractions?["captionClicks"] as? Int,
+            0,
+            "Repost must not activate the caption"
+        )
 
         _ = try await webView.evaluateJavaScript(
             """
@@ -2796,7 +2953,6 @@ final class VigilSocialTests: XCTestCase {
               };
               caption.dispatchEvent(new PointerEvent('pointerdown', options));
               caption.dispatchEvent(new PointerEvent('pointerup', options));
-              caption.click();
               document.getElementById('reels-scroll').scrollTop =
                 document.getElementById('second').offsetTop;
             })()
@@ -3523,6 +3679,7 @@ final class VigilSocialTests: XCTestCase {
         _ = try await webView.evaluateJavaScript(
             """
             (() => {
+              document.documentElement.setAttribute('data-vigil-feature-reels', 'available');
               const media = document.getElementById('media');
               media.muted = false;
               window.__vigilFixtureTap(1);
@@ -3671,6 +3828,282 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(state?["muted"] as? Bool, true)
         XCTAssertEqual(state?["playCalls"] as? Int, 1)
         XCTAssertEqual(state?["pointerUps"] as? Int, 0)
+    }
+
+    @MainActor
+    func testInstagramMediaGesturesCoverFeedAndPostModalWithoutTakingOverStories() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.controlsScript(for: .instagram),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let window = UIWindow(frame: webView.frame)
+        let viewController = UIViewController()
+        viewController.view.addSubview(webView)
+        window.rootViewController = viewController
+        window.isHidden = false
+        defer { window.isHidden = true }
+
+        let loaded = expectation(description: "Instagram multi-surface media fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            #"""
+            <html><head>
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <style>
+                html,body{margin:0;width:100%;height:100%}
+                .surface{display:none;position:relative;width:390px;height:700px}
+                .surface.active{display:block}
+                .media{display:block;width:390px;height:620px;background:#111}
+                .like{position:absolute;right:12px;top:440px;width:48px;height:48px}
+              </style>
+              <script>
+                window.fetch = async (value) => ({ ok: true, status: 200, url: String(value) });
+                window.__vigilBridge = () => {};
+              </script>
+            </head><body>
+              <article id="feed" class="surface active">
+                <video id="feed-media" class="media" muted></video>
+                <button id="feed-like" class="like">
+                  <svg id="feed-heart" aria-label="Like" viewBox="0 0 24 24">
+                    <path d="M12 21s-8-4.8-8-11a4.5 4.5 0 0 1 8-3 4.5 4.5 0 0 1 8 3c0 6.2-8 11-8 11Z"></path>
+                  </svg>
+                </button>
+              </article>
+              <div id="post" class="surface" role="dialog" aria-hidden="true">
+                <img id="post-media" class="media" alt="Post fixture">
+                <button id="post-like" class="like"><svg id="post-heart" aria-label="Like"></svg></button>
+              </div>
+              <section id="story" class="surface">
+                <video id="story-media" class="media" muted></video>
+                <button id="story-like" class="like"><svg aria-label="Like"></svg></button>
+              </section>
+              <script>
+                window.__vigilFixture = {
+                  pointerId: 20,
+                  feedLikeClicks: 0,
+                  postLikeClicks: 0,
+                  storyLikeClicks: 0,
+                  feedNativePointerUps: 0,
+                  feedNativeClicks: 0,
+                  storyNativePointerUps: 0,
+                  feedPlayCalls: 0,
+                  feedPauseCalls: 0
+                };
+                const fixture = window.__vigilFixture;
+                const feedMedia = document.getElementById('feed-media');
+                let feedPlaying = true;
+                Object.defineProperty(feedMedia, 'paused', {
+                  configurable: true, get: () => !feedPlaying
+                });
+                feedMedia.play = () => {
+                  fixture.feedPlayCalls += 1;
+                  feedPlaying = true;
+                  feedMedia.dispatchEvent(new Event('play'));
+                  return Promise.resolve();
+                };
+                feedMedia.pause = () => {
+                  fixture.feedPauseCalls += 1;
+                  feedPlaying = false;
+                  feedMedia.dispatchEvent(new Event('pause'));
+                };
+                fixture.setFeedPlaying = (value) => { feedPlaying = Boolean(value); };
+                feedMedia.addEventListener('pointerup', () => {
+                  fixture.feedNativePointerUps += 1;
+                  feedMedia.pause();
+                });
+                feedMedia.addEventListener('click', () => {
+                  fixture.feedNativeClicks += 1;
+                  feedMedia.pause();
+                });
+                document.getElementById('feed-like').addEventListener('click', () => {
+                  fixture.feedLikeClicks += 1;
+                  const heart = document.getElementById('feed-heart');
+                  heart.setAttribute('aria-label',
+                    heart.getAttribute('aria-label') === 'Like' ? 'Unlike' : 'Like');
+                });
+                document.getElementById('post-like').addEventListener('click', () => {
+                  fixture.postLikeClicks += 1;
+                  const heart = document.getElementById('post-heart');
+                  heart.setAttribute('aria-label',
+                    heart.getAttribute('aria-label') === 'Like' ? 'Unlike' : 'Like');
+                });
+                document.getElementById('story-like').addEventListener('click', () => {
+                  fixture.storyLikeClicks += 1;
+                });
+                document.getElementById('story-media').addEventListener('pointerup', () => {
+                  fixture.storyNativePointerUps += 1;
+                });
+                fixture.tap = (target, x, y, detail = 1) => {
+                  fixture.pointerId += 1;
+                  const pointer = {
+                    bubbles: true, cancelable: true, composed: true,
+                    clientX: x, clientY: y, pointerId: fixture.pointerId,
+                    pointerType: 'touch', isPrimary: true, button: 0
+                  };
+                  target.dispatchEvent(new PointerEvent('pointerdown', pointer));
+                  target.dispatchEvent(new PointerEvent('pointerup', pointer));
+                  target.dispatchEvent(new MouseEvent('click', {
+                    bubbles: true, cancelable: true, composed: true,
+                    clientX: x, clientY: y, detail
+                  }));
+                };
+                fixture.show = (name, path) => {
+                  document.querySelectorAll('.surface').forEach((surface) => {
+                    surface.classList.toggle('active', surface.id === name);
+                  });
+                  document.getElementById('post').setAttribute(
+                    'aria-hidden', name === 'post' ? 'false' : 'true'
+                  );
+                  history.pushState({}, '', path);
+                  document.dispatchEvent(new Event('__vigilRouteChanged'));
+                };
+              </script>
+            </body></html>
+            """#,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+
+        _ = try await webView.evaluateJavaScript(
+            "window.__vigilFixture.tap(document.getElementById('feed-media'), 195, 280)"
+        )
+        try await Task.sleep(nanoseconds: 140_000_000)
+        var state = try await webView.evaluateJavaScript(
+            """
+            ({
+              paused: document.getElementById('feed-media').paused,
+              pauseCalls: window.__vigilFixture.feedPauseCalls,
+              nativePointerUps: window.__vigilFixture.feedNativePointerUps,
+              nativeClicks: window.__vigilFixture.feedNativeClicks
+            })
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(state?["paused"] as? Bool, false, "tap one must not cause a half-pause")
+        XCTAssertEqual(state?["pauseCalls"] as? Int, 0)
+        XCTAssertEqual(state?["nativePointerUps"] as? Int, 0)
+        XCTAssertEqual(state?["nativeClicks"] as? Int, 0)
+
+        try await Task.sleep(nanoseconds: 300_000_000)
+        state = try await webView.evaluateJavaScript(
+            """
+            ({
+              paused: document.getElementById('feed-media').paused,
+              pauseCalls: window.__vigilFixture.feedPauseCalls,
+              feedback: document.querySelector('[data-vigil-instagram-playback-feedback]')?.dataset.state || '',
+              feedbackHasSVG: Boolean(document.querySelector('[data-vigil-instagram-playback-feedback] svg'))
+            })
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(state?["paused"] as? Bool, true)
+        XCTAssertEqual(state?["pauseCalls"] as? Int, 1)
+        XCTAssertEqual(state?["feedback"] as? String, "paused")
+        XCTAssertEqual(state?["feedbackHasSVG"] as? Bool, true)
+
+        _ = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const fixture = window.__vigilFixture;
+              fixture.setFeedPlaying(true);
+              fixture.feedPauseCalls = 0;
+              fixture.feedPlayCalls = 0;
+              fixture.tap(document.getElementById('feed-media'), 170, 280, 1);
+              setTimeout(() => fixture.tap(document.getElementById('feed-media'), 218, 280, 2), 350);
+            })()
+            """
+        )
+        try await waitForJavaScriptCondition(
+            "window.__vigilFixture.feedLikeClicks === 1",
+            in: webView
+        )
+        state = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const feedback = document.querySelector('[data-vigil-instagram-like-heart="true"]');
+              const feedbackPath = feedback?.querySelector('path');
+              const sourcePath = document.querySelector('#feed-heart path');
+              return {
+                paused: document.getElementById('feed-media').paused,
+                pauseCalls: window.__vigilFixture.feedPauseCalls,
+                playCalls: window.__vigilFixture.feedPlayCalls,
+                likeClicks: window.__vigilFixture.feedLikeClicks,
+                label: document.getElementById('feed-heart').getAttribute('aria-label'),
+                heartHasSVG: Boolean(feedback?.querySelector('svg')),
+                heartPathMatches: feedbackPath?.getAttribute('d') === sourcePath?.getAttribute('d'),
+                heartFill: feedbackPath ? getComputedStyle(feedbackPath).fill : ''
+              };
+            })()
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(state?["paused"] as? Bool, false)
+        XCTAssertEqual(state?["pauseCalls"] as? Int, 0)
+        XCTAssertEqual(state?["playCalls"] as? Int, 0)
+        XCTAssertEqual(state?["likeClicks"] as? Int, 1)
+        XCTAssertEqual(state?["label"] as? String, "Unlike")
+        XCTAssertEqual(state?["heartHasSVG"] as? Bool, true)
+        XCTAssertEqual(state?["heartPathMatches"] as? Bool, true)
+        XCTAssertEqual(state?["heartFill"] as? String, "rgb(255, 48, 64)")
+
+        _ = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const fixture = window.__vigilFixture;
+              fixture.show('post', '/p/fixture/');
+              const media = document.getElementById('post-media');
+              fixture.tap(media, 195, 280, 1);
+              setTimeout(() => fixture.tap(media, 195, 280, 2), 90);
+            })()
+            """
+        )
+        try await waitForJavaScriptCondition(
+            "window.__vigilFixture.postLikeClicks === 1",
+            in: webView
+        )
+        state = try await webView.evaluateJavaScript(
+            """
+            ({
+              postLikeClicks: window.__vigilFixture.postLikeClicks,
+              label: document.getElementById('post-heart').getAttribute('aria-label'),
+              heartHasSVG: Boolean(document.querySelector('[data-vigil-instagram-like-heart="true"] svg'))
+            })
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(state?["postLikeClicks"] as? Int, 1)
+        XCTAssertEqual(state?["label"] as? String, "Unlike")
+        XCTAssertEqual(state?["heartHasSVG"] as? Bool, true)
+
+        _ = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const fixture = window.__vigilFixture;
+              fixture.show('story', '/stories/fixture/1/');
+              const media = document.getElementById('story-media');
+              fixture.tap(media, 195, 280, 1);
+              fixture.tap(media, 195, 280, 2);
+            })()
+            """
+        )
+        try await Task.sleep(nanoseconds: 120_000_000)
+        state = try await webView.evaluateJavaScript(
+            """
+            ({
+              nativePointerUps: window.__vigilFixture.storyNativePointerUps,
+              storyLikeClicks: window.__vigilFixture.storyLikeClicks,
+              vigilHeart: Boolean(document.querySelector('[data-vigil-instagram-like-heart="true"]'))
+            })
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(state?["nativePointerUps"] as? Int, 2)
+        XCTAssertEqual(state?["storyLikeClicks"] as? Int, 0)
+        XCTAssertEqual(state?["vigilHeart"] as? Bool, false)
     }
 
     @MainActor
@@ -3848,52 +4281,6 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(scripts[3].source.contains("__vigilPolicyProbeInstalled"))
     }
 
-    @MainActor
-    func testColdStoreDoesNotWaitForPhoneBlocklistValidation() {
-        let startedAt = ProcessInfo.processInfo.systemUptime
-        let store = SocialWebViewStore(
-            defaults: UserDefaults(suiteName: #function)!,
-            fixedService: .instagram,
-            loadInitialPages: false,
-            phoneBlocklistLoader: {
-                Thread.sleep(forTimeInterval: 0.6)
-                return nil
-            }
-        )
-        let initializationDuration = ProcessInfo.processInfo.systemUptime - startedAt
-
-        XCTAssertEqual(store.fixedService, .instagram)
-        XCTAssertLessThan(
-            initializationDuration,
-            0.3,
-            "A large blocklist must validate away from the launch-critical main actor"
-        )
-    }
-
-    @MainActor
-    func testOnlyExactFirstPartyHostsBypassPendingBlocklistValidation() throws {
-        XCTAssertFalse(SocialWebViewStore.needsPhoneBlocklistValidation(
-            try XCTUnwrap(URL(string: "https://www.instagram.com/")),
-            for: .instagram
-        ))
-        XCTAssertFalse(SocialWebViewStore.needsPhoneBlocklistValidation(
-            try XCTUnwrap(URL(string: "https://instagram.com/direct/inbox/")),
-            for: .instagram
-        ))
-        XCTAssertTrue(SocialWebViewStore.needsPhoneBlocklistValidation(
-            try XCTUnwrap(URL(string: "https://help.instagram.com/")),
-            for: .instagram
-        ))
-        XCTAssertTrue(SocialWebViewStore.needsPhoneBlocklistValidation(
-            try XCTUnwrap(URL(string: "https://www.facebook.com/login.php")),
-            for: .instagram
-        ))
-        XCTAssertFalse(SocialWebViewStore.needsPhoneBlocklistValidation(
-            try XCTUnwrap(URL(string: "about:blank")),
-            for: .instagram
-        ))
-    }
-
     func testContentBlockerReloadCacheInvalidatesForEveryAppBuild() {
         let firstBuild = YouTubeContentBlockerReloadPolicy.buildFingerprint(
             bundleIdentifier: "tech.caseline.vigil.instagram",
@@ -3934,6 +4321,33 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(scripts[2].source.contains("/reels"))
         XCTAssertTrue(scripts[3].source.contains("__vigilPolicyProbeInstalled"))
         XCTAssertTrue(scripts[3].source.contains("data-vigil-feature-reels"))
+    }
+
+    func testDocumentFinishUsesACompactAdapterInstallationProbe() {
+        let instagram = DOMAdapters.mainFrameInstallationProbe(for: .instagram)
+        let youtube = DOMAdapters.mainFrameInstallationProbe(for: .youtube)
+
+        XCTAssertLessThan(instagram.utf8.count, 256)
+        XCTAssertLessThan(youtube.utf8.count, 256)
+        XCTAssertTrue(instagram.contains("__vigilInstagramCompatibilityInstalled"))
+        XCTAssertTrue(instagram.contains("__vigilPolicyProbeInstalled"))
+        XCTAssertTrue(instagram.contains("__vigilInstagramInstalled"))
+        XCTAssertTrue(youtube.contains("__vigilCommonInstalled"))
+        XCTAssertTrue(youtube.contains("__vigilYouTubeInstalled"))
+    }
+
+    func testPolicyProbeDefersStartupTrafficWhileFeaturesRemainFailClosed() {
+        let script = DOMAdapters.controlsScript(for: .instagram)
+
+        XCTAssertTrue(script.contains(
+            "document.documentElement.setAttribute(`data-vigil-feature-${key}`, 'pending')"
+        ))
+        XCTAssertTrue(script.contains("addEventListener('load', scheduleInitialProbe, { once: true })"))
+        XCTAssertTrue(script.contains("requestIdleCallback(runInitialProbe, { timeout: 1200 })"))
+        XCTAssertTrue(script.contains("setTimeout(scheduleInitialProbe, 5000)"))
+        XCTAssertTrue(script.contains(
+            "[data-vigil-feature-reels=\"blocked\"], [data-vigil-feature-reels=\"pending\"]"
+        ))
     }
 
     @MainActor
@@ -4617,16 +5031,30 @@ final class VigilSocialTests: XCTestCase {
                 <meta name="title" content="Fixture ordinary video">
                 <style>
                   html, body { margin: 0; }
-                  ytm-player, video { display: block; width: 390px; height: 220px; background: black; }
+                  ytm-player, #player-container-id, #player, video { display: block; width: 390px; height: 220px; background: black; }
                   ytm-single-column-watch-next-results-renderer { display: block; height: 1200px; }
                 </style>
               </head>
               <body>
                 <ytm-watch>
-                  <ytm-player><video playsinline></video></ytm-player>
+                  <ytm-player>
+                    <div id="player-container-id">
+                      <div id="player">
+                        <video playsinline></video>
+                        <input id="seek" type="range" aria-label="Seek">
+                        <button class="ytp-fullscreen-button" aria-label="Full screen">Full screen</button>
+                      </div>
+                    </div>
+                  </ytm-player>
                   <h1>Fixture ordinary video</h1>
                   <ytm-single-column-watch-next-results-renderer></ytm-single-column-watch-next-results-renderer>
                 </ytm-watch>
+                <script>
+                  window.__vigilFixtureFullscreenClicks = 0;
+                  document.querySelector('.ytp-fullscreen-button').addEventListener('click', () => {
+                    window.__vigilFixtureFullscreenClicks += 1;
+                  });
+                </script>
               </body>
             </html>
             """,
@@ -4638,15 +5066,79 @@ final class VigilSocialTests: XCTestCase {
             in: webView
         )
 
-        let entered = try await webView.evaluateJavaScript(
-            "window.__vigilYouTubeParityTest.enterMiniPlayer()"
+        let blockedEdgeSwipe = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const video = document.querySelector('video');
+              const send = (type, x, y) => video.dispatchEvent(new PointerEvent(type, {
+                bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch',
+                isPrimary: true, clientX: x, clientY: y
+              }));
+              send('pointerdown', 5, 60);
+              send('pointermove', 5, 160);
+              send('pointerup', 5, 160);
+              return document.documentElement.dataset.vigilYoutubeMiniplayer === 'true';
+            })()
+            """
         ) as? Bool
-        XCTAssertEqual(entered, true)
+        XCTAssertEqual(blockedEdgeSwipe, false, "The iOS edge-back region must win over the player gesture")
+
+        let blockedSeekSwipe = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const seek = document.getElementById('seek');
+              const send = (type, x, y) => seek.dispatchEvent(new PointerEvent(type, {
+                bubbles: true, cancelable: true, pointerId: 8, pointerType: 'touch',
+                isPrimary: true, clientX: x, clientY: y
+              }));
+              send('pointerdown', 190, 190);
+              send('pointermove', 190, 290);
+              send('pointerup', 190, 290);
+              return document.documentElement.dataset.vigilYoutubeMiniplayer === 'true';
+            })()
+            """
+        ) as? Bool
+        XCTAssertEqual(blockedSeekSwipe, false, "Progress scrubbing must not start the miniplayer")
+
+        let fullscreenClicks = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const video = document.querySelector('video');
+              const send = (type, x, y) => video.dispatchEvent(new PointerEvent(type, {
+                bubbles: true, cancelable: true, pointerId: 81, pointerType: 'touch',
+                isPrimary: true, clientX: x, clientY: y
+              }));
+              send('pointerdown', 190, 160);
+              send('pointermove', 190, 60);
+              send('pointerup', 190, 60);
+              return window.__vigilFixtureFullscreenClicks;
+            })()
+            """
+        ) as? Int
+        XCTAssertEqual(fullscreenClicks, 1, "Swipe-up should retain ordinary-video fullscreen parity")
+
+        let entered = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const video = document.querySelector('video');
+              const send = (type, x, y) => video.dispatchEvent(new PointerEvent(type, {
+                bubbles: true, cancelable: true, pointerId: 9, pointerType: 'touch',
+                isPrimary: true, clientX: x, clientY: y
+              }));
+              send('pointerdown', 190, 60);
+              send('pointermove', 190, 160);
+              send('pointerup', 190, 160);
+              return document.documentElement.dataset.vigilYoutubeMiniplayer === 'true';
+            })()
+            """
+        ) as? Bool
+        XCTAssertEqual(entered, true, "A real pointer-event swipe path must enter the miniplayer")
         let miniState = try await webView.evaluateJavaScript(
             """
             ({
               active: document.documentElement.dataset.vigilYoutubeMiniplayer === 'true',
               player: document.querySelector('[data-vigil-youtube-active-player="true"]') != null,
+              playerTag: document.querySelector('[data-vigil-youtube-active-player="true"]')?.tagName || '',
               shell: document.getElementById('vigil-youtube-miniplayer-shell')?.getAttribute('aria-label') || '',
               close: document.querySelector('#vigil-youtube-miniplayer-shell .vigil-youtube-mini-close')?.getAttribute('aria-label') || ''
             })
@@ -4654,9 +5146,54 @@ final class VigilSocialTests: XCTestCase {
         ) as? [String: Any]
         XCTAssertEqual(miniState?["active"] as? Bool, true)
         XCTAssertEqual(miniState?["player"] as? Bool, true)
+        XCTAssertEqual(miniState?["playerTag"] as? String, "YTM-PLAYER", "The unclipped outer player host must move")
         XCTAssertEqual(miniState?["shell"] as? String, "YouTube miniplayer")
         XCTAssertEqual(miniState?["close"] as? String, "Close miniplayer")
 
+        let tapRestored = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const shell = document.getElementById('vigil-youtube-miniplayer-shell');
+              const send = (type) => shell.dispatchEvent(new PointerEvent(type, {
+                bubbles: true, cancelable: true, pointerId: 10, pointerType: 'touch',
+                isPrimary: true, clientX: 190, clientY: 760
+              }));
+              send('pointerdown');
+              send('pointerup');
+              return !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer');
+            })()
+            """
+        ) as? Bool
+        XCTAssertEqual(tapRestored, true, "Tapping the miniplayer should restore the ordinary player")
+
+        let reentered = try await webView.evaluateJavaScript(
+            "window.__vigilYouTubeParityTest.enterMiniPlayer()"
+        ) as? Bool
+        XCTAssertEqual(reentered, true)
+        let dismissed = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const shell = document.getElementById('vigil-youtube-miniplayer-shell');
+              const send = (type, x) => shell.dispatchEvent(new PointerEvent(type, {
+                bubbles: true, cancelable: true, pointerId: 11, pointerType: 'touch',
+                isPrimary: true, clientX: x, clientY: 760
+              }));
+              send('pointerdown', 180);
+              send('pointermove', 300);
+              send('pointerup', 300);
+              return {
+                inactive: !document.documentElement.hasAttribute('data-vigil-youtube-miniplayer'),
+                pathname: location.pathname
+              };
+            })()
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(dismissed?["inactive"] as? Bool, true)
+        XCTAssertEqual(dismissed?["pathname"] as? String, "/watch", "Dismiss must not unexpectedly navigate Home")
+
+        _ = try await webView.evaluateJavaScript(
+            "window.__vigilYouTubeParityTest.enterMiniPlayer()"
+        )
         _ = try await webView.evaluateJavaScript(
             "window.__vigilYouTubeParityTest.exitMiniPlayer()"
         )
@@ -4668,6 +5205,18 @@ final class VigilSocialTests: XCTestCase {
             """
         ) as? Bool
         XCTAssertEqual(restored, true)
+    }
+
+    @MainActor
+    func testYouTubeInteractionExtensionIdentifiersRemainStable() {
+        XCTAssertEqual(
+            YouTubeSafariSession.contentBlockerIdentifier(appBundleIdentifier: "tech.caseline.vigil.instagram"),
+            "tech.caseline.vigil.instagram.shorts-blocker"
+        )
+        XCTAssertEqual(
+            YouTubeSafariSession.interactionExtensionIdentifier(appBundleIdentifier: "tech.caseline.vigil.instagram"),
+            "tech.caseline.vigil.instagram.youtube-controls"
+        )
     }
 
     func testYouTubeInteractionExtensionIsNarrowAndKeepsShortsUnavailable() throws {

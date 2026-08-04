@@ -128,7 +128,7 @@ private struct YouTubeContentBlockerGate: View {
                     VStack(spacing: 8) {
                         Text("Enable the YouTube filter")
                             .font(.headline)
-                        Text(health.errorMessage ?? "Vigil moved the YouTube Shorts blocker into Instagram so the old helper app can be removed. Enable Vigil YouTube Shorts Filter in Safari Extensions once.")
+                        Text(health.filterErrorMessage ?? "Vigil moved the YouTube Shorts blocker into Instagram so the old helper app can be removed. Enable Vigil YouTube Shorts Filter in Safari Extensions once.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -142,6 +142,27 @@ private struct YouTubeContentBlockerGate: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .foregroundStyle(isDark ? Color.white : Color.black)
                 .background((isDark ? Color.black : Color.white).ignoresSafeArea())
+            } else if health.areControlsEnabled == false {
+                VStack {
+                    Spacer()
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Enable YouTube player gestures", systemImage: "hand.draw")
+                            .font(.headline)
+                        Text(health.controlsErrorMessage ?? "Vigil YouTube Controls is installed but disabled. Enable it and allow access to youtube.com so swipe-down can open the miniplayer. Shorts stays blocked separately.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Button("Open Extension Settings") { health.openSettings() }
+                                .buttonStyle(.borderedProminent)
+                            Button("Check Again") { health.refresh() }
+                                .buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(18)
+                    .foregroundStyle(isDark ? Color.white : Color.black)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    .padding()
+                }
             }
         }
         .task { health.refresh() }
@@ -154,17 +175,25 @@ private struct YouTubeContentBlockerGate: View {
 @MainActor
 private final class YouTubeContentBlockerHealth: ObservableObject {
     @Published private(set) var isEnabled: Bool?
-    @Published private(set) var errorMessage: String?
+    @Published private(set) var areControlsEnabled: Bool?
+    @Published private(set) var filterErrorMessage: String?
+    @Published private(set) var controlsErrorMessage: String?
     private var isRefreshing = false
+    private var controlsStateGeneration: UInt64 = 0
 
-    private var identifier: String? {
+    private var filterIdentifier: String? {
         YouTubeSafariSession.contentBlockerIdentifier(appBundleIdentifier: Bundle.main.bundleIdentifier)
     }
 
+    private var controlsIdentifier: String? {
+        YouTubeSafariSession.interactionExtensionIdentifier(appBundleIdentifier: Bundle.main.bundleIdentifier)
+    }
+
     func refresh() {
-        guard let identifier else {
+        refreshControlsState()
+        guard let identifier = filterIdentifier else {
             isEnabled = false
-            errorMessage = "This build is missing the YouTube filter identifier."
+            filterErrorMessage = "This build is missing the YouTube filter identifier."
             return
         }
         guard !isRefreshing else { return }
@@ -175,14 +204,14 @@ private final class YouTubeContentBlockerHealth: ObservableObject {
                 if let error {
                     self.isRefreshing = false
                     self.isEnabled = false
-                    self.errorMessage = "The YouTube filter could not be checked: \(error.localizedDescription)"
+                    self.filterErrorMessage = "The YouTube filter could not be checked: \(error.localizedDescription)"
                     print("Vigil YouTube content blocker enabled: false (\(error.localizedDescription))")
                     return
                 }
                 guard state?.isEnabled == true else {
                     self.isRefreshing = false
                     self.isEnabled = false
-                    self.errorMessage = nil
+                    self.filterErrorMessage = nil
                     print("Vigil YouTube content blocker enabled: false")
                     return
                 }
@@ -191,7 +220,7 @@ private final class YouTubeContentBlockerHealth: ObservableObject {
                 guard UserDefaults.standard.string(forKey: reloadKey) != fingerprint else {
                     self.isRefreshing = false
                     self.isEnabled = true
-                    self.errorMessage = nil
+                    self.filterErrorMessage = nil
                     print("Vigil YouTube content blocker enabled: true")
                     return
                 }
@@ -200,24 +229,62 @@ private final class YouTubeContentBlockerHealth: ObservableObject {
                     UserDefaults.standard.set(fingerprint, forKey: reloadKey)
                     self.isRefreshing = false
                     self.isEnabled = true
-                    self.errorMessage = nil
+                    self.filterErrorMessage = nil
                     print("Vigil YouTube content blocker enabled: true")
                 } catch {
                     self.isRefreshing = false
                     self.isEnabled = false
-                    self.errorMessage = "The YouTube filter could not load: \(error.localizedDescription)"
+                    self.filterErrorMessage = "The YouTube filter could not load: \(error.localizedDescription)"
                     print("Vigil YouTube content blocker enabled: false (\(error.localizedDescription))")
                 }
             }
         }
     }
 
+    private func refreshControlsState() {
+        controlsStateGeneration &+= 1
+        let generation = controlsStateGeneration
+        guard #available(iOS 26.2, *) else {
+            areControlsEnabled = nil
+            controlsErrorMessage = nil
+            return
+        }
+        guard let identifier = controlsIdentifier else {
+            areControlsEnabled = false
+            controlsErrorMessage = "This build is missing the YouTube controls identifier."
+            return
+        }
+        SFSafariExtensionManager.getStateOfExtension(withIdentifier: identifier) { [weak self] state, error in
+            Task { @MainActor in
+                guard let self, self.controlsStateGeneration == generation else { return }
+                if let error {
+                    self.areControlsEnabled = false
+                    self.controlsErrorMessage = "The YouTube controls extension could not be checked: \(error.localizedDescription)"
+                    print("Vigil YouTube controls enabled: false (\(error.localizedDescription))")
+                    return
+                }
+                self.areControlsEnabled = state?.isEnabled == true
+                self.controlsErrorMessage = nil
+                print("Vigil YouTube controls enabled: \(self.areControlsEnabled == true)")
+            }
+        }
+    }
+
     func openSettings() {
-        guard let identifier else { return }
+        let identifiers = [
+            isEnabled == false ? filterIdentifier : nil,
+            areControlsEnabled == false ? controlsIdentifier : nil
+        ].compactMap { $0 }
+        let requestedIdentifiers = identifiers.isEmpty
+            ? [filterIdentifier, controlsIdentifier].compactMap { $0 }
+            : identifiers
+        guard !requestedIdentifiers.isEmpty else { return }
         if #available(iOS 26.2, *) {
-            SFSafariSettings.openExtensionsSettings(forIdentifiers: [identifier]) { [weak self] error in
+            SFSafariSettings.openExtensionsSettings(forIdentifiers: requestedIdentifiers) { [weak self] error in
                 Task { @MainActor in
-                    self?.errorMessage = error.map { "Safari extension settings could not be opened: \($0.localizedDescription)" }
+                    if let error {
+                        self?.controlsErrorMessage = "Safari extension settings could not be opened: \(error.localizedDescription)"
+                    }
                 }
             }
             return

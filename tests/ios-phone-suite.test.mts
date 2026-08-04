@@ -157,10 +157,15 @@ assert.match(
 );
 assert.match(
   buildPhoneAppsSource,
-  /verifyBundledPhoneBlocklist\(path, blocklist\)[\s\S]*?verifyBundledExplicitContentPolicy\(path, explicitContentPolicy\)/u,
-  "Release builds must verify both generated enforcement artifacts inside every app bundle"
+  /const bundledExplicitContentPolicy = await verifyBundledExplicitContentPolicy\(path, explicitContentPolicy\)/u,
+  "Release Instagram builds must verify the generated classifier policy"
 );
-assert.match(phoneSuiteSource, /app\.blocklist\.artifactSha256/u);
+assert.doesNotMatch(
+  buildPhoneAppsSource,
+  /verifyBundledPhoneBlocklist\(path, blocklist\)/u,
+  "The narrow Instagram companion must not bundle or validate the general adult-domain index"
+);
+assert.match(phoneSuiteSource, /app\.blocklist\?\.artifactSha256/u);
 assert.match(phoneSuiteSource, /app\.explicitContentPolicy\?\.sha256/u);
 assert.match(
   phoneSuiteSource,

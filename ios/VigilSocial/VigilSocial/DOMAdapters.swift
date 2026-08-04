@@ -1082,6 +1082,15 @@ enum DOMAdapters {
         )
     }
 
+    static func mainFrameInstallationProbe(for service: SocialService) -> String {
+        switch service {
+        case .instagram:
+            #"Boolean(window.__vigilInstagramCompatibilityInstalled && window.__vigilPolicyProbeInstalled && window.__vigilInstagramInstalled)"#
+        case .youtube:
+            #"Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilYouTubeInstalled)"#
+        }
+    }
+
     private static func authenticationDocumentGuard(for service: SocialService, body: String) -> String {
         if service == .youtube {
             return #"""
@@ -1473,9 +1482,38 @@ enum DOMAdapters {
               clearTimeout(timeout);
             }
           };
-          probe();
-          addEventListener('online', probe);
-          addEventListener('focus', probe);
+          let initialProbeStarted = false;
+          let initialProbeRequest = 0;
+          const runInitialProbe = () => {
+            if (initialProbeStarted) return;
+            initialProbeStarted = true;
+            if (initialProbeRequest && typeof cancelIdleCallback === 'function') {
+              cancelIdleCallback(initialProbeRequest);
+            }
+            probe();
+          };
+          const scheduleInitialProbe = () => {
+            if (initialProbeStarted || initialProbeRequest) return;
+            if (typeof requestIdleCallback === 'function') {
+              initialProbeRequest = requestIdleCallback(runInitialProbe, { timeout: 1200 });
+            } else {
+              initialProbeRequest = setTimeout(runInitialProbe, 500);
+            }
+          };
+          if (document.readyState === 'complete') scheduleInitialProbe();
+          else addEventListener('load', scheduleInitialProbe, { once: true });
+          // A stalled third-party resource must not leave feature availability
+          // unresolved forever. Pending features stay hidden fail-closed while
+          // this bounded startup grace lets Instagram's own first load win.
+          setTimeout(scheduleInitialProbe, 5000);
+          addEventListener('online', () => {
+            if (initialProbeStarted) probe();
+            else scheduleInitialProbe();
+          });
+          addEventListener('focus', () => {
+            if (initialProbeStarted) probe();
+            else scheduleInitialProbe();
+          });
           setInterval(probe, 15000);
         })();
         """#
@@ -1528,6 +1566,45 @@ enum DOMAdapters {
               ...root.querySelectorAll('video, audio')
             ];
           };
+          const instagramUnmuteSelector = '[aria-label="Unmute" i]';
+          const instagramUnmuteControlFor = (media) => {
+            let container = media?.parentElement || null;
+            for (let depth = 0; container && depth < 10; depth += 1) {
+              const containedMedia = mediaWithin(container);
+              if (containedMedia.length === 1 && containedMedia[0] === media) {
+                const labelledControl = container.matches?.(instagramUnmuteSelector)
+                  ? container
+                  : container.querySelector(instagramUnmuteSelector);
+                if (labelledControl) {
+                  return labelledControl.closest('button, [role="button"]') || labelledControl;
+                }
+              }
+              container = container.parentElement;
+            }
+            const documentMedia = mediaWithin(document);
+            if (documentMedia.length !== 1 || documentMedia[0] !== media) return null;
+            const labelledControl = document.querySelector(instagramUnmuteSelector);
+            return labelledControl?.closest('button, [role="button"]') || labelledControl;
+          };
+          const synchronizeInstagramAudioIndicator = (media) => {
+            if (media.dataset.vigilInstagramAudioIndicatorSynced === 'true') return false;
+            const control = instagramUnmuteControlFor(media);
+            if (!control) return false;
+            media.dataset.vigilInstagramAudioIndicatorSynced = 'true';
+            try {
+              // Instagram owns the mute icon in framework state. Recreate the
+              // state that icon represents, then use its own control so the UI
+              // and the physical media element become audible together.
+              media.muted = true;
+              control.click();
+            } catch (_) {
+              delete media.dataset.vigilInstagramAudioIndicatorSynced;
+              return false;
+            }
+            media.defaultMuted = false;
+            media.muted = false;
+            return true;
+          };
           const applyAudioPreference = (media) => {
             if (!(media instanceof HTMLMediaElement)) return;
             if (!window.__vigilAudioPreferred) {
@@ -1550,21 +1627,58 @@ enum DOMAdapters {
               // Match the companion's audio-on default without continuously
               // overriding Instagram's own subsequent tap-to-mute behavior.
               media.dataset.vigilInstagramAudioInitialized = 'true';
-              media.defaultMuted = false;
-              media.muted = false;
+              if (!synchronizeInstagramAudioIndicator(media)) {
+                media.defaultMuted = false;
+                media.muted = false;
+              }
+            } else {
+              // The video and its overlay control can mount in separate React
+              // commits. Complete UI synchronization when that control arrives.
+              synchronizeInstagramAudioIndicator(media);
             }
           };
           const scanMedia = (root) => mediaWithin(root).forEach(applyAudioPreference);
+          const scanMediaNearControl = (control) => {
+            let container = control?.parentElement || null;
+            for (let depth = 0; container && depth < 10; depth += 1) {
+              const containedMedia = mediaWithin(container);
+              if (containedMedia.length === 1) {
+                applyAudioPreference(containedMedia[0]);
+                return;
+              }
+              container = container.parentElement;
+            }
+          };
           const installMediaRoot = (root) => {
             if (!root?.addEventListener || mediaRoots.has(root)) return;
             mediaRoots.add(root);
             const target = root === document ? document.documentElement : root;
             if (!target) return;
             new MutationObserver((records) => {
-              records.forEach((record) => record.addedNodes?.forEach((node) => {
-                if (node instanceof Element || node instanceof DocumentFragment) scanMedia(node);
-              }));
-            }).observe(target, { childList: true, subtree: true });
+              records.forEach((record) => {
+                if (record.type === 'attributes') {
+                  if (record.target instanceof Element
+                      && record.target.matches(instagramUnmuteSelector)) {
+                    scanMediaNearControl(record.target);
+                  }
+                  return;
+                }
+                record.addedNodes?.forEach((node) => {
+                  if (!(node instanceof Element || node instanceof DocumentFragment)) return;
+                  scanMedia(node);
+                  const controls = node instanceof Element
+                    && node.matches(instagramUnmuteSelector)
+                    ? [node, ...node.querySelectorAll(instagramUnmuteSelector)]
+                    : [...node.querySelectorAll(instagramUnmuteSelector)];
+                  controls.forEach(scanMediaNearControl);
+                });
+              });
+            }).observe(target, {
+              attributes: true,
+              attributeFilter: ['aria-label'],
+              childList: true,
+              subtree: true
+            });
             scanMedia(root);
           };
           installMediaRoot(document);
@@ -3715,6 +3829,21 @@ enum DOMAdapters {
         html[data-vigil-instagram-route-feature="reels"] [data-vigil-instagram-reels-metadata="true"] {
           pointer-events: auto !important;
         }
+        html[data-vigil-instagram-route-feature="reels"] [data-vigil-instagram-reels-scroll="true"] {
+          /* Let WebKit keep native touch momentum, but give it one unambiguous
+             vertical paging contract. No JavaScript scroll correction runs
+             during a gesture. */
+          scroll-behavior: auto !important;
+          scroll-snap-type: y mandatory !important;
+          overscroll-behavior-y: contain !important;
+          overflow-anchor: none !important;
+          -webkit-overflow-scrolling: touch !important;
+        }
+        html[data-vigil-instagram-route-feature="reels"] [data-vigil-instagram-reels-card="true"] {
+          scroll-snap-align: start !important;
+          scroll-snap-stop: always !important;
+          overflow-anchor: none !important;
+        }
         html[data-vigil-instagram-route-feature="reels"] :is(
           [aria-label="Mute" i], [aria-label="Unmute" i]
         ) {
@@ -3727,6 +3856,67 @@ enum DOMAdapters {
               var(--vigil-instagram-reels-authored-translate-y, 0px)
               + var(--vigil-instagram-reels-metadata-offset, 0px)
             ) !important;
+        }
+        [data-vigil-instagram-repost-proxy="true"] {
+          display: flex !important;
+          flex: 0 0 auto !important;
+          width: 52px !important;
+          min-width: 52px !important;
+          height: 62px !important;
+          min-height: 62px !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          align-items: center !important;
+          justify-content: center !important;
+          overflow: visible !important;
+          pointer-events: auto !important;
+        }
+        [data-vigil-instagram-repost-proxy="true"] > button {
+          appearance: none !important;
+          -webkit-appearance: none !important;
+          display: grid !important;
+          place-items: center !important;
+          box-sizing: border-box !important;
+          width: 48px !important;
+          height: 48px !important;
+          margin: 0 !important;
+          padding: 10px !important;
+          border: 0 !important;
+          border-radius: 999px !important;
+          background: transparent !important;
+          color: white !important;
+          filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.52)) !important;
+          pointer-events: auto !important;
+        }
+        [data-vigil-instagram-repost-proxy="true"] svg {
+          display: block !important;
+          width: 28px !important;
+          height: 28px !important;
+          overflow: visible !important;
+          fill: none !important;
+          stroke: currentColor !important;
+          stroke-width: 2.15 !important;
+          stroke-linecap: round !important;
+          stroke-linejoin: round !important;
+          pointer-events: none !important;
+        }
+        [data-vigil-instagram-repost-proxy="true"][data-vigil-reposted="true"] > button {
+          color: rgb(0, 200, 83) !important;
+        }
+        [data-vigil-instagram-action-feedback="true"] {
+          position: fixed !important;
+          z-index: 2147483646 !important;
+          left: 50% !important;
+          bottom: max(calc(env(safe-area-inset-bottom) + 96px), 104px) !important;
+          translate: -50% 0 !important;
+          max-width: min(82vw, 340px) !important;
+          padding: 9px 14px !important;
+          border-radius: 999px !important;
+          background: rgba(0, 0, 0, 0.72) !important;
+          color: white !important;
+          font: 600 14px/1.25 -apple-system, BlinkMacSystemFont, sans-serif !important;
+          text-align: center !important;
+          pointer-events: none !important;
         }
         [data-vigil-instagram-reels-speed-feedback="true"] {
           position: fixed !important;
@@ -3753,27 +3943,78 @@ enum DOMAdapters {
         [data-vigil-instagram-like-heart="true"] {
           position: fixed !important;
           z-index: 2147483646 !important;
-          width: 96px !important;
-          height: 96px !important;
-          margin: -48px 0 0 -48px !important;
+          width: 112px !important;
+          height: 112px !important;
+          margin: -56px 0 0 -56px !important;
           display: grid !important;
           place-items: center !important;
-          color: white !important;
-          font: 800 92px/1 -apple-system, BlinkMacSystemFont, sans-serif !important;
-          text-shadow: 0 2px 14px rgba(0, 0, 0, 0.48) !important;
           pointer-events: none !important;
           user-select: none !important;
-          animation: vigil-instagram-like-heart 680ms cubic-bezier(.2,.8,.2,1) both !important;
+          -webkit-user-select: none !important;
+          filter: drop-shadow(0 2px 10px rgba(0, 0, 0, 0.38)) !important;
+          animation: vigil-instagram-like-heart 780ms cubic-bezier(.2,.8,.2,1) both !important;
+        }
+        [data-vigil-instagram-like-heart="true"] svg {
+          display: block !important;
+          width: 100% !important;
+          height: 100% !important;
+          overflow: visible !important;
+          color: #ff3040 !important;
+        }
+        [data-vigil-instagram-like-heart="true"] svg :is(path, circle, ellipse, polygon, polyline) {
+          fill: #ff3040 !important;
+          stroke: #ff3040 !important;
+        }
+        [data-vigil-instagram-playback-feedback="true"] {
+          position: fixed !important;
+          z-index: 2147483645 !important;
+          width: 72px !important;
+          height: 72px !important;
+          margin: -36px 0 0 -36px !important;
+          display: grid !important;
+          place-items: center !important;
+          border-radius: 50% !important;
+          background: rgba(0, 0, 0, 0.5) !important;
+          -webkit-backdrop-filter: blur(5px) !important;
+          backdrop-filter: blur(5px) !important;
+          color: white !important;
+          pointer-events: none !important;
+          user-select: none !important;
+          -webkit-user-select: none !important;
+          animation: vigil-instagram-playback-feedback-in 160ms ease-out both !important;
+        }
+        [data-vigil-instagram-playback-feedback="true"] svg {
+          display: block !important;
+          width: 34px !important;
+          height: 34px !important;
+          fill: currentColor !important;
+        }
+        [data-vigil-instagram-playback-feedback="true"][data-state="playing"] {
+          animation: vigil-instagram-playback-feedback-out 480ms ease-out both !important;
         }
         @keyframes vigil-instagram-like-heart {
-          0% { opacity: 0; transform: scale(.38) rotate(-9deg); }
-          24% { opacity: 1; transform: scale(1.14) rotate(3deg); }
-          58% { opacity: 1; transform: scale(.98) rotate(0); }
-          100% { opacity: 0; transform: scale(1.08) rotate(0); }
+          0% { opacity: 0; transform: scale(.2); }
+          18% { opacity: 1; transform: scale(1.16); }
+          32% { opacity: 1; transform: scale(.94); }
+          48% { opacity: 1; transform: scale(1); }
+          78% { opacity: 1; transform: scale(1); }
+          100% { opacity: 0; transform: scale(.92); }
+        }
+        @keyframes vigil-instagram-playback-feedback-in {
+          from { opacity: 0; transform: scale(.72); }
+          to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes vigil-instagram-playback-feedback-out {
+          0% { opacity: 1; transform: scale(1); }
+          42% { opacity: 1; transform: scale(1); }
+          100% { opacity: 0; transform: scale(.88); }
         }
         @media (prefers-reduced-motion: reduce) {
           [data-vigil-instagram-like-heart="true"] {
             animation-duration: 220ms !important;
+          }
+          [data-vigil-instagram-playback-feedback="true"] {
+            animation-duration: 120ms !important;
           }
         }
       `;
@@ -4118,9 +4359,39 @@ enum DOMAdapters {
       const reelsScrollContainers = new Set();
       const reelsCards = new Set();
       const reelsMetadata = new Set();
+      const reelsRepostProxies = new Set();
       const reelsMetadataListeners = new WeakSet();
       const reelsLayoutListeners = new WeakSet();
       let reelsNormalizationScheduled = false;
+      let reelsNormalizationTimer = 0;
+      let lastReelsNormalizationAt = -Infinity;
+      const minimumReelsNormalizationInterval = 160;
+
+      let reelsWarmLink = null;
+      const warmReelsRoute = () => {
+        if (reelsWarmLink?.isConnected
+            || routeFeature(location.href) === 'reels'
+            || document.documentElement.getAttribute('data-vigil-feature-reels') !== 'available') return;
+        const link = document.createElement('link');
+        link.rel = 'prefetch';
+        link.as = 'document';
+        link.href = '/reels/';
+        link.setAttribute('fetchpriority', 'low');
+        link.dataset.vigilInstagramReelsWarmup = 'true';
+        (document.head || document.documentElement).appendChild(link);
+        reelsWarmLink = link;
+      };
+      const scheduleReelsWarmup = () => {
+        if (typeof requestIdleCallback === 'function') {
+          requestIdleCallback(warmReelsRoute, { timeout: 2200 });
+        } else {
+          setTimeout(warmReelsRoute, 1200);
+        }
+      };
+      document.addEventListener('pointerdown', (event) => {
+        const link = event.target?.closest?.('a[href]');
+        if (link && routeFeature(link.href) === 'reels') warmReelsRoute();
+      }, { capture: true, passive: true });
 
       const markReelResourceOrigin = (value) => {
         const raw = String(value || '');
@@ -4338,10 +4609,27 @@ enum DOMAdapters {
             const geometry = reelMetadataTextGeometry(candidate, cardRect);
             const bands = verticalBands(geometry?.rows || []);
             const hasFollowingBand = bands.some((band) => band.top > signalRect.bottom + 3);
+            const hasProfileLink = Boolean(candidate.querySelector('a[href]'))
+              && [...candidate.querySelectorAll('a[href]')].some((link) => {
+                let path = '';
+                try { path = new URL(link.href, location.href).pathname; } catch (_) {}
+                return /^\/[^/]+\/?$/.test(path)
+                  && !/^\/(?:reel|reels|explore|direct|accounts)\/?$/i.test(path);
+              });
+            // Compact mobile layouts can put username, caption, and its More
+            // button in a single wrapped band. A lower-left profile link plus
+            // meaningful text is still a strong metadata signal; requiring a
+            // second band made that whole caption stack disappear as soon as a
+            // complete right-side action rail mounted beside it.
+            const compactMetadata = hasProfileLink
+              && geometry?.characters >= 12
+              && rect.height >= 32
+              && rect.width <= cardRect.width * 0.86;
             const movesRightActions = geometry
               ? reelMetadataMovesRightActions(candidate, cardRect)
               : false;
-            const plausible = geometry && bands.length >= 2 && hasFollowingBand
+            const plausible = geometry
+              && ((bands.length >= 2 && hasFollowingBand) || compactMetadata)
               && rect.width >= Math.min(96, cardRect.width * 0.24)
               && rect.right <= cardRect.left + cardRect.width * 0.96
               && rect.left < cardRect.left + cardRect.width * 0.72
@@ -4461,6 +4749,176 @@ enum DOMAdapters {
         metadata.addEventListener('touchend', restoreAfterCaptionAction, { passive: true });
         metadata.addEventListener('click', restoreAfterCaptionAction);
       };
+      const reelControlLabel = (element) => String(
+        element?.getAttribute?.('aria-label') || element?.textContent || ''
+      ).replace(/\s+/g, ' ').trim().toLowerCase();
+      const reelSemanticControl = (root, labels, visibleOnly = true) => {
+        if (!(root instanceof Element || root instanceof Document)) return null;
+        const expected = new Set(labels);
+        let inspected = 0;
+        for (const labeled of root.querySelectorAll('[aria-label]')) {
+          inspected += 1;
+          if (labeled.closest('[data-vigil-instagram-repost-proxy="true"]')
+              || !expected.has(reelControlLabel(labeled))) {
+            if (inspected >= 200) break;
+            continue;
+          }
+          const control = labeled.matches('button, [role="button"]')
+            ? labeled
+            : labeled.closest('button, [role="button"]');
+          if (control && root.contains(control) && (!visibleOnly || visibleElement(control))) {
+            return control;
+          }
+          if (inspected >= 200) break;
+        }
+        return null;
+      };
+      const reelActionRailFor = (card) => {
+        const cardRect = card.getBoundingClientRect();
+        const share = reelSemanticControl(card, ['share', 'share post', 'send', 'send post']);
+        const controls = [
+          reelSemanticControl(card, ['like', 'unlike']),
+          reelSemanticControl(card, ['comment', 'comments']),
+          share
+        ].filter(Boolean);
+        if (!share || controls.length < 2) return null;
+        let candidate = share;
+        let best = null;
+        let depth = 0;
+        while (candidate?.parentElement && candidate !== card && depth < 12) {
+          candidate = candidate.parentElement;
+          if (!card.contains(candidate)) break;
+          const rect = candidate.getBoundingClientRect();
+          const ownedControls = controls.filter((control) => candidate.contains(control));
+          if (ownedControls.length >= 2
+              && rect.left >= cardRect.left + cardRect.width * 0.64
+              && rect.width <= Math.max(120, cardRect.width * 0.34)
+              && rect.height <= cardRect.height * 0.9) best = candidate;
+          depth += 1;
+        }
+        return best ? { rail: best, share } : null;
+      };
+      const showInstagramActionFeedback = (message) => {
+        document.querySelectorAll('[data-vigil-instagram-action-feedback]').forEach(
+          (element) => element.remove()
+        );
+        const feedback = document.createElement('div');
+        feedback.dataset.vigilInstagramActionFeedback = 'true';
+        feedback.setAttribute('role', 'status');
+        feedback.textContent = message;
+        document.documentElement.appendChild(feedback);
+        setTimeout(() => feedback.remove(), 1800);
+      };
+      const setRepostProxyState = (proxy, reposted) => {
+        if (!proxy?.isConnected) return;
+        if (reposted) proxy.dataset.vigilReposted = 'true';
+        else delete proxy.dataset.vigilReposted;
+        const button = proxy.querySelector('button');
+        if (button) button.setAttribute('aria-label', reposted ? 'Remove repost' : 'Repost');
+      };
+      const instagramRepostState = (card) => {
+        if (reelSemanticControl(card, ['remove repost', 'undo repost'], false)) return true;
+        if (reelSemanticControl(card, ['repost', 'repost post'], false)) return false;
+        return null;
+      };
+      const waitForInstagramRepostConfirmation = (card, proxy, expectedState) => {
+        const startedAt = performance.now();
+        const confirm = () => {
+          const state = instagramRepostState(card);
+          if (state === expectedState) {
+            setRepostProxyState(proxy, state);
+            showInstagramActionFeedback(state ? 'Reposted' : 'Repost removed');
+            return;
+          }
+          if (performance.now() - startedAt >= 1400) {
+            showInstagramActionFeedback('Instagram did not confirm the repost');
+            return;
+          }
+          setTimeout(confirm, 80);
+        };
+        setTimeout(confirm, 40);
+      };
+      const activateInstagramRepost = (card, proxy, share) => {
+        const direct = reelSemanticControl(
+          card,
+          ['repost', 'repost post', 'remove repost', 'undo repost'],
+          false
+        );
+        if (direct) {
+          const removing = /^(?:remove|undo) repost/.test(reelControlLabel(direct));
+          direct.click();
+          waitForInstagramRepostConfirmation(card, proxy, !removing);
+          return;
+        }
+        if (!share?.isConnected) {
+          showInstagramActionFeedback('Repost is not available for this item');
+          return;
+        }
+        share.click();
+        const startedAt = performance.now();
+        const findShareSheetRepost = () => {
+          const action = reelSemanticControl(
+            document,
+            ['repost', 'repost post', 'remove repost', 'undo repost']
+          );
+          if (action) {
+            const removing = /^(?:remove|undo) repost/.test(reelControlLabel(action));
+            action.click();
+            waitForInstagramRepostConfirmation(card, proxy, !removing);
+            return;
+          }
+          if (performance.now() - startedAt >= 1400) {
+            showInstagramActionFeedback('Repost is not available for this item');
+            return;
+          }
+          setTimeout(findShareSheetRepost, 80);
+        };
+        setTimeout(findShareSheetRepost, 40);
+      };
+      const reconcileRepostControl = (card) => {
+        const existing = reelSemanticControl(
+          card,
+          ['repost', 'repost post', 'remove repost', 'undo repost']
+        );
+        const currentProxy = card.querySelector('[data-vigil-instagram-repost-proxy="true"]');
+        if (existing) {
+          currentProxy?.remove();
+          if (currentProxy) reelsRepostProxies.delete(currentProxy);
+          return null;
+        }
+        const actionRail = reelActionRailFor(card);
+        if (!actionRail) return currentProxy;
+        if (currentProxy?.isConnected) return currentProxy;
+
+        const proxy = document.createElement('div');
+        proxy.dataset.vigilInstagramRepostProxy = 'true';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('aria-label', 'Repost');
+        button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">'
+          + '<path d="M7 7h9.5a3.5 3.5 0 0 1 3.5 3.5V12"/>'
+          + '<path d="m17 4 3 3-3 3"/>'
+          + '<path d="M17 17H7.5A3.5 3.5 0 0 1 4 13.5V12"/>'
+          + '<path d="m7 20-3-3 3-3"/>'
+          + '</svg>';
+        button.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          activateInstagramRepost(card, proxy, actionRail.share);
+        });
+        proxy.appendChild(button);
+        let shareItem = actionRail.share;
+        while (shareItem.parentElement && shareItem.parentElement !== actionRail.rail) {
+          shareItem = shareItem.parentElement;
+        }
+        if (shareItem.parentElement === actionRail.rail) {
+          actionRail.rail.insertBefore(proxy, shareItem);
+        } else {
+          actionRail.rail.appendChild(proxy);
+        }
+        reelsRepostProxies.add(proxy);
+        return proxy;
+      };
       const clearReelSurfaceMarkers = () => {
         reelsScrollContainers.forEach((container) => {
           container.removeAttribute('data-vigil-instagram-reels-scroll');
@@ -4482,12 +4940,16 @@ enum DOMAdapters {
           metadata.style.removeProperty('--vigil-instagram-reels-authored-translate-y');
           metadata.style.removeProperty('--vigil-instagram-reels-metadata-offset');
         });
+        reelsRepostProxies.forEach((proxy) => proxy.remove());
         reelsScrollContainers.clear();
         reelsCards.clear();
         reelsMetadata.clear();
+        reelsRepostProxies.clear();
       };
       const normalizeReelSurface = () => {
         reelsNormalizationScheduled = false;
+        reelsNormalizationTimer = 0;
+        lastReelsNormalizationAt = performance.now();
         if (routeFeature(location.href) !== 'reels') {
           clearReelSurfaceMarkers();
           return;
@@ -4505,25 +4967,34 @@ enum DOMAdapters {
           ? measuredNavigationRect
           : null;
         let inspected = 0;
+        let processedCards = 0;
         for (const media of document.querySelectorAll('video, img')) {
           inspected += 1;
           if (!primaryInstagramMedia(media)) {
-            if (inspected >= 240) break;
+            if (inspected >= 160) break;
+            continue;
+          }
+          const mediaRect = media.getBoundingClientRect();
+          const nearViewport = mediaRect.bottom > viewport.top - viewport.height * 0.4
+            && mediaRect.top < viewport.bottom + viewport.height * 1.4;
+          if (!nearViewport) {
+            if (inspected >= 160) break;
             continue;
           }
           primeReelMedia(media);
           const container = reelScrollContainerFor(media);
           const card = container && reelCardFor(media, container);
           if (!(container instanceof Element) || !(card instanceof Element)) {
-            if (inspected >= 240) break;
+            if (inspected >= 160) break;
             continue;
           }
+          if (nextCards.has(card)) continue;
+          processedCards += 1;
           nextContainers.add(container);
           nextCards.add(card);
           container.dataset.vigilInstagramReelsScroll = 'true';
-          // RootView now gives Reels the full viewport. Preserve Instagram's
-          // native card size, scroll padding, and centered snap geometry; the
-          // former forced start snap placed live caption overlays below the nav.
+          // Preserve Instagram's authored card size. CSS supplies only the
+          // standard paging contract; it never changes scrollTop or card height.
           container.style.removeProperty('--vigil-instagram-reels-card-height');
           card.dataset.vigilInstagramReelsCard = 'true';
           card.style.removeProperty('--vigil-instagram-reels-card-height');
@@ -4543,8 +5014,9 @@ enum DOMAdapters {
             );
             installReelMetadataListeners(metadata);
           }
+          reconcileRepostControl(card);
           installReelLayoutListener(container);
-          if (inspected >= 240) break;
+          if (processedCards >= 5 || inspected >= 160) break;
         }
         reelsScrollContainers.forEach((container) => {
           if (nextContainers.has(container)) return;
@@ -4569,6 +5041,12 @@ enum DOMAdapters {
           metadata.style.removeProperty('--vigil-instagram-reels-authored-translate-y');
           metadata.style.removeProperty('--vigil-instagram-reels-metadata-offset');
         });
+        reelsRepostProxies.forEach((proxy) => {
+          const card = proxy.closest('[data-vigil-instagram-reels-card="true"]');
+          if (proxy.isConnected && card && nextCards.has(card)) return;
+          proxy.remove();
+          reelsRepostProxies.delete(proxy);
+        });
         reelsScrollContainers.clear();
         reelsCards.clear();
         reelsMetadata.clear();
@@ -4576,10 +5054,28 @@ enum DOMAdapters {
         nextCards.forEach((value) => reelsCards.add(value));
         nextMetadata.forEach((value) => reelsMetadata.add(value));
       };
-      const scheduleReelSurfaceNormalization = () => {
+      const scheduleReelSurfaceNormalization = (immediate = false) => {
+        if (routeFeature(location.href) !== 'reels') {
+          if (reelsScrollContainers.size || reelsCards.size || reelsMetadata.size) {
+            clearTimeout(reelsNormalizationTimer);
+            reelsNormalizationTimer = 0;
+            reelsNormalizationScheduled = true;
+            requestAnimationFrame(normalizeReelSurface);
+          }
+          return;
+        }
         if (reelsNormalizationScheduled) return;
+        const elapsed = performance.now() - lastReelsNormalizationAt;
+        const delay = immediate ? 0 : Math.max(0, minimumReelsNormalizationInterval - elapsed);
         reelsNormalizationScheduled = true;
-        requestAnimationFrame(normalizeReelSurface);
+        if (!delay) {
+          requestAnimationFrame(normalizeReelSurface);
+          return;
+        }
+        reelsNormalizationTimer = setTimeout(() => {
+          reelsNormalizationTimer = 0;
+          requestAnimationFrame(normalizeReelSurface);
+        }, delay);
       };
       const installReelLayoutListener = (container) => {
         if (reelsLayoutListeners.has(container)) return;
@@ -4587,10 +5083,10 @@ enum DOMAdapters {
         let settleTimer = 0;
         const remeasureAfterNativeSettle = () => {
           clearTimeout(settleTimer);
-          settleTimer = setTimeout(scheduleReelSurfaceNormalization, 120);
+          settleTimer = setTimeout(scheduleReelSurfaceNormalization, 140);
         };
         container.addEventListener('scroll', remeasureAfterNativeSettle, { passive: true });
-        container.addEventListener('scrollend', scheduleReelSurfaceNormalization, {
+        container.addEventListener('scrollend', () => scheduleReelSurfaceNormalization(true), {
           passive: true
         });
       };
@@ -4614,9 +5110,35 @@ enum DOMAdapters {
         }
         return null;
       };
-      const semanticLikeScope = (media) => media?.closest?.(
-        '[data-vigil-instagram-reels-card="true"], article'
-      ) || null;
+      const directSemanticLikeControl = (root) => (
+        semanticLikeControl(root, 'unlike') || semanticLikeControl(root, 'like')
+      );
+      const semanticLikeScope = (media) => {
+        if (!(media instanceof HTMLImageElement || media instanceof HTMLVideoElement)) return null;
+        const authoredScope = media.closest(
+          '[data-vigil-instagram-reels-card="true"], article'
+        );
+        // Instagram's article/Reel card is itself the stable ownership
+        // boundary. Its action rail can be visually clipped or finish mounting
+        // after pointer-down, so visibility of that rail must not decide
+        // whether the media gesture recognizer arms.
+        if (authoredScope) return authoredScope;
+        // Post-detail and profile-overlay rollouts do not always retain an
+        // article element. Find the smallest ancestor that contains this one
+        // primary media item and its exact Like/Unlike control. Keeping the
+        // search bounded and semantic avoids treating Story/DM reaction hearts
+        // or profile-grid thumbnails as post likes.
+        let candidate = media.parentElement;
+        for (let depth = 0; candidate && depth < 14; depth += 1) {
+          const primaryMedia = [...candidate.querySelectorAll('video, img')]
+            .filter(primaryInstagramMedia);
+          if (primaryMedia.length === 1 && primaryMedia[0] === media
+              && directSemanticLikeControl(candidate)) return candidate;
+          if (candidate === document.body) break;
+          candidate = candidate.parentElement;
+        }
+        return null;
+      };
       const semanticLikeState = (media) => {
         const scope = semanticLikeScope(media);
         if (!scope) return { state: 'unknown', control: null, scope: null };
@@ -4636,38 +5158,70 @@ enum DOMAdapters {
           || `${media.tagName}:${media.id || ''}`
       );
       const requestedLikeFingerprints = new WeakMap();
-      const showFallbackLikeHeart = (media) => {
+      const fallbackInstagramHeart = () => {
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        icon.setAttribute('viewBox', '0 0 48 48');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute(
+          'd',
+          'M34.6 3.1c-4.5 0-7.9 2.2-10.6 5.3-2.7-3.1-6.1-5.3-10.6-5.3C5.7 3.1 0 9.2 0 16.9c0 10.5 9.4 18.4 23.1 27.7.5.3 1.3.3 1.8 0C38.6 35.3 48 27.4 48 16.9 48 9.2 42.3 3.1 34.6 3.1Z'
+        );
+        icon.appendChild(path);
+        return icon;
+      };
+      const instagramHeartFor = (media) => {
+        const source = semanticLikeState(media).control?.querySelector('svg');
+        if (!(source instanceof SVGElement)) return fallbackInstagramHeart();
+        const icon = source.cloneNode(true);
+        icon.removeAttribute('aria-label');
+        icon.setAttribute('aria-hidden', 'true');
+        icon.querySelectorAll('[id]').forEach((node) => node.removeAttribute('id'));
+        return icon;
+      };
+      const showInstagramLikeHeart = (media) => {
+        const restorePausedFeedback = Boolean(document.querySelector(
+          '[data-vigil-instagram-playback-feedback][data-state="paused"]'
+        ));
+        document.querySelectorAll('[data-vigil-instagram-playback-feedback]').forEach(
+          (element) => element.remove()
+        );
         const rect = media.getBoundingClientRect();
         const heart = document.createElement('div');
         heart.dataset.vigilInstagramLikeHeart = 'true';
         heart.setAttribute('aria-hidden', 'true');
-        heart.textContent = '♥';
+        heart.appendChild(instagramHeartFor(media));
         heart.style.left = `${Math.max(rect.left, Math.min(rect.right, rect.left + rect.width / 2))}px`;
         heart.style.top = `${Math.max(rect.top, Math.min(rect.bottom, rect.top + rect.height / 2))}px`;
         document.documentElement.appendChild(heart);
-        const remove = () => heart.remove();
+        let removed = false;
+        const remove = () => {
+          if (removed) return;
+          removed = true;
+          heart.remove();
+          if (restorePausedFeedback && media instanceof HTMLVideoElement
+              && media.isConnected && media.paused) {
+            showInstagramPlaybackFeedback(media, 'paused');
+          }
+        };
         heart.addEventListener('animationend', remove, { once: true });
         setTimeout(remove, 900);
       };
-      const fallbackToSemanticLike = (media, expectedIdentity, expectedScope) => {
-        if (!media?.isConnected) return;
+      const requestSemanticLike = (media, expectedIdentity, expectedScope) => {
+        if (!media?.isConnected) return false;
         if (reelMediaIdentity(media) !== expectedIdentity
-            || semanticLikeScope(media) !== expectedScope) return;
+            || semanticLikeScope(media) !== expectedScope) return false;
         const result = semanticLikeState(media);
-        if (result.scope !== expectedScope) return;
-        if (result.state === 'liked') {
-          showFallbackLikeHeart(media);
-          return;
-        }
+        if (result.scope !== expectedScope) return false;
+        if (result.state === 'liked') return true;
         if (result.state !== 'unliked' || !result.control
-            || result.control.matches(':disabled, [aria-disabled="true"]')) return;
+            || result.control.matches(':disabled, [aria-disabled="true"]')) return false;
         const fingerprint = reelMediaIdentity(media);
         const previousRequest = requestedLikeFingerprints.get(result.control);
         const now = performance.now();
-        if (previousRequest?.fingerprint === fingerprint && now - previousRequest.time < 650) return;
+        if (previousRequest?.fingerprint === fingerprint && now - previousRequest.time < 650) return true;
         requestedLikeFingerprints.set(result.control, { fingerprint, time: now });
         result.control.click();
-        showFallbackLikeHeart(media);
+        return true;
       };
       let lastHandledLikeGesture = { media: null, time: 0 };
       const restoreMediaTapState = (media, state) => {
@@ -4687,15 +5241,46 @@ enum DOMAdapters {
         if (typeof state.defaultMuted === 'boolean'
             && media.defaultMuted !== state.defaultMuted) media.defaultMuted = state.defaultMuted;
       };
+      const showInstagramPlaybackFeedback = (media, state) => {
+        document.querySelectorAll('[data-vigil-instagram-playback-feedback]').forEach(
+          (element) => element.remove()
+        );
+        if (!(media instanceof HTMLVideoElement) || !media.isConnected) return;
+        const rect = media.getBoundingClientRect();
+        const feedback = document.createElement('div');
+        feedback.dataset.vigilInstagramPlaybackFeedback = 'true';
+        feedback.dataset.state = state;
+        feedback.setAttribute('aria-hidden', 'true');
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        icon.setAttribute('viewBox', '0 0 48 48');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', state === 'paused'
+          ? 'M16 10.8v26.4c0 1.5 1.7 2.4 3 1.5l20-13.2c1.3-.8 1.3-2.7 0-3.5L19 9.3c-1.3-.9-3 .1-3 1.5Z'
+          : 'M13 10h8v28h-8zm14 0h8v28h-8z');
+        icon.appendChild(path);
+        feedback.appendChild(icon);
+        feedback.style.left = `${rect.left + rect.width / 2}px`;
+        feedback.style.top = `${rect.top + rect.height / 2}px`;
+        document.documentElement.appendChild(feedback);
+        const remove = () => feedback.remove();
+        if (state === 'playing') {
+          feedback.addEventListener('animationend', remove, { once: true });
+          setTimeout(remove, 650);
+        } else {
+          media.addEventListener('play', remove, { once: true });
+        }
+      };
       const performInstagramSingleTap = (event, media, originalMediaState) => {
         if (!(media instanceof HTMLVideoElement) || !originalMediaState) return;
         preserveMediaMuteState(media, originalMediaState);
         if (originalMediaState.paused) {
           if (!window.__vigilEarlyMediaGate?.isHeld?.(media)) {
             try { media.play()?.catch?.(() => {}); } catch (_) {}
+            showInstagramPlaybackFeedback(media, 'playing');
           }
         } else {
           try { media.pause(); } catch (_) {}
+          showInstagramPlaybackFeedback(media, 'paused');
         }
       };
       const recognizeInstagramDoubleTap = (event, media, originalMediaState = null) => {
@@ -4714,10 +5299,20 @@ enum DOMAdapters {
         restoreMediaTapState(media, originalMediaState);
         const expectedIdentity = reelMediaIdentity(media);
         const expectedScope = semanticLikeScope(media);
-        setTimeout(
-          () => fallbackToSemanticLike(media, expectedIdentity, expectedScope),
-          40
-        );
+        if (!expectedScope) return;
+        const initialState = semanticLikeState(media).state;
+        if (initialState === 'liked' || initialState === 'unliked') {
+          showInstagramLikeHeart(media);
+        }
+        if (requestSemanticLike(media, expectedIdentity, expectedScope)) return;
+        // React can mount a post's action row a frame after its media. Retry a
+        // few times without ever manufacturing liked state or crossing scopes.
+        let feedbackShown = initialState === 'liked' || initialState === 'unliked';
+        [40, 100, 180].forEach((delay) => setTimeout(() => {
+          if (!requestSemanticLike(media, expectedIdentity, expectedScope) || feedbackShown) return;
+          feedbackShown = true;
+          showInstagramLikeHeart(media);
+        }, delay));
       };
 
       const reelSpeedConsumedPointers = new Set();
@@ -4770,7 +5365,8 @@ enum DOMAdapters {
       };
       window.__vigilRestoreReelHold = () => restoreReelSpeedHold(true);
       const instagramMediaGestureExcluded = (target, media) => {
-        if (!(target instanceof Element) || !(media instanceof HTMLMediaElement)) return true;
+        if (!(target instanceof Element)
+            || !(media instanceof HTMLImageElement || media instanceof HTMLVideoElement)) return true;
         if (target.closest(
           '[data-vigil-instagram-reels-metadata="true"], input, textarea, select, [contenteditable="true"]'
         )) return true;
@@ -4785,6 +5381,19 @@ enum DOMAdapters {
           Math.min(interactiveRect.bottom, mediaRect.bottom) - Math.max(interactiveRect.top, mediaRect.top));
         return interactiveRect.width < 120 || interactiveRect.height < 120
           || overlapWidth * overlapHeight < mediaRect.width * mediaRect.height * 0.45;
+      };
+      const supportsStandardInstagramMediaGestures = (media) => {
+        const path = location.pathname.toLowerCase();
+        if (/^\/(?:stories|direct|accounts|challenge|checkpoint)(?:\/|$)/.test(path)) {
+          return false;
+        }
+        if (path === '/' || path === ''
+            || /^\/(?:reel|reels|p|explore)(?:\/|$)/.test(path)) return true;
+        // Instagram can keep the profile URL while presenting a post in a
+        // modal. Support that post surface without claiming profile-grid media.
+        return Boolean(media?.closest?.(
+          '[role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"]:not([aria-hidden="true"])'
+        ));
       };
       const armReelSpeedHold = (event, pointer) => {
         if (routeFeature(location.href) !== 'reels' || reelSpeedHold) return;
@@ -4882,6 +5491,8 @@ enum DOMAdapters {
       const pendingMediaTaps = new Set();
       let lastMediaTap = null;
       let suppressMediaClickUntil = 0;
+      const instagramDoubleTapMilliseconds = 380;
+      const instagramDoubleTapDistance = 56;
       const cancelPendingMediaTap = (tap) => {
         if (!tap) return;
         tap.canceled = true;
@@ -4891,6 +5502,11 @@ enum DOMAdapters {
       };
       const cancelAllPendingMediaTaps = () => {
         [...pendingMediaTaps].forEach(cancelPendingMediaTap);
+        activeMediaPointers.clear();
+        lastMediaTap = null;
+        document.querySelectorAll(
+          '[data-vigil-instagram-like-heart], [data-vigil-instagram-playback-feedback]'
+        ).forEach((element) => element.remove());
       };
       const scheduleInstagramSingleTap = (media, mediaState, point) => {
         const tap = {
@@ -4907,10 +5523,9 @@ enum DOMAdapters {
           pendingMediaTaps.delete(tap);
           if (lastMediaTap === tap) lastMediaTap = null;
           if (tap.canceled || !media.isConnected
-              || routeFeature(location.href) !== 'reels'
               || reelMediaIdentity(media) !== tap.identity) return;
           performInstagramSingleTap(null, media, mediaState);
-        }, 330);
+        }, instagramDoubleTapMilliseconds);
         pendingMediaTaps.add(tap);
         lastMediaTap = tap;
         return tap;
@@ -4918,7 +5533,9 @@ enum DOMAdapters {
       document.addEventListener('pointerdown', (event) => {
         if (!event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0)) return;
         const media = primaryMediaAtPoint(event.target, event.clientX, event.clientY);
-        if (!media) return;
+        if (!media || instagramMediaGestureExcluded(event.target, media)
+            || !supportsStandardInstagramMediaGestures(media)
+            || !semanticLikeScope(media)) return;
         activeMediaPointers.set(event.pointerId, {
           media, x: event.clientX, y: event.clientY, time: performance.now(),
           mediaState: media instanceof HTMLVideoElement
@@ -4945,35 +5562,33 @@ enum DOMAdapters {
         const deltaY = event.clientY - start.y;
         const distance = Math.hypot(deltaX, deltaY);
         if (elapsed > 420 || distance > 18) {
-          lastMediaTap = null;
+          cancelPendingMediaTap(lastMediaTap);
           return;
         }
         const media = primaryMediaAtPoint(event.target, event.clientX, event.clientY) || start.media;
         const now = performance.now();
         if (lastMediaTap && lastMediaTap.media === media
-            && now - lastMediaTap.time >= 35 && now - lastMediaTap.time <= 330
-            && Math.hypot(event.clientX - lastMediaTap.x, event.clientY - lastMediaTap.y) <= 36) {
+            && now - lastMediaTap.time >= 20
+            && now - lastMediaTap.time <= instagramDoubleTapMilliseconds
+            && Math.hypot(event.clientX - lastMediaTap.x, event.clientY - lastMediaTap.y)
+              <= instagramDoubleTapDistance) {
           suppressMediaClickUntil = now + 520;
           const firstTapState = lastMediaTap.mediaState;
           cancelPendingMediaTap(lastMediaTap);
           recognizeInstagramDoubleTap(event, media, firstTapState);
           return;
         }
-        if (routeFeature(location.href) === 'reels') {
-          suppressMediaClickUntil = now + 520;
-          if (event.cancelable) event.preventDefault();
-          event.stopImmediatePropagation();
-          scheduleInstagramSingleTap(media, start.mediaState, event);
-          return;
-        }
-        lastMediaTap = {
-          media, x: event.clientX, y: event.clientY, time: now,
-          mediaState: start.mediaState
-        };
+        suppressMediaClickUntil = now + 560;
+        if (event.cancelable) event.preventDefault();
+        event.stopImmediatePropagation();
+        cancelPendingMediaTap(lastMediaTap);
+        scheduleInstagramSingleTap(media, start.mediaState, event);
       }, { capture: true, passive: false });
       document.addEventListener('click', (event) => {
         const media = primaryMediaAtPoint(event.target, event.clientX, event.clientY);
-        if (!media || instagramMediaGestureExcluded(event.target, media)) return;
+        if (!media || instagramMediaGestureExcluded(event.target, media)
+            || !supportsStandardInstagramMediaGestures(media)
+            || !semanticLikeScope(media)) return;
         if (event.detail >= 2 || performance.now() <= suppressMediaClickUntil) {
           if (event.cancelable) event.preventDefault();
           event.stopImmediatePropagation();
@@ -4982,7 +5597,9 @@ enum DOMAdapters {
       }, true);
       document.addEventListener('dblclick', (event) => {
         const media = primaryMediaAtPoint(event.target, event.clientX, event.clientY);
-        if (!media || instagramMediaGestureExcluded(event.target, media)) return;
+        if (!media || instagramMediaGestureExcluded(event.target, media)
+            || !supportsStandardInstagramMediaGestures(media)
+            || !semanticLikeScope(media)) return;
         recognizeInstagramDoubleTap(event, media);
       }, true);
       document.addEventListener('__vigilRouteChanged', cancelAllPendingMediaTaps);
@@ -5477,13 +6094,14 @@ enum DOMAdapters {
       });
       document.addEventListener('__vigilPolicyFeaturesChanged', () => {
         scheduleReconcile(null, true);
+        scheduleReelsWarmup();
         scheduleHealth(450);
       });
       const instagramRouteChanged = () => {
         restoreReelSpeedHold(true);
         reportSurface();
         scheduleReconcile(null, true);
-        scheduleReelSurfaceNormalization();
+        scheduleReelSurfaceNormalization(true);
         scheduleHealth(250, true);
         setTimeout(() => scheduleHealth(0, true), 2600);
       };
@@ -5497,7 +6115,11 @@ enum DOMAdapters {
       window.visualViewport?.addEventListener('resize', scheduleReelSurfaceNormalization, {
         passive: true
       });
-      scheduleHealth(500);
+      scheduleReelsWarmup();
+      // The adapter and its fail-closed feature CSS are installed by this point.
+      // Inspect the already-present shell immediately instead of adding a fixed
+      // half-second to every cold launch.
+      scheduleHealth(0);
       setTimeout(() => scheduleHealth(0, true), 3500);
       setTimeout(() => scheduleHealth(0, true), 7000);
     })();

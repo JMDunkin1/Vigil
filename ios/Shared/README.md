@@ -1,9 +1,12 @@
 # Shared iOS filtering assets
 
 `PhoneBlocklist.swift` reads Vigil's generated `adult-blocklist.sdi` resource.
-The app target should copy the artifact produced in `data/adult-blocklist.sdi`
-into its bundle under that name. Absence is explicit: `loadBundled()` returns
-`nil`; a present but corrupt, oversized, or unsupported artifact throws.
+Browser and system-filter targets that use this index should copy the artifact
+produced in `data/adult-blocklist.sdi` into their bundle under that name.
+Narrow companions with an exact host/path allowlist, including VigilInstagram
+and the YouTube companion, should not compile or bundle it. Absence is explicit:
+`loadBundled()` returns `nil`; a present but corrupt, oversized, or unsupported
+artifact throws.
 
 The artifact metadata preserves the selected source's label, URL, homepage, and
 license. UI or distribution notices must continue to surface that attribution;

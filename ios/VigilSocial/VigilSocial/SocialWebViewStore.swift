@@ -31,7 +31,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private let loadInitialPages: Bool
     private var mediaClassifier: (any MediaSafetyClassifying)?
     private var textClassifier: (any PageTextSafetyClassifying)?
-    private let phoneBlocklistLoadTask: Task<PhoneBlocklistIndex?, Never>
     private let unclassifiedMediaPolicy: UnclassifiedMediaPolicy
     private var webViews: [SocialService: WKWebView] = [:]
     private var serviceByWebView: [ObjectIdentifier: SocialService] = [:]
@@ -59,8 +58,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private static let maximumConcurrentMediaClassifications = 4
     private static let maximumPendingMediaClassifications = 12
     private static let maximumMediaRetryTasks = 12
-    private static var bundledPhoneBlocklistLoadTasks: [URL: Task<PhoneBlocklistIndex?, Never>] = [:]
-
     init(
         defaults: UserDefaults = .standard,
         fixedService: SocialService? = nil,
@@ -68,7 +65,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         loadInitialPages: Bool = true,
         mediaClassifier: (any MediaSafetyClassifying)? = nil,
         textClassifier: (any PageTextSafetyClassifying)? = nil,
-        phoneBlocklistLoader: (@Sendable () -> PhoneBlocklistIndex?)? = nil,
         unclassifiedMediaPolicy: UnclassifiedMediaPolicy? = nil,
         mediaClassificationDeadlineNanoseconds: UInt64 = 5_000_000_000
     ) {
@@ -82,30 +78,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.loadInitialPages = loadInitialPages
         self.mediaClassifier = mediaClassifier
         self.textClassifier = textClassifier
-        if let phoneBlocklistLoader {
-            self.phoneBlocklistLoadTask = Task.detached(
-                priority: .userInitiated,
-                operation: phoneBlocklistLoader
-            )
-        } else {
-            let phoneBlocklistURL = bundle.url(
-                forResource: "adult-blocklist",
-                withExtension: "sdi"
-            )
-            if let phoneBlocklistURL,
-               let existingTask = Self.bundledPhoneBlocklistLoadTasks[phoneBlocklistURL] {
-                self.phoneBlocklistLoadTask = existingTask
-            } else {
-                let task: Task<PhoneBlocklistIndex?, Never> = Task.detached(priority: .userInitiated) {
-                    guard let phoneBlocklistURL else { return nil }
-                    return try? PhoneBlocklistIndex(contentsOf: phoneBlocklistURL)
-                }
-                self.phoneBlocklistLoadTask = task
-                if let phoneBlocklistURL {
-                    Self.bundledPhoneBlocklistLoadTasks[phoneBlocklistURL] = task
-                }
-            }
-        }
         self.unclassifiedMediaPolicy = unclassifiedMediaPolicy ?? UnclassifiedMediaPolicy(bundle: bundle)
         self.mediaClassificationDeadlineNanoseconds = max(1, mediaClassificationDeadlineNanoseconds)
         super.init()
@@ -840,6 +812,28 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
     }
 
+    private func verifyInstalledAdapter(for service: SocialService, in webView: WKWebView) {
+        let generation = mainDocumentGenerations[service, default: 0]
+        Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView else { return }
+            let installed = try? await webView.evaluateJavaScript(
+                DOMAdapters.mainFrameInstallationProbe(for: service)
+            ) as? Bool
+            guard self.webViews[service] === webView,
+                  self.mainDocumentGenerations[service, default: 0] == generation,
+                  installed != true else { return }
+            // Registered document-end scripts are the normal installation
+            // path. Send the full adapter only as a recovery fallback; doing
+            // it after every successful navigation made WebKit parse the
+            // large Instagram adapter twice during cold launch.
+            _ = try? await webView.evaluateJavaScript(DOMAdapters.script(
+                for: service,
+                audioEnabled: self.audioEnabled(for: service),
+                contentSafetyEnabled: service != .instagram
+            ))
+        }
+    }
+
     private func scheduleNavigationHealthTimeout(for service: SocialService, generation: UInt64) {
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 15_000_000_000)
@@ -907,17 +901,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private func isAdvisoryHealthMessage(_ detail: String) -> Bool {
         detail.localizedCaseInsensitiveContains("intentionally unavailable")
             || detail.localizedCaseInsensitiveContains("signed out")
-    }
-
-    private func phoneBlocklistDecision(for url: URL) async -> PhoneBlocklistDecision {
-        guard url.scheme?.lowercased() == "https", let host = url.host else { return .allowed }
-        guard let phoneBlocklist = await phoneBlocklistLoadTask.value else { return .unavailable }
-        return phoneBlocklist.matchingDomain(for: host) == nil ? .allowed : .blocked
-    }
-
-    static func needsPhoneBlocklistValidation(_ url: URL, for service: SocialService) -> Bool {
-        guard url.scheme?.lowercased() == "https", let host = url.host else { return false }
-        return !service.isCanonicalAppHost(host)
     }
 
     static func validatedPopupRequest(
@@ -1093,12 +1076,6 @@ private struct WebContentRecoveryState {
     let contentOffset: CGPoint
 }
 
-private enum PhoneBlocklistDecision {
-    case allowed
-    case blocked
-    case unavailable
-}
-
 extension SocialWebViewStore: WKNavigationDelegate {
     func webView(
         _ webView: WKWebView,
@@ -1137,38 +1114,10 @@ extension SocialWebViewStore: WKNavigationDelegate {
             }
         }
 
-        // The fixed service's exact first-party hosts are already confined by
-        // SocialService's HTTPS allowlist. Let the initial Instagram request
-        // start while the large signed blocklist validates on another core.
-        // Every permitted auxiliary/cross-origin request still waits for the
-        // validated index and fails closed when that index is unavailable.
-        guard Self.needsPhoneBlocklistValidation(url, for: service) else {
-            decisionHandler(.allow, preferences)
-            return
-        }
-
-        Task { @MainActor [weak self, weak webView] in
-            guard let self, let webView, self.service(for: webView) == service else {
-                decisionHandler(.cancel, preferences)
-                return
-            }
-            switch await self.phoneBlocklistDecision(for: url) {
-            case .allowed:
-                decisionHandler(.allow, preferences)
-            case .blocked:
-                self.health[service] = .unsupported(
-                    "Vigil blocked this site using the protected phone blocklist."
-                )
-                self.setSurface(.unknown, for: service)
-                decisionHandler(.cancel, preferences)
-            case .unavailable:
-                self.health[service] = .unsupported(
-                    "Vigil could not validate the protected phone blocklist, so this auxiliary site was blocked."
-                )
-                self.setSurface(.unknown, for: service)
-                decisionHandler(.cancel, preferences)
-            }
-        }
+        // SocialService has already confined this request to the companion's
+        // HTTPS host/path allowlist. No general-purpose adult-domain index is
+        // needed for an app that cannot navigate to arbitrary sites.
+        decisionHandler(.allow, preferences)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
@@ -1218,11 +1167,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
             restoreWebContentPositionIfNeeded(for: service, in: webView)
             return
         }
-        webView.evaluateJavaScript(DOMAdapters.script(
-            for: service,
-            audioEnabled: audioEnabled(for: service),
-            contentSafetyEnabled: service != .instagram
-        ))
+        verifyInstalledAdapter(for: service, in: webView)
         restoreWebContentPositionIfNeeded(for: service, in: webView)
     }
 

@@ -97,7 +97,13 @@ its major navigation, story/player, or icon presentation.
   swipe/close behavior, and return to the prior feed position.
 - Reels fill the visible surface above the bottom navigation without cropping
   captions/descriptions, retain sharp responsive media, and page one item per
-  vertical swipe.
+  vertical swipe through WebKit momentum plus mandatory start-aligned CSS snap
+  points. Vigil must never correct an active Reel gesture with `scrollTop`,
+  `scrollBy`, or a synthetic smooth-scroll animation.
+- Public Reel repost uses Instagram's own Repost control when present, or the
+  same semantic action in Instagram's Share sheet. A companion-provided action
+  must report that repost is unavailable when Instagram does not expose the
+  operation; it must never fabricate reposted state.
 - Double-tapping Reel/post media likes an unliked item without toggling
   playback or mute; repeating it never unlikes an already-liked item.
 - Profile/post/Direct navigation and edge-back.

@@ -123,6 +123,10 @@ assert.match(
   "Instagram must verify the migrated YouTube blocker before the old helper app is removed"
 );
 assert.match(socialRootViewSource, /SFContentBlockerManager\.getStateOfContentBlocker/u);
+assert.match(socialRootViewSource, /SFSafariExtensionManager\.getStateOfExtension/u,
+  "the containing app must report whether the ordinary-watch gesture extension is actually enabled");
+assert.match(socialRootViewSource, /allow access to youtube\.com/u,
+  "the disabled controls state must explain Safari's per-site access requirement");
 assert.match(socialRootViewSource, /SFSafariSettings\.openExtensionsSettings/u);
 assert.doesNotMatch(
   socialRootViewSource,
@@ -178,6 +182,16 @@ assert.match(
   /E10000000000000000000004 \/\* VigilYouTubeInteractionExtension\.appex in Embed App Extensions \*\//u,
   "Instagram must copy the signed ordinary-watch interaction extension into its app bundle"
 );
+assert.doesNotMatch(
+  socialProjectSource,
+  /PhoneBlocklist|adult-blocklist|Copy Phone Blocklist|copy-phone-blocklist/u,
+  "the narrow Instagram and YouTube companions must not compile or copy the general adult-domain blocklist"
+);
+assert.doesNotMatch(
+  socialWebViewStoreSource,
+  /PhoneBlocklist|phoneBlocklist|adult-blocklist/u,
+  "the narrow social web view must rely on its exact host/path allowlist instead of loading a general-domain index"
+);
 assert.match(
   socialProjectSource,
   /PRODUCT_BUNDLE_IDENTIFIER = "\$\(VIGIL_APP_BUNDLE_IDENTIFIER\)\.youtube-controls";/u,
@@ -197,6 +211,10 @@ assert.deepEqual(
 assert.match(youtubeInteractionSource, /enterMiniPlayer/u);
 assert.match(youtubeInteractionSource, /exitMiniPlayer/u);
 assert.match(youtubeInteractionSource, /dismissMiniPlayer/u);
+assert.match(youtubeInteractionSource, /PointerEvent/u,
+  "ordinary-watch gestures should use the primary iOS pointer-event path");
+assert.match(youtubeInteractionSource, /webkitEnterFullscreen/u,
+  "the ordinary player should retain swipe-up fullscreen parity");
 assert.match(youtubeInteractionSource, /recoverFromShorts/u,
   "same-document Shorts navigation must recover to ordinary YouTube instead of exposing Shorts");
 assert.match(youtubeInteractionSource, /const isShortsRoute/u);

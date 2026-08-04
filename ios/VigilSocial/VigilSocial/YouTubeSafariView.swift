@@ -104,6 +104,10 @@ final class YouTubeSafariSession: NSObject, ObservableObject, @preconcurrency SF
         appBundleIdentifier.map { "\($0).shorts-blocker" }
     }
 
+    static func interactionExtensionIdentifier(appBundleIdentifier: String?) -> String? {
+        appBundleIdentifier.map { "\($0).youtube-controls" }
+    }
+
     func attach(to viewController: UIViewController) {
         presentationAnchor = viewController
     }
