@@ -19,6 +19,10 @@ const socialWebViewStoreSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "SocialWebViewStore.swift"),
   "utf8"
 );
+const socialDOMAdaptersSource = await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilSocial", "DOMAdapters.swift"),
+  "utf8"
+);
 const socialRootViewSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "RootView.swift"),
   "utf8"
@@ -37,6 +41,18 @@ const socialProjectSource = await readFile(
 );
 const youtubeBlockerInfo = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilYouTubeShortsBlocker", "Info.plist"),
+  "utf8"
+);
+const youtubeInteractionManifest = JSON.parse(await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilYouTubeInteractionExtension", "Resources", "manifest.json"),
+  "utf8"
+)) as { content_scripts?: Array<{ js?: string[]; matches?: string[] }>; host_permissions?: string[] };
+const youtubeInteractionSource = await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilYouTubeInteractionExtension", "Resources", "youtube-parity.js"),
+  "utf8"
+);
+const youtubeInteractionInfo = await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilYouTubeInteractionExtension", "Info.plist"),
   "utf8"
 );
 const socialInfoPlistSource = await readFile(
@@ -58,6 +74,43 @@ assert.match(
   socialRootViewSource,
   /SocialWebView\([\s\S]*?webView: store\.webView\(for: service\)/u,
   "Instagram must render its protected persistent WKWebView"
+);
+assert.match(
+  socialRootViewSource,
+  /webViewSafeAreaEdges: Edge\.Set = service == \.instagram\s*\? \[\.top, \.bottom\]\s*: \.bottom/u,
+  "Instagram must keep one invariant full-screen WKWebView frame across route changes"
+);
+assert.doesNotMatch(
+  socialRootViewSource,
+  /webViewSafeAreaEdges:[\s\S]{0,160}usesFullBleedTop/u,
+  "Reels route reports must adjust content inset without resizing the WKWebView host"
+);
+assert.match(
+  socialRootViewSource,
+  /phase == \.active \{\s*store\.resumeSuspendedMedia\(\)\s*\} else \{\s*store\.suspendAllMedia\(\)/u,
+  "Instagram must suspend media whenever its scene leaves the foreground"
+);
+assert.match(
+  socialWebViewStoreSource,
+  /setAllMediaPlaybackSuspended\(true\)/u,
+  "backgrounded Instagram media must be blocked from external replay by WebKit"
+);
+assert.match(
+  socialWebViewStoreSource,
+  /setAllMediaPlaybackSuspended\(false\)/u,
+  "foregrounding must pair WebKit media suspension with an explicit release"
+);
+assert.match(socialWebViewStoreSource, /nowPlayingCenter\.playbackState = \.stopped/u);
+assert.match(socialWebViewStoreSource, /nowPlayingCenter\.nowPlayingInfo = nil/u);
+assert.match(
+  socialWebViewStoreSource,
+  /AVAudioSession\.sharedInstance\(\)\.setActive\(\s*false,[\s\S]*?notifyOthersOnDeactivation/u,
+  "Instagram must relinquish its iOS audio session when it leaves the foreground"
+);
+assert.match(
+  socialDOMAdaptersSource,
+  /navigator\.mediaSession\.metadata = null/u,
+  "Instagram's page-level Now Playing metadata must be cleared on suspension"
 );
 assert.match(
   socialRootViewSource,
@@ -120,6 +173,35 @@ assert.match(
   /D1000000000000000000000F \/\* VigilYouTubeShortsBlocker\.appex in Embed App Extensions \*\//u,
   "Instagram must copy the signed content blocker into its app bundle"
 );
+assert.match(
+  socialProjectSource,
+  /E10000000000000000000004 \/\* VigilYouTubeInteractionExtension\.appex in Embed App Extensions \*\//u,
+  "Instagram must copy the signed ordinary-watch interaction extension into its app bundle"
+);
+assert.match(
+  socialProjectSource,
+  /PRODUCT_BUNDLE_IDENTIFIER = "\$\(VIGIL_APP_BUNDLE_IDENTIFIER\)\.youtube-controls";/u,
+  "the interaction extension must remain inside the signed Instagram app namespace"
+);
+assert.match(youtubeInteractionInfo, /com\.apple\.Safari\.web-extension/u);
+assert.deepEqual(youtubeInteractionManifest.host_permissions, [
+  "https://youtube.com/*",
+  "https://www.youtube.com/*",
+  "https://m.youtube.com/*"
+], "the interaction extension must not receive access outside YouTube");
+assert.deepEqual(
+  youtubeInteractionManifest.content_scripts?.[0]?.js,
+  ["youtube-parity.js"],
+  "the interaction extension must ship its tested parity script"
+);
+assert.match(youtubeInteractionSource, /enterMiniPlayer/u);
+assert.match(youtubeInteractionSource, /exitMiniPlayer/u);
+assert.match(youtubeInteractionSource, /dismissMiniPlayer/u);
+assert.match(youtubeInteractionSource, /recoverFromShorts/u,
+  "same-document Shorts navigation must recover to ordinary YouTube instead of exposing Shorts");
+assert.match(youtubeInteractionSource, /const isShortsRoute/u);
+assert.doesNotMatch(youtubeInteractionSource, /accounts\.google\.com/u,
+  "ordinary-watch gestures do not need access to Google sign-in documents");
 assert.equal(
   youtubeBlockerRules.some((rule) => rule.action?.type === "block" && rule.trigger?.["url-filter"]?.includes("/shorts")),
   true,
@@ -236,16 +318,55 @@ const instagramIconContents = JSON.parse(await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Assets.xcassets", "InstagramAppIcon.appiconset", "Contents.json"),
   "utf8"
 )) as {
-  images: Array<{ appearances?: unknown; filename: string; idiom: string; platform: string; size: string }>;
+  images: Array<{
+    appearances?: Array<{ appearance: string; value: string }>;
+    filename: string;
+    idiom: string;
+    platform: string;
+    size: string;
+  }>;
 };
-assert.deepEqual(instagramIconContents.images, [
-  {
-    filename: "instagram-light.png",
-    idiom: "universal",
-    platform: "ios",
-    size: "1024x1024"
-  }
-], "Instagram must use only its exact full-color App Store master and let iOS derive system appearances");
+assert.deepEqual(
+  instagramIconContents.images.map((image) => ({
+    appearance: image.appearances?.[0]?.value || "light",
+    filename: image.filename,
+    idiom: image.idiom,
+    platform: image.platform,
+    size: image.size
+  })),
+  [
+    { appearance: "light", filename: "instagram-light.png", idiom: "universal", platform: "ios", size: "1024x1024" },
+    { appearance: "dark", filename: "instagram-dark.png", idiom: "universal", platform: "ios", size: "1024x1024" },
+    { appearance: "tinted", filename: "instagram-tinted.png", idiom: "universal", platform: "ios", size: "1024x1024" }
+  ],
+  "Instagram must supply explicit clean pre-glass light, dark, and tinted appearances"
+);
+
+const instagramAppIconRoot = join(
+  projectRoot,
+  "ios",
+  "VigilSocial",
+  "VigilSocial",
+  "Assets.xcassets",
+  "InstagramAppIcon.appiconset"
+);
+const instagramAppIconPNGs = await Promise.all(
+  instagramIconContents.images.map((image) => readFile(join(instagramAppIconRoot, image.filename)))
+);
+for (const [index, png] of instagramAppIconPNGs.entries()) {
+  assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", "Instagram app icon must be a PNG");
+  assert.equal(png.readUInt32BE(16), 1024, "Instagram app icon must be 1024 pixels wide");
+  assert.equal(png.readUInt32BE(20), 1024, "Instagram app icon must be 1024 pixels tall");
+  assert.equal(png[24], 8, "Instagram app icon must use 8-bit channels");
+  assert.equal(
+    png[25],
+    2,
+    `${instagramIconContents.images[index].filename} must be opaque RGB without an alpha channel`
+  );
+}
+assert.equal(instagramAppIconPNGs[0].equals(instagramAppIconPNGs[1]), false, "Instagram dark must differ from light");
+assert.equal(instagramAppIconPNGs[0].equals(instagramAppIconPNGs[2]), false, "Instagram tinted must differ from light");
+assert.equal(instagramAppIconPNGs[1].equals(instagramAppIconPNGs[2]), false, "Instagram dark and tinted must be distinct");
 
 for (const platform of FOCUSED_SOCIAL_PLATFORMS) {
   if (platform.id !== "instagram" && platform.id !== "youtube") continue;

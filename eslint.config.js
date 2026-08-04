@@ -36,7 +36,10 @@ export default [
     }
   },
   {
-    files: ["ios/VigilBrowser/VigilSafariExtension/Resources/*.js"],
+    files: [
+      "ios/VigilBrowser/VigilSafariExtension/Resources/*.js",
+      "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/*.js"
+    ],
     languageOptions: {
       globals: { ...globals.browser, ...globals.webextensions }
     }

@@ -46,7 +46,7 @@ const embeddedSupervisorPlist = `
   <?xml version="1.0" encoding="UTF-8"?>
   <plist version="1.0"><dict>
     <key>Label</key><string>tech.caseline.vigil.supervisor</string>
-    <key>ProgramArguments</key><array><string>/Users/test/Library/Application Support/Vigil/supervisor/vigil-supervisor-DO-NOT-TERMINATE-OR-BOOTOUT.zsh</string><string>--vigil-safety-boundary-do-not-terminate-or-bootout</string></array>
+    <key>ProgramArguments</key><array><string>/Users/test/Library/Application Support/Vigil/supervisor/vigil</string><string>--vigil-safety-boundary-do-not-terminate-or-bootout</string></array>
     <key>EnvironmentVariables</key><dict>
       <key>HOME</key><string>/Users/test</string>
       <key>USER</key><string>test</string>

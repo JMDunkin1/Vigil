@@ -40,6 +40,10 @@
 		D1000000000000000000000D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* Assets.xcassets */; };
 		D1000000000000000000000E /* ExplicitContentPolicy.json in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000019 /* ExplicitContentPolicy.json */; };
 		D1000000000000000000000F /* VigilYouTubeShortsBlocker.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C20000000000000000000005 /* VigilYouTubeShortsBlocker.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		E10000000000000000000001 /* SafariWebExtensionHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000001 /* SafariWebExtensionHandler.swift */; };
+		E10000000000000000000002 /* manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000003 /* manifest.json */; };
+		E10000000000000000000003 /* youtube-parity.js in Resources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000004 /* youtube-parity.js */; };
+		E10000000000000000000004 /* VigilYouTubeInteractionExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E20000000000000000000005 /* VigilYouTubeInteractionExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -64,6 +68,13 @@
 			remoteGlobalIDString = C60000000000000000000001;
 			remoteInfo = VigilYouTubeShortsBlocker;
 		};
+		E30000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E60000000000000000000001;
+			remoteInfo = VigilYouTubeInteractionExtension;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -85,6 +96,7 @@
 			dstSubfolderSpec = 13;
 			files = (
 				D1000000000000000000000F /* VigilYouTubeShortsBlocker.appex in Embed App Extensions */,
+				E10000000000000000000004 /* VigilYouTubeInteractionExtension.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -116,6 +128,11 @@
 		C20000000000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		C20000000000000000000005 /* VigilYouTubeShortsBlocker.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VigilYouTubeShortsBlocker.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		D20000000000000000000001 /* VigilInstagram.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VigilInstagram.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E20000000000000000000001 /* SafariWebExtensionHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SafariWebExtensionHandler.swift; sourceTree = "<group>"; };
+		E20000000000000000000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		E20000000000000000000003 /* manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = manifest.json; sourceTree = "<group>"; };
+		E20000000000000000000004 /* youtube-parity.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "youtube-parity.js"; sourceTree = "<group>"; };
+		E20000000000000000000005 /* VigilYouTubeInteractionExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VigilYouTubeInteractionExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -140,6 +157,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E40000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D40000000000000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -156,6 +180,7 @@
 				A50000000000000000000002 /* VigilSocial */,
 				A50000000000000000000003 /* VigilSocialTests */,
 				C50000000000000000000001 /* VigilYouTubeShortsBlocker */,
+				E50000000000000000000001 /* VigilYouTubeInteractionExtension */,
 				A50000000000000000000004 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -193,6 +218,25 @@
 			path = VigilYouTubeShortsBlocker;
 			sourceTree = "<group>";
 		};
+		E50000000000000000000001 /* VigilYouTubeInteractionExtension */ = {
+			isa = PBXGroup;
+			children = (
+				E20000000000000000000001 /* SafariWebExtensionHandler.swift */,
+				E20000000000000000000002 /* Info.plist */,
+				E50000000000000000000002 /* Resources */,
+			);
+			path = VigilYouTubeInteractionExtension;
+			sourceTree = "<group>";
+		};
+		E50000000000000000000002 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				E20000000000000000000003 /* manifest.json */,
+				E20000000000000000000004 /* youtube-parity.js */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		A50000000000000000000003 /* VigilSocialTests */ = {
 			isa = PBXGroup;
 			children = (
@@ -207,6 +251,7 @@
 				A20000000000000000000008 /* VigilSocial.app */,
 				A20000000000000000000009 /* VigilSocialTests.xctest */,
 				C20000000000000000000005 /* VigilYouTubeShortsBlocker.appex */,
+				E20000000000000000000005 /* VigilYouTubeInteractionExtension.appex */,
 				D20000000000000000000001 /* VigilInstagram.app */,
 			);
 			name = Products;
@@ -270,6 +315,23 @@
 			productReference = C20000000000000000000005 /* VigilYouTubeShortsBlocker.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		E60000000000000000000001 /* VigilYouTubeInteractionExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E80000000000000000000001 /* Build configuration list for PBXNativeTarget "VigilYouTubeInteractionExtension" */;
+			buildPhases = (
+				E40000000000000000000002 /* Sources */,
+				E40000000000000000000001 /* Frameworks */,
+				E40000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VigilYouTubeInteractionExtension;
+			productName = VigilYouTubeInteractionExtension;
+			productReference = E20000000000000000000005 /* VigilYouTubeInteractionExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		D60000000000000000000001 /* VigilInstagram */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = D80000000000000000000001 /* Build configuration list for PBXNativeTarget "VigilInstagram" */;
@@ -284,6 +346,7 @@
 			);
 			dependencies = (
 				D70000000000000000000001 /* PBXTargetDependency */,
+				E70000000000000000000001 /* PBXTargetDependency */,
 			);
 			name = VigilInstagram;
 			productName = VigilInstagram;
@@ -304,6 +367,7 @@
 					A60000000000000000000002 = { CreatedOnToolsVersion = 26.6; TestTargetID = A60000000000000000000001; };
 					C60000000000000000000001 = { CreatedOnToolsVersion = 26.6; };
 					D60000000000000000000001 = { CreatedOnToolsVersion = 26.6; };
+					E60000000000000000000001 = { CreatedOnToolsVersion = 26.6; };
 				};
 			};
 			buildConfigurationList = A80000000000000000000001 /* Build configuration list for PBXProject "VigilSocial" */;
@@ -322,6 +386,7 @@
 				A60000000000000000000001 /* VigilSocial */,
 				A60000000000000000000002 /* VigilSocialTests */,
 				C60000000000000000000001 /* VigilYouTubeShortsBlocker */,
+				E60000000000000000000001 /* VigilYouTubeInteractionExtension */,
 				D60000000000000000000001 /* VigilInstagram */,
 			);
 		};
@@ -331,6 +396,7 @@
 		A40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A10000000000000000000007 /* icon.png in Resources */, A10000000000000000000008 /* instagram.png in Resources */, A10000000000000000000009 /* youtube.png in Resources */, A1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, A1000000000000000000000D /* Assets.xcassets in Resources */, A1000000000000000000000F /* ExplicitContentPolicy.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		A40000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C40000000000000000000004 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (C10000000000000000000003 /* blockerList.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		E40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (E10000000000000000000002 /* manifest.json in Resources */, E10000000000000000000003 /* youtube-parity.js in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		D40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (D10000000000000000000009 /* icon.png in Resources */, D1000000000000000000000A /* instagram.png in Resources */, D1000000000000000000000B /* youtube.png in Resources */, D1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, D1000000000000000000000D /* Assets.xcassets in Resources */, D1000000000000000000000E /* ExplicitContentPolicy.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
@@ -371,6 +437,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E40000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E10000000000000000000001 /* SafariWebExtensionHandler.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		D40000000000000000000002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -403,6 +477,11 @@
 			isa = PBXTargetDependency;
 			target = C60000000000000000000001 /* VigilYouTubeShortsBlocker */;
 			targetProxy = D30000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		E70000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E60000000000000000000001 /* VigilYouTubeInteractionExtension */;
+			targetProxy = E30000000000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -635,6 +714,48 @@
 			};
 			name = Release;
 		};
+		E90000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3RY7A22U4L;
+				INFOPLIST_FILE = VigilYouTubeInteractionExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(VIGIL_APP_BUNDLE_IDENTIFIER).youtube-controls";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.instagram;
+			};
+			name = Debug;
+		};
+		E90000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3RY7A22U4L;
+				INFOPLIST_FILE = VigilYouTubeInteractionExtension/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(VIGIL_APP_BUNDLE_IDENTIFIER).youtube-controls";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.instagram;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -665,6 +786,12 @@
 		D80000000000000000000001 /* Build configuration list for PBXNativeTarget "VigilInstagram" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (D90000000000000000000001 /* Debug */, D90000000000000000000002 /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E80000000000000000000001 /* Build configuration list for PBXNativeTarget "VigilYouTubeInteractionExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (E90000000000000000000001 /* Debug */, E90000000000000000000002 /* Release */);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};

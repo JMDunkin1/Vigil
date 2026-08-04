@@ -15,7 +15,8 @@ import {
   policyFreshnessProblems,
   preservedPolicyReceipt,
   receiptPhoneEdition,
-  removalPasswordFromProfile
+  removalPasswordFromProfile,
+  safariExtensionUpdateProblems
 } from "../scripts/ios-phone-suite.mjs";
 import { buildPhoneBlocklistArtifact } from "../src/adultBlocklistPhoneArtifact.js";
 
@@ -35,6 +36,7 @@ assert.deepEqual(parseArguments(["update", "--device", "phone-1", "--no-policy",
 assert.equal(parseArguments(["update", "--edition", "personal"]).options.edition, "personal");
 assert.equal(parseArguments(["update", "--edition=enhanced"]).options.edition, "enhanced");
 assert.equal(parseArguments(["update", "--allow-edition-downgrade"]).options.allowEditionDowngrade, true);
+assert.equal(parseArguments(["develop"]).command, "develop");
 assert.equal(parseArguments(["bump", "minor"]).options.bump, "minor");
 assert.throws(() => parseArguments(["update", "--wat"]), /Unknown option/);
 assert.throws(() => parseArguments(["bump", "wat"]), /Unknown release bump/);
@@ -278,6 +280,44 @@ assert.equal(receiptPhoneEdition(null), "personal");
 assert.equal(receiptPhoneEdition({ edition: "personal" }), "personal");
 assert.equal(receiptPhoneEdition({ edition: "enhanced" }), "enhanced");
 assert.equal(receiptPhoneEdition({ apps: [{ bundleId: "tech.caseline.vigil.url-filter" }] }), "enhanced");
+
+const youtubeExtension = {
+  bundleIdentifier: "tech.caseline.vigil.instagram.youtube-controls",
+  sha256: "new-extension-bytes",
+  manifestVersion: 3,
+  hostPermissions: ["https://youtube.com/*", "https://www.youtube.com/*", "https://m.youtube.com/*"],
+  contentScriptMatches: ["https://youtube.com/*", "https://www.youtube.com/*", "https://m.youtube.com/*"],
+  permissions: []
+};
+const nextInstagramApps = [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtension: youtubeExtension }];
+assert.match(safariExtensionUpdateProblems(null, nextInstagramApps).join("\n"), /adds Vigil YouTube Controls/u);
+assert.deepEqual(safariExtensionUpdateProblems({
+  apps: [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtensionSha256: "new-extension-bytes" }]
+}, nextInstagramApps), []);
+assert.match(safariExtensionUpdateProblems({
+  apps: [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtensionSha256: "old-extension-bytes" }]
+}, nextInstagramApps).join("\n"), /cannot be proven safe/u);
+assert.deepEqual(safariExtensionUpdateProblems({
+  apps: [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtension: { ...youtubeExtension, sha256: "old-extension-bytes" } }]
+}, nextInstagramApps), []);
+assert.match(safariExtensionUpdateProblems({
+  apps: [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtension: youtubeExtension }]
+}, [{
+  bundleId: "tech.caseline.vigil.instagram",
+  youtubeInteractionExtension: { ...youtubeExtension, hostPermissions: [...youtubeExtension.hostPermissions, "https://accounts.google.com/*"] }
+}]).join("\n"), /host permissions changed/u);
+assert.match(safariExtensionUpdateProblems({
+  apps: [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtension: youtubeExtension }]
+}, [{
+  bundleId: "tech.caseline.vigil.instagram",
+  youtubeInteractionExtension: { ...youtubeExtension, bundleIdentifier: "tech.caseline.vigil.instagram.youtube-controls-v2" }
+}]).join("\n"), /bundle identifier changed/u);
+assert.match(safariExtensionUpdateProblems({
+  apps: [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtension: youtubeExtension }]
+}, [{
+  bundleId: "tech.caseline.vigil.instagram",
+  youtubeInteractionExtension: { ...youtubeExtension, permissions: ["tabs"] }
+}]).join("\n"), /extension permissions changed/u);
 
 const testSource = {
   id: "custom-test",

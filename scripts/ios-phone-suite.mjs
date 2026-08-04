@@ -28,6 +28,12 @@ const URL_FILTER_APP = {
 };
 const EXPLICIT_CONTENT_POLICY_RESOURCE = "ExplicitContentPolicy.json";
 const EXPLICIT_CONTENT_POLICY_PATH = join(ROOT, "ios", "VigilSocial", "VigilSocial", EXPLICIT_CONTENT_POLICY_RESOURCE);
+const YOUTUBE_INTERACTION_EXTENSION = {
+  productName: "VigilYouTubeInteractionExtension.appex",
+  bundleIdentifierSuffix: ".youtube-controls",
+  manifestName: "manifest.json",
+  scriptName: "youtube-parity.js"
+};
 const PHONE_BLOCKLIST_MAGIC = Buffer.from("SNTLIDX1", "ascii");
 const PHONE_BLOCKLIST_HEADER_BYTES = PHONE_BLOCKLIST_MAGIC.byteLength + 4;
 const MAX_PHONE_BLOCKLIST_BYTES = 32 * 1024 * 1024;
@@ -114,6 +120,13 @@ async function main(selectedCommand, selectedOptions) {
   }
   if (selectedCommand === "update") {
     await updatePhone({ ...selectedOptions, edition });
+    return;
+  }
+  if (selectedCommand === "develop") {
+    if (edition !== "personal") {
+      throw new Error("YouTube development updates require the Personal edition because Enhanced app and URL Filter updates must be deployed together.");
+    }
+    await updatePhone({ ...selectedOptions, edition, noPolicy: true, developmentUpdate: true });
     return;
   }
   if (!["status", "check"].includes(selectedCommand)) throw new Error(`Unknown command: ${selectedCommand}`);
@@ -892,6 +905,12 @@ async function updatePhone(selectedOptions) {
   const audit = await auditFourPolicies(toolEnvironment, edition === "enhanced" ? urlFilter.service : null);
   printPolicyAudit(audit, edition);
   const build = await buildPhoneApps(release, edition, urlFilter, toolEnvironment);
+  if (selectedOptions.noPolicy) {
+    const extensionProblems = safariExtensionUpdateProblems(previousReceipt, build.apps);
+    if (extensionProblems.length) {
+      throw new Error(`Refusing the app-only update because Safari could disable the YouTube controls extension:\n- ${extensionProblems.join("\n- ")}`);
+    }
+  }
   const preparedPolicy = selectedOptions.noPolicy
     ? null
     : await prepareCurrentPolicy(release, selectedOptions.server, edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition);
@@ -951,7 +970,9 @@ async function updatePhone(selectedOptions) {
       signingCapabilities: app.signingCapabilities,
       blocklistArtifactSha256: app.blocklist.artifactSha256,
       blocklistDomainCount: app.blocklist.domainCount,
-      explicitContentPolicySha256: app.explicitContentPolicy?.sha256 || null
+      explicitContentPolicySha256: app.explicitContentPolicy?.sha256 || null,
+      youtubeInteractionExtension: app.youtubeInteractionExtension || null,
+      youtubeInteractionExtensionSha256: app.youtubeInteractionExtension?.sha256 || null
     })),
     deployedAt: new Date().toISOString(),
     rebooted: false
@@ -1116,6 +1137,9 @@ async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = pro
     const path = join(derived, "Build", "Products", "Release-iphoneos", "VigilSocial.app");
     const bundledBlocklist = await verifyBundledPhoneBlocklist(path, blocklist);
     const bundledExplicitContentPolicy = await verifyBundledExplicitContentPolicy(path, explicitContentPolicy);
+    const youtubeInteractionExtension = social.id === "instagram"
+      ? await verifyBundledYouTubeInteractionExtension(path, social.bundleId)
+      : null;
     const signingCapabilities = await signedAppCapabilities(path);
     if (!reducedEntitlements && !signingCapabilities.sensitiveContentAnalysis) {
       throw new Error(`${social.name} built without the requested Sensitive Content Analysis entitlement; refusing to label it as a full-capability build.`);
@@ -1125,6 +1149,7 @@ async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = pro
       path,
       blocklist: bundledBlocklist,
       explicitContentPolicy: bundledExplicitContentPolicy,
+      youtubeInteractionExtension,
       signingCapabilities,
       sha256: await hashAppBundle(path)
     });
@@ -1227,6 +1252,98 @@ async function verifyBundledExplicitContentPolicy(appPath, expected) {
     throw new Error(`${basename(appPath)} contains a stale or substituted ${EXPLICIT_CONTENT_POLICY_RESOURCE}.`);
   }
   return actual;
+}
+
+async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIdentifier) {
+  const extensionPath = join(appPath, "PlugIns", YOUTUBE_INTERACTION_EXTENSION.productName);
+  const infoPath = join(extensionPath, "Info.plist");
+  const manifestPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.manifestName);
+  const scriptPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.scriptName);
+  for (const path of [infoPath, manifestPath, scriptPath]) {
+    if (!await isFile(path)) {
+      throw new Error(`${basename(appPath)} does not contain the complete Vigil YouTube interaction extension.`);
+    }
+  }
+
+  const { stdout: identifierOutput } = await execFileAsync("/usr/bin/plutil", [
+    "-extract", "CFBundleIdentifier", "raw", "-o", "-", infoPath
+  ], { timeout: 10_000, maxBuffer: 1024 * 1024 });
+  const expectedIdentifier = `${parentBundleIdentifier}${YOUTUBE_INTERACTION_EXTENSION.bundleIdentifierSuffix}`;
+  if (identifierOutput.trim() !== expectedIdentifier) {
+    throw new Error(`${YOUTUBE_INTERACTION_EXTENSION.productName} is not contained by ${parentBundleIdentifier}.`);
+  }
+
+  const manifestBytes = await readFile(manifestPath);
+  const scriptBytes = await readFile(scriptPath);
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestBytes.toString("utf8"));
+  } catch {
+    throw new Error(`${YOUTUBE_INTERACTION_EXTENSION.manifestName} is not valid JSON.`);
+  }
+  const expectedHosts = ["https://youtube.com/*", "https://www.youtube.com/*", "https://m.youtube.com/*"];
+  const scripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
+  const contractValid = JSON.stringify(manifest?.host_permissions) === JSON.stringify(expectedHosts)
+    && scripts.length === 1
+    && JSON.stringify(scripts[0]?.matches) === JSON.stringify(expectedHosts)
+    && JSON.stringify(scripts[0]?.js) === JSON.stringify([YOUTUBE_INTERACTION_EXTENSION.scriptName])
+    && scripts[0]?.all_frames === false;
+  const source = scriptBytes.toString("utf8");
+  if (!contractValid
+    || !source.includes("data-vigil-youtube-miniplayer")
+    || !source.includes("recoverFromShorts")
+    || source.includes("accounts.google.com")) {
+    throw new Error("The bundled Vigil YouTube interaction extension does not satisfy its narrow YouTube-only parity contract.");
+  }
+  return {
+    bundleIdentifier: expectedIdentifier,
+    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes])),
+    manifestVersion: manifest.manifest_version,
+    hostPermissions: [...manifest.host_permissions],
+    contentScriptMatches: [...scripts[0].matches],
+    permissions: Array.isArray(manifest.permissions) ? [...manifest.permissions].sort() : []
+  };
+}
+
+export function safariExtensionUpdateProblems(previousReceipt, nextApps) {
+  const maintenance = "Use the explicit offline Safari-extension maintenance procedure before installing this app build.";
+  const previousApp = previousReceipt?.apps?.find((app) => app.bundleId === "tech.caseline.vigil.instagram") || null;
+  const nextApp = nextApps?.find((app) => app.bundleId === "tech.caseline.vigil.instagram") || null;
+  const previous = previousApp?.youtubeInteractionExtension || null;
+  const previousHash = previous?.sha256 || previousApp?.youtubeInteractionExtensionSha256 || "";
+  const next = nextApp?.youtubeInteractionExtension || null;
+
+  if (!next) {
+    return previousHash ? [`The installed app receipt contains Vigil YouTube Controls, but the proposed app build does not. ${maintenance}`] : [];
+  }
+  if (!previousHash) {
+    return [`The proposed build adds Vigil YouTube Controls to a phone whose receipt does not contain it. ${maintenance}`];
+  }
+  if (!previous) {
+    return previousHash === next.sha256
+      ? []
+      : [`The existing receipt predates the extension permission contract and the extension bytes changed, so an in-place update cannot be proven safe. ${maintenance}`];
+  }
+
+  const problems = [];
+  if (previous.bundleIdentifier !== next.bundleIdentifier) {
+    problems.push(`The YouTube controls extension bundle identifier changed from ${previous.bundleIdentifier} to ${next.bundleIdentifier}. ${maintenance}`);
+  }
+  if (previous.manifestVersion !== next.manifestVersion) {
+    problems.push(`The YouTube controls manifest version changed from ${previous.manifestVersion} to ${next.manifestVersion}. ${maintenance}`);
+  }
+  for (const [label, key] of [
+    ["host permissions", "hostPermissions"],
+    ["content-script matches", "contentScriptMatches"],
+    ["extension permissions", "permissions"]
+  ]) {
+    const before = [...(previous[key] || [])].sort();
+    const after = [...(next[key] || [])].sort();
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      problems.push(`The YouTube controls ${label} changed (${before.join(", ") || "none"} -> ${after.join(", ") || "none"}). ${maintenance}`);
+    }
+  }
+  return problems;
 }
 
 async function verifyBundledPhoneBlocklist(appPath, expected) {
@@ -1753,6 +1870,7 @@ Commands:
   check        Status with a nonzero exit when drift exists
   audit        Build and validate Normal, Soft Lock, Full Brick, and Panic profiles
   update       Bump when needed, audit, build, install, sync policy, and verify
+  develop      Safely update the Personal app in place without touching policy
   bump [kind]  Bump patch, minor, or major only when phone inputs changed
   fingerprint  Print the current phone implementation fingerprint
 

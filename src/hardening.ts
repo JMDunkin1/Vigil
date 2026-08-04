@@ -406,7 +406,7 @@ function embeddedSupervisorExpectation(): EmbeddedSupervisorExpectation | null {
 }
 
 function embeddedSupervisorScriptPath(expectation: EmbeddedSupervisorExpectation): string {
-  return join(expectation.userDataDir, "supervisor", "vigil-supervisor-DO-NOT-TERMINATE-OR-BOOTOUT.zsh");
+  return join(expectation.userDataDir, "supervisor", "vigil");
 }
 
 function embeddedSupervisorConfiguration(plist: string): { root: Record<string, unknown> | null; markerPath: string } {

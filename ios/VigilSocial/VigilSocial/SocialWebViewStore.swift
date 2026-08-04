@@ -1,7 +1,22 @@
+import AVFoundation
 import Combine
 import Foundation
+import MediaPlayer
 import UIKit
 import WebKit
+
+enum InstagramExternalPlaybackPolicy {
+    @MainActor
+    static func relinquish() {
+        let nowPlayingCenter = MPNowPlayingInfoCenter.default()
+        nowPlayingCenter.playbackState = .stopped
+        nowPlayingCenter.nowPlayingInfo = nil
+        try? AVAudioSession.sharedInstance().setActive(
+            false,
+            options: .notifyOthersOnDeactivation
+        )
+    }
+}
 
 @MainActor
 final class SocialWebViewStore: NSObject, ObservableObject {
@@ -14,9 +29,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     let fixedService: SocialService
     private let defaults: UserDefaults
     private let loadInitialPages: Bool
-    private let mediaClassifier: any MediaSafetyClassifying
-    private let textClassifier: any PageTextSafetyClassifying
-    private let phoneBlocklist: PhoneBlocklistIndex?
+    private var mediaClassifier: (any MediaSafetyClassifying)?
+    private var textClassifier: (any PageTextSafetyClassifying)?
+    private let phoneBlocklistLoadTask: Task<PhoneBlocklistIndex?, Never>
     private let unclassifiedMediaPolicy: UnclassifiedMediaPolicy
     private var webViews: [SocialService: WKWebView] = [:]
     private var serviceByWebView: [ObjectIdentifier: SocialService] = [:]
@@ -34,22 +49,26 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var latestMediaTokens: [MediaRequestKey: String] = [:]
     private var latestMediaRequestIDs: [MediaRequestKey: UUID] = [:]
     private var mediaRetryTasks: [MediaRequestKey: Task<Void, Never>] = [:]
-    private var surfaceStates: [SocialService: SocialSurfaceState] = [:]
+    @Published private var surfaceStates: [SocialService: SocialSurfaceState] = [:]
     private var webContentRecovery: [SocialService: WebContentRecoveryState] = [:]
     private var refreshingServices: Set<SocialService> = []
+    private var mediaPlaybackIsSuspended = false
+    private var externalPlaybackRelinquishTask: Task<Void, Never>?
     private let mediaClassificationDeadlineNanoseconds: UInt64
 
     private static let maximumConcurrentMediaClassifications = 4
     private static let maximumPendingMediaClassifications = 12
     private static let maximumMediaRetryTasks = 12
+    private static var bundledPhoneBlocklistLoadTasks: [URL: Task<PhoneBlocklistIndex?, Never>] = [:]
 
     init(
         defaults: UserDefaults = .standard,
         fixedService: SocialService? = nil,
         bundle: Bundle = .main,
         loadInitialPages: Bool = true,
-        mediaClassifier: any MediaSafetyClassifying = AppleSensitiveMediaClassifier(),
-        textClassifier: any PageTextSafetyClassifying = ConservativePageTextClassifier(),
+        mediaClassifier: (any MediaSafetyClassifying)? = nil,
+        textClassifier: (any PageTextSafetyClassifying)? = nil,
+        phoneBlocklistLoader: (@Sendable () -> PhoneBlocklistIndex?)? = nil,
         unclassifiedMediaPolicy: UnclassifiedMediaPolicy? = nil,
         mediaClassificationDeadlineNanoseconds: UInt64 = 5_000_000_000
     ) {
@@ -63,7 +82,30 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.loadInitialPages = loadInitialPages
         self.mediaClassifier = mediaClassifier
         self.textClassifier = textClassifier
-        self.phoneBlocklist = try? PhoneBlocklistIndex.loadBundled(bundle: bundle)
+        if let phoneBlocklistLoader {
+            self.phoneBlocklistLoadTask = Task.detached(
+                priority: .userInitiated,
+                operation: phoneBlocklistLoader
+            )
+        } else {
+            let phoneBlocklistURL = bundle.url(
+                forResource: "adult-blocklist",
+                withExtension: "sdi"
+            )
+            if let phoneBlocklistURL,
+               let existingTask = Self.bundledPhoneBlocklistLoadTasks[phoneBlocklistURL] {
+                self.phoneBlocklistLoadTask = existingTask
+            } else {
+                let task: Task<PhoneBlocklistIndex?, Never> = Task.detached(priority: .userInitiated) {
+                    guard let phoneBlocklistURL else { return nil }
+                    return try? PhoneBlocklistIndex(contentsOf: phoneBlocklistURL)
+                }
+                self.phoneBlocklistLoadTask = task
+                if let phoneBlocklistURL {
+                    Self.bundledPhoneBlocklistLoadTasks[phoneBlocklistURL] = task
+                }
+            }
+        }
         self.unclassifiedMediaPolicy = unclassifiedMediaPolicy ?? UnclassifiedMediaPolicy(bundle: bundle)
         self.mediaClassificationDeadlineNanoseconds = max(1, mediaClassificationDeadlineNanoseconds)
         super.init()
@@ -74,7 +116,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 // audio toggle. Do not let a legacy off value strand every
                 // future session in a muted state with no way to recover.
                 audioPreferences[service] = true
-                defaults.set(true, forKey: key)
+                if defaults.object(forKey: key) == nil || !defaults.bool(forKey: key) {
+                    defaults.set(true, forKey: key)
+                }
             } else {
                 audioPreferences[service] = defaults.object(forKey: key) == nil
                     ? true
@@ -165,16 +209,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         // UIKit enables vertical bounce when a refresh control is attached.
         // Reassert the fail-closed state until the page reports a safe route.
         webView.scrollView.alwaysBounceVertical = false
-        if service == .instagram {
-            let edgeBackGesture = UIScreenEdgePanGestureRecognizer(
-                target: self,
-                action: #selector(handleInstagramEdgeBack(_:))
-            )
-            edgeBackGesture.edges = .left
-            edgeBackGesture.maximumNumberOfTouches = 1
-            edgeBackGesture.delegate = self
-            webView.addGestureRecognizer(edgeBackGesture)
-        }
         #if DEBUG
         if #available(iOS 16.4, *) { webView.isInspectable = true }
         #endif
@@ -195,6 +229,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     func reportedChromeIsDark(for service: SocialService) -> Bool? {
         darkChromePreferences[service]
+    }
+
+    func usesFullBleedTop(for service: SocialService) -> Bool {
+        service == .instagram && surfaceStates[service]?.fullBleedTop == true
     }
 
     func toggleAudio(for service: SocialService) {
@@ -242,6 +280,50 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         webViews.values.forEach { $0.evaluateJavaScript("window.__vigilPauseAllMedia?.();") }
     }
 
+    func suspendAllMedia() {
+        guard !mediaPlaybackIsSuspended else {
+            InstagramExternalPlaybackPolicy.relinquish()
+            return
+        }
+        mediaPlaybackIsSuspended = true
+        externalPlaybackRelinquishTask?.cancel()
+        InstagramExternalPlaybackPolicy.relinquish()
+
+        webViews.values.forEach { webView in
+            webView.evaluateJavaScript(
+                "window.__vigilSuspendAllMedia ? window.__vigilSuspendAllMedia() : window.__vigilPauseAllMedia?.();"
+            )
+            // Submit the page hook first so it can record site playback intent.
+            // Do not wait on its completion: a wedged page must still become
+            // externally unplayable as the scene backgrounds.
+            webView.setAllMediaPlaybackSuspended(true) { [weak self] in
+                guard let self, self.mediaPlaybackIsSuspended else { return }
+                InstagramExternalPlaybackPolicy.relinquish()
+            }
+        }
+
+        externalPlaybackRelinquishTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled,
+                  let self,
+                  self.mediaPlaybackIsSuspended else { return }
+            InstagramExternalPlaybackPolicy.relinquish()
+        }
+    }
+
+    func resumeSuspendedMedia() {
+        guard mediaPlaybackIsSuspended else { return }
+        mediaPlaybackIsSuspended = false
+        externalPlaybackRelinquishTask?.cancel()
+        externalPlaybackRelinquishTask = nil
+        webViews.values.forEach { webView in
+            webView.setAllMediaPlaybackSuspended(false) { [weak self, weak webView] in
+                guard let self, let webView, !self.mediaPlaybackIsSuspended else { return }
+                webView.evaluateJavaScript("window.__vigilResumeSuspendedMedia?.();")
+            }
+        }
+    }
+
     @objc private func refreshWebView(_ sender: UIRefreshControl) {
         guard let webView = webViews.values.first(where: { $0.scrollView.refreshControl === sender }),
               let service = service(for: webView),
@@ -252,17 +334,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         refreshingServices.insert(service)
         setSurface(.unknown, for: service)
         webView.reload()
-    }
-
-    @objc private func handleInstagramEdgeBack(_ gesture: UIScreenEdgePanGestureRecognizer) {
-        guard gesture.state == .ended,
-              let webView = gesture.view as? WKWebView,
-              service(for: webView) == .instagram,
-              webView.canGoBack else { return }
-        let translation = gesture.translation(in: webView)
-        let velocity = gesture.velocity(in: webView)
-        guard translation.x >= 52 || velocity.x >= 480 else { return }
-        webView.goBack()
     }
 
     private func handle(_ message: WKScriptMessage, service: SocialService) {
@@ -335,7 +406,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 SocialSurfaceState(
                     route: route,
                     refreshEligible: refreshEligible,
-                    blocksRefresh: blocksRefresh
+                    blocksRefresh: blocksRefresh,
+                    fullBleedTop: body["fullBleedTop"] as? Bool ?? false
                 ),
                 for: service
             )
@@ -437,7 +509,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
             activeMediaRequests[key] = request
             nativeMediaClassificationExecutions.insert(request.requestID)
-            let classifier = mediaClassifier
+            let classifier = resolvedMediaClassifier()
             let requestID = request.requestID
             let dataURL = request.dataURL
             let task = Task { [weak self] in
@@ -705,9 +777,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         guard inspection.chunks.count == total else { return }
         textInspections[service]?.removeValue(forKey: inspectionKey)
         let completeText = (0..<total).compactMap { inspection.chunks[$0] }.joined()
+        let classifier = resolvedTextClassifier()
         Task { [weak self] in
             guard let self else { return }
-            let verdict = await self.textClassifier.classify(pageText: completeText, wasTruncated: inspection.wasTruncated)
+            let verdict = await classifier.classify(
+                pageText: completeText,
+                wasTruncated: inspection.wasTruncated
+            )
             _ = try? await self.webViews[service]?.callAsyncJavaScript(
                 "window.__vigilResolvePageText?.(documentID, revision, verdict);",
                 arguments: [
@@ -719,6 +795,20 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 contentWorld: .page
             )
         }
+    }
+
+    private func resolvedMediaClassifier() -> any MediaSafetyClassifying {
+        if let mediaClassifier { return mediaClassifier }
+        let classifier = AppleSensitiveMediaClassifier()
+        mediaClassifier = classifier
+        return classifier
+    }
+
+    private func resolvedTextClassifier() -> any PageTextSafetyClassifying {
+        if let textClassifier { return textClassifier }
+        let classifier = ConservativePageTextClassifier()
+        textClassifier = classifier
+        return classifier
     }
 
     private func service(for webView: WKWebView) -> SocialService? {
@@ -764,13 +854,40 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     func setSurface(_ surface: SocialSurfaceState, for service: SocialService) {
         surfaceStates[service] = surface
-        guard let scrollView = webViews[service]?.scrollView else { return }
+        guard let webView = webViews[service] else { return }
+        if service == .instagram {
+            // WebKit supplies the same interactive back/forward transition as
+            // Safari. Route-gating it keeps center-screen carousels, Stories,
+            // Reels, feed swipes, and modals entirely owned by Instagram.
+            webView.allowsBackForwardNavigationGestures = surface.allowsInstagramEdgeBack
+            webView.scrollView.contentInsetAdjustmentBehavior = surface.fullBleedTop
+                ? .never
+                : .automatic
+        }
+        let scrollView = webView.scrollView
         let allowsRefresh = surface.allowsRefresh
-        scrollView.refreshControl?.isEnabled = allowsRefresh
-        scrollView.alwaysBounceVertical = allowsRefresh
-        if !allowsRefresh && !refreshingServices.contains(service) {
+        let isRefreshing = refreshingServices.contains(service)
+        // A reload temporarily reports an unknown surface. Keep the active
+        // refresh presentation alive until navigation completes, while
+        // disabling the control so a second pull cannot start concurrently.
+        scrollView.refreshControl?.isEnabled = allowsRefresh && !isRefreshing
+        scrollView.alwaysBounceVertical = allowsRefresh || isRefreshing
+        if !allowsRefresh && !isRefreshing {
             scrollView.refreshControl?.endRefreshing()
         }
+    }
+
+    static func provisionalInstagramSurface(for url: URL) -> SocialSurfaceState {
+        let path = url.path.lowercased()
+        let isReels = path == "/reel" || path.hasPrefix("/reel/")
+            || path == "/reels" || path.hasPrefix("/reels/")
+        let isStory = path == "/stories" || path.hasPrefix("/stories/")
+        return SocialSurfaceState(
+            route: isReels ? "reels" : isStory ? "story" : "unknown",
+            refreshEligible: false,
+            blocksRefresh: true,
+            fullBleedTop: isReels || isStory
+        )
     }
 
     private func recordNavigationFailure(_ error: Error, for service: SocialService) {
@@ -792,9 +909,15 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             || detail.localizedCaseInsensitiveContains("signed out")
     }
 
-    private func isBlockedByPhoneBlocklist(_ url: URL) -> Bool {
+    private func phoneBlocklistDecision(for url: URL) async -> PhoneBlocklistDecision {
+        guard url.scheme?.lowercased() == "https", let host = url.host else { return .allowed }
+        guard let phoneBlocklist = await phoneBlocklistLoadTask.value else { return .unavailable }
+        return phoneBlocklist.matchingDomain(for: host) == nil ? .allowed : .blocked
+    }
+
+    static func needsPhoneBlocklistValidation(_ url: URL, for service: SocialService) -> Bool {
         guard url.scheme?.lowercased() == "https", let host = url.host else { return false }
-        return phoneBlocklist?.matchingDomain(for: host) != nil
+        return !service.isCanonicalAppHost(host)
     }
 
     static func validatedPopupRequest(
@@ -930,6 +1053,19 @@ struct SocialSurfaceState {
     let route: String
     let refreshEligible: Bool
     let blocksRefresh: Bool
+    let fullBleedTop: Bool
+
+    init(
+        route: String,
+        refreshEligible: Bool,
+        blocksRefresh: Bool,
+        fullBleedTop: Bool = false
+    ) {
+        self.route = route
+        self.refreshEligible = refreshEligible
+        self.blocksRefresh = blocksRefresh
+        self.fullBleedTop = fullBleedTop
+    }
 
     static let unknown = SocialSurfaceState(
         route: "unknown",
@@ -940,11 +1076,27 @@ struct SocialSurfaceState {
     var allowsRefresh: Bool {
         refreshEligible && !blocksRefresh
     }
+
+    var allowsInstagramEdgeBack: Bool {
+        // Instagram owns horizontal gestures on feeds, carousels, Stories,
+        // Reels, modals, and unclassified pages. Only routes with an explicit
+        // history-backed detail surface opt in to the native edge recognizer.
+        switch route {
+        case "post", "profile", "directThread": true
+        default: false
+        }
+    }
 }
 
 private struct WebContentRecoveryState {
     let url: URL
     let contentOffset: CGPoint
+}
+
+private enum PhoneBlocklistDecision {
+    case allowed
+    case blocked
+    case unavailable
 }
 
 extension SocialWebViewStore: WKNavigationDelegate {
@@ -959,30 +1111,64 @@ extension SocialWebViewStore: WKNavigationDelegate {
             return
         }
 
-        if isBlockedByPhoneBlocklist(url) {
-            health[service] = .unsupported("Vigil blocked this site using the protected phone blocklist.")
-            setSurface(.unknown, for: service)
-            decisionHandler(.cancel, preferences)
-            return
-        }
-
         preferences.preferredContentMode = .mobile
 
         if navigationAction.targetFrame?.isMainFrame == false {
-            decisionHandler(service.allowsEmbeddedNavigation(to: url) ? .allow : .cancel, preferences)
+            guard service.allowsEmbeddedNavigation(to: url) else {
+                decisionHandler(.cancel, preferences)
+                return
+            }
+        } else {
+            guard service.allowsNavigation(to: url) else {
+                decisionHandler(.cancel, preferences)
+                return
+            }
+            if service.isRestrictedSurface(url) {
+                health[service] = .advisory("That short-form surface is intentionally unavailable.")
+                decisionHandler(.cancel, preferences)
+                return
+            }
+            // Establish the host frame before Instagram measures a new main
+            // document. Waiting for the document-end surface report made the
+            // same WKWebView grow beneath an already-snapped Reel, leaving its
+            // account and caption one navigation-bar height too low.
+            if service == .instagram {
+                setSurface(Self.provisionalInstagramSurface(for: url), for: service)
+            }
+        }
+
+        // The fixed service's exact first-party hosts are already confined by
+        // SocialService's HTTPS allowlist. Let the initial Instagram request
+        // start while the large signed blocklist validates on another core.
+        // Every permitted auxiliary/cross-origin request still waits for the
+        // validated index and fails closed when that index is unavailable.
+        guard Self.needsPhoneBlocklistValidation(url, for: service) else {
+            decisionHandler(.allow, preferences)
             return
         }
 
-        guard service.allowsNavigation(to: url) else {
-            decisionHandler(.cancel, preferences)
-            return
+        Task { @MainActor [weak self, weak webView] in
+            guard let self, let webView, self.service(for: webView) == service else {
+                decisionHandler(.cancel, preferences)
+                return
+            }
+            switch await self.phoneBlocklistDecision(for: url) {
+            case .allowed:
+                decisionHandler(.allow, preferences)
+            case .blocked:
+                self.health[service] = .unsupported(
+                    "Vigil blocked this site using the protected phone blocklist."
+                )
+                self.setSurface(.unknown, for: service)
+                decisionHandler(.cancel, preferences)
+            case .unavailable:
+                self.health[service] = .unsupported(
+                    "Vigil could not validate the protected phone blocklist, so this auxiliary site was blocked."
+                )
+                self.setSurface(.unknown, for: service)
+                decisionHandler(.cancel, preferences)
+            }
         }
-        if service.isRestrictedSurface(url) {
-            health[service] = .advisory("That short-form surface is intentionally unavailable.")
-            decisionHandler(.cancel, preferences)
-            return
-        }
-        decisionHandler(.allow, preferences)
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
@@ -998,7 +1184,18 @@ extension SocialWebViewStore: WKNavigationDelegate {
            !servicesWithUsableContent.contains(service) {
             health[service] = .loading
         }
-        setSurface(.unknown, for: service)
+        let provisionalFullBleedTop = service == .instagram
+            ? surfaceStates[service]?.fullBleedTop ?? false
+            : false
+        setSurface(
+            SocialSurfaceState(
+                route: "unknown",
+                refreshEligible: false,
+                blocksRefresh: true,
+                fullBleedTop: provisionalFullBleedTop
+            ),
+            for: service
+        )
         scheduleNavigationHealthTimeout(for: service, generation: generation)
     }
 
@@ -1104,18 +1301,6 @@ extension SocialWebViewStore: WKUIDelegate {
               ) else { return nil }
         webView.load(request)
         return nil
-    }
-}
-
-extension SocialWebViewStore: UIGestureRecognizerDelegate {
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard let edgeGesture = gestureRecognizer as? UIScreenEdgePanGestureRecognizer,
-              edgeGesture.edges == .left,
-              let webView = edgeGesture.view as? WKWebView,
-              service(for: webView) == .instagram,
-              webView.canGoBack else { return false }
-        let velocity = edgeGesture.velocity(in: webView)
-        return velocity.x > 0 && abs(velocity.x) > abs(velocity.y) * 1.15
     }
 }
 

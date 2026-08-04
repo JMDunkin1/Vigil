@@ -48,6 +48,7 @@
     "ios:phone:update": "node scripts/ios-phone-suite.mjs update",
     "ios:phone:update:personal": "node scripts/ios-phone-suite.mjs update --edition personal",
     "ios:phone:update:enhanced": "node scripts/ios-phone-suite.mjs update --edition enhanced",
+    "ios:youtube:develop": "node scripts/ios-phone-suite.mjs develop --edition personal",
     "ios:phone:bump": "node scripts/ios-phone-suite.mjs bump",
     "ios:content-policy:generate": "npm run build && node dist/runtime/scripts/generate-ios-content-policy.mjs --write",
     "ios:content-policy:check": "npm run build && node dist/runtime/scripts/generate-ios-content-policy.mjs",

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="instagram-base" x1="0.08" y1="0.96" x2="0.91" y2="0.05">
+      <stop offset="0" stop-color="#ffd600"/>
+      <stop offset="0.24" stop-color="#ff7a00"/>
+      <stop offset="0.48" stop-color="#ff0169"/>
+      <stop offset="0.74" stop-color="#d300c5"/>
+      <stop offset="1" stop-color="#7638fa"/>
+    </linearGradient>
+    <radialGradient id="instagram-blue" cx="0.06" cy="0.04" r="0.83">
+      <stop offset="0" stop-color="#4f5bd5" stop-opacity="0.96"/>
+      <stop offset="0.44" stop-color="#7b2cff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#7b2cff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="instagram-gold" cx="0.15" cy="1" r="0.72">
+      <stop offset="0" stop-color="#ffe600" stop-opacity="0.88"/>
+      <stop offset="0.55" stop-color="#ff9b00" stop-opacity="0.25"/>
+      <stop offset="1" stop-color="#ff9b00" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#instagram-base)"/>
+  <rect width="1024" height="1024" fill="url(#instagram-blue)"/>
+  <rect width="1024" height="1024" fill="url(#instagram-gold)"/>
+  <g fill="none" stroke="#ffffff" stroke-width="76" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="166" y="166" width="692" height="692" rx="218"/>
+    <circle cx="512" cy="512" r="164"/>
+  </g>
+  <circle cx="716" cy="308" r="52" fill="#ffffff"/>
+</svg>

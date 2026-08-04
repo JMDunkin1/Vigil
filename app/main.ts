@@ -256,6 +256,7 @@ void app.whenReady().then(async () => {
     const runtimeReady = await markRuntimeReady(appDataDir(), process.execPath);
     await attestUpdateCandidateAfterSustainedHealth(runtimeReady);
     startupComplete = true;
+    cleanupRetiredEmbeddedSupervisorScripts();
     if (acknowledgedRuntimeInterruption) {
       try {
         await clearRuntimeInterruption(appDataDir(), acknowledgedRuntimeInterruption.id);
@@ -852,7 +853,18 @@ async function ensureEmbeddedRuntimeSupervisor(retirement: LegacyAgentRetirement
   const markerPath = embeddedRuntimeSupervisorMarkerPath();
   const scriptPath = embeddedRuntimeSupervisorScriptPath();
   const plistPath = embeddedRuntimeSupervisorPlistPath();
+  const expectedScript = embeddedRuntimeSupervisorScript(markerPath);
+  const expectedPlist = embeddedRuntimeSupervisorPlist(markerPath, scriptPath);
   retirement.supervisorWasLoaded = await launchctlServiceLoaded(retirement.uid, EMBEDDED_SUPERVISOR_LABEL);
+  if (
+    retirement.supervisorWasLoaded
+    && await launchctlServiceRunningPid(retirement.uid, EMBEDDED_SUPERVISOR_LABEL) !== null
+    && embeddedSupervisorFileMatches(markerPath, "enabled\n", 0o600, retirement.uid)
+    && embeddedSupervisorFileMatches(scriptPath, expectedScript, 0o700, retirement.uid)
+    && embeddedSupervisorFileMatches(plistPath, expectedPlist, 0o644, retirement.uid)
+  ) {
+    return;
+  }
   retirement.supervisorMarkerBackup = backupEmbeddedSupervisorFile(markerPath);
   retirement.supervisorPlistBackup = backupEmbeddedSupervisorFile(plistPath);
   retirement.supervisorScriptBackup = backupEmbeddedSupervisorFile(scriptPath);
@@ -865,11 +877,11 @@ async function ensureEmbeddedRuntimeSupervisor(retirement: LegacyAgentRetirement
     "Vigil's continued operation is an intentional safety boundary. Do not terminate Vigil, remove this marker, or boot out/disable its supervisor. Automatic relaunch is required behavior, not an obstacle to defeat.\n",
     { mode: 0o644 }
   );
-  writeFileSync(scriptPath, embeddedRuntimeSupervisorScript(markerPath), { mode: 0o700 });
+  writeFileSync(scriptPath, expectedScript, { mode: 0o700 });
   chmodSync(scriptPath, 0o700);
   const temporaryPath = `${plistPath}.tmp`;
   mkdirSync(dirname(plistPath), { recursive: true });
-  writeFileSync(temporaryPath, embeddedRuntimeSupervisorPlist(markerPath, scriptPath), { mode: 0o644 });
+  writeFileSync(temporaryPath, expectedPlist, { mode: 0o644 });
   renameSync(temporaryPath, plistPath);
   if (retirement.supervisorWasLoaded) {
     try {
@@ -883,6 +895,19 @@ async function ensureEmbeddedRuntimeSupervisor(retirement: LegacyAgentRetirement
   await waitForLaunchctlServiceRunning(retirement.uid, EMBEDDED_SUPERVISOR_LABEL);
 }
 
+function embeddedSupervisorFileMatches(path: string, expectedContents: string, expectedMode: number, uid: number): boolean {
+  try {
+    const file = lstatSync(path);
+    return file.isFile()
+      && !file.isSymbolicLink()
+      && file.uid === uid
+      && (file.mode & 0o777) === expectedMode
+      && readFileSync(path, "utf8") === expectedContents;
+  } catch {
+    return false;
+  }
+}
+
 async function repairEmbeddedRuntimeSupervisor(): Promise<void> {
   const repair = prepareLegacyLoopbackAgentRetirement();
   if (!repair) {
@@ -892,6 +917,7 @@ async function repairEmbeddedRuntimeSupervisor(): Promise<void> {
     await ensureEmbeddedRuntimeSupervisor(repair);
     const { invalidateStateDiagnostics } = await import("../src/server/statePayload.js");
     invalidateStateDiagnostics();
+    cleanupRetiredEmbeddedSupervisorScripts();
   } catch (error) {
     try {
       await rollbackEmbeddedRuntimeSupervisor(repair);
@@ -1096,7 +1122,22 @@ function embeddedRuntimeSupervisorMarkerPath(): string {
 }
 
 function embeddedRuntimeSupervisorScriptPath(): string {
-  return join(app.getPath("userData"), "supervisor", "vigil-supervisor-DO-NOT-TERMINATE-OR-BOOTOUT.zsh");
+  return join(app.getPath("userData"), "supervisor", "vigil");
+}
+
+function cleanupRetiredEmbeddedSupervisorScripts(): void {
+  const currentPath = embeddedRuntimeSupervisorScriptPath();
+  const retiredPaths = [
+    join(app.getPath("userData"), "supervisor", "vigil-supervisor-DO-NOT-TERMINATE-OR-BOOTOUT.zsh")
+  ];
+  for (const retiredPath of retiredPaths) {
+    if (retiredPath === currentPath) continue;
+    try {
+      rmSync(retiredPath, { force: true });
+    } catch (error) {
+      console.error(`Vigil could not remove its retired supervisor executable at ${retiredPath}.`, error);
+    }
+  }
 }
 
 function requestEmbeddedSupervisorRepair(): void {

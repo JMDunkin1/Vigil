@@ -23,6 +23,18 @@ export function policyFreshnessProblems(options?: {
 export function preservedPolicyReceipt(receipt: unknown): { policyFingerprint: string; policyArtifactHash: string };
 export function receiptPhoneEdition(receipt: unknown): "personal" | "enhanced";
 export function removalPasswordFromProfile(profile: unknown): string;
+export interface SafariExtensionUpdateContract {
+  bundleIdentifier: string;
+  sha256: string;
+  manifestVersion: number;
+  hostPermissions: string[];
+  contentScriptMatches: string[];
+  permissions: string[];
+}
+export function safariExtensionUpdateProblems(
+  previousReceipt: unknown,
+  nextApps: Array<{ bundleId: string; youtubeInteractionExtension?: SafariExtensionUpdateContract | null }> | null | undefined
+): string[];
 export interface PhoneBlocklistReadiness {
   ready: boolean;
   path: string;

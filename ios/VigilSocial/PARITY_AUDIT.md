@@ -1,7 +1,7 @@
 # VigilSocial parity contract
 
 VigilSocial contains an Instagram companion that also hosts the YouTube Safari
-content blocker. Instagram
+content blocker and ordinary-watch interaction extension. Instagram
 renders its current mobile website in a persistent `WKWebView` with Vigil's
 content-safety and focused-social policy. The user-facing YouTube surface is a
 full-screen Web Clip named `YouTube`; no separate YouTube helper app is needed.
@@ -25,7 +25,7 @@ The practical target is:
 - YouTube Home, Explore, suggestions, and ads can be unavailable when the
   active Vigil policy blocks them.
 - Instagram navigation remains contained to explicitly supported service and
-  authentication origins. YouTube uses Safari's visible, secure browser chrome.
+  authentication origins. YouTube remains a full-screen Safari Web Clip.
 - Instagram login, recovery, two-factor, checkpoint, and allowed Facebook
   authorization documents run without Vigil's DOM/media hooks. A completed
   same-document sign-in reloads once before protected Instagram content appears.
@@ -44,9 +44,11 @@ caches, or gesture recognizers. In particular:
 
 - YouTube sign-in and cookies belong to Safari's full-screen Web Clip surface.
   Vigil neither spoofs the user agent nor imports credentials.
-- YouTube's native miniplayer drag/pinch gestures, Cast integration, uploads,
-  editing, notifications, and native prefetch pipeline are not available from
-  `m.youtube.com`.
+- Vigil reproduces the ordinary-watch swipe-down miniplayer, tap/swipe-up
+  restore, and horizontal-dismiss gestures through its YouTube-only Safari
+  extension. Pinch-specific native player transitions, Cast integration,
+  uploads, editing, notifications, and the native prefetch pipeline are not
+  available from `m.youtube.com`.
 - Instagram's native prefetch cache, notification integration, and private
   story/feed component behavior are not available through its mobile website.
 
@@ -93,9 +95,17 @@ its major navigation, story/player, or icon presentation.
 - Horizontal post carousels and story-tray scrolling.
 - Story open size, progress, tap-forward/back, automatic advance, reply field,
   swipe/close behavior, and return to the prior feed position.
+- Reels fill the visible surface above the bottom navigation without cropping
+  captions/descriptions, retain sharp responsive media, and page one item per
+  vertical swipe.
+- Double-tapping Reel/post media likes an unliked item without toggling
+  playback or mute; repeating it never unlikes an already-liked item.
 - Profile/post/Direct navigation and edge-back.
 - Media remains concealed until its configured safety verdict and sensitive
   media cannot continue audibly.
+- Locking the phone or backgrounding Instagram pauses playback, removes its
+  Lock Screen/Dynamic Island Now Playing controls, and prevents external replay.
+  Returning to the app may resume only the visible item that was playing.
 
 ### YouTube
 
@@ -103,10 +113,41 @@ its major navigation, story/player, or icon presentation.
 - Google sign-in succeeds in the full-screen Web Clip and persists on relaunch.
 - Horizontal topic shelves, progress scrubbing, fullscreen transitions, and
   edge-back.
+- Swipe down on an ordinary video to keep it playing in a miniplayer while
+  related content is browsed; tap or swipe up to restore it, and swipe sideways
+  or use Close to dismiss it.
+- Miniplayer gestures do not steal progress scrubbing, fullscreen controls,
+  buttons, links, or iOS edge-back.
 - Thumbnail and player preload under rapid scrolling.
-- Direct Shorts routes and Shorts UI remain blocked by the companion adapter.
+- Direct Shorts routes and Shorts UI remain blocked by the content blocker and
+  the interaction extension's same-document route guard.
 - Shorts stays absent from navigation and shelves; direct/deep `/shorts` links
   are blocked or recovered to Home.
+
+## Development-safe YouTube updates
+
+Safari remembers whether an extension is enabled by its bundle identifier and
+permission contract. After the one-time offline activation of `Vigil YouTube
+Controls`, ordinary YouTube interaction work must update that same extension in
+place:
+
+```sh
+npm run ios:youtube:develop
+```
+
+This command builds, audits, signs, and installs the Personal Team app without
+replacing the supervised web-filter profile. Before installation it compares
+the built controls extension with the last deployment receipt and refuses a new
+bundle identifier, manifest version, host scope, content-script scope, or API
+permission set. JavaScript, CSS, and other implementation bytes may change.
+The receipt records the complete extension contract for the next update.
+
+Adding another Safari extension or changing the controls extension's identity
+or permissions is a maintenance operation, not an ordinary development update.
+It must be done while the iPhone is offline, with the exact restriction profile
+restored and verified before connectivity returns. Do not enroll the phone in a
+new management system or disturb its supervision/Home Screen checkpoint for
+routine app development.
 
 ## Commands
 
@@ -138,10 +179,9 @@ input and video latency.
 
 ## Current physical-device status
 
-The official apps were captured and exercised through iPhone Mirroring during
-this audit. The previously installed Vigil companions could not be relaunched:
-their Personal Team provisioning profile expired on July 26, 2026, and the
-installed Xcode 27 beta has no Apple Account configured to issue a replacement.
-The fixed companions therefore passed the simulator matrix, but the
-physical-only gesture and perceived-preload checks above must be repeated after
-the apps are signed and updated in place.
+The Personal Team Instagram companion is installed on the physical phone as
+0.3.31 (34), with both signed YouTube extensions embedded. The Shorts blocker
+remains enabled. `Vigil YouTube Controls` still needs its one-time offline
+activation because the supervised BuiltIn web filter froze Safari's extension
+settings before that new extension first appeared. After activation, repeat the
+physical-only miniplayer, competing-gesture, and perceived-preload checks above.

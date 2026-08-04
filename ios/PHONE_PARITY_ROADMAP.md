@@ -9,8 +9,8 @@ mechanism. The Mac can consult Vigil's complete adult-domain snapshot during a
 browser navigation. The installed iPhone profile uses Apple's built-in web
 content filter, whose explicit deny list is intentionally kept below 500
 entries. Vigil's fixed Instagram companion adds full-document text and media
-inspection, while the YouTube Web Clip uses the Safari content blocker carried
-by Instagram.
+inspection, while the YouTube Web Clip uses the Safari content blocker and
+ordinary-watch interaction extension carried by Instagram.
 
 The selected adult source now contains 952,054 active domains and has a compact
 phone artifact. Shipping that artifact is necessary, but it does not by itself
@@ -34,7 +34,7 @@ in a configuration profile.
 | 952,054-domain adult list | Full snapshot is available to Vigil's live URL matcher; OS/browser preload lists remain bounded | Compact `.sdi` can be bundled and used by Vigil-owned apps, but the profile cannot express the whole list | iOS 26 URL Filter with Bloom + PIR/OHTTP |
 | Text inspection | Browser/extension policy paths | VigilSocial scans the full bounded document, DOM mutations, open shadow roots, and periodic visible-page audits | Generated shared phrase/context policy in every companion release |
 | Image/video inspection | Browser-specific enforcement | Sensitive Content Analysis when the entitlement is provisioned; the current Personal Team fallback reveals unclassified media while retaining text/profile rules | Paid team/capability build that keeps unclassified media concealed |
-| YouTube | Browser extension modifies the normal site | A full-screen Web Clip named `YouTube` supplies the signed-in surface. Instagram contains the Safari Shorts/content-blocker extension, avoiding a second YouTube icon | Verify the Web Clip's signed-in surface and the enabled content blocker on the physical phone |
+| YouTube | Browser extension modifies the normal site | A full-screen Web Clip named `YouTube` supplies the signed-in surface. Instagram contains the Safari Shorts blocker and an ordinary-watch miniplayer gesture extension, avoiding a second YouTube icon | Verify the Web Clip's signed-in surface, both enabled extensions, ordinary-video miniplayer gestures, and continued Shorts exclusion on the physical phone |
 
 ## What the comparison products establish
 
@@ -43,7 +43,8 @@ removal, background audio, and Picture in Picture can be delivered in an iOS
 companion, but it does not disclose its source code or exact sign-in mechanism.
 Vigil uses the physically verified full-screen Web Clip for the YouTube surface.
 The native Instagram package does not load YouTube; it is also the containing
-app required to deliver the Safari content blocker.
+app required to deliver the Safari content blocker and YouTube interaction
+extension.
 
 SHIFT publicly describes a different large-list strategy: it blocks Safari and
 other browsers, then makes SHIFT Web the filtered browsing route. That explains
@@ -72,12 +73,24 @@ policy that the release fingerprint describes.
 
 ### 2. Verify the signed-in YouTube Web Clip
 
-Enable `Vigil YouTube Shorts Filter` in Settings > Apps > Safari > Extensions,
-then verify Google account sign-in, Home, Search, Subscriptions, Library,
-ordinary Watch pages, comments, related videos, fullscreen, and edge-back.
+Enable `Vigil YouTube Shorts Filter` and `Vigil YouTube Controls` in Settings >
+Apps > Safari > Extensions, granting the controls extension access only to the
+three YouTube hosts declared in its manifest. Then verify Google account
+sign-in, Home, Search, Subscriptions, Library, ordinary Watch pages, comments,
+related videos, fullscreen, and edge-back. On ordinary videos, verify swipe-down
+minimizes playback while browsing continues, tap or swipe-up restores it, and a
+sideways swipe or Close dismisses it.
 Verify that the companion refuses to open while the filter is disabled, Shorts
 links and shelves are absent, and direct `/shorts` documents are blocked. The
-YouTube target alone embeds the blocker; the Instagram target remains separate.
+Instagram app package embeds both extensions; the Home Screen YouTube surface
+remains the separate full-screen Web Clip.
+
+Once both extensions are enabled, use `npm run ios:youtube:develop` for routine
+YouTube parity work. It performs an app-only Personal Team update and refuses
+extension identity or permission-contract drift that could make Safari disable
+the already-enabled controls extension. A new extension target or permission
+change requires the documented offline maintenance transaction; it is never a
+normal profile-replacement update.
 
 ### 3. Exercise the 952,054-domain artifact locally
 

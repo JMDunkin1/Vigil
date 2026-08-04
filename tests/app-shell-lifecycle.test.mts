@@ -284,8 +284,8 @@ assert.ok(
 );
 assert.doesNotMatch(
   supervisorInstallerSource,
-  /launchctlServiceLoaded[\s\S]*?\breturn;/,
-  "a loaded supervisor must not keep its stale loop or launchd environment after an app update"
+  /supervisorWasLoaded\s*\)\s*\{\s*return;/,
+  "a merely loaded supervisor must not bypass integrity, runtime, and configuration checks"
 );
 const supervisorRollbackStart = mainSource.indexOf("async function rollbackEmbeddedRuntimeSupervisor");
 const supervisorRollbackEnd = mainSource.indexOf("\nasync function launchctlServiceLoaded", supervisorRollbackStart);
@@ -338,6 +338,25 @@ assert.doesNotMatch(
   /VIGIL_KEEP_LEGACY_SERVER[^\n]*return null/,
   "keeping the legacy plist must not leave its listener running when the embedded runtime binds the same port"
 );
+const embeddedSupervisorEnsureStart = mainSource.indexOf("async function ensureEmbeddedRuntimeSupervisor");
+const embeddedSupervisorEnsureEnd = mainSource.indexOf("\nfunction embeddedSupervisorFileMatches", embeddedSupervisorEnsureStart);
+const embeddedSupervisorEnsureSource = mainSource.slice(embeddedSupervisorEnsureStart, embeddedSupervisorEnsureEnd);
+const supervisorCurrentCheckIndex = embeddedSupervisorEnsureSource.indexOf("embeddedSupervisorFileMatches(plistPath, expectedPlist, 0o644, retirement.uid)");
+const supervisorNoOpReturnIndex = embeddedSupervisorEnsureSource.indexOf("return;", supervisorCurrentCheckIndex);
+const supervisorPlistWriteIndex = embeddedSupervisorEnsureSource.indexOf("writeFileSync(temporaryPath, expectedPlist", supervisorNoOpReturnIndex);
+const currentSupervisorBootoutIndex = embeddedSupervisorEnsureSource.indexOf('["bootout", `gui/${retirement.uid}/${EMBEDDED_SUPERVISOR_LABEL}`]', supervisorPlistWriteIndex);
+assert.ok(
+  supervisorCurrentCheckIndex >= 0
+    && supervisorNoOpReturnIndex > supervisorCurrentCheckIndex
+    && supervisorPlistWriteIndex > supervisorNoOpReturnIndex
+    && currentSupervisorBootoutIndex > supervisorPlistWriteIndex,
+  "an exact running supervisor must remain untouched instead of being rewritten and re-registered on every app launch"
+);
+assert.match(
+  embeddedSupervisorEnsureSource,
+  /launchctlServiceRunningPid\(retirement\.uid, EMBEDDED_SUPERVISOR_LABEL\) !== null[\s\S]*?embeddedSupervisorFileMatches\(markerPath, "enabled\\n", 0o600, retirement\.uid\)[\s\S]*?embeddedSupervisorFileMatches\(scriptPath, expectedScript, 0o700, retirement\.uid\)[\s\S]*?embeddedSupervisorFileMatches\(plistPath, expectedPlist, 0o644, retirement\.uid\)/,
+  "the startup no-op must require a running service and exact owned supervisor files with hardened permissions"
+);
 assert.match(
   legacyAgentRetirementSource,
   /Keep the unloaded plist at its original path[\s\S]*?older packaged copy[\s\S]*?external replacement verification fails/,
@@ -376,6 +395,22 @@ assert.match(
   mainSource,
   /async function repairEmbeddedRuntimeSupervisor[\s\S]*?await ensureEmbeddedRuntimeSupervisor\(repair\)[\s\S]*?invalidateStateDiagnostics\(\)[\s\S]*?catch \(error\)[\s\S]*?await rollbackEmbeddedRuntimeSupervisor\(repair\)/,
   "repairing restart protection must rewrite and verify the packaged supervisor, refresh diagnostics, and restore its prior files on failure"
+);
+assert.match(
+  mainSource,
+  /function embeddedRuntimeSupervisorScriptPath\(\): string \{\s*return join\(app\.getPath\("userData"\), "supervisor", "vigil"\);\s*\}/,
+  "the background-item executable must have the concise user-facing name vigil"
+);
+const startupCompleteAssignmentIndex = mainSource.indexOf("startupComplete = true");
+const retiredSupervisorCleanupIndex = mainSource.indexOf("cleanupRetiredEmbeddedSupervisorScripts()", startupCompleteAssignmentIndex);
+assert.ok(
+  startupCompleteAssignmentIndex >= 0 && retiredSupervisorCleanupIndex > startupCompleteAssignmentIndex,
+  "the retired long-named supervisor must only be removed after the replacement app completes startup"
+);
+assert.match(
+  mainSource,
+  /function cleanupRetiredEmbeddedSupervisorScripts[\s\S]*?vigil-supervisor-DO-NOT-TERMINATE-OR-BOOTOUT\.zsh[\s\S]*?retiredPath === currentPath[\s\S]*?rmSync\(retiredPath, \{ force: true \}\)/,
+  "supervisor cleanup must target only the known retired executable and preserve the current executable"
 );
 assert.match(
   mainSource,

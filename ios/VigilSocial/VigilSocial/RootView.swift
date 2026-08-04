@@ -19,6 +19,13 @@ struct RootView: View {
     private func filteredWebView(service: SocialService) -> some View {
         let reportedIsDark = store.reportedChromeIsDark(for: service)
         let isDark = reportedIsDark ?? (colorScheme == .dark)
+        // Keep Instagram's WKWebView frame invariant across feed, Reels,
+        // Stories, and transient loading states. Route changes may adjust the
+        // scroll view's content inset, but must never resize an already-snapped
+        // Reel beneath its metadata.
+        let webViewSafeAreaEdges: Edge.Set = service == .instagram
+            ? [.top, .bottom]
+            : .bottom
         return ZStack {
             (isDark ? Color.black : Color.white)
                 .ignoresSafeArea()
@@ -28,7 +35,7 @@ struct RootView: View {
                 isDark: isDark
             )
                 .id(service)
-                .ignoresSafeArea(.container, edges: .bottom)
+                .ignoresSafeArea(.container, edges: webViewSafeAreaEdges)
 
             healthOverlay(
                 store.health[service] ?? .loading,
@@ -42,7 +49,11 @@ struct RootView: View {
         }
             .preferredColorScheme(reportedIsDark.map { $0 ? .dark : .light })
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { store.pauseAllMedia() }
+                if phase == .active {
+                    store.resumeSuspendedMedia()
+                } else {
+                    store.suspendAllMedia()
+                }
             }
     }
 
@@ -144,6 +155,7 @@ private struct YouTubeContentBlockerGate: View {
 private final class YouTubeContentBlockerHealth: ObservableObject {
     @Published private(set) var isEnabled: Bool?
     @Published private(set) var errorMessage: String?
+    private var isRefreshing = false
 
     private var identifier: String? {
         YouTubeSafariSession.contentBlockerIdentifier(appBundleIdentifier: Bundle.main.bundleIdentifier)
@@ -155,27 +167,43 @@ private final class YouTubeContentBlockerHealth: ObservableObject {
             errorMessage = "This build is missing the YouTube filter identifier."
             return
         }
+        guard !isRefreshing else { return }
+        isRefreshing = true
         SFContentBlockerManager.getStateOfContentBlocker(withIdentifier: identifier) { [weak self] state, error in
             Task { @MainActor in
                 guard let self else { return }
                 if let error {
+                    self.isRefreshing = false
                     self.isEnabled = false
                     self.errorMessage = "The YouTube filter could not be checked: \(error.localizedDescription)"
                     print("Vigil YouTube content blocker enabled: false (\(error.localizedDescription))")
                     return
                 }
                 guard state?.isEnabled == true else {
+                    self.isRefreshing = false
                     self.isEnabled = false
                     self.errorMessage = nil
                     print("Vigil YouTube content blocker enabled: false")
                     return
                 }
+                let fingerprint = YouTubeContentBlockerReloadPolicy.buildFingerprint()
+                let reloadKey = YouTubeContentBlockerReloadPolicy.reloadKey(for: identifier)
+                guard UserDefaults.standard.string(forKey: reloadKey) != fingerprint else {
+                    self.isRefreshing = false
+                    self.isEnabled = true
+                    self.errorMessage = nil
+                    print("Vigil YouTube content blocker enabled: true")
+                    return
+                }
                 do {
                     try await SFContentBlockerManager.reloadContentBlocker(withIdentifier: identifier)
+                    UserDefaults.standard.set(fingerprint, forKey: reloadKey)
+                    self.isRefreshing = false
                     self.isEnabled = true
                     self.errorMessage = nil
                     print("Vigil YouTube content blocker enabled: true")
                 } catch {
+                    self.isRefreshing = false
                     self.isEnabled = false
                     self.errorMessage = "The YouTube filter could not load: \(error.localizedDescription)"
                     print("Vigil YouTube content blocker enabled: false (\(error.localizedDescription))")
@@ -196,6 +224,30 @@ private final class YouTubeContentBlockerHealth: ObservableObject {
         }
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+}
+
+enum YouTubeContentBlockerReloadPolicy {
+    static func buildFingerprint(bundle: Bundle = .main) -> String {
+        buildFingerprint(
+            bundleIdentifier: bundle.bundleIdentifier ?? "unknown-bundle",
+            version: bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+                ?? "0",
+            build: bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+                ?? "0"
+        )
+    }
+
+    static func buildFingerprint(
+        bundleIdentifier: String,
+        version: String,
+        build: String
+    ) -> String {
+        "\(bundleIdentifier):\(version):\(build)"
+    }
+
+    static func reloadKey(for contentBlockerIdentifier: String) -> String {
+        "VigilSocial.contentBlockerReload.\(contentBlockerIdentifier)"
     }
 }
 
