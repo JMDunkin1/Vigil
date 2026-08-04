@@ -1098,11 +1098,21 @@ enum DOMAdapters {
               let url;
               try { url = new URL(location.href); } catch (_) { return; }
               const host = url.hostname.toLowerCase();
-              // Match SocialLite's public description: load Google's own sign-in
-              // document as an ordinary first-party web page and keep Vigil's
-              // content scripts completely out of that credential surface.
+              const defaultHTTPSPort = !url.port || url.port === '443';
+              const youtubeAuthenticationFrame = host === 'accounts.youtube.com'
+                && [
+                  '/accounts/SetSID', '/accounts/SetSID/',
+                  '/accounts/CheckConnection', '/accounts/CheckConnection/',
+                  '/RotateCookiesPage', '/RotateCookiesPage/'
+                ].includes(url.pathname);
+              // Keep Google's sign-in, YouTube consent, and the exact
+              // first-party auth/session frames completely outside Vigil's
+              // DOM, media, route-policy, and player gesture scripts.
               if (url.protocol === 'https:'
-                  && (host === 'accounts.google.com' || host === 'consent.youtube.com')) return;
+                  && defaultHTTPSPort
+                  && (host === 'accounts.google.com'
+                    || host === 'consent.youtube.com'
+                    || youtubeAuthenticationFrame)) return;
               GUARDED_BODY
             })();
             """#.replacingOccurrences(of: "GUARDED_BODY", with: body)

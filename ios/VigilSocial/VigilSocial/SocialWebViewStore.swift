@@ -28,6 +28,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     let fixedService: SocialService
     private let defaults: UserDefaults
+    private let bundle: Bundle
     private let loadInitialPages: Bool
     private var mediaClassifier: (any MediaSafetyClassifying)?
     private var textClassifier: (any PageTextSafetyClassifying)?
@@ -75,6 +76,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.selectedService = configured
         self.youtubeSafariRequest = YouTubeSafariRequest(url: SocialService.youtube.homeURL)
         self.defaults = defaults
+        self.bundle = bundle
         self.loadInitialPages = loadInitialPages
         self.mediaClassifier = mediaClassifier
         self.textClassifier = textClassifier
@@ -99,12 +101,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             health[service] = .loading
             surfaceStates[service] = .unknown
         }
-        if loadInitialPages, selectedService != .youtube { _ = webView(for: selectedService) }
+        if loadInitialPages { _ = webView(for: selectedService) }
     }
 
     func select(_ service: SocialService) {
         guard service == fixedService else { return }
-        if fixedService != .youtube { _ = webView(for: fixedService) }
+        _ = webView(for: fixedService)
     }
 
     func open(_ url: URL) {
@@ -112,7 +114,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let scheme = url.scheme?.lowercased() ?? ""
         let destination = scheme == "vigilsocial" || scheme.hasPrefix("vigil-") ? service.homeURL : url
         guard service.allowsNavigation(to: destination), !service.isRestrictedSurface(destination) else { return }
-        guard service != .youtube else { return }
         webView(for: fixedService).load(URLRequest(url: destination))
     }
 
@@ -154,6 +155,16 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         ))
+        let youtubeParitySource = service == .youtube
+            ? Self.bundledYouTubeParityScript(in: bundle)
+            : nil
+        if let youtubeParitySource {
+            controller.addUserScript(WKUserScript(
+                source: youtubeParitySource,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            ))
+        }
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = controller
@@ -164,6 +175,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         configuration.defaultWebpagePreferences.preferredContentMode = .mobile
+        if service == .youtube {
+            configuration.applicationNameForUserAgent =
+                YouTubeWebCompatibility.unsupportedSafariApplicationNameSuffix
+        }
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
@@ -187,6 +202,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         webViews[service] = webView
         serviceByWebView[ObjectIdentifier(webView)] = service
         messageBridges[service] = bridge
+        if service == .youtube, youtubeParitySource == nil {
+            health[service] = .unsupported(
+                "This YouTube build is missing its ordinary-watch gesture policy."
+            )
+            return webView
+        }
         if loadInitialPages { webView.load(URLRequest(url: service.homeURL)) }
         return webView
     }
@@ -787,6 +808,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         serviceByWebView[ObjectIdentifier(webView)]
     }
 
+    static func bundledYouTubeParityScript(in bundle: Bundle) -> String? {
+        guard let url = bundle.url(forResource: "youtube-parity", withExtension: "js") else {
+            return nil
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
     static func isCurrentMainDocumentMessage(
         _ documentID: Any?,
         currentDocumentID: String?
@@ -914,7 +942,14 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     static func safeRecoveryURL(_ url: URL?, for service: SocialService) -> URL? {
-        guard let url,
+        guard let url else { return nil }
+        // Authentication helper URLs may carry one-time session state. Never
+        // replay them after WebKit terminates its content process; return to
+        // the service-owned entry point and let the site restart auth safely.
+        if service.usesUnmodifiedAuthenticationDocument(url) {
+            return service.homeURL
+        }
+        guard
               service.allowsNavigation(to: url),
               !service.isRestrictedSurface(url) else { return nil }
         return url
@@ -972,23 +1007,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
               let auxiliaryHealth = service.auxiliaryPageHealth(for: url) else { return }
         health[service] = auxiliaryHealth
         setSurface(.unknown, for: service)
-
-        guard service == .youtube, url.host?.lowercased() == "accounts.google.com" else { return }
-        webView.evaluateJavaScript(
-            #"""
-            (() => {
-              const text = String(document.body?.innerText || '').toLowerCase();
-              return /disallowed_useragent|this browser or app may not be secure|couldn.?t sign you in/.test(text);
-            })()
-            """#
-        ) { [weak self, weak webView] result, _ in
-            guard let self, let webView,
-                  result as? Bool == true,
-                  webView.url == url else { return }
-            self.health[service] = .unsupported(
-                "Google rejected embedded WebKit sign-in. This authentication path is unavailable in the YouTube companion."
-            )
-        }
     }
 
     private func audioPreferenceKey(_ service: SocialService) -> String {
@@ -1150,6 +1168,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
         guard let service = service(for: webView) else { return }
+        guard !service.usesUnmodifiedAuthenticationDocument(webView.url) else { return }
         bindCommittedMainDocument(for: service, in: webView)
     }
 

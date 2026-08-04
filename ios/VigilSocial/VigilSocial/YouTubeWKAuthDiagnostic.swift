@@ -59,9 +59,10 @@ final class YouTubeWKAuthDiagnosticSession: NSObject, ObservableObject {
         let agentLabel: String
         if useUnsupportedSafariSuffix {
             // TinyTube documents this Safari-looking application-name suffix as
-            // an unsupported workaround. Keep it inside this explicit Debug
-            // experiment; the default and every Release build remain truthful.
-            configuration.applicationNameForUserAgent = "Version/17.0 Safari/605.1.15"
+            // an unsupported workaround. This Debug path compares that same
+            // YouTube-only production exception with WebKit's default identity.
+            configuration.applicationNameForUserAgent =
+                YouTubeWebCompatibility.unsupportedSafariApplicationNameSuffix
             agentLabel = "unsupported-safari-suffix"
         } else {
             agentLabel = "default-webkit"
@@ -107,14 +108,11 @@ final class YouTubeWKAuthDiagnosticSession: NSObject, ObservableObject {
         if url.absoluteString == "about:blank" {
             return permitsAboutBlankSubframe
         }
-        if url.scheme?.lowercased() == "https",
-           url.port == nil || url.port == 443,
-           url.host?.lowercased() == "accounts.youtube.com" {
+        if SocialService.isYouTubeSessionHandoffURL(url) {
             // YouTube's first-party sign-in handshake can redirect through this
             // exact endpoint to establish its own site session. Keep the probe's
             // exception path-scoped instead of widening the production allowlist.
-            return url.path == "/accounts/SetSID"
-                || url.path == "/accounts/SetSID/"
+            return true
         }
         return SocialService.youtube.allowsNavigation(to: url)
             && !SocialService.youtube.isRestrictedSurface(url)

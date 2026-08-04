@@ -691,6 +691,15 @@ if (removeTestUrlFilterService) {
     "https://127.0.0.1/",
     "https://localhost/"
   ]);
+  for (const authenticationURL of [
+    "https://consent.youtube.com/",
+    "https://accounts.youtube.com/accounts/SetSID",
+    "https://accounts.youtube.com/accounts/CheckConnection",
+    "https://accounts.youtube.com/RotateCookiesPage"
+  ]) {
+    assert.equal(panicAllowedUrls.includes(authenticationURL), false,
+      `Panic must not admit the YouTube authentication URL ${authenticationURL}`);
+  }
   assert.equal(webFilter?.DenyListURLs, undefined);
   assert.equal(panicAllowedUrls.some((url) => /instagram|youtube|snapchat/i.test(url)), false);
 }
@@ -732,6 +741,30 @@ if (removeTestUrlFilterService) {
     deviceTargets: ["phone"],
     profileSnapshot: customAllowlistProfile
   };
+  const activeYouTubeTargets = iosPolicyTargets(state, now);
+  assert.equal(activeYouTubeTargets.webMode, "allowlist");
+  for (const authenticationURL of [
+    "https://consent.youtube.com/",
+    "https://accounts.youtube.com/accounts/SetSID",
+    "https://accounts.youtube.com/accounts/CheckConnection",
+    "https://accounts.youtube.com/RotateCookiesPage"
+  ]) {
+    assert.equal(
+      activeYouTubeTargets.allowedUrls.includes(authenticationURL),
+      true,
+      `the supervised YouTube companion allowlist must include ${authenticationURL}`
+    );
+  }
+  assert.equal(
+    activeYouTubeTargets.allowedUrls.includes("https://accounts.youtube.com/"),
+    false,
+    "the supervised YouTube companion allowlist must not open the whole accounts.youtube.com origin"
+  );
+  assert.equal(
+    activeYouTubeTargets.deniedUrls.includes("https://youtube.com/shorts"),
+    true,
+    "admitting YouTube authentication helpers must preserve the permanent Shorts deny rule"
+  );
   state.limitRules = [{
     id: "brick-youtube-limit",
     name: "Brick YouTube limit",
@@ -779,6 +812,15 @@ if (removeTestUrlFilterService) {
     const allowedHost = new URL(url).hostname.replace(/^www\./, "");
     return allowedHost === host || allowedHost.endsWith(`.${host}`);
   })), false, "the reached site limit and its aliases must not remain in the URL allowlist");
+  for (const authenticationURL of [
+    "https://consent.youtube.com/",
+    "https://accounts.youtube.com/accounts/SetSID",
+    "https://accounts.youtube.com/accounts/CheckConnection",
+    "https://accounts.youtube.com/RotateCookiesPage"
+  ]) {
+    assert.equal(allowedUrls.includes(authenticationURL), false,
+      `a reached YouTube limit must remove the companion authentication URL ${authenticationURL}`);
+  }
   assert.equal(allowedUrls.includes("https://work.example.test/"), true, "unrelated explicitly allowed sites must remain available");
   assert.equal(allowedUrls.includes("https://www.instagram.com/"), true, "the limit must not remove unrelated social sites");
 }

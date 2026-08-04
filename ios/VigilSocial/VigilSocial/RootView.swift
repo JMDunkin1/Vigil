@@ -9,11 +9,7 @@ struct RootView: View {
 
     var body: some View {
         let service = store.selectedService
-        if service == .youtube {
-            YouTubeFilterHostView()
-        } else {
-            filteredWebView(service: service)
-        }
+        filteredWebView(service: service)
     }
 
     private func filteredWebView(service: SocialService) -> some View {
@@ -315,28 +311,6 @@ enum YouTubeContentBlockerReloadPolicy {
 
     static func reloadKey(for contentBlockerIdentifier: String) -> String {
         "VigilSocial.contentBlockerReload.\(contentBlockerIdentifier)"
-    }
-}
-
-private struct YouTubeFilterHostView: View {
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            VStack(spacing: 16) {
-                Image(systemName: "checkmark.shield.fill")
-                    .font(.system(size: 44, weight: .semibold))
-                    .foregroundStyle(.red)
-                Text("YouTube filter is active")
-                    .font(.headline)
-                Text("Use the YouTube icon on your Home Screen. This helper only keeps Shorts blocked in Safari.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 320)
-            }
-            .padding(28)
-        }
-        .preferredColorScheme(.dark)
     }
 }
 

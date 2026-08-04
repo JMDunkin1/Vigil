@@ -20,7 +20,7 @@ const services = {
   },
   youtube: {
     bundleId: "tech.caseline.vigil.youtube",
-    name: "YouTube Filter",
+    name: "YouTube",
     appIconSet: "YouTubeAppIcon",
     scheme: "vigil-youtube",
     buildScheme: "VigilSocial"

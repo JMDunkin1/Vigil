@@ -19,6 +19,10 @@ const socialWebViewStoreSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "SocialWebViewStore.swift"),
   "utf8"
 );
+const socialServiceSource = await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilSocial", "SocialService.swift"),
+  "utf8"
+);
 const socialDOMAdaptersSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "DOMAdapters.swift"),
   "utf8"
@@ -67,6 +71,11 @@ const socialInfoPlistSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Info.plist"),
   "utf8"
 );
+const iosProfilesSource = await readFile(join(projectRoot, "src", "iosProfiles.ts"), "utf8");
+const parityAuditSource = await readFile(
+  join(projectRoot, "ios", "VigilSocial", "PARITY_AUDIT.md"),
+  "utf8"
+);
 
 assert.doesNotMatch(
   socialWebViewStoreSource,
@@ -81,7 +90,7 @@ assert.match(
 assert.match(
   socialRootViewSource,
   /SocialWebView\([\s\S]*?webView: store\.webView\(for: service\)/u,
-  "Instagram must render its protected persistent WKWebView"
+  "both fixed companions must render their protected persistent WKWebView"
 );
 assert.match(
   socialRootViewSource,
@@ -120,11 +129,8 @@ assert.match(
   /navigator\.mediaSession\.metadata = null/u,
   "Instagram's page-level Now Playing metadata must be cleared on suspension"
 );
-assert.match(
-  socialRootViewSource,
-  /if service == \.youtube \{\s*YouTubeFilterHostView\(\)/u,
-  "the YouTube extension host must not render a browser surface"
-);
+assert.doesNotMatch(socialRootViewSource, /YouTubeFilterHostView/u,
+  "the YouTube target must render its contained WK surface instead of the retired Safari helper placeholder");
 assert.match(
   socialRootViewSource,
   /if service == \.instagram \{\s*YouTubeContentBlockerGate\(isDark: isDark\)/u,
@@ -141,11 +147,91 @@ assert.doesNotMatch(
   /YouTubeSafariView\(request: store\.youtubeSafariRequest\)/u,
   "YouTube must not add SafariViewController chrome around the active companion surface"
 );
+assert.match(socialWebViewStoreSource, /if loadInitialPages \{ _ = webView\(for: selectedService\) \}/u,
+  "the fixed YouTube target must create and load its persistent WKWebView");
+assert.doesNotMatch(socialWebViewStoreSource, /guard service != \.youtube|selectedService != \.youtube/u,
+  "YouTube navigation must not retain the retired no-WK early returns");
+assert.match(
+  socialServiceSource,
+  /unsupportedSafariApplicationNameSuffix = "Version\/17\.0 Safari\/605\.1\.15"/u,
+  "the unsupported competitor compatibility suffix must remain explicit and centralized"
+);
 assert.match(
   socialWebViewStoreSource,
-  /if loadInitialPages, selectedService != \.youtube/u,
-  "the YouTube filter host must not create or load a WKWebView"
+  /if service == \.youtube \{\s*configuration\.applicationNameForUserAgent =\s*YouTubeWebCompatibility\.unsupportedSafariApplicationNameSuffix/u,
+  "only the YouTube WK configuration may receive the unsupported Safari application-name suffix"
 );
+assert.match(socialWebViewStoreSource, /configuration\.websiteDataStore = \.default\(\)/u,
+  "the production YouTube WK surface must keep a persistent first-party website-data store");
+assert.match(
+  socialWebViewStoreSource,
+  /let youtubeParitySource = service == \.youtube[\s\S]*?bundledYouTubeParityScript[\s\S]*?if let youtubeParitySource \{[\s\S]*?controller\.addUserScript[\s\S]*?injectionTime: \.atDocumentStart,[\s\S]*?forMainFrameOnly: true/u,
+  "the exact ordinary-watch miniplayer/Shorts guard resource must be reused in the YouTube WK main frame"
+);
+assert.match(socialWebViewStoreSource, /forResource: "youtube-parity", withExtension: "js"/u,
+  "the YouTube WK app must load the shared parity resource by its exact bundle name");
+assert.match(
+  socialProjectSource,
+  /youtube-parity\.js in YouTube App Resources[\s\S]*?A40000000000000000000003[^\n]*youtube-parity\.js in YouTube App Resources/u,
+  "the shared parity resource must be copied into the production YouTube app bundle"
+);
+assert.doesNotMatch(socialWebViewStoreSource, /ServiceLogin/u,
+  "production must begin at m.youtube.com and use the site's generated sign-in route"
+);
+assert.match(
+  socialServiceSource,
+  /isYouTubeSessionHandoffURL[\s\S]*?"\/accounts\/SetSID"[\s\S]*?isExactYouTubeAccountsURL/u,
+  "native navigation and popup validation must share one exact SetSID admission predicate"
+);
+assert.match(
+  socialServiceSource,
+  /isExactYouTubeAccountsURL[\s\S]*?url\.scheme\?\.lowercased\(\) == "https"[\s\S]*?url\.port == nil \|\| url\.port == 443[\s\S]*?url\.host\?\.lowercased\(\) == "accounts\.youtube\.com"[\s\S]*?URLComponents[\s\S]*?percentEncodedPath[\s\S]*?paths\.contains\(encodedPath\)/u,
+  "YouTube authentication helpers must require HTTPS, the default port, the exact host, and an exact encoded path"
+);
+for (const path of [
+  "/accounts/SetSID",
+  "/accounts/CheckConnection",
+  "/RotateCookiesPage"
+]) {
+  assert.equal(socialDOMAdaptersSource.includes(`'${path}'`), true,
+    `every DOM adapter must identify the exact scriptless authentication helper ${path}`);
+}
+assert.match(
+  socialDOMAdaptersSource,
+  /const youtubeAuthenticationFrame = host === 'accounts\.youtube\.com'[\s\S]*?\.includes\(url\.pathname\)[\s\S]*?url\.protocol === 'https:'[\s\S]*?defaultHTTPSPort[\s\S]*?\|\| youtubeAuthenticationFrame\)\) return;/u,
+  "every installed DOM adapter must return before touching only the exact HTTPS/default-port authentication frames"
+);
+assert.match(
+  socialWebViewStoreSource,
+  /didCommit[\s\S]*?usesUnmodifiedAuthenticationDocument\(webView\.url\)[\s\S]*?bindCommittedMainDocument/u,
+  "native document-ID evaluation must be skipped on every unmodified authentication document"
+);
+assert.doesNotMatch(
+  socialWebViewStoreSource,
+  /document\.body\?\.innerText|disallowed_useragent|this browser or app may not be secure/u,
+  "authentication health must never inspect credential-page body text with evaluateJavaScript"
+);
+assert.match(iosProfilesSource, /"https:\/\/consent\.youtube\.com\/"/u,
+  "the supervised BuiltIn allowlist must admit YouTube consent");
+assert.match(iosProfilesSource, /"https:\/\/accounts\.youtube\.com\/accounts\/SetSID"/u,
+  "the supervised BuiltIn allowlist must admit only YouTube's exact session handoff path");
+assert.match(iosProfilesSource, /"https:\/\/accounts\.youtube\.com\/accounts\/CheckConnection"/u,
+  "the supervised BuiltIn allowlist must admit YouTube's exact embedded connection helper");
+assert.match(iosProfilesSource, /"https:\/\/accounts\.youtube\.com\/RotateCookiesPage"/u,
+  "the supervised BuiltIn allowlist must admit YouTube's exact embedded cookie-rotation helper");
+assert.doesNotMatch(iosProfilesSource, /"https:\/\/accounts\.youtube\.com\/"/u,
+  "the supervised policy must not widen accounts.youtube.com to an origin-wide allowance");
+assert.match(
+  socialWebViewStoreSource,
+  /safeRecoveryURL[\s\S]*?usesUnmodifiedAuthenticationDocument\(url\)[\s\S]*?return service\.homeURL/u,
+  "content-process recovery must not replay one-time authentication helper URLs"
+);
+const parityHostGate = youtubeInteractionSource.indexOf("allowedHosts.has");
+const parityFirstDomAccess = youtubeInteractionSource.indexOf("document.createElement");
+assert.ok(parityHostGate >= 0 && parityFirstDomAccess > parityHostGate,
+  "the reused miniplayer source must reject authentication hosts before its first DOM access");
+assert.match(parityAuditSource, /unsupported[\s\S]*?applicationNameForUserAgent|application-name suffix/iu,
+  "the parity contract must disclose the unsupported browser-identity exception");
 assert.match(youtubeWKAuthDiagnosticSource, /^#if DEBUG/u,
   "the WKWebView authentication probe must compile only in Debug builds");
 assert.match(socialAppSource, /#if DEBUG[\s\S]*?YouTubeWKAuthDiagnosticActivation\.isRequested/u,
@@ -178,15 +264,15 @@ assert.match(youtubeWKAuthDiagnosticSource, /accounts\.google\.com\/ServiceLogin
   "the probe must exercise Google's first-party YouTube ServiceLogin document without private OAuth configuration");
 assert.match(
   youtubeWKAuthDiagnosticSource,
-  /host\?\.lowercased\(\) == "accounts\.youtube\.com"[\s\S]*?url\.path == "\/accounts\/SetSID"/u,
-  "the probe must narrowly permit YouTube's first-party post-authentication session handoff"
+  /if SocialService\.isYouTubeSessionHandoffURL\(url\)[\s\S]*?return true/u,
+  "the probe must delegate first-party session handoff admission to the production encoded-path predicate"
 );
 assert.match(youtubeWKAuthDiagnosticSource, /webView\.customUserAgent = nil/u,
   "the probe must retain WebKit's truthful user-agent identity");
 assert.match(
   youtubeWKAuthDiagnosticSource,
-  /if useUnsupportedSafariSuffix[\s\S]*?applicationNameForUserAgent = "Version\/17\.0 Safari\/605\.1\.15"/u,
-  "the documented unsupported Safari suffix must remain inside its explicit diagnostic variant"
+  /if useUnsupportedSafariSuffix[\s\S]*?applicationNameForUserAgent =\s*YouTubeWebCompatibility\.unsupportedSafariApplicationNameSuffix/u,
+  "the explicit diagnostic comparison must reuse the production YouTube compatibility suffix"
 );
 assert.match(
   youtubeWKAuthDiagnosticSource,
@@ -328,7 +414,7 @@ const explicitVersion = buildArguments(["youtube", "--version", "2.4.1", "--buil
 assert.equal(explicitVersion[explicitVersion.indexOf("-scheme") + 1], "VigilSocial");
 assert.ok(explicitVersion.includes("VIGIL_APP_BUNDLE_IDENTIFIER=tech.caseline.vigil.youtube"));
 assert.ok(explicitVersion.includes("VIGIL_SERVICE=youtube"));
-assert.ok(explicitVersion.includes("SOCIAL_APP_NAME=YouTube Filter"));
+assert.ok(explicitVersion.includes("SOCIAL_APP_NAME=YouTube"));
 assert.ok(explicitVersion.includes("SOCIAL_APP_ICON_SET=YouTubeAppIcon"));
 assert.ok(explicitVersion.includes("SOCIAL_URL_SCHEME=vigil-youtube"));
 assert.ok(explicitVersion.includes("MARKETING_VERSION=2.4.1"));

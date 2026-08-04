@@ -2190,6 +2190,27 @@ final class VigilSocialTests: XCTestCase {
 
     func testServicesOnlyAllowTheirRequiredHTTPSNavigationHosts() throws {
         XCTAssertTrue(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(URL(string: "https://accounts.google.com/"))))
+        XCTAssertTrue(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://consent.youtube.com/m")
+        )))
+        XCTAssertTrue(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/SetSID?ssdc=opaque")
+        )))
+        XCTAssertTrue(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/SetSID/")
+        )))
+        XCTAssertFalse(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/%53etSID")
+        )))
+        XCTAssertFalse(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/CheckConnection")
+        )))
+        XCTAssertFalse(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/RotateCookiesPage")
+        )))
+        XCTAssertFalse(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com:8443/accounts/SetSID")
+        )))
         XCTAssertFalse(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(URL(string: "https://music.youtube.com/"))))
         XCTAssertFalse(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(URL(string: "https://example.com/"))))
         XCTAssertFalse(SocialService.youtube.allowsNavigation(to: try XCTUnwrap(URL(string: "https://m.youtube.com:8443/watch?v=abc"))))
@@ -2239,6 +2260,27 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
             try XCTUnwrap(URL(string: "https://consent.youtube.com/m"))
         ))
+        XCTAssertTrue(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://accounts.youtube.com/accounts/SetSID?ssdc=opaque"))
+        ))
+        XCTAssertTrue(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://accounts.youtube.com/accounts/CheckConnection"))
+        ))
+        XCTAssertTrue(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://accounts.youtube.com/RotateCookiesPage"))
+        ))
+        XCTAssertFalse(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
+            try XCTUnwrap(URL(string: "https://accounts.youtube.com/RotateCookies"))
+        ))
+        for encodedPath in [
+            "/accounts/%53etSID",
+            "/accounts/Check%43onnection",
+            "/RotateCookies%50age"
+        ] {
+            XCTAssertFalse(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
+                try XCTUnwrap(URL(string: "https://accounts.youtube.com\(encodedPath)"))
+            ))
+        }
         XCTAssertFalse(SocialService.youtube.usesUnmodifiedAuthenticationDocument(
             try XCTUnwrap(URL(string: "https://accounts.google.com.example.com/ServiceLogin"))
         ))
@@ -2269,11 +2311,36 @@ final class VigilSocialTests: XCTestCase {
         })
         XCTAssertTrue(youtubeStart.contains("host === 'accounts.google.com'"))
         XCTAssertTrue(youtubeStart.contains("host === 'consent.youtube.com'"))
-        XCTAssertTrue(youtubeStart.contains("content scripts completely out of that credential surface"))
+        XCTAssertTrue(youtubeStart.contains("host === 'accounts.youtube.com'"))
+        XCTAssertTrue(youtubeStart.contains("'/accounts/SetSID'"))
+        XCTAssertTrue(youtubeStart.contains("'/accounts/CheckConnection'"))
+        XCTAssertTrue(youtubeStart.contains("'/RotateCookiesPage'"))
+        XCTAssertTrue(youtubeStart.contains("first-party auth/session frames completely outside Vigil's"))
     }
 
     func testEmbeddedNavigationRestoresRequiredServiceFramesWithoutBecomingABrowser() throws {
         XCTAssertTrue(SocialService.youtube.allowsEmbeddedNavigation(to: try XCTUnwrap(URL(string: "about:blank"))))
+        XCTAssertTrue(SocialService.youtube.allowsEmbeddedNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/SetSID?ssdc=opaque")
+        )))
+        XCTAssertTrue(SocialService.youtube.allowsEmbeddedNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/CheckConnection")
+        )))
+        XCTAssertTrue(SocialService.youtube.allowsEmbeddedNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/RotateCookiesPage/")
+        )))
+        XCTAssertFalse(SocialService.youtube.allowsEmbeddedNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/RotateCookies")
+        )))
+        for encodedPath in [
+            "/accounts/%53etSID",
+            "/accounts/Check%43onnection",
+            "/RotateCookies%50age"
+        ] {
+            XCTAssertFalse(SocialService.youtube.allowsEmbeddedNavigation(to: try XCTUnwrap(
+                URL(string: "https://accounts.youtube.com\(encodedPath)")
+            )))
+        }
         XCTAssertFalse(SocialService.youtube.allowsEmbeddedNavigation(to: try XCTUnwrap(URL(string: "https://m.youtube.com/shorts/abc"))))
         XCTAssertFalse(SocialService.youtube.allowsEmbeddedNavigation(to: try XCTUnwrap(URL(string: "blob:https://m.youtube.com/player"))))
         XCTAssertFalse(SocialService.youtube.allowsEmbeddedNavigation(to: try XCTUnwrap(URL(string: "https://www.youtube-nocookie.com/embed/abc"))))
@@ -4260,10 +4327,15 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(youtube === store.webView(for: .youtube))
         XCTAssertTrue(youtube === store.webView(for: .instagram))
         XCTAssertEqual(youtube.configuration.defaultWebpagePreferences.preferredContentMode, .mobile)
+        XCTAssertTrue(youtube.configuration.websiteDataStore.isPersistent)
+        XCTAssertEqual(
+            youtube.configuration.applicationNameForUserAgent,
+            YouTubeWebCompatibility.unsupportedSafariApplicationNameSuffix
+        )
         XCTAssertNotNil(youtube.scrollView.refreshControl)
         XCTAssertEqual(youtube.scrollView.keyboardDismissMode, .interactive)
         let scripts = youtube.configuration.userContentController.userScripts
-        XCTAssertEqual(scripts.count, 4)
+        XCTAssertEqual(scripts.count, 5)
         XCTAssertFalse(scripts[0].isForMainFrameOnly)
         XCTAssertFalse(scripts[1].isForMainFrameOnly)
         XCTAssertFalse(scripts[2].isForMainFrameOnly)
@@ -4279,6 +4351,18 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(scripts[2].source.contains("/feed/recommended"))
         XCTAssertFalse(scripts[2].source.contains("__vigilPolicyProbeInstalled"))
         XCTAssertTrue(scripts[3].source.contains("__vigilPolicyProbeInstalled"))
+        XCTAssertTrue(scripts[4].isForMainFrameOnly)
+        XCTAssertEqual(scripts[4].injectionTime, .atDocumentStart)
+        XCTAssertTrue(scripts[4].source.contains("__vigilYouTubeParityInstalled"))
+        XCTAssertTrue(scripts[4].source.contains("enterMiniPlayer"))
+        XCTAssertTrue(scripts[4].source.contains("recoverFromShorts"))
+        let authHostGate = try? XCTUnwrap(scripts[4].source.range(of: "allowedHosts.has"))
+        let firstDOMAccess = try? XCTUnwrap(scripts[4].source.range(of: "document.createElement"))
+        XCTAssertNotNil(authHostGate)
+        XCTAssertNotNil(firstDOMAccess)
+        if let authHostGate, let firstDOMAccess {
+            XCTAssertLessThan(authHostGate.lowerBound, firstDOMAccess.lowerBound)
+        }
     }
 
     func testContentBlockerReloadCacheInvalidatesForEveryAppBuild() {
@@ -4312,6 +4396,7 @@ final class VigilSocialTests: XCTestCase {
             .configuration.userContentController.userScripts
 
         XCTAssertEqual(scripts.count, 4)
+        XCTAssertNil(store.webView(for: .instagram).configuration.applicationNameForUserAgent)
         XCTAssertFalse(scripts[0].source.contains("vigil-content-safety-style"))
         XCTAssertFalse(scripts[0].source.contains("__vigilEarlyMediaGate"))
         XCTAssertTrue(scripts[1].source.contains("__vigilInstagramCompatibilityInstalled"))
@@ -4496,9 +4581,38 @@ final class VigilSocialTests: XCTestCase {
             try XCTUnwrap(URL(string: "https://m.youtube.com/shorts/audit")),
             for: .youtube
         ))
+        for authenticationURL in [
+            "https://accounts.google.com/ServiceLogin",
+            "https://consent.youtube.com/m",
+            "https://accounts.youtube.com/accounts/SetSID?ssdc=opaque",
+            "https://accounts.youtube.com/accounts/CheckConnection",
+            "https://accounts.youtube.com/RotateCookiesPage/"
+        ] {
+            XCTAssertEqual(
+                SocialWebViewStore.safeRecoveryURL(
+                    try XCTUnwrap(URL(string: authenticationURL)),
+                    for: .youtube
+                ),
+                SocialService.youtube.homeURL,
+                "Authentication helpers must restart from YouTube home after a content-process crash"
+            )
+        }
         XCTAssertNil(SocialWebViewStore.validatedPopupRequest(
             URLRequest(url: try XCTUnwrap(URL(string: "https://example.com/"))),
             for: .instagram
+        ))
+        let setSID = URLRequest(url: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/SetSID?ssdc=opaque")
+        ))
+        XCTAssertEqual(
+            SocialWebViewStore.validatedPopupRequest(setSID, for: .youtube)?.url,
+            setSID.url
+        )
+        XCTAssertNil(SocialWebViewStore.validatedPopupRequest(
+            URLRequest(url: try XCTUnwrap(
+                URL(string: "https://accounts.youtube.com/accounts/CheckConnection")
+            )),
+            for: .youtube
         ))
     }
 
@@ -4510,6 +4624,11 @@ final class VigilSocialTests: XCTestCase {
         }
         guard case .advisory = SocialService.youtube.auxiliaryPageHealth(for: google) else {
             return XCTFail("Google authorization must remain usable outside the loading overlay")
+        }
+        guard case .advisory = SocialService.youtube.auxiliaryPageHealth(for: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/SetSID")
+        )) else {
+            return XCTFail("YouTube's exact session handoff must remain usable outside the loading overlay")
         }
         XCTAssertNil(SocialService.youtube.auxiliaryPageHealth(
             for: try XCTUnwrap(URL(string: "https://m.youtube.com/"))
@@ -5327,6 +5446,12 @@ final class VigilSocialTests: XCTestCase {
         )))
         XCTAssertFalse(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: try XCTUnwrap(
             URL(string: "https://accounts.youtube.com/accounts/Other")
+        )))
+        XCTAssertTrue(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/SetSID/")
+        )))
+        XCTAssertFalse(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: try XCTUnwrap(
+            URL(string: "https://accounts.youtube.com/accounts/%53etSID")
         )))
         XCTAssertFalse(YouTubeWKAuthDiagnosticSession.allowsNavigation(to: try XCTUnwrap(
             URL(string: "https://m.youtube.com/shorts/audit")

@@ -1,5 +1,12 @@
 import Foundation
 
+enum YouTubeWebCompatibility {
+    // TinyTube documents this Safari-looking suffix as an unsupported way to
+    // make Google's embedded sign-in surface proceed in WKWebView. It is the
+    // single explicit browser-identity exception in VigilSocial.
+    static let unsupportedSafariApplicationNameSuffix = "Version/17.0 Safari/605.1.15"
+}
+
 enum SocialService: String, CaseIterable, Identifiable {
     case instagram
     case youtube
@@ -99,6 +106,7 @@ enum SocialService: String, CaseIterable, Identifiable {
                 || path.contains("/dialog/oauth")
                 || path.hasPrefix("/checkpoint/")
         case .youtube:
+            if Self.isYouTubeSessionHandoffURL(url) { return true }
             return ["youtube.com", "www.youtube.com", "m.youtube.com", "consent.youtube.com"].contains(host)
                 || host == "youtu.be"
                 || host == "accounts.google.com"
@@ -108,6 +116,9 @@ enum SocialService: String, CaseIterable, Identifiable {
     func allowsEmbeddedNavigation(to url: URL) -> Bool {
         let scheme = url.scheme?.lowercased() ?? ""
         if scheme == "about" { return url.absoluteString.lowercased() == "about:blank" }
+        if self == .youtube, Self.isYouTubeEmbeddedAuthenticationFrameURL(url) {
+            return true
+        }
         return allowsNavigation(to: url) && !isRestrictedSurface(url)
     }
 
@@ -117,7 +128,9 @@ enum SocialService: String, CaseIterable, Identifiable {
               url.port == nil || url.port == 443,
               let host = url.host?.lowercased() else { return false }
         if self == .youtube {
-            return host == "accounts.google.com" || host == "consent.youtube.com"
+            return host == "accounts.google.com"
+                || host == "consent.youtube.com"
+                || Self.isYouTubeEmbeddedAuthenticationFrameURL(url)
         }
         if Self.host(host, matches: "facebook.com") {
             return allowsNavigation(to: url)
@@ -172,6 +185,8 @@ enum SocialService: String, CaseIterable, Identifiable {
                 return .advisory("Continue signing in with Google. Embedded sign-in availability is controlled by Google.")
             case "consent.youtube.com":
                 return .advisory("Review YouTube’s consent choices to continue.")
+            case "accounts.youtube.com":
+                return .advisory("Completing YouTube sign-in.")
             default:
                 return .advisory("Opening this link in YouTube.")
             }
@@ -180,6 +195,36 @@ enum SocialService: String, CaseIterable, Identifiable {
 
     private static func host(_ host: String, matches domain: String) -> Bool {
         host == domain || host.hasSuffix(".\(domain)")
+    }
+
+    static func isYouTubeSessionHandoffURL(_ url: URL) -> Bool {
+        isExactYouTubeAccountsURL(url, paths: [
+            "/accounts/SetSID",
+            "/accounts/SetSID/"
+        ])
+    }
+
+    static func isYouTubeEmbeddedAuthenticationFrameURL(_ url: URL) -> Bool {
+        isYouTubeSessionHandoffURL(url) || isExactYouTubeAccountsURL(url, paths: [
+            "/accounts/CheckConnection",
+            "/accounts/CheckConnection/",
+            "/RotateCookiesPage",
+            "/RotateCookiesPage/"
+        ])
+    }
+
+    private static func isExactYouTubeAccountsURL(_ url: URL, paths: Set<String>) -> Bool {
+        guard url.scheme?.lowercased() == "https",
+              url.port == nil || url.port == 443,
+              url.host?.lowercased() == "accounts.youtube.com",
+              let encodedPath = URLComponents(
+                url: url,
+                resolvingAgainstBaseURL: false
+              )?.percentEncodedPath else { return false }
+        // Match the encoded representation too. Foundation's decoded `path`
+        // can turn an encoded spelling into a native allow while JavaScript's
+        // URL.pathname still sees a different document.
+        return paths.contains(encodedPath)
     }
 }
 

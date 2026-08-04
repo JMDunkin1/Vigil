@@ -37,6 +37,16 @@ assert.equal(parseArguments(["update", "--edition", "personal"]).options.edition
 assert.equal(parseArguments(["update", "--edition=enhanced"]).options.edition, "enhanced");
 assert.equal(parseArguments(["update", "--allow-edition-downgrade"]).options.allowEditionDowngrade, true);
 assert.equal(parseArguments(["develop"]).command, "develop");
+assert.match(
+  phoneSuiteSource,
+  /selectedCommand === "develop"[\s\S]*?updatePhone\(\{ \.\.\.selectedOptions, edition, noPolicy: false \}\)/u,
+  "YouTube development updates must keep the native app and its exact supervised auth allowlist in one transaction"
+);
+assert.match(
+  phoneSuiteSource,
+  /selectedOptions\.noPolicy[\s\S]*?previousReceipt\?\.release\?\.sourceFingerprint !== release\.sourceFingerprint[\s\S]*?normal update without --no-policy first/u,
+  "an explicit app-only update must fail before installation when phone-facing sources changed"
+);
 assert.equal(parseArguments(["bump", "minor"]).options.bump, "minor");
 assert.throws(() => parseArguments(["update", "--wat"]), /Unknown option/);
 assert.throws(() => parseArguments(["bump", "wat"]), /Unknown release bump/);
@@ -122,19 +132,21 @@ for (const bundleIdentifier of [
   "tech.caseline.sentinel.youtube",
   "tech.caseline.vigil.browser",
   "tech.caseline.vigil.social",
-  "tech.caseline.vigil.snapchat",
-  "tech.caseline.vigil.youtube"
+  "tech.caseline.vigil.snapchat"
 ]) {
   assert.equal(isLegacyPhoneBundleIdentifier(bundleIdentifier), true, `${bundleIdentifier} should be treated as obsolete`);
 }
 assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.instagram"), false);
+assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.youtube"), false);
 
 const requiredAppsStart = phoneSuiteSource.indexOf("const REQUIRED_SOCIAL_APPS = [");
 const requiredAppsEnd = phoneSuiteSource.indexOf("];", requiredAppsStart);
 const requiredAppsSource = phoneSuiteSource.slice(requiredAppsStart, requiredAppsEnd);
 assert.match(requiredAppsSource, /tech\.caseline\.vigil\.instagram/u);
 assert.match(requiredAppsSource, /service: "instagram"[\s\S]*?appIconSet: "InstagramAppIcon"/u);
-assert.doesNotMatch(requiredAppsSource, /tech\.caseline\.vigil\.(?:browser|social|snapchat|youtube)/u);
+assert.match(requiredAppsSource, /tech\.caseline\.vigil\.youtube/u);
+assert.match(requiredAppsSource, /service: "youtube"[\s\S]*?appIconSet: "YouTubeAppIcon"[\s\S]*?buildScheme: "VigilSocial"/u);
+assert.doesNotMatch(requiredAppsSource, /tech\.caseline\.vigil\.(?:browser|social|snapchat)/u);
 assert.match(phoneSuiteSource, /const appsForEdition = \(edition\) => edition === "enhanced"[\s\S]*?REQUIRED_SOCIAL_APPS, URL_FILTER_APP/u);
 assert.match(phoneSuiteSource, /bundleId: "tech\.caseline\.vigil\.url-filter"/u);
 
@@ -158,7 +170,24 @@ assert.match(
 assert.match(
   buildPhoneAppsSource,
   /const bundledExplicitContentPolicy = await verifyBundledExplicitContentPolicy\(path, explicitContentPolicy\)/u,
-  "Release Instagram builds must verify the generated classifier policy"
+  "Release social builds must verify the generated classifier policy"
+);
+assert.match(
+  buildPhoneAppsSource,
+  /social\.id === "youtube"[\s\S]*?verifyBundledYouTubeParityScript\(path\)[\s\S]*?youtubeParityScript,/u,
+  "the Release YouTube app must verify its app-root parity script before installation"
+);
+assert.match(
+  phoneSuiteSource,
+  /verifyBundledYouTubeParityScript[\s\S]*?YOUTUBE_INTERACTION_EXTENSION\.scriptName[\s\S]*?sourceBytes\.equals\(bundledBytes\)[\s\S]*?sha256: sha256\(bundledBytes\)/u,
+  "the app-root YouTube parity resource must be byte-identical to the shared source and hashed"
+);
+assert.match(phoneSuiteSource, /youtubeParityScriptSha256: app\.youtubeParityScript\?\.sha256 \|\| null/u,
+  "the deployment receipt must retain proof of the bundled YouTube parity script");
+assert.match(
+  phoneSuiteSource,
+  /deployedYouTubeParityScriptProblems[\s\S]*?youtubeParityScriptSha256 === expected\.sha256[\s\S]*?app-root YouTube Shorts\/miniplayer parity script/u,
+  "read-only status must reject a receipt that lacks the current bundled YouTube parity hash"
 );
 assert.doesNotMatch(
   buildPhoneAppsSource,
@@ -169,8 +198,18 @@ assert.match(phoneSuiteSource, /app\.blocklist\?\.artifactSha256/u);
 assert.match(phoneSuiteSource, /app\.explicitContentPolicy\?\.sha256/u);
 assert.match(
   phoneSuiteSource,
-  /if \(\(obsoleteBeforeUpdate\.length \|\| obsoleteLauncherBeforeUpdate\) && !selectedOptions\.replaceLegacy\)[\s\S]*?Re-run with --replace-legacy/u,
-  "obsolete bundles and launcher configuration must require the explicit replacement flag before removal"
+  /YOUTUBE_WEB_CLIP_PROFILE_IDENTIFIER = "tech\.caseline\.vigil\.youtube-webclip-experiment"/u,
+  "the former full-screen YouTube Web Clip must remain explicitly detectable for migration"
+);
+assert.match(
+  phoneSuiteSource,
+  /OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS = new Set\(\[[\s\S]*?LAUNCHER_PROFILE_IDENTIFIER,[\s\S]*?YOUTUBE_WEB_CLIP_PROFILE_IDENTIFIER[\s\S]*?\]\)/u,
+  "legacy replacement must cover both retired Web Clip profile families"
+);
+assert.match(
+  phoneSuiteSource,
+  /obsoleteProfilesBeforeUpdate = profileBeforeUpdate\.profiles[\s\S]*?OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS\.has[\s\S]*?if \(\(obsoleteBeforeUpdate\.length \|\| obsoleteProfilesBeforeUpdate\.length\) && !selectedOptions\.replaceLegacy\)[\s\S]*?Re-run with --replace-legacy/u,
+  "obsolete bundles, launchers, and the old YouTube Web Clip must require the explicit replacement flag before removal"
 );
 assert.match(
   phoneSuiteSource,
@@ -187,15 +226,34 @@ assert.doesNotMatch(phoneSuiteSource, /stable Vigil social-launcher profile is n
 assert.doesNotMatch(phoneSuiteSource, /buildIosSocialLauncherProfile|buildStampedLauncherProfile/u);
 assert.match(
   phoneSuiteSource,
-  /if \(selectedOptions\.replaceLegacy\) \{\s*await removeObsoleteLauncherProfile\(device\.identifier, toolEnvironment\);\s*\}/u,
-  "explicit legacy replacement must remove the retired launcher profile"
+  /if \(selectedOptions\.replaceLegacy\) \{\s*await removeObsoleteConfigurationProfiles\(device\.identifier, toolEnvironment\);\s*legacyProfileMigrationVerified = true;\s*\}/u,
+  "explicit legacy replacement must remove the retired launcher and YouTube Web Clip profiles"
 );
 assert.match(
   phoneSuiteSource,
-  /"devicectl", "device", "profile", "remove",[\s\S]*?LAUNCHER_PROFILE_IDENTIFIER,[\s\S]*?"--type", "configuration",[\s\S]*?"--force-removal"/u
+  /for \(const profileIdentifier of OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS\)[\s\S]*?"devicectl", "device", "profile", "remove",[\s\S]*?profileIdentifier,[\s\S]*?"--type", "configuration",[\s\S]*?"--force-removal"/u
 );
+assert.match(phoneSuiteSource, /Retired YouTube Web Clip:[\s\S]*?--replace-legacy/u,
+  "status must report the stale YouTube Web Clip without silently removing it");
+assert.match(
+  phoneSuiteSource,
+  /!profileBeforeUpdate\.available && !legacyProfileMigrationVerified[\s\S]*?fixed YouTube app was not installed[\s\S]*?supported supervised-management path/u,
+  "a first native YouTube install must not proceed when legacy-profile absence cannot be inspected"
+);
+assert.match(phoneSuiteSource, /legacyProfileMigrationVerified,/u,
+  "the deployment receipt must preserve verified legacy-profile migration for later CoreDevice-limited updates");
 assert.match(phoneSuiteSource, /isMissingConfigurationProfileError\(detail\)/u);
 assert.match(phoneSuiteSource, /isUnsupportedConfigurationProfileError\(detail\)/u);
+assert.match(
+  phoneSuiteSource,
+  /Cannot verify removal of \$\{profileIdentifier\}[\s\S]*?fixed YouTube app was not installed/u,
+  "explicit Web Clip migration must fail closed when CoreDevice cannot remove profiles"
+);
+assert.match(
+  phoneSuiteSource,
+  /const verification = await configurationProfileStatus\(deviceIdentifier, toolEnvironment\)[\s\S]*?Retired configuration profiles remain after explicit removal[\s\S]*?fixed YouTube app was not installed/u,
+  "the legacy profile migration must verify absence before any app installation can follow"
+);
 assert.match(
   phoneSuiteSource,
   /installConfigurationProfileWhenUnlocked\(device, preparedPolicy\.lockPath, toolEnvironment\)/u

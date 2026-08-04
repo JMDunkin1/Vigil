@@ -42,15 +42,22 @@ const MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS = 600_000;
 const MINIMUM_CUSTOM_ADULT_BLOCKLIST_DOMAINS = 1_000;
 const PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
 const LAUNCHER_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-social-launchers";
+// Retained only for explicit migration from the former full-screen Web Clip.
+// Keep this byte-identical to IOS_YOUTUBE_WEB_CLIP_EXPERIMENT_PROFILE_IDENTIFIER.
+const YOUTUBE_WEB_CLIP_PROFILE_IDENTIFIER = "tech.caseline.vigil.youtube-webclip-experiment";
+const OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS = new Set([
+  LAUNCHER_PROFILE_IDENTIFIER,
+  YOUTUBE_WEB_CLIP_PROFILE_IDENTIFIER
+]);
 const LEGACY_BUNDLE_PREFIX = "tech.caseline.sentinel.";
 const OBSOLETE_VIGIL_PHONE_BUNDLE_IDS = new Set([
   "tech.caseline.vigil.browser",
   "tech.caseline.vigil.social",
-  "tech.caseline.vigil.snapchat",
-  "tech.caseline.vigil.youtube"
+  "tech.caseline.vigil.snapchat"
 ]);
 const OBSOLETE_APPS_PROBLEM_PREFIX = "Obsolete phone apps remain installed:";
 const OBSOLETE_LAUNCHER_PROFILE_PROBLEM = "The obsolete Vigil social-launcher profile remains installed; use --replace-legacy to remove its duplicate Home Screen icons.";
+const OBSOLETE_YOUTUBE_WEB_CLIP_PROFILE_PROBLEM = "The obsolete Vigil YouTube Web Clip profile remains installed; use --replace-legacy to remove its duplicate YouTube icon and Safari-opening surface.";
 const PHONE_SOURCE_FILES = [
   "scripts/apply-ios-usb-profile.mjs",
   "scripts/build-ios-social-app.mts",
@@ -78,7 +85,8 @@ const PHONE_SOURCE_FILES = [
   "src/types.ts"
 ];
 const REQUIRED_SOCIAL_APPS = [
-  { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" }
+  { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" },
+  { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" }
 ];
 const appsForEdition = (edition) => edition === "enhanced"
   ? [...REQUIRED_SOCIAL_APPS, URL_FILTER_APP]
@@ -126,7 +134,9 @@ async function main(selectedCommand, selectedOptions) {
     if (edition !== "personal") {
       throw new Error("YouTube development updates require the Personal edition because Enhanced app and URL Filter updates must be deployed together.");
     }
-    await updatePhone({ ...selectedOptions, edition, noPolicy: true, developmentUpdate: true });
+    // The native YouTube companion depends on exact BuiltIn web-filter auth
+    // routes. Keep its app and supervised policy in one verified transaction.
+    await updatePhone({ ...selectedOptions, edition, noPolicy: false });
     return;
   }
   if (!["status", "check"].includes(selectedCommand)) throw new Error(`Unknown command: ${selectedCommand}`);
@@ -655,6 +665,14 @@ function deployedExplicitContentPolicyProblems(receipt, expected, requiredBundle
     : [];
 }
 
+function deployedYouTubeParityScriptProblems(receipt, expected) {
+  const apps = Array.isArray(receipt?.apps) ? receipt.apps : [];
+  const youtube = apps.find((app) => app?.bundleId === "tech.caseline.vigil.youtube");
+  return youtube?.youtubeParityScriptSha256 === expected.sha256
+    ? []
+    : ["The deployment receipt does not prove the current app-root YouTube Shorts/miniplayer parity script."];
+}
+
 async function requireReadyPhoneBlocklist(purpose) {
   const readiness = await phoneBlocklistReadiness();
   if (!readiness.ready) {
@@ -765,11 +783,12 @@ export function receiptPhoneEdition(receipt) {
 }
 
 async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
-  const [release, fingerprint, blocklist, explicitContentPolicy] = await Promise.all([
+  const [release, fingerprint, blocklist, explicitContentPolicy, youtubeParityScript] = await Promise.all([
     readRelease(edition),
     implementationFingerprint(edition),
     phoneBlocklistReadiness(),
-    expectedExplicitContentPolicy()
+    expectedExplicitContentPolicy(),
+    expectedYouTubeParityScript()
   ]);
   const urlFilter = await iosUrlFilterReadiness(blocklist);
   const [appsResult, profileVerification, serverState] = await Promise.all([
@@ -791,6 +810,7 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
   const obsoleteApps = apps.filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
   const lockProfile = profiles.find((profile) => profile.identifier === PROFILE_IDENTIFIER);
   const obsoleteLauncherProfile = profiles.find((profile) => profile.identifier === LAUNCHER_PROFILE_IDENTIFIER);
+  const obsoleteYouTubeWebClipProfile = profiles.find((profile) => profile.identifier === YOUTUBE_WEB_CLIP_PROFILE_IDENTIFIER);
   const receipt = await readReceipt(device.udid || device.identifier);
   const deployedEdition = receiptPhoneEdition(receipt);
   const problems = [];
@@ -808,6 +828,7 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
   } else {
     if (iosEnabled && !lockProfile) problems.push("The live Vigil iPhone policy is enabled locally but no Vigil lock profile is installed.");
     if (obsoleteLauncherProfile) problems.push(OBSOLETE_LAUNCHER_PROFILE_PROBLEM);
+    if (obsoleteYouTubeWebClipProfile) problems.push(OBSOLETE_YOUTUBE_WEB_CLIP_PROFILE_PROBLEM);
   }
   if (!serverState) problems.push(`The Vigil server at ${selectedOptions.server} is unavailable, so live policy freshness cannot be checked.`);
   else if (!livePolicyFingerprint) problems.push("The currently generated live policy could not be resolved for a freshness check.");
@@ -825,6 +846,7 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
   }));
   problems.push(...blocklistReadinessProblems(blocklist, serverState));
   problems.push(...deployedExplicitContentPolicyProblems(receipt, explicitContentPolicy));
+  problems.push(...deployedYouTubeParityScriptProblems(receipt, youtubeParityScript));
   if (edition === "enhanced") {
     problems.push(...deployedBlocklistProblems(receipt, blocklist, [URL_FILTER_APP.bundleId]));
     if (!urlFilter.ready) problems.push(`The fail-closed iOS URL Filter is not deployable: ${urlFilter.error}.`);
@@ -839,7 +861,7 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
       problems.push("The deployment receipt does not prove that iOS reached a running fail-closed URL Filter state.");
     }
   }
-  return { edition, release, fingerprint, blocklist, explicitContentPolicy, urlFilter, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
+  return { edition, release, fingerprint, blocklist, explicitContentPolicy, youtubeParityScript, urlFilter, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, obsoleteYouTubeWebClipProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
 }
 
 function printStatus(report) {
@@ -854,6 +876,7 @@ function printStatus(report) {
   if (report.profileVerification.available) {
     console.log(`- Live policy: ${report.lockProfile ? profileName(report.lockProfile) : "missing"}`);
     console.log(`- Retired social launchers: ${report.obsoleteLauncherProfile ? "installed — remove with --replace-legacy" : "absent"}`);
+    console.log(`- Retired YouTube Web Clip: ${report.obsoleteYouTubeWebClipProfile ? "installed — remove with --replace-legacy" : "absent"}`);
   } else {
     console.log(`- Verification unavailable: ${report.profileVerification.detail}`);
   }
@@ -864,6 +887,7 @@ function printStatus(report) {
     ? `Enhanced system URL Filter: ${report.urlFilter.ready ? `${report.urlFilter.prefilter.domainCount.toLocaleString("en-US")} domains • ${report.urlFilter.prefilter.tag}` : `NOT READY • ${report.urlFilter.error}`}`
     : "Enhanced system URL Filter: optional paid capability • not required by Personal edition");
   console.log(`Bundled explicit-content policy: ${report.explicitContentPolicy.sha256.slice(0, 12)} • ${report.explicitContentPolicy.bytes.toLocaleString("en-US")} bytes`);
+  console.log(`Bundled YouTube parity script: ${report.youtubeParityScript.sha256.slice(0, 12)} • ${report.youtubeParityScript.bytes.toLocaleString("en-US")} bytes`);
   const signing = signingCapabilitySummary(report.receipt?.signingVariant);
   console.log(`Last deployed signing: ${signing.variant} • ${signing.mediaCapability}`);
   console.log(`Live policy source: ${report.serverState ? (report.serverState.state?.deviceControls?.ios?.enabled ? "enabled" : "disabled") : "server unavailable"}`);
@@ -899,6 +923,10 @@ async function updatePhone(selectedOptions) {
   if (selectedOptions.noPolicy && previousReceipt && previousEdition !== edition) {
     throw new Error("An edition change must replace the matching configuration profile; --no-policy cannot be used.");
   }
+  if (selectedOptions.noPolicy
+    && previousReceipt?.release?.sourceFingerprint !== release.sourceFingerprint) {
+    throw new Error("Refusing the app-only update because this release has new phone-facing sources and may require matching supervised allowlist routes. Run the normal update without --no-policy first.");
+  }
   console.log(`Updating ${device.name} to Vigil ${editionLabel(edition)} phone ${release.version} (${release.build}) without rebooting.`);
   console.log(`Apple toolchain: ${developerDir}`);
   await buildRuntime();
@@ -918,20 +946,28 @@ async function updatePhone(selectedOptions) {
   const obsoleteBeforeUpdate = (installedBeforeUpdate.result?.apps || [])
     .filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
   const profileBeforeUpdate = await configurationProfileStatus(device.identifier, toolEnvironment);
-  const obsoleteLauncherBeforeUpdate = profileBeforeUpdate.profiles.some((profile) => profile.identifier === LAUNCHER_PROFILE_IDENTIFIER);
-  if ((obsoleteBeforeUpdate.length || obsoleteLauncherBeforeUpdate) && !selectedOptions.replaceLegacy) {
+  const obsoleteProfilesBeforeUpdate = profileBeforeUpdate.profiles
+    .filter((profile) => OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS.has(profile.identifier));
+  let legacyProfileMigrationVerified = previousReceipt?.legacyProfileMigrationVerified === true;
+  if (!profileBeforeUpdate.available && !legacyProfileMigrationVerified) {
+    throw new Error(`Cannot verify that retired launcher and YouTube Web Clip profiles are absent: ${profileBeforeUpdate.detail}. The fixed YouTube app was not installed. Inspect or remove those profiles through a supported supervised-management path, then run the normal update.`);
+  }
+  if ((obsoleteBeforeUpdate.length || obsoleteProfilesBeforeUpdate.length) && !selectedOptions.replaceLegacy) {
     const obsoleteItems = [
       ...obsoleteBeforeUpdate.map((app) => app.bundleIdentifier),
-      ...(obsoleteLauncherBeforeUpdate ? [LAUNCHER_PROFILE_IDENTIFIER] : [])
+      ...obsoleteProfilesBeforeUpdate.map((profile) => profile.identifier)
     ];
     throw new Error(`Obsolete phone apps or launcher configuration must be removed before the fixed companions can be installed. Re-run with --replace-legacy: ${obsoleteItems.join(", ")}`);
+  }
+  if (selectedOptions.replaceLegacy) {
+    await removeObsoleteConfigurationProfiles(device.identifier, toolEnvironment);
+    legacyProfileMigrationVerified = true;
+  } else if (profileBeforeUpdate.available) {
+    legacyProfileMigrationVerified = true;
   }
   for (const obsolete of obsoleteBeforeUpdate) {
     console.log(`Removing obsolete ${obsolete.bundleIdentifier}; its app-local data cannot be recovered after uninstall…`);
     await run("xcrun", ["devicectl", "device", "uninstall", "app", "--device", device.identifier, obsolete.bundleIdentifier], { env: toolEnvironment });
-  }
-  if (selectedOptions.replaceLegacy) {
-    await removeObsoleteLauncherProfile(device.identifier, toolEnvironment);
   }
   for (const app of build.apps) {
     console.log(`Installing ${app.name}…`);
@@ -963,6 +999,7 @@ async function updatePhone(selectedOptions) {
     explicitContentPolicy: build.explicitContentPolicy,
     urlFilter: build.urlFilter,
     liveUrlFilterAudit,
+    legacyProfileMigrationVerified,
     apps: build.apps.map((app) => ({
       name: app.name,
       bundleId: app.bundleId,
@@ -971,6 +1008,8 @@ async function updatePhone(selectedOptions) {
       blocklistArtifactSha256: app.blocklist?.artifactSha256 || null,
       blocklistDomainCount: app.blocklist?.domainCount || null,
       explicitContentPolicySha256: app.explicitContentPolicy?.sha256 || null,
+      youtubeParityScript: app.youtubeParityScript || null,
+      youtubeParityScriptSha256: app.youtubeParityScript?.sha256 || null,
       youtubeInteractionExtension: app.youtubeInteractionExtension || null,
       youtubeInteractionExtensionSha256: app.youtubeInteractionExtension?.sha256 || null
     })),
@@ -1136,6 +1175,9 @@ async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = pro
     }
     const path = join(derived, "Build", "Products", "Release-iphoneos", "VigilSocial.app");
     const bundledExplicitContentPolicy = await verifyBundledExplicitContentPolicy(path, explicitContentPolicy);
+    const youtubeParityScript = social.id === "youtube"
+      ? await verifyBundledYouTubeParityScript(path)
+      : null;
     const youtubeInteractionExtension = social.id === "instagram"
       ? await verifyBundledYouTubeInteractionExtension(path, social.bundleId)
       : null;
@@ -1148,6 +1190,7 @@ async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = pro
       path,
       blocklist: null,
       explicitContentPolicy: bundledExplicitContentPolicy,
+      youtubeParityScript,
       youtubeInteractionExtension,
       signingCapabilities,
       sha256: await hashAppBundle(path)
@@ -1240,6 +1283,16 @@ async function expectedExplicitContentPolicy() {
   return { sha256: sha256(bytes), bytes: bytes.byteLength };
 }
 
+async function expectedYouTubeParityScript() {
+  const path = join(
+    ROOT,
+    "ios", "VigilSocial", "VigilYouTubeInteractionExtension", "Resources",
+    YOUTUBE_INTERACTION_EXTENSION.scriptName
+  );
+  const bytes = await readFile(path);
+  return { sha256: sha256(bytes), bytes: bytes.byteLength };
+}
+
 async function verifyBundledExplicitContentPolicy(appPath, expected) {
   const resourcePath = join(appPath, EXPLICIT_CONTENT_POLICY_RESOURCE);
   if (!await isFile(resourcePath)) {
@@ -1251,6 +1304,26 @@ async function verifyBundledExplicitContentPolicy(appPath, expected) {
     throw new Error(`${basename(appPath)} contains a stale or substituted ${EXPLICIT_CONTENT_POLICY_RESOURCE}.`);
   }
   return actual;
+}
+
+async function verifyBundledYouTubeParityScript(appPath) {
+  const sourcePath = join(
+    ROOT,
+    "ios", "VigilSocial", "VigilYouTubeInteractionExtension", "Resources",
+    YOUTUBE_INTERACTION_EXTENSION.scriptName
+  );
+  const bundledPath = join(appPath, YOUTUBE_INTERACTION_EXTENSION.scriptName);
+  if (!await isFile(bundledPath)) {
+    throw new Error(`${basename(appPath)} does not contain the app-root ${YOUTUBE_INTERACTION_EXTENSION.scriptName}; refusing to ship a YouTube surface without its Shorts and miniplayer guard.`);
+  }
+  const [sourceBytes, bundledBytes] = await Promise.all([
+    readFile(sourcePath),
+    readFile(bundledPath)
+  ]);
+  if (!sourceBytes.equals(bundledBytes)) {
+    throw new Error(`${basename(appPath)} contains a stale or substituted app-root ${YOUTUBE_INTERACTION_EXTENSION.scriptName}.`);
+  }
+  return { sha256: sha256(bundledBytes), bytes: bundledBytes.byteLength };
 }
 
 async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIdentifier) {
@@ -1770,28 +1843,39 @@ async function configurationProfileStatus(deviceIdentifier, toolEnvironment) {
   }
 }
 
-async function removeObsoleteLauncherProfile(deviceIdentifier, toolEnvironment) {
-  try {
-    await execFileAsync("xcrun", [
-      "devicectl", "device", "profile", "remove",
-      "--device", deviceIdentifier,
-      LAUNCHER_PROFILE_IDENTIFIER,
-      "--type", "configuration",
-      "--force-removal"
-    ], {
-      env: toolEnvironment,
-      maxBuffer: 16 * 1024 * 1024,
-      timeout: 120_000
-    });
-    console.log(`Removed obsolete configuration profile ${LAUNCHER_PROFILE_IDENTIFIER}.`);
-  } catch (error) {
-    const detail = [error?.message, error?.stderr, error?.stdout].filter(Boolean).join("\n");
-    if (isMissingConfigurationProfileError(detail)) return;
-    if (isUnsupportedConfigurationProfileError(detail)) {
-      console.warn(`Could not inspect or remove ${LAUNCHER_PROFILE_IDENTIFIER}: CoreDevice does not support configuration-profile management for this device.`);
-      return;
+async function removeObsoleteConfigurationProfiles(deviceIdentifier, toolEnvironment) {
+  for (const profileIdentifier of OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS) {
+    try {
+      await execFileAsync("xcrun", [
+        "devicectl", "device", "profile", "remove",
+        "--device", deviceIdentifier,
+        profileIdentifier,
+        "--type", "configuration",
+        "--force-removal"
+      ], {
+        env: toolEnvironment,
+        maxBuffer: 16 * 1024 * 1024,
+        timeout: 120_000
+      });
+      console.log(`Removed obsolete configuration profile ${profileIdentifier}.`);
+    } catch (error) {
+      const detail = [error?.message, error?.stderr, error?.stdout].filter(Boolean).join("\n");
+      if (isMissingConfigurationProfileError(detail)) continue;
+      if (isUnsupportedConfigurationProfileError(detail)) {
+        throw new Error(`Cannot verify removal of ${profileIdentifier}: CoreDevice does not support configuration-profile management for this device. The fixed YouTube app was not installed; remove the retired profile through a supported supervised-management path and rerun status before updating.`, { cause: error });
+      }
+      throw error;
     }
-    throw error;
+  }
+  const verification = await configurationProfileStatus(deviceIdentifier, toolEnvironment);
+  if (!verification.available) {
+    throw new Error(`Cannot verify retired-profile removal: ${verification.detail}. The fixed YouTube app was not installed.`);
+  }
+  const remaining = verification.profiles
+    .filter((profile) => OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS.has(profile.identifier))
+    .map((profile) => profile.identifier);
+  if (remaining.length) {
+    throw new Error(`Retired configuration profiles remain after explicit removal: ${remaining.join(", ")}. The fixed YouTube app was not installed.`);
   }
 }
 
@@ -1869,7 +1953,7 @@ Commands:
   check        Status with a nonzero exit when drift exists
   audit        Build and validate Normal, Soft Lock, Full Brick, and Panic profiles
   update       Bump when needed, audit, build, install, sync policy, and verify
-  develop      Safely update the Personal app in place without touching policy
+  develop      Safely update the Personal companions and matching supervised policy
   bump [kind]  Bump patch, minor, or major only when phone inputs changed
   fingerprint  Print the current phone implementation fingerprint
 
@@ -1879,7 +1963,7 @@ Options:
   --server URL Vigil server used for live state and policy (default ${DEFAULT_SERVER})
   --no-policy  Update apps but do not replace configuration profiles
   --allow-edition-downgrade  Explicitly permit Enhanced-to-Personal replacement
-  --replace-legacy  Remove obsolete Sentinel/Browser/Social/Snapchat/YouTube-helper apps and the retired launcher profile
+  --replace-legacy  Remove obsolete Sentinel/Browser/Social/Snapchat apps and retired launcher/YouTube Web Clip profiles
   --force      Force a version bump even if phone inputs are unchanged
   --json       JSON output for fingerprint`);
 }

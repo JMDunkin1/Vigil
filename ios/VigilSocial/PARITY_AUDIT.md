@@ -1,12 +1,10 @@
 # VigilSocial parity contract
 
-VigilSocial contains an Instagram companion that also hosts the YouTube Safari
-content blocker and ordinary-watch interaction extension. Instagram
-renders its current mobile website in a persistent `WKWebView` with Vigil's
-content-safety and focused-social policy. The user-facing YouTube surface is a
-full-screen Web Clip named `YouTube`; no separate YouTube helper app is needed.
-A mismatch caused by Vigil outside the
-intentional differences below is a bug.
+VigilSocial contains fixed Instagram and YouTube companions. Each renders its
+current mobile website in a persistent `WKWebView` with Vigil's content-safety
+and focused-social policy. The Instagram target also hosts the legacy YouTube
+Safari content blocker and ordinary-watch interaction extension. A mismatch
+caused by Vigil outside the intentional differences below is a bug.
 
 The practical target is:
 
@@ -15,7 +13,8 @@ The practical target is:
 2. Match the corresponding native app's surrounding iOS behavior where the web
    surface exposes an equivalent: safe areas, bounce, refresh, edge-back,
    keyboard dismissal, recovery, and app-icon appearances.
-3. Never spoof a browser identity or transfer protected browser credentials.
+3. Never transfer protected browser credentials. The one browser-identity
+   exception is the explicit unsupported YouTube compatibility suffix below.
 
 ## Intentional differences
 
@@ -24,16 +23,23 @@ The practical target is:
   unavailable when the active Vigil policy blocks them.
 - YouTube Home, Explore, suggestions, and ads can be unavailable when the
   active Vigil policy blocks them.
-- Instagram navigation remains contained to explicitly supported service and
-  authentication origins. YouTube remains a full-screen Safari Web Clip.
+- Both companions remain contained to explicitly supported service and
+  authentication origins. YouTube additionally admits only the exact
+  `accounts.youtube.com/accounts/SetSID` session-handoff route (with an optional
+  trailing slash) in a main frame or flattened popup. Embedded frames may also
+  use exact `accounts/CheckConnection` and `RotateCookiesPage` paths for account
+  availability and session rotation; every other `accounts.youtube.com` route
+  fails closed.
 - Instagram login, recovery, two-factor, checkpoint, and allowed Facebook
-  authorization documents run without Vigil's DOM/media hooks. A completed
-  same-document sign-in reloads once before protected Instagram content appears.
-- Instagram media remains subject to the configured on-device classifier.
-  YouTube remains subject to the supervised web policy and Shorts blocker.
-- Instagram does not enable background audio, Picture in Picture, AirPlay/Cast,
-  or unrestricted external link handoff. YouTube retains the browser features
-  that YouTube and iOS expose.
+  authorization documents run without Vigil's DOM/media hooks. Google sign-in,
+  YouTube consent, and the exact YouTube session handoff are likewise kept
+  outside every Vigil DOM/media/player hook. A completed same-document Instagram
+  sign-in reloads once before protected content appears.
+- Both companions' ordinary content remains subject to the configured on-device
+  classifier. YouTube also remains subject to the supervised web policy and
+  overlapping native/DOM Shorts guards.
+- Neither companion enables Picture in Picture, AirPlay/Cast, or unrestricted
+  external link handoff.
 
 These differences must not be removed to improve visual parity.
 
@@ -42,19 +48,25 @@ These differences must not be removed to improve visual parity.
 The companion architecture cannot reproduce private native component trees,
 caches, or gesture recognizers. In particular:
 
-- YouTube sign-in and cookies belong to Safari's full-screen Web Clip surface.
-  Vigil neither spoofs the user agent nor imports credentials.
+- Google officially treats embedded user agents as unsupported. At the user's
+  explicit request, the YouTube-only `WKWebViewConfiguration` appends TinyTube's
+  documented `applicationNameForUserAgent` value
+  `Version/17.0 Safari/605.1.15`. This unsupported application-name suffix does
+  not replace `customUserAgent`, does not import Safari credentials, and may
+  stop working whenever Google changes its policy or detection. Instagram and
+  the default diagnostic path retain WebKit's truthful identity.
 - Vigil reproduces the ordinary-watch swipe-down miniplayer, tap/swipe-up
-  restore, and horizontal-dismiss gestures through its YouTube-only Safari
-  extension. Pinch-specific native player transitions, Cast integration,
-  uploads, editing, notifications, and the native prefetch pipeline are not
-  available from `m.youtube.com`.
+  restore, and horizontal-dismiss gestures by reusing the exact YouTube parity
+  script in the WK companion and Safari extension. Pinch-specific native player
+  transitions, Cast integration, uploads, editing, notifications, and the
+  native prefetch pipeline are not available from `m.youtube.com`.
 - Instagram's native prefetch cache, notification integration, and private
   story/feed component behavior are not available through its mobile website.
 
 The app must show a truthful recoverable state when one of these limitations is
-encountered. It must not spoof a user agent or weaken navigation/content policy
-to conceal the limitation.
+encountered. The unsupported YouTube-only suffix must not expand into a custom
+user-agent replacement, cookie transfer, broader authentication allowlist, or
+weaker Shorts/content policy.
 
 ## Reference baseline
 
@@ -116,7 +128,9 @@ its major navigation, story/player, or icon presentation.
 ### YouTube
 
 - Home, Search, Subscriptions, ordinary Watch, comments, and related content.
-- Google sign-in succeeds in the full-screen Web Clip and persists on relaunch.
+- Google sign-in is attempted from YouTube's site-generated route, uses the
+  persistent WK website-data store, and either persists there on relaunch or
+  exposes Google's failure truthfully. No credential import is permitted.
 - Horizontal topic shelves, progress scrubbing, fullscreen transitions, and
   edge-back.
 - Swipe down on an ordinary video to keep it playing in a miniplayer while
@@ -125,8 +139,9 @@ its major navigation, story/player, or icon presentation.
 - Miniplayer gestures do not steal progress scrubbing, fullscreen controls,
   buttons, links, or iOS edge-back.
 - Thumbnail and player preload under rapid scrolling.
-- Direct Shorts routes and Shorts UI remain blocked by the content blocker and
-  the interaction extension's same-document route guard.
+- Direct Shorts routes and Shorts UI remain blocked by native navigation,
+  document-start route policy, and the reused parity script's same-document
+  guard.
 - Shorts stays absent from navigation and shelves; direct/deep `/shorts` links
   are blocked or recovered to Home.
 
@@ -141,12 +156,15 @@ place:
 npm run ios:youtube:develop
 ```
 
-This command builds, audits, signs, and installs the Personal Team app without
-replacing the supervised web-filter profile. Before installation it compares
-the built controls extension with the last deployment receipt and refuses a new
-bundle identifier, manifest version, host scope, content-script scope, or API
-permission set. JavaScript, CSS, and other implementation bytes may change.
-The receipt records the complete extension contract for the next update.
+This command builds, audits, signs, and installs both Personal Team companions
+and their freshly generated supervised web-filter profile in one transaction.
+The native YouTube sign-in path depends on exact authentication URLs, so an
+app-only development update is not sufficient. Before installation the command
+also compares the built controls extension with the last deployment receipt and
+refuses a new bundle identifier, manifest version, host scope, content-script
+scope, or API permission set. JavaScript, CSS, and other implementation bytes
+may change. The receipt records the complete extension contract and the
+app-root YouTube parity-script hash for the next update.
 
 Adding another Safari extension or changing the controls extension's identity
 or permissions is a maintenance operation, not an ordinary development update.
@@ -190,4 +208,12 @@ The Personal Team Instagram companion is installed on the physical phone as
 remains enabled. `Vigil YouTube Controls` still needs its one-time offline
 activation because the supervised BuiltIn web filter froze Safari's extension
 settings before that new extension first appeared. After activation, repeat the
-physical-only miniplayer, competing-gesture, and perceived-preload checks above.
+fallback Safari checks.
+
+The restored native YouTube WK companion in this change has local source,
+policy, and build verification only. It has not been installed on the physical
+phone, no credentials were entered in its diagnostic probe, and successful
+Google sign-in is not yet claimed. A future authorized update must explicitly
+remove the retired `tech.caseline.vigil.youtube-webclip-experiment` profile with
+`--replace-legacy`, then repeat the physical-only sign-in, miniplayer,
+competing-gesture, and perceived-preload checks above.
