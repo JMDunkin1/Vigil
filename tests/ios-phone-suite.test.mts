@@ -26,22 +26,39 @@ const projectRoot = existsSync(join(process.cwd(), "scripts", "ios-phone-suite.m
   ? process.cwd()
   : resolve(process.cwd(), "..", "..");
 const phoneSuiteSource = await readFile(join(projectRoot, "scripts", "ios-phone-suite.mjs"), "utf8");
+const packageManifest = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8"));
+
+assert.equal(
+  packageManifest.scripts["agent:update:phone"],
+  "node scripts/ios-phone-suite.mjs update --edition personal",
+  "the agent-facing phone updater must keep both Personal companions and their supervised policy in one verified transaction"
+);
+assert.equal(
+  packageManifest.scripts["agent:update:instagram"],
+  "node scripts/ios-phone-suite.mjs update --edition personal --app instagram"
+);
+assert.equal(
+  packageManifest.scripts["agent:update:youtube"],
+  "node scripts/ios-phone-suite.mjs update --edition personal --app youtube"
+);
 
 assert.deepEqual(parseArguments([]), {
   command: "status",
-  options: { allowEditionDowngrade: false, bump: "patch", device: "", edition: "", force: false, json: false, noPolicy: false, replaceLegacy: false, server: "http://127.0.0.1:8787" }
+  options: { allowEditionDowngrade: false, app: "", bump: "patch", device: "", edition: "", force: false, json: false, noPolicy: false, replaceLegacy: false, server: "http://127.0.0.1:8787" }
 });
 assert.deepEqual(parseArguments(["update", "--device", "phone-1", "--no-policy", "--replace-legacy"]), {
   command: "update",
-  options: { allowEditionDowngrade: false, bump: "patch", device: "phone-1", edition: "", force: false, json: false, noPolicy: true, replaceLegacy: true, server: "http://127.0.0.1:8787" }
+  options: { allowEditionDowngrade: false, app: "", bump: "patch", device: "phone-1", edition: "", force: false, json: false, noPolicy: true, replaceLegacy: true, server: "http://127.0.0.1:8787" }
 });
+assert.equal(parseArguments(["update", "--app", "instagram"]).options.app, "instagram");
+assert.equal(parseArguments(["update", "--app=youtube"]).options.app, "youtube");
 assert.equal(parseArguments(["update", "--edition", "personal"]).options.edition, "personal");
 assert.equal(parseArguments(["update", "--edition=enhanced"]).options.edition, "enhanced");
 assert.equal(parseArguments(["update", "--allow-edition-downgrade"]).options.allowEditionDowngrade, true);
 assert.equal(parseArguments(["develop"]).command, "develop");
 assert.match(
   phoneSuiteSource,
-  /selectedCommand === "develop"[\s\S]*?updatePhone\(\{ \.\.\.selectedOptions, edition, noPolicy: false \}\)/u,
+  /selectedCommand === "develop"[\s\S]*?updatePhone\(\{ \.\.\.selectedOptions, app: "youtube", edition, noPolicy: false \}\)/u,
   "YouTube development updates must keep the native app and its exact supervised auth allowlist in one transaction"
 );
 assert.match(
@@ -49,8 +66,19 @@ assert.match(
   /selectedOptions\.noPolicy[\s\S]*?previousReceipt\?\.release\?\.sourceFingerprint !== release\.sourceFingerprint[\s\S]*?normal update without --no-policy first/u,
   "an explicit app-only update must fail before installation when phone-facing sources changed"
 );
+assert.match(
+  phoneSuiteSource,
+  /policyAlreadyCurrent[\s\S]*?profileName\(installedLockProfile\)\.includes\(preparedPolicy\.policyFingerprint\.slice\(0, 12\)\)[\s\S]*?if \(policyAlreadyCurrent\)[\s\S]*?already installed; leaving it in place/u,
+  "frequent phone updates must preserve an already-matching supervised policy instead of replacing it"
+);
+assert.match(
+  phoneSuiteSource,
+  /connection\.state === "connected" \|\| connection\.tunnelState === "connected"/u,
+  "phone status and updates must reject disconnected CoreDevice records instead of treating empty responses as device state"
+);
 assert.equal(parseArguments(["bump", "minor"]).options.bump, "minor");
 assert.throws(() => parseArguments(["update", "--wat"]), /Unknown option/);
+assert.throws(() => parseArguments(["update", "--app", "tiktok"]), /Unknown social app/);
 assert.throws(() => parseArguments(["bump", "wat"]), /Unknown release bump/);
 assert.throws(() => parseArguments(["update", "--edition", "enterprise"]), /Unknown phone edition/);
 
@@ -60,18 +88,45 @@ assert.equal(incrementVersion("1.2.3", "major"), "2.0.0");
 
 const splitRelease = {
   apps: {
-    instagram: { version: "1.2.3", build: 7 },
-    youtube: { version: "2.0.1", build: 11 }
+    instagram: { version: "1.2.3", build: 7, sourceFingerprint: "instagram-source" },
+    youtube: { version: "2.0.1", build: 11, sourceFingerprint: "youtube-source" }
   }
+};
+const splitReceipt = {
+  apps: [
+    { bundleId: "tech.caseline.vigil.instagram", version: "1.2.3", build: 7, sourceFingerprint: "instagram-source" },
+    { bundleId: "tech.caseline.vigil.youtube", version: "2.0.1", build: 11, sourceFingerprint: "youtube-source" }
+  ]
 };
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
   { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" }
-]), ["youtube"]);
+], splitReceipt), ["youtube"]);
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
   { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" }
-]), []);
+], splitReceipt), []);
+assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
+  { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" }
+]), ["instagram", "youtube"], "matching versions without a deployment receipt must be reinstalled and verified");
+assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
+  { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" }
+], {
+  apps: [
+    splitReceipt.apps[0],
+    { ...splitReceipt.apps[1], sourceFingerprint: "stale-youtube-source" }
+  ]
+}), ["youtube"], "a stale app receipt must trigger a verified reinstall even when the installed version matches");
+assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
+  { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" }
+], splitReceipt, ["instagram"]), [], "an Instagram-only update must ignore pending YouTube work");
+assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
+  { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" }
+], splitReceipt, ["youtube"]), ["youtube"], "a YouTube-only update must select only YouTube");
 
 assert.equal(iosSdkSupportsDevice(18.5, "18.6.2"), true);
 assert.equal(iosSdkSupportsDevice(17.5, "18.0"), false);

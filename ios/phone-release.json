@@ -1,12 +1,12 @@
 {
   "schemaVersion": 3,
-  "version": "0.3.40",
-  "build": 43,
+  "version": "0.3.44",
+  "build": 47,
   "sourceFingerprints": {
-    "personal": "b8c830aab1cd5ce8b7f6793fcd522e519e70fc34d10922d0f72ee26fd3925db4",
+    "personal": "52c2322b06aeac34b41390302f3cf1e524ef60674668645b4903e15e4636d55a",
     "enhanced": "33c130da2542d9371f096f10b7c54e9d19cb3f7fafbbbb750be7b501ec3bd51b"
   },
-  "releasedAt": "2026-08-05T01:43:08.539Z",
+  "releasedAt": "2026-08-05T02:51:15.650Z",
   "apps": {
     "instagram": {
       "version": "0.3.40",

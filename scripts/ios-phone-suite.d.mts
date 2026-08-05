@@ -1,5 +1,6 @@
 export interface PhoneSuiteOptions {
   allowEditionDowngrade: boolean;
+  app: "" | "instagram" | "youtube";
   bump: "patch" | "minor" | "major";
   device: string;
   edition: "" | "personal" | "enhanced";
@@ -67,6 +68,8 @@ export function socialAppImplementationFingerprint(
   files: Array<{ path: string; bytes: number; sha256: string }>;
 }>;
 export function socialAppsNeedingUpdate(
-  release: { apps: Record<string, { version: string; build: number }> },
-  installedApps?: Array<{ bundleIdentifier?: string; version?: string; bundleVersion?: string | number }>
+  release: { apps: Record<string, { version: string; build: number; sourceFingerprint?: string }> },
+  installedApps?: Array<{ bundleIdentifier?: string; version?: string; bundleVersion?: string | number }>,
+  receipt?: unknown,
+  selectedAppIds?: Array<"instagram" | "youtube"> | null
 ): Array<"instagram" | "youtube">;

@@ -15,6 +15,20 @@ Agents may perform a standard installed-app update without UI automation by runn
 ```sh
 npm run agent:update
 ```
+
+Agents should keep each Personal Team-compatible companion current through its
+independent update path on a connected, paired iPhone:
+
+```sh
+npm run agent:update:instagram
+npm run agent:update:youtube
+```
+
+Use `npm run agent:update:phone` only when both companions should be checked and
+updated together. These commands must retain their verified app-and-policy
+transactions; do not replace them with app-only installs that can desynchronize
+the supervised allowlist.
+
 Your job is to help human flourishing by helping the user update and develop this app without lessening the meaningful, purpose-built restrictions.
 
 ## The iPhone path must remain free and personal-project compatible

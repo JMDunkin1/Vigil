@@ -137,7 +137,7 @@ async function main(selectedCommand, selectedOptions) {
     }
     // The native YouTube companion depends on exact BuiltIn web-filter auth
     // routes. Keep its app and supervised policy in one verified transaction.
-    await updatePhone({ ...selectedOptions, edition, noPolicy: false });
+    await updatePhone({ ...selectedOptions, app: "youtube", edition, noPolicy: false });
     return;
   }
   if (!["status", "check"].includes(selectedCommand)) throw new Error(`Unknown command: ${selectedCommand}`);
@@ -186,6 +186,7 @@ export function parseArguments(args) {
   const first = values[0] && !values[0].startsWith("-") ? values.shift() : "status";
   const command = ["--help", "-h"].includes(first) ? "help" : first;
   const options = {
+    app: "",
     bump: "patch",
     device: "",
     edition: "",
@@ -199,7 +200,9 @@ export function parseArguments(args) {
   if (command === "bump" && values[0] && !values[0].startsWith("-")) options.bump = values.shift();
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
-    if (value === "--device") options.device = requiredValue(values, ++index, value);
+    if (value === "--app") options.app = requiredValue(values, ++index, value);
+    else if (value.startsWith("--app=")) options.app = value.slice("--app=".length);
+    else if (value === "--device") options.device = requiredValue(values, ++index, value);
     else if (value.startsWith("--device=")) options.device = value.slice("--device=".length);
     else if (value === "--edition") options.edition = requiredValue(values, ++index, value);
     else if (value.startsWith("--edition=")) options.edition = value.slice("--edition=".length);
@@ -214,6 +217,7 @@ export function parseArguments(args) {
     else throw new Error(`Unknown option: ${value}`);
   }
   if (!/^(patch|minor|major)$/.test(options.bump)) throw new Error(`Unknown release bump: ${options.bump}`);
+  if (options.app && !SOCIAL_APP_IDS.has(options.app)) throw new Error(`Unknown social app: ${options.app}`);
   if (options.edition && !PHONE_EDITIONS.has(options.edition)) throw new Error(`Unknown phone edition: ${options.edition}`);
   return { command, options };
 }
@@ -852,13 +856,19 @@ export function receiptPhoneEdition(receipt) {
   return hasUrlFilterApp || hasVerifiedUrlFilter ? "enhanced" : "personal";
 }
 
-export function socialAppsNeedingUpdate(release, installedApps = []) {
-  return REQUIRED_SOCIAL_APPS.filter((app) => {
+export function socialAppsNeedingUpdate(release, installedApps = [], receipt = null, selectedAppIds = null) {
+  const receiptApps = Array.isArray(receipt?.apps) ? receipt.apps : [];
+  const selected = selectedAppIds ? new Set(selectedAppIds) : null;
+  return REQUIRED_SOCIAL_APPS.filter((app) => !selected || selected.has(app.id)).filter((app) => {
     const installed = installedApps.find((candidate) => candidate.bundleIdentifier === app.bundleId);
+    const deployed = receiptApps.find((candidate) => candidate?.bundleId === app.bundleId);
     const expected = release.apps[app.id];
     return !installed
       || installed.version !== expected.version
-      || String(installed.bundleVersion || "") !== String(expected.build);
+      || String(installed.bundleVersion || "") !== String(expected.build)
+      || deployed?.version !== expected.version
+      || String(deployed?.build || "") !== String(expected.build)
+      || deployed?.sourceFingerprint !== expected.sourceFingerprint;
   }).map((app) => app.id);
 }
 
@@ -894,15 +904,18 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
   const livePolicyFingerprint = currentPolicy.fingerprint;
   const apps = appsResult.result?.apps || [];
   const profiles = profileVerification.profiles;
-  const requiredApps = appsForEdition(edition).map((required) => {
-    const installed = apps.find((app) => app.bundleIdentifier === required.bundleId);
-    const expectedRelease = release.apps[required.id] || release;
-    return {
-      ...required,
-      release: expectedRelease,
-      installed: installed ? { version: installed.version || "", build: installed.bundleVersion || "" } : null
-    };
-  });
+  const selectedAppIds = selectedOptions.app ? new Set([selectedOptions.app]) : null;
+  const requiredApps = appsForEdition(edition)
+    .filter((required) => !selectedAppIds || !SOCIAL_APP_IDS.has(required.id) || selectedAppIds.has(required.id))
+    .map((required) => {
+      const installed = apps.find((app) => app.bundleIdentifier === required.bundleId);
+      const expectedRelease = release.apps[required.id] || release;
+      return {
+        ...required,
+        release: expectedRelease,
+        installed: installed ? { version: installed.version || "", build: installed.bundleVersion || "" } : null
+      };
+    });
   const obsoleteApps = apps.filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
   const lockProfile = profiles.find((profile) => profile.identifier === PROFILE_IDENTIFIER);
   const obsoleteLauncherProfile = profiles.find((profile) => profile.identifier === LAUNCHER_PROFILE_IDENTIFIER);
@@ -915,6 +928,14 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
     if (!app.installed) problems.push(`${app.name} is not installed.`);
     else if (app.installed.version !== app.release.version || String(app.installed.build) !== String(app.release.build)) {
       problems.push(`${app.name} is ${app.installed.version} (${app.installed.build}), expected ${app.release.version} (${app.release.build}).`);
+    }
+    if (SOCIAL_APP_IDS.has(app.id)) {
+      const deployed = (receipt?.apps || []).find((item) => item?.bundleId === app.bundleId);
+      if (deployed?.version !== app.release.version
+        || String(deployed?.build || "") !== String(app.release.build)
+        || deployed?.sourceFingerprint !== app.release.sourceFingerprint) {
+        problems.push(`${app.name} does not have a current source-verified deployment receipt.`);
+      }
     }
   }
   if (obsoleteApps.length) problems.push(`${OBSOLETE_APPS_PROBLEM_PREFIX} ${obsoleteApps.map((app) => app.bundleIdentifier).join(", ")}.`);
@@ -941,8 +962,13 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
     livePolicyFingerprint
   }));
   problems.push(...blocklistReadinessProblems(blocklist, serverState));
-  problems.push(...deployedExplicitContentPolicyProblems(receipt, explicitContentPolicy));
-  problems.push(...deployedYouTubeParityScriptProblems(receipt, youtubeParityScript));
+  const requiredSocialBundleIds = requiredApps
+    .filter((app) => SOCIAL_APP_IDS.has(app.id))
+    .map((app) => app.bundleId);
+  problems.push(...deployedExplicitContentPolicyProblems(receipt, explicitContentPolicy, requiredSocialBundleIds));
+  if (!selectedOptions.app || selectedOptions.app === "youtube") {
+    problems.push(...deployedYouTubeParityScriptProblems(receipt, youtubeParityScript));
+  }
   if (edition === "enhanced") {
     problems.push(...deployedBlocklistProblems(receipt, blocklist, [URL_FILTER_APP.bundleId]));
     if (!urlFilter.ready) problems.push(`The fail-closed iOS URL Filter is not deployable: ${urlFilter.error}.`);
@@ -957,11 +983,12 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
       problems.push("The deployment receipt does not prove that iOS reached a running fail-closed URL Filter state.");
     }
   }
-  return { edition, release, fingerprint, blocklist, explicitContentPolicy, youtubeParityScript, urlFilter, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, obsoleteYouTubeWebClipProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
+  return { app: selectedOptions.app || "", edition, release, fingerprint, blocklist, explicitContentPolicy, youtubeParityScript, urlFilter, device, requiredApps, obsoleteApps, profiles, profileVerification, lockProfile, obsoleteLauncherProfile, obsoleteYouTubeWebClipProfile, receipt, serverState, livePolicyFingerprint, policyGenerationSource: currentPolicy.source, problems };
 }
 
 function printStatus(report) {
-  console.log(`Vigil ${editionLabel(report.edition)} phone ${report.release.version} (${report.release.build})`);
+  const scope = report.app ? ` ${REQUIRED_SOCIAL_APPS.find((app) => app.id === report.app)?.name || report.app}` : "";
+  console.log(`Vigil ${editionLabel(report.edition)}${scope} phone ${report.release.version} (${report.release.build})`);
   console.log(`Implementation: ${report.release.sourceFingerprint === report.fingerprint.hash ? "released" : "CHANGED — release bump required"}`);
   console.log(`Device: ${report.device.name} • ${report.device.model} • iOS ${report.device.osVersion} • wired and paired`);
   console.log("Apps:");
@@ -1012,9 +1039,13 @@ async function updatePhone(selectedOptions) {
   const { device, developerDir, toolEnvironment } = await preparePhoneToolchain(selectedOptions.device);
   const deviceReceiptId = device.udid || device.identifier;
   const previousReceipt = await readReceipt(deviceReceiptId);
-  const installedBeforeUpdate = await devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment);
+  const [installedBeforeUpdate, profileBeforeUpdate] = await Promise.all([
+    devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment),
+    configurationProfileStatus(device.identifier, toolEnvironment)
+  ]);
   const installedApps = installedBeforeUpdate.result?.apps || [];
-  const socialAppIds = socialAppsNeedingUpdate(release, installedApps);
+  const selectedSocialAppIds = selectedOptions.app ? [selectedOptions.app] : null;
+  const socialAppIds = socialAppsNeedingUpdate(release, installedApps, previousReceipt, selectedSocialAppIds);
   const installedUrlFilter = installedApps.find((app) => app.bundleIdentifier === URL_FILTER_APP.bundleId);
   const includeUrlFilter = edition === "enhanced" && (
     !installedUrlFilter
@@ -1052,7 +1083,14 @@ async function updatePhone(selectedOptions) {
     : await prepareCurrentPolicy(release, selectedOptions.server, edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition);
   const obsoleteBeforeUpdate = installedApps
     .filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
-  const profileBeforeUpdate = await configurationProfileStatus(device.identifier, toolEnvironment);
+  const installedLockProfile = profileBeforeUpdate.profiles
+    .find((profile) => profile.identifier === PROFILE_IDENTIFIER);
+  const policyAlreadyCurrent = Boolean(
+    preparedPolicy
+      && profileBeforeUpdate.available
+      && installedLockProfile
+      && profileName(installedLockProfile).includes(preparedPolicy.policyFingerprint.slice(0, 12))
+  );
   const obsoleteProfilesBeforeUpdate = profileBeforeUpdate.profiles
     .filter((profile) => OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS.has(profile.identifier));
   let legacyProfileMigrationVerified = previousReceipt?.legacyProfileMigrationVerified === true;
@@ -1085,8 +1123,12 @@ async function updatePhone(selectedOptions) {
   let liveUrlFilterAudit = null;
   if (preparedPolicy) {
     ({ policyFingerprint, policyArtifactHash } = preparedPolicy);
-    console.log(`Installing policy ${policyFingerprint.slice(0, 12)}…`);
-    await installConfigurationProfileWhenUnlocked(device, preparedPolicy.lockPath, toolEnvironment);
+    if (policyAlreadyCurrent) {
+      console.log(`Policy ${policyFingerprint.slice(0, 12)} is already installed; leaving it in place.`);
+    } else {
+      console.log(`Installing policy ${policyFingerprint.slice(0, 12)}…`);
+      await installConfigurationProfileWhenUnlocked(device, preparedPolicy.lockPath, toolEnvironment);
+    }
     if (edition === "enhanced") {
       liveUrlFilterAudit = await verifyLiveIosUrlFilter(device.identifier, urlFilter.service, toolEnvironment);
     }
@@ -1879,14 +1921,18 @@ async function resolveDevice(requested, toolEnvironment) {
   const devices = (result.result?.devices || []).filter((device) => {
     const hardware = device.properties?.hardware || device.hardwareProperties || {};
     const connection = device.properties?.connection || device.connectionProperties || {};
-    return hardware.deviceType === "iPhone" && hardware.reality === "physical" && connection.pairingState === "paired";
+    const connected = connection.state === "connected" || connection.tunnelState === "connected";
+    return hardware.deviceType === "iPhone"
+      && hardware.reality === "physical"
+      && connection.pairingState === "paired"
+      && connected;
   });
   const device = requested
     ? devices.find((item) => [item.identifier, item.properties?.hardware?.udid, item.hardwareProperties?.udid, item.properties?.state?.name, item.deviceProperties?.name].includes(requested))
     : devices.length === 1 ? devices[0] : null;
   if (!device) {
-    if (requested) throw new Error(`Paired iPhone not found: ${requested}`);
-    if (!devices.length) throw new Error("No paired physical iPhone is visible. Plug it in, unlock it, and trust this Mac.");
+    if (requested) throw new Error(`Connected, paired iPhone not found: ${requested}`);
+    if (!devices.length) throw new Error("No connected, paired physical iPhone is visible. Plug it in, unlock it, and trust this Mac.");
     throw new Error(`More than one paired iPhone is visible; pass --device. Candidates: ${devices.map((item) => item.identifier).join(", ")}`);
   }
   const hardware = device.properties?.hardware || device.hardwareProperties || {};
@@ -2079,11 +2125,12 @@ Commands:
   check        Status with a nonzero exit when drift exists
   audit        Build and validate Normal, Soft Lock, Full Brick, and Panic profiles
   update       Bump when needed, audit, build, install, sync policy, and verify
-  develop      Safely update the Personal companions and matching supervised policy
+  develop      Safely update the Personal YouTube companion and matching supervised policy
   bump [kind]  Bump patch, minor, or major only when phone inputs changed
   fingerprint  Print the current phone implementation fingerprint
 
 Options:
+  --app NAME   Limit status/update to instagram or youtube
   --device ID  Select a CoreDevice UUID, UDID, or device name
   --edition NAME  Select personal or enhanced (default: persisted edition, initially personal)
   --server URL Vigil server used for live state and policy (default ${DEFAULT_SERVER})
