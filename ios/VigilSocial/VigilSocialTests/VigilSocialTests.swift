@@ -5494,6 +5494,14 @@ final class VigilSocialTests: XCTestCase {
                     width: 220px;
                     height: 90px;
                   }
+                  .ytp-fullscreen-grid-expand-button {
+                    position: absolute;
+                    z-index: 21;
+                    left: 160px;
+                    top: 120px;
+                    width: 48px;
+                    height: 48px;
+                  }
                   ytm-fullscreen-related-videos-entry-point-view-model,
                   .fullscreen-recommendations-wrapper,
                   .ytFullscreenVideoRecommendationsHost {
@@ -5584,6 +5592,10 @@ final class VigilSocialTests: XCTestCase {
                         <div id="fixture-more-videos-grid" class="ytp-fullscreen-grid">
                           <button class="ytp-more-videos-button">More videos</button>
                           <div class="ytp-more-videos-view">Suggested videos</div>
+                          <button
+                            id="fixture-grid-expand"
+                            class="ytp-fullscreen-grid-expand-button"
+                          >Expand</button>
                         </div>
                         <div id="fixture-pause-overlay" class="ytp-pause-overlay-container">
                           <div class="ytp-pause-overlay">More videos while paused</div>
@@ -5624,6 +5636,7 @@ final class VigilSocialTests: XCTestCase {
                 </ytm-watch>
                 <script>
                   window.__vigilFixtureFullscreenClicks = 0;
+                  window.__vigilFixtureGridExpandClicks = 0;
                   window.__vigilFixtureFullscreenOrdinaryControlClicks = 0;
                   window.__vigilFixtureRecommendationClicks = 0;
                   window.__vigilFixtureHomeControlClicks = 0;
@@ -5674,6 +5687,11 @@ final class VigilSocialTests: XCTestCase {
 
                   document.querySelector('.ytp-fullscreen-button').addEventListener('click', () => {
                     window.__vigilFixtureFullscreenClicks += 1;
+                  });
+                  document.getElementById('fixture-grid-expand').addEventListener('click', () => {
+                    window.__vigilFixtureGridExpandClicks += 1;
+                    document.getElementById('fixture-more-videos-grid')
+                      .toggleAttribute('data-fixture-expanded');
                   });
                   document.getElementById('fixture-fullscreen-ordinary-control').addEventListener('click', () => {
                     window.__vigilFixtureFullscreenOrdinaryControlClicks += 1;
@@ -5826,6 +5844,7 @@ final class VigilSocialTests: XCTestCase {
             (() => {
               const player = document.getElementById('player');
               const grid = document.getElementById('fixture-more-videos-grid');
+              const gridExpand = document.getElementById('fixture-grid-expand');
               const pauseOverlay = document.getElementById('fixture-pause-overlay');
               const mobileMoreVideos = document.getElementById('fixture-mobile-more-videos');
               const portaledMoreVideos = document.getElementById('fixture-portaled-more-videos');
@@ -5849,9 +5868,11 @@ final class VigilSocialTests: XCTestCase {
                 );
                 return target === element || element.contains(target);
               };
-
               player.classList.remove('ytp-fullscreen');
               const inlineAllowed = window.__vigilYouTubeParityTest.updateMoreVideosAvailability();
+              const suppressedGridRetainsGeometry = grid.getBoundingClientRect().width > 0
+                && grid.getBoundingClientRect().height > 0;
+              const suppressedGridExpandHidden = !visible(gridExpand) && !hit(gridExpand);
               const fullscreenHittable = hit(fullscreen);
               if (fullscreenHittable) fullscreen.click();
               const ordinaryFullscreenControlHittable = hit(ordinaryFullscreenControl);
@@ -5874,6 +5895,8 @@ final class VigilSocialTests: XCTestCase {
                 inlineHidden: !visible(grid) && !visible(pauseOverlay)
                   && !visible(mobileMoreVideos) && !visible(portaledMoreVideos)
                   && !visible(fullscreenRecommendations),
+                suppressedGridRetainsGeometry,
+                suppressedGridExpandHidden,
                 portraitFullscreenAllowed,
                 portraitFullscreenHidden,
                 fullscreenHittable,
@@ -5899,6 +5922,8 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(portraitMoreVideos?["portrait"] as? Bool, true)
         XCTAssertEqual(portraitMoreVideos?["inlineAllowed"] as? Bool, false)
         XCTAssertEqual(portraitMoreVideos?["inlineHidden"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["suppressedGridRetainsGeometry"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["suppressedGridExpandHidden"] as? Bool, true)
         XCTAssertEqual(portraitMoreVideos?["portraitFullscreenAllowed"] as? Bool, false)
         XCTAssertEqual(portraitMoreVideos?["portraitFullscreenHidden"] as? Bool, true)
         XCTAssertEqual(portraitMoreVideos?["fullscreenHittable"] as? Bool, true)
@@ -5943,6 +5968,7 @@ final class VigilSocialTests: XCTestCase {
             (() => {
               const player = document.getElementById('player');
               const grid = document.getElementById('fixture-more-videos-grid');
+              const gridExpand = document.getElementById('fixture-grid-expand');
               const pauseOverlay = document.getElementById('fixture-pause-overlay');
               const mobileMoreVideos = document.getElementById('fixture-mobile-more-videos');
               const portaledMoreVideos = document.getElementById('fixture-portaled-more-videos');
@@ -5955,7 +5981,6 @@ final class VigilSocialTests: XCTestCase {
                 return element.isConnected && style.display !== 'none'
                   && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
               };
-
               player.classList.remove('ytp-fullscreen');
               const inlineAllowed = window.__vigilYouTubeParityTest.updateMoreVideosAvailability();
               const inlineHidden = !visible(grid) && !visible(pauseOverlay)
@@ -5966,6 +5991,12 @@ final class VigilSocialTests: XCTestCase {
               const fullscreenVisible = visible(grid) && visible(pauseOverlay)
                 && visible(mobileMoreVideos) && visible(portaledMoreVideos)
                 && visible(fullscreenRecommendations);
+              const gridExpandVisible = visible(gridExpand);
+              const gridExpandInteractive = getComputedStyle(grid).pointerEvents !== 'none'
+                && getComputedStyle(gridExpand).pointerEvents !== 'none';
+              if (gridExpandVisible && gridExpandInteractive) gridExpand.click();
+              const gridExpandWorked = grid.hasAttribute('data-fixture-expanded')
+                && window.__vigilFixtureGridExpandClicks === 1;
               const recommendationsPreserved = visible(recommendation)
                 && document.getElementById('fixture-watch-next').contains(recommendation);
               player.classList.remove('ytp-fullscreen');
@@ -5981,6 +6012,9 @@ final class VigilSocialTests: XCTestCase {
                 inlineHidden,
                 fullscreenAllowed,
                 fullscreenVisible,
+                gridExpandVisible,
+                gridExpandInteractive,
+                gridExpandWorked,
                 recommendationsPreserved,
                 exitAllowed,
                 hiddenAfterExit,
@@ -5997,6 +6031,9 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(landscapeMoreVideos?["inlineHidden"] as? Bool, true)
         XCTAssertEqual(landscapeMoreVideos?["fullscreenAllowed"] as? Bool, true)
         XCTAssertEqual(landscapeMoreVideos?["fullscreenVisible"] as? Bool, true)
+        XCTAssertEqual(landscapeMoreVideos?["gridExpandVisible"] as? Bool, true)
+        XCTAssertEqual(landscapeMoreVideos?["gridExpandInteractive"] as? Bool, true)
+        XCTAssertEqual(landscapeMoreVideos?["gridExpandWorked"] as? Bool, true)
         XCTAssertEqual(landscapeMoreVideos?["recommendationsPreserved"] as? Bool, true)
         XCTAssertEqual(landscapeMoreVideos?["exitAllowed"] as? Bool, false)
         XCTAssertEqual(landscapeMoreVideos?["hiddenAfterExit"] as? Bool, true)

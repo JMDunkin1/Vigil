@@ -388,7 +388,12 @@
       .ytp-more-videos-button, .ytp-more-videos-view, .ytp-fullscreen-grid,
       .ytp-pause-overlay, .ytp-pause-overlay-container, .ytp-endscreen-content
     ) {
-      display: none !important;
+      /* Keep YouTube's fullscreen-grid component measurable while suppressed.
+         Its expand control is initialized inside this tree and can remain inert
+         after an initial display:none layout, even once landscape fullscreen
+         makes the grid eligible again. */
+      visibility: hidden !important;
+      opacity: 0 !important;
       pointer-events: none !important;
     }
     html:not([${MORE_VIDEOS_ATTRIBUTE}="allowed"]) :is(
@@ -401,7 +406,8 @@
       .ytFullscreenVideoRecommendationsHost,
       .ytFullscreenVideoRecommendationsRecommendation
     ) {
-      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
       pointer-events: none !important;
     }
     html[${NATIVE_MINI_ATTRIBUTE}="true"],
