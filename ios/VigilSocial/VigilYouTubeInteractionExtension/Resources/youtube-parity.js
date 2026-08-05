@@ -6,6 +6,212 @@
   if (!allowedHosts.has(String(location.hostname || '').toLowerCase())) return;
   window.__vigilYouTubeParityInstalled = true;
 
+  const PLAYER_RESPONSE_PATHS = new Set([
+    '/youtubei/v1/player', '/youtubei/v1/get_watch', '/get_watch', '/playlist'
+  ]);
+  const PLAYER_AD_KEYS = ['adPlacements', 'playerAds', 'adSlots'];
+
+  const playerResponseURL = value => {
+    let raw = value;
+    if (typeof Request !== 'undefined' && value instanceof Request) raw = value.url;
+    else if (value instanceof URL) raw = value.href;
+    let url;
+    try { url = new URL(String(raw || ''), location.href); } catch { return false; }
+    return url.protocol === 'https:' && (!url.port || url.port === '443')
+      && allowedHosts.has(url.hostname.toLowerCase())
+      && PLAYER_RESPONSE_PATHS.has(url.pathname);
+  };
+
+  const plainRecord = value => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const prototype = Object.getPrototypeOf(value);
+    return prototype === Object.prototype || prototype === null;
+  };
+
+  const playablePlayerResponse = value => plainRecord(value)
+    && plainRecord(value.videoDetails)
+    && typeof value.videoDetails.videoId === 'string'
+    && value.videoDetails.videoId.length > 0
+    && (plainRecord(value.streamingData) || plainRecord(value.playabilityStatus));
+
+  const collectPlayerAdFields = (value, targets, seen = new WeakSet()) => {
+    if (!value || typeof value !== 'object' || seen.has(value)) return false;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      return value.every(item => collectPlayerAdFields(item, targets, seen));
+    }
+    if (!plainRecord(value)) return false;
+    if (playablePlayerResponse(value)) {
+      for (const key of PLAYER_AD_KEYS) {
+        if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor?.configurable || !Array.isArray(descriptor.value)) return false;
+        targets.push([value, key]);
+      }
+    }
+    if (!Object.prototype.hasOwnProperty.call(value, 'playerResponse')) return true;
+    const nested = value.playerResponse;
+    if (!nested || typeof nested !== 'object') return false;
+    return collectPlayerAdFields(nested, targets, seen);
+  };
+
+  const prunePlayerResponse = value => {
+    const targets = [];
+    try {
+      if (!collectPlayerAdFields(value, targets) || targets.length === 0) return false;
+      for (const [target, key] of targets) {
+        if (!Reflect.deleteProperty(target, key)) return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const clonedPrunedPlayerResponse = value => {
+    try {
+      const clone = JSON.parse(JSON.stringify(value));
+      return prunePlayerResponse(clone) ? clone : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const rewrittenHeaders = response => {
+    const headers = new Headers(response.headers);
+    for (const name of [
+      'content-encoding', 'content-length', 'content-md5', 'content-range',
+      'digest', 'etag', 'transfer-encoding'
+    ]) headers.delete(name);
+    return headers;
+  };
+
+  const eligiblePlayerResponse = response => {
+    if (!(response instanceof Response) || response.bodyUsed || response.status !== 200
+        || response.redirected || !['basic', 'cors', 'default'].includes(response.type)) return false;
+    if (response.url && !playerResponseURL(response.url)) return false;
+    return /(?:^|[/+])json(?:\s*;|$)/i.test(response.headers.get('content-type') || '');
+  };
+
+  const rewrittenPlayerResponse = responseBefore => {
+    if (!eligiblePlayerResponse(responseBefore)) return Promise.resolve(responseBefore);
+    return responseBefore.clone().json()
+      .then(payload => {
+        if (!prunePlayerResponse(payload)) return responseBefore;
+        const responseAfter = new Response(JSON.stringify(payload), {
+          status: responseBefore.status,
+          statusText: responseBefore.statusText,
+          headers: rewrittenHeaders(responseBefore)
+        });
+        for (const property of ['ok', 'redirected', 'type', 'url']) {
+          try {
+            Object.defineProperty(responseAfter, property, {
+              configurable: true,
+              value: responseBefore[property]
+            });
+          } catch {}
+        }
+        return responseAfter;
+      })
+      .catch(() => responseBefore);
+  };
+
+  const installFetchPlayerResponseGuard = () => {
+    if (typeof window.fetch !== 'function') return;
+    const nativeFetch = window.fetch;
+    window.fetch = new Proxy(nativeFetch, {
+      apply(target, thisArg, argumentsList) {
+        const result = Reflect.apply(target, thisArg, argumentsList);
+        if (!playerResponseURL(argumentsList[0])) return result;
+        return result.then(rewrittenPlayerResponse, () => result);
+      }
+    });
+  };
+
+  const installXHRPlayerResponseGuard = () => {
+    const NativeXHR = window.XMLHttpRequest;
+    if (typeof NativeXHR !== 'function') return;
+    const guardedRequests = new WeakMap();
+    window.XMLHttpRequest = class extends NativeXHR {
+      open(method, url, ...rest) {
+        guardedRequests.delete(this);
+        if (playerResponseURL(url)) guardedRequests.set(this, { cached: undefined, raw: undefined });
+        return super.open(method, url, ...rest);
+      }
+
+      get response() {
+        const raw = super.response;
+        const state = guardedRequests.get(this);
+        if (!state || this.readyState !== 4) return raw;
+        if ((Number(this.status) || 0) !== 200) return raw;
+        const responseURL = String(this.responseURL || '');
+        if (responseURL && !playerResponseURL(responseURL)) return raw;
+        const contentType = String(this.getResponseHeader?.('content-type') || '');
+        if (contentType && !/(?:^|[/+])json(?:\s*;|$)/i.test(contentType)) return raw;
+        if (!['', 'text', 'json'].includes(String(this.responseType || ''))) return raw;
+        if (state.raw === raw && state.cached !== undefined) return state.cached;
+        state.raw = raw;
+        let payload;
+        let wasText = false;
+        if (typeof raw === 'string') {
+          try {
+            payload = JSON.parse(raw);
+            wasText = true;
+          } catch {
+            state.cached = raw;
+            return raw;
+          }
+        } else {
+          payload = clonedPrunedPlayerResponse(raw);
+          if (!payload) {
+            state.cached = raw;
+            return raw;
+          }
+        }
+        if (wasText && (!payload || typeof payload !== 'object' || !prunePlayerResponse(payload))) {
+          state.cached = raw;
+          return raw;
+        }
+        state.cached = wasText ? JSON.stringify(payload) : payload;
+        return state.cached;
+      }
+
+      get responseText() {
+        const guarded = this.response;
+        return typeof guarded === 'string' ? guarded : super.responseText;
+      }
+    };
+  };
+
+  const installInitialPlayerResponseGuard = () => {
+    const key = 'ytInitialPlayerResponse';
+    const descriptor = Object.getOwnPropertyDescriptor(window, key);
+    if (descriptor) {
+      if ('value' in descriptor && descriptor.configurable) {
+        const sanitized = clonedPrunedPlayerResponse(descriptor.value);
+        if (sanitized) {
+          try { Object.defineProperty(window, key, { ...descriptor, value: sanitized }); } catch {}
+        }
+      }
+      return;
+    }
+    let current;
+    try {
+      Object.defineProperty(window, key, {
+        configurable: true,
+        enumerable: true,
+        get: () => current,
+        set: value => {
+          current = clonedPrunedPlayerResponse(value) || value;
+        }
+      });
+    } catch {}
+  };
+
+  installFetchPlayerResponseGuard();
+  installXHRPlayerResponseGuard();
+  installInitialPlayerResponseGuard();
+
   const MINI_ATTRIBUTE = 'data-vigil-youtube-miniplayer';
   const NATIVE_MINI_ATTRIBUTE = 'data-vigil-youtube-native-miniplayer';
   const SHELL_ID = 'vigil-youtube-miniplayer-shell';
@@ -13,6 +219,7 @@
   const HISTORY_STATE_KEY = '__vigilYouTubeMiniplayer';
   const HISTORY_MARKER_KIND = 'vigil-youtube-miniplayer-history-v1';
   const STYLE_ID = 'vigil-youtube-parity-style';
+  const MORE_VIDEOS_ATTRIBUTE = 'data-vigil-youtube-more-videos';
   const WATCH_SELECTOR = 'ytm-watch, ytd-watch-flexy, [page-subtype="watch"]';
   const PLAYER_SELECTOR = 'ytm-player, ytd-player, #player-container-id, #player';
   const SEEK_CONTROL_SELECTOR = [
@@ -21,16 +228,14 @@
   ].join(',');
   const FORM_CONTROL_SELECTOR = 'a, input, textarea, select';
   const AD_PLAYER_STATE_SELECTOR = '.ad-showing, .ad-interrupting';
-  const AD_SURFACE_SELECTOR = [
+  const COSMETIC_AD_SURFACE_SELECTOR = [
     'ytm-promoted-sparkles-web-renderer', 'ytd-promoted-sparkles-web-renderer',
     'ytm-companion-ad-renderer', 'ytd-companion-slot-renderer',
     'ytm-display-ad-renderer', 'ytd-display-ad-renderer',
     'ytm-promoted-video-renderer', 'ytd-promoted-video-renderer',
     'ytm-ad-slot-renderer', 'ytd-ad-slot-renderer',
     'ytm-in-feed-ad-layout-renderer', 'ytd-in-feed-ad-layout-renderer',
-    'ytd-banner-promo-renderer', 'ytd-statement-banner-renderer',
-    '[data-is-ad="true"]', '#masthead-ad',
-    '.ytp-ad-overlay-container', '.ytp-ad-player-overlay'
+    'ytd-banner-promo-renderer', '#masthead-ad'
   ].join(',');
   const AD_SKIP_SELECTOR = [
     '.ytp-ad-skip-button', '.ytp-ad-skip-button-modern',
@@ -82,8 +287,13 @@
   let lastPlaybackResumeAttemptAt = 0;
   let playbackRecoveryTimer = 0;
   let adAuditTimer = 0;
+  let adEpochPlayer = null;
+  let attemptedSkipControl = null;
+  let observedAdPlayer = null;
+  let adPlayerStateObserver = null;
+  let observedMoreVideosPlayerState = [];
+  let moreVideosPlayerStateObserver = null;
   let nativeMiniPlayer = null;
-  let nativeMiniVideo = null;
   let lastRoute = location.href;
   let suppressPlayerClickUntil = 0;
 
@@ -169,8 +379,30 @@
     ) {
       display: none !important;
     }
-    ${AD_SURFACE_SELECTOR} {
+    ${COSMETIC_AD_SURFACE_SELECTOR} {
       display: none !important;
+    }
+    html:not([${MORE_VIDEOS_ATTRIBUTE}="allowed"]) :is(
+      ytm-player, ytd-player, .html5-video-player
+    ) :is(
+      .ytp-more-videos-button, .ytp-more-videos-view, .ytp-fullscreen-grid,
+      .ytp-pause-overlay, .ytp-pause-overlay-container, .ytp-endscreen-content
+    ) {
+      display: none !important;
+      pointer-events: none !important;
+    }
+    html:not([${MORE_VIDEOS_ATTRIBUTE}="allowed"]) :is(
+      ytm-fullscreen-related-videos-entry-point-view-model,
+      .ytmFullscreenRelatedVideosEntryPointViewModelHost,
+      .fullscreen-watch-next-entrypoint-wrapper,
+      .fullscreen-more-videos-endpoint,
+      .fullscreen-recommendations-wrapper,
+      .fullscreen-recommendation,
+      .ytFullscreenVideoRecommendationsHost,
+      .ytFullscreenVideoRecommendationsRecommendation
+    ) {
+      display: none !important;
+      pointer-events: none !important;
     }
     html[${NATIVE_MINI_ATTRIBUTE}="true"],
     html[${NATIVE_MINI_ATTRIBUTE}="true"] body {
@@ -326,6 +558,52 @@
       || document.webkitFullscreenElement
       || video?.webkitDisplayingFullscreen
   );
+
+  const moreVideosAllowedForState = (fullscreen, width, height) => Boolean(
+    fullscreen && Number(width) > Number(height) && Number(height) > 0
+  );
+
+  const playerIsExpandedFullscreen = video => videoIsFullscreen(video)
+    || Boolean(video?.closest(
+      '.html5-video-player.ytp-fullscreen, ytm-player[fullscreen], ytd-player[fullscreen]'
+    ));
+
+  const observeMoreVideosPlayerState = video => {
+    const candidates = [
+      video?.closest('.html5-video-player'),
+      video?.closest('ytm-player'),
+      video?.closest('ytd-player')
+    ].filter((element, index, all) => element && all.indexOf(element) === index);
+    if (candidates.length === observedMoreVideosPlayerState.length
+        && candidates.every((element, index) => element === observedMoreVideosPlayerState[index])) return;
+    moreVideosPlayerStateObserver?.disconnect();
+    observedMoreVideosPlayerState = candidates;
+    moreVideosPlayerStateObserver = new MutationObserver(scheduleMoreVideosAvailability);
+    candidates.forEach(element => moreVideosPlayerStateObserver.observe(element, {
+      attributes: true,
+      attributeFilter: ['class', 'fullscreen']
+    }));
+  };
+
+  const updateMoreVideosAvailability = () => {
+    const video = mainVideo();
+    observeMoreVideosPlayerState(video);
+    const viewport = window.visualViewport;
+    const width = Number(viewport?.width || innerWidth || 0);
+    const height = Number(viewport?.height || innerHeight || 0);
+    const allowed = moreVideosAllowedForState(
+      playerIsExpandedFullscreen(video), width, height
+    );
+    html.setAttribute(MORE_VIDEOS_ATTRIBUTE, allowed ? 'allowed' : 'suppressed');
+    return allowed;
+  };
+
+  const scheduleMoreVideosAvailability = () => {
+    installStyle();
+    updateMoreVideosAvailability();
+    requestAnimationFrame(updateMoreVideosAvailability);
+    setTimeout(updateMoreVideosAvailability, 180);
+  };
 
   const enterFullscreen = video => {
     if (!video || videoIsFullscreen(video)) return false;
@@ -641,18 +919,41 @@
   const activeAdPlayer = () => Array.from(document.querySelectorAll(AD_PLAYER_STATE_SELECTOR))
     .find(player => player.querySelector('video')) || null;
 
-  const suppressYouTubeAds = root => {
-    const scope = root?.querySelectorAll ? root : document;
-    if (root instanceof Element && root.matches(AD_SURFACE_SELECTOR)) root.remove();
-    scope.querySelectorAll(AD_SURFACE_SELECTOR).forEach(element => element.remove());
+  const enabledSkipControl = element => visibleElement(element)
+    && !element.matches(':disabled, [aria-disabled="true"]');
 
+  const suppressYouTubeAds = () => {
     const player = activeAdPlayer();
-    if (!player) return false;
-    const skip = Array.from(player.querySelectorAll(AD_SKIP_SELECTOR)).find(visibleElement);
-    if (skip instanceof HTMLElement) {
-      try { skip.click(); } catch {}
+    if (!player) {
+      adEpochPlayer = null;
+      attemptedSkipControl = null;
+      return false;
     }
-    return Boolean(skip);
+    if (player !== adEpochPlayer) {
+      adEpochPlayer = player;
+      attemptedSkipControl = null;
+    }
+    observeAdPlayerState(player);
+    const skip = Array.from(player.querySelectorAll(AD_SKIP_SELECTOR))
+      .find(enabledSkipControl);
+    if (!(skip instanceof HTMLElement)) {
+      // YouTube can reuse the same button for a later ad after hiding or
+      // disabling it. Re-arm only after that control leaves its clickable
+      // state; never hammer a still-visible control once per audit interval.
+      if (attemptedSkipControl && !enabledSkipControl(attemptedSkipControl)) {
+        attemptedSkipControl = null;
+      }
+      return false;
+    }
+    if (skip === attemptedSkipControl) return false;
+    attemptedSkipControl = skip;
+    try {
+      skip.click();
+      return true;
+    } catch {
+      attemptedSkipControl = null;
+      return false;
+    }
   };
 
   const scheduleAdAudit = () => {
@@ -661,6 +962,30 @@
       adAuditTimer = 0;
       suppressYouTubeAds();
     }, 80);
+  };
+
+  const observeAdPlayerState = player => {
+    if (player === observedAdPlayer) return;
+    adPlayerStateObserver?.disconnect();
+    observedAdPlayer = player;
+    adPlayerStateObserver = new MutationObserver(records => {
+      const changed = records.some(record => {
+        const wasActive = /(?:^|\s)(?:ad-showing|ad-interrupting)(?:\s|$)/
+          .test(String(record.oldValue || ''));
+        const isActive = record.target instanceof Element
+          && record.target.matches(AD_PLAYER_STATE_SELECTOR);
+        return wasActive !== isActive;
+      });
+      if (!changed) return;
+      adEpochPlayer = null;
+      attemptedSkipControl = null;
+      scheduleAdAudit();
+    });
+    adPlayerStateObserver.observe(player, {
+      attributes: true,
+      attributeFilter: ['class'],
+      attributeOldValue: true
+    });
   };
 
   const clearDrag = () => {
@@ -1261,14 +1586,12 @@
     html.removeAttribute(NATIVE_MINI_ATTRIBUTE);
     nativeMiniPlayer?.removeAttribute('data-vigil-youtube-native-player');
     nativeMiniPlayer = null;
-    nativeMiniVideo = null;
   };
 
   const requestNativeMiniPlayer = (video, player) => {
     const bridge = window.webkit?.messageHandlers?.vigil;
     if (!bridge || typeof bridge.postMessage !== 'function') return false;
     nativeMiniPlayer = player;
-    nativeMiniVideo = video;
     player.setAttribute('data-vigil-youtube-native-player', 'true');
     html.setAttribute(NATIVE_MINI_ATTRIBUTE, 'true');
     try {
@@ -1573,7 +1896,14 @@
 
   document.addEventListener('fullscreenchange', () => {
     if (document.fullscreenElement) exitMiniPlayer();
+    scheduleMoreVideosAvailability();
   });
+  document.addEventListener('webkitfullscreenchange', scheduleMoreVideosAvailability);
+  document.addEventListener('webkitbeginfullscreen', scheduleMoreVideosAvailability, true);
+  document.addEventListener('webkitendfullscreen', scheduleMoreVideosAvailability, true);
+  addEventListener('resize', scheduleMoreVideosAvailability);
+  addEventListener('orientationchange', scheduleMoreVideosAvailability);
+  window.visualViewport?.addEventListener('resize', scheduleMoreVideosAvailability);
 
   document.addEventListener('click', event => {
     const target = event.target instanceof Element ? event.target : null;
@@ -1661,6 +1991,7 @@
   };
 
   installStyle();
+  updateMoreVideosAvailability();
   const mutationChangesPlayerTopology = mutation => {
     const selector = `${WATCH_SELECTOR}, ${PLAYER_SELECTOR}, video`;
     return [...mutation.addedNodes, ...mutation.removedNodes].some(node => (
@@ -1670,8 +2001,9 @@
 
   new MutationObserver(mutations => {
     if (mutations.some(mutation => mutation.addedNodes.length > 0)) scheduleAdAudit();
-    if ((restoreMode || pendingDestinationWatch)
-        && mutations.some(mutationChangesPlayerTopology)) {
+    const playerTopologyChanged = mutations.some(mutationChangesPlayerTopology);
+    if (playerTopologyChanged) scheduleMoreVideosAvailability();
+    if ((restoreMode || pendingDestinationWatch) && playerTopologyChanged) {
       restoreCandidateSince = performance.now();
     }
     routeAudit();
@@ -1680,6 +2012,17 @@
   });
   addEventListener('popstate', routeAudit, true);
   addEventListener('pageshow', routeAudit, true);
+  addEventListener('pageshow', scheduleMoreVideosAvailability, true);
+  addEventListener('pagehide', () => {
+    html.setAttribute(MORE_VIDEOS_ATTRIBUTE, 'suppressed');
+  }, true);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      html.setAttribute(MORE_VIDEOS_ATTRIBUTE, 'suppressed');
+      return;
+    }
+    scheduleMoreVideosAvailability();
+  }, true);
   for (const name of [
     'yt-navigate-finish', 'yt-page-data-updated',
     'state-navigateend', 'state-navigatecomplete', '__vigilRouteChanged'
@@ -1691,6 +2034,10 @@
   document.addEventListener('durationchange', scheduleAdAudit, true);
   suppressYouTubeAds();
   setInterval(suppressYouTubeAds, 1000);
+  setInterval(() => {
+    installStyle();
+    updateMoreVideosAvailability();
+  }, 1000);
   setInterval(routeAudit, 400);
 
   Object.defineProperty(window, '__vigilYouTubeParityTest', {
@@ -1707,6 +2054,8 @@
       suppressYouTubeAds,
       recoverMiniPlayerOwnership,
       reconcilePopRouteIndexForTest: reconcilePopRouteIndex,
+      moreVideosAllowedForState,
+      updateMoreVideosAvailability,
       enterFullscreen,
       playerForVideo,
       isShortsRoute,

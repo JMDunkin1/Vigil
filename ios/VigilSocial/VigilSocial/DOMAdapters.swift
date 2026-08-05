@@ -1562,6 +1562,7 @@ enum DOMAdapters {
     (() => {
       if (window.__vigilInstagramStableStartInstalled) return;
       window.__vigilInstagramStableStartInstalled = true;
+
       const style = document.createElement('style');
       style.id = 'vigil-instagram-stable-start-style';
       style.textContent = `
@@ -1589,6 +1590,19 @@ enum DOMAdapters {
         }
         html[data-vigil-route-policy-blocked] body {
           visibility: hidden !important;
+        }
+        video {
+          /* Instagram's web Reel/Story surface commonly fills a taller iPhone
+             box with object-fit: cover, which discards the left and right of a
+             9:16 source. Preserve the source aspect ratio and trade that crop
+             for centered letterboxing, matching the user's parity preference. */
+          max-width: 100% !important;
+          object-fit: contain !important;
+          object-position: center center !important;
+          background-color: #000 !important;
+          /* Instagram recycles video nodes between adjacent Reels. Never set
+             their width, height, opacity, or transition here: those properties
+             participate in its snap-stack measurements and loading state. */
         }
       `;
       document.documentElement.appendChild(style);
@@ -3334,8 +3348,7 @@ enum DOMAdapters {
         html:is([data-vigil-feature-ads="blocked"], [data-vigil-feature-ads="pending"]) ytm-display-ad-renderer,
         html:is([data-vigil-feature-ads="blocked"], [data-vigil-feature-ads="pending"]) ytm-promoted-video-renderer,
         html:is([data-vigil-feature-ads="blocked"], [data-vigil-feature-ads="pending"]) ytm-ad-slot-renderer,
-        html:is([data-vigil-feature-ads="blocked"], [data-vigil-feature-ads="pending"]) ytm-in-feed-ad-layout-renderer,
-        html:is([data-vigil-feature-ads="blocked"], [data-vigil-feature-ads="pending"]) [data-is-ad="true"] {
+        html:is([data-vigil-feature-ads="blocked"], [data-vigil-feature-ads="pending"]) ytm-in-feed-ad-layout-renderer {
           display: none !important;
         }
         html:is([data-vigil-feature-home="blocked"], [data-vigil-feature-home="pending"])[data-vigil-youtube-home="true"] ytm-rich-grid-renderer,
@@ -3564,10 +3577,14 @@ enum DOMAdapters {
           return score(right) - score(left);
         })[0] || null;
       };
+      const videoHasActiveAd = (video) => Boolean(
+        video?.closest('.ad-showing, .ad-interrupting')
+      );
       const savePlayback = (force = false) => {
         const video = attachedVideo;
         const key = attachedVideoKey;
         if (!video || !key || !Number.isFinite(video.currentTime) || video.currentTime < 0.5) return;
+        if (videoHasActiveAd(video)) return;
         if (video.dataset.vigilMediaVerdict !== 'safe'
             || document.documentElement.dataset.vigilPageVerdict !== 'safe') return;
         const now = Date.now();
@@ -3624,8 +3641,9 @@ enum DOMAdapters {
         const restore = () => {
           const video = mainVideo();
           if (!video || videoKey() !== key || explicitStartOffset() !== null
-              || !Number.isFinite(position) || position < 2) return;
+              || !Number.isFinite(position) || position < 2 || videoHasActiveAd(video)) return;
           const apply = () => {
+            if (videoHasActiveAd(video)) return;
             // Preserve a position already selected by YouTube's signed-in
             // session rather than racing it with the local fallback.
             if (video.currentTime > 3) return;
@@ -3831,7 +3849,7 @@ enum DOMAdapters {
           elementsWithin(
             root,
             'ytm-promoted-sparkles-web-renderer, ytm-companion-ad-renderer, ytm-display-ad-renderer, '
-            + 'ytm-promoted-video-renderer, ytm-ad-slot-renderer, ytm-in-feed-ad-layout-renderer, [data-is-ad="true"]'
+            + 'ytm-promoted-video-renderer, ytm-ad-slot-renderer, ytm-in-feed-ad-layout-renderer'
           ).forEach((node) => { node.dataset.vigilHiddenFeature = 'ads'; });
         }
         elementsWithin(root, 'button, [role="button"]').forEach((node) => {
@@ -3978,6 +3996,12 @@ enum DOMAdapters {
           }
           html[data-vigil-route-policy-blocked] body {
             visibility: hidden !important;
+          }
+          video {
+            max-width: 100% !important;
+            object-fit: contain !important;
+            object-position: center center !important;
+            background-color: #000 !important;
           }
         `;
         document.documentElement.appendChild(style);

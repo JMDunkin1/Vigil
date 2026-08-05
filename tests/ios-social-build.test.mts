@@ -112,13 +112,38 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
-  /webViewSafeAreaEdges: Edge\.Set = service == \.instagram\s*\? \[\]\s*: \.bottom/u,
-  "Instagram must keep one invariant safe-area frame across route changes"
+  /webViewSafeAreaEdges: Edge\.Set = service == \.instagram\s*\? \[\]\s*: \[\.top, \.bottom\]/u,
+  "Instagram must retain an invariant native safe-area frame"
 );
 assert.doesNotMatch(
   socialRootViewSource,
   /webViewSafeAreaEdges:[\s\S]{0,160}usesFullBleedTop/u,
   "Reels route reports must adjust content inset without resizing the WKWebView host"
+);
+assert.match(
+  socialWebViewStoreSource,
+  /contentInsetAdjustmentBehavior = service == \.instagram\s*\? \.never\s*: \.automatic[\s\S]*?webView\.load/u,
+  "Instagram must establish its invariant scroll-inset policy before its first load"
+);
+assert.doesNotMatch(
+  socialWebViewStoreSource,
+  /setSurface[\s\S]{0,900}contentInsetAdjustmentBehavior/u,
+  "Instagram route reports must not change viewport geometry after hydration"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /video \{[\s\S]*?max-width: 100% !important;[\s\S]*?object-fit: contain !important;[\s\S]*?object-position: center center !important;/u,
+  "Instagram video may contain its pixels without replacing site-authored dimensions"
+);
+assert.doesNotMatch(
+  instagramStableAdapterSource,
+  /video \{[\s\S]{0,700}?(?:\n\s+width: 100% !important|\n\s+height: 100% !important|opacity:|transition:)/u,
+  "Instagram must not resize or hide recycled Reel video nodes"
+);
+assert.doesNotMatch(
+  socialDOMAdaptersSource,
+  /viewport-fit=cover|data-vigil-instagram-(?:bottom-chrome|direct-header|direct-back|fit-ready)/u,
+  "Instagram safe areas must be owned by the native host rather than private DOM heuristics"
 );
 assert.match(
   socialRootViewSource,

@@ -990,7 +990,7 @@ function printStatus(report) {
   const scope = report.app ? ` ${REQUIRED_SOCIAL_APPS.find((app) => app.id === report.app)?.name || report.app}` : "";
   console.log(`Vigil ${editionLabel(report.edition)}${scope} phone ${report.release.version} (${report.release.build})`);
   console.log(`Implementation: ${report.release.sourceFingerprint === report.fingerprint.hash ? "released" : "CHANGED — release bump required"}`);
-  console.log(`Device: ${report.device.name} • ${report.device.model} • iOS ${report.device.osVersion} • wired and paired`);
+  console.log(`Device: ${report.device.name} • ${report.device.model} • iOS ${report.device.osVersion} • ${report.device.connection} and paired`);
   console.log("Apps:");
   for (const app of report.requiredApps) {
     console.log(`- ${app.name}: ${app.installed ? `${app.installed.version} (${app.installed.build})` : "missing"} • expected ${app.release.version} (${app.release.build})`);
@@ -1091,6 +1091,9 @@ async function updatePhone(selectedOptions) {
       && installedLockProfile
       && profileName(installedLockProfile).includes(preparedPolicy.policyFingerprint.slice(0, 12))
   );
+  if (preparedPolicy && !policyAlreadyCurrent && device.connection !== "wired" && await existingSupervisorKeybagPath()) {
+    throw new Error("The companion apps can update wirelessly, but this release must also replace the non-removable supervised policy. Connect the paired iPhone over USB for that protected supervisor-keybag transaction, then rerun the same command.");
+  }
   const obsoleteProfilesBeforeUpdate = profileBeforeUpdate.profiles
     .filter((profile) => OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS.has(profile.identifier));
   let legacyProfileMigrationVerified = previousReceipt?.legacyProfileMigrationVerified === true;
@@ -1921,30 +1924,53 @@ async function resolveDevice(requested, toolEnvironment) {
   const devices = (result.result?.devices || []).filter((device) => {
     const hardware = device.properties?.hardware || device.hardwareProperties || {};
     const connection = device.properties?.connection || device.connectionProperties || {};
-    const connected = connection.state === "connected" || connection.tunnelState === "connected";
     return hardware.deviceType === "iPhone"
       && hardware.reality === "physical"
-      && connection.pairingState === "paired"
-      && connected;
+      && connection.pairingState === "paired";
   });
-  const device = requested
+  let device = requested
     ? devices.find((item) => [item.identifier, item.properties?.hardware?.udid, item.hardwareProperties?.udid, item.properties?.state?.name, item.deviceProperties?.name].includes(requested))
     : devices.length === 1 ? devices[0] : null;
   if (!device) {
-    if (requested) throw new Error(`Connected, paired iPhone not found: ${requested}`);
-    if (!devices.length) throw new Error("No connected, paired physical iPhone is visible. Plug it in, unlock it, and trust this Mac.");
+    if (requested) throw new Error(`Paired physical iPhone not found: ${requested}`);
+    if (!devices.length) throw new Error("No paired physical iPhone is visible. Unlock it, trust this Mac, and make it reachable over USB or the local network.");
     throw new Error(`More than one paired iPhone is visible; pass --device. Candidates: ${devices.map((item) => item.identifier).join(", ")}`);
+  }
+  if (!isLiveCoreDeviceConnection(device)) {
+    try {
+      // USB is not required: asking for details wakes and verifies a trusted
+      // CoreDevice tunnel over either the local network or a wired connection.
+      const details = await devicectlJson(["device", "info", "details", "--device", device.identifier], toolEnvironment);
+      device = details.result || device;
+    } catch (error) {
+      const detail = [error?.stderr, error?.message].filter(Boolean).join(" ").trim();
+      throw new Error(`The paired iPhone is not reachable over USB or the local network. Unlock it and ensure it is visible to Xcode.${detail ? ` ${detail}` : ""}`, { cause: error });
+    }
+  }
+  if (!isLiveCoreDeviceConnection(device)) {
+    throw new Error("The paired iPhone is not reachable over USB or the local network. Unlock it and ensure it is visible to Xcode.");
   }
   const hardware = device.properties?.hardware || device.hardwareProperties || {};
   const software = device.properties?.software || device.deviceProperties || {};
   const state = device.properties?.state || device.deviceProperties || {};
   return {
+    connection: coreDeviceConnectionLabel(device),
     identifier: device.identifier,
     udid: hardware.udid || "",
     name: state.name || "iPhone",
     model: hardware.marketingName || hardware.productType || "iPhone",
     osVersion: software.osVersionNumber?.stringValue || software.osVersionNumber || "unknown"
   };
+}
+
+export function isLiveCoreDeviceConnection(device) {
+  const connection = device?.properties?.connection || device?.connectionProperties || {};
+  return connection.state === "connected" || connection.tunnelState === "connected";
+}
+
+export function coreDeviceConnectionLabel(device) {
+  const connection = device?.properties?.connection || device?.connectionProperties || {};
+  return connection.transportType === "wired" ? "wired" : connection.transportType === "localNetwork" ? "wireless" : "connected";
 }
 
 async function selectDeveloperDirectory() {

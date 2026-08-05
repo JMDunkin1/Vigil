@@ -69,6 +69,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private static let maximumConcurrentMediaClassifications = 4
     private static let maximumPendingMediaClassifications = 12
     private static let maximumMediaRetryTasks = 12
+    static let youtubePlaybackPositionNamespace = "VigilSocial.youtube.position.v2"
     init(
         defaults: UserDefaults = .standard,
         fixedService: SocialService? = nil,
@@ -194,6 +195,14 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        // Finalize viewport geometry before the first navigation. RootView
+        // already keeps Instagram's WKWebView inside the system safe area, so
+        // automatic scroll insets would apply that spacing a second time. One
+        // invariant policy also prevents the startup resize/flicker seen when
+        // Instagram hydrates its fixed shell.
+        webView.scrollView.contentInsetAdjustmentBehavior = service == .instagram
+            ? .never
+            : .automatic
         if service == .instagram {
             // Keep an opaque native backing surface visible while Instagram
             // replaces its SPA document. A transparent WKWebView exposes the
@@ -219,7 +228,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         webView.allowsBackForwardNavigationGestures = service.allowsBackForwardNavigationGestures
         webView.allowsLinkPreview = false
         webView.scrollView.alwaysBounceVertical = false
-        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
         webView.scrollView.isDirectionalLockEnabled = service.usesDirectionalScrollLock
         webView.scrollView.keyboardDismissMode = .interactive
         let refreshControl = UIRefreshControl()
@@ -1016,9 +1024,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             // Safari. Route-gating it keeps center-screen carousels, Stories,
             // Reels, feed swipes, and modals entirely owned by Instagram.
             webView.allowsBackForwardNavigationGestures = surface.allowsInstagramEdgeBack
-            webView.scrollView.contentInsetAdjustmentBehavior = surface.fullBleedTop
-                ? .never
-                : .automatic
         }
         let scrollView = webView.scrollView
         let allowsRefresh = surface.allowsRefresh
@@ -1190,7 +1195,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     private func playbackKey(_ videoID: String) -> String {
-        "VigilSocial.youtube.position.\(videoID)"
+        "\(Self.youtubePlaybackPositionNamespace).\(videoID)"
     }
 
     private func javascriptString(_ value: String) -> String {

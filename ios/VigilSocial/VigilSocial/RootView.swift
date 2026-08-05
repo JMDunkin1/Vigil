@@ -22,12 +22,13 @@ struct RootView: View {
             : store.reportedChromeIsDark(for: service)
         let isDark = reportedIsDark ?? (colorScheme == .dark)
         let primaryWebView = store.webView(for: service)
-        // Keep the focused Instagram wrapper inside the ordinary iOS safe
-        // area. Instagram owns its layout; Vigil no longer stretches or
-        // reshapes Reels and Stories beneath the status/home-indicator areas.
+        // Instagram's web UI owns many fixed headers, bottom bars, and modal
+        // controls that change without notice. Keep its whole WKWebView inside
+        // the native safe area instead of guessing which private DOM nodes need
+        // padding. The invariant frame also avoids route-change remeasurement.
         let webViewSafeAreaEdges: Edge.Set = service == .instagram
             ? []
-            : .bottom
+            : [.top, .bottom]
         return ZStack {
             (isDark ? Color.black : Color.white)
                 .ignoresSafeArea()

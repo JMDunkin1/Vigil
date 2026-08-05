@@ -32,6 +32,10 @@ selected companion when it needs an update, keeps the matching supervised policy
 synchronized, and verifies that companion's resulting device state. It does not
 reboot, erase, re-enroll, or weaken supervision.
 
-The iPhone must be connected by USB, unlocked when profile installation needs
-it, trusted and paired, and visible to Xcode. Personal Team signing remains the
-supported default and requires no paid Apple Developer Program membership.
+The iPhone must be unlocked when profile installation needs it, trusted and
+paired, visible to Xcode, and reachable through a wired or wireless CoreDevice
+connection. USB is not required for normal companion updates. If the
+non-removable supervised policy itself has changed, Vigil will ask for USB so it
+can retain the verified supervisor-keybag installation transaction. Personal
+Team signing remains the supported default and requires no paid Apple Developer
+Program membership.

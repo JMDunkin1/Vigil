@@ -7,8 +7,10 @@ import {
   incrementVersion,
   inspectPhoneBlocklistBytes,
   blocklistReadinessProblems,
+  coreDeviceConnectionLabel,
   deployedBlocklistProblems,
   iosSdkSupportsDevice,
+  isLiveCoreDeviceConnection,
   isLegacyPhoneBundleIdentifier,
   isPhoneImplementationFile,
   isSocialAppImplementationFile,
@@ -71,10 +73,23 @@ assert.match(
   /policyAlreadyCurrent[\s\S]*?profileName\(installedLockProfile\)\.includes\(preparedPolicy\.policyFingerprint\.slice\(0, 12\)\)[\s\S]*?if \(policyAlreadyCurrent\)[\s\S]*?already installed; leaving it in place/u,
   "frequent phone updates must preserve an already-matching supervised policy instead of replacing it"
 );
+const disconnectedWirelessPhone = {
+  properties: { connection: { pairingState: "paired", state: "disconnected", transportType: "localNetwork" } }
+};
+assert.equal(isLiveCoreDeviceConnection(disconnectedWirelessPhone), false);
+assert.equal(coreDeviceConnectionLabel(disconnectedWirelessPhone), "wireless");
+assert.equal(isLiveCoreDeviceConnection({ properties: { connection: { state: "connected" } } }), true);
+assert.equal(isLiveCoreDeviceConnection({ connectionProperties: { tunnelState: "connected" } }), true);
+assert.equal(coreDeviceConnectionLabel({ connectionProperties: { transportType: "wired" } }), "wired");
 assert.match(
   phoneSuiteSource,
-  /connection\.state === "connected" \|\| connection\.tunnelState === "connected"/u,
-  "phone status and updates must reject disconnected CoreDevice records instead of treating empty responses as device state"
+  /USB is not required:[\s\S]*?devicectlJson\(\["device", "info", "details", "--device", device\.identifier\]/u,
+  "phone discovery must wake and verify a paired wireless CoreDevice tunnel before rejecting the device"
+);
+assert.match(
+  phoneSuiteSource,
+  /preparedPolicy && !policyAlreadyCurrent && device\.connection !== "wired"[\s\S]*?non-removable supervised policy[\s\S]*?protected supervisor-keybag transaction/u,
+  "a wireless update must fail before app installation when a changed supervised policy still requires USB"
 );
 assert.equal(parseArguments(["bump", "minor"]).options.bump, "minor");
 assert.throws(() => parseArguments(["update", "--wat"]), /Unknown option/);

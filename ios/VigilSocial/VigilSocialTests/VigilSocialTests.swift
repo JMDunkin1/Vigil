@@ -2498,6 +2498,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(script.contains("data-vigil-policy-tier=\"soft\""))
         XCTAssertTrue(script.contains("playbackRequest"))
         XCTAssertTrue(script.contains("__vigilRestorePlayback"))
+        XCTAssertTrue(script.contains("videoHasActiveAd(video)"))
         XCTAssertTrue(script.contains("ytm-open-app-button"))
         XCTAssertTrue(script.contains("disallowed_useragent"))
         XCTAssertTrue(script.contains("YouTube is signed out"))
@@ -4558,7 +4559,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(webView.allowsBackForwardNavigationGestures)
         XCTAssertEqual(refreshControl?.isEnabled, false)
         XCTAssertFalse(webView.scrollView.alwaysBounceVertical)
-        XCTAssertEqual(webView.scrollView.contentInsetAdjustmentBehavior, .automatic)
+        XCTAssertEqual(webView.scrollView.contentInsetAdjustmentBehavior, .never)
 
         store.setSurface(
             SocialSurfaceState(route: "feed", refreshEligible: true, blocksRefresh: false),
@@ -4575,7 +4576,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(refreshControl?.isEnabled, false)
         XCTAssertFalse(webView.scrollView.alwaysBounceVertical)
         XCTAssertFalse(webView.allowsBackForwardNavigationGestures)
-        XCTAssertEqual(webView.scrollView.contentInsetAdjustmentBehavior, .automatic)
+        XCTAssertEqual(webView.scrollView.contentInsetAdjustmentBehavior, .never)
 
         store.setSurface(
             SocialSurfaceState(
@@ -4595,7 +4596,7 @@ final class VigilSocialTests: XCTestCase {
             for: .instagram
         )
         XCTAssertTrue(webView.allowsBackForwardNavigationGestures)
-        XCTAssertEqual(webView.scrollView.contentInsetAdjustmentBehavior, .automatic)
+        XCTAssertEqual(webView.scrollView.contentInsetAdjustmentBehavior, .never)
         XCTAssertFalse(store.usesFullBleedTop(for: .instagram))
 
         store.setSurface(
@@ -4613,7 +4614,11 @@ final class VigilSocialTests: XCTestCase {
 
     @MainActor
     func testInstagramStableAdapterLeavesSiteLayoutAndAppearanceAlone() {
-        let script = DOMAdapters.script(for: .instagram, audioEnabled: true)
+        let script = DOMAdapters.script(
+            for: .instagram,
+            audioEnabled: true,
+            contentSafetyEnabled: false
+        )
 
         XCTAssertTrue(script.contains("window.__vigilInstagramInstalled = true"))
         XCTAssertTrue(script.contains("a[href=\"/reels/\"]"))
@@ -4622,6 +4627,17 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("path.startsWith('/reel/')"))
         XCTAssertTrue(script.contains("{ childList: true, subtree: true }"))
         XCTAssertTrue(script.contains("fullBleedTop: false"))
+        XCTAssertTrue(script.contains("object-fit: contain !important"))
+        XCTAssertTrue(script.contains("object-position: center center !important"))
+        XCTAssertTrue(script.contains("max-width: 100% !important"))
+        XCTAssertFalse(script.contains("max-width: 100vw !important"))
+        XCTAssertFalse(script.contains("\n            width: 100% !important;"))
+        XCTAssertFalse(script.contains("\n            height: 100% !important;"))
+        XCTAssertFalse(script.contains("data-vigil-instagram-bottom-chrome"))
+        XCTAssertFalse(script.contains("data-vigil-instagram-direct-header"))
+        XCTAssertFalse(script.contains("data-vigil-instagram-direct-back"))
+        XCTAssertFalse(script.contains("data-vigil-instagram-fit-ready"))
+        XCTAssertFalse(script.contains("viewport-fit=cover"))
         XCTAssertFalse(script.contains("article a[href*=\"/reel/\"]"))
         XCTAssertFalse(script.contains("touchmove"))
         XCTAssertFalse(script.contains("normalizeReelSurface"))
@@ -4629,6 +4645,112 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(script.contains("normalizeCommentSheets"))
         XCTAssertFalse(script.contains("vigilInstagramRepostProxy"))
         XCTAssertFalse(script.contains("attributeFilter: ["))
+    }
+
+    @MainActor
+    func testInstagramSafeAreaAdapterPreservesReelStackAndDirectControls() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.documentStartScript(
+                for: .instagram,
+                unclassifiedMediaPolicy: .revealUnclassified,
+                audioEnabled: true,
+                contentSafetyEnabled: false
+            ),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.script(
+                for: .instagram,
+                audioEnabled: true,
+                contentSafetyEnabled: false
+            ),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let loaded = expectation(description: "Instagram safe-area fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            #"""
+            <html><head>
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <style>
+                html, body { margin: 0; width: 100%; height: 100%; }
+                main { width: 100%; }
+                article { width: 100%; height: 760px; overflow: hidden; }
+                video { display: block; width: 430px; height: 760px; opacity: 1; }
+                header { height: 52px; }
+                #back { display: block; width: 44px; height: 44px; }
+                nav { height: 52px; display: flex; }
+                nav a { flex: 1; }
+              </style>
+            </head><body>
+              <header><button id="back" aria-label="Back">Back</button></header>
+              <main>
+                <article><video id="first"></video></article>
+                <article><video id="second"></video></article>
+              </main>
+              <nav>
+                <a href="/">Home</a>
+                <a href="/reels/">Reels</a>
+                <a href="/direct/inbox/">Direct</a>
+                <a href="/explore/">Search</a>
+                <a href="/fixture-profile/">Profile</a>
+              </nav>
+            </body></html>
+            """#,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+        try await Task.sleep(nanoseconds: 120_000_000)
+
+        let state = try await webView.evaluateJavaScript(
+            #"""
+            (() => {
+              const first = document.getElementById('first');
+              const second = document.getElementById('second');
+              const back = document.getElementById('back');
+              const navigation = document.querySelector('nav');
+              const firstStyle = getComputedStyle(first);
+              const firstRect = first.getBoundingClientRect();
+              const secondRect = second.getBoundingClientRect();
+              const backRect = back.getBoundingClientRect();
+              return {
+                viewport: document.querySelector('meta[name="viewport"]')?.content || '',
+                navigationMarked: [...navigation.attributes]
+                  .some((attribute) => attribute.name.startsWith('data-vigil-instagram')),
+                backMarked: [...back.attributes]
+                  .some((attribute) => attribute.name.startsWith('data-vigil-instagram')),
+                backTop: backRect.top,
+                videoWidth: firstStyle.width,
+                videoHeight: firstStyle.height,
+                videoMaxWidth: firstStyle.maxWidth,
+                videoFit: firstStyle.objectFit,
+                videoOpacity: firstStyle.opacity,
+                reelSpacing: secondRect.top - firstRect.top
+              };
+            })()
+            """#
+        ) as? [String: Any]
+        XCTAssertFalse((state?["viewport"] as? String)?.contains("viewport-fit=cover") == true)
+        XCTAssertEqual(state?["navigationMarked"] as? Bool, false)
+        XCTAssertEqual(state?["backMarked"] as? Bool, false)
+        XCTAssertEqual(state?["backTop"] as? Double, 0)
+        XCTAssertEqual(state?["videoWidth"] as? String, "390px")
+        XCTAssertEqual(state?["videoHeight"] as? String, "760px")
+        XCTAssertEqual(state?["videoMaxWidth"] as? String, "100%")
+        XCTAssertEqual(state?["videoFit"] as? String, "contain")
+        XCTAssertEqual(state?["videoOpacity"] as? String, "1")
+        XCTAssertEqual(state?["reelSpacing"] as? Double, 760)
+        webView.navigationDelegate = nil
     }
 
     @MainActor
@@ -5250,6 +5372,81 @@ final class VigilSocialTests: XCTestCase {
     func testYouTubeInteractionExtensionMiniplayerLifecycle() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
+            source: #"""
+            (() => {
+              const fixturePayload = () => ({
+                videoDetails: { videoId: 'ordinary-video', title: 'Ordinary video' },
+                streamingData: { formats: [{ itag: 18, url: 'https://media.example/video' }] },
+                adPlacements: [{ adPlacementRenderer: { config: 'fixture' } }],
+                playerAds: [{ playerLegacyDesktopWatchAdsRenderer: { config: 'fixture' } }],
+                adSlots: [{ adSlotRenderer: { slotId: 'fixture-slot' } }],
+                playerResponse: {
+                  videoDetails: { videoId: 'nested-video' },
+                  playabilityStatus: { status: 'OK' },
+                  adPlacements: [{ nested: true }],
+                  playerAds: [{ nested: true }],
+                  adSlots: [{ nested: true }]
+                },
+                metadata: {
+                  adPlacements: 'ordinary nested metadata must remain',
+                  playerAds: 'ordinary nested metadata must remain'
+                }
+              });
+              window.fetch = input => {
+                const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+                if (url.searchParams.get('malformed') === 'true') {
+                  return Promise.resolve(new Response('not-json', {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' }
+                  }));
+                }
+                const payload = fixturePayload();
+                if (url.searchParams.get('schema') === 'drift') {
+                  payload.adPlacements = { unexpected: true };
+                }
+                const response = new Response(JSON.stringify(payload), {
+                  status: url.searchParams.get('partial') === 'true' ? 206 : 200,
+                  statusText: 'Fixture response',
+                  headers: {
+                    'content-encoding': 'gzip',
+                    'content-length': '999',
+                    'content-type': url.searchParams.get('plain') === 'true'
+                      ? 'text/plain'
+                      : 'application/json',
+                    'etag': 'stale-fixture',
+                    'x-vigil-fixture': 'true'
+                  }
+                });
+                Object.defineProperty(response, 'url', { value: url.href });
+                return Promise.resolve(response);
+              };
+              window.XMLHttpRequest = class {
+                constructor() {
+                  this.readyState = 0;
+                  this.responseType = '';
+                  this.responseURL = '';
+                  this.status = 0;
+                  this.fixturePayload = fixturePayload();
+                }
+                open(_method, url) {
+                  this.fixtureURL = new URL(String(url), location.href);
+                  this.responseURL = this.fixtureURL.href;
+                  this.status = 200;
+                  this.readyState = 1;
+                }
+                send() { this.readyState = 4; }
+                getResponseHeader(name) {
+                  return String(name).toLowerCase() === 'content-type' ? 'application/json' : null;
+                }
+                get response() { return JSON.stringify(this.fixturePayload); }
+                get responseText() { return JSON.stringify(this.fixturePayload); }
+              };
+            })();
+            """#,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        controller.addUserScript(WKUserScript(
             source: try youtubeInteractionExtensionSource(),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
@@ -5284,8 +5481,65 @@ final class VigilSocialTests: XCTestCase {
                   html, body { margin: 0; min-height: 100%; }
                   [hidden] { display: none !important; }
                   ytm-player, #player-container-id, #player, video { display: block; width: 390px; height: 220px; background: black; }
-                  .ytp-ad-skip-button { display: block; width: 96px; height: 44px; }
+                  #player { position: relative; }
+                  .ytp-fullscreen-grid, .ytp-pause-overlay-container {
+                    position: absolute;
+                    z-index: 20;
+                    inset: 0 0 52px;
+                    display: block;
+                    background: rgba(20, 20, 20, .92);
+                  }
+                  .ytp-more-videos-view, .ytp-pause-overlay {
+                    display: block;
+                    width: 220px;
+                    height: 90px;
+                  }
+                  ytm-fullscreen-related-videos-entry-point-view-model,
+                  .fullscreen-recommendations-wrapper,
+                  .ytFullscreenVideoRecommendationsHost {
+                    position: absolute;
+                    z-index: 40;
+                    right: 0;
+                    bottom: 0;
+                    display: block;
+                    width: 240px;
+                    height: 96px;
+                    background: rgba(20, 20, 20, .92);
+                  }
+                  .fullscreen-more-videos-endpoint {
+                    display: block;
+                    width: 180px;
+                    height: 48px;
+                  }
+                  player-fullscreen-controls .fullscreen-controls {
+                    position: absolute;
+                    z-index: 35;
+                    left: 0;
+                    top: 60px;
+                    display: block;
+                    width: 80px;
+                    height: 104px;
+                  }
+                  #fixture-fullscreen-ordinary-control {
+                    position: absolute;
+                    z-index: 45;
+                    left: 0;
+                    top: 0;
+                    width: 44px;
+                    height: 44px;
+                  }
+                  .ytp-fullscreen-button {
+                    position: absolute;
+                    z-index: 30;
+                    right: 4px;
+                    bottom: 4px;
+                    width: 104px;
+                    height: 44px;
+                  }
+                  .ytp-ad-player-overlay { display: block; width: 240px; height: 72px; }
+                  .ytp-ad-skip-button, .ytp-ad-skip-button-modern { display: block; width: 96px; height: 44px; }
                   ytm-single-column-watch-next-results-renderer { display: block; height: 1200px; }
+                  #fixture-below-recommendation { display: block; width: 180px; height: 44px; }
                   #fixture-home-content, #fixture-other-content { min-height: 1100px; padding: 72px 20px 100px; }
                   #fixture-home-action { width: 160px; height: 44px; }
                   #fixture-navigation {
@@ -5324,18 +5578,54 @@ final class VigilSocialTests: XCTestCase {
                 <ytm-watch id="fixture-watch-content">
                   <ytm-player id="fixture-player">
                     <div id="player-container-id">
-                      <div id="player">
+                      <div id="player" class="html5-video-player">
                         <video playsinline></video>
                         <input id="seek" type="range" aria-label="Seek">
-                        <button class="ytp-fullscreen-button" aria-label="Full screen">Full screen</button>
+                        <div id="fixture-more-videos-grid" class="ytp-fullscreen-grid">
+                          <button class="ytp-more-videos-button">More videos</button>
+                          <div class="ytp-more-videos-view">Suggested videos</div>
+                        </div>
+                        <div id="fixture-pause-overlay" class="ytp-pause-overlay-container">
+                          <div class="ytp-pause-overlay">More videos while paused</div>
+                        </div>
+                        <div class="fullscreen-watch-next-entrypoint-wrapper">
+                          <ytm-fullscreen-related-videos-entry-point-view-model
+                            id="fixture-mobile-more-videos"
+                            class="ytmFullscreenRelatedVideosEntryPointViewModelHost"
+                          >
+                            <button class="ytmFullscreenRelatedVideosEntryPointViewModelButton fullscreen-more-videos-endpoint">More videos</button>
+                          </ytm-fullscreen-related-videos-entry-point-view-model>
+                        </div>
+                        <button id="fixture-fullscreen" class="ytp-fullscreen-button" aria-label="Full screen">Full screen</button>
                       </div>
                     </div>
                   </ytm-player>
+                  <div id="fixture-portaled-more-videos" class="fullscreen-recommendations-wrapper">
+                    Portaled fullscreen recommendations
+                  </div>
+                  <player-fullscreen-controls>
+                    <div class="fullscreen-controls expanded">
+                      <button id="fixture-fullscreen-ordinary-control">Settings</button>
+                      <div id="fixture-fullscreen-recommendations" class="ytFullscreenVideoRecommendationsHost">
+                        <div class="ytFullscreenVideoRecommendationsRecommendation fullscreen-recommendation">
+                          Expanded fullscreen recommendation
+                        </div>
+                      </div>
+                    </div>
+                  </player-fullscreen-controls>
                   <h1>Fixture ordinary video</h1>
-                  <ytm-single-column-watch-next-results-renderer></ytm-single-column-watch-next-results-renderer>
+                  <ytm-single-column-watch-next-results-renderer id="fixture-watch-next">
+                    <ytm-compact-video-renderer>
+                      <a id="fixture-below-recommendation" href="/watch?v=recommended-video">
+                        Recommended video
+                      </a>
+                    </ytm-compact-video-renderer>
+                  </ytm-single-column-watch-next-results-renderer>
                 </ytm-watch>
                 <script>
                   window.__vigilFixtureFullscreenClicks = 0;
+                  window.__vigilFixtureFullscreenOrdinaryControlClicks = 0;
+                  window.__vigilFixtureRecommendationClicks = 0;
                   window.__vigilFixtureHomeControlClicks = 0;
                   window.__vigilFixtureHomeContentClicks = 0;
                   window.__vigilFixturePauseCalls = 0;
@@ -5384,6 +5674,13 @@ final class VigilSocialTests: XCTestCase {
 
                   document.querySelector('.ytp-fullscreen-button').addEventListener('click', () => {
                     window.__vigilFixtureFullscreenClicks += 1;
+                  });
+                  document.getElementById('fixture-fullscreen-ordinary-control').addEventListener('click', () => {
+                    window.__vigilFixtureFullscreenOrdinaryControlClicks += 1;
+                  });
+                  document.getElementById('fixture-below-recommendation').addEventListener('click', event => {
+                    event.preventDefault();
+                    window.__vigilFixtureRecommendationClicks += 1;
                   });
 
                   const renderFixtureRoute = () => {
@@ -5516,38 +5813,456 @@ final class VigilSocialTests: XCTestCase {
             "window.__vigilYouTubeParityTest != null",
             in: webView
         )
+        _ = try await webView.evaluateJavaScript(
+            "document.getElementById('vigil-youtube-parity-style')?.remove(); true"
+        )
+        try await waitForJavaScriptCondition(
+            "document.getElementById('vigil-youtube-parity-style') != null",
+            in: webView
+        )
+
+        let portraitMoreVideos = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            #"""
+            (() => {
+              const player = document.getElementById('player');
+              const grid = document.getElementById('fixture-more-videos-grid');
+              const pauseOverlay = document.getElementById('fixture-pause-overlay');
+              const mobileMoreVideos = document.getElementById('fixture-mobile-more-videos');
+              const portaledMoreVideos = document.getElementById('fixture-portaled-more-videos');
+              const fullscreenRecommendations =
+                document.getElementById('fixture-fullscreen-recommendations');
+              const fullscreen = document.getElementById('fixture-fullscreen');
+              const ordinaryFullscreenControl =
+                document.getElementById('fixture-fullscreen-ordinary-control');
+              const recommendation = document.getElementById('fixture-below-recommendation');
+              const visible = element => {
+                const style = getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                return element.isConnected && style.display !== 'none'
+                  && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+              };
+              const hit = element => {
+                const rect = element.getBoundingClientRect();
+                const target = document.elementFromPoint(
+                  rect.left + rect.width / 2,
+                  rect.top + rect.height / 2
+                );
+                return target === element || element.contains(target);
+              };
+
+              player.classList.remove('ytp-fullscreen');
+              const inlineAllowed = window.__vigilYouTubeParityTest.updateMoreVideosAvailability();
+              const fullscreenHittable = hit(fullscreen);
+              if (fullscreenHittable) fullscreen.click();
+              const ordinaryFullscreenControlHittable = hit(ordinaryFullscreenControl);
+              if (ordinaryFullscreenControlHittable) ordinaryFullscreenControl.click();
+              const recommendationHittable = hit(recommendation);
+              if (recommendationHittable) recommendation.click();
+
+              player.classList.add('ytp-fullscreen');
+              const portraitFullscreenAllowed =
+                window.__vigilYouTubeParityTest.updateMoreVideosAvailability();
+              const portraitFullscreenHidden = !visible(grid) && !visible(pauseOverlay)
+                && !visible(mobileMoreVideos) && !visible(portaledMoreVideos)
+                && !visible(fullscreenRecommendations);
+              player.classList.remove('ytp-fullscreen');
+              window.__vigilYouTubeParityTest.updateMoreVideosAvailability();
+
+              return {
+                portrait: innerWidth < innerHeight,
+                inlineAllowed,
+                inlineHidden: !visible(grid) && !visible(pauseOverlay)
+                  && !visible(mobileMoreVideos) && !visible(portaledMoreVideos)
+                  && !visible(fullscreenRecommendations),
+                portraitFullscreenAllowed,
+                portraitFullscreenHidden,
+                fullscreenHittable,
+                fullscreenClicks: window.__vigilFixtureFullscreenClicks,
+                ordinaryFullscreenControlVisible: visible(ordinaryFullscreenControl),
+                ordinaryFullscreenControlHittable,
+                ordinaryFullscreenControlClicks:
+                  window.__vigilFixtureFullscreenOrdinaryControlClicks,
+                recommendationVisible: visible(recommendation),
+                recommendationHittable,
+                recommendationClicks: window.__vigilFixtureRecommendationClicks,
+                normalRecommendationsConnected:
+                  document.getElementById('fixture-watch-next').contains(recommendation),
+                classifierMatrix:
+                  !window.__vigilYouTubeParityTest.moreVideosAllowedForState(false, 844, 390)
+                  && !window.__vigilYouTubeParityTest.moreVideosAllowedForState(true, 390, 844)
+                  && window.__vigilYouTubeParityTest.moreVideosAllowedForState(true, 844, 390)
+              };
+            })()
+            """#,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(portraitMoreVideos?["portrait"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["inlineAllowed"] as? Bool, false)
+        XCTAssertEqual(portraitMoreVideos?["inlineHidden"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["portraitFullscreenAllowed"] as? Bool, false)
+        XCTAssertEqual(portraitMoreVideos?["portraitFullscreenHidden"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["fullscreenHittable"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["fullscreenClicks"] as? Int, 1)
+        XCTAssertEqual(portraitMoreVideos?["ordinaryFullscreenControlVisible"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["ordinaryFullscreenControlHittable"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["ordinaryFullscreenControlClicks"] as? Int, 1)
+        XCTAssertEqual(portraitMoreVideos?["recommendationVisible"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["recommendationHittable"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["recommendationClicks"] as? Int, 1)
+        XCTAssertEqual(portraitMoreVideos?["normalRecommendationsConnected"] as? Bool, true)
+        XCTAssertEqual(portraitMoreVideos?["classifierMatrix"] as? Bool, true)
+
+        webView.frame = CGRect(x: 0, y: 0, width: 844, height: 390)
+        try await waitForJavaScriptCondition(
+            "(window.visualViewport?.width || innerWidth) > (window.visualViewport?.height || innerHeight)",
+            in: webView
+        )
+        _ = try await webView.evaluateJavaScript(
+            "document.getElementById('player').classList.remove('ytp-fullscreen'); true"
+        )
+        try await waitForJavaScriptCondition(
+            "document.documentElement.getAttribute('data-vigil-youtube-more-videos') === 'suppressed'",
+            in: webView
+        )
+        _ = try await webView.evaluateJavaScript(
+            "document.getElementById('player').classList.add('ytp-fullscreen'); true"
+        )
+        try await waitForJavaScriptCondition(
+            "document.documentElement.getAttribute('data-vigil-youtube-more-videos') === 'allowed'",
+            in: webView
+        )
+        _ = try await webView.evaluateJavaScript(
+            "document.getElementById('player').classList.remove('ytp-fullscreen'); true"
+        )
+        try await waitForJavaScriptCondition(
+            "document.documentElement.getAttribute('data-vigil-youtube-more-videos') === 'suppressed'",
+            in: webView
+        )
+        let landscapeMoreVideos = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            #"""
+            (() => {
+              const player = document.getElementById('player');
+              const grid = document.getElementById('fixture-more-videos-grid');
+              const pauseOverlay = document.getElementById('fixture-pause-overlay');
+              const mobileMoreVideos = document.getElementById('fixture-mobile-more-videos');
+              const portaledMoreVideos = document.getElementById('fixture-portaled-more-videos');
+              const fullscreenRecommendations =
+                document.getElementById('fixture-fullscreen-recommendations');
+              const recommendation = document.getElementById('fixture-below-recommendation');
+              const visible = element => {
+                const style = getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                return element.isConnected && style.display !== 'none'
+                  && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+              };
+
+              player.classList.remove('ytp-fullscreen');
+              const inlineAllowed = window.__vigilYouTubeParityTest.updateMoreVideosAvailability();
+              const inlineHidden = !visible(grid) && !visible(pauseOverlay)
+                && !visible(mobileMoreVideos) && !visible(portaledMoreVideos)
+                && !visible(fullscreenRecommendations);
+              player.classList.add('ytp-fullscreen');
+              const fullscreenAllowed = window.__vigilYouTubeParityTest.updateMoreVideosAvailability();
+              const fullscreenVisible = visible(grid) && visible(pauseOverlay)
+                && visible(mobileMoreVideos) && visible(portaledMoreVideos)
+                && visible(fullscreenRecommendations);
+              const recommendationsPreserved = visible(recommendation)
+                && document.getElementById('fixture-watch-next').contains(recommendation);
+              player.classList.remove('ytp-fullscreen');
+              const exitAllowed = window.__vigilYouTubeParityTest.updateMoreVideosAvailability();
+              const hiddenAfterExit = !visible(grid) && !visible(pauseOverlay)
+                && !visible(mobileMoreVideos) && !visible(portaledMoreVideos)
+                && !visible(fullscreenRecommendations);
+
+              return {
+                landscape: (window.visualViewport?.width || innerWidth)
+                  > (window.visualViewport?.height || innerHeight),
+                inlineAllowed,
+                inlineHidden,
+                fullscreenAllowed,
+                fullscreenVisible,
+                recommendationsPreserved,
+                exitAllowed,
+                hiddenAfterExit,
+                overlaysRemainConnected: grid.isConnected && pauseOverlay.isConnected
+                  && mobileMoreVideos.isConnected && portaledMoreVideos.isConnected
+                  && fullscreenRecommendations.isConnected
+              };
+            })()
+            """#,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(landscapeMoreVideos?["landscape"] as? Bool, true)
+        XCTAssertEqual(landscapeMoreVideos?["inlineAllowed"] as? Bool, false)
+        XCTAssertEqual(landscapeMoreVideos?["inlineHidden"] as? Bool, true)
+        XCTAssertEqual(landscapeMoreVideos?["fullscreenAllowed"] as? Bool, true)
+        XCTAssertEqual(landscapeMoreVideos?["fullscreenVisible"] as? Bool, true)
+        XCTAssertEqual(landscapeMoreVideos?["recommendationsPreserved"] as? Bool, true)
+        XCTAssertEqual(landscapeMoreVideos?["exitAllowed"] as? Bool, false)
+        XCTAssertEqual(landscapeMoreVideos?["hiddenAfterExit"] as? Bool, true)
+        XCTAssertEqual(landscapeMoreVideos?["overlaysRemainConnected"] as? Bool, true)
+
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        try await waitForJavaScriptCondition(
+            "(window.visualViewport?.width || innerWidth) < (window.visualViewport?.height || innerHeight)",
+            in: webView
+        )
+        _ = try await webView.evaluateJavaScript(
+            "window.__vigilFixtureFullscreenClicks = 0; true"
+        )
+
+        let responsePrevention = try await webView.callAsyncJavaScript(
+            #"""
+            const fetchResponse = await fetch('/youtubei/v1/player?fixture=true');
+            const fetchPayload = await fetchResponse.json();
+            const ordinaryResponse = await fetch('/youtubei/v1/next?fixture=true');
+            const ordinaryPayload = await ordinaryResponse.json();
+            const malformedResponse = await fetch('/youtubei/v1/player?malformed=true');
+            const malformedText = await malformedResponse.text();
+            const driftPayload = await (
+              await fetch('/youtubei/v1/player?schema=drift')
+            ).json();
+            const partialPayload = await (
+              await fetch('/youtubei/v1/player?partial=true')
+            ).json();
+            const plainPayload = await (
+              await fetch('/youtubei/v1/player?plain=true')
+            ).json();
+
+            const playerXHR = new XMLHttpRequest();
+            playerXHR.open('POST', '/youtubei/v1/player?fixture=true');
+            playerXHR.send();
+            const playerXHRPayload = JSON.parse(playerXHR.responseText);
+            const ordinaryXHR = new XMLHttpRequest();
+            ordinaryXHR.open('POST', '/youtubei/v1/next?fixture=true');
+            ordinaryXHR.send();
+            const ordinaryXHRPayload = JSON.parse(ordinaryXHR.responseText);
+
+            const reusedXHR = new XMLHttpRequest();
+            reusedXHR.open('POST', '/youtubei/v1/player?fixture=true');
+            reusedXHR.send();
+            const reusedPlayerPayload = JSON.parse(reusedXHR.responseText);
+            reusedXHR.open('POST', '/youtubei/v1/next?fixture=true');
+            reusedXHR.send();
+            const reusedOrdinaryPayload = JSON.parse(reusedXHR.responseText);
+
+            window.ytInitialPlayerResponse = {
+              videoDetails: { videoId: 'initial-video' },
+              streamingData: { formats: [{ itag: 18 }] },
+              adPlacements: [{ initial: true }],
+              playerAds: [{ initial: true }],
+              adSlots: [{ initial: true }],
+              playerResponse: {
+                videoDetails: { videoId: 'nested-initial-video' },
+                playabilityStatus: { status: 'OK' },
+                adPlacements: [{ nested: true }],
+                playerAds: [{ nested: true }],
+                adSlots: [{ nested: true }]
+              }
+            };
+            const initialPayload = window.ytInitialPlayerResponse;
+
+            return {
+              fetchAdsRemoved: !('adPlacements' in fetchPayload)
+                && !('playerAds' in fetchPayload)
+                && !('adSlots' in fetchPayload)
+                && !('adPlacements' in fetchPayload.playerResponse)
+                && !('playerAds' in fetchPayload.playerResponse)
+                && !('adSlots' in fetchPayload.playerResponse),
+              fetchContentPreserved: fetchPayload.videoDetails.videoId === 'ordinary-video'
+                && fetchPayload.streamingData.formats[0].itag === 18
+                && fetchPayload.metadata.adPlacements === 'ordinary nested metadata must remain'
+                && fetchPayload.metadata.playerAds === 'ordinary nested metadata must remain',
+              fetchMetadataPreserved: fetchResponse.status === 200
+                && fetchResponse.statusText === 'Fixture response'
+                && fetchResponse.headers.get('x-vigil-fixture') === 'true'
+                && fetchResponse.headers.get('content-encoding') === null
+                && fetchResponse.headers.get('content-length') === null
+                && fetchResponse.headers.get('etag') === null,
+              ordinaryFetchUntouched: 'adPlacements' in ordinaryPayload
+                && 'playerAds' in ordinaryPayload
+                && 'adSlots' in ordinaryPayload,
+              malformedFailOpen: malformedText === 'not-json',
+              schemaDriftFailOpen: !Array.isArray(driftPayload.adPlacements)
+                && 'playerAds' in driftPayload
+                && 'adSlots' in driftPayload,
+              non200FailOpen: 'adPlacements' in partialPayload
+                && 'playerAds' in partialPayload
+                && 'adSlots' in partialPayload,
+              nonJSONFailOpen: 'adPlacements' in plainPayload
+                && 'playerAds' in plainPayload
+                && 'adSlots' in plainPayload,
+              xhrAdsRemoved: !('adPlacements' in playerXHRPayload)
+                && !('playerAds' in playerXHRPayload)
+                && !('adSlots' in playerXHRPayload)
+                && !('adPlacements' in playerXHRPayload.playerResponse)
+                && !('playerAds' in playerXHRPayload.playerResponse)
+                && !('adSlots' in playerXHRPayload.playerResponse),
+              xhrContentPreserved: playerXHRPayload.videoDetails.videoId === 'ordinary-video'
+                && playerXHRPayload.streamingData.formats[0].itag === 18,
+              ordinaryXHRUntouched: 'adPlacements' in ordinaryXHRPayload
+                && 'playerAds' in ordinaryXHRPayload
+                && 'adSlots' in ordinaryXHRPayload,
+              reusedXHRScoped: !('adPlacements' in reusedPlayerPayload)
+                && 'adPlacements' in reusedOrdinaryPayload
+                && 'playerAds' in reusedOrdinaryPayload
+                && 'adSlots' in reusedOrdinaryPayload,
+              initialAdsRemoved: !('adPlacements' in initialPayload)
+                && !('playerAds' in initialPayload)
+                && !('adSlots' in initialPayload)
+                && !('adPlacements' in initialPayload.playerResponse)
+                && !('playerAds' in initialPayload.playerResponse)
+                && !('adSlots' in initialPayload.playerResponse),
+              initialContentPreserved: initialPayload.videoDetails.videoId === 'initial-video'
+                && initialPayload.playerResponse.videoDetails.videoId === 'nested-initial-video'
+            };
+            """#,
+            arguments: [:],
+            in: nil,
+            contentWorld: .page
+        ) as? [String: Any]
+        XCTAssertEqual(responsePrevention?["fetchAdsRemoved"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["fetchContentPreserved"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["fetchMetadataPreserved"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["ordinaryFetchUntouched"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["malformedFailOpen"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["schemaDriftFailOpen"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["non200FailOpen"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["nonJSONFailOpen"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["xhrAdsRemoved"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["xhrContentPreserved"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["ordinaryXHRUntouched"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["reusedXHRScoped"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["initialAdsRemoved"] as? Bool, true)
+        XCTAssertEqual(responsePrevention?["initialContentPreserved"] as? Bool, true)
 
         let adSuppression = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
             (() => {
               const player = document.getElementById('player');
+              const video = player.querySelector('video');
+              const initialMedia = {
+                currentTime: video.currentTime,
+                playbackRate: video.playbackRate,
+                muted: video.muted,
+                playCalls: window.__vigilFixturePlayCalls,
+                pauseCalls: window.__vigilFixturePauseCalls
+              };
+              const overlay = document.createElement('div');
+              overlay.className = 'ytp-ad-player-overlay';
               const button = document.createElement('button');
-              button.className = 'ytp-ad-skip-button';
+              button.className = 'ytp-ad-skip-button-modern';
               button.textContent = 'Skip ad';
               button.addEventListener('click', () => {
                 window.__vigilFixtureAdSkipClicks += 1;
+                window.__vigilFixtureAdOverlayConnectedAtClick = overlay.isConnected;
+                window.__vigilFixtureAdOverlayVisibleAtClick =
+                  getComputedStyle(overlay).display !== 'none'
+                  && overlay.getBoundingClientRect().width > 0;
                 player.classList.remove('ad-showing');
               });
+              overlay.append(button);
               player.classList.add('ad-showing');
-              player.append(button);
+              player.append(overlay);
               const suppressed = window.__vigilYouTubeParityTest.suppressYouTubeAds();
+              const duplicateSuppressed = window.__vigilYouTubeParityTest.suppressYouTubeAds();
+              player.classList.add('ad-showing');
+              const reusedControlSuppressed =
+                window.__vigilYouTubeParityTest.suppressYouTubeAds();
+
+              overlay.remove();
+              const unskippableOverlay = document.createElement('div');
+              unskippableOverlay.className = 'ytp-ad-player-overlay';
+              unskippableOverlay.textContent = 'Ad playing';
+              player.dataset.isAd = 'true';
+              player.classList.add('ad-showing');
+              player.append(unskippableOverlay);
+              const unskippableMedia = {
+                currentTime: video.currentTime,
+                playbackRate: video.playbackRate,
+                muted: video.muted,
+                playCalls: window.__vigilFixturePlayCalls,
+                pauseCalls: window.__vigilFixturePauseCalls
+              };
+              const unskippableSuppressed =
+                window.__vigilYouTubeParityTest.suppressYouTubeAds();
               window.__vigilYouTubeParityTest.suppressYouTubeAds();
+              const unskippablePreserved = unskippableOverlay.isConnected
+                && getComputedStyle(unskippableOverlay).display !== 'none'
+                && getComputedStyle(player).display !== 'none'
+                && video.currentTime === unskippableMedia.currentTime
+                && video.playbackRate === unskippableMedia.playbackRate
+                && video.muted === unskippableMedia.muted
+                && window.__vigilFixturePlayCalls === unskippableMedia.playCalls
+                && window.__vigilFixturePauseCalls === unskippableMedia.pauseCalls;
+
+              unskippableOverlay.remove();
+              delete player.dataset.isAd;
+              const countdownOverlay = document.createElement('div');
+              countdownOverlay.className = 'ytp-ad-player-overlay';
+              const countdownButton = document.createElement('button');
+              countdownButton.className = 'ytp-ad-skip-button';
+              countdownButton.textContent = 'Skip ad';
+              countdownButton.disabled = true;
+              countdownButton.addEventListener('click', () => {
+                window.__vigilFixtureAdSkipClicks += 1;
+                player.classList.remove('ad-showing');
+              });
+              countdownOverlay.append(countdownButton);
+              player.append(countdownOverlay);
+              const disabledSuppressed = window.__vigilYouTubeParityTest.suppressYouTubeAds();
+              countdownButton.disabled = false;
+              const enabledSuppressed = window.__vigilYouTubeParityTest.suppressYouTubeAds();
+
+              const lookalike = document.createElement('button');
+              lookalike.className = 'ytp-ad-skip-button';
+              lookalike.textContent = 'Ordinary page control';
+              lookalike.addEventListener('click', () => {
+                window.__vigilFixtureAdSkipClicks += 100;
+              });
+              document.body.append(lookalike);
+              const lookalikeSuppressed = window.__vigilYouTubeParityTest.suppressYouTubeAds();
+
+              const cosmeticAd = document.createElement('ytm-in-feed-ad-layout-renderer');
+              document.body.append(cosmeticAd);
               return {
                 suppressed,
+                duplicateSuppressed,
+                reusedControlSuppressed,
                 skipClicks: window.__vigilFixtureAdSkipClicks,
                 adEnded: !player.classList.contains('ad-showing'),
-                mutedRestored: document.querySelector('video').muted === false,
-                speedRestored: document.querySelector('video').playbackRate === 1
+                overlayConnectedAtClick: window.__vigilFixtureAdOverlayConnectedAtClick,
+                overlayVisibleAtClick: window.__vigilFixtureAdOverlayVisibleAtClick,
+                unskippableSuppressed,
+                unskippablePreserved,
+                disabledSuppressed,
+                enabledSuppressed,
+                lookalikeSuppressed,
+                cosmeticAdHidden: getComputedStyle(cosmeticAd).display === 'none',
+                currentTimePreserved: video.currentTime === initialMedia.currentTime,
+                mutedPreserved: video.muted === initialMedia.muted,
+                speedPreserved: video.playbackRate === initialMedia.playbackRate
               };
             })()
             """,
             in: webView
         ) as? [String: Any]
         XCTAssertEqual(adSuppression?["suppressed"] as? Bool, true)
-        XCTAssertEqual(adSuppression?["skipClicks"] as? Int, 1)
+        XCTAssertEqual(adSuppression?["duplicateSuppressed"] as? Bool, false)
+        XCTAssertEqual(adSuppression?["reusedControlSuppressed"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["skipClicks"] as? Int, 3)
         XCTAssertEqual(adSuppression?["adEnded"] as? Bool, true)
-        XCTAssertEqual(adSuppression?["mutedRestored"] as? Bool, true)
-        XCTAssertEqual(adSuppression?["speedRestored"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["overlayConnectedAtClick"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["overlayVisibleAtClick"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["unskippableSuppressed"] as? Bool, false)
+        XCTAssertEqual(adSuppression?["unskippablePreserved"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["disabledSuppressed"] as? Bool, false)
+        XCTAssertEqual(adSuppression?["enabledSuppressed"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["lookalikeSuppressed"] as? Bool, false)
+        XCTAssertEqual(adSuppression?["cosmeticAdHidden"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["currentTimePreserved"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["mutedPreserved"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["speedPreserved"] as? Bool, true)
 
         let unsafePopGrowthIsRejected = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
@@ -6624,13 +7339,39 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(source.contains("routePlaybackTransitionUntil = performance.now() + 3200"))
         XCTAssertTrue(source.contains("scheduleMiniPlaybackRecovery()"))
         XCTAssertTrue(source.contains("recoverMiniPlayerOwnership()"))
+        XCTAssertTrue(source.contains("const PLAYER_RESPONSE_PATHS"))
+        XCTAssertTrue(source.contains("window.fetch = new Proxy(nativeFetch"))
+        XCTAssertTrue(source.contains("window.XMLHttpRequest = class extends NativeXHR"))
+        XCTAssertTrue(source.contains("installInitialPlayerResponseGuard()"))
+        XCTAssertTrue(source.contains("'ytInitialPlayerResponse'"))
+        XCTAssertTrue(source.contains("const MORE_VIDEOS_ATTRIBUTE"))
+        XCTAssertTrue(source.contains(".ytp-more-videos-button"))
+        XCTAssertTrue(source.contains(".ytp-more-videos-view"))
+        XCTAssertTrue(source.contains(".ytp-fullscreen-grid"))
+        XCTAssertTrue(source.contains("ytm-fullscreen-related-videos-entry-point-view-model"))
+        XCTAssertTrue(source.contains(".ytmFullscreenRelatedVideosEntryPointViewModelHost"))
+        XCTAssertTrue(source.contains(".fullscreen-watch-next-entrypoint-wrapper"))
+        XCTAssertTrue(source.contains(".fullscreen-more-videos-endpoint"))
+        XCTAssertTrue(source.contains(".fullscreen-recommendations-wrapper"))
+        XCTAssertTrue(source.contains(".ytFullscreenVideoRecommendationsHost"))
+        XCTAssertFalse(source.contains("player-fullscreen-controls .fullscreen-controls"))
+        XCTAssertTrue(source.contains("moreVideosAllowedForState"))
         XCTAssertTrue(source.contains(".ytp-ad-skip-button-modern"))
         XCTAssertTrue(source.contains("ytd-in-feed-ad-layout-renderer"))
+        XCTAssertFalse(source.contains("'[data-is-ad=\"true\"]'"))
+        XCTAssertFalse(source.contains("'.ytp-ad-overlay-container'"))
+        XCTAssertFalse(source.contains("'.ytp-ad-player-overlay'"))
         XCTAssertFalse(source.contains("video.playbackRate = 16"))
         XCTAssertFalse(source.contains("video.currentTime = duration"))
+        XCTAssertFalse(source.contains("seekTo("))
+        XCTAssertFalse(source.contains("loadVideoById("))
         XCTAssertTrue(source.contains("type: 'youtubeMinimize'"))
         XCTAssertTrue(source.contains("__vigilExitNativeYouTubeMiniPlayer"))
         XCTAssertFalse(source.contains("accounts.google.com"))
+        XCTAssertEqual(
+            SocialWebViewStore.youtubePlaybackPositionNamespace,
+            "VigilSocial.youtube.position.v2"
+        )
 
         let manifestURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

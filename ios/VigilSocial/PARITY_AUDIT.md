@@ -12,8 +12,10 @@ The practical target is:
    behavior, and in-page gestures. In particular, Instagram must not be
    reconstructed, resized, reordered, or given replacement gestures by Vigil.
 2. Match the corresponding native app's surrounding iOS behavior where the web
-   surface exposes an equivalent: safe areas, bounce, refresh, edge-back,
-   keyboard dismissal, recovery, and app-icon appearances.
+   surface exposes an equivalent: an invariant edge-to-edge vertical canvas,
+   safe control insets, bounce, refresh, edge-back, keyboard dismissal,
+   recovery, and app-icon appearances. Instagram video is aspect-fit so the
+   complete horizontal source remains visible instead of being crop-filled.
 3. Never transfer protected browser credentials. The one browser-identity
    exception is the explicit unsupported YouTube compatibility suffix below.
 

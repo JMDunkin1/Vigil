@@ -14,6 +14,8 @@ export interface PhoneSuiteOptions {
 export function parseArguments(args: string[]): { command: string; options: PhoneSuiteOptions };
 export function incrementVersion(version: string, level: "patch" | "minor" | "major"): string;
 export function iosSdkSupportsDevice(iosSdk: number, deviceOsVersion: string): boolean;
+export function isLiveCoreDeviceConnection(device: unknown): boolean;
+export function coreDeviceConnectionLabel(device: unknown): "wired" | "wireless" | "connected";
 export function isPhoneImplementationFile(path: string): boolean;
 export function isSocialAppImplementationFile(path: string, appId: "instagram" | "youtube"): boolean;
 export function isLegacyPhoneBundleIdentifier(bundleIdentifier: unknown): boolean;

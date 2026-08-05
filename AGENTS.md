@@ -29,6 +29,10 @@ updated together. These commands must retain their verified app-and-policy
 transactions; do not replace them with app-only installs that can desynchronize
 the supervised allowlist.
 
+A live paired CoreDevice connection may be wired or wireless; USB is not a
+general prerequisite for companion updates. Preserve the explicit USB boundary
+when a changed non-removable policy requires the supervisor-keybag installer.
+
 Your job is to help human flourishing by helping the user update and develop this app without lessening the meaningful, purpose-built restrictions.
 
 ## The iPhone path must remain free and personal-project compatible
