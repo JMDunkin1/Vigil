@@ -12,8 +12,7 @@ import { socialIconPngBase64 } from "../src/socialIconAssets.js";
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const projectRoot = existsSync(join(runtimeRoot, "ios")) ? runtimeRoot : resolve(runtimeRoot, "..", "..");
 const phoneRelease = JSON.parse(await readFile(join(projectRoot, "ios", "phone-release.json"), "utf8")) as {
-  build: number;
-  version: string;
+  apps: Record<string, { build: number; version: string }>;
 };
 const socialWebViewStoreSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "SocialWebViewStore.swift"),
@@ -26,6 +25,15 @@ const socialServiceSource = await readFile(
 const socialDOMAdaptersSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "DOMAdapters.swift"),
   "utf8"
+);
+const instagramStableStart = socialDOMAdaptersSource.indexOf("private static let instagramStable =");
+const instagramLegacyStart = socialDOMAdaptersSource.indexOf(
+  "// Retained temporarily as a non-production reference"
+);
+assert.ok(instagramStableStart >= 0 && instagramLegacyStart > instagramStableStart);
+const instagramStableAdapterSource = socialDOMAdaptersSource.slice(
+  instagramStableStart,
+  instagramLegacyStart
 );
 const socialRootViewSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "RootView.swift"),
@@ -89,7 +97,7 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
-  /SocialWebView\([\s\S]*?webView: store\.webView\(for: service\)/u,
+  /let primaryWebView = store\.webView\(for: service\)[\s\S]*?SocialWebView\([\s\S]*?webView: primaryWebView/u,
   "both fixed companions must render their protected persistent WKWebView"
 );
 assert.match(
@@ -104,8 +112,8 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
-  /webViewSafeAreaEdges: Edge\.Set = service == \.instagram\s*\? \[\.top, \.bottom\]\s*: \.bottom/u,
-  "Instagram must keep one invariant full-screen WKWebView frame across route changes"
+  /webViewSafeAreaEdges: Edge\.Set = service == \.instagram\s*\? \[\]\s*: \.bottom/u,
+  "Instagram must keep one invariant safe-area frame across route changes"
 );
 assert.doesNotMatch(
   socialRootViewSource,
@@ -170,9 +178,49 @@ assert.match(
   "unrelated Safari-extension state checks must yield the initial CPU and I/O window to Instagram"
 );
 assert.match(
-  socialDOMAdaptersSource,
-  /setTimeout\(scheduleReelsWarmup, 4000\)[\s\S]*?addEventListener\('load', scheduleBackgroundReelsWarmup/u,
-  "speculative Reels fetching must wait until the initial Instagram page is fully loaded"
+  socialRootViewSource,
+  /let reportedIsDark = service == \.instagram\s*\? nil\s*: store\.reportedChromeIsDark/u,
+  "transient Instagram DOM backgrounds must not drive the native app appearance"
+);
+assert.doesNotMatch(
+  instagramStableAdapterSource,
+  /scheduleReelsWarmup|normalizeReelSurface|normalizeBottomNavigation|normalizeCommentSheets|repost-proxy/u,
+  "the production Instagram adapter must not prefetch or rewrite Instagram's layout and controls"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /new MutationObserver\([\s\S]*?\{ childList: true, subtree: true \}/u,
+  "the production Instagram adapter may observe inserted cards without watching style and class churn"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /:has\(> :is\(a\[href="\/reels\/"\], a\[href="\/reels"\]\)\)/u,
+  "blocked Reels navigation must remove its complete navigation item instead of leaving an orphaned icon or gap"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /'suggested for you'[\s\S]*?'suggested posts'[\s\S]*?'suggested reels'[\s\S]*?'because you watched'[\s\S]*?'because you follow'/u,
+  "Level 2 must recognize conservative exact labels for Instagram recommendation cards"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /path === '\/reel'[\s\S]*?path\.startsWith\('\/reel\/'\)[\s\S]*?path === '\/reels'[\s\S]*?path\.startsWith\('\/reels\/'\)/u,
+  "both standalone Reel viewer spellings must remain fail-closed"
+);
+assert.doesNotMatch(
+  instagramStableAdapterSource,
+  /article\s+a\[href\*=["']\/reel\//u,
+  "friendly inline Reels must not cause their containing followed/profile/Direct card to disappear"
+);
+assert.doesNotMatch(
+  instagramStableAdapterSource,
+  /touchmove|scrollTop\s*=|scrollBy\(|overflow\s*=\s*['"]hidden/u,
+  "the stable adapter must not seize Instagram's gestures or scrolling to contain Reels"
+);
+assert.match(
+  socialWebViewStoreSource,
+  /if service == \.instagram \{[\s\S]*?webView\.isOpaque = true[\s\S]*?webView\.backgroundColor = \.systemBackground[\s\S]*?webView\.scrollView\.backgroundColor = \.systemBackground/u,
+  "Instagram must keep an opaque native backing surface during SPA document swaps"
 );
 assert.doesNotMatch(socialWebViewStoreSource, /guard service != \.youtube|selectedService != \.youtube/u,
   "YouTube navigation must not retain the retired no-WK early returns");
@@ -436,8 +484,8 @@ assert.ok(instagram.includes("SOCIAL_APP_NAME=Instagram"));
 assert.ok(instagram.includes("SOCIAL_APP_ICON_SET=InstagramAppIcon"));
 assert.ok(instagram.includes("SOCIAL_URL_SCHEME=vigil-instagram"));
 assert.ok(instagram.includes("VIGIL_UNCLASSIFIED_MEDIA_POLICY=conceal"));
-assert.ok(instagram.includes(`MARKETING_VERSION=${phoneRelease.version}`));
-assert.ok(instagram.includes(`CURRENT_PROJECT_VERSION=${phoneRelease.build}`));
+assert.ok(instagram.includes(`MARKETING_VERSION=${phoneRelease.apps.instagram.version}`));
+assert.ok(instagram.includes(`CURRENT_PROJECT_VERSION=${phoneRelease.apps.instagram.build}`));
 assert.ok(instagram.includes("CODE_SIGNING_ALLOWED=NO"));
 
 const explicitVersion = buildArguments(["youtube", "--version", "2.4.1", "--build", "37"]);
@@ -452,6 +500,8 @@ assert.ok(explicitVersion.includes("CURRENT_PROJECT_VERSION=37"));
 
 const personalTeamFallback = buildArguments(["youtube", "--unclassified-media-policy", "reveal-unclassified"]);
 assert.ok(personalTeamFallback.includes("VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified"));
+assert.ok(personalTeamFallback.includes(`MARKETING_VERSION=${phoneRelease.apps.youtube.version}`));
+assert.ok(personalTeamFallback.includes(`CURRENT_PROJECT_VERSION=${phoneRelease.apps.youtube.build}`));
 
 assert.throws(() => buildArguments(["combined"]), /Unknown social service/);
 assert.throws(() => buildArguments(["snapchat"]), /Unknown social service/);

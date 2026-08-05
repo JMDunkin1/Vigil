@@ -17,7 +17,7 @@ enum DOMAdapters {
                     audioEnabled: audioEnabled,
                     preferAudibleVideo: service == .instagram
                 )
-            : ""
+            : service == .instagram ? instagramStableDocumentStartStyle : ""
         return authenticationDocumentGuard(for: service, body:
             documentIdentityBootstrap
             + safetyBootstrap
@@ -1076,7 +1076,7 @@ enum DOMAdapters {
         authenticationDocumentGuard(for: service, body:
             (contentSafetyEnabled
                 ? frameSafetyScript(audioEnabled: audioEnabled)
-                : instagramCompatibilityScript(audioEnabled: audioEnabled))
+                : instagramStableCompatibilityScript(audioEnabled: audioEnabled))
             + frameRoutePolicyGuard(for: service)
             + controlsScript(for: service)
         )
@@ -1168,7 +1168,7 @@ enum DOMAdapters {
             for: service,
             body: contentSafetyEnabled
                 ? frameSafetyScript(audioEnabled: audioEnabled)
-                : instagramCompatibilityScript(audioEnabled: audioEnabled)
+                : instagramStableCompatibilityScript(audioEnabled: audioEnabled)
         )
     }
 
@@ -1552,6 +1552,128 @@ enum DOMAdapters {
             .replacingOccurrences(of: "FEATURE_KEYS", with: featureKeys)
             .replacingOccurrences(of: "ALLOWED_HOSTS", with: allowedHosts)
             .replacingOccurrences(of: "PRIORITY_FEATURE", with: priorityFeature)
+    }
+
+    // Instagram is a fast-changing single-page app. Keep the production
+    // companion deliberately small: hide restricted entry points before they
+    // can paint, but leave Instagram's layout, media, dialogs, and gestures
+    // entirely under Instagram's control.
+    private static let instagramStableDocumentStartStyle = #"""
+    (() => {
+      if (window.__vigilInstagramStableStartInstalled) return;
+      window.__vigilInstagramStableStartInstalled = true;
+      const style = document.createElement('style');
+      style.id = 'vigil-instagram-stable-start-style';
+      style.textContent = `
+        html:not([data-vigil-feature-reels="available"]) :is(
+          a[href="/reels/"], a[href="/reels"], [aria-label="Reels" i]
+        ),
+        html:not([data-vigil-feature-reels="available"])
+          :is(nav, [role="navigation"]) :is(li, div):has(> :is(a[href="/reels/"], a[href="/reels"])),
+        html:not([data-vigil-feature-reels="available"])
+          div[data-visualcompletion="ignore-dynamic"] > div:has(> span > div > :is(a[href="/reels/"], a[href="/reels"])),
+        html:not([data-vigil-feature-explore="available"]) :is(
+          a[href="/explore/"], a[href="/explore"], [aria-label="Explore" i]
+        ),
+        html:not([data-vigil-feature-explore="available"])
+          :is(nav, [role="navigation"]) :is(li, div):has(> :is(a[href="/explore/"], a[href="/explore"])),
+        html:not([data-vigil-feature-explore="available"])
+          div[data-visualcompletion="ignore-dynamic"] > div:has(> span > div > :is(a[href="/explore/"], a[href="/explore"])),
+        html:not([data-vigil-feature-shopping="available"]) :is(
+          a[href^="/shop"], a[href^="/shopping"], a[href^="/live"]
+        ),
+        [data-vigil-hidden-feature],
+        [data-vigil-native-app-prompt="true"],
+        a[href^="instagram:"] {
+          display: none !important;
+        }
+        html[data-vigil-route-policy-blocked] body {
+          visibility: hidden !important;
+        }
+      `;
+      document.documentElement.appendChild(style);
+    })();
+    """#
+
+    private static func instagramStableCompatibilityScript(audioEnabled: Bool) -> String {
+        let preference = audioEnabled ? "true" : "false"
+        return #"""
+        (() => {
+          const documentID = (() => {
+            const existing = String(window.__vigilDocumentID || '');
+            if (existing) return existing;
+            let generated = '';
+            try { generated = crypto.randomUUID(); } catch (_) {}
+            if (!generated) generated = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            try {
+              Object.defineProperty(window, '__vigilDocumentID', {
+                value: generated,
+                writable: false,
+                configurable: false
+              });
+            } catch (_) {
+              window.__vigilDocumentID = generated;
+            }
+            return generated;
+          })();
+          const bridge = (payload) => {
+            try {
+              window.webkit.messageHandlers.vigil.postMessage({ ...payload, documentID });
+            } catch (_) {}
+          };
+          window.__vigilBridge = bridge;
+          bridge({ type: 'documentReady' });
+
+          if (window.__vigilInstagramCompatibilityInstalled) return;
+          window.__vigilInstagramCompatibilityInstalled = true;
+          window.__vigilAudioPreferred = AUDIO_PREFERENCE;
+
+          const allMedia = () => [...document.querySelectorAll('video, audio')];
+          const suspendedMedia = new Set();
+          const isVisible = (media) => {
+            if (!(media instanceof HTMLMediaElement) || !media.isConnected || media.ended) return false;
+            const rect = media.getBoundingClientRect();
+            const viewport = window.visualViewport;
+            const width = viewport?.width || innerWidth;
+            const height = viewport?.height || innerHeight;
+            return rect.width > 1 && rect.height > 1
+              && rect.right > 0 && rect.bottom > 0
+              && rect.left < width && rect.top < height;
+          };
+          window.__vigilSetAudioPreference = (enabled) => {
+            window.__vigilAudioPreferred = Boolean(enabled);
+            bridge({ type: 'audio', enabled: window.__vigilAudioPreferred });
+          };
+          window.__vigilPauseAllMedia = () => {
+            allMedia().forEach((media) => {
+              try { media.pause(); } catch (_) {}
+            });
+          };
+          window.__vigilSuspendAllMedia = () => {
+            suspendedMedia.clear();
+            allMedia().forEach((media) => {
+              if (media.paused || media.ended) return;
+              suspendedMedia.add(media);
+              try { media.pause(); } catch (_) {}
+            });
+            try {
+              if (navigator.mediaSession) {
+                navigator.mediaSession.metadata = null;
+                navigator.mediaSession.setPositionState?.();
+              }
+            } catch (_) {}
+          };
+          window.__vigilResumeSuspendedMedia = () => {
+            const pending = [...suspendedMedia];
+            suspendedMedia.clear();
+            if (document.visibilityState === 'hidden') return;
+            pending.forEach((media) => {
+              if (!isVisible(media)) return;
+              try { media.play()?.catch?.(() => {}); } catch (_) {}
+            });
+          };
+        })();
+        """#.replacingOccurrences(of: "AUDIO_PREFERENCE", with: preference)
     }
 
     private static func instagramCompatibilityScript(audioEnabled: Bool) -> String {
@@ -3174,7 +3296,7 @@ enum DOMAdapters {
 
     private static func serviceScript(_ service: SocialService) -> String {
         switch service {
-        case .instagram: instagram
+        case .instagram: instagramStable
         case .youtube: youtube
         }
     }
@@ -3433,7 +3555,10 @@ enum DOMAdapters {
         return candidates.sort((left, right) => {
           const score = (video) => {
             const rect = video.getBoundingClientRect();
-            const playerBonus = video.closest('ytm-player, #player, .html5-video-player, ytm-watch') ? 10_000_000 : 0;
+            const playerBonus = video.closest(
+              'ytm-player, ytd-player, #player-container-id, #player, '
+              + '.html5-video-player, ytm-watch, ytd-watch-flexy, [page-subtype="watch"]'
+            ) ? 10_000_000 : 0;
             return playerBonus + Math.min(rect.width, innerWidth) * Math.min(rect.height, innerHeight);
           };
           return score(right) - score(left);
@@ -3526,8 +3651,13 @@ enum DOMAdapters {
       const youtubeTopbarSelector = 'ytm-header, ytm-mobile-topbar-renderer, ytm-masthead';
       const youtubeNavigationSelector =
         'ytm-pivot-bar-renderer, ytm-pivot-bar-item-renderer';
+      const youtubeWatchSelector =
+        'ytm-watch, ytd-watch-flexy, [page-subtype="watch"]';
+      const youtubePlayerSelector =
+        'ytm-player, ytd-player, #player-container-id, #player';
       const healthVisibilitySelector = `${healthContentSelector}, `
         + `${youtubeTopbarSelector}, ${youtubeNavigationSelector}, `
+        + `${youtubeWatchSelector}, ${youtubePlayerSelector}, `
         + 'a[href*="accounts.google.com"], a[href*="ServiceLogin"], a[href*="/signin"]';
       const firstVisibleYouTubeElement = (selector, maximum = 96) => {
         let inspected = 0;
@@ -3603,7 +3733,9 @@ enum DOMAdapters {
           return;
         }
         const content = route === 'watch'
-          ? mainVideo() || firstVisibleYouTubeElement('ytm-player, #player')
+          ? mainVideo()
+            || firstVisibleYouTubeElement(youtubePlayerSelector)
+            || firstVisibleYouTubeElement(youtubeWatchSelector)
           : firstVisibleYouTubeElement(healthContentSelector);
         const usableEmptyBrowseShell = (
           route === 'subscriptions'
@@ -3810,6 +3942,272 @@ enum DOMAdapters {
     })();
     """#
 
+    private static let instagramStable = #"""
+    (() => {
+      if (window.__vigilInstagramInstalled) return;
+      if (!['instagram.com', 'www.instagram.com'].includes(
+        String(location.hostname || '').toLowerCase()
+      )) return;
+      window.__vigilInstagramInstalled = true;
+
+      if (!document.getElementById('vigil-instagram-stable-start-style')) {
+        const style = document.createElement('style');
+        style.id = 'vigil-instagram-stable-start-style';
+        style.textContent = `
+          html:not([data-vigil-feature-reels="available"]) :is(
+            a[href="/reels/"], a[href="/reels"], [aria-label="Reels" i]
+          ),
+          html:not([data-vigil-feature-reels="available"])
+            :is(nav, [role="navigation"]) :is(li, div):has(> :is(a[href="/reels/"], a[href="/reels"])),
+          html:not([data-vigil-feature-reels="available"])
+            div[data-visualcompletion="ignore-dynamic"] > div:has(> span > div > :is(a[href="/reels/"], a[href="/reels"])),
+          html:not([data-vigil-feature-explore="available"]) :is(
+            a[href="/explore/"], a[href="/explore"], [aria-label="Explore" i]
+          ),
+          html:not([data-vigil-feature-explore="available"])
+            :is(nav, [role="navigation"]) :is(li, div):has(> :is(a[href="/explore/"], a[href="/explore"])),
+          html:not([data-vigil-feature-explore="available"])
+            div[data-visualcompletion="ignore-dynamic"] > div:has(> span > div > :is(a[href="/explore/"], a[href="/explore"])),
+          html:not([data-vigil-feature-shopping="available"]) :is(
+            a[href^="/shop"], a[href^="/shopping"], a[href^="/live"]
+          ),
+          [data-vigil-hidden-feature],
+          [data-vigil-native-app-prompt="true"],
+          a[href^="instagram:"] {
+            display: none !important;
+          }
+          html[data-vigil-route-policy-blocked] body {
+            visibility: hidden !important;
+          }
+        `;
+        document.documentElement.appendChild(style);
+      }
+
+      const featureForURL = (value = location.href) => {
+        try {
+          const url = new URL(value, location.href);
+          if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return '';
+          const path = url.pathname.toLowerCase();
+          if (path === '/reel' || path.startsWith('/reel/')
+              || path === '/reels' || path.startsWith('/reels/')) return 'reels';
+          if (path === '/explore/people/suggested'
+              || path.startsWith('/explore/people/suggested/')) return 'suggested';
+          if (path === '/explore' || path.startsWith('/explore/')) return 'explore';
+          if (/^\/(shop|shopping|live)(\/|$)/.test(path)) return 'shopping';
+          return '';
+        } catch (_) { return ''; }
+      };
+      const featureState = (feature) => feature
+        ? document.documentElement.getAttribute(`data-vigil-feature-${feature}`) || 'pending'
+        : 'available';
+      const restrictedFeature = (value) => {
+        const feature = featureForURL(value);
+        if (feature === 'suggested'
+            && featureState('explore') !== 'available') return 'explore';
+        return feature && featureState(feature) !== 'available' ? feature : '';
+      };
+      const publishUnavailable = (feature) => {
+        if (!feature || window !== window.top) return;
+        window.__vigilBridge?.({
+          type: 'health',
+          state: 'degraded',
+          detail: `That Instagram ${feature} surface is intentionally unavailable.`
+        });
+      };
+
+      const instagramRoute = () => {
+        const path = location.pathname.toLowerCase();
+        if (path === '/' || path === '') return 'feed';
+        if (path === '/stories' || path.startsWith('/stories/')) return 'story';
+        if (path === '/reel' || path.startsWith('/reel/')
+            || path === '/reels' || path.startsWith('/reels/')) return 'reels';
+        if (path === '/direct/inbox' || path === '/direct/inbox/') return 'directInbox';
+        if (path.startsWith('/direct/t/')) return 'directThread';
+        if (path === '/accounts/login' || path.startsWith('/accounts/login/')) return 'login';
+        if (path === '/challenge' || path.startsWith('/challenge/')
+            || path.includes('/challenge/')) return 'challenge';
+        if (path === '/p' || path.startsWith('/p/')) return 'post';
+        if (path === '/explore' || path.startsWith('/explore/')) return 'search';
+        const pieces = path.split('/').filter(Boolean);
+        return pieces.length === 1 ? 'profile' : 'other';
+      };
+      let lastSurface = '';
+      const reportSurface = () => {
+        if (window !== window.top) return;
+        const route = instagramRoute();
+        const payload = `${route}:${location.pathname}:${location.search}`;
+        if (payload === lastSurface) return;
+        lastSurface = payload;
+        window.__vigilBridge?.({
+          type: 'surface',
+          service: 'instagram',
+          route,
+          refreshEligible: route === 'feed',
+          blocksRefresh: route !== 'feed',
+          fullBleedTop: false
+        });
+      };
+
+      let redirectedURL = '';
+      let lastURL = location.href;
+      const enforceRoute = () => {
+        lastURL = location.href;
+        const feature = featureForURL();
+        if (!feature) {
+          redirectedURL = '';
+          delete document.documentElement.dataset.vigilRoutePolicyBlocked;
+          reportSurface();
+          return;
+        }
+        const state = featureState(feature === 'suggested'
+          && featureState('explore') !== 'available' ? 'explore' : feature);
+        if (state === 'available') {
+          redirectedURL = '';
+          delete document.documentElement.dataset.vigilRoutePolicyBlocked;
+          reportSurface();
+          return;
+        }
+        document.documentElement.dataset.vigilRoutePolicyBlocked = feature;
+        if (state !== 'blocked' || redirectedURL === location.href) return;
+        redirectedURL = location.href;
+        publishUnavailable(feature);
+        try { location.replace('/'); } catch (_) {}
+      };
+      const scheduleRouteCheck = () => queueMicrotask(enforceRoute);
+      document.addEventListener('click', (event) => {
+        const link = event.target?.closest?.('a[href]');
+        if (!link) return;
+        const feature = restrictedFeature(link.href);
+        if (!feature) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        publishUnavailable(feature);
+      }, true);
+      for (const name of ['pushState', 'replaceState']) {
+        const original = history[name];
+        history[name] = function(...args) {
+          const result = original.apply(this, args);
+          scheduleRouteCheck();
+          return result;
+        };
+      }
+      addEventListener('popstate', enforceRoute, true);
+      addEventListener('hashchange', enforceRoute, true);
+      addEventListener('pageshow', enforceRoute, true);
+      window.navigation?.addEventListener?.('navigate', scheduleRouteCheck);
+
+      const exactLeafLabel = (root, expected) => {
+        const expectedLabels = new Set(
+          (Array.isArray(expected) ? expected : [expected]).map((value) => String(value).toLowerCase())
+        );
+        let inspected = 0;
+        for (const node of root.querySelectorAll('span, div, a')) {
+          inspected += 1;
+          if (node.children.length === 0) {
+            const label = String(node.textContent || node.getAttribute('aria-label') || '')
+              .replace(/\s+/g, ' ').trim().toLowerCase();
+            if (expectedLabels.has(label)) return true;
+          }
+          if (inspected >= 120) break;
+        }
+        return false;
+      };
+      const markFilteredCards = (root) => {
+        const scope = root instanceof Element ? root : document;
+        const candidates = [
+          ...(scope.matches?.('article, [data-testid*="suggested" i], [data-testid*="sponsored" i], [data-testid*="ad-container" i]') ? [scope] : []),
+          ...scope.querySelectorAll?.('article, [data-testid*="suggested" i], [data-testid*="sponsored" i], [data-testid*="ad-container" i]') || []
+        ];
+        let inspected = 0;
+        for (const candidate of candidates) {
+          inspected += 1;
+          const card = candidate.closest('article') || candidate;
+          if (featureState('suggested') !== 'available'
+              && (candidate.matches('[data-testid*="suggested" i]')
+                || card.querySelector('a[href*="/explore/people/suggested"]')
+                || exactLeafLabel(card, [
+                  'suggested for you',
+                  'suggested posts',
+                  'suggested reels',
+                  'because you watched',
+                  'because you follow'
+                ]))) {
+            card.dataset.vigilHiddenFeature = 'suggested';
+          } else if (featureState('ads') !== 'available'
+              && (candidate.matches('[data-testid*="sponsored" i], [data-testid*="ad-container" i]')
+                || exactLeafLabel(card, 'sponsored'))) {
+            card.dataset.vigilHiddenFeature = 'ads';
+          }
+          if (inspected >= 80) break;
+        }
+      };
+      const markNativeAppPrompts = (root) => {
+        const scope = root instanceof Element ? root : document;
+        const controls = [
+          ...(scope.matches?.('a, button, [role="button"]') ? [scope] : []),
+          ...scope.querySelectorAll?.('a, button, [role="button"]') || []
+        ];
+        for (const control of controls.slice(0, 120)) {
+          const label = String(control.textContent || control.getAttribute('aria-label') || '')
+            .replace(/\s+/g, ' ').trim().toLowerCase();
+          if (label === 'open instagram' || label === 'get the instagram app'
+              || label === 'download the app') {
+            control.dataset.vigilNativeAppPrompt = 'true';
+          }
+        }
+      };
+      let scanScheduled = false;
+      const pendingRoots = new Set();
+      const scheduleScan = (root = document) => {
+        if (root instanceof Element) pendingRoots.add(root);
+        if (scanScheduled) return;
+        scanScheduled = true;
+        queueMicrotask(() => {
+          scanScheduled = false;
+          const roots = pendingRoots.size ? [...pendingRoots] : [document];
+          pendingRoots.clear();
+          roots.slice(0, 24).forEach((candidate) => {
+            markFilteredCards(candidate);
+            markNativeAppPrompts(candidate);
+          });
+        });
+      };
+      new MutationObserver((records) => {
+        records.forEach((record) => record.addedNodes.forEach((node) => {
+          if (node instanceof Element) scheduleScan(node);
+        }));
+        if (location.href !== lastURL) scheduleRouteCheck();
+      }).observe(document.documentElement, { childList: true, subtree: true });
+      document.addEventListener('__vigilPolicyFeaturesChanged', () => {
+        document.querySelectorAll('[data-vigil-hidden-feature]').forEach((card) => {
+          const feature = card.getAttribute('data-vigil-hidden-feature');
+          if (feature && featureState(feature) === 'available') {
+            card.removeAttribute('data-vigil-hidden-feature');
+          }
+        });
+        scheduleScan();
+        enforceRoute();
+      });
+      setInterval(() => {
+        if (location.href !== lastURL) enforceRoute();
+      }, 1000);
+
+      markFilteredCards(document);
+      markNativeAppPrompts(document);
+      enforceRoute();
+      // Level 2 deliberately leaves Reel media embedded in followed posts,
+      // profiles, and Direct threads alone. Only discovery/suggested cards and
+      // standalone /reel(s) routes are filtered; never hide an article merely
+      // because it contains a link to its Reel permalink.
+      if (window === window.top) {
+        window.__vigilBridge?.({ type: 'health', state: 'ready', detail: '' });
+      }
+    })();
+    """#
+
+    // Retained temporarily as a non-production reference while the stable
+    // adapter proves out on the physical phone. Production routes through
+    // `instagramStable` above.
     private static let instagram = #"""
     (() => {
       if (window.__vigilInstagramInstalled) return;

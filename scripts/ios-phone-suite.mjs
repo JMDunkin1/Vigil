@@ -88,6 +88,7 @@ const REQUIRED_SOCIAL_APPS = [
   { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" },
   { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" }
 ];
+const SOCIAL_APP_IDS = new Set(REQUIRED_SOCIAL_APPS.map((app) => app.id));
 const appsForEdition = (edition) => edition === "enhanced"
   ? [...REQUIRED_SOCIAL_APPS, URL_FILTER_APP]
   : [...REQUIRED_SOCIAL_APPS];
@@ -263,6 +264,35 @@ export async function implementationFingerprint(edition = "personal") {
     digest.update(name).update("\0").update(hash).update("\n");
   }
   return { hash: digest.digest("hex"), edition, files: entries, blocklistPath };
+}
+
+export async function socialAppImplementationFingerprint(appId) {
+  if (!SOCIAL_APP_IDS.has(appId)) throw new Error(`Unknown social app: ${appId}`);
+  const socialRoot = join(ROOT, "ios", "VigilSocial");
+  const files = await filesBelow(socialRoot, (path) => isSocialAppImplementationFile(path, appId));
+  files.push(join(ROOT, "ios", "Shared", "PersonalTeam.entitlements"));
+  const unique = [...new Set(files)].sort();
+  const digest = createHash("sha256");
+  digest.update(`app:${appId}\n`);
+  const entries = [];
+  for (const path of unique) {
+    const bytes = await readFile(path);
+    const name = relative(ROOT, path);
+    const hash = sha256(bytes);
+    entries.push({ path: name, bytes: bytes.byteLength, sha256: hash });
+    digest.update(name).update("\0").update(hash).update("\n");
+  }
+  return { hash: digest.digest("hex"), appId, files: entries };
+}
+
+export function isSocialAppImplementationFile(path, appId) {
+  const normalized = String(path).replaceAll("\\", "/");
+  if (normalized.endsWith(".md") || normalized.includes("/VigilSocialTests/")) return false;
+  if (normalized.includes("/xcuserdata/") || normalized.endsWith("/.DS_Store")) return false;
+  if (appId === "youtube" && normalized.includes("/VigilYouTubeInteractionExtension/")) {
+    return normalized.endsWith(`/Resources/${YOUTUBE_INTERACTION_EXTENSION.scriptName}`);
+  }
+  return true;
 }
 
 export function isPhoneImplementationFile(path) {
@@ -696,15 +726,23 @@ async function readReleaseManifest() {
     && Number.isInteger(release.build)
     && release.build >= 1
     && Number.isFinite(Date.parse(String(release.releasedAt || "")));
-  const fingerprintsValid = release.schemaVersion === 2
+  const fingerprintsValid = [2, 3].includes(release.schemaVersion)
     && release.sourceFingerprints
     && typeof release.sourceFingerprints === "object"
     && [...PHONE_EDITIONS].every((edition) => {
       const value = release.sourceFingerprints[edition];
       return value === "" || /^[a-f0-9]{64}$/u.test(String(value || ""));
     });
+  const appsValid = release.schemaVersion !== 3 || REQUIRED_SOCIAL_APPS.every(({ id }) => {
+    const app = release.apps?.[id];
+    return /^\d+\.\d+\.\d+$/.test(String(app?.version || ""))
+      && Number.isInteger(app?.build)
+      && app.build >= 1
+      && Number.isFinite(Date.parse(String(app?.releasedAt || "")))
+      && /^[a-f0-9]{64}$/u.test(String(app?.sourceFingerprint || ""));
+  });
   const legacyValid = release.schemaVersion === 1 && /^[a-f0-9]{64}$/u.test(String(release.sourceFingerprint || ""));
-  if (!commonValid || (!legacyValid && !fingerprintsValid)) {
+  if (!commonValid || (!legacyValid && !fingerprintsValid) || !appsValid) {
     throw new Error(`Invalid phone release manifest: ${RELEASE_PATH}`);
   }
   return release;
@@ -712,31 +750,63 @@ async function readReleaseManifest() {
 
 async function readRelease(edition = "personal") {
   const manifest = await readReleaseManifest();
-  const sourceFingerprint = manifest.schemaVersion === 2
+  const sourceFingerprint = manifest.schemaVersion >= 2
     ? String(manifest.sourceFingerprints[edition] || "")
     : String(manifest.sourceFingerprint || "");
-  return { ...manifest, edition, sourceFingerprint };
+  const apps = Object.fromEntries(REQUIRED_SOCIAL_APPS.map(({ id }) => {
+    const app = manifest.schemaVersion === 3 ? manifest.apps[id] : manifest;
+    return [id, { ...app, sourceFingerprint: manifest.schemaVersion === 3 ? app.sourceFingerprint : sourceFingerprint }];
+  }));
+  return { ...manifest, edition, sourceFingerprint, apps };
 }
 
 async function bumpRelease(level = "patch", force = false, edition = "personal") {
   const manifest = await readReleaseManifest();
   const release = await readRelease(edition);
-  const fingerprint = await implementationFingerprint(edition);
-  if (!force && release.sourceFingerprint === fingerprint.hash) return release;
-  const version = incrementVersion(release.version, level);
-  const sourceFingerprints = manifest.schemaVersion === 2
+  const [fingerprint, ...appFingerprints] = await Promise.all([
+    implementationFingerprint(edition),
+    ...REQUIRED_SOCIAL_APPS.map((app) => socialAppImplementationFingerprint(app.id))
+  ]);
+  const systemChanged = force || release.sourceFingerprint !== fingerprint.hash;
+  const sourceFingerprints = manifest.schemaVersion >= 2
     ? { ...manifest.sourceFingerprints }
     : { personal: "", enhanced: String(manifest.sourceFingerprint || "") };
   sourceFingerprints[edition] = fingerprint.hash;
+  const releasedAt = new Date().toISOString();
+  const apps = {};
+  const changedAppIds = [];
+  for (const [index, social] of REQUIRED_SOCIAL_APPS.entries()) {
+    const current = release.apps[social.id];
+    const appChanged = force || (manifest.schemaVersion === 3
+      && current.sourceFingerprint !== appFingerprints[index].hash);
+    if (appChanged) changedAppIds.push(social.id);
+    apps[social.id] = {
+      version: appChanged ? incrementVersion(current.version, level) : current.version,
+      build: appChanged ? current.build + 1 : current.build,
+      sourceFingerprint: appFingerprints[index].hash,
+      releasedAt: appChanged ? releasedAt : current.releasedAt
+    };
+  }
+  if (!systemChanged && changedAppIds.length === 0 && manifest.schemaVersion === 3) return release;
   const next = {
-    schemaVersion: 2,
-    version,
-    build: release.build + 1,
+    schemaVersion: 3,
+    version: systemChanged ? incrementVersion(release.version, level) : release.version,
+    build: systemChanged ? release.build + 1 : release.build,
     sourceFingerprints,
-    releasedAt: new Date().toISOString()
+    releasedAt: systemChanged ? releasedAt : release.releasedAt,
+    apps
   };
   await atomicJsonWrite(RELEASE_PATH, next);
-  return { ...next, edition, sourceFingerprint: fingerprint.hash };
+  return {
+    ...next,
+    edition,
+    sourceFingerprint: fingerprint.hash,
+    changedAppIds,
+    apps: Object.fromEntries(REQUIRED_SOCIAL_APPS.map(({ id }) => [
+      id,
+      apps[id]
+    ]))
+  };
 }
 
 export function incrementVersion(version, level) {
@@ -782,6 +852,27 @@ export function receiptPhoneEdition(receipt) {
   return hasUrlFilterApp || hasVerifiedUrlFilter ? "enhanced" : "personal";
 }
 
+export function socialAppsNeedingUpdate(release, installedApps = []) {
+  return REQUIRED_SOCIAL_APPS.filter((app) => {
+    const installed = installedApps.find((candidate) => candidate.bundleIdentifier === app.bundleId);
+    const expected = release.apps[app.id];
+    return !installed
+      || installed.version !== expected.version
+      || String(installed.bundleVersion || "") !== String(expected.build);
+  }).map((app) => app.id);
+}
+
+function signingVariantForCapabilities(capabilities, fallback = "unknown") {
+  const socialCapabilities = REQUIRED_SOCIAL_APPS
+    .map((app) => capabilities?.[app.id])
+    .filter(Boolean);
+  if (socialCapabilities.length !== REQUIRED_SOCIAL_APPS.length) return fallback;
+  const capableApps = socialCapabilities.filter((value) => value.sensitiveContentAnalysis).length;
+  if (capableApps === socialCapabilities.length) return "full-capabilities";
+  if (capableApps === 0) return "personal-team-conservative";
+  return "mixed-capabilities";
+}
+
 async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
   const [release, fingerprint, blocklist, explicitContentPolicy, youtubeParityScript] = await Promise.all([
     readRelease(edition),
@@ -805,7 +896,12 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
   const profiles = profileVerification.profiles;
   const requiredApps = appsForEdition(edition).map((required) => {
     const installed = apps.find((app) => app.bundleIdentifier === required.bundleId);
-    return { ...required, installed: installed ? { version: installed.version || "", build: installed.bundleVersion || "" } : null };
+    const expectedRelease = release.apps[required.id] || release;
+    return {
+      ...required,
+      release: expectedRelease,
+      installed: installed ? { version: installed.version || "", build: installed.bundleVersion || "" } : null
+    };
   });
   const obsoleteApps = apps.filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
   const lockProfile = profiles.find((profile) => profile.identifier === PROFILE_IDENTIFIER);
@@ -817,8 +913,8 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
   if (release.sourceFingerprint !== fingerprint.hash) problems.push("Phone-facing sources changed after the current release; bump and deploy a new phone release.");
   for (const app of requiredApps) {
     if (!app.installed) problems.push(`${app.name} is not installed.`);
-    else if (app.installed.version !== release.version || String(app.installed.build) !== String(release.build)) {
-      problems.push(`${app.name} is ${app.installed.version} (${app.installed.build}), expected ${release.version} (${release.build}).`);
+    else if (app.installed.version !== app.release.version || String(app.installed.build) !== String(app.release.build)) {
+      problems.push(`${app.name} is ${app.installed.version} (${app.installed.build}), expected ${app.release.version} (${app.release.build}).`);
     }
   }
   if (obsoleteApps.length) problems.push(`${OBSOLETE_APPS_PROBLEM_PREFIX} ${obsoleteApps.map((app) => app.bundleIdentifier).join(", ")}.`);
@@ -870,7 +966,7 @@ function printStatus(report) {
   console.log(`Device: ${report.device.name} • ${report.device.model} • iOS ${report.device.osVersion} • wired and paired`);
   console.log("Apps:");
   for (const app of report.requiredApps) {
-    console.log(`- ${app.name}: ${app.installed ? `${app.installed.version} (${app.installed.build})` : "missing"}`);
+    console.log(`- ${app.name}: ${app.installed ? `${app.installed.version} (${app.installed.build})` : "missing"} • expected ${app.release.version} (${app.release.build})`);
   }
   console.log("Profiles:");
   if (report.profileVerification.available) {
@@ -916,6 +1012,15 @@ async function updatePhone(selectedOptions) {
   const { device, developerDir, toolEnvironment } = await preparePhoneToolchain(selectedOptions.device);
   const deviceReceiptId = device.udid || device.identifier;
   const previousReceipt = await readReceipt(deviceReceiptId);
+  const installedBeforeUpdate = await devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment);
+  const installedApps = installedBeforeUpdate.result?.apps || [];
+  const socialAppIds = socialAppsNeedingUpdate(release, installedApps);
+  const installedUrlFilter = installedApps.find((app) => app.bundleIdentifier === URL_FILTER_APP.bundleId);
+  const includeUrlFilter = edition === "enhanced" && (
+    !installedUrlFilter
+    || installedUrlFilter.version !== release.version
+    || String(installedUrlFilter.bundleVersion || "") !== String(release.build)
+  );
   const previousEdition = receiptPhoneEdition(previousReceipt);
   if (previousReceipt && previousEdition === "enhanced" && edition === "personal" && !selectedOptions.allowEditionDowngrade) {
     throw new Error("Refusing to replace an Enhanced phone deployment with Personal edition without --allow-edition-downgrade.");
@@ -927,12 +1032,15 @@ async function updatePhone(selectedOptions) {
     && previousReceipt?.release?.sourceFingerprint !== release.sourceFingerprint) {
     throw new Error("Refusing the app-only update because this release has new phone-facing sources and may require matching supervised allowlist routes. Run the normal update without --no-policy first.");
   }
-  console.log(`Updating ${device.name} to Vigil ${editionLabel(edition)} phone ${release.version} (${release.build}) without rebooting.`);
+  const socialUpdateLabel = socialAppIds.length
+    ? socialAppIds.map((id) => `${REQUIRED_SOCIAL_APPS.find((app) => app.id === id).name} ${release.apps[id].version} (${release.apps[id].build})`).join(", ")
+    : "no companion reinstall needed";
+  console.log(`Updating ${device.name} to Vigil ${editionLabel(edition)} phone ${release.version} (${release.build}) without rebooting; ${socialUpdateLabel}.`);
   console.log(`Apple toolchain: ${developerDir}`);
   await buildRuntime();
   const audit = await auditFourPolicies(toolEnvironment, edition === "enhanced" ? urlFilter.service : null);
   printPolicyAudit(audit, edition);
-  const build = await buildPhoneApps(release, edition, urlFilter, toolEnvironment);
+  const build = await buildPhoneApps(release, edition, urlFilter, toolEnvironment, socialAppIds, includeUrlFilter);
   if (selectedOptions.noPolicy) {
     const extensionProblems = safariExtensionUpdateProblems(previousReceipt, build.apps);
     if (extensionProblems.length) {
@@ -942,8 +1050,7 @@ async function updatePhone(selectedOptions) {
   const preparedPolicy = selectedOptions.noPolicy
     ? null
     : await prepareCurrentPolicy(release, selectedOptions.server, edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition);
-  const installedBeforeUpdate = await devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment);
-  const obsoleteBeforeUpdate = (installedBeforeUpdate.result?.apps || [])
+  const obsoleteBeforeUpdate = installedApps
     .filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
   const profileBeforeUpdate = await configurationProfileStatus(device.identifier, toolEnvironment);
   const obsoleteProfilesBeforeUpdate = profileBeforeUpdate.profiles
@@ -986,23 +1093,14 @@ async function updatePhone(selectedOptions) {
     await persistPhoneEdition(edition);
   }
 
-  await writeReceipt(deviceReceiptId, {
-    schemaVersion: 2,
-    edition,
-    device: { identifier: device.identifier, udid: device.udid, name: device.name, model: device.model, osVersion: device.osVersion },
-    release,
-    policyFingerprint,
-    policyArtifactHash,
-    signingVariant: build.signingVariant,
-    signingCapabilities: build.signingCapabilities,
-    blocklist: build.blocklist,
-    explicitContentPolicy: build.explicitContentPolicy,
-    urlFilter: build.urlFilter,
-    liveUrlFilterAudit,
-    legacyProfileMigrationVerified,
-    apps: build.apps.map((app) => ({
+  const appReceiptRecords = new Map((previousReceipt?.apps || []).map((app) => [app.bundleId, app]));
+  for (const app of build.apps) {
+    appReceiptRecords.set(app.bundleId, {
       name: app.name,
       bundleId: app.bundleId,
+      version: (release.apps[app.id] || release).version,
+      build: (release.apps[app.id] || release).build,
+      sourceFingerprint: release.apps[app.id]?.sourceFingerprint || release.sourceFingerprint,
       sha256: app.sha256,
       signingCapabilities: app.signingCapabilities,
       blocklistArtifactSha256: app.blocklist?.artifactSha256 || null,
@@ -1012,7 +1110,27 @@ async function updatePhone(selectedOptions) {
       youtubeParityScriptSha256: app.youtubeParityScript?.sha256 || null,
       youtubeInteractionExtension: app.youtubeInteractionExtension || null,
       youtubeInteractionExtensionSha256: app.youtubeInteractionExtension?.sha256 || null
-    })),
+    });
+  }
+  const signingCapabilities = {
+    ...(previousReceipt?.signingCapabilities || {}),
+    ...build.signingCapabilities
+  };
+  await writeReceipt(deviceReceiptId, {
+    schemaVersion: 2,
+    edition,
+    device: { identifier: device.identifier, udid: device.udid, name: device.name, model: device.model, osVersion: device.osVersion },
+    release,
+    policyFingerprint,
+    policyArtifactHash,
+    signingVariant: signingVariantForCapabilities(signingCapabilities, previousReceipt?.signingVariant || "unknown"),
+    signingCapabilities,
+    blocklist: build.blocklist || previousReceipt?.blocklist || null,
+    explicitContentPolicy: build.explicitContentPolicy,
+    urlFilter: build.urlFilter || previousReceipt?.urlFilter || null,
+    liveUrlFilterAudit: liveUrlFilterAudit || previousReceipt?.liveUrlFilterAudit || null,
+    legacyProfileMigrationVerified,
+    apps: [...appReceiptRecords.values()],
     deployedAt: new Date().toISOString(),
     rebooted: false
   });
@@ -1126,8 +1244,19 @@ function printPolicyAudit(audit, edition) {
   }
 }
 
-async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = process.env) {
-  const root = join(ROOT, "data", "ios-phone-build", `${release.version}-${release.build}-${edition}`);
+async function buildPhoneApps(
+  release,
+  edition,
+  urlFilter,
+  toolEnvironment = process.env,
+  socialAppIds = REQUIRED_SOCIAL_APPS.map((app) => app.id),
+  includeUrlFilter = edition === "enhanced"
+) {
+  const selectedSocialAppIds = new Set(socialAppIds);
+  const releaseLabel = REQUIRED_SOCIAL_APPS
+    .map((app) => `${app.id}-${release.apps[app.id].version}-${release.apps[app.id].build}`)
+    .join("-");
+  const root = join(ROOT, "data", "ios-phone-build", `${edition}-${releaseLabel}`);
   const personalTeamEntitlements = join(ROOT, "ios", "Shared", "PersonalTeam.entitlements");
   await mkdir(root, { recursive: true });
   const blocklist = await requireReadyPhoneBlocklist("build a Release phone app");
@@ -1137,6 +1266,8 @@ async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = pro
   let reducedEntitlements = edition === "personal";
   const apps = [];
   for (const social of REQUIRED_SOCIAL_APPS) {
+    if (!selectedSocialAppIds.has(social.id)) continue;
+    const appRelease = release.apps[social.id];
     const derived = join(root, social.id);
     console.log(`Building ${social.name} companion…`);
     const socialArguments = [
@@ -1152,8 +1283,8 @@ async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = pro
       `SOCIAL_APP_NAME=${social.name}`,
       `SOCIAL_APP_ICON_SET=${social.appIconSet}`,
       `SOCIAL_URL_SCHEME=${social.scheme}`,
-      `MARKETING_VERSION=${release.version}`,
-      `CURRENT_PROJECT_VERSION=${release.build}`
+      `MARKETING_VERSION=${appRelease.version}`,
+      `CURRENT_PROJECT_VERSION=${appRelease.build}`
     ];
     if (reducedEntitlements) {
       socialArguments.push(
@@ -1197,7 +1328,7 @@ async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = pro
     });
   }
   let filterPrefilter = null;
-  if (edition === "enhanced") {
+  if (includeUrlFilter) {
     if (!urlFilter?.ready) throw new Error("Enhanced edition requires a ready fail-closed iOS URL Filter.");
     const filterDerived = join(root, URL_FILTER_APP.id);
     console.log("Building Enhanced fail-closed URL Filter…");
@@ -1238,17 +1369,11 @@ async function buildPhoneApps(release, edition, urlFilter, toolEnvironment = pro
       urlFilter: filterPrefilter
     });
   }
-  const capableApps = apps.filter((app) => app.signingCapabilities.sensitiveContentAnalysis).length;
-  const socialAppCount = REQUIRED_SOCIAL_APPS.length;
-  const signingVariant = capableApps === socialAppCount
-    ? "full-capabilities"
-    : capableApps === 0 ? "personal-team-conservative" : "mixed-capabilities";
   return {
     apps,
-    signingVariant,
     signingCapabilities: Object.fromEntries(apps.map((app) => [app.id, app.signingCapabilities])),
     explicitContentPolicy,
-    urlFilter: edition === "enhanced" ? {
+    urlFilter: includeUrlFilter ? {
       prefilterSha256: filterPrefilter.sha256,
       prefilterTag: filterPrefilter.tag,
       pirDatabaseRevision: filterPrefilter.pirDatabaseRevision,
@@ -1383,6 +1508,7 @@ export function safariExtensionUpdateProblems(previousReceipt, nextApps) {
   const nextApp = nextApps?.find((app) => app.bundleId === "tech.caseline.vigil.instagram") || null;
   const previous = previousApp?.youtubeInteractionExtension || null;
   const previousHash = previous?.sha256 || previousApp?.youtubeInteractionExtensionSha256 || "";
+  if (!nextApp) return [];
   const next = nextApp?.youtubeInteractionExtension || null;
 
   if (!next) {

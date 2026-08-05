@@ -7,6 +7,7 @@
   window.__vigilYouTubeParityInstalled = true;
 
   const MINI_ATTRIBUTE = 'data-vigil-youtube-miniplayer';
+  const NATIVE_MINI_ATTRIBUTE = 'data-vigil-youtube-native-miniplayer';
   const SHELL_ID = 'vigil-youtube-miniplayer-shell';
   const HIDDEN_HANDLE_ID = 'vigil-youtube-miniplayer-handle';
   const HISTORY_STATE_KEY = '__vigilYouTubeMiniplayer';
@@ -19,6 +20,23 @@
     '.ytp-progress-bar', '.ytp-progress-list', '.ytp-scrubber-container'
   ].join(',');
   const FORM_CONTROL_SELECTOR = 'a, input, textarea, select';
+  const AD_PLAYER_STATE_SELECTOR = '.ad-showing, .ad-interrupting';
+  const AD_SURFACE_SELECTOR = [
+    'ytm-promoted-sparkles-web-renderer', 'ytd-promoted-sparkles-web-renderer',
+    'ytm-companion-ad-renderer', 'ytd-companion-slot-renderer',
+    'ytm-display-ad-renderer', 'ytd-display-ad-renderer',
+    'ytm-promoted-video-renderer', 'ytd-promoted-video-renderer',
+    'ytm-ad-slot-renderer', 'ytd-ad-slot-renderer',
+    'ytm-in-feed-ad-layout-renderer', 'ytd-in-feed-ad-layout-renderer',
+    'ytd-banner-promo-renderer', 'ytd-statement-banner-renderer',
+    '[data-is-ad="true"]', '#masthead-ad',
+    '.ytp-ad-overlay-container', '.ytp-ad-player-overlay'
+  ].join(',');
+  const AD_SKIP_SELECTOR = [
+    '.ytp-ad-skip-button', '.ytp-ad-skip-button-modern',
+    '.ytp-skip-ad-button', '.ytp-ad-skip-button-container button',
+    'button[aria-label^="Skip ad" i]', 'button[aria-label^="Skip ads" i]'
+  ].join(',');
   const EDGE_GESTURE_WIDTH = 24;
   const html = document.documentElement;
   const miniPointers = new Map();
@@ -61,8 +79,11 @@
   let suppressShellClickUntil = 0;
   let ignoreMediaPauseUntil = 0;
   let routePlaybackTransitionUntil = 0;
-  let routePauseAllowance = 0;
   let lastPlaybackResumeAttemptAt = 0;
+  let playbackRecoveryTimer = 0;
+  let adAuditTimer = 0;
+  let nativeMiniPlayer = null;
+  let nativeMiniVideo = null;
   let lastRoute = location.href;
   let suppressPlayerClickUntil = 0;
 
@@ -147,6 +168,39 @@
       .ytp-spinner, .ytp-bezel, .ytp-paid-content-overlay
     ) {
       display: none !important;
+    }
+    ${AD_SURFACE_SELECTOR} {
+      display: none !important;
+    }
+    html[${NATIVE_MINI_ATTRIBUTE}="true"],
+    html[${NATIVE_MINI_ATTRIBUTE}="true"] body {
+      width: 100% !important;
+      height: 100% !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      overflow: hidden !important;
+      background: #000 !important;
+    }
+    html[${NATIVE_MINI_ATTRIBUTE}="true"] body > :not(:has([data-vigil-youtube-native-player="true"])) {
+      display: none !important;
+    }
+    html[${NATIVE_MINI_ATTRIBUTE}="true"] [data-vigil-youtube-native-player="true"] {
+      position: fixed !important;
+      z-index: 2147483647 !important;
+      inset: 0 !important;
+      width: 100vw !important;
+      height: 100vh !important;
+      min-width: 0 !important;
+      min-height: 0 !important;
+      margin: 0 !important;
+      overflow: hidden !important;
+      background: #000 !important;
+      transform: none !important;
+    }
+    html[${NATIVE_MINI_ATTRIBUTE}="true"] [data-vigil-youtube-native-player="true"] video {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: contain !important;
     }
     #${SHELL_ID} {
       all: initial;
@@ -522,8 +576,11 @@
   };
 
   const markRoutePlaybackTransition = () => {
-    routePlaybackTransitionUntil = performance.now() + 350;
-    routePauseAllowance = 1;
+    // Live m.youtube.com can issue several pause() calls while its Polymer
+    // router swaps Watch for Browse. Preserve the user's playing intent for
+    // the whole transition; the old one-pause/350ms allowance expired before
+    // slower phones finished rendering Home.
+    routePlaybackTransitionUntil = performance.now() + 3200;
   };
 
   const pauseMiniVideoInternally = () => {
@@ -540,25 +597,70 @@
   const handleMiniVideoPause = event => {
     if (event.currentTarget !== miniVideo) return;
     const now = performance.now();
-    if (now <= routePlaybackTransitionUntil && routePauseAllowance > 0) {
-      routePauseAllowance -= 1;
+    if (now <= routePlaybackTransitionUntil && miniWasPlaying) {
+      scheduleMiniPlaybackRecovery();
     } else if (now > ignoreMediaPauseUntil) {
       miniWasPlaying = false;
     }
     syncPlayButton();
   };
 
-  const maintainMiniPlayback = () => {
+  const maintainMiniPlayback = (force = false) => {
     if (!html.hasAttribute(MINI_ATTRIBUTE)
         || html.hasAttribute('data-vigil-youtube-miniplayer-hidden')
         || !miniWasPlaying || !miniVideo?.paused || miniVideo.ended) return;
     const now = performance.now();
-    if (now - lastPlaybackResumeAttemptAt < 700) return;
+    if (!force && now - lastPlaybackResumeAttemptAt < 300) return;
     lastPlaybackResumeAttemptAt = now;
     try {
       const result = miniVideo.play();
       if (result && typeof result.catch === 'function') result.catch(() => {});
     } catch {}
+  };
+
+  const scheduleMiniPlaybackRecovery = () => {
+    if (playbackRecoveryTimer || !miniWasPlaying) return;
+    playbackRecoveryTimer = setTimeout(() => {
+      playbackRecoveryTimer = 0;
+      maintainMiniPlayback(true);
+      if (miniWasPlaying && miniVideo?.paused
+          && performance.now() <= routePlaybackTransitionUntil) {
+        scheduleMiniPlaybackRecovery();
+      }
+    }, 90);
+  };
+
+  const visibleElement = element => {
+    if (!(element instanceof Element) || !element.isConnected) return false;
+    const style = getComputedStyle(element);
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+
+  const activeAdPlayer = () => Array.from(document.querySelectorAll(AD_PLAYER_STATE_SELECTOR))
+    .find(player => player.querySelector('video')) || null;
+
+  const suppressYouTubeAds = root => {
+    const scope = root?.querySelectorAll ? root : document;
+    if (root instanceof Element && root.matches(AD_SURFACE_SELECTOR)) root.remove();
+    scope.querySelectorAll(AD_SURFACE_SELECTOR).forEach(element => element.remove());
+
+    const player = activeAdPlayer();
+    if (!player) return false;
+    const skip = Array.from(player.querySelectorAll(AD_SKIP_SELECTOR)).find(visibleElement);
+    if (skip instanceof HTMLElement) {
+      try { skip.click(); } catch {}
+    }
+    return Boolean(skip);
+  };
+
+  const scheduleAdAudit = () => {
+    if (adAuditTimer) return;
+    adAuditTimer = setTimeout(() => {
+      adAuditTimer = 0;
+      suppressYouTubeAds();
+    }, 80);
   };
 
   const clearDrag = () => {
@@ -592,6 +694,7 @@
     clearTimeout(restoreFallbackTimer);
     clearTimeout(restoreSettleTimer);
     clearTimeout(browseTransitionTimer);
+    clearTimeout(playbackRecoveryTimer);
     miniTapTimer = 0;
     restoreFallbackTimer = 0;
     restoreSettleTimer = 0;
@@ -599,6 +702,7 @@
     restoreCandidateWatch = null;
     restoreCandidateSince = 0;
     browseTransitionTimer = 0;
+    playbackRecoveryTimer = 0;
     browseTransitionAttempts = 0;
     lastMiniTapAt = 0;
     restoreGeneration += 1;
@@ -637,7 +741,6 @@
     hiddenPlayerWasPlaying = false;
     ignoreMediaPauseUntil = 0;
     routePlaybackTransitionUntil = 0;
-    routePauseAllowance = 0;
     lastPlaybackResumeAttemptAt = 0;
   };
 
@@ -1130,11 +1233,69 @@
     syncPlayButton();
   };
 
+  const recoverMiniPlayerOwnership = () => {
+    if (!miniPlayer || !miniVideo || !html.hasAttribute(MINI_ATTRIBUTE)) return false;
+    let shell = document.getElementById(SHELL_ID);
+    if (!shell) {
+      createShell();
+      shell = document.getElementById(SHELL_ID);
+    }
+    if (!shell) return false;
+
+    // Polymer tears down the outgoing Watch component after the Home route is
+    // already visible. Its disconnected callback can reclaim either the
+    // ytm-player host or the media element even though Vigil moved that node
+    // into the floating shell first. Reassert ownership instead of treating
+    // that temporary disconnect as the user closing the miniplayer.
+    if (!miniPlayer.isConnected || !shell.contains(miniPlayer)) {
+      try { shell.prepend(miniPlayer); } catch {}
+    }
+    if (!miniVideo.isConnected || !miniPlayer.contains(miniVideo)) {
+      try { miniPlayer.prepend(miniVideo); } catch {}
+    }
+    miniPlayer.setAttribute('data-vigil-youtube-active-player', 'true');
+    return shell.isConnected && miniPlayer.isConnected && miniVideo.isConnected;
+  };
+
+  const exitNativeMiniPlayer = () => {
+    html.removeAttribute(NATIVE_MINI_ATTRIBUTE);
+    nativeMiniPlayer?.removeAttribute('data-vigil-youtube-native-player');
+    nativeMiniPlayer = null;
+    nativeMiniVideo = null;
+  };
+
+  const requestNativeMiniPlayer = (video, player) => {
+    const bridge = window.webkit?.messageHandlers?.vigil;
+    if (!bridge || typeof bridge.postMessage !== 'function') return false;
+    nativeMiniPlayer = player;
+    nativeMiniVideo = video;
+    player.setAttribute('data-vigil-youtube-native-player', 'true');
+    html.setAttribute(NATIVE_MINI_ATTRIBUTE, 'true');
+    try {
+      const homePolicy = html.getAttribute('data-vigil-feature-home');
+      const browseURL = homePolicy === 'blocked' || homePolicy === 'pending'
+        ? focusedEntryURL
+        : 'https://m.youtube.com/';
+      bridge.postMessage({
+        type: 'youtubeMinimize',
+        videoID: videoID(),
+        watchURL: location.href,
+        browseURL,
+        wasPlaying: !video.paused && !video.ended
+      });
+      return true;
+    } catch {
+      exitNativeMiniPlayer();
+      return false;
+    }
+  };
+
   const enterMiniPlayer = () => {
     if (!isWatchRoute() || isShortsRoute()) return false;
     const video = mainVideo();
     const player = playerForVideo(video);
     if (!video || !player || videoIsFullscreen(video)) return false;
+    if (requestNativeMiniPlayer(video, player)) return true;
     if (html.hasAttribute(MINI_ATTRIBUTE)) return true;
     installStyle();
     miniVideo = video;
@@ -1163,9 +1324,20 @@
     video.addEventListener('pause', handleMiniVideoPause);
     const sessionID = miniSessionID;
     miniEndedHandler = () => {
-      if (miniSessionID === sessionID && miniVideo === video) dismissMiniPlayer();
+      if (miniSessionID !== sessionID || miniVideo !== video) return;
+      // YouTube reuses the content video element for ads. Finishing a skipped
+      // ad must hand off to the requested video, not close the miniplayer as
+      // though the requested video itself ended.
+      if (activeAdPlayer()) {
+        miniWasPlaying = true;
+        markRoutePlaybackTransition();
+        scheduleMiniPlaybackRecovery();
+        return;
+      }
+      dismissMiniPlayer();
     };
-    video.addEventListener('ended', miniEndedHandler, { once: true });
+    video.addEventListener('ended', miniEndedHandler);
+    scheduleMiniPlaybackRecovery();
     requestAnimationFrame(ensureBrowseSurface);
     return true;
   };
@@ -1443,8 +1615,10 @@
         scheduleFinishRestore();
         return;
       }
-      if (html.hasAttribute(MINI_ATTRIBUTE) && !miniVideo?.isConnected) releaseMiniPlayer(true);
-      else maintainMiniPlayback();
+      if (html.hasAttribute(MINI_ATTRIBUTE)) {
+        recoverMiniPlayerOwnership();
+        maintainMiniPlayback();
+      }
       return;
     }
     const previousVideoID = miniVideoID;
@@ -1478,11 +1652,10 @@
         restoreCandidateSince = 0;
         scheduleFinishRestore();
       }
-    } else if (!miniVideo?.isConnected) {
-      releaseMiniPlayer(true);
     } else {
       if (restoreMode === 'current') cancelRestoreMode();
       pendingDestinationWatch = false;
+      recoverMiniPlayerOwnership();
       maintainMiniPlayback();
     }
   };
@@ -1496,6 +1669,7 @@
   };
 
   new MutationObserver(mutations => {
+    if (mutations.some(mutation => mutation.addedNodes.length > 0)) scheduleAdAudit();
     if ((restoreMode || pendingDestinationWatch)
         && mutations.some(mutationChangesPlayerTopology)) {
       restoreCandidateSince = performance.now();
@@ -1513,6 +1687,10 @@
     addEventListener(name, routeAudit, true);
     document.addEventListener(name, routeAudit, true);
   }
+  document.addEventListener('play', scheduleAdAudit, true);
+  document.addEventListener('durationchange', scheduleAdAudit, true);
+  suppressYouTubeAds();
+  setInterval(suppressYouTubeAds, 1000);
   setInterval(routeAudit, 400);
 
   Object.defineProperty(window, '__vigilYouTubeParityTest', {
@@ -1526,11 +1704,18 @@
       handleMiniTap,
       toggleMiniSize,
       activateBrowseSurface,
+      suppressYouTubeAds,
+      recoverMiniPlayerOwnership,
       reconcilePopRouteIndexForTest: reconcilePopRouteIndex,
       enterFullscreen,
       playerForVideo,
       isShortsRoute,
       isWatchRoute
     })
+  });
+  Object.defineProperty(window, '__vigilExitNativeYouTubeMiniPlayer', {
+    configurable: false,
+    enumerable: false,
+    value: exitNativeMiniPlayer
   });
 })();

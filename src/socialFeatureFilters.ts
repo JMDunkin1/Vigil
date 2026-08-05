@@ -54,6 +54,9 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
         key: "reels",
         label: "Reels",
         probeUrls: ["https://www.instagram.com/?__vigil_feature=reels"],
+        // Level 2 keeps Reel media embedded in followed feed/profile posts and
+        // Direct threads. Both standalone route spellings stay denied because
+        // either viewer can advance into Instagram's unbounded discovery feed.
         deniedUrls: [
           "instagram.com/reel",
           "instagram.com/reels"

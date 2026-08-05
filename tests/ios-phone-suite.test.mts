@@ -11,12 +11,14 @@ import {
   iosSdkSupportsDevice,
   isLegacyPhoneBundleIdentifier,
   isPhoneImplementationFile,
+  isSocialAppImplementationFile,
   parseArguments,
   policyFreshnessProblems,
   preservedPolicyReceipt,
   receiptPhoneEdition,
   removalPasswordFromProfile,
-  safariExtensionUpdateProblems
+  safariExtensionUpdateProblems,
+  socialAppsNeedingUpdate
 } from "../scripts/ios-phone-suite.mjs";
 import { buildPhoneBlocklistArtifact } from "../src/adultBlocklistPhoneArtifact.js";
 
@@ -55,6 +57,21 @@ assert.throws(() => parseArguments(["update", "--edition", "enterprise"]), /Unkn
 assert.equal(incrementVersion("1.2.3", "patch"), "1.2.4");
 assert.equal(incrementVersion("1.2.3", "minor"), "1.3.0");
 assert.equal(incrementVersion("1.2.3", "major"), "2.0.0");
+
+const splitRelease = {
+  apps: {
+    instagram: { version: "1.2.3", build: 7 },
+    youtube: { version: "2.0.1", build: 11 }
+  }
+};
+assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
+  { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" }
+]), ["youtube"]);
+assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
+  { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" }
+]), []);
 
 assert.equal(iosSdkSupportsDevice(18.5, "18.6.2"), true);
 assert.equal(iosSdkSupportsDevice(17.5, "18.0"), false);
@@ -126,6 +143,18 @@ assert.equal(isPhoneImplementationFile("/repo/ios/VigilSocial/VigilSocial/Social
 assert.equal(isPhoneImplementationFile("/repo/ios/VigilBrowser/VigilBrowserTests/VigilBrowserTests.swift"), false);
 assert.equal(isPhoneImplementationFile("/repo/ios/PHONE_MAINTENANCE.md"), false);
 assert.equal(isPhoneImplementationFile("/repo/ios/phone-release.json"), false);
+assert.equal(isSocialAppImplementationFile(
+  "/repo/ios/VigilSocial/VigilYouTubeInteractionExtension/Info.plist",
+  "instagram"
+), true);
+assert.equal(isSocialAppImplementationFile(
+  "/repo/ios/VigilSocial/VigilYouTubeInteractionExtension/Info.plist",
+  "youtube"
+), false);
+assert.equal(isSocialAppImplementationFile(
+  "/repo/ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-parity.js",
+  "youtube"
+), true);
 
 for (const bundleIdentifier of [
   "tech.caseline.sentinel.instagram",
@@ -160,7 +189,8 @@ assert.match(buildPhoneAppsSource, /VIGIL_SERVICE=\$\{social\.service\}/u);
 assert.match(buildPhoneAppsSource, /SOCIAL_APP_ICON_SET=\$\{social\.appIconSet\}/u);
 assert.doesNotMatch(buildPhoneAppsSource, /VigilBrowser|browserDerived|VIGIL_SERVICE=combined/u);
 assert.match(buildPhoneAppsSource, /VigilURLFilter\/VigilURLFilter\.xcodeproj[\s\S]*?VigilURLFilterHost/u);
-assert.match(buildPhoneAppsSource, /if \(edition === "enhanced"\)/u);
+assert.match(buildPhoneAppsSource, /includeUrlFilter = edition === "enhanced"/u);
+assert.match(buildPhoneAppsSource, /if \(includeUrlFilter\)/u);
 assert.match(buildPhoneAppsSource, /signedUrlFilterCapabilities[\s\S]*?urlFilterProvider/u);
 assert.match(
   buildPhoneAppsSource,
@@ -353,6 +383,9 @@ const youtubeExtension = {
   permissions: []
 };
 const nextInstagramApps = [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtension: youtubeExtension }];
+assert.deepEqual(safariExtensionUpdateProblems({
+  apps: [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtension: youtubeExtension }]
+}, [{ bundleId: "tech.caseline.vigil.youtube" }]), []);
 assert.match(safariExtensionUpdateProblems(null, nextInstagramApps).join("\n"), /adds Vigil YouTube Controls/u);
 assert.deepEqual(safariExtensionUpdateProblems({
   apps: [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtensionSha256: "new-extension-bytes" }]

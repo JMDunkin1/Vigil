@@ -25,6 +25,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var audioPreferences: [SocialService: Bool] = [:]
     @Published private(set) var darkChromePreferences: [SocialService: Bool] = [:]
     @Published private(set) var youtubeSafariRequest: YouTubeSafariRequest
+    @Published private(set) var youtubeMiniPlayerWebView: WKWebView?
 
     let fixedService: SocialService
     private let defaults: UserDefaults
@@ -56,6 +57,15 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var externalPlaybackRelinquishTask: Task<Void, Never>?
     private let mediaClassificationDeadlineNanoseconds: UInt64
 
+    private var managedWebViews: [WKWebView] {
+        var result = Array(webViews.values)
+        if let miniWebView = youtubeMiniPlayerWebView,
+           !result.contains(where: { $0 === miniWebView }) {
+            result.append(miniWebView)
+        }
+        return result
+    }
+
     private static let maximumConcurrentMediaClassifications = 4
     private static let maximumPendingMediaClassifications = 12
     private static let maximumMediaRetryTasks = 12
@@ -75,6 +85,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.fixedService = configured
         self.selectedService = configured
         self.youtubeSafariRequest = YouTubeSafariRequest(url: SocialService.youtube.homeURL)
+        self.youtubeMiniPlayerWebView = nil
         self.defaults = defaults
         self.bundle = bundle
         self.loadInitialPages = loadInitialPages
@@ -183,6 +194,14 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         webView.uiDelegate = self
+        if service == .instagram {
+            // Keep an opaque native backing surface visible while Instagram
+            // replaces its SPA document. A transparent WKWebView exposes the
+            // host beneath it as a black/white flash during those transitions.
+            webView.isOpaque = true
+            webView.backgroundColor = .systemBackground
+            webView.scrollView.backgroundColor = .systemBackground
+        }
         webViews[service] = webView
         serviceByWebView[ObjectIdentifier(webView)] = service
         messageBridges[service] = bridge
@@ -214,6 +233,102 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if #available(iOS 16.4, *) { webView.isInspectable = true }
         #endif
         return webView
+    }
+
+    func restoreYoutubeMiniPlayer() {
+        guard let watchWebView = youtubeMiniPlayerWebView,
+              let browseWebView = webViews[.youtube] else { return }
+        browseWebView.evaluateJavaScript("window.__vigilPauseAllMedia?.();")
+        browseWebView.stopLoading()
+        browseWebView.navigationDelegate = nil
+        browseWebView.uiDelegate = nil
+        serviceByWebView.removeValue(forKey: ObjectIdentifier(browseWebView))
+        webViews[.youtube] = watchWebView
+        mainDocumentIDs.removeValue(forKey: .youtube)
+        youtubeMiniPlayerWebView = nil
+        watchWebView.evaluateJavaScript("window.__vigilExitNativeYouTubeMiniPlayer?.();")
+        health[.youtube] = .ready
+    }
+
+    func closeYoutubeMiniPlayer() {
+        closeYoutubeMiniPlayer(resumeBrowseVideo: false)
+    }
+
+    private func closeYoutubeMiniPlayer(resumeBrowseVideo: Bool) {
+        guard let watchWebView = youtubeMiniPlayerWebView else { return }
+        let resumeScript = resumeBrowseVideo
+            ? "document.querySelector('video')?.play().catch(() => {});"
+            : ""
+        webViews[.youtube]?.evaluateJavaScript(
+            "window.__vigilYoutubeBrowseMiniActive = false; \(resumeScript)"
+        )
+        watchWebView.evaluateJavaScript(
+            "window.__vigilPauseAllMedia?.(); window.__vigilExitNativeYouTubeMiniPlayer?.();"
+        )
+        watchWebView.stopLoading()
+        watchWebView.navigationDelegate = nil
+        watchWebView.uiDelegate = nil
+        serviceByWebView.removeValue(forKey: ObjectIdentifier(watchWebView))
+        youtubeMiniPlayerWebView = nil
+    }
+
+    private func beginYoutubeMiniPlayer(
+        from watchWebView: WKWebView,
+        payload: [String: Any]
+    ) {
+        guard fixedService == .youtube,
+              youtubeMiniPlayerWebView == nil,
+              webViews[.youtube] === watchWebView else { return }
+        let requestedURL = (payload["browseURL"] as? String).flatMap(URL.init(string:))
+        let browseURL = requestedURL.flatMap { url in
+            SocialService.youtube.allowsNavigation(to: url)
+                && !SocialService.youtube.isRestrictedSurface(url) ? url : nil
+        } ?? SocialService.youtube.homeURL
+
+        let configuration = watchWebView.configuration.copy() as! WKWebViewConfiguration
+        let controller = WKUserContentController()
+        watchWebView.configuration.userContentController.userScripts.forEach {
+            controller.addUserScript($0)
+        }
+        controller.addUserScript(WKUserScript(
+            source: """
+            window.__vigilYoutubeBrowseMiniActive = true;
+            document.addEventListener('play', event => {
+              if (!window.__vigilYoutubeBrowseMiniActive) return;
+              const media = event.target;
+              if (media instanceof HTMLMediaElement) media.pause();
+            }, true);
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        if let bridge = messageBridges[.youtube] {
+            controller.add(bridge, name: "vigil")
+        }
+        configuration.userContentController = controller
+        let browseWebView = WKWebView(frame: .zero, configuration: configuration)
+        browseWebView.navigationDelegate = self
+        browseWebView.uiDelegate = self
+        browseWebView.allowsBackForwardNavigationGestures = SocialService.youtube.allowsBackForwardNavigationGestures
+        browseWebView.allowsLinkPreview = false
+        browseWebView.scrollView.alwaysBounceVertical = false
+        browseWebView.scrollView.contentInsetAdjustmentBehavior = .automatic
+        browseWebView.scrollView.isDirectionalLockEnabled = SocialService.youtube.usesDirectionalScrollLock
+        browseWebView.scrollView.keyboardDismissMode = .interactive
+        let refreshControl = UIRefreshControl()
+        refreshControl.addTarget(self, action: #selector(refreshWebView(_:)), for: .valueChanged)
+        refreshControl.isEnabled = false
+        browseWebView.scrollView.refreshControl = refreshControl
+        browseWebView.scrollView.alwaysBounceVertical = false
+        #if DEBUG
+        if #available(iOS 16.4, *) { browseWebView.isInspectable = true }
+        #endif
+
+        serviceByWebView[ObjectIdentifier(browseWebView)] = .youtube
+        mainDocumentIDs.removeValue(forKey: .youtube)
+        webViews[.youtube] = browseWebView
+        youtubeMiniPlayerWebView = watchWebView
+        browseWebView.load(URLRequest(url: browseURL))
     }
 
     func audioEnabled(for service: SocialService) -> Bool {
@@ -274,7 +389,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func pauseAllMedia() {
-        webViews.values.forEach { $0.evaluateJavaScript("window.__vigilPauseAllMedia?.();") }
+        managedWebViews.forEach { $0.evaluateJavaScript("window.__vigilPauseAllMedia?.();") }
     }
 
     func suspendAllMedia() {
@@ -286,7 +401,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         externalPlaybackRelinquishTask?.cancel()
         InstagramExternalPlaybackPolicy.relinquish()
 
-        webViews.values.forEach { webView in
+        managedWebViews.forEach { webView in
             webView.evaluateJavaScript(
                 "window.__vigilSuspendAllMedia ? window.__vigilSuspendAllMedia() : window.__vigilPauseAllMedia?.();"
             )
@@ -313,7 +428,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         mediaPlaybackIsSuspended = false
         externalPlaybackRelinquishTask?.cancel()
         externalPlaybackRelinquishTask = nil
-        webViews.values.forEach { webView in
+        managedWebViews.forEach { webView in
             webView.setAllMediaPlaybackSuspended(false) { [weak self, weak webView] in
                 guard let self, let webView, !self.mediaPlaybackIsSuspended else { return }
                 webView.evaluateJavaScript("window.__vigilResumeSuspendedMedia?.();")
@@ -358,6 +473,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ) else { return }
         }
         switch type {
+        case "youtubeMinimize":
+            guard service == .youtube,
+                  let sourceWebView = message.webView else { return }
+            beginYoutubeMiniPlayer(from: sourceWebView, payload: body)
         case "documentReady":
             guard frame.isMainFrame,
                   let documentID = body["documentID"] as? String,
@@ -413,6 +532,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 ),
                 for: service
             )
+            if service == .youtube,
+               route == "watch",
+               youtubeMiniPlayerWebView != nil,
+               message.webView === webViews[.youtube] {
+                closeYoutubeMiniPlayer(resumeBrowseVideo: true)
+            }
         case "playback":
             guard service == .youtube,
                   let key = body["key"] as? String,
@@ -917,7 +1042,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             route: isReels ? "reels" : isStory ? "story" : "unknown",
             refreshEligible: false,
             blocksRefresh: true,
-            fullBleedTop: isReels || isStory
+            // The stable Instagram wrapper never changes the WKWebView frame
+            // during navigation. Instagram's own mobile layout stays inside
+            // the ordinary iOS safe area on every route.
+            fullBleedTop: false
         )
     }
 

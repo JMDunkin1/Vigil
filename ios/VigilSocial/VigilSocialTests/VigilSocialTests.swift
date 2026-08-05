@@ -1508,7 +1508,11 @@ final class VigilSocialTests: XCTestCase {
 
     func testContentFilterPreblursAndObservesDynamicMediaAndText() {
         let bootstrap = DOMAdapters.contentFilterBootstrap
-        let script = DOMAdapters.script(for: .instagram, audioEnabled: true)
+        let script = DOMAdapters.script(
+            for: .instagram,
+            audioEnabled: true,
+            contentSafetyEnabled: false
+        )
         XCTAssertTrue(bootstrap.contains("filter: blur"))
         XCTAssertTrue(bootstrap.contains("background-image: none"))
         XCTAssertTrue(bootstrap.contains("canvas, object, embed"))
@@ -1610,6 +1614,62 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(instagram.contains("service: 'instagram'"))
         XCTAssertTrue(instagram.contains("underlyingRoute === 'feed'"))
         XCTAssertTrue(instagram.contains("underlyingRoute === 'story'"))
+    }
+
+    func testYouTubeHealthRecognizesCurrentWatchContainers() {
+        let youtube = DOMAdapters.script(for: .youtube, audioEnabled: true)
+
+        XCTAssertTrue(youtube.contains(
+            #"'ytm-watch, ytd-watch-flexy, [page-subtype="watch"]'"#
+        ))
+        XCTAssertTrue(youtube.contains(
+            "'ytm-player, ytd-player, #player-container-id, #player'"
+        ))
+        XCTAssertTrue(youtube.contains("firstVisibleYouTubeElement(youtubeWatchSelector)"))
+    }
+
+    @MainActor
+    func testYouTubeVisibleWatchShellIsUsableBeforeVideoAttaches() async throws {
+        let suite = #function
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.removePersistentDomain(forName: suite)
+        let store = SocialWebViewStore(
+            defaults: defaults,
+            fixedService: .youtube,
+            loadInitialPages: false
+        )
+
+        let webView = store.webView(for: .youtube)
+        let window = UIWindow(frame: webView.frame)
+        let viewController = UIViewController()
+        viewController.view.addSubview(webView)
+        window.rootViewController = viewController
+        window.isHidden = false
+        defer {
+            webView.navigationDelegate = nil
+            webView.stopLoading()
+            window.isHidden = true
+        }
+        webView.loadHTMLString(
+            """
+            <html><body>
+              <ytm-watch style="display:block;width:390px;height:700px">
+                <h1>Fixture ordinary video</h1>
+                <div id="deferred-player">Preparing video</div>
+              </ytm-watch>
+            </body></html>
+            """,
+            baseURL: try XCTUnwrap(URL(string: "https://m.youtube.com/watch?v=fixture"))
+        )
+
+        for _ in 0..<60 where store.health[.youtube] != .ready {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertEqual(
+            store.health[.youtube],
+            .ready,
+            "A visible YouTube watch shell is usable while its video element attaches asynchronously"
+        )
     }
 
     @MainActor
@@ -4552,12 +4612,32 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
-    func testInstagramNavigationPreflightsFullBleedBeforeDocumentMeasurement() {
+    func testInstagramStableAdapterLeavesSiteLayoutAndAppearanceAlone() {
+        let script = DOMAdapters.script(for: .instagram, audioEnabled: true)
+
+        XCTAssertTrue(script.contains("window.__vigilInstagramInstalled = true"))
+        XCTAssertTrue(script.contains("a[href=\"/reels/\"]"))
+        XCTAssertTrue(script.contains(":has(> :is(a[href=\"/reels/\"]"))
+        XCTAssertTrue(script.contains("'suggested reels'"))
+        XCTAssertTrue(script.contains("path.startsWith('/reel/')"))
+        XCTAssertTrue(script.contains("{ childList: true, subtree: true }"))
+        XCTAssertTrue(script.contains("fullBleedTop: false"))
+        XCTAssertFalse(script.contains("article a[href*=\"/reel/\"]"))
+        XCTAssertFalse(script.contains("touchmove"))
+        XCTAssertFalse(script.contains("normalizeReelSurface"))
+        XCTAssertFalse(script.contains("normalizeBottomNavigation"))
+        XCTAssertFalse(script.contains("normalizeCommentSheets"))
+        XCTAssertFalse(script.contains("vigilInstagramRepostProxy"))
+        XCTAssertFalse(script.contains("attributeFilter: ["))
+    }
+
+    @MainActor
+    func testInstagramNavigationKeepsAStableSafeAreaBeforeDocumentMeasurement() {
         let reel = SocialWebViewStore.provisionalInstagramSurface(
             for: URL(string: "https://www.instagram.com/reels/example/")!
         )
         XCTAssertEqual(reel.route, "reels")
-        XCTAssertTrue(reel.fullBleedTop)
+        XCTAssertFalse(reel.fullBleedTop)
         XCTAssertTrue(reel.blocksRefresh)
         XCTAssertFalse(reel.refreshEligible)
 
@@ -4565,7 +4645,7 @@ final class VigilSocialTests: XCTestCase {
             for: URL(string: "https://www.instagram.com/stories/example/123/")!
         )
         XCTAssertEqual(story.route, "story")
-        XCTAssertTrue(story.fullBleedTop)
+        XCTAssertFalse(story.fullBleedTop)
 
         let feed = SocialWebViewStore.provisionalInstagramSurface(
             for: URL(string: "https://www.instagram.com/")!
@@ -5204,6 +5284,7 @@ final class VigilSocialTests: XCTestCase {
                   html, body { margin: 0; min-height: 100%; }
                   [hidden] { display: none !important; }
                   ytm-player, #player-container-id, #player, video { display: block; width: 390px; height: 220px; background: black; }
+                  .ytp-ad-skip-button { display: block; width: 96px; height: 44px; }
                   ytm-single-column-watch-next-results-renderer { display: block; height: 1200px; }
                   #fixture-home-content, #fixture-other-content { min-height: 1100px; padding: 72px 20px 100px; }
                   #fixture-home-action { width: 160px; height: 44px; }
@@ -5258,6 +5339,9 @@ final class VigilSocialTests: XCTestCase {
                   window.__vigilFixtureHomeControlClicks = 0;
                   window.__vigilFixtureHomeContentClicks = 0;
                   window.__vigilFixturePauseCalls = 0;
+                  window.__vigilFixturePlayCalls = 0;
+                  window.__vigilFixtureAdSkipClicks = 0;
+                  window.__vigilFixturePlayerTeardowns = 0;
                   window.__vigilFixturePopRoutes = [];
                   window.__vigilFixtureGoCalls = [];
                   window.__vigilFixtureShellClicks = 0;
@@ -5269,10 +5353,21 @@ final class VigilSocialTests: XCTestCase {
 
                   const fixtureNativeHistoryReplaceState = history.replaceState.bind(history);
                   const fixtureVideo = document.querySelector('video');
-                  const fixtureNativePause = fixtureVideo.pause.bind(fixtureVideo);
+                  let fixturePaused = false;
+                  Object.defineProperty(fixtureVideo, 'paused', {
+                    configurable: true,
+                    get: () => fixturePaused
+                  });
+                  fixtureVideo.play = () => {
+                    window.__vigilFixturePlayCalls += 1;
+                    fixturePaused = false;
+                    fixtureVideo.dispatchEvent(new Event('play'));
+                    return Promise.resolve();
+                  };
                   fixtureVideo.pause = () => {
                     window.__vigilFixturePauseCalls += 1;
-                    fixtureNativePause();
+                    fixturePaused = true;
+                    fixtureVideo.dispatchEvent(new Event('pause'));
                   };
                   new MutationObserver(() => {
                     if (window.__vigilFixtureDuplicateWatchActive
@@ -5309,6 +5404,16 @@ final class VigilSocialTests: XCTestCase {
                     event.preventDefault();
                     window.__vigilFixtureHomeControlClicks += 1;
                     if (location.pathname !== '/') {
+                      // The live mobile router pauses the same media element
+                      // more than once and can do so well after navigation
+                      // begins. Reproduce that sequence instead of the old
+                      // single synchronous pause fixture.
+                      fixtureVideo.pause();
+                      setTimeout(() => fixtureVideo.pause(), 450);
+                      setTimeout(() => {
+                        window.__vigilFixturePlayerTeardowns += 1;
+                        document.getElementById('fixture-player')?.remove();
+                      }, 120);
                       history.pushState({ fixture: 'home' }, '', '/');
                     }
                     renderFixtureRoute();
@@ -5411,6 +5516,38 @@ final class VigilSocialTests: XCTestCase {
             "window.__vigilYouTubeParityTest != null",
             in: webView
         )
+
+        let adSuppression = try await evaluateJavaScriptRetryingKnownGestureTransition(
+            """
+            (() => {
+              const player = document.getElementById('player');
+              const button = document.createElement('button');
+              button.className = 'ytp-ad-skip-button';
+              button.textContent = 'Skip ad';
+              button.addEventListener('click', () => {
+                window.__vigilFixtureAdSkipClicks += 1;
+                player.classList.remove('ad-showing');
+              });
+              player.classList.add('ad-showing');
+              player.append(button);
+              const suppressed = window.__vigilYouTubeParityTest.suppressYouTubeAds();
+              window.__vigilYouTubeParityTest.suppressYouTubeAds();
+              return {
+                suppressed,
+                skipClicks: window.__vigilFixtureAdSkipClicks,
+                adEnded: !player.classList.contains('ad-showing'),
+                mutedRestored: document.querySelector('video').muted === false,
+                speedRestored: document.querySelector('video').playbackRate === 1
+              };
+            })()
+            """,
+            in: webView
+        ) as? [String: Any]
+        XCTAssertEqual(adSuppression?["suppressed"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["skipClicks"] as? Int, 1)
+        XCTAssertEqual(adSuppression?["adEnded"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["mutedRestored"] as? Bool, true)
+        XCTAssertEqual(adSuppression?["speedRestored"] as? Bool, true)
 
         let unsafePopGrowthIsRejected = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
@@ -5555,6 +5692,11 @@ final class VigilSocialTests: XCTestCase {
               && location.pathname === '/'
               && document.documentElement.dataset.fixtureRoute === 'home'
               && document.getElementById('vigil-youtube-miniplayer-shell') != null
+              && window.__vigilFixturePlayCalls >= 2
+              && window.__vigilFixturePlayerTeardowns === 1
+              && document.getElementById('vigil-youtube-miniplayer-shell')
+                ?.contains(document.getElementById('fixture-player')) === true
+              && document.querySelector('video').paused === false
             """,
             in: webView
         )
@@ -5580,7 +5722,10 @@ final class VigilSocialTests: XCTestCase {
                 rightAnchored: rightGap >= -1 && rightGap <= 24,
                 bottomAnchored: bottomGap >= -1 && bottomGap <= 160,
                 homeVisible: !document.getElementById('fixture-home-content').hidden,
-                watchHidden: document.getElementById('fixture-watch-content').hidden
+                watchHidden: document.getElementById('fixture-watch-content').hidden,
+                playing: document.querySelector('video').paused === false,
+                playbackRecoveries: window.__vigilFixturePlayCalls,
+                ownershipRecoveries: window.__vigilFixturePlayerTeardowns
               };
             })()
             """,
@@ -5598,6 +5743,9 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(miniState?["bottomAnchored"] as? Bool, true)
         XCTAssertEqual(miniState?["homeVisible"] as? Bool, true)
         XCTAssertEqual(miniState?["watchHidden"] as? Bool, true)
+        XCTAssertEqual(miniState?["playing"] as? Bool, true)
+        XCTAssertGreaterThanOrEqual(miniState?["playbackRecoveries"] as? Int ?? 0, 2)
+        XCTAssertEqual(miniState?["ownershipRecoveries"] as? Int, 1)
 
         let homeInteraction = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
@@ -6473,6 +6621,15 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(source.contains("location.replace(focusedEntryURL)"))
         XCTAssertTrue(source.contains("location.assign(focusedEntryURL)"))
         XCTAssertTrue(source.contains("event.stopImmediatePropagation()"))
+        XCTAssertTrue(source.contains("routePlaybackTransitionUntil = performance.now() + 3200"))
+        XCTAssertTrue(source.contains("scheduleMiniPlaybackRecovery()"))
+        XCTAssertTrue(source.contains("recoverMiniPlayerOwnership()"))
+        XCTAssertTrue(source.contains(".ytp-ad-skip-button-modern"))
+        XCTAssertTrue(source.contains("ytd-in-feed-ad-layout-renderer"))
+        XCTAssertFalse(source.contains("video.playbackRate = 16"))
+        XCTAssertFalse(source.contains("video.currentTime = duration"))
+        XCTAssertTrue(source.contains("type: 'youtubeMinimize'"))
+        XCTAssertTrue(source.contains("__vigilExitNativeYouTubeMiniPlayer"))
         XCTAssertFalse(source.contains("accounts.google.com"))
 
         let manifestURL = URL(fileURLWithPath: #filePath)

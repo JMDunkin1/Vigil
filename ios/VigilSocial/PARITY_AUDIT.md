@@ -9,7 +9,8 @@ caused by Vigil outside the intentional differences below is a bug.
 The practical target is:
 
 1. Preserve the service mobile site's layout, sizing, lazy loading, media
-   behavior, and in-page gestures.
+   behavior, and in-page gestures. In particular, Instagram must not be
+   reconstructed, resized, reordered, or given replacement gestures by Vigil.
 2. Match the corresponding native app's surrounding iOS behavior where the web
    surface exposes an equivalent: safe areas, bounce, refresh, edge-back,
    keyboard dismissal, recovery, and app-icon appearances.
@@ -35,9 +36,11 @@ The practical target is:
   YouTube consent, and the exact YouTube session handoff are likewise kept
   outside every Vigil DOM/media/player hook. A completed same-document Instagram
   sign-in reloads once before protected content appears.
-- Both companions' ordinary content remains subject to the configured on-device
-  classifier. YouTube also remains subject to the supervised web policy and
-  overlapping native/DOM Shorts guards.
+- YouTube ordinary content remains subject to the configured on-device
+  classifier. Instagram uses only its route/card policy guards so its rapidly
+  changing media DOM is not repeatedly concealed and rebuilt. Both companions
+  remain subject to the supervised web policy, and YouTube retains overlapping
+  native/DOM Shorts guards.
 - Neither companion enables Picture in Picture, AirPlay/Cast, or unrestricted
   external link handoff.
 
@@ -108,17 +111,21 @@ its major navigation, story/player, or icon presentation.
 - Horizontal post carousels and story-tray scrolling.
 - Story open size, progress, tap-forward/back, automatic advance, reply field,
   swipe/close behavior, and return to the prior feed position.
-- Reels fill the visible surface above the bottom navigation without cropping
-  captions/descriptions, retain sharp responsive media, and page one item per
-  vertical swipe through WebKit momentum plus mandatory start-aligned CSS snap
-  points. Vigil must never correct an active Reel gesture with `scrollTop`,
-  `scrollBy`, or a synthetic smooth-scroll animation.
-- Public Reel repost uses Instagram's own Repost control when present, or the
-  same semantic action in Instagram's Share sheet. A companion-provided action
-  must report that repost is unavailable when Instagram does not expose the
-  operation; it must never fabricate reposted state.
-- Double-tapping Reel/post media likes an unliked item without toggling
-  playback or mute; repeating it never unlikes an already-liked item.
+- When Reels is allowed, Instagram owns its sizing, scrolling, snap behavior,
+  metadata, preload behavior, controls, and gestures without Vigil correction.
+  When Reels is blocked, its entry points are hidden at document start and its
+  route is redirected without first constructing a replacement Reel surface.
+- Level 2's blocked-Reels state preserves friendly Reel media embedded in a
+  followed feed/profile post or Direct thread. It removes recommendation cards
+  identified by conservative exact labels and keeps both standalone `/reel/`
+  and `/reels/` viewers unavailable, because either viewer can advance into an
+  unbounded discovery session. An article must never be hidden merely because
+  it contains its own Reel permalink.
+- Repost, like, playback, mute, comments, and navigation use Instagram's own
+  controls. Vigil must not inject proxy controls or reinterpret tap, hold,
+  double-tap, pinch, or swipe gestures.
+- Instagram appearance reporting must not change the native color scheme or
+  safe-area geometry while the page is loading or navigating.
 - Profile/post/Direct navigation and edge-back.
 - Media remains concealed until its configured safety verdict and sensitive
   media cannot continue audibly.
@@ -208,17 +215,14 @@ input and video latency.
 
 ## Current physical-device status
 
-The Personal Team Instagram companion is installed on the physical phone as
-0.3.31 (34), with both signed YouTube extensions embedded. The Shorts blocker
-remains enabled. `Vigil YouTube Controls` still needs its one-time offline
-activation because the supervised BuiltIn web filter froze Safari's extension
-settings before that new extension first appeared. After activation, repeat the
-fallback Safari checks.
+The Personal Team Instagram and YouTube companions are installed on the
+physical phone as 0.3.40 (43). The supervised policy still matches the current
+generated source exactly (`bab127c02bb9`); no restriction was removed or
+weakened. A final exact-bundle launch attempt was denied because the phone was
+locked, rather than because the app failed to install.
 
-The restored native YouTube WK companion in this change has local source,
-policy, and build verification only. It has not been installed on the physical
-phone, no credentials were entered in its diagnostic probe, and successful
-Google sign-in is not yet claimed. A future authorized update must explicitly
-remove the retired `tech.caseline.vigil.youtube-webclip-experiment` profile with
-`--replace-legacy`, then repeat the physical-only sign-in, miniplayer,
-competing-gesture, and perceived-preload checks above.
+The final update receipt/profile-label refresh could not be written because the
+`pymobiledevice3` USB channel disappeared after both apps were installed. The
+live policy itself remains current. Reconnect the phone over USB and rerun
+`npm run ios:phone:update:personal` before treating the deployment receipt as
+complete. The user explicitly declined a visual confirmation for this update.

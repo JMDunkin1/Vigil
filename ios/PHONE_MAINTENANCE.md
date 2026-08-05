@@ -23,7 +23,7 @@ explicit `--allow-edition-downgrade` flag.
 
 The phone has two independent kinds of freshness:
 
-- The implementation release in `ios/phone-release.json` covers the fixed iOS companions, the four built-in policy generators, companion behavior, and the bundled adult blocklist.
+- The implementation release in `ios/phone-release.json` covers the four built-in policy generators and bundled enforcement inputs. The same manifest also gives Instagram and YouTube independent app versions, builds, and source fingerprints.
 - The live policy fingerprint covers the configuration generated from Vigil's current state. It can change without an implementation release when a session, limit, blocklist setting, or Normal/Soft Lock/Full Brick/Panic policy changes.
 
 Use these commands from the repository root:
@@ -37,7 +37,7 @@ npm run ios:phone:update:personal
 npm run ios:phone:update:enhanced
 ```
 
-`status` is read-only and explains drift. `check` reports the same state but exits nonzero when the phone or release is stale. If CoreDevice cannot inspect configuration profiles on the connected phone, both commands report profile verification as unavailable instead of treating the live policy as missing or crashing. `audit` builds the TypeScript runtime and validates generated Normal, Soft Lock, Full Brick, and Panic profiles for the selected edition. `update` bumps the patch/build only when that edition's inputs changed, builds the fixed Instagram and YouTube companions (Instagram also contains the Safari YouTube blocker and controls extensions), installs them in place, and replaces only the live policy profile. Enhanced additionally builds, installs, and live-verifies Vigil URL Filter. It does not build or install a Vigil browser, create Home Screen Web Clips, or reboot the phone.
+`status` is read-only and explains drift. `check` reports the same state but exits nonzero when the phone or release is stale. If CoreDevice cannot inspect configuration profiles on the connected phone, both commands report profile verification as unavailable instead of treating the live policy as missing or crashing. `audit` builds the TypeScript runtime and validates generated Normal, Soft Lock, Full Brick, and Panic profiles for the selected edition. `update` bumps each companion's patch/build only when that app's inputs changed, then builds and installs only companions whose installed version is stale. Shared app inputs correctly advance both versions; Instagram's embedded Safari YouTube extension is tracked as an Instagram input. The command also replaces the live policy profile when required. Enhanced additionally builds, installs, and live-verifies Vigil URL Filter. It does not build or install a Vigil browser, create Home Screen Web Clips, or reboot the phone.
 
 Both editions require a valid `adult-blocklist.sdi` before they can bump or mutate the phone. The live installed Vigil data copy takes priority over a stale repository copy. For the default Block List Project source, “valid” means at least 600,000 domains with intact format and payload hashes; a tiny test fixture cannot pass. Each built app must contain the exact artifact at its bundle root. The suite re-reads that bundled copy, compares its domain count, snapshot hash, and whole-artifact hash, and records the proof per app in the deployment receipt. The same gate checks that `ExplicitContentPolicy.json` is freshly generated and byte-identical inside the companion. `status` compares the adult artifact to the enabled live snapshot, reports the real domain count, source, and hashes, and reports whether both generated artifacts were proven by the last deployment.
 
@@ -51,7 +51,7 @@ When more than one Xcode is installed, the suite automatically selects an iOS SD
 
 Personal always uses the conservative entitlement set and records `personal-team-conservative` in the deployment receipt. That keeps profile-based domain and URL rules and page-text inspection active, but reveals media that the unavailable Sensitive Content Analysis framework cannot classify. Enhanced first attempts the fuller companion capability set and inspects the actual signed entitlements instead of trusting requested build settings; a mixed result is recorded explicitly. Enhanced separately requires the system URL Filter entitlement and rejects an inert build.
 
-The update command writes a local, ignored deployment receipt under `data/ios-phone-deployments/`. The authoritative version remains observable on the phone through each app and in the stamped configuration-profile name.
+The update command writes a local, ignored deployment receipt under `data/ios-phone-deployments/`. Each companion's authoritative version remains observable independently on the phone; the separate implementation version remains in the stamped configuration-profile name.
 
 Useful options:
 

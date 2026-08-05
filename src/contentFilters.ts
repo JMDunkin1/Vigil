@@ -44,6 +44,9 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     id: "instagram-reels",
     label: "Instagram Reels",
     sites: ["instagram.com"],
+    // Friendly inline Reel media does not navigate to either of these paths.
+    // Keep both viewer routes fail-closed so a permalink cannot become an
+    // infinite Reels session outside the companion as a browser bypass.
     urlFilters: ["||instagram.com/reel", "||instagram.com/reels"],
     paths: [/^\/reels?(?:\/|$)/i],
     fallbackUrl: "https://www.instagram.com/direct/inbox/",

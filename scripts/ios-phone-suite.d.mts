@@ -14,6 +14,7 @@ export function parseArguments(args: string[]): { command: string; options: Phon
 export function incrementVersion(version: string, level: "patch" | "minor" | "major"): string;
 export function iosSdkSupportsDevice(iosSdk: number, deviceOsVersion: string): boolean;
 export function isPhoneImplementationFile(path: string): boolean;
+export function isSocialAppImplementationFile(path: string, appId: "instagram" | "youtube"): boolean;
 export function isLegacyPhoneBundleIdentifier(bundleIdentifier: unknown): boolean;
 export function policyFreshnessProblems(options?: {
   installedProfileName?: string;
@@ -58,3 +59,14 @@ export function implementationFingerprint(edition?: "personal" | "enhanced"): Pr
   files: Array<{ path: string; bytes: number; sha256: string }>;
   blocklistPath: string;
 }>;
+export function socialAppImplementationFingerprint(
+  appId: "instagram" | "youtube"
+): Promise<{
+  hash: string;
+  appId: "instagram" | "youtube";
+  files: Array<{ path: string; bytes: number; sha256: string }>;
+}>;
+export function socialAppsNeedingUpdate(
+  release: { apps: Record<string, { version: string; build: number }> },
+  installedApps?: Array<{ bundleIdentifier?: string; version?: string; bundleVersion?: string | number }>
+): Array<"instagram" | "youtube">;

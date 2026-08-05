@@ -13,25 +13,36 @@ struct RootView: View {
     }
 
     private func filteredWebView(service: SocialService) -> some View {
-        let reportedIsDark = store.reportedChromeIsDark(for: service)
+        // Instagram's SPA frequently changes transient container backgrounds
+        // while navigating. Driving the native color scheme from those DOM
+        // mutations made the entire WKWebView flash between light and dark.
+        // Let iOS and Instagram share the user's system appearance instead.
+        let reportedIsDark = service == .instagram
+            ? nil
+            : store.reportedChromeIsDark(for: service)
         let isDark = reportedIsDark ?? (colorScheme == .dark)
-        // Keep Instagram's WKWebView frame invariant across feed, Reels,
-        // Stories, and transient loading states. Route changes may adjust the
-        // scroll view's content inset, but must never resize an already-snapped
-        // Reel beneath its metadata.
+        let primaryWebView = store.webView(for: service)
+        // Keep the focused Instagram wrapper inside the ordinary iOS safe
+        // area. Instagram owns its layout; Vigil no longer stretches or
+        // reshapes Reels and Stories beneath the status/home-indicator areas.
         let webViewSafeAreaEdges: Edge.Set = service == .instagram
-            ? [.top, .bottom]
+            ? []
             : .bottom
         return ZStack {
             (isDark ? Color.black : Color.white)
                 .ignoresSafeArea()
 
             SocialWebView(
-                webView: store.webView(for: service),
+                webView: primaryWebView,
                 isDark: isDark
             )
-                .id(service)
+                .id(ObjectIdentifier(primaryWebView))
                 .ignoresSafeArea(.container, edges: webViewSafeAreaEdges)
+
+            if service == .youtube,
+               let miniWebView = store.youtubeMiniPlayerWebView {
+                youtubeMiniPlayer(webView: miniWebView, isDark: isDark)
+            }
 
             healthOverlay(
                 store.health[service] ?? .loading,
@@ -51,6 +62,44 @@ struct RootView: View {
                     store.suspendAllMedia()
                 }
             }
+    }
+
+    private func youtubeMiniPlayer(webView: WKWebView, isDark: Bool) -> some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                ZStack(alignment: .topTrailing) {
+                    SocialWebView(webView: webView, isDark: isDark)
+                        .id(ObjectIdentifier(webView))
+                        .frame(width: 224, height: 126)
+                        .background(Color.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                    Button(action: store.restoreYoutubeMiniPlayer) {
+                        Color.clear.contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 224, height: 126)
+                    .accessibilityLabel("Return to video")
+
+                    Button(action: store.closeYoutubeMiniPlayer) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundStyle(Color.white)
+                            .frame(width: 30, height: 30)
+                            .background(Color.black.opacity(0.72), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(7)
+                    .accessibilityLabel("Close miniplayer")
+                }
+                .shadow(color: Color.black.opacity(0.34), radius: 12, y: 6)
+                .padding(.trailing, 12)
+                .padding(.bottom, 68)
+            }
+        }
+        .ignoresSafeArea(.keyboard)
     }
 
     @ViewBuilder

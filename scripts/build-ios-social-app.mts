@@ -64,7 +64,6 @@ export function buildArguments(argv: string[]): string[] {
 }
 
 export function parseOptions(argv: string[]): BuildOptions {
-  const release = phoneRelease();
   const values = new Map<string, string>();
   let service = "";
   let unsigned = false;
@@ -89,8 +88,10 @@ export function parseOptions(argv: string[]): BuildOptions {
   if (!unclassifiedMediaPolicies.has(unclassifiedMediaPolicy)) {
     throw new Error(`Unknown unclassified media policy: ${unclassifiedMediaPolicy}`);
   }
+  const selectedService = values.get("service") || service;
+  const release = phoneRelease(selectedService);
   return {
-    service: values.get("service") || service,
+    service: selectedService,
     configuration: values.get("configuration") || "Release",
     destination: values.get("destination") || "generic/platform=iOS",
     derivedData: values.get("derived-data") || "",
@@ -101,7 +102,7 @@ export function parseOptions(argv: string[]): BuildOptions {
   };
 }
 
-function phoneRelease(): { version: string; build: number } {
+function phoneRelease(service: string): { version: string; build: number } {
   const fallback = { version: "0.1.0", build: 1 };
   const moduleRoot = dirname(dirname(fileURLToPath(import.meta.url)));
   const candidates = [
@@ -111,7 +112,13 @@ function phoneRelease(): { version: string; build: number } {
   ];
   for (const path of candidates) {
     try {
-      const value = JSON.parse(readFileSync(path, "utf8")) as Partial<typeof fallback>;
+      const manifest = JSON.parse(readFileSync(path, "utf8")) as Partial<typeof fallback> & {
+        schemaVersion?: number;
+        apps?: Record<string, Partial<typeof fallback>>;
+      };
+      const value = manifest.schemaVersion === 3 && manifest.apps?.[service]
+        ? manifest.apps[service]
+        : manifest;
       if (/^\d+\.\d+\.\d+$/.test(String(value.version || "")) && Number.isInteger(value.build) && Number(value.build) > 0) {
         return { version: String(value.version), build: Number(value.build) };
       }
