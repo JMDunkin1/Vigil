@@ -57,8 +57,8 @@ assert.deepEqual([...missingQueries], [], "the active renderer graph must not qu
 
 assert.match(html, /id="view-home"[\s\S]*?data-protection-level="1"[\s\S]*?data-protection-level="2"[\s\S]*?data-protection-level="3"[\s\S]*?data-protection-level="4"/u, "Home must retain all four protection actions");
 assert.match(html, /id="emergencyPanel"[\s\S]*?id="requestEmergency"[\s\S]*?id="confirmEmergency"/u, "Home must keep the protected emergency flow reachable");
-assert.match(html, /src="\/art\/saints\/traditional\/michael\.png"/u, "Home may retain Saint Michael as a quiet visual anchor");
-assert.doesNotMatch(html, /saintInfoPopover|saintStageButton|Browse sacred portraits/u, "Home must not retain the former portrait browser as a peripheral feature");
+assert.match(html, /src="\/art\/saints\/traditional\/michael\.png"/u, "Home must retain Saint Michael as its initial visual anchor");
+assert.match(html, /id="saintInfoPopover"[\s\S]*?Browse sacred portraits[\s\S]*?id="saintStageButton"/u, "Home must retain the established sacred portrait interaction");
 
 assert.match(html, /id="newSchedule"/u);
 assert.match(html, /id="scheduleList"/u);

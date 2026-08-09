@@ -963,9 +963,52 @@ body[data-active-view="home"] .app-main {
   --night-soft: #1a1b1a;
   --shadow: 0 24px 68px rgba(31, 29, 26, 0.16);
   --focus: rgba(169, 111, 76, 0.24);
+  --font-body: Georgia, "Times New Roman", serif;
+  --font-display: Georgia, "Times New Roman", serif;
+  --font-mono: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace;
+  padding: 30px clamp(18px, 3.4vw, 52px) 70px;
   color: var(--ink);
   background:
-    radial-gradient(circle at 78% -8%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 34rem),
-    radial-gradient(circle at 28% 106%, color-mix(in srgb, var(--accent-secondary) 3%, transparent), transparent 30rem),
+    radial-gradient(circle at 78% -8%, color-mix(in srgb, var(--gold) 16%, transparent), transparent 32rem),
     linear-gradient(180deg, var(--paper), var(--paper-2));
+  font-family: var(--font-body);
+}
+
+html[data-theme="dark"] body[data-active-view="home"] .app-main {
+  color-scheme: dark;
+  --paper: #101111;
+  --paper-2: #161717;
+  --surface: rgba(28, 29, 28, 0.9);
+  --surface-strong: #222321;
+  --ink: #f0ece5;
+  --muted: #aaa398;
+  --line: #353532;
+  --line-strong: #575248;
+  --primary: #c28a5c;
+  --primary-strong: #dda873;
+  --blue: #c28a5c;
+  --amber: #e3a85d;
+  --green: #69c7ae;
+  --accent: #b77952;
+  --accent-bright: #d5a16b;
+  --accent-soft: rgba(183, 121, 82, 0.12);
+  --accent-secondary: #9d7c58;
+  --gold: var(--accent);
+  --gold-bright: var(--accent-bright);
+  --night: #0c0d0d;
+  --night-soft: #151616;
+  --shadow: 0 28px 84px rgba(0, 0, 0, 0.44);
+  --focus: rgba(213, 161, 107, 0.24);
+}
+
+@media (max-width: 900px) {
+  body[data-active-view="home"] .app-main {
+    padding: 24px 18px 58px;
+  }
+}
+
+@media (max-width: 720px) {
+  body[data-active-view="home"] .app-main {
+    padding-inline: 13px;
+  }
 }
