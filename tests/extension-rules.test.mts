@@ -572,7 +572,8 @@ assert.ok(
   assert.equal(shortsRedirect.searchParams.get("site"), "YouTube Shorts");
   assert.equal(shortsRedirect.searchParams.get("back"), "https://www.youtube.com/");
   assert.equal(decodeURIComponent(shortsRedirect.toString()).includes("youtube.com/shorts"), false);
-  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), true);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reels"), true);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), false);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/explore"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/feed/explore"), true);
   assert.equal(contentFilterRuleEntries(state, activePolicy(state, now)).some((rule) => rule.id === "reddit-popular"), true);
@@ -615,6 +616,7 @@ assert.ok(
   assert.equal(allowedShortsRedirect.searchParams.get("site"), "YouTube Shorts");
   assert.equal(allowedShortsRedirect.searchParams.get("back"), "https://www.youtube.com/");
   assert.equal(decodeURIComponent(allowedShortsRedirect.toString()).includes("youtube.com/shorts"), false);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reels"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/reel"), false);
 }
 

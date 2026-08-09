@@ -244,7 +244,7 @@ function bindProtectionActions(): void {
   const preview = (level: number) => applyProtectionLevelPresentation(level, true, { input, control, label, status });
   const apply = (level: number) => {
     const normalized = normalizedProtectionLevel(level);
-    if (normalized === 4 && !window.confirm("Start Panic mode for three minutes? It cannot be ended early.")) {
+    if (normalized === 3 && !window.confirm("Start Panic mode for three minutes? It cannot be ended early.")) {
       applyProtectionLevelPresentation(appliedLevel, false, { input, control, label, status });
       void refresh();
       return;
@@ -287,17 +287,17 @@ function bindProtectionActions(): void {
 
 async function setProtectionLevel(levelValue: number): Promise<void> {
   if (protectionRequestInFlight) return;
-  const level = Math.max(1, Math.min(4, Math.round(levelValue || 1)));
+  const level = normalizedProtectionLevel(levelValue);
   protectionRequestInFlight = true;
   setProtectionButtonsDisabled(true);
   try {
-    if (level === 4) {
+    if (level === 3) {
       const durationMinutes = Number(ui.data?.state.settings.panicLockDurationMinutes || 3);
       await post<SessionStartResponse>("/api/panic/start", { durationMinutes });
       toast(`Panic lock started for ${durationMinutes} minute${durationMinutes === 1 ? "" : "s"}`);
     } else {
       await post("/api/protection/level", { level, deviceTargets: ["computer", "phone"] });
-      toast(level === 1 ? "Normal protection restored" : level === 2 ? "Soft Lock applied" : "Full Brick applied");
+      toast(level === 1 ? "Filtered social restored" : "Full Brick applied");
     }
   } catch (error) {
     handleMutationError(error);
@@ -321,20 +321,20 @@ function renderHome(data: DashboardData): void {
   if (!userAdjusting) {
     input.value = String(level);
     $("#protectionLevelControl").dataset.level = String(level);
-    $("#protectionLevelLabel").textContent = level === 4 ? "Panic" : `Level ${level}`;
+    $("#protectionLevelLabel").textContent = level === 3 ? "Panic" : `Level ${level}`;
   }
-  input.disabled = protectionRequestInFlight || level === 4;
-  input.setAttribute("aria-valuetext", level === 4 ? "Panic, locked for three minutes" : `Level ${level}`);
+  input.disabled = protectionRequestInFlight || level === 3;
+  input.setAttribute("aria-valuetext", level === 3 ? "Panic, locked for three minutes" : `Level ${level}`);
   for (const button of $$<HTMLButtonElement>("[data-protection-level-choice]")) {
     const selected = Number(button.dataset.protectionLevelChoice) === level;
     button.classList.toggle("is-selected", selected);
     button.setAttribute("aria-pressed", String(selected));
   }
-  if (level === 4 && active) {
+  if (level === 3 && active) {
     const seconds = Math.max(0, Math.ceil((new Date(active.endsAt).getTime() - Date.now()) / 1_000));
     $("#protectionLevelStatus").textContent = `${formatDuration(seconds)} locked`;
   } else if (!userAdjusting) {
-    $("#protectionLevelStatus").textContent = level === 1 ? "Normal" : level === 2 ? "Soft Lock" : "Full Brick";
+    $("#protectionLevelStatus").textContent = level === 1 ? "Filtered Social" : "Full Brick";
   }
 
   const phase = active?.phase || data.state.sessionPhase;
@@ -358,14 +358,13 @@ function renderHome(data: DashboardData): void {
 }
 
 function activeProtectionLevel(appState: DashboardState): number {
-  if (appState.activePolicy?.kind === "panic" || appState.panicLock) return 4;
+  if (appState.activePolicy?.kind === "panic" || appState.panicLock) return 3;
   const profileIds = new Set([
     appState.activePolicy?.profile?.id,
     appState.activePolicy?.session?.profileId,
     ...Object.values(appState.activeSessions || {}).map((session) => session?.profileId)
   ].filter((value): value is string => Boolean(value)));
-  if (profileIds.has("brick-mode")) return 3;
-  if (profileIds.has("soft-block")) return 2;
+  if (profileIds.has("brick-mode")) return 2;
   return 1;
 }
 
@@ -1681,11 +1680,6 @@ function renderHealth(data: DashboardData): void {
   $("#healthSummary").className = `count-pill ${allHealthy ? "good" : degraded ? "warn" : ""}`;
   $("#maintenanceConfigStatus").textContent = allHealthy ? "Healthy" : degraded ? `${degraded} to review` : "Checking";
   $("#maintenanceConfigStatus").className = `config-status ${allHealthy ? "good" : degraded ? "warn" : ""}`;
-  const runtimeDot = $("#runtimeDot");
-  runtimeDot.className = `status-dot${allHealthy ? "" : degraded ? " warn" : ""}`;
-  $("#runtimeLabel").textContent = allHealthy ? "Protection online" : degraded ? "Protection needs review" : "Protection online";
-  $("#runtimeDetail").textContent = allHealthy ? "Background safeguards healthy" : summary;
-
   const list = $("#hardeningAudit");
   list.replaceChildren();
   const visible = [...required].sort((left, right) => Number(left.ok) - Number(right.ok)).slice(0, 8);

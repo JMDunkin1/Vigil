@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { truthy } from "../booleans.js";
 import { assertTypingChallenge, attachTypingChallenge } from "../challenge.js";
 import { assertDistanceKey } from "../distanceKey.js";
-import { BRICK_MODE_PROFILE_ID, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID } from "../defaults.js";
 import { assertIntentReason } from "../intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "../intervention.js";
 import { completeIntentionalPlanBlock } from "../intentionalUse.js";
@@ -139,7 +139,10 @@ export async function handleSessionApiRoute(
       return true;
     }
 
-    const level = Math.round(clampNumber(body.level, 1, 3, 1));
+    // Level 3 was Full Brick in older clients. Keep accepting it as a legacy
+    // alias while the current UI exposes only Level 1 and Level 2.
+    const requestedLevel = Math.round(clampNumber(body.level, 1, 3, 1));
+    const level = requestedLevel === 1 ? 1 : 2;
     const deviceTargets = normalizeSessionDeviceTargets(body);
     if (!authorizeSessionTransition(response, state, deviceTargets)) return true;
     if (level === 1) {
@@ -151,10 +154,10 @@ export async function handleSessionApiRoute(
       return true;
     }
 
-    const profileId = level === 3 ? BRICK_MODE_PROFILE_ID : SOFT_BLOCK_PROFILE_ID;
+    const profileId = BRICK_MODE_PROFILE_ID;
     const draft = manualSessionDraft(state, {
-      title: level === 3 ? "Full Brick" : "Soft Lock",
-      mode: level === 3 ? "brick" : "focus",
+      title: "Full Brick",
+      mode: "brick",
       profileId,
       durationMinutes: 60 * 24 * 45,
       lockLevel: "deep",

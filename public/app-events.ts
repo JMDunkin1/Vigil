@@ -105,7 +105,7 @@ export function bindAppEvents(context: AppEventsContext) {
   const releaseProtectionLevelSettle = () => {
     protectionLevelControl.classList.remove("is-settling");
   };
-  const confirmPanicLevel = (requestedLevel: number) => requestedLevel !== 4
+  const confirmPanicLevel = (requestedLevel: number) => requestedLevel !== 3
     || window.confirm("Start Panic mode for three minutes? It cannot be ended early.");
   const showProtectionLevel = (requestedLevel: number, preview: boolean) => {
     return applyProtectionLevelPresentation(requestedLevel, preview, {
@@ -605,14 +605,13 @@ export function bindAppEvents(context: AppEventsContext) {
 }
 
 export function normalizedProtectionLevel(requestedLevel: number): number {
-  return Math.max(1, Math.min(4, Math.round(requestedLevel || 1)));
+  return Math.max(1, Math.min(3, Math.round(requestedLevel || 1)));
 }
 
 export function protectionLevelStatus(level: number): string {
   const normalized = normalizedProtectionLevel(level);
-  if (normalized === 1) return "Normal";
-  if (normalized === 2) return "Soft Lock";
-  if (normalized === 3) return "Full Brick";
+  if (normalized === 1) return "Filtered Social";
+  if (normalized === 2) return "Full Brick";
   return "3 min lock";
 }
 
@@ -629,9 +628,9 @@ export function applyProtectionLevelPresentation(
   const level = normalizedProtectionLevel(requestedLevel);
   elements.input.value = String(level);
   elements.control.dataset.level = String(level);
-  elements.label.textContent = level === 4 ? "Panic" : `Level ${level}`;
+  elements.label.textContent = level === 3 ? "Panic" : `Level ${level}`;
   elements.status.textContent = preview
-    ? (level === 4 ? "3 min lock" : "Release to apply")
+    ? (level === 3 ? "3 min lock" : "Release to apply")
     : protectionLevelStatus(level);
   return level;
 }

@@ -44,13 +44,12 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     id: "instagram-reels",
     label: "Instagram Reels",
     sites: ["instagram.com"],
-    // Friendly inline Reel media does not navigate to either of these paths.
-    // Keep both viewer routes fail-closed so a permalink cannot become an
-    // infinite Reels session outside the companion as a browser bypass.
-    urlFilters: ["||instagram.com/reel", "||instagram.com/reels"],
-    paths: [/^\/reels?(?:\/|$)/i],
+    // The plural route is Instagram's unbounded Reels destination. Singular
+    // /reel/{id} permalinks remain available for items shared by a friend.
+    urlFilters: ["||instagram.com/reels"],
+    paths: [/^\/reels(?:\/|$)/i],
     fallbackUrl: "https://www.instagram.com/direct/inbox/",
-    scope: "soft-lock"
+    scope: "permanent"
   },
   {
     id: "instagram-explore",

@@ -10,6 +10,8 @@ const [html, appSource, accountSource, updateSource, styles] = await Promise.all
 ]);
 
 assert.match(html, /<title>Vigil<\/title>/u);
+assert.match(html, /class="brand-mark"[\s\S]*?src="\/app-icons\/jerusalem-cross\.png"/u, "the sidebar brand must use the Jerusalem Cross app icon");
+assert.doesNotMatch(html, /Focus protection|runtime-chip|runtimeDot|runtimeLabel|runtimeDetail/u, "the sidebar must omit the redundant subtitle and health summary chip");
 
 const ids = [...html.matchAll(/\bid="([A-Za-z][\w:-]*)"/g)].map((match) => match[1]);
 const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
@@ -55,7 +57,8 @@ for (const source of requiredRuntimeSources) {
 }
 assert.deepEqual([...missingQueries], [], "the active renderer graph must not query IDs missing from the new shell");
 
-assert.match(html, /id="view-home"[\s\S]*?data-protection-level="1"[\s\S]*?data-protection-level="2"[\s\S]*?data-protection-level="3"[\s\S]*?data-protection-level="4"/u, "Home must retain all four protection actions");
+assert.match(html, /id="view-home"[\s\S]*?data-protection-level="1"[\s\S]*?data-protection-level="2"[\s\S]*?data-protection-level="3"/u, "Home must expose two numbered levels and the separate Panic action");
+assert.doesNotMatch(html, /data-protection-level="4"/u, "the retired third numbered protection level must not remain in the Home selector");
 assert.match(html, /id="emergencyPanel"[\s\S]*?id="requestEmergency"[\s\S]*?id="confirmEmergency"/u, "Home must keep the protected emergency flow reachable");
 assert.match(html, /src="\/art\/saints\/traditional\/michael\.png"/u, "Home must retain Saint Michael as its initial visual anchor");
 assert.match(html, /id="saintInfoPopover"[\s\S]*?Browse sacred portraits[\s\S]*?id="saintStageButton"/u, "Home must retain the established sacred portrait interaction");
@@ -109,6 +112,10 @@ assert.match(appSource, /\/api\/protection\/maintenance\/request/u);
 assert.match(appSource, /INACTIVE_STATE_POLL_MS\s*=\s*30_000/u, "an inactive window must poll less frequently");
 
 assert.match(styles, /--sidebar-width:\s*218px/u, "the redesign must replace the oversized legacy sidebar");
+assert.match(styles, /--bg:\s*#101111[\s\S]*?--bg-deep:\s*#0c0d0d[\s\S]*?--surface:\s*#1c1d1c[\s\S]*?--surface-raised:\s*#222321[\s\S]*?--surface-soft:\s*#242520/u, "the whole shell must use the neutral Ember surface palette");
+assert.match(styles, /--sidebar:\s*#121313/u, "the sidebar must retain the established neutral Ember background");
+assert.match(styles, /\.sidebar\s*\{[\s\S]*?radial-gradient\(circle at 24% 8%, rgba\(169, 111, 76, 0\.05\)/u, "the sidebar must retain the established warm Ember color treatment");
+assert.doesNotMatch(styles, /#111514|#0b0f0e|#171c1a|#1b211f|#202724|#1c211e|#141917|#111614|#101412|#0f1312|#222825/u, "green-tinted neutral backgrounds must not return");
 assert.match(styles, /\.home-layout\s*\{[\s\S]*?grid-template-columns:/u, "Home must use a purposeful dashboard composition");
 assert.match(styles, /\.configuration-index\s*\{[^}]*grid-template-columns:\s*repeat\(2/u, "Configuration should scan as a compact card grid at wide sizes");
 assert.match(styles, /@media \(max-width: 820px\)/u, "the redesign must handle the minimum Electron window width");

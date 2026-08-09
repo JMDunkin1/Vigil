@@ -63,6 +63,12 @@ assert.equal(
   false,
   "Instagram's shared Explore route must remain reachable for account-only search"
 );
+assert.equal(focusedSocialDeniedUrls(settings).includes("instagram.com/reels"), true);
+assert.equal(
+  focusedSocialDeniedUrls(settings).includes("instagram.com/reel"),
+  false,
+  "singular Reel permalinks shared in Direct must remain reachable"
+);
 
 // Apple's built-in filter matches when the deny-list pattern is a substring of
 // the requested URL, after treating a leading www host label as equivalent to
@@ -86,13 +92,15 @@ assert.equal(
   "mobile YouTube needs a distinct sentinel because it is not the bare/www host variant"
 );
 
-// Shorts stays permanent and is intentionally independent of the optional
-// feature-probe contract.
+// Shorts and Instagram's plural Reels destination stay permanent and are
+// intentionally independent of the optional feature-probe contract.
 const everythingOptionalOff = structuredClone(settings);
 everythingOptionalOff.instagram.enabled = false;
 everythingOptionalOff.youtube.enabled = false;
 const permanentOnly = focusedSocialDeniedUrls(everythingOptionalOff);
 assert.ok(permanentOnly.includes("youtube.com/shorts"));
+assert.ok(permanentOnly.includes("instagram.com/reels"));
+assert.equal(permanentOnly.includes("instagram.com/reel"), false);
 assert.equal(permanentOnly.some((url) => url.includes("?__vigil_feature=")), false);
 
 // Exercise the final Apple payload, not just the logical feature list. Explicit

@@ -4510,7 +4510,7 @@ h3,
   color: #ead8c4;
 }
 
-/* Protection bloom: one calm orb that opens into a four-step constellation. */
+/* Protection bloom: two numbered levels plus the separate Panic action. */
 .protection-level-control {
   --level-color: var(--accent-bright);
   --protection-orb-size: clamp(66px, min(7vw, 10vh), 76px);
@@ -4521,9 +4521,8 @@ h3,
 }
 
 .protection-level-control[data-level="1"] { --level-color: #e2ad72; }
-.protection-level-control[data-level="2"] { --level-color: #c98a57; }
-.protection-level-control[data-level="3"] { --level-color: #bc624b; }
-.protection-level-control[data-level="4"] { --level-color: #ff7b81; }
+.protection-level-control[data-level="2"] { --level-color: #bc624b; }
+.protection-level-control[data-level="3"] { --level-color: #ff7b81; }
 
 .protection-level-control:not(.is-open) .protection-level-choice:hover {
   z-index: 6;
@@ -4588,15 +4587,13 @@ h3,
   --protection-trace-inner: linear-gradient(
     90deg,
     color-mix(in srgb, #e2ad72 8%, var(--surface-strong)) 0%,
-    color-mix(in srgb, #c98a57 8%, var(--surface-strong)) 33.333%,
-    color-mix(in srgb, #bc624b 8%, var(--surface-strong)) 66.667%,
+    color-mix(in srgb, #bc624b 8%, var(--surface-strong)) 50%,
     color-mix(in srgb, #ff7b81 8%, var(--surface-strong)) 100%
   );
   --protection-trace-outer: linear-gradient(
     90deg,
     color-mix(in srgb, #e2ad72 18%, var(--surface-strong)) 0%,
-    color-mix(in srgb, #c98a57 18%, var(--surface-strong)) 33.333%,
-    color-mix(in srgb, #bc624b 18%, var(--surface-strong)) 66.667%,
+    color-mix(in srgb, #bc624b 18%, var(--surface-strong)) 50%,
     color-mix(in srgb, #ff7b81 18%, var(--surface-strong)) 100%
   );
   position: absolute;
@@ -4604,7 +4601,7 @@ h3,
   top: 50%;
   left: 50%;
   width: calc(
-    var(--protection-level-step) + var(--protection-level-step) + var(--protection-level-step)
+    var(--protection-level-step) + var(--protection-level-step)
   );
   height: 12px;
   border-radius: 999px;
@@ -4613,8 +4610,7 @@ h3,
     var(--protection-trace-outer) center / 100% 100% no-repeat;
   mask:
     radial-gradient(circle var(--protection-trace-hole-radius) at 0% 50%, var(--protection-trace-hole-edge)),
-    radial-gradient(circle var(--protection-trace-hole-radius) at 33.333% 50%, var(--protection-trace-hole-edge)),
-    radial-gradient(circle var(--protection-trace-hole-radius) at 66.667% 50%, var(--protection-trace-hole-edge)),
+    radial-gradient(circle var(--protection-trace-hole-radius) at 50% 50%, var(--protection-trace-hole-edge)),
     radial-gradient(circle var(--protection-trace-hole-radius) at 100% 50%, var(--protection-trace-hole-edge));
   mask-composite: intersect;
   mask-repeat: no-repeat;
@@ -4719,15 +4715,13 @@ h3,
   transition-duration: 240ms, 280ms;
 }
 
-.protection-level-choice[data-protection-level-choice="1"] { --level-offset: -132px; --choice-color: #e2ad72; }
-.protection-level-choice[data-protection-level-choice="2"] { --level-offset: -44px; --choice-color: #c98a57; }
-.protection-level-choice[data-protection-level-choice="3"] { --level-offset: 44px; --choice-color: #bc624b; }
-.protection-level-choice[data-protection-level-choice="4"] { --level-offset: 132px; --choice-color: #ff7b81; }
+.protection-level-choice[data-protection-level-choice="1"] { --level-offset: -88px; --choice-color: #e2ad72; }
+.protection-level-choice[data-protection-level-choice="2"] { --level-offset: 0px; --choice-color: #bc624b; }
+.protection-level-choice[data-protection-level-choice="3"] { --level-offset: 88px; --choice-color: #ff7b81; }
 
 .protection-level-control[data-level="1"] .protection-level-choice[data-protection-level-choice="1"],
 .protection-level-control[data-level="2"] .protection-level-choice[data-protection-level-choice="2"],
-.protection-level-control[data-level="3"] .protection-level-choice[data-protection-level-choice="3"],
-.protection-level-control[data-level="4"] .protection-level-choice[data-protection-level-choice="4"] {
+.protection-level-control[data-level="3"] .protection-level-choice[data-protection-level-choice="3"] {
   z-index: 3;
   opacity: 1;
   pointer-events: auto;
@@ -4779,11 +4773,9 @@ h3,
 .protection-level-control[data-level="1"].is-open:not(.is-settling) .protection-level-choice[data-protection-level-choice="1"],
 .protection-level-control[data-level="2"].is-open:not(.is-settling) .protection-level-choice[data-protection-level-choice="2"],
 .protection-level-control[data-level="3"].is-open:not(.is-settling) .protection-level-choice[data-protection-level-choice="3"],
-.protection-level-control[data-level="4"].is-open:not(.is-settling) .protection-level-choice[data-protection-level-choice="4"],
 .protection-level-control[data-level="1"].is-scrolling:not(.is-settling) .protection-level-choice[data-protection-level-choice="1"],
 .protection-level-control[data-level="2"].is-scrolling:not(.is-settling) .protection-level-choice[data-protection-level-choice="2"],
-.protection-level-control[data-level="3"].is-scrolling:not(.is-settling) .protection-level-choice[data-protection-level-choice="3"],
-.protection-level-control[data-level="4"].is-scrolling:not(.is-settling) .protection-level-choice[data-protection-level-choice="4"] {
+.protection-level-control[data-level="3"].is-scrolling:not(.is-settling) .protection-level-choice[data-protection-level-choice="3"] {
   opacity: 1;
   transform: translate(calc(-50% + var(--level-offset)), -50%) scale(1);
 }
@@ -4804,10 +4796,9 @@ h3,
 @media (max-width: 520px) {
   .protection-level-control { --protection-level-step: 72px; }
 
-  .protection-level-choice[data-protection-level-choice="1"] { --level-offset: -108px; }
-  .protection-level-choice[data-protection-level-choice="2"] { --level-offset: -36px; }
-  .protection-level-choice[data-protection-level-choice="3"] { --level-offset: 36px; }
-  .protection-level-choice[data-protection-level-choice="4"] { --level-offset: 108px; }
+  .protection-level-choice[data-protection-level-choice="1"] { --level-offset: -72px; }
+  .protection-level-choice[data-protection-level-choice="2"] { --level-offset: 0px; }
+  .protection-level-choice[data-protection-level-choice="3"] { --level-offset: 72px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

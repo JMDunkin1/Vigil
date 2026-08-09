@@ -1163,9 +1163,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const instagramStory = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/stories/example/12345/", event: "navigation" }, now);
   assert.equal(instagramStory.blocked, false);
   const instagramReel = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/reel/abc123/", event: "navigation" }, now);
-  assert.equal(instagramReel.blocked, true);
-  assert.equal(instagramReel.reason, "content-filter");
-  assert.equal(must(instagramReel.contentFilter, "instagram reels filter").id, "instagram-reels");
+  assert.equal(instagramReel.blocked, false, "a singular Reel shared by a friend must remain viewable");
   const instagramReelsTab = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/reels/", event: "navigation" }, now);
   assert.equal(instagramReelsTab.blocked, true);
   const instagramExplore = evaluateExtensionCheck(state, usage, { url: "https://www.instagram.com/explore/", event: "navigation" }, now);
@@ -1757,7 +1755,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(watch.blocked, false);
   const softContentPolicy = mustPolicy(activePolicy(state, now));
   assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reels/xyz", softContentPolicy), "Instagram reels filter").id, "instagram-reels");
-  assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/reel/xyz", softContentPolicy), "Instagram reel filter").id, "instagram-reels");
+  assert.equal(matchContentFilterUrl(state, "https://www.instagram.com/reel/xyz", softContentPolicy), null);
   assert.equal(must(matchContentFilterUrl(state, "https://www.instagram.com/explore/", softContentPolicy), "Instagram Explore filter").id, "instagram-explore");
   const snapFriend = evaluateExtensionCheck(state, usage, { url: "https://web.snapchat.com/", event: "navigation" }, now);
   assert.equal(snapFriend.blocked, false);

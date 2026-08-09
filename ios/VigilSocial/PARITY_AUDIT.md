@@ -113,16 +113,14 @@ its major navigation, story/player, or icon presentation.
 - Horizontal post carousels and story-tray scrolling.
 - Story open size, progress, tap-forward/back, automatic advance, reply field,
   swipe/close behavior, and return to the prior feed position.
-- When Reels is allowed, Instagram owns its sizing, scrolling, snap behavior,
-  metadata, preload behavior, controls, and gestures without Vigil correction.
-  When Reels is blocked, its entry points are hidden at document start and its
-  route is redirected without first constructing a replacement Reel surface.
-- Level 2's blocked-Reels state preserves friendly Reel media embedded in a
-  followed feed/profile post or Direct thread. It removes recommendation cards
-  identified by conservative exact labels and keeps both standalone `/reel/`
-  and `/reels/` viewers unavailable, because either viewer can advance into an
-  unbounded discovery session. An article must never be hidden merely because
-  it contains its own Reel permalink.
+- The Reels tab and plural `/reels/` discovery destination are permanently
+  unavailable, including at Level 1. Their entry points are hidden at document
+  start and direct navigation is redirected to Direct.
+- Friendly Reel media embedded in a followed feed/profile post or Direct thread
+  remains available. A singular `/reel/{id}` permalink shared by another person
+  may open, but the companion contains it to that item instead of permitting an
+  advance into another Reel. An article must never be hidden merely because it
+  contains its own Reel permalink.
 - Repost, like, playback, mute, comments, and navigation use Instagram's own
   controls. Vigil must not inject proxy controls or reinterpret tap, hold,
   double-tap, pinch, or swipe gestures.

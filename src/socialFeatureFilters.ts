@@ -53,12 +53,11 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       {
         key: "reels",
         label: "Reels",
+        permanent: true,
         probeUrls: ["https://www.instagram.com/?__vigil_feature=reels"],
-        // Level 2 keeps Reel media embedded in followed feed/profile posts and
-        // Direct threads. Both standalone route spellings stay denied because
-        // either viewer can advance into Instagram's unbounded discovery feed.
+        // Permanently remove Instagram's unbounded Reels destination while
+        // retaining singular /reel/{id} links shared in Direct messages.
         deniedUrls: [
-          "instagram.com/reel",
           "instagram.com/reels"
         ]
       },
@@ -70,7 +69,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
         // grid from /explore. Keep the route reachable so the companion can
         // preserve account lookup while its DOM policy removes posts, Reels,
         // tags, audio, and places. The probe still tells the companion when
-        // Level 2 is active without denying the shared search route itself.
+        // Focused filtering can be active without denying the shared search route itself.
         deniedUrls: []
       },
       {
@@ -199,7 +198,10 @@ const FOCUSED_SOCIAL_URL_PATTERN_KEYS = new Set([
   // Retain the former whole-Explore rule as a migration cleanup key. New
   // profiles do not deny it because /explore is also Instagram's account
   // search route, but an older persisted copy must not survive normalization.
-  normalizePatternKey("instagram.com/explore")
+  normalizePatternKey("instagram.com/explore"),
+  // Earlier releases denied singular Reel permalinks. Remove that legacy rule
+  // so Direct-message shares can open while the plural destination stays off.
+  normalizePatternKey("instagram.com/reel")
 ]);
 
 export const PERMANENT_SOCIAL_URL_PATTERNS = FOCUSED_SOCIAL_PLATFORMS.flatMap((platform) => (

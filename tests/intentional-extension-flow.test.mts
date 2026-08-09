@@ -144,7 +144,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   assert.equal(appContinued.returnUrl, "");
 
   const second = evaluateExtensionCheck(state, usage, {
-    url: "https://www.instagram.com/reels/123",
+    url: "https://www.instagram.com/reel/123",
     previousUrl: "",
     event: "navigation",
     extensionVersion: REQUIRED_EXTENSION_VERSION

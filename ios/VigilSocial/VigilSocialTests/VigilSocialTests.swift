@@ -4625,6 +4625,9 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains(":has(> :is(a[href=\"/reels/\"]"))
         XCTAssertTrue(script.contains("'suggested reels'"))
         XCTAssertTrue(script.contains("path.startsWith('/reel/')"))
+        XCTAssertTrue(script.contains("const isSingularReelRoute"))
+        XCTAssertTrue(script.contains("let sharedReelPath = ''"))
+        XCTAssertTrue(script.contains("location.replace('/direct/inbox/')"))
         XCTAssertTrue(script.contains("data-vigil-instagram-account-search=\"true\""))
         XCTAssertTrue(script.contains("data-vigil-instagram-search-discovery=\"true\""))
         XCTAssertTrue(script.contains("const isAccountSearchRoute"))
@@ -4726,7 +4729,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(levelOne?["tag"], false)
         XCTAssertEqual(levelOne?["places"], false)
         XCTAssertEqual(levelOne?["search"], true)
-        XCTAssertEqual(levelOne?["reels"], true, "Level 1 keeps the Reels destination")
+        XCTAssertEqual(levelOne?["reels"], false, "Level 1 permanently removes the Reels destination")
 
         let levelTwo = try await webView.evaluateJavaScript(
             #"""
@@ -4740,8 +4743,8 @@ final class VigilSocialTests: XCTestCase {
             """#
         ) as? [String: Bool]
         XCTAssertEqual(levelTwo?["account"], true)
-        XCTAssertEqual(levelTwo?["search"], true, "Level 2 keeps account search available")
-        XCTAssertEqual(levelTwo?["reels"], false, "Level 2 removes the central Reels destination")
+        XCTAssertEqual(levelTwo?["search"], true, "account search remains available to the companion")
+        XCTAssertEqual(levelTwo?["reels"], false, "the Reels destination stays permanently removed")
         webView.navigationDelegate = nil
     }
 

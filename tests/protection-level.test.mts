@@ -8,7 +8,7 @@ import type { Session } from "../src/types.js";
 
 process.env.VIGIL_DATA_DIR = await mkdtemp(join(tmpdir(), "vigil-protection-level-"));
 
-const { BRICK_MODE_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } = await import("../src/defaults.js");
+const { BRICK_MODE_PROFILE_ID, defaultState } = await import("../src/defaults.js");
 const { confirmMaintenanceWindow, requestMaintenanceWindow } = await import("../src/protection.js");
 const { handleSessionApiRoute } = await import("../src/server/sessionRoutes.js");
 
@@ -108,8 +108,10 @@ assert.ok(new Date(maintenance.until) > maintenanceNow);
 const allowedLevelTwo = response();
 assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 2 }), allowedLevelTwo, context), true);
 assert.equal(allowedLevelTwo.statusCodeValue, 200);
-assert.equal(state.activeSessions.computer?.profileId, SOFT_BLOCK_PROFILE_ID);
-assert.equal(state.activeSessions.phone?.profileId, SOFT_BLOCK_PROFILE_ID);
+assert.equal(state.activeSessions.computer?.profileId, BRICK_MODE_PROFILE_ID);
+assert.equal(state.activeSessions.phone?.profileId, BRICK_MODE_PROFILE_ID);
+assert.equal(state.activeSessions.computer?.title, "Full Brick");
+assert.equal(state.activeSessions.computer?.mode, "brick");
 assert.equal(state.activeSessions.computer?.canEndEarly, true);
 assert.equal(state.activeSessions.computer?.commitmentLock, false);
 assert.equal(state.activeSessions.computer?.emergencyUnlocksAllowed, true);
@@ -120,9 +122,9 @@ assert.equal(enforcedSessions.at(-1), state.activeSessions.computer?.id);
 assert.deepEqual(effectOrder.slice(-2), [`enforce:${state.activeSessions.computer?.id}`, "mdm:protection-level-2"]);
 
 state.maintenance.windows = [];
-const reversibleSoftLockLevelOne = response();
-assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 1 }), reversibleSoftLockLevelOne, context), true);
-assert.equal(reversibleSoftLockLevelOne.statusCodeValue, 200, "Soft Lock must remain directly reversible");
+const reversibleBrickLevelOne = response();
+assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 1 }), reversibleBrickLevelOne, context), true);
+assert.equal(reversibleBrickLevelOne.statusCodeValue, 200, "Full Brick must remain directly reversible");
 assert.equal(state.activeSessions.computer, null);
 assert.equal(state.activeSessions.phone, null);
 assert.equal(queuedReasons.at(-1), "protection-level-1");
@@ -130,6 +132,7 @@ assert.equal(queuedReasons.at(-1), "protection-level-1");
 const levelThree = response();
 assert.equal(await handleSessionApiRoute(request("/api/protection/level", { level: 3 }), levelThree, context), true);
 assert.equal(levelThree.statusCodeValue, 200);
+assert.equal(JSON.parse(levelThree.bodyText).level, 2, "legacy Level 3 requests should normalize to current Level 2");
 const activeLevelThree = state.activeSessions.computer as Session | null;
 assert.ok(activeLevelThree);
 assert.equal(activeLevelThree.profileId, BRICK_MODE_PROFILE_ID);

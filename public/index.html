@@ -13,9 +13,9 @@
   <aside class="sidebar" aria-label="Vigil navigation">
     <div class="brand-lockup">
       <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 32 32"><path d="M16 3.5 27 8v7.2c0 6.8-4.6 11.1-11 13.3-6.4-2.2-11-6.5-11-13.3V8Z"/><path d="M16 8v15M10.5 13.5h11"/></svg>
+        <img src="/app-icons/jerusalem-cross.png" alt="">
       </span>
-      <span><strong>Vigil</strong><small>Focus protection</small></span>
+      <span><strong>Vigil</strong></span>
     </div>
 
     <nav id="primaryNavigation" class="primary-nav" aria-label="Primary">
@@ -34,10 +34,6 @@
     </nav>
 
     <div class="sidebar-spacer"></div>
-    <div class="runtime-chip" title="Vigil background enforcement remains online when this window is hidden">
-      <span id="runtimeDot" class="status-dot"></span>
-      <span><strong id="runtimeLabel">Protection online</strong><small id="runtimeDetail">Checking safeguards…</small></span>
-    </div>
     <button id="accountButton" class="account-button" type="button" aria-haspopup="dialog" aria-controls="accountDialog" aria-expanded="false">
       <span class="account-avatar" aria-hidden="true">JD</span>
       <span><strong id="accountName">James Dunkin</strong><small id="accountRole">Admin account</small></span>
@@ -74,15 +70,14 @@
         <div id="protectionLevelControl" class="protection-level-control" data-level="1" aria-expanded="false">
           <div class="protection-level-readout">
             <output id="protectionLevelLabel" for="protectionLevel">Level 1</output>
-            <span id="protectionLevelStatus" aria-live="polite">Normal</span>
+            <span id="protectionLevelStatus" aria-live="polite">Filtered Social</span>
           </div>
-          <input id="protectionLevel" type="range" min="1" max="4" step="1" value="1" aria-label="Protection level. Level 4 starts a three minute Panic lock.">
+          <input id="protectionLevel" type="range" min="1" max="3" step="1" value="1" aria-label="Protection level. Level 1 keeps filtered social apps, Level 2 applies Full Brick, and Panic starts a three minute lock.">
           <div class="protection-level-bloom" aria-hidden="true">
             <span class="protection-level-trace"></span>
-            <button class="protection-level-choice" type="button" tabindex="-1" data-protection-level="1" data-protection-level-choice="1" aria-label="Level 1, Normal"><span>1</span></button>
-            <button class="protection-level-choice" type="button" tabindex="-1" data-protection-level="2" data-protection-level-choice="2" aria-label="Level 2, Soft Lock"><span>2</span></button>
-            <button class="protection-level-choice" type="button" tabindex="-1" data-protection-level="3" data-protection-level-choice="3" aria-label="Level 3, Full Brick"><span>3</span></button>
-            <button class="protection-level-choice protection-level-choice-panic" type="button" tabindex="-1" data-protection-level="4" data-protection-level-choice="4" aria-label="Panic, three minute lock"><span>!</span></button>
+            <button class="protection-level-choice" type="button" tabindex="-1" data-protection-level="1" data-protection-level-choice="1" aria-label="Level 1, filtered social apps without Reels"><span>1</span></button>
+            <button class="protection-level-choice" type="button" tabindex="-1" data-protection-level="2" data-protection-level-choice="2" aria-label="Level 2, Full Brick"><span>2</span></button>
+            <button class="protection-level-choice protection-level-choice-panic" type="button" tabindex="-1" data-protection-level="3" data-protection-level-choice="3" aria-label="Panic, three minute lock"><span>!</span></button>
           </div>
         </div>
 
@@ -260,7 +255,7 @@
           <div class="settings-surface">
             <h3>Screen color &amp; macOS Focus</h3>
             <div class="switch-list">
-              <label class="switch-row"><span><strong>Grayscale during Soft Lock</strong><small>Reduce visual pull when level 2 is active.</small></span><input id="grayscaleSoftBlockEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Grayscale during focused sessions</strong><small>Reduce visual pull while a Soft Lock schedule or session is active.</small></span><input id="grayscaleSoftBlockEnabled" type="checkbox"><i></i></label>
               <label class="switch-row"><span><strong>Guard color settings</strong><small>Keep grayscale from being manually reversed.</small></span><input id="grayscalePreventManualChanges" type="checkbox"><i></i></label>
               <label class="switch-row"><span><strong>Run Focus shortcuts</strong><small>Run named Shortcuts when protected sessions change.</small></span><input id="focusShortcutEnabled" data-setting="focusShortcutEnabled" type="checkbox"><i></i></label>
             </div>

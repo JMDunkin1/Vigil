@@ -1189,9 +1189,8 @@ enum DOMAdapters {
             allowedHosts = "['instagram.com', 'www.instagram.com']"
             fallbackPath = "/"
             routePolicy = #"""
-            if (path === '/reel' || path.startsWith('/reel/')
-                || path === '/reels' || path.startsWith('/reels/')) {
-              return { feature: 'reels', mode: 'redirect', permanent: false };
+            if (path === '/reels' || path.startsWith('/reels/')) {
+              return { feature: 'reels', mode: 'redirect', permanent: true };
             }
             if (path === '/explore/people/suggested'
                 || path.startsWith('/explore/people/suggested/')) {
@@ -1563,12 +1562,12 @@ enum DOMAdapters {
       const style = document.createElement('style');
       style.id = 'vigil-instagram-stable-start-style';
       style.textContent = `
-        html:not([data-vigil-feature-reels="available"]) :is(
+        html :is(
           a[href="/reels/"], a[href="/reels"], [aria-label="Reels" i]
         ),
-        html:not([data-vigil-feature-reels="available"])
+        html
           :is(nav, [role="navigation"]) :is(li, div):has(> :is(a[href="/reels/"], a[href="/reels"])),
-        html:not([data-vigil-feature-reels="available"])
+        html
           div[data-visualcompletion="ignore-dynamic"] > div:has(> span > div > :is(a[href="/reels/"], a[href="/reels"])),
         html:not([data-vigil-feature-shopping="available"]) :is(
           a[href^="/shop"], a[href^="/shopping"], a[href^="/live"]
@@ -3975,12 +3974,12 @@ enum DOMAdapters {
         const style = document.createElement('style');
         style.id = 'vigil-instagram-stable-start-style';
         style.textContent = `
-          html:not([data-vigil-feature-reels="available"]) :is(
+          html :is(
             a[href="/reels/"], a[href="/reels"], [aria-label="Reels" i]
           ),
-          html:not([data-vigil-feature-reels="available"])
+          html
             :is(nav, [role="navigation"]) :is(li, div):has(> :is(a[href="/reels/"], a[href="/reels"])),
-          html:not([data-vigil-feature-reels="available"])
+          html
             div[data-visualcompletion="ignore-dynamic"] > div:has(> span > div > :is(a[href="/reels/"], a[href="/reels"])),
           html:not([data-vigil-feature-shopping="available"]) :is(
             a[href^="/shop"], a[href^="/shopping"], a[href^="/live"]
@@ -4015,8 +4014,7 @@ enum DOMAdapters {
           const url = new URL(value, location.href);
           if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return '';
           const path = url.pathname.toLowerCase();
-          if (path === '/reel' || path.startsWith('/reel/')
-              || path === '/reels' || path.startsWith('/reels/')) return 'reels';
+          if (path === '/reels' || path.startsWith('/reels/')) return 'reels';
           if (path === '/explore/people/suggested'
               || path.startsWith('/explore/people/suggested/')) return 'suggested';
           if (/^\/(shop|shopping|live)(\/|$)/.test(path)) return 'shopping';
@@ -4029,6 +4027,22 @@ enum DOMAdapters {
           if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return false;
           const path = url.pathname.toLowerCase().replace(/\/+$/, '') || '/';
           return path === '/explore';
+        } catch (_) { return false; }
+      };
+      const isSingularReelRoute = (value = location.href) => {
+        try {
+          const url = new URL(value, location.href);
+          if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return false;
+          const path = url.pathname.toLowerCase();
+          return path === '/reel' || path.startsWith('/reel/');
+        } catch (_) { return false; }
+      };
+      const isReelsDestinationRoute = (value = location.href) => {
+        try {
+          const url = new URL(value, location.href);
+          if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return false;
+          const path = url.pathname.toLowerCase();
+          return path === '/reels' || path.startsWith('/reels/');
         } catch (_) { return false; }
       };
       const isDiscoverySearchRoute = (value = location.href) => {
@@ -4096,8 +4110,34 @@ enum DOMAdapters {
 
       let redirectedURL = '';
       let lastURL = location.href;
+      let sharedReelPath = '';
       const enforceRoute = () => {
         lastURL = location.href;
+        if (isReelsDestinationRoute()) {
+          document.documentElement.dataset.vigilRoutePolicyBlocked = 'reels';
+          if (redirectedURL !== location.href) {
+            redirectedURL = location.href;
+            publishUnavailable('reels');
+            try { location.replace('/direct/inbox/'); } catch (_) {}
+          }
+          return;
+        }
+        if (isSingularReelRoute()) {
+          const path = location.pathname.toLowerCase();
+          if (!sharedReelPath) sharedReelPath = path;
+          document.documentElement.dataset.vigilInstagramSharedReel = 'true';
+          if (path !== sharedReelPath) {
+            document.documentElement.dataset.vigilRoutePolicyBlocked = 'reels-containment';
+            if (redirectedURL !== location.href) {
+              redirectedURL = location.href;
+              try { location.replace(sharedReelPath); } catch (_) {}
+            }
+            return;
+          }
+        } else {
+          sharedReelPath = '';
+          delete document.documentElement.dataset.vigilInstagramSharedReel;
+        }
         if (isDiscoverySearchRoute()) {
           document.documentElement.dataset.vigilRoutePolicyBlocked = 'account-search';
           if (redirectedURL !== location.href) {
@@ -4136,6 +4176,14 @@ enum DOMAdapters {
       document.addEventListener('click', (event) => {
         const link = event.target?.closest?.('a[href]');
         if (!link) return;
+        if (isReelsDestinationRoute(link.href)
+            || (sharedReelPath && isSingularReelRoute(link.href)
+              && new URL(link.href, location.href).pathname.toLowerCase() !== sharedReelPath)) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          publishUnavailable('reels');
+          return;
+        }
         const feature = restrictedFeature(link.href);
         if (!feature) return;
         event.preventDefault();
@@ -4301,10 +4349,10 @@ enum DOMAdapters {
       markNativeAppPrompts(document);
       markAccountOnlySearch(document);
       enforceRoute();
-      // Level 2 deliberately leaves Reel media embedded in followed posts,
-      // profiles, and Direct threads alone. Only discovery/suggested cards and
-      // standalone /reel(s) routes are filtered; never hide an article merely
-      // because it contains a link to its Reel permalink.
+      // Reel media embedded in followed posts, profiles, and Direct threads is
+      // left alone. A singular /reel/{id} shared item can open, but navigation
+      // from it into another Reel is contained and the /reels destination is
+      // permanently unavailable.
       if (window === window.top) {
         window.__vigilBridge?.({ type: 'health', state: 'ready', detail: '' });
       }

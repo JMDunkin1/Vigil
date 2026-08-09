@@ -236,8 +236,13 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /path === '\/reel'[\s\S]*?path\.startsWith\('\/reel\/'\)[\s\S]*?path === '\/reels'[\s\S]*?path\.startsWith\('\/reels\/'\)/u,
-  "both standalone Reel viewer spellings must remain fail-closed"
+  /path === '\/reels'[\s\S]*?path\.startsWith\('\/reels\/'\)/u,
+  "the plural Reels discovery destination must remain fail-closed"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /const isSingularReelRoute[\s\S]*?let sharedReelPath = ''/u,
+  "a shared singular Reel must be allowed while navigation to a second Reel is contained"
 );
 assert.doesNotMatch(
   instagramStableAdapterSource,
