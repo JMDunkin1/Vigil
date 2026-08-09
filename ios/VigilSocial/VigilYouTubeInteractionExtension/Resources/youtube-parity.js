@@ -332,6 +332,23 @@
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
+    ytd-comments,
+    ytd-comments-header-renderer,
+    ytd-comment-thread-renderer,
+    ytd-item-section-renderer[section-identifier="comment-item-section"],
+    ytm-comments-entry-point-header-renderer,
+    ytm-comments-header-renderer,
+    ytm-comment-section-renderer,
+    ytm-engagement-panel-section-list-renderer[target-id*="comments" i],
+    [section-identifier="comments-entry-point"],
+    #comments,
+    #comments-button,
+    a[href*="#comments" i],
+    button[aria-label*="comment" i] {
+      display: none !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
     html[${MINI_ATTRIBUTE}="true"] {
       --vigil-youtube-mini-width: clamp(176px, 56vw, 224px);
       --vigil-youtube-mini-bottom: calc(env(safe-area-inset-bottom, 0px) + 68px);

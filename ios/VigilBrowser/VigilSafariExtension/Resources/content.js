@@ -55,16 +55,31 @@
   let restoringURL = "";
   let lastKnownAllowedURL = blankEscapeURL;
   let observedLocation = location.href;
-  const protectedSearchKeys = new Set(["q", "query", "search_query", "text"]);
+  const protectedSearchKeys = new Set([
+    "q", "query", "search_query", "search", "searchterm", "search_term",
+    "keyword", "keywords", "term", "text", "p", "k", "s", "wd"
+  ]);
+  const searchRoutePattern = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse)(?:[/?.#]|$)/i;
+  const searchDescriptorPattern = /(?:^|[-_\s])(?:search|query|keyword)(?:$|[-_\s])/i;
 
   const hostMatches = (host, blocked) => {
     const normalizedBlocked = normalizedHost(blocked);
     return Boolean(normalizedBlocked && (host === normalizedBlocked || host.endsWith(`.${normalizedBlocked}`)));
   };
-  const searchText = url => [...url.searchParams]
-    .filter(([name]) => protectedSearchKeys.has(name.toLowerCase()))
-    .flatMap(([, value]) => decodedCandidates(value))
-    .join(" ");
+  const searchText = url => {
+    const values = [...url.searchParams]
+      .filter(([name]) => protectedSearchKeys.has(name.toLowerCase()))
+      .map(([, value]) => value);
+    const decodedPath = decodedCandidates(url.pathname).at(-1) || url.pathname;
+    const decodedHash = decodedCandidates(url.hash.replace(/^#/, "")).at(-1) || url.hash;
+    if (searchRoutePattern.test(decodedPath)) values.push(decodedPath);
+    if (searchRoutePattern.test(decodedHash)) values.push(decodedHash);
+    return values.flatMap(decodedCandidates).join(" ");
+  };
+  const blockedSearchText = (value, activeRules = rules) => Boolean(activeRules
+    && (activeRules.blockedSearchTerms || []).some(term => (
+      decodedCandidates(value).join(" ").includes(String(term).toLowerCase())
+    )));
   const decision = (raw, activeRules = rules) => {
     if (!activeRules) return { allowed: false, reason: "Vigil filter rules are unavailable" };
     if (activeRules.filterUnavailable) return { allowed: false, reason: "Vigil's content filter failed its integrity check" };
@@ -403,13 +418,60 @@
     const submitter = event.submitter;
     const target = new URL(submitter?.formAction || form.action || location.href, location.href);
     const method = (submitter?.formMethod || form.method || "get").toLowerCase();
+    const fields = submitter ? new FormData(form, submitter) : new FormData(form);
+    const formDescriptor = [form.getAttribute("role"), form.getAttribute("aria-label"), form.id, form.className, form.action]
+      .filter(value => typeof value === "string").join(" ");
+    const formIsSearch = searchDescriptorPattern.test(formDescriptor) || searchRoutePattern.test(form.action || "");
+    const explicitFormSearch = [...fields].some(([name, value]) => (
+      (formIsSearch || protectedSearchKeys.has(name.toLowerCase()))
+      && blockedSearchText(typeof value === "string" ? value : value.name)
+    )) || Array.from(form.elements || []).some(control => (
+      isSearchControl(control) && blockedSearchText(searchControlValue(control))
+    ));
+    if (explicitFormSearch) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      cover("Search blocked by Vigil", currentAllowedEscapeURL());
+      return;
+    }
     if (method === "get") {
       target.search = "";
-      const fields = submitter ? new FormData(form, submitter) : new FormData(form);
       for (const [name, value] of fields) target.searchParams.append(name, typeof value === "string" ? value : value.name);
     }
     const result = decision(target.href);
     if (!result.allowed) { event.preventDefault(); event.stopImmediatePropagation(); cover(result.reason, currentAllowedEscapeURL()); }
     else if (result.redirect) { event.preventDefault(); location.assign(result.redirect); }
   }, true);
+
+  const eventTargetElement = event => {
+    const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+    return path.find(item => item instanceof Element)
+      || (event.target instanceof Element ? event.target : null);
+  };
+  const isSearchControl = value => {
+    if (!(value instanceof Element)) return false;
+    const tag = String(value.tagName || "").toLowerCase();
+    if (!value.isContentEditable && tag !== "input" && tag !== "textarea") return false;
+    const descriptor = [
+      value.getAttribute("name"), value.getAttribute("id"), value.getAttribute("aria-label"),
+      value.getAttribute("placeholder"), value.getAttribute("data-testid")
+    ].filter(Boolean).join(" ");
+    return (value.getAttribute("type") || "").toLowerCase() === "search"
+      || (value.getAttribute("role") || "").toLowerCase() === "searchbox"
+      || protectedSearchKeys.has((value.getAttribute("name") || "").toLowerCase())
+      || searchDescriptorPattern.test(descriptor)
+      || Boolean(value.closest("[role='search'], form[action*='search' i], form[action*='find' i]"));
+  };
+  const searchControlValue = value => typeof value?.value === "string"
+    ? value.value : String(value?.textContent || "");
+  const guardSearchControl = event => {
+    if (event.type === "keydown" && event.key !== "Enter") return;
+    const control = eventTargetElement(event);
+    if (!isSearchControl(control) || !blockedSearchText(searchControlValue(control))) return;
+    if (event.cancelable) event.preventDefault();
+    event.stopImmediatePropagation();
+    cover("Search blocked by Vigil", currentAllowedEscapeURL());
+  };
+  addEventListener("input", guardSearchControl, true);
+  addEventListener("change", guardSearchControl, true);
+  addEventListener("keydown", guardSearchControl, true);
 })();

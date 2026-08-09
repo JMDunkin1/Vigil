@@ -225,6 +225,18 @@ final class VigilBrowserTests: XCTestCase {
             filter.decide(try XCTUnwrap(URL(string: "https://www.google.com/search?q=porn"))),
             .block(reason: "That search is blocked by Vigil.")
         )
+        XCTAssertEqual(
+            filter.decide(try XCTUnwrap(URL(string: "https://archive.org/search?query=porn"))),
+            .block(reason: "That search is blocked by Vigil.")
+        )
+        XCTAssertEqual(
+            filter.decide(try XCTUnwrap(URL(string: "https://archive.org/advancedsearch.php?keyword=p%256Frn"))),
+            .block(reason: "That search is blocked by Vigil.")
+        )
+        XCTAssertEqual(
+            filter.decide(try XCTUnwrap(URL(string: "https://example.com/#/search/porn"))),
+            .block(reason: "That search is blocked by Vigil.")
+        )
     }
 
     func testBlockedTermsAreCheckedOnlyInSearchParameters() throws {

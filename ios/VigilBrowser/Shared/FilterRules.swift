@@ -9,6 +9,10 @@ struct FilterRules: Codable, Equatable, Sendable {
         "youporn", "spankbang", "xvideos", "xnxx", "xhamster", "18+",
         "18%2b", "18plus", "18-plus"
     ]
+    static let protectedSearchParameterNames: Set<String> = [
+        "q", "query", "search_query", "search", "searchterm", "search_term",
+        "keyword", "keywords", "term", "text", "p", "k", "s", "wd"
+    ]
 
     var schemaVersion: Int
     var revision: Int
@@ -132,14 +136,25 @@ struct NavigationFilter: Sendable {
 
     private func isBlockedSearch(_ url: URL) -> Bool {
         guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
-        let terms = components.queryItems?
-            .filter { ["q", "query", "search_query", "text"].contains($0.name.lowercased()) }
-            .compactMap(\.value)
-            .flatMap(Self.decodedCandidates)
-            .joined(separator: " ").lowercased() ?? ""
+        var values = components.queryItems?
+            .filter { FilterRules.protectedSearchParameterNames.contains($0.name.lowercased()) }
+            .compactMap(\.value) ?? []
+        if Self.looksLikeSearchRoute(components.path) { values.append(components.path) }
+        if let fragment = components.fragment, Self.looksLikeSearchRoute(fragment) { values.append(fragment) }
+        let terms = values.flatMap(Self.decodedCandidates).joined(separator: " ").lowercased()
         return rules.blockedSearchTerms.contains { term in
             terms.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil
         }
+    }
+
+    private static func looksLikeSearchRoute(_ value: String) -> Bool {
+        let normalized = value.lowercased()
+        return ["/search", "/search.php", "/advancedsearch", "/advancedsearch.php", "/results", "/result", "/find", "/browse"]
+            .contains { marker in
+                guard let range = normalized.range(of: marker) else { return false }
+                let suffix = normalized[range.upperBound...]
+                return suffix.isEmpty || ["/", "?", ".", "#"].contains(suffix.first!)
+            }
     }
 
     private func safeSearchURL(for url: URL) -> URL {

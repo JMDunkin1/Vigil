@@ -27,10 +27,11 @@ npm run agent:update:phone
 
 Agents should run the app-specific command for the companion they are working
 on. Each phone command uses the verified deployment suite: it bumps only changed
-release inputs, audits all four policy levels, builds and installs only the
-selected companion when it needs an update, keeps the matching supervised policy
-synchronized, and verifies that companion's resulting device state. It does not
-reboot, erase, re-enroll, or weaken supervision.
+release inputs, audits all four policy levels, renews any selected companion
+whose Personal Team signature expires within 48 hours or which cannot launch,
+keeps the matching supervised policy synchronized, and verifies that every
+selected companion launches and remains running before reporting success. It
+does not reboot, erase, re-enroll, or weaken supervision.
 
 The iPhone must be unlocked when profile installation needs it, trusted and
 paired, visible to Xcode, and reachable through a wired or wireless CoreDevice

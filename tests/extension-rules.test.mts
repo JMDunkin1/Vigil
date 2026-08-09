@@ -54,11 +54,14 @@ assert.equal(googleSafeSearchRegex.test("https://www.google.com/search?q=referen
 assert.equal(googleSafeSearchRegex.test("https://images.google.com/search?q=reference"), true);
 assert.equal(googleSafeSearchRegex.test("https://docs.google.com/search?q=reference"), false);
 assert.equal(googleSafeSearchRegex.test("https://www.google.com/search/results?q=reference"), false);
-const explicitSearchCondition = staticRules[3]?.condition as { regexFilter?: unknown } | undefined;
+const explicitSearchCondition = staticRules[3]?.condition as { regexFilter?: unknown; requestDomains?: unknown } | undefined;
 const explicitSearchRegex = new RegExp(String(explicitSearchCondition?.regexFilter || ""), "i");
 assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=ordinary+reference"), false);
 assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=explicit+porn+query"), true);
 assert.equal(explicitSearchRegex.test("https://www.bing.com/search?q=18%2B"), true);
+assert.equal(explicitSearchRegex.test("https://archive.org/search?query=explicit+porn+query"), true);
+assert.equal(explicitSearchRegex.test("https://example.com/find?keywords=rule34"), true);
+assert.equal(explicitSearchCondition?.requestDomains, undefined, "explicit-query DNR protection must apply to site-local search engines too");
 const explicitSearchAction = recordValue(staticRules[3]?.action, "explicit-search DNR action");
 const explicitSearchRedirect = recordValue(explicitSearchAction.redirect, "explicit-search DNR redirect");
 assert.equal(explicitSearchRedirect.extensionPath, "/blocked.html");
@@ -83,6 +86,8 @@ assert.doesNotMatch(contentSource, /\nexport \{\};?\s*$/u, "Chrome content scrip
 assert.doesNotMatch(googleSafeSearchSource, /\nexport \{\};?\s*$/u, "the SafeSearch guard must be emitted as a classic content script");
 assert.doesNotMatch(googleSafeSearchSource, /safeSearchEnabled|chrome\.storage/u, "Google SafeSearch enforcement must not have a setting or stored off path");
 assert.match(googleSafeSearchSource, /searchParams\.set\("safe", "active"\)/u);
+assert.match(contentSource, /data-vigil-youtube-comments/u, "YouTube comments must remain under an always-on DOM restriction");
+assert.match(contentSource, /ytm-comments-entry-point-header-renderer/u, "mobile YouTube comment entry points must be hidden");
 assert.doesNotMatch(backgroundSource, /result\.signature\s*=\s*snapshot\.dynamicRuleSignature/);
 assert.doesNotMatch(contentSource, /activateOfflineGuard/);
 assert.doesNotMatch(contentSource, /data-vigil-page-guard-state/);
@@ -184,6 +189,10 @@ assert.ok(
 {
   type TestEvent = {
     target: unknown;
+    type?: string;
+    key?: string;
+    cancelable?: boolean;
+    composedPath?(): unknown[];
     submitter?: {
       name: string;
       value: string;
@@ -197,11 +206,18 @@ assert.ok(
   type SafeSearchListener = (event: TestEvent) => void;
   class TestElement {
     anchor: { href: string } | null = null;
+    tagName = "";
+    textContent = "";
+    value = "";
+    attributes = new Map<string, string>();
 
-    closest(selector: string): { href: string } | null {
-      assert.equal(selector, "a[href]");
-      return this.anchor;
+    closest(selector: string): TestElement | { href: string } | null {
+      return selector === "a[href]" ? this.anchor : null;
     }
+
+    getAttribute(name: string): string | null { return this.attributes.get(name) ?? null; }
+
+    querySelectorAll(): TestElement[] { return []; }
   }
   class TestForm {
     action = "https://www.google.com/search";
@@ -292,8 +308,18 @@ assert.ok(
   );
   assert.equal(
     runInContext("explicitSearchBlockRedirect('https://google.com.example/search?q=p%6Frn')", context),
-    null,
-    "lookalike domains must not be treated as protected search providers"
+    "chrome-extension://vigil/blocked.html",
+    "site-local search protection must not be limited to a provider allowlist"
+  );
+  assert.equal(
+    runInContext("explicitSearchBlockRedirect('https://archive.org/search?query=p%256Frn')", context),
+    "chrome-extension://vigil/blocked.html",
+    "Internet Archive nested-encoded queries must be blocked"
+  );
+  assert.equal(
+    runInContext("explicitSearchBlockRedirect('https://example.com/#/search/rule34')", context),
+    "chrome-extension://vigil/blocked.html",
+    "SPA search routes must be inspected below the top-level query string"
   );
 
   const linkTarget = new TestElement();
@@ -353,6 +379,23 @@ assert.ok(
   assert.equal(assignments.at(-1), "chrome-extension://vigil/blocked.html");
   form.fields = [["q", "form reference"], ["safe", "off"]];
 
+  const shadowSearchControl = new TestElement();
+  shadowSearchControl.tagName = "INPUT";
+  shadowSearchControl.value = "nested p%6Frn";
+  shadowSearchControl.attributes.set("type", "search");
+  const shadowHost = new TestElement();
+  let shadowInputPrevented = false;
+  must(listeners.get("input"), "shadow search input listener")({
+    type: "input",
+    target: shadowHost,
+    cancelable: true,
+    composedPath() { return [shadowSearchControl, shadowHost]; },
+    preventDefault() { shadowInputPrevented = true; },
+    stopImmediatePropagation() {}
+  });
+  assert.equal(shadowInputPrevented, true, "composed shadow-DOM search input must be stopped before results render");
+  assert.equal(assignments.at(-1), "chrome-extension://vigil/blocked.html");
+
   const assignmentCountBeforePost = assignments.length;
   form.action = "https://www.google.com/search";
   form.method = "post";
@@ -375,6 +418,19 @@ assert.ok(
   assert.equal(postPropagationStopped, false);
   assert.equal(assignments.length, assignmentCountBeforePost, "POST search forms must not be replaced with GET navigations");
 
+  form.fields = [["query", "nested p%6Frn"]];
+  let explicitPostPrevented = false;
+  must(listeners.get("submit"), "explicit POST search listener")({
+    target: form,
+    submitter: plainSubmitter,
+    preventDefault() { explicitPostPrevented = true; },
+    stopImmediatePropagation() {}
+  });
+  assert.equal(explicitPostPrevented, true, "explicit POST search forms must be blocked before submission");
+  assert.equal(assignments.at(-1), "chrome-extension://vigil/blocked.html");
+  form.fields = [["q", "form reference"], ["safe", "off"]];
+
+  const assignmentCountBeforePlainGet = assignments.length;
   form.method = "get";
   let plainGetPrevented = false;
   let plainGetPropagationStopped = false;
@@ -386,7 +442,7 @@ assert.ok(
   });
   assert.equal(plainGetPrevented, true, "a plain submitter must use its parent Google Search form's action");
   assert.equal(plainGetPropagationStopped, true);
-  assert.equal(assignments.length, assignmentCountBeforePost + 1);
+  assert.equal(assignments.length, assignmentCountBeforePlainGet + 1);
   const plainGetRedirect = new URL(must(assignments.at(-1), "plain-submitter Google Search redirect"));
   assert.equal(plainGetRedirect.pathname, "/search");
   assert.equal(plainGetRedirect.searchParams.get("source"), "plain-button");

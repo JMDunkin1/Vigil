@@ -28,6 +28,12 @@ assert.match(contentSource, /let rules = null/u, "bootstrap preflight must not w
 assert.match(contentSource, /const preflight = decision\(location\.href, bootstrapRules\)/u);
 assert.match(contentSource, /safeSearchEnabled: true/u);
 assert.match(contentSource, /"porn", "porno", "xxx"/u);
+assert.match(contentSource, /"keyword", "keywords", "term"/u,
+  "site-local search parameter names must be inspected by the Safari companion");
+assert.match(contentSource, /event\.composedPath/u,
+  "shadow-DOM search controls must be inspected through composed events");
+assert.match(contentSource, /addEventListener\("input", guardSearchControl/u,
+  "SPA search boxes must be blocked before an in-page results container can reveal explicit results");
 assert.match(contentSource, /navigationEvents\.addEventListener\("navigate"/u,
   "Safari 26.2+ must synchronously inspect History API and other programmatic navigations");
 assert.match(contentSource, /document\.write\(`<script src=/u,

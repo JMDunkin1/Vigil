@@ -102,8 +102,12 @@ interface PauseActionMessage {
 let focusedSocialCleanupSettings = defaultFocusedSocialCleanupSettings();
 
 activatePageGuard();
+applyAlwaysOnYoutubeRestrictions();
 sendPulse("navigation", { guard: true });
-setInterval(() => sendPulse("heartbeat"), 5000);
+setInterval(() => {
+  applyAlwaysOnYoutubeRestrictions();
+  sendPulse("heartbeat");
+}, 5000);
 window.addEventListener("focus", () => resetAndPulse("activated"));
 window.addEventListener("pageshow", () => resetAndPulse("activated", { guard: true }));
 window.addEventListener("popstate", () => resetAndPulse("history", { guard: true }));
@@ -830,6 +834,39 @@ function cleanupBrowserNoise() {
   injectCleanupStyle();
   removeCookiePrompts();
   applyYoutubeAutofillFriction();
+}
+
+function applyAlwaysOnYoutubeRestrictions(): void {
+  if (!isYoutubeHost()) return;
+  const root = document.documentElement;
+  if (!root) {
+    document.addEventListener("DOMContentLoaded", applyAlwaysOnYoutubeRestrictions, { once: true });
+    return;
+  }
+  root.setAttribute("data-vigil-youtube-comments", "hidden");
+  if (document.getElementById("vigil-youtube-comments-style")) return;
+  const style = document.createElement("style");
+  style.id = "vigil-youtube-comments-style";
+  style.textContent = `
+    html[data-vigil-youtube-comments="hidden"] ytd-comments,
+    html[data-vigil-youtube-comments="hidden"] ytd-comments-header-renderer,
+    html[data-vigil-youtube-comments="hidden"] ytd-comment-thread-renderer,
+    html[data-vigil-youtube-comments="hidden"] ytd-item-section-renderer[section-identifier="comment-item-section"],
+    html[data-vigil-youtube-comments="hidden"] ytm-comments-entry-point-header-renderer,
+    html[data-vigil-youtube-comments="hidden"] ytm-comments-header-renderer,
+    html[data-vigil-youtube-comments="hidden"] ytm-comment-section-renderer,
+    html[data-vigil-youtube-comments="hidden"] ytm-engagement-panel-section-list-renderer[target-id*="comments" i],
+    html[data-vigil-youtube-comments="hidden"] [section-identifier="comments-entry-point"],
+    html[data-vigil-youtube-comments="hidden"] #comments,
+    html[data-vigil-youtube-comments="hidden"] #comments-button,
+    html[data-vigil-youtube-comments="hidden"] a[href*="#comments" i],
+    html[data-vigil-youtube-comments="hidden"] button[aria-label*="comment" i] {
+      display: none !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
+  `;
+  root.append(style);
 }
 
 function applyFocusedSocialCleanup(settingsValue?: unknown): void {

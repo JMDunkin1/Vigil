@@ -89,6 +89,7 @@ const REQUIRED_SOCIAL_APPS = [
   { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" }
 ];
 const SOCIAL_APP_IDS = new Set(REQUIRED_SOCIAL_APPS.map((app) => app.id));
+const PERSONAL_TEAM_RENEWAL_WINDOW_MS = 48 * 60 * 60 * 1000;
 const appsForEdition = (edition) => edition === "enhanced"
   ? [...REQUIRED_SOCIAL_APPS, URL_FILTER_APP]
   : [...REQUIRED_SOCIAL_APPS];
@@ -856,7 +857,23 @@ export function receiptPhoneEdition(receipt) {
   return hasUrlFilterApp || hasVerifiedUrlFilter ? "enhanced" : "personal";
 }
 
-export function socialAppsNeedingUpdate(release, installedApps = [], receipt = null, selectedAppIds = null) {
+export function signingExpirationNeedsRenewal(
+  expiresAt,
+  now = Date.now(),
+  renewalWindowMilliseconds = PERSONAL_TEAM_RENEWAL_WINDOW_MS
+) {
+  const expiration = expiresAt instanceof Date
+    ? expiresAt.getTime()
+    : typeof expiresAt === "number" ? expiresAt : Date.parse(String(expiresAt || ""));
+  const current = now instanceof Date
+    ? now.getTime()
+    : typeof now === "number" ? now : Date.parse(String(now || ""));
+  return !Number.isFinite(expiration)
+    || !Number.isFinite(current)
+    || expiration <= current + renewalWindowMilliseconds;
+}
+
+export function socialAppsNeedingUpdate(release, installedApps = [], receipt = null, selectedAppIds = null, now = Date.now()) {
   const receiptApps = Array.isArray(receipt?.apps) ? receipt.apps : [];
   const selected = selectedAppIds ? new Set(selectedAppIds) : null;
   return REQUIRED_SOCIAL_APPS.filter((app) => !selected || selected.has(app.id)).filter((app) => {
@@ -868,7 +885,8 @@ export function socialAppsNeedingUpdate(release, installedApps = [], receipt = n
       || String(installed.bundleVersion || "") !== String(expected.build)
       || deployed?.version !== expected.version
       || String(deployed?.build || "") !== String(expected.build)
-      || deployed?.sourceFingerprint !== expected.sourceFingerprint;
+      || deployed?.sourceFingerprint !== expected.sourceFingerprint
+      || signingExpirationNeedsRenewal(deployed?.signingProfile?.expiresAt, now);
   }).map((app) => app.id);
 }
 
@@ -936,6 +954,17 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
         || deployed?.sourceFingerprint !== app.release.sourceFingerprint) {
         problems.push(`${app.name} does not have a current source-verified deployment receipt.`);
       }
+      const expiration = Date.parse(String(deployed?.signingProfile?.expiresAt || ""));
+      if (!Number.isFinite(expiration)) {
+        problems.push(`${app.name} does not have a verified signing-expiration receipt.`);
+      } else if (expiration <= Date.now()) {
+        problems.push(`${app.name}'s installed signing profile expired at ${new Date(expiration).toISOString()}.`);
+      } else if (signingExpirationNeedsRenewal(expiration)) {
+        problems.push(`${app.name}'s installed signing profile expires at ${new Date(expiration).toISOString()} and must be renewed now.`);
+      }
+      if (!deployed?.launchVerifiedAt) {
+        problems.push(`${app.name} does not have a successful post-install launch receipt.`);
+      }
     }
   }
   if (obsoleteApps.length) problems.push(`${OBSOLETE_APPS_PROBLEM_PREFIX} ${obsoleteApps.map((app) => app.bundleIdentifier).join(", ")}.`);
@@ -993,7 +1022,14 @@ function printStatus(report) {
   console.log(`Device: ${report.device.name} • ${report.device.model} • iOS ${report.device.osVersion} • ${report.device.connection} and paired`);
   console.log("Apps:");
   for (const app of report.requiredApps) {
-    console.log(`- ${app.name}: ${app.installed ? `${app.installed.version} (${app.installed.build})` : "missing"} • expected ${app.release.version} (${app.release.build})`);
+    const deployed = (report.receipt?.apps || []).find((item) => item?.bundleId === app.bundleId);
+    const signingExpiration = deployed?.signingProfile?.expiresAt
+      ? ` • signing expires ${deployed.signingProfile.expiresAt}`
+      : SOCIAL_APP_IDS.has(app.id) ? " • signing expiration unverified" : "";
+    const launch = SOCIAL_APP_IDS.has(app.id)
+      ? ` • launch ${deployed?.launchVerifiedAt ? `verified ${deployed.launchVerifiedAt}` : "unverified"}`
+      : "";
+    console.log(`- ${app.name}: ${app.installed ? `${app.installed.version} (${app.installed.build})` : "missing"} • expected ${app.release.version} (${app.release.build})${signingExpiration}${launch}`);
   }
   console.log("Profiles:");
   if (report.profileVerification.available) {
@@ -1045,7 +1081,25 @@ async function updatePhone(selectedOptions) {
   ]);
   const installedApps = installedBeforeUpdate.result?.apps || [];
   const selectedSocialAppIds = selectedOptions.app ? [selectedOptions.app] : null;
-  const socialAppIds = socialAppsNeedingUpdate(release, installedApps, previousReceipt, selectedSocialAppIds);
+  const targetedSocialApps = REQUIRED_SOCIAL_APPS
+    .filter((app) => !selectedSocialAppIds || selectedSocialAppIds.includes(app.id));
+  const socialAppIdSet = new Set(socialAppsNeedingUpdate(
+    release,
+    installedApps,
+    previousReceipt,
+    selectedSocialAppIds
+  ));
+  for (const social of targetedSocialApps) {
+    const installed = installedApps.find((app) => app.bundleIdentifier === social.bundleId);
+    if (!installed || socialAppIdSet.has(social.id)) continue;
+    console.log(`Checking ${social.name} launch health before deciding whether to reinstall…`);
+    const launch = await verifySocialAppLaunch(device.identifier, social, toolEnvironment);
+    if (!launch.ok) {
+      console.warn(`${social.name} could not launch (${launch.detail}); forcing a fresh signed reinstall.`);
+      socialAppIdSet.add(social.id);
+    }
+  }
+  const socialAppIds = [...socialAppIdSet];
   const installedUrlFilter = installedApps.find((app) => app.bundleIdentifier === URL_FILTER_APP.bundleId);
   const includeUrlFilter = edition === "enhanced" && (
     !installedUrlFilter
@@ -1138,6 +1192,16 @@ async function updatePhone(selectedOptions) {
     await persistPhoneEdition(edition);
   }
 
+  const launchVerifications = new Map();
+  for (const social of targetedSocialApps) {
+    console.log(`Verifying installed ${social.name} launches and remains running…`);
+    const launch = await verifySocialAppLaunch(device.identifier, social, toolEnvironment);
+    if (!launch.ok) {
+      throw new Error(`${social.name} was installed but failed its required launch verification: ${launch.detail}`);
+    }
+    launchVerifications.set(social.bundleId, launch);
+  }
+
   const appReceiptRecords = new Map((previousReceipt?.apps || []).map((app) => [app.bundleId, app]));
   for (const app of build.apps) {
     appReceiptRecords.set(app.bundleId, {
@@ -1148,6 +1212,7 @@ async function updatePhone(selectedOptions) {
       sourceFingerprint: release.apps[app.id]?.sourceFingerprint || release.sourceFingerprint,
       sha256: app.sha256,
       signingCapabilities: app.signingCapabilities,
+      signingProfile: app.signingProfile || null,
       blocklistArtifactSha256: app.blocklist?.artifactSha256 || null,
       blocklistDomainCount: app.blocklist?.domainCount || null,
       explicitContentPolicySha256: app.explicitContentPolicy?.sha256 || null,
@@ -1157,12 +1222,23 @@ async function updatePhone(selectedOptions) {
       youtubeInteractionExtensionSha256: app.youtubeInteractionExtension?.sha256 || null
     });
   }
+  for (const social of targetedSocialApps) {
+    const record = appReceiptRecords.get(social.bundleId);
+    const launch = launchVerifications.get(social.bundleId);
+    if (!record || !launch) {
+      throw new Error(`${social.name} is missing the signing or launch evidence required for a deployment receipt.`);
+    }
+    appReceiptRecords.set(social.bundleId, {
+      ...record,
+      launchVerifiedAt: launch.verifiedAt
+    });
+  }
   const signingCapabilities = {
     ...(previousReceipt?.signingCapabilities || {}),
     ...build.signingCapabilities
   };
   await writeReceipt(deviceReceiptId, {
-    schemaVersion: 2,
+    schemaVersion: 3,
     edition,
     device: { identifier: device.identifier, udid: device.udid, name: device.name, model: device.model, osVersion: device.osVersion },
     release,
@@ -1322,6 +1398,7 @@ async function buildPhoneApps(
       "-destination", "generic/platform=iOS",
       "-derivedDataPath", derived,
       "-allowProvisioningUpdates",
+      "clean",
       "build",
       `VIGIL_APP_BUNDLE_IDENTIFIER=${social.bundleId}`,
       `VIGIL_SERVICE=${social.service}`,
@@ -1358,6 +1435,10 @@ async function buildPhoneApps(
       ? await verifyBundledYouTubeInteractionExtension(path, social.bundleId)
       : null;
     const signingCapabilities = await signedAppCapabilities(path);
+    const signingProfile = await signedAppProvisioningProfile(path);
+    if (signingExpirationNeedsRenewal(signingProfile.expiresAt)) {
+      throw new Error(`${social.name} built with a provisioning profile that expires too soon (${signingProfile.expiresAt}); refusing to install a companion that cannot survive the renewal window.`);
+    }
     if (!reducedEntitlements && !signingCapabilities.sensitiveContentAnalysis) {
       throw new Error(`${social.name} built without the requested Sensitive Content Analysis entitlement; refusing to label it as a full-capability build.`);
     }
@@ -1369,6 +1450,7 @@ async function buildPhoneApps(
       youtubeParityScript,
       youtubeInteractionExtension,
       signingCapabilities,
+      signingProfile,
       sha256: await hashAppBundle(path)
     });
   }
@@ -1735,6 +1817,79 @@ async function signedAppCapabilities(appPath) {
   return {
     sensitiveContentAnalysis: /<key>com\.apple\.developer\.sensitivecontentanalysis\.client<\/key>\s*<true\s*\/>/u.test(entitlements)
   };
+}
+
+async function signedAppProvisioningProfile(appPath) {
+  const embeddedProfile = join(appPath, "embedded.mobileprovision");
+  if (!await isFile(embeddedProfile)) {
+    throw new Error(`${basename(appPath)} does not contain an embedded provisioning profile.`);
+  }
+  const directory = await mkdtemp(join(tmpdir(), "vigil-provisioning-profile-"));
+  const decodedProfile = join(directory, "profile.plist");
+  try {
+    await execFileAsync("/usr/bin/security", ["cms", "-D", "-i", embeddedProfile, "-o", decodedProfile], {
+      timeout: 30_000,
+      maxBuffer: 4 * 1024 * 1024
+    });
+    const readValue = async (key) => {
+      const { stdout } = await execFileAsync("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", decodedProfile], {
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024
+      });
+      return stdout.trim();
+    };
+    const [name, uuid, teamIdentifier, createdAtValue, expiresAtValue] = await Promise.all([
+      readValue("Name"),
+      readValue("UUID"),
+      readValue("TeamIdentifier.0"),
+      readValue("CreationDate"),
+      readValue("ExpirationDate")
+    ]);
+    const createdAt = new Date(createdAtValue);
+    const expiresAt = new Date(expiresAtValue);
+    if (!Number.isFinite(createdAt.getTime()) || !Number.isFinite(expiresAt.getTime())) {
+      throw new Error("The embedded provisioning profile has invalid signing dates.");
+    }
+    return {
+      name,
+      uuid,
+      teamIdentifier,
+      createdAt: createdAt.toISOString(),
+      expiresAt: expiresAt.toISOString()
+    };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment) {
+  try {
+    const launch = await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, "--terminate-existing", social.bundleId], toolEnvironment);
+    const processIdentifier = Number(launch.result?.process?.processIdentifier);
+    if (!Number.isInteger(processIdentifier) || processIdentifier <= 0) {
+      return { ok: false, detail: "CoreDevice did not return a launched process identifier" };
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 1_000));
+    const processes = await devicectlJson(["device", "info", "processes", "--device", deviceIdentifier], toolEnvironment);
+    const stillRunning = (processes.result?.runningProcesses || [])
+      .some((process) => Number(process.processIdentifier) === processIdentifier);
+    if (!stillRunning) {
+      return { ok: false, detail: `the launched process ${processIdentifier} exited immediately` };
+    }
+    return {
+      ok: true,
+      processIdentifier,
+      verifiedAt: new Date().toISOString(),
+      detail: "launched and remained running"
+    };
+  } catch (error) {
+    const detail = [error?.stderr, error?.stdout, error?.message]
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/gu, " ")
+      .trim();
+    return { ok: false, detail: detail || String(error) };
+  }
 }
 
 async function hashAppBundle(root) {

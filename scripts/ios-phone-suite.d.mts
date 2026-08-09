@@ -56,6 +56,11 @@ export function phoneBlocklistReadiness(explicitPath?: string): Promise<PhoneBlo
 export function blocklistReadinessProblems(readiness: PhoneBlocklistReadiness, serverState?: unknown): string[];
 export function deployedBlocklistProblems(receipt: unknown, readiness: PhoneBlocklistReadiness, requiredBundleIds?: string[]): string[];
 export function signingCapabilitySummary(variant: unknown): { variant: string; mediaCapability: string };
+export function signingExpirationNeedsRenewal(
+  expiresAt: string | number | Date | null | undefined,
+  now?: string | number | Date,
+  renewalWindowMilliseconds?: number
+): boolean;
 export function implementationFingerprint(edition?: "personal" | "enhanced"): Promise<{
   hash: string;
   edition: "personal" | "enhanced";
@@ -73,5 +78,6 @@ export function socialAppsNeedingUpdate(
   release: { apps: Record<string, { version: string; build: number; sourceFingerprint?: string }> },
   installedApps?: Array<{ bundleIdentifier?: string; version?: string; bundleVersion?: string | number }>,
   receipt?: unknown,
-  selectedAppIds?: Array<"instagram" | "youtube"> | null
+  selectedAppIds?: Array<"instagram" | "youtube"> | null,
+  now?: string | number | Date
 ): Array<"instagram" | "youtube">;

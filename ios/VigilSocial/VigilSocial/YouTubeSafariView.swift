@@ -22,7 +22,7 @@ struct YouTubeSafariView: View {
                         .foregroundStyle(session.isFilterEnabled == false ? Color.orange : Color.red)
 
                     VStack(spacing: 8) {
-                        Text(session.isFilterEnabled == false ? "Enable the YouTube filter" : "YouTube without Shorts")
+                        Text(session.isFilterEnabled == false ? "Enable the YouTube filter" : "Focused YouTube")
                             .font(.title3.weight(.semibold))
                         Text(message)
                             .font(.subheadline)
@@ -67,7 +67,7 @@ struct YouTubeSafariView: View {
         if session.isFilterEnabled == false {
             return "In Settings, open Apps › Safari › Extensions and enable Vigil YouTube Shorts Filter. The companion stays closed until its Shorts protection is active."
         }
-        return "YouTube opens in Apple’s secure Safari view, where Google sign-in is supported. Vigil removes Shorts links, blocks direct Shorts pages and reel data. Apple keeps the standard browser controls visible; they collapse as you scroll."
+        return "YouTube opens in Apple’s secure Safari view, where Google sign-in is supported. Vigil removes comments and Shorts links, and blocks direct Shorts pages and reel data. Apple keeps the standard browser controls visible; they collapse as you scroll."
     }
 }
 

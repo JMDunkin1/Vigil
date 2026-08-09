@@ -37,7 +37,7 @@ npm run ios:phone:update:personal
 npm run ios:phone:update:enhanced
 ```
 
-`status` is read-only and explains drift. `check` reports the same state but exits nonzero when the phone or release is stale. If CoreDevice cannot inspect configuration profiles on the connected phone, both commands report profile verification as unavailable instead of treating the live policy as missing or crashing. `audit` builds the TypeScript runtime and validates generated Normal, Soft Lock, Full Brick, and Panic profiles for the selected edition. `update` bumps each companion's patch/build only when that app's inputs changed, then builds and installs only companions whose installed version is stale. Shared app inputs correctly advance both versions; Instagram's embedded Safari YouTube extension is tracked as an Instagram input. The command also replaces the live policy profile when required. Enhanced additionally builds, installs, and live-verifies Vigil URL Filter. It does not build or install a Vigil browser, create Home Screen Web Clips, or reboot the phone.
+`status` is read-only and explains drift. `check` reports the same state but exits nonzero when the phone or release is stale. If CoreDevice cannot inspect configuration profiles on the connected phone, both commands report profile verification as unavailable instead of treating the live policy as missing or crashing. `audit` builds the TypeScript runtime and validates generated Normal, Soft Lock, Full Brick, and Panic profiles for the selected edition. `update` bumps each companion's patch/build only when that app's inputs changed, and it also renews a companion when its own signing receipt is missing or within 48 hours of expiration. Before accepting an otherwise-current app, the updater launches it; a launch failure forces a clean re-sign and reinstall. Shared app inputs correctly advance both versions; Instagram's embedded Safari YouTube extension is tracked as an Instagram input. The command also replaces the live policy profile when required. Enhanced additionally builds, installs, and live-verifies Vigil URL Filter. It does not build or install a Vigil browser, create Home Screen Web Clips, or reboot the phone.
 
 Both editions require a valid `adult-blocklist.sdi` before they can bump or mutate the phone. The live installed Vigil data copy takes priority over a stale repository copy. For the default Block List Project source, “valid” means at least 600,000 domains with intact format and payload hashes; a tiny test fixture cannot pass. Each built app must contain the exact artifact at its bundle root. The suite re-reads that bundled copy, compares its domain count, snapshot hash, and whole-artifact hash, and records the proof per app in the deployment receipt. The same gate checks that `ExplicitContentPolicy.json` is freshly generated and byte-identical inside the companion. `status` compares the adult artifact to the enabled live snapshot, reports the real domain count, source, and hashes, and reports whether both generated artifacts were proven by the last deployment.
 
@@ -70,10 +70,14 @@ fingerprint. If phone-facing sources changed, especially the YouTube companion's
 exact authentication routes, the suite refuses the app-only update and requires
 the normal companion-plus-policy transaction first.
 
-Personal Team provisioning profiles expire after seven days. Re-run the
-Personal update while the paired phone is connected before the companions
-expire. The supervised configuration profile is independent of that companion
-app signing window and remains installed.
+Personal Team provisioning profiles expire after seven days. Run the Personal
+updater regularly while the paired phone is reachable. Each app's embedded
+profile expiration is recorded independently; the updater clean-builds,
+re-signs, and reinstalls an app inside the 48-hour renewal window even when its
+version is unchanged. It reports success only after every selected companion
+launches and its process remains alive, then records that launch time. The
+supervised configuration profile is independent of the companion app signing
+window and remains installed.
 
 The supported companions are two fixed apps:
 

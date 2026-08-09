@@ -71,8 +71,7 @@
       }
     },
     "condition": {
-      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|text)=[^&#]*(porn|porno|xxx|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(%2b|\\+|plus|-plus))",
-      "requestDomains": ["google.com", "bing.com", "duckduckgo.com"],
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*(porn|porno|xxx|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(%2b|\\+|plus|-plus))",
       "resourceTypes": ["main_frame"]
     }
   }

@@ -375,6 +375,8 @@ if (removeTestUrlFilterService) {
     assert.ok(Array.isArray(deniedUrls));
     assert.equal(deniedUrls.length, 500, "Apple's built-in web filter deny list must never exceed 500 URLs");
     assert.equal(deniedUrls.includes("https://www.google.com/search?q=porn"), true, "permanent explicit-search protection must have first priority");
+    assert.equal(deniedUrls.includes("https://archive.org/search?query=porn"), true, "Internet Archive search must retain permanent explicit-query protection");
+    assert.equal(deniedUrls.includes("https://archive.org/advancedsearch.php?q=porn"), true, "Internet Archive advanced search must retain permanent explicit-query protection");
     assert.equal(deniedUrls.includes("https://youtube.com/shorts"), true, "permanent default protection must have first priority");
     assert.equal(deniedUrls.includes("https://honeytoon.com/"), true, "named explicit comic sites must be retained ahead of the bulk adult preload");
     assert.equal(deniedUrls.includes("https://toongod.org/"), true, "known Toongod domains must be retained ahead of the bulk adult preload");

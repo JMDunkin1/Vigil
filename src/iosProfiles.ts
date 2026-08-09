@@ -55,6 +55,9 @@ const IOS_EXPLICIT_SEARCH_URL_PREFIXES = [
   "https://www.ecosia.org/search?q=",
   "https://www.youtube.com/results?search_query="
 ];
+const IOS_ARCHIVE_EXPLICIT_SEARCH_URL_PREFIX = "https://archive.org/search?query=";
+const IOS_ARCHIVE_ADVANCED_EXPLICIT_SEARCH_URL_PREFIX = "https://archive.org/advancedsearch.php?q=";
+const IOS_ARCHIVE_EXPLICIT_SEARCH_TERM_KEYS = new Set(["porn", "porno", "xxx", "nsfw", "hentai"]);
 const IOS_SOCIAL_COMPANION_ALLOWED_URLS = [
   "https://instagram.com/",
   "https://www.instagram.com/",
@@ -744,7 +747,10 @@ function urlsForExplicitSearchTerm(value: unknown): string[] {
   const term = normalizedExplicitSearchTerm(value);
   if (!term || !IOS_EXPLICIT_SEARCH_TERM_KEYS.has(term)) return [];
   const encoded = encodeURIComponent(term);
-  return IOS_EXPLICIT_SEARCH_URL_PREFIXES.map((prefix) => `${prefix}${encoded}`);
+  const prefixes = [...IOS_EXPLICIT_SEARCH_URL_PREFIXES];
+  if (IOS_ARCHIVE_EXPLICIT_SEARCH_TERM_KEYS.has(term)) prefixes.push(IOS_ARCHIVE_EXPLICIT_SEARCH_URL_PREFIX);
+  if (term === "porn") prefixes.push(IOS_ARCHIVE_ADVANCED_EXPLICIT_SEARCH_URL_PREFIX);
+  return prefixes.map((prefix) => `${prefix}${encoded}`);
 }
 
 function normalizedExplicitSearchTerm(value: unknown): string {

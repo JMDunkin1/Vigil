@@ -20,6 +20,7 @@ import {
   receiptPhoneEdition,
   removalPasswordFromProfile,
   safariExtensionUpdateProblems,
+  signingExpirationNeedsRenewal,
   socialAppsNeedingUpdate
 } from "../scripts/ios-phone-suite.mjs";
 import { buildPhoneBlocklistArtifact } from "../src/adultBlocklistPhoneArtifact.js";
@@ -109,10 +110,13 @@ const splitRelease = {
 };
 const splitReceipt = {
   apps: [
-    { bundleId: "tech.caseline.vigil.instagram", version: "1.2.3", build: 7, sourceFingerprint: "instagram-source" },
-    { bundleId: "tech.caseline.vigil.youtube", version: "2.0.1", build: 11, sourceFingerprint: "youtube-source" }
+    { bundleId: "tech.caseline.vigil.instagram", version: "1.2.3", build: 7, sourceFingerprint: "instagram-source", signingProfile: { expiresAt: "2099-01-08T00:00:00.000Z" } },
+    { bundleId: "tech.caseline.vigil.youtube", version: "2.0.1", build: 11, sourceFingerprint: "youtube-source", signingProfile: { expiresAt: "2099-01-08T00:00:00.000Z" } }
   ]
 };
+assert.equal(signingExpirationNeedsRenewal("2099-01-08T00:00:00.000Z", "2099-01-05T23:59:59.999Z"), false);
+assert.equal(signingExpirationNeedsRenewal("2099-01-08T00:00:00.000Z", "2099-01-06T00:00:00.000Z"), true);
+assert.equal(signingExpirationNeedsRenewal("not-a-date", "2099-01-01T00:00:00.000Z"), true);
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
   { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" }
@@ -142,6 +146,36 @@ assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
   { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" }
 ], splitReceipt, ["youtube"]), ["youtube"], "a YouTube-only update must select only YouTube");
+assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
+  { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" }
+], {
+  apps: [
+    splitReceipt.apps[0],
+    { ...splitReceipt.apps[1], signingProfile: { expiresAt: "2099-01-06T12:00:00.000Z" } }
+  ]
+}, null, "2099-01-05T00:00:00.000Z"), ["youtube"], "a companion inside the 48-hour signing window must be re-signed even when its version matches");
+
+assert.match(
+  phoneSuiteSource,
+  /signingExpirationNeedsRenewal\(deployed\?\.signingProfile\?\.expiresAt, now\)/u,
+  "the update decision must use each companion's own signing expiration"
+);
+assert.match(
+  phoneSuiteSource,
+  /"-allowProvisioningUpdates",[\s\S]*?"clean",[\s\S]*?"build"/u,
+  "expiration renewal must clean stale derived output so Xcode actually re-signs the app"
+);
+assert.match(
+  phoneSuiteSource,
+  /Checking \$\{social\.name\} launch health[\s\S]*?verifySocialAppLaunch[\s\S]*?forcing a fresh signed reinstall/u,
+  "a matching app that cannot launch must be repaired instead of accepted as current"
+);
+assert.match(
+  phoneSuiteSource,
+  /Verifying installed \$\{social\.name\} launches and remains running[\s\S]*?verifySocialAppLaunch[\s\S]*?failed its required launch verification[\s\S]*?writeReceipt/u,
+  "the updater must verify launch survival before publishing its success receipt"
+);
 
 assert.equal(iosSdkSupportsDevice(18.5, "18.6.2"), true);
 assert.equal(iosSdkSupportsDevice(17.5, "18.0"), false);
