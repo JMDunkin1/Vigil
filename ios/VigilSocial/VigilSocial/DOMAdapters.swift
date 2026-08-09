@@ -1202,9 +1202,6 @@ enum DOMAdapters {
                 permanent: false
               };
             }
-            if (path === '/explore' || path.startsWith('/explore/')) {
-              return { feature: 'explore', mode: 'redirect', permanent: false };
-            }
             if (/^\/(shop|shopping|live)(\/|$)/.test(path)) {
               return { feature: 'shopping', mode: 'redirect', permanent: false };
             }
@@ -1573,17 +1570,17 @@ enum DOMAdapters {
           :is(nav, [role="navigation"]) :is(li, div):has(> :is(a[href="/reels/"], a[href="/reels"])),
         html:not([data-vigil-feature-reels="available"])
           div[data-visualcompletion="ignore-dynamic"] > div:has(> span > div > :is(a[href="/reels/"], a[href="/reels"])),
-        html:not([data-vigil-feature-explore="available"]) :is(
-          a[href="/explore/"], a[href="/explore"], [aria-label="Explore" i]
-        ),
-        html:not([data-vigil-feature-explore="available"])
-          :is(nav, [role="navigation"]) :is(li, div):has(> :is(a[href="/explore/"], a[href="/explore"])),
-        html:not([data-vigil-feature-explore="available"])
-          div[data-visualcompletion="ignore-dynamic"] > div:has(> span > div > :is(a[href="/explore/"], a[href="/explore"])),
         html:not([data-vigil-feature-shopping="available"]) :is(
           a[href^="/shop"], a[href^="/shopping"], a[href^="/live"]
         ),
+        html[data-vigil-instagram-account-search="true"] :is(main, [role="main"]) :is(
+          a[href^="/p/"], a[href^="/reel/"],
+          a[href^="/reels/"]:not([href="/reels/"]),
+          a[href^="/explore/tags/"], a[href^="/explore/locations/"],
+          a[href^="/audio/"], a[href^="/music/"], a[href^="/effects/"]
+        ),
         [data-vigil-hidden-feature],
+        [data-vigil-instagram-search-discovery="true"],
         [data-vigil-native-app-prompt="true"],
         a[href^="instagram:"] {
           display: none !important;
@@ -1606,6 +1603,12 @@ enum DOMAdapters {
         }
       `;
       document.documentElement.appendChild(style);
+      try {
+        const path = new URL(location.href).pathname.toLowerCase().replace(/\/+$/, '') || '/';
+        if (path === '/explore') {
+          document.documentElement.dataset.vigilInstagramAccountSearch = 'true';
+        }
+      } catch (_) {}
     })();
     """#
 
@@ -3979,17 +3982,17 @@ enum DOMAdapters {
             :is(nav, [role="navigation"]) :is(li, div):has(> :is(a[href="/reels/"], a[href="/reels"])),
           html:not([data-vigil-feature-reels="available"])
             div[data-visualcompletion="ignore-dynamic"] > div:has(> span > div > :is(a[href="/reels/"], a[href="/reels"])),
-          html:not([data-vigil-feature-explore="available"]) :is(
-            a[href="/explore/"], a[href="/explore"], [aria-label="Explore" i]
-          ),
-          html:not([data-vigil-feature-explore="available"])
-            :is(nav, [role="navigation"]) :is(li, div):has(> :is(a[href="/explore/"], a[href="/explore"])),
-          html:not([data-vigil-feature-explore="available"])
-            div[data-visualcompletion="ignore-dynamic"] > div:has(> span > div > :is(a[href="/explore/"], a[href="/explore"])),
           html:not([data-vigil-feature-shopping="available"]) :is(
             a[href^="/shop"], a[href^="/shopping"], a[href^="/live"]
           ),
+          html[data-vigil-instagram-account-search="true"] :is(main, [role="main"]) :is(
+            a[href^="/p/"], a[href^="/reel/"],
+            a[href^="/reels/"]:not([href="/reels/"]),
+            a[href^="/explore/tags/"], a[href^="/explore/locations/"],
+            a[href^="/audio/"], a[href^="/music/"], a[href^="/effects/"]
+          ),
           [data-vigil-hidden-feature],
+          [data-vigil-instagram-search-discovery="true"],
           [data-vigil-native-app-prompt="true"],
           a[href^="instagram:"] {
             display: none !important;
@@ -4016,10 +4019,29 @@ enum DOMAdapters {
               || path === '/reels' || path.startsWith('/reels/')) return 'reels';
           if (path === '/explore/people/suggested'
               || path.startsWith('/explore/people/suggested/')) return 'suggested';
-          if (path === '/explore' || path.startsWith('/explore/')) return 'explore';
           if (/^\/(shop|shopping|live)(\/|$)/.test(path)) return 'shopping';
           return '';
         } catch (_) { return ''; }
+      };
+      const isAccountSearchRoute = (value = location.href) => {
+        try {
+          const url = new URL(value, location.href);
+          if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return false;
+          const path = url.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+          return path === '/explore';
+        } catch (_) { return false; }
+      };
+      const isDiscoverySearchRoute = (value = location.href) => {
+        try {
+          const url = new URL(value, location.href);
+          if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return false;
+          const path = url.pathname.toLowerCase();
+          return path.startsWith('/explore/tags/')
+            || path.startsWith('/explore/locations/')
+            || path.startsWith('/audio/')
+            || path.startsWith('/music/')
+            || path.startsWith('/effects/');
+        } catch (_) { return false; }
       };
       const featureState = (feature) => feature
         ? document.documentElement.getAttribute(`data-vigil-feature-${feature}`) || 'pending'
@@ -4076,6 +4098,19 @@ enum DOMAdapters {
       let lastURL = location.href;
       const enforceRoute = () => {
         lastURL = location.href;
+        if (isDiscoverySearchRoute()) {
+          document.documentElement.dataset.vigilRoutePolicyBlocked = 'account-search';
+          if (redirectedURL !== location.href) {
+            redirectedURL = location.href;
+            try { location.replace('/explore/'); } catch (_) {}
+          }
+          return;
+        }
+        if (isAccountSearchRoute()) {
+          document.documentElement.dataset.vigilInstagramAccountSearch = 'true';
+        } else {
+          delete document.documentElement.dataset.vigilInstagramAccountSearch;
+        }
         const feature = featureForURL();
         if (!feature) {
           redirectedURL = '';
@@ -4180,6 +4215,51 @@ enum DOMAdapters {
           }
         }
       };
+      const searchDiscoveryPath = (value) => {
+        try {
+          const url = new URL(value, location.href);
+          if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return false;
+          const path = url.pathname.toLowerCase();
+          return path === '/p' || path.startsWith('/p/')
+            || path === '/reel' || path.startsWith('/reel/')
+            || (path.startsWith('/reels/') && path !== '/reels/')
+            || path.startsWith('/explore/tags/')
+            || path.startsWith('/explore/locations/')
+            || path === '/audio' || path.startsWith('/audio/')
+            || path === '/music' || path.startsWith('/music/')
+            || path === '/effects' || path.startsWith('/effects/');
+        } catch (_) { return false; }
+      };
+      const markAccountOnlySearch = (root) => {
+        if (!isAccountSearchRoute()) return;
+        const scope = root instanceof Element ? root : document;
+        const links = [
+          ...(scope.matches?.('a[href]') ? [scope] : []),
+          ...scope.querySelectorAll?.('a[href]') || []
+        ];
+        for (const link of links.slice(0, 240)) {
+          if (link.closest('nav, [role="navigation"]')) continue;
+          if (searchDiscoveryPath(link.href)) {
+            link.dataset.vigilInstagramSearchDiscovery = 'true';
+          }
+        }
+        const categoryLabels = new Set([
+          'for you', 'top', 'posts', 'photos', 'videos', 'reels',
+          'tags', 'hashtags', 'audio', 'music', 'sounds', 'places'
+        ]);
+        const controls = [
+          ...(scope.matches?.('button, [role="tab"]') ? [scope] : []),
+          ...scope.querySelectorAll?.('button, [role="tab"]') || []
+        ];
+        for (const control of controls.slice(0, 120)) {
+          if (control.closest('nav, [role="navigation"]')) continue;
+          const label = String(control.textContent || control.getAttribute('aria-label') || '')
+            .replace(/\s+/g, ' ').trim().toLowerCase();
+          if (categoryLabels.has(label)) {
+            control.dataset.vigilInstagramSearchDiscovery = 'true';
+          }
+        }
+      };
       let scanScheduled = false;
       const pendingRoots = new Set();
       const scheduleScan = (root = document) => {
@@ -4193,6 +4273,7 @@ enum DOMAdapters {
           roots.slice(0, 24).forEach((candidate) => {
             markFilteredCards(candidate);
             markNativeAppPrompts(candidate);
+            markAccountOnlySearch(candidate);
           });
         });
       };
@@ -4218,6 +4299,7 @@ enum DOMAdapters {
 
       markFilteredCards(document);
       markNativeAppPrompts(document);
+      markAccountOnlySearch(document);
       enforceRoute();
       // Level 2 deliberately leaves Reel media embedded in followed posts,
       // profiles, and Direct threads alone. Only discovery/suggested cards and

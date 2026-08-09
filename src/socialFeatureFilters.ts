@@ -64,11 +64,14 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       },
       {
         key: "explore",
-        label: "Explore",
+        label: "Search discovery media",
         probeUrls: ["https://www.instagram.com/?__vigil_feature=explore"],
-        deniedUrls: [
-          "instagram.com/explore"
-        ]
+        // Instagram serves both account search and its unbounded discovery
+        // grid from /explore. Keep the route reachable so the companion can
+        // preserve account lookup while its DOM policy removes posts, Reels,
+        // tags, audio, and places. The probe still tells the companion when
+        // Level 2 is active without denying the shared search route itself.
+        deniedUrls: []
       },
       {
         key: "suggested",
@@ -191,7 +194,13 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
 export const FOCUSED_SOCIAL_URL_PATTERNS = FOCUSED_SOCIAL_PLATFORMS.flatMap((platform) => (
   platform.features.flatMap(featureUrls)
 ));
-const FOCUSED_SOCIAL_URL_PATTERN_KEYS = new Set(FOCUSED_SOCIAL_URL_PATTERNS.map(normalizePatternKey));
+const FOCUSED_SOCIAL_URL_PATTERN_KEYS = new Set([
+  ...FOCUSED_SOCIAL_URL_PATTERNS.map(normalizePatternKey),
+  // Retain the former whole-Explore rule as a migration cleanup key. New
+  // profiles do not deny it because /explore is also Instagram's account
+  // search route, but an older persisted copy must not survive normalization.
+  normalizePatternKey("instagram.com/explore")
+]);
 
 export const PERMANENT_SOCIAL_URL_PATTERNS = FOCUSED_SOCIAL_PLATFORMS.flatMap((platform) => (
   platform.features.flatMap((feature) => feature.permanent ? feature.deniedUrls : [])

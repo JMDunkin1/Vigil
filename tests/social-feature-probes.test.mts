@@ -58,6 +58,11 @@ assert.equal(allProbes.length, 13);
 assert.equal(allProbes.every((url) => url.startsWith("https://")), true);
 assert.equal(allProbes.filter((url) => url.startsWith("https://m.youtube.com/")).length, 4);
 assert.deepEqual(withoutFocusedSocialDeniedUrls(allProbes), []);
+assert.equal(
+  focusedSocialDeniedUrls(settings).includes("instagram.com/explore"),
+  false,
+  "Instagram's shared Explore route must remain reachable for account-only search"
+);
 
 // Apple's built-in filter matches when the deny-list pattern is a substring of
 // the requested URL, after treating a leading www host label as equivalent to

@@ -4625,6 +4625,11 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains(":has(> :is(a[href=\"/reels/\"]"))
         XCTAssertTrue(script.contains("'suggested reels'"))
         XCTAssertTrue(script.contains("path.startsWith('/reel/')"))
+        XCTAssertTrue(script.contains("data-vigil-instagram-account-search=\"true\""))
+        XCTAssertTrue(script.contains("data-vigil-instagram-search-discovery=\"true\""))
+        XCTAssertTrue(script.contains("const isAccountSearchRoute"))
+        XCTAssertTrue(script.contains("const markAccountOnlySearch"))
+        XCTAssertFalse(script.contains("return { feature: 'explore', mode: 'redirect'"))
         XCTAssertTrue(script.contains("{ childList: true, subtree: true }"))
         XCTAssertTrue(script.contains("fullBleedTop: false"))
         XCTAssertTrue(script.contains("object-fit: contain !important"))
@@ -4645,6 +4650,99 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(script.contains("normalizeCommentSheets"))
         XCTAssertFalse(script.contains("vigilInstagramRepostProxy"))
         XCTAssertFalse(script.contains("attributeFilter: ["))
+    }
+
+    @MainActor
+    func testInstagramSearchStaysAvailableButOnlyShowsAccounts() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.documentStartScript(
+                for: .instagram,
+                unclassifiedMediaPolicy: .revealUnclassified,
+                audioEnabled: true,
+                contentSafetyEnabled: false
+            ),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        ))
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.script(
+                for: .instagram,
+                audioEnabled: true,
+                contentSafetyEnabled: false
+            ),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let loaded = expectation(description: "Instagram account-only search fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            #"""
+            <html><body>
+              <main>
+                <input aria-label="Search" value="fixture">
+                <a id="account" href="/fixture-account/">Fixture Account</a>
+                <a id="post" href="/p/discovery-post/">Discovery post</a>
+                <a id="reel" href="/reel/discovery-reel/">Discovery Reel</a>
+                <a id="tag" href="/explore/tags/discovery/">Discovery tag</a>
+                <button id="places" role="tab">Places</button>
+              </main>
+              <nav>
+                <a id="search" href="/explore/">Search</a>
+                <a id="reels" href="/reels/">Reels</a>
+              </nav>
+            </body></html>
+            """#,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/explore/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+        try await Task.sleep(nanoseconds: 150_000_000)
+
+        let levelOne = try await webView.evaluateJavaScript(
+            #"""
+            (() => {
+              document.documentElement.setAttribute('data-vigil-feature-reels', 'available');
+              document.documentElement.setAttribute('data-vigil-feature-explore', 'available');
+              document.dispatchEvent(new Event('__vigilPolicyFeaturesChanged'));
+              const shown = (id) => getComputedStyle(document.getElementById(id)).display !== 'none';
+              return {
+                account: shown('account'), post: shown('post'), reel: shown('reel'),
+                tag: shown('tag'), places: shown('places'), search: shown('search'),
+                reels: shown('reels')
+              };
+            })()
+            """#
+        ) as? [String: Bool]
+        XCTAssertEqual(levelOne?["account"], true)
+        XCTAssertEqual(levelOne?["post"], false)
+        XCTAssertEqual(levelOne?["reel"], false)
+        XCTAssertEqual(levelOne?["tag"], false)
+        XCTAssertEqual(levelOne?["places"], false)
+        XCTAssertEqual(levelOne?["search"], true)
+        XCTAssertEqual(levelOne?["reels"], true, "Level 1 keeps the Reels destination")
+
+        let levelTwo = try await webView.evaluateJavaScript(
+            #"""
+            (() => {
+              document.documentElement.setAttribute('data-vigil-feature-reels', 'blocked');
+              document.documentElement.setAttribute('data-vigil-feature-explore', 'blocked');
+              document.dispatchEvent(new Event('__vigilPolicyFeaturesChanged'));
+              const shown = (id) => getComputedStyle(document.getElementById(id)).display !== 'none';
+              return { account: shown('account'), search: shown('search'), reels: shown('reels') };
+            })()
+            """#
+        ) as? [String: Bool]
+        XCTAssertEqual(levelTwo?["account"], true)
+        XCTAssertEqual(levelTwo?["search"], true, "Level 2 keeps account search available")
+        XCTAssertEqual(levelTwo?["reels"], false, "Level 2 removes the central Reels destination")
+        webView.navigationDelegate = nil
     }
 
     @MainActor
