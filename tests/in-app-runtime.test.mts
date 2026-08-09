@@ -44,7 +44,12 @@ try {
   const index = await runtime.request({ path: "/" });
   assert.equal(index.status, 200);
   assert.match(String(index.headers["Content-Type"]), /text\/html/u);
-  assert.match(Buffer.from(index.body).toString("utf8"), /<title>Vigil<\/title>/u);
+  const indexHtml = Buffer.from(index.body).toString("utf8");
+  assert.match(indexHtml, /<title>Vigil<\/title>/u);
+  assert.match(indexHtml, /data-view-target="home"/u);
+  assert.match(indexHtml, /data-view-target="schedules"/u);
+  assert.match(indexHtml, /data-view-target="configuration"/u);
+  assert.doesNotMatch(indexHtml, /data-view(?:-target)?="(?:activity|tracking|audio|journal)"/u, "the packaged app shell must not restore retired feature views");
 
   const settings = await runtime.request({
     method: "POST",

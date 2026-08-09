@@ -23,10 +23,7 @@ assert.equal(isBlankNewJournalDraft("", "", "Some writing"), false);
 assert.equal(isBlankNewJournalDraft("saved-entry", "", ""), false);
 
 const html = await readFile("public/index.html", "utf8");
-assert.match(html, /<option value="0" selected>When I leave Journal<\/option>/u);
+assert.doesNotMatch(html, /data-view(?:-target)?="journal"|journalEntryForm|journalSecurityForm/u, "Journal must not remain in the focused renderer");
 
 const appSource = await readFile("public/app.js", "utf8");
-assert.match(appSource, /shouldConfirmJournalDraftOnViewExit[\s\S]*?window\.confirm\("Leave Journal and discard your unsaved entry\?"\)/u);
-assert.doesNotMatch(appSource, /toast\("Journal unlocked"\)/u);
-const appEventsSource = await readFile("public/app-events.js", "utf8");
-assert.match(appEventsSource, /const journalForm = \$\("#journalEntryForm"\)[\s\S]*?trackFormChanges\(journalForm\)/u);
+assert.doesNotMatch(appSource, /journal-lock|journalEntryForm|bindJournal|unlockJournal/u, "the active renderer must not initialize Journal compatibility code");

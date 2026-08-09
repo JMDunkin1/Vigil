@@ -1,39 +1,48 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [appEventsSource, appSource, formsSource] = await Promise.all([
-  readFile("public/app-events.js", "utf8"),
-  readFile("public/app.js", "utf8"),
-  readFile("public/forms.js", "utf8")
-]);
+const appSource = await readFile("public/app.js", "utf8");
 
-const profileChangeHandler = section(appEventsSource, '$("#profileSelect").addEventListener', '$("#profileForm").addEventListener');
-assert.match(profileChangeHandler, /baselineProfileId: state\.selectedProfileId/u, "the ruleset selector must update the idle baseline profile");
-assert.doesNotMatch(profileChangeHandler, /activeProfileId/u, "viewing a ruleset must not rewrite the runtime active profile");
+const baselineSelection = section(appSource, "async function selectBaselineProfile", "function openNewProfile");
+assert.match(baselineSelection, /baselineProfileId: id/u, "the ruleset selector must update the idle baseline profile");
+assert.doesNotMatch(baselineSelection, /activeProfileId/u, "selecting a baseline must not rewrite the current runtime policy");
 
-const scheduleSubmitHandler = section(appEventsSource, '$("#scheduleForm").addEventListener', '$("#newSchedule").addEventListener');
-assert.match(scheduleSubmitHandler, /body\.profileId = \$\("#scheduleProfileId"\)\.value/u, "schedule saves must use the schedule's explicit ruleset control");
-assert.doesNotMatch(scheduleSubmitHandler, /body\.lockLevel = "deep"/u, "schedule saves must preserve the form's hydrated lock level");
-assert.doesNotMatch(scheduleSubmitHandler, /settings\.activeProfileId/u, "schedule saves must not inherit whichever runtime profile is active");
+const newSchedule = section(appSource, "function openNewSchedule", "function openScheduleTemplate");
+assert.match(newSchedule, /baselineProfileId\(ui\.data\?\.state\)/u, "new schedules must default to the configured baseline ruleset");
+assert.match(newSchedule, /dataset\.lockLevel = "deep"/u, "new schedules must reset to the safe deep-lock default");
+assert.match(newSchedule, /setScheduleDevices\(\["computer", "phone"\]\)/u, "new schedules must clearly target both configured devices by default");
 
-const loadSchedule = section(formsSource, "function loadSchedule", "function loadGrayscaleSchedule");
-assert.match(loadSchedule, /\$\("#scheduleProfileId"\)\.value = schedule\.profileId/u, "editing a schedule must restore its saved ruleset");
-assert.match(loadSchedule, /form\.elements\.lockLevel\.value = schedule\.lockLevel \|\| "deep"/u, "editing a schedule must preserve its saved lock level");
+const saveSchedule = section(appSource, "async function saveSchedule", "function validateScheduleForm");
+assert.match(saveSchedule, /profileId: \$\("#scheduleProfileId"\)\.value/u, "schedule saves must use the explicit ruleset control");
+assert.match(saveSchedule, /lockLevel:[\s\S]*?dataset\.lockLevel \|\| "deep"/u, "schedule saves must preserve an edited schedule's hydrated lock level");
+assert.match(saveSchedule, /commitmentLock:[\s\S]*?\.checked/u, "unchecked commitment state must be serialized explicitly");
+assert.match(saveSchedule, /days: selectedScheduleDays\(\)/u, "schedule days must serialize as a numeric array");
+assert.match(saveSchedule, /deviceTargets: selectedScheduleDevices\(\)/u, "device targets must serialize explicitly");
+assert.match(saveSchedule, /wifiNetworks: lines/u, "Wi-Fi qualifiers must serialize as a clean list");
+assert.match(saveSchedule, /post\("\/api\/grayscale\/schedule", shared\)/u, "the unified schedule surface must save grayscale routines through their protected endpoint");
 
-const resetSchedule = section(formsSource, "function resetScheduleForm", "function resetGrayscaleScheduleForm");
-assert.match(resetSchedule, /dataset\.baselineProfileId/u, "new schedules must default to the configured baseline ruleset");
+const editSchedule = section(appSource, "function editSchedule", "async function toggleSchedule");
+assert.match(editSchedule, /\$\("#scheduleProfileId"\)\.value = entry\.lock\.profileId/u, "editing a schedule must restore its bound ruleset");
+assert.match(editSchedule, /dataset\.lockLevel = entry\.lock\.lockLevel \|\| "deep"/u, "editing a schedule must restore its saved lock level");
+assert.match(editSchedule, /setScheduleDays\(entry\.days\)/u);
+assert.match(editSchedule, /setScheduleDevices\(entry\.deviceTargets\)/u);
+assert.match(editSchedule, /wifiNetworks[\s\S]*?join\("\\n"\)/u);
 
-const loadIntentionalRule = section(formsSource, "function loadIntentionalRule", "function resetIntentionalRuleForm");
-assert.match(loadIntentionalRule, /rule\.delaySeconds \?\? 12/u, "a saved zero-second intentional delay must survive form hydration");
-assert.match(loadIntentionalRule, /rule\.dailyBudgetMinutes \?\? 30/u, "a saved zero-minute intentional budget must survive form hydration");
+const scheduleRows = section(appSource, "function scheduleRow", "function scheduleActionButton");
+assert.match(scheduleRows, /profileName\(entry\.lock\.profileId\)/u, "schedule summaries must resolve the bound profile name");
+assert.match(scheduleRows, /scheduleModeLabel\(entry\.lock\?\.mode/u, "schedule summaries must show the session mode");
+assert.match(scheduleRows, /deviceTargetsLabel\(entry\.deviceTargets\)/u, "schedule summaries must show their device scope");
+assert.match(scheduleRows, /commitment/u, "schedule summaries must disclose commitment locking");
 
-const renderProfiles = section(appSource, "function renderProfiles", "function renderSchedules");
-assert.match(renderProfiles, /settings\.baselineProfileId/u, "the ruleset selector must render from baselineProfileId");
-assert.match(renderProfiles, /fillSelect\(scheduleProfileSelect, profiles, baselineId\)/u, "available profiles must populate the schedule ruleset control");
+const toggleSchedule = section(appSource, "async function toggleSchedule", "async function deleteSchedule");
+assert.match(toggleSchedule, /lockSchedulePayload\(entry\.lock, !entry\.enabled\)/u, "toggling must retain the full saved lock schedule payload");
+assert.match(toggleSchedule, /grayscaleSchedulePayload\(entry\.grayscale, !entry\.enabled\)/u, "toggling must retain the full grayscale schedule payload");
 
-const renderSchedules = section(appSource, "function renderSchedules", "function scheduleModeLabel");
-assert.match(renderSchedules, /profileNames\.get\(schedule\.profileId\)/u, "schedule summaries must resolve their bound profile name");
-assert.match(renderSchedules, /scheduleModeLabel\(schedule\.mode\).*profileName/u, "schedule summaries must show both protection mode and bound profile");
+const validation = section(appSource, "function validateScheduleForm", "function renderSchedules");
+assert.match(validation, /Start and end times must be different/u, "start === end must be rejected because it never activates");
+assert.match(validation, /Choose at least one day/u);
+assert.match(validation, /Choose at least one device/u);
+assert.match(validation, /Choose a ruleset/u);
 
 function section(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start);

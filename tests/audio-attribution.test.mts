@@ -19,10 +19,12 @@ for (const expected of [
   assert.ok(source.includes(expected), `missing bundled-audio provenance: ${expected}`);
 }
 
-for (const id of ["focusSoundAttribution", "focusSoundAttributionText", "focusSoundSourceLink", "focusSoundLicenseLink"]) {
-  assert.match(html, new RegExp(`id="${id}"`), `missing sound-library attribution surface: ${id}`);
+for (const id of ["focusSoundAttribution", "focusSoundAttributionText", "focusSoundSourceLink", "focusSoundLicenseLink", "audioSoundLibrary"]) {
+  assert.doesNotMatch(html, new RegExp(`id="${id}"`), `retired Audio UI must not expose #${id}`);
 }
-assert.match(html, /id="audioSoundLibrary"[\s\S]*?id="focusSoundAttribution"/, "recording attribution must stay in the expandable sound library");
+assert.doesNotMatch(html, /data-view(?:-target)?="audio"/u, "Audio must not remain as a visible or hidden destination");
+// Keep provenance in the dormant compatibility controller while old stored
+// settings and packaged assets are migrated independently from this UI redo.
 assert.match(source, /closest\("\.audio-library-group"\)\?\.append\(attribution\)/, "recording attribution must follow the active track into its dropdown");
 assert.match(source, /attribution\.hidden = !track/);
 assert.match(source, /attributionText\.textContent = track\.attribution/);

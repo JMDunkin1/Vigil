@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 
 const appSource = await readFile("public/app.js", "utf8");
 const renderAppLocks = section(appSource, "function renderAppLocks", "function configureAppLockUnlockButton");
-const configureUnlock = section(appSource, "function configureAppLockUnlockButton", "function renderIntentionalUse");
+const configureUnlock = section(appSource, "function configureAppLockUnlockButton", "async function requestAppLockUnlock");
 
 assert.match(
   renderAppLocks,
@@ -17,7 +17,7 @@ assert.match(
 );
 assert.match(
   renderAppLocks,
-  /selectedRule\?\.name[^\n]+selectedChallenge\.text/u,
+  /selectedRule\?\.name \|\| "App lock"[\s\S]*?selectedChallenge\.text/u,
   "the challenge prompt must identify the app lock whose request is selected"
 );
 assert.match(
@@ -32,8 +32,13 @@ assert.match(
 );
 assert.match(
   configureUnlock,
+  /confirmAppLockUnlock\(rule, pendingRequest\)/u,
+  "confirmation must keep the selected rule paired with its own pending request"
+);
+assert.match(
+  appSource,
   /requestId: pendingRequest\.id,[\s\S]*?challengeText: \$\("#appLockChallengeInput"\)\.value/u,
-  "confirmation must submit the selected row's request id with the challenge currently bound to it"
+  "confirmation must submit the selected request id with the challenge currently bound to it"
 );
 
 function section(source: string, start: string, end: string): string {
