@@ -82,7 +82,7 @@ window and remains installed.
 The supported companions are two fixed apps:
 
 - `tech.caseline.vigil.instagram` displays as Instagram, cannot switch to another service, and carries the Safari YouTube blocker and controls extensions as a fallback surface.
-- `tech.caseline.vigil.youtube` displays as YouTube, cannot switch to another service, and uses one persistent YouTube-only `WKWebView` with the shared Shorts guard and ordinary-watch miniplayer behavior. Its documented Safari application-name suffix is an unsupported compatibility exception; it is not a guarantee that Google will continue to permit embedded sign-in.
+- `tech.caseline.vigil.youtube` displays as YouTube, cannot switch to another service, and uses one persistent YouTube-only `WKWebView` with the shared Shorts guard and focused ordinary-watch controls. The unreliable WebKit miniplayer path is intentionally absent. Its documented Safari application-name suffix is an unsupported compatibility exception; it is not a guarantee that Google will continue to permit embedded sign-in.
 
 Snapchat remains subject to the managed phone policy but is not built as a Vigil companion. Browser restrictions are likewise delivered by the managed phone policy rather than through a dedicated Vigil browser app.
 

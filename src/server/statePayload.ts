@@ -7,7 +7,7 @@ import { focusShortcutSummary } from "../focusHooks.js";
 import { externalNetworkBlockSummary } from "../externalNetworkBlock.js";
 import { grayscaleSummary } from "../grayscale.js";
 import { assertFoolproofReadyForStrict, foolproofSummary } from "../foolproof.js";
-import { buildHostsBlock, hostsStatus, launchAgentPath, launchAgentStatus, managedBlockDomains, stateSealStatus } from "../hardening.js";
+import { buildResolvedHostsBlock, hostsStatus, launchAgentPath, launchAgentStatus, managedBlockDomains, stateSealStatus } from "../hardening.js";
 import { appLockSummary } from "../appLocks.js";
 import { limitSummary } from "../limits.js";
 import { activePolicy, activeProfile, sessionPhase, snapshotProfile } from "../policy.js";
@@ -321,7 +321,7 @@ export function publicDevicePolicies(current: VigilState) {
 export async function buildNetworkPreview(state: VigilState): Promise<string> {
   const domains = managedBlockDomains(state);
   return [
-    buildHostsBlock(state),
+    await buildResolvedHostsBlock(state),
     "",
     buildPfConfBlock(),
     "",

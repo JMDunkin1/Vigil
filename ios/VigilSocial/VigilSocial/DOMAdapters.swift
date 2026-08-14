@@ -1587,6 +1587,23 @@ enum DOMAdapters {
         html[data-vigil-route-policy-blocked] body {
           visibility: hidden !important;
         }
+        html[data-vigil-instagram-home-filter="true"] main article:not(
+          [data-vigil-instagram-home-relationship="friend"]
+        ) {
+          display: none !important;
+        }
+        #vigil-instagram-friends-empty {
+          box-sizing: border-box !important;
+          margin: 20px auto 96px !important;
+          padding: 22px 20px !important;
+          max-width: 470px !important;
+          border: 1px solid rgba(128, 128, 128, .35) !important;
+          border-radius: 14px !important;
+          color: inherit !important;
+          background: Canvas !important;
+          font: 600 15px/1.45 -apple-system, BlinkMacSystemFont, sans-serif !important;
+          text-align: center !important;
+        }
         video {
           /* Instagram's web Reel/Story surface commonly fills a taller iPhone
              box with object-fit: cover, which discards the left and right of a
@@ -1604,7 +1621,9 @@ enum DOMAdapters {
       document.documentElement.appendChild(style);
       try {
         const path = new URL(location.href).pathname.toLowerCase().replace(/\/+$/, '') || '/';
-        if (path === '/explore') {
+        if (path === '/') {
+          document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
+        } else if (path === '/explore') {
           document.documentElement.dataset.vigilInstagramAccountSearch = 'true';
         }
       } catch (_) {}
@@ -1646,6 +1665,53 @@ enum DOMAdapters {
 
           const allMedia = () => [...document.querySelectorAll('video, audio')];
           const suspendedMedia = new Set();
+          const audioState = new WeakMap();
+          const mediaSourceKey = (media) => String(
+            media.currentSrc || media.getAttribute('src') || media.querySelector('source')?.src || ''
+          );
+          const instagramUnmuteControlFor = (media) => {
+            let container = media?.parentElement || null;
+            for (let depth = 0; container && depth < 10; depth += 1) {
+              const mediaInContainer = container.querySelectorAll?.('video, audio') || [];
+              if (mediaInContainer.length === 1 && mediaInContainer[0] === media) {
+                const labelled = container.querySelector?.('[aria-label="Unmute" i]');
+                if (labelled) return labelled.closest('button, [role="button"]') || labelled;
+              }
+              container = container.parentElement;
+            }
+            return null;
+          };
+          const applyAudioPreference = (media) => {
+            if (!(media instanceof HTMLMediaElement)) return;
+            const source = mediaSourceKey(media);
+            let state = audioState.get(media);
+            if (!state || state.source !== source) {
+              state = { source, initialized: false, userChoseMute: false };
+              audioState.set(media, state);
+            }
+            if (!window.__vigilAudioPreferred) {
+              media.defaultMuted = true;
+              media.muted = true;
+              return;
+            }
+            if (state.userChoseMute) return;
+            const unmuteControl = instagramUnmuteControlFor(media);
+            if (unmuteControl && media.muted) {
+              // Use Instagram's own control so its icon/framework state agrees
+              // with the physical media element. Synthetic clicks are excluded
+              // from the user-choice listener below.
+              try { unmuteControl.click(); } catch (_) {}
+            }
+            if (!state.initialized || media.muted || media.defaultMuted) {
+              state.initialized = true;
+              media.defaultMuted = false;
+              media.muted = false;
+            }
+          };
+          const scanMedia = (root = document) => {
+            if (root instanceof HTMLMediaElement) applyAudioPreference(root);
+            root.querySelectorAll?.('video, audio').forEach(applyAudioPreference);
+          };
           const isVisible = (media) => {
             if (!(media instanceof HTMLMediaElement) || !media.isConnected || media.ended) return false;
             const rect = media.getBoundingClientRect();
@@ -1658,6 +1724,7 @@ enum DOMAdapters {
           };
           window.__vigilSetAudioPreference = (enabled) => {
             window.__vigilAudioPreferred = Boolean(enabled);
+            scanMedia();
             bridge({ type: 'audio', enabled: window.__vigilAudioPreferred });
           };
           window.__vigilPauseAllMedia = () => {
@@ -1688,6 +1755,36 @@ enum DOMAdapters {
               try { media.play()?.catch?.(() => {}); } catch (_) {}
             });
           };
+          document.addEventListener('click', (event) => {
+            if (!event.isTrusted || !(event.target instanceof Element)) return;
+            const media = event.target.closest('video, audio')
+              || event.target.closest('button, [role="button"]')
+                ?.parentElement?.querySelector?.('video, audio');
+            if (!(media instanceof HTMLMediaElement)) return;
+            queueMicrotask(() => {
+              const state = audioState.get(media) || {
+                source: mediaSourceKey(media), initialized: true, userChoseMute: false
+              };
+              state.userChoseMute = media.muted;
+              state.initialized = true;
+              audioState.set(media, state);
+            });
+          }, true);
+          document.addEventListener('play', (event) => applyAudioPreference(event.target), true);
+          new MutationObserver((records) => {
+            records.forEach((record) => {
+              if (record.type === 'attributes') applyAudioPreference(record.target);
+              record.addedNodes?.forEach((node) => {
+                if (node instanceof Element) scanMedia(node);
+              });
+            });
+          }).observe(document.documentElement, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['muted', 'src']
+          });
+          scanMedia();
         })();
         """#.replacingOccurrences(of: "AUDIO_PREFERENCE", with: preference)
     }
@@ -3999,6 +4096,23 @@ enum DOMAdapters {
           html[data-vigil-route-policy-blocked] body {
             visibility: hidden !important;
           }
+          html[data-vigil-instagram-home-filter="true"] main article:not(
+            [data-vigil-instagram-home-relationship="friend"]
+          ) {
+            display: none !important;
+          }
+          #vigil-instagram-friends-empty {
+            box-sizing: border-box !important;
+            margin: 20px auto 96px !important;
+            padding: 22px 20px !important;
+            max-width: 470px !important;
+            border: 1px solid rgba(128, 128, 128, .35) !important;
+            border-radius: 14px !important;
+            color: inherit !important;
+            background: Canvas !important;
+            font: 600 15px/1.45 -apple-system, BlinkMacSystemFont, sans-serif !important;
+            text-align: center !important;
+          }
           video {
             max-width: 100% !important;
             object-fit: contain !important;
@@ -4172,7 +4286,10 @@ enum DOMAdapters {
         publishUnavailable(feature);
         try { location.replace('/'); } catch (_) {}
       };
-      const scheduleRouteCheck = () => queueMicrotask(enforceRoute);
+      const scheduleRouteCheck = () => queueMicrotask(() => {
+        enforceRoute();
+        reconcileFriendsFeed();
+      });
       document.addEventListener('click', (event) => {
         const link = event.target?.closest?.('a[href]');
         if (!link) return;
@@ -4247,6 +4364,127 @@ enum DOMAdapters {
           }
           if (inspected >= 80) break;
         }
+      };
+      // A normal follow is not proof of a social relationship. Home cards stay
+      // fail-closed until Instagram's same-origin relationship data confirms
+      // both directions: the viewer follows the author and the author follows
+      // the viewer. This is identity-based and deliberately has no item limit.
+      const friendshipCache = new Map();
+      const friendshipChecks = new Map();
+      let friendshipLookupFailed = false;
+      const normalizedUsername = (value) => String(value || '').trim().replace(/^@/, '').toLowerCase();
+      const homeCardAuthor = (article) => {
+        const links = article.querySelectorAll?.('a[href]') || [];
+        for (const link of links) {
+          let path = '';
+          try { path = new URL(link.href, location.href).pathname; } catch (_) { continue; }
+          const pieces = path.split('/').filter(Boolean);
+          if (pieces.length !== 1) continue;
+          const username = normalizedUsername(pieces[0]);
+          if (!username || [
+            'accounts', 'direct', 'explore', 'reel', 'reels', 'stories'
+          ].includes(username)) continue;
+          return username;
+        }
+        return '';
+      };
+      const fetchMutualFriendship = async (username) => {
+        const cached = friendshipCache.get(username);
+        if (typeof cached === 'boolean') return cached;
+        if (friendshipChecks.has(username)) return friendshipChecks.get(username);
+        const check = (async () => {
+          try {
+            const response = await fetch(
+              `/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+              {
+                credentials: 'same-origin',
+                headers: {
+                  Accept: '*/*',
+                  'X-IG-App-ID': '936619743392459'
+                }
+              }
+            );
+            if (!response.ok) throw new Error(`relationship lookup returned ${response.status}`);
+            const payload = await response.json();
+            const user = payload?.data?.user;
+            if (!user) throw new Error('relationship lookup omitted the user');
+            const status = user.friendship_status || {};
+            const viewerFollows = status.following === true || user.followed_by_viewer === true;
+            const followsViewer = status.followed_by === true || user.follows_viewer === true;
+            const mutual = viewerFollows && followsViewer;
+            friendshipCache.set(username, mutual);
+            return mutual;
+          } catch (_) {
+            friendshipLookupFailed = true;
+            friendshipCache.set(username, false);
+            return false;
+          } finally {
+            friendshipChecks.delete(username);
+          }
+        })();
+        friendshipChecks.set(username, check);
+        return check;
+      };
+      const reconcileFriendsEmptyState = () => {
+        const stateID = 'vigil-instagram-friends-empty';
+        if (instagramRoute() !== 'feed') {
+          document.getElementById(stateID)?.remove();
+          return;
+        }
+        const articles = [...document.querySelectorAll('main article:not([data-vigil-hidden-feature])')];
+        const hasFriend = articles.some((article) => (
+          article.dataset.vigilInstagramHomeRelationship === 'friend'
+        ));
+        if (hasFriend) {
+          document.getElementById(stateID)?.remove();
+          return;
+        }
+        const checking = articles.some((article) => (
+          !article.dataset.vigilInstagramHomeRelationship
+          || article.dataset.vigilInstagramHomeRelationship === 'pending'
+        ));
+        let state = document.getElementById(stateID);
+        if (!state) {
+          state = document.createElement('div');
+          state.id = stateID;
+          state.setAttribute('role', 'status');
+          (document.querySelector('main') || document.body)?.prepend(state);
+        }
+        state.textContent = checking
+          ? 'Checking for something new from friends…'
+          : friendshipLookupFailed
+            ? 'Could not check your friends right now. Nothing else is shown.'
+            : 'Nothing from your friends yet.';
+      };
+      const classifyHomeCard = (article) => {
+        if (!(article instanceof Element) || article.hasAttribute('data-vigil-hidden-feature')) return;
+        const username = homeCardAuthor(article);
+        if (!username) {
+          article.dataset.vigilInstagramHomeRelationship = 'other';
+          return;
+        }
+        if (article.dataset.vigilInstagramHomeAuthor === username
+            && ['friend', 'other', 'pending'].includes(
+              article.dataset.vigilInstagramHomeRelationship || ''
+            )) return;
+        article.dataset.vigilInstagramHomeAuthor = username;
+        article.dataset.vigilInstagramHomeRelationship = 'pending';
+        void fetchMutualFriendship(username).then((mutual) => {
+          if (!article.isConnected || homeCardAuthor(article) !== username) return;
+          article.dataset.vigilInstagramHomeRelationship = mutual ? 'friend' : 'other';
+          reconcileFriendsEmptyState();
+        });
+      };
+      const reconcileFriendsFeed = () => {
+        const isFeed = instagramRoute() === 'feed';
+        if (!isFeed) {
+          delete document.documentElement.dataset.vigilInstagramHomeFilter;
+          document.getElementById('vigil-instagram-friends-empty')?.remove();
+          return;
+        }
+        document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
+        document.querySelectorAll('main article').forEach(classifyHomeCard);
+        reconcileFriendsEmptyState();
       };
       const markNativeAppPrompts = (root) => {
         const scope = root instanceof Element ? root : document;
@@ -4323,6 +4561,7 @@ enum DOMAdapters {
             markNativeAppPrompts(candidate);
             markAccountOnlySearch(candidate);
           });
+          reconcileFriendsFeed();
         });
       };
       new MutationObserver((records) => {
@@ -4342,12 +4581,16 @@ enum DOMAdapters {
         enforceRoute();
       });
       setInterval(() => {
-        if (location.href !== lastURL) enforceRoute();
+        if (location.href !== lastURL) {
+          enforceRoute();
+          reconcileFriendsFeed();
+        }
       }, 1000);
 
       markFilteredCards(document);
       markNativeAppPrompts(document);
       markAccountOnlySearch(document);
+      reconcileFriendsFeed();
       enforceRoute();
       // Reel media embedded in followed posts, profiles, and Direct threads is
       // left alone. A singular /reel/{id} shared item can open, but navigation

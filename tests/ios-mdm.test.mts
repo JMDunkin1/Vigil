@@ -5,6 +5,7 @@ import { ADULT_BLOCKLIST_SOURCES, clearAdultBlocklistCacheForTest, setAdultBlock
 import { BRICK_MODE_PROFILE_ID, DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS, NORMAL_PROFILE_ID, PANIC_LOCK_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDeviceUsageCredential, iosMdmDoctor, iosMdmQueuedPushEligible, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
 import { IOS_APP_STORE_BUNDLE_ID, IOS_PANIC_ALLOWED_APP_BUNDLE_IDS, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER, buildIosConfigurationProfile, iosPolicyTargets, iosProfileSummary } from "../src/iosProfiles.js";
+import { IOS_GOOGLE_SAFE_SEARCH_DOMAINS, IOS_SAFE_SEARCH_DOH_URL } from "../src/iosSafeSearch.js";
 import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS } from "../src/socialFeatureFilters.js";
 import { activeLimitPolicy } from "../src/limits.js";
 import { parsePlist, plistData, toPlist } from "../src/plist.js";
@@ -143,6 +144,7 @@ if (removeTestUrlFilterService) {
   const disabledProfile = buildIosConfigurationProfile(state, now);
   assert.doesNotMatch(disabledProfile, /blockedAppBundleIDs/);
   assert.doesNotMatch(disabledProfile, /allowAppInstallation/);
+  assert.doesNotMatch(disabledProfile, /com\.apple\.dnsSettings\.managed/);
   assert.doesNotMatch(disabledProfile, /PayloadRemovalDisallowed<\/key>\s*<true/);
 
   state.deviceControls.ios.enabled = true;
@@ -159,8 +161,9 @@ if (removeTestUrlFilterService) {
   assert.doesNotMatch(enabledProfile, /Vigil Snapchat/);
   assert.match(enabledProfile, /allowAppInstallation/);
   const enabledParsed = recordValue(parsePlist(enabledProfile), "enabled phone profile");
+  assert.equal(enabledParsed.PayloadScope, "System", "phone restrictions and SafeSearch DNS must be installed at device scope");
   assert.ok(Array.isArray(enabledParsed.PayloadContent), "enabled phone profile payload content should be an array");
-  assert.equal(enabledParsed.PayloadContent.length, 2, "Level 1 must include release controls plus permanent baseline web protection");
+  assert.equal(enabledParsed.PayloadContent.length, 3, "Level 1 must include release controls, baseline web protection, and locked SafeSearch DNS");
   const enabledRestrictions = enabledParsed.PayloadContent
     .map((item) => recordValue(item, "enabled phone payload"))
     .find((payload) => payload.PayloadType === "com.apple.applicationaccess");
@@ -185,6 +188,14 @@ if (removeTestUrlFilterService) {
   assert.equal(levelOneDeniedUrls.includes("https://pornhub.com/"), true);
   assert.equal(levelOneDeniedUrls.includes("https://www.google.com/search?q=porn"), true);
   assert.equal(levelOneDeniedUrls.includes("https://duckduckgo.com/?q=nsfw"), true);
+  const enabledSafeSearchDns = enabledParsed.PayloadContent
+    .map((item) => recordValue(item, "enabled phone DNS payload"))
+    .find((payload) => payload.PayloadType === "com.apple.dnsSettings.managed");
+  assert.ok(enabledSafeSearchDns);
+  const enabledDnsSettings = recordValue(enabledSafeSearchDns.DNSSettings, "enabled phone DNS settings");
+  assert.equal(enabledDnsSettings.DNSProtocol, "HTTPS");
+  assert.equal(enabledDnsSettings.ServerURL, IOS_SAFE_SEARCH_DOH_URL);
+  assert.deepEqual(enabledDnsSettings.SupplementalMatchDomains, [...IOS_GOOGLE_SAFE_SEARCH_DOMAINS]);
   assert.equal(webClipPayloads(enabledParsed).length, 0, "dynamic enforcement profile must not own launcher icons");
   const enabledSummary = iosProfileSummary(state, now);
   assert.equal(enabledSummary.profile.appBundleCount, 10);
@@ -211,6 +222,10 @@ if (removeTestUrlFilterService) {
   assert.equal(enabledSummary.protection.allAppsHidden, false);
   assert.equal(enabledSummary.protection.explicitSearchesBlocked, true);
   assert.equal(enabledSummary.protection.explicitSearchTermCount, 22);
+  assert.equal(enabledSummary.protection.safeSearchEnforced, true);
+  assert.equal(enabledSummary.protection.safeSearchMode, "filter");
+  assert.equal(enabledSummary.protection.safeSearchProvider, "managed-encrypted-dns");
+  assert.equal(enabledSummary.protection.safeSearchDomainCount, IOS_GOOGLE_SAFE_SEARCH_DOMAINS.length);
   assert.equal(enabledSummary.manageEngine.deliveryProvider, "manageengine");
   assert.equal(enabledSummary.manageEngine.preferred, true);
   assert.equal(enabledSummary.manageEngine.exportCommand, "npm run ios:manageengine:export");
@@ -935,10 +950,12 @@ if (removeTestUrlFilterService) {
   assert.equal(noWebSummary.profile.allowedUrlCount, 0);
   assert.equal(noWebSummary.profile.webClipCount, 0);
   assert.equal(noWebSummary.launcherProfile.webClipCount, 0);
+  assert.equal(noWebSummary.protection.safeSearchEnforced, false);
   assert.equal(noWebSummary.companionApps.appCount, 2);
   assert.equal(noWebSummary.profile.focusedSocial.deniedUrlCount, 0);
   assert.equal(noWebSummary.profile.focusedSocial.webClipCount, 0);
   const noWebProfile = buildIosConfigurationProfile(noWebState, now);
+  assert.doesNotMatch(noWebProfile, /com\.apple\.dnsSettings\.managed/);
   assert.doesNotMatch(noWebProfile, /com\.apple\.webClip\.managed/);
   assert.doesNotMatch(noWebProfile, /DenyListURLs/);
   assert.match(noWebProfile, /blockedAppBundleIDs/);

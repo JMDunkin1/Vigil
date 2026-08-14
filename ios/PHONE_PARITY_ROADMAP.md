@@ -10,7 +10,7 @@ browser navigation. The installed iPhone profile uses Apple's built-in web
 content filter, whose explicit deny list is intentionally kept below 500
 entries. Vigil's fixed Instagram companion adds full-document text and media
 inspection. The maintained YouTube companion uses a persistent, YouTube-only
-`WKWebView`, the same Shorts guard, and the ordinary-watch miniplayer script;
+`WKWebView`, the same Shorts guard, and focused ordinary-watch controls;
 Instagram still carries the Safari extensions as a fallback web surface.
 
 The selected adult source now contains 952,054 active domains and has a compact
@@ -35,7 +35,7 @@ in a configuration profile.
 | 952,054-domain adult list | Full snapshot is available to Vigil's live URL matcher; OS/browser preload lists remain bounded | Compact `.sdi` can be bundled and used by Vigil-owned apps, but the profile cannot express the whole list | iOS 26 URL Filter with Bloom + PIR/OHTTP |
 | Text inspection | Browser/extension policy paths | VigilSocial scans the full bounded document, DOM mutations, open shadow roots, and periodic visible-page audits | Generated shared phrase/context policy in every companion release |
 | Image/video inspection | Browser-specific enforcement | Sensitive Content Analysis when the entitlement is provisioned; the current Personal Team fallback reveals unclassified media while retaining text/profile rules | Paid team/capability build that keeps unclassified media concealed |
-| YouTube | Browser extension modifies the normal site | A fixed `tech.caseline.vigil.youtube` companion supplies one persistent YouTube-only WK surface with the shared Shorts guard and ordinary-watch miniplayer behavior. The previous full-screen Web Clip is retired | Verify Google sign-in persistence, exact auth-route containment, ordinary-video miniplayer gestures, and continued Shorts exclusion on the physical phone |
+| YouTube | Browser extension modifies the normal site | A fixed `tech.caseline.vigil.youtube` companion supplies one persistent YouTube-only WK surface with the shared Shorts guard and focused ordinary-watch controls. The previous full-screen Web Clip is retired | Verify Google sign-in persistence, exact auth-route containment, ordinary-video playback/fullscreen controls, and continued Shorts exclusion on the physical phone |
 
 ## What the comparison products establish
 
@@ -85,11 +85,9 @@ the exact paths in the parity audit. Do not import cookies or credentials.
 On the physical phone, start sign-in from YouTube's site-generated route and
 verify Google account sign-in, relaunch persistence, Home, Search,
 Subscriptions, Library, ordinary Watch pages, comments, related videos,
-fullscreen, and edge-back. On ordinary videos, verify swipe-down minimizes
-playback into a floating corner player and returns to Home (or the policy-allowed
-browse surface) with navigation still usable. Verify drag repositioning,
-double-tap and pinch resizing, horizontal edge-hide and handle restore, tap or
-swipe-up Watch restore, and Close stopping playback without leaving browse.
+fullscreen, swipe-up fullscreen, and edge-back. Verify that downward player
+gestures remain owned by YouTube/WebKit and never create a second browsing web
+view or detach the active video surface.
 Verify that Shorts links and shelves remain absent and direct `/shorts`
 documents recover to the focused browse surface.
 

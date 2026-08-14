@@ -120,7 +120,7 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
     row("typing-challenge", "Typing challenge", settings.typingChallengeEnabled !== false, settings.typingChallengeEnabled !== false ? "Unlock confirmations require a random typing challenge." : "Unlock confirmations do not require a typing challenge."),
     row("distance-key", "Distance key", distanceKey.enabled && distanceKey.hasToken, distanceKeyDetail(distanceKey)),
     row("notification-focus", "Notification Focus", focusShortcut.enabled && !focusShortcut.lastError, focusShortcutDetail(focusShortcut)),
-    row("system-network-block", "System network block", networkEnabled && networkCurrent, networkEnabled ? (networkCurrent ? "Whole-site domain blocks are enforced across apps by hosts/PF." : "Apply the network block so hosts/PF are current.") : "System network blocking is disabled."),
+    row("system-network-block", "System network block", networkEnabled && networkCurrent, networkEnabled ? (networkCurrent ? "Whole-site blocks and strict Google, Bing, and DuckDuckGo search are enforced across browsers by hosts/PF." : "Apply the network block so hosts/PF are current.") : "System network blocking is disabled."),
     row("safari-url-filter", "Safari web filter", !safariRequired || safariWebFilterCurrent(safariFilter), safariFilterDetail(safariFilter, Boolean(safariRequired))),
     row("chrome-safe-search", "Chrome SafeSearch filter", Boolean(chromeSafeSearch.current), chromeSafeSearchDetail(chromeSafeSearch)),
     row("external-network-block", "Apple network DNS/router", !externalNetworkBlock.enabled || Boolean(externalNetworkBlock.ready), externalNetworkBlockDetail(externalNetworkBlock)),

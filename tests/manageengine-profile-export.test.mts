@@ -381,7 +381,7 @@ async function writeTestUrlFilterService(dataDirectory: string): Promise<void> {
     assert.equal(summary.enforcementActive, false, "the second queued Level 1 export should win as a complete artifact set");
     const profile = recordValue(parsePlist(profileText), "overlap profile");
     assert.ok(Array.isArray(profile.PayloadContent));
-    assert.equal(profile.PayloadContent.length, 2, "Personal edition should contain restrictions and Apple's BuiltIn web filter only");
+    assert.equal(profile.PayloadContent.length, 3, "Personal edition should contain restrictions, Apple's BuiltIn web filter, and SafeSearch DNS");
     const payloads = profile.PayloadContent.map((value) => recordValue(value, "overlap payload"));
     assert.equal(payloads.some((payload) => payload.FilterType === "Plugin"), false);
     const releasePayload = payloads.find((payload) => payload.PayloadType === "com.apple.applicationaccess")!;
@@ -392,6 +392,9 @@ async function writeTestUrlFilterService(dataDirectory: string): Promise<void> {
     const baselineFilter = payloads.find((payload) => payload.PayloadType === "com.apple.webcontent-filter" && payload.FilterType === "BuiltIn")!;
     assert.equal(baselineFilter.PayloadType, "com.apple.webcontent-filter");
     assert.ok(Array.isArray(baselineFilter.DenyListURLs));
+    const safeSearchDns = payloads.find((payload) => payload.PayloadType === "com.apple.dnsSettings.managed")!;
+    assert.equal(safeSearchDns.PayloadType, "com.apple.dnsSettings.managed");
+    assert.equal(recordValue(safeSearchDns.DNSSettings, "SafeSearch DNS settings").DNSProtocol, "HTTPS");
     assert.equal(Object.keys(initialPin.paths).some((path) => path.includes("social-launchers")), false);
     assert.equal(pinnedMainProfile.sha256, createHash("sha256").update(profileText).digest("hex"));
     await initialPin.release();

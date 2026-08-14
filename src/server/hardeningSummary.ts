@@ -156,7 +156,7 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, chromeSaf
       id: "system-network-block",
       label: "System network block",
       ok: Boolean(networkEnabled && networkCurrent),
-      detail: systemNetworkBlockDetail(networkEnabled, networkCurrent)
+      detail: systemNetworkBlockDetail(networkEnabled, networkCurrent, hosts)
     },
     {
       id: "safari-url-filter",
@@ -277,9 +277,12 @@ export function hardeningAudit({ state, hosts, firewall, safariFilter, chromeSaf
   ];
 }
 
-function systemNetworkBlockDetail(enabled: boolean, current: boolean): string {
+function systemNetworkBlockDetail(enabled: boolean, current: boolean, hosts: SummaryRecord): string {
   if (!enabled) return "System network blocking is disabled.";
-  if (current) return "Blocked site domains are denied across Safari and other apps without rewriting browser tabs.";
+  if (current) {
+    const mappedHosts = Number(hosts.safeSearchMappedHosts || 0);
+    return `Blocked sites plus strict Google, Bing, and DuckDuckGo search are enforced across browsers${mappedHosts ? ` (${mappedHosts} search hosts)` : ""}.`;
+  }
   return "Apply the network block so hosts and PF are current for across-app site enforcement.";
 }
 

@@ -4460,7 +4460,9 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(scripts[4].isForMainFrameOnly)
         XCTAssertEqual(scripts[4].injectionTime, .atDocumentStart)
         XCTAssertTrue(scripts[4].source.contains("__vigilYouTubeParityInstalled"))
-        XCTAssertTrue(scripts[4].source.contains("enterMiniPlayer"))
+        XCTAssertTrue(scripts[4].source.contains("enterFullscreen"))
+        XCTAssertFalse(scripts[4].source.contains("youtubeMinimize"))
+        XCTAssertFalse(scripts[4].source.localizedCaseInsensitiveContains("miniplayer"))
         XCTAssertTrue(scripts[4].source.contains("recoverFromShorts"))
         let authHostGate = try? XCTUnwrap(scripts[4].source.range(of: "allowedHosts.has"))
         let firstDOMAccess = try? XCTUnwrap(scripts[4].source.range(of: "document.createElement"))
@@ -4652,7 +4654,12 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(script.contains("normalizeBottomNavigation"))
         XCTAssertFalse(script.contains("normalizeCommentSheets"))
         XCTAssertFalse(script.contains("vigilInstagramRepostProxy"))
-        XCTAssertFalse(script.contains("attributeFilter: ["))
+        XCTAssertFalse(script.contains("attributeFilter: ['class', 'style']"))
+        XCTAssertTrue(script.contains("attributeFilter: ['muted', 'src']"))
+        XCTAssertTrue(script.contains("const fetchMutualFriendship = async (username)"))
+        XCTAssertTrue(script.contains("const mutual = viewerFollows && followsViewer"))
+        XCTAssertTrue(script.contains("Nothing from your friends yet."))
+        XCTAssertFalse(script.contains("homeDigestLimit"))
     }
 
     @MainActor
@@ -5469,6 +5476,7 @@ final class VigilSocialTests: XCTestCase {
         return (webView, window)
     }
 
+    #if RETIRED_YOUTUBE_MINIPLAYER_TESTS
     @MainActor
     func testYouTubeInteractionExtensionMiniplayerLifecycle() async throws {
         let controller = WKUserContentController()
@@ -7449,6 +7457,17 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(restoredState?["goCalls"] as? String, "-1")
     }
 
+    #endif
+
+    func testYouTubeInteractionExtensionHasNoMiniplayerPath() throws {
+        let source = try youtubeInteractionExtensionSource()
+        XCTAssertFalse(source.contains("youtubeMinimize"))
+        XCTAssertFalse(source.contains("__vigilExitNativeYouTubeMiniPlayer"))
+        XCTAssertFalse(source.localizedCaseInsensitiveContains("miniplayer"))
+        XCTAssertTrue(source.contains("enterFullscreen"))
+        XCTAssertTrue(source.contains("dy >= 0"))
+    }
+
     @MainActor
     func testYouTubeInteractionExtensionIdentifiersRemainStable() {
         XCTAssertEqual(
@@ -7474,9 +7493,6 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(source.contains("location.replace(focusedEntryURL)"))
         XCTAssertTrue(source.contains("location.assign(focusedEntryURL)"))
         XCTAssertTrue(source.contains("event.stopImmediatePropagation()"))
-        XCTAssertTrue(source.contains("routePlaybackTransitionUntil = performance.now() + 3200"))
-        XCTAssertTrue(source.contains("scheduleMiniPlaybackRecovery()"))
-        XCTAssertTrue(source.contains("recoverMiniPlayerOwnership()"))
         XCTAssertTrue(source.contains("const PLAYER_RESPONSE_PATHS"))
         XCTAssertTrue(source.contains("window.fetch = new Proxy(nativeFetch"))
         XCTAssertTrue(source.contains("window.XMLHttpRequest = class extends NativeXHR"))
@@ -7503,8 +7519,8 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(source.contains("video.currentTime = duration"))
         XCTAssertFalse(source.contains("seekTo("))
         XCTAssertFalse(source.contains("loadVideoById("))
-        XCTAssertTrue(source.contains("type: 'youtubeMinimize'"))
-        XCTAssertTrue(source.contains("__vigilExitNativeYouTubeMiniPlayer"))
+        XCTAssertFalse(source.contains("youtubeMinimize"))
+        XCTAssertFalse(source.localizedCaseInsensitiveContains("miniplayer"))
         XCTAssertFalse(source.contains("accounts.google.com"))
         XCTAssertEqual(
             SocialWebViewStore.youtubePlaybackPositionNamespace,

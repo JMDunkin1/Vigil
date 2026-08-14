@@ -3,8 +3,10 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { buildHostsBlock, loadStateForScript, replaceManagedHostsBlock } from "../src/hardening.js";
 import { isDirectRun } from "../src/directRun.js";
+import { resolveSafeSearchHostMappings } from "../src/networkSafeSearch.js";
 import { buildResolvedFirewallBlock, buildPfConfBlock, firewallStatus, PF_ANCHOR_PATH, PF_CONF_PATH, replaceManagedPfConfBlock, validateAndLoadPf, writeFirewallFiles } from "../src/firewall.js";
 import type { VigilState } from "../src/types.js";
+import type { SafeSearchHostMapping } from "../src/networkSafeSearch.js";
 
 const execFileAsync = promisify(execFile);
 const HOSTS_PATH = "/etc/hosts";
@@ -16,6 +18,7 @@ interface ApplyNetworkBlockOptions {
   anchorPath?: string;
   validateAndLoadPf?: (pfConfPath: string) => Promise<void>;
   flushDns?: () => Promise<void>;
+  resolveSafeSearchMappings?: () => Promise<readonly SafeSearchHostMapping[]>;
 }
 
 if (isDirectRun(import.meta.url)) {
@@ -33,7 +36,10 @@ export async function applyNetworkBlock(options: ApplyNetworkBlockOptions = {}) 
   const hostsPath = options.hostsPath || HOSTS_PATH;
   const pfConfPath = options.pfConfPath || PF_CONF_PATH;
   const anchorPath = options.anchorPath || PF_ANCHOR_PATH;
-  const block = buildHostsBlock(state);
+  // Resolve all strict-search endpoints before touching protected files. A DNS
+  // failure must leave the currently enforced hosts/PF transaction intact.
+  const safeSearchMappings = await (options.resolveSafeSearchMappings || resolveSafeSearchHostMappings)();
+  const block = buildHostsBlock(state, new Date(), safeSearchMappings);
   const currentHosts = await readFile(hostsPath, "utf8");
   const nextHosts = replaceManagedHostsBlock(currentHosts, block);
   const currentPfConf = await readOptional(pfConfPath);
@@ -66,7 +72,9 @@ export async function applyNetworkBlock(options: ApplyNetworkBlockOptions = {}) 
   const status = await firewallStatus(state, new Date(), { pfConfPath, anchorPath });
   return {
     status,
-    domainCount: firewall.domains.length
+    domainCount: firewall.domains.length,
+    safeSearchProviders: safeSearchMappings.map((mapping) => mapping.id),
+    safeSearchMappedHosts: new Set(safeSearchMappings.flatMap((mapping) => [...mapping.hosts])).size
   };
 }
 

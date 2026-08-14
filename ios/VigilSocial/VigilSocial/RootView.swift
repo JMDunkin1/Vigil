@@ -22,13 +22,13 @@ struct RootView: View {
             : store.reportedChromeIsDark(for: service)
         let isDark = reportedIsDark ?? (colorScheme == .dark)
         let primaryWebView = store.webView(for: service)
-        // Instagram's web UI owns many fixed headers, bottom bars, and modal
-        // controls that change without notice. Keep its whole WKWebView inside
-        // the native safe area instead of guessing which private DOM nodes need
-        // padding. The invariant frame also avoids route-change remeasurement.
+        // Instagram stays entirely inside the native safe area. YouTube keeps
+        // its original system-managed top inset and extends only beneath the
+        // home indicator; extending beneath the status area can strand its
+        // header above the visible viewport until the user scrolls.
         let webViewSafeAreaEdges: Edge.Set = service == .instagram
             ? []
-            : [.top, .bottom]
+            : .bottom
         return ZStack {
             (isDark ? Color.black : Color.white)
                 .ignoresSafeArea()
@@ -39,11 +39,6 @@ struct RootView: View {
             )
                 .id(ObjectIdentifier(primaryWebView))
                 .ignoresSafeArea(.container, edges: webViewSafeAreaEdges)
-
-            if service == .youtube,
-               let miniWebView = store.youtubeMiniPlayerWebView {
-                youtubeMiniPlayer(webView: miniWebView, isDark: isDark)
-            }
 
             healthOverlay(
                 store.health[service] ?? .loading,
@@ -63,44 +58,6 @@ struct RootView: View {
                     store.suspendAllMedia()
                 }
             }
-    }
-
-    private func youtubeMiniPlayer(webView: WKWebView, isDark: Bool) -> some View {
-        VStack {
-            Spacer()
-            HStack {
-                Spacer()
-                ZStack(alignment: .topTrailing) {
-                    SocialWebView(webView: webView, isDark: isDark)
-                        .id(ObjectIdentifier(webView))
-                        .frame(width: 224, height: 126)
-                        .background(Color.black)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                    Button(action: store.restoreYoutubeMiniPlayer) {
-                        Color.clear.contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: 224, height: 126)
-                    .accessibilityLabel("Return to video")
-
-                    Button(action: store.closeYoutubeMiniPlayer) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(Color.white)
-                            .frame(width: 30, height: 30)
-                            .background(Color.black.opacity(0.72), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .padding(7)
-                    .accessibilityLabel("Close miniplayer")
-                }
-                .shadow(color: Color.black.opacity(0.34), radius: 12, y: 6)
-                .padding(.trailing, 12)
-                .padding(.bottom, 68)
-            }
-        }
-        .ignoresSafeArea(.keyboard)
     }
 
     @ViewBuilder
@@ -206,7 +163,7 @@ private struct YouTubeContentBlockerGate: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Enable YouTube player gestures", systemImage: "hand.draw")
                             .font(.headline)
-                        Text(health.controlsErrorMessage ?? "Vigil YouTube Controls is installed but disabled. Enable it and allow access to youtube.com so swipe-down can open the miniplayer. Shorts stays blocked separately.")
+                        Text(health.controlsErrorMessage ?? "Vigil YouTube Controls is installed but disabled. Enable it and allow access to youtube.com to retain the focused player controls. Shorts stays blocked separately.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         HStack {

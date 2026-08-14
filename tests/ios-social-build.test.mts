@@ -119,8 +119,8 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
-  /webViewSafeAreaEdges: Edge\.Set = service == \.instagram\s*\? \[\]\s*: \[\.top, \.bottom\]/u,
-  "Instagram must retain an invariant native safe-area frame"
+  /webViewSafeAreaEdges: Edge\.Set = service == \.instagram\s*\? \[\]\s*: \.bottom/u,
+  "Instagram must retain its native safe-area frame and YouTube must retain its original top inset"
 );
 assert.doesNotMatch(
   socialRootViewSource,
@@ -255,6 +255,21 @@ assert.doesNotMatch(
   "the stable adapter must not seize Instagram's gestures or scrolling to contain Reels"
 );
 assert.match(
+  instagramStableAdapterSource,
+  /const fetchMutualFriendship = async \(username\)[\s\S]*?viewerFollows && followsViewer[\s\S]*?Nothing from your friends yet/u,
+  "Instagram home must show only mutually followed friends and fail closed when no friend content is available"
+);
+assert.doesNotMatch(
+  instagramStableAdapterSource,
+  /homeDigestLimit|home-overflow|small home digest/u,
+  "Instagram friend filtering must not use an arbitrary item limit"
+);
+assert.match(
+  socialDOMAdaptersSource,
+  /const applyAudioPreference = \(media\)[\s\S]*?media\.defaultMuted = false;[\s\S]*?media\.muted = false;/u,
+  "Instagram's audio-on preference must be applied to newly mounted media"
+);
+assert.match(
   socialWebViewStoreSource,
   /if service == \.instagram \{[\s\S]*?webView\.isOpaque = true[\s\S]*?webView\.backgroundColor = \.systemBackground[\s\S]*?webView\.scrollView\.backgroundColor = \.systemBackground/u,
   "Instagram must keep an opaque native backing surface during SPA document swaps"
@@ -281,7 +296,7 @@ assert.match(socialWebViewStoreSource, /configuration\.websiteDataStore = \.defa
 assert.match(
   socialWebViewStoreSource,
   /let youtubeParitySource = service == \.youtube[\s\S]*?bundledYouTubeParityScript[\s\S]*?if let youtubeParitySource \{[\s\S]*?controller\.addUserScript[\s\S]*?injectionTime: \.atDocumentStart,[\s\S]*?forMainFrameOnly: true/u,
-  "the exact ordinary-watch miniplayer/Shorts guard resource must be reused in the YouTube WK main frame"
+  "the exact ordinary-watch player-controls/Shorts guard resource must be reused in the YouTube WK main frame"
 );
 assert.match(socialWebViewStoreSource, /forResource: "youtube-parity", withExtension: "js"/u,
   "the YouTube WK app must load the shared parity resource by its exact bundle name");
@@ -344,7 +359,7 @@ assert.match(
 const parityHostGate = youtubeInteractionSource.indexOf("allowedHosts.has");
 const parityFirstDomAccess = youtubeInteractionSource.indexOf("document.createElement");
 assert.ok(parityHostGate >= 0 && parityFirstDomAccess > parityHostGate,
-  "the reused miniplayer source must reject authentication hosts before its first DOM access");
+  "the reused YouTube controls source must reject authentication hosts before its first DOM access");
 assert.match(parityAuditSource, /unsupported[\s\S]*?applicationNameForUserAgent|application-name suffix/iu,
   "the parity contract must disclose the unsupported browser-identity exception");
 assert.match(youtubeWKAuthDiagnosticSource, /^#if DEBUG/u,
@@ -471,9 +486,8 @@ assert.deepEqual(
   ["youtube-parity.js"],
   "the interaction extension must ship its tested parity script"
 );
-assert.match(youtubeInteractionSource, /enterMiniPlayer/u);
-assert.match(youtubeInteractionSource, /exitMiniPlayer/u);
-assert.match(youtubeInteractionSource, /dismissMiniPlayer/u);
+assert.doesNotMatch(youtubeInteractionSource, /youtubeMinimize|MiniPlayer|miniplayer/u,
+  "the retired miniplayer must not remain in the shipped controls script");
 assert.match(youtubeInteractionSource, /PointerEvent/u,
   "ordinary-watch gestures should use the primary iOS pointer-event path");
 assert.match(youtubeInteractionSource, /webkitEnterFullscreen/u,

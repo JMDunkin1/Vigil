@@ -24,6 +24,7 @@ import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS, focusedSoci
 import type { IosManageEngineGeneration, IosSettings, VigilState, UnknownRecord } from "./types.js";
 import { configuredIosPhoneProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
 import type { IosUrlFilterServiceConfiguration } from "./iosUrlFilterServiceConfiguration.js";
+import { IOS_GOOGLE_SAFE_SEARCH_DOMAINS, IOS_SAFE_SEARCH_DOH_URL } from "./iosSafeSearch.js";
 
 export const IOS_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
 export const IOS_RETIRED_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-social-launchers";
@@ -188,7 +189,10 @@ export function iosProfileSummary(state: VigilState, now = new Date()) {
       knownSiteDomainCount: deliveredAdultDomains,
       explicitSearchesBlocked: Boolean(active && (targets.fullLockoutActive || hasExplicitSearchProtection(targets.deniedUrls))),
       explicitSearchTermCount: DEFAULT_EXPLICIT_SEARCH_TERMS.length,
-      safeSearchEnforced: false,
+      safeSearchEnforced: Boolean(active && settings.blockWeb),
+      safeSearchMode: active && settings.blockWeb ? "filter" : "off",
+      safeSearchProvider: active && settings.blockWeb ? "managed-encrypted-dns" : null,
+      safeSearchDomainCount: active && settings.blockWeb ? IOS_GOOGLE_SAFE_SEARCH_DOMAINS.length : 0,
       sensitiveMediaFiltered: false,
       requiresManagedSafariExtension: false,
       systemWideManagedWebFilter: Boolean(active && settings.blockWeb),
@@ -271,6 +275,9 @@ export function buildIosConfigurationProfile(
   const webFilter = webContentFilterPayload(settings, targets);
   if (webFilter) payloads.push(webFilter);
 
+  const safeSearchDns = safeSearchDnsPayload(settings);
+  if (safeSearchDns) payloads.push(safeSearchDns);
+
   if (active && settings.hardenRemoval && settings.removalPassword) {
     payloads.push(commonPayload("com.apple.profileRemovalPassword", "Profile Removal Password", "removal-password", {
       RemovalPassword: settings.removalPassword
@@ -286,6 +293,7 @@ export function buildIosConfigurationProfile(
     PayloadIdentifier: IOS_PROFILE_IDENTIFIER,
     PayloadOrganization: APP_NAME,
     PayloadRemovalDisallowed: Boolean(active && settings.hardenRemoval),
+    PayloadScope: "System",
     PayloadType: "Configuration",
     PayloadUUID: stableIosPayloadUuid(IOS_PROFILE_IDENTIFIER),
     PayloadVersion: 1
@@ -682,6 +690,17 @@ function webContentFilterPayload(settings: IosSettings, targets: IosPolicyTarget
 
   if (!content.DenyListURLs?.length && !content.AllowListBookmarks?.length) return null;
   return commonPayload("com.apple.webcontent-filter", "iPhone Web Filter", "web-filter", content);
+}
+
+function safeSearchDnsPayload(settings: IosSettings): MobileConfigPayload | null {
+  if (!settings.enabled || !settings.blockWeb) return null;
+  return commonPayload("com.apple.dnsSettings.managed", "Google SafeSearch Filter", "safe-search-dns", {
+    DNSSettings: {
+      DNSProtocol: "HTTPS",
+      ServerURL: IOS_SAFE_SEARCH_DOH_URL,
+      SupplementalMatchDomains: [...IOS_GOOGLE_SAFE_SEARCH_DOMAINS]
+    }
+  });
 }
 
 function commonPayload(type: string, name: string, suffix: string, values: UnknownRecord = {}, identifierPrefix = IOS_PROFILE_IDENTIFIER): MobileConfigPayload {

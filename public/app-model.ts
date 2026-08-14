@@ -357,6 +357,9 @@ export interface IosDeviceSummary extends UnknownRecord {
     explicitSearchesBlocked?: boolean;
     explicitSearchTermCount?: number;
     safeSearchEnforced?: boolean;
+    safeSearchMode?: string;
+    safeSearchProvider?: string | null;
+    safeSearchDomainCount?: number;
     sensitiveMediaFiltered?: boolean;
     requiresManagedSafariExtension?: boolean;
     systemWideManagedWebFilter?: boolean;

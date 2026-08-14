@@ -705,7 +705,7 @@ function deployedYouTubeParityScriptProblems(receipt, expected) {
   const youtube = apps.find((app) => app?.bundleId === "tech.caseline.vigil.youtube");
   return youtube?.youtubeParityScriptSha256 === expected.sha256
     ? []
-    : ["The deployment receipt does not prove the current app-root YouTube Shorts/miniplayer parity script."];
+    : ["The deployment receipt does not prove the current app-root YouTube Shorts/player-controls script."];
 }
 
 async function requireReadyPhoneBlocklist(purpose) {
@@ -1566,7 +1566,7 @@ async function verifyBundledYouTubeParityScript(appPath) {
   );
   const bundledPath = join(appPath, YOUTUBE_INTERACTION_EXTENSION.scriptName);
   if (!await isFile(bundledPath)) {
-    throw new Error(`${basename(appPath)} does not contain the app-root ${YOUTUBE_INTERACTION_EXTENSION.scriptName}; refusing to ship a YouTube surface without its Shorts and miniplayer guard.`);
+    throw new Error(`${basename(appPath)} does not contain the app-root ${YOUTUBE_INTERACTION_EXTENSION.scriptName}; refusing to ship a YouTube surface without its Shorts and player-controls guard.`);
   }
   const [sourceBytes, bundledBytes] = await Promise.all([
     readFile(sourcePath),
@@ -1614,7 +1614,9 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
     && scripts[0]?.all_frames === false;
   const source = scriptBytes.toString("utf8");
   if (!contractValid
-    || !source.includes("data-vigil-youtube-miniplayer")
+    || !source.includes("enterFullscreen")
+    || source.includes("youtubeMinimize")
+    || source.includes("data-vigil-youtube-miniplayer")
     || !source.includes("recoverFromShorts")
     || source.includes("accounts.google.com")) {
     throw new Error("The bundled Vigil YouTube interaction extension does not satisfy its narrow YouTube-only parity contract.");

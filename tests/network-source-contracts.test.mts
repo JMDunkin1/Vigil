@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultState } from "../src/defaults.js";
 import { buildFirewallBlock, buildPfConfBlock, extractManagedFirewallBlock, extractManagedPfConfBlock, firewallDomainSignature, firewallStatus, replaceManagedPfConfBlock } from "../src/firewall.js";
-import { buildHostsBlock, embeddedSupervisorExpectedScript, embeddedSupervisorMarkerPath, embeddedSupervisorPlistRestartHardened, embeddedSupervisorRestartHardened, extractHostsBlock, hostsBlockMatches, parseLaunchAgentPrint, replaceManagedHostsBlock } from "../src/hardening.js";
+import { buildHostsBlock, embeddedSupervisorExpectedScript, embeddedSupervisorMarkerPath, embeddedSupervisorPlistRestartHardened, embeddedSupervisorRestartHardened, extractHostsBlock, HOSTS_BEGIN, hostsBlockMatches, parseLaunchAgentPrint, replaceManagedHostsBlock, SAFE_SEARCH_HOSTS_BEGIN } from "../src/hardening.js";
+import { fallbackSafeSearchHostMappings } from "../src/networkSafeSearch.js";
 import { applyNetworkBlock } from "../scripts/apply-hosts.mjs";
 import { now } from "./test-helpers.mjs";
 
@@ -15,6 +16,9 @@ import { now } from "./test-helpers.mjs";
   assert.equal(hostsBlockMatches(extractHostsBlock(hosts), block), true);
   assert.match(block, /0\.0\.0\.0 pornhub\.com/);
   assert.doesNotMatch(block, /0\.0\.0\.0 youtube\.com/);
+  assert.equal(SAFE_SEARCH_HOSTS_BEGIN.includes(HOSTS_BEGIN), false, "older Vigil builds must not mistake the independent search-safety section for their managed block");
+  assert.match(block, /# BEGIN CASELINE SEARCH SAFETY/u);
+  assert.match(block, /216\.239\.38\.120 www\.google\.com/u);
   assert.equal(hostsBlockMatches(extractHostsBlock(hosts).replace("pornhub.com", "example.com"), block), false);
   const duplicateHosts = replaceManagedHostsBlock(`${hosts}\n${block}\n`, block);
   assert.equal((duplicateHosts.match(/# BEGIN VIGIL/g) || []).length, 1);
@@ -237,7 +241,8 @@ assert.equal(
     pfConfPath,
     anchorPath,
     validateAndLoadPf: async () => {},
-    flushDns: async () => {}
+    flushDns: async () => {},
+    resolveSafeSearchMappings: async () => fallbackSafeSearchHostMappings()
   });
   const appliedPfConf = await readFile(pfConfPath, "utf8");
   assert.equal(result.status.current, true);
@@ -278,7 +283,8 @@ assert.equal(
       validateAndLoadPf: async () => {
         throw new Error("simulated pf validation failure");
       },
-      flushDns: async () => {}
+      flushDns: async () => {},
+      resolveSafeSearchMappings: async () => fallbackSafeSearchHostMappings()
     }),
     /simulated pf validation failure/
   );

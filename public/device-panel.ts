@@ -172,7 +172,9 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
     ["Browser filtering", ios.protection?.systemWideManagedWebFilter ? "managed across Safari and third-party browsers" : "off"],
     ["Known adult sites", ios.protection?.knownSitesBlocked ? `${Number(ios.protection.knownSiteDomainCount || 0).toLocaleString()} blocked domains + Apple's adult filter` : "off"],
     ["Explicit searches", ios.protection?.explicitSearchesBlocked ? `${ios.protection.explicitSearchTermCount || 0} terms blocked before results` : "off"],
-    ["SafeSearch", ios.protection?.safeSearchEnforced ? "enabled by the active phone policy" : "off"],
+    ["SafeSearch", ios.protection?.safeSearchEnforced
+      ? `locked to Filter across ${Number(ios.protection.safeSearchDomainCount || 0).toLocaleString()} Google domains`
+      : "off"],
     ["Sensitive media", ios.protection?.sensitiveMediaFiltered ? "enabled by the active phone policy" : "off"],
     ["Delivery", manageEngine.deliveryProvider === "manageengine" ? "ManageEngine" : "Apple devices only"],
     ["Setup", ios.supervisedRequired ? "supervised iPhone required" : "standard"],

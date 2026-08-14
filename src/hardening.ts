@@ -11,14 +11,21 @@ import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { applySealVerificationToState, stateSealSummary, verifyStateTextSeal } from "./seal.js";
 import { parsePlist } from "./plist.js";
 import { buildRuntimeSupervisorScript } from "./runtimeReady.js";
+import { fallbackSafeSearchHostMappings, resolveSafeSearchHostMappings, safeSearchHostsLines, safeSearchMappedHostCount } from "./networkSafeSearch.js";
 import type { Profile, VigilState, UnknownRecord } from "./types.js";
+import type { SafeSearchHostMapping } from "./networkSafeSearch.js";
 
 export const HOSTS_BEGIN = "# BEGIN VIGIL";
 export const HOSTS_END = "# END VIGIL";
+export const SAFE_SEARCH_HOSTS_BEGIN = "# BEGIN CASELINE SEARCH SAFETY";
+export const SAFE_SEARCH_HOSTS_END = "# END CASELINE SEARCH SAFETY";
 export const LAUNCH_AGENT_LABEL = "com.vigil.agent";
 export const EMBEDDED_SUPERVISOR_LABEL = "tech.caseline.vigil.supervisor";
 export const VIGIL_SAFETY_BOUNDARY_ARG = "--vigil-safety-boundary-do-not-terminate-or-bootout";
-const HOSTS_MARKER_PAIRS = [[HOSTS_BEGIN, HOSTS_END]] as const;
+const HOSTS_MARKER_PAIRS = [
+  [HOSTS_BEGIN, HOSTS_END],
+  [SAFE_SEARCH_HOSTS_BEGIN, SAFE_SEARCH_HOSTS_END]
+] as const;
 const execFileAsync = promisify(execFile);
 
 interface LaunchAgentPrintStatus {
@@ -43,16 +50,32 @@ interface EmbeddedSupervisorIntegrityEvidence {
   supervisorRunning: boolean;
 }
 
-export function buildHostsBlock(state: VigilState, now = new Date()): string {
+export function buildHostsBlock(
+  state: VigilState,
+  now = new Date(),
+  safeSearchMappings: readonly SafeSearchHostMapping[] = fallbackSafeSearchHostMappings()
+): string {
   const domains = managedBlockDomains(state, now);
   const lines = [HOSTS_BEGIN];
+  const blockedHosts = new Set<string>();
   for (const domain of domains) {
-    lines.push(`0.0.0.0 ${domain}`);
-    lines.push(`0.0.0.0 www.${domain}`);
+    for (const host of [domain, `www.${domain}`]) {
+      blockedHosts.add(host);
+      lines.push(`0.0.0.0 ${host}`);
+    }
   }
 
   lines.push(HOSTS_END);
-  return lines.join("\n");
+  const safeSearchLines = [
+    SAFE_SEARCH_HOSTS_BEGIN,
+    ...safeSearchHostsLines(safeSearchMappings, blockedHosts),
+    SAFE_SEARCH_HOSTS_END
+  ];
+  return `${lines.join("\n")}\n\n${safeSearchLines.join("\n")}`;
+}
+
+export async function buildResolvedHostsBlock(state: VigilState, now = new Date()): Promise<string> {
+  return buildHostsBlock(state, now, await resolveSafeSearchHostMappings());
 }
 
 export function managedBlockDomains(state: VigilState, now = new Date()): string[] {
@@ -62,9 +85,12 @@ export function managedBlockDomains(state: VigilState, now = new Date()): string
 
 export async function hostsStatus(state: VigilState | null = null, now = new Date()) {
   try {
-    const hosts = await readFile("/etc/hosts", "utf8");
+    const [hosts, safeSearchMappings] = await Promise.all([
+      readFile("/etc/hosts", "utf8"),
+      resolveSafeSearchHostMappings()
+    ]);
     const currentBlock = extractHostsBlock(hosts);
-    const expectedBlock = state ? buildHostsBlock(state, now) : "";
+    const expectedBlock = state ? buildHostsBlock(state, now, safeSearchMappings) : "";
     const installed = Boolean(currentBlock);
     const duplicate = countCompleteManagedHostsBlocks(hosts) > 1;
     const stale = Boolean(state && installed && (!hostsBlockMatches(currentBlock, expectedBlock) || duplicate));
@@ -76,6 +102,9 @@ export async function hostsStatus(state: VigilState | null = null, now = new Dat
       current: Boolean(installed && !stale),
       expectedEntries: expectedBlock ? countHostEntries(expectedBlock) : 0,
       installedEntries: currentBlock ? countHostEntries(currentBlock) : 0,
+      safeSearchCurrent: Boolean(installed && !stale),
+      safeSearchProviders: safeSearchMappings.map((mapping) => mapping.id),
+      safeSearchMappedHosts: safeSearchMappedHostCount(safeSearchMappings),
       writableByUser: false
     };
   } catch (error) {
@@ -263,12 +292,13 @@ export async function loadStateForScript(): Promise<VigilState> {
 }
 
 export function extractHostsBlock(hosts: string): string {
+  const blocks: string[] = [];
   for (const [begin, endMarker] of HOSTS_MARKER_PAIRS) {
     const start = hosts.indexOf(begin);
-    const end = hosts.indexOf(endMarker);
-    if (start >= 0 && end > start) return hosts.slice(start, end + endMarker.length).trim();
+    const end = start >= 0 ? hosts.indexOf(endMarker, start + begin.length) : -1;
+    if (start >= 0 && end > start) blocks.push(hosts.slice(start, end + endMarker.length).trim());
   }
-  return "";
+  return blocks.join("\n\n");
 }
 
 export function hostsBlockMatches(currentBlock: string, expectedBlock: string): boolean {
@@ -300,7 +330,7 @@ function hasPartialHostsBlock(hosts: string): boolean {
 }
 
 function countCompleteManagedHostsBlocks(hosts: string): number {
-  return HOSTS_MARKER_PAIRS.reduce((count, [begin, end]) => count + countCompleteManagedHostsBlocksForPair(hosts, begin, end), 0);
+  return Math.max(0, ...HOSTS_MARKER_PAIRS.map(([begin, end]) => countCompleteManagedHostsBlocksForPair(hosts, begin, end)));
 }
 
 function countCompleteManagedHostsBlocksForPair(hosts: string, begin: string, endMarker: string): number {
@@ -368,7 +398,7 @@ function isLocalHost(domain: unknown): boolean {
 function countHostEntries(block: string): number {
   return block
     .split(/\r?\n/)
-    .filter((line: string) => /^0\.0\.0\.0\s+\S+/.test(line.trim()))
+    .filter((line: string) => /^(?:\d{1,3}(?:\.\d{1,3}){3}|[a-f0-9:]+)\s+\S+/iu.test(line.trim()))
     .length;
 }
 

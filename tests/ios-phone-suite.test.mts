@@ -320,7 +320,7 @@ assert.match(phoneSuiteSource, /youtubeParityScriptSha256: app\.youtubeParityScr
   "the deployment receipt must retain proof of the bundled YouTube parity script");
 assert.match(
   phoneSuiteSource,
-  /deployedYouTubeParityScriptProblems[\s\S]*?youtubeParityScriptSha256 === expected\.sha256[\s\S]*?app-root YouTube Shorts\/miniplayer parity script/u,
+  /deployedYouTubeParityScriptProblems[\s\S]*?youtubeParityScriptSha256 === expected\.sha256[\s\S]*?app-root YouTube Shorts\/player-controls script/u,
   "read-only status must reject a receipt that lacks the current bundled YouTube parity hash"
 );
 assert.doesNotMatch(

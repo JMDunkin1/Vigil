@@ -584,7 +584,7 @@ function record(value: unknown): UnknownRecord {
 function networkDetail(hosts: HardeningCheck, firewall: HardeningCheck, enabled: boolean): string {
   if (!enabled) return "System network blocking is disabled.";
   if (!current(hosts) && !current(firewall)) return "Apply hosts and PF firewall rules for whole-site blocks.";
-  if (!current(hosts)) return "Hosts block is missing or stale.";
+  if (!current(hosts)) return "Cross-browser site and SafeSearch hosts protection is missing or stale.";
   return "PF firewall block is missing or stale.";
 }
 
