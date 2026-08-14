@@ -1,21 +1,21 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { defaultState } from "../src/defaults.js";
 import { hardeningDriftAttestationRequired } from "../src/integrityLockdown.js";
 import { queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
-import { hotUsageCheckpointFingerprint, hotUsageCheckpointRetryDelayMs, MONITOR_FULL_CHECKPOINT_INTERVAL_MS, MONITOR_HOT_CHECKPOINT_MAX_RETRY_MS, Monitor, monitorPollIntervalMs, wifiEnvironmentObservationRequired } from "../src/monitor.js";
+import { hotUsageCheckpointFingerprint, hotUsageCheckpointRetryDelayMs, MONITOR_ACTIVITY_ACCOUNTING_DELAY_MS, MONITOR_FULL_CHECKPOINT_INTERVAL_MS, MONITOR_HOT_CHECKPOINT_MAX_RETRY_MS, Monitor, wifiEnvironmentObservationRequired } from "../src/monitor.js";
 import { RuntimeMutationCoordinator } from "../src/server/mutationCoordinator.js";
 import type { UsageState } from "../src/types.js";
 import { recordUsage } from "../src/usage.js";
 
 assert.equal(defaultState().settings.pollIntervalMs, 15_000,
   "event-driven app and browser enforcement must keep the omnibus recovery sweep off the legacy three-second cadence");
-assert.equal(monitorPollIntervalMs(15_000, true), 15_000,
-  "healthy activity acceleration should retain the efficient recovery cadence");
-assert.equal(monitorPollIntervalMs(15_000, false), 3_000,
-  "an unavailable activity source must restore the fast safety cadence");
-assert.equal(monitorPollIntervalMs(3_000, true), 3_000,
-  "an explicit three-second cadence must remain exact even when acceleration is healthy");
+assert.equal(MONITOR_ACTIVITY_ACCOUNTING_DELAY_MS, 60_000,
+  "active usage accounting may use a coalesced one-shot delay, not a permanent recovery poll");
+const monitorRuntimeSource = await readFile(new URL("../src/monitor.js", import.meta.url), "utf8");
+assert.doesNotMatch(monitorRuntimeSource, /setInterval\(/u,
+  "the monitor must stay event-driven instead of recreating a permanent three- or fifteen-second loop");
 assert.equal(hotUsageCheckpointRetryDelayMs(1), 30_000);
 assert.equal(hotUsageCheckpointRetryDelayMs(100), MONITOR_HOT_CHECKPOINT_MAX_RETRY_MS,
   "persistent compact-checkpoint failures must use a capped retry cadence");

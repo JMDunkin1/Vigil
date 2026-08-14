@@ -891,6 +891,7 @@ export interface MonitorHandle {
   status: UnknownRecord;
   start(): void;
   stop(): Promise<void>;
+  reconcile(reason?: string): Promise<void>;
   enforceImmediately(reason?: string): Promise<UnknownRecord>;
   reconcileDurableEffect(action: string, payload: UnknownRecord): Promise<UnknownRecord>;
   observeDurableEffect(entry: { key: string; kind: string; payload: UnknownRecord }, transition: "pending" | "running" | "failed" | "completed", error: string): void;

@@ -4,7 +4,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, 
 import { lstat } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, protocol, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell, systemPreferences, Tray } from "electron";
 import type { IpcMainEvent, IpcMainInvokeEvent, MenuItemConstructorOptions, Rectangle } from "electron";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../src/apiSecurity.js";
 import { resolveDefaultDataDir } from "../src/dataPaths.js";
@@ -35,6 +35,11 @@ const APP_UPDATE_STATE_CHANNEL = "vigil:app-update-state";
 const APP_UPDATE_DETAILS_CHANNEL = "vigil:show-app-update-details";
 const execFileAsync = promisify(execFile);
 const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+// Electron's Tray currently drives a continuous AppKit display cycle on the
+// supported macOS runtime even with no window or renderer (about 4% of one CPU
+// in a minimal reproduction). Finder/Spotlight and singleton activation still
+// open Vigil normally, so keep the nonessential status item retired.
+const MENU_BAR_COMPANION_ENABLED = false;
 // Tray clicks refresh immediately; a slow background refresh keeps its label
 // useful without waking the full runtime and rebuilding menus twice a minute.
 const TRAY_STATUS_POLL_INTERVAL_MS = 5 * 60_000;
@@ -149,6 +154,7 @@ let appUpdateActionState: AppUpdateActionState = {
   message: ""
 };
 let windowResizeSession: WindowResizeSession | null = null;
+let powerReconciliationInstalled = false;
 
 // Electron scopes its single-instance lock to the userData directory. Set a
 // stable product identity before taking the lock so packaged copies and a
@@ -239,6 +245,7 @@ void app.whenReady().then(async () => {
     await ensureEmbeddedRuntimeSupervisor(legacyAgent);
     await retireLegacyLoopbackAgent(legacyAgent);
     await ensureVigilRuntime(appUpdateController);
+    installPowerReconciliation();
     const runtimeInterruption = await readRuntimeInterruption(appDataDir());
     if (runtimeInterruption.status === "invalid") {
       console.error(`Vigil preserved an invalid runtime interruption receipt (${runtimeInterruption.reason}) for integrity lockdown.`);
@@ -250,7 +257,7 @@ void app.whenReady().then(async () => {
     const appUrl = APP_URL;
     currentAppUrl = appUrl;
     installMenu(appUrl);
-    installMenuBarCompanion(appUrl);
+    if (MENU_BAR_COMPANION_ENABLED) installMenuBarCompanion(appUrl);
     applyIconTheme(selectedIconTheme);
     if (shouldShowWindowOnLaunch() || revealWindowWhenReady) showVigilWindow(appUrl);
     const runtimeReady = await markRuntimeReady(appDataDir(), process.execPath);
@@ -344,8 +351,25 @@ function revealVigilWindow(): void {
 }
 
 function hideVigilWindow(): void {
-  mainWindow?.hide();
+  const window = mainWindow;
+  // A hidden Chromium window still retains a renderer, compositor surfaces,
+  // AppKit tracking areas, and their background wakeups. The resident main
+  // process owns enforcement, so release the presentation layer completely;
+  // Open Vigil recreates it from the private in-app URL on demand.
+  if (window && !window.isDestroyed()) window.destroy();
   hideVigilDock();
+}
+
+function installPowerReconciliation(): void {
+  if (powerReconciliationInstalled) return;
+  powerReconciliationInstalled = true;
+  const reconcile = (reason: string) => {
+    void ownedRuntime?.reconcile?.(reason).catch((error) => {
+      console.error(`Vigil ${reason} reconciliation failed:`, error);
+    });
+  };
+  powerMonitor.on("resume", () => reconcile("system-resume"));
+  powerMonitor.on("unlock-screen", () => reconcile("screen-unlock"));
 }
 
 function showVigilDock(): void {

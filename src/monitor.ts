@@ -69,16 +69,10 @@ interface MonitorMutationOptions {
 export const MONITOR_FULL_CHECKPOINT_INTERVAL_MS = 15 * 60_000;
 export const MONITOR_HOT_CHECKPOINT_INTERVAL_MS = 15_000;
 export const MONITOR_HOT_CHECKPOINT_MAX_RETRY_MS = MONITOR_FULL_CHECKPOINT_INTERVAL_MS;
-export const MONITOR_RECOVERY_POLL_INTERVAL_MS = 3_000;
+export const MONITOR_ACTIVITY_ACCOUNTING_DELAY_MS = 60_000;
 export const HARDENING_DRIFT_EVIDENCE_MAX_AGE_MS = 15_000;
 export const BROWSER_ACTIVITY_PERSISTENCE_RETRY_DELAYS_MS = Object.freeze([250, 500, 1_000, 3_000]);
 export const BROWSER_ACTIVITY_PERSISTENCE_SHUTDOWN_MAX_ATTEMPTS = 4;
-
-export function monitorPollIntervalMs(configuredIntervalMs: unknown, activityAccelerationHealthy: boolean): number {
-  const configured = Number(configuredIntervalMs);
-  const intervalMs = Number.isFinite(configured) && configured > 0 ? configured : 15_000;
-  return activityAccelerationHealthy ? intervalMs : Math.min(intervalMs, MONITOR_RECOVERY_POLL_INTERVAL_MS);
-}
 
 export function hotUsageCheckpointRetryDelayMs(failureCount: unknown): number {
   const failures = Math.max(1, Math.trunc(Number(failureCount) || 1));
@@ -479,6 +473,7 @@ interface MonitorStatus extends UnknownRecord {
   lastIdleAccounting: UnknownRecord | null;
   accessibilityLikelyMissing: boolean;
   browserActivityAccelerationHealthy: boolean;
+  eventDriven: boolean;
   effectivePollIntervalMs: number;
 }
 
@@ -591,8 +586,9 @@ export class Monitor implements MonitorHandle {
   lastMonotonicAt: number;
   lastSample: FrontSample | null;
   previousSample: FrontSample | null;
-  timer: ReturnType<typeof setInterval> | null;
-  lastScheduledTickMonotonicAt: number;
+  running: boolean;
+  activityAccountingTimer: ReturnType<typeof setTimeout> | null;
+  activityObservedSinceAccountingArm: boolean;
   policyBoundaryTimer: ReturnType<typeof setTimeout> | null;
   status: MonitorStatus;
   recentBlocks: Map<string, number>;
@@ -683,8 +679,9 @@ export class Monitor implements MonitorHandle {
     this.lastMonotonicAt = performance.now();
     this.lastSample = null;
     this.previousSample = null;
-    this.timer = null;
-    this.lastScheduledTickMonotonicAt = performance.now();
+    this.running = false;
+    this.activityAccountingTimer = null;
+    this.activityObservedSinceAccountingArm = false;
     this.policyBoundaryTimer = null;
     this.status = {
       ok: true,
@@ -709,7 +706,8 @@ export class Monitor implements MonitorHandle {
       lastIdleAccounting: null,
       accessibilityLikelyMissing: false,
       browserActivityAccelerationHealthy: false,
-      effectivePollIntervalMs: MONITOR_RECOVERY_POLL_INTERVAL_MS
+      eventDriven: true,
+      effectivePollIntervalMs: 0
     };
     this.recentBlocks = new Map();
     this.appBlockHistory = new Map();
@@ -807,35 +805,30 @@ export class Monitor implements MonitorHandle {
   }
 
   start(): void {
-    if (this.timer) return;
+    if (this.running) return;
+    this.running = true;
     this.stopping = false;
     this.browserActivityMutationAdmissionOpen = true;
     this.startBrowserActivityAcceleration();
-    this.lastScheduledTickMonotonicAt = performance.now();
     this.refreshEffectivePollInterval();
     void this.runScheduledTick();
-    const recoveryCheckIntervalMs = monitorPollIntervalMs(this.state.settings.pollIntervalMs, false);
-    this.timer = setInterval(() => {
-      const now = performance.now();
-      const intervalMs = this.refreshEffectivePollInterval();
-      if (now - this.lastScheduledTickMonotonicAt < intervalMs) return;
-      this.lastScheduledTickMonotonicAt = now;
-      void this.runScheduledTick();
-    }, recoveryCheckIntervalMs);
     this.armPolicyBoundaryTimer();
   }
 
   refreshEffectivePollInterval(): number {
     const healthy = this.browserActivityUnsubscribe !== null && this.browserActivityHealthy();
-    const intervalMs = monitorPollIntervalMs(this.state.settings.pollIntervalMs, healthy);
     this.status.browserActivityAccelerationHealthy = healthy;
-    this.status.effectivePollIntervalMs = intervalMs;
-    return intervalMs;
+    // Retain the response field for older clients, but zero explicitly means
+    // the legacy recurring poll has been retired.
+    this.status.effectivePollIntervalMs = 0;
+    return 0;
   }
 
   async stop(): Promise<void> {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
+    this.running = false;
+    if (this.activityAccountingTimer) clearTimeout(this.activityAccountingTimer);
+    this.activityAccountingTimer = null;
+    this.activityObservedSinceAccountingArm = false;
     if (this.policyBoundaryTimer) clearTimeout(this.policyBoundaryTimer);
     this.policyBoundaryTimer = null;
     this.stopping = true;
@@ -885,6 +878,7 @@ export class Monitor implements MonitorHandle {
     try {
       this.browserActivityUnsubscribe = this.browserActivitySubscribe((signal) => {
         if (this.stopping || this.browserActivityBurst !== burst) return;
+        this.scheduleActivityAccounting();
         if (signal.kind === "activate" || signal.kind === "launch") {
           this.handleApplicationActivity(signal.kind, burst);
           return;
@@ -895,6 +889,24 @@ export class Monitor implements MonitorHandle {
       this.browserActivityBurst = null;
       void burst.stop();
     }
+  }
+
+  scheduleActivityAccounting(): void {
+    if (!this.running || this.stopping) return;
+    if (this.activityAccountingTimer) {
+      this.activityObservedSinceAccountingArm = true;
+      return;
+    }
+    this.activityObservedSinceAccountingArm = false;
+    this.activityAccountingTimer = setTimeout(() => {
+      this.activityAccountingTimer = null;
+      const remainActive = this.activityObservedSinceAccountingArm;
+      this.activityObservedSinceAccountingArm = false;
+      void this.runScheduledTick().finally(() => {
+        if (remainActive && !this.activityAccountingTimer) this.scheduleActivityAccounting();
+      });
+    }, MONITOR_ACTIVITY_ACCOUNTING_DELAY_MS);
+    this.activityAccountingTimer.unref?.();
   }
 
   handleApplicationActivity(kind: "activate" | "launch", burst: BrowserActivityBurstScheduler): void {
@@ -915,6 +927,7 @@ export class Monitor implements MonitorHandle {
     if (this.stopping || !front.ok) return;
     if (appCanReportUrls(front.app)) burst.wake();
     await this.enqueueMutationOperation(async () => {
+      await this.recordElapsedUsage(this.beginPollFrame());
       this.applyFrontmostSample(front);
       await this.enforceFrontmost(front);
     }, { persist: false });
@@ -931,7 +944,7 @@ export class Monitor implements MonitorHandle {
   armPolicyBoundaryTimer(): void {
     if (this.policyBoundaryTimer) clearTimeout(this.policyBoundaryTimer);
     this.policyBoundaryTimer = null;
-    if (this.stopping || !this.timer) return;
+    if (this.stopping || !this.running) return;
     const now = Date.now();
     const boundary = nextBrowserActivityPolicyBoundary(this.committedState, now);
     const delayMs = Math.max(25, boundary - now + 25);
@@ -954,9 +967,16 @@ export class Monitor implements MonitorHandle {
     if (this.stopping) return false;
     this.retryPendingBrowserActivityMutations();
     const candidate = await this.readFrontmost({ fresh: true, updateHealth: false });
-    if (!candidate.ok || !appCanReportUrls(candidate.app)) {
+    if (!candidate.ok) {
       this.breakBrowserActivityContinuity();
       return true;
+    }
+    if (!appCanReportUrls(candidate.app)) {
+      this.breakBrowserActivityContinuity();
+      // Input outside a browser cannot settle into a browser navigation. End
+      // the sparse tail after its leading probe instead of waking Node another
+      // five times for an inapplicable target.
+      return false;
     }
     const candidateTarget = `${candidate.app}\n${candidate.url}`;
     if (!candidate.url) {
@@ -1402,6 +1422,10 @@ export class Monitor implements MonitorHandle {
     });
     this.tickInFlight = tracked;
     return tracked;
+  }
+
+  async reconcile(_reason = "external-event"): Promise<void> {
+    await this.runScheduledTick();
   }
 
   reportTickFailure(error: unknown): void {
@@ -1918,7 +1942,7 @@ export class Monitor implements MonitorHandle {
 
     const wallSeconds = Math.max(0, (frame.now - frame.previousWall) / 1000);
     const elapsedSeconds = Math.max(frame.seconds, wallSeconds);
-    if (isInterruptedPollGap(elapsedSeconds, this.state.settings?.pollIntervalMs)) {
+    if (isInterruptedPollGap(elapsedSeconds, MONITOR_ACTIVITY_ACCOUNTING_DELAY_MS)) {
       this.status.lastIdleAccounting = this.idleAccountingStatus(frame, {
         countedSeconds: 0,
         skippedSeconds: elapsedSeconds,

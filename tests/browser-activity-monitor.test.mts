@@ -59,7 +59,8 @@ import { recordUsage } from "../src/usage.js";
   assert.equal(snapshotWrites, 0);
 
   monitor.readFrontmost = async () => ({ ok: true, app: "Codex", hostname: "", url: "" });
-  assert.equal(await monitor.probeBrowserActivity(), true, "non-browser activity must retain a short browser-activation grace period");
+  assert.equal(await monitor.probeBrowserActivity(), false,
+    "non-browser activity must end the expensive URL tail; native activation signals cover a later browser switch");
   assert.equal(enforcementChecks, 2);
 
   monitor.readFrontmost = async () => ({
@@ -1162,8 +1163,8 @@ import { recordUsage } from "../src/usage.js";
     : dirname(dirname(process.cwd()));
   const helperSource = await readFile(join(projectRoot, "app", "vigil-human-idle.c"), "utf8");
   const macosSource = await readFile(join(projectRoot, "src", "macos.ts"), "utf8");
-  assert.match(helperSource, /browserActivityPollMilliseconds = 25/u,
-    "permission-free activity detection must stay within a 25ms native polling bound");
+  assert.match(helperSource, /browserActivityPollMilliseconds = 100/u,
+    "permission-free activity detection must stay responsive without polling WindowServer every display frame");
   assert.match(helperSource, /CGEventSourceCounterForEventType/u);
   assert.match(helperSource, /kCGEventSourceStateCombinedSessionState/u,
     "browser acceleration must include assistive, remote, and synthesized session input");

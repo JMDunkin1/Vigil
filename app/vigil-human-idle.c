@@ -10,10 +10,10 @@
 #include <time.h>
 
 enum {
-  // Keep the aggregate, permission-free fallback within roughly one to two
-  // display frames. The expensive URL query is still event-coalesced in Node;
-  // this loop only reads tiny WindowServer counters.
-  browserActivityPollMilliseconds = 25,
+  // Aggregate, permission-free counters do not need display-frame cadence.
+  // A 100ms bound remains responsive while cutting idle WindowServer queries
+  // by 75%; Node still launches the first browser probe immediately.
+  browserActivityPollMilliseconds = 100,
   browserActivityHeartbeatMilliseconds = 1000
 };
 

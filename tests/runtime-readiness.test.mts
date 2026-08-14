@@ -37,6 +37,16 @@ assert.equal(runtimeReadiness(disabled, state, instance).ok, false, "non-applica
 
 const staleTick = new Date(Date.now() - 31_000).toISOString();
 assert.equal(runtimeReadiness({ ...monitorStatus, lastSuccessfulTickAt: staleTick }, state, instance).ok, false);
+const eventDrivenInstance = new Date(Date.now() - 60_000).toISOString();
+assert.equal(runtimeReadiness({
+  ...monitorStatus,
+  runtimeInstanceId: eventDrivenInstance,
+  runtimeStartedAt: eventDrivenInstance,
+  eventDriven: true,
+  effectivePollIntervalMs: 0,
+  lastSuccessfulTickAt: staleTick
+}, state, eventDrivenInstance).ok, true,
+  "an event-driven monitor must not invent a recurring tick solely to satisfy readiness freshness");
 
 const fallbackStaleTick = new Date(Date.now() - 16_000).toISOString();
 assert.equal(runtimeReadiness({ ...monitorStatus, effectivePollIntervalMs: 3_000, lastSuccessfulTickAt: fallbackStaleTick }, state, instance).ok, false,

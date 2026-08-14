@@ -69,10 +69,10 @@ function schedulerDependencies(clock: FakeClock) {
   };
 }
 
-assert.deepEqual(BROWSER_ACTIVITY_BURST_DELAYS_MS, [0, 125, 400, 900, 1_600, 2_600]);
-assert.equal(BROWSER_ACTIVITY_BURST_WINDOW_MS, 2_600);
-assert.equal(BROWSER_ACTIVITY_MIN_PROBE_GAP_MS, 250);
-assert.equal(BROWSER_ACTIVITY_MAX_PROBE_GAP_MS, 300);
+assert.deepEqual(BROWSER_ACTIVITY_BURST_DELAYS_MS, [0, 200, 800, 2_000]);
+assert.equal(BROWSER_ACTIVITY_BURST_WINDOW_MS, 2_000);
+assert.equal(BROWSER_ACTIVITY_MIN_PROBE_GAP_MS, 500);
+assert.equal(BROWSER_ACTIVITY_MAX_PROBE_GAP_MS, 600);
 
 {
   const clock = new FakeClock();
@@ -84,10 +84,10 @@ assert.equal(BROWSER_ACTIVITY_MAX_PROBE_GAP_MS, 300);
 
   scheduler.wake();
   assert.deepEqual(probes, [0], "the first activity signal must launch a leading probe synchronously");
-  await clock.advanceTo(125);
-  assert.deepEqual(probes, [0, 125], "the first sparse follow-up must catch a URL that settles after the leading probe");
+  await clock.advanceTo(200);
+  assert.deepEqual(probes, [0, 200], "the first sparse follow-up must catch a URL that settles after the leading probe");
   await clock.advanceTo(5_000);
-  assert.deepEqual(probes, [0, 125], "a false follow-up must stop the remaining tail");
+  assert.deepEqual(probes, [0, 200], "a false follow-up must stop the remaining tail");
   await scheduler.stop();
 }
 
@@ -121,10 +121,10 @@ assert.equal(BROWSER_ACTIVITY_MAX_PROBE_GAP_MS, 300);
 
   scheduler.wake();
   await clock.advanceTo(2_000);
-  assert.deepEqual(probes, [0, 125, 400], "a false result must end the active burst");
+  assert.deepEqual(probes, [0, 200, 800], "a false result must end the active burst");
 
   scheduler.wake();
-  assert.deepEqual(probes, [0, 125, 400, 2_000], "activity after dormancy must get a new immediate leading probe");
+  assert.deepEqual(probes, [0, 200, 800, 2_000], "activity after dormancy must get a new immediate leading probe");
   await scheduler.stop();
 }
 
@@ -138,11 +138,11 @@ assert.equal(BROWSER_ACTIVITY_MAX_PROBE_GAP_MS, 300);
 
   scheduler.wake();
   await clock.flush();
-  assert.equal(clock.nextTimerDueAt(), 125);
+  assert.equal(clock.nextTimerDueAt(), 200);
   assert.equal(clock.timerSetCount, 1);
   clock.time = 50;
   scheduler.wake();
-  assert.equal(clock.nextTimerDueAt(), 125, "a newer wake must preserve an already-earlier probe");
+  assert.equal(clock.nextTimerDueAt(), 200, "a newer wake must preserve an already-earlier probe");
   assert.equal(clock.timerSetCount, 1, "preserving an earlier probe must not allocate a replacement timer");
   assert.equal(clock.timerClearCount, 0, "preserving an earlier probe must not churn timer cancellation");
   await scheduler.stop();
@@ -227,8 +227,8 @@ assert.equal(BROWSER_ACTIVITY_MAX_PROBE_GAP_MS, 300);
   }, schedulerDependencies(clock));
 
   scheduler.wake();
-  await clock.advanceTo(500);
-  assert.deepEqual(probes, [0, 125, 400], "a failed leading probe must not kill the sparse recovery tail");
+  await clock.advanceTo(900);
+  assert.deepEqual(probes, [0, 200, 800], "a failed leading probe must not kill the sparse recovery tail");
   await scheduler.stop();
 }
 
@@ -250,7 +250,7 @@ assert.equal(BROWSER_ACTIVITY_MAX_PROBE_GAP_MS, 300);
 
   scheduler.wake();
   scheduler.wake();
-  await clock.advanceTo(2_700);
+  await clock.advanceTo(2_100);
   assert.equal(probes[0], 0);
   assert.equal(probes[1], 200, "activity coalesced during the leading probe must get one immediate catch-up");
   assert.equal(maximumActive, 1, "browser probes must never overlap");
@@ -261,7 +261,7 @@ assert.equal(BROWSER_ACTIVITY_MAX_PROBE_GAP_MS, 300);
   await clock.flush();
   assert.equal(stopped, false, "stop must drain the in-flight probe");
   scheduler.wake();
-  await clock.advanceTo(3_000);
+  await clock.advanceTo(2_400);
   await stopping;
   assert.equal(stopped, true);
   const completedProbeCount = probes.length;
@@ -291,21 +291,21 @@ assert.equal(BROWSER_ACTIVITY_MAX_PROBE_GAP_MS, 300);
   scheduler.wake();
   await clock.advanceTo(80);
   assert.deepEqual(probes, [0, 40], "a wake during the catch-up probe must wait for the minimum gap");
-  assert.equal(clock.nextTimerDueAt(), 290);
-
-  await clock.advanceTo(290);
-  await clock.advanceTo(300);
-  scheduler.wake();
-  await clock.advanceTo(330);
   assert.equal(clock.nextTimerDueAt(), 540);
+
   await clock.advanceTo(540);
-  assert.deepEqual(probes, [0, 40, 290, 540]);
+  await clock.advanceTo(550);
+  scheduler.wake();
+  await clock.advanceTo(580);
+  assert.equal(clock.nextTimerDueAt(), 1_040);
+  await clock.advanceTo(1_040);
+  assert.deepEqual(probes, [0, 40, 540, 1_040]);
   assert.ok(
     probes.slice(2).every((at, index) => at - probes[index + 1]! >= BROWSER_ACTIVITY_MIN_PROBE_GAP_MS),
     "successive in-flight wakes must not drive probes faster than the minimum gap"
   );
 
-  await clock.advanceTo(580);
+  await clock.advanceTo(1_080);
   await scheduler.stop();
 }
 

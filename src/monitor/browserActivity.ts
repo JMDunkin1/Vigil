@@ -4,10 +4,10 @@ import { performance } from "node:perf_hooks";
 // browser, followed by a sparse tail for URL and application state that settles
 // shortly after the input. Repeated input may pull a tail probe earlier, but it
 // cannot create overlapping probes or an unbounded per-event fan-out.
-export const BROWSER_ACTIVITY_BURST_DELAYS_MS = Object.freeze([0, 125, 400, 900, 1_600, 2_600]);
-export const BROWSER_ACTIVITY_BURST_WINDOW_MS = 2_600;
-export const BROWSER_ACTIVITY_MIN_PROBE_GAP_MS = 250;
-export const BROWSER_ACTIVITY_MAX_PROBE_GAP_MS = 300;
+export const BROWSER_ACTIVITY_BURST_DELAYS_MS = Object.freeze([0, 200, 800, 2_000]);
+export const BROWSER_ACTIVITY_BURST_WINDOW_MS = 2_000;
+export const BROWSER_ACTIVITY_MIN_PROBE_GAP_MS = 500;
+export const BROWSER_ACTIVITY_MAX_PROBE_GAP_MS = 600;
 
 type TimerHandle = unknown;
 

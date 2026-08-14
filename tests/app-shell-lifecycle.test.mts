@@ -13,6 +13,12 @@ assert.notEqual(beforeQuitEnd, -1, "the before-quit cleanup hook must be complet
 const beforeQuitSource = mainSource.slice(beforeQuitStart, beforeQuitEnd + 4);
 
 assert.match(mainSource, /backgroundThrottling:\s*true/, "Electron must throttle renderer work when Vigil's window is hidden");
+assert.match(mainSource, /const MENU_BAR_COMPANION_ENABLED = false;/,
+  "the high-wakeup Electron tray must remain retired while Spotlight and singleton activation provide the UI entrypoint");
+assert.match(mainSource, /if \(MENU_BAR_COMPANION_ENABLED\) installMenuBarCompanion\(appUrl\);/,
+  "startup must not instantiate Electron's continuously repainting macOS status item");
+assert.match(mainSource, /powerMonitor\.on\("resume", \(\) => reconcile\("system-resume"\)\)/,
+  "waking from sleep must trigger one explicit runtime reconciliation without a permanent poll");
 assert.match(mainSource, /vigil:window-activity/, "Electron must send authoritative native focus state to the renderer");
 assert.match(mainSource, /vigilWindow\.on\("blur", syncRendererActivity\)/, "losing native window focus must immediately stop renderer animation work");
 assert.match(mainSource, /app\.commandLine\.appendSwitch\("autoplay-policy", "no-user-gesture-required"\)/, "saved Focus Sound playback must resume after a packaged-app relaunch");
@@ -57,7 +63,7 @@ assert.match(
 assert.match(
   mainSource,
   /label: "Open Vigil",\s*click: \(\) => \{\s*showVigilWindow\(appUrl\);\s*\}/,
-  "the menu-bar Open Vigil action must remain the explicit way to reveal the window"
+  "the dormant tray implementation must preserve its safe explicit reveal action if a future Electron release fixes the wakeup regression"
 );
 assert.match(
   mainSource,
@@ -67,17 +73,17 @@ assert.match(
 assert.match(
   mainSource,
   /app\.on\("window-all-closed", \(\) => \{\s*if \(!shouldStayResident\(\)\) app\.quit\(\);/,
-  "closing the last window must leave the packaged menu-bar companion running"
+  "closing the last window must leave packaged background enforcement running"
 );
 assert.match(
   beforeQuitSource,
   /shouldStayResident\(\)[\s\S]*?!quitForUpdate[\s\S]*?event\.preventDefault\(\)[\s\S]*?hideVigilWindow\(\)/,
-  "normal quit attempts must hide the window and leave the packaged menu-bar companion running"
+  "normal quit attempts must hide the window and leave packaged background enforcement running"
 );
 assert.match(
   mainSource,
-  /function hideVigilWindow\(\): void \{\s*mainWindow\?\.hide\(\);\s*hideVigilDock\(\);\s*\}/,
-  "hiding Vigil must also remove its Dock tile while enforcement remains resident"
+  /function hideVigilWindow\(\): void \{[\s\S]*?if \(window && !window\.isDestroyed\(\)\) window\.destroy\(\);\s*hideVigilDock\(\);\s*\}/,
+  "hiding Vigil must release its Chromium window and remove its Dock tile while enforcement remains resident"
 );
 assert.match(
   mainSource,

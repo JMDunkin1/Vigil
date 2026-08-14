@@ -114,7 +114,9 @@ interface ServerOptions {
   systemEffects?: "live" | "isolated";
 }
 
-export interface VigilRuntimeHandle extends InAppTransport {}
+export interface VigilRuntimeHandle extends InAppTransport {
+  reconcile?(reason?: string): Promise<void>;
+}
 
 interface GuardResult {
   ok: boolean;
@@ -830,6 +832,7 @@ function serverHandle() {
     server,
     monitor,
     request: dispatchVigilRequest,
+    reconcile: async (reason = "external-event") => await requireMonitor().reconcile(reason),
     stop: stopVigilServer
   };
 }
@@ -837,6 +840,7 @@ function serverHandle() {
 function runtimeHandle(): VigilRuntimeHandle {
   return {
     request: dispatchVigilRequest,
+    reconcile: async (reason = "external-event") => await requireMonitor().reconcile(reason),
     stop: stopVigilRuntime
   };
 }
@@ -1335,14 +1339,17 @@ export function runtimeReadiness(monitorStatus: UnknownRecord, requestState: Vig
   for (const [component, error] of Object.entries(componentErrors)) {
     if (String(error || "")) blockers.push(`${component}: ${String(error)}`);
   }
+  const eventDriven = monitorStatus.eventDriven === true;
   const reportedPollIntervalMs = Number(monitorStatus.effectivePollIntervalMs);
-  const freshnessLimitMs = monitorRuntimeFreshnessLimitMs(
+  const freshnessLimitMs = eventDriven ? null : monitorRuntimeFreshnessLimitMs(
     Number.isFinite(reportedPollIntervalMs) && reportedPollIntervalMs > 0
       ? reportedPollIntervalMs
       : requestState.settings.pollIntervalMs
   );
   const successfulTickAgeMs = Number.isFinite(tickMs) ? Date.now() - tickMs : Number.POSITIVE_INFINITY;
-  if (!Number.isFinite(successfulTickAgeMs) || successfulTickAgeMs > freshnessLimitMs) blockers.push("monitor successful tick is stale");
+  if (!eventDriven && (!Number.isFinite(successfulTickAgeMs) || successfulTickAgeMs > freshnessLimitMs!)) {
+    blockers.push("monitor successful tick is stale");
+  }
   const componentHealth = monitorStatus.componentHealth && typeof monitorStatus.componentHealth === "object"
     ? monitorStatus.componentHealth as Record<string, UnknownRecord>
     : {};
@@ -1379,6 +1386,7 @@ export function runtimeReadiness(monitorStatus: UnknownRecord, requestState: Vig
       successfulTickAt: successfulTickAt || null,
       ageMs: Number.isFinite(successfulTickAgeMs) ? Math.max(0, successfulTickAgeMs) : null,
       limitMs: freshnessLimitMs,
+      eventDriven,
       components: componentHealth
     }
   };
