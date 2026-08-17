@@ -186,6 +186,17 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        // RootView applies the exact SwiftUI environment style once the view
+        // is mounted, but the first Instagram navigation begins before that
+        // representable callback. Seed WebKit from UIKit's current trait first
+        // so its initial media-query/layout paint cannot use light appearance
+        // for one frame on a dark device.
+        if service == .instagram {
+            let initialStyle = UITraitCollection.current.userInterfaceStyle
+            if initialStyle == .dark || initialStyle == .light {
+                webView.overrideUserInterfaceStyle = initialStyle
+            }
+        }
         webView.navigationDelegate = self
         webView.uiDelegate = self
         // Finalize viewport geometry before the first navigation. RootView
@@ -350,7 +361,17 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
         refreshingServices.insert(service)
         setSurface(.unknown, for: service)
-        webView.reload()
+        if service == .instagram {
+            // A settled friend-feed empty state is sticky against background
+            // pagination, but an intentional pull must visibly begin a fresh
+            // loading cycle before WebKit swaps in the reloaded document.
+            webView.evaluateJavaScript("window.__vigilResetFriendsFeedForRefresh?.();")
+            DispatchQueue.main.async { [weak webView] in
+                webView?.reload()
+            }
+        } else {
+            webView.reload()
+        }
     }
 
     private func handle(_ message: WKScriptMessage, service: SocialService) {

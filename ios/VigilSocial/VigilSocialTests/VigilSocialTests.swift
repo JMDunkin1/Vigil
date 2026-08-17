@@ -2463,7 +2463,7 @@ final class VigilSocialTests: XCTestCase {
             XCTAssertEqual(service.homeURL.scheme, "https")
         }
         XCTAssertEqual(SocialService.instagram.homeURL.path, "/")
-        XCTAssertEqual(SocialService.youtube.homeURL.path, "/feed/subscriptions")
+        XCTAssertEqual(SocialService.youtube.homeURL.path, "/")
     }
 
     func testYouTubeAdapterBlocksShortsAndPersistsPlayback() {
@@ -2708,15 +2708,15 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(script.contains("body { max-width: none"))
         XCTAssertFalse(script.contains("touch-action: pan-x pan-y"))
         XCTAssertTrue(script.contains("['reels', 'explore', 'suggested', 'shopping', 'ads']"))
-        XCTAssertTrue(script.contains("data-vigil-feature-reels=\"blocked\""))
-        XCTAssertTrue(script.contains("data-vigil-feature-shopping=\"blocked\""))
-        XCTAssertTrue(script.contains("hasExactLeafLabel(container, 'sponsored')"))
-        XCTAssertTrue(script.contains("navigation.insertBefore(reelsItem, directItem)"))
-        XCTAssertTrue(script.contains("feature === 'suggested' && isBlocked('explore')"))
-        XCTAssertTrue(script.contains("data-vigil-instagram-route-feature=\"reels\""))
+        XCTAssertTrue(script.contains("a[href=\"/reels/\"]"))
+        XCTAssertTrue(script.contains("data-vigil-feature-shopping=\"available\""))
+        XCTAssertTrue(script.contains("exactLeafLabel(card, 'sponsored')"))
+        XCTAssertFalse(script.contains("navigation.insertBefore(reelsItem, directItem)"))
+        XCTAssertTrue(script.contains("feature === 'suggested'"))
+        XCTAssertFalse(script.contains("data-vigil-instagram-route-feature=\"reels\""))
         XCTAssertTrue(script.contains("html[data-vigil-route-policy-blocked] body"))
-        XCTAssertTrue(script.contains("const routePolicyWatchdog = setInterval"))
-        XCTAssertTrue(script.contains("data-vigil-feature-suggested') !== 'available'"))
+        XCTAssertTrue(script.contains("const enforceRoute = () =>"))
+        XCTAssertTrue(script.contains("featureState('suggested') !== 'available'"))
         XCTAssertFalse(script.contains("location.replace('/accounts/login/')"))
         XCTAssertTrue(script.contains("removeAttribute('data-vigil-hidden-feature')"))
         XCTAssertTrue(script.contains("__vigilAudioPreferred = configuredAudioPreference"))
@@ -2726,14 +2726,13 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("height: 52dvh !important"))
         XCTAssertTrue(script.contains("const isInstagramCommentsDialog"))
         XCTAssertTrue(script.contains("normalizeCommentSheets()"))
-        XCTAssertTrue(script.contains("scroll-snap-type: y mandatory !important"))
-        XCTAssertTrue(script.contains("scroll-snap-stop: always !important"))
-        XCTAssertTrue(script.contains("overscroll-behavior-y: contain !important"))
-        XCTAssertTrue(script.contains("const minimumReelsNormalizationInterval = 320"))
-        XCTAssertTrue(script.contains("const reelsMetadataByCard = new WeakMap()"))
-        XCTAssertTrue(script.contains("processedCards >= 3"))
-        XCTAssertTrue(script.contains("link.rel = 'prefetch'"))
-        XCTAssertTrue(script.contains("const reconcileRepostControl"))
+        XCTAssertTrue(script.contains("const instagramCommentSheetFor"))
+        XCTAssertTrue(script.contains("const nestedCommentPanel"))
+        XCTAssertTrue(script.contains("const rememberCommentPlayback"))
+        XCTAssertTrue(script.contains("window.__vigilEarlyMediaGate?.isHeld?.(media)"))
+        XCTAssertFalse(script.contains("const minimumReelsNormalizationInterval = 320"))
+        XCTAssertFalse(script.contains("link.rel = 'prefetch'"))
+        XCTAssertFalse(script.contains("const reconcileRepostControl"))
         XCTAssertFalse(script.contains("scrollBy({"))
         XCTAssertFalse(script.contains("scrollTop = target"))
     }
@@ -2763,21 +2762,55 @@ final class VigilSocialTests: XCTestCase {
         let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
         webView.navigationDelegate = navigationDelegate
         webView.loadHTMLString(
-            """
-            <html><body>
-              <main><article><button>Open comments</button></article></main>
-              <section id="comments" role="dialog" aria-label="Comments"
-                style="position:fixed;inset:0;width:100vw;height:100vh">
-                <h2>Comments</h2>
-                <textarea placeholder="Add a comment…"></textarea>
-              </section>
+            #"""
+            <html><head>
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <style>html,body{margin:0;width:100%;height:100%}</style>
+            </head><body>
+              <main><article>
+                <video id="media" style="display:block;width:390px;height:520px"></video>
+                <button id="open-comments" aria-label="Comments">Open comments</button>
+              </article></main>
+              <script>
+                const media = document.getElementById('media');
+                let playing = true;
+                window.__vigilFixturePlayCalls = 0;
+                Object.defineProperty(media, 'paused', {
+                  configurable: true,
+                  get: () => !playing
+                });
+                Object.defineProperty(media, 'ended', {
+                  configurable: true,
+                  get: () => false
+                });
+                media.play = () => {
+                  playing = true;
+                  window.__vigilFixturePlayCalls += 1;
+                  return Promise.resolve();
+                };
+                document.getElementById('open-comments').addEventListener('click', () => {
+                  playing = false;
+                  const dialog = document.createElement('section');
+                  dialog.id = 'post-dialog';
+                  dialog.setAttribute('role', 'dialog');
+                  dialog.setAttribute('aria-label', 'Post');
+                  dialog.style.cssText = 'position:fixed;inset:0;width:390px;height:844px';
+                  const comments = document.createElement('section');
+                  comments.id = 'comments';
+                  comments.style.cssText = 'position:absolute;inset:0;width:390px;height:844px;background:white';
+                  comments.innerHTML = '<h2>Comments</h2><textarea placeholder="Add a comment…"></textarea>';
+                  dialog.append(media, comments);
+                  document.body.append(dialog);
+                });
+              </script>
             </body></html>
-            """,
+            """#,
             baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/p/fixture/"))
         )
         await fulfillment(of: [loaded], timeout: 5)
+        _ = try await webView.evaluateJavaScript("document.getElementById('open-comments').click()")
         try await waitForJavaScriptCondition(
-            "document.getElementById('comments')?.dataset.vigilInstagramCommentsSheet === 'true'",
+            "document.getElementById('comments')?.dataset.vigilInstagramCommentsSheet === 'true' && !document.getElementById('media').paused",
             in: webView
         )
 
@@ -2785,7 +2818,16 @@ final class VigilSocialTests: XCTestCase {
             """
             (() => {
               const rect = document.getElementById('comments').getBoundingClientRect();
-              return { top: rect.top, bottom: rect.bottom, viewport: innerHeight };
+              const outer = document.getElementById('post-dialog');
+              return {
+                top: rect.top,
+                bottom: rect.bottom,
+                viewport: innerHeight,
+                outerHeight: outer.getBoundingClientRect().height,
+                outerSheet: outer.dataset.vigilInstagramCommentsSheet || '',
+                playCalls: window.__vigilFixturePlayCalls,
+                playing: !document.getElementById('media').paused
+              };
             })()
             """
         ) as? [String: Any]
@@ -2794,6 +2836,10 @@ final class VigilSocialTests: XCTestCase {
         let viewport = try XCTUnwrap(geometry?["viewport"] as? Double)
         XCTAssertEqual(bottom, viewport, accuracy: 2)
         XCTAssertGreaterThan(top, viewport * 0.4)
+        XCTAssertGreaterThan(try XCTUnwrap(geometry?["outerHeight"] as? Double), 700)
+        XCTAssertEqual(geometry?["outerSheet"] as? String, "")
+        XCTAssertEqual(geometry?["playCalls"] as? Int, 1)
+        XCTAssertEqual(geometry?["playing"] as? Bool, true)
     }
 
     @MainActor
@@ -2863,7 +2909,7 @@ final class VigilSocialTests: XCTestCase {
                 descriptionVisible: getComputedStyle(description).display !== 'none'
                   && descriptionRect.bottom <= reelRect.bottom,
                 reportedReels: window.__vigilFixtureMessages.some((message) =>
-                  message.type === 'surface' && message.route === 'reels' && message.fullBleedTop === true
+                  message.type === 'surface' && message.route === 'reels' && message.fullBleedTop === false
                 )
               };
             })()
@@ -2923,6 +2969,155 @@ final class VigilSocialTests: XCTestCase {
             "window.__vigilFixtureMessages.filter((message) => message.type === 'surface').at(-1)?.fullBleedTop"
         ) as? Bool
         XCTAssertEqual(directFullBleed, false)
+    }
+
+    @MainActor
+    func testInstagramDirectQuickTapActivatesOnceAndLongHoldKeepsTheMessageMenu() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.controlsScript(for: .instagram),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let loaded = expectation(description: "Instagram Direct touch fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            """
+            <html><body>
+              <div id="message-row">
+                <a id="conversation" href="/direct/t/friend/">
+                  <span id="conversation-label">Friend</span>
+                </a>
+                <button id="message-menu" hidden>React · More</button>
+              </div>
+              <script>
+                window.__vigilDirectFixture = {
+                  clicks: 0,
+                  menuClicks: 0,
+                  pointerUps: 0,
+                  holdTimer: 0,
+                  pointer(type, id, x = 80, y = 120) {
+                    document.getElementById('conversation-label').dispatchEvent(
+                      new PointerEvent(type, {
+                        bubbles: true,
+                        cancelable: true,
+                        pointerId: id,
+                        pointerType: 'touch',
+                        isPrimary: true,
+                        clientX: x,
+                        clientY: y,
+                        button: 0
+                      })
+                    );
+                  }
+                };
+                const fixture = window.__vigilDirectFixture;
+                const conversation = document.getElementById('conversation');
+                conversation.addEventListener('click', (event) => {
+                  event.preventDefault();
+                  fixture.clicks += 1;
+                  document.getElementById('message-menu').hidden = true;
+                });
+                document.getElementById('message-menu').addEventListener('click', () => {
+                  fixture.menuClicks += 1;
+                });
+                conversation.addEventListener('pointerdown', () => {
+                  clearTimeout(fixture.holdTimer);
+                  fixture.holdTimer = setTimeout(() => {
+                    document.getElementById('message-menu').hidden = false;
+                  }, 320);
+                });
+                conversation.addEventListener('pointerup', () => {
+                  fixture.pointerUps += 1;
+                  clearTimeout(fixture.holdTimer);
+                });
+                conversation.addEventListener('pointercancel', () => {
+                  clearTimeout(fixture.holdTimer);
+                });
+              </script>
+            </body></html>
+            """,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/direct/inbox/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+
+        _ = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              const fixture = window.__vigilDirectFixture;
+              fixture.pointer('pointerdown', 51);
+              fixture.pointer('pointerup', 51);
+              // Model the hover menu appearing beneath the touch before
+              // WebKit's compatibility click. It must not steal activation.
+              document.getElementById('message-menu').hidden = false;
+              document.getElementById('message-menu').dispatchEvent(
+                new MouseEvent('click', {
+                  bubbles: true,
+                  cancelable: true,
+                  clientX: 80,
+                  clientY: 120
+                })
+              );
+            })()
+            """
+        )
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let quickTap = try await webView.evaluateJavaScript(
+            """
+            ({
+              clicks: window.__vigilDirectFixture.clicks,
+              menuClicks: window.__vigilDirectFixture.menuClicks,
+              pointerUps: window.__vigilDirectFixture.pointerUps,
+              menuVisible: !document.getElementById('message-menu').hidden
+            })
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(quickTap?["clicks"] as? Int, 1)
+        XCTAssertEqual(quickTap?["menuClicks"] as? Int, 0)
+        XCTAssertEqual(quickTap?["pointerUps"] as? Int, 1)
+        XCTAssertEqual(quickTap?["menuVisible"] as? Bool, false)
+
+        _ = try await webView.evaluateJavaScript(
+            "window.__vigilDirectFixture.pointer('pointerdown', 52)"
+        )
+        try await Task.sleep(nanoseconds: 500_000_000)
+        _ = try await webView.evaluateJavaScript(
+            """
+            (() => {
+              window.__vigilDirectFixture.pointer('pointerup', 52);
+              document.getElementById('conversation-label').dispatchEvent(
+                new MouseEvent('click', {
+                  bubbles: true,
+                  cancelable: true,
+                  clientX: 80,
+                  clientY: 120
+                })
+              );
+            })()
+            """
+        )
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let longHold = try await webView.evaluateJavaScript(
+            """
+            ({
+              clicks: window.__vigilDirectFixture.clicks,
+              menuClicks: window.__vigilDirectFixture.menuClicks,
+              pointerUps: window.__vigilDirectFixture.pointerUps,
+              menuVisible: !document.getElementById('message-menu').hidden
+            })
+            """
+        ) as? [String: Any]
+        XCTAssertEqual(longHold?["clicks"] as? Int, 1)
+        XCTAssertEqual(longHold?["menuClicks"] as? Int, 0)
+        XCTAssertEqual(longHold?["pointerUps"] as? Int, 2)
+        XCTAssertEqual(longHold?["menuVisible"] as? Bool, true)
     }
 
     @MainActor
@@ -4660,6 +4855,27 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("const mutual = viewerFollows && followsViewer"))
         XCTAssertTrue(script.contains("Nothing from your friends yet."))
         XCTAssertFalse(script.contains("homeDigestLimit"))
+        XCTAssertTrue(script.contains("document.body?.append(state)"))
+        XCTAssertTrue(script.contains("renderFriendsState('loading')"))
+        XCTAssertTrue(script.contains("renderFriendsState('empty')"))
+        XCTAssertTrue(script.contains("friendshipCacheTTL = 6 * 60 * 60 * 1000"))
+        XCTAssertTrue(script.contains("a[href^=\"/stories/\"]:not("))
+        XCTAssertTrue(script.contains("const classifyHomeStory"))
+        XCTAssertTrue(script.contains("fetchMutualFriendship(username)"))
+        XCTAssertTrue(script.contains("isOwnStoryLink(link)"))
+        XCTAssertTrue(script.contains("querySelectorAll('a[href^=\"/stories/\"]')"))
+        XCTAssertTrue(script.contains("link.closest('li, [role=\"listitem\"]')"))
+        XCTAssertFalse(script.contains("background: Canvas"))
+        XCTAssertFalse(script.contains("querySelector('main') || document.body)?.prepend(state)"))
+        XCTAssertTrue(script.contains("main [role=\"progressbar\"]"))
+        XCTAssertTrue(script.contains("state.dataset.vigilState === 'empty' && mode === 'loading'"))
+        XCTAssertTrue(script.contains("window.__vigilResetFriendsFeedForRefresh"))
+        XCTAssertTrue(script.contains("renderFriendsState('loading', true)"))
+        XCTAssertTrue(script.contains("prefers-color-scheme: dark"))
+        XCTAssertTrue(script.contains("color: #f5f5f5 !important"))
+        XCTAssertTrue(script.contains("data-vigil-instagram-route-transition=\"true\""))
+        XCTAssertTrue(script.contains("const prepareRouteTransition"))
+        XCTAssertTrue(script.contains("prepareRouteTransition(link.href)"))
     }
 
     @MainActor

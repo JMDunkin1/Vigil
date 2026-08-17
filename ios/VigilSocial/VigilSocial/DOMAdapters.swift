@@ -1552,8 +1552,8 @@ enum DOMAdapters {
 
     // Instagram is a fast-changing single-page app. Keep the production
     // companion deliberately small: hide restricted entry points before they
-    // can paint, but leave Instagram's layout, media, dialogs, and gestures
-    // entirely under Instagram's control.
+    // can paint and normalize only the comments surface requested below, while
+    // leaving Instagram's remaining layout, media, and gestures under its control.
     private static let instagramStableDocumentStartStyle = #"""
     (() => {
       if (window.__vigilInstagramStableStartInstalled) return;
@@ -1592,17 +1592,93 @@ enum DOMAdapters {
         ) {
           display: none !important;
         }
+        html[data-vigil-instagram-home-filter="true"] a[href^="/stories/"]:not(
+          [data-vigil-instagram-story-relationship="friend"]
+        ) {
+          visibility: hidden !important;
+        }
+        html[data-vigil-instagram-home-filter="true"]
+          [data-vigil-instagram-story-relationship="pending"] {
+          visibility: hidden !important;
+        }
+        html[data-vigil-instagram-home-filter="true"]
+          [data-vigil-instagram-story-relationship="other"] {
+          display: none !important;
+        }
+        html[data-vigil-instagram-route-transition="true"] main article {
+          visibility: hidden !important;
+        }
+        html[data-vigil-instagram-home-filter="true"] main [role="progressbar"] {
+          display: none !important;
+        }
+        @media (prefers-color-scheme: dark) {
+          html a[href="/"] svg[aria-label="Instagram" i],
+          html a[href="/"] svg[aria-label="Instagram" i] * {
+            color: #f5f5f5 !important;
+            fill: #f5f5f5 !important;
+          }
+        }
+        @media (prefers-color-scheme: light) {
+          html a[href="/"] svg[aria-label="Instagram" i],
+          html a[href="/"] svg[aria-label="Instagram" i] * {
+            color: #050505 !important;
+            fill: #050505 !important;
+          }
+        }
         #vigil-instagram-friends-empty {
           box-sizing: border-box !important;
-          margin: 20px auto 96px !important;
-          padding: 22px 20px !important;
-          max-width: 470px !important;
-          border: 1px solid rgba(128, 128, 128, .35) !important;
-          border-radius: 14px !important;
+          position: fixed !important;
+          z-index: 2 !important;
+          inset: 156px 20px 84px !important;
+          display: grid !important;
+          place-items: center !important;
+          pointer-events: none !important;
           color: inherit !important;
-          background: Canvas !important;
           font: 600 15px/1.45 -apple-system, BlinkMacSystemFont, sans-serif !important;
           text-align: center !important;
+        }
+        #vigil-instagram-friends-empty > span {
+          display: none !important;
+          box-sizing: border-box !important;
+          max-width: 320px !important;
+          padding: 20px 22px !important;
+          border: 1px solid rgba(128, 128, 128, .3) !important;
+          border-radius: 14px !important;
+          background: rgba(128, 128, 128, .08) !important;
+        }
+        #vigil-instagram-friends-empty[data-vigil-state="empty"] > span {
+          display: block !important;
+        }
+        #vigil-instagram-friends-empty > i {
+          width: 24px !important;
+          height: 24px !important;
+          border: 2.5px solid rgba(128, 128, 128, .28) !important;
+          border-top-color: currentColor !important;
+          border-radius: 50% !important;
+          animation: vigil-instagram-friends-spin .72s linear infinite !important;
+        }
+        #vigil-instagram-friends-empty[data-vigil-state="empty"] > i {
+          display: none !important;
+        }
+        @keyframes vigil-instagram-friends-spin { to { transform: rotate(360deg); } }
+        [data-vigil-instagram-comments-sheet="true"] {
+          box-sizing: border-box !important;
+          position: fixed !important;
+          inset: auto 0 0 0 !important;
+          z-index: 2147483644 !important;
+          width: 100% !important;
+          min-width: 0 !important;
+          max-width: none !important;
+          height: 52vh !important;
+          height: 52dvh !important;
+          min-height: 0 !important;
+          max-height: 52vh !important;
+          max-height: 52dvh !important;
+          margin: 0 !important;
+          transform: none !important;
+          translate: none !important;
+          overflow: hidden !important;
+          border-radius: 18px 18px 0 0 !important;
         }
         video {
           /* Instagram's web Reel/Story surface commonly fills a taller iPhone
@@ -4101,17 +4177,93 @@ enum DOMAdapters {
           ) {
             display: none !important;
           }
+          html[data-vigil-instagram-home-filter="true"] a[href^="/stories/"]:not(
+            [data-vigil-instagram-story-relationship="friend"]
+          ) {
+            visibility: hidden !important;
+          }
+          html[data-vigil-instagram-home-filter="true"]
+            [data-vigil-instagram-story-relationship="pending"] {
+            visibility: hidden !important;
+          }
+          html[data-vigil-instagram-home-filter="true"]
+            [data-vigil-instagram-story-relationship="other"] {
+            display: none !important;
+          }
+          html[data-vigil-instagram-route-transition="true"] main article {
+            visibility: hidden !important;
+          }
+          html[data-vigil-instagram-home-filter="true"] main [role="progressbar"] {
+            display: none !important;
+          }
+          @media (prefers-color-scheme: dark) {
+            html a[href="/"] svg[aria-label="Instagram" i],
+            html a[href="/"] svg[aria-label="Instagram" i] * {
+              color: #f5f5f5 !important;
+              fill: #f5f5f5 !important;
+            }
+          }
+          @media (prefers-color-scheme: light) {
+            html a[href="/"] svg[aria-label="Instagram" i],
+            html a[href="/"] svg[aria-label="Instagram" i] * {
+              color: #050505 !important;
+              fill: #050505 !important;
+            }
+          }
           #vigil-instagram-friends-empty {
             box-sizing: border-box !important;
-            margin: 20px auto 96px !important;
-            padding: 22px 20px !important;
-            max-width: 470px !important;
-            border: 1px solid rgba(128, 128, 128, .35) !important;
-            border-radius: 14px !important;
+            position: fixed !important;
+            z-index: 2 !important;
+            inset: 156px 20px 84px !important;
+            display: grid !important;
+            place-items: center !important;
+            pointer-events: none !important;
             color: inherit !important;
-            background: Canvas !important;
             font: 600 15px/1.45 -apple-system, BlinkMacSystemFont, sans-serif !important;
             text-align: center !important;
+          }
+          #vigil-instagram-friends-empty > span {
+            display: none !important;
+            box-sizing: border-box !important;
+            max-width: 320px !important;
+            padding: 20px 22px !important;
+            border: 1px solid rgba(128, 128, 128, .3) !important;
+            border-radius: 14px !important;
+            background: rgba(128, 128, 128, .08) !important;
+          }
+          #vigil-instagram-friends-empty[data-vigil-state="empty"] > span {
+            display: block !important;
+          }
+          #vigil-instagram-friends-empty > i {
+            width: 24px !important;
+            height: 24px !important;
+            border: 2.5px solid rgba(128, 128, 128, .28) !important;
+            border-top-color: currentColor !important;
+            border-radius: 50% !important;
+            animation: vigil-instagram-friends-spin .72s linear infinite !important;
+          }
+          #vigil-instagram-friends-empty[data-vigil-state="empty"] > i {
+            display: none !important;
+          }
+          @keyframes vigil-instagram-friends-spin { to { transform: rotate(360deg); } }
+          [data-vigil-instagram-comments-sheet="true"] {
+            box-sizing: border-box !important;
+            position: fixed !important;
+            inset: auto 0 0 0 !important;
+            z-index: 2147483644 !important;
+            width: 100% !important;
+            min-width: 0 !important;
+            max-width: none !important;
+            height: 52vh !important;
+            height: 52dvh !important;
+            min-height: 0 !important;
+            max-height: 52vh !important;
+            max-height: 52dvh !important;
+            margin: 0 !important;
+            transform: none !important;
+            translate: none !important;
+            overflow: hidden !important;
+            border-radius: 18px 18px 0 0 !important;
           }
           video {
             max-width: 100% !important;
@@ -4222,6 +4374,150 @@ enum DOMAdapters {
         });
       };
 
+      const visibleInstagramElement = (element) => {
+        if (!(element instanceof Element) || !element.isConnected) return false;
+        const style = getComputedStyle(element);
+        return style.display !== 'none' && style.visibility !== 'hidden'
+          && element.getClientRects().length > 0;
+      };
+      const normalizedInstagramLabel = (element) => String(
+        element?.getAttribute?.('aria-label') || element?.textContent || ''
+      ).replace(/\s+/g, ' ').trim().toLowerCase();
+      const commentComposerSelector = [
+        'textarea[placeholder*="comment" i]',
+        'input[placeholder*="comment" i]',
+        '[aria-label*="add a comment" i]'
+      ].join(', ');
+      const commentDetailSelector = [
+        '[data-testid*="comment" i]',
+        '[aria-label="Comments" i]',
+        '[aria-label^="Comment by" i]',
+        '[aria-label^="Reply to" i]'
+      ].join(', ');
+      const largeVisibleMediaIn = (root) => {
+        const viewportWidth = Math.max(1, window.visualViewport?.width || innerWidth || 1);
+        const viewportHeight = Math.max(1, window.visualViewport?.height || innerHeight || 1);
+        let inspected = 0;
+        for (const media of root.querySelectorAll('video, img')) {
+          inspected += 1;
+          if (visibleInstagramElement(media)) {
+            const rect = media.getBoundingClientRect();
+            if (rect.width >= Math.min(220, viewportWidth * 0.55)
+                && rect.height >= Math.min(280, viewportHeight * 0.34)) return media;
+          }
+          if (inspected >= 24) break;
+        }
+        return null;
+      };
+      const commentHeadingIn = (root) => {
+        let inspected = 0;
+        for (const heading of root.querySelectorAll('h1, h2, h3, [role="heading"]')) {
+          inspected += 1;
+          if (normalizedInstagramLabel(heading) === 'comments') return heading;
+          if (inspected >= 12) break;
+        }
+        return null;
+      };
+      const nestedCommentPanel = (dialog, heading, composer, largeMedia) => {
+        if (!heading || !composer || !largeMedia) return null;
+        let candidate = heading.parentElement;
+        let depth = 0;
+        while (candidate && candidate !== dialog && depth < 12) {
+          if (candidate.contains(composer) && !candidate.contains(largeMedia)) return candidate;
+          candidate = candidate.parentElement;
+          depth += 1;
+        }
+        return null;
+      };
+      const instagramCommentSheetFor = (dialog) => {
+        if (!(dialog instanceof Element) || !visibleInstagramElement(dialog)) return null;
+        const ownLabel = normalizedInstagramLabel(dialog);
+        const heading = commentHeadingIn(dialog);
+        const composer = dialog.querySelector(commentComposerSelector);
+        const explicitComments = ownLabel === 'comments' || ownLabel.startsWith('comments ');
+        const hasCommentDetails = Boolean(dialog.querySelector(commentDetailSelector));
+        if (!explicitComments && !heading && !(composer && hasCommentDetails)) return null;
+
+        // Some post variants put the media and comments inside one full-screen
+        // dialog. Pin only the nested comments panel in that case; shrinking the
+        // outer dialog would crop the Reel that should continue behind the sheet.
+        const largeMedia = largeVisibleMediaIn(dialog);
+        if (largeMedia) return nestedCommentPanel(dialog, heading, composer, largeMedia);
+        return dialog;
+      };
+      const isInstagramCommentsDialog = (dialog) => Boolean(instagramCommentSheetFor(dialog));
+      let commentPlaybackSnapshot = [];
+      let commentPlaybackSnapshotAt = 0;
+      let commentPlaybackRestoreFor = 0;
+      const commentTrigger = (target) => {
+        const control = target?.closest?.('button, a, [role="button"]');
+        if (!control) return null;
+        const labels = [
+          normalizedInstagramLabel(control),
+          ...[...control.querySelectorAll('[aria-label]')].slice(0, 8)
+            .map(normalizedInstagramLabel)
+        ];
+        return labels.some((label) => label === 'comment' || label === 'comments'
+          || /^view(?: all)?(?: \d+)? comments?$/.test(label)
+          || label === 'add a comment') ? control : null;
+      };
+      const rememberCommentPlayback = (event) => {
+        if (!commentTrigger(event.target)) return;
+        const now = performance.now();
+        const playingMedia = [...document.querySelectorAll('video')].filter((media) => (
+          visibleInstagramElement(media) && !media.paused && !media.ended
+        ));
+        // A physical tap commonly emits touchstart, pointerdown, and click. If
+        // Instagram pauses between those events, keep the first event's valid
+        // snapshot instead of replacing it with the later paused state.
+        if (!playingMedia.length && now - commentPlaybackSnapshotAt < 1200) return;
+        commentPlaybackSnapshot = playingMedia;
+        commentPlaybackSnapshotAt = now;
+      };
+      const restoreCommentPlayback = () => {
+        if (!document.querySelector('[data-vigil-instagram-comments-sheet="true"]')
+            || performance.now() - commentPlaybackSnapshotAt > 1800) return;
+        commentPlaybackSnapshot.forEach((media) => {
+          if (!media.isConnected || !media.paused || media.ended
+              || window.__vigilEarlyMediaGate?.isHeld?.(media)) return;
+          try {
+            const replay = media.play();
+            replay?.catch?.(() => {});
+          } catch (_) {}
+        });
+      };
+      const scheduleCommentPlaybackRestore = () => {
+        if (!commentPlaybackSnapshotAt
+            || commentPlaybackRestoreFor === commentPlaybackSnapshotAt) return;
+        commentPlaybackRestoreFor = commentPlaybackSnapshotAt;
+        // Instagram variants pause either during dialog insertion or in a
+        // shortly delayed React effect. Cover both without owning playback
+        // beyond the opening transition.
+        [0, 80, 240, 600].forEach((delay) => setTimeout(restoreCommentPlayback, delay));
+      };
+      const normalizeCommentSheets = () => {
+        const activeSheets = new Set();
+        let inspected = 0;
+        for (const dialog of document.querySelectorAll(
+          '[role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"]:not([aria-hidden="true"])'
+        )) {
+          inspected += 1;
+          const sheet = instagramCommentSheetFor(dialog);
+          if (sheet) activeSheets.add(sheet);
+          if (inspected >= 16) break;
+        }
+        document.querySelectorAll('[data-vigil-instagram-comments-sheet]').forEach((sheet) => {
+          if (!activeSheets.has(sheet)) sheet.removeAttribute('data-vigil-instagram-comments-sheet');
+        });
+        activeSheets.forEach((sheet) => {
+          sheet.dataset.vigilInstagramCommentsSheet = 'true';
+        });
+        if (activeSheets.size) scheduleCommentPlaybackRestore();
+      };
+      document.addEventListener('pointerdown', rememberCommentPlayback, true);
+      document.addEventListener('touchstart', rememberCommentPlayback, { capture: true, passive: true });
+      document.addEventListener('click', rememberCommentPlayback, true);
+
       let redirectedURL = '';
       let lastURL = location.href;
       let sharedReelPath = '';
@@ -4286,11 +4582,131 @@ enum DOMAdapters {
         publishUnavailable(feature);
         try { location.replace('/'); } catch (_) {}
       };
-      const scheduleRouteCheck = () => queueMicrotask(() => {
-        enforceRoute();
-        reconcileFriendsFeed();
-      });
+      let routeTransitionGeneration = 0;
+      const prepareRouteTransition = (value = location.href) => {
+        try {
+          const url = new URL(value, location.href);
+          if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return;
+          document.documentElement.dataset.vigilInstagramRouteTransition = 'true';
+          if ((url.pathname.toLowerCase().replace(/\/+$/, '') || '/') === '/') {
+            // Set the fail-closed Home marker before Instagram synchronously
+            // swaps its SPA tree, not one mutation callback afterward.
+            document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
+          }
+        } catch (_) {}
+      };
+      const scheduleRouteCheck = () => {
+        const generation = ++routeTransitionGeneration;
+        prepareRouteTransition();
+        queueMicrotask(() => {
+          enforceRoute();
+          reconcileFriendsFeed();
+          requestAnimationFrame(() => requestAnimationFrame(() => {
+            if (generation !== routeTransitionGeneration) return;
+            delete document.documentElement.dataset.vigilInstagramRouteTransition;
+            reconcileFriendsFeed();
+          }));
+        });
+      };
+      // Mobile WebKit preserves CSS hover after a touch. In Direct, Instagram
+      // uses that hover to reveal reactions and More, so its first tap can stop
+      // at the hover state and require a second tap to activate the underlying
+      // conversation or shared item. Activate a short, stationary touch on
+      // release; leave a held touch entirely to Instagram's native menu.
+      const directActivationSelector = [
+        'a[href]',
+        'button',
+        '[role="button"]',
+        '[role="link"]',
+        '[tabindex]:not([tabindex="-1"])'
+      ].join(', ');
+      const directActivationTarget = (target) => {
+        const route = instagramRoute();
+        if (route !== 'directInbox' && route !== 'directThread') return null;
+        if (!(target instanceof Element)
+            || target.closest('input, textarea, select, option, [contenteditable="true"]')) return null;
+        const activation = target.closest(directActivationSelector);
+        if (!(activation instanceof HTMLElement)
+            || activation.matches(':disabled, [aria-disabled="true"]')) return null;
+        return activation;
+      };
+      let directTouch = null;
+      let directProgrammaticActivation = false;
+      let suppressedDirectClick = null;
+      const clearDirectTouch = (pointerId = null) => {
+        if (directTouch && (pointerId === null || directTouch.pointerId === pointerId)) {
+          directTouch = null;
+        }
+      };
+      document.addEventListener('pointerdown', (event) => {
+        if (!event.isPrimary || event.pointerType !== 'touch') return;
+        const activation = directActivationTarget(event.target);
+        directTouch = activation ? {
+          activation,
+          pointerId: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          startedAt: performance.now()
+        } : null;
+      }, { capture: true, passive: true });
+      document.addEventListener('pointermove', (event) => {
+        if (!directTouch || directTouch.pointerId !== event.pointerId) return;
+        if (Math.hypot(event.clientX - directTouch.x, event.clientY - directTouch.y) > 14) {
+          directTouch = null;
+        }
+      }, { capture: true, passive: true });
+      document.addEventListener('pointercancel', (event) => {
+        clearDirectTouch(event.pointerId);
+      }, true);
+      document.addEventListener('pointerup', (event) => {
+        const touch = directTouch;
+        clearDirectTouch(event.pointerId);
+        if (!touch || touch.pointerId !== event.pointerId
+            || Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 14
+            || !touch.activation.isConnected
+            || !directActivationTarget(touch.activation)) return;
+        suppressedDirectClick = {
+          activation: touch.activation,
+          x: event.clientX,
+          y: event.clientY,
+          until: performance.now() + 700
+        };
+        // A held release may still be followed by WebKit's compatibility
+        // click. Consume that click, but do not cancel or stop pointerup: the
+        // latter belongs to Instagram's long-press menu lifecycle.
+        if (performance.now() - touch.startedAt > 420) return;
+        if (event.cancelable) event.preventDefault();
+        // Run after Instagram receives pointerup so any pressed/hold state it
+        // owns is cleared before the ordinary activation is delivered.
+        queueMicrotask(() => {
+          if (!touch.activation.isConnected || !directActivationTarget(touch.activation)) return;
+          directProgrammaticActivation = true;
+          try { touch.activation.click(); } catch (_) {}
+          finally { directProgrammaticActivation = false; }
+        });
+      }, { capture: true, passive: false });
       document.addEventListener('click', (event) => {
+        if (suppressedDirectClick && performance.now() > suppressedDirectClick.until) {
+          suppressedDirectClick = null;
+        }
+        if (suppressedDirectClick && !directProgrammaticActivation) {
+          const target = event.target instanceof Element ? event.target : null;
+          const activation = suppressedDirectClick.activation;
+          const atReleasedPoint = event instanceof MouseEvent
+            && Math.hypot(
+              event.clientX - suppressedDirectClick.x,
+              event.clientY - suppressedDirectClick.y
+            ) <= 24;
+          if (target && (target === activation
+              || activation.contains(target)
+              || target.contains(activation)
+              || atReleasedPoint)) {
+            suppressedDirectClick = null;
+            if (event.cancelable) event.preventDefault();
+            event.stopImmediatePropagation();
+            return;
+          }
+        }
         const link = event.target?.closest?.('a[href]');
         if (!link) return;
         if (isReelsDestinationRoute(link.href)
@@ -4302,23 +4718,34 @@ enum DOMAdapters {
           return;
         }
         const feature = restrictedFeature(link.href);
-        if (!feature) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        publishUnavailable(feature);
+        if (feature) {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          publishUnavailable(feature);
+          return;
+        }
+        prepareRouteTransition(link.href);
       }, true);
       for (const name of ['pushState', 'replaceState']) {
         const original = history[name];
         history[name] = function(...args) {
+          prepareRouteTransition(args[2]);
           const result = original.apply(this, args);
           scheduleRouteCheck();
           return result;
         };
       }
-      addEventListener('popstate', enforceRoute, true);
-      addEventListener('hashchange', enforceRoute, true);
-      addEventListener('pageshow', enforceRoute, true);
-      window.navigation?.addEventListener?.('navigate', scheduleRouteCheck);
+      const historyRouteEvent = () => {
+        prepareRouteTransition();
+        scheduleRouteCheck();
+      };
+      addEventListener('popstate', historyRouteEvent, true);
+      addEventListener('hashchange', historyRouteEvent, true);
+      addEventListener('pageshow', scheduleRouteCheck, true);
+      window.navigation?.addEventListener?.('navigate', (event) => {
+        prepareRouteTransition(event.destination?.url);
+        scheduleRouteCheck();
+      });
 
       const exactLeafLabel = (root, expected) => {
         const expectedLabels = new Set(
@@ -4371,7 +4798,44 @@ enum DOMAdapters {
       // the viewer. This is identity-based and deliberately has no item limit.
       const friendshipCache = new Map();
       const friendshipChecks = new Map();
+      const viewerID = (() => {
+        try {
+          return decodeURIComponent(
+            document.cookie.match(/(?:^|;\s*)ds_user_id=([^;]+)/)?.[1] || ''
+          );
+        } catch (_) { return ''; }
+      })();
+      // A viewer-scoped local cache survives relaunches. If Instagram hides the
+      // viewer identity cookie, fall back to this WKWebView session so cached
+      // relationships can never cross accounts.
+      const friendshipStorage = viewerID ? localStorage : sessionStorage;
+      const friendshipCacheKey = `vigil.instagram.mutual-friendships.v1:${viewerID || 'session'}`;
+      const friendshipCacheTTL = 6 * 60 * 60 * 1000;
       let friendshipLookupFailed = false;
+      try {
+        const saved = JSON.parse(friendshipStorage.getItem(friendshipCacheKey) || '{}');
+        const now = Date.now();
+        Object.entries(saved).forEach(([username, record]) => {
+          if (typeof record?.mutual === 'boolean'
+              && Number.isFinite(record?.checkedAt)
+              && now - record.checkedAt < friendshipCacheTTL) {
+            friendshipCache.set(username, record.mutual);
+          }
+        });
+      } catch (_) {}
+      const persistFriendship = (username, mutual) => {
+        try {
+          const now = Date.now();
+          const saved = JSON.parse(friendshipStorage.getItem(friendshipCacheKey) || '{}');
+          const fresh = Object.fromEntries(Object.entries(saved).filter(([, record]) => (
+            typeof record?.mutual === 'boolean'
+            && Number.isFinite(record?.checkedAt)
+            && now - record.checkedAt < friendshipCacheTTL
+          )));
+          fresh[username] = { mutual, checkedAt: now };
+          friendshipStorage.setItem(friendshipCacheKey, JSON.stringify(fresh));
+        } catch (_) {}
+      };
       const normalizedUsername = (value) => String(value || '').trim().replace(/^@/, '').toLowerCase();
       const homeCardAuthor = (article) => {
         const links = article.querySelectorAll?.('a[href]') || [];
@@ -4413,6 +4877,7 @@ enum DOMAdapters {
             const followsViewer = status.followed_by === true || user.follows_viewer === true;
             const mutual = viewerFollows && followsViewer;
             friendshipCache.set(username, mutual);
+            persistFriendship(username, mutual);
             return mutual;
           } catch (_) {
             friendshipLookupFailed = true;
@@ -4425,10 +4890,68 @@ enum DOMAdapters {
         friendshipChecks.set(username, check);
         return check;
       };
-      const reconcileFriendsEmptyState = () => {
+      let emptyStateTimer = 0;
+      let emptyStateSignature = '';
+      const removeFriendsState = () => {
+        clearTimeout(emptyStateTimer);
+        emptyStateTimer = 0;
+        emptyStateSignature = '';
+        document.getElementById('vigil-instagram-friends-empty')?.remove();
+      };
+      const renderFriendsState = (mode, force = false) => {
         const stateID = 'vigil-instagram-friends-empty';
+        let state = document.getElementById(stateID);
+        if (!state) {
+          state = document.createElement('div');
+          state.id = stateID;
+          state.setAttribute('role', 'status');
+          state.setAttribute('aria-live', 'polite');
+          const spinner = document.createElement('i');
+          spinner.setAttribute('aria-hidden', 'true');
+          const message = document.createElement('span');
+          state.append(spinner, message);
+          document.body?.append(state);
+        }
+        if (!state) return;
+        // Once the settled empty result is visible, background pagination may
+        // continue checking newly inserted cards without flashing back to a
+        // loader. Only removeFriendsState(), called for a verified friend or a
+        // route change, may replace that settled result.
+        if (!force && state.dataset.vigilState === 'empty' && mode === 'loading') return;
+        state.dataset.vigilState = mode;
+        state.querySelector('span').textContent = friendshipLookupFailed
+          ? 'We could not find anything from friends right now.'
+          : 'Nothing from your friends yet.';
+      };
+      window.__vigilResetFriendsFeedForRefresh = () => {
+        if (instagramRoute() !== 'feed') return;
+        clearTimeout(emptyStateTimer);
+        emptyStateTimer = 0;
+        emptyStateSignature = '';
+        friendshipLookupFailed = false;
+        renderFriendsState('loading', true);
+      };
+      const scheduleFriendsEmpty = (signature, delay) => {
+        if (emptyStateTimer && emptyStateSignature === signature) return;
+        clearTimeout(emptyStateTimer);
+        emptyStateSignature = signature;
+        emptyStateTimer = setTimeout(() => {
+          emptyStateTimer = 0;
+          if (instagramRoute() !== 'feed') return;
+          const articles = [...document.querySelectorAll('main article:not([data-vigil-hidden-feature])')];
+          if (articles.some((article) => (
+            article.dataset.vigilInstagramHomeRelationship === 'friend'
+          ))) return;
+          if (articles.some((article) => (
+            !article.dataset.vigilInstagramHomeRelationship
+            || article.dataset.vigilInstagramHomeRelationship === 'pending'
+          ))) return;
+          renderFriendsState('empty');
+        }, delay);
+      };
+      const reconcileFriendsEmptyState = () => {
         if (instagramRoute() !== 'feed') {
-          document.getElementById(stateID)?.remove();
+          removeFriendsState();
           return;
         }
         const articles = [...document.querySelectorAll('main article:not([data-vigil-hidden-feature])')];
@@ -4436,25 +4959,24 @@ enum DOMAdapters {
           article.dataset.vigilInstagramHomeRelationship === 'friend'
         ));
         if (hasFriend) {
-          document.getElementById(stateID)?.remove();
+          removeFriendsState();
           return;
         }
-        const checking = articles.some((article) => (
+        const checking = articles.length === 0 || articles.some((article) => (
           !article.dataset.vigilInstagramHomeRelationship
           || article.dataset.vigilInstagramHomeRelationship === 'pending'
         ));
-        let state = document.getElementById(stateID);
-        if (!state) {
-          state = document.createElement('div');
-          state.id = stateID;
-          state.setAttribute('role', 'status');
-          (document.querySelector('main') || document.body)?.prepend(state);
+        renderFriendsState('loading');
+        if (checking) {
+          if (articles.length === 0) scheduleFriendsEmpty('no-articles', 4000);
+          else {
+            clearTimeout(emptyStateTimer);
+            emptyStateTimer = 0;
+            emptyStateSignature = '';
+          }
+          return;
         }
-        state.textContent = checking
-          ? 'Checking for something new from friends…'
-          : friendshipLookupFailed
-            ? 'Could not check your friends right now. Nothing else is shown.'
-            : 'Nothing from your friends yet.';
+        scheduleFriendsEmpty('checked-articles', 350);
       };
       const classifyHomeCard = (article) => {
         if (!(article instanceof Element) || article.hasAttribute('data-vigil-hidden-feature')) return;
@@ -4475,14 +4997,67 @@ enum DOMAdapters {
           reconcileFriendsEmptyState();
         });
       };
+      const storyAuthor = (link) => {
+        try {
+          const url = new URL(link.href, location.href);
+          const pieces = url.pathname.split('/').filter(Boolean);
+          return pieces[0]?.toLowerCase() === 'stories'
+            ? normalizedUsername(pieces[1])
+            : '';
+        } catch (_) { return ''; }
+      };
+      const storyItemFor = (link) => {
+        const semanticItem = link.closest('li, [role="listitem"]');
+        if (semanticItem) return semanticItem;
+        return link.parentElement || link;
+      };
+      const isOwnStoryLink = (link) => {
+        const labels = [
+          link.getAttribute('aria-label'),
+          link.textContent,
+          ...[...link.querySelectorAll('[aria-label]')].slice(0, 8)
+            .map((node) => node.getAttribute('aria-label'))
+        ].map((value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase());
+        return labels.some((label) => label === 'your story' || label.startsWith('your story, '));
+      };
+      const classifyHomeStory = (link) => {
+        if (!(link instanceof HTMLAnchorElement)) return;
+        const username = storyAuthor(link);
+        const item = storyItemFor(link);
+        if (!username) {
+          link.dataset.vigilInstagramStoryRelationship = 'other';
+          item.dataset.vigilInstagramStoryRelationship = 'other';
+          return;
+        }
+        if (isOwnStoryLink(link)) {
+          link.dataset.vigilInstagramStoryRelationship = 'friend';
+          item.dataset.vigilInstagramStoryRelationship = 'friend';
+          return;
+        }
+        if (link.dataset.vigilInstagramStoryAuthor === username
+            && ['friend', 'other', 'pending'].includes(
+              link.dataset.vigilInstagramStoryRelationship || ''
+            )) return;
+        link.dataset.vigilInstagramStoryAuthor = username;
+        link.dataset.vigilInstagramStoryRelationship = 'pending';
+        item.dataset.vigilInstagramStoryRelationship = 'pending';
+        void fetchMutualFriendship(username).then((mutual) => {
+          if (!link.isConnected || storyAuthor(link) !== username) return;
+          const currentItem = storyItemFor(link);
+          const relationship = mutual ? 'friend' : 'other';
+          link.dataset.vigilInstagramStoryRelationship = relationship;
+          currentItem.dataset.vigilInstagramStoryRelationship = relationship;
+        });
+      };
       const reconcileFriendsFeed = () => {
         const isFeed = instagramRoute() === 'feed';
         if (!isFeed) {
           delete document.documentElement.dataset.vigilInstagramHomeFilter;
-          document.getElementById('vigil-instagram-friends-empty')?.remove();
+          removeFriendsState();
           return;
         }
         document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
+        document.querySelectorAll('a[href^="/stories/"]').forEach(classifyHomeStory);
         document.querySelectorAll('main article').forEach(classifyHomeCard);
         reconcileFriendsEmptyState();
       };
@@ -4561,6 +5136,7 @@ enum DOMAdapters {
             markNativeAppPrompts(candidate);
             markAccountOnlySearch(candidate);
           });
+          normalizeCommentSheets();
           reconcileFriendsFeed();
         });
       };
@@ -4590,6 +5166,7 @@ enum DOMAdapters {
       markFilteredCards(document);
       markNativeAppPrompts(document);
       markAccountOnlySearch(document);
+      normalizeCommentSheets();
       reconcileFriendsFeed();
       enforceRoute();
       // Reel media embedded in followed posts, profiles, and Direct threads is

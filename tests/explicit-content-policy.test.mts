@@ -32,8 +32,10 @@ assert.ok(expected.terms.includes("porn"));
 assert.equal(expected.terms.includes("18+"), false, "ambiguous age-gate text remains a URL-only rule");
 assert.equal(expected.terms.includes("croxyproxy"), false, "circumvention domains must remain network-only rules");
 assert.equal(expected.terms.includes("wildlife"), false, "priority adult domains must not become generic page-text terms");
+assert.equal(expected.terms.includes("deviantart"), false, "mixed-content priority domains must remain network-only rules");
 assert.ok(DEFAULT_FILTER_BYPASS_BLOCKED_SITES.includes("croxyproxy.com"));
 assert.ok(DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.includes("wildlife.adult"));
+assert.ok(DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.includes("deviantart.com"));
 assert.ok(expected.contextualRules.some((rule) => (
   rule.contexts.includes("webtoon") && rule.markers.includes("mature")
 )));

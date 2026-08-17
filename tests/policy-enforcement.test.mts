@@ -581,6 +581,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockSite(profile, "docs.google.com"), false);
   assert.equal(shouldBlockSite(profile, "www.croxyproxy.com"), true);
   assert.equal(shouldBlockSite(profile, "wildlife.adult"), true);
+  assert.equal(shouldBlockSite(profile, "www.deviantart.com"), true);
+  assert.equal(shouldBlockSite(profile, "artist.deviantart.com"), true);
   assert.equal(expandSiteTargets(["youtube.com"]).includes("youtu.be"), true);
   assert.equal(hostMatchesSiteTargets("mobile.twitter.com", ["x.com"]), true);
   assert.equal(shouldBlockSite(testProfile({ mode: "allowlist", allowedSites: ["youtube.com"], blockedSites: [] }), "youtu.be"), false);

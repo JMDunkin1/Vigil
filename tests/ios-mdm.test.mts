@@ -45,6 +45,7 @@ if (removeTestUrlFilterService) {
   const allPrioritySites = [...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES];
   assert.equal(allPrioritySites.length >= 200, true, "the Personal priority overlay should cover a couple hundred high-risk domains");
   assert.equal(allPrioritySites.every((site) => targets.deniedUrls.includes(`https://${site}/`)), true);
+  assert.equal(targets.deniedUrls.includes("https://deviantart.com/"), true, "DeviantArt must be blocked when SafeSearch cannot sanitize it");
   assert.equal(targets.deniedUrls.includes("http://croxyproxy.com/"), false, "HTTPS-only proxy roots preserve capacity for modern services");
   assert.equal(targets.deniedUrls.includes("http://anonymouse.com/"), true, "confirmed plain-HTTP proxies need a second scheme entry");
   assert.equal(DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES.every((site) => targets.deniedUrls.includes(`http://${site}/`)), true);

@@ -86,6 +86,23 @@ const socialInfoPlistSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Info.plist"),
   "utf8"
 );
+const launchBackgroundContents = JSON.parse(await readFile(
+  join(
+    projectRoot,
+    "ios",
+    "VigilSocial",
+    "VigilSocial",
+    "Assets.xcassets",
+    "LaunchBackground.colorset",
+    "Contents.json"
+  ),
+  "utf8"
+)) as {
+  colors: Array<{
+    appearances?: Array<{ appearance: string; value: string }>;
+    color: { components: { alpha: string; blue: string; green: string; red: string } };
+  }>;
+};
 const iosProfilesSource = await readFile(join(projectRoot, "src", "iosProfiles.ts"), "utf8");
 const parityAuditSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "PARITY_AUDIT.md"),
@@ -216,8 +233,23 @@ assert.match(
 );
 assert.doesNotMatch(
   instagramStableAdapterSource,
-  /scheduleReelsWarmup|normalizeReelSurface|normalizeBottomNavigation|normalizeCommentSheets|repost-proxy/u,
-  "the production Instagram adapter must not prefetch or rewrite Instagram's layout and controls"
+  /scheduleReelsWarmup|normalizeReelSurface|normalizeBottomNavigation|repost-proxy/u,
+  "the production Instagram adapter must not prefetch or rewrite Instagram's Reel layout and controls"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /const normalizeCommentSheets = \(\)[\s\S]*?sheet\.dataset\.vigilInstagramCommentsSheet = 'true'/u,
+  "the production Instagram adapter must normalize every recognized comments surface"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /rememberCommentPlayback[\s\S]*?!media\.paused[\s\S]*?restoreCommentPlayback[\s\S]*?__vigilEarlyMediaGate\?\.isHeld\?\.\(media\)[\s\S]*?media\.play\(\)/u,
+  "opening comments should resume only media that was playing and remains allowed by the safety gate"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /height: 52dvh !important[\s\S]*?nestedCommentPanel[\s\S]*?!candidate\.contains\(largeMedia\)/u,
+  "a full-screen post dialog must keep its media outside the normalized half-height comments panel"
 );
 assert.match(
   instagramStableAdapterSource,
@@ -256,6 +288,16 @@ assert.doesNotMatch(
 );
 assert.match(
   instagramStableAdapterSource,
+  /const directActivationTarget[\s\S]*?event\.pointerType !== 'touch'[\s\S]*?performance\.now\(\) - touch\.startedAt > 420[\s\S]*?touch\.activation\.click\(\)/u,
+  "Instagram Direct must activate a quick touch once while reserving held touches for the message menu"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /A held release may still be followed[\s\S]*?suppressedDirectClick[\s\S]*?event\.stopImmediatePropagation\(\)/u,
+  "a held Direct touch must suppress WebKit's trailing compatibility click without consuming pointerup"
+);
+assert.match(
+  instagramStableAdapterSource,
   /const fetchMutualFriendship = async \(username\)[\s\S]*?viewerFollows && followsViewer[\s\S]*?Nothing from your friends yet/u,
   "Instagram home must show only mutually followed friends and fail closed when no friend content is available"
 );
@@ -263,6 +305,78 @@ assert.doesNotMatch(
   instagramStableAdapterSource,
   /homeDigestLimit|home-overflow|small home digest/u,
   "Instagram friend filtering must not use an arbitrary item limit"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /friendshipCacheTTL = 6 \* 60 \* 60 \* 1000[\s\S]*?friendshipStorage\.setItem/u,
+  "Instagram should reuse fresh viewer-scoped relationship checks to improve time to first friend post"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /a\[href\^="\/stories\/"\]:not\([\s\S]*?data-vigil-instagram-story-relationship="friend"[\s\S]*?visibility: hidden !important/u,
+  "Instagram must conceal unverified Stories before they can paint on Home"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /const classifyHomeStory[\s\S]*?isOwnStoryLink\(link\)[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?querySelectorAll\('a\[href\^="\/stories\/"\]'\)\.forEach\(classifyHomeStory\)/u,
+  "Instagram Home Stories must reuse the mutual-friend verifier while retaining the viewer's own Story"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /const semanticItem = link\.closest\('li, \[role="listitem"\]'\)[\s\S]*?return link\.parentElement \|\| link/u,
+  "Story removal must target one tray item rather than climbing into the entire Stories surface"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /document\.body\?\.append\(state\)/u,
+  "Instagram should show a centered out-of-flow spinner before its eventual empty state"
+);
+assert.match(instagramStableAdapterSource, /renderFriendsState\('loading'\)/u);
+assert.match(instagramStableAdapterSource, /renderFriendsState\('empty'\)/u);
+assert.doesNotMatch(
+  instagramStableAdapterSource,
+  /background: Canvas|querySelector\('main'\).*prepend\(state\)/u,
+  "friend status must not restyle or move Instagram's stock header and Stories surface"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /main \[role="progressbar"\][\s\S]*?display: none !important/u,
+  "Instagram's own feed loader must not appear beside Vigil's centered spinner"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /state\.dataset\.vigilState === 'empty' && mode === 'loading'/u,
+  "a settled empty friend feed must not flash back to loading during background pagination"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /window\.__vigilResetFriendsFeedForRefresh[\s\S]*?renderFriendsState\('loading', true\)/u,
+  "an intentional pull-to-refresh must explicitly reset the settled friend feed to loading"
+);
+assert.match(
+  socialWebViewStoreSource,
+  /service == \.instagram[\s\S]*?__vigilResetFriendsFeedForRefresh[\s\S]*?webView\?\.reload\(\)/u,
+  "Instagram's native refresh control must request the friend-feed loading reset before reload"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /prefers-color-scheme: dark[\s\S]*?svg\[aria-label="Instagram" i\][\s\S]*?color: #f5f5f5 !important/u,
+  "Instagram's wordmark must retain readable contrast in dark mode"
+);
+assert.match(
+  socialWebViewStoreSource,
+  /UITraitCollection\.current\.userInterfaceStyle[\s\S]*?webView\.overrideUserInterfaceStyle = initialStyle[\s\S]*?webView\.load/u,
+  "Instagram must seed WebKit's native appearance before its first navigation"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /data-vigil-instagram-route-transition="true"[\s\S]*?main article[\s\S]*?visibility: hidden !important/u,
+  "Instagram SPA transitions must conceal stale article trees before they can flash"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /const prepareRouteTransition[\s\S]*?vigilInstagramHomeFilter = 'true'[\s\S]*?prepareRouteTransition\(link\.href\)[\s\S]*?prepareRouteTransition\(args\[2\]\)/u,
+  "Home must become fail-closed before click and History API route swaps"
 );
 assert.match(
   socialDOMAdaptersSource,
@@ -283,8 +397,8 @@ assert.match(
 );
 assert.match(
   socialServiceSource,
-  /case \.youtube:[\s\S]{0,420}URL\(string: "https:\/\/m\.youtube\.com\/feed\/subscriptions"\)!/u,
-  "YouTube must start on Subscriptions instead of loading a blocked recommendations page and redirecting"
+  /case \.youtube:[\s\S]{0,420}URL\(string: "https:\/\/m\.youtube\.com\/"\)!/u,
+  "YouTube must start on Home and let the policy adapter redirect when recommendations are blocked"
 );
 assert.match(
   socialWebViewStoreSource,
@@ -579,6 +693,22 @@ assert.doesNotMatch(
   socialInfoPlistSource,
   /CFBundleIcon(?:Files|Name)|SOCIAL_ICON_NAME/u,
   "the legacy plist PNG declaration must not override the compiled app icon catalog"
+);
+assert.match(
+  socialInfoPlistSource,
+  /<key>UILaunchScreen<\/key>\s*<dict>\s*<key>UIColorName<\/key>\s*<string>LaunchBackground<\/string>/u,
+  "the native launch screen must use the adaptive app background instead of iOS's white default"
+);
+assert.deepEqual(
+  launchBackgroundContents.colors.map((entry) => ({
+    appearance: entry.appearances?.[0]?.value || "light",
+    ...entry.color.components
+  })),
+  [
+    { appearance: "light", alpha: "1.000", blue: "1.000", green: "1.000", red: "1.000" },
+    { appearance: "dark", alpha: "1.000", blue: "0.000", green: "0.000", red: "0.000" }
+  ],
+  "the launch background must be black in dark mode so startup cannot flash white"
 );
 
 for (const [service, iconSet] of [["youtube", "YouTubeAppIcon"]] as const) {

@@ -272,6 +272,7 @@ export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
   "pornpics.com",
   "f95zone.to",
   "beeg.com",
+  "deviantart.com",
   "redgifs.com",
   "rule34.xxx",
   "nhentai.net",
