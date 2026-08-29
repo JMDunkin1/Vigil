@@ -1,24 +1,24 @@
 {
   "schemaVersion": 3,
-  "version": "0.3.68",
-  "build": 71,
+  "version": "0.3.70",
+  "build": 73,
   "sourceFingerprints": {
-    "personal": "71bfa5c1a8a9eb00db2555ce128067998edede1f2b9da0b9fba54a2e6a1211d2",
+    "personal": "f4188a058bbe161094b69e9867648c625893bb3ff6a7cbd41955d04f7816559b",
     "enhanced": "33c130da2542d9371f096f10b7c54e9d19cb3f7fafbbbb750be7b501ec3bd51b"
   },
-  "releasedAt": "2026-08-17T23:08:49.419Z",
+  "releasedAt": "2026-08-18T00:14:47.305Z",
   "apps": {
     "instagram": {
-      "version": "0.3.62",
-      "build": 65,
-      "sourceFingerprint": "ed5e2d459e3d79bf4a514164f6be11ac9f97511ddb2d36ffa53fe7a15a10d8f9",
-      "releasedAt": "2026-08-17T23:08:49.419Z"
+      "version": "0.3.64",
+      "build": 67,
+      "sourceFingerprint": "b9934902b36695215c222da8de138192f017a439979ee7ee4e25657ecbfdef94",
+      "releasedAt": "2026-08-18T00:14:47.305Z"
     },
     "youtube": {
-      "version": "0.3.62",
-      "build": 65,
-      "sourceFingerprint": "4bb688c2474d125e4ba97155ff9afa389c5dc96beeb5e818458a18dc60b00652",
-      "releasedAt": "2026-08-17T23:08:49.419Z"
+      "version": "0.3.64",
+      "build": 67,
+      "sourceFingerprint": "c150df8ce56d6b5d735d0f0963c5f556764f17311e6d1ed48597df6e616ca466",
+      "releasedAt": "2026-08-18T00:14:47.305Z"
     }
   }
 }

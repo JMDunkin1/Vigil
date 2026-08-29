@@ -208,12 +208,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ? .never
             : .automatic
         if service == .instagram {
-            // Keep an opaque native backing surface visible while Instagram
-            // replaces its SPA document. A transparent WKWebView exposes the
-            // host beneath it as a black/white flash during those transitions.
+            // Instagram's own startup mark appears on a dark canvas. Use the
+            // same deterministic backing color before WebKit has a document;
+            // systemBackground can resolve light during cold initialization
+            // even when the eventual page chooses dark appearance.
             webView.isOpaque = true
-            webView.backgroundColor = .systemBackground
-            webView.scrollView.backgroundColor = .systemBackground
+            webView.backgroundColor = .black
+            webView.scrollView.backgroundColor = .black
         }
         webViews[service] = webView
         serviceByWebView[ObjectIdentifier(webView)] = service

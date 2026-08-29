@@ -318,13 +318,18 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /const classifyHomeStory[\s\S]*?isOwnStoryLink\(link\)[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?querySelectorAll\('a\[href\^="\/stories\/"\]'\)\.forEach\(classifyHomeStory\)/u,
-  "Instagram Home Stories must reuse the mutual-friend verifier while retaining the viewer's own Story"
+  /const homeStoryControls[\s\S]*?main button:has\(img\[alt\*="profile picture" i\]\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?homeStoryControls\(\)\.forEach\(classifyHomeStory\)/u,
+  "Instagram Home Stories must classify both link and button trays with the mutual-friend verifier while retaining the viewer's own Story"
 );
 assert.match(
   instagramStableAdapterSource,
-  /const semanticItem = link\.closest\('li, \[role="listitem"\]'\)[\s\S]*?return link\.parentElement \|\| link/u,
+  /const semanticItem = control\.closest\('li, \[role="listitem"\]'\)[\s\S]*?return control\.parentElement \|\| control/u,
   "Story removal must target one tray item rather than climbing into the entire Stories surface"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /const storyAuthor = \(control\)[\s\S]*?profile picture[\s\S]*?const isOwnStoryControl/u,
+  "button-based Stories must derive their author from Instagram's accessible profile-image metadata"
 );
 assert.match(
   instagramStableAdapterSource,
@@ -385,8 +390,13 @@ assert.match(
 );
 assert.match(
   socialWebViewStoreSource,
-  /if service == \.instagram \{[\s\S]*?webView\.isOpaque = true[\s\S]*?webView\.backgroundColor = \.systemBackground[\s\S]*?webView\.scrollView\.backgroundColor = \.systemBackground/u,
-  "Instagram must keep an opaque native backing surface during SPA document swaps"
+  /if service == \.instagram \{[\s\S]*?webView\.isOpaque = true[\s\S]*?webView\.backgroundColor = \.black[\s\S]*?webView\.scrollView\.backgroundColor = \.black/u,
+  "Instagram must keep a black opaque native backing surface before WebKit's first document"
+);
+assert.match(
+  socialDOMAdaptersSource,
+  /vigilInstagramStarting = 'true'[\s\S]*?delete document\.documentElement\.dataset\.vigilInstagramStarting[\s\S]*?DOMContentLoaded[\s\S]*?background-color: #000 !important/u,
+  "Instagram must hold a black document canvas until its initial DOM is ready"
 );
 assert.doesNotMatch(socialWebViewStoreSource, /guard service != \.youtube|selectedService != \.youtube/u,
   "YouTube navigation must not retain the retired no-WK early returns");
@@ -705,10 +715,10 @@ assert.deepEqual(
     ...entry.color.components
   })),
   [
-    { appearance: "light", alpha: "1.000", blue: "1.000", green: "1.000", red: "1.000" },
+    { appearance: "light", alpha: "1.000", blue: "0.000", green: "0.000", red: "0.000" },
     { appearance: "dark", alpha: "1.000", blue: "0.000", green: "0.000", red: "0.000" }
   ],
-  "the launch background must be black in dark mode so startup cannot flash white"
+  "the launch background must always be black so startup cannot flash white before appearance resolves"
 );
 
 for (const [service, iconSet] of [["youtube", "YouTubeAppIcon"]] as const) {

@@ -1559,9 +1559,26 @@ enum DOMAdapters {
       if (window.__vigilInstagramStableStartInstalled) return;
       window.__vigilInstagramStableStartInstalled = true;
 
+      // WebKit's default document canvas is white. Hold a black canvas from
+      // document-start through Instagram's first complete DOM so the native
+      // launch screen hands off directly to Instagram's startup mark.
+      document.documentElement.dataset.vigilInstagramStarting = 'true';
+      const finishStartupCanvas = () => requestAnimationFrame(() => {
+        delete document.documentElement.dataset.vigilInstagramStarting;
+      });
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', finishStartupCanvas, { once: true });
+      } else {
+        finishStartupCanvas();
+      }
+
       const style = document.createElement('style');
       style.id = 'vigil-instagram-stable-start-style';
       style.textContent = `
+        html[data-vigil-instagram-starting="true"],
+        html[data-vigil-instagram-starting="true"] body {
+          background-color: #000 !important;
+        }
         html :is(
           a[href="/reels/"], a[href="/reels"], [aria-label="Reels" i]
         ),
@@ -1595,6 +1612,12 @@ enum DOMAdapters {
         html[data-vigil-instagram-home-filter="true"] a[href^="/stories/"]:not(
           [data-vigil-instagram-story-relationship="friend"]
         ) {
+          visibility: hidden !important;
+        }
+        html[data-vigil-instagram-home-filter="true"] main
+          :is(button, [role="button"]):has(img[alt*="profile picture" i]):not(
+            article :is(button, [role="button"])
+          ):not([data-vigil-instagram-story-relationship="friend"]) {
           visibility: hidden !important;
         }
         html[data-vigil-instagram-home-filter="true"]
@@ -4182,6 +4205,12 @@ enum DOMAdapters {
           ) {
             visibility: hidden !important;
           }
+          html[data-vigil-instagram-home-filter="true"] main
+            :is(button, [role="button"]):has(img[alt*="profile picture" i]):not(
+              article :is(button, [role="button"])
+            ):not([data-vigil-instagram-story-relationship="friend"]) {
+            visibility: hidden !important;
+          }
           html[data-vigil-instagram-home-filter="true"]
             [data-vigil-instagram-story-relationship="pending"] {
             visibility: hidden !important;
@@ -4997,55 +5026,99 @@ enum DOMAdapters {
           reconcileFriendsEmptyState();
         });
       };
-      const storyAuthor = (link) => {
-        try {
-          const url = new URL(link.href, location.href);
-          const pieces = url.pathname.split('/').filter(Boolean);
-          return pieces[0]?.toLowerCase() === 'stories'
-            ? normalizedUsername(pieces[1])
-            : '';
-        } catch (_) { return ''; }
+      const validInstagramUsername = (value) => {
+        const username = normalizedUsername(value);
+        return /^[a-z0-9._]{1,30}$/.test(username) ? username : '';
       };
-      const storyItemFor = (link) => {
-        const semanticItem = link.closest('li, [role="listitem"]');
-        if (semanticItem) return semanticItem;
-        return link.parentElement || link;
-      };
-      const isOwnStoryLink = (link) => {
+      const storyAuthor = (control) => {
+        if (control instanceof HTMLAnchorElement) {
+          try {
+            const url = new URL(control.href, location.href);
+            const pieces = url.pathname.split('/').filter(Boolean);
+            if (pieces[0]?.toLowerCase() === 'stories') {
+              const fromPath = validInstagramUsername(pieces[1]);
+              if (fromPath) return fromPath;
+            }
+          } catch (_) {}
+        }
+        for (const image of control.querySelectorAll('img[alt]')) {
+          const alt = String(image.getAttribute('alt') || '').replace(/\s+/g, ' ').trim();
+          const possessive = alt.match(/^(.+?)(?:'s|’s) profile picture(?:\b|$)/i);
+          if (possessive) {
+            const fromPossessive = validInstagramUsername(possessive[1]);
+            if (fromPossessive) return fromPossessive;
+          }
+          const described = alt.match(/^profile picture of ([a-z0-9._]{1,30})(?:\b|$)/i);
+          if (described) return validInstagramUsername(described[1]);
+        }
         const labels = [
-          link.getAttribute('aria-label'),
-          link.textContent,
-          ...[...link.querySelectorAll('[aria-label]')].slice(0, 8)
+          control.getAttribute('aria-label'),
+          ...[...control.querySelectorAll('[aria-label]')].slice(0, 12)
+            .map((node) => node.getAttribute('aria-label'))
+        ];
+        for (const value of labels) {
+          const label = String(value || '').replace(/\s+/g, ' ').trim();
+          const possessive = label.match(/(?:^|\s)([a-z0-9._]{1,30})(?:'s|’s) story(?:\b|$)/i);
+          if (possessive) return validInstagramUsername(possessive[1]);
+          const status = label.match(/^([a-z0-9._]{1,30}),? (?:unseen|seen) story(?:\b|$)/i);
+          if (status) return validInstagramUsername(status[1]);
+        }
+        const textCandidates = String(control.textContent || '')
+          .split(/\s+/).map(validInstagramUsername).filter(Boolean);
+        return textCandidates[0] || '';
+      };
+      const storyItemFor = (control) => {
+        const semanticItem = control.closest('li, [role="listitem"]');
+        if (semanticItem) return semanticItem;
+        return control.parentElement || control;
+      };
+      const isOwnStoryControl = (control) => {
+        const labels = [
+          control.getAttribute('aria-label'),
+          control.textContent,
+          ...[...control.querySelectorAll('[aria-label]')].slice(0, 12)
             .map((node) => node.getAttribute('aria-label'))
         ].map((value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase());
-        return labels.some((label) => label === 'your story' || label.startsWith('your story, '));
+        return labels.some((label) => label === 'your story'
+          || label.startsWith('your story, ')
+          || label === 'add to your story'
+          || label === 'create story');
       };
-      const classifyHomeStory = (link) => {
-        if (!(link instanceof HTMLAnchorElement)) return;
-        const username = storyAuthor(link);
-        const item = storyItemFor(link);
-        if (!username) {
-          link.dataset.vigilInstagramStoryRelationship = 'other';
-          item.dataset.vigilInstagramStoryRelationship = 'other';
-          return;
-        }
-        if (isOwnStoryLink(link)) {
-          link.dataset.vigilInstagramStoryRelationship = 'friend';
+      const homeStoryControls = () => {
+        const controls = [...document.querySelectorAll([
+          'a[href^="/stories/"]',
+          'main button:has(img[alt*="profile picture" i])',
+          'main [role="button"]:has(img[alt*="profile picture" i])'
+        ].join(', '))];
+        return controls.filter((control) => !control.closest('article, nav, [role="navigation"]')
+          && !controls.some((parent) => parent !== control && parent.contains(control)));
+      };
+      const classifyHomeStory = (control) => {
+        if (!(control instanceof Element)) return;
+        const item = storyItemFor(control);
+        if (isOwnStoryControl(control)) {
+          control.dataset.vigilInstagramStoryRelationship = 'friend';
           item.dataset.vigilInstagramStoryRelationship = 'friend';
           return;
         }
-        if (link.dataset.vigilInstagramStoryAuthor === username
+        const username = storyAuthor(control);
+        if (!username) {
+          control.dataset.vigilInstagramStoryRelationship = 'other';
+          item.dataset.vigilInstagramStoryRelationship = 'other';
+          return;
+        }
+        if (control.dataset.vigilInstagramStoryAuthor === username
             && ['friend', 'other', 'pending'].includes(
-              link.dataset.vigilInstagramStoryRelationship || ''
+              control.dataset.vigilInstagramStoryRelationship || ''
             )) return;
-        link.dataset.vigilInstagramStoryAuthor = username;
-        link.dataset.vigilInstagramStoryRelationship = 'pending';
+        control.dataset.vigilInstagramStoryAuthor = username;
+        control.dataset.vigilInstagramStoryRelationship = 'pending';
         item.dataset.vigilInstagramStoryRelationship = 'pending';
         void fetchMutualFriendship(username).then((mutual) => {
-          if (!link.isConnected || storyAuthor(link) !== username) return;
-          const currentItem = storyItemFor(link);
+          if (!control.isConnected || storyAuthor(control) !== username) return;
+          const currentItem = storyItemFor(control);
           const relationship = mutual ? 'friend' : 'other';
-          link.dataset.vigilInstagramStoryRelationship = relationship;
+          control.dataset.vigilInstagramStoryRelationship = relationship;
           currentItem.dataset.vigilInstagramStoryRelationship = relationship;
         });
       };
@@ -5057,7 +5130,7 @@ enum DOMAdapters {
           return;
         }
         document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
-        document.querySelectorAll('a[href^="/stories/"]').forEach(classifyHomeStory);
+        homeStoryControls().forEach(classifyHomeStory);
         document.querySelectorAll('main article').forEach(classifyHomeCard);
         reconcileFriendsEmptyState();
       };
