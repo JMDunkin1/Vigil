@@ -218,11 +218,11 @@ app.on("second-instance", (_event, argv) => {
 
 app.on("activate", () => {
   // Hiding the Dock tile can emit an AppKit activation while the resident app
-  // is handing focus to another process. Treat activation as a request to
-  // refocus an existing presentation only; a manual Finder/Spotlight launch is
-  // delivered through second-instance and remains the explicit way to create a
-  // window after Vigil has gone back to background enforcement.
-  if (!mainWindow || mainWindow.isDestroyed()) return;
+  // is handing focus to another process. By then the tile is no longer visible,
+  // whereas an intentional Finder, Spotlight, or Dock open restores it before
+  // delivering activation. Ignore only the background lifecycle activation so
+  // an intentional later open can still recreate Vigil's presentation.
+  if (shouldStayResident() && app.dock && !app.dock.isVisible()) return;
   revealVigilWindow();
 });
 

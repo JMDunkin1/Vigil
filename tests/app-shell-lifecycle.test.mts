@@ -42,8 +42,8 @@ assert.match(
 
 assert.match(
   mainSource,
-  /app\.on\("activate", \(\) => \{[\s\S]*?if \(!mainWindow \|\| mainWindow\.isDestroyed\(\)\) return;\s*revealVigilWindow\(\);\s*\}\);/,
-  "AppKit activation may refocus an existing Vigil window but must not recreate a closed presentation while the Dock tile is hiding"
+  /app\.on\("activate", \(\) => \{[\s\S]*?if \(shouldStayResident\(\) && app\.dock && !app\.dock\.isVisible\(\)\) return;\s*revealVigilWindow\(\);\s*\}\);/,
+  "AppKit activation must recreate an intentionally opened Vigil window without reopening its presentation while the Dock tile is hiding"
 );
 assert.match(
   mainSource,
