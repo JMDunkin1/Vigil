@@ -340,12 +340,24 @@ app.on("window-all-closed", () => {
 });
 
 function showVigilWindow(appUrl: string): void {
-  showVigilDock();
+  const dockReady = showVigilDock();
   if (!mainWindow) createWindow(appUrl);
-  if (!mainWindow) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  const window = mainWindow;
+  if (!window) return;
+  const reveal = (): void => {
+    // The user may hide Vigil again while macOS is restoring its Dock tile.
+    // Never let completion of that older presentation request recreate it.
+    if (mainWindow !== window || window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  };
+  reveal();
+  if (dockReady) {
+    void dockReady.then(reveal).catch((error) => {
+      console.error("Vigil could not restore its Dock presentation.", error);
+    });
+  }
 }
 
 function revealVigilWindow(): void {
@@ -378,9 +390,9 @@ function installPowerReconciliation(): void {
   powerMonitor.on("unlock-screen", () => reconcile("screen-unlock"));
 }
 
-function showVigilDock(): void {
-  if (!shouldStayResident()) return;
-  void app.dock?.show();
+function showVigilDock(): Promise<void> | null {
+  if (!shouldStayResident() || !app.dock || app.dock.isVisible()) return null;
+  return app.dock.show();
 }
 
 function hideVigilDock(): void {

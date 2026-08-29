@@ -67,8 +67,8 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function showVigilWindow\(appUrl: string\): void \{\s*showVigilDock\(\);\s*if \(!mainWindow\) createWindow\(appUrl\);[\s\S]*?mainWindow\.show\(\);[\s\S]*?mainWindow\.focus\(\);\s*\}/,
-  "opening a resident window must restore its Dock tile before using Electron's native show and focus lifecycle"
+  /function showVigilWindow\(appUrl: string\): void \{\s*const dockReady = showVigilDock\(\);\s*if \(!mainWindow\) createWindow\(appUrl\);[\s\S]*?const reveal = \(\): void => \{[\s\S]*?if \(mainWindow !== window \|\| window\.isDestroyed\(\)\) return;[\s\S]*?window\.show\(\);[\s\S]*?window\.focus\(\);[\s\S]*?dockReady\.then\(reveal\)/,
+  "opening a resident window must present it again after asynchronous Dock restoration without reviving a window hidden during that wait"
 );
 assert.match(
   mainSource,
@@ -87,8 +87,8 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function showVigilDock\(\): void \{\s*if \(!shouldStayResident\(\)\) return;\s*void app\.dock\?\.show\(\);\s*\}/,
-  "revealing packaged Vigil must restore its Dock tile"
+  /function showVigilDock\(\): Promise<void> \| null \{\s*if \(!shouldStayResident\(\) \|\| !app\.dock \|\| app\.dock\.isVisible\(\)\) return null;\s*return app\.dock\.show\(\);\s*\}/,
+  "revealing packaged Vigil must expose asynchronous Dock restoration to the window presentation lifecycle"
 );
 assert.match(
   mainSource,
