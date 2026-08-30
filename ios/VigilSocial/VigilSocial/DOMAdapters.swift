@@ -1611,13 +1611,17 @@ enum DOMAdapters {
         }
         html[data-vigil-instagram-home-filter="true"] a[href^="/stories/"]:not(
           [data-vigil-instagram-story-relationship="friend"]
+        ):not(
+          [data-vigil-instagram-story-relationship="self"]
         ) {
           visibility: hidden !important;
         }
         html[data-vigil-instagram-home-filter="true"] main
           :is(button, [role="button"]):has(img[alt*="profile picture" i]):not(
             article :is(button, [role="button"])
-          ):not([data-vigil-instagram-story-relationship="friend"]) {
+          ):not([data-vigil-instagram-story-relationship="friend"]):not(
+            [data-vigil-instagram-story-relationship="self"]
+          ) {
           visibility: hidden !important;
         }
         html[data-vigil-instagram-home-filter="true"]
@@ -1628,7 +1632,8 @@ enum DOMAdapters {
           [data-vigil-instagram-story-relationship="other"] {
           display: none !important;
         }
-        html[data-vigil-instagram-route-transition="true"] main article {
+        html[data-vigil-instagram-route-transition="true"] body,
+        html[data-vigil-instagram-story-gate="pending"] body {
           visibility: hidden !important;
         }
         html[data-vigil-instagram-home-filter="true"] main [role="progressbar"] {
@@ -1684,6 +1689,39 @@ enum DOMAdapters {
           display: none !important;
         }
         @keyframes vigil-instagram-friends-spin { to { transform: rotate(360deg); } }
+        [data-vigil-instagram-story-placeholders="true"] {
+          box-sizing: border-box !important;
+          display: flex !important;
+          flex: 0 0 auto !important;
+          align-items: flex-start !important;
+          gap: 12px !important;
+          padding: 0 8px !important;
+          pointer-events: none !important;
+          list-style: none !important;
+        }
+        [data-vigil-instagram-story-placeholder="true"] {
+          box-sizing: border-box !important;
+          display: grid !important;
+          width: 66px !important;
+          place-items: center !important;
+          gap: 7px !important;
+        }
+        [data-vigil-instagram-story-placeholder="true"]::before {
+          box-sizing: border-box !important;
+          content: "" !important;
+          width: 58px !important;
+          height: 58px !important;
+          border: 2px solid rgba(128, 128, 128, .34) !important;
+          border-radius: 50% !important;
+          background: rgba(128, 128, 128, .14) !important;
+        }
+        [data-vigil-instagram-story-placeholder="true"]::after {
+          content: "" !important;
+          width: 38px !important;
+          height: 7px !important;
+          border-radius: 999px !important;
+          background: rgba(128, 128, 128, .20) !important;
+        }
         [data-vigil-instagram-comments-sheet="true"] {
           box-sizing: border-box !important;
           position: fixed !important;
@@ -1722,6 +1760,10 @@ enum DOMAdapters {
         const path = new URL(location.href).pathname.toLowerCase().replace(/\/+$/, '') || '/';
         if (path === '/') {
           document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
+        } else if (path === '/stories' || path.startsWith('/stories/')) {
+          // Story documents start concealed. The document-end verifier opens
+          // only the viewer's own Story or a confirmed mutual friend's Story.
+          document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
         } else if (path === '/explore') {
           document.documentElement.dataset.vigilInstagramAccountSearch = 'true';
         }
@@ -4202,13 +4244,17 @@ enum DOMAdapters {
           }
           html[data-vigil-instagram-home-filter="true"] a[href^="/stories/"]:not(
             [data-vigil-instagram-story-relationship="friend"]
+          ):not(
+            [data-vigil-instagram-story-relationship="self"]
           ) {
             visibility: hidden !important;
           }
           html[data-vigil-instagram-home-filter="true"] main
             :is(button, [role="button"]):has(img[alt*="profile picture" i]):not(
               article :is(button, [role="button"])
-            ):not([data-vigil-instagram-story-relationship="friend"]) {
+            ):not([data-vigil-instagram-story-relationship="friend"]):not(
+              [data-vigil-instagram-story-relationship="self"]
+            ) {
             visibility: hidden !important;
           }
           html[data-vigil-instagram-home-filter="true"]
@@ -4219,7 +4265,8 @@ enum DOMAdapters {
             [data-vigil-instagram-story-relationship="other"] {
             display: none !important;
           }
-          html[data-vigil-instagram-route-transition="true"] main article {
+          html[data-vigil-instagram-route-transition="true"] body,
+          html[data-vigil-instagram-story-gate="pending"] body {
             visibility: hidden !important;
           }
           html[data-vigil-instagram-home-filter="true"] main [role="progressbar"] {
@@ -4275,6 +4322,39 @@ enum DOMAdapters {
             display: none !important;
           }
           @keyframes vigil-instagram-friends-spin { to { transform: rotate(360deg); } }
+          [data-vigil-instagram-story-placeholders="true"] {
+            box-sizing: border-box !important;
+            display: flex !important;
+            flex: 0 0 auto !important;
+            align-items: flex-start !important;
+            gap: 12px !important;
+            padding: 0 8px !important;
+            pointer-events: none !important;
+            list-style: none !important;
+          }
+          [data-vigil-instagram-story-placeholder="true"] {
+            box-sizing: border-box !important;
+            display: grid !important;
+            width: 66px !important;
+            place-items: center !important;
+            gap: 7px !important;
+          }
+          [data-vigil-instagram-story-placeholder="true"]::before {
+            box-sizing: border-box !important;
+            content: "" !important;
+            width: 58px !important;
+            height: 58px !important;
+            border: 2px solid rgba(128, 128, 128, .34) !important;
+            border-radius: 50% !important;
+            background: rgba(128, 128, 128, .14) !important;
+          }
+          [data-vigil-instagram-story-placeholder="true"]::after {
+            content: "" !important;
+            width: 38px !important;
+            height: 7px !important;
+            border-radius: 999px !important;
+            background: rgba(128, 128, 128, .20) !important;
+          }
           [data-vigil-instagram-comments-sheet="true"] {
             box-sizing: border-box !important;
             position: fixed !important;
@@ -4617,11 +4697,29 @@ enum DOMAdapters {
           const url = new URL(value, location.href);
           if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return;
           document.documentElement.dataset.vigilInstagramRouteTransition = 'true';
-          if ((url.pathname.toLowerCase().replace(/\/+$/, '') || '/') === '/') {
+          const path = url.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+          if (path === '/') {
             // Set the fail-closed Home marker before Instagram synchronously
             // swaps its SPA tree, not one mutation callback afterward.
             document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
+            delete document.documentElement.dataset.vigilInstagramStoryGate;
+          } else if (path === '/stories' || path.startsWith('/stories/')) {
+            // Conceal the Story viewer before Instagram can synchronously swap
+            // in the next account during its click or History handler.
+            document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
+          } else {
+            delete document.documentElement.dataset.vigilInstagramStoryGate;
           }
+          const sourceURL = location.href;
+          setTimeout(() => {
+            // Instagram sometimes consumes an already-selected navigation link
+            // without changing history. Do not strand the current safe surface
+            // behind the transition gate when no route swap actually happened.
+            if (location.href !== sourceURL) return;
+            delete document.documentElement.dataset.vigilInstagramRouteTransition;
+            reconcileFriendsFeed();
+            void reconcileStoryRoute();
+          }, 400);
         } catch (_) {}
       };
       const scheduleRouteCheck = () => {
@@ -4630,6 +4728,7 @@ enum DOMAdapters {
         queueMicrotask(() => {
           enforceRoute();
           reconcileFriendsFeed();
+          void reconcileStoryRoute();
           requestAnimationFrame(() => requestAnimationFrame(() => {
             if (generation !== routeTransitionGeneration) return;
             delete document.documentElement.dataset.vigilInstagramRouteTransition;
@@ -4827,6 +4926,7 @@ enum DOMAdapters {
       // the viewer. This is identity-based and deliberately has no item limit.
       const friendshipCache = new Map();
       const friendshipChecks = new Map();
+      const normalizedUsername = (value) => String(value || '').trim().replace(/^@/, '').toLowerCase();
       const viewerID = (() => {
         try {
           return decodeURIComponent(
@@ -4841,6 +4941,14 @@ enum DOMAdapters {
       const friendshipCacheKey = `vigil.instagram.mutual-friendships.v1:${viewerID || 'session'}`;
       const friendshipCacheTTL = 6 * 60 * 60 * 1000;
       let friendshipLookupFailed = false;
+      let viewerUsername = '';
+      const csrfToken = (() => {
+        try {
+          return decodeURIComponent(
+            document.cookie.match(/(?:^|;\s*)csrftoken=([^;]+)/)?.[1] || ''
+          );
+        } catch (_) { return ''; }
+      })();
       try {
         const saved = JSON.parse(friendshipStorage.getItem(friendshipCacheKey) || '{}');
         const now = Date.now();
@@ -4865,7 +4973,6 @@ enum DOMAdapters {
           friendshipStorage.setItem(friendshipCacheKey, JSON.stringify(fresh));
         } catch (_) {}
       };
-      const normalizedUsername = (value) => String(value || '').trim().replace(/^@/, '').toLowerCase();
       const homeCardAuthor = (article) => {
         const links = article.querySelectorAll?.('a[href]') || [];
         for (const link of links) {
@@ -4881,43 +4988,82 @@ enum DOMAdapters {
         }
         return '';
       };
+      const relationshipBoolean = (...values) => {
+        for (const value of values) {
+          if (typeof value === 'boolean') return value;
+        }
+        return null;
+      };
+      const relationshipFromUser = (user) => {
+        if (!user || typeof user !== 'object') return null;
+        const status = user.friendship_status || user.friendship || user;
+        const viewerFollows = relationshipBoolean(
+          status.following,
+          status.is_following,
+          user.followed_by_viewer
+        );
+        const followsViewer = relationshipBoolean(
+          status.followed_by,
+          status.is_followed_by,
+          user.follows_viewer
+        );
+        if (typeof viewerFollows !== 'boolean' || typeof followsViewer !== 'boolean') return null;
+        return viewerFollows && followsViewer;
+      };
+      const instagramRequestHeaders = () => ({
+        Accept: '*/*',
+        'X-IG-App-ID': '936619743392459',
+        ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {})
+      });
+      const fetchInstagramJSON = async (path) => {
+        const response = await fetch(path, {
+          credentials: 'same-origin',
+          headers: instagramRequestHeaders()
+        });
+        if (!response.ok) throw new Error(`Instagram lookup returned ${response.status}`);
+        return response.json();
+      };
       const fetchMutualFriendship = async (username) => {
         const cached = friendshipCache.get(username);
         if (typeof cached === 'boolean') return cached;
         if (friendshipChecks.has(username)) return friendshipChecks.get(username);
         const check = (async () => {
-          try {
-            const response = await fetch(
-              `/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
-              {
-                credentials: 'same-origin',
-                headers: {
-                  Accept: '*/*',
-                  'X-IG-App-ID': '936619743392459'
-                }
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+              const payload = await fetchInstagramJSON(
+                `/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`
+              );
+              const user = payload?.data?.user || payload?.user;
+              if (!user) throw new Error('relationship lookup omitted the user');
+              let mutual = relationshipFromUser(user);
+              if (mutual === null && user.id) {
+                const friendship = await fetchInstagramJSON(
+                  `/api/v1/friendships/show/${encodeURIComponent(user.id)}/`
+                );
+                mutual = relationshipFromUser(friendship);
               }
-            );
-            if (!response.ok) throw new Error(`relationship lookup returned ${response.status}`);
-            const payload = await response.json();
-            const user = payload?.data?.user;
-            if (!user) throw new Error('relationship lookup omitted the user');
-            const status = user.friendship_status || {};
-            const viewerFollows = status.following === true || user.followed_by_viewer === true;
-            const followsViewer = status.followed_by === true || user.follows_viewer === true;
-            const mutual = viewerFollows && followsViewer;
-            friendshipCache.set(username, mutual);
-            persistFriendship(username, mutual);
-            return mutual;
-          } catch (_) {
-            friendshipLookupFailed = true;
-            friendshipCache.set(username, false);
-            return false;
-          } finally {
-            friendshipChecks.delete(username);
+              if (typeof mutual !== 'boolean') {
+                throw new Error('relationship lookup omitted mutual-follow fields');
+              }
+              friendshipCache.set(username, mutual);
+              persistFriendship(username, mutual);
+              return mutual;
+            } catch (_) {
+              if (attempt === 0) {
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                continue;
+              }
+            }
           }
+          // A transport or schema failure is not evidence that two people are
+          // not friends. Keep the surface concealed without poisoning the
+          // viewer-scoped cache with a false negative.
+          friendshipLookupFailed = true;
+          return null;
         })();
         friendshipChecks.set(username, check);
-        return check;
+        try { return await check; }
+        finally { friendshipChecks.delete(username); }
       };
       let emptyStateTimer = 0;
       let emptyStateSignature = '';
@@ -5015,20 +5161,60 @@ enum DOMAdapters {
           return;
         }
         if (article.dataset.vigilInstagramHomeAuthor === username
-            && ['friend', 'other', 'pending'].includes(
+            && ['friend', 'other', 'pending', 'unavailable'].includes(
               article.dataset.vigilInstagramHomeRelationship || ''
             )) return;
         article.dataset.vigilInstagramHomeAuthor = username;
         article.dataset.vigilInstagramHomeRelationship = 'pending';
         void fetchMutualFriendship(username).then((mutual) => {
           if (!article.isConnected || homeCardAuthor(article) !== username) return;
-          article.dataset.vigilInstagramHomeRelationship = mutual ? 'friend' : 'other';
+          article.dataset.vigilInstagramHomeRelationship = mutual === true
+            ? 'friend'
+            : mutual === false ? 'other' : 'unavailable';
           reconcileFriendsEmptyState();
         });
       };
       const validInstagramUsername = (value) => {
         const username = normalizedUsername(value);
         return /^[a-z0-9._]{1,30}$/.test(username) ? username : '';
+      };
+      const discoverViewerUsername = () => {
+        if (viewerUsername) return viewerUsername;
+        const controls = document.querySelectorAll([
+          'nav a[href][aria-label*="profile" i]',
+          '[role="navigation"] a[href][aria-label*="profile" i]',
+          'a[href] svg[aria-label="Profile" i]'
+        ].join(', '));
+        for (const candidate of controls) {
+          const link = candidate instanceof HTMLAnchorElement ? candidate : candidate.closest('a[href]');
+          if (!link) continue;
+          try {
+            const pieces = new URL(link.href, location.href).pathname.split('/').filter(Boolean);
+            if (pieces.length !== 1) continue;
+            const username = validInstagramUsername(pieces[0]);
+            if (username) {
+              viewerUsername = username;
+              return viewerUsername;
+            }
+          } catch (_) {}
+        }
+        return '';
+      };
+      let viewerUsernameCheck = null;
+      const hydrateViewerUsername = () => {
+        if (discoverViewerUsername()) return Promise.resolve(viewerUsername);
+        if (viewerUsernameCheck) return viewerUsernameCheck;
+        viewerUsernameCheck = fetchInstagramJSON('/api/v1/accounts/current_user/?edit=true')
+          .then((payload) => {
+            const username = validInstagramUsername(
+              payload?.user?.username || payload?.username || payload?.data?.user?.username
+            );
+            if (username) viewerUsername = username;
+            return viewerUsername;
+          })
+          .catch(() => '')
+          .finally(() => { viewerUsernameCheck = null; });
+        return viewerUsernameCheck;
       };
       const storyAuthor = (control) => {
         if (control instanceof HTMLAnchorElement) {
@@ -5063,9 +5249,14 @@ enum DOMAdapters {
           const status = label.match(/^([a-z0-9._]{1,30}),? (?:unseen|seen) story(?:\b|$)/i);
           if (status) return validInstagramUsername(status[1]);
         }
-        const textCandidates = String(control.textContent || '')
-          .split(/\s+/).map(validInstagramUsername).filter(Boolean);
-        return textCandidates[0] || '';
+        const textCandidates = [control, ...control.querySelectorAll('span, [dir="auto"]')];
+        for (const node of textCandidates.slice(0, 24)) {
+          const username = validInstagramUsername(
+            String(node.textContent || '').replace(/\s+/g, ' ').trim()
+          );
+          if (username) return username;
+        }
+        return '';
       };
       const storyItemFor = (control) => {
         const semanticItem = control.closest('li, [role="listitem"]');
@@ -5079,7 +5270,9 @@ enum DOMAdapters {
           ...[...control.querySelectorAll('[aria-label]')].slice(0, 12)
             .map((node) => node.getAttribute('aria-label'))
         ].map((value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase());
-        return labels.some((label) => label === 'your story'
+        const author = storyAuthor(control);
+        return Boolean(author && author === discoverViewerUsername())
+          || labels.some((label) => label === 'your story'
           || label.startsWith('your story, ')
           || label === 'add to your story'
           || label === 'create story');
@@ -5097,8 +5290,8 @@ enum DOMAdapters {
         if (!(control instanceof Element)) return;
         const item = storyItemFor(control);
         if (isOwnStoryControl(control)) {
-          control.dataset.vigilInstagramStoryRelationship = 'friend';
-          item.dataset.vigilInstagramStoryRelationship = 'friend';
+          control.dataset.vigilInstagramStoryRelationship = 'self';
+          item.dataset.vigilInstagramStoryRelationship = 'self';
           return;
         }
         const username = storyAuthor(control);
@@ -5108,7 +5301,7 @@ enum DOMAdapters {
           return;
         }
         if (control.dataset.vigilInstagramStoryAuthor === username
-            && ['friend', 'other', 'pending'].includes(
+            && ['friend', 'other', 'pending', 'unavailable'].includes(
               control.dataset.vigilInstagramStoryRelationship || ''
             )) return;
         control.dataset.vigilInstagramStoryAuthor = username;
@@ -5117,10 +5310,83 @@ enum DOMAdapters {
         void fetchMutualFriendship(username).then((mutual) => {
           if (!control.isConnected || storyAuthor(control) !== username) return;
           const currentItem = storyItemFor(control);
-          const relationship = mutual ? 'friend' : 'other';
+          const relationship = mutual === true
+            ? 'friend'
+            : mutual === false ? 'other' : 'unavailable';
           control.dataset.vigilInstagramStoryRelationship = relationship;
           currentItem.dataset.vigilInstagramStoryRelationship = relationship;
+          reconcileStoryPlaceholders();
         });
+      };
+      const removeStoryPlaceholders = () => {
+        document.querySelectorAll('[data-vigil-instagram-story-placeholders="true"]')
+          .forEach((element) => element.remove());
+      };
+      const reconcileStoryPlaceholders = () => {
+        if (instagramRoute() !== 'feed') {
+          removeStoryPlaceholders();
+          return;
+        }
+        const controls = homeStoryControls();
+        const hasFriend = controls.some((control) => (
+          control.dataset.vigilInstagramStoryRelationship === 'friend'
+        ));
+        const checking = controls.some((control) => (
+          !control.dataset.vigilInstagramStoryRelationship
+          || control.dataset.vigilInstagramStoryRelationship === 'pending'
+        ));
+        if (hasFriend || checking) {
+          removeStoryPlaceholders();
+          return;
+        }
+        if (document.querySelector('[data-vigil-instagram-story-placeholders="true"]')) return;
+        const ownControl = controls.find((control) => (
+          control.dataset.vigilInstagramStoryRelationship === 'self'
+        ));
+        const firstControl = ownControl || controls[0];
+        const item = firstControl ? storyItemFor(firstControl) : null;
+        const host = item?.parentElement;
+        if (!host) return;
+        const placeholders = document.createElement(
+          ['UL', 'OL'].includes(host.tagName) ? 'li' : 'div'
+        );
+        placeholders.dataset.vigilInstagramStoryPlaceholders = 'true';
+        placeholders.setAttribute('aria-hidden', 'true');
+        for (let index = 0; index < 4; index += 1) {
+          const placeholder = document.createElement('span');
+          placeholder.dataset.vigilInstagramStoryPlaceholder = 'true';
+          placeholders.append(placeholder);
+        }
+        host.append(placeholders);
+      };
+      let verifiedStoryPath = '';
+      let storyAccessGeneration = 0;
+      const reconcileStoryRoute = async () => {
+        let path = '';
+        try { path = new URL(location.href).pathname.toLowerCase(); } catch (_) {}
+        if (!(path === '/stories' || path.startsWith('/stories/'))) {
+          verifiedStoryPath = '';
+          delete document.documentElement.dataset.vigilInstagramStoryGate;
+          return;
+        }
+        if (verifiedStoryPath === path
+            && document.documentElement.dataset.vigilInstagramStoryGate !== 'pending') return;
+        const username = validInstagramUsername(path.split('/').filter(Boolean)[1]);
+        document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
+        const generation = ++storyAccessGeneration;
+        const ownUsername = discoverViewerUsername() || await hydrateViewerUsername();
+        const mutual = username && username !== ownUsername
+          ? await fetchMutualFriendship(username)
+          : Boolean(username && username === ownUsername);
+        let currentPath = '';
+        try { currentPath = new URL(location.href).pathname.toLowerCase(); } catch (_) {}
+        if (generation !== storyAccessGeneration || currentPath !== path) return;
+        if (mutual === true) {
+          verifiedStoryPath = path;
+          delete document.documentElement.dataset.vigilInstagramStoryGate;
+          return;
+        }
+        try { location.replace('/'); } catch (_) {}
       };
       const reconcileFriendsFeed = () => {
         const isFeed = instagramRoute() === 'feed';
@@ -5130,8 +5396,13 @@ enum DOMAdapters {
           return;
         }
         document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
+        void hydrateViewerUsername().then(() => {
+          homeStoryControls().forEach(classifyHomeStory);
+          reconcileStoryPlaceholders();
+        });
         homeStoryControls().forEach(classifyHomeStory);
         document.querySelectorAll('main article').forEach(classifyHomeCard);
+        reconcileStoryPlaceholders();
         reconcileFriendsEmptyState();
       };
       const markNativeAppPrompts = (root) => {
@@ -5241,6 +5512,7 @@ enum DOMAdapters {
       markAccountOnlySearch(document);
       normalizeCommentSheets();
       reconcileFriendsFeed();
+      void reconcileStoryRoute();
       enforceRoute();
       // Reel media embedded in followed posts, profiles, and Direct threads is
       // left alone. A singular /reel/{id} shared item can open, but navigation

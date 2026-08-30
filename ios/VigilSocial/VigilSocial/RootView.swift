@@ -7,6 +7,12 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
 
+    private static let instagramDarkSurface = Color(
+        red: 18.0 / 255.0,
+        green: 18.0 / 255.0,
+        blue: 18.0 / 255.0
+    )
+
     var body: some View {
         let service = store.selectedService
         filteredWebView(service: service)
@@ -29,16 +35,29 @@ struct RootView: View {
         let webViewSafeAreaEdges: Edge.Set = service == .instagram
             ? []
             : .bottom
+        let surfaceColor = service == .instagram && isDark
+            ? Self.instagramDarkSurface
+            : (isDark ? Color.black : Color.white)
         return ZStack {
-            (isDark ? Color.black : Color.white)
+            surfaceColor
                 .ignoresSafeArea()
 
-            SocialWebView(
-                webView: primaryWebView,
-                isDark: isDark
-            )
-                .id(ObjectIdentifier(primaryWebView))
-                .ignoresSafeArea(.container, edges: webViewSafeAreaEdges)
+            VStack(spacing: 0) {
+                if service == .instagram {
+                    InstagramSessionCounter(
+                        scenePhase: scenePhase,
+                        isDark: isDark,
+                        surfaceColor: surfaceColor
+                    )
+                }
+
+                SocialWebView(
+                    webView: primaryWebView,
+                    isDark: isDark
+                )
+                    .id(ObjectIdentifier(primaryWebView))
+                    .ignoresSafeArea(.container, edges: webViewSafeAreaEdges)
+            }
 
             healthOverlay(
                 store.health[service] ?? .loading,
@@ -126,6 +145,65 @@ struct RootView: View {
                 dismissAction: nil
             )
         }
+    }
+}
+
+private struct InstagramSessionCounter: View {
+    let scenePhase: ScenePhase
+    let isDark: Bool
+    let surfaceColor: Color
+
+    @State private var accumulatedSeconds: TimeInterval = 0
+    @State private var activeSince: Date?
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Text(Self.formattedDuration(elapsed(at: context.date)))
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(isDark ? Color.white.opacity(0.72) : Color.black.opacity(0.62))
+                .contentTransition(.numericText())
+                .frame(maxWidth: .infinity)
+                .frame(height: 20)
+                .background(surfaceColor)
+                .accessibilityLabel("Time on Instagram")
+                .accessibilityValue(Self.formattedDuration(elapsed(at: context.date)))
+        }
+        .allowsHitTesting(false)
+        .onAppear { resumeIfNeeded(at: Date()) }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                resumeIfNeeded(at: Date())
+            } else {
+                pauseIfNeeded(at: Date())
+            }
+        }
+        .onDisappear { pauseIfNeeded(at: Date()) }
+    }
+
+    private func elapsed(at date: Date) -> TimeInterval {
+        accumulatedSeconds + max(0, activeSince.map { date.timeIntervalSince($0) } ?? 0)
+    }
+
+    private func resumeIfNeeded(at date: Date) {
+        guard scenePhase == .active, activeSince == nil else { return }
+        activeSince = date
+    }
+
+    private func pauseIfNeeded(at date: Date) {
+        guard let activeSince else { return }
+        accumulatedSeconds += max(0, date.timeIntervalSince(activeSince))
+        self.activeSince = nil
+    }
+
+    private static func formattedDuration(_ interval: TimeInterval) -> String {
+        let seconds = max(0, Int(interval.rounded(.down)))
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        let remainder = seconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, remainder)
+        }
+        return String(format: "%02d:%02d", minutes, remainder)
     }
 }
 

@@ -298,8 +298,13 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /const fetchMutualFriendship = async \(username\)[\s\S]*?viewerFollows && followsViewer[\s\S]*?Nothing from your friends yet/u,
+  /const relationshipFromUser[\s\S]*?viewerFollows && followsViewer[\s\S]*?const fetchMutualFriendship = async \(username\)[\s\S]*?Nothing from your friends yet/u,
   "Instagram home must show only mutually followed friends and fail closed when no friend content is available"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /friendships\/show\/[\s\S]*?transport or schema failure is not evidence[\s\S]*?return null/u,
+  "a failed relationship request must not be cached as a false non-friend result"
 );
 assert.doesNotMatch(
   instagramStableAdapterSource,
@@ -375,8 +380,18 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /data-vigil-instagram-route-transition="true"[\s\S]*?main article[\s\S]*?visibility: hidden !important/u,
-  "Instagram SPA transitions must conceal stale article trees before they can flash"
+  /data-vigil-instagram-route-transition="true"[\s\S]*?body[\s\S]*?visibility: hidden !important/u,
+  "Instagram SPA transitions must conceal the stale document surface before it can flash"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /vigilInstagramStoryGate = 'pending'[\s\S]*?const reconcileStoryRoute[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?location\.replace\('\/'\)/u,
+  "Stories must remain concealed until the route author is self or a confirmed mutual friend"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /vigilInstagramStoryRelationship = 'self'[\s\S]*?const reconcileStoryPlaceholders[\s\S]*?vigilInstagramStoryPlaceholder/u,
+  "the viewer's own Story must remain distinct and an empty friend tray must render inert placeholders"
 );
 assert.match(
   instagramStableAdapterSource,
@@ -387,6 +402,16 @@ assert.match(
   socialDOMAdaptersSource,
   /const applyAudioPreference = \(media\)[\s\S]*?media\.defaultMuted = false;[\s\S]*?media\.muted = false;/u,
   "Instagram's audio-on preference must be applied to newly mounted media"
+);
+assert.match(
+  socialRootViewSource,
+  /instagramDarkSurface[\s\S]*?red: 18\.0 \/ 255\.0[\s\S]*?surfaceColor[\s\S]*?ignoresSafeArea/u,
+  "Instagram's native safe areas must use the same dark surface color as its shell"
+);
+assert.match(
+  socialRootViewSource,
+  /InstagramSessionCounter[\s\S]*?TimelineView\(\.periodic[\s\S]*?Time on Instagram[\s\S]*?scenePhase == \.active/u,
+  "Instagram must show a foreground-only running session counter above its web surface"
 );
 assert.match(
   socialWebViewStoreSource,
