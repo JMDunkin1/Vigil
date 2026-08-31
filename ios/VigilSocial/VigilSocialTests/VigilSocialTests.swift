@@ -4868,7 +4868,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("fetchMutualFriendship(username)"))
         XCTAssertTrue(script.contains("isOwnStoryControl(control)"))
         XCTAssertTrue(script.contains("vigilInstagramStoryRelationship = 'self'"))
-        XCTAssertTrue(script.contains("homeStoryControls().forEach(classifyHomeStory)"))
+        XCTAssertTrue(script.contains("controls.forEach(classifyHomeStory)"))
         XCTAssertTrue(script.contains("const reconcileStoryPlaceholders"))
         XCTAssertTrue(script.contains("vigilInstagramStoryPlaceholder"))
         XCTAssertTrue(script.contains("const reconcileStoryRoute"))
@@ -4882,9 +4882,131 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("renderFriendsState('loading', true)"))
         XCTAssertTrue(script.contains("prefers-color-scheme: dark"))
         XCTAssertTrue(script.contains("color: #f5f5f5 !important"))
-        XCTAssertTrue(script.contains("data-vigil-instagram-route-transition=\"true\""))
+    }
+
+    @MainActor
+    func testInstagramHomeMotionStabilityGuards() {
+        let script = DOMAdapters.script(
+            for: .instagram,
+            audioEnabled: true,
+            contentSafetyEnabled: false
+        )
+
+        XCTAssertFalse(script.contains(
+            "html[data-vigil-instagram-route-transition=\"true\"] body"
+        ))
         XCTAssertTrue(script.contains("const prepareRouteTransition"))
+        XCTAssertTrue(script.contains("if (routeKey(url) === routeKey(source)) return"))
+        XCTAssertTrue(script.contains("const sourceIsStory"))
         XCTAssertTrue(script.contains("prepareRouteTransition(link.href)"))
+        XCTAssertTrue(script.contains("data-vigil-instagram-story-rail=\"true\""))
+        XCTAssertTrue(script.contains("overscroll-behavior-x: none !important"))
+        XCTAssertTrue(script.contains("const clampStoryRail"))
+        XCTAssertTrue(script.contains("rail.scrollLeft = clamped"))
+        XCTAssertTrue(script.contains("const stagedHomeStoryRelationships"))
+        XCTAssertTrue(script.contains("const flushHomeStoryRelationships"))
+    }
+
+    @MainActor
+    func testInstagramHomeIgnoresSameRouteNoiseAndBoundsFilteredStories() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.script(
+                for: .instagram,
+                audioEnabled: true,
+                contentSafetyEnabled: false
+            ),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let loaded = expectation(description: "Instagram stable Home motion fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            #"""
+            <html><head>
+              <style>
+                #rail { width: 120px; overflow-x: auto; }
+                #stories { display: flex; width: max-content; margin: 0; padding: 0; }
+                #stories > li { flex: 0 0 100px; list-style: none; }
+              </style>
+              <script>
+                window.fetch = async (input) => {
+                  const url = new URL(input, location.href);
+                  let payload = {};
+                  if (url.pathname.includes('/accounts/current_user/')) {
+                    payload = { user: { username: 'viewer' } };
+                  } else if (url.pathname.includes('/users/web_profile_info/')) {
+                    const username = url.searchParams.get('username');
+                    const mutual = username === 'friend';
+                    payload = { data: { user: {
+                      id: username,
+                      username,
+                      friendship_status: { following: true, followed_by: mutual }
+                    } } };
+                  }
+                  return { ok: true, status: 200, url: url.href, json: async () => payload };
+                };
+              </script>
+            </head><body>
+              <nav><a href="/viewer/" aria-label="Profile">Profile</a></nav>
+              <a id="same" href="/">Home</a>
+              <main><div id="rail"><ul id="stories">
+                <li id="self-item"><a id="self" href="/stories/viewer/1/" aria-label="Your story"><img alt="viewer's profile picture"></a></li>
+                <li id="friend-item"><a id="friend" href="/stories/friend/1/"><img alt="friend's profile picture"></a></li>
+                <li id="other-item"><a id="other" href="/stories/other/1/"><img alt="other's profile picture"></a></li>
+              </ul></div></main>
+            </body></html>
+            """#,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        _ = try await webView.evaluateJavaScript(
+            #"""
+            (() => {
+              const same = document.getElementById('same');
+              same.addEventListener('click', (event) => event.preventDefault(), { once: true });
+              same.click();
+              history.replaceState(history.state, '');
+              const rail = document.getElementById('rail');
+              rail.scrollLeft = rail.scrollWidth;
+              rail.dispatchEvent(new Event('scroll'));
+            })()
+            """#
+        )
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let state = try await webView.evaluateJavaScript(
+            #"""
+            (() => {
+              const rail = document.getElementById('rail');
+              return {
+                bodyVisible: getComputedStyle(document.body).visibility !== 'hidden',
+                transitionArmed: document.documentElement.dataset.vigilInstagramRouteTransition === 'true',
+                railMarked: rail.dataset.vigilInstagramStoryRail === 'true',
+                railPosition: rail.scrollLeft,
+                railMaximum: Math.max(0, rail.scrollWidth - rail.clientWidth),
+                friendVisible: getComputedStyle(document.getElementById('friend-item')).display !== 'none',
+                otherCollapsed: getComputedStyle(document.getElementById('other-item')).display === 'none'
+              };
+            })()
+            """#
+        ) as? [String: Any]
+        XCTAssertEqual(state?["bodyVisible"] as? Bool, true)
+        XCTAssertEqual(state?["transitionArmed"] as? Bool, false)
+        XCTAssertEqual(state?["railMarked"] as? Bool, true)
+        XCTAssertEqual(state?["friendVisible"] as? Bool, true)
+        XCTAssertEqual(state?["otherCollapsed"] as? Bool, true)
+        XCTAssertEqual(state?["railPosition"] as? Double, state?["railMaximum"] as? Double)
+        webView.navigationDelegate = nil
     }
 
     @MainActor

@@ -323,7 +323,7 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /const homeStoryControls[\s\S]*?main button:has\(img\[alt\*="profile picture" i\]\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?homeStoryControls\(\)\.forEach\(classifyHomeStory\)/u,
+  /const homeStoryControls[\s\S]*?main button:has\(img\[alt\*="profile picture" i\]\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?controls\.forEach\(classifyHomeStory\)/u,
   "Instagram Home Stories must classify both link and button trays with the mutual-friend verifier while retaining the viewer's own Story"
 );
 assert.match(
@@ -378,10 +378,15 @@ assert.match(
   /UITraitCollection\.current\.userInterfaceStyle[\s\S]*?webView\.overrideUserInterfaceStyle = initialStyle[\s\S]*?webView\.load/u,
   "Instagram must seed WebKit's native appearance before its first navigation"
 );
+assert.doesNotMatch(
+  instagramStableAdapterSource,
+  /html\[data-vigil-instagram-route-transition="true"\] body/u,
+  "ordinary Instagram SPA transitions must not blank the entire live document"
+);
 assert.match(
   instagramStableAdapterSource,
-  /data-vigil-instagram-route-transition="true"[\s\S]*?body[\s\S]*?visibility: hidden !important/u,
-  "Instagram SPA transitions must conceal the stale document surface before it can flash"
+  /const routeKey = \(candidate\)[\s\S]*?routeKey\(url\) === routeKey\(source\)[\s\S]*?return/u,
+  "same-route History and Navigation API noise must not arm a visual transition"
 );
 assert.match(
   instagramStableAdapterSource,
@@ -397,6 +402,16 @@ assert.match(
   instagramStableAdapterSource,
   /const prepareRouteTransition[\s\S]*?vigilInstagramHomeFilter = 'true'[\s\S]*?prepareRouteTransition\(link\.href\)[\s\S]*?prepareRouteTransition\(args\[2\]\)/u,
   "Home must become fail-closed before click and History API route swaps"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /data-vigil-instagram-story-rail="true"[\s\S]*?overscroll-behavior-x: none !important[\s\S]*?const clampStoryRail[\s\S]*?rail\.scrollLeft = clamped/u,
+  "the filtered Home Stories rail must stop at its real rendered bounds"
+);
+assert.match(
+  instagramStableAdapterSource,
+  /const stagedHomeStoryRelationships[\s\S]*?const flushHomeStoryRelationships[\s\S]*?stagedHomeStoryRelationships\.set\(control, \{ username, relationship \}\)[\s\S]*?flushHomeStoryRelationships\(\)/u,
+  "Home Story relationship results must commit as a batch instead of shifting the rail once per request"
 );
 assert.match(
   socialDOMAdaptersSource,

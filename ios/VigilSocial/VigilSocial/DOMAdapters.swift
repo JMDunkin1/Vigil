@@ -1632,9 +1632,15 @@ enum DOMAdapters {
           [data-vigil-instagram-story-relationship="other"] {
           display: none !important;
         }
-        html[data-vigil-instagram-route-transition="true"] body,
         html[data-vigil-instagram-story-gate="pending"] body {
           visibility: hidden !important;
+        }
+        html[data-vigil-instagram-home-filter="true"]
+          [data-vigil-instagram-story-relationship="unavailable"] {
+          display: none !important;
+        }
+        [data-vigil-instagram-story-rail="true"] {
+          overscroll-behavior-x: none !important;
         }
         html[data-vigil-instagram-home-filter="true"] main [role="progressbar"] {
           display: none !important;
@@ -4265,9 +4271,15 @@ enum DOMAdapters {
             [data-vigil-instagram-story-relationship="other"] {
             display: none !important;
           }
-          html[data-vigil-instagram-route-transition="true"] body,
           html[data-vigil-instagram-story-gate="pending"] body {
             visibility: hidden !important;
+          }
+          html[data-vigil-instagram-home-filter="true"]
+            [data-vigil-instagram-story-relationship="unavailable"] {
+            display: none !important;
+          }
+          [data-vigil-instagram-story-rail="true"] {
+            overscroll-behavior-x: none !important;
           }
           html[data-vigil-instagram-home-filter="true"] main [role="progressbar"] {
             display: none !important;
@@ -4694,20 +4706,31 @@ enum DOMAdapters {
       let routeTransitionGeneration = 0;
       const prepareRouteTransition = (value = location.href) => {
         try {
-          const url = new URL(value, location.href);
+          const url = value === undefined || value === null || value === ''
+            ? new URL(location.href)
+            : new URL(value, location.href);
           if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return;
+          const source = new URL(lastURL || location.href, location.href);
+          const routeKey = (candidate) => `${candidate.pathname}${candidate.search}`;
+          // Instagram frequently calls replaceState without a URL and emits
+          // Navigation API events for touches that never leave the current
+          // surface. Treating those as route transitions made the entire body
+          // disappear for one or two frames after ordinary taps and swipes.
+          if (routeKey(url) === routeKey(source)) return;
           document.documentElement.dataset.vigilInstagramRouteTransition = 'true';
           const path = url.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+          const sourcePath = source.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+          const sourceIsStory = sourcePath === '/stories' || sourcePath.startsWith('/stories/');
           if (path === '/') {
             // Set the fail-closed Home marker before Instagram synchronously
             // swaps its SPA tree, not one mutation callback afterward.
             document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
-            delete document.documentElement.dataset.vigilInstagramStoryGate;
+            if (!sourceIsStory) delete document.documentElement.dataset.vigilInstagramStoryGate;
           } else if (path === '/stories' || path.startsWith('/stories/')) {
             // Conceal the Story viewer before Instagram can synchronously swap
             // in the next account during its click or History handler.
             document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
-          } else {
+          } else if (!sourceIsStory) {
             delete document.documentElement.dataset.vigilInstagramStoryGate;
           }
           const sourceURL = location.href;
@@ -5286,18 +5309,94 @@ enum DOMAdapters {
         return controls.filter((control) => !control.closest('article, nav, [role="navigation"]')
           && !controls.some((parent) => parent !== control && parent.contains(control)));
       };
+      const stagedHomeStoryRelationships = new WeakMap();
+      const storyRailClampFrames = new WeakMap();
+      const boundStoryRails = new WeakSet();
+      const storyRailFor = (controls) => {
+        const firstItem = controls[0] ? storyItemFor(controls[0]) : null;
+        let candidate = firstItem?.parentElement || null;
+        let measuredFallback = null;
+        for (let depth = 0; candidate && candidate !== document.body && depth < 8; depth += 1) {
+          const style = getComputedStyle(candidate);
+          if (/(auto|scroll)/.test(`${style.overflowX} ${style.overflow}`)) return candidate;
+          if (!measuredFallback && candidate.clientWidth > 0
+              && candidate.scrollWidth > candidate.clientWidth + 1) measuredFallback = candidate;
+          candidate = candidate.parentElement;
+        }
+        return measuredFallback;
+      };
+      const clampStoryRail = (rail) => {
+        if (!(rail instanceof HTMLElement) || !rail.isConnected) return;
+        const distance = Math.max(0, rail.scrollWidth - rail.clientWidth);
+        const rightToLeft = getComputedStyle(rail).direction === 'rtl';
+        const minimum = rightToLeft ? -distance : 0;
+        const maximum = rightToLeft ? 0 : distance;
+        const clamped = Math.min(maximum, Math.max(minimum, rail.scrollLeft));
+        if (Math.abs(clamped - rail.scrollLeft) > 0.5) rail.scrollLeft = clamped;
+      };
+      const scheduleStoryRailClamp = (rail) => {
+        if (!(rail instanceof HTMLElement) || storyRailClampFrames.has(rail)) return;
+        const frame = requestAnimationFrame(() => {
+          storyRailClampFrames.delete(rail);
+          clampStoryRail(rail);
+        });
+        storyRailClampFrames.set(rail, frame);
+      };
+      const normalizeHomeStoryRail = (controls = homeStoryControls()) => {
+        const rail = instagramRoute() === 'feed' ? storyRailFor(controls) : null;
+        document.querySelectorAll('[data-vigil-instagram-story-rail="true"]')
+          .forEach((candidate) => {
+            if (candidate !== rail) candidate.removeAttribute('data-vigil-instagram-story-rail');
+          });
+        if (!(rail instanceof HTMLElement)) return;
+        rail.dataset.vigilInstagramStoryRail = 'true';
+        if (!boundStoryRails.has(rail)) {
+          boundStoryRails.add(rail);
+          rail.addEventListener('scroll', () => scheduleStoryRailClamp(rail), { passive: true });
+        }
+        scheduleStoryRailClamp(rail);
+      };
+      const flushHomeStoryRelationships = () => {
+        const controls = homeStoryControls();
+        const unresolved = controls.some((control) => {
+          const relationship = control.dataset.vigilInstagramStoryRelationship || '';
+          if (['self', 'friend', 'other', 'unavailable'].includes(relationship)) return false;
+          return !stagedHomeStoryRelationships.has(control);
+        });
+        if (unresolved) {
+          normalizeHomeStoryRail(controls);
+          return false;
+        }
+        controls.forEach((control) => {
+          const staged = stagedHomeStoryRelationships.get(control);
+          if (!staged || storyAuthor(control) !== staged.username) return;
+          const item = storyItemFor(control);
+          control.dataset.vigilInstagramStoryRelationship = staged.relationship;
+          item.dataset.vigilInstagramStoryRelationship = staged.relationship;
+          stagedHomeStoryRelationships.delete(control);
+        });
+        // Commit a tray's relationship results in one task. Incrementally
+        // collapsing cards as network requests returned made the remaining
+        // Stories jump and cut in and out underneath an active swipe.
+        normalizeHomeStoryRail(controls);
+        reconcileStoryPlaceholders();
+        return true;
+      };
       const classifyHomeStory = (control) => {
         if (!(control instanceof Element)) return;
         const item = storyItemFor(control);
         if (isOwnStoryControl(control)) {
+          stagedHomeStoryRelationships.delete(control);
           control.dataset.vigilInstagramStoryRelationship = 'self';
           item.dataset.vigilInstagramStoryRelationship = 'self';
           return;
         }
         const username = storyAuthor(control);
         if (!username) {
-          control.dataset.vigilInstagramStoryRelationship = 'other';
-          item.dataset.vigilInstagramStoryRelationship = 'other';
+          control.dataset.vigilInstagramStoryRelationship = 'pending';
+          item.dataset.vigilInstagramStoryRelationship = 'pending';
+          stagedHomeStoryRelationships.set(control, { username: '', relationship: 'other' });
+          queueMicrotask(flushHomeStoryRelationships);
           return;
         }
         if (control.dataset.vigilInstagramStoryAuthor === username
@@ -5309,13 +5408,11 @@ enum DOMAdapters {
         item.dataset.vigilInstagramStoryRelationship = 'pending';
         void fetchMutualFriendship(username).then((mutual) => {
           if (!control.isConnected || storyAuthor(control) !== username) return;
-          const currentItem = storyItemFor(control);
           const relationship = mutual === true
             ? 'friend'
             : mutual === false ? 'other' : 'unavailable';
-          control.dataset.vigilInstagramStoryRelationship = relationship;
-          currentItem.dataset.vigilInstagramStoryRelationship = relationship;
-          reconcileStoryPlaceholders();
+          stagedHomeStoryRelationships.set(control, { username, relationship });
+          flushHomeStoryRelationships();
         });
       };
       const removeStoryPlaceholders = () => {
@@ -5393,16 +5490,22 @@ enum DOMAdapters {
         if (!isFeed) {
           delete document.documentElement.dataset.vigilInstagramHomeFilter;
           removeFriendsState();
+          normalizeHomeStoryRail([]);
           return;
         }
         document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
         void hydrateViewerUsername().then(() => {
-          homeStoryControls().forEach(classifyHomeStory);
+          const controls = homeStoryControls();
+          controls.forEach(classifyHomeStory);
+          flushHomeStoryRelationships();
           reconcileStoryPlaceholders();
         });
-        homeStoryControls().forEach(classifyHomeStory);
+        const controls = homeStoryControls();
+        controls.forEach(classifyHomeStory);
+        flushHomeStoryRelationships();
         document.querySelectorAll('main article').forEach(classifyHomeCard);
         reconcileStoryPlaceholders();
+        normalizeHomeStoryRail(controls);
         reconcileFriendsEmptyState();
       };
       const markNativeAppPrompts = (root) => {
