@@ -253,8 +253,8 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /new MutationObserver\([\s\S]*?\{ childList: true, subtree: true \}/u,
-  "the production Instagram adapter may observe inserted cards without watching style and class churn"
+  /new MutationObserver\([\s\S]*?attributeFilter: \['href', 'aria-label', 'alt', 'role'\]/u,
+  "the production Instagram adapter must observe recycled identities without watching style and class churn"
 );
 assert.match(
   instagramStableAdapterSource,
@@ -323,12 +323,12 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /const homeStoryControls[\s\S]*?main button:has\(img\[alt\*="profile picture" i\]\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?controls\.forEach\(classifyHomeStory\)/u,
+  /const homeStoryControls[\s\S]*?:is\(main, \[role="main"\]\) button:has\(img\[alt\*="profile picture" i\]\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?controls\.forEach\(classifyHomeStory\)/u,
   "Instagram Home Stories must classify both link and button trays with the mutual-friend verifier while retaining the viewer's own Story"
 );
 assert.match(
   instagramStableAdapterSource,
-  /const semanticItem = control\.closest\('li, \[role="listitem"\]'\)[\s\S]*?return control\.parentElement \|\| control/u,
+  /const semanticItem = control\.closest\('li, \[role="listitem"\]'\)[\s\S]*?ownsOnlyThisControl\(control\.parentElement\) \? control\.parentElement : control/u,
   "Story removal must target one tray item rather than climbing into the entire Stories surface"
 );
 assert.match(
@@ -390,24 +390,50 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /vigilInstagramStoryGate = 'pending'[\s\S]*?const reconcileStoryRoute[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?location\.replace\('\/'\)/u,
+  /vigilInstagramStoryGate = 'pending'[\s\S]*?const reconcileStoryRoute[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?location\.replace\(nextPath \|\| '\/'\)/u,
   "Stories must remain concealed until the route author is self or a confirmed mutual friend"
 );
+assert.match(instagramStableAdapterSource,
+  /const nextVerifiedStoryPath[\s\S]*?current < previous \? -1 : 1[\s\S]*?hasKnownStoryAccess\(new URL\(path, location.href\)\)/u,
+  "Story traversal must skip filtered accounts in the navigation direction without authorizing them");
+assert.match(instagramStableAdapterSource,
+  /data-vigil-instagram-feed-region="closed"[\s\S]*?content-visibility: hidden !important[\s\S]*?const reconcileHomeFeedRegions[\s\S]*?protectedControls[\s\S]*?hasVerifiedPost \? 'open' : 'closed'/u,
+  "empty feed containers must remain collapsed across recycled posts while keeping profile/story controls outside");
 assert.match(
   instagramStableAdapterSource,
-  /vigilInstagramStoryRelationship = 'self'[\s\S]*?const reconcileStoryPlaceholders[\s\S]*?vigilInstagramStoryPlaceholder/u,
-  "the viewer's own Story must remain distinct and an empty friend tray must render inert placeholders"
+  /const isProfileControl[\s\S]*?const isStoryControl[\s\S]*?vigilInstagramProfileControl = 'true'[\s\S]*?vigilInstagramStoryRelationship = 'self'/u,
+  "profile controls and the viewer's own Story must remain distinct from filtered friend Stories"
 );
+assert.doesNotMatch(instagramStableAdapterSource, /placeholders\.append|host\.append\(placeholders\)/u,
+  "an own-only story tray must not gain fake Stories");
 assert.match(
   instagramStableAdapterSource,
-  /const prepareRouteTransition[\s\S]*?vigilInstagramHomeFilter = 'true'[\s\S]*?prepareRouteTransition\(link\.href\)[\s\S]*?prepareRouteTransition\(args\[2\]\)/u,
-  "Home must become fail-closed before click and History API route swaps"
+  /const prepareRouteTransition[\s\S]*?path === '\/' && committing[\s\S]*?vigilInstagramHomeFilter = 'true'[\s\S]*?prepareRouteTransition\(args\[2\], true\)/u,
+  "Home filtering must begin on a committed route, not hide a profile on a canceled tap"
 );
+assert.match(instagramStableAdapterSource,
+  /\[data-vigil-instagram-home-relationship\]:not\([\s\S]*?display: none !important/u,
+  "classified Home cards must remain hidden while a destination's DOM loads");
 assert.match(
   instagramStableAdapterSource,
   /data-vigil-instagram-story-rail="true"[\s\S]*?overscroll-behavior-x: none !important[\s\S]*?const clampStoryRail[\s\S]*?rail\.scrollLeft = clamped/u,
   "the filtered Home Stories rail must stop at its real rendered bounds"
 );
+assert.match(instagramStableAdapterSource,
+  /data-vigil-instagram-story-track="true"[\s\S]*?width: max-content !important[\s\S]*?data-vigil-instagram-story-slot[\s\S]*?transform: none !important/u,
+  "filtered Stories must compact native slots without retaining spacer width");
+assert.doesNotMatch(instagramStableAdapterSource,
+  /homeStorySnapshots|vigil-instagram-stable-stories|vigilInstagramStorySource|vigilInstagramStoryAvatar/u,
+  "Instagram must keep its original avatars, profile shortcut and native Story activation, not a replacement row");
+assert.match(instagramStableAdapterSource,
+  /const storyForwardControl[\s\S]*?hasKnownStoryAccess[\s\S]*?root === dialog[\s\S]*?storyFrameKey\(touch.media\) !== touch.frameKey[\s\S]*?clientX: rect.left \+ rect.width \* 0.75/u,
+  "right-side Story taps must activate the foreground native Next once with real right-side coordinates");
+assert.match(instagramStableAdapterSource,
+  /data-vigil-instagram-story-relationship="pending"\] \{\s*display: none !important/u,
+  "unresolved Stories must not create invisible scrollable gaps");
+assert.match(instagramStableAdapterSource,
+  /home-filter="true"\] :is\(article, \[role="article"\]\)[\s\S]*?const homeCards[\s\S]*?homeCards\(\)\.forEach\(classifyHomeCard\)/u,
+  "both semantic and role-based posts must be concealed before paint and classified on pagination");
 assert.match(
   instagramStableAdapterSource,
   /const stagedHomeStoryRelationships[\s\S]*?const flushHomeStoryRelationships[\s\S]*?stagedHomeStoryRelationships\.set\(control, \{ username, relationship \}\)[\s\S]*?flushHomeStoryRelationships\(\)/u,
@@ -420,7 +446,7 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
-  /instagramDarkSurface[\s\S]*?red: 18\.0 \/ 255\.0[\s\S]*?surfaceColor[\s\S]*?ignoresSafeArea/u,
+  /instagramDarkSurface[\s\S]*?red: 12\.0 \/ 255\.0[\s\S]*?green: 16\.0 \/ 255\.0[\s\S]*?blue: 20\.0 \/ 255\.0[\s\S]*?surfaceColor[\s\S]*?ignoresSafeArea/u,
   "Instagram's native safe areas must use the same dark surface color as its shell"
 );
 assert.match(

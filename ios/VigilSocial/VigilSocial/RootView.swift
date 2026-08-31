@@ -7,10 +7,12 @@ struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
 
+    // Match Instagram's dark --ig-primary-background (#0c1014) across
+    // the status area, session counter, and home-indicator safe area.
     private static let instagramDarkSurface = Color(
-        red: 18.0 / 255.0,
-        green: 18.0 / 255.0,
-        blue: 18.0 / 255.0
+        red: 12.0 / 255.0,
+        green: 16.0 / 255.0,
+        blue: 20.0 / 255.0
     )
 
     var body: some View {

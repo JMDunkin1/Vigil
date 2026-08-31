@@ -1559,6 +1559,32 @@ enum DOMAdapters {
       if (window.__vigilInstagramStableStartInstalled) return;
       window.__vigilInstagramStableStartInstalled = true;
 
+      // The site may cache History methods while booting. Install this shim
+      // before its router so autoplay and taps share the same prepaint guard.
+      window.__vigilInstagramEarlyHistoryInstalled = true;
+      for (const name of ['pushState', 'replaceState']) {
+        const original = history[name];
+        history[name] = function(...args) {
+          if (typeof window.__vigilInstagramPrepareRoute === 'function') {
+            window.__vigilInstagramPrepareRoute(args[2], true);
+          } else {
+            try {
+              const url = new URL(args[2] || location.href, location.href);
+              if (url.origin === location.origin && url.pathname !== location.pathname) {
+                if (/^\/stories(?:\/|$)/i.test(url.pathname)) {
+                  document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
+                } else if (url.pathname === '/') {
+                  document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
+                }
+              }
+            } catch (_) {}
+          }
+          const result = original.apply(this, args);
+          document.dispatchEvent(new Event('__vigilInstagramHistoryChanged'));
+          return result;
+        };
+      }
+
       // WebKit's default document canvas is white. Hold a black canvas from
       // document-start through Instagram's first complete DOM so the native
       // launch screen hands off directly to Instagram's startup mark.
@@ -1604,9 +1630,14 @@ enum DOMAdapters {
         html[data-vigil-route-policy-blocked] body {
           visibility: hidden !important;
         }
-        html[data-vigil-instagram-home-filter="true"] main article:not(
+        html[data-vigil-instagram-home-filter="true"] :is(article, [role="article"]):not(
+          nav *, [role="navigation"] *, [role="dialog"] *, [aria-modal="true"] *
+        ):not(
           [data-vigil-instagram-home-relationship="friend"]
-        ) {
+        ):not([data-vigil-instagram-home-relationship="self"]),
+        [data-vigil-instagram-home-relationship]:not(
+          [data-vigil-instagram-home-relationship="friend"]
+        ):not([data-vigil-instagram-home-relationship="self"]) {
           display: none !important;
         }
         html[data-vigil-instagram-home-filter="true"] a[href^="/stories/"]:not(
@@ -1617,30 +1648,76 @@ enum DOMAdapters {
           visibility: hidden !important;
         }
         html[data-vigil-instagram-home-filter="true"] main
+          :is(ul, [role="list"], [aria-label="Stories" i])
           :is(button, [role="button"]):has(img[alt*="profile picture" i]):not(
-            article :is(button, [role="button"])
-          ):not([data-vigil-instagram-story-relationship="friend"]):not(
-            [data-vigil-instagram-story-relationship="self"]
-          ) {
+            article *, nav *, [role="navigation"] *
+          ):not([aria-label="Profile" i]):not([aria-label="Your profile" i]):not(
+            [data-vigil-instagram-profile-control="true"]
+          ):not([aria-label="Your story" i]):not([aria-label="Add to your story" i]):not(
+            [data-vigil-instagram-story-relationship="friend"]
+          ):not([data-vigil-instagram-story-relationship="self"]) {
           visibility: hidden !important;
         }
-        html[data-vigil-instagram-home-filter="true"]
-          [data-vigil-instagram-story-relationship="pending"] {
-          visibility: hidden !important;
+        [data-vigil-instagram-story-relationship="pending"] {
+          display: none !important;
         }
-        html[data-vigil-instagram-home-filter="true"]
-          [data-vigil-instagram-story-relationship="other"] {
+        [data-vigil-instagram-feed-region="closed"] {
+          display: none !important;
+          content-visibility: hidden !important;
+        }
+        [data-vigil-instagram-story-relationship="other"] {
           display: none !important;
         }
         html[data-vigil-instagram-story-gate="pending"] body {
           visibility: hidden !important;
         }
-        html[data-vigil-instagram-home-filter="true"]
-          [data-vigil-instagram-story-relationship="unavailable"] {
+        [data-vigil-instagram-story-relationship="unavailable"] {
           display: none !important;
         }
         [data-vigil-instagram-story-rail="true"] {
           overscroll-behavior-x: none !important;
+          scroll-behavior: auto !important;
+          scroll-snap-type: none !important;
+          overflow-x: auto !important;
+          overflow-anchor: none !important;
+        }
+        [data-vigil-instagram-story-track="true"] {
+          display: flex !important;
+          flex-flow: row nowrap !important;
+          justify-content: flex-start !important;
+          gap: 0 !important;
+          position: relative !important;
+          inset: auto !important;
+          transform: none !important;
+          translate: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          transition: none !important;
+        }
+        [data-vigil-instagram-story-track="true"]:not([data-vigil-instagram-story-rail="true"]),
+        [data-vigil-instagram-story-carrier="true"] {
+          width: max-content !important;
+          min-width: 0 !important;
+          max-width: none !important;
+          transform: none !important;
+          translate: none !important;
+        }
+        [data-vigil-instagram-story-track="true"] > :not([data-vigil-instagram-story-slot]) {
+          display: none !important;
+        }
+        [data-vigil-instagram-story-slot] {
+          overflow: clip !important;
+          position: relative !important;
+          inset: auto !important;
+          transform: none !important;
+          translate: none !important;
+          margin: 0 !important;
+          flex: 0 0 auto !important;
+          order: 0 !important;
+          transition: none !important;
+        }
+        [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-slot="visible"]) {
+          display: none !important;
         }
         html[data-vigil-instagram-home-filter="true"] main [role="progressbar"] {
           display: none !important;
@@ -1695,39 +1772,6 @@ enum DOMAdapters {
           display: none !important;
         }
         @keyframes vigil-instagram-friends-spin { to { transform: rotate(360deg); } }
-        [data-vigil-instagram-story-placeholders="true"] {
-          box-sizing: border-box !important;
-          display: flex !important;
-          flex: 0 0 auto !important;
-          align-items: flex-start !important;
-          gap: 12px !important;
-          padding: 0 8px !important;
-          pointer-events: none !important;
-          list-style: none !important;
-        }
-        [data-vigil-instagram-story-placeholder="true"] {
-          box-sizing: border-box !important;
-          display: grid !important;
-          width: 66px !important;
-          place-items: center !important;
-          gap: 7px !important;
-        }
-        [data-vigil-instagram-story-placeholder="true"]::before {
-          box-sizing: border-box !important;
-          content: "" !important;
-          width: 58px !important;
-          height: 58px !important;
-          border: 2px solid rgba(128, 128, 128, .34) !important;
-          border-radius: 50% !important;
-          background: rgba(128, 128, 128, .14) !important;
-        }
-        [data-vigil-instagram-story-placeholder="true"]::after {
-          content: "" !important;
-          width: 38px !important;
-          height: 7px !important;
-          border-radius: 999px !important;
-          background: rgba(128, 128, 128, .20) !important;
-        }
         [data-vigil-instagram-comments-sheet="true"] {
           box-sizing: border-box !important;
           position: fixed !important;
@@ -4243,9 +4287,14 @@ enum DOMAdapters {
           html[data-vigil-route-policy-blocked] body {
             visibility: hidden !important;
           }
-          html[data-vigil-instagram-home-filter="true"] main article:not(
+          html[data-vigil-instagram-home-filter="true"] :is(article, [role="article"]):not(
+            nav *, [role="navigation"] *, [role="dialog"] *, [aria-modal="true"] *
+          ):not(
             [data-vigil-instagram-home-relationship="friend"]
-          ) {
+          ):not([data-vigil-instagram-home-relationship="self"]),
+          [data-vigil-instagram-home-relationship]:not(
+            [data-vigil-instagram-home-relationship="friend"]
+          ):not([data-vigil-instagram-home-relationship="self"]) {
             display: none !important;
           }
           html[data-vigil-instagram-home-filter="true"] a[href^="/stories/"]:not(
@@ -4256,30 +4305,76 @@ enum DOMAdapters {
             visibility: hidden !important;
           }
           html[data-vigil-instagram-home-filter="true"] main
+            :is(ul, [role="list"], [aria-label="Stories" i])
             :is(button, [role="button"]):has(img[alt*="profile picture" i]):not(
-              article :is(button, [role="button"])
-            ):not([data-vigil-instagram-story-relationship="friend"]):not(
-              [data-vigil-instagram-story-relationship="self"]
-            ) {
+              article *, nav *, [role="navigation"] *
+            ):not([aria-label="Profile" i]):not([aria-label="Your profile" i]):not(
+              [data-vigil-instagram-profile-control="true"]
+            ):not([aria-label="Your story" i]):not([aria-label="Add to your story" i]):not(
+              [data-vigil-instagram-story-relationship="friend"]
+            ):not([data-vigil-instagram-story-relationship="self"]) {
             visibility: hidden !important;
           }
-          html[data-vigil-instagram-home-filter="true"]
-            [data-vigil-instagram-story-relationship="pending"] {
-            visibility: hidden !important;
+          [data-vigil-instagram-story-relationship="pending"] {
+            display: none !important;
           }
-          html[data-vigil-instagram-home-filter="true"]
-            [data-vigil-instagram-story-relationship="other"] {
+          [data-vigil-instagram-feed-region="closed"] {
+            display: none !important;
+            content-visibility: hidden !important;
+          }
+          [data-vigil-instagram-story-relationship="other"] {
             display: none !important;
           }
           html[data-vigil-instagram-story-gate="pending"] body {
             visibility: hidden !important;
           }
-          html[data-vigil-instagram-home-filter="true"]
-            [data-vigil-instagram-story-relationship="unavailable"] {
+          [data-vigil-instagram-story-relationship="unavailable"] {
             display: none !important;
           }
           [data-vigil-instagram-story-rail="true"] {
             overscroll-behavior-x: none !important;
+            scroll-behavior: auto !important;
+            scroll-snap-type: none !important;
+            overflow-x: auto !important;
+            overflow-anchor: none !important;
+          }
+          [data-vigil-instagram-story-track="true"] {
+            display: flex !important;
+            flex-flow: row nowrap !important;
+            justify-content: flex-start !important;
+            gap: 0 !important;
+            position: relative !important;
+            inset: auto !important;
+            transform: none !important;
+            translate: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            transition: none !important;
+          }
+          [data-vigil-instagram-story-track="true"]:not([data-vigil-instagram-story-rail="true"]),
+          [data-vigil-instagram-story-carrier="true"] {
+            width: max-content !important;
+            min-width: 0 !important;
+            max-width: none !important;
+            transform: none !important;
+            translate: none !important;
+          }
+          [data-vigil-instagram-story-track="true"] > :not([data-vigil-instagram-story-slot]) {
+            display: none !important;
+          }
+          [data-vigil-instagram-story-slot] {
+            overflow: clip !important;
+            position: relative !important;
+            inset: auto !important;
+            transform: none !important;
+            translate: none !important;
+            margin: 0 !important;
+            flex: 0 0 auto !important;
+            order: 0 !important;
+            transition: none !important;
+          }
+          [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-slot="visible"]) {
+            display: none !important;
           }
           html[data-vigil-instagram-home-filter="true"] main [role="progressbar"] {
             display: none !important;
@@ -4334,39 +4429,6 @@ enum DOMAdapters {
             display: none !important;
           }
           @keyframes vigil-instagram-friends-spin { to { transform: rotate(360deg); } }
-          [data-vigil-instagram-story-placeholders="true"] {
-            box-sizing: border-box !important;
-            display: flex !important;
-            flex: 0 0 auto !important;
-            align-items: flex-start !important;
-            gap: 12px !important;
-            padding: 0 8px !important;
-            pointer-events: none !important;
-            list-style: none !important;
-          }
-          [data-vigil-instagram-story-placeholder="true"] {
-            box-sizing: border-box !important;
-            display: grid !important;
-            width: 66px !important;
-            place-items: center !important;
-            gap: 7px !important;
-          }
-          [data-vigil-instagram-story-placeholder="true"]::before {
-            box-sizing: border-box !important;
-            content: "" !important;
-            width: 58px !important;
-            height: 58px !important;
-            border: 2px solid rgba(128, 128, 128, .34) !important;
-            border-radius: 50% !important;
-            background: rgba(128, 128, 128, .14) !important;
-          }
-          [data-vigil-instagram-story-placeholder="true"]::after {
-            content: "" !important;
-            width: 38px !important;
-            height: 7px !important;
-            border-radius: 999px !important;
-            background: rgba(128, 128, 128, .20) !important;
-          }
           [data-vigil-instagram-comments-sheet="true"] {
             box-sizing: border-box !important;
             position: fixed !important;
@@ -4704,7 +4766,7 @@ enum DOMAdapters {
         try { location.replace('/'); } catch (_) {}
       };
       let routeTransitionGeneration = 0;
-      const prepareRouteTransition = (value = location.href) => {
+      const prepareRouteTransition = (value = location.href, committing = false) => {
         try {
           const url = value === undefined || value === null || value === ''
             ? new URL(location.href)
@@ -4721,7 +4783,7 @@ enum DOMAdapters {
           const path = url.pathname.toLowerCase().replace(/\/+$/, '') || '/';
           const sourcePath = source.pathname.toLowerCase().replace(/\/+$/, '') || '/';
           const sourceIsStory = sourcePath === '/stories' || sourcePath.startsWith('/stories/');
-          if (path === '/') {
+          if (path === '/' && committing) {
             // Set the fail-closed Home marker before Instagram synchronously
             // swaps its SPA tree, not one mutation callback afterward.
             document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
@@ -4729,7 +4791,9 @@ enum DOMAdapters {
           } else if (path === '/stories' || path.startsWith('/stories/')) {
             // Conceal the Story viewer before Instagram can synchronously swap
             // in the next account during its click or History handler.
-            document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
+            if (!hasKnownStoryAccess(url)) {
+              document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
+            }
           } else if (!sourceIsStory) {
             delete document.documentElement.dataset.vigilInstagramStoryGate;
           }
@@ -4747,7 +4811,7 @@ enum DOMAdapters {
       };
       const scheduleRouteCheck = () => {
         const generation = ++routeTransitionGeneration;
-        prepareRouteTransition();
+        prepareRouteTransition(location.href, true);
         queueMicrotask(() => {
           enforceRoute();
           reconcileFriendsFeed();
@@ -4759,6 +4823,8 @@ enum DOMAdapters {
           }));
         });
       };
+      window.__vigilInstagramPrepareRoute = prepareRouteTransition;
+      document.addEventListener('__vigilInstagramHistoryChanged', scheduleRouteCheck);
       // Mobile WebKit preserves CSS hover after a touch. In Direct, Instagram
       // uses that hover to reveal reactions and More, so its first tap can stop
       // at the hover state and require a second tap to activate the underlying
@@ -4836,6 +4902,102 @@ enum DOMAdapters {
           finally { directProgrammaticActivation = false; }
         });
       }, { capture: true, passive: false });
+      let storyForwardTouch = null;
+      let suppressedStoryForwardClick = null;
+      let deliveringStoryForwardClick = false;
+      const storyForwardControl = (target, x, y) => {
+        if (instagramRoute() !== 'story' || !(target instanceof Element) || !target.isConnected
+            || document.documentElement.dataset.vigilInstagramStoryGate === 'pending'
+            || !hasKnownStoryAccess(new URL(location.href))) return null;
+        const interactive = target.closest('a[href], button, [role="button"], input, textarea, select, [contenteditable="true"]');
+        const nextLabel = '[aria-label="Next" i], [aria-label="Next story" i], [aria-label="Next photo" i]';
+        if (interactive && !interactive.matches(nextLabel) && !interactive.querySelector(nextLabel)) return null;
+        const excluded = '[aria-hidden="true"], [data-vigil-instagram-feed-region], nav';
+        const dialog = target.closest('[role="dialog"], [aria-modal="true"]');
+        const viewportWidth = Math.max(1, window.visualViewport?.width || innerWidth || 1);
+        const viewportHeight = Math.max(1, window.visualViewport?.height || innerHeight || 1);
+        let media = null;
+        // Start at the actual hit target. A Home post or adjacent preloaded
+        // Story can remain in the document behind the foreground viewer.
+        for (let root = target, depth = 0; root && depth < 12; root = root.parentElement, depth += 1) {
+          if (!media) {
+            const candidates = root.matches('video, img') ? [root] : root.querySelectorAll('video, img');
+            media = [...candidates].slice(0, 24).find((candidate) => {
+              if (!visibleInstagramElement(candidate) || candidate.closest(excluded)) return false;
+              const rect = candidate.getBoundingClientRect();
+              return rect.width >= Math.min(220, viewportWidth * 0.55)
+                && rect.height >= Math.min(280, viewportHeight * 0.34)
+                && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+            });
+          }
+          if (media) {
+            const bounds = media.getBoundingClientRect();
+            if (x < bounds.left + bounds.width * 0.55 || x > bounds.right
+                || y < bounds.top + Math.min(90, bounds.height * 0.18)
+                || y > bounds.bottom - Math.min(110, bounds.height * 0.22)) return null;
+            for (const labelled of root.querySelectorAll(nextLabel)) {
+              const control = labelled.closest('button, [role="button"]') || labelled;
+              if (!(control instanceof HTMLElement) || !visibleInstagramElement(control)
+                  || control.matches(':disabled, [aria-disabled="true"]') || control.closest(excluded)) continue;
+              const rect = control.getBoundingClientRect();
+              if (rect.left + rect.width / 2 < bounds.left + bounds.width / 2
+                  || rect.left > bounds.right + 60 || rect.bottom < bounds.top || rect.top > bounds.bottom) continue;
+              return { control, media };
+            }
+          }
+          if (root === dialog || root === document.body) break;
+        }
+        return null;
+      };
+      const storyFrameKey = (media) => [location.href, media?.currentSrc || '',
+        media?.getAttribute('src') || '', media?.querySelector('source')?.getAttribute('src') || ''].join('|');
+      document.addEventListener('pointerdown', (event) => {
+        if (!event.isPrimary || event.pointerType !== 'touch') return;
+        const forward = storyForwardControl(event.target, event.clientX, event.clientY);
+        storyForwardTouch = forward ? {
+          ...forward, pointerId: event.pointerId, target: event.target,
+          x: event.clientX, y: event.clientY, startedAt: performance.now(),
+          frameKey: storyFrameKey(forward.media)
+        } : null;
+      }, { capture: true, passive: true });
+      document.addEventListener('pointermove', (event) => {
+        if (storyForwardTouch?.pointerId === event.pointerId
+            && Math.hypot(event.clientX - storyForwardTouch.x, event.clientY - storyForwardTouch.y) > 12) {
+          storyForwardTouch = null;
+        }
+      }, { capture: true, passive: true });
+      document.addEventListener('pointercancel', () => { storyForwardTouch = null; }, true);
+      document.addEventListener('pointerup', (event) => {
+        const touch = storyForwardTouch;
+        storyForwardTouch = null;
+        if (!touch || touch.pointerId !== event.pointerId || performance.now() - touch.startedAt > 350
+            || Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 12) return;
+        suppressedStoryForwardClick = { x: touch.x, y: touch.y, until: performance.now() + 700 };
+        if (event.cancelable) event.preventDefault();
+        // Let Instagram clear its press-to-pause state first. If pointerup
+        // already advanced the viewer, never issue a second advance.
+        setTimeout(() => {
+          if (!touch.control.isConnected || !touch.media.isConnected
+              || storyFrameKey(touch.media) !== touch.frameKey
+              || storyForwardControl(touch.target, touch.x, touch.y)?.control !== touch.control) return;
+          const rect = touch.control.getBoundingClientRect();
+          deliveringStoryForwardClick = true;
+          try {
+            touch.control.dispatchEvent(new MouseEvent('click', {
+              bubbles: true, cancelable: true, view: window,
+              clientX: rect.left + rect.width * 0.75, clientY: rect.top + rect.height / 2
+            }));
+          } finally { deliveringStoryForwardClick = false; }
+        }, 40);
+      }, { capture: true, passive: false });
+      document.addEventListener('click', (event) => {
+        const suppressed = suppressedStoryForwardClick;
+        if (!deliveringStoryForwardClick && suppressed && performance.now() < suppressed.until
+            && Math.hypot(event.clientX - suppressed.x, event.clientY - suppressed.y) <= 24) {
+          if (event.cancelable) event.preventDefault();
+          event.stopImmediatePropagation();
+        }
+      }, true);
       document.addEventListener('click', (event) => {
         if (suppressedDirectClick && performance.now() > suppressedDirectClick.until) {
           suppressedDirectClick = null;
@@ -4877,10 +5039,10 @@ enum DOMAdapters {
         }
         prepareRouteTransition(link.href);
       }, true);
-      for (const name of ['pushState', 'replaceState']) {
+      if (!window.__vigilInstagramEarlyHistoryInstalled) for (const name of ['pushState', 'replaceState']) {
         const original = history[name];
         history[name] = function(...args) {
-          prepareRouteTransition(args[2]);
+          prepareRouteTransition(args[2], true);
           const result = original.apply(this, args);
           scheduleRouteCheck();
           return result;
@@ -4947,6 +5109,9 @@ enum DOMAdapters {
       // fail-closed until Instagram's same-origin relationship data confirms
       // both directions: the viewer follows the author and the author follows
       // the viewer. This is identity-based and deliberately has no item limit.
+      const homeCards = () => [...document.querySelectorAll('article, [role="article"]')]
+        .filter((card) => !card.closest('nav, [role="navigation"], [role="dialog"], [aria-modal="true"]'));
+      const homeCardIdentities = new WeakMap();
       const friendshipCache = new Map();
       const friendshipChecks = new Map();
       const normalizedUsername = (value) => String(value || '').trim().replace(/^@/, '').toLowerCase();
@@ -5136,9 +5301,9 @@ enum DOMAdapters {
         emptyStateTimer = setTimeout(() => {
           emptyStateTimer = 0;
           if (instagramRoute() !== 'feed') return;
-          const articles = [...document.querySelectorAll('main article:not([data-vigil-hidden-feature])')];
+          const articles = homeCards().filter((card) => !card.hasAttribute('data-vigil-hidden-feature'));
           if (articles.some((article) => (
-            article.dataset.vigilInstagramHomeRelationship === 'friend'
+            ['friend', 'self'].includes(article.dataset.vigilInstagramHomeRelationship)
           ))) return;
           if (articles.some((article) => (
             !article.dataset.vigilInstagramHomeRelationship
@@ -5148,13 +5313,14 @@ enum DOMAdapters {
         }, delay);
       };
       const reconcileFriendsEmptyState = () => {
+        reconcileHomeFeedRegions();
         if (instagramRoute() !== 'feed') {
           removeFriendsState();
           return;
         }
-        const articles = [...document.querySelectorAll('main article:not([data-vigil-hidden-feature])')];
+        const articles = homeCards().filter((card) => !card.hasAttribute('data-vigil-hidden-feature'));
         const hasFriend = articles.some((article) => (
-          article.dataset.vigilInstagramHomeRelationship === 'friend'
+          ['friend', 'self'].includes(article.dataset.vigilInstagramHomeRelationship)
         ));
         if (hasFriend) {
           removeFriendsState();
@@ -5179,21 +5345,32 @@ enum DOMAdapters {
       const classifyHomeCard = (article) => {
         if (!(article instanceof Element) || article.hasAttribute('data-vigil-hidden-feature')) return;
         const username = homeCardAuthor(article);
+        if (username && username === discoverViewerUsername()) {
+          homeCardIdentities.set(article, username);
+          article.dataset.vigilInstagramHomeAuthor = username;
+          article.dataset.vigilInstagramHomeRelationship = 'self';
+          return;
+        }
         if (!username) {
+          homeCardIdentities.delete(article);
+          delete article.dataset.vigilInstagramHomeAuthor;
           article.dataset.vigilInstagramHomeRelationship = 'other';
           return;
         }
-        if (article.dataset.vigilInstagramHomeAuthor === username
+        if (homeCardIdentities.get(article) === username
+            && article.dataset.vigilInstagramHomeAuthor === username
             && ['friend', 'other', 'pending', 'unavailable'].includes(
               article.dataset.vigilInstagramHomeRelationship || ''
             )) return;
         article.dataset.vigilInstagramHomeAuthor = username;
+        homeCardIdentities.set(article, username);
         article.dataset.vigilInstagramHomeRelationship = 'pending';
         void fetchMutualFriendship(username).then((mutual) => {
-          if (!article.isConnected || homeCardAuthor(article) !== username) return;
-          article.dataset.vigilInstagramHomeRelationship = mutual === true
-            ? 'friend'
-            : mutual === false ? 'other' : 'unavailable';
+          if (!article.isConnected || homeCardAuthor(article) !== username
+              || article.dataset.vigilInstagramHomeAuthor !== username) return;
+          article.dataset.vigilInstagramHomeRelationship = username === discoverViewerUsername()
+            ? 'self'
+            : mutual === true ? 'friend' : mutual === false ? 'other' : 'unavailable';
           reconcileFriendsEmptyState();
         });
       };
@@ -5281,10 +5458,25 @@ enum DOMAdapters {
         }
         return '';
       };
+      const homeStoryItems = new WeakMap();
       const storyItemFor = (control) => {
         const semanticItem = control.closest('li, [role="listitem"]');
-        if (semanticItem) return semanticItem;
-        return control.parentElement || control;
+        const ownsOnlyThisControl = (candidate) => candidate
+          && !candidate.matches('main, nav, header, [role="main"], [role="navigation"], [role="list"]')
+          && [...candidate.querySelectorAll('a[href], button, [role="button"]')]
+            .every((other) => other === control || control.contains(other));
+        if (ownsOnlyThisControl(semanticItem)) return semanticItem;
+        // Anonymous trays sometimes put every button directly in one div.
+        // Hiding that parent hides the viewer's avatar and all its siblings.
+        return ownsOnlyThisControl(control.parentElement) ? control.parentElement : control;
+      };
+      const clearStoryClassification = (control) => {
+        const item = homeStoryItems.get(control);
+        if (item) delete item.dataset.vigilInstagramStoryRelationship;
+        homeStoryItems.delete(control);
+        delete control.dataset.vigilInstagramStoryRelationship;
+        delete control.dataset.vigilInstagramStoryAuthor;
+        stagedHomeStoryRelationships.delete(control);
       };
       const isOwnStoryControl = (control) => {
         const labels = [
@@ -5300,25 +5492,73 @@ enum DOMAdapters {
           || label === 'add to your story'
           || label === 'create story');
       };
+      const isProfileControl = (control) => {
+        if (control.matches('[aria-label="Profile" i], [aria-label="Your profile" i]')
+            || control.querySelector('svg[aria-label="Profile" i]')) return true;
+        const link = control.closest('a[href]') || control.querySelector('a[href]');
+        if (!link) return false;
+        try {
+          const path = new URL(link.href, location.href).pathname.split('/').filter(Boolean);
+          return path.length === 1 && Boolean(validInstagramUsername(path[0]))
+            && !['stories', 'reels', 'reel', 'explore', 'accounts', 'direct'].includes(path[0]);
+        } catch (_) { return false; }
+      };
+      const isStoryControl = (control) => {
+        if (control.querySelectorAll('img[alt*="profile picture" i]').length > 1) return false;
+        if (isProfileControl(control)) {
+          clearStoryClassification(control);
+          control.dataset.vigilInstagramProfileControl = 'true';
+          return false;
+        }
+        if (control.matches('a[href^="/stories/"]')) return true;
+        const label = [control.getAttribute('aria-label'), control.textContent]
+          .map((value) => String(value || '')).join(' ');
+        if (/\bstor(?:y|ies)\b/i.test(label)) return true;
+        if (control.closest('ul, [role="list"], [aria-label="Stories" i]')) return true;
+        let ancestor = control.parentElement;
+        for (let depth = 0; ancestor && ancestor !== document.body && depth < 6; depth += 1) {
+          if (/auto|scroll/.test(getComputedStyle(ancestor).overflowX)
+              && ancestor.querySelectorAll('img[alt*="profile picture" i]').length > 1) return true;
+          ancestor = ancestor.parentElement;
+        }
+        return false;
+      };
       const homeStoryControls = () => {
+        if (instagramRoute() !== 'feed') return [];
         const controls = [...document.querySelectorAll([
           'a[href^="/stories/"]',
-          'main button:has(img[alt*="profile picture" i])',
-          'main [role="button"]:has(img[alt*="profile picture" i])'
+          ':is(main, [role="main"]) button:has(img[alt*="profile picture" i])',
+          ':is(main, [role="main"]) [role="button"]:has(img[alt*="profile picture" i])'
         ].join(', '))];
-        return controls.filter((control) => !control.closest('article, nav, [role="navigation"]')
-          && !controls.some((parent) => parent !== control && parent.contains(control)));
+        const stories = controls.filter((control) => !control.closest('article, [role="article"], nav, [role="navigation"]')
+          && isStoryControl(control));
+        return stories.filter((control) => !stories.some((parent) => (
+          parent !== control && parent.contains(control)
+        )));
       };
       const stagedHomeStoryRelationships = new WeakMap();
       const storyRailClampFrames = new WeakMap();
       const boundStoryRails = new WeakSet();
+      const storyRailResizeObserver = new ResizeObserver((entries) => {
+        entries.forEach(({ target }) => {
+          const rail = target.closest('[data-vigil-instagram-story-rail="true"]');
+          if (rail) scheduleStoryRailClamp(rail);
+        });
+      });
       const storyRailFor = (controls) => {
+        if (controls.length === 0) {
+          return document.querySelector('[data-vigil-instagram-story-rail="true"]');
+        }
         const firstItem = controls[0] ? storyItemFor(controls[0]) : null;
         let candidate = firstItem?.parentElement || null;
         let measuredFallback = null;
         for (let depth = 0; candidate && candidate !== document.body && depth < 8; depth += 1) {
+          if (!controls.every((control) => candidate.contains(control))) {
+            candidate = candidate.parentElement;
+            continue;
+          }
           const style = getComputedStyle(candidate);
-          if (/(auto|scroll)/.test(`${style.overflowX} ${style.overflow}`)) return candidate;
+          if (/^(auto|scroll)$/.test(style.overflowX)) return candidate;
           if (!measuredFallback && candidate.clientWidth > 0
               && candidate.scrollWidth > candidate.clientWidth + 1) measuredFallback = candidate;
           candidate = candidate.parentElement;
@@ -5326,7 +5566,8 @@ enum DOMAdapters {
         return measuredFallback;
       };
       const clampStoryRail = (rail) => {
-        if (!(rail instanceof HTMLElement) || !rail.isConnected) return;
+        if (!(rail instanceof HTMLElement) || !rail.isConnected
+            || rail.dataset.vigilInstagramStoryRail !== 'true') return;
         const distance = Math.max(0, rail.scrollWidth - rail.clientWidth);
         const rightToLeft = getComputedStyle(rail).direction === 'rtl';
         const minimum = rightToLeft ? -distance : 0;
@@ -5344,9 +5585,66 @@ enum DOMAdapters {
       };
       const normalizeHomeStoryRail = (controls = homeStoryControls()) => {
         const rail = instagramRoute() === 'feed' ? storyRailFor(controls) : null;
+        // Instagram's virtual row retains the width, absolute offsets and
+        // spacers of accounts we have hidden. Clamp to a compact layout of
+        // real visible slots, not that original (mostly empty) scrollWidth.
+        let track = controls[0] ? storyItemFor(controls[0]).parentElement
+          : rail?.matches('[data-vigil-instagram-story-track="true"]') ? rail
+          : rail?.querySelector('[data-vigil-instagram-story-track="true"]');
+        while (track && track !== rail && !controls.every((control) => track.contains(control))) {
+          track = track.parentElement;
+        }
+        if (!(rail instanceof HTMLElement) || !track || !rail.contains(track)
+            || track.matches('main, [role="main"], nav, [role="navigation"]')
+            || track.querySelector('article, [role="article"]')) track = null;
+        const slots = new Map();
+        if (track) {
+          for (const control of controls) {
+            let slot = control;
+            while (slot.parentElement && slot.parentElement !== track) slot = slot.parentElement;
+            if (slot.parentElement !== track) continue;
+            const visible = ['self', 'friend'].includes(control.dataset.vigilInstagramStoryRelationship);
+            slots.set(slot, slots.get(slot) === 'visible' || visible ? 'visible' : 'hidden');
+          }
+          // A profile shortcut inside a tray is always kept. Never compact a
+          // shared container that also owns unrelated navigation/actions.
+          for (const control of track.querySelectorAll('a[href], button, [role="button"]')) {
+            if (controls.some((story) => story === control || story.contains(control) || control.contains(story))) continue;
+            if (!isProfileControl(control)) { track = null; break; }
+            let slot = control;
+            while (slot.parentElement && slot.parentElement !== track) slot = slot.parentElement;
+            slots.set(slot, 'visible');
+          }
+        }
+        document.querySelectorAll('[data-vigil-instagram-story-track="true"]').forEach((candidate) => {
+          if (candidate !== track) {
+            candidate.removeAttribute('data-vigil-instagram-story-track');
+            storyRailResizeObserver.unobserve(candidate);
+          }
+        });
+        document.querySelectorAll('[data-vigil-instagram-story-slot]').forEach((candidate) => {
+          if (!track || !slots.has(candidate)) candidate.removeAttribute('data-vigil-instagram-story-slot');
+        });
+        const carriers = new Set();
+        for (let carrier = track?.parentElement; carrier && carrier !== rail && rail?.contains(carrier);
+            carrier = carrier.parentElement) carriers.add(carrier);
+        document.querySelectorAll('[data-vigil-instagram-story-carrier="true"]').forEach((candidate) => {
+          if (!carriers.has(candidate)) candidate.removeAttribute('data-vigil-instagram-story-carrier');
+        });
+        carriers.forEach((carrier) => { carrier.dataset.vigilInstagramStoryCarrier = 'true'; });
+        if (track) {
+          slots.forEach((state, slot) => { slot.dataset.vigilInstagramStorySlot = state; });
+          if (track.dataset.vigilInstagramStoryTrack !== 'true') {
+            track.dataset.vigilInstagramStoryTrack = 'true';
+            storyRailResizeObserver.observe(track);
+          }
+        }
         document.querySelectorAll('[data-vigil-instagram-story-rail="true"]')
           .forEach((candidate) => {
-            if (candidate !== rail) candidate.removeAttribute('data-vigil-instagram-story-rail');
+            if (candidate !== rail) {
+              candidate.removeAttribute('data-vigil-instagram-story-rail');
+              storyRailResizeObserver.unobserve(candidate);
+            }
           });
         if (!(rail instanceof HTMLElement)) return;
         rail.dataset.vigilInstagramStoryRail = 'true';
@@ -5354,10 +5652,14 @@ enum DOMAdapters {
           boundStoryRails.add(rail);
           rail.addEventListener('scroll', () => scheduleStoryRailClamp(rail), { passive: true });
         }
-        scheduleStoryRailClamp(rail);
+        storyRailResizeObserver.observe(rail);
+        // Reset an old offset in the same task as slot removal, before paint.
+        clampStoryRail(rail);
       };
       const flushHomeStoryRelationships = () => {
+        if (instagramRoute() !== 'feed') return false;
         const controls = homeStoryControls();
+        rememberHomeStoryOrder(controls);
         const unresolved = controls.some((control) => {
           const relationship = control.dataset.vigilInstagramStoryRelationship || '';
           if (['self', 'friend', 'other', 'unavailable'].includes(relationship)) return false;
@@ -5379,19 +5681,29 @@ enum DOMAdapters {
         // collapsing cards as network requests returned made the remaining
         // Stories jump and cut in and out underneath an active swipe.
         normalizeHomeStoryRail(controls);
-        reconcileStoryPlaceholders();
+        removeStoryPlaceholders();
         return true;
       };
       const classifyHomeStory = (control) => {
-        if (!(control instanceof Element)) return;
+        if (!(control instanceof Element) || instagramRoute() !== 'feed') return;
         const item = storyItemFor(control);
+        const previousItem = homeStoryItems.get(control);
+        if (previousItem && previousItem !== item) delete previousItem.dataset.vigilInstagramStoryRelationship;
+        homeStoryItems.set(control, item);
         if (isOwnStoryControl(control)) {
           stagedHomeStoryRelationships.delete(control);
+          control.dataset.vigilInstagramStoryAuthor = storyAuthor(control);
           control.dataset.vigilInstagramStoryRelationship = 'self';
           item.dataset.vigilInstagramStoryRelationship = 'self';
           return;
         }
         const username = storyAuthor(control);
+        if (control.dataset.vigilInstagramStoryAuthor === username
+            && ['friend', 'other', 'pending', 'unavailable'].includes(
+              control.dataset.vigilInstagramStoryRelationship || ''
+            )) return;
+        control.dataset.vigilInstagramStoryAuthor = username;
+        stagedHomeStoryRelationships.delete(control);
         if (!username) {
           control.dataset.vigilInstagramStoryRelationship = 'pending';
           item.dataset.vigilInstagramStoryRelationship = 'pending';
@@ -5399,18 +5711,14 @@ enum DOMAdapters {
           queueMicrotask(flushHomeStoryRelationships);
           return;
         }
-        if (control.dataset.vigilInstagramStoryAuthor === username
-            && ['friend', 'other', 'pending', 'unavailable'].includes(
-              control.dataset.vigilInstagramStoryRelationship || ''
-            )) return;
-        control.dataset.vigilInstagramStoryAuthor = username;
         control.dataset.vigilInstagramStoryRelationship = 'pending';
         item.dataset.vigilInstagramStoryRelationship = 'pending';
         void fetchMutualFriendship(username).then((mutual) => {
-          if (!control.isConnected || storyAuthor(control) !== username) return;
-          const relationship = mutual === true
-            ? 'friend'
-            : mutual === false ? 'other' : 'unavailable';
+          if (!control.isConnected || storyAuthor(control) !== username
+              || control.dataset.vigilInstagramStoryAuthor !== username) return;
+          const relationship = isOwnStoryControl(control)
+            ? 'self'
+            : mutual === true ? 'friend' : mutual === false ? 'other' : 'unavailable';
           stagedHomeStoryRelationships.set(control, { username, relationship });
           flushHomeStoryRelationships();
         });
@@ -5419,55 +5727,135 @@ enum DOMAdapters {
         document.querySelectorAll('[data-vigil-instagram-story-placeholders="true"]')
           .forEach((element) => element.remove());
       };
-      const reconcileStoryPlaceholders = () => {
+      const hasKnownStoryAccess = (url) => {
+        const parts = url.pathname.toLowerCase().split('/').filter(Boolean);
+        if (parts[0] !== 'stories') return false;
+        const username = validInstagramUsername(parts[1]);
+        return Boolean(username) && (username === discoverViewerUsername()
+          || friendshipCache.get(username) === true);
+      };
+      const storyOrderKey = `${friendshipCacheKey}:story-order`;
+      const readStoryOrder = () => {
+        try {
+          const saved = JSON.parse(sessionStorage.getItem(storyOrderKey) || 'null');
+          if (!saved || !discoverViewerUsername() || saved.viewer !== discoverViewerUsername()
+              || !Number.isFinite(saved.savedAt) || Date.now() - saved.savedAt > 30 * 60 * 1000
+              || !Array.isArray(saved.order)
+              || !saved.order.every((username) => username && validInstagramUsername(username) === username)) return null;
+          return saved;
+        } catch (_) { return null; }
+      };
+      const saveStoryOrder = (saved) => {
+        try { sessionStorage.setItem(storyOrderKey, JSON.stringify(saved)); } catch (_) {}
+      };
+      const rememberHomeStoryOrder = (controls) => {
+        const viewer = discoverViewerUsername();
+        if (!viewer || !controls.length) return;
+        const saved = readStoryOrder();
+        const order = [...new Set([...(saved?.order || []), ...controls.map(storyAuthor).filter(Boolean)])];
+        if (!order.length) return;
+        if (saved && !saved.active && JSON.stringify(saved.order) === JSON.stringify(order)) return;
+        // Keep the original account order, including filtered slots, separately
+        // from its compact visual layout. A native Next tap still visits those
+        // accounts; it must skip them rather than close the entire viewer.
+        saveStoryOrder({ viewer, order, active: '', savedAt: Date.now() });
+      };
+      const rememberVerifiedStory = (path) => {
+        if (!discoverViewerUsername()) {
+          // A full-document Story link has no Home profile navigation from
+          // which to recover the viewer. Resolve it without reblanking an
+          // already-verified Story, then retain this traversal position.
+          void hydrateViewerUsername().then((viewer) => {
+            if (viewer && verifiedStoryPath === path && instagramRoute() === 'story') {
+              rememberVerifiedStory(path);
+            }
+          });
+          return;
+        }
+        const saved = readStoryOrder();
+        const username = validInstagramUsername(path.split('/').filter(Boolean)[1]);
+        if (!saved || !saved.order.includes(username) || saved.active === username) return;
+        saved.active = username;
+        saveStoryOrder(saved);
+      };
+      const nextVerifiedStoryPath = (username) => {
+        const saved = readStoryOrder();
+        if (!saved) return '';
+        const current = saved.order.indexOf(username);
+        const previous = saved.order.indexOf(saved.active);
+        if (current < 0 || previous < 0 || current === previous) return '';
+        const direction = current < previous ? -1 : 1;
+        for (let index = current + direction; index >= 0 && index < saved.order.length; index += direction) {
+          const path = `/stories/${saved.order[index]}/`;
+          // Sequence membership is never permission. Only the existing
+          // viewer-scoped mutual-friend verifier can authorize a destination.
+          if (hasKnownStoryAccess(new URL(path, location.href))) return path;
+        }
+        return '';
+      };
+      const reconcileHomeFeedRegions = () => {
+        const previous = [...document.querySelectorAll('[data-vigil-instagram-feed-region]')];
         if (instagramRoute() !== 'feed') {
-          removeStoryPlaceholders();
+          previous.forEach((region) => region.removeAttribute('data-vigil-instagram-feed-region'));
           return;
         }
-        const controls = homeStoryControls();
-        const hasFriend = controls.some((control) => (
-          control.dataset.vigilInstagramStoryRelationship === 'friend'
-        ));
-        const checking = controls.some((control) => (
-          !control.dataset.vigilInstagramStoryRelationship
-          || control.dataset.vigilInstagramStoryRelationship === 'pending'
-        ));
-        if (hasFriend || checking) {
-          removeStoryPlaceholders();
-          return;
-        }
-        if (document.querySelector('[data-vigil-instagram-story-placeholders="true"]')) return;
-        const ownControl = controls.find((control) => (
-          control.dataset.vigilInstagramStoryRelationship === 'self'
-        ));
-        const firstControl = ownControl || controls[0];
-        const item = firstControl ? storyItemFor(firstControl) : null;
-        const host = item?.parentElement;
-        if (!host) return;
-        const placeholders = document.createElement(
-          ['UL', 'OL'].includes(host.tagName) ? 'li' : 'div'
-        );
-        placeholders.dataset.vigilInstagramStoryPlaceholders = 'true';
-        placeholders.setAttribute('aria-hidden', 'true');
-        for (let index = 0; index < 4; index += 1) {
-          const placeholder = document.createElement('span');
-          placeholder.dataset.vigilInstagramStoryPlaceholder = 'true';
-          placeholders.append(placeholder);
-        }
-        host.append(placeholders);
+        const cards = homeCards();
+        const protectedControls = [...homeStoryControls(), ...document.querySelectorAll([
+          'nav', '[role="navigation"]', 'header', 'footer', '[role="dialog"]', '[aria-modal="true"]',
+          '[aria-label="Profile" i]', '[aria-label="Your profile" i]',
+          '#vigil-instagram-friends-empty'
+        ].join(', '))].filter((control) => !control.closest('article, [role="article"]'));
+        const safeRegion = (region) => region instanceof HTMLElement
+          && !region.matches('html, body, main, [role="main"], article, [role="article"]')
+          && !protectedControls.some((control) => region === control || region.contains(control));
+        // Keep the enclosing stream closed even when Instagram temporarily
+        // replaces articles with divs/spacers during virtualized scrolling.
+        // Hiding only the articles left a tall, composited empty scroll area.
+        const regions = new Set(previous.filter(safeRegion));
+        cards.forEach((card) => {
+          let candidate = card.parentElement;
+          let region = null;
+          for (let depth = 0; candidate && depth < 8 && safeRegion(candidate); depth += 1) {
+            region = candidate;
+            candidate = candidate.parentElement;
+          }
+          if (region) regions.add(region);
+        });
+        previous.forEach((region) => {
+          if (!regions.has(region)) region.removeAttribute('data-vigil-instagram-feed-region');
+        });
+        regions.forEach((region) => {
+          const hasVerifiedPost = cards.some((card) => region.contains(card)
+            && !card.hasAttribute('data-vigil-hidden-feature')
+            && ['friend', 'self'].includes(card.dataset.vigilInstagramHomeRelationship)
+            && homeCardIdentities.get(card) === homeCardAuthor(card));
+          region.dataset.vigilInstagramFeedRegion = hasVerifiedPost ? 'open' : 'closed';
+        });
       };
       let verifiedStoryPath = '';
+      let redirectedStoryPath = '';
       let storyAccessGeneration = 0;
       const reconcileStoryRoute = async () => {
         let path = '';
         try { path = new URL(location.href).pathname.toLowerCase(); } catch (_) {}
         if (!(path === '/stories' || path.startsWith('/stories/'))) {
+          storyAccessGeneration += 1;
           verifiedStoryPath = '';
+          redirectedStoryPath = '';
           delete document.documentElement.dataset.vigilInstagramStoryGate;
           return;
         }
         if (verifiedStoryPath === path
             && document.documentElement.dataset.vigilInstagramStoryGate !== 'pending') return;
+        if (hasKnownStoryAccess(new URL(location.href))) {
+          storyAccessGeneration += 1;
+          redirectedStoryPath = '';
+          verifiedStoryPath = path;
+          rememberVerifiedStory(path);
+          delete document.documentElement.dataset.vigilInstagramStoryGate;
+          return;
+        }
+        if (redirectedStoryPath === path) return;
         const username = validInstagramUsername(path.split('/').filter(Boolean)[1]);
         document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
         const generation = ++storyAccessGeneration;
@@ -5479,32 +5867,60 @@ enum DOMAdapters {
         try { currentPath = new URL(location.href).pathname.toLowerCase(); } catch (_) {}
         if (generation !== storyAccessGeneration || currentPath !== path) return;
         if (mutual === true) {
+          redirectedStoryPath = '';
           verifiedStoryPath = path;
+          rememberVerifiedStory(path);
           delete document.documentElement.dataset.vigilInstagramStoryGate;
           return;
         }
-        try { location.replace('/'); } catch (_) {}
+        const nextPath = nextVerifiedStoryPath(username);
+        redirectedStoryPath = path;
+        try { location.replace(nextPath || '/'); } catch (_) {}
       };
       const reconcileFriendsFeed = () => {
         const isFeed = instagramRoute() === 'feed';
         if (!isFeed) {
+          // Classified Home cards remain fail-closed on the nodes themselves
+          // until Instagram replaces them. Removing only the route flag used
+          // to reveal the old feed during every delayed destination render.
           delete document.documentElement.dataset.vigilInstagramHomeFilter;
+          if (instagramRoute() === 'profile') {
+            document.querySelectorAll('[data-vigil-instagram-story-relationship]')
+              .forEach((control) => {
+                if (isProfileControl(control)) clearStoryClassification(control);
+              });
+            const username = validInstagramUsername(location.pathname.split('/').filter(Boolean)[0]);
+            homeCards().filter((card) => card.hasAttribute('data-vigil-instagram-home-relationship'))
+              .forEach((article) => {
+                if (username && homeCardAuthor(article) === username) {
+                  delete article.dataset.vigilInstagramHomeRelationship;
+                  delete article.dataset.vigilInstagramHomeAuthor;
+                }
+              });
+          }
           removeFriendsState();
+          removeStoryPlaceholders();
           normalizeHomeStoryRail([]);
+          reconcileHomeFeedRegions();
           return;
         }
         document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
         void hydrateViewerUsername().then(() => {
+          // A slow identity request may finish after the user opens Profile.
+          // Never run Home's avatar classifier against that destination tree.
+          if (instagramRoute() !== 'feed') return;
           const controls = homeStoryControls();
           controls.forEach(classifyHomeStory);
           flushHomeStoryRelationships();
-          reconcileStoryPlaceholders();
+          homeCards().forEach(classifyHomeCard);
+          reconcileFriendsEmptyState();
+          removeStoryPlaceholders();
         });
         const controls = homeStoryControls();
         controls.forEach(classifyHomeStory);
         flushHomeStoryRelationships();
-        document.querySelectorAll('main article').forEach(classifyHomeCard);
-        reconcileStoryPlaceholders();
+        homeCards().forEach(classifyHomeCard);
+        removeStoryPlaceholders();
         normalizeHomeStoryRail(controls);
         reconcileFriendsEmptyState();
       };
@@ -5588,11 +6004,19 @@ enum DOMAdapters {
         });
       };
       new MutationObserver((records) => {
-        records.forEach((record) => record.addedNodes.forEach((node) => {
-          if (node instanceof Element) scheduleScan(node);
-        }));
+        records.forEach((record) => {
+          if (record.type === 'attributes') scheduleScan(record.target);
+          if (record.type === 'characterData') scheduleScan(record.target.parentElement);
+          if ([...record.removedNodes].some((node) => node instanceof Element)) scheduleScan(record.target);
+          record.addedNodes.forEach((node) => {
+            if (node instanceof Element) scheduleScan(node);
+          });
+        });
         if (location.href !== lastURL) scheduleRouteCheck();
-      }).observe(document.documentElement, { childList: true, subtree: true });
+      }).observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, characterData: true,
+        attributeFilter: ['href', 'aria-label', 'alt', 'role']
+      });
       document.addEventListener('__vigilPolicyFeaturesChanged', () => {
         document.querySelectorAll('[data-vigil-hidden-feature]').forEach((card) => {
           const feature = card.getAttribute('data-vigil-hidden-feature');
