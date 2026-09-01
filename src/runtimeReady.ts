@@ -508,7 +508,11 @@ reopen_vigil() {
     /usr/bin/printf '%s\n' "Vigil preserved an ambiguous interrupted app update instead of launching an unverified bundle." >&2
     return 1
   fi
-  /usr/bin/open -g "$app_path" --args ${shellSingleQuote(options.backgroundLaunchArg)} ${shellSingleQuote(options.safetyBoundaryArg)}
+  # Force a short-lived secondary LaunchServices instance even when Vigil is
+  # already resident. Its singleton argv identifies this as background repair;
+  # reopening the existing application directly can instead emit \`activate\`
+  # without the recovery arguments and pull the hidden window to the front.
+  /usr/bin/open -gn "$app_path" --args ${shellSingleQuote(options.backgroundLaunchArg)} ${shellSingleQuote(options.safetyBoundaryArg)}
 }
 
 preserve_interruption() {
@@ -606,6 +610,8 @@ pid=""
 started_at=""
 ready_app_path=""
 ready_transport=""
+ready_device=""
+ready_inode=""
 ready_loaded=false
 global_recovery_notice=""
 while [[ -e "$marker" ]]; do
@@ -621,6 +627,8 @@ while [[ -e "$marker" ]]; do
     started_at=""
     ready_app_path=""
     ready_transport=""
+    ready_device=""
+    ready_inode=""
     ready_loaded=false
     global_recovery_notice=""
     /bin/sleep 1
@@ -629,6 +637,21 @@ while [[ -e "$marker" ]]; do
   command=""
   ready_exists=false
   if [[ "$ready_loaded" == true ]]; then
+    current_ready_device=$(/usr/bin/stat -f '%d' "$ready" 2>/dev/null)
+    current_ready_inode=$(/usr/bin/stat -f '%i' "$ready" 2>/dev/null)
+    if [[ "$current_ready_device" != "$ready_device" || "$current_ready_inode" != "$ready_inode" ]]; then
+      # Replacement runtimes publish readiness with an atomic rename. Never
+      # diagnose a cached predecessor or remove the replacement receipt.
+      pid=""
+      started_at=""
+      ready_app_path=""
+      ready_transport=""
+      ready_device=""
+      ready_inode=""
+      ready_loaded=false
+    fi
+  fi
+  if [[ "$ready_loaded" == true ]]; then
     ready_exists=true
   elif [[ -e "$ready" || -L "$ready" ]]; then
     ready_exists=true
@@ -636,11 +659,27 @@ while [[ -e "$marker" ]]; do
     started_at=""
     ready_app_path=""
     ready_transport=""
+    ready_device=$(/usr/bin/stat -f '%d' "$ready" 2>/dev/null)
+    ready_inode=$(/usr/bin/stat -f '%i' "$ready" 2>/dev/null)
     pid=$(/usr/bin/plutil -extract pid raw -o - "$ready" 2>/dev/null)
     started_at=$(/usr/bin/plutil -extract startedAt raw -o - "$ready" 2>/dev/null)
     ready_app_path=$(/usr/bin/plutil -extract appPath raw -o - "$ready" 2>/dev/null)
     ready_transport=$(/usr/bin/plutil -extract transport raw -o - "$ready" 2>/dev/null)
-    ready_loaded=true
+    current_ready_device=$(/usr/bin/stat -f '%d' "$ready" 2>/dev/null)
+    current_ready_inode=$(/usr/bin/stat -f '%i' "$ready" 2>/dev/null)
+    if [[ -n "$ready_device" && -n "$ready_inode" && "$current_ready_device" == "$ready_device" && "$current_ready_inode" == "$ready_inode" ]]; then
+      ready_loaded=true
+    else
+      # The canonical receipt changed while it was being read. Retry the new
+      # inode instead of treating a torn predecessor snapshot as corruption.
+      ready_exists=false
+      pid=""
+      started_at=""
+      ready_app_path=""
+      ready_transport=""
+      ready_device=""
+      ready_inode=""
+    fi
   fi
   if [[ "$pid" == <-> ]]; then
     command=$(/bin/ps -p "$pid" -o command= 2>/dev/null)
@@ -720,6 +759,8 @@ while [[ -e "$marker" ]]; do
   started_at=""
   ready_app_path=""
   ready_transport=""
+  ready_device=""
+  ready_inode=""
   ready_loaded=false
   if [[ ! -e "$marker" ]]; then
     break

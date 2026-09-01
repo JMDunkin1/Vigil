@@ -169,7 +169,7 @@ try {
   assert.match(script, /runtime-interruption\.json/, "the supervisor must retain interruption evidence outside the readiness file");
   assert.match(script, /\/bin\/chmod 0600 "\$temporary"[\s\S]*?\/bin\/sync[\s\S]*?\/bin\/mv -f "\$temporary" "\$interruption"[\s\S]*?\/bin\/sync/, "evidence must be private and power-loss durable around its atomic rename");
   assert.match(script, /archive_existing_interruption\(\)[\s\S]*?archive_path="\$\{interruption\}\.conflict\.\$\{archived_at\}\.\$\{archive_uuid\}"[\s\S]*?\/bin\/mv "\$interruption" "\$archive_path"/, "a nonmatching receipt must be atomically archived instead of overwritten");
-  assert.match(script, /ready_loaded=false[\s\S]*?if \[\[ "\$ready_loaded" == true \]\]; then[\s\S]*?elif \[\[ -e "\$ready" \|\| -L "\$ready" \]\]; then[\s\S]*?ready_loaded=true/, "a healthy runtime must read its immutable readiness identity only once");
+  assert.match(script, /ready_loaded=false[\s\S]*?if \[\[ "\$ready_loaded" == true \]\]; then[\s\S]*?current_ready_device[\s\S]*?current_ready_inode[\s\S]*?ready_loaded=false[\s\S]*?if \[\[ "\$ready_loaded" == true \]\]; then[\s\S]*?elif \[\[ -e "\$ready" \|\| -L "\$ready" \]\]; then[\s\S]*?ready_device[\s\S]*?ready_inode[\s\S]*?ready_loaded=true/, "a healthy runtime must cache one readiness inode while atomically published replacements invalidate the predecessor identity");
   assert.match(script, /\/usr\/bin\/plutil -extract startedAt[\s\S]*?\/usr\/bin\/plutil -extract appPath[\s\S]*?\/usr\/bin\/plutil -extract transport/, "the supervisor must validate the complete runtime identity");
   assert.match(script, /authenticated_update_active\(\)[\s\S]*?marker_token[\s\S]*?lock_token[\s\S]*?marker_pid[\s\S]*?lock_pid/, "the supervisor must bind update suppression to the exact private lock and maintenance request");
   assert.match(script, /while \[\[ -e "\$marker" \]\]; do[\s\S]*?if authenticated_update_active; then[\s\S]*?\/bin\/sleep 1[\s\S]*?continue/, "restart supervision must stay loaded and resume immediately if the authenticated updater disappears");
@@ -258,12 +258,17 @@ try {
   const reopenDefinition = script.indexOf("reopen_vigil() {");
   const recoverGlobalFirst = script.indexOf("if ! recover_global_update_transaction; then", reopenDefinition);
   const reconcileLegacySecond = script.indexOf("if ! reconcile_interrupted_app_update; then", recoverGlobalFirst);
-  const openAfterRecovery = script.indexOf('/usr/bin/open -g "$app_path"', reconcileLegacySecond);
+  const openAfterRecovery = script.indexOf('/usr/bin/open -gn "$app_path"', reconcileLegacySecond);
   assert.ok(
     recoverGlobalFirst > reopenDefinition
       && reconcileLegacySecond > recoverGlobalFirst
       && openAfterRecovery > reconcileLegacySecond,
     "relaunch must recover the global transaction first, then legacy residue, and only then open Vigil"
+  );
+  assert.match(
+    script,
+    /\/usr\/bin\/open -gn "\$app_path" --args '--vigil-background' '--vigil-safety-boundary-do-not-terminate-or-bootout'/,
+    "background recovery must create a singleton secondary instead of activating the resident presentation"
   );
 
   assert.match(
@@ -377,11 +382,93 @@ try {
   if (process.platform === "darwin") {
     await Promise.all([
       verifyOrphanedGlobalRecoveryWithLiveRuntime("pending"),
-      verifyOrphanedGlobalRecoveryWithLiveRuntime("commit-intent")
+      verifyOrphanedGlobalRecoveryWithLiveRuntime("commit-intent"),
+      verifyAtomicReadyReplacementSupersedesCachedRuntime()
     ]);
   }
 } finally {
   await rm(dataDir, { recursive: true, force: true });
+}
+
+async function verifyAtomicReadyReplacementSupersedesCachedRuntime(): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "vigil-ready-replacement-"));
+  const markerPath = join(root, "supervisor", "enabled");
+  const dataDir = join(root, "data");
+  const appPath = join(root, "Vigil.app");
+  const readyPath = join(dataDir, "runtime-ready.json");
+  const interruptionPath = join(dataDir, "runtime-interruption.json");
+  const observedReadyPidsPath = join(root, "observed-ready-pids");
+  const oldKeepalivePath = join(root, "old.keepalive");
+  const newKeepalivePath = join(root, "new.keepalive");
+  const nodePath = await realpath(process.execPath);
+  let oldRuntime: ChildProcess | null = null;
+  let newRuntime: ChildProcess | null = null;
+  let supervisor: ChildProcess | null = null;
+  try {
+    await mkdir(join(root, "supervisor"), { recursive: true });
+    await mkdir(dataDir, { recursive: true });
+    await writeFile(markerPath, "enabled\n", { mode: 0o600 });
+    await writeFile(oldKeepalivePath, "running\n", { mode: 0o600 });
+    await writeFile(newKeepalivePath, "running\n", { mode: 0o600 });
+    oldRuntime = spawnKeepaliveRuntime(nodePath, oldKeepalivePath);
+    newRuntime = spawnKeepaliveRuntime(nodePath, newKeepalivePath);
+    await Promise.all([childSpawned(oldRuntime), childSpawned(newRuntime)]);
+    if (!oldRuntime.pid || !newRuntime.pid) throw new Error("The readiness-replacement runtimes did not receive process ids.");
+
+    await writeFile(readyPath, `${JSON.stringify({
+      pid: oldRuntime.pid,
+      startedAt: new Date().toISOString(),
+      appPath: nodePath,
+      transport: "in-app"
+    })}\n`, { mode: 0o600 });
+    const generated = buildRuntimeSupervisorScript({
+      markerPath,
+      dataDir,
+      appPath,
+      executablePath: nodePath,
+      backgroundLaunchArg: "--vigil-background",
+      safetyBoundaryArg: "--vigil-safety-boundary-do-not-terminate-or-bootout"
+    });
+    const instrumented = generated.replace(
+      "      ready_loaded=true\n",
+      `      ready_loaded=true\n      /usr/bin/printf '%s\\n' "$pid" >> ${JSON.stringify(observedReadyPidsPath)}\n`
+    );
+    assert.notEqual(instrumented, generated, "the readiness fixture must instrument the stable receipt publication branch");
+    const supervisorScriptPath = join(root, "supervisor.zsh");
+    await writeFile(supervisorScriptPath, instrumented, { mode: 0o700 });
+    await chmod(supervisorScriptPath, 0o700);
+    supervisor = spawn("/bin/zsh", [supervisorScriptPath], { stdio: "ignore" });
+    await childSpawned(supervisor);
+    await waitForCondition(
+      async () => (await readFileIfPresent(observedReadyPidsPath)).split("\n").includes(String(oldRuntime?.pid)),
+      "the supervisor to cache the predecessor readiness inode"
+    );
+
+    const replacementPath = `${readyPath}.replacement`;
+    await writeFile(replacementPath, `${JSON.stringify({
+      pid: newRuntime.pid,
+      startedAt: new Date().toISOString(),
+      appPath: nodePath,
+      transport: "in-app"
+    })}\n`, { mode: 0o600 });
+    await rename(replacementPath, readyPath);
+    await rm(oldKeepalivePath, { force: true });
+
+    await waitForCondition(
+      async () => (await readFileIfPresent(observedReadyPidsPath)).split("\n").includes(String(newRuntime?.pid)),
+      "the supervisor to invalidate the predecessor inode and accept the replacement readiness receipt"
+    );
+    assert.equal((await readRuntimeReady(dataDir))?.pid, newRuntime.pid, "the replacement runtime receipt must remain canonical");
+    assert.equal(await pathExistsForTest(interruptionPath), false, "the replaced predecessor must not create false interruption evidence");
+  } finally {
+    await rm(markerPath, { force: true });
+    await rm(oldKeepalivePath, { force: true });
+    await rm(newKeepalivePath, { force: true });
+    if (supervisor) await childExited(supervisor, "temporary readiness-replacement supervisor");
+    if (oldRuntime) await childExited(oldRuntime, "temporary predecessor runtime");
+    if (newRuntime) await childExited(newRuntime, "temporary replacement runtime");
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 async function verifyOrphanedGlobalRecoveryWithLiveRuntime(state: "pending" | "commit-intent"): Promise<void> {
@@ -509,6 +596,13 @@ async function childSpawned(child: ChildProcess): Promise<void> {
   });
 }
 
+function spawnKeepaliveRuntime(nodePath: string, keepalivePath: string): ChildProcess {
+  return spawn(nodePath, [
+    "-e",
+    `const fs=require("node:fs");const path=${JSON.stringify(keepalivePath)};const timer=setInterval(()=>{if(!fs.existsSync(path)){clearInterval(timer);}},20);`
+  ], { stdio: "ignore" });
+}
+
 async function childExited(child: ChildProcess, label: string): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   await new Promise<void>((resolveExit, rejectExit) => {
@@ -539,6 +633,15 @@ async function pathExistsForTest(path: string): Promise<boolean> {
     return true;
   } catch (error) {
     if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function readFileIfPresent(path: string): Promise<string> {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT") return "";
     throw error;
   }
 }
