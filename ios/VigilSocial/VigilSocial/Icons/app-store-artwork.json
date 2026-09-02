@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-03T18:58:08.820Z",
+  "generatedAt": "2026-09-02T03:58:49.337Z",
   "storefront": "US",
   "services": [
     {
@@ -27,9 +27,16 @@
     {
       "name": "YouTube",
       "appStoreId": "544007664",
-      "version": "21.31.3",
-      "artworkUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/8e/43/35/8e43350e-2dad-ac27-13d4-71eac741cf80/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/1024x1024bb.png",
-      "sha256": "7df565526b508712363675335e56b5d4b0b00e5abdfe7aa07052551c1e2969ee"
+      "version": "21.35.3",
+      "artworkUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/36/99/dd/3699dde2-2561-d256-afcc-23a67f0cebe3/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/1024x1024bb.png",
+      "sha256": "90301bb264cbd1c21a6cc98fe5d628879b70ef84e960ddfb0f80c6ab03e081a2"
+    },
+    {
+      "name": "Snapchat",
+      "appStoreId": "447188370",
+      "version": "14.21.1.0",
+      "artworkUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/15/b3/22/15b322e0-cb0d-b30d-93af-458c2c433a8a/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/1024x1024bb.png",
+      "sha256": "0363f3481be3f9057e5f77c5453278b7f663d37e0b18d13fdd8e143e712168be"
     }
   ]
 }

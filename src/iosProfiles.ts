@@ -70,7 +70,12 @@ const IOS_SOCIAL_COMPANION_ALLOWED_URLS = [
   "https://consent.youtube.com/",
   "https://accounts.youtube.com/accounts/SetSID",
   "https://accounts.youtube.com/accounts/CheckConnection",
-  "https://accounts.youtube.com/RotateCookiesPage"
+  "https://accounts.youtube.com/RotateCookiesPage",
+  "https://snapchat.com/",
+  "https://www.snapchat.com/",
+  "https://www.snapchat.com/web/",
+  "https://web.snapchat.com/",
+  "https://accounts.snapchat.com/"
 ];
 const IOS_PANIC_ALLOWED_URLS = [
   "http://127.0.0.1/",

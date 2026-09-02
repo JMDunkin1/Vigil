@@ -1,7 +1,7 @@
 # Vigil
 
 Vigil is a local-first focus-enforcement app for macOS with supervised iPhone
-companions for Instagram and YouTube.
+companions for Instagram, YouTube, and Snapchat.
 
 ## Agent update commands
 
@@ -17,9 +17,10 @@ paired iPhone:
 ```sh
 npm run agent:update:instagram
 npm run agent:update:youtube
+npm run agent:update:snapchat
 ```
 
-To check and update both companions in one transaction, run:
+To check and update all companions in one transaction, run:
 
 ```sh
 npm run agent:update:phone

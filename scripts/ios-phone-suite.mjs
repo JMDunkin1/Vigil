@@ -52,8 +52,7 @@ const OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS = new Set([
 const LEGACY_BUNDLE_PREFIX = "tech.caseline.sentinel.";
 const OBSOLETE_VIGIL_PHONE_BUNDLE_IDS = new Set([
   "tech.caseline.vigil.browser",
-  "tech.caseline.vigil.social",
-  "tech.caseline.vigil.snapchat"
+  "tech.caseline.vigil.social"
 ]);
 const OBSOLETE_APPS_PROBLEM_PREFIX = "Obsolete phone apps remain installed:";
 const OBSOLETE_LAUNCHER_PROFILE_PROBLEM = "The obsolete Vigil social-launcher profile remains installed; use --replace-legacy to remove its duplicate Home Screen icons.";
@@ -86,7 +85,8 @@ const PHONE_SOURCE_FILES = [
 ];
 const REQUIRED_SOCIAL_APPS = [
   { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" },
-  { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" }
+  { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" },
+  { id: "snapchat", service: "snapchat", name: "Snapchat", bundleId: "tech.caseline.vigil.snapchat", appIconSet: "SnapchatAppIcon", scheme: "vigil-snapchat", buildScheme: "VigilSnapchat" }
 ];
 const SOCIAL_APP_IDS = new Set(REQUIRED_SOCIAL_APPS.map((app) => app.id));
 const PERSONAL_TEAM_RENEWAL_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -1605,7 +1605,19 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   } catch {
     throw new Error(`${YOUTUBE_INTERACTION_EXTENSION.manifestName} is not valid JSON.`);
   }
-  const expectedHosts = ["https://youtube.com/*", "https://www.youtube.com/*", "https://m.youtube.com/*"];
+  const expectedHosts = [
+    "https://youtube.com/*",
+    "https://www.youtube.com/*",
+    "https://m.youtube.com/*",
+    "https://reddit.com/*",
+    "https://*.reddit.com/*",
+    "https://redd.it/*",
+    "https://*.redd.it/*",
+    "https://x.com/*",
+    "https://*.x.com/*",
+    "https://twitter.com/*",
+    "https://*.twitter.com/*"
+  ];
   const scripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
   const contractValid = JSON.stringify(manifest?.host_permissions) === JSON.stringify(expectedHosts)
     && scripts.length === 1
@@ -1615,11 +1627,13 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   const source = scriptBytes.toString("utf8");
   if (!contractValid
     || !source.includes("enterFullscreen")
+    || !source.includes("installMatureContentInterlock")
+    || !source.includes("data-vigil-mature-control")
     || source.includes("youtubeMinimize")
     || source.includes("data-vigil-youtube-miniplayer")
     || !source.includes("recoverFromShorts")
     || source.includes("accounts.google.com")) {
-    throw new Error("The bundled Vigil YouTube interaction extension does not satisfy its narrow YouTube-only parity contract.");
+    throw new Error("The bundled Vigil interaction extension does not satisfy its focused YouTube, Reddit, and X contract.");
   }
   return {
     bundleIdentifier: expectedIdentifier,
@@ -2313,7 +2327,7 @@ Commands:
   fingerprint  Print the current phone implementation fingerprint
 
 Options:
-  --app NAME   Limit status/update to instagram or youtube
+  --app NAME   Limit status/update to instagram, youtube, or snapchat
   --device ID  Select a CoreDevice UUID, UDID, or device name
   --edition NAME  Select personal or enhanced (default: persisted edition, initially personal)
   --server URL Vigil server used for live state and policy (default ${DEFAULT_SERVER})

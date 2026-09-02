@@ -97,6 +97,15 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     scope: "soft-lock"
   },
   {
+    id: "reddit-mature-gate",
+    label: "Reddit mature-content gate",
+    sites: ["reddit.com"],
+    urlFilters: ["||reddit.com/over18"],
+    paths: [/^\/over18(?:\/|$)/i],
+    fallbackUrl: "https://www.reddit.com/",
+    scope: "permanent"
+  },
+  {
     id: "x-explore",
     label: "X Explore",
     sites: ["x.com", "twitter.com"],
@@ -115,17 +124,17 @@ export const CONTENT_FILTER_RULES: ContentFilterRule[] = [
     scope: "permanent"
   },
   {
-    id: "snapchat-stories",
-    label: "Snapchat Stories",
+    id: "snapchat-discover",
+    label: "Snapchat Discover",
     sites: ["snapchat.com"],
-    urlFilters: ["||snapchat.com/stories"],
-    paths: [/^\/stories?(?:\/|$)/i],
+    urlFilters: ["||snapchat.com/discover"],
+    paths: [/^\/discover(?:\/|$)/i],
     fallbackUrl: "https://web.snapchat.com/",
     scope: "permanent"
   },
   {
     id: "snapchat-public-stories",
-    label: "Snapchat Stories",
+    label: "Snapchat public Stories",
     sites: ["story.snapchat.com"],
     urlFilters: ["||story.snapchat.com"],
     paths: [/^\/(?:$|s(?:\/|$)|p(?:\/|$))/i],

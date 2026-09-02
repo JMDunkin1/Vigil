@@ -185,7 +185,7 @@ if (removeTestUrlFilterService) {
   const levelOneDeniedUrls = enabledWebFilter.DenyListURLs as unknown[];
   assert.equal(levelOneDeniedUrls.includes("https://youtube.com/shorts"), true);
   assert.equal(levelOneDeniedUrls.includes("https://snapchat.com/spotlight"), true);
-  assert.equal(levelOneDeniedUrls.includes("https://snapchat.com/stories"), true);
+  assert.equal(levelOneDeniedUrls.includes("https://snapchat.com/discover"), true);
   assert.equal(levelOneDeniedUrls.includes("https://pornhub.com/"), true);
   assert.equal(levelOneDeniedUrls.includes("https://www.google.com/search?q=porn"), true);
   assert.equal(levelOneDeniedUrls.includes("https://duckduckgo.com/?q=nsfw"), true);
@@ -209,8 +209,8 @@ if (removeTestUrlFilterService) {
   assert.equal(enabledSummary.profile.focusedSocial.nativeAppBundleCount, 0);
   assert.equal(enabledSummary.profile.webClipCount, 0);
   assert.equal(enabledSummary.profile.focusedSocial.webClipCount, 0);
-  assert.equal(enabledSummary.companionApps.appCount, 2);
-  assert.deepEqual(enabledSummary.companionApps.labels, ["Instagram", "YouTube"]);
+  assert.equal(enabledSummary.companionApps.appCount, 3);
+  assert.deepEqual(enabledSummary.companionApps.labels, ["Instagram", "YouTube", "Snapchat"]);
   assert.deepEqual(enabledSummary.companionApps.bundleIds, Object.values(IOS_SOCIAL_COMPANION_BUNDLE_IDS));
   assert.deepEqual(enabledSummary.companionApps.apps, IOS_SOCIAL_COMPANION_APPS.map((app) => ({ ...app })));
   assert.equal(enabledSummary.launcherProfile.identifier, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER);
@@ -281,7 +281,7 @@ if (removeTestUrlFilterService) {
   assert.match(softPhoneProfile, /snapchat\.com\/spotlight/);
   assert.match(softPhoneProfile, /story\.snapchat\.com/);
   const softPhoneSummary = iosProfileSummary(state, now);
-  assert.equal(softPhoneSummary.profile.focusedSocial.nativeAppBundleCount, 2);
+  assert.equal(softPhoneSummary.profile.focusedSocial.nativeAppBundleCount, 3);
   assert.equal(softPhoneSummary.profile.focusedSocialEnforcementActive, true);
   assert.equal(softPhoneSummary.appStoreAllowedByThisProfile, true);
   assert.doesNotMatch(softPhoneProfile, /allowAppInstallation/);
@@ -614,7 +614,7 @@ if (removeTestUrlFilterService) {
   const summary = iosProfileSummary(state, now);
   assert.equal(summary.profile.webClipCount, 0);
   assert.equal(summary.launcherProfile.webClipCount, 0);
-  assert.equal(summary.companionApps.appCount, 2);
+  assert.equal(summary.companionApps.appCount, 3);
   assert.equal(summary.appStoreAllowedByThisProfile, true);
   const profile = buildIosConfigurationProfile(state, now);
   const parsedProfile = recordValue(parsePlist(profile), "brick web clip profile");
@@ -898,7 +898,7 @@ if (removeTestUrlFilterService) {
   assert.equal(summary.profile.focusedSocial.webClipCount, 0);
   assert.equal(summary.profile.focusedSocial.nativeAppBundleCount, 0);
   assert.equal(summary.launcherProfile.webClipCount, 0);
-  assert.equal(summary.companionApps.appCount, 2);
+  assert.equal(summary.companionApps.appCount, 3);
   const profile = buildIosConfigurationProfile(state, now);
   assert.doesNotMatch(profile, /com\.apple\.webClip\.managed/);
   assert.doesNotMatch(profile, /Vigil YouTube/);
@@ -952,7 +952,7 @@ if (removeTestUrlFilterService) {
   assert.equal(noWebSummary.profile.webClipCount, 0);
   assert.equal(noWebSummary.launcherProfile.webClipCount, 0);
   assert.equal(noWebSummary.protection.safeSearchEnforced, false);
-  assert.equal(noWebSummary.companionApps.appCount, 2);
+  assert.equal(noWebSummary.companionApps.appCount, 3);
   assert.equal(noWebSummary.profile.focusedSocial.deniedUrlCount, 0);
   assert.equal(noWebSummary.profile.focusedSocial.webClipCount, 0);
   const noWebProfile = buildIosConfigurationProfile(noWebState, now);

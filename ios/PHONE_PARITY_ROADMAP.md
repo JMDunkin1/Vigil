@@ -11,7 +11,9 @@ content filter, whose explicit deny list is intentionally kept below 500
 entries. Vigil's fixed Instagram companion adds full-document text and media
 inspection. The maintained YouTube companion uses a persistent, YouTube-only
 `WKWebView`, the same Shorts guard, and focused ordinary-watch controls;
-Instagram still carries the Safari extensions as a fallback web surface.
+Instagram still carries the Safari extensions as a fallback web surface. The
+Snapchat companion uses the service's desktop web client and removes Spotlight,
+Discover, and public Stories while retaining friend messages and Stories.
 
 The selected adult source now contains 952,054 active domains and has a compact
 phone artifact. Shipping that artifact is necessary, but it does not by itself
@@ -36,6 +38,7 @@ in a configuration profile.
 | Text inspection | Browser/extension policy paths | VigilSocial scans the full bounded document, DOM mutations, open shadow roots, and periodic visible-page audits | Generated shared phrase/context policy in every companion release |
 | Image/video inspection | Browser-specific enforcement | Sensitive Content Analysis when the entitlement is provisioned; the current Personal Team fallback reveals unclassified media while retaining text/profile rules | Paid team/capability build that keeps unclassified media concealed |
 | YouTube | Browser extension modifies the normal site | A fixed `tech.caseline.vigil.youtube` companion supplies one persistent YouTube-only WK surface with the shared Shorts guard and focused ordinary-watch controls. The previous full-screen Web Clip is retired | Verify Google sign-in persistence, exact auth-route containment, ordinary-video playback/fullscreen controls, and continued Shorts exclusion on the physical phone |
+| Snapchat | Browser URL rules remove public routes | A fixed `tech.caseline.vigil.snapchat` companion supplies one persistent Snapchat-only WK surface with Spotlight/Discover DOM and route guards | Verify sign-in persistence, friend messages/Stories, and continued public-feed exclusion on the physical phone |
 
 ## What the comparison products establish
 
@@ -144,5 +147,5 @@ Only after the simulator, artifact, entitlement, and signed-build checks pass,
 run the normal in-place phone update. Do not repeat enrollment, restore a
 checkpoint, restore the Home Screen separately, or alter the proven supervision
 keybag. After installation, verify supervision, non-removable profile state,
-exact policy fingerprint, both companion launches, URL Filter enabled state,
+exact policy fingerprint, every companion launch, URL Filter enabled state,
 and representative blocked/allowed URLs on Wi-Fi and cellular.

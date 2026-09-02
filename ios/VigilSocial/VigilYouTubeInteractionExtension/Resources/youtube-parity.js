@@ -1,10 +1,188 @@
 (() => {
   'use strict';
 
-  if (window.top !== window || window.__vigilYouTubeParityInstalled) return;
+  if (window.top !== window) return;
+  const currentHost = String(location.hostname || '').toLowerCase().replace(/^www\./, '');
+  const maturePlatform = currentHost === 'reddit.com' || currentHost.endsWith('.reddit.com') || currentHost === 'redd.it'
+    ? 'reddit'
+    : currentHost === 'x.com' || currentHost.endsWith('.x.com') || currentHost === 'twitter.com' || currentHost.endsWith('.twitter.com')
+      ? 'x'
+      : null;
+  if (maturePlatform) {
+    installMatureContentInterlock(maturePlatform);
+    return;
+  }
+
+  if (window.__vigilYouTubeParityInstalled) return;
   const allowedHosts = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com']);
   if (!allowedHosts.has(String(location.hostname || '').toLowerCase())) return;
   window.__vigilYouTubeParityInstalled = true;
+
+  function installMatureContentInterlock(platform) {
+    if (window.__vigilMatureContentInterlockInstalled) return;
+    window.__vigilMatureContentInterlockInstalled = true;
+    const normalizedText = value => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const ageGateRoute = value => {
+      try {
+        const url = new URL(String(value || ''), location.href);
+        const host = url.hostname.toLowerCase().replace(/^www\./, '');
+        return (host === 'reddit.com' || host.endsWith('.reddit.com')) && /^\/over18(?:\/|$)/i.test(url.pathname);
+      } catch { return false; }
+    };
+    const safeDestination = platform === 'reddit' ? 'https://www.reddit.com/' : 'https://x.com/home';
+    if (ageGateRoute(location.href)) {
+      location.replace(safeDestination);
+      return;
+    }
+    const markerText = value => /^(?:nsfw|18\+|mature content|adult content|sensitive content|this (?:media|post|profile|community) may contain sensitive (?:content|material))\.?$/i.test(normalizedText(value));
+    const xMarkerText = value => /^(?:sensitive content|this (?:media|post|profile) may contain sensitive (?:content|material))\.?$/i.test(normalizedText(value));
+    const revealText = value => {
+      const text = normalizedText(value);
+      return [
+        /\b(?:show|display|view|reveal|see|allow|enable)\s+(?:(?:potentially\s+)?(?:sensitive|mature|adult|nsfw))(?:\s+(?:content|media|posts?|communities|profiles?|images?))?\b/i,
+        /\bdisplay\s+media\s+that\s+may\s+contain\s+sensitive\s+(?:content|material)\b/i,
+        /\b(?:yes[,]?\s*)?(?:i(?:'|’)m|i am)\s+(?:over\s+)?18\b/i,
+        /\bcontinue(?:\s+to)?\s+(?:18\+|mature|adult|nsfw)\b/i,
+        /\bshow\s+mature\s*\(?18\+\)?\s*content\b/i
+      ].some(pattern => pattern.test(text));
+    };
+    const safeSelect = (selector, scope = document) => {
+      const matches = [];
+      try {
+        if (scope instanceof HTMLElement && scope.matches(selector)) matches.push(scope);
+        matches.push(...scope.querySelectorAll(selector));
+      } catch {}
+      return matches;
+    };
+    const contentContainer = element => {
+      const selectors = platform === 'reddit'
+        ? ['shreddit-post', 'article', '.thing', "[data-testid='post-container']", "[role='article']", '.Post', "[data-click-id='background']", "[role='dialog']"]
+        : ['article', "[data-testid='cellInnerDiv']", "[role='article']", "[role='dialog']"];
+      for (const selector of selectors) {
+        const container = element.closest?.(selector);
+        if (container instanceof HTMLElement) return container;
+      }
+      return null;
+    };
+    const markContent = marker => {
+      const container = contentContainer(marker) || marker;
+      if (!(container instanceof HTMLElement)) return;
+      container.setAttribute('data-vigil-mature-content', 'blocked');
+      container.querySelectorAll('video, audio').forEach(media => {
+        try { media.pause(); } catch {}
+      });
+    };
+    const controlDescriptor = element => {
+      const values = [
+        element.getAttribute?.('aria-label'), element.getAttribute?.('title'),
+        element.getAttribute?.('data-testid'), element.getAttribute?.('name'),
+        element.getAttribute?.('value'), element.textContent
+      ];
+      if (element instanceof HTMLInputElement) {
+        for (const label of element.labels || []) values.push(label.textContent);
+      }
+      return normalizedText(values.filter(Boolean).join(' ').slice(0, 900));
+    };
+    const revealControl = element => {
+      const descriptor = controlDescriptor(element);
+      if (revealText(descriptor)) return true;
+      if (!/^(?:show|view|continue|yes|enable|allow)$/i.test(descriptor)) return false;
+      const context = element.closest?.("[role='dialog'], [role='menuitem'], label, li, form, article");
+      return Boolean(context && /\b(?:nsfw|18\+|mature|adult|sensitive)\b/i.test(String(context.textContent || '').slice(0, 900)));
+    };
+    const blockControl = control => {
+      if (!(control instanceof HTMLElement)) return;
+      control.setAttribute('data-vigil-mature-control', 'blocked');
+      control.setAttribute('aria-disabled', 'true');
+      control.setAttribute('aria-hidden', 'true');
+      control.setAttribute('tabindex', '-1');
+      if (control instanceof HTMLButtonElement || control instanceof HTMLInputElement) control.disabled = true;
+      if (control instanceof HTMLInputElement && (control.type === 'checkbox' || control.type === 'radio')) control.checked = false;
+      const container = contentContainer(control);
+      if (container && !control.closest("label, [role='menuitem'], form")) markContent(container);
+    };
+    let scanning = false;
+    const scan = (scope = document) => {
+      if (scanning || !document.documentElement) return;
+      scanning = true;
+      try {
+        const structured = platform === 'reddit'
+          ? ['shreddit-post[nsfw]', 'shreddit-post[over-18]', '.thing.over18', "[data-nsfw='true' i]", "[data-over-18='true' i]", "[data-over18='true' i]"]
+          : ["[data-testid*='sensitiveMedia' i]", "[data-testid*='sensitive_media' i]", "[aria-label*='sensitive content' i]", "[aria-label*='sensitive media' i]"];
+        for (const selector of structured) safeSelect(selector, scope).slice(0, 400).forEach(markContent);
+        const textSelector = platform === 'reddit'
+          ? ".thing .nsfw-stamp, [data-testid='post-container'] [class*='badge' i], shreddit-post [slot*='flair' i], [class*='nsfw' i], [data-testid*='label' i]"
+          : "article span, [role='dialog'] span, [data-testid*='sensitive' i]";
+        safeSelect(textSelector, scope)
+          .slice(0, 800)
+          .forEach(marker => { if (platform === 'x' ? xMarkerText(marker.textContent) : markerText(marker.textContent)) markContent(marker); });
+        safeSelect("a[href], button, input, label, [role='button'], [role='switch'], [role='menuitem']", scope)
+          .slice(0, 800)
+          .forEach(control => { if (revealControl(control)) blockControl(control); });
+      } finally { scanning = false; }
+    };
+    const install = () => {
+      const root = document.documentElement;
+      if (!root) return;
+      root.setAttribute('data-vigil-mature-interlock', platform);
+      if (!document.getElementById('vigil-mature-content-style')) {
+        const style = document.createElement('style');
+        style.id = 'vigil-mature-content-style';
+        style.textContent = `
+          html[data-vigil-mature-interlock] [data-vigil-mature-control="blocked"] { display: none !important; visibility: hidden !important; pointer-events: none !important; }
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] img,
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] picture,
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] video,
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] audio,
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] canvas,
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] iframe,
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] object,
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] embed,
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] svg[role="img"],
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] [style*="background-image" i] { display: none !important; visibility: hidden !important; pointer-events: none !important; background-image: none !important; }
+          html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"]::before { content: "Mature media removed by Vigil"; display: block !important; box-sizing: border-box !important; margin: 8px 0 !important; padding: 14px 16px !important; border: 1px solid rgba(183,121,82,.55) !important; border-radius: 10px !important; background: #211d1a !important; color: #eadfd7 !important; font: 600 14px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif !important; text-align: center !important; }
+        `;
+        root.append(style);
+      }
+      scan();
+      const guard = event => {
+        if (event instanceof KeyboardEvent && event.key !== 'Enter' && event.key !== ' ') return;
+        const target = (event.composedPath?.() || []).find(value => value instanceof HTMLElement)
+          || (event.target instanceof HTMLElement ? event.target : null);
+        if (!target) return;
+        const control = target.closest("a[href], button, input, label, [role='button'], [role='switch'], [role='menuitem'], form") || target;
+        const anchor = control.closest?.('a[href]');
+        if (!control.closest("[data-vigil-mature-control='blocked']") && !revealControl(control) && !ageGateRoute(anchor?.href || '')) return;
+        if (event.cancelable) event.preventDefault();
+        event.stopImmediatePropagation();
+        blockControl(control);
+        if (anchor && ageGateRoute(anchor.href)) location.replace(safeDestination);
+        scan();
+      };
+      for (const eventName of ['pointerdown', 'mousedown', 'touchstart', 'click', 'submit', 'change', 'input', 'keydown']) document.addEventListener(eventName, guard, true);
+      new MutationObserver(records => {
+        const scopes = new Set();
+        for (const record of records) {
+          if (record.target instanceof HTMLElement) scopes.add(record.target);
+          else if (record.target.parentElement) scopes.add(record.target.parentElement);
+          for (const node of record.addedNodes) {
+            if (node instanceof HTMLElement) scopes.add(node);
+            else if (node.parentElement) scopes.add(node.parentElement);
+          }
+        }
+        if (scopes.size > 40) scan();
+        else scopes.forEach(scan);
+      }).observe(root, {
+        childList: true, subtree: true, characterData: true, attributes: true,
+        attributeFilter: ['aria-label', 'aria-checked', 'data-testid', 'href', 'nsfw', 'over-18', 'data-nsfw', 'data-over-18', 'data-over18', 'title']
+      });
+      addEventListener('pageshow', () => scan(), true);
+      addEventListener('popstate', () => ageGateRoute(location.href) ? location.replace(safeDestination) : scan(), true);
+      setInterval(() => ageGateRoute(location.href) ? location.replace(safeDestination) : scan(), 1500);
+    };
+    if (document.documentElement) install();
+    else document.addEventListener('DOMContentLoaded', install, { once: true });
+  }
 
   const PLAYER_RESPONSE_PATHS = new Set([
     '/youtubei/v1/player', '/youtubei/v1/get_watch', '/get_watch', '/playlist'

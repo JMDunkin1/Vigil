@@ -22,9 +22,10 @@ independent update path on a connected, paired iPhone:
 ```sh
 npm run agent:update:instagram
 npm run agent:update:youtube
+npm run agent:update:snapchat
 ```
 
-Use `npm run agent:update:phone` only when both companions should be checked and
+Use `npm run agent:update:phone` only when all companions should be checked and
 updated together. These commands must retain their verified app-and-policy
 transactions; do not replace them with app-only installs that can desynchronize
 the supervised allowlist.
@@ -69,7 +70,7 @@ The live-proven no-erase sequence for an already activated iPhone is:
    no-erase supervision with the same Vigil keybag.
 6. Verify `IsSupervised=true`, pair with the supervisor keybag, install the
    signed non-removable Vigil profile, verify the exact live policy fingerprint,
-   and launch-test both Vigil companion apps. Only then may success be reported.
+   and launch-test every Vigil companion app. Only then may success be reported.
 
 Do not restore the full checkpoint after supervision: a `backup2 restore
 --system` of the checkpoint clears supervision and recreates the failure loop.

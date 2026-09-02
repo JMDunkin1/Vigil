@@ -179,13 +179,18 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
-        configuration.defaultWebpagePreferences.preferredContentMode = .mobile
+        configuration.defaultWebpagePreferences.preferredContentMode = service == .snapchat
+            ? .desktop
+            : .mobile
         if service == .youtube {
             configuration.applicationNameForUserAgent =
                 YouTubeWebCompatibility.unsupportedSafariApplicationNameSuffix
         }
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
+        if service == .snapchat {
+            webView.customUserAgent = SnapchatWebCompatibility.desktopSafariUserAgent
+        }
         // RootView applies the exact SwiftUI environment style once the view
         // is mounted, but the first Instagram navigation begins before that
         // representable callback. Seed WebKit from UIKit's current trait first
@@ -1196,7 +1201,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
             return
         }
 
-        preferences.preferredContentMode = .mobile
+        preferences.preferredContentMode = service == .snapchat ? .desktop : .mobile
 
         if navigationAction.targetFrame?.isMainFrame == false {
             guard service.allowsEmbeddedNavigation(to: url) else {

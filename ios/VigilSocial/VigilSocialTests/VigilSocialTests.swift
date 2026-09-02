@@ -8549,7 +8549,7 @@ final class VigilSocialTests: XCTestCase {
         )
     }
 
-    func testYouTubeInteractionExtensionIsNarrowAndKeepsShortsUnavailable() throws {
+    func testFocusedWebInteractionExtensionKeepsShortsAndMatureRevealsUnavailable() throws {
         let source = try youtubeInteractionExtensionSource()
         let context = try XCTUnwrap(JSContext())
         context.setObject(source, forKeyedSubscript: "source" as NSString)
@@ -8562,6 +8562,9 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(source.contains("location.replace(focusedEntryURL)"))
         XCTAssertTrue(source.contains("location.assign(focusedEntryURL)"))
         XCTAssertTrue(source.contains("event.stopImmediatePropagation()"))
+        XCTAssertTrue(source.contains("installMatureContentInterlock"))
+        XCTAssertTrue(source.contains("data-vigil-mature-control"))
+        XCTAssertTrue(source.contains("data-vigil-mature-content"))
         XCTAssertTrue(source.contains("const PLAYER_RESPONSE_PATHS"))
         XCTAssertTrue(source.contains("window.fetch = new Proxy(nativeFetch"))
         XCTAssertTrue(source.contains("window.XMLHttpRequest = class extends NativeXHR"))
@@ -8604,7 +8607,19 @@ final class VigilSocialTests: XCTestCase {
         let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(
             manifest["host_permissions"] as? [String],
-            ["https://youtube.com/*", "https://www.youtube.com/*", "https://m.youtube.com/*"]
+            [
+                "https://youtube.com/*",
+                "https://www.youtube.com/*",
+                "https://m.youtube.com/*",
+                "https://reddit.com/*",
+                "https://*.reddit.com/*",
+                "https://redd.it/*",
+                "https://*.redd.it/*",
+                "https://x.com/*",
+                "https://*.x.com/*",
+                "https://twitter.com/*",
+                "https://*.twitter.com/*"
+            ]
         )
         let contentScripts = try XCTUnwrap(manifest["content_scripts"] as? [[String: Any]])
         XCTAssertEqual(contentScripts.count, 1)

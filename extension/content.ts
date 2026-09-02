@@ -12,8 +12,13 @@ let focusedSocialCleanupAttached = false;
 let focusedSocialCleanupSignature = "";
 let focusedSocialCleanupObserver: MutationObserver | null = null;
 let focusedSocialCleanupTimer: number | null = null;
+let matureContentInterlockAttached = false;
+let matureContentScanInProgress = false;
+let matureContentObserver: MutationObserver | null = null;
 const YOUTUBE_AUTOFILL_PREVIOUS_ABSENT = "__vigil_absent__";
 const pausedByVigil = new Set<HTMLMediaElement>();
+
+type MaturePlatform = "reddit" | "x";
 
 type PulseReason = "navigation" | "heartbeat" | "activated" | "history";
 type HistoryMethod = "pushState" | "replaceState";
@@ -102,9 +107,11 @@ interface PauseActionMessage {
 let focusedSocialCleanupSettings = defaultFocusedSocialCleanupSettings();
 
 activatePageGuard();
+applyAlwaysOnMatureContentRestrictions();
 applyAlwaysOnYoutubeRestrictions();
 sendPulse("navigation", { guard: true });
 setInterval(() => {
+  applyAlwaysOnMatureContentRestrictions();
   applyAlwaysOnYoutubeRestrictions();
   sendPulse("heartbeat");
 }, 5000);
@@ -132,6 +139,7 @@ patchHistory("replaceState");
 
 function resetAndPulse(reason: PulseReason, options: PulseOptions = {}): void {
   lastPulseAt = Date.now();
+  applyAlwaysOnMatureContentRestrictions();
   sendPulse(reason, options);
 }
 
@@ -203,6 +211,7 @@ function patchHistory(method: HistoryMethod): void {
   const original = history[method].bind(history) as (data: unknown, unused: string, url?: string | URL | null) => void;
   history[method] = function patchedHistoryMethod(data: unknown, unused: string, url?: string | URL | null): void {
     const result = original(data, unused, url);
+    applyAlwaysOnMatureContentRestrictions();
     setTimeout(() => resetAndPulse("history"), 0);
     return result;
   } as History[HistoryMethod];
@@ -834,6 +843,272 @@ function cleanupBrowserNoise() {
   injectCleanupStyle();
   removeCookiePrompts();
   applyYoutubeAutofillFriction();
+}
+
+function maturePlatformForHost(hostValue: string): MaturePlatform | null {
+  const host = hostValue.trim().toLowerCase().replace(/^www\./, "");
+  if (host === "reddit.com" || host.endsWith(".reddit.com") || host === "redd.it" || host.endsWith(".redd.it")) return "reddit";
+  if (host === "x.com" || host.endsWith(".x.com") || host === "twitter.com" || host.endsWith(".twitter.com")) return "x";
+  return null;
+}
+
+function matureAgeGateRoute(value: string): boolean {
+  try {
+    const url = new URL(value, location.href);
+    return maturePlatformForHost(url.hostname) === "reddit" && /^\/over18(?:\/|$)/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function matureSafeDestination(platform: MaturePlatform): string {
+  return platform === "reddit" ? "https://www.reddit.com/" : "https://x.com/home";
+}
+
+function applyAlwaysOnMatureContentRestrictions(): void {
+  const platform = maturePlatformForHost(location.hostname);
+  if (!platform) return;
+  if (matureAgeGateRoute(location.href)) {
+    location.replace(matureSafeDestination(platform));
+    return;
+  }
+  const root = document.documentElement;
+  if (!root) {
+    document.addEventListener("DOMContentLoaded", applyAlwaysOnMatureContentRestrictions, { once: true });
+    return;
+  }
+  root.setAttribute("data-vigil-mature-interlock", platform);
+  injectMatureContentStyle();
+  scanMatureContent(platform);
+  if (matureContentInterlockAttached) return;
+  matureContentInterlockAttached = true;
+  for (const eventName of ["pointerdown", "mousedown", "touchstart", "click", "submit", "change", "input", "keydown"]) {
+    document.addEventListener(eventName, guardMatureContentAction, true);
+  }
+  matureContentObserver = new MutationObserver((records) => scanMatureContentMutations(platform, records));
+  matureContentObserver.observe(root, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ["aria-label", "aria-checked", "data-testid", "href", "nsfw", "over-18", "data-nsfw", "data-over-18", "data-over18", "title"]
+  });
+}
+
+function injectMatureContentStyle(): void {
+  if (document.getElementById("vigil-mature-content-style")) return;
+  const style = document.createElement("style");
+  style.id = "vigil-mature-content-style";
+  style.textContent = `
+    html[data-vigil-mature-interlock] [data-vigil-mature-control="blocked"] {
+      display: none !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+    }
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] img,
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] picture,
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] video,
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] audio,
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] canvas,
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] iframe,
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] object,
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] embed,
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] svg[role="img"],
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"] [style*="background-image" i] {
+      display: none !important;
+      visibility: hidden !important;
+      pointer-events: none !important;
+      background-image: none !important;
+    }
+    html[data-vigil-mature-interlock] [data-vigil-mature-content="blocked"]::before {
+      content: "Mature media removed by Vigil";
+      display: block !important;
+      box-sizing: border-box !important;
+      margin: 8px 0 !important;
+      padding: 14px 16px !important;
+      border: 1px solid rgba(183, 121, 82, 0.55) !important;
+      border-radius: 10px !important;
+      background: #211d1a !important;
+      color: #eadfd7 !important;
+      font: 600 14px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+      text-align: center !important;
+    }
+  `;
+  document.documentElement.append(style);
+}
+
+function matureQuerySelectorAll(scope: ParentNode, selector: string): HTMLElement[] {
+  const matches: HTMLElement[] = [];
+  if (scope instanceof HTMLElement) {
+    try {
+      if (scope.matches(selector)) matches.push(scope);
+    } catch {
+      return matches;
+    }
+  }
+  try {
+    matches.push(...scope.querySelectorAll<HTMLElement>(selector));
+  } catch {
+    // A changed site selector should not disable the other adapter rules.
+  }
+  return matches;
+}
+
+function scanMatureContentMutations(platform: MaturePlatform, records: MutationRecord[]): void {
+  const scopes = new Set<HTMLElement>();
+  for (const record of records) {
+    if (record.target instanceof HTMLElement) scopes.add(record.target);
+    else if (record.target.parentElement) scopes.add(record.target.parentElement);
+    for (const node of record.addedNodes) {
+      if (node instanceof HTMLElement) scopes.add(node);
+      else if (node.parentElement) scopes.add(node.parentElement);
+    }
+  }
+  if (scopes.size > 40) {
+    scanMatureContent(platform);
+    return;
+  }
+  for (const scope of scopes) scanMatureContent(platform, scope);
+}
+
+function scanMatureContent(platform: MaturePlatform, scope: ParentNode = document): void {
+  if (matureContentScanInProgress) return;
+  matureContentScanInProgress = true;
+  try {
+    const structuredSelectors = platform === "reddit"
+      ? [
+          "shreddit-post[nsfw]",
+          "shreddit-post[over-18]",
+          ".thing.over18",
+          "[data-nsfw='true' i]",
+          "[data-over-18='true' i]",
+          "[data-over18='true' i]"
+        ]
+      : [
+          "[data-testid*='sensitiveMedia' i]",
+          "[data-testid*='sensitive_media' i]",
+          "[aria-label*='sensitive content' i]",
+          "[aria-label*='sensitive media' i]"
+        ];
+    for (const selector of structuredSelectors) {
+      for (const marker of matureQuerySelectorAll(scope, selector).slice(0, 400)) markMatureContent(marker, platform);
+    }
+
+    const textSelector = platform === "reddit"
+      ? ".thing .nsfw-stamp, [data-testid='post-container'] [class*='badge' i], shreddit-post [slot*='flair' i], [class*='nsfw' i], [data-testid*='label' i]"
+      : "article span, [role='dialog'] span, [data-testid*='sensitive' i]";
+    const textCandidates = matureQuerySelectorAll(scope, textSelector).slice(0, 800);
+    for (const marker of textCandidates) {
+      const text = normalizeMatureText(marker.textContent || "");
+      if (platform === "x" ? matureXMarkerText(text) : matureMarkerText(text)) markMatureContent(marker, platform);
+    }
+
+    for (const control of matureQuerySelectorAll(scope, "a[href], button, input, label, [role='button'], [role='switch'], [role='menuitem']").slice(0, 800)) {
+      if (matureControlIsReveal(control)) blockMatureControl(control, platform);
+    }
+  } finally {
+    matureContentScanInProgress = false;
+  }
+}
+
+function normalizeMatureText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function matureMarkerText(value: string): boolean {
+  return /^(?:nsfw|18\+|mature content|adult content|sensitive content|this (?:media|post|profile|community) may contain sensitive (?:content|material))\.?$/i.test(value);
+}
+
+function matureXMarkerText(value: string): boolean {
+  return /^(?:sensitive content|this (?:media|post|profile) may contain sensitive (?:content|material))\.?$/i.test(value);
+}
+
+function matureRevealText(value: string): boolean {
+  const text = normalizeMatureText(value);
+  return [
+    /\b(?:show|display|view|reveal|see|allow|enable)\s+(?:(?:potentially\s+)?(?:sensitive|mature|adult|nsfw))(?:\s+(?:content|media|posts?|communities|profiles?|images?))?\b/i,
+    /\bdisplay\s+media\s+that\s+may\s+contain\s+sensitive\s+(?:content|material)\b/i,
+    /\b(?:yes[,]?\s*)?(?:i(?:'|’)m|i am)\s+(?:over\s+)?18\b/i,
+    /\bcontinue(?:\s+to)?\s+(?:18\+|mature|adult|nsfw)\b/i,
+    /\bshow\s+mature\s*\(?18\+\)?\s*content\b/i
+  ].some((pattern) => pattern.test(text));
+}
+
+function matureControlDescriptor(element: HTMLElement): string {
+  const values = [
+    element.getAttribute("aria-label"),
+    element.getAttribute("title"),
+    element.getAttribute("data-testid"),
+    element.getAttribute("name"),
+    element.getAttribute("value"),
+    element.textContent
+  ];
+  if (element instanceof HTMLInputElement) {
+    for (const label of element.labels || []) values.push(label.textContent);
+  }
+  return normalizeMatureText(values.filter((value): value is string => Boolean(value)).join(" ").slice(0, 900));
+}
+
+function matureControlIsReveal(element: HTMLElement): boolean {
+  const descriptor = matureControlDescriptor(element);
+  if (matureRevealText(descriptor)) return true;
+  if (!/^(?:show|view|continue|yes|enable|allow)$/i.test(descriptor)) return false;
+  const context = element.closest<HTMLElement>("[role='dialog'], [role='menuitem'], label, li, form, article");
+  return Boolean(context && /\b(?:nsfw|18\+|mature|adult|sensitive)\b/i.test((context.textContent || "").slice(0, 900)));
+}
+
+function matureContentContainer(element: Element, platform: MaturePlatform): HTMLElement | null {
+  const selectors = platform === "reddit"
+    ? ["shreddit-post", "article", ".thing", "[data-testid='post-container']", "[role='article']", ".Post", "[data-click-id='background']", "[role='dialog']"]
+    : ["article", "[data-testid='cellInnerDiv']", "[role='article']", "[role='dialog']"];
+  for (const selector of selectors) {
+    const container = element.closest(selector);
+    if (container instanceof HTMLElement) return container;
+  }
+  return null;
+}
+
+function markMatureContent(marker: HTMLElement, platform: MaturePlatform): void {
+  const container = matureContentContainer(marker, platform) || marker;
+  container.setAttribute("data-vigil-mature-content", "blocked");
+  container.querySelectorAll("video, audio").forEach((media) => {
+    if (media instanceof HTMLMediaElement) media.pause();
+  });
+}
+
+function blockMatureControl(control: HTMLElement, platform: MaturePlatform): void {
+  control.setAttribute("data-vigil-mature-control", "blocked");
+  control.setAttribute("aria-disabled", "true");
+  control.setAttribute("aria-hidden", "true");
+  control.setAttribute("tabindex", "-1");
+  if (control instanceof HTMLButtonElement || control instanceof HTMLInputElement) control.disabled = true;
+  if (control instanceof HTMLInputElement && (control.type === "checkbox" || control.type === "radio")) control.checked = false;
+  const container = matureContentContainer(control, platform);
+  if (container && !control.closest("label, [role='menuitem'], form")) markMatureContent(container, platform);
+}
+
+function matureEventElement(event: Event): HTMLElement | null {
+  for (const value of event.composedPath?.() || []) {
+    if (value instanceof HTMLElement) return value;
+  }
+  return event.target instanceof HTMLElement ? event.target : null;
+}
+
+function guardMatureContentAction(event: Event): void {
+  const platform = maturePlatformForHost(location.hostname);
+  if (!platform) return;
+  if (event instanceof KeyboardEvent && event.key !== "Enter" && event.key !== " ") return;
+  const target = matureEventElement(event);
+  if (!target) return;
+  const control = target.closest<HTMLElement>("a[href], button, input, label, [role='button'], [role='switch'], [role='menuitem'], form") || target;
+  const anchor = control.closest<HTMLAnchorElement>("a[href]");
+  const blocked = control.closest<HTMLElement>("[data-vigil-mature-control='blocked']");
+  if (!blocked && !matureControlIsReveal(control) && !matureAgeGateRoute(anchor?.href || "")) return;
+  if (event.cancelable) event.preventDefault();
+  event.stopImmediatePropagation();
+  blockMatureControl(control, platform);
+  if (anchor && matureAgeGateRoute(anchor.href)) location.replace(matureSafeDestination(platform));
+  scanMatureContent(platform);
 }
 
 function applyAlwaysOnYoutubeRestrictions(): void {

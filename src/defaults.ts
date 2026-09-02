@@ -398,7 +398,7 @@ export const DEFAULT_SHORT_FORM_URL_PATTERNS = [
   "x.com/explore",
   "twitter.com/explore",
   "snapchat.com/spotlight",
-  "snapchat.com/stories",
+  "snapchat.com/discover",
   "story.snapchat.com",
   "tiktok.com"
 ];
@@ -608,7 +608,7 @@ export function defaultState(): VigilState {
         id: NORMAL_PROFILE_ID,
         name: "Normal",
         mode: "blocklist",
-        description: "Normal use with permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Stories protection.",
+        description: "Normal use with permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Discover protection.",
         blockedApps: [],
         blockedSites: [...DEFAULT_EXPLICIT_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES],
         blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS],

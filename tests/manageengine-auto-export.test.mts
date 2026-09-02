@@ -70,7 +70,7 @@ try {
   assert.equal(summary.artifactHash, createHash("sha256").update(profileText).digest("hex"));
   assert.equal(recordValue(summary.deployment, "auto-export deployment").status, "unverified");
   const companionApps = recordValue(summary.companionApps, "auto-export companion summary");
-  assert.equal(companionApps.appCount, 2);
+  assert.equal(companionApps.appCount, 3);
   assert.deepEqual(companionApps.bundleIds, Object.values(IOS_SOCIAL_COMPANION_BUNDLE_IDS));
   assert.deepEqual(companionApps.apps, IOS_SOCIAL_COMPANION_APPS.map((app) => ({ ...app })));
   assert.equal(recordValue(summary.launcherProfile, "auto-export retired launcher summary").webClipCount, 0);

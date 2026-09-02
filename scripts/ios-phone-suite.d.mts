@@ -1,6 +1,6 @@
 export interface PhoneSuiteOptions {
   allowEditionDowngrade: boolean;
-  app: "" | "instagram" | "youtube";
+  app: "" | "instagram" | "youtube" | "snapchat";
   bump: "patch" | "minor" | "major";
   device: string;
   edition: "" | "personal" | "enhanced";
@@ -17,7 +17,7 @@ export function iosSdkSupportsDevice(iosSdk: number, deviceOsVersion: string): b
 export function isLiveCoreDeviceConnection(device: unknown): boolean;
 export function coreDeviceConnectionLabel(device: unknown): "wired" | "wireless" | "connected";
 export function isPhoneImplementationFile(path: string): boolean;
-export function isSocialAppImplementationFile(path: string, appId: "instagram" | "youtube"): boolean;
+export function isSocialAppImplementationFile(path: string, appId: "instagram" | "youtube" | "snapchat"): boolean;
 export function isLegacyPhoneBundleIdentifier(bundleIdentifier: unknown): boolean;
 export function policyFreshnessProblems(options?: {
   installedProfileName?: string;
@@ -68,16 +68,16 @@ export function implementationFingerprint(edition?: "personal" | "enhanced"): Pr
   blocklistPath: string;
 }>;
 export function socialAppImplementationFingerprint(
-  appId: "instagram" | "youtube"
+  appId: "instagram" | "youtube" | "snapchat"
 ): Promise<{
   hash: string;
-  appId: "instagram" | "youtube";
+  appId: "instagram" | "youtube" | "snapchat";
   files: Array<{ path: string; bytes: number; sha256: string }>;
 }>;
 export function socialAppsNeedingUpdate(
   release: { apps: Record<string, { version: string; build: number; sourceFingerprint?: string }> },
   installedApps?: Array<{ bundleIdentifier?: string; version?: string; bundleVersion?: string | number }>,
   receipt?: unknown,
-  selectedAppIds?: Array<"instagram" | "youtube"> | null,
+  selectedAppIds?: Array<"instagram" | "youtube" | "snapchat"> | null,
   now?: string | number | Date
-): Array<"instagram" | "youtube">;
+): Array<"instagram" | "youtube" | "snapchat">;

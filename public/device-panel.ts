@@ -182,7 +182,7 @@ function renderDevices(devices: DashboardData["devices"], $: QueryElement): void
     ["Web", ios.blockWeb ? `${profile.deniedUrlCount || 0} denied / ${profile.allowedUrlCount || 0} allowed across phone browsers` : "off"],
     ["Companion apps", companionAppsText(companionApps)],
     ["Focused social", focusedSocialSummaryText(profile.focusedSocial)],
-    ["Snapchat", ios.enabled && ios.blockApps ? "covered by the managed native-app policy; no companion" : "policy-only; no companion"],
+    ["Snapchat", ios.enabled && ios.blockApps ? "focused companion; Spotlight and Discover removed" : "focused companion configured"],
     ["Grayscale", profile.grayscale?.desired ? `${profile.grayscale.label || "on"}${profile.grayscale.settingsGuarded ? " + Settings guard" : ""}` : "normal"],
     ["Native Reels", "not available through public iOS APIs"],
     ["Safari history", ios.allowSafariHistoryClearing !== false ? "clearing allowed" : "clearing blocked"],

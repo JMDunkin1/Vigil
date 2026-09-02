@@ -241,9 +241,9 @@ private struct YouTubeContentBlockerGate: View {
                 VStack {
                     Spacer()
                     VStack(alignment: .leading, spacing: 12) {
-                        Label("Enable YouTube player gestures", systemImage: "hand.draw")
+                        Label("Enable focused web controls", systemImage: "hand.draw")
                             .font(.headline)
-                        Text(health.controlsErrorMessage ?? "Vigil YouTube Controls is installed but disabled. Enable it and allow access to youtube.com to retain the focused player controls. Shorts stays blocked separately.")
+                        Text(health.controlsErrorMessage ?? "Vigil Focused Web Controls is installed but disabled. Enable it and allow access to YouTube, Reddit, X, and Twitter. This retains focused YouTube gestures and removes platform-labeled mature media and reveal controls; Shorts stays blocked separately.")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                         HStack {

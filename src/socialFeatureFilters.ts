@@ -36,12 +36,14 @@ interface FocusedSocialPlatformDefinition {
 
 export const IOS_SOCIAL_COMPANION_BUNDLE_IDS = {
   instagram: "tech.caseline.vigil.instagram",
-  youtube: "tech.caseline.vigil.youtube"
-} as const satisfies Partial<Record<FocusedSocialPlatformId, string>>;
+  youtube: "tech.caseline.vigil.youtube",
+  snapchat: "tech.caseline.vigil.snapchat"
+} as const satisfies Record<FocusedSocialPlatformId, string>;
 
 export const IOS_SOCIAL_COMPANION_APPS = [
   { id: "instagram", label: "Instagram", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.instagram },
-  { id: "youtube", label: "YouTube", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.youtube }
+  { id: "youtube", label: "YouTube", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.youtube },
+  { id: "snapchat", label: "Snapchat", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.snapchat }
 ] as const;
 
 export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
@@ -172,6 +174,7 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
         key: "spotlight",
         label: "Spotlight",
         permanent: true,
+        probeUrls: ["https://www.snapchat.com/?__vigil_feature=spotlight"],
         deniedUrls: [
           "snapchat.com/spotlight",
           "web.snapchat.com/spotlight"
@@ -179,10 +182,11 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
       },
       {
         key: "stories",
-        label: "Stories",
+        label: "Discover and public Stories",
         permanent: true,
+        probeUrls: ["https://www.snapchat.com/?__vigil_feature=stories"],
         deniedUrls: [
-          "snapchat.com/stories",
+          "snapchat.com/discover",
           "story.snapchat.com"
         ]
       }
@@ -201,7 +205,10 @@ const FOCUSED_SOCIAL_URL_PATTERN_KEYS = new Set([
   normalizePatternKey("instagram.com/explore"),
   // Earlier releases denied singular Reel permalinks. Remove that legacy rule
   // so Direct-message shares can open while the plural destination stays off.
-  normalizePatternKey("instagram.com/reel")
+  normalizePatternKey("instagram.com/reel"),
+  // Earlier releases blocked /stories wholesale. The focused Snapchat
+  // companion now preserves friends' Stories and removes Discover instead.
+  normalizePatternKey("snapchat.com/stories")
 ]);
 
 export const PERMANENT_SOCIAL_URL_PATTERNS = FOCUSED_SOCIAL_PLATFORMS.flatMap((platform) => (

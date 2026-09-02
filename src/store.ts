@@ -1303,7 +1303,7 @@ export function sanitizeDefaultFocusProfile(profile: Profile): Profile {
 function sanitizeNormalProfile(profile: Profile): Profile {
   return {
     ...profile,
-    description: "Normal use with permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Stories protection.",
+    description: "Normal use with permanent explicit-content, YouTube Shorts, and Snapchat Spotlight/Discover protection.",
     blockedApps: [],
     blockedSites: [...DEFAULT_EXPLICIT_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES],
     blockedUrlPatterns: [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS],
@@ -1615,7 +1615,8 @@ function normalizeLimitRules(existingRules: VigilState["limitRules"], builtinRul
   const builtinById = new Map(builtinRules.map((rule) => [rule.id, rule]));
   const socialCompanionByNativeBundleId = new Map([
     ["com.burbn.instagram", "tech.caseline.vigil.instagram"],
-    ["com.google.ios.youtube", "tech.caseline.vigil.youtube"]
+    ["com.google.ios.youtube", "tech.caseline.vigil.youtube"],
+    ["com.toyopagroup.picaboo", "tech.caseline.vigil.snapchat"]
   ]);
   const mergedExisting = existingRules.map((rule) => {
     const builtin = builtinById.get(rule.id);

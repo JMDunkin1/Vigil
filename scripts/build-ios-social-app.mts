@@ -24,6 +24,13 @@ const services = {
     appIconSet: "YouTubeAppIcon",
     scheme: "vigil-youtube",
     buildScheme: "VigilSocial"
+  },
+  snapchat: {
+    bundleId: "tech.caseline.vigil.snapchat",
+    name: "Snapchat",
+    appIconSet: "SnapchatAppIcon",
+    scheme: "vigil-snapchat",
+    buildScheme: "VigilSnapchat"
   }
 } as const;
 
@@ -132,7 +139,7 @@ function phoneRelease(service: string): { version: string; build: number } {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes("--help")) {
-    process.stdout.write("Usage: npm run ios:social:build -- <instagram|youtube> [--configuration Debug|Release] [--destination value] [--derived-data path] [--version x.y.z] [--build number] [--unclassified-media-policy conceal|reveal-unclassified] [--unsigned]\n");
+    process.stdout.write("Usage: npm run ios:social:build -- <instagram|youtube|snapchat> [--configuration Debug|Release] [--destination value] [--derived-data path] [--version x.y.z] [--build number] [--unclassified-media-policy conceal|reveal-unclassified] [--unsigned]\n");
     return;
   }
   await assertGeneratedIosContentPolicyCurrent();

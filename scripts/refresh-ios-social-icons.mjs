@@ -14,7 +14,8 @@ const CATALOG = join(ROOT, "ios", "VigilSocial", "VigilSocial", "Assets.xcassets
 const ICON_SOURCES = join(ROOT, "ios", "VigilSocial", "VigilSocial", "Icons", "IconSources");
 const OPAQUE_PNG_RENDERER = join(ROOT, "scripts", "render-opaque-png.swift");
 const services = [
-  { name: "YouTube", id: "544007664", set: "YouTubeAppIcon.appiconset", light: "youtube-light.png" }
+  { name: "YouTube", id: "544007664", set: "YouTubeAppIcon.appiconset", light: "youtube-light.png" },
+  { name: "Snapchat", id: "447188370", set: "SnapchatAppIcon.appiconset", light: "snapchat-light.png" }
 ];
 const instagramVariants = ["light", "dark", "tinted"];
 

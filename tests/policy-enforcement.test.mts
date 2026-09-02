@@ -592,6 +592,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockUrl(profile, "https://www.youtube.com/watch?v=abc"), false);
   assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/popular"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.reddit.com/r/learnprogramming/comments/demo"), false);
+  assert.equal(must(matchContentFilterUrl(state, "https://www.reddit.com/over18?dest=%2Fr%2Fexample"), "Reddit mature gate filter").id, "reddit-mature-gate");
   assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("honeytoon"), true);
   assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("webtoon18"), true);
   assert.equal(DEFAULT_EXPLICIT_CONTEXTUAL_RULES.some((rule) => rule.markers.includes("uncensored")), true);
@@ -1773,7 +1774,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(contentFilterEnabled(state), true);
   assert.equal(safariUrlFilterEnabled(state), true);
   assert.equal(must(matchContentFilterUrl(state, "https://www.youtube.com/shorts/abc"), "YouTube Shorts filter").id, "youtube-shorts");
-  assert.equal(must(matchContentFilterUrl(state, "https://snapchat.com/stories"), "Snapchat Stories filter").id, "snapchat-stories");
+  assert.equal(must(matchContentFilterUrl(state, "https://snapchat.com/discover"), "Snapchat Discover filter").id, "snapchat-discover");
   updateSettings(state.settings, { contentFilterEnabled: false, safariUrlFilterEnabled: false, strictBypassProtectionEnabled: false });
   assert.equal(state.settings.contentFilterEnabled, true);
   assert.equal(state.settings.safariUrlFilterEnabled, true);

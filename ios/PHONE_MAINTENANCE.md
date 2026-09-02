@@ -7,8 +7,8 @@ Vigil has two explicit phone editions:
 - **Personal** is the default and requires no paid Apple membership. It installs
   the supervised, removal-disallowed restrictions profile; Apple's BuiltIn
   automatic adult-content filter; the 500 highest-priority explicit deny URLs;
-  and the fixed Instagram and YouTube companions with the exact bundled adult
-  blocklist and generated explicit-content policy. It deliberately uses the
+  and the fixed Instagram, YouTube, and Snapchat companions with their exact
+  service allowlists and generated explicit-content policy. It deliberately uses the
   conservative Personal Team entitlement set.
 - **Enhanced** contains every Personal protection and also requires the signed
   Vigil system URL Filter, its matching Bloom prefilter/PIR database, public
@@ -23,7 +23,7 @@ explicit `--allow-edition-downgrade` flag.
 
 The phone has two independent kinds of freshness:
 
-- The implementation release in `ios/phone-release.json` covers the four built-in policy generators and bundled enforcement inputs. The same manifest also gives Instagram and YouTube independent app versions, builds, and source fingerprints.
+- The implementation release in `ios/phone-release.json` covers the four built-in policy generators and bundled enforcement inputs. The same manifest also gives Instagram, YouTube, and Snapchat independent app versions, builds, and source fingerprints.
 - The live policy fingerprint covers the configuration generated from Vigil's current state. It can change without an implementation release when a session, limit, blocklist setting, or Normal/Soft Lock/Full Brick/Panic policy changes.
 
 Use these commands from the repository root:
@@ -79,13 +79,14 @@ launches and its process remains alive, then records that launch time. The
 supervised configuration profile is independent of the companion app signing
 window and remains installed.
 
-The supported companions are two fixed apps:
+The supported companions are three fixed apps:
 
 - `tech.caseline.vigil.instagram` displays as Instagram, cannot switch to another service, and carries the Safari YouTube blocker and controls extensions as a fallback surface.
 - `tech.caseline.vigil.youtube` displays as YouTube, cannot switch to another service, and uses one persistent YouTube-only `WKWebView` with the shared Shorts guard and focused ordinary-watch controls. The unreliable WebKit miniplayer path is intentionally absent. Its documented Safari application-name suffix is an unsupported compatibility exception; it is not a guarantee that Google will continue to permit embedded sign-in.
+- `tech.caseline.vigil.snapchat` displays as Snapchat, cannot switch to another service, and uses one persistent Snapchat-only `WKWebView`. It preserves friend messages and Stories while removing Spotlight, Discover, and public-story navigation. Its desktop web identity is a compatibility path, not a guarantee that Snapchat will continue to permit embedded access.
 
-Snapchat remains subject to the managed phone policy but is not built as a Vigil companion. Browser restrictions are likewise delivered by the managed phone policy rather than through a dedicated Vigil browser app.
+Browser restrictions are delivered by the managed phone policy rather than through a dedicated Vigil browser app.
 
-Obsolete `tech.caseline.sentinel.*`, `tech.caseline.vigil.browser`, `tech.caseline.vigil.social`, and `tech.caseline.vigil.snapchat` installations are reported but never silently removed. The retired `tech.caseline.vigil.ios-social-launchers` launcher profile and the former `tech.caseline.vigil.youtube-webclip-experiment` YouTube Web Clip profile are also reported because they would duplicate the installed surfaces. Instagram and YouTube are updated in place. Use `--replace-legacy` only when you intentionally want to uninstall obsolete bundles and remove those retired profiles; app-local data from uninstalled bundles cannot be recovered.
+Obsolete `tech.caseline.sentinel.*`, `tech.caseline.vigil.browser`, and `tech.caseline.vigil.social` installations are reported but never silently removed. The retired `tech.caseline.vigil.ios-social-launchers` launcher profile and the former `tech.caseline.vigil.youtube-webclip-experiment` YouTube Web Clip profile are also reported because they would duplicate the installed surfaces. All three companions are updated in place. Use `--replace-legacy` only when you intentionally want to uninstall obsolete bundles and remove those retired profiles; app-local data from uninstalled bundles cannot be recovered.
 
 ManageEngine exports now contain the live policy and its JSON summary only. The summary lists the fixed companion labels and bundle identifiers as installed apps; no social-launcher profile or managed Web Clip payload is generated or assigned. A successful export removes stale local `vigil-social-launchers.mobileconfig` and `vigil-social-launchers.summary.json` compatibility artifacts so they cannot be uploaded accidentally.

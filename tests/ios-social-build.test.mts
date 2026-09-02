@@ -206,7 +206,7 @@ assert.match(
 assert.match(socialRootViewSource, /SFContentBlockerManager\.getStateOfContentBlocker/u);
 assert.match(socialRootViewSource, /SFSafariExtensionManager\.getStateOfExtension/u,
   "the containing app must report whether the ordinary-watch gesture extension is actually enabled");
-assert.match(socialRootViewSource, /allow access to youtube\.com/u,
+assert.match(socialRootViewSource, /allow access to YouTube/u,
   "the disabled controls state must explain Safari's per-site access requirement");
 assert.match(socialRootViewSource, /SFSafariSettings\.openExtensionsSettings/u);
 assert.doesNotMatch(
@@ -669,8 +669,16 @@ assert.match(youtubeInteractionInfo, /com\.apple\.Safari\.web-extension/u);
 assert.deepEqual(youtubeInteractionManifest.host_permissions, [
   "https://youtube.com/*",
   "https://www.youtube.com/*",
-  "https://m.youtube.com/*"
-], "the interaction extension must not receive access outside YouTube");
+  "https://m.youtube.com/*",
+  "https://reddit.com/*",
+  "https://*.reddit.com/*",
+  "https://redd.it/*",
+  "https://*.redd.it/*",
+  "https://x.com/*",
+  "https://*.x.com/*",
+  "https://twitter.com/*",
+  "https://*.twitter.com/*"
+], "the interaction extension must stay confined to its maintained YouTube, Reddit, and X surfaces");
 assert.deepEqual(
   youtubeInteractionManifest.content_scripts?.[0]?.js,
   ["youtube-parity.js"],
@@ -684,6 +692,10 @@ assert.match(youtubeInteractionSource, /webkitEnterFullscreen/u,
   "the ordinary player should retain swipe-up fullscreen parity");
 assert.match(youtubeInteractionSource, /recoverFromShorts/u,
   "same-document Shorts navigation must recover to ordinary YouTube instead of exposing Shorts");
+assert.match(youtubeInteractionSource, /installMatureContentInterlock/u,
+  "the maintained Reddit and X surfaces must keep their mature-content interlock");
+assert.match(youtubeInteractionSource, /data-vigil-mature-control/u,
+  "mature-content reveal controls must remain unavailable on iPhone");
 assert.match(youtubeInteractionSource, /const isShortsRoute/u);
 assert.doesNotMatch(youtubeInteractionSource, /accounts\.google\.com/u,
   "ordinary-watch gestures do not need access to Google sign-in documents");
@@ -716,6 +728,21 @@ assert.match(
   /webView\.overrideUserInterfaceStyle = isDark \? \.dark : \.light/u,
   "reported page appearance must drive the embedded web view interface style"
 );
+assert.match(
+  socialDOMAdaptersSource,
+  /define\(Navigator\.prototype, 'userAgent', desktopUserAgent\)[\s\S]*?define\(Navigator\.prototype, 'maxTouchPoints', 0\)/u,
+  "Snapchat must expose a desktop identity before its page scripts run"
+);
+assert.match(
+  socialDOMAdaptersSource,
+  /accounts\.snapchat\.com\/v2\/login\?continue=[\s\S]*?download snapchat[\s\S]*?location\.replace\(webLoginURL\)/u,
+  "Snapchat's mobile download shell must recover into the first-party web login flow"
+);
+assert.match(
+  socialDOMAdaptersSource,
+  /path === '\/spotlight'[\s\S]*?path === '\/discover'[\s\S]*?location\.replace\('\/web\/'\)/u,
+  "Snapchat Spotlight and Discover routes must recover to friend chat"
+);
 
 const instagram = buildArguments(["instagram", "--unsigned", "--destination", "generic/platform=iOS Simulator"]);
 assert.equal(instagram[instagram.indexOf("-scheme") + 1], "VigilInstagram");
@@ -744,8 +771,18 @@ assert.ok(personalTeamFallback.includes("VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-
 assert.ok(personalTeamFallback.includes(`MARKETING_VERSION=${phoneRelease.apps.youtube.version}`));
 assert.ok(personalTeamFallback.includes(`CURRENT_PROJECT_VERSION=${phoneRelease.apps.youtube.build}`));
 
+const snapchat = buildArguments(["snapchat", "--unsigned", "--destination", "generic/platform=iOS Simulator"]);
+assert.equal(snapchat[snapchat.indexOf("-scheme") + 1], "VigilSnapchat");
+assert.ok(snapchat.includes("VIGIL_APP_BUNDLE_IDENTIFIER=tech.caseline.vigil.snapchat"));
+assert.ok(snapchat.includes("VIGIL_SERVICE=snapchat"));
+assert.ok(snapchat.includes("SOCIAL_APP_NAME=Snapchat"));
+assert.ok(snapchat.includes("SOCIAL_APP_ICON_SET=SnapchatAppIcon"));
+assert.ok(snapchat.includes("SOCIAL_URL_SCHEME=vigil-snapchat"));
+assert.ok(snapchat.includes(`MARKETING_VERSION=${phoneRelease.apps.snapchat.version}`));
+assert.ok(snapchat.includes(`CURRENT_PROJECT_VERSION=${phoneRelease.apps.snapchat.build}`));
+assert.ok(snapchat.includes("CODE_SIGNING_ALLOWED=NO"));
+
 assert.throws(() => buildArguments(["combined"]), /Unknown social service/);
-assert.throws(() => buildArguments(["snapchat"]), /Unknown social service/);
 assert.throws(() => buildArguments(["tiktok"]), /Unknown social service/);
 assert.throws(() => buildArguments(["youtube", "--config", "Debug"]), /Unknown option: --config/);
 assert.throws(() => buildArguments(["--service"]), /Missing value for --service/);
@@ -816,6 +853,14 @@ for (const [service, iconSet] of [["youtube", "YouTubeAppIcon"]] as const) {
     `${service} must provide light, dark, and tinted iOS app icons`
   );
 }
+
+const snapchatIconContents = JSON.parse(await readFile(
+  join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Assets.xcassets", "SnapchatAppIcon.appiconset", "Contents.json"),
+  "utf8"
+)) as { images: Array<{ filename: string; idiom: string; platform: string; size: string }> };
+assert.deepEqual(snapchatIconContents.images, [
+  { filename: "snapchat-light.png", idiom: "universal", platform: "ios", size: "1024x1024" }
+], "Snapchat must compile the current official App Store artwork as its Home Screen icon");
 
 const instagramIconContents = JSON.parse(await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial", "Assets.xcassets", "InstagramAppIcon.appiconset", "Contents.json"),

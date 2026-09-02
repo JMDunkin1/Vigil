@@ -44,6 +44,10 @@ assert.equal(
   packageManifest.scripts["agent:update:youtube"],
   "node scripts/ios-phone-suite.mjs update --edition personal --app youtube"
 );
+assert.equal(
+  packageManifest.scripts["agent:update:snapchat"],
+  "node scripts/ios-phone-suite.mjs update --edition personal --app snapchat"
+);
 
 assert.deepEqual(parseArguments([]), {
   command: "status",
@@ -55,6 +59,7 @@ assert.deepEqual(parseArguments(["update", "--device", "phone-1", "--no-policy",
 });
 assert.equal(parseArguments(["update", "--app", "instagram"]).options.app, "instagram");
 assert.equal(parseArguments(["update", "--app=youtube"]).options.app, "youtube");
+assert.equal(parseArguments(["update", "--app=snapchat"]).options.app, "snapchat");
 assert.equal(parseArguments(["update", "--edition", "personal"]).options.edition, "personal");
 assert.equal(parseArguments(["update", "--edition=enhanced"]).options.edition, "enhanced");
 assert.equal(parseArguments(["update", "--allow-edition-downgrade"]).options.allowEditionDowngrade, true);
@@ -105,13 +110,15 @@ assert.equal(incrementVersion("1.2.3", "major"), "2.0.0");
 const splitRelease = {
   apps: {
     instagram: { version: "1.2.3", build: 7, sourceFingerprint: "instagram-source" },
-    youtube: { version: "2.0.1", build: 11, sourceFingerprint: "youtube-source" }
+    youtube: { version: "2.0.1", build: 11, sourceFingerprint: "youtube-source" },
+    snapchat: { version: "0.1.0", build: 1, sourceFingerprint: "snapchat-source" }
   }
 };
 const splitReceipt = {
   apps: [
     { bundleId: "tech.caseline.vigil.instagram", version: "1.2.3", build: 7, sourceFingerprint: "instagram-source", signingProfile: { expiresAt: "2099-01-08T00:00:00.000Z" } },
-    { bundleId: "tech.caseline.vigil.youtube", version: "2.0.1", build: 11, sourceFingerprint: "youtube-source", signingProfile: { expiresAt: "2099-01-08T00:00:00.000Z" } }
+    { bundleId: "tech.caseline.vigil.youtube", version: "2.0.1", build: 11, sourceFingerprint: "youtube-source", signingProfile: { expiresAt: "2099-01-08T00:00:00.000Z" } },
+    { bundleId: "tech.caseline.vigil.snapchat", version: "0.1.0", build: 1, sourceFingerprint: "snapchat-source", signingProfile: { expiresAt: "2099-01-08T00:00:00.000Z" } }
   ]
 };
 assert.equal(signingExpirationNeedsRenewal("2099-01-08T00:00:00.000Z", "2099-01-05T23:59:59.999Z"), false);
@@ -119,40 +126,49 @@ assert.equal(signingExpirationNeedsRenewal("2099-01-08T00:00:00.000Z", "2099-01-
 assert.equal(signingExpirationNeedsRenewal("not-a-date", "2099-01-01T00:00:00.000Z"), true);
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
-  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" }
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" },
+  { bundleIdentifier: "tech.caseline.vigil.snapchat", version: "0.1.0", bundleVersion: "1" }
 ], splitReceipt), ["youtube"]);
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
-  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" }
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" },
+  { bundleIdentifier: "tech.caseline.vigil.snapchat", version: "0.1.0", bundleVersion: "1" }
 ], splitReceipt), []);
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
-  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" }
-]), ["instagram", "youtube"], "matching versions without a deployment receipt must be reinstalled and verified");
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" },
+  { bundleIdentifier: "tech.caseline.vigil.snapchat", version: "0.1.0", bundleVersion: "1" }
+]), ["instagram", "youtube", "snapchat"], "matching versions without a deployment receipt must be reinstalled and verified");
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
-  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" }
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" },
+  { bundleIdentifier: "tech.caseline.vigil.snapchat", version: "0.1.0", bundleVersion: "1" }
 ], {
   apps: [
     splitReceipt.apps[0],
-    { ...splitReceipt.apps[1], sourceFingerprint: "stale-youtube-source" }
+    { ...splitReceipt.apps[1], sourceFingerprint: "stale-youtube-source" },
+    splitReceipt.apps[2]
   ]
 }), ["youtube"], "a stale app receipt must trigger a verified reinstall even when the installed version matches");
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
-  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" }
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" },
+  { bundleIdentifier: "tech.caseline.vigil.snapchat", version: "0.1.0", bundleVersion: "1" }
 ], splitReceipt, ["instagram"]), [], "an Instagram-only update must ignore pending YouTube work");
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
-  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" }
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.0", bundleVersion: "10" },
+  { bundleIdentifier: "tech.caseline.vigil.snapchat", version: "0.1.0", bundleVersion: "1" }
 ], splitReceipt, ["youtube"]), ["youtube"], "a YouTube-only update must select only YouTube");
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
-  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" }
+  { bundleIdentifier: "tech.caseline.vigil.youtube", version: "2.0.1", bundleVersion: "11" },
+  { bundleIdentifier: "tech.caseline.vigil.snapchat", version: "0.1.0", bundleVersion: "1" }
 ], {
   apps: [
     splitReceipt.apps[0],
-    { ...splitReceipt.apps[1], signingProfile: { expiresAt: "2099-01-06T12:00:00.000Z" } }
+    { ...splitReceipt.apps[1], signingProfile: { expiresAt: "2099-01-06T12:00:00.000Z" } },
+    splitReceipt.apps[2]
   ]
 }, null, "2099-01-05T00:00:00.000Z"), ["youtube"], "a companion inside the 48-hour signing window must be re-signed even when its version matches");
 
@@ -264,13 +280,13 @@ for (const bundleIdentifier of [
   "tech.caseline.sentinel.instagram",
   "tech.caseline.sentinel.youtube",
   "tech.caseline.vigil.browser",
-  "tech.caseline.vigil.social",
-  "tech.caseline.vigil.snapchat"
+  "tech.caseline.vigil.social"
 ]) {
   assert.equal(isLegacyPhoneBundleIdentifier(bundleIdentifier), true, `${bundleIdentifier} should be treated as obsolete`);
 }
 assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.instagram"), false);
 assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.youtube"), false);
+assert.equal(isLegacyPhoneBundleIdentifier("tech.caseline.vigil.snapchat"), false);
 
 const requiredAppsStart = phoneSuiteSource.indexOf("const REQUIRED_SOCIAL_APPS = [");
 const requiredAppsEnd = phoneSuiteSource.indexOf("];", requiredAppsStart);
@@ -279,7 +295,9 @@ assert.match(requiredAppsSource, /tech\.caseline\.vigil\.instagram/u);
 assert.match(requiredAppsSource, /service: "instagram"[\s\S]*?appIconSet: "InstagramAppIcon"/u);
 assert.match(requiredAppsSource, /tech\.caseline\.vigil\.youtube/u);
 assert.match(requiredAppsSource, /service: "youtube"[\s\S]*?appIconSet: "YouTubeAppIcon"[\s\S]*?buildScheme: "VigilSocial"/u);
-assert.doesNotMatch(requiredAppsSource, /tech\.caseline\.vigil\.(?:browser|social|snapchat)/u);
+assert.match(requiredAppsSource, /tech\.caseline\.vigil\.snapchat/u);
+assert.match(requiredAppsSource, /service: "snapchat"[\s\S]*?appIconSet: "SnapchatAppIcon"[\s\S]*?buildScheme: "VigilSnapchat"/u);
+assert.doesNotMatch(requiredAppsSource, /tech\.caseline\.vigil\.(?:browser|social)["']/u);
 assert.match(phoneSuiteSource, /const appsForEdition = \(edition\) => edition === "enhanced"[\s\S]*?REQUIRED_SOCIAL_APPS, URL_FILTER_APP/u);
 assert.match(phoneSuiteSource, /bundleId: "tech\.caseline\.vigil\.url-filter"/u);
 

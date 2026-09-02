@@ -19,10 +19,50 @@ enum DOMAdapters {
                 )
             : service == .instagram ? instagramStableDocumentStartStyle : ""
         return authenticationDocumentGuard(for: service, body:
-            documentIdentityBootstrap
+            (service == .snapchat ? snapchatDesktopIdentityBootstrap : "")
+            + documentIdentityBootstrap
             + safetyBootstrap
         )
     }
+
+    private static let snapchatDesktopIdentityBootstrap = #"""
+    (() => {
+      // Snapchat for Web currently gates the chat client on a desktop browser
+      // identity. Keep the compatibility surface narrow and deterministic;
+      // navigation remains confined independently by SocialService.
+      const define = (target, key, value) => {
+        try {
+          Object.defineProperty(target, key, {
+            configurable: true,
+            enumerable: true,
+            get: () => value
+          });
+        } catch (_) {}
+      };
+      const desktopUserAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15';
+      define(Navigator.prototype, 'userAgent', desktopUserAgent);
+      define(Navigator.prototype, 'appVersion', desktopUserAgent.replace(/^Mozilla\//, ''));
+      define(Navigator.prototype, 'platform', 'MacIntel');
+      define(Navigator.prototype, 'vendor', 'Apple Computer, Inc.');
+      define(Navigator.prototype, 'maxTouchPoints', 0);
+      define(Navigator.prototype, 'webdriver', false);
+
+      const style = document.createElement('style');
+      style.id = 'vigil-snapchat-start-style';
+      style.textContent = `
+        a[href*="/spotlight" i], a[href*="/discover" i],
+        button[aria-label*="Spotlight" i], [role="button"][aria-label*="Spotlight" i],
+        button[aria-label*="Discover" i], [role="button"][aria-label*="Discover" i],
+        [data-testid*="spotlight" i], [data-testid*="discover" i] {
+          display: none !important;
+        }
+        html[data-vigil-snapchat-restricted="true"] body {
+          visibility: hidden !important;
+        }
+      `;
+      document.documentElement.appendChild(style);
+    })();
+    """#
 
     private static let documentIdentityBootstrap = #"""
     (() => {
@@ -1088,6 +1128,8 @@ enum DOMAdapters {
             #"Boolean(window.__vigilInstagramCompatibilityInstalled && window.__vigilPolicyProbeInstalled && window.__vigilInstagramInstalled)"#
         case .youtube:
             #"Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilYouTubeInstalled)"#
+        case .snapchat:
+            #"Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilSnapchatInstalled)"#
         }
     }
 
@@ -1225,6 +1267,17 @@ enum DOMAdapters {
             }
             if (path === '/' || path === '') {
               return { feature: 'home', mode: 'conceal', permanent: false };
+            }
+            """#
+        case .snapchat:
+            allowedHosts = "['snapchat.com', 'www.snapchat.com', 'web.snapchat.com']"
+            fallbackPath = "/web/"
+            routePolicy = #"""
+            if (path === '/spotlight' || path.startsWith('/spotlight/')) {
+              return { feature: 'spotlight', mode: 'redirect', permanent: true };
+            }
+            if (path === '/discover' || path.startsWith('/discover/')) {
+              return { feature: 'stories', mode: 'redirect', permanent: true };
             }
             """#
         }
@@ -1413,6 +1466,10 @@ enum DOMAdapters {
             featureKeys = "['home', 'explore', 'suggested', 'ads']"
             allowedHosts = "['youtube.com', 'www.youtube.com', 'm.youtube.com']"
             priorityFeature = "home"
+        case .snapchat:
+            featureKeys = "['spotlight', 'stories']"
+            allowedHosts = "['snapchat.com', 'www.snapchat.com', 'web.snapchat.com']"
+            priorityFeature = "spotlight"
         }
         return #"""
         (() => {
@@ -3602,8 +3659,161 @@ enum DOMAdapters {
         switch service {
         case .instagram: instagramStable
         case .youtube: youtube
+        case .snapchat: snapchat
         }
     }
+
+    private static let snapchat = #"""
+    (() => {
+      if (window.__vigilSnapchatInstalled) return;
+      const allowedHosts = ['snapchat.com', 'www.snapchat.com', 'web.snapchat.com'];
+      if (!allowedHosts.includes(String(location.hostname || '').toLowerCase())) return;
+      window.__vigilSnapchatInstalled = true;
+
+      const style = document.createElement('style');
+      style.id = 'vigil-snapchat-style';
+      style.textContent = `
+        a[href*="/spotlight" i], a[href*="/discover" i],
+        button[aria-label*="Spotlight" i], [role="button"][aria-label*="Spotlight" i],
+        button[aria-label*="Discover" i], [role="button"][aria-label*="Discover" i],
+        [data-testid*="spotlight" i], [data-testid*="discover" i],
+        [data-page-type*="spotlight" i], [data-page-type*="discover" i] {
+          display: none !important;
+        }
+        [data-vigil-hidden-feature] { display: none !important; }
+        html[data-vigil-snapchat-restricted="true"] body {
+          visibility: hidden !important;
+        }
+      `;
+      document.documentElement.appendChild(style);
+
+      const restrictedFeature = (value = location.href) => {
+        try {
+          const url = new URL(value, location.href);
+          if (!allowedHosts.includes(url.hostname.toLowerCase())) return '';
+          const path = url.pathname.toLowerCase();
+          if (path === '/spotlight' || path.startsWith('/spotlight/')) return 'Spotlight';
+          if (path === '/discover' || path.startsWith('/discover/')) return 'Discover';
+        } catch (_) {}
+        return '';
+      };
+      const labelledRestrictedControl = (element) => {
+        const control = element?.closest?.('a[href], button, [role="button"], [role="tab"]');
+        if (!control) return null;
+        if (control instanceof HTMLAnchorElement && restrictedFeature(control.href)) return control;
+        const label = String(
+          control.getAttribute('aria-label')
+          || control.getAttribute('data-testid')
+          || control.textContent
+          || ''
+        ).trim().toLowerCase();
+        return /^(spotlight|discover)(\s|$)/.test(label) ? control : null;
+      };
+      const hideRestrictedControls = (root = document) => {
+        root.querySelectorAll?.(
+          'a[href], button[aria-label], [role="button"][aria-label], '
+          + '[role="tab"], [data-testid]'
+        ).forEach((element) => {
+          const control = labelledRestrictedControl(element);
+          if (control) control.setAttribute('data-vigil-hidden-feature', 'true');
+        });
+      };
+      const publishUnavailable = (feature) => {
+        if (window !== window.top) return;
+        window.__vigilBridge?.({
+          type: 'health',
+          state: 'degraded',
+          detail: `Snapchat ${feature} is intentionally unavailable.`
+        });
+      };
+      const loginAttemptKey = 'vigil-snapchat-web-login-attempted';
+      const webLoginURL = 'https://accounts.snapchat.com/v2/login?continue=https%3A%2F%2Fwww.snapchat.com%2Fweb%2F';
+      const isMarketingShell = () => {
+        const text = String(document.body?.innerText || '').toLowerCase();
+        return text.includes('download snapchat') && text.includes('open snapchat');
+      };
+      const beginWebLoginIfNeeded = () => {
+        if (!isMarketingShell()) return false;
+        try {
+          if (sessionStorage.getItem(loginAttemptKey) === 'true') return false;
+          sessionStorage.setItem(loginAttemptKey, 'true');
+        } catch (_) {}
+        try { location.replace(webLoginURL); } catch (_) {}
+        return true;
+      };
+      const enforceRoute = (notify = false) => {
+        const feature = restrictedFeature();
+        if (!feature) {
+          delete document.documentElement.dataset.vigilSnapchatRestricted;
+          return false;
+        }
+        document.documentElement.dataset.vigilSnapchatRestricted = 'true';
+        if (notify) publishUnavailable(feature);
+        try { location.replace('/web/'); } catch (_) {}
+        return true;
+      };
+
+      document.addEventListener('click', (event) => {
+        const control = labelledRestrictedControl(event.target);
+        if (!control) return;
+        const feature = restrictedFeature(control.href || '')
+          || (/spotlight/i.test(control.textContent || control.getAttribute('aria-label') || '')
+            ? 'Spotlight' : 'Discover');
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        publishUnavailable(feature);
+      }, true);
+
+      let reconciliationScheduled = false;
+      const reconcile = () => {
+        reconciliationScheduled = false;
+        if (beginWebLoginIfNeeded()) return;
+        if (enforceRoute(true)) return;
+        hideRestrictedControls();
+      };
+      const scheduleReconcile = () => {
+        if (reconciliationScheduled) return;
+        reconciliationScheduled = true;
+        requestAnimationFrame(reconcile);
+      };
+      for (const name of ['pushState', 'replaceState']) {
+        const original = history[name];
+        history[name] = function(...args) {
+          const result = original.apply(this, args);
+          scheduleReconcile();
+          return result;
+        };
+      }
+      addEventListener('popstate', scheduleReconcile, true);
+      addEventListener('hashchange', scheduleReconcile, true);
+      new MutationObserver(scheduleReconcile).observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['href', 'aria-label', 'data-testid']
+      });
+
+      const reportHealth = () => {
+        const text = String(document.body?.innerText || '').toLowerCase();
+        const marketingShell = isMarketingShell();
+        const unsupported = marketingShell
+          || /browser (isn't|is not) supported|unsupported browser|try another browser|only available on desktop/.test(text);
+        window.__vigilBridge?.({
+          type: 'health',
+          state: unsupported ? 'unsupported' : 'ready',
+          detail: unsupported
+            ? (marketingShell
+              ? 'Snapchat returned its app-download page instead of friend chat after web sign-in.'
+              : 'Snapchat rejected its web client in this version of WebKit.')
+            : ''
+        });
+      };
+      reconcile();
+      reportHealth();
+      setTimeout(reportHealth, 1500);
+      setTimeout(reportHealth, 8000);
+    })();
+    """#
 
     private static let youtube = #"""
     (() => {

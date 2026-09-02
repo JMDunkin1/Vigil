@@ -14,6 +14,7 @@ const youtubeProbes = (feature: string) => [
   `https://www.youtube.com/?__vigil_feature=${feature}`,
   `https://m.youtube.com/?__vigil_feature=${feature}`
 ];
+const snapchatProbe = (feature: string) => `https://www.snapchat.com/?__vigil_feature=${feature}`;
 
 const settings = normalizeFocusedSocialSettings();
 for (const feature of ["reels", "explore", "suggested", "shopping", "ads"] as const) {
@@ -25,6 +26,7 @@ for (const feature of ["reels", "explore", "suggested", "shopping", "ads"] as co
   isolated.youtube.explore = false;
   isolated.youtube.suggested = false;
   isolated.youtube.ads = false;
+  isolated.snapchat.enabled = false;
   const denied = focusedSocialDeniedUrls(isolated);
   assert.ok(denied.includes(instagramProbe(feature)), `${feature} should carry its own Instagram companion probe`);
   for (const other of ["reels", "explore", "suggested", "shopping", "ads"] as const) {
@@ -39,6 +41,7 @@ for (const feature of ["home", "explore", "suggested", "ads"] as const) {
   isolated.instagram.suggested = false;
   isolated.instagram.shopping = false;
   isolated.instagram.ads = false;
+  isolated.snapchat.enabled = false;
   for (const key of ["home", "explore", "suggested", "ads"] as const) {
     isolated.youtube[key] = key === feature;
   }
@@ -53,8 +56,21 @@ for (const feature of ["home", "explore", "suggested", "ads"] as const) {
   }
 }
 
+const attemptedSnapchatDisable = structuredClone(settings);
+attemptedSnapchatDisable.instagram.enabled = false;
+attemptedSnapchatDisable.youtube.enabled = false;
+attemptedSnapchatDisable.snapchat.spotlight = false;
+attemptedSnapchatDisable.snapchat.stories = false;
+const permanentSnapchatProbes = focusedSocialDeniedUrls(attemptedSnapchatDisable);
+for (const feature of ["spotlight", "stories"] as const) {
+  assert.ok(
+    permanentSnapchatProbes.includes(snapchatProbe(feature)),
+    `${feature} must keep its permanent Snapchat companion probe even if persisted settings try to disable it`
+  );
+}
+
 const allProbes = focusedSocialDeniedUrls(settings).filter((url) => url.includes("?__vigil_feature="));
-assert.equal(allProbes.length, 13);
+assert.equal(allProbes.length, 15);
 assert.equal(allProbes.every((url) => url.startsWith("https://")), true);
 assert.equal(allProbes.filter((url) => url.startsWith("https://m.youtube.com/")).length, 4);
 assert.deepEqual(withoutFocusedSocialDeniedUrls(allProbes), []);
@@ -97,6 +113,7 @@ assert.equal(
 const everythingOptionalOff = structuredClone(settings);
 everythingOptionalOff.instagram.enabled = false;
 everythingOptionalOff.youtube.enabled = false;
+everythingOptionalOff.snapchat.enabled = false;
 const permanentOnly = focusedSocialDeniedUrls(everythingOptionalOff);
 assert.ok(permanentOnly.includes("youtube.com/shorts"));
 assert.ok(permanentOnly.includes("instagram.com/reels"));
@@ -132,7 +149,7 @@ const finalDenied = Array.isArray(webFilter?.DenyListURLs)
   : [];
 const finalProbes = finalDenied.filter((url) => url.includes("?__vigil_feature="));
 assert.deepEqual(new Set(finalProbes), new Set(allProbes));
-assert.equal(finalProbes.length, 13);
+assert.equal(finalProbes.length, 15);
 assert.equal(finalProbes.some((url) => url.startsWith("http://")), false);
 assert.ok(finalDenied.length <= 500);
 

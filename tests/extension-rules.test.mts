@@ -88,6 +88,14 @@ assert.doesNotMatch(googleSafeSearchSource, /safeSearchEnabled|chrome\.storage/u
 assert.match(googleSafeSearchSource, /searchParams\.set\("safe", "active"\)/u);
 assert.match(contentSource, /data-vigil-youtube-comments/u, "YouTube comments must remain under an always-on DOM restriction");
 assert.match(contentSource, /ytm-comments-entry-point-header-renderer/u, "mobile YouTube comment entry points must be hidden");
+assert.match(contentSource, /data-vigil-mature-interlock/u, "mixed-use sites must keep their always-on mature-content interlock");
+assert.match(contentSource, /data-vigil-mature-content/u, "labeled mature posts must retain their media-only block");
+assert.match(contentSource, /data-vigil-mature-control/u, "mature-content reveal controls must remain unavailable");
+assert.match(contentSource, /event\.stopImmediatePropagation\(\)/u, "the mature-content interlock must stop site handlers in the capture phase");
+assert.ok(
+  contentSource.indexOf("applyAlwaysOnMatureContentRestrictions();") < contentSource.indexOf('sendPulse("navigation", { guard: true });'),
+  "the mature-content interlock must install before the first background-policy response"
+);
 assert.doesNotMatch(backgroundSource, /result\.signature\s*=\s*snapshot\.dynamicRuleSignature/);
 assert.doesNotMatch(contentSource, /activateOfflineGuard/);
 assert.doesNotMatch(contentSource, /data-vigil-page-guard-state/);
@@ -110,6 +118,37 @@ assert.ok(
   contentSource.indexOf("focusedSocialCleanupEnabled === true") < contentSource.indexOf("result.offline === true"),
   "cached cleanup flags must be applied before an offline pulse releases the page guard"
 );
+
+{
+  const start = contentSource.indexOf("function maturePlatformForHost(");
+  const end = contentSource.indexOf("\nfunction applyAlwaysOnMatureContentRestrictions(", start);
+  assert.ok(start >= 0 && end > start, "the mature-content route helpers must remain available for behavior tests");
+  const context = createContext({ URL, location: { href: "https://www.reddit.com/" } });
+  runInContext(contentSource.slice(start, end), context);
+  assert.equal(runInContext('maturePlatformForHost("old.reddit.com")', context), "reddit");
+  assert.equal(runInContext('maturePlatformForHost("mobile.twitter.com")', context), "x");
+  assert.equal(runInContext('maturePlatformForHost("example.com")', context), null);
+  assert.equal(runInContext('matureAgeGateRoute("https://www.reddit.com/over18?dest=%2Fr%2Fexample")', context), true);
+  assert.equal(runInContext('matureAgeGateRoute("https://www.reddit.com/r/learnprogramming")', context), false);
+}
+
+{
+  const start = contentSource.indexOf("function normalizeMatureText(");
+  const end = contentSource.indexOf("\nfunction matureControlDescriptor(", start);
+  assert.ok(start >= 0 && end > start, "the mature-content label helpers must remain available for behavior tests");
+  const context = createContext({});
+  runInContext(contentSource.slice(start, end), context);
+  assert.equal(runInContext('matureRevealText("Show mature (18+) content")', context), true);
+  assert.equal(runInContext('matureRevealText("Display media that may contain sensitive content")', context), true);
+  assert.equal(runInContext('matureRevealText("Yes, I am over 18")', context), true);
+  assert.equal(runInContext('matureRevealText("Show comments")', context), false);
+  assert.equal(runInContext('matureRevealText("Over 18 years of research")', context), false);
+  assert.equal(runInContext('matureMarkerText("NSFW")', context), true);
+  assert.equal(runInContext('matureMarkerText("Sensitive financial information")', context), false);
+  assert.equal(runInContext('matureXMarkerText("This media may contain sensitive material")', context), true);
+  assert.equal(runInContext('matureXMarkerText("NSFW")', context), false,
+    "ordinary X post text must not be treated as a platform sensitivity marker");
+}
 
 {
   const start = contentSource.indexOf("function handlePulseResult(");
@@ -567,6 +606,7 @@ assert.ok(
   };
   const rules = extensionRuleSnapshot(state, now);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/shorts"), true);
+  assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||reddit.com/over18"), true);
   const shortsRedirect = new URL(must(rules.contentRules.find((rule) => rule.urlFilter === "||youtube.com/shorts"), "YouTube Shorts dynamic rule").redirectUrl);
   assert.equal(shortsRedirect.pathname, "/blocked");
   assert.equal(shortsRedirect.searchParams.get("site"), "YouTube Shorts");
@@ -577,6 +617,7 @@ assert.ok(
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||instagram.com/explore"), true);
   assert.equal(rules.contentRules.some((rule) => rule.urlFilter === "||youtube.com/feed/explore"), true);
   assert.equal(contentFilterRuleEntries(state, activePolicy(state, now)).some((rule) => rule.id === "reddit-popular"), true);
+  assert.equal(contentFilterRuleEntries(state, activePolicy(state, now)).some((rule) => rule.id === "reddit-mature-gate"), true);
   state.settings.contentFilterEnabled = false;
   const disabledContentRules = extensionRuleSnapshot(state, now).contentRules;
   assert.equal(disabledContentRules.some((rule) => rule.id === "reddit-popular"), true);
