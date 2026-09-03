@@ -607,6 +607,26 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockUrl(profile, "https://search.example/?q=mawha"), true);
   assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=webtoon%2018")?.pattern, "webtoon18");
   assert.equal(shouldBlockUrl(profile, "https://search.example/?q=18%2B+manhwa"), true);
+  assert.equal(matchBlockedUrlPattern(profile, "https://www.google.com/search?q=Ari+Kytsya+leaks")?.pattern, "person-intimate-exposure");
+  assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=ari+kytsya+leaks"), true);
+  assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=nude+Ari+Kytsya"), true);
+  assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=Ari+Kytsya+naked"), true);
+  assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=Ari+Kytsya+topless"), true);
+  assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=Ari%2520Kytsya%2520leaked"), true);
+  for (const harmlessQuery of [
+    "memory leaks javascript",
+    "roof water leaks",
+    "iphone 18 leaks",
+    "Supreme Court leaks",
+    "Panama Papers leaks",
+    "nude color palette"
+  ]) {
+    assert.equal(
+      shouldBlockUrl(profile, `https://www.google.com/search?q=${encodeURIComponent(harmlessQuery)}`),
+      false,
+      `ordinary search should remain available: ${harmlessQuery}`
+    );
+  }
   assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=uncensored+webtoon")?.pattern, "uncensoredwebtoon");
   assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=webtoon-uncensored")?.pattern, "webtoonuncensored");
   assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=uncensored%20manhua")?.pattern, "uncensoredmanhua");

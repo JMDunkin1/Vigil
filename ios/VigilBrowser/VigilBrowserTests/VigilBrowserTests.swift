@@ -237,6 +237,25 @@ final class VigilBrowserTests: XCTestCase {
             filter.decide(try XCTUnwrap(URL(string: "https://example.com/#/search/porn"))),
             .block(reason: "That search is blocked by Vigil.")
         )
+        for query in ["Ari Kytsya leaks", "ari kytsya leaks", "nude Ari Kytsya", "Ari Kytsya naked"] {
+            var components = URLComponents(string: "https://www.google.com/search")!
+            components.queryItems = [URLQueryItem(name: "q", value: query)]
+            XCTAssertEqual(
+                filter.decide(try XCTUnwrap(components.url)),
+                .block(reason: "That search is blocked by Vigil."),
+                query
+            )
+        }
+        for query in [
+            "memory leaks javascript", "roof water leaks", "iphone 18 leaks",
+            "Supreme Court leaks", "Panama Papers leaks", "nude color palette"
+        ] {
+            var components = URLComponents(string: "https://www.google.com/search")!
+            components.queryItems = [URLQueryItem(name: "q", value: query)]
+            guard case .allow = filter.decide(try XCTUnwrap(components.url)) else {
+                return XCTFail("Ordinary search should remain available: \(query)")
+            }
+        }
     }
 
     func testBlockedTermsAreCheckedOnlyInSearchParameters() throws {

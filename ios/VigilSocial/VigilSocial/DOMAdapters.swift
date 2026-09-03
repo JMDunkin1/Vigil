@@ -5413,19 +5413,51 @@ enum DOMAdapters {
         'X-IG-App-ID': '936619743392459',
         ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {})
       });
+      const instagramLookupTimeoutMilliseconds = 4000;
       const fetchInstagramJSON = async (path) => {
-        const response = await fetch(path, {
-          credentials: 'same-origin',
-          headers: instagramRequestHeaders()
+        const controller = new AbortController();
+        let timeout = 0;
+        const request = (async () => {
+          const response = await fetch(path, {
+            credentials: 'same-origin',
+            headers: instagramRequestHeaders(),
+            signal: controller.signal
+          });
+          if (!response.ok) throw new Error(`Instagram lookup returned ${response.status}`);
+          return response.json();
+        })();
+        const deadline = new Promise((_, reject) => {
+          timeout = setTimeout(() => {
+            controller.abort();
+            reject(new Error('Instagram lookup timed out'));
+          }, instagramLookupTimeoutMilliseconds);
         });
-        if (!response.ok) throw new Error(`Instagram lookup returned ${response.status}`);
-        return response.json();
+        try { return await Promise.race([request, deadline]); }
+        finally { clearTimeout(timeout); }
       };
+      const friendshipLookupQueue = [];
+      const maxConcurrentFriendshipLookups = 3;
+      let activeFriendshipLookups = 0;
+      const drainFriendshipLookupQueue = () => {
+        while (activeFriendshipLookups < maxConcurrentFriendshipLookups
+            && friendshipLookupQueue.length) {
+          const entry = friendshipLookupQueue.shift();
+          activeFriendshipLookups += 1;
+          void entry.task().then(entry.resolve, entry.reject).finally(() => {
+            activeFriendshipLookups -= 1;
+            drainFriendshipLookupQueue();
+          });
+        }
+      };
+      const withFriendshipLookupSlot = (task) => new Promise((resolve, reject) => {
+        friendshipLookupQueue.push({ task, resolve, reject });
+        drainFriendshipLookupQueue();
+      });
       const fetchMutualFriendship = async (username) => {
         const cached = friendshipCache.get(username);
         if (typeof cached === 'boolean') return cached;
         if (friendshipChecks.has(username)) return friendshipChecks.get(username);
-        const check = (async () => {
+        const check = withFriendshipLookupSlot(async () => {
           for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
               const payload = await fetchInstagramJSON(
@@ -5458,7 +5490,7 @@ enum DOMAdapters {
           // viewer-scoped cache with a false negative.
           friendshipLookupFailed = true;
           return null;
-        })();
+        });
         friendshipChecks.set(username, check);
         try { return await check; }
         finally { friendshipChecks.delete(username); }
@@ -5747,6 +5779,8 @@ enum DOMAdapters {
         )));
       };
       const stagedHomeStoryRelationships = new WeakMap();
+      const storyRelationshipFlushDelay = 180;
+      let storyRelationshipFlushTimer = 0;
       const storyRailClampFrames = new WeakMap();
       const boundStoryRails = new WeakSet();
       const storyRailResizeObserver = new ResizeObserver((entries) => {
@@ -5866,7 +5900,7 @@ enum DOMAdapters {
         // Reset an old offset in the same task as slot removal, before paint.
         clampStoryRail(rail);
       };
-      const flushHomeStoryRelationships = () => {
+      const flushHomeStoryRelationships = (allowPartial = false) => {
         if (instagramRoute() !== 'feed') return false;
         const controls = homeStoryControls();
         rememberHomeStoryOrder(controls);
@@ -5875,10 +5909,22 @@ enum DOMAdapters {
           if (['self', 'friend', 'other', 'unavailable'].includes(relationship)) return false;
           return !stagedHomeStoryRelationships.has(control);
         });
-        if (unresolved) {
+        const hasStaged = controls.some((control) => stagedHomeStoryRelationships.has(control));
+        if (unresolved && !allowPartial) {
+          if (hasStaged && !storyRelationshipFlushTimer) {
+            // One slow or stalled account must not hold every already-verified
+            // friend Story in the hidden pending state. Keep a short batching
+            // window for stable layout, then commit only completed checks.
+            storyRelationshipFlushTimer = setTimeout(() => {
+              storyRelationshipFlushTimer = 0;
+              flushHomeStoryRelationships(true);
+            }, storyRelationshipFlushDelay);
+          }
           normalizeHomeStoryRail(controls);
           return false;
         }
+        clearTimeout(storyRelationshipFlushTimer);
+        storyRelationshipFlushTimer = 0;
         controls.forEach((control) => {
           const staged = stagedHomeStoryRelationships.get(control);
           if (!staged || storyAuthor(control) !== staged.username) return;
@@ -5887,9 +5933,9 @@ enum DOMAdapters {
           item.dataset.vigilInstagramStoryRelationship = staged.relationship;
           stagedHomeStoryRelationships.delete(control);
         });
-        // Commit a tray's relationship results in one task. Incrementally
-        // collapsing cards as network requests returned made the remaining
-        // Stories jump and cut in and out underneath an active swipe.
+        // Commit settled results in one task. The short batching window avoids
+        // the old per-request layout churn without letting an unrelated hung
+        // lookup keep a verified friend hidden indefinitely.
         normalizeHomeStoryRail(controls);
         removeStoryPlaceholders();
         return true;
@@ -6090,6 +6136,8 @@ enum DOMAdapters {
       const reconcileFriendsFeed = () => {
         const isFeed = instagramRoute() === 'feed';
         if (!isFeed) {
+          clearTimeout(storyRelationshipFlushTimer);
+          storyRelationshipFlushTimer = 0;
           // Classified Home cards remain fail-closed on the nodes themselves
           // until Instagram replaces them. Removing only the route flag used
           // to reveal the old feed during every delayed destination render.

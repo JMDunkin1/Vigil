@@ -360,6 +360,32 @@ assert.ok(
     "chrome-extension://vigil/blocked.html",
     "SPA search routes must be inspected below the top-level query string"
   );
+  for (const explicitPersonQuery of [
+    "Ari Kytsya leaks",
+    "ari kytsya leaks",
+    "nude Ari Kytsya",
+    "Ari Kytsya naked"
+  ]) {
+    assert.equal(
+      runInContext(`explicitSearchBlockRedirect('https://www.google.com/search?q=${encodeURIComponent(explicitPersonQuery)}')`, context),
+      "chrome-extension://vigil/blocked.html",
+      `person-targeted intimate search must be blocked: ${explicitPersonQuery}`
+    );
+  }
+  for (const ordinaryQuery of [
+    "memory leaks javascript",
+    "roof water leaks",
+    "iphone 18 leaks",
+    "Supreme Court leaks",
+    "Panama Papers leaks",
+    "nude color palette"
+  ]) {
+    assert.equal(
+      runInContext(`explicitSearchBlockRedirect('https://www.google.com/search?q=${encodeURIComponent(ordinaryQuery)}')`, context),
+      null,
+      `ordinary search must remain available: ${ordinaryQuery}`
+    );
+  }
 
   const linkTarget = new TestElement();
   linkTarget.anchor = { href: "https://images.google.com/search?q=reference&safe=off" };

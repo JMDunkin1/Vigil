@@ -11,6 +11,7 @@ import {
   STRICT_NETWORK_BYPASS_APPS,
   STRICT_UNSUPPORTED_BROWSERS
 } from "./defaults.js";
+import { matchExplicitPersonSearchUrl } from "./explicitPersonSearch.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { parseClock } from "./time.js";
 import type { ActivePolicy, DeviceTarget, DeviceTargetInput, IntentionalPlanBlock, LockLevel, PolicyPhase, PolicyPhaseKind, Profile, Schedule, VigilState, Session } from "./types.js";
@@ -736,6 +737,17 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   if (!profile) return null;
   const parsed = parseHttpUrl(value);
   if (!parsed) return null;
+  const explicitPersonSearch = profileHasExplicitSearchProtection(profile)
+    ? matchExplicitPersonSearchUrl(parsed)
+    : null;
+  if (explicitPersonSearch) {
+    return {
+      pattern: explicitPersonSearch.ruleId,
+      label: "Explicit person search",
+      hostname: normalizeHost(parsed.hostname),
+      url: parsed.toString()
+    };
+  }
   const candidates = urlPatternCandidates(parsed);
   const compactCandidates = candidates.map(compactUrlPatternText).filter(Boolean);
   for (const raw of profile.blockedUrlPatterns || []) {
@@ -754,6 +766,11 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
     };
   }
   return null;
+}
+
+function profileHasExplicitSearchProtection(profile: Profile): boolean {
+  const patterns = new Set((profile.blockedUrlPatterns || []).map(normalizeUrlPattern));
+  return patterns.has("porn") && patterns.has("onlyfans");
 }
 
 export function expandSiteTargets(values: readonly unknown[] = []): string[] {

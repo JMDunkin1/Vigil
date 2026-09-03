@@ -61,6 +61,24 @@
   ]);
   const searchRoutePattern = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse)(?:[/?.#]|$)/i;
   const searchDescriptorPattern = /(?:^|[-_\s])(?:search|query|keyword)(?:$|[-_\s])/i;
+  const personExposureMarkers = new Set(["leak", "leaks", "leaked", "nude", "nudes", "naked", "topless"]);
+  const personIntimateContext = new Set([
+    "explicit", "fansly", "intimate", "nsfw", "nude", "nudes", "naked",
+    "onlyfans", "porn", "porno", "sex", "sextape", "topless", "xxx"
+  ]);
+  const nonPersonSearchContext = new Set([
+    "air", "album", "api", "app", "apps", "classified", "code", "color", "court",
+    "data", "database", "document", "documents", "email", "emails", "episode",
+    "episodes", "fc", "film", "films", "game", "games", "gas", "government",
+    "iphone", "javascript", "memory", "movie", "movies", "news", "oil",
+    "palette", "papers", "password", "passwords", "phone", "pipeline", "pixel", "product",
+    "products", "release", "releases", "report", "reports", "roof", "roster",
+    "rumor", "rumors", "samsung", "security", "software", "source", "sources",
+    "spec", "specs", "team", "transfer", "transfers", "tv", "water"
+  ]);
+  const personNameFillerWords = new Set([
+    "a", "an", "and", "at", "for", "from", "in", "of", "on", "or", "the", "to", "with"
+  ]);
 
   const hostMatches = (host, blocked) => {
     const normalizedBlocked = normalizedHost(blocked);
@@ -76,10 +94,28 @@
     if (searchRoutePattern.test(decodedHash)) values.push(decodedHash);
     return values.flatMap(decodedCandidates).join(" ");
   };
+  const explicitPersonSearchText = value => {
+    const tokens = decodedCandidates(value).at(-1)?.replace(/\+/g, " ").normalize("NFKC")
+      .match(/[\p{L}\p{M}][\p{L}\p{M}'’.-]*/gu)
+      ?.map(token => token.replace(/^[^\p{L}\p{M}]+|[^\p{L}\p{M}]+$/gu, "").toLowerCase())
+      .filter(Boolean) || [];
+    if (tokens.length < 2) return false;
+    const markerIndex = tokens.findIndex(token => personExposureMarkers.has(token));
+    if (markerIndex < 0) return false;
+    if (tokens.some((token, index) => index !== markerIndex && personIntimateContext.has(token))) return true;
+    const nameSide = markerIndex === tokens.length - 1
+      ? tokens.slice(0, markerIndex)
+      : markerIndex === 0
+        ? tokens.slice(1)
+        : [];
+    const structuralName = nameSide.filter(token => !personNameFillerWords.has(token));
+    return structuralName.length >= 2 && structuralName.length <= 4
+      && structuralName.every(token => token.length >= 2 && !nonPersonSearchContext.has(token));
+  };
   const blockedSearchText = (value, activeRules = rules) => Boolean(activeRules
-    && (activeRules.blockedSearchTerms || []).some(term => (
+    && ((activeRules.blockedSearchTerms || []).some(term => (
       decodedCandidates(value).join(" ").includes(String(term).toLowerCase())
-    )));
+    )) || explicitPersonSearchText(value)));
   const decision = (raw, activeRules = rules) => {
     if (!activeRules) return { allowed: false, reason: "Vigil filter rules are unavailable" };
     if (activeRules.filterUnavailable) return { allowed: false, reason: "Vigil's content filter failed its integrity check" };
@@ -94,7 +130,8 @@
       absoluteCandidates.some(candidate => candidate.includes(String(value).toLowerCase()))
     ))) return { allowed: false, reason: "Page blocked by Vigil" };
     const terms = searchText(url);
-    if ((activeRules.blockedSearchTerms || []).some(value => terms.includes(String(value).toLowerCase()))) return { allowed: false, reason: "Search blocked by Vigil" };
+    if ((activeRules.blockedSearchTerms || []).some(value => terms.includes(String(value).toLowerCase()))
+        || explicitPersonSearchText(terms)) return { allowed: false, reason: "Search blocked by Vigil" };
     if (activeRules.safeSearchEnabled) {
       let key = null, value = null;
       if (host === "google.com" || host.endsWith(".google.com")) { key = "safe"; value = "active"; }

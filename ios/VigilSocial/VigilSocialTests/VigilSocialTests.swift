@@ -4852,6 +4852,8 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(script.contains("attributeFilter: ['class', 'style']"))
         XCTAssertTrue(script.contains("attributeFilter: ['muted', 'src']"))
         XCTAssertTrue(script.contains("const fetchMutualFriendship = async (username)"))
+        XCTAssertTrue(script.contains("instagramLookupTimeoutMilliseconds = 4000"))
+        XCTAssertTrue(script.contains("maxConcurrentFriendshipLookups = 3"))
         XCTAssertTrue(script.contains("return viewerFollows && followsViewer"))
         XCTAssertTrue(script.contains("/api/v1/friendships/show/"))
         XCTAssertTrue(script.contains("return null"))
@@ -4905,6 +4907,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("rail.scrollLeft = clamped"))
         XCTAssertTrue(script.contains("const stagedHomeStoryRelationships"))
         XCTAssertTrue(script.contains("const flushHomeStoryRelationships"))
+        XCTAssertTrue(script.contains("flushHomeStoryRelationships(true)"))
     }
 
     @MainActor
@@ -5079,6 +5082,69 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(ownOnly?["scroll"] as? Double, 0)
         XCTAssertEqual(ownOnly?["overflow"] as? Double, 0, "Unresolved Stories must not create blank scrollable slots")
         XCTAssertEqual(ownOnly?["ownVisible"] as? Bool, true)
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
+    func testInstagramVerifiedStoryDoesNotWaitForStalledPeerLookup() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.script(for: .instagram, audioEnabled: true, contentSafetyEnabled: false),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let loaded = expectation(description: "Story tray with a stalled peer lookup loaded")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+            <html><head><style>
+              #rail { width: 300px; overflow-x: auto; }
+              #stories { display: flex; width: max-content; margin: 0; padding: 0; }
+              #stories > li { flex: 0 0 100px; list-style: none; }
+            </style><script>
+              window.fetch = async input => {
+                const url = new URL(input, location.href);
+                if (url.pathname.includes('/accounts/current_user/')) {
+                  return { ok: true, json: async () => ({ user: { username: 'viewer' } }) };
+                }
+                const username = url.searchParams.get('username');
+                if (username === 'stalled') return new Promise(() => {});
+                const user = {
+                  id: username,
+                  username,
+                  friendship_status: { following: true, followed_by: username === 'friend' }
+                };
+                return { ok: true, json: async () => ({ data: { user } }) };
+              };
+            </script></head><body>
+              <nav><a href="/viewer/" aria-label="Profile">Profile</a></nav>
+              <main><div id="rail"><ul id="stories">
+                <li id="self-item"><a href="/stories/viewer/1/" aria-label="Your story"><img alt="viewer's profile picture"></a></li>
+                <li id="friend-item"><a href="/stories/friend/1/"><img alt="friend's profile picture"></a></li>
+                <li id="stalled-item"><a href="/stories/stalled/1/"><img alt="stalled's profile picture"></a></li>
+              </ul></div></main>
+            </body></html>
+            """#, baseURL: URL(string: "https://www.instagram.com/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        try await Task.sleep(nanoseconds: 500_000_000)
+
+        let state = try await webView.evaluateJavaScript(#"""
+            (() => ({
+              friendVisible: document.getElementById('friend-item').getBoundingClientRect().width > 0,
+              friendRelationship: document.querySelector('#friend-item a')?.dataset.vigilInstagramStoryRelationship,
+              stalledVisible: document.getElementById('stalled-item').getBoundingClientRect().width > 0,
+              stalledRelationship: document.querySelector('#stalled-item a')?.dataset.vigilInstagramStoryRelationship
+            }))()
+            """#) as? [String: Any]
+        XCTAssertEqual(state?["friendVisible"] as? Bool, true)
+        XCTAssertEqual(state?["friendRelationship"] as? String, "friend")
+        XCTAssertEqual(state?["stalledVisible"] as? Bool, false)
+        XCTAssertEqual(state?["stalledRelationship"] as? String, "pending")
         webView.navigationDelegate = nil
     }
 

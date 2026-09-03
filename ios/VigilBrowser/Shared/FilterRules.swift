@@ -97,6 +97,27 @@ enum FilterDecision: Equatable {
 }
 
 struct NavigationFilter: Sendable {
+    private static let personExposureMarkers: Set<String> = [
+        "leak", "leaks", "leaked", "nude", "nudes", "naked", "topless"
+    ]
+    private static let personIntimateContext: Set<String> = [
+        "explicit", "fansly", "intimate", "nsfw", "nude", "nudes", "naked",
+        "onlyfans", "porn", "porno", "sex", "sextape", "topless", "xxx"
+    ]
+    private static let nonPersonSearchContext: Set<String> = [
+        "air", "album", "api", "app", "apps", "classified", "code", "color", "court",
+        "data", "database", "document", "documents", "email", "emails", "episode",
+        "episodes", "fc", "film", "films", "game", "games", "gas", "government",
+        "iphone", "javascript", "memory", "movie", "movies", "news", "oil",
+        "palette", "papers", "password", "passwords", "phone", "pipeline", "pixel", "product",
+        "products", "release", "releases", "report", "reports", "roof", "roster",
+        "rumor", "rumors", "samsung", "security", "software", "source", "sources",
+        "spec", "specs", "team", "transfer", "transfers", "tv", "water"
+    ]
+    private static let nameFillerWords: Set<String> = [
+        "a", "an", "and", "at", "for", "from", "in", "of", "on", "or", "the", "to", "with"
+    ]
+
     let rules: FilterRules
     var blocklist: PhoneBlocklistIndex? = nil
     var blocklistIntegrityValid = true
@@ -144,7 +165,30 @@ struct NavigationFilter: Sendable {
         let terms = values.flatMap(Self.decodedCandidates).joined(separator: " ").lowercased()
         return rules.blockedSearchTerms.contains { term in
             terms.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        } || Self.isExplicitPersonSearch(terms)
+    }
+
+    private static func isExplicitPersonSearch(_ value: String) -> Bool {
+        let tokens = value
+            .components(separatedBy: CharacterSet.letters.union(.nonBaseCharacters).inverted)
+            .map { $0.lowercased() }
+            .filter { !$0.isEmpty }
+        guard tokens.count >= 2,
+              let markerIndex = tokens.firstIndex(where: personExposureMarkers.contains) else { return false }
+        if tokens.enumerated().contains(where: { index, token in
+            index != markerIndex && personIntimateContext.contains(token)
+        }) { return true }
+        let nameSide: ArraySlice<String>
+        if markerIndex == tokens.count - 1 {
+            nameSide = tokens[..<markerIndex]
+        } else if markerIndex == 0 {
+            nameSide = tokens.dropFirst()
+        } else {
+            return false
         }
+        let structuralName = nameSide.filter { !nameFillerWords.contains($0) }
+        return (2...4).contains(structuralName.count)
+            && structuralName.allSatisfy { $0.count >= 2 && !nonPersonSearchContext.contains($0) }
     }
 
     private static func looksLikeSearchRoute(_ value: String) -> Bool {
