@@ -46,17 +46,29 @@
 		F10000000000000000000001 /* YouTubeWKAuthDiagnostic.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000001 /* YouTubeWKAuthDiagnostic.swift */; };
 		F10000000000000000000002 /* YouTubeWKAuthDiagnostic.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000001 /* YouTubeWKAuthDiagnostic.swift */; };
 		G10000000000000000000001 /* VigilSocialApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* VigilSocialApp.swift */; };
+		H10000000000000000000001 /* VigilSocialApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* VigilSocialApp.swift */; };
 		G10000000000000000000002 /* SocialService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* SocialService.swift */; };
+		H10000000000000000000002 /* SocialService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* SocialService.swift */; };
 		G10000000000000000000003 /* DOMAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* DOMAdapters.swift */; };
+		H10000000000000000000003 /* DOMAdapters.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* DOMAdapters.swift */; };
 		G10000000000000000000004 /* SocialWebViewStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* SocialWebViewStore.swift */; };
+		H10000000000000000000004 /* SocialWebViewStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* SocialWebViewStore.swift */; };
 		G10000000000000000000005 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* RootView.swift */; };
+		H10000000000000000000005 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* RootView.swift */; };
 		G10000000000000000000006 /* ContentSafetyClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* ContentSafetyClassifier.swift */; };
+		H10000000000000000000006 /* ContentSafetyClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* ContentSafetyClassifier.swift */; };
 		G10000000000000000000007 /* YouTubeSafariView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* YouTubeSafariView.swift */; };
+		H10000000000000000000007 /* YouTubeSafariView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* YouTubeSafariView.swift */; };
 		G10000000000000000000008 /* YouTubeWKAuthDiagnostic.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000001 /* YouTubeWKAuthDiagnostic.swift */; };
+		H10000000000000000000008 /* YouTubeWKAuthDiagnostic.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000001 /* YouTubeWKAuthDiagnostic.swift */; };
 		G10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* PrivacyInfo.xcprivacy */; };
+		H10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* PrivacyInfo.xcprivacy */; };
 		G1000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* Assets.xcassets */; };
+		H1000000000000000000000A /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* Assets.xcassets */; };
 		G1000000000000000000000B /* ExplicitContentPolicy.json in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000019 /* ExplicitContentPolicy.json */; };
+		H1000000000000000000000B /* ExplicitContentPolicy.json in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000019 /* ExplicitContentPolicy.json */; };
 		G1000000000000000000000C /* snapchat.png in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* snapchat.png */; };
+		H1000000000000000000000C /* linkedin.png in Resources */ = {isa = PBXBuildFile; fileRef = H20000000000000000000002 /* linkedin.png */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -148,6 +160,8 @@
 		E20000000000000000000005 /* VigilYouTubeInteractionExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = VigilYouTubeInteractionExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		F20000000000000000000001 /* YouTubeWKAuthDiagnostic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeWKAuthDiagnostic.swift; sourceTree = "<group>"; };
 		G20000000000000000000001 /* VigilSnapchat.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VigilSnapchat.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		H20000000000000000000001 /* VigilLinkedIn.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VigilLinkedIn.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		H20000000000000000000002 /* linkedin.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = VigilSocial/Icons/linkedin.png; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -187,6 +201,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		G40000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		H40000000000000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -277,6 +298,7 @@
 				E20000000000000000000005 /* VigilYouTubeInteractionExtension.appex */,
 				D20000000000000000000001 /* VigilInstagram.app */,
 				G20000000000000000000001 /* VigilSnapchat.app */,
+				H20000000000000000000001 /* VigilLinkedIn.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -392,6 +414,23 @@
 			productReference = G20000000000000000000001 /* VigilSnapchat.app */;
 			productType = "com.apple.product-type.application";
 		};
+		H60000000000000000000001 /* VigilLinkedIn */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = H80000000000000000000001 /* Build configuration list for PBXNativeTarget "VigilLinkedIn" */;
+			buildPhases = (
+				H40000000000000000000002 /* Sources */,
+				H40000000000000000000001 /* Frameworks */,
+				H40000000000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VigilLinkedIn;
+			productName = VigilLinkedIn;
+			productReference = H20000000000000000000001 /* VigilLinkedIn.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -408,6 +447,7 @@
 					D60000000000000000000001 = { CreatedOnToolsVersion = 26.6; };
 					E60000000000000000000001 = { CreatedOnToolsVersion = 26.6; };
 					G60000000000000000000001 = { CreatedOnToolsVersion = 26.6; };
+					H60000000000000000000001 = { CreatedOnToolsVersion = 26.6; };
 				};
 			};
 			buildConfigurationList = A80000000000000000000001 /* Build configuration list for PBXProject "VigilSocial" */;
@@ -429,6 +469,7 @@
 				E60000000000000000000001 /* VigilYouTubeInteractionExtension */,
 				D60000000000000000000001 /* VigilInstagram */,
 				G60000000000000000000001 /* VigilSnapchat */,
+				H60000000000000000000001 /* VigilLinkedIn */,
 			);
 		};
 /* End PBXProject section */
@@ -440,6 +481,7 @@
 		E40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (E10000000000000000000002 /* manifest.json in Resources */, E10000000000000000000003 /* youtube-parity.js in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		D40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (D10000000000000000000009 /* icon.png in Resources */, D1000000000000000000000A /* instagram.png in Resources */, D1000000000000000000000B /* youtube.png in Resources */, D1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, D1000000000000000000000D /* Assets.xcassets in Resources */, D1000000000000000000000E /* ExplicitContentPolicy.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		G40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (G10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */, G1000000000000000000000A /* Assets.xcassets in Resources */, G1000000000000000000000B /* ExplicitContentPolicy.json in Resources */, G1000000000000000000000C /* snapchat.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		H40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (H10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */, H1000000000000000000000A /* Assets.xcassets in Resources */, H1000000000000000000000B /* ExplicitContentPolicy.json in Resources */, H1000000000000000000000C /* linkedin.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -509,6 +551,21 @@
 				G10000000000000000000006 /* ContentSafetyClassifier.swift in Sources */,
 				G10000000000000000000007 /* YouTubeSafariView.swift in Sources */,
 				G10000000000000000000008 /* YouTubeWKAuthDiagnostic.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		H40000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				H10000000000000000000001 /* VigilSocialApp.swift in Sources */,
+				H10000000000000000000002 /* SocialService.swift in Sources */,
+				H10000000000000000000003 /* DOMAdapters.swift in Sources */,
+				H10000000000000000000004 /* SocialWebViewStore.swift in Sources */,
+				H10000000000000000000005 /* RootView.swift in Sources */,
+				H10000000000000000000006 /* ContentSafetyClassifier.swift in Sources */,
+				H10000000000000000000007 /* YouTubeSafariView.swift in Sources */,
+				H10000000000000000000008 /* YouTubeWKAuthDiagnostic.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -796,6 +853,36 @@
 			};
 			name = Debug;
 		};
+		H90000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "$(SOCIAL_APP_ICON_SET)";
+				CODE_SIGN_ENTITLEMENTS = VigilSocial/VigilSocial.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3RY7A22U4L;
+				ENABLE_PREVIEWS = YES;
+				INFOPLIST_FILE = VigilSocial/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(VIGIL_APP_BUNDLE_IDENTIFIER)";
+				PRODUCT_MODULE_NAME = VigilSocial;
+				PRODUCT_NAME = VigilSocial;
+				SOCIAL_APP_ICON_SET = LinkedInAppIcon;
+				SOCIAL_APP_NAME = LinkedIn;
+				SOCIAL_URL_SCHEME = vigil-linkedin;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.linkedin;
+				VIGIL_SERVICE = linkedin;
+				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
+			};
+			name = Debug;
+		};
 		G90000000000000000000002 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -821,6 +908,35 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.snapchat;
 				VIGIL_SERVICE = snapchat;
+				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
+			};
+			name = Release;
+		};
+		H90000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = "$(SOCIAL_APP_ICON_SET)";
+				CODE_SIGN_ENTITLEMENTS = VigilSocial/VigilSocial.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 3RY7A22U4L;
+				INFOPLIST_FILE = VigilSocial/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(VIGIL_APP_BUNDLE_IDENTIFIER)";
+				PRODUCT_MODULE_NAME = VigilSocial;
+				PRODUCT_NAME = VigilSocial;
+				SOCIAL_APP_ICON_SET = LinkedInAppIcon;
+				SOCIAL_APP_NAME = LinkedIn;
+				SOCIAL_URL_SCHEME = vigil-linkedin;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.linkedin;
+				VIGIL_SERVICE = linkedin;
 				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
 			};
 			name = Release;
@@ -909,6 +1025,12 @@
 		G80000000000000000000001 /* Build configuration list for PBXNativeTarget "VigilSnapchat" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (G90000000000000000000001 /* Debug */, G90000000000000000000002 /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		H80000000000000000000001 /* Build configuration list for PBXNativeTarget "VigilLinkedIn" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (H90000000000000000000001 /* Debug */, H90000000000000000000002 /* Release */);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};

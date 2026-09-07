@@ -724,7 +724,7 @@ export interface IosMdmSettings {
   lastGrayscaleCommandQueuedAt: string | null;
 }
 
-export type FocusedSocialPlatformId = "instagram" | "youtube" | "snapchat";
+export type FocusedSocialPlatformId = "instagram" | "youtube" | "snapchat" | "linkedin";
 
 export interface FocusedSocialPlatformSettings {
   enabled: boolean;
@@ -740,6 +740,7 @@ export interface FocusedSocialPlatformSettings {
 }
 
 export interface FocusedSocialSettings {
+  linkedin: FocusedSocialPlatformSettings & { shorts: boolean };
   enabled: boolean;
   /** @deprecated Persisted compatibility key; this now enables the native companion-app path. */
   forceWebClips: boolean;

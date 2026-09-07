@@ -86,8 +86,12 @@ const PHONE_SOURCE_FILES = [
 const REQUIRED_SOCIAL_APPS = [
   { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" },
   { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" },
-  { id: "snapchat", service: "snapchat", name: "Snapchat", bundleId: "tech.caseline.vigil.snapchat", appIconSet: "SnapchatAppIcon", scheme: "vigil-snapchat", buildScheme: "VigilSnapchat" }
+  { id: "snapchat", service: "snapchat", name: "Snapchat", bundleId: "tech.caseline.vigil.snapchat", appIconSet: "SnapchatAppIcon", scheme: "vigil-snapchat", buildScheme: "VigilSnapchat" },
+  { id: "linkedin", service: "linkedin", name: "LinkedIn", bundleId: "tech.caseline.vigil.linkedin", appIconSet: "LinkedInAppIcon", scheme: "vigil-linkedin", buildScheme: "VigilLinkedIn" }
 ];
+// LinkedIn is an explicit fourth-app install. Keep the default free three-app
+// maintenance path usable without replacing an existing companion.
+const DEFAULT_SOCIAL_APPS = REQUIRED_SOCIAL_APPS.filter((app) => app.id !== "linkedin");
 const SOCIAL_APP_IDS = new Set(REQUIRED_SOCIAL_APPS.map((app) => app.id));
 const PERSONAL_TEAM_RENEWAL_WINDOW_MS = 48 * 60 * 60 * 1000;
 const appsForEdition = (edition) => edition === "enhanced"
@@ -685,7 +689,7 @@ export function deployedBlocklistProblems(receipt, readiness, requiredBundleIds 
   return problems;
 }
 
-function deployedExplicitContentPolicyProblems(receipt, expected, requiredBundleIds = REQUIRED_SOCIAL_APPS.map((app) => app.bundleId)) {
+function deployedExplicitContentPolicyProblems(receipt, expected, requiredBundleIds = DEFAULT_SOCIAL_APPS.map((app) => app.bundleId)) {
   if (!receipt) return ["No deployment receipt proves that the installed phone apps contain the generated explicit-content policy."];
   if (receipt.explicitContentPolicy?.sha256 !== expected.sha256) {
     return ["The deployment receipt does not match the current generated explicit-content policy."];
@@ -876,7 +880,7 @@ export function signingExpirationNeedsRenewal(
 export function socialAppsNeedingUpdate(release, installedApps = [], receipt = null, selectedAppIds = null, now = Date.now()) {
   const receiptApps = Array.isArray(receipt?.apps) ? receipt.apps : [];
   const selected = selectedAppIds ? new Set(selectedAppIds) : null;
-  return REQUIRED_SOCIAL_APPS.filter((app) => !selected || selected.has(app.id)).filter((app) => {
+  return REQUIRED_SOCIAL_APPS.filter((app) => selected ? selected.has(app.id) : app.id !== "linkedin").filter((app) => {
     const installed = installedApps.find((candidate) => candidate.bundleIdentifier === app.bundleId);
     const deployed = receiptApps.find((candidate) => candidate?.bundleId === app.bundleId);
     const expected = release.apps[app.id];
@@ -891,10 +895,10 @@ export function socialAppsNeedingUpdate(release, installedApps = [], receipt = n
 }
 
 function signingVariantForCapabilities(capabilities, fallback = "unknown") {
-  const socialCapabilities = REQUIRED_SOCIAL_APPS
+  const socialCapabilities = DEFAULT_SOCIAL_APPS
     .map((app) => capabilities?.[app.id])
     .filter(Boolean);
-  if (socialCapabilities.length !== REQUIRED_SOCIAL_APPS.length) return fallback;
+  if (socialCapabilities.length !== DEFAULT_SOCIAL_APPS.length) return fallback;
   const capableApps = socialCapabilities.filter((value) => value.sensitiveContentAnalysis).length;
   if (capableApps === socialCapabilities.length) return "full-capabilities";
   if (capableApps === 0) return "personal-team-conservative";
@@ -924,7 +928,7 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
   const profiles = profileVerification.profiles;
   const selectedAppIds = selectedOptions.app ? new Set([selectedOptions.app]) : null;
   const requiredApps = appsForEdition(edition)
-    .filter((required) => !selectedAppIds || !SOCIAL_APP_IDS.has(required.id) || selectedAppIds.has(required.id))
+    .filter((required) => selectedAppIds ? !SOCIAL_APP_IDS.has(required.id) || selectedAppIds.has(required.id) : required.id !== "linkedin")
     .map((required) => {
       const installed = apps.find((app) => app.bundleIdentifier === required.bundleId);
       const expectedRelease = release.apps[required.id] || release;
@@ -1059,6 +1063,9 @@ function printStatus(report) {
 
 async function updatePhone(selectedOptions) {
   const edition = selectedOptions.edition;
+  if (selectedOptions.app === "linkedin" && selectedOptions.noPolicy) {
+    throw new Error("LinkedIn replacement requires the verified app-and-policy transaction; --no-policy cannot block the original app.");
+  }
   if (selectedOptions.noPolicy && edition === "enhanced") {
     throw new Error("--no-policy is incompatible with the Enhanced edition's fail-closed iOS URL Filter; the app and its exact managed configuration must be deployed together.");
   }
@@ -1080,9 +1087,14 @@ async function updatePhone(selectedOptions) {
     configurationProfileStatus(device.identifier, toolEnvironment)
   ]);
   const installedApps = installedBeforeUpdate.result?.apps || [];
+  if (edition === "personal" && selectedOptions.app === "linkedin"
+    && !installedApps.some((app) => app.bundleIdentifier === "tech.caseline.vigil.linkedin")
+    && DEFAULT_SOCIAL_APPS.every((social) => installedApps.some((app) => app.bundleIdentifier === social.bundleId))) {
+    throw new Error("LinkedIn is a separate fourth app, but Apple Personal Team signing permits only three installed apps per device. The existing Instagram, YouTube, and Snapchat apps are present. No companion was replaced and no policy was changed. The standalone LinkedIn target remains available for simulator development.");
+  }
   const selectedSocialAppIds = selectedOptions.app ? [selectedOptions.app] : null;
   const targetedSocialApps = REQUIRED_SOCIAL_APPS
-    .filter((app) => !selectedSocialAppIds || selectedSocialAppIds.includes(app.id));
+    .filter((app) => selectedSocialAppIds ? selectedSocialAppIds.includes(app.id) : app.id !== "linkedin");
   const socialAppIdSet = new Set(socialAppsNeedingUpdate(
     release,
     installedApps,
@@ -1132,14 +1144,14 @@ async function updatePhone(selectedOptions) {
       throw new Error(`Refusing the app-only update because Safari could disable the YouTube controls extension:\n- ${extensionProblems.join("\n- ")}`);
     }
   }
-  const preparedPolicy = selectedOptions.noPolicy
+  let preparedPolicy = selectedOptions.noPolicy
     ? null
-    : await prepareCurrentPolicy(release, selectedOptions.server, edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition);
+    : await prepareCurrentPolicy(release, selectedOptions.server, edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition, selectedOptions.app === "linkedin");
   const obsoleteBeforeUpdate = installedApps
     .filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
   const installedLockProfile = profileBeforeUpdate.profiles
     .find((profile) => profile.identifier === PROFILE_IDENTIFIER);
-  const policyAlreadyCurrent = Boolean(
+  let policyAlreadyCurrent = Boolean(
     preparedPolicy
       && profileBeforeUpdate.available
       && installedLockProfile
@@ -1174,6 +1186,20 @@ async function updatePhone(selectedOptions) {
   for (const app of build.apps) {
     console.log(`Installing ${app.name}…`);
     await run("xcrun", ["devicectl", "device", "install", "app", "--device", device.identifier, app.path], { env: toolEnvironment });
+  }
+
+  if (selectedOptions.app === "linkedin") {
+    const social = REQUIRED_SOCIAL_APPS.find((app) => app.id === "linkedin");
+    await activateLinkedInReplacement(selectedOptions.server, async () => {
+      console.log("Verifying the LinkedIn companion before blocking the original app…");
+      return verifySocialAppLaunch(device.identifier, social, toolEnvironment);
+    });
+    // Persist first so all future policies, including unrelated companion
+    // updates, retain the replacement. Re-read live state before signing.
+    preparedPolicy = await prepareCurrentPolicy(release, selectedOptions.server,
+      edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition);
+    policyAlreadyCurrent = Boolean(profileBeforeUpdate.available && installedLockProfile
+      && profileName(installedLockProfile).includes(preparedPolicy.policyFingerprint.slice(0, 12)));
   }
 
   let { policyFingerprint, policyArtifactHash } = preservedPolicyReceipt(selectedOptions.noPolicy ? previousReceipt : null);
@@ -1370,7 +1396,7 @@ async function buildPhoneApps(
   edition,
   urlFilter,
   toolEnvironment = process.env,
-  socialAppIds = REQUIRED_SOCIAL_APPS.map((app) => app.id),
+  socialAppIds = DEFAULT_SOCIAL_APPS.map((app) => app.id),
   includeUrlFilter = edition === "enhanced"
 ) {
   const selectedSocialAppIds = new Set(socialAppIds);
@@ -1960,8 +1986,58 @@ async function profileSigningIdentity() {
   return match[1];
 }
 
-async function prepareCurrentPolicy(release, server, urlFilterService, toolEnvironment, edition) {
-  const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(5000), null, urlFilterService);
+export function linkedInReplacementSettings(ios) {
+  if (ios?.enabled !== true || ios?.blockApps !== true) {
+    throw new Error("LinkedIn replacement requires active iPhone app restrictions; no replacement settings were saved.");
+  }
+  const nativeId = "com.linkedin.LinkedIn";
+  const companionId = "tech.caseline.vigil.linkedin";
+  if ((ios.blockedAppBundleIds || []).some((id) => String(id).toLowerCase() === companionId)) {
+    throw new Error("The LinkedIn companion is explicitly blocked by existing settings; replacement will not remove that restriction.");
+  }
+  const without = (values, id) => (Array.isArray(values) ? values : [])
+    .filter((value) => String(value).toLowerCase() !== id.toLowerCase());
+  return {
+    blockedAppBundleIds: [...without(without(ios.blockedAppBundleIds, companionId), nativeId), nativeId],
+    allowedAppBundleIds: [...without(without(ios.allowedAppBundleIds, nativeId), companionId), companionId],
+    focusedSocial: {
+      ...ios.focusedSocial,
+      linkedin: { ...ios.focusedSocial?.linkedin, enabled: true, shorts: true }
+    }
+  };
+}
+
+export async function activateLinkedInReplacement(server, verifyLaunch) {
+  const launch = await verifyLaunch();
+  if (!launch?.ok) {
+    throw new Error(`LinkedIn failed launch verification; the original app was not blocked: ${launch?.detail || "unknown launch failure"}`);
+  }
+  const live = await downloadServerState(server, AbortSignal.timeout(5000));
+  const patch = linkedInReplacementSettings(live.state.deviceControls?.ios);
+  const response = await fetch(`${server}/api/devices/ios/settings`, {
+    method: "POST",
+    headers: { "x-vigil-intent": "vigil-app", "content-type": "application/json" },
+    body: JSON.stringify(patch),
+    signal: AbortSignal.timeout(5000)
+  });
+  if (!response.ok) {
+    throw new Error(`LinkedIn is installed, but saving its original-app restriction failed: HTTP ${response.status}. The replacement transaction is incomplete.`);
+  }
+  const saved = await downloadServerState(server, AbortSignal.timeout(5000));
+  const ios = saved.state.deviceControls?.ios;
+  const includes = (values, id) => Array.isArray(values)
+    && values.some((value) => String(value).toLowerCase() === id.toLowerCase());
+  if (ios?.enabled !== true || ios?.blockApps !== true
+    || !includes(ios.blockedAppBundleIds, "com.linkedin.LinkedIn")
+    || includes(ios.allowedAppBundleIds, "com.linkedin.LinkedIn")
+    || includes(ios.blockedAppBundleIds, "tech.caseline.vigil.linkedin")
+    || !includes(ios.allowedAppBundleIds, "tech.caseline.vigil.linkedin")) {
+    throw new Error("LinkedIn replacement settings did not persist exactly; do not report the original app as blocked.");
+  }
+}
+
+async function prepareCurrentPolicy(release, server, urlFilterService, toolEnvironment, edition, replaceLinkedIn = false) {
+  const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(5000), null, urlFilterService, replaceLinkedIn);
   const policyFingerprint = sha256(profile);
   const stamped = await stampProfile(profile, `Vigil iPhone Lock • ${editionLabel(edition)} • ${release.version} (${release.build}) • ${policyFingerprint.slice(0, 12)}`);
   const policyArtifactHash = sha256(stamped);
@@ -1973,11 +2049,13 @@ async function prepareCurrentPolicy(release, server, urlFilterService, toolEnvir
   return { lockPath, policyFingerprint, policyArtifactHash };
 }
 
-async function buildCurrentPolicyFromLiveState(server, signal, suppliedServerState = null, urlFilterService = null) {
+async function buildCurrentPolicyFromLiveState(server, signal, suppliedServerState = null, urlFilterService = null, replaceLinkedIn = false) {
   const serverState = suppliedServerState || await downloadServerState(server, signal);
   const state = structuredClone(serverState.state);
   const ios = state?.deviceControls?.ios;
   if (!ios || typeof ios !== "object") throw new Error("Vigil live state does not contain iPhone policy settings.");
+
+  if (replaceLinkedIn) Object.assign(ios, linkedInReplacementSettings(ios));
 
   if (ios.hardenRemoval && ios.removalPasswordSet !== true) {
     throw new Error("Vigil's hardened iPhone profile has no persisted removal password; refusing to generate an unrecoverable profile.");
@@ -2327,7 +2405,7 @@ Commands:
   fingerprint  Print the current phone implementation fingerprint
 
 Options:
-  --app NAME   Limit status/update to instagram, youtube, or snapchat
+  --app NAME   Limit status/update to instagram, youtube, snapchat, or linkedin
   --device ID  Select a CoreDevice UUID, UDID, or device name
   --edition NAME  Select personal or enhanced (default: persisted edition, initially personal)
   --server URL Vigil server used for live state and policy (default ${DEFAULT_SERVER})

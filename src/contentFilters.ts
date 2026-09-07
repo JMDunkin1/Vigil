@@ -177,16 +177,16 @@ export function matchContentFilterUrl(state: VigilState, value: unknown, policy:
 }
 
 export function contentFilterRuleEntries(state: VigilState, policy: ActivePolicy | null | undefined): ContentFilterRuleEntry[] {
-  if (!contentFilterEnabled(state) || !policy) return [];
+  if (!contentFilterEnabled(state)) return [];
   return CONTENT_FILTER_RULES.filter((rule) => contentFilterRuleApplies(rule, policy)).flatMap((rule) => {
     return rule.urlFilters.map((urlFilter) => ({
       id: rule.id,
       label: rule.label,
       urlFilter,
       fallbackUrl: rule.fallbackUrl,
-      mode: policy.session?.mode || "focus",
+      mode: policy?.session?.mode || (rule.scope === "permanent" ? "permanent" : "focus"),
       kind: "content-filter",
-      until: policy.endsAt || policy.session?.endsAt || ""
+      until: policy?.endsAt || policy?.session?.endsAt || ""
     }));
   });
 }

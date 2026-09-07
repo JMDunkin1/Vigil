@@ -61,6 +61,8 @@ assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=explicit+
 assert.equal(explicitSearchRegex.test("https://www.bing.com/search?q=18%2B"), true);
 assert.equal(explicitSearchRegex.test("https://archive.org/search?query=explicit+porn+query"), true);
 assert.equal(explicitSearchRegex.test("https://example.com/find?keywords=rule34"), true);
+assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=prno"), true);
+assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=p0rn"), true);
 assert.equal(explicitSearchCondition?.requestDomains, undefined, "explicit-query DNR protection must apply to site-local search engines too");
 const explicitSearchAction = recordValue(staticRules[3]?.action, "explicit-search DNR action");
 const explicitSearchRedirect = recordValue(explicitSearchAction.redirect, "explicit-search DNR redirect");
@@ -364,7 +366,15 @@ assert.ok(
     "Ari Kytsya leaks",
     "ari kytsya leaks",
     "nude Ari Kytsya",
-    "Ari Kytsya naked"
+    "Ari Kytsya naked",
+    "ari kytsya nud",
+    "nud ari kytsya",
+    "ari nud kytsya",
+    "ari kytsya nuds",
+    "ari kytsya leks",
+    "leakd ari kytsya",
+    "ari leakd kytsya",
+    "ari kytsya prno"
   ]) {
     assert.equal(
       runInContext(`explicitSearchBlockRedirect('https://www.google.com/search?q=${encodeURIComponent(explicitPersonQuery)}')`, context),
@@ -378,7 +388,12 @@ assert.ok(
     "iphone 18 leaks",
     "Supreme Court leaks",
     "Panama Papers leaks",
-    "nude color palette"
+    "nude color palette",
+    "nude art figure drawing",
+    "naked mole rat",
+    "nude lipstick shade",
+    "memory leks javascript tutorial",
+    "NUD command reference"
   ]) {
     assert.equal(
       runInContext(`explicitSearchBlockRedirect('https://www.google.com/search?q=${encodeURIComponent(ordinaryQuery)}')`, context),
@@ -531,6 +546,14 @@ assert.ok(
   assert.equal(postOverridePrevented, false);
   assert.equal(postOverridePropagationStopped, false);
   assert.equal(assignments.length, assignmentCountBeforePostOverride, "a submitter POST override must not be replaced with a GET navigation");
+}
+
+{
+  const state = defaultState();
+  const permanentRules = contentFilterRuleEntries(state, null);
+  assert.equal(permanentRules.some((rule) => rule.id === "reddit-mature-gate"), true);
+  assert.equal(permanentRules.some((rule) => rule.id === "reddit-popular"), false);
+  assert.equal(permanentRules.find((rule) => rule.id === "reddit-mature-gate")?.mode, "permanent");
 }
 
 {

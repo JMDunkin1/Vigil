@@ -26,7 +26,7 @@
     blockedHosts: [],
     blockedURLFragments: [],
     blockedSearchTerms: [
-      "porn", "porno", "xxx", "nsfw", "hentai", "rule34", "gonewild",
+      "porn", "porno", "prno", "p0rn", "xxx", "nsfw", "hentai", "rule34", "gonewild",
       "onlyfans", "fansly", "chaturbate", "stripchat", "cam4", "redtube",
       "youporn", "spankbang", "xvideos", "xnxx", "xhamster", "18+",
       "18%2b", "18plus", "18-plus"
@@ -61,20 +61,31 @@
   ]);
   const searchRoutePattern = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse)(?:[/?.#]|$)/i;
   const searchDescriptorPattern = /(?:^|[-_\s])(?:search|query|keyword)(?:$|[-_\s])/i;
-  const personExposureMarkers = new Set(["leak", "leaks", "leaked", "nude", "nudes", "naked", "topless"]);
+  const personExposureMarkers = new Set([
+    "leak", "leaks", "leaked", "leakd", "lek", "leks",
+    "nud", "nuds", "nude", "nudes", "nued", "naked", "topless"
+  ]);
   const personIntimateContext = new Set([
     "explicit", "fansly", "intimate", "nsfw", "nude", "nudes", "naked",
     "onlyfans", "porn", "porno", "sex", "sextape", "topless", "xxx"
   ]);
-  const nonPersonSearchContext = new Set([
-    "air", "album", "api", "app", "apps", "classified", "code", "color", "court",
+  const personLeakContext = new Set([
+    "air", "api", "app", "apps", "classified", "code", "command", "court",
     "data", "database", "document", "documents", "email", "emails", "episode",
     "episodes", "fc", "film", "films", "game", "games", "gas", "government",
-    "iphone", "javascript", "memory", "movie", "movies", "news", "oil",
-    "palette", "papers", "password", "passwords", "phone", "pipeline", "pixel", "product",
+    "guide", "iphone", "javascript", "memory", "movie", "movies", "news", "oil",
+    "papers", "password", "passwords", "phone", "pipeline", "pixel", "product",
     "products", "release", "releases", "report", "reports", "roof", "roster",
     "rumor", "rumors", "samsung", "security", "software", "source", "sources",
-    "spec", "specs", "team", "transfer", "transfers", "tv", "water"
+    "spec", "specs", "team", "transfer", "transfers", "tutorial", "tv", "water"
+  ]);
+  const personNudeContext = new Set([
+    "anatomy", "animal", "animals", "art", "arts", "artwork", "artworks", "beach", "beaches",
+    "beige", "color", "colors", "colour", "colours", "drawing", "drawings", "fabric", "fashion",
+    "figure", "figures", "lipstick", "makeup", "medical", "mice", "model", "models", "mole",
+    "mouse", "museum", "museums", "painting", "paintings", "palette", "photography", "rat", "rats",
+    "reference", "references", "sculpture", "sculptures", "shade", "shades", "statue", "statues",
+    "studies", "study"
   ]);
   const personNameFillerWords = new Set([
     "a", "an", "and", "at", "for", "from", "in", "of", "on", "or", "the", "to", "with"
@@ -102,15 +113,17 @@
     if (tokens.length < 2) return false;
     const markerIndex = tokens.findIndex(token => personExposureMarkers.has(token));
     if (markerIndex < 0) return false;
+    const marker = tokens[markerIndex];
+    const ordinaryContext = ["leak", "leaks", "leaked", "leakd", "lek", "leks"].includes(marker)
+      ? personLeakContext
+      : personNudeContext;
     if (tokens.some((token, index) => index !== markerIndex && personIntimateContext.has(token))) return true;
-    const nameSide = markerIndex === tokens.length - 1
-      ? tokens.slice(0, markerIndex)
-      : markerIndex === 0
-        ? tokens.slice(1)
-        : [];
-    const structuralName = nameSide.filter(token => !personNameFillerWords.has(token));
+    if (tokens.some(token => ordinaryContext.has(token))) return false;
+    const structuralName = tokens.filter((token, index) => (
+      index !== markerIndex && !personNameFillerWords.has(token)
+    ));
     return structuralName.length >= 2 && structuralName.length <= 4
-      && structuralName.every(token => token.length >= 2 && !nonPersonSearchContext.has(token));
+      && structuralName.every(token => token.length >= 2);
   };
   const blockedSearchText = (value, activeRules = rules) => Boolean(activeRules
     && ((activeRules.blockedSearchTerms || []).some(term => (

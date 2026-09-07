@@ -8,6 +8,7 @@ enum YouTubeWebCompatibility {
 }
 
 enum SnapchatWebCompatibility {
+    static let loginURL = URL(string: "https://accounts.snapchat.com/v2/login?continue=https%3A%2F%2Fwww.snapchat.com%2Fweb%2F")!
     // Snapchat for Web is intentionally desktop-only even though its web app
     // is otherwise usable in modern WebKit. The focused companion presents a
     // desktop Safari identity while keeping navigation confined to Snapchat.
@@ -18,6 +19,7 @@ enum SocialService: String, CaseIterable, Identifiable {
     case instagram
     case youtube
     case snapchat
+    case linkedin
 
     var id: String { rawValue }
 
@@ -26,6 +28,7 @@ enum SocialService: String, CaseIterable, Identifiable {
         case .instagram: "Instagram"
         case .youtube: "YouTube"
         case .snapchat: "Snapchat"
+        case .linkedin: "LinkedIn"
         }
     }
 
@@ -34,6 +37,7 @@ enum SocialService: String, CaseIterable, Identifiable {
         case .instagram: "camera"
         case .youtube: "play.rectangle"
         case .snapchat: "message"
+        case .linkedin: "briefcase"
         }
     }
 
@@ -50,6 +54,8 @@ enum SocialService: String, CaseIterable, Identifiable {
             // to Subscriptions when Home recommendations are intentionally
             // blocked, and keeps Subscriptions as the permanent Shorts escape.
             URL(string: "https://m.youtube.com/")!
+        case .linkedin:
+            URL(string: "https://www.linkedin.com/feed/")!
         case .snapchat:
             // Snapchat now serves its desktop chat client from /web. Starting
             // on this first-party route keeps the companion out of the public
@@ -68,6 +74,8 @@ enum SocialService: String, CaseIterable, Identifiable {
             // YouTube uses edge-back navigation, while its in-page horizontal
             // controls continue to be handled by the mobile site.
             true
+        case .linkedin:
+            true
         case .snapchat:
             // Leave chat-list and conversation swipes to Snapchat's web UI.
             false
@@ -82,6 +90,8 @@ enum SocialService: String, CaseIterable, Identifiable {
         case .youtube:
             // Keep vertical watch/feed motion from drifting into horizontal UI.
             true
+        case .linkedin:
+            true
         case .snapchat:
             false
         }
@@ -94,6 +104,8 @@ enum SocialService: String, CaseIterable, Identifiable {
             return normalized == "instagram.com" || normalized == "www.instagram.com"
         case .youtube:
             return ["youtube.com", "www.youtube.com", "m.youtube.com"].contains(normalized)
+        case .linkedin:
+            return ["linkedin.com", "www.linkedin.com"].contains(normalized)
         case .snapchat:
             return ["snapchat.com", "www.snapchat.com", "web.snapchat.com"].contains(normalized)
         }
@@ -113,6 +125,7 @@ enum SocialService: String, CaseIterable, Identifiable {
         let host = url.host?.lowercased() ?? ""
         if host == "instagram.com" || host.hasSuffix(".instagram.com") { return .instagram }
         if host == "youtube.com" || host.hasSuffix(".youtube.com") || host == "youtu.be" { return .youtube }
+        if host == "linkedin.com" || host == "www.linkedin.com" { return .linkedin }
         if host == "snapchat.com" || host.hasSuffix(".snapchat.com") { return .snapchat }
         return nil
     }
@@ -136,6 +149,8 @@ enum SocialService: String, CaseIterable, Identifiable {
             return ["youtube.com", "www.youtube.com", "m.youtube.com", "consent.youtube.com"].contains(host)
                 || host == "youtu.be"
                 || host == "accounts.google.com"
+        case .linkedin:
+            return ["linkedin.com", "www.linkedin.com"].contains(host)
         case .snapchat:
             if ["snapchat.com", "www.snapchat.com", "web.snapchat.com"].contains(host) {
                 return true
@@ -162,6 +177,13 @@ enum SocialService: String, CaseIterable, Identifiable {
             return host == "accounts.google.com"
                 || host == "consent.youtube.com"
                 || Self.isYouTubeEmbeddedAuthenticationFrameURL(url)
+        }
+        if self == .linkedin {
+            guard isCanonicalAppHost(host) else { return false }
+            let path = url.path.lowercased()
+            return ["/login", "/uas", "/checkpoint", "/signup", "/start", "/authwall"].contains {
+                path == $0 || path.hasPrefix("\($0)/")
+            }
         }
         if self == .snapchat {
             return host == "accounts.snapchat.com"
@@ -200,6 +222,11 @@ enum SocialService: String, CaseIterable, Identifiable {
         case .youtube:
             let path = url.path.lowercased()
             return path == "/shorts" || path.hasPrefix("/shorts/")
+        case .linkedin:
+            let path = url.path.lowercased()
+            return ["/video", "/shorts", "/feed/video", "/feed/immersive"].contains {
+                path == $0 || path.hasPrefix("\($0)/")
+            }
         case .snapchat:
             let host = url.host?.lowercased() ?? ""
             guard ["snapchat.com", "www.snapchat.com", "web.snapchat.com"].contains(host) else {
@@ -232,6 +259,8 @@ enum SocialService: String, CaseIterable, Identifiable {
             default:
                 return .advisory("Opening this link in YouTube.")
             }
+        case .linkedin:
+            return .advisory("Opening this allowed LinkedIn page.")
         case .snapchat:
             if host == "accounts.snapchat.com" {
                 return .advisory("Continue signing in with Snapchat. You’ll return to chat after authorization.")

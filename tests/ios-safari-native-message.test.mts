@@ -27,7 +27,7 @@ assert.match(contentSource, /const bootstrapRules/u);
 assert.match(contentSource, /let rules = null/u, "bootstrap preflight must not weaken the fail-closed native-rule fallback");
 assert.match(contentSource, /const preflight = decision\(location\.href, bootstrapRules\)/u);
 assert.match(contentSource, /safeSearchEnabled: true/u);
-assert.match(contentSource, /"porn", "porno", "xxx"/u);
+assert.match(contentSource, /"porn", "porno", "prno", "p0rn", "xxx"/u);
 assert.match(contentSource, /"keyword", "keywords", "term"/u,
   "site-local search parameter names must be inspected by the Safari companion");
 assert.match(contentSource, /event\.composedPath/u,

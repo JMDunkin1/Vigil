@@ -1616,6 +1616,7 @@ function normalizeLimitRules(existingRules: VigilState["limitRules"], builtinRul
   const socialCompanionByNativeBundleId = new Map([
     ["com.burbn.instagram", "tech.caseline.vigil.instagram"],
     ["com.google.ios.youtube", "tech.caseline.vigil.youtube"],
+    ["com.linkedin.linkedin", "tech.caseline.vigil.linkedin"],
     ["com.toyopagroup.picaboo", "tech.caseline.vigil.snapchat"]
   ]);
   const mergedExisting = existingRules.map((rule) => {

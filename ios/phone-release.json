@@ -1,30 +1,36 @@
 {
   "schemaVersion": 3,
-  "version": "0.3.82",
-  "build": 85,
+  "version": "0.3.87",
+  "build": 90,
   "sourceFingerprints": {
-    "personal": "f9868af20a15f0c0dbfd08cffa0e85f4264ca0e2738354fae67ebcfb53c55bbb",
+    "personal": "e211619e41a1a746a2ac4e2400114fb323913d018080ba5a508a05f7fdf13b70",
     "enhanced": "33c130da2542d9371f096f10b7c54e9d19cb3f7fafbbbb750be7b501ec3bd51b"
   },
-  "releasedAt": "2026-09-03T01:33:37.254Z",
+  "releasedAt": "2026-09-07T15:01:09.613Z",
   "apps": {
     "instagram": {
-      "version": "0.3.76",
-      "build": 79,
-      "sourceFingerprint": "8522ce6a9358a4a7e6928ad54a1cfcf6ac1c2b6bea54fa5e2cdc6269db07c47d",
-      "releasedAt": "2026-09-03T01:33:37.254Z"
+      "version": "0.3.81",
+      "build": 84,
+      "sourceFingerprint": "c45c2bc51285a69a9fc7f46eac831538a51492e736fbdb8849361f02628e81fa",
+      "releasedAt": "2026-09-07T15:01:09.613Z"
     },
     "youtube": {
-      "version": "0.3.76",
-      "build": 79,
-      "sourceFingerprint": "7a6501d42061baf117572ff1bd845eed27bed05b235a44e95cc0f68713417d04",
-      "releasedAt": "2026-09-03T01:33:37.254Z"
+      "version": "0.3.81",
+      "build": 84,
+      "sourceFingerprint": "84eec3667c1a311d1fb2d078f85b7e09bcf55a4a7fd735acac5c6184fde2f2c3",
+      "releasedAt": "2026-09-07T15:01:09.613Z"
     },
     "snapchat": {
-      "version": "0.1.4",
-      "build": 5,
-      "sourceFingerprint": "4f80c902d303ea9ed89a6e83c8808442fcf424eb7662f5a58d93c1da38071978",
-      "releasedAt": "2026-09-03T01:33:37.254Z"
+      "version": "0.1.9",
+      "build": 10,
+      "sourceFingerprint": "e8db8c9aa2f93c766229f8daadb211b3e0d60cdc5a5af0b6a1267c50b3e542e2",
+      "releasedAt": "2026-09-07T15:01:09.613Z"
+    },
+    "linkedin": {
+      "version": "0.1.0",
+      "build": 1,
+      "sourceFingerprint": "1c87bf4f72cc6550cc2d6076c897b10e0689d73d6942d9d751126a50c3298828",
+      "releasedAt": "2026-09-07T02:13:52.275Z"
     }
   }
 }

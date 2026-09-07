@@ -4,7 +4,7 @@ struct FilterRules: Codable, Equatable, Sendable {
     static let currentSchema = 2
     fileprivate static let legacySchema = 1
     static let defaultExplicitSearchTerms = [
-        "porn", "porno", "xxx", "nsfw", "hentai", "rule34", "gonewild",
+        "porn", "porno", "prno", "p0rn", "xxx", "nsfw", "hentai", "rule34", "gonewild",
         "onlyfans", "fansly", "chaturbate", "stripchat", "cam4", "redtube",
         "youporn", "spankbang", "xvideos", "xnxx", "xhamster", "18+",
         "18%2b", "18plus", "18-plus"
@@ -98,21 +98,30 @@ enum FilterDecision: Equatable {
 
 struct NavigationFilter: Sendable {
     private static let personExposureMarkers: Set<String> = [
-        "leak", "leaks", "leaked", "nude", "nudes", "naked", "topless"
+        "leak", "leaks", "leaked", "leakd", "lek", "leks",
+        "nud", "nuds", "nude", "nudes", "nued", "naked", "topless"
     ]
     private static let personIntimateContext: Set<String> = [
         "explicit", "fansly", "intimate", "nsfw", "nude", "nudes", "naked",
         "onlyfans", "porn", "porno", "sex", "sextape", "topless", "xxx"
     ]
-    private static let nonPersonSearchContext: Set<String> = [
-        "air", "album", "api", "app", "apps", "classified", "code", "color", "court",
+    private static let leakContext: Set<String> = [
+        "air", "api", "app", "apps", "classified", "code", "command", "court",
         "data", "database", "document", "documents", "email", "emails", "episode",
         "episodes", "fc", "film", "films", "game", "games", "gas", "government",
-        "iphone", "javascript", "memory", "movie", "movies", "news", "oil",
-        "palette", "papers", "password", "passwords", "phone", "pipeline", "pixel", "product",
+        "guide", "iphone", "javascript", "memory", "movie", "movies", "news", "oil",
+        "papers", "password", "passwords", "phone", "pipeline", "pixel", "product",
         "products", "release", "releases", "report", "reports", "roof", "roster",
         "rumor", "rumors", "samsung", "security", "software", "source", "sources",
-        "spec", "specs", "team", "transfer", "transfers", "tv", "water"
+        "spec", "specs", "team", "transfer", "transfers", "tutorial", "tv", "water"
+    ]
+    private static let nudeContext: Set<String> = [
+        "anatomy", "animal", "animals", "art", "arts", "artwork", "artworks", "beach", "beaches",
+        "beige", "color", "colors", "colour", "colours", "drawing", "drawings", "fabric", "fashion",
+        "figure", "figures", "lipstick", "makeup", "medical", "mice", "model", "models", "mole",
+        "mouse", "museum", "museums", "painting", "paintings", "palette", "photography", "rat", "rats",
+        "reference", "references", "sculpture", "sculptures", "shade", "shades", "statue", "statues",
+        "studies", "study"
     ]
     private static let nameFillerWords: Set<String> = [
         "a", "an", "and", "at", "for", "from", "in", "of", "on", "or", "the", "to", "with"
@@ -175,20 +184,19 @@ struct NavigationFilter: Sendable {
             .filter { !$0.isEmpty }
         guard tokens.count >= 2,
               let markerIndex = tokens.firstIndex(where: personExposureMarkers.contains) else { return false }
+        let marker = tokens[markerIndex]
+        let ordinaryContext = ["leak", "leaks", "leaked", "leakd", "lek", "leks"].contains(marker)
+            ? leakContext
+            : nudeContext
         if tokens.enumerated().contains(where: { index, token in
             index != markerIndex && personIntimateContext.contains(token)
         }) { return true }
-        let nameSide: ArraySlice<String>
-        if markerIndex == tokens.count - 1 {
-            nameSide = tokens[..<markerIndex]
-        } else if markerIndex == 0 {
-            nameSide = tokens.dropFirst()
-        } else {
-            return false
+        if tokens.contains(where: ordinaryContext.contains) { return false }
+        let structuralName = tokens.enumerated().compactMap { index, token in
+            index != markerIndex && !nameFillerWords.contains(token) ? token : nil
         }
-        let structuralName = nameSide.filter { !nameFillerWords.contains($0) }
         return (2...4).contains(structuralName.count)
-            && structuralName.allSatisfy { $0.count >= 2 && !nonPersonSearchContext.contains($0) }
+            && structuralName.allSatisfy { $0.count >= 2 }
     }
 
     private static func looksLikeSearchRoute(_ value: String) -> Bool {

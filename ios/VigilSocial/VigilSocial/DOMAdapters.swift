@@ -20,6 +20,7 @@ enum DOMAdapters {
             : service == .instagram ? instagramStableDocumentStartStyle : ""
         return authenticationDocumentGuard(for: service, body:
             (service == .snapchat ? snapchatDesktopIdentityBootstrap : "")
+            + (service == .linkedin ? linkedin : "")
             + documentIdentityBootstrap
             + safetyBootstrap
         )
@@ -1128,12 +1129,55 @@ enum DOMAdapters {
             #"Boolean(window.__vigilInstagramCompatibilityInstalled && window.__vigilPolicyProbeInstalled && window.__vigilInstagramInstalled)"#
         case .youtube:
             #"Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilYouTubeInstalled)"#
+        case .linkedin:
+            #"Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilLinkedInInstalled)"#
         case .snapchat:
             #"Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilSnapchatInstalled)"#
         }
     }
 
     private static func authenticationDocumentGuard(for service: SocialService, body: String) -> String {
+        if service == .linkedin {
+            return #"""
+            (() => {
+              const isAuthentication = () => {
+                const url = new URL(location.href);
+                return url.protocol === 'https:' && (!url.port || url.port === '443')
+                  && ['linkedin.com', 'www.linkedin.com'].includes(url.hostname.toLowerCase())
+                  && /^\/(login|uas|checkpoint|signup|start|authwall)(\/|$)/i.test(url.pathname);
+              };
+              if (isAuthentication()) {
+                // A same-document login completion also needs a fresh protected
+                // document, just like Instagram's authentication transition.
+                if (window.__vigilLinkedInAuthenticationWatchdog) return;
+                window.__vigilLinkedInAuthenticationWatchdog = true;
+                const timer = setInterval(() => {
+                  if (isAuthentication()) return;
+                  clearInterval(timer);
+                  location.reload();
+                }, 250);
+                addEventListener('pagehide', () => clearInterval(timer), { once: true });
+                return;
+              }
+              GUARDED_BODY
+            })();
+            """#.replacingOccurrences(of: "GUARDED_BODY", with: body)
+        }
+        if service == .snapchat {
+            return #"""
+            (() => {
+              let url;
+              try { url = new URL(location.href); } catch (_) { return; }
+              // Match SocialService.usesUnmodifiedAuthenticationDocument: Snap's
+              // login and security challenges must retain their original DOM
+              // and browser environment. Chat gets the full guard on navigation.
+              if (url.protocol === 'https:'
+                  && (!url.port || url.port === '443')
+                  && url.hostname.toLowerCase() === 'accounts.snapchat.com') return;
+              GUARDED_BODY
+            })();
+            """#.replacingOccurrences(of: "GUARDED_BODY", with: body)
+        }
         if service == .youtube {
             return #"""
             (() => {
@@ -1267,6 +1311,14 @@ enum DOMAdapters {
             }
             if (path === '/' || path === '') {
               return { feature: 'home', mode: 'conceal', permanent: false };
+            }
+            """#
+        case .linkedin:
+            allowedHosts = "['linkedin.com', 'www.linkedin.com']"
+            fallbackPath = "/feed/"
+            routePolicy = #"""
+            if (/^\/(video|shorts|feed\/(video|immersive))(\/|$)/.test(path)) {
+              return { feature: 'shorts', mode: 'redirect', permanent: true };
             }
             """#
         case .snapchat:
@@ -1466,6 +1518,10 @@ enum DOMAdapters {
             featureKeys = "['home', 'explore', 'suggested', 'ads']"
             allowedHosts = "['youtube.com', 'www.youtube.com', 'm.youtube.com']"
             priorityFeature = "home"
+        case .linkedin:
+            featureKeys = "[]"
+            allowedHosts = "['linkedin.com', 'www.linkedin.com']"
+            priorityFeature = "shorts"
         case .snapchat:
             featureKeys = "['spotlight', 'stories']"
             allowedHosts = "['snapchat.com', 'www.snapchat.com', 'web.snapchat.com']"
@@ -1691,11 +1747,19 @@ enum DOMAdapters {
           nav *, [role="navigation"] *, [role="dialog"] *, [aria-modal="true"] *
         ):not(
           [data-vigil-instagram-home-relationship="friend"]
-        ):not([data-vigil-instagram-home-relationship="self"]),
+        ):not([data-vigil-instagram-home-relationship="self"]):not(
+          [data-vigil-instagram-home-relationship="refreshing"]
+        ),
         [data-vigil-instagram-home-relationship]:not(
           [data-vigil-instagram-home-relationship="friend"]
-        ):not([data-vigil-instagram-home-relationship="self"]) {
+        ):not([data-vigil-instagram-home-relationship="self"]):not(
+          [data-vigil-instagram-home-relationship="refreshing"]
+        ) {
           display: none !important;
+        }
+        [data-vigil-instagram-home-relationship="refreshing"] {
+          visibility: hidden !important;
+          pointer-events: none !important;
         }
         html[data-vigil-instagram-home-filter="true"] a[href^="/stories/"]:not(
           [data-vigil-instagram-story-relationship="friend"]
@@ -1722,6 +1786,11 @@ enum DOMAdapters {
           display: none !important;
           content-visibility: hidden !important;
         }
+        [data-vigil-instagram-feed-region="refreshing"],
+        [data-vigil-instagram-feed-region="refreshing"] * {
+          visibility: hidden !important;
+          pointer-events: none !important;
+        }
         [data-vigil-instagram-story-relationship="other"] {
           display: none !important;
         }
@@ -1732,6 +1801,7 @@ enum DOMAdapters {
           display: none !important;
         }
         [data-vigil-instagram-story-rail="true"] {
+          padding-block: 4px !important;
           overscroll-behavior-x: none !important;
           scroll-behavior: auto !important;
           scroll-snap-type: none !important;
@@ -1763,7 +1833,7 @@ enum DOMAdapters {
           display: none !important;
         }
         [data-vigil-instagram-story-slot] {
-          overflow: clip !important;
+          overflow: visible !important;
           position: relative !important;
           inset: auto !important;
           transform: none !important;
@@ -1773,6 +1843,11 @@ enum DOMAdapters {
           order: 0 !important;
           transition: none !important;
         }
+        [data-vigil-instagram-story-slot]:is(
+          [data-vigil-instagram-story-relationship="self"],
+          :has([data-vigil-instagram-story-relationship="self"]),
+          :has([aria-label="Your profile" i])
+        ) { order: -1 !important; }
         [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-slot="visible"]) {
           display: none !important;
         }
@@ -3659,9 +3734,111 @@ enum DOMAdapters {
         switch service {
         case .instagram: instagramStable
         case .youtube: youtube
+        case .linkedin: linkedin
         case .snapchat: snapchat
         }
     }
+
+    private static let linkedin = #"""
+    (() => {
+      if (window.__vigilLinkedInInstalled) return;
+      const hosts = ['linkedin.com', 'www.linkedin.com'];
+      if (!hosts.includes(location.hostname.toLowerCase())) return;
+      window.__vigilLinkedInInstalled = true;
+      const restricted = (value) => {
+        try {
+          const url = new URL(value, location.href);
+          return hosts.includes(url.hostname.toLowerCase())
+            && /^\/(video|shorts|feed\/(video|immersive))(\/|$)/i.test(decodeURIComponent(url.pathname));
+        } catch (_) { return true; }
+      };
+      const style = document.createElement('style');
+      style.id = 'vigil-linkedin-style';
+      style.textContent = `
+        html[data-vigil-linkedin-restricted] body { visibility: hidden !important; }
+        [data-vigil-linkedin-hidden],
+        a[href^="/video"], a[href^="/shorts"],
+        a[href^="/feed/video"], a[href^="/feed/immersive"],
+        [data-testid*="immersive-video" i],
+        [class*="immersive-video" i], [class*="video-discovery" i],
+        [class*="video-carousel" i] { display: none !important; }
+      `;
+      document.documentElement.appendChild(style);
+      const blockedControl = (element) => {
+        const control = element?.closest?.('a[href], button, [role="button"], [role="tab"]');
+        if (!control) return null;
+        if (control.matches('a[href]') && restricted(control.href)) return control;
+        // Only the global Video destination; preserve the post composer,
+        // ordinary video playback, uploads, and messaging attachments.
+        if (control.closest('nav, [role="navigation"]')
+            && /^(video|videos)$/i.test((control.getAttribute('aria-label') || control.textContent || '').trim())) return control;
+        return null;
+      };
+      const enforceRoute = () => {
+        if (!restricted(location.href)) {
+          delete document.documentElement.dataset.vigilLinkedinRestricted;
+          return false;
+        }
+        document.documentElement.dataset.vigilLinkedinRestricted = 'true';
+        document.querySelectorAll('video').forEach(video => video.pause());
+        location.replace('https://www.linkedin.com/feed/');
+        return true;
+      };
+      const reconcile = () => {
+        if (enforceRoute()) return;
+        document.querySelectorAll('a[href], nav button, [role="navigation"] [role="tab"]').forEach(element => {
+          const control = blockedControl(element);
+          if (control) control.setAttribute('data-vigil-linkedin-hidden', 'true');
+          else element.removeAttribute('data-vigil-linkedin-hidden');
+        });
+        document.querySelectorAll('video').forEach(video => {
+          if (video.closest('[class*="immersive-video" i], [class*="video-discovery" i], [class*="video-carousel" i], [data-testid*="immersive-video" i]')) {
+            video.pause();
+            video.muted = true;
+          }
+        });
+      };
+      document.addEventListener('click', event => {
+        if (!blockedControl(event.target)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+      document.addEventListener('play', event => {
+        const video = event.target;
+        if (video.matches?.('video') && (restricted(location.href)
+            || video.closest('[class*="immersive-video" i], [class*="video-discovery" i], [class*="video-carousel" i], [data-testid*="immersive-video" i]'))) {
+          video.pause();
+          video.muted = true;
+        }
+      }, true);
+      let pending = false;
+      const schedule = () => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => { pending = false; reconcile(); });
+      };
+      for (const method of ['pushState', 'replaceState']) {
+        const original = history[method];
+        history[method] = function(...args) {
+          const result = original.apply(this, args);
+          // Conceal synchronously, before the next paint of an SPA video route.
+          if (!enforceRoute()) schedule();
+          return result;
+        };
+      }
+      addEventListener('popstate', reconcile, true);
+      addEventListener('hashchange', reconcile, true);
+      new MutationObserver(schedule).observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true,
+        attributeFilter: ['href', 'aria-label', 'class', 'data-testid']
+      });
+      reconcile();
+      if (window === window.top) addEventListener('DOMContentLoaded', () => {
+        reconcile();
+        if (!restricted(location.href)) window.__vigilBridge?.({ type: 'health', state: 'ready', detail: '' });
+      }, { once: true });
+    })();
+    """#
 
     private static let snapchat = #"""
     (() => {
@@ -3732,13 +3909,18 @@ enum DOMAdapters {
         const text = String(document.body?.innerText || '').toLowerCase();
         return text.includes('download snapchat') && text.includes('open snapchat');
       };
+      let loginNavigationPending = false;
       const beginWebLoginIfNeeded = () => {
+        if (loginNavigationPending) return true;
         if (!isMarketingShell()) return false;
         try {
           if (sessionStorage.getItem(loginAttemptKey) === 'true') return false;
           sessionStorage.setItem(loginAttemptKey, 'true');
         } catch (_) {}
-        try { location.replace(webLoginURL); } catch (_) {}
+        try {
+          location.replace(webLoginURL);
+          loginNavigationPending = true;
+        } catch (_) { return false; }
         return true;
       };
       const enforceRoute = (notify = false) => {
@@ -3795,6 +3977,7 @@ enum DOMAdapters {
 
       const reportHealth = () => {
         const text = String(document.body?.innerText || '').toLowerCase();
+        if (loginNavigationPending) return;
         const marketingShell = isMarketingShell();
         const unsupported = marketingShell
           || /browser (isn't|is not) supported|unsupported browser|try another browser|only available on desktop/.test(text);
@@ -3803,7 +3986,7 @@ enum DOMAdapters {
           state: unsupported ? 'unsupported' : 'ready',
           detail: unsupported
             ? (marketingShell
-              ? 'Snapchat returned its app-download page instead of friend chat after web sign-in.'
+              ? 'Snapchat returned its app-download page. Tap Try again to open Snapchat sign-in.'
               : 'Snapchat rejected its web client in this version of WebKit.')
             : ''
         });
@@ -4501,11 +4684,19 @@ enum DOMAdapters {
             nav *, [role="navigation"] *, [role="dialog"] *, [aria-modal="true"] *
           ):not(
             [data-vigil-instagram-home-relationship="friend"]
-          ):not([data-vigil-instagram-home-relationship="self"]),
+          ):not([data-vigil-instagram-home-relationship="self"]):not(
+            [data-vigil-instagram-home-relationship="refreshing"]
+          ),
           [data-vigil-instagram-home-relationship]:not(
             [data-vigil-instagram-home-relationship="friend"]
-          ):not([data-vigil-instagram-home-relationship="self"]) {
+          ):not([data-vigil-instagram-home-relationship="self"]):not(
+            [data-vigil-instagram-home-relationship="refreshing"]
+          ) {
             display: none !important;
+          }
+          [data-vigil-instagram-home-relationship="refreshing"] {
+            visibility: hidden !important;
+            pointer-events: none !important;
           }
           html[data-vigil-instagram-home-filter="true"] a[href^="/stories/"]:not(
             [data-vigil-instagram-story-relationship="friend"]
@@ -4532,6 +4723,11 @@ enum DOMAdapters {
             display: none !important;
             content-visibility: hidden !important;
           }
+          [data-vigil-instagram-feed-region="refreshing"],
+          [data-vigil-instagram-feed-region="refreshing"] * {
+            visibility: hidden !important;
+            pointer-events: none !important;
+          }
           [data-vigil-instagram-story-relationship="other"] {
             display: none !important;
           }
@@ -4542,6 +4738,7 @@ enum DOMAdapters {
             display: none !important;
           }
           [data-vigil-instagram-story-rail="true"] {
+            padding-block: 4px !important;
             overscroll-behavior-x: none !important;
             scroll-behavior: auto !important;
             scroll-snap-type: none !important;
@@ -4573,7 +4770,7 @@ enum DOMAdapters {
             display: none !important;
           }
           [data-vigil-instagram-story-slot] {
-            overflow: clip !important;
+            overflow: visible !important;
             position: relative !important;
             inset: auto !important;
             transform: none !important;
@@ -4583,6 +4780,11 @@ enum DOMAdapters {
             order: 0 !important;
             transition: none !important;
           }
+          [data-vigil-instagram-story-slot]:is(
+            [data-vigil-instagram-story-relationship="self"],
+            :has([data-vigil-instagram-story-relationship="self"]),
+            :has([aria-label="Your profile" i])
+          ) { order: -1 !important; }
           [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-slot="visible"]) {
             display: none !important;
           }
@@ -5322,6 +5524,9 @@ enum DOMAdapters {
       const homeCards = () => [...document.querySelectorAll('article, [role="article"]')]
         .filter((card) => !card.closest('nav, [role="navigation"], [role="dialog"], [aria-modal="true"]'));
       const homeCardIdentities = new WeakMap();
+      const homeCardStableRelationships = new WeakMap();
+      const homeCardRefreshTimers = new WeakMap();
+      const homeFeedRegionRefreshTimers = new WeakMap();
       const friendshipCache = new Map();
       const friendshipChecks = new Map();
       const normalizedUsername = (value) => String(value || '').trim().replace(/^@/, '').toLowerCase();
@@ -5371,8 +5576,9 @@ enum DOMAdapters {
           friendshipStorage.setItem(friendshipCacheKey, JSON.stringify(fresh));
         } catch (_) {}
       };
-      const homeCardAuthor = (article) => {
+      const homeCardAuthor = (article, preferred = '') => {
         const links = article.querySelectorAll?.('a[href]') || [];
+        let first = '';
         for (const link of links) {
           let path = '';
           try { path = new URL(link.href, location.href).pathname; } catch (_) { continue; }
@@ -5382,9 +5588,10 @@ enum DOMAdapters {
           if (!username || [
             'accounts', 'direct', 'explore', 'reel', 'reels', 'stories'
           ].includes(username)) continue;
-          return username;
+          if (preferred && username === preferred) return username;
+          if (!first) first = username;
         }
-        return '';
+        return first;
       };
       const relationshipBoolean = (...values) => {
         for (const value of values) {
@@ -5414,9 +5621,19 @@ enum DOMAdapters {
         ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {})
       });
       const instagramLookupTimeoutMilliseconds = 4000;
+      const withInstagramLookupDeadline = async (task) => {
+        let timeout = 0;
+        const deadline = new Promise((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error('Instagram lookup timed out')),
+            instagramLookupTimeoutMilliseconds
+          );
+        });
+        try { return await Promise.race([Promise.resolve().then(task), deadline]); }
+        finally { clearTimeout(timeout); }
+      };
       const fetchInstagramJSON = async (path) => {
         const controller = new AbortController();
-        let timeout = 0;
         const request = (async () => {
           const response = await fetch(path, {
             credentials: 'same-origin',
@@ -5426,14 +5643,75 @@ enum DOMAdapters {
           if (!response.ok) throw new Error(`Instagram lookup returned ${response.status}`);
           return response.json();
         })();
-        const deadline = new Promise((_, reject) => {
-          timeout = setTimeout(() => {
-            controller.abort();
-            reject(new Error('Instagram lookup timed out'));
-          }, instagramLookupTimeoutMilliseconds);
+        try {
+          return await withInstagramLookupDeadline(() => request);
+        } catch (error) {
+          controller.abort();
+          throw error;
+        }
+      };
+      const instagramRuntimeAPI = () => {
+        if (typeof window.require !== 'function') return null;
+        try {
+          const module = window.require('PolarisInstapi');
+          return module?.default || module || null;
+        } catch (_) {
+          return null;
+        }
+      };
+      const fetchInstagramRuntimeJSON = async (method, path, options) => {
+        const api = instagramRuntimeAPI();
+        const operation = method === 'POST' ? api?.apiPost : api?.apiGet;
+        if (typeof operation !== 'function') {
+          throw new Error('Instagram request runtime is unavailable');
+        }
+        return withInstagramLookupDeadline(() => operation.call(api, path, options));
+      };
+      const instagramSearchUser = async (username) => {
+        const query = new URLSearchParams({
+          context: 'blended',
+          include_reel: 'true',
+          query: username,
+          search_surface: 'web_top_search'
         });
-        try { return await Promise.race([request, deadline]); }
-        finally { clearTimeout(timeout); }
+        const payload = await fetchInstagramJSON(`/api/v1/web/search/topsearch/?${query}`);
+        const entries = payload?.users || payload?.data?.users || [];
+        for (const entry of entries) {
+          const user = entry?.user || entry;
+          if (normalizedUsername(user?.username) === username) return user;
+        }
+        throw new Error('Instagram search omitted the requested user');
+      };
+      const instagramUserID = (user) => user?.id || user?.pk || user?.pk_id || '';
+      const currentMutualFriendship = async (username) => {
+        const user = await instagramSearchUser(username);
+        let mutual = relationshipFromUser(user);
+        const userID = instagramUserID(user);
+        if (mutual === null && userID) {
+          try {
+            const friendship = await fetchInstagramJSON(
+              `/api/v1/friendships/show/${encodeURIComponent(userID)}/`
+            );
+            mutual = relationshipFromUser(friendship);
+          } catch (error) {
+            // Instagram's own current web client uses PolarisInstapi for this
+            // batch POST. Keep it as a token-aware fallback when available.
+            if (!instagramRuntimeAPI()) throw error;
+            const payload = await fetchInstagramRuntimeJSON(
+              'POST',
+              '/api/v1/friendships/show_many/',
+              { body: { user_ids: String(userID) } }
+            );
+            const statuses = payload?.data?.friendship_statuses
+              || payload?.friendship_statuses
+              || {};
+            mutual = relationshipFromUser(statuses[String(userID)]);
+          }
+        }
+        if (typeof mutual !== 'boolean') {
+          throw new Error('relationship lookup omitted mutual-follow fields');
+        }
+        return mutual;
       };
       const friendshipLookupQueue = [];
       const maxConcurrentFriendshipLookups = 3;
@@ -5460,17 +5738,23 @@ enum DOMAdapters {
         const check = withFriendshipLookupSlot(async () => {
           for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-              const payload = await fetchInstagramJSON(
-                `/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`
-              );
-              const user = payload?.data?.user || payload?.user;
-              if (!user) throw new Error('relationship lookup omitted the user');
-              let mutual = relationshipFromUser(user);
-              if (mutual === null && user.id) {
-                const friendship = await fetchInstagramJSON(
-                  `/api/v1/friendships/show/${encodeURIComponent(user.id)}/`
+              let mutual;
+              try {
+                mutual = await currentMutualFriendship(username);
+              } catch (_) {
+                const payload = await fetchInstagramJSON(
+                  `/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`
                 );
-                mutual = relationshipFromUser(friendship);
+                const user = payload?.data?.user || payload?.user;
+                if (!user) throw new Error('relationship lookup omitted the user');
+                mutual = relationshipFromUser(user);
+                const userID = instagramUserID(user);
+                if (mutual === null && userID) {
+                  const friendship = await fetchInstagramJSON(
+                    `/api/v1/friendships/show/${encodeURIComponent(userID)}/`
+                  );
+                  mutual = relationshipFromUser(friendship);
+                }
               }
               if (typeof mutual !== 'boolean') {
                 throw new Error('relationship lookup omitted mutual-follow fields');
@@ -5584,19 +5868,53 @@ enum DOMAdapters {
         }
         scheduleFriendsEmpty('checked-articles', 350);
       };
-      const classifyHomeCard = (article) => {
+      const classifyHomeCard = (article, settleMissingIdentity = false) => {
         if (!(article instanceof Element) || article.hasAttribute('data-vigil-hidden-feature')) return;
-        const username = homeCardAuthor(article);
+        const previousIdentity = homeCardIdentities.get(article) || '';
+        const username = homeCardAuthor(article, previousIdentity);
+        const refreshTimer = homeCardRefreshTimers.get(article);
+        if (username === previousIdentity && refreshTimer) {
+          clearTimeout(refreshTimer);
+          homeCardRefreshTimers.delete(article);
+        }
+        const stableRelationship = homeCardStableRelationships.get(article);
+        if (!settleMissingIdentity && previousIdentity && username !== previousIdentity
+            && ['friend', 'self'].includes(stableRelationship)) {
+          article.dataset.vigilInstagramHomeRelationship = 'refreshing';
+          if (!refreshTimer) {
+            const timer = setTimeout(() => {
+              homeCardRefreshTimers.delete(article);
+              if (article.isConnected
+                  && article.dataset.vigilInstagramHomeRelationship === 'refreshing') {
+                classifyHomeCard(article, true);
+                reconcileFriendsEmptyState();
+              }
+            }, 160);
+            homeCardRefreshTimers.set(article, timer);
+          }
+          return;
+        }
         if (username && username === discoverViewerUsername()) {
           homeCardIdentities.set(article, username);
+          homeCardStableRelationships.set(article, 'self');
           article.dataset.vigilInstagramHomeAuthor = username;
           article.dataset.vigilInstagramHomeRelationship = 'self';
           return;
         }
         if (!username) {
+          if (refreshTimer) clearTimeout(refreshTimer);
+          homeCardRefreshTimers.delete(article);
           homeCardIdentities.delete(article);
+          homeCardStableRelationships.delete(article);
           delete article.dataset.vigilInstagramHomeAuthor;
           article.dataset.vigilInstagramHomeRelationship = 'other';
+          return;
+        }
+        if (previousIdentity === username
+            && ['friend', 'self'].includes(homeCardStableRelationships.get(article))) {
+          const stableRelationship = homeCardStableRelationships.get(article);
+          article.dataset.vigilInstagramHomeAuthor = username;
+          article.dataset.vigilInstagramHomeRelationship = stableRelationship;
           return;
         }
         if (homeCardIdentities.get(article) === username
@@ -5604,15 +5922,22 @@ enum DOMAdapters {
             && ['friend', 'other', 'pending', 'unavailable'].includes(
               article.dataset.vigilInstagramHomeRelationship || ''
             )) return;
+        homeCardStableRelationships.delete(article);
         article.dataset.vigilInstagramHomeAuthor = username;
         homeCardIdentities.set(article, username);
         article.dataset.vigilInstagramHomeRelationship = 'pending';
         void fetchMutualFriendship(username).then((mutual) => {
-          if (!article.isConnected || homeCardAuthor(article) !== username
+          if (!article.isConnected || homeCardAuthor(article, username) !== username
               || article.dataset.vigilInstagramHomeAuthor !== username) return;
-          article.dataset.vigilInstagramHomeRelationship = username === discoverViewerUsername()
+          const relationship = username === discoverViewerUsername()
             ? 'self'
             : mutual === true ? 'friend' : mutual === false ? 'other' : 'unavailable';
+          article.dataset.vigilInstagramHomeRelationship = relationship;
+          if (['friend', 'self'].includes(relationship)) {
+            homeCardStableRelationships.set(article, relationship);
+          } else {
+            homeCardStableRelationships.delete(article);
+          }
           reconcileFriendsEmptyState();
         });
       };
@@ -5783,6 +6108,48 @@ enum DOMAdapters {
       let storyRelationshipFlushTimer = 0;
       const storyRailClampFrames = new WeakMap();
       const boundStoryRails = new WeakSet();
+      const storyRailViewportStates = new WeakMap();
+      let lastStoryRailViewportState = null;
+      const rememberStoryRailViewport = (rail, controls = homeStoryControls()) => {
+        if (!(rail instanceof HTMLElement) || !rail.isConnected) return null;
+        const railRect = rail.getBoundingClientRect();
+        const candidates = controls.map((control) => ({
+          control,
+          item: storyItemFor(control),
+          username: storyAuthor(control)
+        })).filter(({ item, username, control }) => username
+          && ['self', 'friend'].includes(control.dataset.vigilInstagramStoryRelationship)
+          && item instanceof HTMLElement)
+          .map((candidate) => ({ ...candidate, rect: candidate.item.getBoundingClientRect() }))
+          .filter(({ rect }) => rect.width > 0 && rect.right > railRect.left && rect.left < railRect.right)
+          .sort((left, right) => Math.abs(left.rect.left - railRect.left)
+            - Math.abs(right.rect.left - railRect.left));
+        const anchor = candidates[0];
+        if (!anchor) return null;
+        const state = {
+          username: anchor.username,
+          offset: anchor.rect.left - railRect.left,
+          scrollLeft: rail.scrollLeft
+        };
+        storyRailViewportStates.set(rail, state);
+        lastStoryRailViewportState = state;
+        return state;
+      };
+      const restoreStoryRailViewport = (rail, controls, state) => {
+        if (!(rail instanceof HTMLElement) || !state?.username) return false;
+        const control = controls.find((candidate) => storyAuthor(candidate) === state.username
+          && ['self', 'friend'].includes(candidate.dataset.vigilInstagramStoryRelationship));
+        const item = control ? storyItemFor(control) : null;
+        if (!(item instanceof HTMLElement) || item.getBoundingClientRect().width <= 0) return false;
+        const currentOffset = item.getBoundingClientRect().left - rail.getBoundingClientRect().left;
+        // Scroll events can arrive after a mutation/relationship flush. Account
+        // for motion since the snapshot so anchoring never undoes a swipe.
+        const expectedOffset = state.offset - (rail.scrollLeft - state.scrollLeft);
+        const adjustment = currentOffset - expectedOffset;
+        if (Math.abs(adjustment) > 0.5) rail.scrollLeft += adjustment;
+        rememberStoryRailViewport(rail, controls);
+        return true;
+      };
       const storyRailResizeObserver = new ResizeObserver((entries) => {
         entries.forEach(({ target }) => {
           const rail = target.closest('[data-vigil-instagram-story-rail="true"]');
@@ -5828,7 +6195,12 @@ enum DOMAdapters {
         storyRailClampFrames.set(rail, frame);
       };
       const normalizeHomeStoryRail = (controls = homeStoryControls()) => {
-        const rail = instagramRoute() === 'feed' ? storyRailFor(controls) : null;
+        const isFeed = instagramRoute() === 'feed';
+        if (!isFeed) lastStoryRailViewportState = null;
+        const rail = isFeed ? storyRailFor(controls) : null;
+        const viewportState = rail instanceof HTMLElement
+          ? storyRailViewportStates.get(rail) || lastStoryRailViewportState
+          : null;
         // Instagram's virtual row retains the width, absolute offsets and
         // spacers of accounts we have hidden. Clamp to a compact layout of
         // real visible slots, not that original (mostly empty) scrollWidth.
@@ -5894,11 +6266,18 @@ enum DOMAdapters {
         rail.dataset.vigilInstagramStoryRail = 'true';
         if (!boundStoryRails.has(rail)) {
           boundStoryRails.add(rail);
-          rail.addEventListener('scroll', () => scheduleStoryRailClamp(rail), { passive: true });
+          rail.addEventListener('scroll', () => {
+            rememberStoryRailViewport(rail);
+            scheduleStoryRailClamp(rail);
+          }, { passive: true });
         }
         storyRailResizeObserver.observe(rail);
-        // Reset an old offset in the same task as slot removal, before paint.
-        clampStoryRail(rail);
+        // Keep the same account at the same viewport edge when Instagram
+        // prepends or recycles slots, then trim only genuinely blank overflow.
+        if (!restoreStoryRailViewport(rail, controls, viewportState)) {
+          clampStoryRail(rail);
+          rememberStoryRailViewport(rail, controls);
+        }
       };
       const flushHomeStoryRelationships = (allowPartial = false) => {
         if (instagramRoute() !== 'feed') return false;
@@ -6034,25 +6413,33 @@ enum DOMAdapters {
         saved.active = username;
         saveStoryOrder(saved);
       };
-      const nextVerifiedStoryPath = (username) => {
+      const nextVerifiedStoryPath = async (username) => {
         const saved = readStoryOrder();
         if (!saved) return '';
         const current = saved.order.indexOf(username);
         const previous = saved.order.indexOf(saved.active);
-        if (current < 0 || previous < 0 || current === previous) return '';
-        const direction = current < previous ? -1 : 1;
-        for (let index = current + direction; index >= 0 && index < saved.order.length; index += direction) {
+        if (previous < 0 || current === previous) return '';
+        // Instagram may advance to an account outside the mounted virtual row.
+        // In that case resume after the last verified account we actually saw.
+        const direction = current >= 0 && current < previous ? -1 : 1;
+        const start = current >= 0 ? current : previous;
+        for (let index = start + direction; index >= 0 && index < saved.order.length; index += direction) {
           const path = `/stories/${saved.order[index]}/`;
           // Sequence membership is never permission. Only the existing
           // viewer-scoped mutual-friend verifier can authorize a destination.
           if (hasKnownStoryAccess(new URL(path, location.href))) return path;
+          if (await fetchMutualFriendship(saved.order[index]) === true) return path;
         }
         return '';
       };
-      const reconcileHomeFeedRegions = () => {
+      const reconcileHomeFeedRegions = (settleRefreshing = false) => {
         const previous = [...document.querySelectorAll('[data-vigil-instagram-feed-region]')];
         if (instagramRoute() !== 'feed') {
-          previous.forEach((region) => region.removeAttribute('data-vigil-instagram-feed-region'));
+          previous.forEach((region) => {
+            clearTimeout(homeFeedRegionRefreshTimers.get(region));
+            homeFeedRegionRefreshTimers.delete(region);
+            region.removeAttribute('data-vigil-instagram-feed-region');
+          });
           return;
         }
         const cards = homeCards();
@@ -6078,14 +6465,53 @@ enum DOMAdapters {
           if (region) regions.add(region);
         });
         previous.forEach((region) => {
-          if (!regions.has(region)) region.removeAttribute('data-vigil-instagram-feed-region');
+          if (!regions.has(region)) {
+            clearTimeout(homeFeedRegionRefreshTimers.get(region));
+            homeFeedRegionRefreshTimers.delete(region);
+            region.removeAttribute('data-vigil-instagram-feed-region');
+          }
         });
         regions.forEach((region) => {
-          const hasVerifiedPost = cards.some((card) => region.contains(card)
-            && !card.hasAttribute('data-vigil-hidden-feature')
-            && ['friend', 'self'].includes(card.dataset.vigilInstagramHomeRelationship)
-            && homeCardIdentities.get(card) === homeCardAuthor(card));
-          region.dataset.vigilInstagramFeedRegion = hasVerifiedPost ? 'open' : 'closed';
+          const regionCards = cards.filter((card) => region.contains(card)
+            && !card.hasAttribute('data-vigil-hidden-feature'));
+          const hasVerifiedPost = regionCards.some((card) => {
+            const identity = homeCardIdentities.get(card) || '';
+            const author = homeCardAuthor(card, identity);
+            const relationship = card.dataset.vigilInstagramHomeRelationship;
+            if (['friend', 'self'].includes(relationship)) return identity === author;
+            return relationship === 'refreshing'
+              && ['friend', 'self'].includes(homeCardStableRelationships.get(card));
+          });
+          const hasUnsettledPost = regionCards.length === 0 || regionCards.some((card) => {
+            const relationship = card.dataset.vigilInstagramHomeRelationship || '';
+            return !relationship || ['pending', 'refreshing'].includes(relationship);
+          });
+          const previousState = region.dataset.vigilInstagramFeedRegion;
+          if (hasVerifiedPost) {
+            clearTimeout(homeFeedRegionRefreshTimers.get(region));
+            homeFeedRegionRefreshTimers.delete(region);
+            region.dataset.vigilInstagramFeedRegion = 'open';
+          } else if (!settleRefreshing && hasUnsettledPost
+              && ['open', 'refreshing'].includes(previousState)) {
+            // Instagram temporarily removes article semantics while recycling
+            // the virtual feed. Conceal the already-open region without
+            // collapsing its geometry or resetting the user's scroll offset.
+            region.dataset.vigilInstagramFeedRegion = 'refreshing';
+            if (!homeFeedRegionRefreshTimers.has(region)) {
+              const timer = setTimeout(() => {
+                homeFeedRegionRefreshTimers.delete(region);
+                if (region.isConnected
+                    && region.dataset.vigilInstagramFeedRegion === 'refreshing') {
+                  reconcileHomeFeedRegions(true);
+                }
+              }, 9000);
+              homeFeedRegionRefreshTimers.set(region, timer);
+            }
+          } else {
+            clearTimeout(homeFeedRegionRefreshTimers.get(region));
+            homeFeedRegionRefreshTimers.delete(region);
+            region.dataset.vigilInstagramFeedRegion = 'closed';
+          }
         });
       };
       let verifiedStoryPath = '';
@@ -6129,7 +6555,8 @@ enum DOMAdapters {
           delete document.documentElement.dataset.vigilInstagramStoryGate;
           return;
         }
-        const nextPath = nextVerifiedStoryPath(username);
+        const nextPath = await nextVerifiedStoryPath(username);
+        if (generation !== storyAccessGeneration || location.pathname.toLowerCase() !== path) return;
         redirectedStoryPath = path;
         try { location.replace(nextPath || '/'); } catch (_) {}
       };
@@ -6168,16 +6595,16 @@ enum DOMAdapters {
           // Never run Home's avatar classifier against that destination tree.
           if (instagramRoute() !== 'feed') return;
           const controls = homeStoryControls();
+          homeCards().forEach(classifyHomeCard);
           controls.forEach(classifyHomeStory);
           flushHomeStoryRelationships();
-          homeCards().forEach(classifyHomeCard);
           reconcileFriendsEmptyState();
           removeStoryPlaceholders();
         });
         const controls = homeStoryControls();
+        homeCards().forEach(classifyHomeCard);
         controls.forEach(classifyHomeStory);
         flushHomeStoryRelationships();
-        homeCards().forEach(classifyHomeCard);
         removeStoryPlaceholders();
         normalizeHomeStoryRail(controls);
         reconcileFriendsEmptyState();

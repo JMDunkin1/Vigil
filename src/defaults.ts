@@ -305,6 +305,8 @@ export const DEFAULT_EXPLICIT_BLOCKED_SITES = [
 export const DEFAULT_EXPLICIT_SEARCH_TERMS = [
   "porn",
   "porno",
+  "prno",
+  "p0rn",
   "xxx",
   "nsfw",
   "hentai",
@@ -386,6 +388,14 @@ export const DEFAULT_EXPLICIT_URL_PATTERNS = [
 
 export const DEFAULT_ALWAYS_BANNED_URL_PATTERNS = [
   ...PERMANENT_SOCIAL_URL_PATTERNS,
+  // Reddit's age-confirmation route must be part of the shared permanent
+  // policy, not only a browser-extension content rule. This keeps the gate
+  // closed in Safari and in Apple's supervised iPhone web filter while the
+  // rest of Reddit remains available.
+  // Reddit serves the gate over HTTPS, and Apple's BuiltIn filter normalizes
+  // the leading www label. Keeping this canonical form also preserves the
+  // scarce 500-entry iPhone deny-list budget.
+  "https://reddit.com/over18",
   "findmyhotkey.com",
   "webtoons.com"
 ];

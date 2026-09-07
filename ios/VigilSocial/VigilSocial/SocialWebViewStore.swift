@@ -232,7 +232,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             // Navigation runs in WebKit's processes. Start it before finishing
             // the local scroll/gesture chrome so those independent setup paths
             // overlap during a cold launch.
-            webView.load(URLRequest(url: service.homeURL))
+            // Snapchat's /web landing can return a mobile download shell before
+            // it ever offers login. Begin with first-party authentication;
+            // its continue URL returns the persistent session to friend chat.
+            let initialURL = service == .snapchat
+                ? SnapchatWebCompatibility.loginURL
+                : service.homeURL
+            webView.load(URLRequest(url: initialURL))
         }
 
         webView.allowsBackForwardNavigationGestures = service.allowsBackForwardNavigationGestures
@@ -284,6 +290,15 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func retry(_ service: SocialService) {
+        if service == .snapchat, case .unsupported = health[service] {
+            // Retrying a download shell must open sign-in rather than reloading
+            // the same shell with its session-scoped recovery attempt exhausted.
+            cancelDocumentWork(for: service)
+            health[service] = .loading
+            setSurface(.unknown, for: service)
+            webView(for: service).load(URLRequest(url: SnapchatWebCompatibility.loginURL))
+            return
+        }
         reload(service)
     }
 

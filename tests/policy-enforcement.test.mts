@@ -596,6 +596,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("honeytoon"), true);
   assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("webtoon18"), true);
   assert.equal(DEFAULT_EXPLICIT_CONTEXTUAL_RULES.some((rule) => rule.markers.includes("uncensored")), true);
+  assert.equal(DEFAULT_EXPLICIT_SEARCH_TERMS.includes("prno"), true);
+  assert.equal(DEFAULT_EXPLICIT_SEARCH_TERMS.includes("p0rn"), true);
   assert.equal(DEFAULT_EXPLICIT_SEARCH_TERMS.includes("uncensored"), false);
   assert.equal(DEFAULT_EXPLICIT_URL_PATTERNS.includes("uncensored"), false);
   assert.equal(DEFAULT_ALWAYS_BANNED_URL_PATTERNS.includes("findmyhotkey.com"), true);
@@ -613,13 +615,37 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=Ari+Kytsya+naked"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=Ari+Kytsya+topless"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=Ari%2520Kytsya%2520leaked"), true);
+  for (const evasiveQuery of [
+    "ari kytsya nud",
+    "nud ari kytsya",
+    "ari nud kytsya",
+    "ari kytsya nuds",
+    "ari kytsya nued",
+    "ari kytsya leks",
+    "leakd ari kytsya",
+    "ari leakd kytsya",
+    "prno",
+    "ari kytsya prno",
+    "p0rn ari kytsya"
+  ]) {
+    assert.equal(
+      shouldBlockUrl(profile, `https://www.google.com/search?q=${encodeURIComponent(evasiveQuery)}`),
+      true,
+      `intent-preserving spelling/order variant should be blocked: ${evasiveQuery}`
+    );
+  }
   for (const harmlessQuery of [
     "memory leaks javascript",
     "roof water leaks",
     "iphone 18 leaks",
     "Supreme Court leaks",
     "Panama Papers leaks",
-    "nude color palette"
+    "nude color palette",
+    "nude art figure drawing",
+    "naked mole rat",
+    "nude lipstick shade",
+    "memory leks javascript tutorial",
+    "NUD command reference"
   ]) {
     assert.equal(
       shouldBlockUrl(profile, `https://www.google.com/search?q=${encodeURIComponent(harmlessQuery)}`),
@@ -832,6 +858,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(blockedPageDisplayLabel("example%252ecom"), "This page",
     "nested percent-encoded host labels must be redacted before Apple filter decoding");
   assert.equal(blockedPageDisplayLabel("YouTube Shorts"), "YouTube Shorts");
+  assert.equal(blockedPageDisplayLabel("person-intimate-exposure"), "Search");
   const validLocalAllow = { address: "http://localhost:8787/", pageTitle: "Vigil" };
   assert.equal(managedFilterAllowsVigilPages([
     { address: "http://user@127.0.0.1:8787/", pageTitle: "Vigil" },
@@ -984,6 +1011,9 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(baselineUrls.includes("https://www.pornhub.com/"), true);
   assert.equal(baselineUrls.includes("https://youtube.com/shorts"), true);
   assert.equal(baselineUrls.includes("https://snapchat.com/spotlight"), true);
+  assert.equal(baselineUrls.includes("https://reddit.com/over18"), true);
+  assert.equal(baselineUrls.includes("https://www.reddit.com/over18"), true);
+  assert.equal(safariFilterDenyMatch(state, "https://www.reddit.com/over18?dest=%2Fr%2Fexample", now), "https://reddit.com/over18");
   assert.equal(baselineUrls.includes("https://croxyproxy.com/"), true);
   assert.equal(baselineUrls.includes("http://anonymouse.com/"), true, "confirmed plain-HTTP proxies need a Safari filter entry");
   assert.equal(baselineUrls.includes("http://croxyproxy.com/"), false, "HTTPS-only priority sites should not spend a second Safari filter slot");

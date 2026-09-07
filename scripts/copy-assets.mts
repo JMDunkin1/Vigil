@@ -11,6 +11,7 @@ const socialIcons = [
     name: "youtube.png",
     source: ["Icons", "youtube-webclip.png"]
   },
+  { name: "linkedin.png", source: ["Icons", "linkedin.png"] },
   { name: "snapchat.png", source: ["Icons", "snapchat.png"] }
 ];
 

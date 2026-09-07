@@ -5,6 +5,7 @@ import type { FocusedSocialPlatformId } from "./types.js";
 
 const RUNTIME_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const ICON_FILES: Record<FocusedSocialPlatformId, string> = {
+  linkedin: "linkedin.png",
   instagram: "instagram.png",
   youtube: "youtube.png",
   snapchat: "snapchat.png"

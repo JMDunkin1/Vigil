@@ -237,7 +237,11 @@ final class VigilBrowserTests: XCTestCase {
             filter.decide(try XCTUnwrap(URL(string: "https://example.com/#/search/porn"))),
             .block(reason: "That search is blocked by Vigil.")
         )
-        for query in ["Ari Kytsya leaks", "ari kytsya leaks", "nude Ari Kytsya", "Ari Kytsya naked"] {
+        for query in [
+            "Ari Kytsya leaks", "ari kytsya leaks", "nude Ari Kytsya", "Ari Kytsya naked",
+            "ari kytsya nud", "nud ari kytsya", "ari nud kytsya", "ari kytsya nuds",
+            "ari kytsya leks", "leakd ari kytsya", "ari leakd kytsya", "ari kytsya prno"
+        ] {
             var components = URLComponents(string: "https://www.google.com/search")!
             components.queryItems = [URLQueryItem(name: "q", value: query)]
             XCTAssertEqual(
@@ -248,7 +252,9 @@ final class VigilBrowserTests: XCTestCase {
         }
         for query in [
             "memory leaks javascript", "roof water leaks", "iphone 18 leaks",
-            "Supreme Court leaks", "Panama Papers leaks", "nude color palette"
+            "Supreme Court leaks", "Panama Papers leaks", "nude color palette",
+            "nude art figure drawing", "naked mole rat", "nude lipstick shade",
+            "memory leks javascript tutorial", "NUD command reference"
         ] {
             var components = URLComponents(string: "https://www.google.com/search")!
             components.queryItems = [URLQueryItem(name: "q", value: query)]

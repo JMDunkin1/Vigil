@@ -37,16 +37,28 @@ interface FocusedSocialPlatformDefinition {
 export const IOS_SOCIAL_COMPANION_BUNDLE_IDS = {
   instagram: "tech.caseline.vigil.instagram",
   youtube: "tech.caseline.vigil.youtube",
-  snapchat: "tech.caseline.vigil.snapchat"
+  snapchat: "tech.caseline.vigil.snapchat",
+  linkedin: "tech.caseline.vigil.linkedin"
 } as const satisfies Record<FocusedSocialPlatformId, string>;
 
 export const IOS_SOCIAL_COMPANION_APPS = [
   { id: "instagram", label: "Instagram", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.instagram },
   { id: "youtube", label: "YouTube", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.youtube },
-  { id: "snapchat", label: "Snapchat", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.snapchat }
+  { id: "snapchat", label: "Snapchat", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.snapchat },
+  { id: "linkedin", label: "LinkedIn", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.linkedin }
 ] as const;
 
 export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
+  {
+    id: "linkedin", label: "LinkedIn", nativeBundleId: "com.linkedin.LinkedIn",
+    features: [{
+      key: "shorts", label: "Immersive video feed", permanent: true,
+      // The fixed companion enforces these routes in native navigation and
+      // at document start. Do not evict existing priority adult/proxy blocks
+      // from Apple's already-full 500-entry system deny list.
+      deniedUrls: []
+    }]
+  },
   {
     id: "instagram",
     label: "Instagram",
@@ -219,6 +231,7 @@ export function defaultFocusedSocialSettings(): FocusedSocialSettings {
   return {
     enabled: true,
     forceWebClips: true,
+    linkedin: { enabled: false, shorts: true, explore: false, suggested: false, ads: false },
     instagram: {
       enabled: true,
       reels: true,
@@ -255,6 +268,10 @@ export function normalizeFocusedSocialSettings(value: unknown = {}, existing: Pa
     forceWebClips: body.forceWebClips === undefined ? current.forceWebClips !== false : parseBoolean(body.forceWebClips, true),
     instagram: normalizeInstagramSettings(recordValue(body.instagram), current.instagram, defaults.instagram),
     youtube: normalizeYoutubeSettings(recordValue(body.youtube), current.youtube, defaults.youtube),
+    linkedin: {
+      enabled: body.linkedin === undefined ? current.linkedin.enabled : parseBoolean(recordValue(body.linkedin).enabled, current.linkedin.enabled),
+      shorts: true, explore: false, suggested: false, ads: false
+    },
     snapchat: normalizeSnapchatSettings(recordValue(body.snapchat), current.snapchat, defaults.snapchat)
   };
 }
@@ -285,7 +302,7 @@ export function withoutFocusedSocialDeniedUrls(values: readonly unknown[]): stri
 
 export function focusedSocialBrowserCleanupEnabled(value: unknown): boolean {
   const settings = normalizeFocusedSocialSettings(value);
-  return Boolean(settings.enabled && (settings.instagram.enabled || settings.youtube.enabled || settings.snapchat.enabled));
+  return Boolean(settings.enabled && (settings.instagram.enabled || settings.youtube.enabled || settings.snapchat.enabled || settings.linkedin.enabled));
 }
 
 export function focusedSocialBrowserCleanupSettings(value: unknown): FocusedSocialSettings {
@@ -352,6 +369,7 @@ function mergeFocusedSocialSettings(defaults: FocusedSocialSettings, existing: P
   return {
     enabled: existing.enabled === undefined ? defaults.enabled : Boolean(existing.enabled),
     forceWebClips: existing.forceWebClips === undefined ? defaults.forceWebClips : Boolean(existing.forceWebClips),
+    linkedin: { ...defaults.linkedin, ...(recordValue(existing.linkedin) as Partial<FocusedSocialSettings["linkedin"]>) },
     instagram: {
       ...defaults.instagram,
       ...(recordValue(existing.instagram) as Partial<FocusedSocialSettings["instagram"]>)

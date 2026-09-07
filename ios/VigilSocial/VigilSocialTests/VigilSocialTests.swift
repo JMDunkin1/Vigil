@@ -6,7 +6,82 @@ import WebKit
 
 final class VigilSocialTests: XCTestCase {
     @MainActor
+    private static var retainedCompanionValidationFixtures: [(UIWindow, WKWebView)] = []
+
+    @MainActor
     private static var retainedYouTubeMiniplayerFixtures: [(UIWindow, WKWebView)] = []
+
+    func testLinkedInNavigationPolicy() throws {
+        for path in ["/video", "/video/123", "/shorts/1", "/feed/video/123", "/feed/immersive/"] {
+            XCTAssertTrue(SocialService.linkedin.isRestrictedSurface(try XCTUnwrap(URL(string: "https://www.linkedin.com\(path)"))), path)
+        }
+        for path in ["/feed/", "/messaging/", "/jobs/", "/in/member/", "/feed/update/urn:li:activity:123", "/login", "/checkpoint/challenge/"] {
+            XCTAssertFalse(SocialService.linkedin.isRestrictedSurface(try XCTUnwrap(URL(string: "https://www.linkedin.com\(path)"))), path)
+        }
+        for value in ["https://www.linkedin.com.evil.test/", "https://example.com/", "http://www.linkedin.com/", "https://www.linkedin.com:444/"] {
+            XCTAssertFalse(SocialService.linkedin.allowsNavigation(to: try XCTUnwrap(URL(string: value))))
+        }
+        XCTAssertTrue(SocialService.linkedin.usesUnmodifiedAuthenticationDocument(URL(string: "https://www.linkedin.com/checkpoint/challenge/")))
+        XCTAssertFalse(SocialService.linkedin.usesUnmodifiedAuthenticationDocument(URL(string: "https://www.linkedin.com/feed/")))
+    }
+
+    @MainActor
+    func testLinkedInRemovesVideoDiscoveryAndPreservesOrdinaryControls() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.documentStartScript(for: .linkedin, unclassifiedMediaPolicy: .revealUnclassified, audioEnabled: true, contentSafetyEnabled: false),
+            injectionTime: .atDocumentStart, forMainFrameOnly: false
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 800), configuration: configuration)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        let viewController = UIViewController()
+        window.rootViewController = viewController
+        viewController.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString("""
+            <html><body>
+              <nav><a id="video" href="/video/">Video</a><a id="jobs" href="/jobs/">Jobs</a></nav>
+              <main><article id="post">Ordinary post</article>
+                <button id="upload">Video</button><a id="message" href="/messaging/">Messages</a>
+                <section class="video-discovery" id="discovery">Videos for you</section>
+              </main>
+            </body></html>
+            """, baseURL: URL(string: "https://www.linkedin.com/feed/"))
+        try await waitForJavaScriptCondition("Boolean(document.querySelector('#post') && window.__vigilLinkedInInstalled)", in: webView)
+        let result = try await evaluateJavaScriptRetryingKnownGestureTransition("""
+            ['video','discovery','jobs','post','upload','message'].map(id => getComputedStyle(document.getElementById(id)).display !== 'none')
+            """, in: webView) as? [Bool]
+        XCTAssertEqual(result, [false, false, true, true, true, true])
+        _ = try await evaluateJavaScriptRetryingKnownGestureTransition("""
+            const link = document.createElement('a'); link.id = 'dynamic'; link.href='/feed/immersive/1'; link.textContent='Watch'; document.body.appendChild(link); true;
+            """, in: webView)
+        try await waitForJavaScriptCondition("getComputedStyle(document.getElementById('dynamic')).display === 'none'", in: webView)
+    }
+
+    @MainActor
+    func testSnapchatLoginDocumentRemainsUnmodified() async throws {
+        let controller = WKUserContentController()
+        for script in [
+            DOMAdapters.documentStartScript(for: .snapchat, unclassifiedMediaPolicy: .conceal, audioEnabled: true),
+            DOMAdapters.script(for: .snapchat, audioEnabled: true)
+        ] {
+            controller.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        }
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 800), configuration: configuration)
+        webView.loadHTMLString("<html><body><form id='login'>Log in<input name='username'></form></body></html>", baseURL: URL(string: "https://accounts.snapchat.com/v2/login"))
+        try await waitForJavaScriptCondition("Boolean(document.getElementById('login'))", in: webView)
+        let untouched = try await webView.evaluateJavaScript("""
+            !window.__vigilDocumentID && !window.__vigilCommonInstalled
+              && !document.querySelector('style[id^="vigil-"]')
+              && getComputedStyle(document.getElementById('login')).visibility === 'visible'
+            """) as? Bool
+        XCTAssertEqual(untouched, true)
+    }
 
     func testGeneratedJavaScriptParses() throws {
         let context = try XCTUnwrap(JSContext())
@@ -20,7 +95,10 @@ final class VigilSocialTests: XCTestCase {
                 audioEnabled: false
             ),
             DOMAdapters.script(for: .instagram, audioEnabled: true),
-            DOMAdapters.script(for: .youtube, audioEnabled: false)
+            DOMAdapters.script(for: .youtube, audioEnabled: false),
+            DOMAdapters.script(for: .linkedin, audioEnabled: true),
+            DOMAdapters.documentStartScript(for: .linkedin, unclassifiedMediaPolicy: .revealUnclassified, audioEnabled: true),
+            DOMAdapters.script(for: .snapchat, audioEnabled: true)
         ]
         for script in scripts {
             context.exception = nil
@@ -4855,6 +4933,13 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("instagramLookupTimeoutMilliseconds = 4000"))
         XCTAssertTrue(script.contains("maxConcurrentFriendshipLookups = 3"))
         XCTAssertTrue(script.contains("return viewerFollows && followsViewer"))
+        XCTAssertTrue(script.contains("homeCardStableRelationships"))
+        XCTAssertTrue(script.contains("data-vigil-instagram-home-relationship=\"refreshing\""))
+        XCTAssertTrue(script.contains("homeFeedRegionRefreshTimers"))
+        XCTAssertTrue(script.contains("storyRailViewportStates"))
+        XCTAssertTrue(script.contains("window.require('PolarisInstapi')"))
+        XCTAssertTrue(script.contains("/api/v1/web/search/topsearch/"))
+        XCTAssertTrue(script.contains("/api/v1/friendships/show_many/"))
         XCTAssertTrue(script.contains("/api/v1/friendships/show/"))
         XCTAssertTrue(script.contains("return null"))
         XCTAssertTrue(script.contains("Nothing from your friends yet."))
@@ -5009,6 +5094,467 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(state?["friendVisible"] as? Bool, true)
         XCTAssertEqual(state?["otherCollapsed"] as? Bool, true)
         XCTAssertEqual(state?["railPosition"] as? Double, state?["railMaximum"] as? Double)
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
+    func testInstagramCurrentRelationshipAPIRevealsFriendPostsAndStories() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.script(
+                for: .instagram,
+                audioEnabled: true,
+                contentSafetyEnabled: false
+            ),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let loaded = expectation(description: "Current Instagram relationship API fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            #"""
+            <html><head><script>
+              window.fixtureRelationshipPosts = 0;
+              window.fetch = async input => {
+                const url = new URL(input, location.href);
+                if (url.pathname.includes('/accounts/current_user/')) {
+                  return { ok: true, status: 200, json: async () => ({ user: { username: 'viewer' } }) };
+                }
+                if (url.pathname.includes('/web/search/topsearch/')) {
+                  const username = url.searchParams.get('query');
+                  return { ok: true, status: 200, json: async () => ({ users: [{ user: {
+                    pk: `id-${username}`,
+                    username,
+                    friendship_status: { following: true }
+                  } }] }) };
+                }
+                if (url.pathname.includes('/friendships/show/')) {
+                  window.fixtureRelationshipPosts += 1;
+                  const id = url.pathname.split('/').filter(Boolean).at(-1);
+                  return { ok: true, status: 200, json: async () => ({
+                    following: true,
+                    followed_by: id === 'id-friend'
+                  }) };
+                }
+                if (url.pathname.includes('/users/web_profile_info/')) {
+                  return { ok: false, status: 429, json: async () => ({}) };
+                }
+                throw new Error(`unexpected request: ${url.pathname}`);
+              };
+            </script></head><body>
+              <nav><a href="/viewer/" aria-label="Profile">Profile</a></nav>
+              <main>
+                <div role="list">
+                  <a id="friend-story" href="/stories/friend/1/"><img alt="friend's profile picture"></a>
+                  <a id="other-story" href="/stories/other/1/"><img alt="other's profile picture"></a>
+                </div>
+                <article id="friend-post"><a href="/friend/">friend</a><p>Friend post</p></article>
+                <article id="other-post"><a href="/other/">other</a><p>Other post</p></article>
+              </main>
+            </body></html>
+            """#,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+        try await Task.sleep(nanoseconds: 750_000_000)
+
+        let state = try await webView.evaluateJavaScript(
+            #"""
+            (() => ({
+              friendPostVisible: getComputedStyle(document.getElementById('friend-post')).display !== 'none',
+              otherPostHidden: getComputedStyle(document.getElementById('other-post')).display === 'none',
+              friendStoryVisible: document.getElementById('friend-story').getBoundingClientRect().width > 0,
+              otherStoryHidden: getComputedStyle(document.getElementById('other-story')).display === 'none',
+              friendStoryRelationship: document.getElementById('friend-story').dataset.vigilInstagramStoryRelationship,
+              relationshipPosts: window.fixtureRelationshipPosts
+            }))()
+            """#
+        ) as? [String: Any]
+        XCTAssertEqual(state?["friendPostVisible"] as? Bool, true)
+        XCTAssertEqual(state?["otherPostHidden"] as? Bool, true)
+        XCTAssertEqual(state?["friendStoryVisible"] as? Bool, true)
+        XCTAssertEqual(state?["otherStoryHidden"] as? Bool, true)
+        XCTAssertEqual(state?["friendStoryRelationship"] as? String, "friend")
+        XCTAssertGreaterThanOrEqual(state?["relationshipPosts"] as? Int ?? 0, 2)
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
+    func testInstagramTransientCarouselMutationPreservesVerifiedPostLayoutAndPosition() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.script(for: .instagram, audioEnabled: true, contentSafetyEnabled: false),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let fixtureWindow = UIWindow(frame: webView.frame)
+        fixtureWindow.rootViewController = UIViewController()
+        fixtureWindow.rootViewController?.view.addSubview(webView)
+        fixtureWindow.isHidden = false
+        defer {
+            webView.removeFromSuperview()
+            fixtureWindow.isHidden = true
+        }
+        let loaded = expectation(description: "Instagram transient carousel mutation fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            #"""
+            <html><head><style>
+              body { margin: 0; }
+              #before { height: 500px; }
+              #stream { min-height: 2400px; }
+              #post { height: 520px; }
+              #carousel { width: 360px; overflow-x: auto; }
+              #slides { width: 1200px; height: 420px; }
+            </style><script>
+              window.fetch = async input => {
+                const url = new URL(input, location.href);
+                if (url.pathname.includes('/accounts/current_user/')) {
+                  return { ok: true, status: 200, json: async () => ({ user: { username: 'viewer' } }) };
+                }
+                if (url.pathname.includes('/web/search/topsearch/')) {
+                  const username = url.searchParams.get('query');
+                  return { ok: true, status: 200, json: async () => ({ users: [{ user: {
+                    pk: `id-${username}`, username, friendship_status: { following: true }
+                  } }] }) };
+                }
+                if (url.pathname.includes('/friendships/show/')) {
+                  return { ok: true, status: 200, json: async () => ({ following: true, followed_by: true }) };
+                }
+                throw new Error(`unexpected request: ${url.pathname}`);
+              };
+            </script></head><body>
+              <nav><a href="/viewer/" aria-label="Profile">Profile</a></nav>
+              <main><div id="before"></div><div id="stream">
+                <article id="post">
+                  <header><a id="author" href="/friend/">friend</a></header>
+                  <div id="carousel"><div id="slides"><img id="media" alt="carousel item one"></div></div>
+                </article>
+              </div></main>
+            </body></html>
+            """#,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+        try await Task.sleep(nanoseconds: 600_000_000)
+
+        _ = try await webView.evaluateJavaScript(
+            #"""
+            (() => {
+              const post = document.getElementById('post');
+              if (post.dataset.vigilInstagramHomeRelationship !== 'friend') {
+                throw new Error(`post was not verified: ${post.dataset.vigilInstagramHomeRelationship}`);
+              }
+              const carousel = document.getElementById('carousel');
+              carousel.scrollLeft = 420;
+              scrollTo(0, 700);
+              post.insertAdjacentHTML(
+                'afterbegin',
+                '<a id="tagged" href="/tagged/" style="position:absolute">tagged</a>'
+              );
+              document.getElementById('author').removeAttribute('href');
+              document.getElementById('media').setAttribute('alt', 'carousel item two');
+            })()
+            """#
+        )
+        try await Task.sleep(nanoseconds: 50_000_000)
+
+        let refreshing = try await webView.evaluateJavaScript(
+            #"""
+            (() => {
+              const post = document.getElementById('post');
+              const carousel = document.getElementById('carousel');
+              return {
+                relationship: post.dataset.vigilInstagramHomeRelationship,
+                display: getComputedStyle(post).display,
+                visibility: getComputedStyle(post).visibility,
+                height: post.getBoundingClientRect().height,
+                carousel: carousel.scrollLeft,
+                vertical: scrollY
+              };
+            })()
+            """#
+        ) as? [String: Any]
+        XCTAssertEqual(refreshing?["relationship"] as? String, "refreshing")
+        XCTAssertNotEqual(refreshing?["display"] as? String, "none")
+        XCTAssertEqual(refreshing?["visibility"] as? String, "hidden")
+        XCTAssertEqual(refreshing?["height"] as? Double, 520)
+        XCTAssertEqual(refreshing?["carousel"] as? Double, 420)
+        XCTAssertEqual(refreshing?["vertical"] as? Double, 700)
+
+        _ = try await webView.evaluateJavaScript(
+            "document.getElementById('author').setAttribute('href', '/friend/')"
+        )
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let restored = try await webView.evaluateJavaScript(
+            #"""
+            (() => ({
+              relationship: document.getElementById('post').dataset.vigilInstagramHomeRelationship,
+              visible: getComputedStyle(document.getElementById('post')).visibility !== 'hidden',
+              carousel: document.getElementById('carousel').scrollLeft,
+              vertical: scrollY
+            }))()
+            """#
+        ) as? [String: Any]
+        XCTAssertEqual(restored?["relationship"] as? String, "friend")
+        XCTAssertEqual(restored?["visible"] as? Bool, true)
+        XCTAssertEqual(restored?["carousel"] as? Double, 420)
+        XCTAssertEqual(restored?["vertical"] as? Double, 700)
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
+    func testInstagramVirtualFeedRecyclingPreservesOpenRegionAndVerticalPosition() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.script(for: .instagram, audioEnabled: true, contentSafetyEnabled: false),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let fixtureWindow = UIWindow(frame: webView.frame)
+        fixtureWindow.rootViewController = UIViewController()
+        fixtureWindow.rootViewController?.view.addSubview(webView)
+        fixtureWindow.isHidden = false
+        defer { fixtureWindow.isHidden = true }
+        let loaded = expectation(description: "Instagram virtual feed recycling fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            #"""
+            <html><head><style>
+              body { margin: 0; }
+              #before { height: 500px; }
+              #stream { min-height: 2400px; }
+              article { height: 520px; }
+            </style><script>
+              window.fetch = async input => {
+                const url = new URL(input, location.href);
+                if (url.pathname.includes('/accounts/current_user/')) {
+                  return { ok: true, status: 200, json: async () => ({ user: { username: 'viewer' } }) };
+                }
+                if (url.pathname.includes('/web/search/topsearch/')) {
+                  const username = url.searchParams.get('query');
+                  return { ok: true, status: 200, json: async () => ({ users: [{ user: {
+                    pk: `id-${username}`, username, friendship_status: { following: true }
+                  } }] }) };
+                }
+                if (url.pathname.includes('/friendships/show/id-friend2/')) {
+                  return new Promise(resolve => {
+                    window.releaseFriend2 = () => resolve({
+                      ok: true, status: 200,
+                      json: async () => ({ following: true, followed_by: true })
+                    });
+                  });
+                }
+                if (url.pathname.includes('/friendships/show/')) {
+                  return { ok: true, status: 200, json: async () => ({ following: true, followed_by: true }) };
+                }
+                throw new Error(`unexpected request: ${url.pathname}`);
+              };
+            </script></head><body>
+              <nav><a href="/viewer/" aria-label="Profile">Profile</a></nav>
+              <main><div id="before"></div><div id="stream">
+                <article id="post"><a href="/friend/">friend</a></article>
+              </div></main>
+            </body></html>
+            """#,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+        try await Task.sleep(nanoseconds: 600_000_000)
+
+        _ = try await webView.evaluateJavaScript(#"""
+            (() => {
+              const stream = document.getElementById('stream');
+              if (stream.dataset.vigilInstagramFeedRegion !== 'open') {
+                throw new Error(`stream was not open: ${stream.dataset.vigilInstagramFeedRegion}`);
+              }
+              scrollTo(0, 700);
+              stream.innerHTML = '<article id="post2"><a href="/friend2/">friend2</a></article>';
+            })()
+            """#)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let refreshing = try await webView.evaluateJavaScript(#"""
+            (() => {
+              const stream = document.getElementById('stream');
+              return {
+                state: stream.dataset.vigilInstagramFeedRegion,
+                display: getComputedStyle(stream).display,
+                visibility: getComputedStyle(stream).visibility,
+                height: stream.getBoundingClientRect().height,
+                vertical: scrollY,
+                releasable: typeof window.releaseFriend2 === 'function'
+              };
+            })()
+            """#) as? [String: Any]
+        XCTAssertEqual(refreshing?["state"] as? String, "refreshing")
+        XCTAssertNotEqual(refreshing?["display"] as? String, "none")
+        XCTAssertEqual(refreshing?["visibility"] as? String, "hidden")
+        XCTAssertEqual(refreshing?["height"] as? Double, 2400)
+        XCTAssertEqual(refreshing?["vertical"] as? Double, 700)
+        XCTAssertEqual(refreshing?["releasable"] as? Bool, true)
+
+        _ = try await webView.evaluateJavaScript("window.releaseFriend2()")
+        try await Task.sleep(nanoseconds: 120_000_000)
+        let reopened = try await webView.evaluateJavaScript(#"""
+            (() => ({
+              state: document.getElementById('stream').dataset.vigilInstagramFeedRegion,
+              post: document.getElementById('post2').dataset.vigilInstagramHomeRelationship,
+              visible: getComputedStyle(document.getElementById('stream')).visibility !== 'hidden',
+              vertical: scrollY
+            }))()
+            """#) as? [String: Any]
+        XCTAssertEqual(reopened?["state"] as? String, "open")
+        XCTAssertEqual(reopened?["post"] as? String, "friend")
+        XCTAssertEqual(reopened?["visible"] as? Bool, true)
+        XCTAssertEqual(reopened?["vertical"] as? Double, 700)
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
+    func testInstagramStoryPaginationPreservesVisibleAccountAnchor() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.script(for: .instagram, audioEnabled: true, contentSafetyEnabled: false),
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(
+            frame: CGRect(x: 0, y: 0, width: 390, height: 844),
+            configuration: configuration
+        )
+        let loaded = expectation(description: "Instagram Story pagination anchor fixture loaded")
+        let navigationDelegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = navigationDelegate
+        webView.loadHTMLString(
+            #"""
+            <html><head><style>
+              #rail { width: 200px; overflow-x: auto; }
+              #stories { display: flex; width: max-content; margin: 0; padding: 0; }
+              #stories > li { flex: 0 0 100px; width: 100px; list-style: none; }
+              a { display: block; width: 100px; height: 90px; }
+            </style><script>
+              window.fetch = async input => {
+                const url = new URL(input, location.href);
+                if (url.pathname.includes('/accounts/current_user/')) {
+                  return { ok: true, status: 200, json: async () => ({ user: { username: 'viewer' } }) };
+                }
+                if (url.pathname.includes('/web/search/topsearch/')) {
+                  const username = url.searchParams.get('query');
+                  return { ok: true, status: 200, json: async () => ({ users: [{ user: {
+                    pk: `id-${username}`, username, friendship_status: { following: true }
+                  } }] }) };
+                }
+                if (url.pathname.includes('/friendships/show/id-newfriend/')) {
+                  return new Promise(resolve => {
+                    window.releaseNewStory = () => resolve({
+                      ok: true, status: 200,
+                      json: async () => ({ following: true, followed_by: true })
+                    });
+                  });
+                }
+                if (url.pathname.includes('/friendships/show/')) {
+                  return { ok: true, status: 200, json: async () => ({ following: true, followed_by: true }) };
+                }
+                throw new Error(`unexpected request: ${url.pathname}`);
+              };
+            </script></head><body>
+              <nav><a href="/viewer/" aria-label="Profile">Profile</a></nav>
+              <main><div id="rail"><ul id="stories" role="list">
+                <li><a href="/stories/viewer/1/" aria-label="Your story"><img alt="viewer's profile picture"></a></li>
+                <li id="friend-a"><a href="/stories/frienda/1/"><img alt="frienda's profile picture"></a></li>
+                <li><a href="/stories/friendb/1/"><img alt="friendb's profile picture"></a></li>
+              </ul></div></main>
+            </body></html>
+            """#,
+            baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/"))
+        )
+        await fulfillment(of: [loaded], timeout: 5)
+        try await Task.sleep(nanoseconds: 600_000_000)
+
+        _ = try await webView.evaluateJavaScript(#"""
+            (() => {
+              const rail = document.getElementById('rail');
+              rail.scrollLeft = 100;
+              rail.dispatchEvent(new Event('scroll'));
+            })()
+            """#)
+        try await Task.sleep(nanoseconds: 30_000_000)
+        _ = try await webView.evaluateJavaScript(#"""
+            document.getElementById('friend-a').insertAdjacentHTML(
+              'beforebegin',
+              '<li id="new-friend"><a href="/stories/newfriend/1/"><img alt="newfriend\'s profile picture"></a></li>'
+            )
+            """#)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let pending = try await webView.evaluateJavaScript(#"""
+            (() => {
+              const rail = document.getElementById('rail');
+              const offset = document.getElementById('friend-a').getBoundingClientRect().left
+                - rail.getBoundingClientRect().left;
+              return { scroll: rail.scrollLeft, offset,
+                releasable: typeof window.releaseNewStory === 'function' };
+            })()
+            """#) as? [String: Any]
+        XCTAssertEqual(pending?["scroll"] as? Double, 100)
+        XCTAssertEqual(pending?["offset"] as? Double, 0)
+        XCTAssertEqual(pending?["releasable"] as? Bool, true)
+
+        _ = try await webView.evaluateJavaScript("window.releaseNewStory()")
+        try await Task.sleep(nanoseconds: 120_000_000)
+        let settled = try await webView.evaluateJavaScript(#"""
+            (() => {
+              const rail = document.getElementById('rail');
+              const offset = document.getElementById('friend-a').getBoundingClientRect().left
+                - rail.getBoundingClientRect().left;
+              return {
+                scroll: rail.scrollLeft,
+                offset,
+                relationship: document.querySelector('#new-friend a').dataset.vigilInstagramStoryRelationship
+              };
+            })()
+            """#) as? [String: Any]
+        XCTAssertEqual(settled?["relationship"] as? String, "friend")
+        XCTAssertEqual(settled?["scroll"] as? Double, 200)
+        XCTAssertEqual(settled?["offset"] as? Double, 0)
+
+        // Reproduce a compositor scroll whose event has not reached the adapter
+        // when a DOM mutation causes another normalization pass.
+        _ = try await webView.evaluateJavaScript(#"""
+            window.holdStoryScroll = event => {
+              if (event.target.id === 'rail') event.stopImmediatePropagation();
+            };
+            window.addEventListener('scroll', window.holdStoryScroll, true);
+            document.getElementById('rail').scrollLeft = 40;
+            document.getElementById('friend-a').appendChild(document.createElement('span'));
+            true;
+            """#)
+        try await Task.sleep(nanoseconds: 250_000_000)
+        let swiped = try await webView.evaluateJavaScript("document.getElementById('rail').scrollLeft") as? Double
+        XCTAssertEqual(swiped, 40, "A pending scroll event must not let anchoring undo the user's swipe")
+        _ = try await webView.evaluateJavaScript("window.removeEventListener('scroll', window.holdStoryScroll, true)")
         webView.navigationDelegate = nil
     }
 
@@ -5297,6 +5843,12 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(probe.paths.last, "/stories/friendtwo", "Advance must skip the filtered account, not close all Stories")
         let deniedHidden = try await webView.evaluateJavaScript("getComputedStyle(document.body).visibility === 'hidden'") as? Bool
         XCTAssertEqual(deniedHidden, true, "The skipped account must never be revealed")
+        let navigationsBeforeUnmountedAccount = probe.paths.count
+        _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/stories/unmountedother/1/');")
+        try await Task.sleep(nanoseconds: 250_000_000)
+        XCTAssertGreaterThan(probe.paths.count, navigationsBeforeUnmountedAccount)
+        XCTAssertEqual(probe.paths.last, "/stories/friendtwo", "An unmounted filtered account must resume after the active friend")
+
         _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/stories/friendtwo/1/');")
         for _ in 0..<20 {
             let active = try await webView.evaluateJavaScript(
@@ -5392,6 +5944,7 @@ final class VigilSocialTests: XCTestCase {
                 sameFriend: originalFriend === document.getElementById('friend'),
                 sameProfile: originalProfile === document.getElementById('profile'),
                 sameAppearance: avatarAppearance() === originalAppearance,
+                ringUnclipped: getComputedStyle(document.getElementById('friend-slot')).overflow === 'visible',
                 ownVisible: originalProfile.getBoundingClientRect().width > 0,
                 friendVisible: originalFriend.getBoundingClientRect().width > 0,
                 otherHidden: document.getElementById('other-slot').getBoundingClientRect().width === 0,
@@ -5401,7 +5954,7 @@ final class VigilSocialTests: XCTestCase {
               };
             })()
             """#) as? [String: Any]
-        for key in ["sameFriend", "sameProfile", "sameAppearance", "ownVisible", "friendVisible", "otherHidden"] {
+        for key in ["sameFriend", "sameProfile", "sameAppearance", "ringUnclipped", "ownVisible", "friendVisible", "otherHidden"] {
             XCTAssertEqual(state?[key] as? Bool, true, key)
         }
         XCTAssertEqual(state?["generatedRows"] as? Int, 0, "Never replace Instagram's native row")

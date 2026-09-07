@@ -102,8 +102,8 @@ try {
   assert.equal(deployment.artifactOnly, true);
   assert.equal(deployment.requiresManageEngineUploadAndAssignment, true);
   const companionApps = recordValue(summary.companionApps, "companion app summary");
-  assert.equal(companionApps.appCount, 3);
-  assert.deepEqual(companionApps.labels, ["Instagram", "YouTube", "Snapchat"]);
+  assert.equal(companionApps.appCount, 4);
+  assert.deepEqual(companionApps.labels, ["Instagram", "YouTube", "Snapchat", "LinkedIn"]);
   assert.deepEqual(companionApps.bundleIds, Object.values(IOS_SOCIAL_COMPANION_BUNDLE_IDS));
   assert.deepEqual(companionApps.apps, IOS_SOCIAL_COMPANION_APPS.map((app) => ({ ...app })));
   const retiredLauncher = recordValue(summary.launcherProfile, "retired launcher summary");

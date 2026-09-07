@@ -35,6 +35,9 @@ export function buildBlockedPageUrl(options: BlockedPageUrlOptions = {}): string
 export function blockedPageDisplayLabel(value: unknown): string {
   const label = String(value || "").replace(/\s+/gu, " ").trim().slice(0, 80);
   if (!label) return "This page";
+  // Keep internal policy identifiers useful to diagnostics without presenting
+  // them as awkward prose on the user-facing block screen.
+  if (label === "person-intimate-exposure") return "Search";
   // Apple's managed web filter inspects the complete requested URL. Never put
   // a denied hostname or path into Vigil's own blocker URL just to display it.
   if (/[:/?#@%]/u.test(label) || /[a-z0-9-]+(?:\.[a-z0-9-]+)+/iu.test(label)) {

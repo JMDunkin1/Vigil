@@ -75,7 +75,8 @@
     "install:agent": "npm run build && node dist/runtime/scripts/install-launch-agent.mjs",
     "uninstall:agent": "npm run build && node dist/runtime/scripts/uninstall-launch-agent.mjs",
     "install:system-guardian": "npm run build && sudo env PATH=\"$PATH\" node dist/runtime/scripts/install-system-guardian.mjs",
-    "retire:legacy-guardians": "npm run build && node dist/runtime/scripts/retire-legacy-guardians.mjs"
+    "retire:legacy-guardians": "npm run build && node dist/runtime/scripts/retire-legacy-guardians.mjs",
+    "agent:update:linkedin": "node scripts/ios-phone-suite.mjs update --edition personal --app linkedin"
   },
   "engines": {
     "node": ">=22.6"

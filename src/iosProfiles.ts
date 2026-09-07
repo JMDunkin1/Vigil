@@ -42,6 +42,10 @@ const MIN_PRIORITY_DOMAIN_BREADTH = 200;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_ID_KEYS = new Set(IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS.map((value) => value.toLowerCase()));
 const IOS_EXPLICIT_SEARCH_TERM_KEYS = new Set(DEFAULT_EXPLICIT_SEARCH_TERMS.map(normalizedExplicitSearchTerm));
+// The companion filter can recognize these typo variants directly. Avoid
+// spending seven scarce BuiltIn-filter URL slots per typo and displacing the
+// higher-priority domain overlay from Apple's 500-entry deny list.
+const IOS_COMPANION_ONLY_EXPLICIT_SEARCH_TERM_KEYS = new Set(["prno", "p0rn"]);
 const IOS_PRIORITY_BLOCKED_SITE_KEYS = new Set([
   ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES,
   ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES
@@ -75,7 +79,9 @@ const IOS_SOCIAL_COMPANION_ALLOWED_URLS = [
   "https://www.snapchat.com/",
   "https://www.snapchat.com/web/",
   "https://web.snapchat.com/",
-  "https://accounts.snapchat.com/"
+  "https://accounts.snapchat.com/",
+  "https://linkedin.com/",
+  "https://www.linkedin.com/"
 ];
 const IOS_PANIC_ALLOWED_URLS = [
   "http://127.0.0.1/",
@@ -444,7 +450,9 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     && focusedSocialEnforcementActive
     && appMode !== "allowlist";
   const permanentDeniedUrls = urlsFromPatterns([
-    ...DEFAULT_EXPLICIT_SEARCH_TERMS,
+    ...DEFAULT_EXPLICIT_SEARCH_TERMS.filter((term) => (
+      !IOS_COMPANION_ONLY_EXPLICIT_SEARCH_TERM_KEYS.has(normalizedExplicitSearchTerm(term))
+    )),
     ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS
   ]).concat(urlsFromSiteTargets(DEFAULT_EXPLICIT_BLOCKED_SITES));
   const policyDeniedUrls = [
@@ -770,6 +778,7 @@ function priorityUrlsFromSiteTargets(values: readonly unknown[]): string[] {
 function urlsForExplicitSearchTerm(value: unknown): string[] {
   const term = normalizedExplicitSearchTerm(value);
   if (!term || !IOS_EXPLICIT_SEARCH_TERM_KEYS.has(term)) return [];
+  if (IOS_COMPANION_ONLY_EXPLICIT_SEARCH_TERM_KEYS.has(term)) return [];
   const encoded = encodeURIComponent(term);
   const prefixes = [...IOS_EXPLICIT_SEARCH_URL_PREFIXES];
   if (IOS_ARCHIVE_EXPLICIT_SEARCH_TERM_KEYS.has(term)) prefixes.push(IOS_ARCHIVE_EXPLICIT_SEARCH_URL_PREFIX);

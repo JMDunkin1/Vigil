@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { appleContentFilterStatus } from "./appleContentFilter.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { vigilLocalSiteAllowList } from "./blockedPageUrl.js";
-import { CONTENT_FILTER_RULES, contentFilterEnabled } from "./contentFilters.js";
+import { contentFilterEnabled, contentFilterRuleEntries } from "./contentFilters.js";
 import { DATA_DIR } from "./store.js";
 import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, normalizeHost, normalizeUrlPattern } from "./policy.js";
@@ -125,11 +125,9 @@ export function safariFilterTargets(state: VigilState, now = new Date()): Safari
     }
   }
 
-  if (policy && contentFilterEnabled(state)) {
-    for (const rule of CONTENT_FILTER_RULES) {
-      for (const filter of rule.urlFilters) {
-        targets.push(...contentFilterTargetUrls(filter, `content-filter:${rule.id}`));
-      }
+  if (contentFilterEnabled(state)) {
+    for (const rule of contentFilterRuleEntries(state, policy)) {
+      targets.push(...contentFilterTargetUrls(rule.urlFilter, `content-filter:${rule.id}`));
     }
   }
 
