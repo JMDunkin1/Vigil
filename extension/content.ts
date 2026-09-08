@@ -1797,3 +1797,16 @@ function removeCookiePrompts() {
     }
   }
 }
+
+// Capture actual external-link clicks in the isolated extension world. A URL's
+// query string or missing referrer never grants a discovery exemption.
+document.addEventListener("click", (event) => {
+  if (!event.isTrusted || isYoutubeHost()) return;
+  const target = event.target instanceof Element ? event.target.closest("a[href]") : null;
+  if (!(target instanceof HTMLAnchorElement)) return;
+  try {
+    const url = new URL(target.href);
+    const id = url.hostname === "youtu.be" ? url.pathname.slice(1) : /^(www\.|m\.)?youtube\.com$/.test(url.hostname) ? url.searchParams.get("v") : null;
+    if (id && /^[a-zA-Z0-9_-]{11}$/.test(id)) void chrome.runtime.sendMessage({ type: "VIGIL_YOUTUBE", youtube: { action: "external", videoId: id } });
+  } catch { /* Navigation remains subject to the playback gate. */ }
+}, true);

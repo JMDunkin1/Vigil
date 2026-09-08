@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { youtubeBuildConfiguration } from "./youtube-build-connection.mjs";
 
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -150,7 +151,9 @@ async function main(): Promise<void> {
     return;
   }
   await assertGeneratedIosContentPolicyCurrent();
-  await run("xcodebuild", buildArguments(argv));
+  const options = parseOptions(argv);
+  const configuration = ["youtube", "instagram"].includes(options.service) ? await youtubeBuildConfiguration() : null;
+  await run("xcodebuild", [...buildArguments(argv), ...(configuration ? [`VIGIL_YOUTUBE_CONNECTION_FILE=${configuration}`] : [])]);
 }
 
 function isService(value: string): value is keyof typeof services {

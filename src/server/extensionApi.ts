@@ -1,3 +1,5 @@
+import { youtubeTokenMatches } from "../youtubeConnection.js";
+import { youtubeAction } from "../youtubeLimits.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { apiRequestGuard, extensionCorsHeaders, extensionTrustSummary, isTrustedExtensionRequest } from "../apiSecurity.js";
 import type { RequestTransportContext } from "../apiSecurity.js";
@@ -42,6 +44,17 @@ export async function handleExtensionApiRoute(
     const extensionGuard = extensionRouteGuard(method, path, request);
     if (!extensionGuard.ok) sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" });
     else sendEmpty(response, 204, extensionResponseCorsHeaders(request));
+    return true;
+  }
+
+  if (method === "POST" && path === "/api/extension/youtube") {
+    if (!trustedExtensionRequest(request) && !youtubeTokenMatches(request.headers["x-vigil-extension-token"])) {
+      sendJson(response, 403, { error: "Trusted companion required." }, extensionResponseCorsHeaders(request));
+      return true;
+    }
+    const result = youtubeAction(state, await readBody(request));
+    await persistExtensionChanges(context, true, { state: true });
+    sendJson(response, 200, result, extensionResponseCorsHeaders(request));
     return true;
   }
 

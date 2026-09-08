@@ -147,7 +147,7 @@ interface ExtensionPauseActionMessage {
   replacement?: unknown;
 }
 
-interface ExtensionMessage extends ExtensionPulseMessage, ExtensionPauseActionMessage {}
+interface ExtensionMessage extends ExtensionPulseMessage, ExtensionPauseActionMessage { youtube?: Record<string, unknown> }
 
 interface ExtensionCheckResult {
   ok?: boolean;
@@ -293,6 +293,22 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse: (response?: unknown) => void) => {
+  if (message?.type === "VIGIL_YOUTUBE") {
+    const youtubeRequest = (async () => {
+      const source = new URL(sender.url || "about:blank");
+      const youtube = /^(www\.|m\.)?youtube\.com$/.test(source.hostname);
+      const body: Record<string, unknown> = { ...message.youtube, client: `chrome:${sender.tab?.id}:${sender.documentId || ""}` };
+      if (body.action === "external" ? youtube : !youtube) throw new Error("Invalid YouTube request origin.");
+      const response = await fetchVigil("/api/extension/youtube", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
+      });
+      if (!response.ok) throw new Error("Connect to Vigil to continue watching.");
+      return response.json();
+    })();
+    void youtubeRequest.then(sendResponse).catch(() => sendResponse({ ok: false, message: "Connect to Vigil to continue watching." }));
+    return true;
+  }
+
   if (message?.type === "VIGIL_PULSE") {
     void checkUrl(sender.tab?.id, message.url || "", message.reason || "heartbeat", message.seconds, message.title, {
       deferTabAction: true,

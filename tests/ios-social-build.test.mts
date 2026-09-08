@@ -218,7 +218,7 @@ assert.match(socialWebViewStoreSource, /if loadInitialPages \{ _ = webView\(for:
   "the fixed YouTube target must create and load its persistent WKWebView");
 assert.match(
   socialWebViewStoreSource,
-  /webViews\[service\] = webView[\s\S]*?webView\.load\(URLRequest\(url: service\.homeURL\)\)[\s\S]*?let refreshControl = UIRefreshControl\(\)/u,
+  /webViews\[service\] = webView[\s\S]*?webView\.load\(URLRequest\(url: initialURL\)\)[\s\S]*?let refreshControl = UIRefreshControl\(\)/u,
   "cold-launch navigation must begin before nonessential scroll chrome is configured"
 );
 assert.match(
@@ -681,7 +681,7 @@ assert.deepEqual(youtubeInteractionManifest.host_permissions, [
 ], "the interaction extension must stay confined to its maintained YouTube, Reddit, and X surfaces");
 assert.deepEqual(
   youtubeInteractionManifest.content_scripts?.[0]?.js,
-  ["youtube-parity.js"],
+  ["youtube-parity.js", "youtube-limits.js"],
   "the interaction extension must ship its tested parity script"
 );
 assert.doesNotMatch(youtubeInteractionSource, /youtubeMinimize|MiniPlayer|miniplayer/u,

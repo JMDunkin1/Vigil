@@ -1,3 +1,4 @@
+import { youtubeTokenMatches } from "./youtubeConnection.js";
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { truthy } from "./booleans.js";
@@ -10,6 +11,7 @@ export const EXTENSION_ID_HEADER = "x-vigil-extension-id";
 export const EXTENSION_TOKEN_HEADER = "x-vigil-extension-token";
 
 const EXTENSION_API_PATHS = new Set([
+  "/api/extension/youtube",
   "/api/extension/check",
   "/api/extension/rules",
   "/api/extension/rules/sync",
@@ -66,6 +68,7 @@ interface DeviceUsageAuthorizationInput extends RequestTransportContext {
 
 export function apiRequestGuard({ method = "GET", path = "", headers = {}, remoteAddress = null, trustedLoopback = false }: GuardInput): GuardResult {
   const normalizedMethod = String(method || "GET").toUpperCase();
+  if (path === "/api/extension/youtube" && youtubeTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER)) && isJsonContentType(headerValue(headers, "content-type"))) return allow();
   if (EXTENSION_API_PATHS.has(path)) return extensionApiRequestGuard({ method: normalizedMethod, headers, remoteAddress, trustedLoopback });
   if (DEVICE_SYNC_API_PATHS.has(path)) return allow();
   if (!isMutationMethod(normalizedMethod)) return allow();
@@ -137,6 +140,7 @@ function localMutationGuard({ method = "GET", headers = {}, remoteAddress = null
 }
 
 export function publicHostGuard({ path = "", headers = {}, remoteAddress = null, trustedLoopback = false }: GuardInput): GuardResult {
+  if (path === "/api/extension/youtube" && youtubeTokenMatches(headerValue(headers, EXTENSION_TOKEN_HEADER))) return allow();
   if (String(path || "").startsWith("/mdm/")) return allow();
   if (DEVICE_SYNC_API_PATHS.has(path)) return allow();
   if (isDirectLoopbackRequest(headers, { remoteAddress, trustedLoopback })) return allow();

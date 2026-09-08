@@ -496,6 +496,7 @@ export function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnap
     appLockLedger: state.appLockLedger || {},
     adultBlocklist: protectedAdultBlocklist(state.adultBlocklist || {}),
     intentionalUse: protectedIntentionalUse(state.intentionalUse || {}),
+    ...(state.youtubeLimits ? { youtubeLimits: state.youtubeLimits } : {}),
     extension: protectedExtension(state.extension || {}),
     keyholder: state.keyholder || {},
     distanceKey: state.distanceKey || {},

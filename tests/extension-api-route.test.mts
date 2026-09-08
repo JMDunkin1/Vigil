@@ -388,3 +388,23 @@ try {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
+
+{
+  const youtubeState = defaultState();
+  const denied = response();
+  await handleExtensionApiRoute(request("POST", "/api/extension/youtube", {
+    host: "127.0.0.1:8787", "content-type": "application/json"
+  }, { action: "save", videoId: "video000000" }), denied, new URL("http://127.0.0.1:8787/api/extension/youtube"), { state: youtubeState, usage: {}, requestPersistence() {} });
+  assert.equal(denied.statusCodeValue, 403);
+  assert.equal(youtubeState.youtubeLimits, undefined);
+  let persisted = false;
+  const saved = response();
+  await handleExtensionApiRoute(request("POST", "/api/extension/youtube", {
+    host: "127.0.0.1:8787", origin: `chrome-extension://${BUILT_IN_CHROME_EXTENSION_ID}`, "content-type": "application/json"
+  }, { action: "save", videoId: "video000000" }), saved, new URL("http://127.0.0.1:8787/api/extension/youtube"), {
+    state: youtubeState, usage: {}, requestPersistence() { persisted = true; }
+  });
+  assert.equal(saved.statusCodeValue, 200);
+  assert.equal(JSON.parse(saved.bodyText).slots[0].videoId, "video000000");
+  assert.equal(persisted, true, "playback authorization and slot changes require durable coordinated persistence");
+}

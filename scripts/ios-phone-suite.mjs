@@ -81,7 +81,10 @@ const PHONE_SOURCE_FILES = [
   "src/socialFeatureFilters.ts",
   "src/socialIconAssets.ts",
   "src/store.ts",
-  "src/types.ts"
+  "src/types.ts",
+  "src/youtubeConnection.ts",
+  "src/youtubeLimits.ts",
+  "scripts/youtube-build-connection.mts"
 ];
 const REQUIRED_SOCIAL_APPS = [
   { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" },
@@ -280,6 +283,10 @@ export async function socialAppImplementationFingerprint(appId) {
   const socialRoot = join(ROOT, "ios", "VigilSocial");
   const files = await filesBelow(socialRoot, (path) => isSocialAppImplementationFile(path, appId));
   files.push(join(ROOT, "ios", "Shared", "PersonalTeam.entitlements"));
+  if (appId === "youtube" || appId === "instagram") {
+    const connection = join(process.env.VIGIL_DATA_DIR || join(ROOT, "data"), "youtube-connection.json");
+    if (await isFile(connection)) files.push(connection);
+  }
   const unique = [...new Set(files)].sort();
   const digest = createHash("sha256");
   digest.update(`app:${appId}\n`);
@@ -299,7 +306,7 @@ export function isSocialAppImplementationFile(path, appId) {
   if (normalized.endsWith(".md") || normalized.includes("/VigilSocialTests/")) return false;
   if (normalized.includes("/xcuserdata/") || normalized.endsWith("/.DS_Store")) return false;
   if (appId === "youtube" && normalized.includes("/VigilYouTubeInteractionExtension/")) {
-    return normalized.endsWith(`/Resources/${YOUTUBE_INTERACTION_EXTENSION.scriptName}`);
+    return /\/Resources\/[^/]+\.js$/.test(normalized);
   }
   return true;
 }
@@ -1434,6 +1441,11 @@ async function buildPhoneApps(
       `MARKETING_VERSION=${appRelease.version}`,
       `CURRENT_PROJECT_VERSION=${appRelease.build}`
     ];
+    if (social.id === "youtube" || social.id === "instagram") {
+      const { youtubeBuildConfiguration } = await import(pathToFileURL(join(ROOT, "dist/runtime/scripts/youtube-build-connection.mjs")).href);
+      const youtubeConfiguration = await youtubeBuildConfiguration();
+      socialArguments.push(`VIGIL_YOUTUBE_CONNECTION_FILE=${youtubeConfiguration}`);
+    }
     if (reducedEntitlements) {
       socialArguments.push(
         `CODE_SIGN_ENTITLEMENTS=${personalTeamEntitlements}`,
@@ -1584,7 +1596,23 @@ async function verifyBundledExplicitContentPolicy(appPath, expected) {
   return actual;
 }
 
+async function verifyYouTubeLimitsResources(bundlePath, safari = false) {
+  const names = safari ? ["youtube-limits.js", "youtube-background.js"] : ["youtube-limits.js"];
+  for (const name of names) {
+    const source = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name));
+    const bundled = await readFile(join(bundlePath, name));
+    if (!source.equals(bundled)) throw new Error(`Refusing to install stale YouTube limits: ${name}.`);
+  }
+  const { ensureYouTubeConnection } = await import(pathToFileURL(join(ROOT, "dist/runtime/src/youtubeConnection.js")).href);
+  const expected = await ensureYouTubeConnection();
+  const bundled = JSON.parse(await readFile(join(bundlePath, "youtube-connection.json"), "utf8"));
+  if (bundled.server !== expected.server || bundled.token !== expected.token) {
+    throw new Error("Refusing to install a YouTube companion with mismatched authority credentials.");
+  }
+}
+
 async function verifyBundledYouTubeParityScript(appPath) {
+  await verifyYouTubeLimitsResources(appPath);
   const sourcePath = join(
     ROOT,
     "ios", "VigilSocial", "VigilYouTubeInteractionExtension", "Resources",
@@ -1606,6 +1634,7 @@ async function verifyBundledYouTubeParityScript(appPath) {
 
 async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIdentifier) {
   const extensionPath = join(appPath, "PlugIns", YOUTUBE_INTERACTION_EXTENSION.productName);
+  await verifyYouTubeLimitsResources(extensionPath, true);
   const infoPath = join(extensionPath, "Info.plist");
   const manifestPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.manifestName);
   const scriptPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.scriptName);
@@ -1646,10 +1675,13 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   ];
   const scripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
   const contractValid = JSON.stringify(manifest?.host_permissions) === JSON.stringify(expectedHosts)
-    && scripts.length === 1
+    && scripts.length === 2
     && JSON.stringify(scripts[0]?.matches) === JSON.stringify(expectedHosts)
-    && JSON.stringify(scripts[0]?.js) === JSON.stringify([YOUTUBE_INTERACTION_EXTENSION.scriptName])
-    && scripts[0]?.all_frames === false;
+    && JSON.stringify(scripts[0]?.js) === JSON.stringify([YOUTUBE_INTERACTION_EXTENSION.scriptName, "youtube-limits.js"])
+    && scripts[0]?.all_frames === false
+    && scripts[1]?.all_frames === true
+    && JSON.stringify(scripts[1]?.matches) === JSON.stringify(expectedHosts.slice(0, 3))
+    && JSON.stringify(scripts[1]?.js) === JSON.stringify(["youtube-limits.js"]);
   const source = scriptBytes.toString("utf8");
   if (!contractValid
     || !source.includes("enterFullscreen")

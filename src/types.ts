@@ -812,6 +812,7 @@ export interface DeviceControlsState {
 }
 
 export interface VigilState {
+  youtubeLimits?: import("./youtubeLimits.js").YouTubeDay;
   version: number;
   createdAt: string;
   settings: AppSettings;

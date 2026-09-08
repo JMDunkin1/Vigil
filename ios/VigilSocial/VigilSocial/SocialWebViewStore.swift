@@ -117,9 +117,25 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     func open(_ url: URL) {
         guard let service = SocialService.resolve(url), service == fixedService else { return }
         let scheme = url.scheme?.lowercased() ?? ""
-        let destination = scheme == "vigilsocial" || scheme.hasPrefix("vigil-") ? service.homeURL : url
+        var destination = scheme == "vigilsocial" || scheme.hasPrefix("vigil-") ? service.homeURL : url
+        if service == .youtube {
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            let candidate = url.host == "youtu.be" ? url.lastPathComponent : components?.queryItems?.first(where: { $0.name == "v" })?.value
+            if let id = candidate, id.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil,
+               let normalized = URL(string: "https://m.youtube.com/watch?v=\(id)") {
+                destination = normalized
+            }
+        }
         guard service.allowsNavigation(to: destination), !service.isRestrictedSurface(destination) else { return }
-        webView(for: fixedService).load(URLRequest(url: destination))
+        if service == .youtube,
+           let id = URLComponents(url: destination, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "v" })?.value {
+            Task { @MainActor in
+                _ = await YouTubeLimitsConnection.send(["action": "external", "videoId": id], bundle: bundle)
+                webView(for: fixedService).load(URLRequest(url: destination))
+            }
+        } else {
+            webView(for: fixedService).load(URLRequest(url: destination))
+        }
     }
 
     func webView(for requestedService: SocialService) -> WKWebView {
@@ -131,6 +147,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             Task { @MainActor in self?.handle(message, service: service) }
         }
         controller.add(bridge, name: "vigil")
+        if service == .youtube {
+            controller.add(bridge, name: "vigilYouTube")
+            if let resource = bundle.url(forResource: "youtube-limits", withExtension: "js"),
+               let source = try? String(contentsOf: resource, encoding: .utf8) {
+                controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+            }
+        }
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.documentStartScript(
                 for: service,
@@ -409,6 +432,25 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             guard origin.protocol.lowercased() == "https",
                   origin.host.lowercased() == url.host?.lowercased(),
                   origin.port == 0 || origin.port == requestedPort else { return }
+        }
+        if message.name == "vigilYouTube" {
+            guard service == .youtube, frame.isMainFrame,
+                  ["youtube.com", "www.youtube.com", "m.youtube.com"].contains(url.host?.lowercased() ?? ""),
+                  let envelope = message.body as? [String: Any],
+                  let requestID = envelope["requestId"] as? String,
+                  UUID(uuidString: requestID) != nil,
+                  var body = envelope["body"] as? [String: Any],
+                  body["action"] as? String != "external" else { return }
+            body["client"] = "ios:" + (body["client"] as? String ?? "").prefix(100)
+            let originalURL = message.webView?.url
+            Task { @MainActor [weak webView = message.webView] in
+                let result = await YouTubeLimitsConnection.send(body, bundle: self.bundle)
+                guard let webView, webView.url == originalURL,
+                      let bytes = try? JSONSerialization.data(withJSONObject: [requestID, result]),
+                      let json = String(data: bytes, encoding: .utf8) else { return }
+                _ = try? await webView.evaluateJavaScript("window.__vigilYouTubeReply?.(...\(json))")
+            }
+            return
         }
         let payload = message.body
         guard let body = payload as? [String: Any], let type = body["type"] as? String else { return }

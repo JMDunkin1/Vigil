@@ -603,3 +603,7 @@ assert.deepEqual(deployedBlocklistProblems({
     blocklistDomainCount: readyBlocklist.domainCount
   }]
 }, readyBlocklist, ["app.one"]), []);
+
+assert.equal(isSocialAppImplementationFile(
+  "/repo/ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-limits.js", "youtube"
+), true, "YouTube limits must participate in the independent companion update fingerprint");

@@ -25,6 +25,7 @@ await copyAssetDir("public");
 await copyAssetDir("extension");
 await makeExtensionScriptsClassic();
 await copySocialIcons();
+await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-limits.js"), join(runtimeRoot, "extension/youtube-limits.js"));
 
 async function copyProjectFile(path: string): Promise<void> {
   const from = join(projectRoot, path);

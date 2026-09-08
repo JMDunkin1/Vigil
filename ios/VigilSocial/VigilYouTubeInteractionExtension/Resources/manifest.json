@@ -16,22 +16,50 @@
     "https://twitter.com/*",
     "https://*.twitter.com/*"
   ],
-  "content_scripts": [{
-    "matches": [
-      "https://youtube.com/*",
-      "https://www.youtube.com/*",
-      "https://m.youtube.com/*",
-      "https://reddit.com/*",
-      "https://*.reddit.com/*",
-      "https://redd.it/*",
-      "https://*.redd.it/*",
-      "https://x.com/*",
-      "https://*.x.com/*",
-      "https://twitter.com/*",
-      "https://*.twitter.com/*"
+  "content_scripts": [
+    {
+      "matches": [
+        "https://youtube.com/*",
+        "https://www.youtube.com/*",
+        "https://m.youtube.com/*",
+        "https://reddit.com/*",
+        "https://*.reddit.com/*",
+        "https://redd.it/*",
+        "https://*.redd.it/*",
+        "https://x.com/*",
+        "https://*.x.com/*",
+        "https://twitter.com/*",
+        "https://*.twitter.com/*"
+      ],
+      "js": [
+        "youtube-parity.js",
+        "youtube-limits.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://youtube.com/*",
+        "https://www.youtube.com/*",
+        "https://m.youtube.com/*"
+      ],
+      "js": [
+        "youtube-limits.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "permissions": [
+    "nativeMessaging",
+    "webNavigation",
+    "storage"
+  ],
+  "background": {
+    "scripts": [
+      "youtube-background.js"
     ],
-    "js": ["youtube-parity.js"],
-    "run_at": "document_start",
-    "all_frames": false
-  }]
+    "persistent": false
+  }
 }

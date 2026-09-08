@@ -1,3 +1,4 @@
+import { ensureYouTubeConnection, youtubeTokenMatches } from "./youtubeConnection.js";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
@@ -92,6 +93,8 @@ let state: VigilState = defaultState();
 let usage: UsageState = {};
 let monitor: MonitorHandle | null = null;
 let server: Server | null = null;
+let youtubeServer: Server | null = null;
+let youtubeRetry: NodeJS.Timeout | null = null;
 let activeHost = DEFAULT_HOST;
 let activePort = PORT;
 let appUpdateController: AppUpdateController | null = null;
@@ -247,10 +250,43 @@ export async function startVigilRuntime(options: ServerOptions = {}): Promise<Vi
     requestMutationAdmission = { accepting: true };
     monitor.start();
     runtimeStarted = true;
+    if (options.systemEffects !== "isolated") await startYouTubeNetwork();
   } else if (options.appUpdate) {
     appUpdateController = options.appUpdate;
   }
   return runtimeHandle();
+}
+
+
+async function startYouTubeNetwork(): Promise<void> {
+  if (youtubeServer || runtimeStopping) return;
+  try {
+    await ensureYouTubeConnection();
+    const listener = createServer((request, response) => {
+      if (request.url !== "/api/extension/youtube" || request.method !== "POST" || !youtubeTokenMatches(request.headers["x-vigil-extension-token"])) {
+        sendJson(response, 403, { error: "Trusted YouTube companion required." });
+        return;
+      }
+      void trackRuntimeRequest(() => requestHandler(request, response)).catch(error => {
+        if (!response.headersSent) sendJson(response, 500, serializeError(error));
+      });
+    });
+    listener.requestTimeout = 5000;
+    listener.headersTimeout = 5000;
+    await new Promise<void>((resolve, reject) => {
+      listener.once("error", reject);
+      listener.listen(8789, "0.0.0.0", () => { listener.removeListener("error", reject); resolve(); });
+    });
+    listener.on("error", error => console.error("YouTube companion connection failed.", error.message));
+    youtubeServer = listener;
+  } catch (error) {
+    if (!runtimeStopping && !youtubeRetry) {
+      youtubeRetry = setTimeout(() => { youtubeRetry = null; void startYouTubeNetwork(); }, 5000);
+      youtubeRetry.unref();
+    }
+    // A network setup failure must never take Vigil's enforcement offline.
+    console.error("YouTube sharing is unavailable; phone playback will stay paused.", error instanceof Error ? error.message : String(error));
+  }
 }
 
 export async function recoverStartupContinuity(
@@ -878,6 +914,8 @@ async function performShutdown({ exit = true }: { exit?: boolean } = {}): Promis
     runtimeStopping = false;
     throw error;
   }
+  if (youtubeRetry) { clearTimeout(youtubeRetry); youtubeRetry = null; }
+  if (youtubeServer) { youtubeServer.closeAllConnections(); youtubeServer.close(); youtubeServer = null; }
   await closeListeningServer(activeServer);
   server = null;
   monitor = null;
