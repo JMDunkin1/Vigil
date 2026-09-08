@@ -27,7 +27,7 @@
     if (window.webkit?.messageHandlers?.vigilYouTube) {
       const requestId = crypto.randomUUID();
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { pending.delete(requestId); reject(new Error('Connect to Vigil to continue watching.')); }, 4500);
+        const timer = setTimeout(() => { pending.delete(requestId); reject(new Error('Vigil did not respond. Check Local Network access in iPhone Settings, then tap Retry.')); }, 6500);
         pending.set(requestId, value => { clearTimeout(timer); resolve(value); });
         window.webkit.messageHandlers.vigilYouTube.postMessage({ requestId, body });
       });
@@ -126,7 +126,15 @@
     panel = document.createElement('section'); panel.id = 'vigil-youtube-limits';
     const shadow = panel.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = ':host{display:block!important;position:relative!important;z-index:2147483646!important;background:#17201c!important;color:#fff!important;font:14px system-ui!important;padding:14px!important}button{background:#d5efb9;color:#17201c;border:0;border-radius:6px;padding:7px 10px;margin:4px;cursor:pointer}summary{cursor:pointer}div{margin:5px 0}a{color:inherit}';
+    style.textContent = `
+      :host{display:block!important;position:relative!important;z-index:2100!important;
+        background:var(--yt-spec-base-background,#fff)!important;color:var(--yt-spec-text-primary,#0f0f0f)!important;
+        font:14px Roboto,Arial,sans-serif!important;padding:12px 16px!important;border-bottom:1px solid var(--yt-spec-10-percent-layer,rgba(0,0,0,.1))!important;color-scheme:light dark}
+      strong{display:block;font-size:13px;font-weight:500;line-height:20px}button{font:500 13px Roboto,Arial,sans-serif;background:var(--yt-spec-badge-chip-background,rgba(127,127,127,.14));color:inherit;border:0;border-radius:18px;min-height:36px;padding:0 14px;margin:6px 6px 0 0;cursor:pointer}
+      button:hover{background:rgba(127,127,127,.25)}button:focus-visible,summary:focus-visible{outline:2px solid #3ea6ff;outline-offset:2px}
+      summary{cursor:pointer;font-size:13px;padding:8px 0;color:var(--yt-spec-text-secondary,#606060)}details>div>div{padding:8px 0;border-top:1px solid rgba(127,127,127,.15);line-height:20px}
+      [role=status]:empty{display:none}[role=status]{font-size:13px;line-height:20px;margin-top:8px}a{color:inherit}
+      @media(prefers-color-scheme:dark){:host{background:var(--yt-spec-base-background,#0f0f0f)!important;color:var(--yt-spec-text-primary,#f1f1f1)!important}summary{color:var(--yt-spec-text-secondary,#aaa)}}`;
     statusLine = document.createElement('strong'); statusLine.textContent = 'Watch Later · Connecting to Vigil…';
     message = document.createElement('div'); message.setAttribute('role', 'status');
     slots = document.createElement('div');
@@ -135,7 +143,8 @@
     shadow.append(style, statusLine, message, details,
       button('Save this video', async () => { const id = currentID(); if (id) await save(id, document.title); }),
       button('Play this video', async () => { intent = currentID(); await begin(); }),
-      button('Pause', async () => { intent = ''; await stop(); }));
+      button('Pause', async () => { intent = ''; await stop(); }),
+      button('Retry', async () => { show('Connecting to Vigil…'); await request({ action: 'status' }); show(''); }));
     document.documentElement.prepend(panel);
     void request({ action: 'status' }).catch(error => show(error.message));
   }
@@ -157,7 +166,7 @@
       if (!state?.feeds[name]) { requestedFeed = name; await request({ action: 'feed', feed: name, cards }); }
       if (feedName() !== name || feedPanel) return;
       feedPanel = document.createElement('section'); feedPanel.id = 'vigil-daily-feed';
-      feedPanel.style.cssText = 'display:grid;gap:16px;padding:20px;background:#fff;color:#17201c;position:relative;z-index:2147483645';
+      feedPanel.style.cssText = 'display:grid;gap:16px;padding:20px;background:var(--yt-spec-base-background,#fff);color:var(--yt-spec-text-primary,#0f0f0f);font:14px Roboto,Arial,sans-serif;position:relative;z-index:2100';
       for (const card of state?.feeds[name] || []) {
         const row = document.createElement('article'), title = document.createElement('div');
         title.textContent = card.title;

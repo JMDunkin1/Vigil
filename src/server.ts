@@ -275,7 +275,7 @@ async function startYouTubeNetwork(): Promise<void> {
     listener.headersTimeout = 5000;
     await new Promise<void>((resolve, reject) => {
       listener.once("error", reject);
-      listener.listen(8789, "0.0.0.0", () => { listener.removeListener("error", reject); resolve(); });
+      listener.listen(8789, "::", () => { listener.removeListener("error", reject); resolve(); });
     });
     listener.on("error", error => console.error("YouTube companion connection failed.", error.message));
     youtubeServer = listener;

@@ -15,7 +15,7 @@ enum YouTubeLimitsConnection {
               components.user == nil, components.password == nil,
               components.scheme == "https" || (components.scheme == "http" && (host.hasSuffix(".local") || host == "localhost" || host == "127.0.0.1")),
               !token.isEmpty, !token.contains("$(") else {
-            return ["ok": false, "message": "Connect to Vigil to continue watching."]
+            return ["ok": false, "message": "This app needs its Vigil connection configured. Update the YouTube companion from Vigil on your Mac."]
         }
         components.path = "/api/extension/youtube"
         components.query = nil
@@ -34,11 +34,18 @@ enum YouTubeLimitsConnection {
             let (data, response) = try await session.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200,
                   let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return ["ok": false, "message": "Connect to Vigil to continue watching."]
+                return ["ok": false, "message": (response as? HTTPURLResponse)?.statusCode == 403 ? "This app’s Vigil connection is out of date. Update the YouTube companion from your Mac." : "Vigil could not complete this request. Tap Retry."]
             }
             return value
         } catch {
-            return ["ok": false, "message": "Connect to Vigil to continue watching."]
+            let failure = error as NSError
+            let text: String
+            if failure.code == NSURLErrorNotConnectedToInternet {
+                text = "Allow Local Network access for Vigil YouTube in iPhone Settings, then connect to the same Wi-Fi as your Mac and tap Retry."
+            } else {
+                text = "Cannot reach Vigil on your Mac. Keep the Mac awake, connect both devices to the same Wi-Fi, and tap Retry."
+            }
+            return ["ok": false, "message": text]
         }
     }
     private final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
