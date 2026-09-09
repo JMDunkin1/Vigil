@@ -681,7 +681,7 @@ assert.deepEqual(youtubeInteractionManifest.host_permissions, [
 ], "the interaction extension must stay confined to its maintained YouTube, Reddit, and X surfaces");
 assert.deepEqual(
   youtubeInteractionManifest.content_scripts?.[0]?.js,
-  ["youtube-parity.js", "youtube-limits.js"],
+  ["youtube-parity.js"],
   "the interaction extension must ship its tested parity script"
 );
 assert.doesNotMatch(youtubeInteractionSource, /youtubeMinimize|MiniPlayer|miniplayer/u,

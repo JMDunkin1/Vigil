@@ -32,8 +32,7 @@
         "https://*.twitter.com/*"
       ],
       "js": [
-        "youtube-parity.js",
-        "youtube-limits.js"
+        "youtube-parity.js"
       ],
       "run_at": "document_start",
       "all_frames": false
@@ -45,10 +44,23 @@
         "https://m.youtube.com/*"
       ],
       "js": [
-        "youtube-limits.js"
+        "youtube-bridge.js"
       ],
       "run_at": "document_start",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "https://youtube.com/*",
+        "https://www.youtube.com/*",
+        "https://m.youtube.com/*"
+      ],
+      "js": [
+        "youtube-limits.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
     }
   ],
   "permissions": [

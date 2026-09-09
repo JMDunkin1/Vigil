@@ -148,7 +148,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
         controller.add(bridge, name: "vigil")
         if service == .youtube {
-            controller.add(bridge, name: "vigilYouTube")
+            controller.addScriptMessageHandler(YouTubeLimitsMessageBridge(bundle: bundle), contentWorld: .page, name: "vigilYouTube")
             if let resource = bundle.url(forResource: "youtube-limits", withExtension: "js"),
                let source = try? String(contentsOf: resource, encoding: .utf8) {
                 controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false))
@@ -432,25 +432,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             guard origin.protocol.lowercased() == "https",
                   origin.host.lowercased() == url.host?.lowercased(),
                   origin.port == 0 || origin.port == requestedPort else { return }
-        }
-        if message.name == "vigilYouTube" {
-            guard service == .youtube, frame.isMainFrame,
-                  ["youtube.com", "www.youtube.com", "m.youtube.com"].contains(url.host?.lowercased() ?? ""),
-                  let envelope = message.body as? [String: Any],
-                  let requestID = envelope["requestId"] as? String,
-                  UUID(uuidString: requestID) != nil,
-                  var body = envelope["body"] as? [String: Any],
-                  body["action"] as? String != "external" else { return }
-            body["client"] = "ios:" + (body["client"] as? String ?? "").prefix(100)
-            let originalURL = message.webView?.url
-            Task { @MainActor [weak webView = message.webView] in
-                let result = await YouTubeLimitsConnection.send(body, bundle: self.bundle)
-                guard let webView, webView.url == originalURL,
-                      let bytes = try? JSONSerialization.data(withJSONObject: [requestID, result]),
-                      let json = String(data: bytes, encoding: .utf8) else { return }
-                _ = try? await webView.evaluateJavaScript("window.__vigilYouTubeReply?.(...\(json))")
-            }
-            return
         }
         let payload = message.body
         guard let body = payload as? [String: Any], let type = body["type"] as? String else { return }
@@ -1429,5 +1410,29 @@ private final class ScriptMessageBridge: NSObject, WKScriptMessageHandler {
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         handler(message)
+    }
+}
+
+// WebKit owns the reply channel, including during document-start navigation.
+// Do not inject callbacks into a URL that may have changed while awaiting I/O.
+@MainActor
+private final class YouTubeLimitsMessageBridge: NSObject, WKScriptMessageHandlerWithReply {
+    private let bundle: Bundle
+    init(bundle: Bundle) { self.bundle = bundle }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage,
+                               replyHandler: @escaping (Any?, String?) -> Void) {
+        let origin = message.frameInfo.securityOrigin
+        guard message.frameInfo.isMainFrame, origin.protocol == "https",
+              ["youtube.com", "www.youtube.com", "m.youtube.com"].contains(origin.host.lowercased()),
+              let envelope = message.body as? [String: Any],
+              var body = envelope["body"] as? [String: Any],
+              body["action"] as? String != "external" else {
+            replyHandler(["ok": false, "message": "Open YouTube in the Vigil app to use Watch Later."], nil)
+            return
+        }
+        body["client"] = "ios:" + (body["client"] as? String ?? "").prefix(100)
+        Task { @MainActor in
+            replyHandler(await YouTubeLimitsConnection.send(body, bundle: bundle), nil)
+        }
     }
 }

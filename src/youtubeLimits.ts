@@ -9,7 +9,7 @@ export const YOUTUBE_FULL = "Watch Later is full. Replace an unwatched video to 
 export const YOUTUBE_USED = "You’ve used all four Watch Later slots today.";
 export const YOUTUBE_TIME = "You’ve reached today’s watch time.";
 export interface YouTubeSlot { videoId: string; title: string; locked: boolean; removed: boolean }
-export interface YouTubeCard { videoId: string; title: string }
+export interface YouTubeCard { videoId: string; title: string; channel?: string; duration?: string }
 interface Lease { id: string; client: string; videoId: string; milliseconds: number; settledMs: number; expiresAt: number }
 export interface YouTubeDay {
   day: string;
@@ -18,13 +18,14 @@ export interface YouTubeDay {
   played: Record<string, number>;
   usedMs: number;
   grace: { status: "unused" | "active" | "ended"; videoId: string | null; usedMs: number };
+  feedMode?: "native";
   feeds: Partial<Record<"home" | "subscriptions", YouTubeCard[]>>;
   external: string[];
   lease: Lease | null;
 }
 export interface YouTubeRequest {
   action?: unknown; client?: unknown; videoId?: unknown; title?: unknown;
-  replace?: unknown; feed?: unknown; cards?: unknown; leaseId?: unknown;
+  replace?: unknown; mode?: unknown; feed?: unknown; cards?: unknown; leaseId?: unknown;
   playedMs?: unknown; ended?: unknown;
 }
 function videoId(value: unknown): string {
@@ -98,15 +99,23 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
     }
     case "feed": {
       if (input.feed !== "home" && input.feed !== "subscriptions") return result(false, "Invalid feed.");
-      if (!day.feeds[input.feed] && Array.isArray(input.cards) && input.cards.length) {
-        const cards: YouTubeCard[] = [];
+      // One-time migration away from the discarded custom-card feed. Playback
+      // time and the four-slot ledger are never reset by this UI migration.
+      if (input.mode === "native" && day.feedMode !== "native") { day.feeds = {}; day.feedMode = "native"; }
+      if (Array.isArray(input.cards)) {
+        const cards = day.feeds[input.feed] ||= [];
         for (const item of input.cards.slice(0, 100)) {
           if (!item || typeof item !== "object") continue;
           const id = videoId(item.videoId);
-          if (id && !cards.some((card) => card.videoId === id)) cards.push({ videoId: id, title: String(item.title || id).slice(0, 200) });
-          if (cards.length === 20) break;
+          const title = String(item.title || "").trim().slice(0, 200);
+          if (!id || !title || /^(?:\d+:)+\d+$/.test(title) || title === id) continue;
+          const existing = cards.find(card => card.videoId === id);
+          const metadata = { title, channel: String(item.channel || "").slice(0, 150), duration: String(item.duration || "").slice(0, 30) };
+          // Repair metadata without changing the persistent daily IDs or order.
+          if (existing) Object.assign(existing, metadata);
+          else if (cards.length < 20) cards.push({ videoId: id, ...metadata });
+          for (const saved of day.slots) if (saved?.videoId === id) saved.title = title;
         }
-        if (cards.length) day.feeds[input.feed] = cards;
       }
       return result();
     }

@@ -79,6 +79,7 @@
 		910000000000000000000008 /* YouTube limits in Resources */ = {isa = PBXBuildFile; fileRef = 920000000000000000000003; };
         910000000000000000000009 /* YouTube connection in Resources */ = {isa = PBXBuildFile; fileRef = 920000000000000000000004; };
         91000000000000000000000A /* YouTube connection in Resources */ = {isa = PBXBuildFile; fileRef = 920000000000000000000004; };
+		91000000000000000000000B /* YouTube bridge in Resources */ = {isa = PBXBuildFile; fileRef = 920000000000000000000005; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -176,6 +177,7 @@
 		920000000000000000000002 /* youtube-limits.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "VigilYouTubeInteractionExtension/Resources/youtube-limits.js"; sourceTree = SOURCE_ROOT; };
 		920000000000000000000003 /* youtube-background.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "VigilYouTubeInteractionExtension/Resources/youtube-background.js"; sourceTree = SOURCE_ROOT; };
         920000000000000000000004 /* youtube-connection.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = "youtube-connection.json"; path = "$(VIGIL_YOUTUBE_CONNECTION_FILE)"; sourceTree = "<absolute>"; };
+		920000000000000000000005 /* youtube-bridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "VigilYouTubeInteractionExtension/Resources/youtube-bridge.js"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -492,7 +494,7 @@
 		A40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (910000000000000000000009, 910000000000000000000006, A10000000000000000000007 /* icon.png in Resources */, A10000000000000000000008 /* instagram.png in Resources */, A10000000000000000000009 /* youtube.png in Resources */, A1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, A1000000000000000000000D /* Assets.xcassets in Resources */, A1000000000000000000000F /* ExplicitContentPolicy.json in Resources */, A10000000000000000000010 /* youtube-parity.js in YouTube App Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		A40000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C40000000000000000000004 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (C10000000000000000000003 /* blockerList.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
-		E40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (91000000000000000000000A, 910000000000000000000008, 910000000000000000000007, E10000000000000000000002 /* manifest.json in Resources */, E10000000000000000000003 /* youtube-parity.js in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		E40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (91000000000000000000000B, 91000000000000000000000A, 910000000000000000000008, 910000000000000000000007, E10000000000000000000002 /* manifest.json in Resources */, E10000000000000000000003 /* youtube-parity.js in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		D40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (D10000000000000000000009 /* icon.png in Resources */, D1000000000000000000000A /* instagram.png in Resources */, D1000000000000000000000B /* youtube.png in Resources */, D1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, D1000000000000000000000D /* Assets.xcassets in Resources */, D1000000000000000000000E /* ExplicitContentPolicy.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		G40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (G10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */, G1000000000000000000000A /* Assets.xcassets in Resources */, G1000000000000000000000B /* ExplicitContentPolicy.json in Resources */, G1000000000000000000000C /* snapchat.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		H40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (H10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */, H1000000000000000000000A /* Assets.xcassets in Resources */, H1000000000000000000000B /* ExplicitContentPolicy.json in Resources */, H1000000000000000000000C /* linkedin.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };

@@ -115,7 +115,7 @@ test('ending exactly at the base boundary does not allow replay grace', () => {
   assert.equal(act({ action: 'start', videoId: ids[0] }).ok, false);
 });
 test('feeds freeze twenty unique IDs independently across restart and other accounts', () => {
-  const { act, state } = setup(); const cards = ids.map(videoId => ({ videoId, title: videoId }));
+  const { act, state } = setup(); const cards = ids.map(videoId => ({ videoId, title: `Title for ${videoId}` }));
   act({ action: 'feed', feed: 'home', cards: [...cards, ...cards] });
   act({ action: 'feed', feed: 'subscriptions', cards: cards.slice().reverse() });
   act({ action: 'feed', feed: 'home', cards: cards.slice().reverse() });
@@ -151,4 +151,16 @@ test('renewals retain ownership and charge each cumulative interval only once', 
   act({ action: 'settle', leaseId: renewed.id, playedMs: 2500 });
   assert.equal(state.youtubeLimits!.usedMs, 2500);
   assert.equal(act({ action: 'settle', leaseId: renewed.id, playedMs: 2500 }).ok, false);
+});
+
+test('a partial feed fills to twenty without replacing its first IDs and repairs timestamp titles', () => {
+  const { act, state } = setup();
+  act({ action: 'feed', feed: 'home', cards: ids.slice(0, 4).map(videoId => ({ videoId, title: `Title ${videoId}` })) });
+  state.youtubeLimits!.feeds.home![0].title = '6:15';
+  act({ action: 'save', videoId: ids[0], title: '6:15' });
+  act({ action: 'feed', feed: 'home', cards: ids.map(videoId => ({ videoId, title: `Correct ${videoId}` })) });
+  assert.deepEqual(state.youtubeLimits!.feeds.home!.map(card => card.videoId), ids.slice(0, 20));
+  assert.equal(state.youtubeLimits!.slots[0]!.title, `Correct ${ids[0]}`);
+  act({ action: 'feed', feed: 'home', cards: ids.slice().reverse().map(videoId => ({ videoId, title: `Title ${videoId}` })) });
+  assert.deepEqual(state.youtubeLimits!.feeds.home!.map(card => card.videoId), ids.slice(0, 20));
 });

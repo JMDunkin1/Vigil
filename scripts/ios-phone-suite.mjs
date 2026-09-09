@@ -284,8 +284,7 @@ export async function socialAppImplementationFingerprint(appId) {
   const files = await filesBelow(socialRoot, (path) => isSocialAppImplementationFile(path, appId));
   files.push(join(ROOT, "ios", "Shared", "PersonalTeam.entitlements"));
   if (appId === "youtube" || appId === "instagram") {
-    const connection = join(process.env.VIGIL_DATA_DIR || join(ROOT, "data"), "youtube-connection.json");
-    if (await isFile(connection)) files.push(connection);
+    files.push(join(ROOT, "src/youtubeLimits.ts"), join(ROOT, "scripts/youtube-build-connection.mts"));
   }
   const unique = [...new Set(files)].sort();
   const digest = createHash("sha256");
@@ -1597,17 +1596,16 @@ async function verifyBundledExplicitContentPolicy(appPath, expected) {
 }
 
 async function verifyYouTubeLimitsResources(bundlePath, safari = false) {
-  const names = safari ? ["youtube-limits.js", "youtube-background.js"] : ["youtube-limits.js"];
+  const names = safari ? ["youtube-limits.js", "youtube-background.js", "youtube-bridge.js"] : ["youtube-limits.js"];
   for (const name of names) {
     const source = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name));
     const bundled = await readFile(join(bundlePath, name));
     if (!source.equals(bundled)) throw new Error(`Refusing to install stale YouTube limits: ${name}.`);
   }
-  const { ensureYouTubeConnection } = await import(pathToFileURL(join(ROOT, "dist/runtime/src/youtubeConnection.js")).href);
-  const expected = await ensureYouTubeConnection();
+  const { youtubeLocalEngine } = await import(pathToFileURL(join(ROOT, "dist/runtime/scripts/youtube-build-connection.mjs")).href);
   const bundled = JSON.parse(await readFile(join(bundlePath, "youtube-connection.json"), "utf8"));
-  if (bundled.server !== expected.server || bundled.token !== expected.token) {
-    throw new Error("Refusing to install a YouTube companion with mismatched authority credentials.");
+  if (bundled.mode !== "local" || bundled.engine !== await youtubeLocalEngine()) {
+    throw new Error("Refusing to install a YouTube companion with a stale local policy engine.");
   }
 }
 
@@ -1675,13 +1673,17 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   ];
   const scripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
   const contractValid = JSON.stringify(manifest?.host_permissions) === JSON.stringify(expectedHosts)
-    && scripts.length === 2
+    && scripts.length === 3
     && JSON.stringify(scripts[0]?.matches) === JSON.stringify(expectedHosts)
-    && JSON.stringify(scripts[0]?.js) === JSON.stringify([YOUTUBE_INTERACTION_EXTENSION.scriptName, "youtube-limits.js"])
+    && JSON.stringify(scripts[0]?.js) === JSON.stringify([YOUTUBE_INTERACTION_EXTENSION.scriptName])
     && scripts[0]?.all_frames === false
     && scripts[1]?.all_frames === true
     && JSON.stringify(scripts[1]?.matches) === JSON.stringify(expectedHosts.slice(0, 3))
-    && JSON.stringify(scripts[1]?.js) === JSON.stringify(["youtube-limits.js"]);
+    && JSON.stringify(scripts[1]?.js) === JSON.stringify(["youtube-bridge.js"])
+    && scripts[2]?.all_frames === true
+    && scripts[2]?.world === "MAIN"
+    && JSON.stringify(scripts[2]?.matches) === JSON.stringify(expectedHosts.slice(0, 3))
+    && JSON.stringify(scripts[2]?.js) === JSON.stringify(["youtube-limits.js"]);
   const source = scriptBytes.toString("utf8");
   if (!contractValid
     || !source.includes("enterFullscreen")

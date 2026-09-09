@@ -9,7 +9,8 @@ import { youtubeAction, YOUTUBE_BASE_MS } from '../src/youtubeLimits.js';
 const source = await readFile(new URL('../extension/youtube-limits.js', import.meta.url), 'utf8');
 const id = 'video000000';
 type Callback = (event?: unknown) => unknown;
-async function playerFixture() {
+async function playerFixture(nativeReply = false, initiallySaved = true) {
+  let accountSaved = initiallySaved;
   let clock = 0;
   const nodes: Node[] = [], intervals: { callback: Callback; ms: number }[] = [];
   const handlers = new Map<string, Callback[]>();
@@ -28,7 +29,8 @@ async function playerFixture() {
     toggleAttribute() {}
     attachShadow() { return new Node(); }
     addEventListener(event: string, callback: Callback) { this.events.set(event, callback); }
-    closest() { return null; }
+    closest(selector: string): Node | null { return selector.includes('.ytp-play-button') && (this as Node) === (media as Node) ? this : null; }
+    querySelector() { return null; }
     click() { this.events.get('click')?.({ preventDefault() {}, stopPropagation() {} }); }
   }
   const emit = (name: string) => { for (const callback of handlers.get(name) || []) callback({ target: media }); };
@@ -39,10 +41,11 @@ async function playerFixture() {
   });
   const state = defaultState();
   const act = (body: YouTubeRequest) => youtubeAction(state, body, new Date(Date.UTC(2026, 8, 7, 16) + clock));
-  act({ action: 'save', videoId: id });
+  if (initiallySaved) act({ action: 'save', videoId: id });
   const window: Record<string, unknown> = { addEventListener() {} }; window.top = window;
+  if (nativeReply) window.webkit = { messageHandlers: { vigilYouTube: { async postMessage(envelope: { body: YouTubeRequest }) { return act(envelope.body); } } } };
   const document = {
-    documentElement: new Node(), title: 'Fixture',
+    documentElement: new Node(), body: new Node(), title: 'Fixture',
     createElement() { return new Node(); },
     getElementById(id: string) { return nodes.find(node => node.id === id); },
     querySelector() { return media; },
@@ -52,11 +55,21 @@ async function playerFixture() {
   runInNewContext(source, { window, document, location: new URL(`https://www.youtube.com/watch?v=${id}`),
     crypto: webcrypto, URL, Element: Node, performance: { now: () => clock },
     setInterval(callback: Callback, ms: number) { intervals.push({ callback, ms }); },
-    setTimeout, clearTimeout, chrome: { runtime: { async sendMessage(message: { youtube: YouTubeRequest }) { return act(message.youtube); } } }
+    setTimeout, clearTimeout, AbortSignal,
+    fetch: async () => ({ ok: true, text: async () => `var ytInitialData = ${JSON.stringify({ contents: accountSaved ? [{ playlistVideoRenderer: { videoId: id, title: { simpleText: 'Real Watch Later video' } } }] : [] })};` }),
+    chrome: { runtime: { async sendMessage(message: { youtube: YouTubeRequest }) { return act(message.youtube); } } }
   });
   const flush = () => new Promise<void>(resolve => setImmediate(resolve));
   await flush();
-  const click = async (label: string) => { const node = nodes.find(node => node.textContent === label); assert.ok(node, label); node.click(); await flush(); };
+  const click = async (label: string) => {
+    if (label === 'Pause') {
+      media.pause();
+      for (const interval of intervals) if (interval.ms === 50) interval.callback();
+    } else if (label === 'Play this video') {
+      for (const callback of handlers.get('click') || []) callback({ isTrusted: true, target: media, preventDefault() {}, stopImmediatePropagation() {} });
+    } else throw new Error(`Unexpected native control: ${label}`);
+    await flush();
+  };
   const advance = async (milliseconds: number, moving = true) => {
     for (let elapsed = 0; elapsed < milliseconds; elapsed += 50) {
       clock += 50;
@@ -65,7 +78,17 @@ async function playerFixture() {
       await flush();
     }
   };
-  return { state, media, click, advance, emit, nodes };
+  const standardSave = async (remove = false) => {
+    const context = new Node();
+    for (const callback of handlers.get('click') || []) callback({ isTrusted: true, target: context });
+    const control = new Node(); control.textContent = remove ? 'Remove from Watch Later' : 'Save to Watch Later';
+    control.closest = () => control;
+    control.click = () => { accountSaved = !remove; };
+    for (const callback of handlers.get('click') || []) callback({ isTrusted: true, target: control, preventDefault() {}, stopImmediatePropagation() {} });
+    await new Promise(resolve => setTimeout(resolve, 900));
+    return accountSaved;
+  };
+  return { state, media, click, advance, emit, nodes, standardSave };
 }
 test('player gates autoplay and meters the first playback seconds', async () => {
   const { state, media, click, advance } = await playerFixture();
@@ -110,4 +133,27 @@ test('authorization renewals do not interrupt ordinary playback', async () => {
   assert.equal(media.pauseCount, 0);
   await click('Pause');
   assert.ok(Math.abs(state.youtubeLimits!.usedMs - 6000) < 1);
+});
+
+test('native WebKit promise replies populate slots and authorize playback without injected callbacks', async () => {
+  const { state, media, click, advance, nodes } = await playerFixture(true);
+  assert.ok(nodes.some(node => node.textContent.includes('3 saves left')));
+  await click('Play this video');
+  assert.equal(media.paused, false);
+  await advance(500); await click('Pause');
+  assert.ok(Math.abs(state.youtubeLimits!.usedMs - 500) < 1);
+});
+
+test('standard YouTube save and remove controls change the account playlist and daily slot together', async () => {
+  const { state, standardSave } = await playerFixture(false, false);
+  assert.equal(await standardSave(), true);
+  assert.equal(state.youtubeLimits!.slots[0]!.videoId, id);
+  assert.equal(await standardSave(true), false);
+  assert.equal(state.youtubeLimits!.slots.filter(Boolean).length, 0);
+});
+test('a full daily allowance blocks the standard save before YouTube changes its playlist', async () => {
+  const { state, standardSave } = await playerFixture(false, false);
+  state.youtubeLimits!.slots = Array.from({ length: 4 }, (_, i) => ({ videoId: `other${String(i).padStart(6, '0')}`, title: `Existing ${i}`, locked: false, removed: false }));
+  assert.equal(await standardSave(), false);
+  assert.equal(state.youtubeLimits!.slots.filter(Boolean).length, 4);
 });

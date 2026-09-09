@@ -5,14 +5,15 @@
   if (window.__vigilYouTubeLimits) return;
   window.__vigilYouTubeLimits = true;
   const topFrame = window.top === window;
+  const accountFetch = typeof fetch === 'function' ? fetch.bind(window) : null;
   const pending = new Map();
   const client = crypto.randomUUID();
-  let state = null, panel, message, slots, feedPanel, statusLine;
+  let state = null, panel, message, statusLine;
   let lease = null, playing = null, played = 0, lastTick = 0, lastPosition = 0;
   let renewal = null;
   let previousRate = 1;
   let intent = '', busy = false, waiting = false, deadline = 0, route = location.href;
-  let feedBusy = false, requestedFeed = '', feedRoute = '';
+  let menuVideo = null, replayingSave = false;
   const idFrom = value => {
     try {
       const url = new URL(value, location.href);
@@ -27,60 +28,38 @@
     if (window.webkit?.messageHandlers?.vigilYouTube) {
       const requestId = crypto.randomUUID();
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => { pending.delete(requestId); reject(new Error('Vigil did not respond. Check Local Network access in iPhone Settings, then tap Retry.')); }, 6500);
+        const timer = setTimeout(() => { pending.delete(requestId); reject(new Error('The allowance check did not finish. Reopen Vigil YouTube to retry.')); }, 6500);
         pending.set(requestId, value => { clearTimeout(timer); resolve(value); });
-        window.webkit.messageHandlers.vigilYouTube.postMessage({ requestId, body });
+        const reply = window.webkit.messageHandlers.vigilYouTube.postMessage({ requestId, body });
+        if (reply?.then) reply.then(value => { clearTimeout(timer); pending.delete(requestId); resolve(value); }, error => { clearTimeout(timer); pending.delete(requestId); reject(error); });
       });
     }
     if (typeof browser !== 'undefined' && browser.runtime?.sendMessage) return browser.runtime.sendMessage({ type: 'VIGIL_YOUTUBE', youtube: body });
     if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) return chrome.runtime.sendMessage({ type: 'VIGIL_YOUTUBE', youtube: body });
-    throw new Error('Connect to Vigil to continue watching.');
+    const id = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { pending.delete(id); reject(new Error('Vigil could not check the allowance. Try again.')); }, 6500);
+      pending.set(id, value => { clearTimeout(timer); resolve(value); });
+      window.postMessage({ type: 'VIGIL_YOUTUBE_REQUEST', id, body }, location.origin);
+    });
   };
+  window.addEventListener('message', event => { if (event.source === window && event.origin === location.origin && event.data?.type === 'VIGIL_YOUTUBE_REPLY') { pending.get(event.data.id)?.(event.data.value); pending.delete(event.data.id); } });
   window.__vigilYouTubeReply = (id, value) => { pending.get(id)?.(value); pending.delete(id); };
   const show = value => { if (message) message.textContent = value || ''; };
   const request = async body => {
     const response = await transport(body);
     if (response?.day) {
-      if (state && response.day !== state.day) { intent = ''; feedPanel?.remove(); feedPanel = null; requestedFeed = ''; }
+      if (state && response.day !== state.day) { intent = ''; }
       state = response; render();
     }
-    if (!response?.ok) throw new Error(response?.message || 'Connect to Vigil to continue watching.');
+    if (!response?.ok) throw new Error(response?.message || 'Your allowance could not be checked. Reopen YouTube to retry.');
     return response;
   };
-  const button = (label, handler) => {
-    const item = document.createElement('button'); item.textContent = label; item.type = 'button';
-    item.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); void handler().catch(error => show(error.message)); });
-    return item;
-  };
-  const save = async (id, title = id, replace) => {
-    try { await request({ action: 'save', videoId: id, title, replace }); show('Saved to Watch Later.'); }
-    catch (error) {
-      show(error.message);
-      if (error.message === 'Watch Later is full. Replace an unwatched video to save this one.') {
-        for (const slot of state?.slots || []) if (slot && !slot.locked) {
-          message.append(button(`Replace ${slot.title}`, () => save(id, title, slot.videoId)));
-        }
-      }
-    }
-  };
   function render() {
-    if (!slots || !state) return;
-    statusLine.textContent = `Watch Later · ${state.slots.filter(Boolean).length} of 4 slots used · Playback ${Math.floor(state.usedMs / 60000)} min of 120 min`;
-    if (state.grace.status === 'active') statusLine.textContent += ` · Finish this video: ${Math.ceil((1200000 - state.grace.usedMs) / 1000)} sec remaining`;
-    slots.replaceChildren();
-    for (const slot of state.slots) {
-      const row = document.createElement('div');
-      if (!slot) row.textContent = 'Empty slot';
-      else if (slot.removed) row.textContent = 'Used today';
-      else {
-        row.textContent = `${slot.title} · ${slot.locked ? 'Used today' : 'Replaceable'} `;
-        row.append(button('Play', async () => {
-          if (currentID() === slot.videoId) { intent = slot.videoId; await begin(); }
-          else location.assign(`/watch?v=${encodeURIComponent(slot.videoId)}`);
-        }), button('Remove', async () => { await stop(); await request({ action: 'remove', videoId: slot.videoId }); }));
-      }
-      slots.append(row);
-    }
+    if (!statusLine || !state) return;
+    const remaining = Math.max(0, 7200000 - state.usedMs);
+    statusLine.textContent = `${4 - state.slots.filter(Boolean).length} saves left · ${Math.ceil(remaining / 60000)} min left`;
+    if (state.grace.status === 'active') statusLine.textContent = `Finish this video · ${Math.ceil((1200000 - state.grace.usedMs) / 60000)} min left`;
   }
   const sample = () => {
     if (!lease || !playing) return;
@@ -111,8 +90,15 @@
     if (!media) return;
     busy = true;
     try {
-      const sent = performance.now();
-      const response = await request({ action: 'start', videoId: id });
+      let sent = performance.now(), response;
+      try { response = await request({ action: 'start', videoId: id }); }
+      catch (error) {
+        if (error.message !== 'Save this video to Watch Later before playing.') throw error;
+        const saved = await watchLaterMembership(id);
+        if (!saved) throw error;
+        await request({ action: 'save', ...saved });
+        sent = performance.now(); response = await request({ action: 'start', videoId: id });
+      }
       lease = response.lease;
       deadline = sent + (lease.expiresAt - response.serverTime) - 100;
       if (currentID() !== id || performance.now() >= deadline || intent !== id) { await stop(); return; }
@@ -122,79 +108,278 @@
     finally { busy = false; }
   }
   function mount() {
-    if (!document.documentElement || panel || !topFrame) return;
-    panel = document.createElement('section'); panel.id = 'vigil-youtube-limits';
+    if (!document.body || panel || !topFrame) return;
+    panel = document.createElement('aside'); panel.id = 'vigil-youtube-limits';
     const shadow = panel.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = `
-      :host{display:block!important;position:relative!important;z-index:2100!important;
-        background:var(--yt-spec-base-background,#fff)!important;color:var(--yt-spec-text-primary,#0f0f0f)!important;
-        font:14px Roboto,Arial,sans-serif!important;padding:12px 16px!important;border-bottom:1px solid var(--yt-spec-10-percent-layer,rgba(0,0,0,.1))!important;color-scheme:light dark}
-      strong{display:block;font-size:13px;font-weight:500;line-height:20px}button{font:500 13px Roboto,Arial,sans-serif;background:var(--yt-spec-badge-chip-background,rgba(127,127,127,.14));color:inherit;border:0;border-radius:18px;min-height:36px;padding:0 14px;margin:6px 6px 0 0;cursor:pointer}
-      button:hover{background:rgba(127,127,127,.25)}button:focus-visible,summary:focus-visible{outline:2px solid #3ea6ff;outline-offset:2px}
-      summary{cursor:pointer;font-size:13px;padding:8px 0;color:var(--yt-spec-text-secondary,#606060)}details>div>div{padding:8px 0;border-top:1px solid rgba(127,127,127,.15);line-height:20px}
-      [role=status]:empty{display:none}[role=status]{font-size:13px;line-height:20px;margin-top:8px}a{color:inherit}
-      @media(prefers-color-scheme:dark){:host{background:var(--yt-spec-base-background,#0f0f0f)!important;color:var(--yt-spec-text-primary,#f1f1f1)!important}summary{color:var(--yt-spec-text-secondary,#aaa)}}`;
-    statusLine = document.createElement('strong'); statusLine.textContent = 'Watch Later · Connecting to Vigil…';
+    style.textContent = `:host{display:block;position:relative;z-index:0;font:12px Roboto,Arial,sans-serif;color:var(--yt-spec-text-secondary,#888);padding:5px 12px;box-sizing:border-box;background:transparent}strong{font-weight:400}div:empty{display:none}div{padding:4px 0;line-height:18px}button{border:0;border-radius:18px;padding:6px 12px;background:rgba(127,127,127,.15);color:inherit;font:inherit}`;
+    statusLine = document.createElement('strong'); statusLine.textContent = 'Checking allowance…';
     message = document.createElement('div'); message.setAttribute('role', 'status');
-    slots = document.createElement('div');
-    const details = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = 'Today’s Watch Later';
-    details.append(summary, slots);
-    shadow.append(style, statusLine, message, details,
-      button('Save this video', async () => { const id = currentID(); if (id) await save(id, document.title); }),
-      button('Play this video', async () => { intent = currentID(); await begin(); }),
-      button('Pause', async () => { intent = ''; await stop(); }),
-      button('Retry', async () => { show('Connecting to Vigil…'); await request({ action: 'status' }); show(''); }));
-    document.documentElement.prepend(panel);
+    shadow.append(style, statusLine, message);
+    const header = document.querySelector('ytm-mobile-topbar-renderer,ytd-masthead');
+    if (header?.parentNode) header.after(panel); else document.body.append(panel);
     void request({ action: 'status' }).catch(error => show(error.message));
   }
-  function feedName() { return ['/', '/feed/recommended'].includes(location.pathname) ? 'home' : location.pathname === '/feed/subscriptions' ? 'subscriptions' : ''; }
-  async function feed() {
-    const name = feedName();
-    if (name === 'home' && ['blocked', 'pending'].includes(document.documentElement.getAttribute('data-vigil-feature-home'))) return;
-    if (!name || !topFrame || feedBusy) return;
-    if (feedRoute !== location.pathname) { feedPanel?.remove(); feedPanel = null; feedRoute = location.pathname; requestedFeed = ''; }
+  // Feed metadata is read as data, never evaluated as page code.
+  const textOf = value => typeof value === 'string' ? value : value?.simpleText || value?.content || value?.runs?.map(run => run.text || '').join('') || '';
+  const validTitle = value => Boolean(value && !/^(?:\d+:)+\d+$/.test(value.trim()) && !/^save to watch later$/i.test(value.trim()));
+  function videoCards(data) {
+    const cards = [], continuations = [];
+    const visit = value => {
+      if (!value || typeof value !== 'object') return;
+      if (value.reelShelfRenderer || value.shortsLockupViewModel || value.adSlotRenderer || value.promotedSparklesWebRenderer) return;
+      if (value.continuationCommand?.token) continuations.push(value.continuationCommand.token);
+      for (const key of ['videoRenderer', 'videoWithContextRenderer', 'gridVideoRenderer', 'compactVideoRenderer', 'playlistVideoRenderer', 'playlistPanelVideoRenderer', 'lockupViewModel']) {
+        const video = value[key];
+        if (!video) continue;
+        const videoId = video.videoId || (video.contentType === 'LOCKUP_CONTENT_TYPE_VIDEO' ? video.contentId : '');
+        const title = textOf(video.title || video.headline || video.metadata?.lockupMetadataViewModel?.title).trim();
+        if (/^[\w-]{11}$/.test(videoId || '') && validTitle(title) && !video.navigationEndpoint?.reelWatchEndpoint && !cards.some(card => card.videoId === videoId)) {
+          cards.push({ videoId, title, channel: textOf(video.ownerText || video.shortBylineText || video.longBylineText), duration: textOf(video.lengthText) });
+        }
+      }
+      for (const child of Object.values(value)) if (typeof child === 'object') {
+        if (Array.isArray(child)) child.forEach(visit); else visit(child);
+      }
+    };
+    visit(data);
+    return { cards, continuations };
+  }
+  function jsonAfter(source, marker) {
+    const match = marker.exec(source);
+    if (!match) return null;
+    let offset = match.index + match[0].length;
+    while (/\s/.test(source[offset] || '') && offset < source.length) offset++;
+    if (source.startsWith('JSON.parse(', offset)) offset += 11;
+    while (/\s/.test(source[offset] || '') && offset < source.length) offset++;
+    const quote = source[offset];
+    if (quote === "'" || quote === '"') {
+      let decoded = '';
+      for (let i = offset + 1; i < source.length; i++) {
+        const c = source[i];
+        if (c === quote) { try { return JSON.parse(decoded); } catch { return null; } }
+        if (c !== '\\') { decoded += c; continue; }
+        const escape = source[++i];
+        if (escape === 'x' || escape === 'u') {
+          const length = escape === 'x' ? 2 : 4;
+          const hex = source.slice(i + 1, i + 1 + length);
+          if (!new RegExp(`^[0-9a-fA-F]{${length}}$`).test(hex)) return null;
+          decoded += String.fromCharCode(parseInt(hex, 16)); i += length;
+        } else decoded += ({ n: '\n', r: '\r', t: '\t', b: '\b', f: '\f' })[escape] ?? escape;
+      }
+      return null;
+    }
+    const start = source.indexOf('{', offset);
+    if (start < 0) return null;
+    let depth = 0, quoted = false, escaped = false;
+    for (let i = start; i < source.length; i++) {
+      const c = source[i];
+      if (quoted) { if (escaped) escaped = false; else if (c === '\\') escaped = true; else if (c === '"') quoted = false; }
+      else if (c === '"') quoted = true;
+      else if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) { try { return JSON.parse(source.slice(start, i + 1)); } catch { return null; } }
+    }
+    return null;
+  }
+  function domCards() {
     const cards = [];
     for (const anchor of document.querySelectorAll('a[href*="watch?v="]')) {
-      const id = idFrom(anchor.href);
-      if (id && !cards.some(card => card.videoId === id)) cards.push({ videoId: id, title: (anchor.getAttribute('title') || anchor.textContent || id).trim().slice(0, 200) });
-      if (cards.length === 20) break;
+      const videoId = idFrom(anchor.href);
+      if (!videoId || cards.some(card => card.videoId === videoId)) continue;
+      const container = anchor.closest('ytm-video-with-context-renderer,ytm-rich-item-renderer,ytd-rich-item-renderer,ytd-video-renderer,ytm-compact-video-renderer,ytd-grid-video-renderer');
+      const titleNode = container?.querySelector('h3,h4,#video-title,.media-item-headline');
+      const title = (titleNode?.textContent || anchor.getAttribute('title') || anchor.getAttribute('aria-label') || anchor.textContent || '').trim();
+      if (validTitle(title)) cards.push({ videoId, title });
     }
-    if (!state?.feeds[name] && (!cards.length || requestedFeed === name)) return;
-    feedBusy = true;
+    return cards;
+  }
+  async function watchLaterMembership(videoId) {
+    const response = await accountFetch('/playlist?list=WL', { credentials: 'include', signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error('Could not check Watch Later. Please try again.');
+    const html = await response.text();
+    const initial = jsonAfter(html, /(?:var\s+)?ytInitialData\s*=\s*/);
+    if (!initial) throw new Error('Could not check Watch Later. Please try again.');
+    let page = videoCards(initial);
+    const config = jsonAfter(html, /ytcfg\.set\(\s*/);
+    for (let i = 0; i < 5; i++) {
+      const card = page.cards.find(card => card.videoId === videoId);
+      if (card) return card;
+      const token = page.continuations[0];
+      if (!token || !config?.INNERTUBE_CONTEXT) return null;
+      const next = await accountFetch('/youtubei/v1/browse', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(10000), body: JSON.stringify({ context: config.INNERTUBE_CONTEXT, continuation: token }) });
+      if (!next.ok) throw new Error('Could not check Watch Later. Please try again.');
+      page = videoCards(await next.json());
+    }
+    throw new Error('Could not find this video in Watch Later. Open the playlist and try again.');
+  }
+  function rememberMenuVideo(target) {
+    const card = target.closest('ytm-video-with-context-renderer,ytm-rich-item-renderer,ytd-rich-item-renderer,ytd-video-renderer,ytm-compact-video-renderer,ytd-grid-video-renderer,ytm-playlist-video-renderer,ytd-playlist-video-renderer');
+    const anchor = card?.querySelector('a[href*="watch?v="]');
+    const videoId = anchor ? idFrom(anchor.href) : currentID();
+    const title = card?.querySelector('h3,h4,#video-title,.media-item-headline')?.textContent?.trim() || document.querySelector('h1')?.textContent?.trim() || document.title;
+    if (videoId) menuVideo = { videoId, title };
+  }
+  async function standardWatchLaterChange(target, remove) {
+    const video = menuVideo;
+    if (!video) { show('Open the video’s menu again to change Watch Later.'); return; }
+    const before = state?.slots.find(slot => slot?.videoId === video.videoId);
     try {
-      if (!state?.feeds[name]) { requestedFeed = name; await request({ action: 'feed', feed: name, cards }); }
-      if (feedName() !== name || feedPanel) return;
-      feedPanel = document.createElement('section'); feedPanel.id = 'vigil-daily-feed';
-      feedPanel.style.cssText = 'display:grid;gap:16px;padding:20px;background:var(--yt-spec-base-background,#fff);color:var(--yt-spec-text-primary,#0f0f0f);font:14px Roboto,Arial,sans-serif;position:relative;z-index:2100';
-      for (const card of state?.feeds[name] || []) {
-        const row = document.createElement('article'), title = document.createElement('div');
-        title.textContent = card.title;
-        row.append(title, button('Save to Watch Later', () => save(card.videoId, card.title)));
-        feedPanel.append(row);
+      // Reserve before allowing YouTube to save, so a fifth save cannot slip
+      // through concurrent tabs. YouTube itself performs the account change.
+      if (!remove) await request({ action: 'save', ...video });
+      replayingSave = true;
+      try { target.click(); } finally { replayingSave = false; }
+      let saved = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 700));
+        saved = await watchLaterMembership(video.videoId);
+        if (Boolean(saved) !== remove) break;
       }
-      const end = document.createElement('p'); end.textContent = 'You’ve reached today’s feed.'; feedPanel.append(end);
-      panel.after(feedPanel);
-    } catch (error) { requestedFeed = ''; show(error.message); }
-    finally { feedBusy = false; }
+      if (remove && !saved) await request({ action: 'remove', videoId: video.videoId });
+      else if (!remove && !saved && !before) {
+        await request({ action: 'remove', videoId: video.videoId });
+        throw new Error('YouTube did not save this video. Please try again.');
+      }
+      show('');
+    } catch (error) { show(error.message); }
+  }
+  function feedName() { return ['/', '/feed/recommended'].includes(location.pathname) ? 'home' : location.pathname === '/feed/subscriptions' ? 'subscriptions' : ''; }
+  const nativeCardSelector = 'ytm-rich-item-renderer,ytm-video-with-context-renderer,ytd-rich-item-renderer,ytd-video-renderer,ytm-compact-video-renderer,ytd-grid-video-renderer';
+  let feedSync = false, feedSignature = '', feedEnd;
+  const nativeCache = new Map();
+  function nativeFeedData(data, append = false) {
+    const name = feedName();
+    if (!name || !data || typeof data !== 'object') return data;
+    const day = state?.day || new Intl.DateTimeFormat('en-CA').format(new Date());
+    const key = `vigil-native-feed:${name}`;
+    let cached = nativeCache.get(name);
+    if (!cached) { try { cached = JSON.parse(localStorage.getItem(key) || 'null'); } catch { /* No UI cache yet. */ } }
+    if (!cached || cached.day !== day) cached = { day, items: [] };
+    const lists = [];
+    const scan = value => {
+      if (!value || typeof value !== 'object') return;
+      for (const kind of ['richGridRenderer', 'itemSectionRenderer', 'appendContinuationItemsAction', 'reloadContinuationItemsCommand']) {
+        const items = value[kind]?.contents || value[kind]?.continuationItems;
+        if (Array.isArray(items) && items.some(item => videoCards(item).cards.length)) lists.push(items);
+      }
+      for (const child of Object.values(value)) if (child && typeof child === 'object') {
+        if (Array.isArray(child)) child.forEach(scan); else scan(child);
+      }
+    };
+    scan(data);
+    if (!lists.length) return data;
+    for (const list of lists) for (const item of list) {
+      const card = videoCards(item).cards[0];
+      if (card && cached.items.length < 20 && !cached.items.some(old => old.card.videoId === card.videoId)) cached.items.push({ card, item });
+    }
+    // Reuse YouTube's own renderer models. YouTube continues to render every
+    // thumbnail, title, three-dot menu and Save action itself.
+    let inserted = false;
+    const rendered = append ? new Set(domCards().map(card => card.videoId)) : new Set();
+    for (const list of lists) {
+      const other = list.filter(item => !videoCards(item).cards.length && !(cached.items.length === 20 && item.continuationItemRenderer));
+      list.splice(0, list.length, ...(inserted ? [] : cached.items.filter(entry => !rendered.has(entry.card.videoId)).map(entry => entry.item)), ...other);
+      inserted = true;
+    }
+    nativeCache.set(name, cached);
+    try { localStorage.setItem(key, JSON.stringify(cached)); } catch { /* The protected ledger remains authoritative. */ }
+    return data;
+  }
+  if (topFrame) {
+    const descriptor = Object.getOwnPropertyDescriptor(window, 'ytInitialData');
+    if (!descriptor || descriptor.configurable) {
+      let initialValue = descriptor?.value;
+      Object.defineProperty(window, 'ytInitialData', { configurable: true, enumerable: true,
+        get: () => initialValue,
+        set: value => {
+          try { initialValue = typeof value === 'string' ? JSON.stringify(nativeFeedData(JSON.parse(value))) : nativeFeedData(value); }
+          catch { initialValue = value; }
+        }
+      });
+    }
+  }
+  if (topFrame && accountFetch) {
+    const browseRequest = input => { try { return new URL(typeof input === 'string' ? input : input.url, location.href).pathname === '/youtubei/v1/browse'; } catch { return false; } };
+    const transform = data => nativeFeedData(data, JSON.stringify(data).includes('appendContinuationItemsAction'));
+    window.fetch = async (input, options) => {
+      const response = await accountFetch(input, options);
+      if (!feedName() || !browseRequest(input) || !response.ok) return response;
+      try {
+        const data = transform(await response.clone().json());
+        const headers = new Headers(response.headers); headers.delete('content-length');
+        return new Response(JSON.stringify(data), { status: response.status, statusText: response.statusText, headers });
+      } catch { return response; }
+    };
+    if (typeof XMLHttpRequest !== 'undefined') {
+      const open = XMLHttpRequest.prototype.open;
+      const urls = new WeakMap();
+      XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+        urls.set(this, url);
+        this.addEventListener('readystatechange', () => {
+          if (this.readyState !== 4 || !feedName() || !browseRequest(urls.get(this))) return;
+          try {
+            if (this.responseType === 'json') { const data = transform(this.response); Object.defineProperty(this, 'response', { configurable: true, value: data }); }
+            else if (!this.responseType || this.responseType === 'text') {
+              const text = JSON.stringify(transform(JSON.parse(this.responseText)));
+              Object.defineProperty(this, 'responseText', { configurable: true, value: text });
+              Object.defineProperty(this, 'response', { configurable: true, value: text });
+            }
+          } catch { /* DOM filtering still applies if YouTube changes its response. */ }
+        }, true);
+        return open.call(this, method, url, ...rest);
+      };
+    }
+  }
+  async function filterNativeFeed() {
+    const name = feedName();
+    if (!name) {
+      feedEnd?.remove(); feedEnd = null;
+      document.querySelectorAll('[data-vigil-feed-hidden]').forEach(node => node.removeAttribute('data-vigil-feed-hidden'));
+      document.documentElement.removeAttribute('data-vigil-feed-complete');
+      return;
+    }
+    if (!state || feedSync) return;
+    const models = nativeCache.get(name)?.items.map(entry => entry.card) || [];
+    const cards = [...models];
+    for (const card of domCards()) if (!cards.some(old => old.videoId === card.videoId)) cards.push(card);
+    const signature = `${state.day}:${name}:${cards.map(card => card.videoId).join(',')}`;
+    if (cards.length && signature !== feedSignature) {
+      feedSync = true;
+      try { await request({ action: 'feed', mode: 'native', feed: name, cards }); feedSignature = signature; }
+      catch (error) { show(error.message); }
+      finally { feedSync = false; }
+    }
+    const allowed = new Set((state.feeds[name] || []).map(card => card.videoId));
+    let last;
+    for (const card of document.querySelectorAll(nativeCardSelector)) {
+      const anchor = card.querySelector('a[href*="watch?v="]');
+      const id = anchor && idFrom(anchor.href);
+      if (!id) continue;
+      card.toggleAttribute('data-vigil-feed-hidden', !allowed.has(id));
+      if (allowed.has(id)) last = card;
+    }
+    document.documentElement.toggleAttribute('data-vigil-feed-complete', allowed.size === 20);
+    if (allowed.size === 20 && last) {
+      if (!feedEnd) { feedEnd = document.createElement('p'); feedEnd.id = 'vigil-feed-end'; feedEnd.textContent = 'You’ve reached today’s feed.'; feedEnd.style.cssText = 'grid-column:1/-1;text-align:center;padding:24px 12px;font:14px Roboto,Arial,sans-serif;color:inherit'; }
+      last.after(feedEnd);
+    }
   }
   function clean() {
     mount();
-    const daily = Boolean(feedName());
-    const blockedHome = feedName() === 'home' && ['blocked', 'pending'].includes(document.documentElement.getAttribute('data-vigil-feature-home'));
-    if (feedPanel) feedPanel.hidden = blockedHome;
-    document.documentElement.toggleAttribute('data-vigil-daily-feed', daily);
-    if (!daily) { feedPanel?.remove(); feedPanel = null; feedRoute = ''; }
+    const content = document.querySelector('ytm-browse,ytd-browse,ytm-watch,ytd-watch-flexy');
+    if (panel && content && panel.parentNode !== content) content.prepend(panel);
+    void filterNativeFeed();
     if (!document.getElementById('vigil-limits-style')) {
       const style = document.createElement('style'); style.id = 'vigil-limits-style';
-      style.textContent = 'a[href*="/shorts/"],ytd-reel-shelf-renderer,ytm-reel-shelf-renderer,ytd-video-preview,ytm-video-preview,ytd-continuation-item-renderer,ytm-continuation-item-renderer,.ytp-autonav-toggle-button,.ytp-autonav-endscreen-countdown-container{display:none!important}html[data-vigil-daily-feed] ytd-browse,html[data-vigil-daily-feed] ytm-browse{display:none!important}';
+      style.textContent = 'a[href*="/shorts/"],ytd-reel-shelf-renderer,ytm-reel-shelf-renderer,ytd-video-preview,ytm-video-preview,.ytp-autonav-toggle-button,.ytp-autonav-endscreen-countdown-container,[data-vigil-feed-hidden],html[data-vigil-feed-complete] ytd-continuation-item-renderer,html[data-vigil-feed-complete] ytm-continuation-item-renderer{display:none!important}';
       document.documentElement.append(style);
     }
     for (const media of document.querySelectorAll('video,audio')) {
       media.autoplay = false; media.removeAttribute('autoplay');
       if (media !== playing || !lease || /^\/shorts\//.test(location.pathname)) media.pause();
     }
-    void feed();
+
   }
   document.addEventListener('play', event => {
     if (event.target !== playing || !lease || currentID() !== lease.videoId) event.target.pause?.();
@@ -208,14 +393,19 @@
   document.addEventListener('ended', event => { if (event.target === playing) { intent = ''; void stop(true).catch(error => show(error.message)); } }, true);
   // Native controls may resume only through a fresh, explicit playback action.
   document.addEventListener('click', event => {
-    if (!event.isTrusted || !(event.target instanceof Element)) return;
-    const anchor = event.target.closest('a[href]');
-    const id = anchor && idFrom(anchor.href);
-    if (id && !state?.slots.some(slot => slot?.videoId === id && !slot.removed)) {
+    if (replayingSave || !event.isTrusted || !(event.target instanceof Element)) return;
+    const target = event.target.closest('button,[role="menuitem"],[role="checkbox"],ytm-menu-service-item-renderer,ytd-menu-service-item-renderer,ytm-playlist-add-to-option-renderer,ytd-playlist-add-to-option-renderer') || event.target;
+    const label = (target.getAttribute('aria-label') || target.textContent || '').trim().replace(/\s+/g, ' ');
+    const option = target.closest('ytm-playlist-add-to-option-renderer,ytd-playlist-add-to-option-renderer');
+    const watchLaterOption = option?.data?.playlistId === 'WL' || (option && /^watch later(?: private)?$/i.test(label));
+    if (/^(save to watch later|remove from watch later)$/i.test(label) || watchLaterOption || (/^watch later$/i.test(label) && target.closest('[role=checkbox]'))) {
+      const remove = /^remove/i.test(label) || target.getAttribute('aria-checked') === 'true' || target.querySelector('[aria-checked="true"]') !== null;
       event.preventDefault(); event.stopImmediatePropagation();
-      intent = ''; void stop().then(() => save(id, anchor.textContent || id)).catch(error => show(error.message));
+      void standardWatchLaterChange(target, remove);
+      return;
     }
-    if (event.target.closest('.ytp-play-button,video') && currentID() && !lease) { intent = currentID(); void begin(); }
+    rememberMenuVideo(event.target);
+    if (event.target.closest('.ytp-play-button,video,button[aria-label="Play"],button[aria-label="Play video"]') && currentID() && !lease) { intent = currentID(); void begin(); }
   }, true);
   document.addEventListener('keydown', event => {
     if (!event.isTrusted || ![' ', 'k'].includes(event.key) || /INPUT|TEXTAREA/.test(event.target?.tagName || '') || event.target?.isContentEditable) return;

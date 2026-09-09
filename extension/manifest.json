@@ -57,10 +57,24 @@
         "https://youtube-nocookie.com/*"
       ],
       "js": [
-        "youtube-limits.js"
+        "youtube-bridge.js"
       ],
       "run_at": "document_start",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "https://*.youtube.com/*",
+        "https://youtube.com/*",
+        "https://*.youtube-nocookie.com/*",
+        "https://youtube-nocookie.com/*"
+      ],
+      "js": [
+        "youtube-limits.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
     }
   ],
   "web_accessible_resources": [

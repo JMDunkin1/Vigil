@@ -1,56 +1,41 @@
 import Foundation
+import JavaScriptCore
 
-// Shared by the Personal Team companion and the Safari native-message handler.
-// Credentials stay in native code and are never returned to the YouTube page.
+// The ledger lives in this app's protected container. YouTube account data is
+// reconciled by the page adapter; playback authority never needs a nearby Mac.
+@MainActor
 enum YouTubeLimitsConnection {
     static func send(_ body: [String: Any], bundle: Bundle = .main) async -> [String: Any] {
-        let managed = UserDefaults.standard.dictionary(forKey: "com.apple.configuration.managed") ?? [:]
-        let resource = bundle.url(forResource: "youtube-connection", withExtension: "json")
-        let data = resource.flatMap { try? Data(contentsOf: $0) }
-        let connection = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: String] } ?? [:]
-        let server = managed["VigilYouTubeServer"] as? String ?? connection["server"] ?? ""
-        let token = managed["VigilYouTubeToken"] as? String ?? connection["token"] ?? ""
-        guard var components = URLComponents(string: server),
-              let host = components.host, !host.isEmpty,
-              components.user == nil, components.password == nil,
-              components.scheme == "https" || (components.scheme == "http" && (host.hasSuffix(".local") || host == "localhost" || host == "127.0.0.1")),
-              !token.isEmpty, !token.contains("$(") else {
-            return ["ok": false, "message": "This app needs its Vigil connection configured. Update the YouTube companion from Vigil on your Mac."]
-        }
-        components.path = "/api/extension/youtube"
-        components.query = nil
-        components.fragment = nil
-        guard let url = components.url else { return ["ok": false] }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 4
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(token, forHTTPHeaderField: "x-vigil-extension-token")
         do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-            // Do not forward the bearer credential across redirects.
-            let session = URLSession(configuration: .ephemeral, delegate: NoRedirect(), delegateQueue: nil)
-            defer { session.finishTasksAndInvalidate() }
-            let (data, response) = try await session.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200,
-                  let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return ["ok": false, "message": (response as? HTTPURLResponse)?.statusCode == 403 ? "This app’s Vigil connection is out of date. Update the YouTube companion from your Mac." : "Vigil could not complete this request. Tap Retry."]
-            }
-            return value
+            guard let resource = bundle.url(forResource: "youtube-connection", withExtension: "json"),
+                  let configuration = try JSONSerialization.jsonObject(with: Data(contentsOf: resource)) as? [String: Any],
+                  configuration["mode"] as? String == "local",
+                  let engine = configuration["engine"] as? String,
+                  let context = JSContext() else { throw LedgerError.invalid }
+            let directory = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            let path = directory.appendingPathComponent("youtube-daily-ledger.json")
+            let existing = FileManager.default.fileExists(atPath: path.path)
+            let state = existing ? try Data(contentsOf: path) : try JSONSerialization.data(withJSONObject: configuration["seed"] as? [String: Any] ?? [:])
+            guard let object = try JSONSerialization.jsonObject(with: state) as? [String: Any],
+                  !existing || object["youtubeLimits"] is [String: Any],
+                  let stateText = String(data: state, encoding: .utf8),
+                  let bodyText = String(data: try JSONSerialization.data(withJSONObject: body), encoding: .utf8) else { throw LedgerError.invalid }
+            let uuid: @convention(block) () -> String = { UUID().uuidString }
+            context.setObject(uuid, forKeyedSubscript: "__uuid" as NSString)
+            context.evaluateScript(engine)
+            guard context.exception == nil,
+                  let encoded = context.objectForKeyedSubscript("vigilLocalAction")?.call(withArguments: [stateText, bodyText])?.toString(),
+                  context.exception == nil,
+                  let bytes = encoded.data(using: .utf8),
+                  let result = try JSONSerialization.jsonObject(with: bytes) as? [String: Any],
+                  let next = result["state"] as? [String: Any],
+                  let reply = result["reply"] as? [String: Any] else { throw LedgerError.invalid }
+            // Persist before granting playback. A failed write cannot grant time.
+            try JSONSerialization.data(withJSONObject: next).write(to: path, options: .atomic)
+            return reply
         } catch {
-            let failure = error as NSError
-            let text: String
-            if failure.code == NSURLErrorNotConnectedToInternet {
-                text = "Allow Local Network access for Vigil YouTube in iPhone Settings, then connect to the same Wi-Fi as your Mac and tap Retry."
-            } else {
-                text = "Cannot reach Vigil on your Mac. Keep the Mac awake, connect both devices to the same Wi-Fi, and tap Retry."
-            }
-            return ["ok": false, "message": text]
+            return ["ok": false, "message": "Your saved YouTube limits could not be read or saved. Reopen Vigil YouTube to retry."]
         }
     }
-    private final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-            completionHandler(nil)
-        }
-    }
+    private enum LedgerError: Error { case invalid }
 }
