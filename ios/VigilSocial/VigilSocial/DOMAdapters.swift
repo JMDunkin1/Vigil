@@ -5384,6 +5384,7 @@ enum DOMAdapters {
         storyForwardTouch = null;
         if (!touch || touch.pointerId !== event.pointerId || performance.now() - touch.startedAt > 350
             || Math.hypot(event.clientX - touch.x, event.clientY - touch.y) > 12) return;
+        armStoryContinuation(touch.media);
         suppressedStoryForwardClick = { x: touch.x, y: touch.y, until: performance.now() + 700 };
         if (event.cancelable) event.preventDefault();
         // Let Instagram clear its press-to-pause state first. If pointerup
@@ -6369,6 +6370,72 @@ enum DOMAdapters {
         return Boolean(username) && (username === discoverViewerUsername()
           || friendshipCache.get(username) === true);
       };
+      // Capture Next before Instagram's router can discard the viewer. The
+      // compact friend tray and Instagram's original sequence are different.
+      const storyContinuationKey = `${friendshipCacheKey}:story-continuation`;
+      let storyContinuationGeneration = 0;
+      let storyContinuationTimer = 0;
+      const cancelStoryContinuation = () => {
+        storyContinuationGeneration += 1;
+        clearTimeout(storyContinuationTimer);
+        try { sessionStorage.removeItem(storyContinuationKey); } catch (_) {}
+      };
+      const readStoryContinuation = () => {
+        try {
+          const pending = JSON.parse(sessionStorage.getItem(storyContinuationKey) || 'null');
+          if (!pending || pending.viewer !== discoverViewerUsername()
+              || !Number.isFinite(pending.createdAt) || Date.now() - pending.createdAt > 10000
+              || !Array.isArray(pending.order)
+              || !pending.order.every(name => name && validInstagramUsername(name) === name)
+              || !pending.order.includes(pending.active)) return null;
+          return pending;
+        } catch (_) { return null; }
+      };
+      const resumeStoryContinuation = async () => {
+        if (instagramRoute() !== 'feed') return;
+        const pending = readStoryContinuation();
+        if (!pending) return;
+        cancelStoryContinuation();
+        const generation = storyContinuationGeneration;
+        const next = await nextVerifiedStoryPath('', pending);
+        if (!next || generation !== storyContinuationGeneration || instagramRoute() !== 'feed') return;
+        // The Home scan may already have reset active; retain this traversal
+        // snapshot across the full-document hop to the next verified account.
+        saveStoryOrder({ viewer: pending.viewer, order: pending.order,
+          active: pending.active, savedAt: Date.now() });
+        try { location.replace(next); } catch (_) {}
+      };
+      const armStoryContinuation = () => {
+        if (instagramRoute() !== 'story' || !hasKnownStoryAccess(new URL(location.href))) return;
+        const saved = readStoryOrder();
+        const active = validInstagramUsername(location.pathname.split('/').filter(Boolean)[1]);
+        if (!saved || !saved.order.includes(active)) return;
+        cancelStoryContinuation();
+        try {
+          sessionStorage.setItem(storyContinuationKey, JSON.stringify({
+            viewer: saved.viewer, order: saved.order, active,
+            sourcePath: location.pathname.toLowerCase(), createdAt: Date.now()
+          }));
+        } catch (_) { return; }
+        storyContinuationTimer = setTimeout(() => { void resumeStoryContinuation(); }, 500);
+      };
+      document.addEventListener('click', event => {
+        if (instagramRoute() !== 'story' || !(event.target instanceof Element)) return;
+        const control = event.target.closest('button, [role="button"], a[href]') || event.target;
+        const labels = [control, ...control.querySelectorAll('[aria-label]')]
+          .map(node => String(node.getAttribute('aria-label') || '').trim().toLowerCase());
+        if (labels.some(label => ['next', 'next story', 'next photo'].includes(label))) {
+          armStoryContinuation();
+        } else {
+          // Closing, navigating away, and other explicit controls supersede a
+          // previous Next. A stale intent must never reopen a closed viewer.
+          cancelStoryContinuation();
+        }
+      }, true);
+      document.addEventListener('ended', event => {
+        if (event.target instanceof HTMLVideoElement && visibleInstagramElement(event.target)
+            && event.target.getBoundingClientRect().height >= 280) armStoryContinuation();
+      }, true);
       const storyOrderKey = `${friendshipCacheKey}:story-order`;
       const readStoryOrder = () => {
         try {
@@ -6396,6 +6463,8 @@ enum DOMAdapters {
         saveStoryOrder({ viewer, order, active: '', savedAt: Date.now() });
       };
       const rememberVerifiedStory = (path) => {
+        const continuation = readStoryContinuation();
+        if (continuation && continuation.sourcePath !== path) cancelStoryContinuation();
         if (!discoverViewerUsername()) {
           // A full-document Story link has no Home profile navigation from
           // which to recover the viewer. Resolve it without reblanking an
@@ -6413,8 +6482,8 @@ enum DOMAdapters {
         saved.active = username;
         saveStoryOrder(saved);
       };
-      const nextVerifiedStoryPath = async (username) => {
-        const saved = readStoryOrder();
+      const nextVerifiedStoryPath = async (username, sequence = null) => {
+        const saved = sequence || readStoryOrder();
         if (!saved) return '';
         const current = saved.order.indexOf(username);
         const previous = saved.order.indexOf(saved.active);
@@ -6521,6 +6590,7 @@ enum DOMAdapters {
         let path = '';
         try { path = new URL(location.href).pathname.toLowerCase(); } catch (_) {}
         if (!(path === '/stories' || path.startsWith('/stories/'))) {
+          void hydrateViewerUsername().then(() => resumeStoryContinuation());
           storyAccessGeneration += 1;
           verifiedStoryPath = '';
           redirectedStoryPath = '';

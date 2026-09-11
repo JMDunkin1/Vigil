@@ -397,7 +397,7 @@ assert.match(instagramStableAdapterSource,
   /const nextVerifiedStoryPath[\s\S]*?current < previous \? -1 : 1[\s\S]*?hasKnownStoryAccess\(new URL\(path, location.href\)\)/u,
   "Story traversal must skip filtered accounts in the navigation direction without authorizing them");
 assert.match(instagramStableAdapterSource,
-  /data-vigil-instagram-feed-region="closed"[\s\S]*?content-visibility: hidden !important[\s\S]*?const reconcileHomeFeedRegions[\s\S]*?protectedControls[\s\S]*?hasVerifiedPost \? 'open' : 'closed'/u,
+  /data-vigil-instagram-feed-region="closed"[\s\S]*?content-visibility: hidden !important[\s\S]*?const reconcileHomeFeedRegions[\s\S]*?protectedControls[\s\S]*?if \(hasVerifiedPost\)[\s\S]*?vigilInstagramFeedRegion = 'open'[\s\S]*?vigilInstagramFeedRegion = 'refreshing'[\s\S]*?vigilInstagramFeedRegion = 'closed'/u,
   "empty feed containers must remain collapsed across recycled posts while keeping profile/story controls outside");
 assert.match(
   instagramStableAdapterSource,

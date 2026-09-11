@@ -5874,6 +5874,34 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(cachedRouteHidden, true, "Autoplay's cached router must use the same prepaint verification as manual Next")
         try await Task.sleep(nanoseconds: 250_000_000)
         XCTAssertEqual(probe.paths.last, "/stories/friendtwo")
+
+        // Instagram can close directly to Home instead of visiting the hidden
+        // account. Next must retain the friend sequence before Home resets it.
+        _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/stories/friendone/4/');")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let beforeHomeAdvance = probe.paths.count
+        _ = try await webView.evaluateJavaScript(#"""
+            document.getElementById('next').onclick = () => history.pushState({}, '', '/');
+            document.getElementById('next').click();
+            true;
+            """#)
+        try await Task.sleep(nanoseconds: 700_000_000)
+        XCTAssertEqual(probe.paths.count, beforeHomeAdvance + 1, "A Next that lands on Home must continue exactly once")
+        XCTAssertEqual(probe.paths.last, "/stories/friendtwo")
+
+        _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/stories/friendone/5/');")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let beforeClose = probe.paths.count
+        _ = try await webView.evaluateJavaScript(#"""
+            const close = document.createElement('button');
+            close.setAttribute('aria-label', 'Close');
+            close.onclick = () => history.pushState({}, '', '/');
+            document.body.appendChild(close);
+            close.click();
+            true;
+            """#)
+        try await Task.sleep(nanoseconds: 700_000_000)
+        XCTAssertEqual(probe.paths.count, beforeClose, "Explicit Close must stay on Home")
         webView.navigationDelegate = nil
     }
 
