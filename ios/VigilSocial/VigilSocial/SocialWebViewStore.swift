@@ -18,6 +18,29 @@ enum InstagramExternalPlaybackPolicy {
     }
 }
 
+enum InstagramInformationalAccounts {
+    static let storageKey = "VigilSocial.instagram.informationalAccounts.v1"
+    static let initialAccounts = ["wludining", "whiterhino.asylumfightteam"]
+
+    static func normalizedUsername(_ input: String) -> String? {
+        var value = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if value.hasPrefix("https://") {
+            guard let url = URLComponents(string: value),
+                  ["instagram.com", "www.instagram.com"].contains(url.host ?? ""),
+                  url.port == nil, url.user == nil, url.password == nil else { return nil }
+            let parts = url.path.split(separator: "/")
+            guard parts.count == 1 else { return nil }
+            value = String(parts[0])
+        } else if value.hasPrefix("@") {
+            value.removeFirst()
+        }
+        let reserved = ["accounts", "direct", "explore", "reels", "reel", "p", "stories", "about", "legal", "shop", "shopping", "live"]
+        guard value.range(of: #"^[a-z0-9_](?:[a-z0-9._]{0,28}[a-z0-9_])?$"#, options: .regularExpression) != nil,
+              !value.contains(".."), !reserved.contains(value) else { return nil }
+        return value
+    }
+}
+
 @MainActor
 final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var selectedService: SocialService
@@ -25,6 +48,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var audioPreferences: [SocialService: Bool] = [:]
     @Published private(set) var darkChromePreferences: [SocialService: Bool] = [:]
     @Published private(set) var youtubeSafariRequest: YouTubeSafariRequest
+
+    @Published private(set) var instagramInformationalAccounts: [String] = []
+    private var instagramControlsUserScript: WKUserScript?
 
     let fixedService: SocialService
     private let defaults: UserDefaults
@@ -88,6 +114,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.unclassifiedMediaPolicy = unclassifiedMediaPolicy ?? UnclassifiedMediaPolicy(bundle: bundle)
         self.mediaClassificationDeadlineNanoseconds = max(1, mediaClassificationDeadlineNanoseconds)
         super.init()
+        instagramInformationalAccounts = Array(Set(
+            (defaults.stringArray(forKey: InstagramInformationalAccounts.storageKey)
+                ?? InstagramInformationalAccounts.initialAccounts)
+                .compactMap(InstagramInformationalAccounts.normalizedUsername)
+        )).sorted()
         for service in SocialService.allCases {
             let key = audioPreferenceKey(service)
             if service == .instagram {
@@ -138,6 +169,43 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
     }
 
+    @discardableResult
+    func addInstagramInformationalAccount(_ input: String) -> Bool {
+        guard let username = InstagramInformationalAccounts.normalizedUsername(input) else { return false }
+        guard !instagramInformationalAccounts.contains(username) else { return true }
+        instagramInformationalAccounts.append(username)
+        instagramInformationalAccounts.sort()
+        saveInstagramInformationalAccounts()
+        return true
+    }
+
+    func removeInstagramInformationalAccount(_ username: String) {
+        instagramInformationalAccounts.removeAll { $0 == username }
+        saveInstagramInformationalAccounts()
+    }
+
+    private func saveInstagramInformationalAccounts() {
+        defaults.set(instagramInformationalAccounts, forKey: InstagramInformationalAccounts.storageKey)
+        guard let webView = webViews[.instagram], let previous = instagramControlsUserScript else { return }
+        let replacement = WKUserScript(
+            source: DOMAdapters.installedControlsScript(for: .instagram, informationalAccounts: instagramInformationalAccounts),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true
+        )
+        let controller = webView.configuration.userContentController
+        // Materialize before removal: WebKit can expose a bridged live array
+        // and return copies of WKUserScript rather than the original objects.
+        let scripts = controller.userScripts.map { script in
+            script.source == previous.source && script.isForMainFrameOnly
+                ? replacement : script
+        }
+        controller.removeAllUserScripts()
+        for script in scripts { controller.addUserScript(script) }
+        instagramControlsUserScript = replacement
+        // Reload clears all old author decisions, including in-flight lookups and
+        // verified story paths, so removal cannot retain an exception in memory.
+        webView.reload()
+    }
+
     func webView(for requestedService: SocialService) -> WKWebView {
         let service = requestedService == fixedService ? requestedService : fixedService
         if let existing = webViews[service] { return existing }
@@ -178,11 +246,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: false
         ))
-        controller.addUserScript(WKUserScript(
-            source: DOMAdapters.installedControlsScript(for: service),
+        let controlsUserScript = WKUserScript(
+            source: DOMAdapters.installedControlsScript(for: service, informationalAccounts: instagramInformationalAccounts),
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
-        ))
+        )
+        controller.addUserScript(controlsUserScript)
+        if service == .instagram { instagramControlsUserScript = controlsUserScript }
         let youtubeParitySource = service == .youtube
             ? Self.bundledYouTubeParityScript(in: bundle)
             : nil
@@ -951,7 +1021,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             _ = try? await webView.evaluateJavaScript(DOMAdapters.script(
                 for: service,
                 audioEnabled: self.audioEnabled(for: service),
-                contentSafetyEnabled: service != .instagram
+                contentSafetyEnabled: service != .instagram,
+                informationalAccounts: self.instagramInformationalAccounts
             ))
         }
     }
@@ -1248,6 +1319,11 @@ extension SocialWebViewStore: WKNavigationDelegate {
             }
         } else {
             guard service.allowsNavigation(to: url) else {
+                decisionHandler(.cancel, preferences)
+                return
+            }
+            if service == .instagram,
+               InstagramSingleReelPolicy.blocksNavigation(from: webView.url, to: url) {
                 decisionHandler(.cancel, preferences)
                 return
             }

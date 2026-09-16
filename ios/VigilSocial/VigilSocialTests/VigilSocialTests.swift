@@ -11,6 +11,149 @@ final class VigilSocialTests: XCTestCase {
     @MainActor
     private static var retainedYouTubeMiniplayerFixtures: [(UIWindow, WKWebView)] = []
 
+    func testInstagramSharedReelNativeNavigation() throws {
+        let source = try XCTUnwrap(URL(string: "https://www.instagram.com/reel/AbC123/"))
+        for path in ["/reel/other/", "/reel/abc123/", "/creator/reel/other/", "/reels/AbC123/", "/p/AbC123/"] {
+            XCTAssertTrue(InstagramSingleReelPolicy.blocksNavigation(from: source, to: URL(string: "https://www.instagram.com\(path)")!), path)
+        }
+        for path in ["/reel/AbC123/?utm_source=share", "/creator/reel/AbC123/", "/direct/t/123/", "/creator/", "/"] {
+            XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: source, to: URL(string: "https://www.instagram.com\(path)")!), path)
+        }
+        XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: URL(string: "https://www.instagram.com/direct/t/123/"), to: source))
+    }
+
+    @MainActor
+    func testInstagramSharedReelBlocksScrollingAndRecycledMedia() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: DOMAdapters.documentStartScript(
+            for: .instagram, unclassifiedMediaPolicy: .revealUnclassified,
+            audioEnabled: true, contentSafetyEnabled: false),
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "Shared reel containment fixture")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+            body { margin: 0; } #stack { height: 700px; overflow-y: scroll; }
+            article, video { display: block; width: 390px; height: 700px; }
+          </style></head><body>
+            <main id="stack">
+              <article><a href="/reel/AbC123/">Shared item</a><video id="shared" src="https://www.instagram.com/fixture-one.mp4"></video></article>
+              <article><a href="/reel/Other456/">Recommendation</a><video id="next" src="https://www.instagram.com/fixture-two.mp4"></video></article>
+            </main>
+            <div data-vigil-instagram-comments-sheet="true"><textarea id="comment"></textarea></div>
+            <button id="next-button" aria-label="Next reel">Next</button>
+            <script>
+              window.siteMoves = 0;
+              document.addEventListener('pointermove', () => window.siteMoves++);
+            </script>
+          </body></html>
+          """#, baseURL: URL(string: "https://www.instagram.com/reel/AbC123/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        let state = try await webView.evaluateJavaScript(#"""
+          (() => {
+            const video = document.getElementById('shared');
+            const next = document.getElementById('next');
+            const wheel = new WheelEvent('wheel', {bubbles:true,cancelable:true,deltaY:100});
+            video.dispatchEvent(wheel);
+            video.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true,pointerType:'touch',clientX:100,clientY:300}));
+            const move = new PointerEvent('pointermove', {bubbles:true,cancelable:true,pointerType:'touch',clientX:100,clientY:100});
+            video.dispatchEvent(move);
+            const up = new PointerEvent('pointerup', {bubbles:true,cancelable:true,pointerType:'touch',clientX:100,clientY:100});
+            video.dispatchEvent(up);
+            const touch = (type, y) => {
+              const event = new Event(type, {bubbles:true,cancelable:true});
+              Object.defineProperty(event, 'touches', {value: type === 'touchend' ? [] : [{clientX:100,clientY:y}]});
+              video.dispatchEvent(event);
+              return event;
+            };
+            touch('touchstart', 300);
+            const touchMove = touch('touchmove', 100);
+            const touchEnd = touch('touchend', 100);
+            const tap = new MouseEvent('click', {bubbles:true,cancelable:true});
+            video.dispatchEvent(tap);
+            const key = new KeyboardEvent('keydown', {bubbles:true,cancelable:true,key:'ArrowDown'});
+            document.body.dispatchEvent(key);
+            const commentWheel = new WheelEvent('wheel', {bubbles:true,cancelable:true,deltaY:100});
+            document.getElementById('comment').dispatchEvent(commentWheel);
+            const commentKey = new KeyboardEvent('keydown', {bubbles:true,cancelable:true,key:' '});
+            document.getElementById('comment').dispatchEvent(commentKey);
+            const nextClick = new MouseEvent('click', {bubbles:true,cancelable:true});
+            document.getElementById('next-button').dispatchEvent(nextClick);
+            history.pushState({}, '', '/reel/Other456/');
+            history.replaceState({}, '', '/reel/abc123/');
+            const result = {
+              originalVisible: getComputedStyle(video).visibility === 'visible',
+              nextHidden: getComputedStyle(next).visibility === 'hidden',
+              wheelBlocked: wheel.defaultPrevented,
+              swipeBlocked: move.defaultPrevented && up.defaultPrevented && window.siteMoves === 0,
+              touchBlocked: touchMove.defaultPrevented && touchEnd.defaultPrevented,
+              playbackTapAllowed: !tap.defaultPrevented,
+              keyBlocked: key.defaultPrevented,
+              commentsWork: !commentWheel.defaultPrevented && !commentKey.defaultPrevented,
+              nextBlocked: nextClick.defaultPrevented,
+              path: location.pathname
+            };
+            const stack = document.getElementById('stack');
+            stack.scrollTop = 500;
+            stack.dispatchEvent(new Event('scroll'));
+            result.scrollRestored = stack.scrollTop === 0;
+            video.src = 'https://www.instagram.com/fixture-recycled.mp4';
+            video.dispatchEvent(new Event('loadedmetadata'));
+            result.recycledHidden = getComputedStyle(video).visibility === 'hidden';
+            const remount = video.cloneNode();
+            remount.src = 'https://www.instagram.com/fixture-one.mp4';
+            video.replaceWith(remount);
+            remount.dispatchEvent(new Event('loadedmetadata'));
+            result.originalRemountAllowed = getComputedStyle(remount).visibility === 'visible';
+            history.pushState({}, '', '/direct/t/123/');
+            const directWheel = new WheelEvent('wheel', {bubbles:true,cancelable:true,deltaY:100});
+            document.body.dispatchEvent(directWheel);
+            result.exited = !document.documentElement.hasAttribute('data-vigil-single-reel') && !directWheel.defaultPrevented;
+            history.pushState({}, '', '/reel/SecondShared/');
+            result.secondSharedAllowed = location.pathname === '/reel/SecondShared/';
+            return result;
+          })()
+          """#) as? [String: Any]
+        for key in ["originalVisible", "nextHidden", "wheelBlocked", "swipeBlocked", "touchBlocked", "playbackTapAllowed", "keyBlocked", "commentsWork", "nextBlocked", "scrollRestored", "recycledHidden", "originalRemountAllowed", "exited", "secondSharedAllowed"] {
+            XCTAssertEqual(state?[key] as? Bool, true, key)
+        }
+        XCTAssertEqual(state?["path"] as? String, "/reel/AbC123/")
+        webView.navigationDelegate = nil
+    }
+
+    func testInstagramInformationalAccountInput() {
+        XCTAssertEqual(InstagramInformationalAccounts.normalizedUsername(" @WLUDining "), "wludining")
+        XCTAssertEqual(InstagramInformationalAccounts.normalizedUsername("https://www.instagram.com/wludining/?igsh=share"), "wludining")
+        for invalid in ["*", "", "a/b", "x';alert(1)//", "https://instagram.com.evil.test/wludining", "https://www.instagram.com/p/123/", "reels", ".abc", "abc..def", String(repeating: "a", count: 31)] {
+            XCTAssertNil(InstagramInformationalAccounts.normalizedUsername(invalid), invalid)
+        }
+    }
+
+    @MainActor
+    func testInstagramInformationalAccountsPersistAndReplaceAdapter() throws {
+        let suite = "VigilInformationalTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SocialWebViewStore(defaults: defaults, fixedService: .instagram, loadInitialPages: false)
+        let webView = store.webView(for: .instagram)
+        let initialScriptCount = webView.configuration.userContentController.userScripts.count
+        XCTAssertTrue(store.addInstagramInformationalAccount("@Useful_Gym"))
+        XCTAssertTrue(store.addInstagramInformationalAccount("useful_gym"))
+        XCTAssertEqual(store.instagramInformationalAccounts.filter { $0 == "useful_gym" }.count, 1)
+        XCTAssertFalse(store.addInstagramInformationalAccount("*"))
+        XCTAssertTrue(webView.configuration.userContentController.userScripts.contains { $0.source.contains("\"useful_gym\"") })
+        store.removeInstagramInformationalAccount("useful_gym")
+        XCTAssertEqual(webView.configuration.userContentController.userScripts.count, initialScriptCount)
+        XCTAssertFalse(webView.configuration.userContentController.userScripts.contains { $0.source.contains("\"useful_gym\"") })
+        for account in store.instagramInformationalAccounts { store.removeInstagramInformationalAccount(account) }
+        let relaunched = SocialWebViewStore(defaults: defaults, fixedService: .instagram, loadInitialPages: false)
+        XCTAssertEqual(relaunched.instagramInformationalAccounts, [])
+    }
+
     func testLinkedInNavigationPolicy() throws {
         for path in ["/video", "/video/123", "/shorts/1", "/feed/video/123", "/feed/immersive/"] {
             XCTAssertTrue(SocialService.linkedin.isRestrictedSurface(try XCTUnwrap(URL(string: "https://www.linkedin.com\(path)"))), path)
@@ -4922,7 +5065,10 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(script.contains("data-vigil-instagram-fit-ready"))
         XCTAssertFalse(script.contains("viewport-fit=cover"))
         XCTAssertFalse(script.contains("article a[href*=\"/reel/\"]"))
-        XCTAssertFalse(script.contains("touchmove"))
+        // Shared reels now deliberately capture swipes; other surfaces retain
+        // native gestures through the guard's route check.
+        XCTAssertTrue(script.contains("window.addEventListener('touchmove'"))
+        XCTAssertTrue(script.contains("if (!syncRoute() || !gesture"))
         XCTAssertFalse(script.contains("normalizeReelSurface"))
         XCTAssertFalse(script.contains("normalizeBottomNavigation"))
         XCTAssertTrue(script.contains("normalizeCommentSheets"))
@@ -5099,12 +5245,23 @@ final class VigilSocialTests: XCTestCase {
 
     @MainActor
     func testInstagramCurrentRelationshipAPIRevealsFriendPostsAndStories() async throws {
+        try await verifyInstagramAccountVisibility(informationalAccounts: [])
+    }
+
+    @MainActor
+    func testInstagramInformationalAccountsRevealPostsAndStories() async throws {
+        try await verifyInstagramAccountVisibility(informationalAccounts: ["other"])
+    }
+
+    @MainActor
+    private func verifyInstagramAccountVisibility(informationalAccounts: [String]) async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.script(
                 for: .instagram,
                 audioEnabled: true,
-                contentSafetyEnabled: false
+                contentSafetyEnabled: false,
+                informationalAccounts: informationalAccounts
             ),
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
@@ -5156,6 +5313,7 @@ final class VigilSocialTests: XCTestCase {
                   <a id="other-story" href="/stories/other/1/"><img alt="other's profile picture"></a>
                 </div>
                 <article id="friend-post"><a href="/friend/">friend</a><p>Friend post</p></article>
+                <article id="stranger-post"><a href="/stranger/">stranger</a><p>Stranger post</p></article>
                 <article id="other-post"><a href="/other/">other</a><p>Other post</p></article>
               </main>
             </body></html>
@@ -5168,6 +5326,7 @@ final class VigilSocialTests: XCTestCase {
         let state = try await webView.evaluateJavaScript(
             #"""
             (() => ({
+              strangerPostHidden: getComputedStyle(document.getElementById('stranger-post')).display === 'none',
               friendPostVisible: getComputedStyle(document.getElementById('friend-post')).display !== 'none',
               otherPostHidden: getComputedStyle(document.getElementById('other-post')).display === 'none',
               friendStoryVisible: document.getElementById('friend-story').getBoundingClientRect().width > 0,
@@ -5178,9 +5337,10 @@ final class VigilSocialTests: XCTestCase {
             """#
         ) as? [String: Any]
         XCTAssertEqual(state?["friendPostVisible"] as? Bool, true)
-        XCTAssertEqual(state?["otherPostHidden"] as? Bool, true)
+        XCTAssertEqual(state?["otherPostHidden"] as? Bool, informationalAccounts.isEmpty)
+        XCTAssertEqual(state?["strangerPostHidden"] as? Bool, true)
         XCTAssertEqual(state?["friendStoryVisible"] as? Bool, true)
-        XCTAssertEqual(state?["otherStoryHidden"] as? Bool, true)
+        XCTAssertEqual(state?["otherStoryHidden"] as? Bool, informationalAccounts.isEmpty)
         XCTAssertEqual(state?["friendStoryRelationship"] as? String, "friend")
         XCTAssertGreaterThanOrEqual(state?["relationshipPosts"] as? Int ?? 0, 2)
         webView.navigationDelegate = nil

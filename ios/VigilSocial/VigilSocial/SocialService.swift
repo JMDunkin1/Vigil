@@ -15,6 +15,23 @@ enum SnapchatWebCompatibility {
     static let desktopSafariUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15"
 }
 
+enum InstagramSingleReelPolicy {
+    static func blocksNavigation(from source: URL?, to destination: URL) -> Bool {
+        guard let source, let current = mediaRoute(source), current.kind == "reel",
+              let next = mediaRoute(destination) else { return false }
+        return next.kind != "reel" || current.id != next.id
+    }
+
+    private static func mediaRoute(_ url: URL) -> (kind: String, id: String)? {
+        guard ["instagram.com", "www.instagram.com"].contains(url.host?.lowercased() ?? "") else { return nil }
+        let parts = url.path.split(separator: "/").map(String.init)
+        let offset = parts.count == 3 ? 1 : 0
+        guard parts.count == offset + 2,
+              ["reel", "reels", "p"].contains(parts[offset].lowercased()) else { return nil }
+        return (parts[offset].lowercased(), parts[offset + 1])
+    }
+}
+
 enum SocialService: String, CaseIterable, Identifiable {
     case instagram
     case youtube

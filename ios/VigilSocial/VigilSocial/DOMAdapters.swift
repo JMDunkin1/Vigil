@@ -22,6 +22,7 @@ enum DOMAdapters {
             (service == .snapchat ? snapchatDesktopIdentityBootstrap : "")
             + (service == .linkedin ? linkedin : "")
             + documentIdentityBootstrap
+            + (service == .instagram ? instagramSingleReelGuard : "")
             + safetyBootstrap
         )
     }
@@ -1112,14 +1113,15 @@ enum DOMAdapters {
     static func script(
         for service: SocialService,
         audioEnabled: Bool,
-        contentSafetyEnabled: Bool = true
+        contentSafetyEnabled: Bool = true,
+        informationalAccounts: [String] = []
     ) -> String {
         authenticationDocumentGuard(for: service, body:
             (contentSafetyEnabled
                 ? frameSafetyScript(audioEnabled: audioEnabled)
                 : instagramStableCompatibilityScript(audioEnabled: audioEnabled))
             + frameRoutePolicyGuard(for: service)
-            + controlsScript(for: service)
+            + controlsScript(for: service, informationalAccounts: informationalAccounts)
         )
     }
 
@@ -1258,12 +1260,15 @@ enum DOMAdapters {
         )
     }
 
-    static func controlsScript(for service: SocialService) -> String {
-        lockdownProbe(service) + serviceScript(service)
+    static func controlsScript(for service: SocialService, informationalAccounts: [String] = []) -> String {
+        let accounts = informationalAccounts.compactMap(InstagramInformationalAccounts.normalizedUsername)
+        let encoded = (try? JSONEncoder().encode(accounts)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        return (service == .instagram ? instagramSingleReelGuard : "") + lockdownProbe(service) + serviceScript(service)
+            .replacingOccurrences(of: "/* VIGIL_INFORMATIONAL_ACCOUNTS */ []", with: encoded)
     }
 
-    static func installedControlsScript(for service: SocialService) -> String {
-        authenticationDocumentGuard(for: service, body: controlsScript(for: service))
+    static func installedControlsScript(for service: SocialService, informationalAccounts: [String] = []) -> String {
+        authenticationDocumentGuard(for: service, body: controlsScript(for: service, informationalAccounts: informationalAccounts))
     }
 
     static func frameRoutePolicyGuard(for service: SocialService) -> String {
@@ -1667,6 +1672,191 @@ enum DOMAdapters {
     // companion deliberately small: hide restricted entry points before they
     // can paint and normalize only the comments surface requested below, while
     // leaving Instagram's remaining layout, media, and gestures under its control.
+    // Shared media is one item, not an entry point into Instagram's snap feed.
+    // Install before Instagram so its gesture/router listeners cannot consume
+    // a swipe first. The document-end path also installs this in test/recovery.
+    static let instagramSingleReelGuard = #"""
+    (() => {
+      if (window.__vigilInstagramSingleReelInstalled) return;
+      window.__vigilInstagramSingleReelInstalled = true;
+      const mediaRoute = (value) => {
+        try {
+          const url = new URL(value, location.href);
+          if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return null;
+          const match = url.pathname.match(/^\/(?:[a-z0-9._]+\/)?(reel|reels|p)\/([A-Za-z0-9_-]+)\/?$/i);
+          return match ? { kind: match[1].toLowerCase(), id: match[2] } : null;
+        } catch (_) { return null; }
+      };
+      let pinnedID = '';
+      let pinnedVideo = null;
+      let pinnedSource = '';
+      let gesture = null;
+      let pointerGesture = null;
+      const lockedScroll = new Map();
+      const style = document.createElement('style');
+      style.textContent = `
+        html[data-vigil-single-reel] video:not([data-vigil-single-reel-media="allowed"]) {
+          visibility: hidden !important;
+        }
+        html[data-vigil-single-reel] [data-vigil-single-reel-scroll] {
+          overflow-y: hidden !important;
+          overscroll-behavior-y: none !important;
+          scroll-snap-type: none !important;
+        }
+        html[data-vigil-single-reel] video { touch-action: pinch-zoom !important; }
+      `;
+      document.documentElement.appendChild(style);
+      const reset = () => {
+        pinnedID = '';
+        pinnedVideo = null;
+        pinnedSource = '';
+        gesture = null;
+        lockedScroll.forEach((_, node) => node.removeAttribute('data-vigil-single-reel-scroll'));
+        lockedScroll.clear();
+        document.querySelectorAll('[data-vigil-single-reel-media]').forEach(node => node.removeAttribute('data-vigil-single-reel-media'));
+        delete document.documentElement.dataset.vigilSingleReel;
+      };
+      const syncRoute = () => {
+        const route = mediaRoute(location.href);
+        if (!route || (!pinnedID && route.kind !== 'reel')) {
+          if (pinnedID) reset();
+          return false;
+        }
+        if (!pinnedID) pinnedID = route.id;
+        document.documentElement.dataset.vigilSingleReel = pinnedID;
+        return true;
+      };
+      const blocksDestination = (value) => {
+        if (!syncRoute() || value == null || value === '') return false;
+        const route = mediaRoute(value);
+        return Boolean(route && (route.id !== pinnedID || route.kind !== 'reel'));
+      };
+      const cancel = event => {
+        if (event.cancelable) event.preventDefault();
+        event.stopImmediatePropagation();
+      };
+      const inSheet = target => target instanceof Element && Boolean(target.closest(
+        '[data-vigil-instagram-comments-sheet="true"], input, textarea, [contenteditable="true"], [role="slider"]'
+      ));
+      const restoreScroll = () => lockedScroll.forEach((position, node) => {
+        if (node.scrollTop !== position) node.scrollTop = position;
+      });
+      const mediaSource = video => video.getAttribute('src') || video.currentSrc || video.querySelector('source')?.src || '';
+      const reconcile = () => {
+        if (!syncRoute()) return;
+        const videos = [...document.querySelectorAll('video')];
+        if (pinnedVideo && !pinnedVideo.isConnected && pinnedSource) {
+          // A harmless React remount may replace the node, but only the exact
+          // already-authorized media source may inherit playback permission.
+          const replacement = videos.find(video => mediaSource(video) === pinnedSource);
+          if (replacement) pinnedVideo = replacement;
+        }
+        if (!pinnedVideo) {
+          // Pick the visible item rather than a prefetched neighbour. Require
+          // a matching permalink when the item's article exposes one.
+          const visible = videos.filter(video => {
+            const box = video.getBoundingClientRect();
+            if (box.width <= 0 || box.height <= 0 || box.bottom <= 0 || box.top >= innerHeight) return false;
+            const links = [...(video.closest('article')?.querySelectorAll('a[href]') || [])]
+              .map(link => mediaRoute(link.href)).filter(Boolean);
+            return !links.length || links.some(route => route.id === pinnedID);
+          });
+          visible.sort((a, b) => Math.abs(a.getBoundingClientRect().top + a.getBoundingClientRect().height / 2 - innerHeight / 2)
+            - Math.abs(b.getBoundingClientRect().top + b.getBoundingClientRect().height / 2 - innerHeight / 2));
+          pinnedVideo = visible[0] || null;
+        }
+        for (const video of videos) {
+          const source = mediaSource(video);
+          if (video === pinnedVideo && !pinnedSource && source) pinnedSource = source;
+          // React can recycle the same video node without changing history.
+          // A different source must never inherit permission from that node.
+          const allowed = video === pinnedVideo && (!pinnedSource || source === pinnedSource)
+            && mediaRoute(location.href)?.id === pinnedID;
+          video.dataset.vigilSingleReelMedia = allowed ? 'allowed' : 'blocked';
+          if (!allowed && !video.paused) video.pause();
+        }
+        if (pinnedVideo?.isConnected) {
+          for (let node = pinnedVideo.parentElement; node; node = node.parentElement) {
+            if (inSheet(node)) continue;
+            if (!lockedScroll.has(node)) {
+              lockedScroll.set(node, node.scrollTop);
+              node.setAttribute('data-vigil-single-reel-scroll', 'true');
+            }
+          }
+        }
+        restoreScroll();
+      };
+      window.addEventListener('touchstart', event => {
+        if (!syncRoute() || inSheet(event.target) || event.touches.length !== 1) { gesture = null; return; }
+        gesture = { x: event.touches[0].clientX, y: event.touches[0].clientY, blocked: false };
+      }, { capture: true, passive: true });
+      window.addEventListener('touchmove', event => {
+        if (!syncRoute() || !gesture || event.touches.length !== 1) return;
+        const dx = event.touches[0].clientX - gesture.x;
+        const dy = event.touches[0].clientY - gesture.y;
+        if (gesture.blocked || (Math.abs(dy) > 6 && Math.abs(dy) > Math.abs(dx))) {
+          gesture.blocked = true;
+          cancel(event);
+          restoreScroll();
+        }
+      }, { capture: true, passive: false });
+      for (const type of ['touchend', 'touchcancel']) window.addEventListener(type, event => {
+        if (gesture?.blocked) cancel(event);
+        gesture = null;
+      }, { capture: true, passive: false });
+      window.addEventListener('pointerdown', event => {
+        pointerGesture = syncRoute() && !inSheet(event.target) ? { x: event.clientX, y: event.clientY, blocked: false } : null;
+      }, true);
+      window.addEventListener('pointermove', event => {
+        if (!syncRoute() || !pointerGesture) return;
+        if (pointerGesture.blocked || (Math.abs(event.clientY - pointerGesture.y) > 6
+            && Math.abs(event.clientY - pointerGesture.y) > Math.abs(event.clientX - pointerGesture.x))) {
+          pointerGesture.blocked = true;
+          cancel(event);
+        }
+      }, true);
+      for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, event => {
+        if (pointerGesture?.blocked) cancel(event);
+        pointerGesture = null;
+      }, true);
+      window.addEventListener('wheel', event => {
+        if (syncRoute() && !inSheet(event.target) && event.deltaY) cancel(event);
+      }, { capture: true, passive: false });
+      window.addEventListener('keydown', event => {
+        if (syncRoute() && !inSheet(event.target)
+            && ['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)) cancel(event);
+      }, true);
+      window.addEventListener('click', event => {
+        const link = event.target?.closest?.('a[href]');
+        const next = event.target?.closest?.('[aria-label="Next" i], [aria-label="Next reel" i], [aria-label="Previous reel" i]');
+        if (blocksDestination(link?.href) || (syncRoute() && next && !inSheet(next))) cancel(event);
+      }, true);
+      window.addEventListener('scroll', event => {
+        if (!syncRoute() || inSheet(event.target)) return;
+        restoreScroll();
+      }, true);
+      for (const type of ['play', 'playing', 'loadedmetadata', 'emptied']) document.addEventListener(type, reconcile, true);
+      for (const name of ['pushState', 'replaceState']) {
+        const original = history[name];
+        history[name] = function(...args) {
+          if (blocksDestination(args[2])) return;
+          const result = original.apply(this, args);
+          reconcile();
+          return result;
+        };
+      }
+      window.navigation?.addEventListener('navigate', event => {
+        if (blocksDestination(event.destination?.url) && event.cancelable) event.preventDefault();
+      });
+      window.addEventListener('popstate', reconcile, true);
+      window.addEventListener('pageshow', reconcile, true);
+      new MutationObserver(reconcile).observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'href']
+      });
+      reconcile();
+    })();
+    """#
+
     private static let instagramStableDocumentStartStyle = #"""
     (() => {
       if (window.__vigilInstagramStableStartInstalled) return;
@@ -5128,7 +5318,7 @@ enum DOMAdapters {
           return;
         }
         if (isSingularReelRoute()) {
-          const path = location.pathname.toLowerCase();
+          const path = location.pathname;
           if (!sharedReelPath) sharedReelPath = path;
           document.documentElement.dataset.vigilInstagramSharedReel = 'true';
           if (path !== sharedReelPath) {
@@ -5437,7 +5627,7 @@ enum DOMAdapters {
         if (!link) return;
         if (isReelsDestinationRoute(link.href)
             || (sharedReelPath && isSingularReelRoute(link.href)
-              && new URL(link.href, location.href).pathname.toLowerCase() !== sharedReelPath)) {
+              && new URL(link.href, location.href).pathname !== sharedReelPath)) {
           event.preventDefault();
           event.stopImmediatePropagation();
           publishUnavailable('reels');
@@ -5531,6 +5721,12 @@ enum DOMAdapters {
       const friendshipCache = new Map();
       const friendshipChecks = new Map();
       const normalizedUsername = (value) => String(value || '').trim().replace(/^@/, '').toLowerCase();
+      // Native settings are serialized into this closure, never read from page storage.
+      // Exceptions authorize only named authors; they never become cached friendships.
+      const informationalAccounts = new Set(/* VIGIL_INFORMATIONAL_ACCOUNTS */ []);
+      const isInformationalAccount = (username) => informationalAccounts.has(normalizedUsername(username));
+      const canViewAccount = async (username) => isInformationalAccount(username)
+        || await fetchMutualFriendship(username);
       const viewerID = (() => {
         try {
           return decodeURIComponent(
@@ -5927,7 +6123,7 @@ enum DOMAdapters {
         article.dataset.vigilInstagramHomeAuthor = username;
         homeCardIdentities.set(article, username);
         article.dataset.vigilInstagramHomeRelationship = 'pending';
-        void fetchMutualFriendship(username).then((mutual) => {
+        void canViewAccount(username).then((mutual) => {
           if (!article.isConnected || homeCardAuthor(article, username) !== username
               || article.dataset.vigilInstagramHomeAuthor !== username) return;
           const relationship = username === discoverViewerUsername()
@@ -6349,7 +6545,7 @@ enum DOMAdapters {
         }
         control.dataset.vigilInstagramStoryRelationship = 'pending';
         item.dataset.vigilInstagramStoryRelationship = 'pending';
-        void fetchMutualFriendship(username).then((mutual) => {
+        void canViewAccount(username).then((mutual) => {
           if (!control.isConnected || storyAuthor(control) !== username
               || control.dataset.vigilInstagramStoryAuthor !== username) return;
           const relationship = isOwnStoryControl(control)
@@ -6368,7 +6564,7 @@ enum DOMAdapters {
         if (parts[0] !== 'stories') return false;
         const username = validInstagramUsername(parts[1]);
         return Boolean(username) && (username === discoverViewerUsername()
-          || friendshipCache.get(username) === true);
+          || isInformationalAccount(username) || friendshipCache.get(username) === true);
       };
       // Capture Next before Instagram's router can discard the viewer. The
       // compact friend tray and Instagram's original sequence are different.
@@ -6497,7 +6693,7 @@ enum DOMAdapters {
           // Sequence membership is never permission. Only the existing
           // viewer-scoped mutual-friend verifier can authorize a destination.
           if (hasKnownStoryAccess(new URL(path, location.href))) return path;
-          if (await fetchMutualFriendship(saved.order[index]) === true) return path;
+          if (await canViewAccount(saved.order[index]) === true) return path;
         }
         return '';
       };
@@ -6613,7 +6809,7 @@ enum DOMAdapters {
         const generation = ++storyAccessGeneration;
         const ownUsername = discoverViewerUsername() || await hydrateViewerUsername();
         const mutual = username && username !== ownUsername
-          ? await fetchMutualFriendship(username)
+          ? await canViewAccount(username)
           : Boolean(username && username === ownUsername);
         let currentPath = '';
         try { currentPath = new URL(location.href).pathname.toLowerCase(); } catch (_) {}
