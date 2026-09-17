@@ -1,9 +1,7 @@
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../apiSecurity.js";
 import { BLOCKED_PAGE_ESCAPE_FALLBACK, safeExternalPageUrl } from "../blockedPageUrl.js";
 import { PORT } from "../defaults.js";
-import { emergencyUnlockAllowedForPolicy, activePolicy } from "../policy.js";
-import { intentReasonPolicy } from "../intentReason.js";
-import { interventionSummary } from "../intervention.js";
+import { activePolicy } from "../policy.js";
 import { pausePageData } from "../intentionalUse.js";
 import { policyForSample } from "../monitor/policy.js";
 import { safariFilterDenyMatch } from "../safariFilter.js";
@@ -118,7 +116,10 @@ export function blockedPage(input: PageInput): string {
   const integrityReason = integrityAlarm?.type === "state-seal"
     ? "Vigil found a saved-state integrity mismatch."
     : String(integrityAlarm?.detail || "Vigil found an integrity problem.");
-  const blockExplanation = activeMatchesRequest && active?.kind === "integrity"
+  const browserProtectionInterrupted = requestedKind === "browser-protection";
+  const blockExplanation = browserProtectionInterrupted
+    ? "Vigil could not confirm that this page’s protection is responding. The extension may still be enabled. Check its access to this website and try opening the page again."
+    : activeMatchesRequest && active?.kind === "integrity"
     ? `${integrityReason} This protection stays active ${active.endsAt || "until the integrity alarm is reviewed"}.`
     : activeMatchesRequest && active
       ? `${active.session.title || "A Vigil protection"} is active${active.endsAt ? ` until ${active.endsAt}` : ""}.`
@@ -150,7 +151,7 @@ export function blockedPage(input: PageInput): string {
 <body data-vigil-block-page="1">
   <main>
     <p class="eyebrow">Vigil</p>
-    <h1>${site} is blocked.</h1>
+    <h1>${browserProtectionInterrupted ? "Browser protection connection interrupted." : `${site} is blocked.`}</h1>
     <p class="reason">${escapeHtml(blockExplanation)}</p>
     <div class="escape-actions">
       <a id="leaveBlockedPage" href="${escapeHtml(escapeUrl)}">Go back</a>
@@ -180,308 +181,6 @@ function staleBlockedPageReceipt(url: URL, state: VigilState): boolean {
   const until = url.searchParams.get("until");
   return Boolean(until && policy.endsAt && until !== policy.endsAt);
 }
-
-function legacyBlockedPage({ url, state, port = PORT }: PageInput): string {
-  const policy = activePolicy(state);
-  const site = escapeHtml(url.searchParams.get("site") || "This target");
-  const mode = escapeHtml(url.searchParams.get("mode") || "focus");
-  const until = escapeHtml(url.searchParams.get("until") || "");
-  const emergencyAllowed = emergencyUnlockAllowedForPolicy(policy);
-  const reasonPolicy = intentReasonPolicy(state);
-  const breakStatus = emergencyAllowed ? "" : commitmentLockError(policy);
-  const reasonStatus = reasonPolicy.enabled ? `Enter a reason of at least ${reasonPolicy.minLength} characters.` : "";
-  const initialStatus = breakStatus || reasonStatus;
-  const breakDisabled = emergencyAllowed && !reasonPolicy.enabled ? "" : " disabled";
-  const intervention = interventionSummary(state);
-  const backUrl = safePageNavigationUrl(url.searchParams.get("back"));
-  const interventionClass = escapeHtml(intervention.level);
-  const interventionCopy = escapeHtml(intervention.message);
-  const interventionTargets = escapeHtml(intervention.topTargets.map((target) => `${target.label} x${target.count}`).join(" | ") || "No recent targets");
-  const pageData = {
-    site: url.searchParams.get("site") || "",
-    kind: url.searchParams.get("kind") || "manual",
-    lockId: url.searchParams.get("lockId") || "",
-    returnUrl: url.searchParams.get("return") || "",
-    backUrl,
-    emergencyAllowed,
-    reasonGate: reasonPolicy
-  };
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Blocked</title>
-  <style>
-    :root { color-scheme: dark; --paper: #101111; --paper-2: #161717; --ink: #f0ece5; --muted: #aaa398; --surface: rgba(28, 29, 28, .96); --line: #353532; --line-strong: #575248; --primary: #b77952; --primary-strong: #d5a16b; --red: #9c4439; --focus: rgba(213, 161, 107, .24); }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; font-family: Inter, "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); background: radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .08), transparent 34rem), radial-gradient(circle at 28% 106%, rgba(157, 124, 88, .04), transparent 30rem), linear-gradient(180deg, var(--paper), var(--paper-2)); }
-    main { position: relative; width: min(620px, 100%); padding: 30px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 28px 84px rgba(0, 0, 0, .44); }
-    main::before { content: "V"; display: grid; place-items: center; width: 38px; height: 38px; margin-bottom: 22px; border: 1px solid rgba(213, 161, 107, .46); border-radius: 9px; background: rgba(183, 121, 82, .12); color: var(--primary-strong); font-size: .9rem; font-weight: 850; }
-    h1 { font: 700 clamp(2.25rem, 7vw, 4.15rem)/.98 Georgia, "Times New Roman", serif; margin: 0 0 18px; letter-spacing: -.04em; color: var(--ink); }
-    h2 { font-family: "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace; text-transform: uppercase; letter-spacing: .12em; }
-    p { font-size: 1.03rem; line-height: 1.58; color: var(--muted); margin: 0 0 14px; }
-    a { color: var(--primary-strong); font-weight: 700; }
-    blockquote { margin: 22px 0 0; padding: 15px 17px; border-left: 2px solid rgba(213, 161, 107, .52); background: rgba(183, 121, 82, .06); color: #d7d0c5; font-style: italic; line-height: 1.5; }
-    blockquote cite { display: block; margin-top: 7px; color: var(--muted); font-size: .82rem; font-style: normal; }
-    .meta { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); }
-    .break-panel { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--line); display: grid; gap: 12px; }
-    .break-panel h2 { margin: 0; font-size: .86rem; }
-    .break-panel input { width: 100%; min-height: 44px; border: 1px solid var(--line-strong); border-radius: 9px; padding: 0 12px; background: #151616; color: var(--ink); font: inherit; font-size: .94rem; font-weight: 500; }
-    .break-panel input:focus { outline: 3px solid var(--focus); outline-offset: 2px; }
-    .challenge { border: 1px dashed rgba(213, 161, 107, .52); border-radius: 9px; background: rgba(183, 121, 82, .1); color: var(--primary-strong); padding: 10px 12px; font: 800 .9rem "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace; overflow-wrap: anywhere; }
-    .challenge[hidden] { display: none; }
-    .scanner-video { width: 100%; border-radius: 8px; }
-    .break-actions, .distance-row { display: flex; gap: 10px; flex-wrap: wrap; }
-    .distance-row input { flex: 1 1 220px; }
-    button { min-height: 44px; border: 1px solid transparent; border-radius: 9px; padding: 0 16px; font: inherit; font-weight: 760; cursor: pointer; }
-    button:disabled { cursor: not-allowed; opacity: .52; }
-    .primary { color: #16120f; background: var(--primary); }
-    .secondary { color: var(--ink); background: #222321; border-color: var(--line-strong); }
-    .escape-actions { display: none; margin-top: 22px; }
-    .escape-actions.is-visible { display: flex; }
-    .escape-actions a { min-height: 44px; border: 1px solid var(--line-strong); border-radius: 9px; padding: 0 16px; display: inline-grid; place-items: center; color: var(--ink); background: #222321; text-decoration: none; font-weight: 760; }
-    .status { min-height: 22px; color: var(--muted); font-size: .88rem; }
-    .intervention { margin-top: 18px; border: 1px solid var(--line); border-radius: 9px; background: #181919; padding: 12px; }
-    .intervention strong { display: block; margin-bottom: 5px; }
-    .intervention span { display: block; color: #929b98; font: .88rem ui-sans-serif, system-ui, sans-serif; overflow-wrap: anywhere; }
-    .intervention.elevated { border-color: rgba(213, 161, 107, .52); background: rgba(183, 121, 82, .1); }
-    .intervention.high { border-color: #9c4439; background: #24100f; }
-    @media (max-width: 620px) { body { place-items: start; padding: 48px 20px; } main { padding: 24px 20px; } }
-  </style>
-</head>
-<body>
-  <main>
-    <h1>${site} is blocked.</h1>
-    <p>The ${mode} lock is active. The useful move is to close this tab and go back to the thing you chose before impulse got loud.</p>
-    <div id="escapeActions" class="escape-actions">
-      <a id="leaveBlockedPage" href="${escapeHtml(backUrl || BLOCKED_PAGE_ESCAPE_FALLBACK)}">Go back</a>
-    </div>
-    <div class="intervention ${interventionClass}">
-      <strong>Adaptive friction</strong>
-      <span>${interventionCopy}</span>
-      <span>${interventionTargets}</span>
-    </div>
-    <blockquote>“You have made us for Yourself, O Lord, and our heart is restless until it rests in You.”<cite>Saint Augustine, Confessions I.1</cite></blockquote>
-    <section class="break-panel">
-      <h2>Intentional break</h2>
-      <input id="breakReason" type="text" autocomplete="off" placeholder="${reasonPolicy.enabled ? `Reason (${reasonPolicy.minLength}+ chars)` : "Reason"}">
-      <input id="breakPasscode" type="password" autocomplete="current-password" placeholder="Keyholder passcode">
-      <div class="distance-row">
-        <input id="breakDistanceKey" type="password" autocomplete="off" placeholder="Distance key">
-        <button id="scanBreakDistanceKey" class="secondary" type="button">Scan</button>
-      </div>
-      <code id="breakChallenge" class="challenge" hidden></code>
-      <input id="breakChallengeInput" class="is-hidden" type="text" autocomplete="off" placeholder="Typing challenge" hidden>
-      <div class="break-actions">
-        <button id="requestBreak" class="primary" type="button"${breakDisabled}>Request Break</button>
-        <button id="confirmBreak" class="secondary" type="button" disabled>Confirm</button>
-      </div>
-      <div id="breakStatus" class="status">${escapeHtml(initialStatus)}</div>
-    </section>
-    <p class="meta">Locked until ${until || "the session ends"}. Vigil: <a href="http://127.0.0.1:${port}">open app</a></p>
-  </main>
-  <script>
-    const pageData = ${safeScriptJson(pageData)};
-    let pending = null;
-    let timer = null;
-    const reason = document.querySelector("#breakReason");
-    const passcode = document.querySelector("#breakPasscode");
-    const distanceKey = document.querySelector("#breakDistanceKey");
-    const challenge = document.querySelector("#breakChallenge");
-    const challengeInput = document.querySelector("#breakChallengeInput");
-    const requestButton = document.querySelector("#requestBreak");
-    const confirmButton = document.querySelector("#confirmBreak");
-    const scanButton = document.querySelector("#scanBreakDistanceKey");
-    const status = document.querySelector("#breakStatus");
-    const escapeActions = document.querySelector("#escapeActions");
-    const leaveBlockedPage = document.querySelector("#leaveBlockedPage");
-    let scanStream = null;
-
-    const escapeTarget = blockedEscapeTarget();
-    if (escapeActions && leaveBlockedPage) {
-      escapeActions.classList.add("is-visible");
-      leaveBlockedPage.href = escapeTarget;
-      leaveBlockedPage.addEventListener("click", (event) => {
-        event.preventDefault();
-        location.replace(escapeTarget);
-      });
-    }
-
-    reason.addEventListener("input", syncRequestButton);
-    syncRequestButton();
-
-    requestButton.addEventListener("click", async () => {
-      if (!reasonReady()) {
-        status.textContent = "Enter a reason of at least " + pageData.reasonGate.minLength + " characters.";
-        syncRequestButton();
-        return;
-      }
-      requestButton.disabled = true;
-      try {
-        const isAppLock = pageData.kind === "app-lock" && pageData.lockId;
-        const body = isAppLock
-          ? { lockId: pageData.lockId, reason: reason.value.trim() }
-          : { reason: reason.value.trim() };
-        const result = await postJson(isAppLock ? "/api/app-lock/unlock/request" : "/api/emergency/request", body);
-        pending = result.request || result.pending;
-        tick();
-        timer = setInterval(tick, 500);
-      } catch (error) {
-        status.textContent = error.message;
-        requestButton.disabled = false;
-      }
-    });
-
-    confirmButton.addEventListener("click", async () => {
-      if (!pending) return;
-      confirmButton.disabled = true;
-      try {
-        const isAppLock = pageData.kind === "app-lock" && pageData.lockId;
-        await postJson(isAppLock ? "/api/app-lock/unlock/confirm" : "/api/emergency/confirm", {
-          requestId: pending.id,
-          passcode: passcode.value,
-          distanceKey: distanceKey.value,
-          challengeText: challengeInput.value
-        });
-        status.textContent = "Break opened.";
-        if (pageData.returnUrl) setTimeout(() => { location.href = pageData.returnUrl; }, 650);
-      } catch (error) {
-        status.textContent = error.message;
-        tick();
-      }
-    });
-
-    scanButton.addEventListener("click", async () => {
-      if (!("BarcodeDetector" in window)) {
-        status.textContent = "QR scanning is not available in this browser.";
-        return;
-      }
-      scanButton.disabled = true;
-      status.textContent = "Camera starting.";
-      try {
-        scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-        const video = document.createElement("video");
-        video.playsInline = true;
-        video.muted = true;
-        video.srcObject = scanStream;
-        video.className = "scanner-video";
-        document.querySelector(".break-panel").append(video);
-        await video.play();
-        const detector = new BarcodeDetector({ formats: ["qr_code"] });
-        const started = Date.now();
-        const loop = async () => {
-          const codes = await detector.detect(video).catch(() => []);
-          const match = String(codes[0]?.rawValue || "").match(/[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}/i);
-          if (match) {
-            distanceKey.value = match[0].toUpperCase();
-            stopScanner(video);
-            status.textContent = "Distance key scanned.";
-            return;
-          }
-          if (Date.now() - started > 30000) {
-            stopScanner(video);
-            status.textContent = "No QR code found. Type the key instead.";
-            return;
-          }
-          requestAnimationFrame(loop);
-        };
-        requestAnimationFrame(loop);
-      } catch (error) {
-        status.textContent = error.message || "Camera unavailable.";
-        scanButton.disabled = false;
-      }
-    });
-
-    async function postJson(path, body) {
-      const response = await fetch(path, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "${CONTROL_INTENT_HEADER}": "${CONTROL_INTENT_VALUE}"
-        },
-        body: JSON.stringify(body)
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error || "Request failed.");
-      return result;
-    }
-
-    function stopScanner(video) {
-      if (scanStream) {
-        for (const track of scanStream.getTracks()) track.stop();
-      }
-      scanStream = null;
-      scanButton.disabled = false;
-      if (video) video.remove();
-    }
-
-    function tick() {
-      if (!pending) return;
-      renderChallenge();
-      const seconds = Math.ceil((new Date(pending.eligibleAt).getTime() - Date.now()) / 1000);
-      if (seconds > 0) {
-        status.textContent = "Confirm in " + seconds + "s.";
-        confirmButton.disabled = true;
-      } else {
-        status.textContent = "Ready to confirm.";
-        confirmButton.disabled = false;
-        clearInterval(timer);
-      }
-    }
-
-    function reasonReady() {
-      if (!pageData.reasonGate || !pageData.reasonGate.enabled) return true;
-      return reason.value.replace(/\\s+/g, " ").trim().length >= pageData.reasonGate.minLength;
-    }
-
-    function syncRequestButton() {
-      if (!requestButton || pending) return;
-      requestButton.disabled = !pageData.emergencyAllowed || !reasonReady();
-    }
-
-    function blockedEscapeTarget() {
-      return safeNavigationTarget(pageData.backUrl) || ${safeScriptJson(BLOCKED_PAGE_ESCAPE_FALLBACK)};
-    }
-
-    function safeNavigationTarget(value) {
-      try {
-        const url = new URL(String(value || ""));
-        if (url.protocol !== "http:" && url.protocol !== "https:") return "";
-        const host = url.hostname.replace(/^\\[|\\]$/g, "").toLowerCase();
-        if (["127.0.0.1", "localhost", "::1"].includes(host)) return "";
-        if (sameNavigationUrl(url.href, pageData.returnUrl) || sameNavigationUrl(url.href, location.href)) return "";
-        return url.href;
-      } catch {
-        return "";
-      }
-    }
-
-    function sameNavigationUrl(left, right) {
-      try {
-        return new URL(String(left || "")).href === new URL(String(right || "")).href;
-      } catch {
-        return false;
-      }
-    }
-
-    function renderChallenge() {
-      if (pending && pending.challenge && pending.challenge.text) {
-        challenge.hidden = false;
-        challengeInput.hidden = false;
-        challenge.textContent = "Type: " + pending.challenge.text;
-      } else {
-        challenge.hidden = true;
-        challengeInput.hidden = true;
-        challenge.textContent = "";
-      }
-    }
-  </script>
-</body>
-</html>`;
-}
-
-void legacyBlockedPage;
 
 export function pausePage({ url, state, port = PORT }: PageInput): string {
   const requestId = url.searchParams.get("requestId") || "";
@@ -1186,15 +885,6 @@ export function safeScriptJson(value: unknown): string {
   return JSON.stringify(value).replace(/[<>&]/g, (char) => entities[char] || char);
 }
 
-function safePageNavigationUrl(value: unknown): string {
-  try {
-    const url = new URL(String(value || ""));
-    return ["http:", "https:"].includes(url.protocol) && !isLocalPageHost(url.hostname) ? url.toString() : "";
-  } catch {
-    return "";
-  }
-}
-
 function safeBlockedPageEscapeUrl(input: PageInput, value: unknown): string {
   const candidate = safeExternalPageUrl(value);
   if (!candidate) return "";
@@ -1208,10 +898,6 @@ function safeBlockedPageEscapeUrl(input: PageInput, value: unknown): string {
   });
   if (policy || safariFilterDenyMatch(state, parsed)) return "";
   return parsed.toString();
-}
-
-function isLocalPageHost(hostname: unknown): boolean {
-  return ["127.0.0.1", "localhost", "::1"].includes(String(hostname || "").replace(/^\[|\]$/g, "").toLowerCase());
 }
 
 export function commitmentLockError(policy: ActivePolicy | null | undefined): string {

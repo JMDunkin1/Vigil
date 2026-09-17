@@ -1,33 +1,21 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 
-const source = await readFile(new URL("../public/focus-sound.js", import.meta.url), "utf8");
-const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-for (const expected of [
-  "File:Rain_(1).ogg",
-  "File:Waves.ogg",
-  "File:Storm_thunderbolts.ogg",
-  "File:Forest_lawn_creek.ogg",
-  "Goldberg-Variationen",
-  "Invention_8",
-  "Italian_Concerto",
-  "Harmonious_Blacksmith",
-  "Kirkpatrick.87",
-  "Kirkpatrick.466",
-  "creativecommons.org/publicdomain/zero/1.0"
-]) {
-  assert.ok(source.includes(expected), `missing bundled-audio provenance: ${expected}`);
+// The Audio view is retired, but distributed recordings still need provenance.
+const tracks = JSON.parse(await readFile(new URL("../public/audio/attribution.json", import.meta.url), "utf8")) as Array<{
+  id: string;
+  src: string;
+  attribution: string;
+  sourcePage: string;
+  license: string;
+  licenseUrl: string;
+}>;
+assert.equal(tracks.length, 10);
+assert.equal(new Set(tracks.map((track) => track.id)).size, tracks.length);
+for (const track of tracks) {
+  assert.ok(track.attribution.trim(), `${track.id} must retain recording attribution`);
+  assert.ok(track.license.trim());
+  assert.equal(new URL(track.sourcePage).protocol, "https:");
+  assert.equal(new URL(track.licenseUrl).protocol, "https:");
+  assert.ok((await stat(new URL(`../public${track.src}`, import.meta.url))).size > 1_000);
 }
-
-for (const id of ["focusSoundAttribution", "focusSoundAttributionText", "focusSoundSourceLink", "focusSoundLicenseLink", "audioSoundLibrary"]) {
-  assert.doesNotMatch(html, new RegExp(`id="${id}"`), `retired Audio UI must not expose #${id}`);
-}
-assert.doesNotMatch(html, /data-view(?:-target)?="audio"/u, "Audio must not remain as a visible or hidden destination");
-// Keep provenance in the dormant compatibility controller while old stored
-// settings and packaged assets are migrated independently from this UI redo.
-assert.match(source, /closest\("\.audio-library-group"\)\?\.append\(attribution\)/, "recording attribution must follow the active track into its dropdown");
-assert.match(source, /attribution\.hidden = !track/);
-assert.match(source, /attributionText\.textContent = track\.attribution/);
-assert.match(source, /sourceLink\.href = track\.sourcePage/);
-assert.match(source, /licenseLink\.href = track\.licenseUrl/);
-assert.match(source, /licenseLink\.textContent = track\.license/);

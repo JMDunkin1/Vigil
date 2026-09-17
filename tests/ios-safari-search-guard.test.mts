@@ -20,13 +20,15 @@ class SearchInput {
   getAttribute(name: string): string | null { return name === "type" ? "search" : null; }
   closest(): null { return null; }
 }
-function page(url: string) {
+const blockedURL = "safari-web-extension://vigil/blocked.html";
+function page(url: string, runtimeAvailable = true) {
   const redirects: string[] = [];
   const listeners = new Map<string, (event: unknown) => void>();
   let interval = () => {};
   const location = { href: url, replace: (target: string) => redirects.push(target), assign: (target: string) => redirects.push(target) };
   runInNewContext(source, {
     URL, URLSearchParams, location, Element: SearchInput,
+    browser: runtimeAvailable ? { runtime: { getURL: (path: string) => `safari-web-extension://vigil/${path}` } } : undefined,
     addEventListener: (name: string, listener: (event: unknown) => void) => listeners.set(name, listener),
     setInterval: (callback: () => void) => { interval = callback; }
   });
@@ -39,7 +41,7 @@ for (const url of [
   "https://www.pixiv.net/en/tags/nudity/artworks",
   "https://www.google.com/search?q=adult+content+on+artstation",
   "https://example.org/search?q=Jane+Example+leaks"
-]) assert.deepEqual(page(url).redirects, ["about:blank"], url);
+]) assert.deepEqual(page(url).redirects, [blockedURL], url);
 for (const url of [
   "https://health.example/article/sex-education",
   "https://www.reddit.com/search?q=Middlesex",
@@ -50,12 +52,15 @@ assert.equal(new URL(page("https://www.google.com/search?q=landscapes&safe=off")
 const dynamic = page("https://www.reddit.com/");
 dynamic.location.href = "https://www.reddit.com/search?q=adult+content";
 dynamic.tick();
-assert.deepEqual(dynamic.redirects, ["about:blank"], "same-document navigation is checked");
+assert.deepEqual(dynamic.redirects, [blockedURL], "same-document navigation is checked");
 const inputPage = page("https://www.reddit.com/");
 const input = new SearchInput();
 input.value = "adult content";
 let cancelled = false;
 inputPage.listeners.get("input")!({ target: input, type: "input", cancelable: true, preventDefault: () => { cancelled = true; }, stopImmediatePropagation() {} });
 assert.equal(cancelled, true);
-assert.deepEqual(inputPage.redirects, ["about:blank"], "search-box input is checked before submission");
+assert.deepEqual(inputPage.redirects, [blockedURL], "search-box input is checked before submission");
 console.log("iOS Safari desktop search parity, navigation, input, benign searches and bundled freshness passed.");
+
+assert.deepEqual(page("https://example.org/search?q=porn", false).redirects, ["about:blank"], "missing extension APIs still leave the blocked page");
+assert.deepEqual(manifest.web_accessible_resources, [{ resources: ["blocked.html", "blocked.css"], matches: ["http://*/*", "https://*/*"] }]);

@@ -236,21 +236,23 @@ async function verifySessionToken(token: string): Promise<SessionPayload | null>
 async function authSecret(): Promise<Buffer> {
   if (cachedSecret) return cachedSecret;
   await mkdir(dirname(AUTH_SECRET_PATH), { recursive: true });
+  let secret: Buffer;
   try {
-    cachedSecret = Buffer.from((await readFile(AUTH_SECRET_PATH, "utf8")).trim(), "base64");
+    secret = Buffer.from((await readFile(AUTH_SECRET_PATH, "utf8")).trim(), "base64");
   } catch (error) {
     if (!isNodeErrorCode(error, "ENOENT")) throw error;
     const generated = randomBytes(32);
     try {
       await writeFile(AUTH_SECRET_PATH, `${generated.toString("base64")}\n`, { mode: 0o600, flag: "wx" });
-      cachedSecret = generated;
+      secret = generated;
     } catch (writeError) {
       if (!isNodeErrorCode(writeError, "EEXIST")) throw writeError;
-      cachedSecret = Buffer.from((await readFile(AUTH_SECRET_PATH, "utf8")).trim(), "base64");
+      secret = Buffer.from((await readFile(AUTH_SECRET_PATH, "utf8")).trim(), "base64");
     }
   }
-  if (cachedSecret.length < 32) throw new Error("Vigil auth secret is invalid.");
-  return cachedSecret;
+  if (secret.length < 32) throw new Error("Vigil auth secret is invalid.");
+  cachedSecret = secret;
+  return secret;
 }
 
 async function loadAccounts(): Promise<StoredAccounts> {

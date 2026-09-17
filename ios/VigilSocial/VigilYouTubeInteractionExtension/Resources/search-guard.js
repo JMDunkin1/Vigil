@@ -1,6 +1,11 @@
 /* eslint-disable no-unused-vars -- Shared desktop matcher includes helpers unused by this entry point. */
 // Generated from the desktop search guard; run the generator after npm run build.
 (() => {
+function vigilBlockedSearchURL() {
+  try {
+    return (globalThis.browser || globalThis.chrome).runtime.getURL("blocked.html");
+  } catch { return "about:blank"; }
+}
 // Mixed-use platforms supply context only for search/tag/community navigation.
 // Ordinary page prose, unrelated hosts, and generic searches retain their own
 // policy. Existing explicit terms and permanently denied sites still apply.
@@ -117,18 +122,18 @@ function explicitSearchBlockRedirect(rawUrl, baseUrl = location.href) {
     if (url.protocol !== "http:" && url.protocol !== "https:")
         return null;
     if (matchContextualExplicitSearchUrl(url))
-        return "about:blank";
+        return vigilBlockedSearchURL();
     for (const [name, rawValue] of url.searchParams) {
         if (!EXPLICIT_SEARCH_PARAMETER_NAMES.has(name.toLowerCase()))
             continue;
         if (containsExplicitSearchText(rawValue, url.hostname))
-            return "about:blank";
+            return vigilBlockedSearchURL();
     }
     const decodedPath = decodeNestedSearchValue(url.pathname);
     const decodedHash = decodeNestedSearchValue(url.hash.replace(/^#/u, ""));
     if ((SEARCH_ROUTE_PATTERN.test(decodedPath) && containsExplicitSearchText(decodedPath, url.hostname))
         || (SEARCH_ROUTE_PATTERN.test(decodedHash) && containsExplicitSearchText(decodedHash, url.hostname))) {
-        return "about:blank";
+        return vigilBlockedSearchURL();
     }
     return null;
 }
@@ -256,7 +261,7 @@ function enforceGoogleSafeSearchForForm(event) {
     if (explicitFormSearch || directBlock) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        location.assign("about:blank");
+        location.assign(vigilBlockedSearchURL());
         return;
     }
     if (method.toLowerCase() !== "get")
@@ -306,7 +311,7 @@ function enforceExplicitSearchControlInteraction(event) {
     if (event.cancelable)
         event.preventDefault();
     event.stopImmediatePropagation();
-    location.assign("about:blank");
+    location.assign(vigilBlockedSearchURL());
     return true;
 }
 function eventTargetElement(event) {
@@ -361,7 +366,7 @@ function explicitSearchTextInContainer(container) {
 function scanExistingSearchControls(root) {
     const controls = root.querySelectorAll?.("input[type='search'], [role='searchbox'], input[name], textarea[name], [contenteditable='true']") || [];
     if (Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control)))) {
-        location.replace("about:blank");
+        location.replace(vigilBlockedSearchURL());
     }
 }
 function installDynamicSearchGuard() {
@@ -376,7 +381,7 @@ function installDynamicSearchGuard() {
                 if (node instanceof Element) {
                     if ((isSearchControl(node) && containsExplicitSearchText(searchControlValue(node)))
                         || explicitSearchTextInContainer(node)) {
-                        location.replace("about:blank");
+                        location.replace(vigilBlockedSearchURL());
                         return;
                     }
                 }

@@ -8,13 +8,13 @@ const output = join(dirname(dirname(runtimeRoot)), "ios/VigilSocial/VigilYouTube
 
 export async function generatedIosSafariGuard(): Promise<string> {
   const source = await readFile(join(runtimeRoot, "extension/google-safe-search.js"), "utf8");
-  // Safari cannot navigate to Chrome's blocked page. Leave the unsafe page
-  // entirely using a browser-owned blank document, without a server dependency.
-  const adapted = source.replaceAll('chrome.runtime.getURL("blocked.html")', '"about:blank"');
+  // Use an extension-owned page rather than modifying the unsafe website.
+  // Keep a blank-page fallback if the extension URL API is unavailable.
+  const adapted = source.replaceAll('chrome.runtime.getURL("blocked.html")', 'vigilBlockedSearchURL()');
   if (adapted === source || /\b(?:import|export)\s|chrome\.runtime/u.test(adapted)) {
     throw new Error("The desktop search guard cannot be safely bundled for Safari.");
   }
-  return `/* eslint-disable no-unused-vars -- Shared desktop matcher includes helpers unused by this entry point. */\n// Generated from the desktop search guard; run the generator after npm run build.\n(() => {\n${adapted}\n})();\n`;
+  return `/* eslint-disable no-unused-vars -- Shared desktop matcher includes helpers unused by this entry point. */\n// Generated from the desktop search guard; run the generator after npm run build.\n(() => {\nfunction vigilBlockedSearchURL() {\n  try {\n    return (globalThis.browser || globalThis.chrome).runtime.getURL("blocked.html");\n  } catch { return "about:blank"; }\n}\n${adapted}\n})();\n`;
 }
 
 export async function assertGeneratedIosSafariGuardCurrent(): Promise<void> {

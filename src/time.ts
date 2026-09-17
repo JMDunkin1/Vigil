@@ -101,6 +101,12 @@ export function endOfToday(now = new Date()): Date {
   return date;
 }
 
+export function cooldownExpiresAt(now: Date, delaySeconds: number): string {
+  // Keep ordinary requests short-lived, but always allow a minute to confirm
+  // after a configured cooldown longer than the usual fifteen-minute window.
+  return new Date(now.getTime() + Math.max(15 * 60, delaySeconds + 60) * 1000).toISOString();
+}
+
 export function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;

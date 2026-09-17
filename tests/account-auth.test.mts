@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -20,6 +20,18 @@ try {
   process.env.VIGIL_BOOTSTRAP_TOKEN = "local-bootstrap-secret";
   process.env.VIGIL_TRUSTED_PROXY_IPS = "127.0.0.1";
   const auth = await import("../src/auth.js");
+
+  // An invalid on-disk signing key must never enter the process cache, even
+  // after the first request has already detected and rejected it.
+  const secretPath = join(dataDir, "auth-secret.key");
+  await writeFile(secretPath, Buffer.from("weak-key").toString("base64"));
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      auth.accountSession(request({ cookie: "vigil_session=payload.signature" })),
+      /auth secret is invalid/
+    );
+  }
+  await rm(secretPath);
 
   assert.equal(auth.hostedSignupsEnabled(), false);
   await assert.rejects(auth.createAccount({

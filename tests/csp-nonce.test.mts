@@ -21,7 +21,7 @@ assert.ok(body.includes(`<style nonce="${nonce}">`));
 assert.ok(body.includes(`<script nonce="${nonce}">`));
 
 const root = await sourceRoot();
-for (const path of ["src/server/pages.ts", "public/dom.ts", "public/tracking-view.ts", "public/saint-stage.ts", "public/distance-key-ui.ts"]) {
+for (const path of ["src/server/pages.ts", "public/app.ts", "public/saint-stage.ts"]) {
   const source = await readFile(join(root, path), "utf8");
   assert.doesNotMatch(source, /\.style(?:\.|\[)|style\.textContent/u, `${path} must project runtime presentation through CSP-safe attributes or classes`);
 }

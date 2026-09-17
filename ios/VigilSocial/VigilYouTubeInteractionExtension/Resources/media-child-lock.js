@@ -117,5 +117,11 @@
   reportHealth();
   addEventListener('focus', reportHealth, true);
   document.addEventListener('visibilitychange', reportHealth);
+  // Browser focus can return to the address bar without a DOM focus or
+  // visibility event. Re-scan on a background request without reloading the
+  // document, losing a form, or changing its navigation history.
+  runtime?.onMessage?.addListener(message => {
+    if (message?.type === 'VIGIL_REQUEST_BROWSER_FILTER_HEALTH') reportHealth();
+  });
   setInterval(reportHealth, 1500);
 })();

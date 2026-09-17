@@ -2975,7 +2975,7 @@ final class VigilSocialTests: XCTestCase {
                 expectation: redirected
             )
             webView.navigationDelegate = routeDelegate
-            _ = try? await webView.callAsyncJavaScript(
+            webView.callAsyncJavaScript(
                 """
                 document.documentElement.setAttribute(
                   `data-vigil-feature-${feature}`,
@@ -9448,6 +9448,7 @@ final class VigilSocialTests: XCTestCase {
         )
     }
 
+    @MainActor
     func testFocusedWebInteractionExtensionKeepsShortsAndMatureRevealsUnavailable() throws {
         let source = try youtubeInteractionExtensionSource()
         let context = try XCTUnwrap(JSContext())

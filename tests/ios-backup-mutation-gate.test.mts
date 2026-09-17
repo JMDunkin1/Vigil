@@ -50,41 +50,68 @@ try {
   assert.deepEqual(await readJsonLines(validationLogPath), [{ backupPath, password: "recovery-pass" }]);
 
   await resetLogs();
-  await expectDeepValidationFailure(join(root, "scripts", "restore-ios-home-layout.mjs"), [
+  await expectFailure(join(root, "scripts", "restore-ios-home-layout.mjs"), [
     "--udid", udid,
     "--backup", backupPath,
     "--password", "recovery-pass",
     "--supervisor-keybag", keybagPath,
     "--yes-restore-layout"
-  ], env);
+  ], env, /Standalone Home Screen restore is disabled/u);
   assert.deepEqual(
     await readJsonLines(commandLogPath),
-    [["usbmux", "list", "--usb"]],
-    "layout restore must stop at failed pruned-payload traversal before pairing or backup2 restore"
+    [],
+    "standalone restore must reject confirmation before even invoking device discovery"
   );
+  assert.deepEqual(await readJsonLines(validationLogPath), []);
+
+  await resetLogs();
+  await expectDeepValidationFailure(join(root, "scripts", "restore-ios-home-layout.mjs"), [
+    "--udid", udid, "--backup", backupPath, "--password", "recovery-pass"
+  ], env);
   const restoreValidations = await readJsonLines(validationLogPath) as Array<{ backupPath: string; password: string }>;
   assert.equal(restoreValidations.length, 1);
   assert.equal(restoreValidations[0]?.password, "recovery-pass");
   assert.equal(basename(restoreValidations[0]?.backupPath || ""), udid);
   assert.match(restoreValidations[0]?.backupPath || "", /ios-home-layout-restore/u);
-  assert.notEqual(restoreValidations[0]?.backupPath, backupPath, "restore must validate the newly pruned payload, not only its source checkpoint");
+  assert.notEqual(restoreValidations[0]?.backupPath, backupPath, "payload inspection must validate the newly pruned payload");
+
+  for (const cloud of [null, {}, { IsSupervised: false }, { IsSupervised: "false" }]) {
+    await resetLogs();
+    await expectFailure(join(root, "scripts", "supervise-ios-preserving-layout.mjs"), [
+      "--udid", udid, "--checkpoint", backupPath, "--yes-supervise-and-restore"
+    ], { ...env, IOS_FIXTURE_CLOUD: JSON.stringify(cloud) }, /New iPhone enrollment is disabled/u);
+    assert.deepEqual(await readJsonLines(commandLogPath), [
+      ["usbmux", "list", "--usb"], ["profile", "cloud-configuration", "--udid", udid]
+    ], "unsupervised or malformed state must never reach backup, restore, pair, or install");
+  }
+
+  // Real plutil parsing is available on macOS; all device commands remain fake.
+  if (process.platform === "darwin") {
+    const profilePath = join(workspace, "empty.mobileconfig");
+    await writeFile(profilePath, plist({ PayloadIdentifier: "tech.caseline.vigil.ios-lock" })
+      .replace("</dict>", "<key>PayloadContent</key><array/></dict>"));
+    await resetLogs();
+    await expectFailure(join(root, "scripts", "apply-ios-usb-profile.mjs"), [
+      "--udid", udid, "--profile", profilePath, "--supervisor-keybag", keybagPath
+    ], { ...env, IOS_FIXTURE_CLOUD: JSON.stringify({ IsSupervised: true }) }, /no configuration payloads/u);
+    assert.deepEqual(await readJsonLines(commandLogPath), [
+      ["usbmux", "list", "--usb"], ["profile", "cloud-configuration", "--udid", udid]
+    ], "an explicitly empty profile must never become an instruction to remove Vigil");
+  }
 } finally {
   await rm(workspace, { recursive: true, force: true });
 }
 
 async function expectDeepValidationFailure(script: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
+  await expectFailure(script, args, env, /Deep iPhone backup payload validation failed[\s\S]*fixture rejected payload traversal/u);
+}
+
+async function expectFailure(script: string, args: string[], env: NodeJS.ProcessEnv, pattern: RegExp): Promise<void> {
   await assert.rejects(
-    () => execFileAsync(process.execPath, [script, ...args], {
-      env,
-      maxBuffer: 1024 * 1024,
-      timeout: 20_000
-    }),
+    () => execFileAsync(process.execPath, [script, ...args], { env, maxBuffer: 1024 * 1024, timeout: 20_000 }),
     (error: unknown) => {
-      const stderr = typeof error === "object" && error && "stderr" in error
-        ? String(error.stderr)
-        : String(error);
-      assert.match(stderr, /Deep iPhone backup payload validation failed/u);
-      assert.match(stderr, /fixture rejected payload traversal/u);
+      const stderr = typeof error === "object" && error && "stderr" in error ? String(error.stderr) : String(error);
+      assert.match(stderr, pattern);
       return true;
     }
   );
@@ -149,6 +176,8 @@ function fakePymobiledevice3Source(): string {
     'appendFileSync(process.env.IOS_COMMAND_LOG, JSON.stringify(args) + "\\n");',
     'if (args.join(" ") === "usbmux list --usb") {',
     `  process.stdout.write(${JSON.stringify(JSON.stringify([{ Identifier: udid, DeviceName: "Fixture iPhone" }]))});`,
+    '} else if (args[0] === "profile" && args[1] === "cloud-configuration") {',
+    '  process.stdout.write(process.env.IOS_FIXTURE_CLOUD || "{}");',
     "} else {",
     '  process.stdout.write("{}");',
     "}",

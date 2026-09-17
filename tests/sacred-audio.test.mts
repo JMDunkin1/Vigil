@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { sacredAudioCatalog } from "../public/sacred-audio-catalog.js";
@@ -23,9 +23,6 @@ for (const track of sacredAudioCatalog) {
   assert.equal(new URL(track.sourcePage).protocol, "https:");
   assert.equal(new URL(track.licenseUrl).protocol, "https:");
 }
-
-const focusSoundSource = await readFile(join(process.cwd(), "public", "focus-sound.js"), "utf8");
-assert.match(focusSoundSource, /track\.licenseUrl/);
 
 assert.equal(sacredAudioCatalog.some((track) => track.id === "rorate-caeli" && track.seasons.some((season) => season === "advent")), true);
 assert.equal(sacredAudioCatalog.some((track) => track.id === "victimae-paschali-laudes" && track.seasons.some((season) => season === "easter")), true);

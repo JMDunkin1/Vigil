@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { applyProtectionLevelPresentation } from "../public/app-events.js";
+import { applyProtectionLevelPresentation } from "../public/protection-level.js";
 
 const input = { value: "2" };
 const control = { dataset: {} as DOMStringMap };

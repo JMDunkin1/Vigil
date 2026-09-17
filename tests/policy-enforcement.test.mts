@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appleContentFilterStatusFromRecord } from "../src/appleContentFilter.js";
-import { activeAppLockPolicy, confirmAppLockUnlock, requestAppLockUnlock } from "../src/appLocks.js";
+import { activeAppLockPolicy, confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "../src/appLocks.js";
 import { blockedPageDisplayLabel, managedFilterAllowsVigilPages, safeExternalPageUrl } from "../src/blockedPageUrl.js";
 import { contentFilterEnabled, matchContentFilterUrl } from "../src/contentFilters.js";
 import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_CONTEXTUAL_RULES, DEFAULT_EXPLICIT_SEARCH_TERMS, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
@@ -1735,6 +1735,16 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   state.appLocks[0].unlocksAllowed = 0;
   state.appLockUnlocks = [];
   assert.equal(managedBlockDomains(state, now).includes("reddit.com"), true);
+}
+
+{
+  const state = defaultState();
+  state.appLocks = [normalizeAppLock({ enabled: true, delaySeconds: 3600 }, undefined, "long-cooldown")];
+  const request = requestAppLockUnlock(state, "long-cooldown", "I need a short intentional unlock for this task.", now);
+  const confirmation = { challengeText: must(request.challenge, "long cooldown challenge").text };
+  assert.throws(() => confirmAppLockUnlock(state, request.id, confirmation, now), /cooldown/);
+  const unlock = confirmAppLockUnlock(state, request.id, confirmation, new Date(request.eligibleAt));
+  assert.equal(unlock.lockId, "long-cooldown", "a configured cooldown must finish before its request expires");
 }
 
 {

@@ -85,7 +85,7 @@ export function activeLimitBlocks(state: VigilState, now = new Date(), options: 
 }
 
 export function normalizeLimitRule(body: Record<string, unknown>, existing: Partial<LimitRule> | undefined, fallbackId: string): LimitRule {
-  const type = body.type === "open" ? "open" : "time";
+  const type = (body.type ?? existing?.type) === "open" ? "open" : "time";
   return {
     id: String(body.id || existing?.id || fallbackId),
     name: String(body.name || existing?.name || (type === "open" ? "Open limit" : "Time limit")).slice(0, 80),

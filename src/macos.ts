@@ -372,33 +372,6 @@ export async function redirectActiveBrowserTab(
   }
 }
 
-export function browserRefreshScript(appName: string, currentUrl: string): string {
-  const tab = appName === "Safari" ? "current tab" : "active tab";
-  return [
-    "considering case",
-    `tell application "${escapeAppleScript(appName)}"`,
-    "  if (count of windows) = 0 then return \"refresh:0\"",
-    `  set observedTab to ${tab} of front window`,
-    `  if URL of observedTab is not "${escapeAppleScript(currentUrl)}" then return "refresh:0"`,
-    // Assigning the same URL reloads this exact tab and reattaches its content
-    // scripts without changing the address or navigating to a blocker page.
-    `  set URL of observedTab to "${escapeAppleScript(currentUrl)}"`,
-    "  return \"refresh:1\"",
-    "end tell",
-    "end considering"
-  ].join("\n");
-}
-
-export async function refreshActiveBrowserTab(appName: string, currentUrl: string): Promise<BrowserRedirectResult> {
-  if (!["Safari", "Google Chrome"].includes(appName) || !/^https?:\/\//iu.test(currentUrl)) {
-    return { ok: false, matched: false, error: "Not a supported page" };
-  }
-  try {
-    const count = parseBrowserRedirectCount(await runAppleScript(browserRefreshScript(appName, currentUrl), 1500));
-    return { ok: count !== null, matched: count === 1, method: "browser-protection-refresh" };
-  } catch (error) { return { ok: false, matched: false, error: simplifyError(error) }; }
-}
-
 async function redirectSafariTab(appName: string, url: string, options: { currentUrl?: string } = {}) {
   const method = await runAppleScript(safariRedirectScript(url, options, appName), 5000);
   const redirectedTabCount = parseBrowserRedirectCount(method);

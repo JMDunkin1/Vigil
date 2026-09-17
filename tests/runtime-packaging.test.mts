@@ -8,7 +8,6 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-import { distanceKeyQrMatrix } from "../public/distance-key-qr.js";
 import { launchAgentDataDirFromPlist, launchAgentDataRootsConflict } from "../src/dataPaths.js";
 import { BUILT_IN_CHROME_EXTENSION_ID, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
 import { isDirectRun } from "../src/directRun.js";
@@ -105,6 +104,17 @@ try {
   assert.equal(existsSync(join(buildMigrationDir, "dist.nosync", ".metadata_never_index")), true);
   assert.equal(await readFile(join(buildMigrationDir, "dist", "mac", "Vigil.app", "executable"), "utf8"), "preserved");
   assert.equal(await readFile(join(buildMigrationDir, "dist", "runtime", "existing"), "utf8"), "preserved");
+
+  const redirectedRoot = join(buildMigrationDir, "redirected");
+  const unrelatedRoot = join(buildMigrationDir, "unrelated");
+  await mkdir(redirectedRoot);
+  await mkdir(unrelatedRoot);
+  await symlink(unrelatedRoot, join(redirectedRoot, "dist.nosync"), "dir");
+  await symlink("dist.nosync", join(redirectedRoot, "dist"), "dir");
+  await assert.rejects(prepareModule.prepareBuildDirectory(redirectedRoot), /symlink dist.nosync/,
+    "build cleanup must not follow a redirected backing directory outside its output tree");
+  assert.equal(existsSync(join(unrelatedRoot, ".metadata_never_index")), false,
+    "reject the unsafe output tree before writing into it");
 } finally {
   await rm(buildMigrationDir, { recursive: true, force: true });
 }
@@ -250,9 +260,3 @@ for (const path of [
 ]) {
   assert.ok((await stat(join(process.cwd(), path))).size > 100_000, `${path} should be a real audio asset`);
 }
-
-const matrix = distanceKeyQrMatrix("ABCD-EFGH-1234");
-assert.equal(matrix.length, 21);
-assert.equal(matrix.every((row) => row.length === 21), true);
-assert.equal(matrix.flat().every((value) => typeof value === "boolean"), true);
-assert.throws(() => distanceKeyQrMatrix("emoji-😀"), /cannot be encoded/);

@@ -1,9 +1,9 @@
 import { del, get, post } from "./api-client.js";
 import { createAccountUi } from "./account-ui.js";
-import { applyProtectionLevelPresentation, normalizedProtectionLevel } from "./app-events.js";
+import { applyProtectionLevelPresentation, normalizedProtectionLevel } from "./protection-level.js";
 import { createAppUpdatePanel } from "./app-update.js";
 import { startDashboardRefresh } from "./dashboard-refresh.js";
-import { formHasUnsavedChanges, formRevision, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
+import { formHasUnsavedChanges, formRevision, markFormSaved, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
 import { daysText, formatDuration, lines } from "./format.js";
 import { createSaintStage } from "./saint-stage.js";
 import { $, $$, errorMessage, initTheme } from "./ui-shell.js";
@@ -74,8 +74,7 @@ const ui = {
 let refreshCycle: Promise<void> | null = null;
 let refreshRequested = false;
 let protectionRequestInFlight = false;
-let profileFormDirty = false;
-let iosFormDirty = false;
+let profileEditorGeneration = 0;
 let resumeScheduleAfterMaintenance = false;
 let selectedAppLockRequestId: string | null = null;
 let toastTimer: number | null = null;
@@ -773,7 +772,7 @@ function clockLabel(value: string): string {
 
 function bindProfileActions(): void {
   const form = $("#profileForm") as unknown as HTMLFormElement;
-  form.addEventListener("input", () => { profileFormDirty = true; });
+  trackFormChanges(form);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     void saveProfile();
@@ -808,7 +807,7 @@ function renderProfiles(appState: DashboardState): void {
     ? `${(profile.blockedApps || []).length} apps · ${(profile.blockedSites || []).length} sites. Vigil’s unsafe-content blocklist also applies.`
     : `Built-in ruleset. Create a custom profile to edit app and site rules.`;
   const form = $("#profileForm") as unknown as HTMLFormElement;
-  if (!form.hidden && !profileFormDirty && formInput(form, "id").value === profile.id) fillProfileForm(profile);
+  if (!form.hidden && !formHasUnsavedChanges(form) && formInput(form, "id").value === profile.id) fillProfileForm(profile);
 }
 
 async function selectBaselineProfile(): Promise<void> {
@@ -826,6 +825,7 @@ async function selectBaselineProfile(): Promise<void> {
 }
 
 function openNewProfile(): void {
+  profileEditorGeneration += 1;
   const form = $("#profileForm") as unknown as HTMLFormElement;
   form.hidden = false;
   form.reset();
@@ -833,7 +833,7 @@ function openNewProfile(): void {
   formInput(form, "name").value = "Custom focus";
   formInput(form, "mode").value = "blocklist";
   $("#deleteProfile").hidden = true;
-  profileFormDirty = false;
+  markFormSaved(form);
   formInput(form, "name").focus();
 }
 
@@ -844,9 +844,10 @@ function openSelectedProfile(): void {
     return;
   }
   const form = $("#profileForm") as unknown as HTMLFormElement;
+  profileEditorGeneration += 1;
   form.hidden = false;
   fillProfileForm(profile);
-  profileFormDirty = false;
+  markFormSaved(form);
   $("#deleteProfile").hidden = false;
   formInput(form, "name").focus();
 }
@@ -870,8 +871,9 @@ function formInput(form: HTMLFormElement, name: string): HTMLInputElement | HTML
 }
 
 function closeProfileEditor(): void {
+  profileEditorGeneration += 1;
   $("#profileForm").hidden = true;
-  profileFormDirty = false;
+  markFormSaved($("#profileForm") as unknown as HTMLFormElement);
 }
 
 function selectedProfile(): Profile | null {
@@ -881,6 +883,8 @@ function selectedProfile(): Profile | null {
 async function saveProfile(): Promise<void> {
   const form = $("#profileForm") as unknown as HTMLFormElement;
   const id = formInput(form, "id").value;
+  const revision = formRevision(form);
+  const generation = profileEditorGeneration;
   try {
     const result = await post<ProfileSaveResponse>("/api/profile", {
       ...(id ? { id } : {}),
@@ -893,12 +897,14 @@ async function saveProfile(): Promise<void> {
       allowedSites: lines(formInput(form, "allowedSites").value)
     });
     const savedId = result.profile?.id || id;
+    // Retain the new profile's identity even if the baseline update fails or
+    // the user continues editing while this save completes.
+    if (generation === profileEditorGeneration && savedId) formInput(form, "id").value = savedId;
     if (savedId) {
       await post("/api/settings", { baselineProfileId: savedId });
       ui.selectedProfileId = savedId;
     }
-    profileFormDirty = false;
-    closeProfileEditor();
+    if (generation === profileEditorGeneration && markFormSavedAtRevision(form, revision)) closeProfileEditor();
     toast("Profile saved");
     await refresh();
   } catch (error) {
@@ -1418,7 +1424,7 @@ function setInputValue(selector: string, value: unknown): void {
 
 function bindDeviceActions(): void {
   const form = $("#iosForm") as unknown as HTMLFormElement;
-  form.addEventListener("change", () => { iosFormDirty = true; });
+  trackFormChanges(form);
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     void saveIosSettings();
@@ -1429,6 +1435,8 @@ function bindDeviceActions(): void {
 }
 
 async function saveIosSettings(): Promise<void> {
+  const form = $("#iosForm") as unknown as HTMLFormElement;
+  const revision = formRevision(form);
   try {
     await post("/api/devices/ios/settings", {
       enabled: $("#iosEnabled").checked,
@@ -1438,7 +1446,7 @@ async function saveIosSettings(): Promise<void> {
       restrictInstallAndErase: $("#iosRestrictInstallErase").checked,
       allowSafariHistoryClearing: $("#iosAllowSafariHistoryClearing").checked
     });
-    iosFormDirty = false;
+    markFormSavedAtRevision(form, revision);
     toast("iPhone policy saved");
     await refresh();
   } catch (error) {
@@ -1448,7 +1456,7 @@ async function saveIosSettings(): Promise<void> {
 
 function renderDevice(data: DashboardData): void {
   const ios = data.devices.ios || {};
-  if (!iosFormDirty) {
+  if (!formHasUnsavedChanges($("#iosForm") as unknown as HTMLFormElement)) {
     $("#iosEnabled").checked = Boolean(ios.enabled);
     $("#iosBlockWeb").checked = ios.blockWeb !== false;
     $("#iosBlockApps").checked = ios.blockApps !== false;

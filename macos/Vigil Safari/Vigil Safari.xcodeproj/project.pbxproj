@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		ABCD00000000000000000009 = {isa = PBXBuildFile; fileRef = ABCD0000000000000000000A; };
+		ABCD00000000000000000007 = {isa = PBXBuildFile; fileRef = ABCD00000000000000000008; };
 		ABCD00000000000000000005 = {isa = PBXBuildFile; fileRef = ABCD00000000000000000006; };
 		ABCD00000000000000000003 = {isa = PBXBuildFile; fileRef = ABCD00000000000000000004; };
 		ABCD00000000000000000001 = {isa = PBXBuildFile; fileRef = ABCD00000000000000000002; };
@@ -56,6 +58,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		ABCD0000000000000000000A = {isa = PBXFileReference; lastKnownFileType = text.css; path = "Vigil Safari Extension/Resources/blocked.css"; sourceTree = SOURCE_ROOT; };
+		ABCD00000000000000000008 = {isa = PBXFileReference; lastKnownFileType = text.html; path = "Vigil Safari Extension/Resources/blocked.html"; sourceTree = SOURCE_ROOT; };
 		ABCD00000000000000000006 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "Vigil Safari Extension/Resources/search-guard.js"; sourceTree = SOURCE_ROOT; };
 		ABCD00000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "Vigil Safari Extension/Resources/media-child-lock.js"; sourceTree = SOURCE_ROOT; };
 		ABCD00000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "Vigil Safari Extension/Resources/reddit-child-lock.js"; sourceTree = SOURCE_ROOT; };
@@ -264,7 +268,7 @@
 		4E7932313056217D00E63426 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (ABCD00000000000000000005, ABCD00000000000000000003, ABCD00000000000000000001,
+			files = (ABCD00000000000000000005, ABCD00000000000000000009, ABCD00000000000000000007, ABCD00000000000000000003, ABCD00000000000000000001,
 				4E79324D3056217D00E63426 /* youtube-limits.js in Resources */,
 				4E79324C3056217D00E63426 /* youtube-parity.js in Resources */,
 				4E79324E3056217D00E63426 /* manifest.json in Resources */,

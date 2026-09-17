@@ -44,7 +44,7 @@ try {
 const app = join(output, 'DerivedData/Build/Products/Release/Vigil Safari.app');
 await exec('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
 const resources = join(app, 'Contents/PlugIns/Vigil Safari Extension.appex/Contents/Resources');
-for (const name of ['search-guard.js', 'manifest.json', 'reddit-child-lock.js', 'media-child-lock.js', 'youtube-parity.js', 'youtube-limits.js', 'youtube-bridge.js', 'youtube-background.js', 'status.html', 'status.js', 'icons/icon-16.png', 'icons/icon-32.png', 'icons/icon-48.png', 'icons/icon-128.png', 'icons/toolbar.png']) {
+for (const name of ['blocked.html', 'blocked.css', 'search-guard.js', 'manifest.json', 'reddit-child-lock.js', 'media-child-lock.js', 'youtube-parity.js', 'youtube-limits.js', 'youtube-bridge.js', 'youtube-background.js', 'status.html', 'status.js', 'icons/icon-16.png', 'icons/icon-32.png', 'icons/icon-48.png', 'icons/icon-128.png', 'icons/toolbar.png']) {
   const source = await readFile(join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources', name));
   if (!source.equals(await readFile(join(resources, name)))) throw new Error(`Stale Safari resource: ${name}`);
 }

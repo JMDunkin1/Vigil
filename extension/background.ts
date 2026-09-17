@@ -287,7 +287,21 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   void checkUrl(tabId, changeInfo.url, "navigation", 0, tab.title);
 });
 
+function requestBrowserFilterHealth(tabId: number): void {
+  if (!Number.isInteger(tabId) || tabId < 0) return;
+  void chrome.tabs.sendMessage(tabId, { type: "VIGIL_REQUEST_BROWSER_FILTER_HEALTH" }, { frameId: 0 }).catch(() => {});
+}
+
+chrome.windows.onFocusChanged.addListener(async windowId => {
+  if (windowId < 0) return;
+  try {
+    const tabs = await chrome.tabs.query({ active: true, windowId });
+    for (const tab of tabs) if (tab.id !== undefined) requestBrowserFilterHealth(tab.id);
+  } catch { /* A window may close before its tab can be queried. */ }
+});
+
 chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  requestBrowserFilterHealth(tabId);
   const tab = await getTab(tabId);
   if (tab?.url) void checkUrl(tabId, tab.url, "activated", 0, tab.title);
 });

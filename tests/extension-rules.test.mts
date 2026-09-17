@@ -1022,7 +1022,7 @@ assert.ok(
           callback();
         }
       },
-      windows: { get: async () => ({ focused: windowFocused }) },
+      windows: { onFocusChanged: event(), get: async () => ({ focused: windowFocused }) },
       webNavigation: {
         onCommitted: event(),
         onHistoryStateUpdated: event()

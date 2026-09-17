@@ -32,7 +32,7 @@ private actor URLFilterArtifactStore {
             try? FileManager.default.removeItem(at: stagedBitsetURL)
         }
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("vigil-url-prefilter-(current.metadata.bitsetSha256).bin", isDirectory: false)
+            .appendingPathComponent("vigil-url-prefilter-\(current.metadata.bitsetSha256).bin", isDirectory: false)
         stagedBitsetURL = url
         return try current.systemPrefilter(stagedAt: url)
     }

@@ -4,6 +4,7 @@ import { activeLimitBlocks } from "./limits.js";
 import { integrityLockdownActive } from "./integrityLockdown.js";
 import { assertTypingChallenge, attachTypingChallenge } from "./challenge.js";
 import { assertIntentReason } from "./intentReason.js";
+import { cooldownExpiresAt } from "./time.js";
 import type { AppLockRule, DeviceTargetInput, MaintenanceRequest, MaintenanceWindow, VigilState, Session } from "./types.js";
 
 interface ProtectionAction {
@@ -156,7 +157,7 @@ export function requestMaintenanceWindow(state: VigilState, reason: unknown = ""
     reason: assertIntentReason(state, reason, "Maintenance window"),
     requestedAt: now.toISOString(),
     eligibleAt: new Date(now.getTime() + delaySeconds * 1000).toISOString(),
-    expiresAt: new Date(now.getTime() + Math.max(delaySeconds + 60, 15 * 60) * 1000).toISOString()
+    expiresAt: cooldownExpiresAt(now, delaySeconds)
   };
   attachTypingChallenge(state, pending, "maintenance", now);
   state.maintenance.pending.push(pending);

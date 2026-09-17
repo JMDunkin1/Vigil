@@ -8,6 +8,16 @@ if (await isDirectRun(import.meta.url, process.argv[1])) await prepareBuildDirec
 export async function prepareBuildDirectory(root) {
   const buildLink = join(root, "dist");
   const buildRoot = join(root, "dist.nosync");
+  // The build command removes dist/runtime after this check. Only the public
+  // dist alias may be a symlink; its backing directory must stay in the repo.
+  try {
+    const stats = await lstat(buildRoot);
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new Error("Refusing to use a non-directory or symlink dist.nosync path.");
+    }
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+  }
   let linkReady = false;
   try {
     const stats = await lstat(buildLink);

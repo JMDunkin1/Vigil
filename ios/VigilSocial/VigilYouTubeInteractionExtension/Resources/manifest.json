@@ -77,6 +77,10 @@
       "all_frames": true
     }
   ],
+  "web_accessible_resources": [{
+    "resources": ["blocked.html", "blocked.css"],
+    "matches": ["http://*/*", "https://*/*"]
+  }],
   "permissions": [
     "nativeMessaging",
     "webNavigation",

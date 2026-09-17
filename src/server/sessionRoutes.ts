@@ -27,7 +27,7 @@ import {
   snapshotProfile
 } from "../policy.js";
 import { addEvent, saveState } from "../store.js";
-import { clampNumber, weekKey } from "../time.js";
+import { clampNumber, cooldownExpiresAt, weekKey } from "../time.js";
 import type { ActivePolicy, ActivePolicyContributor, DeviceTarget, EmergencyPolicyContributor, EmergencyRequest, LimitBlock, LockLevel, Profile, VigilState, Session, SessionCycle, UnknownRecord } from "../types.js";
 import { commitmentLockError } from "./pages.js";
 import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
@@ -261,7 +261,7 @@ export async function handleSessionApiRoute(
       reason: assertIntentReason(state, body.reason, "Emergency unlock"),
       requestedAt: new Date(now).toISOString(),
       eligibleAt: new Date(now + delaySeconds * 1000).toISOString(),
-      expiresAt: new Date(now + 15 * 60 * 1000).toISOString(),
+      expiresAt: cooldownExpiresAt(new Date(now), delaySeconds),
       delaySeconds,
       intervention: interventionSummary(state, new Date(now)),
       activeKind: active?.kind || "limit",

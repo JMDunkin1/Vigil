@@ -12,7 +12,7 @@ import {
   normalizeLockLevel
 } from "./policy.js";
 import { normalizeTextList as normalizeTargets, normalizeWeekdays as normalizeDays } from "./normalizers.js";
-import { clampNumber, dateKey, normalizeClock, parseClock, splitSecondsAcrossLocalDays, trackingDateKey, trackingDay, weekKey } from "./time.js";
+import { clampNumber, cooldownExpiresAt, dateKey, normalizeClock, parseClock, splitSecondsAcrossLocalDays, trackingDateKey, trackingDay, weekKey } from "./time.js";
 import { behaviorSummary, journalEntriesForWeek, plannerSummary, recoverySummary, reflectionStreakDays, sosPlan } from "./intentionalUseSummary.js";
 import { journalVaultSummary, normalizeJournalVaultState } from "./journalVault.js";
 import type {
@@ -1254,7 +1254,7 @@ function refreshPendingPauseOnReentry(
 
   pause.requestedAt = now.toISOString();
   pause.eligibleAt = new Date(now.getTime() + delaySeconds * 1000).toISOString();
-  pause.expiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+  pause.expiresAt = cooldownExpiresAt(now, delaySeconds);
   pause.delaySeconds = delaySeconds;
   pause.sessionMinutes = rule.sessionMinutes;
   pause.frictionLevel = rule.frictionLevel;
@@ -1281,7 +1281,7 @@ function createPause(state: VigilState, rule: IntentionalUseRule, sample: UsageS
     status: "pending",
     requestedAt: now.toISOString(),
     eligibleAt: new Date(now.getTime() + delaySeconds * 1000).toISOString(),
-    expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+    expiresAt: cooldownExpiresAt(now, delaySeconds),
     frictionLevel: rule.frictionLevel,
     delaySeconds,
     sessionMinutes: rule.sessionMinutes,

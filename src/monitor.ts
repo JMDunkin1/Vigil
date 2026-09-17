@@ -1,6 +1,6 @@
 import { performance } from "node:perf_hooks";
-import { takeBrowserProtectionRefresh, unsupportedBrowser } from "./browserProtection.js";
-import { quitApplicationInstance, refreshActiveBrowserTab } from "./macos.js";
+import { unsupportedBrowser } from "./browserProtection.js";
+import { quitApplicationInstance } from "./macos.js";
 import { createHash } from "node:crypto";
 import { addEvent, DATA_DIR, saveState, STATE_SEAL_KEY_PATH } from "./store.js";
 import { PORT } from "./defaults.js";
@@ -46,7 +46,6 @@ interface MonitorContext {
   browserActivityBurstDependencies?: Partial<BrowserActivityBurstSchedulerDependencies>;
   browserRedirect?: typeof redirectActiveBrowserTab;
   applicationQuit?: typeof quitApplicationInstance;
-  browserRefresh?: typeof refreshActiveBrowserTab;
   runtimeUsageCheckpointEnabled?: boolean;
   runtimeUsageCheckpointWriter?: typeof saveRuntimeUsageCheckpoint;
   runtimeUsageCheckpointLocation?: { checkpointPath: string; keyPath: string };
@@ -645,7 +644,6 @@ export class Monitor implements MonitorHandle {
   browserActivityBurstDependencies: Partial<BrowserActivityBurstSchedulerDependencies>;
   browserActivityUnsubscribe: (() => void) | null;
   applicationQuit: typeof quitApplicationInstance;
-  browserRefresh: typeof refreshActiveBrowserTab;
   applicationQuits = new Map<string, Promise<boolean>>();
   browserActivityBurst: BrowserActivityBurstScheduler | null;
   browserActivityMutationAdmissionOpen: boolean;
@@ -679,7 +677,6 @@ export class Monitor implements MonitorHandle {
     browserActivityBurstDependencies,
     browserRedirect,
     applicationQuit,
-    browserRefresh,
     runtimeUsageCheckpointEnabled,
     runtimeUsageCheckpointWriter,
     runtimeUsageCheckpointLocation,
@@ -802,7 +799,6 @@ export class Monitor implements MonitorHandle {
     this.browserActivityBurstDependencies = browserActivityBurstDependencies || {};
     this.browserActivityUnsubscribe = null;
     this.applicationQuit = applicationQuit || quitApplicationInstance;
-    this.browserRefresh = browserRefresh || refreshActiveBrowserTab;
     this.browserActivityBurst = null;
     this.browserActivityMutationAdmissionOpen = true;
     this.browserActivityContinuityGeneration = 0;
@@ -1158,7 +1154,6 @@ export class Monitor implements MonitorHandle {
     }
 
     if (this.browserActivityTargetAlreadyEvaluated(candidateTarget, continuityGeneration, policyGeneration)) return true;
-    await this.refreshBrowserProtection(candidate);
     this.queueBrowserActivityMutation(`check:${continuityGeneration}:${policyGeneration}:${candidateTarget}`, async () => {
       // A later probe may have observed a non-browser app or an empty URL while
       // this check waited behind serialized monitor work. Such a check belongs
@@ -1200,15 +1195,6 @@ export class Monitor implements MonitorHandle {
     this.lastBrowserActivityEvaluatedTarget = "";
     this.lastBrowserActivityEvaluatedGeneration = -1;
     this.lastBrowserActivityEvaluatedPolicyGeneration = -1;
-  }
-
-  async refreshBrowserProtection(front: FrontSample): Promise<void> {
-    if (!this.committedState.settings.protectedBrowsersOnly || !front.url) return;
-    const state = structuredClone(this.committedState);
-    const now = this.browserActivityNow();
-    if (policyForSample(state, this.committedUsage, front, new Date(now))) return;
-    if (!takeBrowserProtectionRefresh(front.app, front.url, now)) return;
-    if (this.externalEffectsEnabled) await this.browserRefresh(front.app, front.url);
   }
 
   currentBrowserActivityPolicyGeneration(now = this.browserActivityNow()): number {
@@ -1320,6 +1306,7 @@ export class Monitor implements MonitorHandle {
     const backUrl = this.safeBlockedPageBackUrl(front, options, validation);
     return buildBlockedPageUrl({
       site: front.hostname,
+      kind: options.browserControl?.area === "browser-protection" ? "browser-protection" : undefined,
       until: policy.endsAt,
       mode: policy.session.mode || "focus",
       policyId: policy.session.id || "",
@@ -2493,7 +2480,6 @@ export class Monitor implements MonitorHandle {
     const policy = this.policyForTarget(evaluationSample);
     if (!policy) {
       if (await this.pauseIntentionalUse(evaluationSample)) return;
-      await this.refreshBrowserProtection(evaluationSample);
       this.status.lastEnforcement = null;
       if (front.app) this.appBlockHistory.delete(front.app);
       return;

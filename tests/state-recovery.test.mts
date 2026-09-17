@@ -47,6 +47,16 @@ try {
   assert.equal(integrityLockdownActive(secondLoad), true, "the fail-closed alarm must survive restart");
   const secondNames = await readdir(dataDir);
   assert.equal(secondNames.filter((name) => /^state\.corrupt\..+\.json$/u.test(name) && !name.endsWith(".seal.json")).length, 1);
+
+  for (const invalidShape of ["null", "[]", "42", '"not a state object"']) {
+    await writeFile(store.STATE_PATH, invalidShape);
+    const recovery = await store.loadState();
+    assert.equal(integrityLockdownActive(recovery), true, `${invalidShape} must recover into enforcement lockdown`);
+    assert.match(recovery.integrity.stateSeal.tamperDetail || "", /must be a JSON object/);
+    const files = (await readdir(dataDir)).filter((name) => /^state\.corrupt\..+\.json$/u.test(name) && !name.endsWith(".seal.json"));
+    const evidence = await Promise.all(files.map((name) => readFile(join(dataDir, name), "utf8")));
+    assert.ok(evidence.includes(invalidShape), "valid JSON with an invalid state shape must still preserve the original evidence");
+  }
 } finally {
   await rm(dataDir, { recursive: true, force: true });
 }

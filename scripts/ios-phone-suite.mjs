@@ -1665,6 +1665,13 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   const infoPath = join(extensionPath, "Info.plist");
   const manifestPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.manifestName);
   const scriptPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.scriptName);
+  const blockedPageBytes = [];
+  for (const name of ["blocked.html", "blocked.css"]) {
+    const bytes = await readFile(join(extensionPath, name));
+    const source = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name));
+    if (!bytes.equals(source)) throw new Error(`Stale Safari blocked-page resource: ${name}`);
+    blockedPageBytes.push(bytes);
+  }
   const searchBytes = await readFile(join(extensionPath, "search-guard.js"));
   const { generatedIosSafariGuard } = await import(join(ROOT, "dist/runtime/scripts/generate-ios-safari-guard.mjs"));
   if (!searchBytes.equals(Buffer.from(await generatedIosSafariGuard()))) throw new Error("Stale Safari search guard; refusing companion update.");
@@ -1711,6 +1718,7 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   ];
   const scripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
   const contractValid = JSON.stringify(manifest?.host_permissions) === JSON.stringify([...expectedHosts, "http://*/*", "https://*/*"])
+    && JSON.stringify(manifest.web_accessible_resources) === JSON.stringify([{ resources: ["blocked.html", "blocked.css"], matches: ["http://*/*", "https://*/*"] }])
     && scripts.length === 4
     && JSON.stringify(scripts[3]?.matches) === JSON.stringify(["http://*/*", "https://*/*"])
     && JSON.stringify(scripts[3]?.js) === JSON.stringify(["search-guard.js", "media-child-lock.js"])
@@ -1739,7 +1747,7 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   }
   return {
     bundleIdentifier: expectedIdentifier,
-    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes, redditBytes, mediaBytes, searchBytes])),
+    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes, redditBytes, mediaBytes, searchBytes, ...blockedPageBytes])),
     manifestVersion: manifest.manifest_version,
     hostPermissions: [...manifest.host_permissions],
     contentScriptMatches: [...scripts[0].matches],

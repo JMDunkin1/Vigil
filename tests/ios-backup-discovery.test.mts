@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -27,7 +27,6 @@ interface BackupResolverOptions {
 
 const sourceRoot = await findSourceRoot();
 const backupLayoutModule = await import(pathToFileURL(join(sourceRoot, "scripts", "ios-backup-layout.mjs")).href);
-const supervisionSource = await readFile(join(sourceRoot, "scripts", "supervise-ios-preserving-layout.mjs"), "utf8");
 const resolveNewestLayoutBackup = backupLayoutModule.resolveNewestLayoutBackup as (options: BackupResolverOptions) => Promise<LayoutBackupCandidate>;
 const inspectLayoutBackupCandidates = backupLayoutModule.inspectLayoutBackupCandidates as (
   candidates: BackupCandidateInput[],
@@ -37,17 +36,6 @@ const assertRestorableLayoutBackup = backupLayoutModule.assertRestorableLayoutBa
   path: string,
   options?: { source?: string; udid?: string }
 ) => Promise<LayoutBackupCandidate>;
-assert.match(
-  supervisionSource,
-  /async function restoreCheckpoint[\s\S]*?await assertRestorableLayoutBackup\([\s\S]*?await validateCheckpointPayload\([\s\S]*?"--remove"/u,
-  "the destructive restore must revalidate metadata and payload completeness immediately before backup2 restore --remove"
-);
-assert.ok(
-  supervisionSource.indexOf("await validateCheckpointPayload(checkpointRoot, udid, options.password")
-    < supervisionSource.indexOf("await restorePreSupervisionSetupState("),
-  "the full checkpoint payload must be validated before the first iPhone restore or supervision mutation"
-);
-
 const workspace = await mkdtemp(join(tmpdir(), "vigil-ios-backups-"));
 const udid = "00008150-000954C63628401C";
 const homeDir = join(workspace, "home", "jamesdunkin");

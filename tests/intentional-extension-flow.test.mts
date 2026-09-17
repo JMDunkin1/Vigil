@@ -131,15 +131,16 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
     end: "23:59",
     apps: ["Chess"],
     sites: [],
-    delaySeconds: 0,
+    delaySeconds: 3600,
     sessionMinutes: 5,
     dailyBudgetMinutes: 0
   }];
   const appPause = intentionalUseDecision(appState, { app: "Chess", hostname: "", url: "" }, { event: "mac-app" }, now);
   assert.equal(appPause.shouldPause, true);
   assert.equal(must(appPause.pause, "app pause").targetType, "app");
-  must(appState.intentionalUse.pauses[0], "stored app pause").eligibleAt = now.toISOString();
-  const appContinued = confirmIntentionalPause(appState, must(appPause.pause, "app pause").id, { intention: "One puzzle" }, now);
+  const storedPause = must(appState.intentionalUse.pauses[0], "stored app pause");
+  assert.throws(() => confirmIntentionalPause(appState, storedPause.id, { intention: "One puzzle" }, now), /pause|wait|cooldown/i);
+  const appContinued = confirmIntentionalPause(appState, storedPause.id, { intention: "One puzzle" }, new Date(storedPause.eligibleAt));
   assert.equal(appContinued.grant.app, "Chess");
   assert.equal(appContinued.returnUrl, "");
 

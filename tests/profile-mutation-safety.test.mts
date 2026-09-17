@@ -58,6 +58,10 @@ for (const id of BUILT_IN_PROFILE_IDS) {
   assert.equal(updated.mode, "allowlist");
   assert.deepEqual(updated.allowedSites, ["openai.com"]);
   assert.equal(state.profiles.length, initialCount + 1, "custom profile updates must remain in-place");
+
+  const renamed = upsertProfile(state, { id: "custom-study", name: "Renamed study" });
+  assert.equal(renamed.mode, "allowlist", "a name-only edit must not weaken an allowlist into a blocklist");
+  assert.deepEqual(renamed.allowedSites, ["openai.com"]);
 }
 
 for (const id of BUILT_IN_PROFILE_IDS) {

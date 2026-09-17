@@ -1,3 +1,18 @@
+// Ask the existing content filter to re-scan on browser-owned activation
+// events. This is only a request: the authenticated report below still requires
+// a visible top frame in the active tab of the focused window.
+const requestFilterHealth = tabId => {
+  if (!Number.isInteger(tabId) || tabId < 0) return;
+  void browser.tabs.sendMessage(tabId, { type: 'VIGIL_REQUEST_BROWSER_FILTER_HEALTH' }, { frameId: 0 }).catch(() => {});
+};
+browser.tabs.onActivated?.addListener(({ tabId }) => requestFilterHealth(tabId));
+browser.windows.onFocusChanged?.addListener(windowId => {
+  if (!Number.isInteger(windowId) || windowId < 0) return;
+  void browser.tabs.query({ active: true, windowId }).then(tabs => {
+    for (const tab of tabs) requestFilterHealth(tab.id);
+  }).catch(() => {});
+});
+
 browser.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === 'VIGIL_BROWSER_FILTER_HEALTH') {
     if (sender.frameId !== 0 || !sender.tab?.active || sender.tab.windowId === undefined || !sender.url || message.revision !== '2026-09-17.1') return undefined;

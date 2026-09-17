@@ -23,6 +23,7 @@ assert.equal(parseBoolean("true", false), true);
 assert.equal(parseBoolean("on", false), true);
 assert.equal(parseBoolean("not-a-bool", true), true);
 assert.equal(normalizeLimitRule({ enabled: "false" }, { enabled: true }, "limit").enabled, false);
+assert.equal(normalizeLimitRule({ name: "Renamed" }, { type: "open" }, "limit").type, "open", "partial edits must preserve open-count limits");
 const mdmBooleans = normalizeIosMdmSettings({
   enabled: "false",
   signMessage: "false",

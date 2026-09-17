@@ -44,7 +44,7 @@ if (!isSupervisedCloud(cloud)) {
     "iPhone is paired over USB but is not supervised.",
     "Vigil uses the same supervised-device enforcement model as SHIFT, and iOS will not accept app or web restriction payloads until the phone is supervised.",
     "Vigil will not attempt a partial-restore/no-erase supervision trick from this script because that can disturb Apple ID, setup, and Home Screen layout state; a checkpoint proves a recovery source exists, not that the supervision flow is safe.",
-    "Use `npm run ios:supervise-preserve-layout -- --yes-supervise-and-restore` to create a verified layout checkpoint, supervise with a persistent Vigil keybag, restore the checkpoint, then apply this profile."
+    "New enrollment is disabled pending the verified escrow-backed single-restore flow documented in AGENTS.md. Preserve the existing checkpoint and supervisor keybag."
   ].join("\n"));
 }
 
@@ -233,7 +233,10 @@ async function validateProvidedProfile(inputPath) {
   if (!profile?.isFile() || profile.size <= 0) {
     throw new Error(`Provided iOS profile is missing or empty: ${path}`);
   }
-  return await profileHasPayloads(path) ? path : "";
+  if (!(await profileHasPayloads(path))) {
+    throw new Error(`Provided iOS profile has no configuration payloads; refusing to replace or remove the installed Vigil profile: ${path}`);
+  }
+  return path;
 }
 
 async function profileHasPayloads(path) {
@@ -390,7 +393,7 @@ async function readCloudConfiguration(udid, supervisorKeybagPath) {
 }
 
 function isSupervisedCloud(cloud) {
-  return Boolean(cloud && typeof cloud === "object" && cloud.IsSupervised);
+  return Boolean(cloud && typeof cloud === "object" && cloud.IsSupervised === true);
 }
 
 async function pairSupervised(udid, supervisorKeybagPath) {

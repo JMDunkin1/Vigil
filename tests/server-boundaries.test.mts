@@ -205,7 +205,7 @@ assert.deepEqual(conflictPreview.conflicts, ["computer"]);
 
 {
   const routeState = defaultState();
-  routeState.settings.emergencyDelaySeconds = 0;
+  routeState.settings.emergencyDelaySeconds = 3600;
   const phoneSession: Session = {
     ...existingSession,
     id: "phone-only-emergency",
@@ -245,6 +245,8 @@ assert.deepEqual(conflictPreview.conflicts, ["computer"]);
   assert.equal(pending.sessionId, "phone-only-emergency");
   const storedPending = routeState.emergency.pending.find((item) => item.id === pending.id);
   assert.ok(storedPending, "phone emergency request should be stored");
+  assert.ok(storedPending.eligibleAt);
+  assert.ok(Date.parse(storedPending.expiresAt) > Date.parse(storedPending.eligibleAt), "long emergency cooldowns must leave time to confirm");
   storedPending.eligibleAt = new Date(Date.now() - 1000).toISOString();
 
   const confirmResponse = mockSessionResponse();

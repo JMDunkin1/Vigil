@@ -33,40 +33,10 @@ assert.match(apply, /"usbmux", "list", "--usb"/u);
 assert.doesNotMatch(apply, /create-keybag/u);
 assert.doesNotMatch(apply, /["']supervise["']/u);
 
-assert.match(restore, /--yes-restore-layout/u);
-assert.match(restore, /Mobilebackup2Service/u);
-assert.match(restore, /backup\._include_escrow_bag = False/u);
-assert.match(restore, /reboot=False/u);
-assert.match(restore, /remove=False/u);
-assert.match(restore, /skip_apps=True/u);
-assert.match(restore, /pair-supervised/u);
-assert.match(
-  restore,
-  /async function validateLayoutRestorePayload[\s\S]*?await validateRestorableBackupPayload\(\{[\s\S]*?backupPath: join\(payloadRoot, udid\),[\s\S]*?password,[\s\S]*?pythonPath: PYIOSBACKUP_PYTHON_PATH,[\s\S]*?timeoutMs: RESTORE_TIMEOUT_MS/u,
-  "the pruned no-remove restore payload must receive a password-aware deep traversal"
-);
-const restoreValidationIndex = restore.indexOf("await validateLayoutRestorePayload(payloadRoot, udid, options.password)");
-const restorePairingIndex = restore.indexOf("await ensureRestorePairing(udid, options.supervisorKeybag)");
-const restoreMutationIndex = restore.indexOf("await restoreLayoutPayload(udid, payloadRoot, options.password)");
-assert.ok(
-  restoreValidationIndex >= 0
-    && restoreValidationIndex < restorePairingIndex
-    && restorePairingIndex < restoreMutationIndex,
-  "the pruned payload must pass deep validation before restore pairing and backup2 restore"
-);
-
-assert.match(supervise, /--yes-supervise-and-restore/u);
-assert.match(supervise, /backup2",\s*"backup"/u);
-assert.match(supervise, /"--full"/u);
-assert.match(supervise, /profile",\s*"create-keybag"/u);
-assert.match(supervise, /profile",\s*"supervise"/u);
-assert.match(supervise, /CloudConfigurationDetails\.plist/u);
-assert.match(supervise, /waitForCloudConfigurationCleared/u);
-assert.match(supervise, /backup2",\s*"restore"/u);
-assert.match(supervise, /"--no-remove"/u);
-assert.match(supervise, /"--skip-apps"/u);
-assert.match(supervise, /isSupervisedCloud\(restoredCloud\)/u);
-assert.match(supervise, /pair-supervised/u);
+// These commands may inspect or prepare recovery data, but must never restore
+// a supervised device or reinstate the retired two-restore enrollment flow.
+assert.doesNotMatch(restore, /await backup\.restore\(|pair-supervised|_include_escrow_bag/u);
+assert.doesNotMatch(supervise, /"backup2"|create-keybag|"supervise"/u);
 assert.match(supervise, /apply-ios-usb-profile\.mjs/u);
 assert.match(supervise, /--require-checkpoint/u);
 

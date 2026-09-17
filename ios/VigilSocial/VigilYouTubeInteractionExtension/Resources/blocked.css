@@ -1,0 +1,40 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f3f1eb;
+  color: #242b29;
+  -webkit-text-size-adjust: 100%;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: max(32px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+}
+main { width: 100%; max-width: 380px; padding-bottom: 5vh; }
+.mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid #b9c3b7;
+  border-radius: 14px;
+  color: #536d56;
+  font-size: 24px;
+  font-weight: 500;
+}
+.brand { margin: 24px 0 12px; font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #647168; }
+h1 { margin: 0; font-size: clamp(27px, 7vw, 34px); line-height: 1.15; letter-spacing: -.035em; font-weight: 600; }
+.message { margin: 18px 0 30px; font-size: 16px; line-height: 1.65; color: #656c65; }
+a { display: flex; justify-content: space-between; align-items: center; min-height: 52px; padding: 14px 18px; border-radius: 12px; background: #314f3c; color: #fff; text-decoration: none; font-size: 15px; font-weight: 600; }
+a:focus-visible { outline: 3px solid #789982; outline-offset: 4px; }
+@media (prefers-color-scheme: dark) {
+  :root { background: #171d1a; color: #f0f0e9; }
+  .mark { border-color: #46564a; color: #c0d3bb; }
+  .brand { color: #a6b4a5; }
+  .message { color: #aeb7ad; }
+  a { background: #c0d3bb; color: #1c3023; }
+}

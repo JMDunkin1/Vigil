@@ -1,4 +1,4 @@
-import { dateKey } from "./time.js";
+import { cooldownExpiresAt, dateKey } from "./time.js";
 import { assertTypingChallenge, attachTypingChallenge } from "./challenge.js";
 import { parseBoolean } from "./booleans.js";
 import { assertIntentReason } from "./intentReason.js";
@@ -96,7 +96,7 @@ export function requestAppLockUnlock(state: VigilState, lockId: string, reason =
     reason: assertIntentReason(state, reason, "App Lock unlock"),
     requestedAt: now.toISOString(),
     eligibleAt: new Date(now.getTime() + (lock.delaySeconds || 0) * 1000).toISOString(),
-    expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString()
+    expiresAt: cooldownExpiresAt(now, lock.delaySeconds || 0)
   };
   attachTypingChallenge(state, request, "app-lock", now);
   state.appLockRequests ||= [];

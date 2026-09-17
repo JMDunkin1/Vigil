@@ -161,7 +161,11 @@ export async function loadState(): Promise<VigilState> {
   }
   let parsed: RawState;
   try {
-    parsed = JSON.parse(raw) as RawState;
+    const value: unknown = JSON.parse(raw);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("State data must be a JSON object.");
+    }
+    parsed = value as RawState;
   } catch (error) {
     return await recoverMalformedState(rawBytes, error);
   }

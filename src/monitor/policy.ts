@@ -46,7 +46,7 @@ export function policyForSample(state: VigilState, usage: UsageState, sample: Us
     if (sample.url && browserPageNeedsProtection(sample.app || "", sample.url, now.getTime())) return {
       ...base,
       kind: "browser-control",
-      browserControl: { area: "browser-protection", label: "Enable Vigil protection for this browser and website", url: sample.url }
+      browserControl: { area: "browser-protection", label: "Browser protection connection interrupted", url: sample.url }
     };
   }
   const sessionBrowserControl = sample.url && matchStrictBrowserControlUrl(state, sessionPolicy, sample.url);
