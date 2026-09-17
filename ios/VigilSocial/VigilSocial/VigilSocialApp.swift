@@ -3,11 +3,15 @@ import SafariServices
 
 @main
 struct VigilSocialApp: App {
-    @StateObject private var store = SocialWebViewStore()
+    @StateObject private var container = SocialContainerStore()
 
     var body: some Scene {
         WindowGroup {
             Group {
+                if container.isCombined {
+                    SocialContainerView(container: container)
+                } else {
+                    let store = container.store(for: container.initialService)
                 #if DEBUG
                 if store.fixedService == .youtube,
                    YouTubeWKAuthDiagnosticActivation.isRequested(
@@ -31,13 +35,14 @@ struct VigilSocialApp: App {
                 #else
                 RootView(store: store)
                 #endif
+                }
             }
                 .onOpenURL { url in
-                    if store.fixedService == .instagram,
+                    if (container.isCombined || container.initialService == .instagram),
                        url.scheme == "vigil-instagram", url.host == "safari-settings" {
                         openFocusedExtensionSettings()
                     } else {
-                        store.open(url)
+                        container.open(url)
                     }
                 }
         }

@@ -16,17 +16,20 @@ Agents may perform a standard installed-app update without UI automation by runn
 npm run agent:update
 ```
 
-Agents should keep each Personal Team-compatible companion current through its
-independent update path on a connected, paired iPhone:
+The four Personal Team-compatible services now share one Vigil Social app,
+using the existing Instagram bundle identifier to preserve its Safari
+extensions and signing slot. Update it on a connected, paired iPhone with:
 
 ```sh
-npm run agent:update:instagram
-npm run agent:update:youtube
-npm run agent:update:snapchat
+npm run agent:update:social
 ```
 
-Use `npm run agent:update:phone` only when all companions should be checked and
-updated together. These commands must retain their verified app-and-policy
+The existing `agent:update:instagram`, `agent:update:youtube`,
+`agent:update:snapchat`, `agent:update:linkedin`, and `agent:update:phone`
+commands also update this same combined installation. First migration must
+back up the original containers, preserve the YouTube ledger, verify the exact
+live supervised policy and all four service launches, and only then retire the
+separate apps. These commands must retain their verified app-and-policy
 transactions; do not replace them with app-only installs that can desynchronize
 the supervised allowlist.
 

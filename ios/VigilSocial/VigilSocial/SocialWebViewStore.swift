@@ -5,6 +5,125 @@ import MediaPlayer
 import UIKit
 import WebKit
 
+// Keep one unchanged, fixed-service engine per service. Switching changes only
+// which engine is visible; web history, page state, and usage ledgers survive.
+@MainActor
+final class SocialContainerStore: ObservableObject {
+    let isCombined: Bool
+    let initialService: SocialService
+    @Published private(set) var selectedService: SocialService?
+    @Published private(set) var stores: [SocialService: SocialWebViewStore] = [:]
+    @Published private(set) var migrationReady = false
+    private let bundle: Bundle
+    private let defaults: UserDefaults
+    private let loadInitialPages: Bool
+
+    init(bundle: Bundle = .main, defaults: UserDefaults = .standard,
+         combined: Bool? = nil, loadInitialPages: Bool = true) {
+        self.bundle = bundle
+        self.defaults = defaults
+        self.loadInitialPages = loadInitialPages
+        let configured = bundle.object(forInfoDictionaryKey: "VigilService") as? String
+        isCombined = combined ?? (configured == "all")
+        initialService = configured.flatMap(SocialService.init(rawValue:)) ?? .youtube
+        selectedService = isCombined ? nil : initialService
+        refreshMigrationReadiness()
+        if !isCombined {
+            stores[initialService] = SocialWebViewStore(defaults: defaults, fixedService: initialService,
+                                                       bundle: bundle, loadInitialPages: loadInitialPages)
+        }
+    }
+
+    func refreshMigrationReadiness() {
+        #if targetEnvironment(simulator)
+        migrationReady = true
+        #else
+        guard isCombined else { migrationReady = true; return }
+        guard let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+              let data = try? Data(contentsOf: directory.appendingPathComponent("vigil-social-migration.json")),
+              let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        migrationReady = record["schemaVersion"] as? Int == 1 && record["complete"] as? Bool == true
+        if migrationReady, let id = record["id"] as? String,
+           defaults.string(forKey: "VigilSocial.migration.v1") != id {
+            for (key, value) in record["preferences"] as? [String: Any] ?? [:] {
+                if SocialService.allCases.contains(where: { key.hasPrefix("VigilSocial.\($0.rawValue).") }) {
+                    defaults.set(value, forKey: key)
+                }
+            }
+            defaults.set(id, forKey: "VigilSocial.migration.v1")
+        }
+        #endif
+    }
+
+    func store(for service: SocialService) -> SocialWebViewStore {
+        if let existing = stores[service] { return existing }
+        let store = SocialWebViewStore(defaults: defaults, fixedService: service,
+                                      bundle: bundle, loadInitialPages: loadInitialPages,
+                                      websiteDataStore: isCombined ? Self.websiteDataStore(for: service) : nil)
+        stores[service] = store
+        return store
+    }
+
+    static func websiteDataStore(for service: SocialService) -> WKWebsiteDataStore {
+        // Instagram keeps its existing store; other services get persistent,
+        // isolated stores, including their third-party authentication cookies.
+        switch service {
+        case .instagram: return .default()
+        case .youtube: return WKWebsiteDataStore(forIdentifier: UUID(uuidString: "B1853428-14D1-4532-8F11-000000000002")!)
+        case .snapchat: return WKWebsiteDataStore(forIdentifier: UUID(uuidString: "B1853428-14D1-4532-8F11-000000000003")!)
+        case .linkedin: return WKWebsiteDataStore(forIdentifier: UUID(uuidString: "B1853428-14D1-4532-8F11-000000000004")!)
+        }
+    }
+
+    func select(_ service: SocialService) {
+        guard migrationReady else { return }
+        guard isCombined || service == initialService else { return }
+        if let previous = selectedService, previous != service { stores[previous]?.suspendAllMedia(relinquishExternalPlayback: false) }
+        let next = store(for: service)
+        selectedService = service
+        writeSelectionReceipt()
+        // The combined view rechecks the system web policy before resuming.
+        if !isCombined { next.resumeSuspendedMedia() }
+    }
+
+    func showHome() {
+        guard isCombined else { return }
+        stores.values.forEach { $0.suspendAllMedia(relinquishExternalPlayback: false) }
+        InstagramExternalPlaybackPolicy.relinquish()
+        selectedService = nil
+        writeSelectionReceipt()
+    }
+
+    private func writeSelectionReceipt() {
+        guard isCombined,
+              let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+              let data = try? JSONSerialization.data(withJSONObject: [
+                "combined": true,
+                "service": selectedService?.rawValue ?? "home",
+                "selectedAt": ISO8601DateFormatter().string(from: Date())
+              ]) else { return }
+        try? data.write(to: directory.appendingPathComponent("vigil-social-selection.json"), options: .atomic)
+    }
+
+    func open(_ url: URL) {
+        refreshMigrationReadiness()
+        guard migrationReady else { return }
+        if isCombined && url.scheme == "vigilsocial" && url.host == "home" {
+            showHome()
+            return
+        }
+        guard let service = SocialService.resolve(url),
+              isCombined || service == initialService else { return }
+        let isLauncher = url.scheme == "vigilsocial" || url.scheme == "vigil-\(service.rawValue)"
+        // Invalid/restricted URLs must not switch to or load another service.
+        guard isLauncher || (service.allowsNavigation(to: url) && !service.isRestrictedSurface(url)) else { return }
+        select(service)
+        // A Home Screen launch resumes the existing page, like opening the old
+        // standalone app. Only an explicit content link changes its location.
+        if !isLauncher { store(for: service).open(url) }
+    }
+}
+
 enum InstagramExternalPlaybackPolicy {
     @MainActor
     static func relinquish() {
@@ -56,6 +175,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private let defaults: UserDefaults
     private let bundle: Bundle
     private let loadInitialPages: Bool
+    private let websiteDataStore: WKWebsiteDataStore?
     private var mediaClassifier: (any MediaSafetyClassifying)?
     private var textClassifier: (any PageTextSafetyClassifying)?
     private let unclassifiedMediaPolicy: UnclassifiedMediaPolicy
@@ -79,6 +199,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var webContentRecovery: [SocialService: WebContentRecoveryState] = [:]
     private var refreshingServices: Set<SocialService> = []
     private var mediaPlaybackIsSuspended = false
+    private var externalPlaybackMayRelinquish = false
     private var externalPlaybackRelinquishTask: Task<Void, Never>?
     private let mediaClassificationDeadlineNanoseconds: UInt64
 
@@ -98,6 +219,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         mediaClassifier: (any MediaSafetyClassifying)? = nil,
         textClassifier: (any PageTextSafetyClassifying)? = nil,
         unclassifiedMediaPolicy: UnclassifiedMediaPolicy? = nil,
+        websiteDataStore: WKWebsiteDataStore? = nil,
         mediaClassificationDeadlineNanoseconds: UInt64 = 5_000_000_000
     ) {
         let configured = fixedService
@@ -109,6 +231,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.defaults = defaults
         self.bundle = bundle
         self.loadInitialPages = loadInitialPages
+        self.websiteDataStore = websiteDataStore
         self.mediaClassifier = mediaClassifier
         self.textClassifier = textClassifier
         self.unclassifiedMediaPolicy = unclassifiedMediaPolicy ?? UnclassifiedMediaPolicy(bundle: bundle)
@@ -143,6 +266,42 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     func select(_ service: SocialService) {
         guard service == fixedService else { return }
         _ = webView(for: fixedService)
+    }
+
+    func confirmServiceAccess() async -> Bool {
+        var confirmed = false
+        defer {
+            if bundle.object(forInfoDictionaryKey: "VigilService") as? String == "all",
+               let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+               let data = try? JSONSerialization.data(withJSONObject: [
+                "service": fixedService.rawValue, "accessConfirmed": confirmed,
+                "checkedAt": ISO8601DateFormatter().string(from: Date())
+               ]) {
+                try? data.write(to: directory.appendingPathComponent("vigil-social-access-\(fixedService.rawValue).json"), options: .atomic)
+            }
+        }
+        let view = webView(for: fixedService)
+        guard let url = view.url, fixedService.allowsNavigation(to: url), !view.isLoading else { return false }
+        do {
+            let result = try await view.callAsyncJavaScript("""
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 4000);
+                try {
+                    const target = new URL('/robots.txt', location.origin);
+                    const response = await fetch(target.href, {
+                        method: 'HEAD', cache: 'no-store', credentials: 'include',
+                        redirect: 'error', signal: controller.signal
+                    });
+                    // An HTTP error still proves the origin is reachable. Do
+                    // not reject sign-in/CAPTCHA pages just because their
+                    // server declines HEAD or has no robots.txt resource.
+                    return response.status >= 200 && response.status < 600 && response.url === target.href;
+                } catch (_) { return false; }
+                finally { clearTimeout(timeout); }
+                """, arguments: [:], in: nil, contentWorld: .defaultClient)
+            confirmed = result as? Bool == true
+            return confirmed
+        } catch { return false }
     }
 
     func open(_ url: URL) {
@@ -266,7 +425,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
         let configuration = WKWebViewConfiguration()
         configuration.userContentController = controller
-        configuration.websiteDataStore = .default()
+        configuration.websiteDataStore = websiteDataStore ?? .default()
         configuration.allowsAirPlayForMediaPlayback = false
         configuration.allowsPictureInPictureMediaPlayback = false
         configuration.allowsInlineMediaPlayback = true
@@ -426,14 +585,16 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         managedWebViews.forEach { $0.evaluateJavaScript("window.__vigilPauseAllMedia?.();") }
     }
 
-    func suspendAllMedia() {
+    func suspendAllMedia(relinquishExternalPlayback: Bool = true) {
+        externalPlaybackMayRelinquish = relinquishExternalPlayback
+        externalPlaybackRelinquishTask?.cancel()
         guard !mediaPlaybackIsSuspended else {
-            InstagramExternalPlaybackPolicy.relinquish()
+            if relinquishExternalPlayback { InstagramExternalPlaybackPolicy.relinquish() }
             return
         }
         mediaPlaybackIsSuspended = true
         externalPlaybackRelinquishTask?.cancel()
-        InstagramExternalPlaybackPolicy.relinquish()
+        if relinquishExternalPlayback { InstagramExternalPlaybackPolicy.relinquish() }
 
         managedWebViews.forEach { webView in
             webView.evaluateJavaScript(
@@ -444,15 +605,17 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             // externally unplayable as the scene backgrounds.
             webView.setAllMediaPlaybackSuspended(true) { [weak self] in
                 guard let self, self.mediaPlaybackIsSuspended else { return }
-                InstagramExternalPlaybackPolicy.relinquish()
+                if self.externalPlaybackMayRelinquish { InstagramExternalPlaybackPolicy.relinquish() }
             }
         }
 
+        guard relinquishExternalPlayback else { return }
         externalPlaybackRelinquishTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled,
                   let self,
-                  self.mediaPlaybackIsSuspended else { return }
+                  self.mediaPlaybackIsSuspended,
+                  self.externalPlaybackMayRelinquish else { return }
             InstagramExternalPlaybackPolicy.relinquish()
         }
     }

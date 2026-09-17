@@ -7,6 +7,7 @@ import {
   isChromiumBrowser,
   isSafariBrowser,
   parseBrowserRedirectCount,
+  safariHistoryResetUrls,
   safariInterruptionScript,
   safariRedirectScript
 } from "../src/macos.js";
@@ -265,7 +266,7 @@ import { shouldAttemptBlockedBrowserRedirect } from "../src/monitor.js";
   const nativeWindowIdCheck = script.indexOf("set targetStillCurrent to (((id of visibleWindow) as text) is (blockedWindowId as text))", nativeTabCheck);
   const nativeTabIndexCheck = script.indexOf("set targetStillCurrent to ((index of visibleTab) as integer) is blockedTabIndex", nativeWindowIdCheck);
   const nativeUrlCheck = script.indexOf("set targetStillCurrent to ((URL of visibleTab) is previousUrl)", nativeTabIndexCheck);
-  const nativeSet = script.indexOf("set URL of blockedTab to targetUrl", nativeUrlCheck);
+  const nativeSet = script.indexOf("set URL of blockedTab to holdingUrl", nativeUrlCheck);
   assert.ok(nativeFrontmostCheck >= 0 && nativeGate > nativeFrontmostCheck,
     "native Safari fallback must refuse to mutate after Safari loses focus");
   assert.ok(nativeWindowCheck > nativeGate && nativeTabCheck > nativeWindowCheck && nativeWindowIdCheck > nativeTabCheck,
@@ -275,9 +276,22 @@ import { shouldAttemptBlockedBrowserRedirect } from "../src/monitor.js";
   const confirmedTarget = script.indexOf("set targetStillCurrent to ((URL of visibleTab) is targetUrl)", nativeSet);
   const confirmedCount = script.indexOf("set redirectedTabCount to 1", confirmedTarget);
   assert.ok(confirmedTarget > nativeSet && confirmedCount > confirmedTarget,
-    "Safari must count a redirect only after confirming the same current tab reached the exact target URL");
-  assert.doesNotMatch(script, /make new tab|close blockedTab|close replacementTab|repeat with safariTab|\bopen\b|activate/,
-    "Safari fallback must never sweep, create, close, open, or activate browser tabs or windows");
+    "Safari must count a redirect only after confirming the replacement tab reached the exact target URL");
+  const createReplacement = script.indexOf("set replacementTab to make new tab at end of tabs of blockedWindow with properties {URL:replacementUrl}", nativeSet);
+  const selectReplacement = script.indexOf("set current tab of blockedWindow to replacementTab", createReplacement);
+  const confirmReplacement = script.indexOf("set replacementIsCurrent to ((URL of current tab of front window) is replacementUrl)", selectReplacement);
+  const ownedCloseGuard = script.indexOf("if (URL of ownedTab) is holdingUrl then", confirmReplacement);
+  const closeOwned = script.indexOf("close ownedTab", ownedCloseGuard);
+  const retiredConfirmation = script.indexOf("if retiredTabCount is 1 and (URL of current tab of front window) is replacementUrl then", closeOwned);
+  const rebindTab = script.indexOf("set blockedTab to current tab of blockedWindow", retiredConfirmation);
+  assert.ok(createReplacement > nativeSet && selectReplacement > createReplacement,
+    "native fallback must first cover the restricted tab, then create a fresh blocker with no inherited history");
+  assert.ok(confirmReplacement > selectReplacement && ownedCloseGuard > confirmReplacement && closeOwned > ownedCloseGuard,
+    "only the uniquely tagged old tab may close, after confirming the new blocker is foregrounded");
+  assert.ok(retiredConfirmation > closeOwned && rebindTab > retiredConfirmation && confirmedTarget > rebindTab,
+    "success requires retiring the original history and rebinding the replacement after tab indices shift");
+  assert.doesNotMatch(script, /close blockedTab|close replacementTab|close visibleTab|close candidateTab|\bduplicate\b|\bopen\b|activate/,
+    "Safari must not close a stale index-based reference, duplicate restricted history, or activate an application");
   const safariCaseStart = script.indexOf("considering case");
   const safariCaseEnd = script.lastIndexOf("end considering");
   assert.ok(safariCaseStart >= 0 && safariCaseEnd > safariCaseStart,
@@ -313,7 +327,7 @@ import { shouldAttemptBlockedBrowserRedirect } from "../src/monitor.js";
     { currentUrl: "safari-extension://blocked/internal" }
   );
   assert.match(internalPage, /set previousUrl to "safari-extension:\/\/blocked\/internal"/);
-  assert.match(internalPage, /set mediaMode to "javascript-error"[\s\S]*set nativeFallbackAllowed to true[\s\S]*set URL of blockedTab to targetUrl/,
+  assert.match(internalPage, /set mediaMode to "javascript-error"[\s\S]*set nativeFallbackAllowed to true[\s\S]*set URL of blockedTab to holdingUrl/,
     "Safari internal pages must remain enforceable through the target-checked native fallback");
 
   const compatible = safariRedirectScript("http://127.0.0.1:8787/blocked");
@@ -322,4 +336,28 @@ import { shouldAttemptBlockedBrowserRedirect } from "../src/monitor.js";
   assert.match(compatible, /if previousUrl is not "" and previousUrl is not targetUrl then/);
   assert.match(compatible, /if targetStillCurrent and nativeFallbackAllowed and hasBlockedTab then/,
     "callers without an observed URL must remain unable to admit native Safari mutation");
+}
+
+{
+  const target = "http://127.0.0.1:8787/blocked?site=Example&back=https%3A%2F%2Fexample.com%2F";
+  const first = safariHistoryResetUrls(target)!;
+  const second = safariHistoryResetUrls(target)!;
+  assert.ok(first && second);
+  assert.notEqual(first.holding, second.holding, "concurrent redirects must not claim each other's tabs");
+  assert.notEqual(first.replacement, second.replacement);
+  assert.notEqual(first.holding, first.replacement);
+  for (const url of [first.holding, first.replacement]) {
+    assert.equal(url.split("#")[0], target, "ownership tags must preserve the official blocker and its safe escape link");
+  }
+  for (const target of [
+    "http://127.0.0.1:8787/pause", "https://example.com/blocked",
+    "http://127.0.0.1:8787/blocked-copy", "http://localhost:8787/blocked",
+    "http://127.0.0.1:9999/blocked", "http://user@127.0.0.1:8787/blocked", "about:blank"
+  ]) {
+    assert.equal(safariHistoryResetUrls(target), null);
+    const script = safariRedirectScript(target, { currentUrl: "https://example.com/" });
+    assert.doesNotMatch(script, /make new tab|close ownedTab/,
+      "intentional pauses and non-blocker navigation must preserve the user's tab history");
+    assert.match(script, /set URL of blockedTab to targetUrl/);
+  }
 }

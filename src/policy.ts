@@ -767,10 +767,20 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
     if (!pattern) continue;
     const explicitXxx = pattern === "xxx" && (normalizeHost(parsed.hostname).endsWith(".xxx") || matchExplicitXxxSearchUrl(parsed));
     if (pattern === "xxx" && !explicitXxx) continue;
+    // Vigil's Reddit child lock adds nsfw=0 to turn adult results OFF. Only
+    // that exact safety flag is metadata for the generic "nsfw" keyword;
+    // search text, paths, fragments, enabled flags and custom URL rules remain
+    // subject to their original checks.
+    const patternCandidates = pattern === "nsfw"
+      ? urlPatternCandidates(withoutRedditSafeSearchFlag(parsed))
+      : candidates;
     const compactPattern = compactUrlPatternText(pattern);
-    const matchesRaw = explicitXxx || candidates.some((candidate) => candidate.includes(pattern));
+    const matchesRaw = explicitXxx || patternCandidates.some((candidate) => candidate.includes(pattern));
+    const patternCompactCandidates = pattern === "nsfw"
+      ? patternCandidates.map(compactUrlPatternText)
+      : compactCandidates;
     const matchesCompact = compactPattern.length >= 4
-      && compactCandidates.some((candidate) => candidate.includes(compactPattern));
+      && patternCompactCandidates.some((candidate) => candidate.includes(compactPattern));
     if (!matchesRaw && !matchesCompact) continue;
     const raw = rawPatterns[index];
     return {
@@ -781,6 +791,16 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
     };
   }
   return null;
+}
+
+function withoutRedditSafeSearchFlag(url: URL): URL {
+  const host = normalizeHost(url.hostname);
+  if ((host !== "reddit.com" && !host.endsWith(".reddit.com"))
+    || !/^\/(?:r\/[^/]+\/)?search(?:\.json)?\/?$/iu.test(url.pathname)
+    || !url.searchParams.getAll("nsfw").includes("0")) return url;
+  const search = new URL(url.href);
+  search.searchParams.delete("nsfw", "0");
+  return search;
 }
 
 export function expandSiteTargets(values: readonly unknown[] = []): string[] {

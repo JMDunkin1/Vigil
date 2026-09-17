@@ -171,7 +171,7 @@ assert.doesNotMatch(
 );
 assert.match(
   socialRootViewSource,
-  /phase == \.active \{\s*store\.resumeSuspendedMedia\(\)\s*\} else \{\s*store\.suspendAllMedia\(\)/u,
+  /phase == \.active && isServiceVisible \{\s*store\.resumeSuspendedMedia\(\)\s*\} else \{\s*store\.suspendAllMedia\(relinquishExternalPlayback: phase != \.active\)/u,
   "Instagram must suspend media whenever its scene leaves the foreground"
 );
 assert.match(
@@ -481,7 +481,7 @@ assert.match(
   /if service == \.youtube \{\s*configuration\.applicationNameForUserAgent =\s*YouTubeWebCompatibility\.unsupportedSafariApplicationNameSuffix/u,
   "only the YouTube WK configuration may receive the unsupported Safari application-name suffix"
 );
-assert.match(socialWebViewStoreSource, /configuration\.websiteDataStore = \.default\(\)/u,
+assert.match(socialWebViewStoreSource, /configuration\.websiteDataStore = websiteDataStore \?\? \.default\(\)/u,
   "the production YouTube WK surface must keep a persistent first-party website-data store");
 assert.match(
   socialWebViewStoreSource,

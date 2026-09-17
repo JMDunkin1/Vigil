@@ -135,6 +135,7 @@ export function normalizeIosSettings(body: UnknownRecord = {}, existing: Partial
     restrictInstallAndErase: body.restrictInstallAndErase === undefined ? current.restrictInstallAndErase !== false : parseBoolean(body.restrictInstallAndErase, true),
     allowSafariHistoryClearing: body.allowSafariHistoryClearing === undefined ? current.allowSafariHistoryClearing !== false : parseBoolean(body.allowSafariHistoryClearing, true),
     allowNativeSnapchat: body.allowNativeSnapchat === undefined ? current.allowNativeSnapchat === true : parseBoolean(body.allowNativeSnapchat, false),
+    socialContainer: current.socialContainer === true || parseBoolean(body.socialContainer, false),
     blockedAppBundleIds: normalizeBundleIds([
       ...DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
       ...normalizeBundleIds(body.blockedAppBundleIds ?? body.blockedApps ?? current.blockedAppBundleIds ?? [])
@@ -148,6 +149,9 @@ export function normalizeIosSettings(body: UnknownRecord = {}, existing: Partial
     manageEngineGeneration: normalizeIosManageEngineGeneration(current.manageEngineGeneration)
   };
 
+  if (next.socialContainer && (!next.blockWeb || !next.blockApps)) {
+    throw new Error("Vigil Social requires both supervised app and web restrictions.");
+  }
   if (next.hardenRemoval && !next.removalPassword) next.removalPassword = randomRemovalPassword();
   if (!next.blockedAppBundleIds.length) next.blockedAppBundleIds = [...DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS];
   if (!next.allowedAppBundleIds.length) next.allowedAppBundleIds = [...DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS];
@@ -470,7 +474,7 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES
   ]);
   const adultDeniedUrls = urlsFromSiteTargets(adultBlocklistPreloadDomains(state));
-  const deniedUrls = !settings.blockWeb && !fullLockoutActive
+  let deniedUrls = !settings.blockWeb && !fullLockoutActive
     ? []
     : fullLockoutActive
     ? []
@@ -539,6 +543,36 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     appBundleIds = appMode === "allowlist"
       ? withoutBundleIds(appBundleIds, managedHelperAppBundleIds)
       : uniqueStrings([...appBundleIds, ...managedHelperAppBundleIds]);
+  }
+
+  if (settings.socialContainer && settings.blockApps && !fullLockoutActive) {
+    const containerId = IOS_SOCIAL_COMPANION_BUNDLE_IDS.instagram;
+    const serviceDomains = {
+      instagram: ["instagram.com"], youtube: ["youtube.com", "youtu.be"],
+      snapchat: ["snapchat.com"], linkedin: ["linkedin.com"]
+    };
+    const services = Object.entries(IOS_SOCIAL_COMPANION_BUNDLE_IDS);
+    const blockedServices = services.filter(([, id]) => appMode === "allowlist"
+      ? !appBundleIds.includes(id) : appBundleIds.includes(id));
+    if (fullBrickActive || blockedServices.length === services.length) {
+      appBundleIds = appMode === "allowlist"
+        ? withoutBundleIds(appBundleIds, [containerId])
+        : uniqueStrings([...appBundleIds, containerId]);
+    } else {
+      // iOS sees one binary. Translate each old companion's app restriction to
+      // its service domains, retaining all existing URL/content restrictions.
+      // Never turn one service's exhausted limit into a block on all four.
+      if (!settings.blockWeb) throw new Error("Vigil Social requires the supervised web filter to preserve per-service app restrictions.");
+      const domains = blockedServices.flatMap(([id]) => serviceDomains[id as keyof typeof serviceDomains]);
+      deniedUrls = prioritizedDenyUrlsWithAdultReserve(
+        permanentDeniedUrls, [...urlsFromSiteTargets(domains), ...policyDeniedUrls],
+        settings.deniedUrls, priorityDeniedUrls, adultDeniedUrls
+      );
+      allowedUrls = withoutSiteTargets(allowedUrls, domains);
+      appBundleIds = appMode === "allowlist"
+        ? uniqueStrings([...appBundleIds, containerId])
+        : withoutBundleIds(appBundleIds, [containerId]);
+    }
   }
 
   return {

@@ -1,12 +1,12 @@
 import { bundleDeclaresWebBrowser, registerBrowserApplication } from "./browserProtection.js";
 import { execFile, spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { BROWSERS } from "./defaults.js";
+import { BROWSERS, PORT } from "./defaults.js";
 import { InFlightCoalescer } from "./inFlight.js";
 import type { UnknownRecord } from "./types.js";
 
@@ -579,8 +579,11 @@ export function safariRedirectScript(url: string, options: { currentUrl?: string
   const target = escapeAppleScript(url);
   const current = escapeAppleScript(options.currentUrl || "");
   const app = escapeAppleScript(appName);
+  const historyReset = safariHistoryResetUrls(url);
   return [
     `set targetUrl to "${target}"`,
+    `set holdingUrl to "${escapeAppleScript(historyReset?.holding || url)}"`,
+    `set replacementUrl to "${escapeAppleScript(historyReset?.replacement || url)}"`,
     `set previousUrl to "${current}"`,
     "set mediaMode to \"unknown\"",
     "set redirectMethod to \"missing-precondition\"",
@@ -625,7 +628,8 @@ export function safariRedirectScript(url: string, options: { currentUrl?: string
     "    end try",
     "  end if",
     "end tell",
-    safariNativeFallbackAppleScript(app),
+    safariNativeFallbackAppleScript(app, Boolean(historyReset)),
+    ...(historyReset ? [safariFreshBlockerTabAppleScript(app)] : []),
     safariTargetConfirmationAppleScript(app, "targetUrl", [
       "if targetStillCurrent and hasBlockedTab then",
       "  if redirectMethod is \"javascript-replace-unconfirmed\" then",
@@ -633,6 +637,9 @@ export function safariRedirectScript(url: string, options: { currentUrl?: string
       "    set redirectedTabCount to 1",
       "  else if redirectMethod is \"native-set-url-unconfirmed\" then",
       "    set redirectMethod to \"native-set-url\"",
+      "    set redirectedTabCount to 1",
+      "  else if redirectMethod is \"native-fresh-tab-unconfirmed\" then",
+      "    set redirectMethod to \"native-fresh-tab\"",
       "    set redirectedTabCount to 1",
       "  end if",
       "end if"
@@ -651,7 +658,22 @@ export function safariRedirectScript(url: string, options: { currentUrl?: string
   ].join("\n");
 }
 
-function safariNativeFallbackAppleScript(app: string): string {
+export function safariHistoryResetUrls(value: string): { holding: string; replacement: string } | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.port !== String(PORT)
+      || url.pathname !== "/blocked" || url.username || url.password) return null;
+    const marker = randomUUID();
+    url.hash = `vigil-holding-${marker}`;
+    const holding = url.href;
+    url.hash = `vigil-blocker-${marker}`;
+    return { holding, replacement: url.href };
+  } catch {
+    return null;
+  }
+}
+
+function safariNativeFallbackAppleScript(app: string, resetHistory: boolean): string {
   return [
     "set targetStillCurrent to false",
     "tell application \"System Events\"",
@@ -673,13 +695,77 @@ function safariNativeFallbackAppleScript(app: string): string {
     "      if targetStillCurrent then set targetStillCurrent to ((index of visibleTab) as integer) is blockedTabIndex",
     "      if targetStillCurrent then set targetStillCurrent to ((URL of visibleTab) is previousUrl)",
     "      if targetStillCurrent then",
-    "        set URL of blockedTab to targetUrl",
-    "        set redirectMethod to \"native-set-url-unconfirmed\"",
+    `        set URL of blockedTab to ${resetHistory ? "holdingUrl" : "targetUrl"}`,
+    `        set redirectMethod to "${resetHistory ? "native-holding-unconfirmed" : "native-set-url-unconfirmed"}"`,
     "      end if",
     "    on error",
     "      set redirectMethod to \"native-set-url-error\"",
     "    end try",
     "  end tell",
+    "end if"
+  ].join("\n");
+}
+
+function safariFreshBlockerTabAppleScript(app: string): string {
+  // Safari's native URL setter adds history instead of replacing it. A second
+  // redirect leaves the offending document in Back history. Retire only the
+  // tab tagged by this operation, after its fresh blocker is selected. Unique
+  // URLs provide ownership because Safari's scripting API has no stable tab ID.
+  return [
+    "if redirectMethod is \"native-holding-unconfirmed\" then",
+    safariTargetConfirmationAppleScript(app, "holdingUrl", []),
+    "  if targetStillCurrent then",
+    `    tell application "${app}"`,
+    "      try",
+    "        set replacementTab to make new tab at end of tabs of blockedWindow with properties {URL:replacementUrl}",
+    "      on error",
+    "        set targetStillCurrent to false",
+    "      end try",
+    "    end tell",
+    "    if targetStillCurrent then",
+    safariTargetConfirmationAppleScript(app, "holdingUrl", []),
+    "      if targetStillCurrent then",
+    `        tell application "${app}"`,
+    "          try",
+    "            if (URL of replacementTab) is replacementUrl then",
+    "              set current tab of blockedWindow to replacementTab",
+    "            end if",
+    "          end try",
+    "        end tell",
+    "      end if",
+    "    end if",
+    // Never close by a saved tab index: selecting or removing tabs can change
+    // what an index-based AppleScript reference points to.
+    "    set replacementIsCurrent to false",
+    "    tell application \"System Events\"",
+    `      set replacementIsCurrent to frontmost of process "${app}"`,
+    "    end tell",
+    "    if replacementIsCurrent then",
+    `      tell application "${app}"`,
+    "        try",
+    "          set replacementIsCurrent to (((id of front window) as text) is (blockedWindowId as text))",
+    "          if replacementIsCurrent then set replacementIsCurrent to ((URL of current tab of front window) is replacementUrl)",
+    "          if replacementIsCurrent then",
+    "            set retiredTabCount to 0",
+    "            repeat with ownedTab in tabs of front window",
+    "              if (URL of ownedTab) is holdingUrl then",
+    "                close ownedTab",
+    "                set retiredTabCount to retiredTabCount + 1",
+    "                exit repeat",
+    "              end if",
+    "            end repeat",
+    "            if retiredTabCount is 1 and (URL of current tab of front window) is replacementUrl then",
+    "              set blockedWindow to front window",
+    "              set blockedTab to current tab of blockedWindow",
+    "              set blockedTabIndex to index of blockedTab",
+    "              set targetUrl to replacementUrl",
+    "              set redirectMethod to \"native-fresh-tab-unconfirmed\"",
+    "            end if",
+    "          end if",
+    "        end try",
+    "      end tell",
+    "    end if",
+    "  end if",
     "end if"
   ].join("\n");
 }

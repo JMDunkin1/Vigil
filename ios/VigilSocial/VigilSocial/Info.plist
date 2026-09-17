@@ -32,6 +32,7 @@
             <key>CFBundleURLSchemes</key>
             <array>
                 <string>$(SOCIAL_URL_SCHEME)</string>
+                <string>$(SOCIAL_LEGACY_URL_SCHEME)</string>
             </array>
         </dict>
     </array>

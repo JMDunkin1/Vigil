@@ -2222,7 +2222,10 @@ enum DOMAdapters {
           window.__vigilInstagramCompatibilityInstalled = true;
           window.__vigilAudioPreferred = AUDIO_PREFERENCE;
 
-          const allMedia = () => [...document.querySelectorAll('video, audio')];
+          const mediaRoots = new Set([document]);
+          window.__vigilShadowDOM?.subscribe((root) => mediaRoots.add(root));
+          const allMedia = () => [...mediaRoots].flatMap((root) =>
+            [...root.querySelectorAll('video, audio')]);
           const suspendedMedia = new Set();
           const audioState = new WeakMap();
           const mediaSourceKey = (media) => String(
@@ -2292,7 +2295,6 @@ enum DOMAdapters {
             });
           };
           window.__vigilSuspendAllMedia = () => {
-            suspendedMedia.clear();
             allMedia().forEach((media) => {
               if (media.paused || media.ended) return;
               suspendedMedia.add(media);

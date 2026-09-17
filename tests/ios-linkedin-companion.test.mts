@@ -18,7 +18,7 @@ const release = { apps: {
   snapchat: { version: "0.1.0", build: 1, sourceFingerprint: "snapchat" },
   linkedin: { version: "0.1.0", build: 1, sourceFingerprint: "linkedin" }
 } };
-assert.deepEqual(socialAppsNeedingUpdate(release), ["instagram", "youtube", "snapchat"]);
+assert.deepEqual(socialAppsNeedingUpdate(release), ["instagram"]);
 assert.deepEqual(socialAppsNeedingUpdate(release, [], null, ["linkedin"]), ["linkedin"]);
 assert.deepEqual(socialAppsNeedingUpdate(release, [], null, ["snapchat"]), ["snapchat"]);
 

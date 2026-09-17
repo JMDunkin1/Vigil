@@ -11,6 +11,16 @@ monitor.lastScheduledTickAt = now - 10_000;
 monitor.status.browserActivityAccelerationHealthy = true;
 assert.equal(monitor.maintenanceTickRequired(now), false,
   "healthy unrestricted idle monitoring must not repeat OS checks");
+for (const url of ["https://example.com/", "http://127.0.0.1:8787/blocked", ""]) {
+  monitor.lastSample = { app: "Safari", hostname: "", url };
+  assert.equal(monitor.maintenanceTickRequired(now), false,
+    "a healthy foreground browser must not create recurring OS polling, including on the blocker");
+}
+monitor.lastSample = { app: "TextEdit", hostname: "", url: "" };
+assert.equal(monitor.maintenanceTickRequired(now), false,
+  "switching away from the browser must let healthy unrestricted monitoring become idle again");
+monitor.lastSample = null;
+monitor.lastScheduledTickAt = now - 10_000;
 monitor.status.browserActivityAccelerationHealthy = false;
 assert.equal(monitor.maintenanceTickRequired(now), true,
   "loss of the activity source must retain an independent enforcement backstop");

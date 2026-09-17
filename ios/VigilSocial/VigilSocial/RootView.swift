@@ -2,8 +2,177 @@ import SafariServices
 import SwiftUI
 import WebKit
 
+struct SocialContainerView: View {
+    @ObservedObject var container: SocialContainerStore
+
+    var body: some View {
+        ZStack {
+            ForEach(SocialService.allCases) { service in
+                if let store = container.stores[service] {
+                    SocialServiceAccessView(store: store, isServiceVisible: container.selectedService == service)
+                        .opacity(container.selectedService == service ? 1 : 0)
+                        .allowsHitTesting(container.selectedService == service)
+                        .accessibilityHidden(container.selectedService != service)
+                }
+            }
+            if container.selectedService == nil {
+                GeometryReader { geometry in
+                  ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    Spacer()
+                    Text("Vigil Social").font(.largeTitle.bold())
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                        ForEach(SocialService.allCases) { service in
+                            Button { container.select(service) } label: {
+                                VStack(spacing: 12) {
+                                    if let path = Bundle.main.path(forResource: service.rawValue, ofType: "png"),
+                                       let icon = UIImage(contentsOfFile: path) {
+                                        Image(uiImage: icon).resizable().scaledToFit()
+                                            .frame(width: 58, height: 58)
+                                            .clipShape(RoundedRectangle(cornerRadius: 13))
+                                    } else {
+                                        Image(systemName: service.systemImage).font(.largeTitle)
+                                            .frame(width: 58, height: 58)
+                                    }
+                                    Text(service.displayName).font(.headline)
+                                }
+                                .frame(maxWidth: .infinity).padding(.vertical, 24)
+                                .background(Color(uiColor: .secondarySystemGroupedBackground),
+                                            in: RoundedRectangle(cornerRadius: 24))
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityIdentifier("social-launch-\(service.rawValue)")
+                        }
+                    }
+                    Text("Double-tap with three fingers to return here.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(28).frame(maxWidth: .infinity, minHeight: geometry.size.height)
+                  }
+                }
+                .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+            }
+            if !container.migrationReady {
+                VStack(spacing: 16) {
+                    ProgressView()
+                    Text("Finishing your app migration").font(.headline)
+                    Text("Vigil is preserving your usage records. Keep the phone connected until the update finishes.")
+                        .foregroundStyle(.secondary)
+                }
+                .multilineTextAlignment(.center).padding(28)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+            }
+        }
+        .task {
+            while !container.migrationReady && !Task.isCancelled {
+                container.refreshMigrationReadiness()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        .background(SocialHomeGesture(action: container.showHome))
+        .accessibilityAction(named: Text("Return to apps"), container.showHome)
+    }
+}
+
+// A previously loaded web page must not stay interactive when a later profile
+// blocks this service. Check through WebKit (which observes Apple's BuiltIn
+// filter), in an isolated content world that site scripts cannot override.
+private struct SocialServiceAccessView: View {
+    @ObservedObject var store: SocialWebViewStore
+    let isServiceVisible: Bool
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var accessConfirmed = false
+    @State private var checking = true
+
+    var body: some View {
+        ZStack {
+            RootView(store: store, isServiceVisible: isServiceVisible && accessConfirmed)
+                .opacity(accessConfirmed ? 1 : 0)
+                .allowsHitTesting(accessConfirmed)
+                .accessibilityHidden(!accessConfirmed)
+            if !accessConfirmed {
+                VStack(spacing: 16) {
+                    if checking { ProgressView() }
+                    Text(checking ? "Opening \(store.fixedService.displayName)…" : "\(store.fixedService.displayName) is unavailable")
+                        .font(.headline)
+                    if !checking {
+                        Text("Vigil could not confirm access under the current web policy. This will retry automatically when access and your connection are available.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                }
+                .multilineTextAlignment(.center).padding(28)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+            }
+        }
+        .task(id: isServiceVisible && scenePhase == .active) {
+            accessConfirmed = false
+            guard isServiceVisible && scenePhase == .active else {
+                store.suspendAllMedia(relinquishExternalPlayback: scenePhase != .active)
+                return
+            }
+            checking = true
+            store.suspendAllMedia(relinquishExternalPlayback: false)
+            while !Task.isCancelled {
+                let allowed = await store.confirmServiceAccess()
+                guard !Task.isCancelled else { return }
+                accessConfirmed = allowed
+                checking = !allowed && store.webView(for: store.fixedService).isLoading
+                if allowed { store.resumeSuspendedMedia() }
+                else { store.suspendAllMedia(relinquishExternalPlayback: false) }
+                try? await Task.sleep(for: .seconds(checking ? 1 : 5))
+            }
+        }
+    }
+}
+
+// Install on the window rather than a transparent overlay: web controls keep
+// their normal hit testing, scrolling, and one/two-finger gestures.
+struct SocialHomeGesture: UIViewRepresentable {
+    let action: () -> Void
+
+    func makeUIView(context: Context) -> GestureAnchor {
+        let view = GestureAnchor()
+        view.action = action
+        return view
+    }
+    func updateUIView(_ uiView: GestureAnchor, context: Context) { uiView.action = action }
+    static func dismantleUIView(_ uiView: GestureAnchor, coordinator: ()) { uiView.detach() }
+
+    final class GestureAnchor: UIView, UIGestureRecognizerDelegate {
+        var action: (() -> Void)?
+        private weak var attachedWindow: UIWindow?
+        private(set) lazy var recognizer: UITapGestureRecognizer = {
+            let gesture = UITapGestureRecognizer(target: self, action: #selector(returnHome))
+            gesture.numberOfTouchesRequired = 3
+            gesture.numberOfTapsRequired = 2
+            gesture.cancelsTouchesInView = false
+            gesture.delaysTouchesBegan = false
+            gesture.delaysTouchesEnded = false
+            gesture.delegate = self
+            return gesture
+        }()
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            detach()
+            attachedWindow = window
+            window?.addGestureRecognizer(recognizer)
+        }
+        func detach() {
+            attachedWindow?.removeGestureRecognizer(recognizer)
+            attachedWindow = nil
+        }
+        @objc private func returnHome() { if recognizer.state == .ended { action?() } }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
+    }
+}
+
 struct RootView: View {
     @ObservedObject var store: SocialWebViewStore
+    var isServiceVisible = true
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
 
@@ -50,6 +219,7 @@ struct RootView: View {
                 if service == .instagram {
                     InstagramSessionCounter(
                         scenePhase: scenePhase,
+                        isServiceVisible: isServiceVisible,
                         isDark: isDark,
                         surfaceColor: surfaceColor
                     )
@@ -76,11 +246,15 @@ struct RootView: View {
         }
             .preferredColorScheme(reportedIsDark.map { $0 ? .dark : .light })
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active {
+                if phase == .active && isServiceVisible {
                     store.resumeSuspendedMedia()
                 } else {
-                    store.suspendAllMedia()
+                    store.suspendAllMedia(relinquishExternalPlayback: phase != .active)
                 }
+            }
+            .onChange(of: isServiceVisible) { _, visible in
+                if visible && scenePhase == .active { store.resumeSuspendedMedia() }
+                else { store.suspendAllMedia(relinquishExternalPlayback: false) }
             }
     }
 
@@ -155,6 +329,7 @@ struct RootView: View {
 
 private struct InstagramSessionCounter: View {
     let scenePhase: ScenePhase
+    let isServiceVisible: Bool
     let isDark: Bool
     let surfaceColor: Color
 
@@ -176,11 +351,15 @@ private struct InstagramSessionCounter: View {
         .allowsHitTesting(false)
         .onAppear { resumeIfNeeded(at: Date()) }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active {
+            if phase == .active && isServiceVisible {
                 resumeIfNeeded(at: Date())
             } else {
                 pauseIfNeeded(at: Date())
             }
+        }
+        .onChange(of: isServiceVisible) { _, visible in
+            if visible { resumeIfNeeded(at: Date()) }
+            else { pauseIfNeeded(at: Date()) }
         }
         .onDisappear { pauseIfNeeded(at: Date()) }
     }
@@ -190,7 +369,7 @@ private struct InstagramSessionCounter: View {
     }
 
     private func resumeIfNeeded(at date: Date) {
-        guard scenePhase == .active, activeSince == nil else { return }
+        guard scenePhase == .active, isServiceVisible, activeSince == nil else { return }
         activeSince = date
     }
 

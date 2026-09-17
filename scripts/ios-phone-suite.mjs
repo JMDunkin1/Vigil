@@ -87,14 +87,14 @@ const PHONE_SOURCE_FILES = [
   "scripts/youtube-build-connection.mts"
 ];
 const REQUIRED_SOCIAL_APPS = [
-  { id: "instagram", service: "instagram", name: "Instagram", bundleId: "tech.caseline.vigil.instagram", appIconSet: "InstagramAppIcon", scheme: "vigil-instagram", buildScheme: "VigilInstagram" },
+  { id: "instagram", service: "all", name: "Vigil Social", bundleId: "tech.caseline.vigil.instagram", appIconSet: "AppIcon", scheme: "vigilsocial", buildScheme: "VigilInstagram" },
   { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" },
   { id: "snapchat", service: "snapchat", name: "Snapchat", bundleId: "tech.caseline.vigil.snapchat", appIconSet: "SnapchatAppIcon", scheme: "vigil-snapchat", buildScheme: "VigilSnapchat" },
   { id: "linkedin", service: "linkedin", name: "LinkedIn", bundleId: "tech.caseline.vigil.linkedin", appIconSet: "LinkedInAppIcon", scheme: "vigil-linkedin", buildScheme: "VigilLinkedIn" }
 ];
-// LinkedIn is an explicit fourth-app install. Keep the default free three-app
-// maintenance path usable without replacing an existing companion.
-const DEFAULT_SOCIAL_APPS = REQUIRED_SOCIAL_APPS.filter((app) => app.id !== "linkedin");
+// One installation, retaining the existing Instagram bundle and Safari extensions.
+// Legacy targets remain available for source compatibility and simulator tests.
+const DEFAULT_SOCIAL_APPS = REQUIRED_SOCIAL_APPS.filter((app) => app.id === "instagram");
 const SOCIAL_APP_IDS = new Set(REQUIRED_SOCIAL_APPS.map((app) => app.id));
 const PERSONAL_TEAM_RENEWAL_WINDOW_MS = 48 * 60 * 60 * 1000;
 const appsForEdition = (edition) => edition === "enhanced"
@@ -107,6 +107,9 @@ if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
 }
 
 async function main(selectedCommand, selectedOptions) {
+  // Every maintenance alias now updates the same combined binary. There must
+  // never be a fourth install, or an old command reinstalling a retired shell.
+  if (["update", "develop", "status", "check"].includes(selectedCommand)) selectedOptions.app = "instagram";
   if (selectedCommand === "help") return printHelp();
   await configureRuntimeDataDirectory();
   const edition = await selectedPhoneEdition(selectedOptions.edition);
@@ -145,7 +148,7 @@ async function main(selectedCommand, selectedOptions) {
     }
     // The native YouTube companion depends on exact BuiltIn web-filter auth
     // routes. Keep its app and supervised policy in one verified transaction.
-    await updatePhone({ ...selectedOptions, app: "youtube", edition, noPolicy: false });
+    await updatePhone({ ...selectedOptions, app: "instagram", edition, noPolicy: false });
     return;
   }
   if (!["status", "check"].includes(selectedCommand)) throw new Error(`Unknown command: ${selectedCommand}`);
@@ -225,6 +228,7 @@ export function parseArguments(args) {
     else throw new Error(`Unknown option: ${value}`);
   }
   if (!/^(patch|minor|major)$/.test(options.bump)) throw new Error(`Unknown release bump: ${options.bump}`);
+  if (options.app === "all") options.app = "instagram";
   if (options.app && !SOCIAL_APP_IDS.has(options.app)) throw new Error(`Unknown social app: ${options.app}`);
   if (options.edition && !PHONE_EDITIONS.has(options.edition)) throw new Error(`Unknown phone edition: ${options.edition}`);
   return { command, options };
@@ -712,7 +716,8 @@ function deployedExplicitContentPolicyProblems(receipt, expected, requiredBundle
 
 function deployedYouTubeParityScriptProblems(receipt, expected) {
   const apps = Array.isArray(receipt?.apps) ? receipt.apps : [];
-  const youtube = apps.find((app) => app?.bundleId === "tech.caseline.vigil.youtube");
+  const youtube = apps.find((app) => app?.bundleId === (receipt?.socialContainer
+    ? "tech.caseline.vigil.instagram" : "tech.caseline.vigil.youtube"));
   return youtube?.youtubeParityScriptSha256 === expected.sha256
     ? []
     : ["The deployment receipt does not prove the current app-root YouTube Shorts/player-controls script."];
@@ -886,7 +891,7 @@ export function signingExpirationNeedsRenewal(
 export function socialAppsNeedingUpdate(release, installedApps = [], receipt = null, selectedAppIds = null, now = Date.now()) {
   const receiptApps = Array.isArray(receipt?.apps) ? receipt.apps : [];
   const selected = selectedAppIds ? new Set(selectedAppIds) : null;
-  return REQUIRED_SOCIAL_APPS.filter((app) => selected ? selected.has(app.id) : app.id !== "linkedin").filter((app) => {
+  return REQUIRED_SOCIAL_APPS.filter((app) => selected ? selected.has(app.id) : app.id === "instagram").filter((app) => {
     const installed = installedApps.find((candidate) => candidate.bundleIdentifier === app.bundleId);
     const deployed = receiptApps.find((candidate) => candidate?.bundleId === app.bundleId);
     const expected = release.apps[app.id];
@@ -1005,7 +1010,7 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
     .filter((app) => SOCIAL_APP_IDS.has(app.id))
     .map((app) => app.bundleId);
   problems.push(...deployedExplicitContentPolicyProblems(receipt, explicitContentPolicy, requiredSocialBundleIds));
-  if (!selectedOptions.app || selectedOptions.app === "youtube") {
+  if (!selectedOptions.app || ["youtube", "instagram"].includes(selectedOptions.app)) {
     problems.push(...deployedYouTubeParityScriptProblems(receipt, youtubeParityScript));
   }
   if (edition === "enhanced") {
@@ -1069,8 +1074,8 @@ function printStatus(report) {
 
 async function updatePhone(selectedOptions) {
   const edition = selectedOptions.edition;
-  if (selectedOptions.app === "linkedin" && selectedOptions.noPolicy) {
-    throw new Error("LinkedIn replacement requires the verified app-and-policy transaction; --no-policy cannot block the original app.");
+  if (selectedOptions.noPolicy) {
+    throw new Error("Vigil Social requires the verified app-and-policy transaction; --no-policy cannot preserve service restrictions.");
   }
   if (selectedOptions.noPolicy && edition === "enhanced") {
     throw new Error("--no-policy is incompatible with the Enhanced edition's fail-closed iOS URL Filter; the app and its exact managed configuration must be deployed together.");
@@ -1093,14 +1098,9 @@ async function updatePhone(selectedOptions) {
     configurationProfileStatus(device.identifier, toolEnvironment)
   ]);
   const installedApps = installedBeforeUpdate.result?.apps || [];
-  if (edition === "personal" && selectedOptions.app === "linkedin"
-    && !installedApps.some((app) => app.bundleIdentifier === "tech.caseline.vigil.linkedin")
-    && DEFAULT_SOCIAL_APPS.every((social) => installedApps.some((app) => app.bundleIdentifier === social.bundleId))) {
-    throw new Error("LinkedIn is a separate fourth app, but Apple Personal Team signing permits only three installed apps per device. The existing Instagram, YouTube, and Snapchat apps are present. No companion was replaced and no policy was changed. The standalone LinkedIn target remains available for simulator development.");
-  }
   const selectedSocialAppIds = selectedOptions.app ? [selectedOptions.app] : null;
   const targetedSocialApps = REQUIRED_SOCIAL_APPS
-    .filter((app) => selectedSocialAppIds ? selectedSocialAppIds.includes(app.id) : app.id !== "linkedin");
+    .filter((app) => selectedSocialAppIds ? selectedSocialAppIds.includes(app.id) : app.id === "instagram");
   const socialAppIdSet = new Set(socialAppsNeedingUpdate(
     release,
     installedApps,
@@ -1152,7 +1152,7 @@ async function updatePhone(selectedOptions) {
   }
   let preparedPolicy = selectedOptions.noPolicy
     ? null
-    : await prepareCurrentPolicy(release, selectedOptions.server, edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition, selectedOptions.app === "linkedin");
+    : await prepareCurrentPolicy(release, selectedOptions.server, edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition, "combined");
   const obsoleteBeforeUpdate = installedApps
     .filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
   const installedLockProfile = profileBeforeUpdate.profiles
@@ -1185,6 +1185,8 @@ async function updatePhone(selectedOptions) {
   } else if (profileBeforeUpdate.available) {
     legacyProfileMigrationVerified = true;
   }
+  const containerBackup = previousReceipt?.socialContainer === true
+    ? null : await backupSocialContainers(device.identifier, installedApps, toolEnvironment);
   for (const obsolete of obsoleteBeforeUpdate) {
     console.log(`Removing obsolete ${obsolete.bundleIdentifier}; its app-local data cannot be recovered after uninstall…`);
     await run("xcrun", ["devicectl", "device", "uninstall", "app", "--device", device.identifier, obsolete.bundleIdentifier], { env: toolEnvironment });
@@ -1194,19 +1196,18 @@ async function updatePhone(selectedOptions) {
     await run("xcrun", ["devicectl", "device", "install", "app", "--device", device.identifier, app.path], { env: toolEnvironment });
   }
 
-  if (selectedOptions.app === "linkedin") {
-    const social = REQUIRED_SOCIAL_APPS.find((app) => app.id === "linkedin");
-    await activateLinkedInReplacement(selectedOptions.server, async () => {
-      console.log("Verifying the LinkedIn companion before blocking the original app…");
-      return verifySocialAppLaunch(device.identifier, social, toolEnvironment);
-    });
-    // Persist first so all future policies, including unrelated companion
-    // updates, retain the replacement. Re-read live state before signing.
-    preparedPolicy = await prepareCurrentPolicy(release, selectedOptions.server,
-      edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition);
-    policyAlreadyCurrent = Boolean(profileBeforeUpdate.available && installedLockProfile
-      && profileName(installedLockProfile).includes(preparedPolicy.policyFingerprint.slice(0, 12)));
+  if (containerBackup) {
+    await restoreSocialContainerLedger(device.identifier, containerBackup, toolEnvironment);
   }
+
+  await activateSocialContainer(selectedOptions.server, async () => {
+    const social = REQUIRED_SOCIAL_APPS[0];
+    return verifySocialAppLaunch(device.identifier, social, toolEnvironment);
+  });
+  preparedPolicy = await prepareCurrentPolicy(release, selectedOptions.server,
+    edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition);
+  policyAlreadyCurrent = Boolean(profileBeforeUpdate.available && installedLockProfile
+    && profileName(installedLockProfile).includes(preparedPolicy.policyFingerprint.slice(0, 12)));
 
   let { policyFingerprint, policyArtifactHash } = preservedPolicyReceipt(selectedOptions.noPolicy ? previousReceipt : null);
   let liveUrlFilterAudit = null;
@@ -1234,7 +1235,27 @@ async function updatePhone(selectedOptions) {
     launchVerifications.set(social.bundleId, launch);
   }
 
+  const verifiedProfiles = await configurationProfileStatus(device.identifier, toolEnvironment);
+  if (!verifiedProfiles.available || !verifiedProfiles.profiles.some((profile) =>
+    profile.identifier === PROFILE_IDENTIFIER && profileName(profile).includes(policyFingerprint.slice(0, 12)))) {
+    throw new Error("The combined app is installed, but the exact live supervised policy is not verified; legacy companions were retained.");
+  }
+  if (containerBackup) {
+    const completion = join(containerBackup.path, "vigil-social-migration.json");
+    const preferences = await socialMigrationPreferences(containerBackup);
+    await writeFile(completion, JSON.stringify({ schemaVersion: 1, id: randomUUID(), complete: true, preferences }), { mode: 0o600 });
+    await runQuiet("xcrun", ["devicectl", "device", "copy", "to", "--device", device.identifier, "--source", completion, "--destination", "Documents/vigil-social-migration.json", "--domain-type", "appDataContainer", "--domain-identifier", REQUIRED_SOCIAL_APPS[0].bundleId], { env: toolEnvironment });
+  }
+  const serviceLaunches = await verifyCombinedServiceLaunches(device.identifier, toolEnvironment);
+  if (containerBackup) {
+    for (const original of containerBackup.apps.filter((app) => app.id !== "instagram")) {
+      console.log(`Retiring the separate ${original.id} app after verified backup, container launch, and policy installation…`);
+      await run("xcrun", ["devicectl", "device", "uninstall", "app", "--device", device.identifier, original.bundleId], { env: toolEnvironment });
+    }
+  }
+
   const appReceiptRecords = new Map((previousReceipt?.apps || []).map((app) => [app.bundleId, app]));
+  for (const retired of REQUIRED_SOCIAL_APPS.slice(1)) appReceiptRecords.delete(retired.bundleId);
   for (const app of build.apps) {
     appReceiptRecords.set(app.bundleId, {
       name: app.name,
@@ -1271,6 +1292,9 @@ async function updatePhone(selectedOptions) {
   };
   await writeReceipt(deviceReceiptId, {
     schemaVersion: 3,
+    socialContainer: true,
+    containerBackup: containerBackup?.path || previousReceipt?.containerBackup || null,
+    serviceLaunches,
     edition,
     device: { identifier: device.identifier, udid: device.udid, name: device.name, model: device.model, osVersion: device.osVersion },
     release,
@@ -1437,6 +1461,7 @@ async function buildPhoneApps(
       `SOCIAL_APP_NAME=${social.name}`,
       `SOCIAL_APP_ICON_SET=${social.appIconSet}`,
       `SOCIAL_URL_SCHEME=${social.scheme}`,
+      `SOCIAL_LEGACY_URL_SCHEME=${social.id === "instagram" ? "vigil-instagram" : social.scheme}`,
       `MARKETING_VERSION=${appRelease.version}`,
       `CURRENT_PROJECT_VERSION=${appRelease.build}`
     ];
@@ -1465,7 +1490,7 @@ async function buildPhoneApps(
     }
     const path = join(derived, "Build", "Products", "Release-iphoneos", "VigilSocial.app");
     const bundledExplicitContentPolicy = await verifyBundledExplicitContentPolicy(path, explicitContentPolicy);
-    const youtubeParityScript = social.id === "youtube"
+    const youtubeParityScript = ["youtube", "instagram"].includes(social.id)
       ? await verifyBundledYouTubeParityScript(path)
       : null;
     const youtubeInteractionExtension = social.id === "instagram"
@@ -2051,6 +2076,137 @@ export function linkedInReplacementSettings(ios) {
   };
 }
 
+export function socialContainerSettings(ios) {
+  if (ios?.blockWeb !== true) throw new Error("Vigil Social needs the supervised web filter to retain independent service restrictions.");
+  return { ...linkedInReplacementSettings(ios), socialContainer: true };
+}
+
+async function backupSocialContainers(deviceIdentifier, installedApps, toolEnvironment) {
+  const path = join(ROOT, "data", "ios-social-migrations", `${Date.now()}-${randomUUID()}`);
+  await mkdir(path, { recursive: true, mode: 0o700 });
+  await chmod(path, 0o700);
+  const apps = [];
+  for (const social of REQUIRED_SOCIAL_APPS) {
+    if (!installedApps.some((app) => app.bundleIdentifier === social.bundleId)) continue;
+    const destination = join(path, social.id);
+    console.log(`Saving the ${social.id} app data before migration…`);
+    await runQuiet("xcrun", ["devicectl", "device", "copy", "from", "--device", deviceIdentifier, "--source", ".", "--destination", destination, "--domain-type", "appDataContainer", "--domain-identifier", social.bundleId], { env: toolEnvironment });
+    const files = [];
+    for (const file of await filesBelow(destination, () => true)) {
+      const bytes = await readFile(file);
+      files.push({ path: relative(destination, file), bytes: bytes.length, sha256: sha256(bytes) });
+    }
+    if (!files.length) throw new Error(`The ${social.id} backup was empty; migration stopped before replacing apps.`);
+    apps.push({ id: social.id, bundleId: social.bundleId, path: destination, files });
+  }
+  const backup = { schemaVersion: 1, path, apps };
+  await writeFile(join(path, "manifest.json"), JSON.stringify(backup, null, 2), { mode: 0o600 });
+  return backup;
+}
+
+export function validateSocialMigrationLedger(bytes) {
+  const value = JSON.parse(Buffer.from(bytes).toString("utf8"));
+  const day = value?.youtubeLimits;
+  const nonnegative = (number) => typeof number === "number" && Number.isFinite(number) && number >= 0;
+  if (!day || typeof day !== "object" || Array.isArray(day)
+    || !/^\d{4}-\d{2}-\d{2}$/.test(day.day) || typeof day.timezone !== "string"
+    || !Array.isArray(day.slots) || day.slots.length !== 4
+    || !nonnegative(day.usedMs) || !day.played || typeof day.played !== "object"
+    || !Object.values(day.played).every(nonnegative)
+    || !day.grace || !["unused", "active", "ended"].includes(day.grace.status) || !nonnegative(day.grace.usedMs)
+    || !Array.isArray(day.external) || !day.feeds || typeof day.feeds !== "object"
+    || !(day.lease === null || (day.lease && nonnegative(day.lease.milliseconds)
+      && nonnegative(day.lease.settledMs) && day.lease.settledMs <= day.lease.milliseconds
+      && nonnegative(day.lease.expiresAt)))) {
+    throw new Error("The original YouTube usage ledger is invalid; migration must not reset usage.");
+  }
+  new Intl.DateTimeFormat("en", { timeZone: day.timezone });
+  return value;
+}
+
+async function restoreSocialContainerLedger(deviceIdentifier, backup, toolEnvironment) {
+  const original = backup.apps.find((app) => app.id === "youtube");
+  const relativePath = "Library/Application Support/youtube-daily-ledger.json";
+  const record = original?.files.find((file) => file.path === relativePath);
+  // An unused original app has no ledger; the normal seed is then appropriate.
+  if (!record) return;
+  const source = join(original.path, relativePath);
+  const bytes = await readFile(source);
+  if (sha256(bytes) !== record.sha256) throw new Error("The archived YouTube ledger changed; refusing migration.");
+  validateSocialMigrationLedger(bytes);
+  const existing = backup.apps.find((app) => app.id === "instagram")?.files.find((file) => file.path === relativePath);
+  if (existing && existing.sha256 !== record.sha256) {
+    throw new Error("Both apps contain different YouTube usage ledgers. They need a verified merge before migration can continue; neither ledger was replaced.");
+  }
+  await runQuiet("xcrun", ["devicectl", "device", "copy", "to", "--device", deviceIdentifier, "--source", source, "--destination", relativePath, "--domain-type", "appDataContainer", "--domain-identifier", REQUIRED_SOCIAL_APPS[0].bundleId], { env: toolEnvironment });
+  const verification = join(backup.path, "verified-youtube-ledger.json");
+  await runQuiet("xcrun", ["devicectl", "device", "copy", "from", "--device", deviceIdentifier, "--source", relativePath, "--destination", verification, "--domain-type", "appDataContainer", "--domain-identifier", REQUIRED_SOCIAL_APPS[0].bundleId], { env: toolEnvironment });
+  if (sha256(await readFile(verification)) !== record.sha256) throw new Error("YouTube ledger migration could not be verified; separate apps were retained.");
+}
+
+async function socialMigrationPreferences(backup) {
+  const preferences = {};
+  for (const app of backup.apps.filter((original) => original.id !== "instagram")) {
+    const path = join(app.path, "Library", "Preferences", `${app.bundleId}.plist`);
+    if (!await isFile(path)) continue;
+    const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", path]);
+    for (const [key, value] of Object.entries(JSON.parse(stdout))) {
+      if (key.startsWith(`VigilSocial.${app.id}.`)) preferences[key] = value;
+    }
+  }
+  return preferences;
+}
+
+async function verifyCombinedServiceLaunches(deviceIdentifier, toolEnvironment) {
+  const directory = await mkdtemp(join(tmpdir(), "vigil-social-launch-"));
+  const launches = [];
+  try {
+    for (const service of ["instagram", "youtube", "snapchat", "linkedin"]) {
+      const started = Date.now();
+      await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, "--payload-url", `vigilsocial://${service}`, REQUIRED_SOCIAL_APPS[0].bundleId], toolEnvironment);
+      let verified = false;
+      for (let attempt = 0; attempt < 30 && !verified; attempt += 1) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 1000));
+        const destination = join(directory, `${service}.json`);
+        try {
+          await runQuiet("xcrun", ["devicectl", "device", "copy", "from", "--device", deviceIdentifier, "--source", "Documents/vigil-social-selection.json", "--destination", destination, "--domain-type", "appDataContainer", "--domain-identifier", REQUIRED_SOCIAL_APPS[0].bundleId], { env: toolEnvironment });
+          const selected = JSON.parse(await readFile(destination, "utf8"));
+          verified = selected.combined === true && selected.service === service && Date.parse(selected.selectedAt) >= started - 1000;
+          if (verified) {
+            const accessPath = join(directory, `${service}-access.json`);
+            await runQuiet("xcrun", ["devicectl", "device", "copy", "from", "--device", deviceIdentifier, "--source", `Documents/vigil-social-access-${service}.json`, "--destination", accessPath, "--domain-type", "appDataContainer", "--domain-identifier", REQUIRED_SOCIAL_APPS[0].bundleId], { env: toolEnvironment });
+            const access = JSON.parse(await readFile(accessPath, "utf8"));
+            verified = access.service === service && access.accessConfirmed === true && Date.parse(access.checkedAt) >= started - 1000;
+          }
+        } catch { verified = false; /* Wait for the main scene and its protected web view. */ }
+      }
+      if (!verified) throw new Error(`The combined ${service} view did not verify access. Check connectivity, login, and active restrictions; legacy apps were retained.`);
+      launches.push({ service, verifiedAt: new Date().toISOString() });
+    }
+    await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, "--payload-url", "vigilsocial://home", REQUIRED_SOCIAL_APPS[0].bundleId], toolEnvironment);
+    return launches;
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+export async function activateSocialContainer(server, verifyLaunch) {
+  const launch = await verifyLaunch();
+  if (!launch?.ok) throw new Error(`Vigil Social failed launch verification; migration settings were not saved: ${launch?.detail || "unknown error"}`);
+  const live = await downloadServerState(server, AbortSignal.timeout(5000));
+  const patch = socialContainerSettings(live.state.deviceControls?.ios);
+  const response = await fetch(`${server}/api/devices/ios/settings`, {
+    method: "POST",
+    headers: { "x-vigil-intent": "vigil-app", "content-type": "application/json" },
+    body: JSON.stringify(patch), signal: AbortSignal.timeout(5000)
+  });
+  if (!response.ok) throw new Error(`Vigil Social policy persistence failed: HTTP ${response.status}; migration is incomplete.`);
+  const saved = (await downloadServerState(server, AbortSignal.timeout(5000))).state.deviceControls?.ios;
+  if (saved?.socialContainer !== true || saved?.blockApps !== true || saved?.blockWeb !== true
+    || !saved.blockedAppBundleIds?.includes("com.linkedin.LinkedIn")
+    || saved.allowedAppBundleIds?.includes("com.linkedin.LinkedIn")) {
+    throw new Error("Vigil Social settings did not persist. Update the installed Mac app before retrying the phone migration.");
+  }
+}
+
 export async function activateLinkedInReplacement(server, verifyLaunch) {
   const launch = await verifyLaunch();
   if (!launch?.ok) {
@@ -2099,7 +2255,8 @@ async function buildCurrentPolicyFromLiveState(server, signal, suppliedServerSta
   const ios = state?.deviceControls?.ios;
   if (!ios || typeof ios !== "object") throw new Error("Vigil live state does not contain iPhone policy settings.");
 
-  if (replaceLinkedIn) Object.assign(ios, linkedInReplacementSettings(ios));
+  if (replaceLinkedIn === "combined") Object.assign(ios, socialContainerSettings(ios));
+  else if (replaceLinkedIn) Object.assign(ios, linkedInReplacementSettings(ios));
 
   if (ios.hardenRemoval && ios.removalPasswordSet !== true) {
     throw new Error("Vigil's hardened iPhone profile has no persisted removal password; refusing to generate an unrecoverable profile.");

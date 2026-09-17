@@ -6,6 +6,82 @@ import WebKit
 
 final class VigilSocialTests: XCTestCase {
     @MainActor
+    func testCombinedContainerKeepsFourIndependentEnginesAndPages() throws {
+        let container = SocialContainerStore(combined: true, loadInitialPages: false)
+        XCTAssertNil(container.selectedService)
+        XCTAssertTrue(container.stores.isEmpty, "The picker must not load four websites in the background")
+        for service in SocialService.allCases {
+            container.select(service)
+            XCTAssertEqual(container.selectedService, service)
+            XCTAssertEqual(container.store(for: service).fixedService, service)
+        }
+        XCTAssertEqual(container.stores.count, 4)
+        let instagram = container.store(for: .instagram)
+        let page = instagram.webView(for: .instagram)
+        container.showHome()
+        XCTAssertNil(container.selectedService)
+        container.open(try XCTUnwrap(URL(string: "vigilsocial://instagram")))
+        XCTAssertTrue(container.store(for: .instagram) === instagram)
+        XCTAssertTrue(container.store(for: .instagram).webView(for: .instagram) === page)
+        XCTAssertFalse(page === container.store(for: .youtube).webView(for: .youtube))
+        XCTAssertEqual(page.configuration.websiteDataStore.identifier, nil)
+        let identifiers = [SocialService.youtube, .snapchat, .linkedin].compactMap {
+            container.store(for: $0).webView(for: $0).configuration.websiteDataStore.identifier
+        }
+        XCTAssertEqual(Set(identifiers).count, 3)
+    }
+
+    @MainActor
+    func testCombinedLauncherRejectsRestrictedAndUnrelatedURLs() throws {
+        let container = SocialContainerStore(combined: true, loadInitialPages: false)
+        for address in ["https://example.com/", "https://www.linkedin.com/video/", "https://www.youtube.com/shorts/abcdefghijk"] {
+            container.open(try XCTUnwrap(URL(string: address)))
+            XCTAssertNil(container.selectedService, address)
+        }
+        for service in SocialService.allCases {
+            container.open(try XCTUnwrap(URL(string: "vigilsocial://\(service.rawValue)")))
+            XCTAssertEqual(container.selectedService, service)
+        }
+        container.open(try XCTUnwrap(URL(string: "vigilsocial://home")))
+        XCTAssertNil(container.selectedService)
+    }
+
+    @MainActor
+    func testHomeGestureUsesThreeFingersAndTwoTapsWithoutBlockingOrdinaryTouches() {
+        let anchor = SocialHomeGesture.GestureAnchor()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.addSubview(anchor)
+        XCTAssertEqual(anchor.recognizer.numberOfTouchesRequired, 3)
+        XCTAssertEqual(anchor.recognizer.numberOfTapsRequired, 2)
+        XCTAssertFalse(anchor.recognizer.cancelsTouchesInView)
+        XCTAssertFalse(anchor.recognizer.delaysTouchesBegan)
+        XCTAssertTrue(window.gestureRecognizers?.contains(anchor.recognizer) == true)
+        anchor.removeFromSuperview()
+        XCTAssertFalse(window.gestureRecognizers?.contains(anchor.recognizer) == true)
+    }
+
+    @MainActor
+    func testContainerAccessCheckFailsClosedAndCannotBeForgedByPageScripts() async throws {
+        let store = SocialWebViewStore(fixedService: .linkedin, loadInitialPages: false)
+        let view = store.webView(for: .linkedin)
+        let loaded = expectation(description: "Policy probe fixture")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        view.navigationDelegate = delegate
+        view.loadHTMLString("<html><body>Sign in</body></html>", baseURL: SocialService.linkedin.homeURL)
+        await fulfillment(of: [loaded], timeout: 5)
+        _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => { throw new Error('blocked'); }; return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
+        _ = try await view.evaluateJavaScript("globalThis.fetch = async () => ({status:200,url:'https://www.linkedin.com/robots.txt'}); true;")
+        let denied = await store.confirmServiceAccess()
+        XCTAssertFalse(denied, "A page must not forge the system-policy check")
+        _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:405,url:'https://www.linkedin.com/robots.txt'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
+        let permitted = await store.confirmServiceAccess()
+        XCTAssertTrue(permitted, "A server declining HEAD must not strand the sign-in form")
+        _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:200,url:'https://blocked.example/'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
+        let redirected = await store.confirmServiceAccess()
+        XCTAssertFalse(redirected)
+    }
+
+    @MainActor
     private static var retainedCompanionValidationFixtures: [(UIWindow, WKWebView)] = []
 
     @MainActor
@@ -4867,7 +4943,12 @@ final class VigilSocialTests: XCTestCase {
         )
         XCTAssertNotNil(youtube.scrollView.refreshControl)
         XCTAssertEqual(youtube.scrollView.keyboardDismissMode, .interactive)
-        let scripts = youtube.configuration.userContentController.userScripts
+        let installedScripts = youtube.configuration.userContentController.userScripts
+        let limitScripts = installedScripts.filter { $0.source.contains("window.__vigilYouTubeLimits = true") }
+        XCTAssertEqual(limitScripts.count, 1)
+        XCTAssertEqual(limitScripts.first?.injectionTime, .atDocumentStart)
+        XCTAssertEqual(limitScripts.first?.isForMainFrameOnly, false)
+        let scripts = installedScripts.filter { !$0.source.contains("window.__vigilYouTubeLimits = true") }
         XCTAssertEqual(scripts.count, 5)
         XCTAssertFalse(scripts[0].isForMainFrameOnly)
         XCTAssertFalse(scripts[1].isForMainFrameOnly)

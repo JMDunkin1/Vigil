@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        CC0000000000000000000001 = {isa = PBXBuildFile; fileRef = E20000000000000000000004; };
+        CC0000000000000000000002 = {isa = PBXBuildFile; fileRef = A20000000000000000000013; };
+        CC0000000000000000000003 = {isa = PBXBuildFile; fileRef = H20000000000000000000002; };
+        CC0000000000000000000004 = {isa = PBXBuildFile; fileRef = 920000000000000000000002; };
+        CC0000000000000000000005 = {isa = PBXBuildFile; fileRef = 920000000000000000000004; };
 		ABCD00000000000000000003 = {isa = PBXBuildFile; fileRef = ABCD00000000000000000004; };
 		ABCD00000000000000000001 = {isa = PBXBuildFile; fileRef = ABCD00000000000000000002; };
 		A10000000000000000000001 /* VigilSocialApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* VigilSocialApp.swift */; };
@@ -505,7 +510,7 @@
 		A40000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C40000000000000000000004 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (C10000000000000000000003 /* blockerList.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		E40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (ABCD00000000000000000003, ABCD00000000000000000001, AABC00000000000000000004, AABC00000000000000000002, AABC00000000000000000001, 91000000000000000000000B, 91000000000000000000000A, 910000000000000000000008, 910000000000000000000007, E10000000000000000000002 /* manifest.json in Resources */, E10000000000000000000003 /* youtube-parity.js in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
-		D40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (D10000000000000000000009 /* icon.png in Resources */, D1000000000000000000000A /* instagram.png in Resources */, D1000000000000000000000B /* youtube.png in Resources */, D1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, D1000000000000000000000D /* Assets.xcassets in Resources */, D1000000000000000000000E /* ExplicitContentPolicy.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		D40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (CC0000000000000000000001, CC0000000000000000000002, CC0000000000000000000003, CC0000000000000000000004, CC0000000000000000000005, D10000000000000000000009 /* icon.png in Resources */, D1000000000000000000000A /* instagram.png in Resources */, D1000000000000000000000B /* youtube.png in Resources */, D1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, D1000000000000000000000D /* Assets.xcassets in Resources */, D1000000000000000000000E /* ExplicitContentPolicy.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		G40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (G10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */, G1000000000000000000000A /* Assets.xcassets in Resources */, G1000000000000000000000B /* ExplicitContentPolicy.json in Resources */, G1000000000000000000000C /* snapchat.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		H40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (H10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */, H1000000000000000000000A /* Assets.xcassets in Resources */, H1000000000000000000000B /* ExplicitContentPolicy.json in Resources */, H1000000000000000000000C /* linkedin.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
@@ -677,6 +682,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(VIGIL_APP_BUNDLE_IDENTIFIER)";
 				PRODUCT_MODULE_NAME = VigilSocial;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SOCIAL_LEGACY_URL_SCHEME = "$(SOCIAL_URL_SCHEME)";
 				VIGIL_SERVICE = youtube;
 				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.youtube;
 				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
@@ -707,6 +713,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "$(VIGIL_APP_BUNDLE_IDENTIFIER)";
 				PRODUCT_MODULE_NAME = VigilSocial;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				SOCIAL_LEGACY_URL_SCHEME = "$(SOCIAL_URL_SCHEME)";
 				VIGIL_SERVICE = youtube;
 				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.youtube;
 				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
@@ -829,6 +836,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.instagram;
+				SOCIAL_LEGACY_URL_SCHEME = "$(SOCIAL_URL_SCHEME)";
 				VIGIL_SERVICE = instagram;
 				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
 			};
@@ -859,6 +867,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.instagram;
+				SOCIAL_LEGACY_URL_SCHEME = "$(SOCIAL_URL_SCHEME)";
 				VIGIL_SERVICE = instagram;
 				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
 			};
@@ -890,6 +899,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.snapchat;
+				SOCIAL_LEGACY_URL_SCHEME = "$(SOCIAL_URL_SCHEME)";
 				VIGIL_SERVICE = snapchat;
 				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
 			};
@@ -921,6 +931,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.linkedin;
+				SOCIAL_LEGACY_URL_SCHEME = "$(SOCIAL_URL_SCHEME)";
 				VIGIL_SERVICE = linkedin;
 				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
 			};
@@ -951,6 +962,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.snapchat;
+				SOCIAL_LEGACY_URL_SCHEME = "$(SOCIAL_URL_SCHEME)";
 				VIGIL_SERVICE = snapchat;
 				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
 			};
@@ -981,6 +993,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.linkedin;
+				SOCIAL_LEGACY_URL_SCHEME = "$(SOCIAL_URL_SCHEME)";
 				VIGIL_SERVICE = linkedin;
 				VIGIL_UNCLASSIFIED_MEDIA_POLICY = conceal;
 			};

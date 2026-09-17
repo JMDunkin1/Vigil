@@ -12,6 +12,15 @@ const project = "ios/VigilSocial/VigilSocial.xcodeproj";
 const valueOptions = new Set(["service", "configuration", "destination", "derived-data", "version", "build", "unclassified-media-policy"]);
 const unclassifiedMediaPolicies = new Set(["conceal", "reveal-unclassified"]);
 const services = {
+  all: {
+    // Update the existing Instagram installation in place to preserve its
+    // Safari extensions, signing slot, and data container.
+    bundleId: "tech.caseline.vigil.instagram",
+    name: "Vigil Social",
+    appIconSet: "AppIcon",
+    scheme: "vigilsocial",
+    buildScheme: "VigilInstagram"
+  },
   instagram: {
     bundleId: "tech.caseline.vigil.instagram",
     name: "Instagram",
@@ -69,6 +78,7 @@ export function buildArguments(argv: string[]): string[] {
     `SOCIAL_APP_NAME=${service.name}`,
     `SOCIAL_APP_ICON_SET=${service.appIconSet}`,
     `SOCIAL_URL_SCHEME=${service.scheme}`,
+    `SOCIAL_LEGACY_URL_SCHEME=${options.service === "all" ? "vigil-instagram" : service.scheme}`,
     `VIGIL_UNCLASSIFIED_MEDIA_POLICY=${options.unclassifiedMediaPolicy}`,
     `MARKETING_VERSION=${options.version}`,
     `CURRENT_PROJECT_VERSION=${options.build}`
@@ -147,12 +157,12 @@ function phoneRelease(service: string): { version: string; build: number } {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes("--help")) {
-    process.stdout.write("Usage: npm run ios:social:build -- <instagram|youtube|snapchat|linkedin> [--configuration Debug|Release] [--destination value] [--derived-data path] [--version x.y.z] [--build number] [--unclassified-media-policy conceal|reveal-unclassified] [--unsigned]\n");
+    process.stdout.write("Usage: npm run ios:social:build -- <all|instagram|youtube|snapchat|linkedin> [--configuration Debug|Release] [--destination value] [--derived-data path] [--version x.y.z] [--build number] [--unclassified-media-policy conceal|reveal-unclassified] [--unsigned]\n");
     return;
   }
   await assertGeneratedIosContentPolicyCurrent();
   const options = parseOptions(argv);
-  const configuration = ["youtube", "instagram"].includes(options.service) ? await youtubeBuildConfiguration() : null;
+  const configuration = ["all", "youtube", "instagram"].includes(options.service) ? await youtubeBuildConfiguration() : null;
   await run("xcodebuild", [...buildArguments(argv), ...(configuration ? [`VIGIL_YOUTUBE_CONNECTION_FILE=${configuration}`] : [])]);
 }
 

@@ -778,6 +778,8 @@ export interface IosSettings {
   allowSafariHistoryClearing: boolean;
   /** Owner-authorized coexistence while the Snapchat companion cannot sign in. */
   allowNativeSnapchat?: boolean;
+  /** The four fixed services share the existing Instagram app container. */
+  socialContainer?: boolean;
   blockedAppBundleIds: string[];
   allowedAppBundleIds: string[];
   deniedUrls: string[];

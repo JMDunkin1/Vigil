@@ -12,6 +12,9 @@ export interface PhoneSuiteOptions {
 }
 
 export function parseArguments(args: string[]): { command: string; options: PhoneSuiteOptions };
+export function socialContainerSettings(ios: unknown): Record<string, unknown>;
+export function validateSocialMigrationLedger(bytes: Uint8Array): Record<string, unknown>;
+export function activateSocialContainer(server: string, verifyLaunch: () => Promise<{ ok: boolean; detail?: string }>): Promise<void>;
 export function incrementVersion(version: string, level: "patch" | "minor" | "major"): string;
 export function iosSdkSupportsDevice(iosSdk: number, deviceOsVersion: string): boolean;
 export function isLiveCoreDeviceConnection(device: unknown): boolean;

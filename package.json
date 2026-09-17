@@ -72,6 +72,7 @@
     "agent:update:youtube": "node scripts/ios-phone-suite.mjs update --edition personal --app youtube",
     "agent:update:snapchat": "node scripts/ios-phone-suite.mjs update --edition personal --app snapchat",
     "agent:update:phone": "node scripts/ios-phone-suite.mjs update --edition personal",
+    "agent:update:social": "node scripts/ios-phone-suite.mjs update --edition personal --app all",
     "install:agent": "npm run build && node dist/runtime/scripts/install-launch-agent.mjs",
     "uninstall:agent": "npm run build && node dist/runtime/scripts/uninstall-launch-agent.mjs",
     "install:system-guardian": "npm run build && sudo env PATH=\"$PATH\" node dist/runtime/scripts/install-system-guardian.mjs",
