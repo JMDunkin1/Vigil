@@ -4,7 +4,6 @@ import WebKit
 
 struct RootView: View {
     @ObservedObject var store: SocialWebViewStore
-    @State private var showsInformationalAccounts = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
 
@@ -47,23 +46,11 @@ struct RootView: View {
 
             VStack(spacing: 0) {
                 if service == .instagram {
-                    HStack(spacing: 8) {
-                        InstagramSessionCounter(
-                            scenePhase: scenePhase,
-                            isDark: isDark,
-                            surfaceColor: surfaceColor
-                        )
-                        Button {
-                            showsInformationalAccounts = true
-                        } label: {
-                            Label("Informational accounts", systemImage: "info.circle")
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .frame(minHeight: 44)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .background(surfaceColor)
+                    InstagramSessionCounter(
+                        scenePhase: scenePhase,
+                        isDark: isDark,
+                        surfaceColor: surfaceColor
+                    )
                 }
 
                 SocialWebView(
@@ -84,9 +71,6 @@ struct RootView: View {
                 YouTubeContentBlockerGate(isDark: isDark)
             }
         }
-            .sheet(isPresented: $showsInformationalAccounts) {
-                InstagramInformationalAccountsView(store: store)
-            }
             .preferredColorScheme(reportedIsDark.map { $0 ? .dark : .light })
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active {
@@ -163,77 +147,6 @@ struct RootView: View {
                 dismissAction: nil
             )
         }
-    }
-}
-
-private struct InstagramInformationalAccountsView: View {
-    @ObservedObject var store: SocialWebViewStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var username = ""
-    @State private var inputError: String?
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Text("See posts and stories from useful accounts, such as your school or gym, even when they don’t follow you back.")
-                    Text("Other accounts still need to follow you back. Reels, suggested content, and ads keep their existing restrictions.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                Section("Add an account") {
-                    TextField("@username or Instagram profile link", text: $username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                        .onSubmit(addAccount)
-                    if let inputError {
-                        Text(inputError).foregroundStyle(.red).font(.footnote)
-                    }
-                    Button("Add account", action: addAccount)
-                        .disabled(username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-                Section {
-                    ForEach(store.instagramInformationalAccounts, id: \.self) { account in
-                        Button {
-                            store.open(URL(string: "https://www.instagram.com/\(account)/")!)
-                            dismiss()
-                        } label: {
-                            HStack {
-                                Text("@\(account)")
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.caption)
-                            }
-                        }
-                        .swipeActions {
-                            Button("Remove", role: .destructive) {
-                                store.removeInstagramInformationalAccount(account)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Saved accounts")
-                } footer: {
-                    Text("Tap an account to open its profile. Swipe left to remove it. Changes refresh Instagram and are saved on this device.")
-                }
-            }
-            .navigationTitle("Informational accounts")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
-        }
-    }
-
-    private func addAccount() {
-        guard store.addInstagramInformationalAccount(username) else {
-            inputError = "Enter a valid Instagram username or profile link."
-            return
-        }
-        username = ""
-        inputError = nil
     }
 }
 
