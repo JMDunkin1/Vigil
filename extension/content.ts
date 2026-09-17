@@ -1195,7 +1195,12 @@ function focusedSocialCleanupFromEvent(event: Event): void {
 }
 
 function runFocusedSocialCleanupSoon(delayMs: number): void {
-  if (focusedSocialCleanupTimer) window.clearTimeout(focusedSocialCleanupTimer);
+  if (focusedSocialCleanupTimer !== null) {
+    // Keep the first mutation's deadline: busy pages must not postpone cleanup
+    // indefinitely. Navigation and blocked clicks can still request an immediate scan.
+    if (delayMs > 0) return;
+    window.clearTimeout(focusedSocialCleanupTimer);
+  }
   focusedSocialCleanupTimer = window.setTimeout(() => {
     focusedSocialCleanupTimer = null;
     applyFocusedSocialDomCleanup();

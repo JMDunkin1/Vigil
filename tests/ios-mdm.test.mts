@@ -593,7 +593,7 @@ if (removeTestUrlFilterService) {
   assert.ok(Array.isArray(webFilter.DenyListURLs), "custom Shorts profile should include denied URLs");
   assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts"), true);
   assert.equal(webFilter.DenyListURLs.includes("https://www.youtube.com/shorts"), false, "Apple normalizes bare and www hosts, so the redundant twin must not consume a slot");
-  assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts/"), true, "permanent Shorts variants must survive custom profile snapshots");
+  assert.equal(webFilter.DenyListURLs.some((prefix) => typeof prefix === "string" && "https://youtube.com/shorts/".startsWith(prefix)), true, "permanent Shorts variants must remain covered by retained prefixes in custom profile snapshots");
 }
 
 {

@@ -2,6 +2,8 @@ import { del, get, post } from "./api-client.js";
 import { createAccountUi } from "./account-ui.js";
 import { applyProtectionLevelPresentation, normalizedProtectionLevel } from "./app-events.js";
 import { createAppUpdatePanel } from "./app-update.js";
+import { startDashboardRefresh } from "./dashboard-refresh.js";
+import { formHasUnsavedChanges, formRevision, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
 import { daysText, formatDuration, lines } from "./format.js";
 import { createSaintStage } from "./saint-stage.js";
 import { $, $$, errorMessage, initTheme } from "./ui-shell.js";
@@ -60,7 +62,6 @@ interface VigilAppUpdateNavigationWindow extends Window {
 
 const BUILT_IN_PROFILE_IDS = new Set(["default", "normal", "soft-block", "brick-mode"]);
 const ACTIVE_STATE_POLL_MS = 3_000;
-const INACTIVE_STATE_POLL_MS = 30_000;
 
 const ui = {
   data: null as DashboardData | null,
@@ -106,8 +107,10 @@ function boot(): void {
   accountUi.bind();
   appUpdatePanel.render();
   void appUpdatePanel.refreshStatus(false);
-  window.setInterval(renderCountdowns, 1_000);
-  void pollState();
+  startDashboardRefresh({
+    document, timers: window, refresh, renderCountdowns, renderOnResume: render,
+    onError: (error) => toast(errorMessage(error)), pollMs: ACTIVE_STATE_POLL_MS
+  });
 }
 
 function bindNavigation(): void {
@@ -184,11 +187,6 @@ function bindAppUpdateDetailsNavigation(): void {
   bridge?.subscribeDetails?.(() => openConfigurationPanel("maintenance"));
 }
 
-async function pollState(): Promise<void> {
-  if (!document.hidden) await refresh();
-  window.setTimeout(() => void pollState(), document.hidden ? INACTIVE_STATE_POLL_MS : ACTIVE_STATE_POLL_MS);
-}
-
 function refresh(): Promise<void> {
   refreshRequested = true;
   refreshCycle ||= runRefreshLoop();
@@ -212,9 +210,9 @@ async function runRefreshLoop(): Promise<void> {
 }
 
 function render(): void {
+  if (document.hidden) return;
   const data = ui.data;
   if (!data) return;
-  renderHome(data);
   renderSchedules(data);
   renderProfiles(data.state);
   renderLimits(data.limits.rules);
@@ -222,8 +220,6 @@ function render(): void {
   renderSettings(data);
   renderDevice(data);
   renderHealth(data);
-  renderEmergency(data.state);
-  renderMaintenance(data);
   renderCountdowns();
   appUpdatePanel.render();
 }
@@ -369,6 +365,7 @@ function activeProtectionLevel(appState: DashboardState): number {
 }
 
 function renderCountdowns(): void {
+  if (document.hidden) return;
   const data = ui.data;
   if (!data) return;
   renderHome(data);
@@ -568,7 +565,7 @@ function renderSchedules(data: DashboardData): void {
   if (!entries.length) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = "No schedules yet. Choose a quick start above or create your own.";
+    empty.textContent = "No schedules yet.";
     list.append(empty);
     return;
   }
@@ -808,8 +805,8 @@ function renderProfiles(appState: DashboardState): void {
   $("#editProfile").textContent = custom ? "Edit custom profile" : "Built-in profile";
   $("#rulesConfigStatus").textContent = profile.name;
   $("#managedBlocklistSummary").textContent = custom
-    ? `${profile.name} blocks ${(profile.blockedApps || []).length} app targets and ${(profile.blockedSites || []).length} site targets. Managed unsafe-content rules remain layered on top.`
-    : `${profile.name} is a protected built-in ruleset. Its effective rules and permanent managed protections are not exposed as a partial editable list.`;
+    ? `${(profile.blockedApps || []).length} apps · ${(profile.blockedSites || []).length} sites. Vigil’s unsafe-content blocklist also applies.`
+    : `Built-in ruleset. Create a custom profile to edit app and site rules.`;
   const form = $("#profileForm") as unknown as HTMLFormElement;
   if (!form.hidden && !profileFormDirty && formInput(form, "id").value === profile.id) fillProfileForm(profile);
 }
@@ -1140,7 +1137,7 @@ function renderAppLocks(rules: DashboardItem[]): void {
   renderTypingChallenge("#appLockChallenge", "#appLockChallengeInput", selectedChallenge);
   if (selectedChallenge?.text) $("#appLockChallenge").textContent = `${selectedRule?.name || "App lock"} — type: ${selectedChallenge.text}`;
   $("#appLockUnlockPanel").hidden = !rules.some((rule) => rule.enabled);
-  $("#appLockUnlockTitle").textContent = selectedRule ? selectedRule.name : "Request a deliberate unlock from a lock below";
+  $("#appLockUnlockTitle").textContent = selectedRule ? selectedRule.name : "Choose an app lock to unlock";
 
   if (!rules.length) {
     list.append(ruleEmptyState("No app locks configured."));
@@ -1283,6 +1280,9 @@ function renderLimitsConfigurationStatus(limits: DashboardItem[], appLocks: Dash
 }
 
 function bindSettingActions(): void {
+  for (const id of ["enforcementTimingForm", "accessTimingForm", "focusShortcutForm", "keyholderForm"]) {
+    trackFormChanges($("#" + id) as unknown as HTMLFormElement);
+  }
   for (const input of $$<HTMLInputElement>("[data-setting]")) {
     input.addEventListener("change", () => void saveBooleanSetting(input));
   }
@@ -1292,14 +1292,14 @@ function bindSettingActions(): void {
       appQuitEscalationSeconds: Number($("#appQuitEscalationSeconds").value),
       processSweepIntervalSeconds: Number($("#processSweepIntervalSeconds").value),
       systemSleepLockIntervalSeconds: Number($("#systemSleepLockIntervalSeconds").value)
-    }, "Enforcement timing saved");
+    }, "Enforcement timing saved", "#enforcementTimingForm");
   });
   $("#accessTimingForm").addEventListener("submit", (event: Event) => {
     event.preventDefault();
     void saveSettings({
       intentReasonMinLength: Number($("#intentReasonMinLength").value),
       panicLockDurationMinutes: Number($("#panicLockDurationMinutes").value)
-    }, "Unlock safeguards saved");
+    }, "Unlock safeguards saved", "#accessTimingForm");
   });
   $("#focusShortcutForm").addEventListener("submit", (event: Event) => {
     event.preventDefault();
@@ -1307,7 +1307,7 @@ function bindSettingActions(): void {
       focusShortcutEnabled: $("#focusShortcutEnabled").checked,
       focusShortcutOnName: $("#focusShortcutOnName").value,
       focusShortcutOffName: $("#focusShortcutOffName").value
-    }, "Focus shortcuts saved");
+    }, "Focus shortcuts saved", "#focusShortcutForm");
   });
   for (const id of ["grayscaleSoftBlockEnabled", "grayscalePreventManualChanges"]) {
     $(`#${id}`).addEventListener("change", () => void saveGrayscaleSettings());
@@ -1333,9 +1333,12 @@ async function saveBooleanSetting(input: HTMLInputElement): Promise<void> {
   }
 }
 
-async function saveSettings(body: UnknownRecord, success: string): Promise<void> {
+async function saveSettings(body: UnknownRecord, success: string, formSelector: string): Promise<void> {
+  const form = $(formSelector) as unknown as HTMLFormElement;
+  const submittedRevision = formRevision(form);
   try {
     await post("/api/settings", body);
+    markFormSavedAtRevision(form, submittedRevision);
     toast(success);
     await refresh();
   } catch (error) {
@@ -1357,12 +1360,14 @@ async function saveGrayscaleSettings(): Promise<void> {
 }
 
 async function saveKeyholder(): Promise<void> {
+  const form = $("#keyholderForm") as unknown as HTMLFormElement;
+  const submittedRevision = formRevision(form);
   try {
     await post("/api/keyholder", {
       enabled: $("#keyholderEnabled").checked,
       passcode: $("#keyholderPasscode").value
     });
-    $("#keyholderPasscode").value = "";
+    if (markFormSavedAtRevision(form, submittedRevision)) $("#keyholderPasscode").value = "";
     toast("Keyholder saved");
     await refresh();
   } catch (error) {
@@ -1385,7 +1390,9 @@ function renderSettings(data: DashboardData): void {
   $("#grayscaleSoftBlockEnabled").checked = Boolean(data.state.grayscale?.softBlockEnabled);
   $("#grayscalePreventManualChanges").checked = data.state.grayscale?.preventManualChanges !== false;
   const keyholder = data.state.keyholder as unknown as UnknownRecord;
-  $("#keyholderEnabled").checked = Boolean(keyholder.enabled);
+  if (!formHasUnsavedChanges($("#keyholderForm") as unknown as HTMLFormElement)) {
+    $("#keyholderEnabled").checked = Boolean(keyholder.enabled);
+  }
   $("#keyholderStatus").textContent = keyholder.hasPasscode ? "Passcode set" : "Not set";
   $("#keyholderStatus").className = `count-pill${keyholder.hasPasscode ? " good" : ""}`;
   const protectedCount = [
@@ -1404,6 +1411,8 @@ function renderSettings(data: DashboardData): void {
 
 function setInputValue(selector: string, value: unknown): void {
   const input = $(selector);
+  const form = input.closest("form");
+  if (form && formHasUnsavedChanges(form)) return;
   if (document.activeElement !== input) input.value = String(value ?? "");
 }
 
@@ -1447,7 +1456,7 @@ function renderDevice(data: DashboardData): void {
     $("#iosRestrictInstallErase").checked = ios.restrictInstallAndErase !== false;
     $("#iosAllowSafariHistoryClearing").checked = ios.allowSafariHistoryClearing !== false;
   }
-  $("#iosStatusTitle").textContent = ios.enabled ? "Vigil content filter configured" : "Vigil content filter ready";
+  $("#iosStatusTitle").textContent = "iPhone content filter";
   $("#iosStatusText").textContent = ios.note || "A supervised iPhone is required for the managed restriction policy.";
   $("#iosStatus").textContent = ios.enabled ? "Configured" : "Ready";
   $("#iosStatus").className = `count-pill${ios.enabled ? " good" : ""}`;

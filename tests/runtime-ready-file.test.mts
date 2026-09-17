@@ -167,6 +167,10 @@ try {
     safetyBoundaryArg: "--vigil-safety-boundary-do-not-terminate-or-bootout"
   });
   assert.match(script, /runtime-interruption\.json/, "the supervisor must retain interruption evidence outside the readiness file");
+  assert.equal((script.match(/\/usr\/bin\/stat -f '%d:%i' "\$ready"/gu) || []).length, 3,
+    "cached observation and both receipt-read boundaries must each obtain one coherent identity snapshot");
+  assert.doesNotMatch(script, /\/usr\/bin\/stat -f '%[di]' "\$ready"/u,
+    "readiness identity checks must not fork separate stat processes for device and inode");
   assert.match(script, /\/bin\/chmod 0600 "\$temporary"[\s\S]*?\/bin\/sync[\s\S]*?\/bin\/mv -f "\$temporary" "\$interruption"[\s\S]*?\/bin\/sync/, "evidence must be private and power-loss durable around its atomic rename");
   assert.match(script, /archive_existing_interruption\(\)[\s\S]*?archive_path="\$\{interruption\}\.conflict\.\$\{archived_at\}\.\$\{archive_uuid\}"[\s\S]*?\/bin\/mv "\$interruption" "\$archive_path"/, "a nonmatching receipt must be atomically archived instead of overwritten");
   assert.match(script, /ready_loaded=false[\s\S]*?if \[\[ "\$ready_loaded" == true \]\]; then[\s\S]*?current_ready_device[\s\S]*?current_ready_inode[\s\S]*?ready_loaded=false[\s\S]*?if \[\[ "\$ready_loaded" == true \]\]; then[\s\S]*?elif \[\[ -e "\$ready" \|\| -L "\$ready" \]\]; then[\s\S]*?ready_device[\s\S]*?ready_inode[\s\S]*?ready_loaded=true/, "a healthy runtime must cache one readiness inode while atomically published replacements invalidate the predecessor identity");

@@ -150,9 +150,11 @@ const playButton = {
   }
 };
 const waveLevels = Array.from({ length: 18 }, () => new Map<string, string>());
+let waveStyleWrites = 0;
 const waveBars = waveLevels.map((properties) => ({
   style: {
     setProperty(name: string, value: string) {
+      waveStyleWrites += 1;
       properties.set(name, value);
     },
     removeProperty(name: string) {
@@ -357,6 +359,10 @@ try {
   runAnimationFrame();
   const playingLevel = Number(waveLevels[0].get("--wave-level"));
   assert.equal(playingLevel > 0.4, true, "a strong live signal must produce visibly tall spectrum bars");
+  const pendingFrame = [...animationFrames.keys()][0];
+  focusSound.setViewActive(true);
+  assert.equal([...animationFrames.keys()][0], pendingFrame, "repeated active-view notifications must retain the scheduled waveform and smoothing state");
+  assert.equal(Number(waveLevels[0].get("--wave-level")), playingLevel);
 
   analysers[0].signalLevel = 0;
   for (let frame = 0; frame < 12; frame += 1) runAnimationFrame();
@@ -366,6 +372,10 @@ try {
     true,
     "a silent time-domain signal must settle near idle even when the frequency bins remain nonzero"
   );
+  for (let frame = 0; frame < 80; frame += 1) runAnimationFrame();
+  const settledWrites = waveStyleWrites;
+  for (let frame = 0; frame < 10; frame += 1) runAnimationFrame();
+  assert.equal(waveStyleWrites, settledWrites, "a settled silent waveform must avoid redundant DOM style writes");
 
   analysers[0].signalLevel = 0.12;
   analysers[0].frequencyGradient = true;

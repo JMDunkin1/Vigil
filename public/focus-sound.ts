@@ -341,6 +341,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
     const frequencyData = new Uint8Array(analyser.frequencyBinCount);
     const timeData = new Float32Array(analyser.fftSize);
     const displayedLevels = bars.map(() => waveformIdleScale);
+    const writtenLevels = bars.map(() => "");
     let lastDrawAt = Number.NEGATIVE_INFINITY;
 
     const draw = (timestamp: number) => {
@@ -356,7 +357,11 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
           const target = waveformIdleScale + (1 - waveformIdleScale) * loudness * Math.pow(band, 0.86);
           const response = target > displayedLevels[index] ? 0.52 : 0.2;
           displayedLevels[index] += (target - displayedLevels[index]) * response;
-          bar.style.setProperty("--wave-level", displayedLevels[index].toFixed(3));
+          const level = displayedLevels[index].toFixed(3);
+          if (writtenLevels[index] !== level) {
+            bar.style.setProperty("--wave-level", level);
+            writtenLevels[index] = level;
+          }
         }
       }
 
@@ -419,6 +424,7 @@ export function createFocusSoundController({ $, post, toast }: { $: QueryElement
       resetTimer();
     },
     setViewActive(active: boolean) {
+      if (soundViewActive === active) return;
       soundViewActive = active;
       if (!active) {
         stopSpectrumVisualization();

@@ -74,6 +74,7 @@ export const MONITOR_FULL_CHECKPOINT_INTERVAL_MS = 15 * 60_000;
 export const MONITOR_HOT_CHECKPOINT_INTERVAL_MS = 15_000;
 export const MONITOR_HOT_CHECKPOINT_MAX_RETRY_MS = MONITOR_FULL_CHECKPOINT_INTERVAL_MS;
 export const MONITOR_ACTIVITY_ACCOUNTING_DELAY_MS = 60_000;
+export const MONITOR_MAINTENANCE_INTERVAL_MS = 1_000;
 export const HARDENING_DRIFT_EVIDENCE_MAX_AGE_MS = 15_000;
 export const BROWSER_ACTIVITY_PERSISTENCE_RETRY_DELAYS_MS = Object.freeze([250, 500, 1_000, 3_000]);
 export const BROWSER_ACTIVITY_PERSISTENCE_SHUTDOWN_MAX_ATTEMPTS = 4;
@@ -236,6 +237,9 @@ export function wifiEnvironmentObservationRequired(state: VigilState): boolean {
 
 export function hardeningDriftPolicyFingerprint(state: VigilState, now = new Date()): string {
   const runtime = state.integrity?.runtime || {};
+  // Selectors expire stale entries at the same instant. Share one isolated
+  // evaluation draft rather than copying all audit history for each selector.
+  const evaluatedState = structuredClone(state);
   // Keep persistence-only metadata (events, seal timestamps, effect
   // acknowledgements) out of this generation. Those can change while evidence
   // is collected without changing what hardening the active policy requires.
@@ -244,8 +248,8 @@ export function hardeningDriftPolicyFingerprint(state: VigilState, now = new Dat
   return JSON.stringify({
     foolproofModeEnabled: Boolean(state.settings?.foolproofModeEnabled),
     attestationRequired: hardeningDriftAttestationRequired(state, now),
-    activePolicy: activePolicy(structuredClone(state), now),
-    managedDomains: managedBlockDomains(structuredClone(state), now),
+    activePolicy: activePolicy(evaluatedState, now),
+    managedDomains: managedBlockDomains(evaluatedState, now),
     settings: state.settings,
     adultBlocklist: state.adultBlocklist,
     profiles: state.profiles,
@@ -255,7 +259,7 @@ export function hardeningDriftPolicyFingerprint(state: VigilState, now = new Dat
     appLocks: state.appLocks,
     planBlocks: state.intentionalUse?.planBlocks || [],
     extensionDynamicRules: state.extension?.dynamicRules || {},
-    extensionRules: extensionDynamicRulesReady(structuredClone(state), now),
+    extensionRules: extensionDynamicRulesReady(evaluatedState, now),
     wifiSsid: state.environment?.wifiSsid || "",
     activeSessions: state.activeSessions,
     activeSession: state.activeSession,
@@ -355,6 +359,9 @@ export function browserActivityPolicyFingerprint(
 
 export function policyBoundaryTransitionFingerprint(state: VigilState, at = new Date()): string {
   const timestamp = at.getTime();
+  // Keep cleanup private, while avoiding eight copies of the same state for
+  // each side of every minute/session boundary.
+  const evaluatedState = structuredClone(state);
   const activeIds = (items: UnknownRecord[] | undefined, field: string, status?: [string, string]): string[] => (
     (items || [])
       .filter((item) => {
@@ -367,10 +374,10 @@ export function policyBoundaryTransitionFingerprint(state: VigilState, at = new 
       .sort()
   );
   const policyForDevice = (device: "computer" | "phone") => (
-    activePolicy(structuredClone(state), at, { device })
+    activePolicy(evaluatedState, at, { device })
   );
   const grayscaleForDevice = (device: "computer" | "phone") => {
-    const decision = grayscaleDecision(structuredClone(state), at, { device });
+    const decision = grayscaleDecision(evaluatedState, at, { device });
     return {
       desired: decision.desired,
       reason: decision.reason,
@@ -380,9 +387,9 @@ export function policyBoundaryTransitionFingerprint(state: VigilState, at = new 
     };
   };
   const activeLimitIds = (device: "computer" | "phone") => (
-    activeLimitBlocks(structuredClone(state), at, { device }).map((block) => block.id).sort()
+    activeLimitBlocks(evaluatedState, at, { device }).map((block) => block.id).sort()
   );
-  const extensionRules = extensionDynamicRulesReady(structuredClone(state), at);
+  const extensionRules = extensionDynamicRulesReady(evaluatedState, at);
   const activeAppLockIds = (state.appLocks || [])
     .filter((lock) => lock.enabled && (!(lock.days || []).length || lock.days.includes(at.getDay())))
     .map((lock) => lock.id)
@@ -409,7 +416,7 @@ export function policyBoundaryTransitionFingerprint(state: VigilState, at = new 
       computer: grayscaleForDevice("computer"),
       phone: grayscaleForDevice("phone")
     },
-    managedDomains: managedBlockDomains(structuredClone(state), at),
+    managedDomains: managedBlockDomains(evaluatedState, at),
     extensionRules: {
       expectedCount: extensionRules.expectedCount,
       expectedSignature: extensionRules.expectedSignature
@@ -594,6 +601,8 @@ export class Monitor implements MonitorHandle {
   activityAccountingTimer: ReturnType<typeof setTimeout> | null;
   activityObservedSinceAccountingArm: boolean;
   policyBoundaryTimer: ReturnType<typeof setTimeout> | null;
+  maintenanceTimer: ReturnType<typeof setTimeout> | null;
+  lastScheduledTickAt: number;
   status: MonitorStatus;
   recentBlocks: Map<string, number>;
   appBlockHistory: Map<string, AppBlockRecord>;
@@ -692,6 +701,8 @@ export class Monitor implements MonitorHandle {
     this.activityAccountingTimer = null;
     this.activityObservedSinceAccountingArm = false;
     this.policyBoundaryTimer = null;
+    this.maintenanceTimer = null;
+    this.lastScheduledTickAt = 0;
     this.status = {
       ok: true,
       lastError: "",
@@ -824,6 +835,54 @@ export class Monitor implements MonitorHandle {
     this.refreshEffectivePollInterval();
     void this.runScheduledTick();
     this.armPolicyBoundaryTimer();
+    this.armMaintenanceTimer();
+    this.scheduleActivityAccounting();
+  }
+
+  armMaintenanceTimer(): void {
+    if (this.maintenanceTimer || !this.running || this.stopping) return;
+    this.maintenanceTimer = setTimeout(() => {
+      this.maintenanceTimer = null;
+      if (!this.running || this.stopping) return;
+      this.refreshEffectivePollInterval();
+      this.retryPendingBrowserActivityMutations();
+      if (this.maintenanceTickRequired()) void this.runScheduledTick();
+      this.armMaintenanceTimer();
+    }, MONITOR_MAINTENANCE_INTERVAL_MS);
+    this.maintenanceTimer.unref?.();
+  }
+
+  maintenanceTickRequired(now = Date.now(), monotonicNow = performance.now()): boolean {
+    // Input is an accelerator, not a proof that ongoing protections remain
+    // healthy. Check inexpensive deadlines even when no further input arrives;
+    // an ordinary healthy, unrestricted idle monitor performs no OS polling.
+    if (this.tickInFlight) return false;
+    if (now < this.lastScheduledTickAt) return true;
+    if (now - this.lastScheduledTickAt < 3_000) return false;
+    if (!this.status.browserActivityAccelerationHealthy || this.status.componentErrors.tick
+      || this.status.componentErrors.frontmost) return true;
+    if (this.runtimeUsageCheckpointEnabled && this.hotCheckpointFailureCount > 0
+      && monotonicNow >= this.nextHotCheckpointAt) return true;
+    if (this.nextSystemSleepLockAt > 0 && now >= this.nextSystemSleepLockAt) return true;
+    if (this.nextGrayscaleRefreshAt > 0 && now >= this.nextGrayscaleRefreshAt) return true;
+    if (this.nextEnvironmentRefreshAt > 0 && now >= this.nextEnvironmentRefreshAt) return true;
+    const lockdown = integrityLockdownActive(this.committedState);
+    const sweepAlwaysRequired = lockdown
+      || this.status.lastProcessSweep?.fullLockout === true
+      || this.committedState.settings.protectedBrowsersOnly;
+    const sweepEnabled = sweepAlwaysRequired
+      || (this.committedState.settings.processSweepEnabled && this.committedState.settings.appQuitEnabled);
+    if (sweepEnabled && this.nextProcessSweepAt > 0 && now >= this.nextProcessSweepAt) {
+      if (sweepAlwaysRequired || this.status.componentErrors["process-sweep"]
+        || [...this.appBlockHistory.values()].some((record) => now - record.lastSeenAt <= 10 * 60_000)) return true;
+    }
+    const protectedLock = protectedLockActive(this.committedState, new Date(now));
+    if (protectedLock || lockdown) {
+      return now >= this.nextIntegrityRefreshAt
+        || (this.nextAppleContentFilterRefreshAt > 0 && now >= this.nextAppleContentFilterRefreshAt)
+        || (protectedLock && this.committedState.settings.foolproofModeEnabled && now >= this.nextHardeningDriftRefreshAt);
+    }
+    return false;
   }
 
   refreshEffectivePollInterval(): number {
@@ -842,6 +901,8 @@ export class Monitor implements MonitorHandle {
     this.activityObservedSinceAccountingArm = false;
     if (this.policyBoundaryTimer) clearTimeout(this.policyBoundaryTimer);
     this.policyBoundaryTimer = null;
+    if (this.maintenanceTimer) clearTimeout(this.maintenanceTimer);
+    this.maintenanceTimer = null;
     this.stopping = true;
     this.pendingImmediateEnforcementReasons.clear();
     // Detach the signal source first, but leave mutation admission available
@@ -926,10 +987,24 @@ export class Monitor implements MonitorHandle {
       const remainActive = this.activityObservedSinceAccountingArm;
       this.activityObservedSinceAccountingArm = false;
       void this.runScheduledTick().finally(() => {
-        if (remainActive && !this.activityAccountingTimer) this.scheduleActivityAccounting();
+        if ((remainActive || this.activityAccountingRequired()) && !this.activityAccountingTimer) {
+          this.scheduleActivityAccounting();
+        }
       });
     }, MONITOR_ACTIVITY_ACCOUNTING_DELAY_MS);
     this.activityAccountingTimer.unref?.();
+  }
+
+  activityAccountingRequired(): boolean {
+    if (!this.lastSample) return false;
+    if (this.committedState.settings.idleUsageTrackingEnabled === false) return true;
+    const accounting = this.status.lastIdleAccounting;
+    // A last key/click still starts an active-use tail up to the configured
+    // idle threshold. Keep counting that tail without requiring another input;
+    // failed idle observations retain the existing fail-closed accounting.
+    if (!accounting || accounting.ok === false || accounting.idleSeconds == null) return true;
+    return Number(accounting.idleSeconds)
+      < idleUsageThresholdSeconds(this.committedState.settings.idleUsageThresholdSeconds);
   }
 
   handleApplicationActivity(kind: "activate" | "launch", burst: BrowserActivityBurstScheduler): void {
@@ -1427,6 +1502,7 @@ export class Monitor implements MonitorHandle {
     // activity source is disabled or unavailable.
     this.retryPendingBrowserActivityMutations();
     if (this.tickInFlight) return this.tickInFlight;
+    this.lastScheduledTickAt = Date.now();
     const fullCheckpoint = performance.now() >= this.nextFullCheckpointAt;
     let persistedHotFingerprint: string | null = null;
     const scheduled = (async () => {
@@ -2643,6 +2719,7 @@ export class Monitor implements MonitorHandle {
     runningApps?: Awaited<ReturnType<typeof listRunningAppNames>>;
   } = {}): Promise<void> {
     const lockdown = integrityLockdownActive(this.state) || isFullLockoutPolicy(activePolicy(this.state, new Date(now)));
+    this.status.lastProcessSweep = { ...this.status.lastProcessSweep, fullLockout: lockdown };
     if (!lockdown && !this.state.settings.protectedBrowsersOnly && (!this.state.settings.processSweepEnabled || !this.state.settings.appQuitEnabled)) {
       this.setComponentDisabled("process-sweep");
       return;
@@ -2653,7 +2730,7 @@ export class Monitor implements MonitorHandle {
 
     const running = options.runningApps || await listRunningAppNames();
     if (!running.ok) {
-      this.status.lastProcessSweep = { ok: false, error: running.error, at: new Date().toISOString(), blocked: [] };
+      this.status.lastProcessSweep = { ok: false, error: running.error, at: new Date().toISOString(), blocked: [], fullLockout: lockdown };
       this.setComponentHealth("process-sweep", running.error || "Running process enumeration failed");
       if (options.force) throw new Error(running.error || "Running process enumeration failed");
       return;
@@ -2666,7 +2743,7 @@ export class Monitor implements MonitorHandle {
       await this.blockApp({ app, hostname: "", url: "" }, policy, { source: "process-sweep" });
     }
 
-    this.status.lastProcessSweep = { ok: true, checked: running.apps.length, blocked: blocked.map((item) => item.app), at: new Date().toISOString() };
+    this.status.lastProcessSweep = { ok: true, checked: running.apps.length, blocked: blocked.map((item) => item.app), at: new Date().toISOString(), fullLockout: lockdown };
     this.setComponentHealth("process-sweep", "");
   }
 
@@ -3042,7 +3119,11 @@ export class Monitor implements MonitorHandle {
   }
 
   markCoolingDown(key: string): void {
-    this.recentBlocks.set(key, Date.now() + 12000);
+    const now = Date.now();
+    for (const [target, expiresAt] of this.recentBlocks) {
+      if (expiresAt <= now) this.recentBlocks.delete(target);
+    }
+    this.recentBlocks.set(key, now + 12000);
   }
 
   pruneAppBlockHistory(now = Date.now()): void {

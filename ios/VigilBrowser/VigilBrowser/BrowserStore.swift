@@ -20,7 +20,7 @@ final class BrowserStore: NSObject, ObservableObject {
     private let textClassifier: any PageTextSafetyClassifying
     private var observations: [NSKeyValueObservation] = []
     private var contentSafetyBridge: BrowserScriptMessageBridge?
-    private var textInspections: [String: BrowserTextInspection] = [:]
+    private var textInspections = BrowserTextInspectionBuffer()
     private var lastKnownAllowedURL: URL?
     private var surfaceState: BrowserSurfaceState = .browsing
     private var blockedPageNavigation: WKNavigation?
@@ -321,21 +321,34 @@ final class BrowserStore: NSObject, ObservableObject {
         guard let revision = body["revision"] as? String,
               let index = body["index"] as? Int,
               let total = body["total"] as? Int,
-              let text = body["text"] as? String,
-              total > 0, total <= 32, index >= 0, index < total else { return }
-        let wasTruncated = body["wasTruncated"] as? Bool ?? true
-        let inspectionKey = "\(frameID):\(revision)"
-        var inspection = textInspections[inspectionKey]
-            ?? BrowserTextInspection(chunks: [:], total: total, wasTruncated: wasTruncated)
-        guard inspection.total == total else { return }
-        inspection.chunks[index] = text
-        textInspections[inspectionKey] = inspection
-        guard inspection.chunks.count == total else { return }
-        textInspections.removeValue(forKey: inspectionKey)
-        let pageText = (0..<total).compactMap { inspection.chunks[$0] }.joined()
+              let text = body["text"] as? String else { return }
+        let result = textInspections.receive(
+            frameID: frameID,
+            revision: revision,
+            index: index,
+            total: total,
+            text: text,
+            wasTruncated: body["wasTruncated"] as? Bool ?? true
+        )
+        let pageText: String
+        let wasTruncated: Bool
+        switch result {
+        case .pending, .ignored:
+            return
+        case let .rejected(retry):
+            resolveContentSafety(
+                "globalThis.__vigilResolvePageText?.(revision, verdict, retry)",
+                arguments: ["revision": revision, "verdict": "unknown", "retry": retry],
+                in: frame
+            )
+            return
+        case let .complete(text, truncated):
+            pageText = text
+            wasTruncated = truncated
+        }
         Task { [weak self] in
             guard let self else { return }
-            let verdict = await self.textClassifier.classify(pageText: pageText, wasTruncated: inspection.wasTruncated)
+            let verdict = await self.textClassifier.classify(pageText: pageText, wasTruncated: wasTruncated)
             self.resolveContentSafety(
                 "globalThis.__vigilResolvePageText?.(revision, verdict)",
                 arguments: ["revision": revision, "verdict": verdict.rawValue],
@@ -438,10 +451,102 @@ enum BrowserSurfaceState: Equatable {
     }
 }
 
-private struct BrowserTextInspection {
-    var chunks: [Int: String]
-    let total: Int
-    let wasTruncated: Bool
+// Foundation-only assembly state, also compiled directly by native regression tests.
+struct BrowserTextInspectionBuffer {
+    enum Result: Equatable {
+        case pending
+        case ignored
+        case rejected(retry: Bool)
+        case complete(text: String, wasTruncated: Bool)
+    }
+
+    static let maximumFrames = 32
+    static let maximumChunkBytes = 96_000 // The scanner emits at most 24,000 UTF-16 units.
+    static let maximumAssemblyBytes = 2 * 1024 * 1024
+    static let maximumPendingBytes = 4 * 1024 * 1024
+    static let expirationSeconds: TimeInterval = 5
+
+    private struct Inspection {
+        let revision: UInt64
+        let total: Int
+        var chunks: [Int: String] = [:]
+        var byteCount = 0
+        var wasTruncated: Bool
+        var updatedAt: TimeInterval
+        var completed = false
+    }
+
+    private var frames: [String: Inspection] = [:]
+    private(set) var pendingBytes = 0
+    var trackedFrameCount: Int { frames.count }
+
+    mutating func reset() {
+        frames.removeAll()
+        pendingBytes = 0
+    }
+
+    mutating func receive(
+        frameID: String, revision: String, index: Int, total: Int, text: String,
+        wasTruncated: Bool, now: TimeInterval = ProcessInfo.processInfo.systemUptime
+    ) -> Result {
+        guard !frameID.isEmpty, frameID.utf8.count <= 128,
+              !revision.isEmpty, revision.utf8.count <= 20,
+              let revisionNumber = UInt64(revision), revisionNumber > 0 else {
+            return .rejected(retry: false)
+        }
+        var requestedAssemblyExpired = false
+        for (key, inspection) in frames where !inspection.completed && now - inspection.updatedAt >= Self.expirationSeconds {
+            if key == frameID && inspection.revision == revisionNumber { requestedAssemblyExpired = true }
+            pendingBytes -= inspection.byteCount
+            frames.removeValue(forKey: key)
+        }
+        if requestedAssemblyExpired { return .rejected(retry: true) }
+        if let current = frames[frameID] {
+            if revisionNumber < current.revision { return .ignored }
+            if revisionNumber == current.revision && current.completed { return .ignored }
+            if revisionNumber > current.revision {
+                pendingBytes -= current.byteCount
+                frames.removeValue(forKey: frameID)
+            }
+        }
+        guard total > 0, total <= 32, index >= 0, index < total,
+              text.utf8.count <= Self.maximumChunkBytes else {
+            if let discarded = frames.removeValue(forKey: frameID) { pendingBytes -= discarded.byteCount }
+            return .rejected(retry: false)
+        }
+        if frames[frameID] == nil && frames.count >= Self.maximumFrames {
+            // Completed revisions contain no page text and can retire to admit
+            // a new frame. Incomplete frames keep their chunks until expiry.
+            if let oldest = frames.filter({ $0.value.completed }).min(by: { $0.value.updatedAt < $1.value.updatedAt }) {
+                frames.removeValue(forKey: oldest.key)
+            } else {
+                return .rejected(retry: true)
+            }
+        }
+        var inspection = frames.removeValue(forKey: frameID)
+            ?? Inspection(revision: revisionNumber, total: total, wasTruncated: wasTruncated, updatedAt: now)
+        pendingBytes -= inspection.byteCount
+        guard inspection.total == total else { return .rejected(retry: false) }
+        let replacementBytes = text.utf8.count
+        let bytes = inspection.byteCount - (inspection.chunks[index]?.utf8.count ?? 0) + replacementBytes
+        guard bytes <= Self.maximumAssemblyBytes else { return .rejected(retry: false) }
+        guard pendingBytes + bytes <= Self.maximumPendingBytes else { return .rejected(retry: true) }
+        inspection.chunks[index] = text
+        inspection.byteCount = bytes
+        inspection.wasTruncated = inspection.wasTruncated || wasTruncated
+        inspection.updatedAt = now
+        if inspection.chunks.count == total {
+            let pageText = (0..<total).compactMap { inspection.chunks[$0] }.joined()
+            inspection.chunks.removeAll()
+            inspection.byteCount = 0
+            inspection.completed = true
+            frames[frameID] = inspection
+            return .complete(text: pageText, wasTruncated: inspection.wasTruncated)
+        }
+        pendingBytes += bytes
+        frames[frameID] = inspection
+        return .pending
+    }
 }
 
 private final class BrowserScriptMessageBridge: NSObject, WKScriptMessageHandler {
@@ -525,6 +630,9 @@ extension BrowserStore: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
+        // Reset before the new document's atDocumentStart scanner can submit
+        // chunks; resetting at commit could discard its already received prefix.
+        textInspections.reset()
         if let navigation,
            let recoverableCommittedNavigation,
            navigation !== recoverableCommittedNavigation {

@@ -1,6 +1,50 @@
 import Foundation
 
 enum DOMAdapters {
+    // Keep live detached/closed roots protected without making their lifetime
+    // equal to the page's. Older engines retain the conservative strong Set.
+    private static let rootRegistryFactory = #"""
+    ((initial = []) => {
+      if (typeof WeakRef !== 'function') return new Set(initial);
+      const references = new Set();
+      const members = new WeakSet();
+      const finalizer = typeof FinalizationRegistry === 'function'
+        ? new FinalizationRegistry((reference) => references.delete(reference))
+        : null;
+      let additions = 0;
+      const registry = {
+        has(root) { return members.has(root); },
+        add(root) {
+          if (members.has(root)) return registry;
+          members.add(root);
+          const reference = new WeakRef(root);
+          references.add(reference);
+          finalizer?.register(root, reference);
+          // Bound dead wrapper accumulation even without finalization support
+          // or when no global media/visual reconciliation has run recently.
+          if (++additions % 64 === 0) {
+            for (const entry of references) {
+              if (!entry.deref()) references.delete(entry);
+            }
+          }
+          return registry;
+        },
+        *[Symbol.iterator]() {
+          for (const reference of references) {
+            const root = reference.deref();
+            if (root) yield root;
+            else references.delete(reference);
+          }
+        },
+        forEach(callback, thisArg) {
+          for (const root of registry) callback.call(thisArg, root, root, registry);
+        }
+      };
+      for (const root of initial) registry.add(root);
+      return Object.freeze(registry);
+    })
+    """#
+
     static var contentFilterBootstrap: String {
         contentFilterBootstrap(for: .conceal)
     }
@@ -227,7 +271,7 @@ enum DOMAdapters {
           visibility: hidden !important;
         }
       `;
-      const protectedRoots = new Set();
+      const protectedRoots = ROOT_REGISTRY_FACTORY();
       const hostShadowRoots = new WeakMap();
       const safetyStyles = new WeakMap();
       const safetySheets = new WeakMap();
@@ -515,6 +559,7 @@ enum DOMAdapters {
             .replacingOccurrences(of: "DOCUMENT_UNCLASSIFIED_MEDIA_CSS", with: unclassifiedMediaCSS)
             .replacingOccurrences(of: "SHADOW_UNCLASSIFIED_MEDIA_CSS", with: shadowUnclassifiedMediaCSS)
             .replacingOccurrences(of: "UNCLASSIFIED_MEDIA_POLICY", with: policy)
+            .replacingOccurrences(of: "ROOT_REGISTRY_FACTORY", with: rootRegistryFactory)
     }
 
     static func earlyMediaGate(
@@ -548,7 +593,7 @@ enum DOMAdapters {
       const mutedProperty = findProperty('muted');
       const defaultMutedProperty = findProperty('defaultMuted');
       const states = new WeakMap();
-      const mediaRoots = new Set();
+      const mediaRoots = ROOT_REGISTRY_FACTORY();
       const audioContextStates = new WeakMap();
       const audioContexts = new Set();
       const audioContextPrototypeMethods = new WeakMap();
@@ -1108,6 +1153,7 @@ enum DOMAdapters {
     """#
             .replacingOccurrences(of: "AUDIO_PREFERENCE", with: preference)
             .replacingOccurrences(of: "PREFER_AUDIBLE_VIDEO", with: audibleVideoPreference)
+            .replacingOccurrences(of: "ROOT_REGISTRY_FACTORY", with: rootRegistryFactory)
     }
 
     static func script(
@@ -2339,7 +2385,7 @@ enum DOMAdapters {
           window.__vigilInstagramCompatibilityInstalled = true;
           window.__vigilAudioPreferred = configuredAudioPreference;
 
-          const mediaRoots = new Set();
+          const mediaRoots = ROOT_REGISTRY_FACTORY();
           const mediaWithin = (root) => {
             if (!root?.querySelectorAll) return [];
             return [
@@ -2574,6 +2620,7 @@ enum DOMAdapters {
           scheduleAppearance();
         })();
         """#.replacingOccurrences(of: "AUDIO_PREFERENCE", with: preference)
+            .replacingOccurrences(of: "ROOT_REGISTRY_FACTORY", with: rootRegistryFactory)
     }
 
     private static func common(audioEnabled: Bool) -> String {
@@ -2617,7 +2664,7 @@ enum DOMAdapters {
             window.__vigilAudioPreferred = configuredAudioPreference;
             earlyMediaGate?.setAudioPreference(window.__vigilAudioPreferred);
             const shadowDOM = window.__vigilShadowDOM || null;
-            const inspectionRoots = new Set([document]);
+            const inspectionRoots = ROOT_REGISTRY_FACTORY([document]);
             shadowDOM?.forEach((root) => inspectionRoots.add(root));
             const queryAllInspectionRoots = (selector) => {
               const results = [];
@@ -3918,6 +3965,7 @@ enum DOMAdapters {
           }
         })();
         """#.replacingOccurrences(of: "AUDIO_PREFERENCE", with: preference)
+            .replacingOccurrences(of: "ROOT_REGISTRY_FACTORY", with: rootRegistryFactory)
     }
 
     private static func serviceScript(_ service: SocialService) -> String {

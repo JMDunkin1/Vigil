@@ -508,16 +508,21 @@ function aggregateTimedSegments(segments: TimedUsageSegment[]): UsageBucket {
     events.set(segment.endMs, endEvents);
   }
   const boundaries = [...events.keys()].sort((a, b) => a - b);
-  const active = new Set<TimedUsageSegment>();
+  // Sets preserve insertion order, including the original stable-sort tie
+  // break. Keep the two priority classes separate so each boundary can pick
+  // its winner without allocating and sorting all overlapping segments.
+  const activePhone = new Set<TimedUsageSegment>();
+  const activeComputer = new Set<TimedUsageSegment>();
+  const activeFor = (segment: TimedUsageSegment) => segment.device === "phone" ? activePhone : activeComputer;
   const attributed: UsageSegment[] = [];
   for (let index = 0; index < boundaries.length - 1; index += 1) {
     const startMs = boundaries[index];
     const endMs = boundaries[index + 1];
     if (endMs <= startMs) continue;
     const boundaryEvents = events.get(startMs);
-    for (const segment of boundaryEvents?.ends || []) active.delete(segment);
-    for (const segment of boundaryEvents?.starts || []) active.add(segment);
-    const winner = [...active].sort((left, right) => usageSegmentPriority(right) - usageSegmentPriority(left))[0];
+    for (const segment of boundaryEvents?.ends || []) activeFor(segment).delete(segment);
+    for (const segment of boundaryEvents?.starts || []) activeFor(segment).add(segment);
+    const winner = (activePhone.size ? activePhone : activeComputer).values().next().value;
     if (!winner) continue;
     const seconds = (endMs - startMs) / 1000;
     incrementTimedUsage(aggregate, winner, seconds);
@@ -525,10 +530,6 @@ function aggregateTimedSegments(segments: TimedUsageSegment[]): UsageBucket {
   }
   aggregate.segments = attributed;
   return aggregate;
-}
-
-function usageSegmentPriority(segment: TimedUsageSegment): number {
-  return segment.device === "phone" ? 2 : 1;
 }
 
 function incrementTimedUsage(bucket: UsageBucket, segment: TimedUsageSegment, seconds: number): void {
@@ -882,15 +883,20 @@ function usageRangesRegressed(
   previousRanges: Array<{ start: number; end: number }>,
   incomingRanges: Array<{ start: number; end: number }>
 ): boolean {
+  // Both inputs are sorted by start. Merge incoming coverage once; rescanning
+  // every incoming segment for every previous segment made each full phone
+  // timeline update quadratic (up to 5,000 segments per snapshot).
+  const coverage: Array<{ start: number; end: number }> = [];
+  for (const range of incomingRanges) {
+    const previous = coverage.at(-1);
+    if (previous && range.start <= previous.end) previous.end = Math.max(previous.end, range.end);
+    else coverage.push({ ...range });
+  }
+  let index = 0;
   return previousRanges.some(({ start, end }) => {
-    let coveredThrough = start;
-    for (const range of incomingRanges) {
-      if (range.end <= coveredThrough) continue;
-      if (range.start > coveredThrough) return true;
-      coveredThrough = Math.max(coveredThrough, range.end);
-      if (coveredThrough >= end) return false;
-    }
-    return true;
+    while (index < coverage.length && coverage[index].end <= start) index += 1;
+    const range = coverage[index];
+    return !range || range.start > start || range.end < end;
   });
 }
 

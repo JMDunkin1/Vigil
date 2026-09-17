@@ -95,8 +95,8 @@ export function formatDuration(seconds: unknown): string {
   return `${minutes}m`;
 }
 
-export function endOfToday(): Date {
-  const date = new Date();
+export function endOfToday(now = new Date()): Date {
+  const date = new Date(now.getTime());
   date.setHours(23, 59, 59, 999);
   return date;
 }

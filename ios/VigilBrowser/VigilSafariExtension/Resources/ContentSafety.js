@@ -27,11 +27,15 @@
   (document.head || document.documentElement).appendChild(style);
   document.documentElement.dataset.vigilPageVerdict = "unknown";
 
+  // ID lookup must not keep detached feed items and their DOM subtrees alive.
   const mediaElements = new Map();
+  const waitingForMedia = new WeakSet();
   let nextMediaID = 1;
   let nextMediaToken = 1;
   let textRevision = 0;
   let inspectionScheduled = false;
+  let textRetryTimer = null;
+  let textRetryAttempts = 0;
 
   const sendNative = payload => {
     if (isWebKitBrowser) {
@@ -57,7 +61,7 @@
   };
 
   globalThis.__vigilResolveMedia = (id, token, verdict) => {
-    const element = mediaElements.get(String(id));
+    const element = mediaElements.get(String(id))?.deref();
     if (!element || element.dataset.vigilMediaToken !== String(token)
         || !["safe", "sensitive", "unknown"].includes(verdict)) return;
     if (element.dataset.vigilMediaVerdict === "sensitive") return;
@@ -73,8 +77,8 @@
     if (!id) {
       id = String(nextMediaID++);
       element.dataset.vigilMediaId = id;
-      mediaElements.set(id, element);
     }
+    if (mediaElements.get(id)?.deref() !== element) mediaElements.set(id, new WeakRef(element));
     if (element instanceof HTMLImageElement && element.dataset.vigilMediaFingerprint === fingerprint) return;
     if (element.dataset.vigilMediaFingerprint !== fingerprint) {
       element.dataset.vigilMediaFingerprint = fingerprint;
@@ -120,21 +124,65 @@
     return { text: pieces.join("\n"), wasTruncated };
   };
 
-  globalThis.__vigilResolvePageText = (revision, verdict) => {
-    if (String(revision) === String(textRevision) && ["safe", "sensitive", "unknown"].includes(verdict)) {
+  const scheduleTextRetry = revision => {
+    if (textRetryTimer !== null || textRetryAttempts >= 3) return;
+    textRetryTimer = setTimeout(() => {
+      textRetryTimer = null;
+      if (String(revision) === String(textRevision)) {
+        textRetryAttempts += 1;
+        scheduleInspection(true);
+      }
+    }, 2000);
+  };
+
+  globalThis.__vigilResolvePageText = (revision, verdict, retry = false) => {
+    if (!inspectionScheduled && String(revision) === String(textRevision) && ["safe", "sensitive", "unknown"].includes(verdict)) {
       document.documentElement.dataset.vigilPageVerdict = verdict;
+      if (verdict !== "unknown" || retry !== true) {
+        if (textRetryTimer !== null) clearTimeout(textRetryTimer);
+        textRetryTimer = null;
+      }
+      // Rejected chunks remain concealed while a bounded retry recovers native
+      // capacity pressure. Permanent malformed-payload errors do not retry.
+      if (verdict === "unknown" && retry === true) scheduleTextRetry(revision);
     }
+  };
+
+  const beginTextRevision = () => {
+    // A prior revision may report pressure during the mutation debounce. Its
+    // timer must not prevent the new batch from installing its own watchdog.
+    if (textRetryTimer !== null) clearTimeout(textRetryTimer);
+    textRetryTimer = null;
+    return String(++textRevision);
   };
 
   const inspectDocument = () => {
     inspectionScheduled = false;
+    for (const [id, reference] of mediaElements) {
+      if (!reference.deref()) mediaElements.delete(id);
+    }
     document.querySelectorAll("img, video").forEach(element => {
-      if (element instanceof HTMLImageElement && !element.complete) element.addEventListener("load", () => submitMedia(element), { once: true });
-      else if (element instanceof HTMLVideoElement && element.readyState < 2) element.addEventListener("loadeddata", () => submitMedia(element), { once: true });
-      else submitMedia(element);
+      const readyEvent = element instanceof HTMLImageElement && !element.complete ? "load"
+        : element instanceof HTMLVideoElement && element.readyState < 2 ? "loadeddata" : null;
+      if (!readyEvent) { submitMedia(element); return; }
+      if (waitingForMedia.has(element)) return;
+      waitingForMedia.add(element);
+      const onReady = () => {
+        element.removeEventListener(readyEvent, onReady);
+        element.removeEventListener("error", onError);
+        waitingForMedia.delete(element);
+        submitMedia(element);
+      };
+      const onError = () => {
+        element.removeEventListener(readyEvent, onReady);
+        element.removeEventListener("error", onError);
+        waitingForMedia.delete(element);
+      };
+      element.addEventListener(readyEvent, onReady, { once: true });
+      element.addEventListener("error", onError, { once: true });
     });
     const extracted = extractText(512000);
-    const revision = String(++textRevision);
+    const revision = beginTextRevision();
     const chunkLength = 24000;
     const chunks = [];
     for (let offset = 0; offset < extracted.text.length || offset === 0; offset += chunkLength - 128) {
@@ -142,6 +190,10 @@
       if (offset + chunkLength >= extracted.text.length) break;
     }
     if (isWebKitBrowser) {
+      // Also recover an incomplete batch discarded at provisional navigation
+      // start when that navigation fails and the existing document survives.
+      // Successful native verdicts cancel this missing-response timer.
+      scheduleTextRetry(revision);
       chunks.forEach((text, index) => sendNative({
         type: "classifyText", revision, index, total: chunks.length,
         wasTruncated: extracted.wasTruncated, text
@@ -157,7 +209,12 @@
     }
   };
 
-  const scheduleInspection = () => {
+  const scheduleInspection = (isRetry = false) => {
+    if (isRetry !== true) {
+      textRetryAttempts = 0;
+      if (textRetryTimer !== null) clearTimeout(textRetryTimer);
+      textRetryTimer = null;
+    }
     // MutationObserver callbacks run before the next paint, so newly inserted
     // text is concealed while the replacement revision is classified.
     document.documentElement.dataset.vigilPageVerdict = "unknown";

@@ -740,13 +740,16 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   if (!profile) return null;
   const parsed = parseHttpUrl(value);
   if (!parsed) return null;
-  if (profileHasExplicitSearchProtection(profile) && matchContextualExplicitSearchUrl(parsed)) {
+  const rawPatterns = profile.blockedUrlPatterns || [];
+  const patterns = rawPatterns.map(normalizeUrlPattern);
+  const explicitSearchProtection = patterns.includes("porn") && patterns.includes("onlyfans");
+  if (explicitSearchProtection && matchContextualExplicitSearchUrl(parsed)) {
     return {
       pattern: "contextual-explicit-search", label: "Explicit search on a mixed-content platform",
       hostname: normalizeHost(parsed.hostname), url: parsed.toString()
     };
   }
-  const explicitPersonSearch = profileHasExplicitSearchProtection(profile)
+  const explicitPersonSearch = explicitSearchProtection
     ? matchExplicitPersonSearchUrl(parsed)
     : null;
   if (explicitPersonSearch) {
@@ -759,16 +762,17 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   }
   const candidates = urlPatternCandidates(parsed);
   const compactCandidates = candidates.map(compactUrlPatternText).filter(Boolean);
-  for (const raw of profile.blockedUrlPatterns || []) {
-    const pattern = normalizeUrlPattern(raw);
+  for (let index = 0; index < patterns.length; index += 1) {
+    const pattern = patterns[index];
     if (!pattern) continue;
-    const explicitXxx = pattern === "xxx" && (parsed.hostname.toLowerCase().endsWith(".xxx") || matchExplicitXxxSearchUrl(parsed));
+    const explicitXxx = pattern === "xxx" && (normalizeHost(parsed.hostname).endsWith(".xxx") || matchExplicitXxxSearchUrl(parsed));
     if (pattern === "xxx" && !explicitXxx) continue;
     const compactPattern = compactUrlPatternText(pattern);
     const matchesRaw = explicitXxx || candidates.some((candidate) => candidate.includes(pattern));
     const matchesCompact = compactPattern.length >= 4
       && compactCandidates.some((candidate) => candidate.includes(compactPattern));
     if (!matchesRaw && !matchesCompact) continue;
+    const raw = rawPatterns[index];
     return {
       pattern: raw,
       label: `URL pattern: ${raw}`,
@@ -777,11 +781,6 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
     };
   }
   return null;
-}
-
-function profileHasExplicitSearchProtection(profile: Profile): boolean {
-  const patterns = new Set((profile.blockedUrlPatterns || []).map(normalizeUrlPattern));
-  return patterns.has("porn") && patterns.has("onlyfans");
 }
 
 export function expandSiteTargets(values: readonly unknown[] = []): string[] {
@@ -807,7 +806,13 @@ export function expandAppTargets(values: readonly unknown[] = []): string[] {
 export function appMatchesAppTargets(appName: unknown, targets: readonly unknown[]): boolean {
   const app = normalizeAppName(appName);
   if (!app) return false;
-  return expandAppTargets(targets).includes(app);
+  // Membership needs neither a sorted expansion nor a deduplicated copy. Read
+  // the current targets on every check so in-place policy edits apply at once.
+  for (const target of targets || []) {
+    const normalized = normalizeAppName(target);
+    if (normalized === app || APP_ALIAS_LOOKUP.get(normalized)?.includes(app)) return true;
+  }
+  return false;
 }
 
 export function isProcessSweepExemptApp(appName: unknown): boolean {
@@ -825,7 +830,15 @@ export function normalizeAppName(value: unknown): string {
 export function hostMatchesSiteTargets(hostname: unknown, targets: readonly unknown[]): boolean {
   const host = normalizeHost(hostname);
   if (!host) return false;
-  return expandSiteTargets(targets).some((domain) => host === domain || host.endsWith(`.${domain}`));
+  for (const target of targets || []) {
+    const domain = normalizeHost(target);
+    if (!domain) continue;
+    if (host === domain || host.endsWith(`.${domain}`)) return true;
+    for (const alias of SITE_ALIAS_LOOKUP.get(domain) || []) {
+      if (host === alias || host.endsWith(`.${alias}`)) return true;
+    }
+  }
+  return false;
 }
 
 export function normalizeHost(value: unknown): string {
@@ -833,7 +846,8 @@ export function normalizeHost(value: unknown): string {
     const input = String(value || "").trim().toLowerCase();
     if (!input) return "";
     const parsed = input.includes("://") ? new URL(input) : new URL(`https://${input}`);
-    return parsed.hostname.replace(/^www\./, "");
+    // A terminal DNS root dot names the same host, including its site aliases.
+    return parsed.hostname.replace(/\.$/, "").replace(/^www\./, "");
   } catch {
     return String(value || "")
       .trim()
@@ -841,7 +855,8 @@ export function normalizeHost(value: unknown): string {
       .replace(/^https?:\/\//, "")
       .replace(/^www\./, "")
       .split("/")[0]
-      .split(":")[0];
+      .split(":")[0]
+      .replace(/\.$/, "");
   }
 }
 

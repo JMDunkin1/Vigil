@@ -418,6 +418,17 @@ final class VigilSocialTests: XCTestCase {
                 window.__vigilFixtureRoots = { openRoot, closedRoot };
 
                 setTimeout(() => {
+                  closedHost.remove();
+                  let registered = false;
+                  window.__vigilShadowDOM.forEach((root) => {
+                    if (root === closedRoot) registered = true;
+                  });
+                  window.__vigilFixtureDetachedRootProtected = registered
+                    && window.__vigilEarlyMediaGate.isHeld(closedRoot.getElementById('closed-video'));
+                  document.body.appendChild(closedHost);
+                }, 200);
+
+                setTimeout(() => {
                   const dynamicHost = document.createElement('div');
                   document.body.appendChild(dynamicHost);
                   const dynamicRoot = dynamicHost.attachShadow({ mode: 'closed' });
@@ -440,7 +451,7 @@ final class VigilSocialTests: XCTestCase {
             #"""
             (() => {
               const roots = window.__vigilFixtureRoots;
-              if (!roots?.dynamicRoot) return false;
+              if (!roots?.dynamicRoot || !window.__vigilFixtureDetachedRootProtected) return false;
               return Object.entries(roots).every(([prefix, root]) => {
                 prefix = prefix.replace('Root', '');
                 const image = root.getElementById(`${prefix}-image`);

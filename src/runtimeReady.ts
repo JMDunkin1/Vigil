@@ -637,8 +637,11 @@ while [[ -e "$marker" ]]; do
   command=""
   ready_exists=false
   if [[ "$ready_loaded" == true ]]; then
-    current_ready_device=$(/usr/bin/stat -f '%d' "$ready" 2>/dev/null)
-    current_ready_inode=$(/usr/bin/stat -f '%i' "$ready" 2>/dev/null)
+    # Read both identity fields in one syscall/subprocess, so an atomic
+    # replacement cannot produce a device/inode pair from different entries.
+    current_ready_identity=$(/usr/bin/stat -f '%d:%i' "$ready" 2>/dev/null)
+    current_ready_device="\${current_ready_identity%%:*}"
+    current_ready_inode="\${current_ready_identity#*:}"
     if [[ "$current_ready_device" != "$ready_device" || "$current_ready_inode" != "$ready_inode" ]]; then
       # Replacement runtimes publish readiness with an atomic rename. Never
       # diagnose a cached predecessor or remove the replacement receipt.
@@ -659,14 +662,18 @@ while [[ -e "$marker" ]]; do
     started_at=""
     ready_app_path=""
     ready_transport=""
-    ready_device=$(/usr/bin/stat -f '%d' "$ready" 2>/dev/null)
-    ready_inode=$(/usr/bin/stat -f '%i' "$ready" 2>/dev/null)
+    ready_identity=$(/usr/bin/stat -f '%d:%i' "$ready" 2>/dev/null)
+    ready_device="\${ready_identity%%:*}"
+    ready_inode="\${ready_identity#*:}"
     pid=$(/usr/bin/plutil -extract pid raw -o - "$ready" 2>/dev/null)
     started_at=$(/usr/bin/plutil -extract startedAt raw -o - "$ready" 2>/dev/null)
     ready_app_path=$(/usr/bin/plutil -extract appPath raw -o - "$ready" 2>/dev/null)
     ready_transport=$(/usr/bin/plutil -extract transport raw -o - "$ready" 2>/dev/null)
-    current_ready_device=$(/usr/bin/stat -f '%d' "$ready" 2>/dev/null)
-    current_ready_inode=$(/usr/bin/stat -f '%i' "$ready" 2>/dev/null)
+    # Read both identity fields in one syscall/subprocess, so an atomic
+    # replacement cannot produce a device/inode pair from different entries.
+    current_ready_identity=$(/usr/bin/stat -f '%d:%i' "$ready" 2>/dev/null)
+    current_ready_device="\${current_ready_identity%%:*}"
+    current_ready_inode="\${current_ready_identity#*:}"
     if [[ -n "$ready_device" && -n "$ready_inode" && "$current_ready_device" == "$ready_device" && "$current_ready_inode" == "$ready_inode" ]]; then
       ready_loaded=true
     else

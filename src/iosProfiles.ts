@@ -38,8 +38,8 @@ export const IOS_PANIC_ALLOWED_APP_BUNDLE_IDS = [
 ];
 const MAX_DENY_URLS = 500;
 const MIN_BULK_ADULT_DENY_URLS = 6;
-// Preserve the previous first 200 domains when adding Hot.com.
-const MIN_PRIORITY_DOMAIN_BREADTH = 201;
+// Preserve the previous first 201 domains when adding Kinklets.
+const MIN_PRIORITY_DOMAIN_BREADTH = 202;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_ID_KEYS = new Set(IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS.map((value) => value.toLowerCase()));
 const IOS_EXPLICIT_SEARCH_TERM_KEYS = new Set(DEFAULT_EXPLICIT_SEARCH_TERMS.map(normalizedExplicitSearchTerm));
@@ -861,11 +861,13 @@ function prioritizedDenyUrlsWithAdultReserve(
 ): string[] {
   const candidates = uniqueUrls([...permanentUrls, ...policyUrls, ...userUrls]);
   // Apple's BuiltIn list uses literal URL substrings (WebContentFilter docs).
-  // A q=porn entry already covers q=porno. Compact only covered query entries
-  // so adding a priority domain never spends a slot on the same search twice.
-  const higherPriority = candidates.filter(url => !url.includes("?") || !candidates.some(other =>
-    other !== url && other.includes("?") && url.startsWith(other)
-  ));
+  // A q=porn entry already covers q=porno, and /shorts covers /shorts/.
+  // Reclaim those duplicate slots without removing any covered URL or reducing
+  // the reserved bulk-adult coverage when a curated domain is added.
+  const candidateSet = new Set(candidates);
+  const higherPriority = candidates.filter(url => url.includes("?")
+    ? !candidates.some(other => other !== url && other.includes("?") && url.startsWith(other))
+    : !url.endsWith("/") || !candidateSet.has(url.slice(0, -1)));
   const alreadyCovered = new Set([...higherPriority, ...priorityDomainUrls].map((url) => String(url).toLowerCase()));
   const novelAdultUrls = uniqueUrls(adultUrls).filter((url) => !alreadyCovered.has(url.toLowerCase()));
   const adultReserve = Math.min(MIN_BULK_ADULT_DENY_URLS, novelAdultUrls.length);

@@ -115,67 +115,67 @@
 
     <section id="view-schedules" class="view" data-view="schedules" hidden>
       <header class="page-header">
-        <div><p class="eyebrow">Automatic protection</p><h1>Schedules</h1><p>Set it once. Vigil applies the right rules on the right days.</p></div>
+        <div><h1>Schedules</h1></div>
         <button id="newSchedule" class="button primary" type="button"><span aria-hidden="true">＋</span> New schedule</button>
       </header>
 
       <section class="template-strip" aria-labelledby="templateHeading">
-        <div><span class="card-kicker">Quick start</span><strong id="templateHeading">Start with a useful rhythm</strong></div>
+        <div><strong id="templateHeading">Templates</strong></div>
         <button type="button" data-schedule-template="workday"><span class="template-icon">☀</span><span><strong>Workday</strong><small>Weekdays · 9 to 5</small></span></button>
         <button type="button" data-schedule-template="evening"><span class="template-icon">☾</span><span><strong>Evening</strong><small>Daily · 9 PM to 7 AM</small></span></button>
-        <button type="button" data-schedule-template="grayscale"><span class="template-icon">◐</span><span><strong>Night color</strong><small>Daily · grayscale</small></span></button>
+        <button type="button" data-schedule-template="grayscale"><span class="template-icon">◐</span><span><strong>Grayscale</strong><small>Daily · grayscale</small></span></button>
       </section>
 
       <div class="schedule-overview">
-        <div class="section-heading"><div><span class="card-kicker">Your week</span><h2>Recurring guardrails</h2></div><span id="scheduleCount" class="count-pill">0 schedules</span></div>
+        <div class="section-heading"><div><h2>Your schedules</h2></div><span id="scheduleCount" class="count-pill">0 schedules</span></div>
         <div id="scheduleList" class="schedule-list" aria-live="polite"></div>
       </div>
     </section>
 
     <section id="view-configuration" class="view" data-view="configuration" hidden>
       <header class="page-header configuration-header">
-        <div><p class="eyebrow">Make Vigil yours</p><h1>Configuration</h1><p>Core rules, safeguards, devices, and maintenance—nothing extra.</p></div>
-        <label class="config-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.25"/><path d="m12.5 12.5 4 4"/></svg><input id="configurationSearch" type="search" placeholder="Find a setting"></label>
+        <div><h1>Configuration</h1></div>
+        <label class="config-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.25"/><path d="m12.5 12.5 4 4"/></svg><input id="configurationSearch" type="search" aria-label="Find a setting" placeholder="Find a setting"></label>
       </header>
 
       <div id="configurationIndex" class="configuration-index">
         <button class="config-card" type="button" data-config-target="rules" data-config-search="rules profiles block apps sites baseline">
           <span class="config-icon rust"><svg viewBox="0 0 24 24"><path d="M5 4.5h14v15H5Z"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/></svg></span>
-          <span><strong>Blocking rules</strong><small>Choose the baseline ruleset and manage custom profiles.</small></span><span id="rulesConfigStatus" class="config-status">Baseline</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+          <span><strong>Blocking rules</strong></span><span id="rulesConfigStatus" class="config-status">Baseline</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
         </button>
         <button class="config-card" type="button" data-config-target="limits" data-config-search="limits app locks opens minutes daily unlock socials">
           <span class="config-icon violet"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3.25 2M5.5 5.5l2 2M18.5 5.5l-2 2"/></svg></span>
-          <span><strong>Limits &amp; app locks</strong><small>Cap daily use or require deliberate, limited unlocks.</small></span><span id="limitsConfigStatus" class="config-status">No rules</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+          <span><strong>Limits &amp; app locks</strong></span><span id="limitsConfigStatus" class="config-status">No rules</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
         </button>
         <button class="config-card" type="button" data-config-target="protection" data-config-search="protection browser network filter background grayscale focus">
           <span class="config-icon blue"><svg viewBox="0 0 24 24"><path d="M12 3.5 20 7v5.25c0 4.95-3.35 8.08-8 9.75-4.65-1.67-8-4.8-8-9.75V7Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg></span>
-          <span><strong>Core protection</strong><small>Browser, network, unsafe-content, and background layers.</small></span><span id="protectionConfigStatus" class="config-status">Checking</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+          <span><strong>Core protection</strong></span><span id="protectionConfigStatus" class="config-status">Checking</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
         </button>
         <button class="config-card" type="button" data-config-target="access" data-config-search="unlock safeguards keyholder reason typing challenge maintenance">
           <span class="config-icon amber"><svg viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8.5 10V7.5a3.5 3.5 0 0 1 7 0V10M12 14v2"/></svg></span>
-          <span><strong>Unlock safeguards</strong><small>Reasons, challenges, protected edits, and keyholder access.</small></span><span id="accessConfigStatus" class="config-status">Protected</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+          <span><strong>Unlock safeguards</strong></span><span id="accessConfigStatus" class="config-status">Protected</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
         </button>
         <button class="config-card" type="button" data-config-target="devices" data-config-search="iphone device supervised filter social companion">
           <span class="config-icon green"><svg viewBox="0 0 24 24"><rect x="7" y="2.75" width="10" height="18.5" rx="2.5"/><path d="M10.5 5h3M11 18.5h2"/></svg></span>
-          <span><strong>iPhone &amp; devices</strong><small>Manage supervised phone filtering and delivery.</small></span><span id="deviceConfigStatus" class="config-status">Ready</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+          <span><strong>iPhone &amp; devices</strong></span><span id="deviceConfigStatus" class="config-status">Ready</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
         </button>
         <button class="config-card" type="button" data-config-target="appearance" data-config-search="appearance icon home buttons layout">
           <span class="config-icon violet"><svg viewBox="0 0 24 24"><path d="M12 3.5a8.5 8.5 0 1 0 0 17h1.25a1.5 1.5 0 0 0 0-3h-.65a1.4 1.4 0 0 1 0-2.8H14a6.5 6.5 0 0 0 6.5-6.5C20.5 5.2 16.7 3.5 12 3.5Z"/><circle cx="8" cy="9" r=".75"/><circle cx="11" cy="6.75" r=".75"/><circle cx="15" cy="7.5" r=".75"/></svg></span>
-          <span><strong>Appearance</strong><small>Choose Vigil’s app and menu-bar identity.</small></span><span class="config-status">3 icons</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+          <span><strong>Appearance</strong></span><span class="config-status">3 icons</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
         </button>
         <button class="config-card" type="button" data-config-target="maintenance" data-config-search="health updates maintenance diagnostics repair status">
           <span class="config-icon slate"><svg viewBox="0 0 24 24"><path d="m14.75 5.25 4 4-9.5 9.5-4.75.75.75-4.75Z"/><path d="m13 7 4 4M5.25 14.75l4 4"/></svg></span>
-          <span><strong>Health &amp; maintenance</strong><small>Review enforcement, update Vigil, and make protected repairs.</small></span><span id="maintenanceConfigStatus" class="config-status">Checking</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+          <span><strong>Health &amp; maintenance</strong></span><span id="maintenanceConfigStatus" class="config-status">Checking</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
         </button>
         <p id="configurationEmpty" class="empty-state" hidden>No settings match that search.</p>
       </div>
 
       <div id="configurationDetails" class="configuration-details" hidden>
         <section class="config-panel" data-config-panel="rules" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><span class="card-kicker">Configuration</span><h2>Blocking rules</h2><p>Pick the always-on baseline. Schedules can use a different ruleset.</p></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Blocking rules</h2></div></header>
           <div class="settings-surface">
             <div class="field-heading"><label for="profileSelect"><strong>Baseline ruleset</strong><small>Used whenever no stronger session is active.</small></label><select id="profileSelect"></select></div>
-            <div id="profileSummary" class="managed-note"><span>✓</span><div><strong>Protected by Vigil</strong><p id="managedBlocklistSummary">Loading effective rules…</p></div></div>
+            <div id="profileSummary" class="managed-note"><span>✓</span><div><strong>Ruleset details</strong><p id="managedBlocklistSummary">Loading effective rules…</p></div></div>
             <div class="button-row"><button id="editProfile" class="button secondary" type="button">Edit custom profile</button><button id="newProfile" class="button secondary" type="button">New custom profile</button></div>
           </div>
           <form id="profileForm" class="settings-surface editor-surface" hidden>
@@ -190,36 +190,36 @@
         </section>
 
         <section class="config-panel" data-config-panel="limits" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><span class="card-kicker">Configuration</span><h2>Limits &amp; app locks</h2><p>Keep enforcement rules close without turning Vigil into an activity tracker.</p></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Limits &amp; app locks</h2></div></header>
 
           <div class="settings-surface">
-            <div class="section-heading"><div><span class="card-kicker">Daily boundaries</span><h3>Time &amp; open limits</h3><p>Block selected targets after a daily time or open allowance is reached.</p></div><button id="newLimit" class="button secondary" type="button">New limit</button></div>
+            <div class="section-heading"><div><h3>Time &amp; open limits</h3></div><button id="newLimit" class="button secondary" type="button">New limit</button></div>
             <div id="limitList" class="rule-list"></div>
             <form id="limitForm" class="rule-editor" hidden>
               <input name="id" type="hidden">
-              <div class="form-grid two"><label>Limit name<input name="name" type="text" value="Instagram boundary" required></label><label>Measure by<select name="type"><option value="time">Time used</option><option value="open">Number of opens</option></select></label></div>
-              <div class="form-grid three"><label data-limit-field="time">Daily minutes<input name="limitMinutes" type="number" min="1" max="1440" value="20"></label><label data-limit-field="open">Daily opens<input name="unlocksAllowed" type="number" min="0" max="200" value="5"></label><label>Block for<input name="blockMinutes" type="number" min="0" max="1440" value="20"></label><label>Lock strength<select name="lockLevel"><option value="deep">Strict block</option><option value="light">Soft block</option></select></label></div>
+              <div class="form-grid two"><label>Limit name<input name="name" type="text" value="Instagram" required></label><label>Measure by<select name="type"><option value="time">Time used</option><option value="open">Number of opens</option></select></label></div>
+              <div class="form-grid three"><label data-limit-field="time">Daily minutes<input name="limitMinutes" type="number" min="1" max="1440" value="20"></label><label data-limit-field="open">Daily opens<input name="unlocksAllowed" type="number" min="0" max="200" value="5"></label><label>Block duration (minutes)<input name="blockMinutes" type="number" min="0" max="1440" value="20"></label><label>Lock strength<select name="lockLevel"><option value="deep">Strict block</option><option value="light">Soft block</option></select></label></div>
               <fieldset class="day-fieldset"><legend>Days</legend><div id="limitDays" class="day-chips"><label><input type="checkbox" value="0" checked><span>Sun</span></label><label><input type="checkbox" value="1" checked><span>Mon</span></label><label><input type="checkbox" value="2" checked><span>Tue</span></label><label><input type="checkbox" value="3" checked><span>Wed</span></label><label><input type="checkbox" value="4" checked><span>Thu</span></label><label><input type="checkbox" value="5" checked><span>Fri</span></label><label><input type="checkbox" value="6" checked><span>Sat</span></label></div></fieldset>
               <div class="form-grid two"><label>Apps<textarea name="apps" rows="3" placeholder="Instagram&#10;com.burbn.instagram"></textarea></label><label>Sites<textarea name="sites" rows="3" placeholder="instagram.com"></textarea></label></div>
-              <label class="switch-row standalone"><span><strong>Turn this limit on</strong><small>Usage enforcement continues in the background; no Activity screen is needed.</small></span><input name="enabled" type="checkbox" checked><i></i></label>
+              <label class="switch-row standalone"><span><strong>Enable limit</strong></span><input name="enabled" type="checkbox" checked><i></i></label>
               <div class="button-row"><button class="button primary" type="submit">Save limit</button><button id="cancelLimitEdit" class="button secondary" type="button">Cancel</button></div>
             </form>
           </div>
 
           <div class="settings-surface">
-            <div class="section-heading"><div><span class="card-kicker">Deliberate access</span><h3>App locks</h3><p>Require a cooldown and allow only a fixed number of short unlocks.</p></div><button id="newAppLock" class="button secondary" type="button">New app lock</button></div>
+            <div class="section-heading"><div><h3>App locks</h3></div><button id="newAppLock" class="button secondary" type="button">New app lock</button></div>
             <div id="appLockList" class="rule-list"></div>
             <form id="appLockForm" class="rule-editor" hidden>
               <input name="id" type="hidden">
               <div class="form-grid two"><label>Lock name<input name="name" type="text" value="Locked socials" required></label><label>Lock strength<select name="lockLevel"><option value="deep">Strict block</option><option value="light">Soft block</option></select></label></div>
-              <div class="form-grid three"><label>Unlocks each day<input name="unlocksAllowed" type="number" min="0" max="200" value="2"></label><label>Minutes per unlock<input name="unlockMinutes" type="number" min="1" max="1440" value="10"></label><label>Cooldown<input name="delaySeconds" type="number" min="0" max="3600" value="30"></label></div>
+              <div class="form-grid three"><label>Unlocks each day<input name="unlocksAllowed" type="number" min="0" max="200" value="2"></label><label>Minutes per unlock<input name="unlockMinutes" type="number" min="1" max="1440" value="10"></label><label>Cooldown (seconds)<input name="delaySeconds" type="number" min="0" max="3600" value="30"></label></div>
               <fieldset class="day-fieldset"><legend>Days</legend><div id="appLockDays" class="day-chips"><label><input type="checkbox" value="0" checked><span>Sun</span></label><label><input type="checkbox" value="1" checked><span>Mon</span></label><label><input type="checkbox" value="2" checked><span>Tue</span></label><label><input type="checkbox" value="3" checked><span>Wed</span></label><label><input type="checkbox" value="4" checked><span>Thu</span></label><label><input type="checkbox" value="5" checked><span>Fri</span></label><label><input type="checkbox" value="6" checked><span>Sat</span></label></div></fieldset>
               <div class="form-grid two"><label>Apps<textarea name="apps" rows="3" placeholder="Instagram&#10;com.burbn.instagram"></textarea></label><label>Sites<textarea name="sites" rows="3" placeholder="instagram.com"></textarea></label></div>
-              <label class="switch-row standalone"><span><strong>Turn this app lock on</strong><small>Selected targets remain locked except for deliberate unlock windows.</small></span><input name="enabled" type="checkbox"><i></i></label>
+              <label class="switch-row standalone"><span><strong>Enable app lock</strong></span><input name="enabled" type="checkbox"><i></i></label>
               <div class="button-row"><button class="button primary" type="submit">Save app lock</button><button id="cancelAppLockEdit" class="button secondary" type="button">Cancel</button></div>
             </form>
             <div id="appLockUnlockPanel" class="unlock-panel" hidden>
-              <div><span class="card-kicker">Selected unlock request</span><strong id="appLockUnlockTitle">Choose an app lock</strong></div>
+              <div><strong id="appLockUnlockTitle">Choose an app lock</strong></div>
               <label>Reason<input id="appLockReason" type="text" placeholder="Why this unlock is needed"></label>
               <div class="form-grid two"><label>Keyholder passcode<input id="appLockPasscode" type="password"></label><label>Distance key<input id="appLockDistanceKey" type="password"></label></div>
               <code id="appLockChallenge" class="typing-challenge" hidden></code>
@@ -229,25 +229,25 @@
         </section>
 
         <section class="config-panel" data-config-panel="protection" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><span class="card-kicker">Configuration</span><h2>Core protection</h2><p>Keep every enforcement layer aligned with your blocking rules.</p></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Core protection</h2></div></header>
           <div class="settings-surface">
             <h3>Browser &amp; network</h3>
             <div class="switch-list">
-              <label class="switch-row"><span><strong>System network blocking</strong><small>Apply supported whole-site rules outside browser companions.</small></span><input id="systemNetworkBlockingEnabled" data-setting="systemNetworkBlockingEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Safari filtering</strong><small>Permanent protection for Safari URLs.</small></span><input id="safariUrlFilterEnabled" type="checkbox" checked disabled><i></i></label>
-              <label class="switch-row"><span><strong>Content filtering</strong><small>Permanent unsafe-content and feed protection.</small></span><input id="contentFilterEnabled" type="checkbox" checked disabled><i></i></label>
-              <label class="switch-row"><span><strong>Blocked-page explanation</strong><small>Redirect supported browsers to Vigil’s explanation.</small></span><input id="siteRedirectEnabled" data-setting="siteRedirectEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Browser cleanup</strong><small>Reduce recommendations and distracting visual noise.</small></span><input id="browserNoiseBlockingEnabled" data-setting="browserNoiseBlockingEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Managed unsafe-content list</strong><small>Use Vigil’s maintained permanent domain protection.</small></span><input id="adultBlocklistEnabled" data-setting="adultBlocklistEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>System network blocking</strong><small>Block supported sites outside the browser too.</small></span><input id="systemNetworkBlockingEnabled" data-setting="systemNetworkBlockingEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Safari filtering</strong><small>Always on.</small></span><input id="safariUrlFilterEnabled" type="checkbox" checked disabled><i></i></label>
+              <label class="switch-row"><span><strong>Content filtering</strong><small>Unsafe-content and feed filtering. Always on.</small></span><input id="contentFilterEnabled" type="checkbox" checked disabled><i></i></label>
+              <label class="switch-row"><span><strong>Blocked-page explanation</strong><small>Show why a site is blocked.</small></span><input id="siteRedirectEnabled" data-setting="siteRedirectEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Browser cleanup</strong><small>Hide recommendations and feeds.</small></span><input id="browserNoiseBlockingEnabled" data-setting="browserNoiseBlockingEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Unsafe-content blocklist</strong><small>Use Vigil’s maintained list of blocked sites.</small></span><input id="adultBlocklistEnabled" data-setting="adultBlocklistEnabled" type="checkbox"><i></i></label>
             </div>
           </div>
           <div class="settings-surface">
             <h3>Background enforcement</h3>
             <div class="switch-list">
-              <label class="switch-row"><span><strong>Close blocked apps</strong><small>Escalate when a blocked app remains open.</small></span><input id="appQuitEnabled" data-setting="appQuitEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Block bypass tools</strong><small>Required protection for strict sessions.</small></span><input id="strictBypassProtectionEnabled" type="checkbox" checked disabled><i></i></label>
-              <label class="switch-row"><span><strong>Background app sweep</strong><small>Recheck processes while protection is active.</small></span><input id="processSweepEnabled" data-setting="processSweepEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Sleep-screen relock</strong><small>Restore the lock screen during sleep protection.</small></span><input id="systemSleepLockEnabled" data-setting="systemSleepLockEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Close blocked apps</strong><small>Force-close apps that stay open after a block.</small></span><input id="appQuitEnabled" data-setting="appQuitEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Block bypass tools</strong><small>Required during strict sessions.</small></span><input id="strictBypassProtectionEnabled" type="checkbox" checked disabled><i></i></label>
+              <label class="switch-row"><span><strong>Check background apps</strong></span><input id="processSweepEnabled" data-setting="processSweepEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Relock during sleep sessions</strong></span><input id="systemSleepLockEnabled" data-setting="systemSleepLockEnabled" type="checkbox"><i></i></label>
               <label class="switch-row"><span><strong>Readiness checks</strong><small>Verify safeguards before strict enforcement starts.</small></span><input id="foolproofModeEnabled" data-setting="foolproofModeEnabled" type="checkbox"><i></i></label>
             </div>
             <form id="enforcementTimingForm" class="compact-form"><label>App escalation<input id="appQuitEscalationSeconds" type="number" min="1" max="3600"><small>seconds</small></label><label>Sweep interval<input id="processSweepIntervalSeconds" type="number" min="3" max="3600"><small>seconds</small></label><label>Sleep relock<input id="systemSleepLockIntervalSeconds" type="number" min="15" max="3600"><small>seconds</small></label><button class="button secondary" type="submit">Save timing</button></form>
@@ -255,76 +255,76 @@
           <div class="settings-surface">
             <h3>Screen color &amp; macOS Focus</h3>
             <div class="switch-list">
-              <label class="switch-row"><span><strong>Grayscale during focused sessions</strong><small>Reduce visual pull while a Soft Lock schedule or session is active.</small></span><input id="grayscaleSoftBlockEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Guard color settings</strong><small>Keep grayscale from being manually reversed.</small></span><input id="grayscalePreventManualChanges" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Run Focus shortcuts</strong><small>Run named Shortcuts when protected sessions change.</small></span><input id="focusShortcutEnabled" data-setting="focusShortcutEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Grayscale during focused sessions</strong><small>Apply during Soft Lock schedules and sessions.</small></span><input id="grayscaleSoftBlockEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Prevent grayscale changes</strong></span><input id="grayscalePreventManualChanges" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Run Focus shortcuts</strong></span><input id="focusShortcutEnabled" data-setting="focusShortcutEnabled" type="checkbox"><i></i></label>
             </div>
             <form id="focusShortcutForm" class="inline-form"><input id="focusShortcutOnName" type="text" placeholder="Focus On shortcut"><input id="focusShortcutOffName" type="text" placeholder="Focus Off shortcut"><button class="button secondary" type="submit">Save shortcuts</button></form>
           </div>
         </section>
 
         <section class="config-panel" data-config-panel="access" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><span class="card-kicker">Configuration</span><h2>Unlock safeguards</h2><p>Protected changes should require deliberate, accountable access.</p></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Unlock safeguards</h2></div></header>
           <div class="settings-surface">
             <div class="switch-list">
-              <label class="switch-row"><span><strong>Protect settings changes</strong><small>Route weakening edits through authenticated maintenance.</small></span><input id="protectedEditsEnabled" data-setting="protectedEditsEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Typing challenge</strong><small>Require a generated phrase for protected actions.</small></span><input id="typingChallengeEnabled" data-setting="typingChallengeEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Reason gate</strong><small>Require a written reason before an override.</small></span><input id="intentReasonEnabled" data-setting="intentReasonEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Strict by default</strong><small>Prefer deep locking when a rule has no explicit level.</small></span><input id="strictByDefault" data-setting="strictByDefault" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Protect settings changes</strong><small>Require maintenance approval to reduce protection.</small></span><input id="protectedEditsEnabled" data-setting="protectedEditsEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Typing challenge</strong><small>Type a phrase before protected actions.</small></span><input id="typingChallengeEnabled" data-setting="typingChallengeEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Require a reason</strong></span><input id="intentReasonEnabled" data-setting="intentReasonEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Strict by default</strong><small>Use strict blocking unless a rule specifies otherwise.</small></span><input id="strictByDefault" data-setting="strictByDefault" type="checkbox"><i></i></label>
             </div>
             <form id="accessTimingForm" class="compact-form"><label>Minimum reason<input id="intentReasonMinLength" type="number" min="1" max="280"><small>characters</small></label><label>Panic duration<input id="panicLockDurationMinutes" type="number" min="1" max="1440"><small>minutes</small></label><button class="button secondary" type="submit">Save safeguards</button></form>
           </div>
           <form id="keyholderForm" class="settings-surface">
-            <div class="section-heading"><div><span class="card-kicker">Second person</span><h3>Keyholder passcode</h3></div><span id="keyholderStatus" class="count-pill">Not set</span></div>
-            <label class="switch-row standalone"><span><strong>Require a keyholder</strong><small>Add a passcode to protected unlock flows.</small></span><input id="keyholderEnabled" type="checkbox"><i></i></label>
+            <div class="section-heading"><div><h3>Keyholder passcode</h3></div><span id="keyholderStatus" class="count-pill">Not set</span></div>
+            <label class="switch-row standalone"><span><strong>Require a keyholder</strong><small>Require their passcode for protected unlocks.</small></span><input id="keyholderEnabled" type="checkbox"><i></i></label>
             <div class="inline-form"><input id="keyholderPasscode" type="password" placeholder="New passcode"><button class="button secondary" type="submit">Save passcode</button></div>
           </form>
-          <div class="settings-surface maintenance-callout"><div><span class="card-kicker">Need to change a protected setting?</span><h3>Open a maintenance window</h3><p>Maintenance authenticates deliberate changes while Vigil’s background availability remains online.</p></div><button class="button secondary" type="button" data-config-link="maintenance">Go to maintenance</button></div>
+          <div class="settings-surface maintenance-callout"><div><h3>Protected changes</h3><p>Open maintenance to change protected settings.</p></div><button class="button secondary" type="button" data-config-link="maintenance">Go to maintenance</button></div>
         </section>
 
         <section class="config-panel" data-config-panel="devices" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><span class="card-kicker">Configuration</span><h2>iPhone &amp; devices</h2><p>Personal Team-compatible controls for a locally supervised iPhone.</p></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>iPhone &amp; devices</h2></div></header>
           <form id="iosForm" class="settings-surface">
-            <div class="section-heading"><div><span class="card-kicker">Supervised iPhone</span><h3 id="iosStatusTitle">Vigil content filter</h3><p id="iosStatusText">Checking phone policy…</p></div><span id="iosStatus" class="count-pill">Ready</span></div>
+            <div class="section-heading"><div><h3 id="iosStatusTitle">Vigil content filter</h3><p id="iosStatusText">Checking phone policy…</p></div><span id="iosStatus" class="count-pill">Ready</span></div>
             <div class="switch-list">
-              <label class="switch-row"><span><strong>Enable iPhone protection</strong><small>Generate the managed Vigil policy for the paired phone.</small></span><input id="iosEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Filter websites</strong><small>Apply website rules across phone browsers.</small></span><input id="iosBlockWeb" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Restrict native distractions</strong><small>Use the supervised app policy and compatible companions.</small></span><input id="iosBlockApps" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Non-removable profile</strong><small>Keep the verified restriction profile protected.</small></span><input id="iosHardenRemoval" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Lock install and erase escapes</strong><small>Apply supervised restrictions while enforcement is active.</small></span><input id="iosRestrictInstallErase" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Allow clearing Safari history</strong><small>Keep this available unless the policy needs it restricted.</small></span><input id="iosAllowSafariHistoryClearing" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Enable iPhone protection</strong></span><input id="iosEnabled" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Filter websites</strong><small>Apply website rules across browsers.</small></span><input id="iosBlockWeb" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Restrict apps</strong><small>Use the supervised allowlist and Vigil companion apps.</small></span><input id="iosBlockApps" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Non-removable profile</strong><small>Prevent removal in iPhone Settings.</small></span><input id="iosHardenRemoval" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Restrict app installs and device erase</strong><small>Applies while protection is active.</small></span><input id="iosRestrictInstallErase" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Allow clearing Safari history</strong></span><input id="iosAllowSafariHistoryClearing" type="checkbox"><i></i></label>
             </div>
             <div class="button-row"><button class="button primary" type="submit">Save iPhone policy</button><button id="iosDownloadProfile" class="button secondary" type="button">Download profile</button></div>
             <div id="iosSummary" class="device-summary"></div>
           </form>
-          <div class="settings-surface personal-team-note"><strong>Free personal-project path</strong><p>Vigil keeps policy generation and companion updates compatible with Xcode Personal Team signing and locally managed supervision.</p></div>
+
         </section>
 
         <section class="config-panel" data-config-panel="appearance" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><span class="card-kicker">Configuration</span><h2>Appearance</h2><p>Choose the identity used by the app and menu-bar companion.</p></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Appearance</h2></div></header>
           <fieldset class="settings-surface icon-picker">
             <legend>App icon</legend>
-            <label><input type="radio" name="appIconTheme" value="jerusalem-cross"><span class="icon-preview"><img src="/app-icons/jerusalem-cross.png" alt=""></span><span><strong>Jerusalem Cross</strong><small>Parchment and midnight blue</small></span></label>
-            <label><input type="radio" name="appIconTheme" value="sacred-heart"><span class="icon-preview"><img src="/app-icons/sacred-heart.png" alt=""></span><span><strong>Sacred Heart</strong><small>Heart, thorns, flame, and cross</small></span></label>
-            <label><input type="radio" name="appIconTheme" value="saint-michael"><span class="icon-preview"><img src="/app-icons/saint-michael.png" alt=""></span><span><strong>Saint Michael</strong><small>Archangel and radiant eye</small></span></label>
+            <label><input type="radio" name="appIconTheme" value="jerusalem-cross"><span class="icon-preview"><img src="/app-icons/jerusalem-cross.png" alt=""></span><span><strong>Jerusalem Cross</strong></span></label>
+            <label><input type="radio" name="appIconTheme" value="sacred-heart"><span class="icon-preview"><img src="/app-icons/sacred-heart.png" alt=""></span><span><strong>Sacred Heart</strong></span></label>
+            <label><input type="radio" name="appIconTheme" value="saint-michael"><span class="icon-preview"><img src="/app-icons/saint-michael.png" alt=""></span><span><strong>Saint Michael</strong></span></label>
             <p id="iconThemeStatus" class="field-note">Loading icon…</p>
           </fieldset>
         </section>
 
         <section class="config-panel" data-config-panel="maintenance" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><span class="card-kicker">Configuration</span><h2>Health &amp; maintenance</h2><p>Verify enforcement, update Vigil, and use the authenticated repair path.</p></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Health &amp; maintenance</h2></div></header>
           <div class="settings-surface">
-            <div class="section-heading"><div><span class="card-kicker">Live safeguards</span><h3>Protection health</h3></div><span id="healthSummary" class="count-pill">Checking</span></div>
+            <div class="section-heading"><div><h3>Protection health</h3></div><span id="healthSummary" class="count-pill">Checking</span></div>
             <div id="hardeningAudit" class="health-list"></div>
             <div class="button-row"><button id="installLaunchAgent" class="button secondary" type="button">Repair login protection</button><button id="applyHostsBlock" class="button secondary" type="button">Repair network block</button><button id="applySafariFilter" class="button secondary" type="button">Repair Safari filter</button><button id="exportDiagnosticSnapshot" class="button secondary" type="button">Export diagnostics</button></div>
             <p id="hardeningActionStatus" class="field-note">Ready</p>
           </div>
           <div id="appUpdatePanel" class="settings-surface update-panel" aria-busy="false">
-            <div><span class="card-kicker">Vigil app</span><h3 id="appUpdateStatus" role="status" aria-live="polite">Not checked</h3><p id="appUpdateHelp">Check the protected update channel without stopping enforcement.</p><small id="appUpdateMeta">—</small><progress id="appUpdateProgress" max="1" hidden></progress></div>
+            <div><h3 id="appUpdateStatus" role="status" aria-live="polite">Not checked</h3><p id="appUpdateHelp">Check for a new version of Vigil.</p><small id="appUpdateMeta">—</small><progress id="appUpdateProgress" max="1" hidden></progress></div>
             <div class="button-row"><button id="relaunchVigil" class="button secondary" type="button">Relaunch Vigil</button><button id="checkAppUpdate" class="button secondary" type="button">Check for updates</button></div>
           </div>
           <div class="settings-surface">
-            <div class="section-heading"><div><span class="card-kicker">Protected access</span><h3>Maintenance window</h3><p>Authenticate deliberate repairs or protected configuration changes. This does not stop Vigil.</p></div><span id="maintenanceStatus" class="count-pill">Closed</span></div>
+            <div class="section-heading"><div><h3>Maintenance window</h3><p>Approve protected changes. Vigil keeps running.</p></div><span id="maintenanceStatus" class="count-pill">Closed</span></div>
             <div class="form-stack"><label>Reason<input id="maintenanceReason" type="text" placeholder="Why maintenance is needed"></label><div class="form-grid two"><label>Keyholder passcode<input id="maintenancePasscode" type="password"></label><label>Distance key<input id="maintenanceDistanceKey" type="password"></label></div><code id="maintenanceChallenge" class="typing-challenge" hidden></code><input id="maintenanceChallengeInput" type="text" placeholder="Type the phrase above" hidden></div>
             <div class="button-row"><button id="requestMaintenance" class="button secondary" type="button">Request maintenance</button><button id="confirmMaintenance" class="button primary" type="button" disabled>Confirm window</button></div>
             <p id="maintenanceHelp" class="field-note">No maintenance request is pending.</p>
@@ -337,7 +337,7 @@
   <dialog id="scheduleEditor" class="schedule-dialog" aria-labelledby="scheduleEditorTitle">
     <form id="scheduleForm">
       <input name="id" type="hidden">
-      <header class="dialog-header"><div><span class="card-kicker">Automatic protection</span><h2 id="scheduleEditorTitle">New schedule</h2></div><button id="closeScheduleEditor" class="icon-button" type="button" aria-label="Close schedule editor">×</button></header>
+      <header class="dialog-header"><div><h2 id="scheduleEditorTitle">New schedule</h2></div><button id="closeScheduleEditor" class="icon-button" type="button" aria-label="Close schedule editor">×</button></header>
       <div class="dialog-body">
         <label>Schedule type<select id="scheduleKind" name="kind"><option value="lock">Protection schedule</option><option value="grayscale">Grayscale routine</option></select></label>
         <label>Schedule name<input name="name" type="text" maxlength="80" value="Focus block" required></label>
@@ -346,8 +346,8 @@
         <fieldset class="day-fieldset"><legend>Days</legend><div id="scheduleDays" class="day-chips"><label><input type="checkbox" value="0"><span>Sun</span></label><label><input type="checkbox" value="1" checked><span>Mon</span></label><label><input type="checkbox" value="2" checked><span>Tue</span></label><label><input type="checkbox" value="3" checked><span>Wed</span></label><label><input type="checkbox" value="4" checked><span>Thu</span></label><label><input type="checkbox" value="5" checked><span>Fri</span></label><label><input type="checkbox" value="6"><span>Sat</span></label></div></fieldset>
         <fieldset class="device-fieldset"><legend>Devices</legend><div class="segmented-checks"><label><input name="deviceTargets" type="checkbox" value="computer" checked><span>Mac</span></label><label><input name="deviceTargets" type="checkbox" value="phone" checked><span>iPhone</span></label></div></fieldset>
         <div class="switch-list schedule-switches">
-          <label class="switch-row"><span><strong>Turn this schedule on</strong><small>Vigil starts it automatically on selected days.</small></span><input name="enabled" type="checkbox"><i></i></label>
-          <label class="switch-row" data-schedule-kind-field="lock"><span><strong>Commitment lock</strong><small>Cannot use Emergency; only authenticated maintenance can change an active lock.</small></span><input name="commitmentLock" type="checkbox"><i></i></label>
+          <label class="switch-row"><span><strong>Enable schedule</strong></span><input name="enabled" type="checkbox"><i></i></label>
+          <label class="switch-row" data-schedule-kind-field="lock"><span><strong>Commitment lock</strong><small>No emergency unlock. Active locks can only be changed through maintenance.</small></span><input name="commitmentLock" type="checkbox"><i></i></label>
         </div>
         <label data-schedule-kind-field="lock">Only on these Wi-Fi networks <span class="optional">optional</span><textarea name="wifiNetworks" rows="2" placeholder="One network name per line"></textarea></label>
         <p id="scheduleValidation" class="form-error" hidden></p>
@@ -357,7 +357,7 @@
   </dialog>
 
   <dialog id="accountDialog" class="account-dialog" aria-labelledby="accountDialogTitle">
-    <div class="dialog-header"><div><span class="card-kicker">Vigil account</span><h2 id="accountDialogTitle">Your profile</h2></div><button id="closeAccountDialog" class="icon-button" type="button" aria-label="Close account panel">×</button></div>
+    <div class="dialog-header"><div><h2 id="accountDialogTitle">Account</h2></div><button id="closeAccountDialog" class="icon-button" type="button" aria-label="Close account panel">×</button></div>
     <section id="accountSignedIn" class="account-signed-in"><div class="account-profile-card"><span id="accountDialogAvatar" class="account-avatar large">JD</span><div><strong id="accountDialogName">James Dunkin</strong><span id="accountDialogEmail">Local administrator</span><small id="accountDialogRole">Admin account</small></div></div><p id="accountModeCopy">This administrator profile owns the local Vigil installation.</p><button id="accountSignOut" class="button secondary" type="button" hidden>Sign out</button></section>
     <section id="accountAuth" hidden><div class="auth-tabs" role="tablist"><button class="is-active" type="button" data-auth-panel="signin" role="tab" aria-selected="true">Sign in</button><button type="button" data-auth-panel="signup" role="tab" aria-selected="false">Create account</button></div><form id="accountSignInForm" class="auth-form" data-auth-form="signin"><label>Email<input name="email" type="email" autocomplete="email" required></label><label>Password<input name="password" type="password" autocomplete="current-password" minlength="12" required></label><button class="button primary" type="submit">Sign in</button></form><form id="accountSignUpForm" class="auth-form" data-auth-form="signup" hidden><label>Name<input name="name" type="text" required></label><label>Email<input name="email" type="email" required></label><label>Password<input name="password" type="password" minlength="12" required></label><button class="button primary" type="submit">Create account</button></form><p id="accountAuthStatus" class="field-note" aria-live="polite"></p></section>
   </dialog>

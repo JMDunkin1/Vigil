@@ -109,7 +109,7 @@ assert.match(appSource, /post\("\/api\/grayscale\/schedule"/u);
 assert.match(appSource, /post\("\/api\/settings"/u);
 assert.match(appSource, /post\("\/api\/devices\/ios\/settings"/u);
 assert.match(appSource, /\/api\/protection\/maintenance\/request/u);
-assert.match(appSource, /INACTIVE_STATE_POLL_MS\s*=\s*30_000/u, "an inactive window must poll less frequently");
+assert.match(appSource, /startDashboardRefresh/u, "dashboard polling must use the visibility-aware presentation scheduler");
 
 assert.match(styles, /--sidebar-width:\s*218px/u, "the redesign must replace the oversized legacy sidebar");
 assert.match(styles, /--bg:\s*#101111[\s\S]*?--bg-deep:\s*#0c0d0d[\s\S]*?--surface:\s*#1c1d1c[\s\S]*?--surface-raised:\s*#222321[\s\S]*?--surface-soft:\s*#242520/u, "the whole shell must use the neutral Ember surface palette");

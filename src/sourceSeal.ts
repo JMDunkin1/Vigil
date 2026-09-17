@@ -52,13 +52,28 @@ interface SourceSealVerification extends UnknownRecord {
   checkedAt: string;
 }
 
-export async function sourceSealStatus(options: SourceSealOptions = {}) {
+// Diagnostics and protected-lock attestation can request the same full-tree
+// verification concurrently. Share only work that is still running: every
+// later call must read the source contents again, even with unchanged metadata.
+const sourceSealChecks = new Map<string, Promise<ReturnType<typeof sourceSealSummary>>>();
+
+export function sourceSealStatus(options: SourceSealOptions = {}) {
   const root = options.root || ROOT;
-  const text = await sourceManifestText({ root });
-  const verification = await verifyStateTextSeal(text, {
-    keyPath: options.keyPath || STATE_SEAL_KEY_PATH,
-    sealPath: options.sealPath || SOURCE_SEAL_PATH
+  const keyPath = options.keyPath || STATE_SEAL_KEY_PATH;
+  const sealPath = options.sealPath || SOURCE_SEAL_PATH;
+  const key = JSON.stringify([root, keyPath, sealPath]);
+  const existing = sourceSealChecks.get(key);
+  if (existing) return existing;
+  const check = measureSourceSealStatus(root, keyPath, sealPath).finally(() => {
+    if (sourceSealChecks.get(key) === check) sourceSealChecks.delete(key);
   });
+  sourceSealChecks.set(key, check);
+  return check;
+}
+
+async function measureSourceSealStatus(root: string, keyPath: string, sealPath: string) {
+  const text = await sourceManifestText({ root });
+  const verification = await verifyStateTextSeal(text, { keyPath, sealPath });
   const manifest = JSON.parse(text) as SourceManifest;
   return sourceSealSummary(verification, manifest.files.length);
 }

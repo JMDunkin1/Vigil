@@ -367,7 +367,7 @@ function cleanupExpiredLimitBlocks(state: VigilState, now: Date): void {
 }
 
 function blockUntil(rule: LimitRule, now: Date): Date {
-  if (!rule.blockMinutes) return endOfToday();
+  if (!rule.blockMinutes) return endOfToday(now);
   return new Date(now.getTime() + rule.blockMinutes * 60 * 1000);
 }
 
@@ -387,7 +387,7 @@ function limitRuleOverridden(state: VigilState, ruleId: string, now: Date): bool
 function limitOverrideUntil(value: unknown, now: Date): Date {
   const parsed = new Date(String(value || ""));
   if (Number.isFinite(parsed.getTime()) && parsed > now) return parsed;
-  return endOfToday();
+  return endOfToday(now);
 }
 
 function optionalString(value: unknown): string | undefined {

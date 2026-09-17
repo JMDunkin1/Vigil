@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultState } from "../src/defaults.js";
@@ -43,7 +43,13 @@ assert.equal(
     assert.equal(initial.status, "missing");
     const written = await writeSourceSeal({ root: dir, keyPath, sealPath, sealedAt: now.toISOString() });
     assert.equal(written.ok, true);
-    const sealed = await sourceSealStatus({ root: dir, keyPath, sealPath });
+    const pendingSeal = sourceSealStatus({ root: dir, keyPath, sealPath });
+    assert.equal(sourceSealStatus({ root: dir, keyPath, sealPath }), pendingSeal,
+      "concurrent diagnostics and enforcement must share one in-flight content scan");
+    const otherSeal = sourceSealStatus({ root: dir, keyPath, sealPath: join(dir, "other.seal.json") });
+    assert.notEqual(otherSeal, pendingSeal, "distinct seal paths must never share integrity evidence");
+    assert.equal((await otherSeal).ok, false);
+    const sealed = await pendingSeal;
     assert.equal(sealed.ok, true);
     const manifest = JSON.parse(await sourceManifestText({ root: dir })) as { files: Array<{ path: string }> };
     assert.deepEqual(manifest.files.map((file) => file.path), [
@@ -54,9 +60,32 @@ assert.equal(
       "scripts/tool.mjs",
       "src/server.js"
     ]);
+    const sourcePath = join(dir, "src", "server.js");
+    const metadata = await stat(sourcePath);
+    await writeFile(sourcePath, "console.log('NO');\n");
+    await utimes(sourcePath, metadata.atime, metadata.mtime);
+    assert.equal((await sourceSealStatus({ root: dir, keyPath, sealPath })).status, "mismatch",
+      "completed checks must never be cached, including same-size changes with preserved mtime");
     await writeFile(join(dir, "src", "server.js"), "console.log('changed');\n");
     const changed = await sourceSealStatus({ root: dir, keyPath, sealPath });
     assert.equal(changed.status, "mismatch");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  const dir = await mkdtemp(join(tmpdir(), "vigil-source-seal-retry-"));
+  try {
+    const packagePath = join(dir, "package.json");
+    const options = { root: dir, keyPath: join(dir, "key"), sealPath: join(dir, "seal") };
+    await mkdir(packagePath);
+    await assert.rejects(sourceSealStatus(options), { code: "EISDIR" });
+    await rm(packagePath, { recursive: true });
+    await writeFile(packagePath, "{}\n");
+    await writeSourceSeal(options);
+    assert.equal((await sourceSealStatus(options)).ok, true,
+      "a failed scan must be evicted so repaired source can be checked again");
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

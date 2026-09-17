@@ -129,21 +129,54 @@ struct ConservativePageTextClassifier: PageTextSafetyClassifying {
         let offset: Int
     }
 
-    private let policy: ExplicitContentTextPolicy?
+    private struct CompiledContextualRule: Sendable {
+        let contexts: Set<String>
+        let markers: Set<String>
+        let maximumDistanceCharacters: Int
+    }
+
+    private struct CompiledPolicy: Sendable {
+        let phrases: [String]
+        let terms: Set<String>
+        let prefixTerms: [String]
+        let contextualRules: [CompiledContextualRule]
+    }
+
+    private let policy: CompiledPolicy?
 
     init(policy: ExplicitContentTextPolicy? = ExplicitContentTextPolicy.load()) {
-        self.policy = policy
+        guard let policy, policy.isUsable else {
+            self.policy = nil
+            return
+        }
+        let terms = Set(policy.terms.map(Self.normalize).filter { !$0.isEmpty })
+        self.policy = CompiledPolicy(
+            phrases: policy.phrases.map(Self.normalize).filter { !$0.isEmpty }.map { " \($0) " },
+            terms: terms.subtracting(["porn", "porno"]),
+            prefixTerms: ["porn", "porno"].filter { terms.contains($0) },
+            contextualRules: policy.contextualRules.map { rule in
+                CompiledContextualRule(
+                    contexts: Set(rule.contexts.map(Self.normalize)),
+                    markers: Set(rule.markers.map(Self.normalize)),
+                    maximumDistanceCharacters: rule.maximumDistanceCharacters
+                )
+            }
+        )
     }
 
     func classify(pageText: String, wasTruncated: Bool) async -> ContentSafetyVerdict {
         _ = wasTruncated
-        guard let policy, policy.isUsable else { return .unknown }
+        guard let policy else { return .unknown }
         let normalized = Self.normalize(pageText)
         let tokens = Self.tokens(normalized)
         guard !tokens.isEmpty else { return .safe }
 
-        if policy.phrases.contains(where: { Self.containsPhrase($0, in: normalized) })
-            || policy.terms.contains(where: { Self.containsTerm($0, in: tokens) })
+        let paddedText = " \(normalized) "
+        if policy.phrases.contains(where: paddedText.contains)
+            || tokens.contains(where: { token in
+                policy.terms.contains(token.value)
+                    || policy.prefixTerms.contains(where: token.value.hasPrefix)
+            })
             || policy.contextualRules.contains(where: { Self.matches($0, in: tokens) }) {
             return .sensitive
         }
@@ -157,9 +190,13 @@ struct ConservativePageTextClassifier: PageTextSafetyClassifying {
         let folded = value
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
             .lowercased()
-        let scalars = folded.unicodeScalars.map { scalar -> Character in
-            CharacterSet.alphanumerics.contains(scalar) ? Character(String(scalar)) : " "
+        var scalars = String.UnicodeScalarView()
+        scalars.reserveCapacity(folded.utf8.count)
+        for scalar in folded.unicodeScalars {
+            scalars.append(CharacterSet.alphanumerics.contains(scalar) ? scalar : " ")
         }
+        // Preserve Character-level whitespace handling: combining marks can
+        // join a separator's grapheme and must be removed together with it.
         return String(scalars).split(whereSeparator: \Character.isWhitespace).joined(separator: " ")
     }
 
@@ -172,29 +209,20 @@ struct ConservativePageTextClassifier: PageTextSafetyClassifying {
         }
     }
 
-    private static func containsPhrase(_ phrase: String, in normalized: String) -> Bool {
-        let candidate = normalize(phrase)
-        return !candidate.isEmpty && " \(normalized) ".contains(" \(candidate) ")
-    }
-
-    private static func containsTerm(_ term: String, in tokens: [Token]) -> Bool {
-        let candidate = normalize(term)
-        guard !candidate.isEmpty else { return false }
-        if candidate == "porn" || candidate == "porno" {
-            return tokens.contains { $0.value.hasPrefix(candidate) }
-        }
-        return tokens.contains { $0.value == candidate }
-    }
-
-    private static func matches(_ rule: ExplicitContentTextPolicy.ContextualRule, in tokens: [Token]) -> Bool {
-        let contexts = Set(rule.contexts.map(normalize))
-        let markers = Set(rule.markers.map(normalize))
-        let contextOffsets = tokens.filter { contexts.contains($0.value) }.map(\.offset)
-        let markerOffsets = tokens.filter { markers.contains($0.value) }.map(\.offset)
-        return contextOffsets.contains { contextOffset in
-            markerOffsets.contains { markerOffset in
-                abs(contextOffset - markerOffset) <= rule.maximumDistanceCharacters
+    private static func matches(_ rule: CompiledContextualRule, in tokens: [Token]) -> Bool {
+        // Token offsets are ordered. Only the latest occurrence of each side can
+        // be the closest match to the current token, so one pass replaces the
+        // previous context-by-marker cross product on long, repetitive pages.
+        var lastContextOffset: Int?
+        var lastMarkerOffset: Int?
+        for token in tokens {
+            if rule.contexts.contains(token.value) { lastContextOffset = token.offset }
+            if rule.markers.contains(token.value) { lastMarkerOffset = token.offset }
+            if let context = lastContextOffset, let marker = lastMarkerOffset,
+               abs(context - marker) <= rule.maximumDistanceCharacters {
+                return true
             }
         }
+        return false
     }
 }
