@@ -1932,11 +1932,16 @@ export class Monitor implements MonitorHandle {
 
   async recordElapsedUsage(frame: PollFrame): Promise<void> {
     if (!this.lastSample) {
+      // Event-driven monitoring may remain quiet after its first tick. Probe
+      // idle health now so readiness does not depend on later user activity.
+      const accounting = await this.idleAdjustedUsage({ ...frame, seconds: 0 });
       this.status.lastIdleAccounting = this.idleAccountingStatus(frame, {
+        ...accounting,
         countedSeconds: 0,
         skippedSeconds: 0,
         reason: "no-sample"
       });
+      this.setComponentHealth("idle-usage", accounting.ok === false ? accounting.error || "Idle usage lookup failed" : "");
       return;
     }
 

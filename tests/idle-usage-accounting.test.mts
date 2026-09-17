@@ -71,3 +71,21 @@ await monitor.recordElapsedUsage({
 assert.deepEqual(usage, {}, "an interrupted poll must not create a trusted usage segment");
 assert.equal(monitor.status.lastIdleAccounting?.reason, "interrupted-poll");
 assert.equal(monitor.status.lastIdleAccounting?.countedSeconds, 0);
+
+const startupUsage: UsageState = {};
+const startupMonitor = new Monitor({ state: defaultState(), usage: startupUsage });
+const startupFrame = {
+  now: Date.now(), monotonicNow: 1_000, previousWall: Date.now() - 1_000,
+  previousMonotonic: 0, seconds: 1
+};
+startupMonitor.idleAdjustedUsage = async (frame) => {
+  assert.equal(frame.seconds, 0, "startup must probe health without inventing usage");
+  return { ok: false, error: "idle helper unavailable", countedSeconds: 0, skippedSeconds: 0 };
+};
+await startupMonitor.recordElapsedUsage(startupFrame);
+assert.equal(startupMonitor.status.componentErrors["idle-usage"], "idle helper unavailable");
+startupMonitor.idleAdjustedUsage = async () => ({ ok: true, countedSeconds: 0, skippedSeconds: 0 });
+await startupMonitor.recordElapsedUsage(startupFrame);
+assert.equal(startupMonitor.status.componentHealth["idle-usage"]?.state, "healthy");
+assert.equal(startupMonitor.status.componentErrors["idle-usage"], undefined);
+assert.deepEqual(startupUsage, {}, "startup health checks must not record usage without a sample");
