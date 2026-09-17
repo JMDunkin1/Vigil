@@ -964,11 +964,15 @@ function scanMatureContentMutations(platform: MaturePlatform, records: MutationR
       else if (node.parentElement) scopes.add(node.parentElement);
     }
   }
-  if (scopes.size > 40) {
-    scanMatureContent(platform);
-    return;
+  for (const scope of scopes) {
+    // Mutation batches often contain a parent and many descendants. The
+    // parent's scan already checks those descendants, including new controls.
+    // Keep disjoint scopes local instead of rescanning the entire page when a
+    // busy feed produces more than forty records.
+    let parent = scope.parentElement;
+    while (parent && !scopes.has(parent)) parent = parent.parentElement;
+    if (!parent) scanMatureContent(platform, scope);
   }
-  for (const scope of scopes) scanMatureContent(platform, scope);
 }
 
 function scanMatureContent(platform: MaturePlatform, scope: ParentNode = document): void {
@@ -991,19 +995,19 @@ function scanMatureContent(platform: MaturePlatform, scope: ParentNode = documen
           "[aria-label*='sensitive media' i]"
         ];
     for (const selector of structuredSelectors) {
-      for (const marker of matureQuerySelectorAll(scope, selector).slice(0, 400)) markMatureContent(marker, platform);
+      for (const marker of matureQuerySelectorAll(scope, selector)) markMatureContent(marker, platform);
     }
 
     const textSelector = platform === "reddit"
       ? ".thing .nsfw-stamp, [data-testid='post-container'] [class*='badge' i], shreddit-post [slot*='flair' i], [class*='nsfw' i], [data-testid*='label' i]"
       : "article span, [role='dialog'] span, [data-testid*='sensitive' i]";
-    const textCandidates = matureQuerySelectorAll(scope, textSelector).slice(0, 800);
+    const textCandidates = matureQuerySelectorAll(scope, textSelector);
     for (const marker of textCandidates) {
       const text = normalizeMatureText(marker.textContent || "");
       if (platform === "x" ? matureXMarkerText(text) : matureMarkerText(text)) markMatureContent(marker, platform);
     }
 
-    for (const control of matureQuerySelectorAll(scope, "a[href], button, input, label, [role='button'], [role='switch'], [role='menuitem']").slice(0, 800)) {
+    for (const control of matureQuerySelectorAll(scope, "a[href], button, input, label, [role='button'], [role='switch'], [role='menuitem']")) {
       if (matureControlIsReveal(control)) blockMatureControl(control, platform);
     }
   } finally {

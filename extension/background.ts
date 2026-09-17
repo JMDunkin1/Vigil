@@ -129,6 +129,8 @@ let vigilConnection = {
   localServer: DEFAULT_LOCAL_SERVER,
   extensionToken: ""
 };
+let vigilConnectionRevision = 0;
+let vigilConnectionReady: Promise<typeof vigilConnection> | null = null;
 
 interface ExtensionPulseMessage {
   type?: string;
@@ -264,6 +266,7 @@ chrome.runtime.onStartup.addListener(loadNoisePreference);
 chrome.runtime.onStartup.addListener(initializeSiteBlocking);
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || (!changes.vigilLocalServer && !changes.vigilExtensionToken)) return;
+  invalidateVigilConnection();
   void loadVigilConnection().then(() => syncSiteBlockingFromServer());
 });
 
@@ -1505,15 +1508,41 @@ async function fetchVigil(path: string, options: RequestInit = {}): Promise<Resp
   }
 }
 
-async function loadVigilConnection(): Promise<typeof vigilConnection> {
-  const values = await storageGet(CONNECTION_DEFAULTS);
-  const localServer = normalizeLocalServer(values.vigilLocalServer);
-  const extensionToken = String(values.vigilExtensionToken || "").trim();
-  vigilConnection = { localServer, extensionToken };
-  if (values.vigilLocalServer !== localServer) {
-    await storageSet({ vigilLocalServer: localServer });
-  }
-  return vigilConnection;
+function invalidateVigilConnection(): void {
+  vigilConnectionRevision += 1;
+  vigilConnectionReady = null;
+}
+
+function loadVigilConnection(): Promise<typeof vigilConnection> {
+  if (vigilConnectionReady) return vigilConnectionReady;
+  const revision = vigilConnectionRevision;
+  vigilConnectionReady = (async () => {
+    const values = await new Promise<StorageResult<typeof CONNECTION_DEFAULTS> | null>((resolve) => {
+      try {
+        chrome.storage.local.get(CONNECTION_DEFAULTS, (value) => {
+          resolve(chrome.runtime.lastError ? null : value as StorageResult<typeof CONNECTION_DEFAULTS>);
+        });
+      } catch {
+        resolve(null);
+      }
+    });
+    // A settings change can arrive while Chrome is reading the old values.
+    // Every waiter must use the new read rather than republish stale credentials.
+    if (revision !== vigilConnectionRevision) return loadVigilConnection();
+    if (!values) {
+      vigilConnectionReady = null;
+      return vigilConnection;
+    }
+    const localServer = normalizeLocalServer(values.vigilLocalServer);
+    const extensionToken = String(values.vigilExtensionToken || "").trim();
+    vigilConnection = { localServer, extensionToken };
+    if (values.vigilLocalServer !== localServer) {
+      await storageSet({ vigilLocalServer: localServer });
+    }
+    if (revision !== vigilConnectionRevision) return loadVigilConnection();
+    return vigilConnection;
+  })();
+  return vigilConnectionReady;
 }
 
 function vigilUrl(path: string, localServer: string): string {

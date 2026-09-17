@@ -80,6 +80,7 @@ final class SocialContainerStore: ObservableObject {
         guard isCombined || service == initialService else { return }
         if let previous = selectedService, previous != service { stores[previous]?.suspendAllMedia(relinquishExternalPlayback: false) }
         let next = store(for: service)
+        next.requestFreshServiceAccessReceipt()
         selectedService = service
         writeSelectionReceipt()
         // The combined view rechecks the system web policy before resuming.
@@ -134,6 +135,27 @@ enum InstagramExternalPlaybackPolicy {
             false,
             options: .notifyOthersOnDeactivation
         )
+    }
+}
+
+// This is a launch-verification receipt, not the authority for access. The
+// live WebKit probe still runs on every check. Persist transitions and the
+// first result after each launcher selection without rewriting every poll.
+struct SocialServiceAccessReceipt {
+    private var lastConfirmed: Bool?
+
+    mutating func invalidate() { lastConfirmed = nil }
+
+    mutating func write(confirmed: Bool, service: SocialService, directory: URL, now: Date = Date()) throws {
+        guard lastConfirmed != confirmed else { return }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "service": service.rawValue,
+            "accessConfirmed": confirmed,
+            "checkedAt": ISO8601DateFormatter().string(from: now)
+        ])
+        try data.write(to: directory.appendingPathComponent("vigil-social-access-\(service.rawValue).json"), options: .atomic)
+        // A failed write must remain retryable on the next check.
+        lastConfirmed = confirmed
     }
 }
 
@@ -202,6 +224,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var mediaPlaybackIsSuspended = false
     private var externalPlaybackMayRelinquish = false
     private var externalPlaybackRelinquishTask: Task<Void, Never>?
+    private var serviceAccessReceipt = SocialServiceAccessReceipt()
     private let mediaClassificationDeadlineNanoseconds: UInt64
 
     private var managedWebViews: [WKWebView] {
@@ -269,16 +292,16 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         _ = webView(for: fixedService)
     }
 
+    func requestFreshServiceAccessReceipt() {
+        serviceAccessReceipt.invalidate()
+    }
+
     func confirmServiceAccess() async -> Bool {
         var confirmed = false
         defer {
             if bundle.object(forInfoDictionaryKey: "VigilService") as? String == "all",
-               let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
-               let data = try? JSONSerialization.data(withJSONObject: [
-                "service": fixedService.rawValue, "accessConfirmed": confirmed,
-                "checkedAt": ISO8601DateFormatter().string(from: Date())
-               ]) {
-                try? data.write(to: directory.appendingPathComponent("vigil-social-access-\(fixedService.rawValue).json"), options: .atomic)
+               let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                try? serviceAccessReceipt.write(confirmed: confirmed, service: fixedService, directory: directory)
             }
         }
         let view = webView(for: fixedService)
@@ -713,7 +736,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         switch type {
         case "videoOrientation":
             guard service == .youtube, frame.isMainFrame else { return }
-            youtubeAllowsLandscape = body["allowed"] as? Bool == true
+            let allowed = body["allowed"] as? Bool == true
+            if youtubeAllowsLandscape != allowed { youtubeAllowsLandscape = allowed }
         case "documentReady":
             guard frame.isMainFrame,
                   let documentID = body["documentID"] as? String,
@@ -726,13 +750,14 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             }
         case "health":
             let detail = body["detail"] as? String ?? ""
+            let nextHealth: AdapterHealth
             switch body["state"] as? String {
             case "ready":
                 servicesWithUsableContent.insert(service)
-                health[service] = .ready
-            case "unsupported": health[service] = .unsupported(detail)
+                nextHealth = .ready
+            case "unsupported": nextHealth = .unsupported(detail)
             case "degraded":
-                health[service] = isAdvisoryHealthMessage(detail)
+                nextHealth = isAdvisoryHealthMessage(detail)
                     || Self.isRecoverableInstagramHealthReport(
                         detail,
                         service: service,
@@ -740,14 +765,17 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                     )
                     ? .advisory(detail)
                     : .degraded(detail)
-            default: health[service] = .loading
+            default: nextHealth = .loading
             }
+            if health[service] != nextHealth { health[service] = nextHealth }
         case "audio":
-            guard let enabled = body["enabled"] as? Bool else { return }
+            guard let enabled = body["enabled"] as? Bool,
+                  audioPreferences[service] != enabled else { return }
             audioPreferences[service] = enabled
             defaults.set(enabled, forKey: audioPreferenceKey(service))
         case "appearance":
-            guard let dark = body["dark"] as? Bool else { return }
+            guard let dark = body["dark"] as? Bool,
+                  darkChromePreferences[service] != dark else { return }
             darkChromePreferences[service] = dark
         case "surface":
             guard let reportedService = body["service"] as? String,
@@ -1241,7 +1269,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func setSurface(_ surface: SocialSurfaceState, for service: SocialService) {
-        surfaceStates[service] = surface
+        if surfaceStates[service] != surface { surfaceStates[service] = surface }
         guard let webView = webViews[service] else { return }
         if service == .instagram {
             // WebKit supplies the same interactive back/forward transition as
@@ -1455,7 +1483,7 @@ private struct MediaClassificationRequest {
     let frame: WKFrameInfo
 }
 
-struct SocialSurfaceState {
+struct SocialSurfaceState: Equatable {
     let route: String
     let refreshEligible: Bool
     let blocksRefresh: Bool

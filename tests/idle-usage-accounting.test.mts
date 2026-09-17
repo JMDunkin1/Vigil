@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { defaultState } from "../src/defaults.js";
-import { HUMAN_ACTIVITY_WATCH_HEALTH_MAX_AGE_MS, browserActivityWatchHeartbeatCurrent, canonicalFrontmostAppName, packagedAppBundleForExecutable, parseBrowserActivityWake, parseBrowserActivityWatchHeartbeat, parseHidIdleSeconds, parseHumanActivitySample, parseHumanIdleSeconds, splitHumanActivityOutput } from "../src/macos.js";
+import { HUMAN_ACTIVITY_WATCH_HEALTH_MAX_AGE_MS, browserActivityWatchHeartbeatCurrent, canonicalFrontmostAppName, observationCacheCurrent, packagedAppBundleForExecutable, parseBrowserActivityWake, parseBrowserActivityWatchHeartbeat, parseHidIdleSeconds, parseHumanActivitySample, parseHumanIdleSeconds, splitHumanActivityOutput } from "../src/macos.js";
 import { activeSecondsBeforeIdleThreshold, Monitor } from "../src/monitor.js";
 import { isInterruptedPollGap, maxTrustedPollGapSeconds } from "../src/monitor/timing.js";
 import type { UsageState } from "../src/types.js";
@@ -10,12 +10,24 @@ assert.equal(parseHidIdleSeconds('      "HIDIdleTime" = 3376045002708'), 3376.04
 assert.equal(parseHidIdleSeconds("no idle value"), null);
 assert.equal(parseHumanIdleSeconds("12.375\n"), 12.375);
 assert.equal(parseHumanIdleSeconds("not-a-number"), null);
+assert.equal(parseHumanIdleSeconds(""), null);
+assert.equal(parseHumanIdleSeconds("  \n"), null);
+assert.equal(parseHumanIdleSeconds(undefined), null);
+assert.equal(parseHumanIdleSeconds(0), 0);
 assert.deepEqual(parseHumanActivitySample("12.375\tSafari\tcom.apple.Safari\n"), {
   idleSeconds: 12.375,
   app: "Safari",
   bundleId: "com.apple.Safari"
 });
 assert.equal(parseHumanActivitySample("error"), null);
+for (const malformed of ["", "\tSafari\tcom.apple.Safari", "12.375", "12.375\tSafari", "12.375\tSafari\tcom.apple.Safari\textra"]) {
+  assert.equal(parseHumanActivitySample(malformed), null, "malformed helper records must not become a healthy empty foreground observation");
+}
+assert.deepEqual(parseHumanActivitySample("0\t\t"), { idleSeconds: 0, app: "", bundleId: "" },
+  "the helper may legitimately have no foreground application at the login screen");
+assert.equal(observationCacheCurrent(1_000, 2_500, 3_499), true);
+assert.equal(observationCacheCurrent(1_000, 2_500, 3_500), false);
+assert.equal(observationCacheCurrent(1_000, 2_500, 999), false, "clock rollback must invalidate foreground and bundle observations");
 assert.equal(parseBrowserActivityWake("wake\tkey\n"), "key");
 assert.equal(parseBrowserActivityWake("wake\tclick\n"), "click");
 assert.equal(parseBrowserActivityWake("wake\tactivate\n"), "activate");

@@ -1,10 +1,65 @@
 import XCTest
+import Combine
 import JavaScriptCore
 import UIKit
 import WebKit
 @testable import VigilSocial
 
 final class VigilSocialTests: XCTestCase {
+    func testAccessReceiptsPersistTransitionsAndFreshLaunchesWithoutPollingWrites() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("vigil-social-access-linkedin.json")
+        var receipt = SocialServiceAccessReceipt()
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        try receipt.write(confirmed: true, service: .linkedin, directory: directory, now: start)
+        let initial = try Data(contentsOf: path)
+        for poll in 1...12 {
+            try receipt.write(confirmed: true, service: .linkedin, directory: directory,
+                              now: start.addingTimeInterval(Double(poll * 5)))
+        }
+        XCTAssertEqual(try Data(contentsOf: path), initial)
+        try receipt.write(confirmed: false, service: .linkedin, directory: directory,
+                          now: start.addingTimeInterval(65))
+        let denied = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any])
+        XCTAssertEqual(denied["accessConfirmed"] as? Bool, false)
+        receipt.invalidate()
+        let nextLaunch = start.addingTimeInterval(70)
+        try receipt.write(confirmed: false, service: .linkedin, directory: directory, now: nextLaunch)
+        let refreshed = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: path)) as? [String: Any])
+        XCTAssertEqual(refreshed["checkedAt"] as? String, ISO8601DateFormatter().string(from: nextLaunch))
+    }
+
+    func testAccessReceiptRetriesAfterPersistenceFailure() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var receipt = SocialServiceAccessReceipt()
+        XCTAssertThrowsError(try receipt.write(confirmed: true, service: .linkedin, directory: directory))
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try receipt.write(confirmed: true, service: .linkedin, directory: directory)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("vigil-social-access-linkedin.json").path))
+    }
+
+    @MainActor
+    func testRepeatedSurfaceReportsDoNotPublishButStillRepairRefreshControls() {
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false)
+        let webView = store.webView(for: .instagram)
+        let surface = SocialSurfaceState(route: "profile", refreshEligible: true, blocksRefresh: false)
+        var notifications = 0
+        let observation = store.objectWillChange.sink { notifications += 1 }
+        store.setSurface(surface, for: .instagram)
+        XCTAssertEqual(notifications, 1)
+        webView.scrollView.refreshControl?.isEnabled = false
+        store.setSurface(surface, for: .instagram)
+        XCTAssertEqual(notifications, 1)
+        XCTAssertEqual(webView.scrollView.refreshControl?.isEnabled, true)
+        store.setSurface(.unknown, for: .instagram)
+        XCTAssertEqual(notifications, 2)
+        XCTAssertEqual(webView.scrollView.refreshControl?.isEnabled, false)
+        withExtendedLifetime(observation) {}
+    }
+
     @MainActor
     func testCombinedContainerKeepsFourIndependentEnginesAndPages() throws {
         let container = SocialContainerStore(combined: true, loadInitialPages: false)

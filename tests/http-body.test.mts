@@ -52,6 +52,28 @@ excessStream.end();
 for (const stream of admittedStreams) stream.end("{}");
 assert.deepEqual(await Promise.all(admittedReads), admittedStreams.map(() => "{}"), "body buffering must have bounded admission");
 
+// Closed requests must release their admission slots immediately, including
+// streams which close without delivering an `aborted` event.
+const disconnectedStreams = Array.from({ length: MAX_CONCURRENT_BODY_READS }, () => new PassThrough());
+const disconnectedReads = disconnectedStreams.map((stream) => assert.rejects(
+  readTextBody(stream as unknown as IncomingMessage),
+  hasBodyError(400, /aborted/i)
+));
+for (const stream of disconnectedStreams) stream.destroy();
+await Promise.all(disconnectedReads);
+assert.deepEqual(await readBody(bodyRequest('{"afterDisconnect":true}')), { afterDisconnect: true });
+for (const stream of disconnectedStreams) {
+  for (const event of ["data", "end", "error", "aborted", "close"]) {
+    assert.equal(stream.listenerCount(event), 0, `closed body must release its ${event} listener`);
+  }
+}
+const alreadyClosed = new PassThrough();
+alreadyClosed.destroy();
+await assert.rejects(readTextBody(alreadyClosed as unknown as IncomingMessage), hasBodyError(400, /no longer readable/i));
+const alreadyAborted = Object.assign(new PassThrough(), { aborted: true });
+await assert.rejects(readTextBody(alreadyAborted as unknown as IncomingMessage), hasBodyError(400, /no longer readable/i));
+alreadyAborted.destroy();
+
 function bodyRequest(body: string | Buffer): IncomingMessage {
   return Readable.from([body]) as unknown as IncomingMessage;
 }

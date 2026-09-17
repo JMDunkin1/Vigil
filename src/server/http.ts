@@ -48,6 +48,9 @@ async function readTextBodyOnce(
   request: IncomingMessage,
   options: { timeoutMs?: number }
 ): Promise<string> {
+  if (request.aborted || request.destroyed || request.readableEnded) {
+    throw requestBodyError(400, "Request body is no longer readable.");
+  }
   if (activeBodyReads >= MAX_CONCURRENT_BODY_READS) {
     discardRequestBody(request);
     throw requestBodyError(503, "Too many request bodies are being received.");
@@ -66,6 +69,7 @@ async function readTextBodyOnce(
         request.off("end", onEnd);
         request.off("error", onError);
         request.off("aborted", onAborted);
+        request.off("close", onAborted);
       };
       const finish = (operation: () => void) => {
         if (settled) return;
@@ -103,6 +107,7 @@ async function readTextBodyOnce(
       request.once("end", onEnd);
       request.once("error", onError);
       request.once("aborted", onAborted);
+      request.once("close", onAborted);
     });
   } finally {
     activeBodyReads -= 1;

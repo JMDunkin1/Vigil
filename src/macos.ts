@@ -29,6 +29,8 @@ let humanActivityPending: {
 } | null = null;
 const humanActivityQueries = new InFlightCoalescer<"sample", HumanActivitySample>();
 const activeBrowserUrlQueries = new InFlightCoalescer<string, BrowserUrlResult>();
+const runningProcessQueries = new InFlightCoalescer<"running", string>();
+const browserBundleQueries = new InFlightCoalescer<string, void>();
 let recentHumanActivity: { capturedAt: number; sample: HumanActivitySample } | null = null;
 const browserActivityListeners = new Set<(signal: BrowserActivitySignal) => void>();
 const HUMAN_ACTIVITY_CACHE_MS = 2500;
@@ -243,7 +245,7 @@ export async function runAppleScript(script: string, timeout = 2500): Promise<st
 
 export async function getFrontmostApp(options: { fresh?: boolean } = {}) {
   const cached = recentHumanActivity;
-  if (!options.fresh && cached && Date.now() - cached.capturedAt <= HUMAN_ACTIVITY_CACHE_MS) {
+  if (!options.fresh && cached && observationCacheCurrent(cached.capturedAt, HUMAN_ACTIVITY_CACHE_MS)) {
     return { ok: true, app: cached.sample.app };
   }
   try {
@@ -281,9 +283,14 @@ async function getFrontmostAppViaAppleScript() {
 
 export async function listRunningAppNames() {
   try {
-    const { stdout } = await execFileAsync("/bin/ps", ["-axo", "comm="], {
-      timeout: 2500,
-      maxBuffer: 1024 * 512
+    // Share only the live subprocess. A new check must enumerate processes
+    // again once ps finishes, even if an older check is still inspecting bundles.
+    const stdout = await runningProcessQueries.run("running", async () => {
+      const { stdout } = await execFileAsync("/bin/ps", ["-axo", "comm="], {
+        timeout: 2500,
+        maxBuffer: 1024 * 512
+      });
+      return stdout;
     });
     await discoverBrowserApplications(stdout);
     return { ok: true, apps: parseProcessList(stdout) };
@@ -299,15 +306,21 @@ async function discoverBrowserApplications(output: string): Promise<void> {
     const match = command.trim().match(/^(.*\.app)\/Contents\/MacOS\/[^/]+$/);
     if (match) bundles.set(match[1], processDisplayName(command));
   }
+  for (const path of browserBundleCheckedAt.keys()) {
+    if (!bundles.has(path)) browserBundleCheckedAt.delete(path);
+  }
   await Promise.all([...bundles].map(async ([path, name]) => {
-    if (Date.now() - (browserBundleCheckedAt.get(path) || 0) < 30_000) return;
-    try {
-      const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", join(path, "Contents/Info.plist")], { timeout: 2000, maxBuffer: 1024 * 1024 });
-      const info = JSON.parse(stdout) as { CFBundleIdentifier?: string } & Parameters<typeof bundleDeclaresWebBrowser>[0];
-      const web = bundleDeclaresWebBrowser(info);
-      registerBrowserApplication(name, info.CFBundleIdentifier || "", web);
-      browserBundleCheckedAt.set(path, Date.now());
-    } catch { /* Known browser names remain blocked if bundle inspection fails. */ }
+    const checkedAt = browserBundleCheckedAt.get(path);
+    if (checkedAt !== undefined && observationCacheCurrent(checkedAt, 30_000)) return;
+    await browserBundleQueries.run(path, async () => {
+      try {
+        const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", join(path, "Contents/Info.plist")], { timeout: 2000, maxBuffer: 1024 * 1024 });
+        const info = JSON.parse(stdout) as { CFBundleIdentifier?: string } & Parameters<typeof bundleDeclaresWebBrowser>[0];
+        const web = bundleDeclaresWebBrowser(info);
+        registerBrowserApplication(name, info.CFBundleIdentifier || "", web);
+        browserBundleCheckedAt.set(path, Date.now());
+      } catch { /* Known browser names remain blocked if bundle inspection fails. */ }
+    });
   }));
 }
 
@@ -1237,12 +1250,16 @@ async function getFallbackMacIdleTime(humanIdleError: unknown) {
 }
 
 export function parseHumanIdleSeconds(output: unknown): number | null {
-  const seconds = Number(String(output || "").trim());
+  const text = String(output ?? "").trim();
+  if (!text) return null;
+  const seconds = Number(text);
   return Number.isFinite(seconds) && seconds >= 0 ? seconds : null;
 }
 
 export function parseHumanActivitySample(output: unknown): HumanActivitySample | null {
-  const [idleText = "", name = "", bundleId = ""] = String(output || "").replace(/[\r\n]+$/u, "").split("\t");
+  const fields = String(output || "").replace(/[\r\n]+$/u, "").split("\t");
+  if (fields.length !== 3) return null;
+  const [idleText = "", name = "", bundleId = ""] = fields;
   const idleSeconds = parseHumanIdleSeconds(idleText);
   if (idleSeconds === null) return null;
   return {
@@ -1250,6 +1267,11 @@ export function parseHumanActivitySample(output: unknown): HumanActivitySample |
     app: canonicalFrontmostAppName(name, bundleId),
     bundleId
   };
+}
+
+export function observationCacheCurrent(capturedAt: number, maxAgeMs: number, now = Date.now()): boolean {
+  const age = now - capturedAt;
+  return Number.isFinite(age) && age >= 0 && age < maxAgeMs;
 }
 
 export function parseBrowserActivityWake(output: unknown): BrowserActivityKind | null {

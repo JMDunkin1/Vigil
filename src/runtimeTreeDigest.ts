@@ -46,8 +46,12 @@ export async function captureRuntimeTreeDigest(
   rootPathInput: string,
   dependencies: RuntimeTreeDigestDependencies = {}
 ): Promise<RuntimeTreeDigest> {
-  const first = await captureRuntimeTreeDigestOnce(rootPathInput, dependencies);
-  const second = await captureRuntimeTreeDigestOnce(rootPathInput, dependencies);
+  // Traversal is serial, so both complete captures can share one scratch
+  // buffer. Keep it local so simultaneous digest requests cannot overwrite
+  // one another's file bytes while an asynchronous read is pending.
+  const readBuffer = Buffer.allocUnsafe(READ_BUFFER_BYTES);
+  const first = await captureRuntimeTreeDigestOnce(rootPathInput, dependencies, readBuffer);
+  const second = await captureRuntimeTreeDigestOnce(rootPathInput, dependencies, readBuffer);
   if (!runtimeTreeDigestContentsMatch(first, second)
     || first.rootDev !== second.rootDev
     || first.rootIno !== second.rootIno) {
@@ -58,7 +62,8 @@ export async function captureRuntimeTreeDigest(
 
 async function captureRuntimeTreeDigestOnce(
   rootPathInput: string,
-  dependencies: RuntimeTreeDigestDependencies
+  dependencies: RuntimeTreeDigestDependencies,
+  readBuffer: Buffer
 ): Promise<RuntimeTreeDigest> {
   const rootPath = resolve(rootPathInput);
   if (rootPath !== rootPathInput || await realpath(rootPath) !== rootPath) {
@@ -69,7 +74,7 @@ async function captureRuntimeTreeDigestOnce(
 
   const entries: RuntimeTreeEntry[] = [];
   const totals = { bytes: 0 };
-  await walkRuntimeDirectory(rootPath, rootPath, entries, totals, dependencies);
+  await walkRuntimeDirectory(rootPath, rootPath, entries, totals, dependencies, readBuffer);
 
   const [rootAfter, rootCanonicalAfter] = await Promise.all([
     lstat(rootPath),
@@ -112,7 +117,8 @@ async function walkRuntimeDirectory(
   directoryPath: string,
   entries: RuntimeTreeEntry[],
   totals: { bytes: number },
-  dependencies: RuntimeTreeDigestDependencies
+  dependencies: RuntimeTreeDigestDependencies,
+  readBuffer: Buffer
 ): Promise<void> {
   const [before, canonicalBefore] = await Promise.all([
     lstat(directoryPath),
@@ -138,13 +144,13 @@ async function walkRuntimeDirectory(
       throw new Error(`The Vigil runtime tree contains a symbolic link at ${portablePath(rootPath, entryPath)}.`);
     }
     if (entryStat.isDirectory()) {
-      await walkRuntimeDirectory(rootPath, entryPath, entries, totals, dependencies);
+      await walkRuntimeDirectory(rootPath, entryPath, entries, totals, dependencies, readBuffer);
       continue;
     }
     if (!entryStat.isFile()) {
       throw new Error(`The Vigil runtime tree contains an unsafe special entry at ${portablePath(rootPath, entryPath)}.`);
     }
-    const file = await hashPinnedRuntimeFile(rootPath, entryPath, entryStat, dependencies);
+    const file = await hashPinnedRuntimeFile(rootPath, entryPath, entryStat, dependencies, readBuffer);
     totals.bytes += file.size;
     if (!Number.isSafeInteger(totals.bytes) || totals.bytes > MAX_RUNTIME_TREE_BYTES) {
       throw new Error("The Vigil runtime tree exceeds its bounded byte limit.");
@@ -171,7 +177,8 @@ async function hashPinnedRuntimeFile(
   rootPath: string,
   path: string,
   pathnameBeforeOpen: Stats,
-  dependencies: RuntimeTreeDigestDependencies
+  dependencies: RuntimeTreeDigestDependencies,
+  buffer: Buffer
 ): Promise<{ mode: number; sha256: string; size: number }> {
   if (await realpath(path) !== path) {
     throw new Error(`The Vigil runtime tree contains a non-canonical file at ${portablePath(rootPath, path)}.`);
@@ -193,7 +200,6 @@ async function hashPinnedRuntimeFile(
     await dependencies.afterFilePinned?.(path);
 
     const content = createHash("sha256");
-    const buffer = Buffer.allocUnsafe(READ_BUFFER_BYTES);
     let offset = 0;
     while (offset < before.size) {
       const { bytesRead } = await handle.read(
