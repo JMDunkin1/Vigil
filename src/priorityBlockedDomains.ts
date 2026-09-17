@@ -254,6 +254,9 @@ export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
  * classifier terms.
  */
 export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
+  "xerography14macro.com",
+  "dxweb003.xyz",
+  "newgrounds.com",
   "kinklets.com",
   "hot.com",
   "secretflame.ai",

@@ -38,8 +38,8 @@ export const IOS_PANIC_ALLOWED_APP_BUNDLE_IDS = [
 ];
 const MAX_DENY_URLS = 500;
 const MIN_BULK_ADULT_DENY_URLS = 6;
-// Preserve the previous first 201 domains when adding Kinklets.
-const MIN_PRIORITY_DOMAIN_BREADTH = 202;
+// Preserve the existing bypass-domain breadth as the adult overlay grows.
+const MIN_PRIORITY_DOMAIN_BREADTH = 173 + DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.length;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_ID_KEYS = new Set(IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS.map((value) => value.toLowerCase()));
 const IOS_EXPLICIT_SEARCH_TERM_KEYS = new Set(DEFAULT_EXPLICIT_SEARCH_TERMS.map(normalizedExplicitSearchTerm));
@@ -895,13 +895,16 @@ function prioritizedDenyUrlsWithAdultReserve(
 ): string[] {
   const candidates = uniqueUrls([...permanentUrls, ...policyUrls, ...userUrls]);
   // Apple's BuiltIn list uses literal URL substrings (WebContentFilter docs).
-  // A q=porn entry already covers q=porno, and /shorts covers /shorts/.
+  // A q=porn entry already covers q=porno, /shorts covers /shorts/,
+  // and a blocked root URL covers paths and queries beneath that root.
   // Reclaim those duplicate slots without removing any covered URL or reducing
   // the reserved bulk-adult coverage when a curated domain is added.
-  const candidateSet = new Set(candidates);
-  const higherPriority = candidates.filter(url => url.includes("?")
-    ? !candidates.some(other => other !== url && other.includes("?") && url.startsWith(other))
-    : !url.endsWith("/") || !candidateSet.has(url.slice(0, -1)));
+  // Apple also treats a leading www label as equivalent to the bare host.
+  const coverageKeys = candidates.map(url => url.replace(/^(https?:\/\/)www\./, "$1"));
+  const higherPriority = candidates.filter((_url, index) =>
+    !coverageKeys.some((other, otherIndex) => otherIndex !== index
+      && coverageKeys[index].startsWith(other)
+      && (other !== coverageKeys[index] || otherIndex < index)));
   const alreadyCovered = new Set([...higherPriority, ...priorityDomainUrls].map((url) => String(url).toLowerCase()));
   const novelAdultUrls = uniqueUrls(adultUrls).filter((url) => !alreadyCovered.has(url.toLowerCase()));
   const adultReserve = Math.min(MIN_BULK_ADULT_DENY_URLS, novelAdultUrls.length);

@@ -346,7 +346,7 @@ if (removeTestUrlFilterService) {
   const limitOnlyWebFilter = profilePayload(limitOnlyParsed, "com.apple.webcontent-filter");
   assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://youtube.com/"));
   assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://www.google.com/search?q=porn"), "standalone time limits must preserve permanent explicit-search protection");
-  assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://youtube.com/shorts"), "standalone time limits must preserve permanent Shorts protection");
+  assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.some(prefix => typeof prefix === "string" && "https://youtube.com/shorts".startsWith(prefix)), "standalone time limits must preserve permanent Shorts coverage, including when the whole site is blocked");
   assert.match(limitOnlyProfile, /com\.burbn\.instagram/);
   state.limitBlocks = [];
   assert.equal(activeLimitPolicy(state, phoneUsage, { app: "com.google.ios.youtube", hostname: "youtube.com", device: "phone" }, now), null);
@@ -591,7 +591,7 @@ if (removeTestUrlFilterService) {
     .find((payload) => payload.PayloadType === "com.apple.webcontent-filter");
   assert.ok(webFilter, "custom Shorts profile should include a web filter");
   assert.ok(Array.isArray(webFilter.DenyListURLs), "custom Shorts profile should include denied URLs");
-  assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts"), true);
+  assert.equal(webFilter.DenyListURLs.some((prefix: unknown) => typeof prefix === "string" && "https://youtube.com/shorts".startsWith(prefix)), true);
   assert.equal(webFilter.DenyListURLs.includes("https://www.youtube.com/shorts"), false, "Apple normalizes bare and www hosts, so the redundant twin must not consume a slot");
   assert.equal(webFilter.DenyListURLs.some((prefix) => typeof prefix === "string" && "https://youtube.com/shorts/".startsWith(prefix)), true, "permanent Shorts variants must remain covered by retained prefixes in custom profile snapshots");
 }
@@ -636,7 +636,7 @@ if (removeTestUrlFilterService) {
   assert.ok(webFilter, "brick web clip profile should include a web filter");
   assert.equal(webFilter.AllowListBookmarks, undefined, "Full Brick must not turn unrelated web access into an allowlist");
   assert.ok(Array.isArray(webFilter.DenyListURLs), "Level 3 should keep targeted social and explicit-content denies");
-  assert.equal(webFilter.DenyListURLs.includes("https://youtube.com/shorts"), true);
+  assert.equal(webFilter.DenyListURLs.some((prefix: unknown) => typeof prefix === "string" && "https://youtube.com/shorts".startsWith(prefix)), true);
   assert.equal(webFilter.DenyListURLs.includes("https://instagram.com/"), true);
   assert.equal(webFilter.SafariHistoryRetentionEnabled, false);
 }
