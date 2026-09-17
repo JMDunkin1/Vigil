@@ -73,6 +73,37 @@ export type BrowserActivityKind = "key" | "click" | "activate" | "launch";
 export interface BrowserActivitySignal {
   kind: BrowserActivityKind;
   at: number;
+  application?: ApplicationInstance;
+}
+
+export interface ApplicationInstance {
+  app: string;
+  bundleId: string;
+  pid: number;
+  launchedAt: number;
+}
+
+export async function quitApplicationInstance(application: ApplicationInstance): Promise<{ ok: boolean; method?: string; error?: string }> {
+  try {
+    await execFileAsync(HUMAN_IDLE_HELPER, ["--quit-application-instance", String(application.pid), application.bundleId, String(application.launchedAt)], { timeout: 1500 });
+    return { ok: true, method: "native-application-instance" };
+  } catch (error) {
+    return { ok: false, error: simplifyError(error) };
+  }
+}
+
+export function parseApplicationActivity(output: string): BrowserActivitySignal | null {
+  if (!output.startsWith("application\t")) return null;
+  try {
+    const frame = JSON.parse(output.slice("application\t".length));
+    if (!["activate", "launch"].includes(frame.kind) || typeof frame.app !== "string"
+      || typeof frame.bundleId !== "string" || !frame.bundleId
+      || !Number.isSafeInteger(frame.pid) || frame.pid <= 0
+      || !Number.isFinite(frame.launchedAt) || frame.launchedAt <= 0) return null;
+    const app = canonicalFrontmostAppName(frame.app, frame.bundleId);
+    registerBrowserApplication(app, frame.bundleId, bundleDeclaresWebBrowser(frame.bundleInfo || {}));
+    return { kind: frame.kind, at: Date.now(), application: { app, bundleId: frame.bundleId, pid: frame.pid, launchedAt: frame.launchedAt } };
+  } catch { return null; }
 }
 
 export interface BrowserRedirectResult {
@@ -339,6 +370,33 @@ export async function redirectActiveBrowserTab(
   } catch (error) {
     return { ok: false, matched: false, redirectedTabCount: 0, error: simplifyError(error) };
   }
+}
+
+export function browserRefreshScript(appName: string, currentUrl: string): string {
+  const tab = appName === "Safari" ? "current tab" : "active tab";
+  return [
+    "considering case",
+    `tell application "${escapeAppleScript(appName)}"`,
+    "  if (count of windows) = 0 then return \"refresh:0\"",
+    `  set observedTab to ${tab} of front window`,
+    `  if URL of observedTab is not "${escapeAppleScript(currentUrl)}" then return "refresh:0"`,
+    // Assigning the same URL reloads this exact tab and reattaches its content
+    // scripts without changing the address or navigating to a blocker page.
+    `  set URL of observedTab to "${escapeAppleScript(currentUrl)}"`,
+    "  return \"refresh:1\"",
+    "end tell",
+    "end considering"
+  ].join("\n");
+}
+
+export async function refreshActiveBrowserTab(appName: string, currentUrl: string): Promise<BrowserRedirectResult> {
+  if (!["Safari", "Google Chrome"].includes(appName) || !/^https?:\/\//iu.test(currentUrl)) {
+    return { ok: false, matched: false, error: "Not a supported page" };
+  }
+  try {
+    const count = parseBrowserRedirectCount(await runAppleScript(browserRefreshScript(appName, currentUrl), 1500));
+    return { ok: count !== null, matched: count === 1, method: "browser-protection-refresh" };
+  } catch (error) { return { ok: false, matched: false, error: simplifyError(error) }; }
 }
 
 async function redirectSafariTab(appName: string, url: string, options: { currentUrl?: string } = {}) {
@@ -1011,6 +1069,13 @@ function consumeHumanActivityOutput(child: ChildProcessWithoutNullStreams, chunk
   const framed = splitHumanActivityOutput(humanActivityOutput, chunk);
   humanActivityOutput = framed.remainder;
   for (const line of framed.lines) {
+    const application = parseApplicationActivity(line);
+    if (application) {
+      humanActivityLastWatchAliveAt = Date.now();
+      recentHumanActivity = null;
+      notifyBrowserActivity(application.kind, application.application);
+      continue;
+    }
     if (parseBrowserActivityWatchHeartbeat(line)) {
       humanActivityLastWatchAliveAt = Date.now();
       continue;
@@ -1041,8 +1106,8 @@ function consumeHumanActivityOutput(child: ChildProcessWithoutNullStreams, chunk
   }
 }
 
-function notifyBrowserActivity(kind: BrowserActivityKind): void {
-  const signal = { kind, at: Date.now() };
+function notifyBrowserActivity(kind: BrowserActivityKind, application?: ApplicationInstance): void {
+  const signal = { kind, at: Date.now(), application };
   for (const listener of browserActivityListeners) {
     try {
       listener(signal);

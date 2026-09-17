@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -39,6 +40,27 @@ static int64_t monotonicMilliseconds(void) {
   return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
 }
 
+static void printApplicationActivity(NSNotification *notification, NSString *kind) {
+  NSRunningApplication *app = notification.userInfo[NSWorkspaceApplicationKey];
+  if (!watchBrowserActivity) return;
+  if (!app || !app.bundleIdentifier || !app.launchDate) {
+    printf("wake\t%s\n", kind.UTF8String);
+    return;
+  }
+  NSDictionary *info = [NSBundle bundleWithURL:app.bundleURL].infoDictionary ?: @{};
+  NSDictionary *frame = @{
+    @"kind": kind, @"app": app.localizedName ?: @"",
+    @"bundleId": app.bundleIdentifier, @"pid": @(app.processIdentifier),
+    @"launchedAt": @(app.launchDate.timeIntervalSince1970),
+    @"bundleInfo": @{
+      @"CFBundleURLTypes": info[@"CFBundleURLTypes"] ?: @[],
+      @"CFBundleDocumentTypes": info[@"CFBundleDocumentTypes"] ?: @[]
+    }
+  };
+  NSData *json = [NSJSONSerialization dataWithJSONObject:frame options:0 error:nil];
+  if (json) printf("application\t%.*s\n", (int)json.length, (const char *)json.bytes);
+}
+
 @interface VigilWorkspaceObserver : NSObject
 - (void)applicationActivated:(NSNotification *)notification;
 - (void)applicationLaunched:(NSNotification *)notification;
@@ -46,13 +68,11 @@ static int64_t monotonicMilliseconds(void) {
 
 @implementation VigilWorkspaceObserver
 - (void)applicationActivated:(NSNotification *)notification {
-  (void)notification;
-  if (watchBrowserActivity) printf("wake\tactivate\n");
+  printApplicationActivity(notification, @"activate");
 }
 
 - (void)applicationLaunched:(NSNotification *)notification {
-  (void)notification;
-  if (watchBrowserActivity) printf("wake\tlaunch\n");
+  printApplicationActivity(notification, @"launch");
 }
 @end
 
@@ -114,9 +134,14 @@ static NSRunningApplication *currentFrontmostApplication(void) {
 }
 
 static void drainWorkspaceNotifications(void) {
-  [[NSRunLoop currentRunLoop]
-    runMode:NSDefaultRunLoopMode
-    beforeDate:[NSDate date]];
+  // This command-line helper has no AppKit event loop to drain autoreleased
+  // objects. Even an idle watch creates a date and processes notifications on
+  // every iteration, so bound their lifetime independently of sample requests.
+  @autoreleasepool {
+    [[NSRunLoop currentRunLoop]
+      runMode:NSDefaultRunLoopMode
+      beforeDate:[NSDate date]];
+  }
 }
 
 static void printHumanActivitySample(void) {
@@ -140,7 +165,7 @@ static void printHumanActivitySample(void) {
   }
 }
 
-int main(int argc, const char *argv[]) {
+static int runHelper(int argc, const char *argv[]) {
   char request[16];
   watchBrowserActivity = argc > 1
     && strcmp(argv[1], "--watch-browser-activity") == 0;
@@ -202,5 +227,23 @@ int main(int argc, const char *argv[]) {
     printHumanActivitySample();
   }
   [workspaceNotifications removeObserver:workspaceObserver];
+  [workspaceObserver release];
   return 0;
+}
+
+int main(int argc, const char *argv[]) {
+  @autoreleasepool {
+    if (argc == 5 && strcmp(argv[1], "--quit-application-instance") == 0) {
+      NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:atoi(argv[2])];
+      NSString *bundleId = [NSString stringWithUTF8String:argv[3]];
+      // Bind the action to this launch, never a name or a reused PID. Vigil's
+      // enforcement runtime and the supported browsers are never targets here.
+      if (!app || !app.launchDate || ![app.bundleIdentifier isEqualToString:bundleId]
+          || fabs(app.launchDate.timeIntervalSince1970 - atof(argv[4])) > 0.000001
+          || [bundleId hasPrefix:@"tech.caseline.vigil"]
+          || [@[@"com.apple.Safari", @"com.google.Chrome", @"com.openai.codex", @"com.openai.chat", @"com.apple.finder"] containsObject:bundleId]) return 2;
+      return [app forceTerminate] ? 0 : 1;
+    }
+    return runHelper(argc, argv);
+  }
 }

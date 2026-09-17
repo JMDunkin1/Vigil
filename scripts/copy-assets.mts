@@ -57,7 +57,15 @@ async function makeExtensionScriptsClassic(): Promise<void> {
   // emits a trailing `export {};`, which Chrome rejects before Vigil can run.
   for (const name of ["background.js", "blocked.js", "content.js", "google-safe-search.js", "options.js"]) {
     const path = join(runtimeRoot, "extension", name);
-    const source = await readFile(path, "utf8");
+    let source = await readFile(path, "utf8");
+    if (name === "google-safe-search.js") {
+      // Inline the same pure matcher used by the server into the classic
+      // document-start script; no runtime import or server round-trip needed.
+      const matcher = (await readFile(join(runtimeRoot, "src/contextualExplicitSearch.js"), "utf8"))
+        .replace(/^export /gmu, "");
+      source = source.replace(/^import .*contextualExplicitSearch\.js["'];?\s*$/mu, matcher);
+      source += "\nexport {};\n";
+    }
     const classic = source.replace(/\nexport \{\};?\s*$/u, "\n");
     if (classic === source) throw new Error(`Vigil extension build did not contain the expected module marker in ${name}.`);
     await writeFile(path, classic, "utf8");

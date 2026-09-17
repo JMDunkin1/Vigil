@@ -74,7 +74,7 @@ function clean(values: readonly string[]): string[] {
 
 function isUnambiguousPageTerm(value: string): boolean {
   const term = value.trim().toLowerCase();
-  return Boolean(term && !term.includes("%") && term !== "18+" && term !== "18-plus" && term !== "18plus");
+  return Boolean(term && !term.includes("%") && term !== "xxx" && term !== "18+" && term !== "18-plus" && term !== "18plus");
 }
 
 function siteLabel(value: string): string {

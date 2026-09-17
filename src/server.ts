@@ -788,6 +788,9 @@ async function dispatchRequest(
 }
 
 const READ_ONLY_API_ROUTES = new Set([
+  // Browser attestation updates only its short-lived in-memory lease. It must
+  // not wait behind startup checks or unrelated durable state transactions.
+  "browserFilterHealth",
   "accountSession", "accountSignup", "accountLogin", "accountLogout",
   "health", "state", "ruleExplain", "diagnosticExport", "appUpdateStatus", "appUpdateStart", "appRelaunch", "extensionPairing",
   "launchAgentInstall", "hostsApply", "safariFilterApply", "chromeSafeSearchApply"

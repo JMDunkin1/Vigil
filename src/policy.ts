@@ -13,6 +13,7 @@ import {
   STRICT_UNSUPPORTED_BROWSERS
 } from "./defaults.js";
 import { matchExplicitPersonSearchUrl } from "./explicitPersonSearch.js";
+import { matchContextualExplicitSearchUrl, matchExplicitXxxSearchUrl } from "./contextualExplicitSearch.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { parseClock } from "./time.js";
 import type { ActivePolicy, DeviceTarget, DeviceTargetInput, IntentionalPlanBlock, LockLevel, PolicyPhase, PolicyPhaseKind, Profile, Schedule, VigilState, Session } from "./types.js";
@@ -739,6 +740,12 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   if (!profile) return null;
   const parsed = parseHttpUrl(value);
   if (!parsed) return null;
+  if (profileHasExplicitSearchProtection(profile) && matchContextualExplicitSearchUrl(parsed)) {
+    return {
+      pattern: "contextual-explicit-search", label: "Explicit search on a mixed-content platform",
+      hostname: normalizeHost(parsed.hostname), url: parsed.toString()
+    };
+  }
   const explicitPersonSearch = profileHasExplicitSearchProtection(profile)
     ? matchExplicitPersonSearchUrl(parsed)
     : null;
@@ -755,8 +762,10 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   for (const raw of profile.blockedUrlPatterns || []) {
     const pattern = normalizeUrlPattern(raw);
     if (!pattern) continue;
+    const explicitXxx = pattern === "xxx" && (parsed.hostname.toLowerCase().endsWith(".xxx") || matchExplicitXxxSearchUrl(parsed));
+    if (pattern === "xxx" && !explicitXxx) continue;
     const compactPattern = compactUrlPatternText(pattern);
-    const matchesRaw = candidates.some((candidate) => candidate.includes(pattern));
+    const matchesRaw = explicitXxx || candidates.some((candidate) => candidate.includes(pattern));
     const matchesCompact = compactPattern.length >= 4
       && compactCandidates.some((candidate) => candidate.includes(compactPattern));
     if (!matchesRaw && !matchesCompact) continue;

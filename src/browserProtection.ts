@@ -6,6 +6,7 @@ const HEALTH_TTL_MS = 8_000;
 const LOAD_WINDOW_MS = 1_500;
 const pageHealth = new Map<ProtectedBrowser, { url: string; seenAt: number }>();
 const unprotectedSince = new Map<ProtectedBrowser, number>();
+const refreshAttempted = new Set<ProtectedBrowser>();
 const discoveredBrowsers = new Map<string, string>();
 
 export function registerBrowserApplication(name: string, bundleId: string, handlesWebURLs: boolean): void {
@@ -44,6 +45,7 @@ export function recordBrowserFilterHealth(browser: ProtectedBrowser, url: string
   if (!key || revision !== BROWSER_FILTER_REVISION) return false;
   pageHealth.set(browser, { url: key, seenAt: now });
   unprotectedSince.delete(browser);
+  refreshAttempted.delete(browser);
   return true;
 }
 
@@ -63,7 +65,24 @@ export function browserPageNeedsProtection(name: string, value: string, now = Da
 }
 
 export function resetBrowserProtectionHealthForTest(): void {
-  pageHealth.clear(); unprotectedSince.clear(); discoveredBrowsers.clear();
+  pageHealth.clear(); unprotectedSince.clear(); refreshAttempted.clear(); discoveredBrowsers.clear();
+}
+
+export function takeBrowserProtectionRefresh(name: string, value: string, now = Date.now()): boolean {
+  const browser = protectedBrowser(name);
+  const url = pageKey(value);
+  if (!browser || !url || refreshAttempted.has(browser)) return false;
+  const host = new URL(url).hostname;
+  if (["127.0.0.1", "localhost", "[::1]"].includes(host)) return false;
+  const health = pageHealth.get(browser);
+  // Normal navigation must not be refreshed again. Repair only a cold runtime
+  // or a previously attested page whose companion lost its connection.
+  if (health && (health.url !== url || (now >= health.seenAt && now - health.seenAt < HEALTH_TTL_MS))) return false;
+  const started = unprotectedSince.get(browser);
+  if (started === undefined || now < started || now - started >= LOAD_WINDOW_MS) return false;
+  refreshAttempted.add(browser);
+  // Consuming this attempt never resets or extends the existing load deadline.
+  return true;
 }
 
 export function browserFilterHealthSummary(now = Date.now()) {

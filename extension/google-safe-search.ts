@@ -1,9 +1,11 @@
+import { containsContextualExplicitSearch, containsExplicitXxxSearchText, matchContextualExplicitSearchUrl } from "../src/contextualExplicitSearch.js";
+
 const GOOGLE_SEARCH_HOSTNAMES = new Set(["google.com", "www.google.com", "images.google.com"]);
 const EXPLICIT_SEARCH_PARAMETER_NAMES = new Set([
   "q", "query", "search_query", "search", "searchterm", "search_term",
-  "keyword", "keywords", "term", "text", "p", "k", "s", "wd"
+  "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag"
 ]);
-const EXPLICIT_SEARCH_PATTERN = /porn|porno|prno|p0rn|xxx|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(?:\+|plus|-plus)/iu;
+const EXPLICIT_SEARCH_PATTERN = /porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(?:\+|plus|-plus)/iu;
 const PERSON_EXPOSURE_MARKERS = new Set([
   "leak", "leaks", "leaked", "leakd", "lek", "leks",
   "nud", "nuds", "nude", "nudes", "nued", "naked", "topless"
@@ -45,23 +47,26 @@ function explicitSearchBlockRedirect(rawUrl: string, baseUrl = location.href): s
     return null;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (matchContextualExplicitSearchUrl(url)) return chrome.runtime.getURL("blocked.html");
   for (const [name, rawValue] of url.searchParams) {
     if (!EXPLICIT_SEARCH_PARAMETER_NAMES.has(name.toLowerCase())) continue;
-    if (containsExplicitSearchText(rawValue)) return chrome.runtime.getURL("blocked.html");
+    if (containsExplicitSearchText(rawValue, url.hostname)) return chrome.runtime.getURL("blocked.html");
   }
   const decodedPath = decodeNestedSearchValue(url.pathname);
   const decodedHash = decodeNestedSearchValue(url.hash.replace(/^#/u, ""));
-  if ((SEARCH_ROUTE_PATTERN.test(decodedPath) && containsExplicitSearchText(decodedPath))
-    || (SEARCH_ROUTE_PATTERN.test(decodedHash) && containsExplicitSearchText(decodedHash))) {
+  if ((SEARCH_ROUTE_PATTERN.test(decodedPath) && containsExplicitSearchText(decodedPath, url.hostname))
+    || (SEARCH_ROUTE_PATTERN.test(decodedHash) && containsExplicitSearchText(decodedHash, url.hostname))) {
     return chrome.runtime.getURL("blocked.html");
   }
   return null;
 }
 
-function containsExplicitSearchText(rawValue: string): boolean {
+function containsExplicitSearchText(rawValue: string, hostname = new URL(location.href).hostname): boolean {
   const decoded = decodeNestedSearchValue(rawValue);
   return EXPLICIT_SEARCH_PATTERN.test(decoded)
     || EXPLICIT_SEARCH_PATTERN.test(decoded.replace(/\+/gu, " "))
+    || containsContextualExplicitSearch(decoded, hostname)
+    || containsExplicitXxxSearchText(decoded)
     || containsExplicitPersonSearchText(decoded);
 }
 

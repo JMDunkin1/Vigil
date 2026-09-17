@@ -29,6 +29,8 @@ assert.deepEqual(committed, expected, "the iOS text policy must stay generated f
 assert.ok(expected.terms.includes("toongod"));
 assert.ok(expected.terms.includes("honeytoon"));
 assert.ok(expected.terms.includes("porn"));
+assert.equal(expected.terms.includes("xxx"), false, "page prose must not be classified by incidental XXX or Roman numerals");
+assert.ok(expected.phrases.includes("xxx videos"));
 assert.equal(expected.terms.includes("18+"), false, "ambiguous age-gate text remains a URL-only rule");
 assert.equal(expected.terms.includes("croxyproxy"), false, "circumvention domains must remain network-only rules");
 assert.equal(expected.terms.includes("wildlife"), false, "priority adult domains must not become generic page-text terms");

@@ -1,4 +1,6 @@
 import { performance } from "node:perf_hooks";
+import { takeBrowserProtectionRefresh, unsupportedBrowser } from "./browserProtection.js";
+import { quitApplicationInstance, refreshActiveBrowserTab } from "./macos.js";
 import { createHash } from "node:crypto";
 import { addEvent, DATA_DIR, saveState, STATE_SEAL_KEY_PATH } from "./store.js";
 import { PORT } from "./defaults.js";
@@ -43,6 +45,8 @@ interface MonitorContext {
   browserActivityHealthy?: () => boolean;
   browserActivityBurstDependencies?: Partial<BrowserActivityBurstSchedulerDependencies>;
   browserRedirect?: typeof redirectActiveBrowserTab;
+  applicationQuit?: typeof quitApplicationInstance;
+  browserRefresh?: typeof refreshActiveBrowserTab;
   runtimeUsageCheckpointEnabled?: boolean;
   runtimeUsageCheckpointWriter?: typeof saveRuntimeUsageCheckpoint;
   runtimeUsageCheckpointLocation?: { checkpointPath: string; keyPath: string };
@@ -631,6 +635,9 @@ export class Monitor implements MonitorHandle {
   browserActivityHealthy: NonNullable<MonitorContext["browserActivityHealthy"]>;
   browserActivityBurstDependencies: Partial<BrowserActivityBurstSchedulerDependencies>;
   browserActivityUnsubscribe: (() => void) | null;
+  applicationQuit: typeof quitApplicationInstance;
+  browserRefresh: typeof refreshActiveBrowserTab;
+  applicationQuits = new Map<string, Promise<boolean>>();
   browserActivityBurst: BrowserActivityBurstScheduler | null;
   browserActivityMutationAdmissionOpen: boolean;
   browserActivityContinuityGeneration: number;
@@ -662,6 +669,8 @@ export class Monitor implements MonitorHandle {
     browserActivityHealthy,
     browserActivityBurstDependencies,
     browserRedirect,
+    applicationQuit,
+    browserRefresh,
     runtimeUsageCheckpointEnabled,
     runtimeUsageCheckpointWriter,
     runtimeUsageCheckpointLocation,
@@ -781,6 +790,8 @@ export class Monitor implements MonitorHandle {
         : () => this.browserActivityUnsubscribe !== null);
     this.browserActivityBurstDependencies = browserActivityBurstDependencies || {};
     this.browserActivityUnsubscribe = null;
+    this.applicationQuit = applicationQuit || quitApplicationInstance;
+    this.browserRefresh = browserRefresh || refreshActiveBrowserTab;
     this.browserActivityBurst = null;
     this.browserActivityMutationAdmissionOpen = true;
     this.browserActivityContinuityGeneration = 0;
@@ -880,7 +891,19 @@ export class Monitor implements MonitorHandle {
         if (this.stopping || this.browserActivityBurst !== burst) return;
         this.scheduleActivityAccounting();
         if (signal.kind === "activate" || signal.kind === "launch") {
-          this.handleApplicationActivity(signal.kind, burst);
+          if (!signal.application) {
+            this.handleApplicationActivity(signal.kind, burst);
+            return;
+          }
+          const operation = (async () => {
+            let handled = false;
+            try { handled = await this.enforceRestrictedBrowserInstance(signal); }
+            catch (error) {
+              this.setComponentHealth("process-sweep", `Application event enforcement failed: ${errorMessage(error)}`);
+            }
+            if (!handled && !this.stopping) this.handleApplicationActivity(signal.kind as "activate" | "launch", burst);
+          })();
+          this.trackOperationCompletion(operation);
           return;
         }
         burst.wake();
@@ -920,6 +943,40 @@ export class Monitor implements MonitorHandle {
         `Application ${kind} enforcement failed: ${errorMessage(error)}`
       );
     });
+  }
+
+  async enforceRestrictedBrowserInstance(signal: BrowserActivitySignal): Promise<boolean> {
+    const application = signal.application;
+    if (this.stopping || !application || !this.committedState.settings.protectedBrowsersOnly
+      || !unsupportedBrowser(application.app)) return false;
+    const state = structuredClone(this.committedState);
+    const sample = { app: application.app, hostname: "", url: "" };
+    const policy = policyForSample(state, this.committedUsage, sample, new Date(this.browserActivityNow()));
+    if (!policy || !shouldQuitAppForPolicy(state, policy, application.app)) return false;
+    const key = `${application.pid}:${application.launchedAt}`;
+    const pending = this.applicationQuits.get(key);
+    if (pending) return pending;
+    const operation = (async () => {
+      // Workspace identity lets us enforce without AppleScript, URL reads,
+      // process enumeration, grace timers, or waiting for the mutation queue.
+      const result = this.externalEffectsEnabled
+        ? await this.applicationQuit(application)
+        : { ok: true, method: "external-effects-isolated" };
+      this.queueBrowserActivityMutation(`application:${key}`, async () => {
+        addEvent(this.state, "blocked_app", {
+          app: application.app, policy: policy.session.title || policy.session.mode,
+          source: "application-event", escalated: true, result
+        });
+        this.status.lastEnforcement = {
+          type: "app", target: application.app, source: "application-event",
+          escalated: true, result, at: new Date().toISOString()
+        };
+      }, { persist: true, retryOnFailure: true });
+      return result.ok;
+    })();
+    this.applicationQuits.set(key, operation);
+    try { return await operation; }
+    finally { this.applicationQuits.delete(key); }
   }
 
   async enforceActivatedApplication(burst: BrowserActivityBurstScheduler): Promise<void> {
@@ -1026,6 +1083,7 @@ export class Monitor implements MonitorHandle {
     }
 
     if (this.browserActivityTargetAlreadyEvaluated(candidateTarget, continuityGeneration, policyGeneration)) return true;
+    await this.refreshBrowserProtection(candidate);
     this.queueBrowserActivityMutation(`check:${continuityGeneration}:${policyGeneration}:${candidateTarget}`, async () => {
       // A later probe may have observed a non-browser app or an empty URL while
       // this check waited behind serialized monitor work. Such a check belongs
@@ -1067,6 +1125,15 @@ export class Monitor implements MonitorHandle {
     this.lastBrowserActivityEvaluatedTarget = "";
     this.lastBrowserActivityEvaluatedGeneration = -1;
     this.lastBrowserActivityEvaluatedPolicyGeneration = -1;
+  }
+
+  async refreshBrowserProtection(front: FrontSample): Promise<void> {
+    if (!this.committedState.settings.protectedBrowsersOnly || !front.url) return;
+    const state = structuredClone(this.committedState);
+    const now = this.browserActivityNow();
+    if (policyForSample(state, this.committedUsage, front, new Date(now))) return;
+    if (!takeBrowserProtectionRefresh(front.app, front.url, now)) return;
+    if (this.externalEffectsEnabled) await this.browserRefresh(front.app, front.url);
   }
 
   currentBrowserActivityPolicyGeneration(now = this.browserActivityNow()): number {
@@ -2350,6 +2417,7 @@ export class Monitor implements MonitorHandle {
     const policy = this.policyForTarget(evaluationSample);
     if (!policy) {
       if (await this.pauseIntentionalUse(evaluationSample)) return;
+      await this.refreshBrowserProtection(evaluationSample);
       this.status.lastEnforcement = null;
       if (front.app) this.appBlockHistory.delete(front.app);
       return;
@@ -2548,6 +2616,7 @@ export class Monitor implements MonitorHandle {
     this.markCoolingDown(key);
 
     const decision = appQuitEscalationDecision(this.state, this.appBlockHistory.get(front.app) || null);
+    const force = decision.force || policy.profile.id === "protected-browser-required";
     this.appBlockHistory.set(front.app, decision.record);
     this.pruneAppBlockHistory();
 
@@ -2555,18 +2624,18 @@ export class Monitor implements MonitorHandle {
       app: front.app,
       hostname: front.hostname,
       url: front.url,
-      force: decision.force,
+      force,
       policyId: policy.session?.id || ""
-    }, async () => await quitApp(front.app, { force: decision.force }));
+    }, async () => await quitApp(front.app, { force }));
     addEvent(this.state, "blocked_app", {
       app: front.app,
       policy: policy.session.title || policy.session.mode,
       source: options.source || "frontmost",
-      escalated: decision.force,
+      escalated: force,
       attempts: decision.record.attempts,
       result
     });
-    this.status.lastEnforcement = { type: "app", target: front.app, source: options.source || "frontmost", escalated: decision.force, attempts: decision.record.attempts, result, at: new Date().toISOString() };
+    this.status.lastEnforcement = { type: "app", target: front.app, source: options.source || "frontmost", escalated: force, attempts: decision.record.attempts, result, at: new Date().toISOString() };
   }
 
   async sweepBlockedProcesses(now: number, options: {

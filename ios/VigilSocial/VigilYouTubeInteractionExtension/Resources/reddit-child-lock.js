@@ -3,7 +3,7 @@
   const redditHost = host => /(^|\.)reddit\.com$/i.test(host);
   if (!redditHost(location.hostname)) return;
   const text = value => String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
-  const explicit = value => /(?:^|[\W_])sex(?:$|[\W_])|porn|p0rn|prno|xxx|nsfw|hentai|rule[\s_-]*34|gonewild|onlyfans|fansly|nudes?|naked|blowjob|handjob|cumshot|hardcore\s+sex|sex\s+(?:videos?|tapes?)/i.test(text(value));
+  const explicit = value => /(?:^|[\W_])sex(?:$|[\W_])|porn|p0rn|prno|xxx[\s_-]+(?:videos?|photos?|pics?|porn)|nsfw|hentai|rule[\s_-]*34|gonewild|onlyfans|fansly|nudes?|naked|blowjob|handjob|cumshot|hardcore\s+sex|sex\s+(?:videos?|tapes?)/i.test(text(value));
   const ageConfirmation = value => /\b(?:i\s*(?:am|'m|’m)|im)\s+(?:over\s+)?(?:18|eighteen)\b|\b(?:yes|continue|enter|view|confirm).{0,30}(?:18\+|over\s+18|adult|mature|nsfw)\b/i.test(text(value));
   const safeURL = value => {
     let url;

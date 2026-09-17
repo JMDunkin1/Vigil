@@ -1181,8 +1181,8 @@ import { recordUsage } from "../src/usage.js";
     "the native watcher must expose liveness without requiring another full monitor sweep");
   assert.match(helperSource, /NSWorkspaceDidActivateApplicationNotification/u);
   assert.match(helperSource, /NSWorkspaceDidLaunchApplicationNotification/u);
-  assert.match(helperSource, /printf\("wake\\tactivate\\n"\)/u);
-  assert.match(helperSource, /printf\("wake\\tlaunch\\n"\)/u);
+  assert.match(helperSource, /printApplicationActivity\(notification, @"activate"\)/u);
+  assert.match(helperSource, /printApplicationActivity\(notification, @"launch"\)/u);
   assert.match(helperSource, /strcmp\(request, "watch\\n"\)/u);
   assert.match(helperSource, /strcmp\(request, "unwatch\\n"\)/u);
   assert.doesNotMatch(helperSource, /CGEventTapCreate|CGEventGetIntegerValueField|CGEventKeyboardGetUnicodeString|NSEvent\.keyCode/u,

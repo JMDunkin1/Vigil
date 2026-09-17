@@ -1,7 +1,12 @@
 (() => {
   'use strict';
   if (!/^https?:$/.test(location.protocol)) return;
-  const explicitTitle = value => /(?:^|[^a-z0-9])(?:xxx|sex|porn(?:ography|ographic)?|p0rn|hentai|nsfw|gonewild|onlyfans|fansly|blowjob|cumshot)(?:$|[^a-z0-9])|\b(?:nude|naked|sex)\s+(?:videos?|photos?|tapes?)\b/i.test(String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, ''));
+  const isContextualPlatform = /(^|\.)(reddit\.com|deviantart\.com|artstation\.com|pixiv\.net|behance\.net|newgrounds\.com|furaffinity\.net|tumblr\.com|pinterest\.(?:com|co\.uk)|x\.com|twitter\.com)$/i.test(location.hostname);
+  const explicitTitle = value => {
+    const text = String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '');
+    return /(?:^|[^a-z0-9])(?:porn(?:ography|ographic)?|p0rn|hentai|nsfw|gonewild|onlyfans|fansly|blowjob|cumshot)(?:$|[^a-z0-9])|\b(?:nude|naked|sex|xxx)\s+(?:videos?|photos?|tapes?)\b/i.test(text)
+      || (isContextualPlatform && /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu.test(text));
+  };
   const isX = /(^|\.)(x\.com|twitter\.com)$/i.test(location.hostname);
   const sensitiveWarning = value => /(?:this (?:post|media|profile|account)|the following media|content warning)[\s\S]{0,100}(?:sensitive|adult|nudity|sexual)|^(?:sensitive content|adult content|age.restricted content)$/i.test(String(value || '').trim());
   const scanX = root => {
