@@ -1807,7 +1807,7 @@ export class Monitor implements MonitorHandle {
       return Boolean(
         policy &&
         (!payload.policyId || payload.policyId === policy.session?.id) &&
-        (lockdown || state.settings.appQuitEnabled) &&
+        (lockdown || policy.profile.id === "protected-browser-required" || state.settings.appQuitEnabled) &&
         shouldQuitAppForPolicy(state, policy, app)
       );
     }
@@ -2394,7 +2394,7 @@ export class Monitor implements MonitorHandle {
       return;
     }
 
-    if ((lockdown || this.state.settings.appQuitEnabled) && shouldQuitAppForPolicy(this.state, policy, front.app)) {
+    if ((lockdown || policy.profile.id === "protected-browser-required" || this.state.settings.appQuitEnabled) && shouldQuitAppForPolicy(this.state, policy, front.app)) {
       await this.blockApp(evaluationSample, policy);
     }
   }
@@ -2569,12 +2569,12 @@ export class Monitor implements MonitorHandle {
     runningApps?: Awaited<ReturnType<typeof listRunningAppNames>>;
   } = {}): Promise<void> {
     const lockdown = integrityLockdownActive(this.state) || isFullLockoutPolicy(activePolicy(this.state, new Date(now)));
-    if (!lockdown && (!this.state.settings.processSweepEnabled || !this.state.settings.appQuitEnabled)) {
+    if (!lockdown && !this.state.settings.protectedBrowsersOnly && (!this.state.settings.processSweepEnabled || !this.state.settings.appQuitEnabled)) {
       this.setComponentDisabled("process-sweep");
       return;
     }
     if (!options.force && now < this.nextProcessSweepAt) return;
-    const interval = lockdown ? 3 : Math.max(3, Number(this.state.settings.processSweepIntervalSeconds || 15));
+    const interval = (lockdown || this.state.settings.protectedBrowsersOnly) ? 3 : Math.max(3, Number(this.state.settings.processSweepIntervalSeconds || 15));
     this.nextProcessSweepAt = now + interval * 1000;
 
     const running = options.runningApps || await listRunningAppNames();

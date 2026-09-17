@@ -147,7 +147,7 @@ interface ExtensionPauseActionMessage {
   replacement?: unknown;
 }
 
-interface ExtensionMessage extends ExtensionPulseMessage, ExtensionPauseActionMessage { youtube?: Record<string, unknown> }
+interface ExtensionMessage extends ExtensionPulseMessage, ExtensionPauseActionMessage { youtube?: Record<string, unknown>; revision?: string }
 
 interface ExtensionCheckResult {
   ok?: boolean;
@@ -293,6 +293,14 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse: (response?: unknown) => void) => {
+  if (message?.type === "VIGIL_BROWSER_FILTER_HEALTH") {
+    if (sender.frameId !== 0 || !sender.tab?.active || !sender.url || message.revision !== "2026-09-17.1") return false;
+    void fetchVigil("/api/extension/browser-health", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url: sender.url, revision: message.revision })
+    }).then(response => response.json()).then(sendResponse).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   if (message?.type === "VIGIL_YOUTUBE") {
     const youtubeRequest = (async () => {
       const source = new URL(sender.url || "about:blank");

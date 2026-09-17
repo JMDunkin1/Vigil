@@ -6322,10 +6322,14 @@ enum DOMAdapters {
           .sort((left, right) => Math.abs(left.rect.left - railRect.left)
             - Math.abs(right.rect.left - railRect.left));
         const anchor = candidates[0];
-        if (!anchor) return null;
+        // At the leading edge, preserve the edge itself, including an own
+        // profile shortcut which need not have a story author/relationship.
+        const atStart = Math.abs(rail.scrollLeft) <= 1;
+        if (!anchor && !atStart) return null;
         const state = {
-          username: anchor.username,
-          offset: anchor.rect.left - railRect.left,
+          atStart,
+          username: anchor?.username || '',
+          offset: anchor ? anchor.rect.left - railRect.left : 0,
           scrollLeft: rail.scrollLeft
         };
         storyRailViewportStates.set(rail, state);
@@ -6333,7 +6337,13 @@ enum DOMAdapters {
         return state;
       };
       const restoreStoryRailViewport = (rail, controls, state) => {
-        if (!(rail instanceof HTMLElement) || !state?.username) return false;
+        if (!(rail instanceof HTMLElement) || !state) return false;
+        if (state.atStart && Math.abs(rail.scrollLeft - state.scrollLeft) <= 1) {
+          rail.scrollLeft = 0;
+          rememberStoryRailViewport(rail, controls);
+          return true;
+        }
+        if (!state.username) return false;
         const control = controls.find((candidate) => storyAuthor(candidate) === state.username
           && ['self', 'friend'].includes(candidate.dataset.vigilInstagramStoryRelationship));
         const item = control ? storyItemFor(control) : null;
@@ -6396,7 +6406,8 @@ enum DOMAdapters {
         if (!isFeed) lastStoryRailViewportState = null;
         const rail = isFeed ? storyRailFor(controls) : null;
         const viewportState = rail instanceof HTMLElement
-          ? storyRailViewportStates.get(rail) || lastStoryRailViewportState
+          ? (Math.abs(rail.scrollLeft) <= 1 ? { atStart: true, scrollLeft: rail.scrollLeft }
+            : storyRailViewportStates.get(rail) || lastStoryRailViewportState)
           : null;
         // Instagram's virtual row retains the width, absolute offsets and
         // spacers of accounts we have hidden. Clamp to a compact layout of

@@ -349,6 +349,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         #if DEBUG
         if #available(iOS 16.4, *) { webView.isInspectable = true }
         #endif
+        // Opt in only for a paired developer-tool launch when diagnosing the
+        // installed Personal Team build. Ordinary launches remain unchanged.
+        if ProcessInfo.processInfo.environment["VIGIL_WEB_INSPECT"] == "1",
+           #available(iOS 16.4, *) { webView.isInspectable = true }
         return webView
     }
 

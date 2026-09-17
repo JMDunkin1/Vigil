@@ -121,6 +121,7 @@ export interface ActivePolicy {
 }
 
 export interface AppSettings {
+  protectedBrowsersOnly: boolean;
   pollIntervalMs: number;
   idleUsageTrackingEnabled: boolean;
   idleUsageThresholdSeconds: number;
@@ -775,6 +776,8 @@ export interface IosSettings {
   hardenRemoval: boolean;
   restrictInstallAndErase: boolean;
   allowSafariHistoryClearing: boolean;
+  /** Owner-authorized coexistence while the Snapchat companion cannot sign in. */
+  allowNativeSnapchat?: boolean;
   blockedAppBundleIds: string[];
   allowedAppBundleIds: string[];
   deniedUrls: string[];

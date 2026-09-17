@@ -1,3 +1,4 @@
+import { bundleDeclaresWebBrowser, registerBrowserApplication } from "./browserProtection.js";
 import { execFile, spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -253,10 +254,30 @@ export async function listRunningAppNames() {
       timeout: 2500,
       maxBuffer: 1024 * 512
     });
+    await discoverBrowserApplications(stdout);
     return { ok: true, apps: parseProcessList(stdout) };
   } catch (error) {
     return { ok: false, apps: [], error: simplifyError(error) };
   }
+}
+
+const browserBundleCheckedAt = new Map<string, number>();
+async function discoverBrowserApplications(output: string): Promise<void> {
+  const bundles = new Map<string, string>();
+  for (const command of output.split(/\r?\n/)) {
+    const match = command.trim().match(/^(.*\.app)\/Contents\/MacOS\/[^/]+$/);
+    if (match) bundles.set(match[1], processDisplayName(command));
+  }
+  await Promise.all([...bundles].map(async ([path, name]) => {
+    if (Date.now() - (browserBundleCheckedAt.get(path) || 0) < 30_000) return;
+    try {
+      const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", join(path, "Contents/Info.plist")], { timeout: 2000, maxBuffer: 1024 * 1024 });
+      const info = JSON.parse(stdout) as { CFBundleIdentifier?: string } & Parameters<typeof bundleDeclaresWebBrowser>[0];
+      const web = bundleDeclaresWebBrowser(info);
+      registerBrowserApplication(name, info.CFBundleIdentifier || "", web);
+      browserBundleCheckedAt.set(path, Date.now());
+    } catch { /* Known browser names remain blocked if bundle inspection fails. */ }
+  }));
 }
 
 export function parseProcessList(output = ""): string[] {

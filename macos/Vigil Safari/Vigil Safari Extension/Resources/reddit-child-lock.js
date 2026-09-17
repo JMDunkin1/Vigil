@@ -1,0 +1,1 @@
+../../../../ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js

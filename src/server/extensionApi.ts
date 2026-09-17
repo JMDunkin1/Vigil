@@ -1,3 +1,4 @@
+import { browserFilterHealthSummary, recordBrowserFilterHealth } from "../browserProtection.js";
 import { youtubeTokenMatches } from "../youtubeConnection.js";
 import { youtubeAction } from "../youtubeLimits.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -47,13 +48,36 @@ export async function handleExtensionApiRoute(
     return true;
   }
 
+  if (method === "POST" && path === "/api/extension/browser-health") {
+    const chrome = trustedExtensionRequest(request);
+    const safari = !chrome && youtubeTokenMatches(request.headers["x-vigil-extension-token"]);
+    if (!chrome && !safari) {
+      sendJson(response, 403, { error: "Trusted browser companion required." }, extensionResponseCorsHeaders(request));
+      return true;
+    }
+    const body = await readBody(request);
+    if (body.action === "status") {
+      sendJson(response, 200, { ok: true, browsers: browserFilterHealthSummary() }, extensionResponseCorsHeaders(request));
+      return true;
+    }
+    const ok = recordBrowserFilterHealth(chrome ? "Google Chrome" : "Safari", String(body.url || ""), body.revision);
+    sendJson(response, ok ? 200 : 400, { ok }, extensionResponseCorsHeaders(request));
+    return true;
+  }
+
   if (method === "POST" && path === "/api/extension/youtube") {
     if (!trustedExtensionRequest(request) && !youtubeTokenMatches(request.headers["x-vigil-extension-token"])) {
       sendJson(response, 403, { error: "Trusted companion required." }, extensionResponseCorsHeaders(request));
       return true;
     }
-    const result = youtubeAction(state, await readBody(request));
-    await persistExtensionChanges(context, true, { state: true });
+    const body = await readBody(request);
+    const previousLedger = JSON.stringify(state.youtubeLimits);
+    const result = youtubeAction(state, body);
+    // Status reads and rejected/no-op actions must not rewrite the entire
+    // sealed runtime snapshot. Expiry and day rollover still persist.
+    if (JSON.stringify(state.youtubeLimits) !== previousLedger) {
+      await persistExtensionChanges(context, true, { state: true });
+    }
     sendJson(response, 200, result, extensionResponseCorsHeaders(request));
     return true;
   }

@@ -38,7 +38,8 @@ export const IOS_PANIC_ALLOWED_APP_BUNDLE_IDS = [
 ];
 const MAX_DENY_URLS = 500;
 const MIN_BULK_ADULT_DENY_URLS = 6;
-const MIN_PRIORITY_DOMAIN_BREADTH = 200;
+// Preserve the previous first 200 domains when adding Hot.com.
+const MIN_PRIORITY_DOMAIN_BREADTH = 201;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_ID_KEYS = new Set(IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS.map((value) => value.toLowerCase()));
 const IOS_EXPLICIT_SEARCH_TERM_KEYS = new Set(DEFAULT_EXPLICIT_SEARCH_TERMS.map(normalizedExplicitSearchTerm));
@@ -133,6 +134,7 @@ export function normalizeIosSettings(body: UnknownRecord = {}, existing: Partial
     hardenRemoval: body.hardenRemoval === undefined ? current.hardenRemoval !== false : parseBoolean(body.hardenRemoval, true),
     restrictInstallAndErase: body.restrictInstallAndErase === undefined ? current.restrictInstallAndErase !== false : parseBoolean(body.restrictInstallAndErase, true),
     allowSafariHistoryClearing: body.allowSafariHistoryClearing === undefined ? current.allowSafariHistoryClearing !== false : parseBoolean(body.allowSafariHistoryClearing, true),
+    allowNativeSnapchat: body.allowNativeSnapchat === undefined ? current.allowNativeSnapchat === true : parseBoolean(body.allowNativeSnapchat, false),
     blockedAppBundleIds: normalizeBundleIds([
       ...DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
       ...normalizeBundleIds(body.blockedAppBundleIds ?? body.blockedApps ?? current.blockedAppBundleIds ?? [])
@@ -498,6 +500,13 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
       ...focusedSocialBlockedBundleIds(focusedSocialSettings)
     ]);
   }
+  // Coexistence only changes the ordinary native-app restriction. Explicit
+  // time limits below and full lockouts still apply to both Snapchat apps.
+  if (settings.allowNativeSnapchat && !fullLockoutActive && !fullBrickActive) {
+    appBundleIds = appMode === "allowlist"
+      ? uniqueStrings([...appBundleIds, "com.toyopagroup.picaboo"])
+      : withoutBundleIds(appBundleIds, ["com.toyopagroup.picaboo"]);
+  }
   if (settings.blockApps && fullBrickActive && appMode !== "allowlist") {
     appBundleIds = uniqueStrings([
       ...appBundleIds,
@@ -850,14 +859,22 @@ function prioritizedDenyUrlsWithAdultReserve(
   priorityDomainUrls: readonly unknown[],
   adultUrls: readonly unknown[]
 ): string[] {
-  const higherPriority = uniqueUrls([...permanentUrls, ...policyUrls, ...userUrls]);
+  const candidates = uniqueUrls([...permanentUrls, ...policyUrls, ...userUrls]);
+  // Apple's BuiltIn list uses literal URL substrings (WebContentFilter docs).
+  // A q=porn entry already covers q=porno. Compact only covered query entries
+  // so adding a priority domain never spends a slot on the same search twice.
+  const higherPriority = candidates.filter(url => !url.includes("?") || !candidates.some(other =>
+    other !== url && other.includes("?") && url.startsWith(other)
+  ));
   const alreadyCovered = new Set([...higherPriority, ...priorityDomainUrls].map((url) => String(url).toLowerCase()));
   const novelAdultUrls = uniqueUrls(adultUrls).filter((url) => !alreadyCovered.has(url.toLowerCase()));
   const adultReserve = Math.min(MIN_BULK_ADULT_DENY_URLS, novelAdultUrls.length);
+  const coveredByPolicy = new Set(higherPriority.map(url => url.toLowerCase()));
+  const novelPriorityUrls = uniqueUrls(priorityDomainUrls).filter(url => !coveredByPolicy.has(url.toLowerCase()));
   const priorityDomainBudget = Math.max(0, MAX_DENY_URLS - higherPriority.length - adultReserve);
   return uniqueUrls([
     ...higherPriority,
-    ...priorityDomainUrls.slice(0, priorityDomainBudget),
+    ...novelPriorityUrls.slice(0, priorityDomainBudget),
     ...novelAdultUrls
   ]).slice(0, MAX_DENY_URLS);
 }

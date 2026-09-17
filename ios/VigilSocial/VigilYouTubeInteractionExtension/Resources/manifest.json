@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Vigil Focused Web Controls",
-  "version": "0.1.0",
-  "description": "Adds focused YouTube controls and removes platform-labeled mature media and reveal controls on Reddit and X.",
+  "version": "0.1.4",
+  "description": "Adds focused YouTube controls, locks Reddit adult-content controls, and filters explicit media titles across websites.",
   "host_permissions": [
     "https://youtube.com/*",
     "https://www.youtube.com/*",
@@ -14,7 +14,9 @@
     "https://x.com/*",
     "https://*.x.com/*",
     "https://twitter.com/*",
-    "https://*.twitter.com/*"
+    "https://*.twitter.com/*",
+    "http://*/*",
+    "https://*/*"
   ],
   "content_scripts": [
     {
@@ -32,6 +34,7 @@
         "https://*.twitter.com/*"
       ],
       "js": [
+        "reddit-child-lock.js",
         "youtube-parity.js"
       ],
       "run_at": "document_start",
@@ -59,8 +62,18 @@
         "youtube-limits.js"
       ],
       "run_at": "document_start",
-      "all_frames": true,
-      "world": "MAIN"
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "media-child-lock.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
   "permissions": [
@@ -71,7 +84,19 @@
   "background": {
     "scripts": [
       "youtube-background.js"
-    ],
-    "persistent": false
+    ]
+  },
+  "action": {
+    "default_title": "Vigil YouTube Controls",
+    "default_popup": "status.html",
+    "default_icon": {
+      "32": "icons/toolbar.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
   }
 }

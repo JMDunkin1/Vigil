@@ -15,6 +15,8 @@ struct RootView: View {
         blue: 20.0 / 255.0
     )
 
+    private static let youtubeDarkSurface = Color(white: 15.0 / 255.0)
+
     var body: some View {
         let service = store.selectedService
         filteredWebView(service: service)
@@ -39,7 +41,7 @@ struct RootView: View {
             : .bottom
         let surfaceColor = service == .instagram && isDark
             ? Self.instagramDarkSurface
-            : (isDark ? Color.black : Color.white)
+            : (isDark ? (service == .youtube ? Self.youtubeDarkSurface : Color.black) : Color.white)
         return ZStack {
             surfaceColor
                 .ignoresSafeArea()
@@ -55,7 +57,8 @@ struct RootView: View {
 
                 SocialWebView(
                     webView: primaryWebView,
-                    isDark: isDark
+                    isDark: isDark,
+                    backingColor: service == .youtube ? surfaceColor : nil
                 )
                     .id(ObjectIdentifier(primaryWebView))
                     .ignoresSafeArea(.container, edges: webViewSafeAreaEdges)
@@ -519,6 +522,7 @@ private struct SocialHealthOverlay: View {
 private struct SocialWebView: UIViewRepresentable {
     let webView: WKWebView
     let isDark: Bool
+    let backingColor: Color?
 
     func makeUIView(context: Context) -> WKWebView {
         applyInterfaceStyle(to: webView)
@@ -531,5 +535,9 @@ private struct SocialWebView: UIViewRepresentable {
 
     private func applyInterfaceStyle(to webView: WKWebView) {
         webView.overrideUserInterfaceStyle = isDark ? .dark : .light
+        if let backingColor {
+            webView.backgroundColor = UIColor(backingColor)
+            webView.scrollView.backgroundColor = UIColor(backingColor)
+        }
     }
 }

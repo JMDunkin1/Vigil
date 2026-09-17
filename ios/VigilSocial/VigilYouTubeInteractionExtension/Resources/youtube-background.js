@@ -1,4 +1,10 @@
 browser.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type === 'VIGIL_BROWSER_FILTER_HEALTH') {
+    if (sender.frameId !== 0 || !sender.tab?.active || !sender.url || message.revision !== '2026-09-17.1') return undefined;
+    return browser.runtime.sendNativeMessage('tech.caseline.vigil', {
+      action: 'browser-filter-health', url: sender.url, revision: message.revision
+    });
+  }
   if (message?.type !== 'VIGIL_YOUTUBE') return undefined;
   const host = new URL(sender.url || 'about:blank').hostname;
   if (!/^(www\.|m\.)?youtube\.com$/.test(host) || message.youtube?.action === 'external') return Promise.resolve({ ok: false });
@@ -32,7 +38,8 @@ browser.webNavigation.onCommitted.addListener(details => {
     if (details.transitionType === 'link' && !details.transitionQualifiers?.includes('forward_back')) await externalGrant(details.url, previous);
   })().catch(() => {});
 });
-browser.webNavigation.onCreatedNavigationTarget.addListener(details => {
+// Safari does not expose this optional event on every supported release.
+browser.webNavigation.onCreatedNavigationTarget?.addListener(details => {
   void (async () => {
     const key = `youtube-source:${details.sourceTabId}`;
     const previous = (await browser.storage.local.get(key))[key];

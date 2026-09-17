@@ -323,7 +323,7 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /const homeStoryControls[\s\S]*?:is\(main, \[role="main"\]\) button:has\(img\[alt\*="profile picture" i\]\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?controls\.forEach\(classifyHomeStory\)/u,
+  /const homeStoryControls[\s\S]*?:is\(main, \[role="main"\]\) button:has\(img\[alt\*="profile picture" i\]\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?canViewAccount\(username\)[\s\S]*?controls\.forEach\(classifyHomeStory\)/u,
   "Instagram Home Stories must classify both link and button trays with the mutual-friend verifier while retaining the viewer's own Story"
 );
 assert.match(
@@ -390,8 +390,8 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /vigilInstagramStoryGate = 'pending'[\s\S]*?const reconcileStoryRoute[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?location\.replace\(nextPath \|\| '\/'\)/u,
-  "Stories must remain concealed until the route author is self or a confirmed mutual friend"
+  /vigilInstagramStoryGate = 'pending'[\s\S]*?const reconcileStoryRoute[\s\S]*?canViewAccount\(username\)[\s\S]*?location\.replace\(nextPath \|\| '\/'\)/u,
+  "Stories must remain concealed until the route author is self, a confirmed mutual friend, or an explicitly allowed informational account"
 );
 assert.match(instagramStableAdapterSource,
   /const nextVerifiedStoryPath[\s\S]*?current < previous \? -1 : 1[\s\S]*?hasKnownStoryAccess\(new URL\(path, location.href\)\)/u,
@@ -677,11 +677,13 @@ assert.deepEqual(youtubeInteractionManifest.host_permissions, [
   "https://x.com/*",
   "https://*.x.com/*",
   "https://twitter.com/*",
-  "https://*.twitter.com/*"
-], "the interaction extension must stay confined to its maintained YouTube, Reddit, and X surfaces");
+  "https://*.twitter.com/*",
+  "http://*/*",
+  "https://*/*"
+], "the interaction extension must cover media labels across browsing surfaces");
 assert.deepEqual(
   youtubeInteractionManifest.content_scripts?.[0]?.js,
-  ["youtube-parity.js"],
+  ["reddit-child-lock.js", "youtube-parity.js"],
   "the interaction extension must ship its tested parity script"
 );
 assert.doesNotMatch(youtubeInteractionSource, /youtubeMinimize|MiniPlayer|miniplayer/u,

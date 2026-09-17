@@ -1,3 +1,4 @@
+import { browserPageNeedsProtection, unsupportedBrowser } from "../browserProtection.js";
 import { activeAppLockPolicy } from "../appLocks.js";
 import { matchAdultBlocklistHost } from "../adultBlocklist.js";
 import { matchContentFilterUrl } from "../contentFilters.js";
@@ -36,6 +37,18 @@ export type EnforcedPolicy = ActivePolicy & {
 export function policyForSample(state: VigilState, usage: UsageState, sample: UsageSample, now = new Date()): EnforcedPolicy | null {
   const sessionPolicy = activePolicy(state, now);
   const baseline = baselinePolicy(state, now, { device: "computer" });
+  if (state.settings.protectedBrowsersOnly && (sessionPolicy || baseline)) {
+    const base = (sessionPolicy || baseline)!;
+    if (unsupportedBrowser(sample.app || "")) return {
+      ...base,
+      profile: { ...base.profile, id: "protected-browser-required", blockedApps: [...base.profile.blockedApps, sample.app || ""] }
+    };
+    if (sample.url && browserPageNeedsProtection(sample.app || "", sample.url, now.getTime())) return {
+      ...base,
+      kind: "browser-control",
+      browserControl: { area: "browser-protection", label: "Enable Vigil protection for this browser and website", url: sample.url }
+    };
+  }
   const sessionBrowserControl = sample.url && matchStrictBrowserControlUrl(state, sessionPolicy, sample.url);
   if (sessionBrowserControl && sessionPolicy) return { ...sessionPolicy, kind: "browser-control", browserControl: sessionBrowserControl };
   const contentPolicy = sessionPolicy || baseline;

@@ -1,4 +1,5 @@
 export const API_ROUTES = Object.freeze([
+  { id: "browserFilterHealth", domain: "extension", methods: ["POST"], path: "/api/extension/browser-health" },
   { id: "youtubeLimits", domain: "extension", methods: ["POST"], path: "/api/extension/youtube" },
   { id: "accountSession", domain: "account", methods: ["GET"], path: "/api/account/session" },
   { id: "accountSignup", domain: "account", methods: ["POST"], path: "/api/account/signup" },

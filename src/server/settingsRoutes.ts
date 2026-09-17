@@ -45,7 +45,8 @@ export async function handleSettingsApiRoute(
   if (method !== "POST" || path !== "/api/settings") return false;
 
   const body = await readBody(request);
-  if (isProtectedSettingsMutation(body)) {
+  const onlyEnablingBrowserProtection = Object.keys(body).length === 1 && body.protectedBrowsersOnly === true;
+  if (!onlyEnablingBrowserProtection && isProtectedSettingsMutation(body)) {
     assertProtectedEditAllowed(state, { kind: "settings" });
   }
 
@@ -70,6 +71,9 @@ export function updateSettings(
   body: UnknownRecord,
   profileIds: readonly string[] = []
 ): string[] {
+  if (settings.protectedBrowsersOnly && Object.hasOwn(body, "protectedBrowsersOnly") && !parseBoolean(body.protectedBrowsersOnly)) {
+    throw new Error("Protected-browser enforcement cannot be disabled.");
+  }
   const draft = { ...settings };
   const context: SettingMutationContext = { profileIds: new Set(profileIds) };
   const updated: string[] = [];
@@ -267,6 +271,7 @@ const SETTING_MUTATIONS = {
   externalNetworkBlockProvider: enumSetting("externalNetworkBlockProvider", ["manual"]),
   hostsBlockingEnabled: booleanSetting("hostsBlockingEnabled"),
   protectedEditsEnabled: booleanSetting("protectedEditsEnabled"),
+  protectedBrowsersOnly: booleanSetting("protectedBrowsersOnly"),
   protectedEditDelaySeconds: numberSetting("protectedEditDelaySeconds"),
   protectedEditWindowMinutes: numberSetting("protectedEditWindowMinutes")
 } satisfies Partial<Record<keyof AppSettings, SettingMutation>>;

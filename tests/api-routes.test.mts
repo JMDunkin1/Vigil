@@ -66,7 +66,7 @@ assert.equal(domains.get("app"), 3);
 assert.equal(domains.get("account"), 4);
 assert.equal(domains.get("devices"), 10);
 assert.equal(domains.get("grayscale"), 3);
-assert.equal(domains.get("extension"), 7);
+assert.equal(domains.get("extension"), 8);
 assert.equal(domains.get("profiles"), 2);
 assert.equal(domains.get("intentionalUse"), 24);
 assert.ok(domains.get("hardening") >= 3);

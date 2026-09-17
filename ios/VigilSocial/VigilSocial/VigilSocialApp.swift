@@ -1,4 +1,5 @@
 import SwiftUI
+import SafariServices
 
 @main
 struct VigilSocialApp: App {
@@ -31,7 +32,31 @@ struct VigilSocialApp: App {
                 RootView(store: store)
                 #endif
             }
-                .onOpenURL { store.open($0) }
+                .onOpenURL { url in
+                    if store.fixedService == .instagram,
+                       url.scheme == "vigil-instagram", url.host == "safari-settings" {
+                        openFocusedExtensionSettings()
+                    } else {
+                        store.open(url)
+                    }
+                }
+        }
+    }
+
+    private func openFocusedExtensionSettings() {
+        guard #available(iOS 26.2, *) else { return }
+        SFSafariSettings.openExtensionsSettings(forIdentifiers: ["tech.caseline.vigil.instagram.youtube-controls"]) { error in
+            // Record only the result of Apple's settings handoff, never browsing data.
+            let result: [String: Any] = [
+                "opened": error == nil,
+                "error": error?.localizedDescription ?? "",
+                "domain": (error as NSError?)?.domain ?? "",
+                "code": (error as NSError?)?.code ?? 0
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: result),
+               let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                try? data.write(to: directory.appendingPathComponent("safari-settings-result.json"), options: .atomic)
+            }
         }
     }
 }

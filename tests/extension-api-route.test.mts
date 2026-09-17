@@ -408,3 +408,41 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   assert.equal(JSON.parse(saved.bodyText).slots[0].videoId, "video000000");
   assert.equal(persisted, true, "playback authorization and slot changes require durable coordinated persistence");
 }
+
+// Read-only allowance polls must not request full sealed snapshots. Mutations
+// caused by a nominal status request (such as lease expiry) still must persist.
+{
+  const state = defaultState();
+  let writes = 0;
+  const action = async (body: Record<string, unknown>) => {
+    const reply = response();
+    await handleExtensionApiRoute(request("POST", "/api/extension/youtube", {
+      host: "127.0.0.1:8787", origin: `chrome-extension://${BUILT_IN_CHROME_EXTENSION_ID}`, "content-type": "application/json"
+    }, body), reply, new URL("http://127.0.0.1:8787/api/extension/youtube"), {
+      state, usage: {}, requestPersistence() { writes++; }
+    });
+    return JSON.parse(reply.bodyText);
+  };
+  await action({ action: "status" });
+  assert.equal(writes, 1, "initial daily ledger is durable");
+  for (let i = 0; i < 10; i++) await action({ action: "status" });
+  await action({ action: "start", videoId: "abcdefghijk", client: "test" });
+  assert.equal(writes, 1, "polls and rejected unsaved playback do not write");
+  await action({ action: "save", videoId: "abcdefghijk" });
+  await action({ action: "start", videoId: "abcdefghijk", client: "test" });
+  assert.equal(writes, 3, "slot and playback grants persist");
+  state.youtubeLimits!.lease!.expiresAt = 0;
+  await action({ action: "status" });
+  assert.equal(writes, 4, "expiry charges still persist on a status request");
+  assert.equal(state.youtubeLimits!.usedMs, 2000);
+}
+
+// Ordinary webpages/local app requests cannot vouch for browser protection.
+for (const [origin, expected] of [['https://example.com', 403], ['http://127.0.0.1:8787', 403], [`chrome-extension://${BUILT_IN_CHROME_EXTENSION_ID}`, 200]] as const) {
+  const reply = response();
+  await handleExtensionApiRoute(request('POST', '/api/extension/browser-health', {
+    host:'127.0.0.1:8787', origin, 'content-type':'application/json', [CONTROL_INTENT_HEADER]:CONTROL_INTENT_VALUE
+  }, {url:'https://example.com/', revision:'2026-09-17.1'}), reply,
+  new URL('http://127.0.0.1:8787/api/extension/browser-health'), {state:defaultState(),usage:{}});
+  assert.equal(reply.statusCodeValue, expected, origin);
+}

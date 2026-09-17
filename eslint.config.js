@@ -38,10 +38,18 @@ export default [
   {
     files: [
       "ios/VigilBrowser/VigilSafariExtension/Resources/*.js",
-      "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/*.js"
+      "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/*.js",
+      "macos/Vigil Safari/Vigil Safari Extension/Resources/*.js"
     ],
     languageOptions: {
       globals: { ...globals.browser, ...globals.webextensions }
+    }
+  },
+  {
+    files: ["macos/Vigil Safari/Vigil Safari/Resources/Script.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: { ...globals.browser, webkit: "readonly" }
     }
   }
 ];

@@ -1596,7 +1596,7 @@ async function verifyBundledExplicitContentPolicy(appPath, expected) {
 }
 
 async function verifyYouTubeLimitsResources(bundlePath, safari = false) {
-  const names = safari ? ["youtube-limits.js", "youtube-background.js", "youtube-bridge.js"] : ["youtube-limits.js"];
+  const names = safari ? ["youtube-limits.js", "youtube-background.js", "youtube-bridge.js", "status.html", "status.js", "icons/icon-16.png", "icons/icon-32.png", "icons/icon-48.png", "icons/icon-128.png", "icons/toolbar.png"] : ["youtube-limits.js"];
   for (const name of names) {
     const source = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name));
     const bundled = await readFile(join(bundlePath, name));
@@ -1636,6 +1636,12 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   const infoPath = join(extensionPath, "Info.plist");
   const manifestPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.manifestName);
   const scriptPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.scriptName);
+  const mediaBytes = await readFile(join(extensionPath, "media-child-lock.js"));
+  const mediaSource = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/media-child-lock.js"));
+  if (!mediaBytes.equals(mediaSource)) throw new Error("Stale media child-lock resource; refusing companion update.");
+  const redditBytes = await readFile(join(extensionPath, "reddit-child-lock.js"));
+  const redditSource = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js"));
+  if (!redditBytes.equals(redditSource)) throw new Error("Stale Reddit child-lock resource; refusing companion update.");
   for (const path of [infoPath, manifestPath, scriptPath]) {
     if (!await isFile(path)) {
       throw new Error(`${basename(appPath)} does not contain the complete Vigil YouTube interaction extension.`);
@@ -1672,16 +1678,20 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
     "https://*.twitter.com/*"
   ];
   const scripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
-  const contractValid = JSON.stringify(manifest?.host_permissions) === JSON.stringify(expectedHosts)
-    && scripts.length === 3
+  const contractValid = JSON.stringify(manifest?.host_permissions) === JSON.stringify([...expectedHosts, "http://*/*", "https://*/*"])
+    && scripts.length === 4
+    && JSON.stringify(scripts[3]?.matches) === JSON.stringify(["http://*/*", "https://*/*"])
+    && JSON.stringify(scripts[3]?.js) === JSON.stringify(["media-child-lock.js"])
+    && scripts[3]?.run_at === "document_start"
+    && scripts[3]?.all_frames === true
     && JSON.stringify(scripts[0]?.matches) === JSON.stringify(expectedHosts)
-    && JSON.stringify(scripts[0]?.js) === JSON.stringify([YOUTUBE_INTERACTION_EXTENSION.scriptName])
+    && JSON.stringify(scripts[0]?.js) === JSON.stringify(["reddit-child-lock.js", YOUTUBE_INTERACTION_EXTENSION.scriptName])
     && scripts[0]?.all_frames === false
     && scripts[1]?.all_frames === true
     && JSON.stringify(scripts[1]?.matches) === JSON.stringify(expectedHosts.slice(0, 3))
     && JSON.stringify(scripts[1]?.js) === JSON.stringify(["youtube-bridge.js"])
     && scripts[2]?.all_frames === true
-    && scripts[2]?.world === "MAIN"
+    && scripts[2]?.world === undefined
     && JSON.stringify(scripts[2]?.matches) === JSON.stringify(expectedHosts.slice(0, 3))
     && JSON.stringify(scripts[2]?.js) === JSON.stringify(["youtube-limits.js"]);
   const source = scriptBytes.toString("utf8");
@@ -1697,7 +1707,7 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   }
   return {
     bundleIdentifier: expectedIdentifier,
-    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes])),
+    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes, redditBytes, mediaBytes])),
     manifestVersion: manifest.manifest_version,
     hostPermissions: [...manifest.host_permissions],
     contentScriptMatches: [...scripts[0].matches],

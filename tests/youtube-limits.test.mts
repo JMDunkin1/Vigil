@@ -164,3 +164,19 @@ test('a partial feed fills to twenty without replacing its first IDs and repairs
   act({ action: 'feed', feed: 'home', cards: ids.slice().reverse().map(videoId => ({ videoId, title: `Title ${videoId}` })) });
   assert.deepEqual(state.youtubeLimits!.feeds.home!.map(card => card.videoId), ids.slice(0, 20));
 });
+
+ test('searched videos use time with all save slots occupied and retain time enforcement', () => {
+  const { act, play, state } = setup();
+  for (const id of ids.slice(0, 4)) { act({ action: 'save', videoId: id }); play(id, 16000); }
+  const slots = structuredClone(state.youtubeLimits!.slots);
+  const before = state.youtubeLimits!.usedMs;
+  assert.equal(act({ action: 'search', videoId: ids[4] }).ok, true);
+  play(ids[4], 16000);
+  assert.deepEqual(state.youtubeLimits!.slots, slots);
+  assert.equal(state.youtubeLimits!.usedMs, before + 16000);
+  state.youtubeLimits!.usedMs = YOUTUBE_BASE_MS;
+  state.youtubeLimits!.grace = { status: 'ended', videoId: ids[4], usedMs: YOUTUBE_GRACE_MS };
+  act({ action: 'search', videoId: ids[5] });
+  assert.equal(act({ action: 'start', videoId: ids[5] }).ok, false);
+  assert.equal(act({ action: 'search', videoId: 'invalid' }).ok, false);
+});

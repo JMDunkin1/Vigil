@@ -32,7 +32,7 @@ const backgroundSiteRuleLimit = 300;
 const backgroundContentRuleLimit = 200;
 assert.match(backgroundSource, /const SITE_BLOCK_RULE_LIMIT = 300;/u);
 assert.match(backgroundSource, /const CONTENT_BLOCK_RULE_LIMIT = 200;/u);
-assert.equal(staticRules.length, 4);
+assert.equal(staticRules.length, 6);
 assert.match(staticRulesText, /"safe"\s*,\s*"value": "active"/u);
 assert.match(staticRulesText, /"adlt"\s*,\s*"value": "strict"/u);
 assert.match(staticRulesText, /"kp"\s*,\s*"value": "1"/u);

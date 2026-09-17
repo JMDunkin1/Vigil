@@ -1,3 +1,4 @@
+import { unsupportedBrowser } from "./browserProtection.js";
 import {
   ALWAYS_ALLOWED_APPS,
   BRICK_MODE_PROFILE_ID,
@@ -678,6 +679,7 @@ export function shouldBlockApp(profile: Profile | null | undefined, appName: unk
 }
 
 export function shouldBlockAppForPolicy(state: VigilState, policy: ActivePolicy | null | undefined, appName: unknown): boolean {
+  if (state.settings.protectedBrowsersOnly && unsupportedBrowser(String(appName || ""))) return true;
   const strictBypassApps = strictBypassAppsForPolicy(state, policy);
   const fullLockout = isFullLockoutPolicy(policy) || policy?.kind === "integrity";
   return shouldBlockApp(policy?.profile, appName, {

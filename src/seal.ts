@@ -54,6 +54,7 @@ export const PROTECTED_SETTINGS = [
   "externalNetworkBlockProvider",
   "hostsBlockingEnabled",
   "protectedEditsEnabled",
+  "protectedBrowsersOnly",
   "protectedEditDelaySeconds",
   "protectedEditWindowMinutes"
 ] as const;
@@ -580,6 +581,7 @@ function protectedDeviceControls(deviceControls: unknown): UnknownRecord {
       hardenRemoval: ios.hardenRemoval,
       restrictInstallAndErase: ios.restrictInstallAndErase,
       allowSafariHistoryClearing: ios.allowSafariHistoryClearing,
+      allowNativeSnapchat: ios.allowNativeSnapchat === true ? true : undefined,
       blockedAppBundleIds: ios.blockedAppBundleIds || [],
       allowedAppBundleIds: ios.allowedAppBundleIds || [],
       deniedUrls: ios.deniedUrls || [],

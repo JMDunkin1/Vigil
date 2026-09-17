@@ -254,6 +254,7 @@ export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
  * classifier terms.
  */
 export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
+  "hot.com",
   "secretflame.ai",
   "swipey.ai",
   "pornworks.me",

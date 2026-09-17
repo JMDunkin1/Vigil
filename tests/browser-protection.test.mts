@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import { bundleDeclaresWebBrowser, BROWSER_FILTER_REVISION, browserPageNeedsProtection, recordBrowserFilterHealth, registerBrowserApplication, resetBrowserProtectionHealthForTest, unsupportedBrowser } from '../src/browserProtection.js';
+import { defaultState } from '../src/defaults.js';
+import { policyForSample, sweepBlockedApps } from '../src/monitor/policy.js';
+import { updateSettings } from '../src/server/settingsRoutes.js';
+import { shouldBlockAppForPolicy, baselinePolicy, shouldBlockSite } from '../src/policy.js';
+import type { UsageState } from '../src/types.js';
+
+resetBrowserProtectionHealthForTest();
+for (const name of ['Firefox','DuckDuckGo','Brave Browser','Microsoft Edge','Safari Technology Preview','Google Chrome Canary']) assert.equal(unsupportedBrowser(name),true,name);
+for (const name of ['Safari','Google Chrome','Codex','Terminal','Vigil']) assert.equal(unsupportedBrowser(name),false,name);
+for (const [name,id] of [['Finder','com.apple.finder'],['ChatGPT','com.openai.codex'],['ChatGPT','com.openai.chat']]) {
+  registerBrowserApplication(name,id,true);
+  assert.equal(unsupportedBrowser(name),false,`${name} is not a browser`);
+}
+registerBrowserApplication('New Browser','com.example.newbrowser',true);
+assert.equal(unsupportedBrowser('New Browser'),true);
+registerBrowserApplication('Google Chrome','com.example.renamed',true);
+assert.equal(unsupportedBrowser('Google Chrome'),true,'renaming a discovered browser must not qualify it');
+resetBrowserProtectionHealthForTest();
+const url='https://www.reddit.com/r/gardening/';
+assert.equal(browserPageNeedsProtection('Safari',url,10000),false);
+assert.equal(browserPageNeedsProtection('Safari','https://example.com/',11501),true,'changing URL does not renew the loading allowance');
+assert.equal(recordBrowserFilterHealth('Safari',url,'old',11501),false);
+assert.equal(recordBrowserFilterHealth('Google Chrome',url,BROWSER_FILTER_REVISION,11501),true);
+assert.equal(browserPageNeedsProtection('Safari',url,11502),true,'Chrome cannot vouch for Safari');
+assert.equal(recordBrowserFilterHealth('Safari',url,BROWSER_FILTER_REVISION,11503),true);
+assert.equal(browserPageNeedsProtection('Safari',url,11504),false);
+assert.equal(browserPageNeedsProtection('Safari','https://other.example/',12000),false);
+assert.equal(browserPageNeedsProtection('Safari','https://other.example/',13501),true,'another website cannot borrow the lease');
+assert.equal(browserPageNeedsProtection('Safari',url,20000),true,'disabled/stale extensions fail closed');
+assert.equal(browserPageNeedsProtection('Safari',url,1000),true,'a clock rollback must not extend freshness');
+resetBrowserProtectionHealthForTest();
+const state=defaultState();
+state.settings.protectedBrowsersOnly=true;
+state.settings.strictBypassProtectionEnabled=false;
+state.settings.appQuitEnabled=false;
+state.settings.processSweepEnabled=false;
+const now=new Date('2026-09-17T00:00:00Z');
+const usage:UsageState={};
+assert.equal(shouldBlockAppForPolicy(state,baselinePolicy(state,now),'DuckDuckGo'),true);
+assert.ok(policyForSample(state,usage,{app:'Firefox',url:'',hostname:''},now));
+assert.deepEqual(sweepBlockedApps(state,usage,['Firefox','DuckDuckGo','Safari','Google Chrome','Codex'],now).map(row=>row.app),['Firefox','DuckDuckGo']);
+assert.throws(()=>updateSettings(state.settings,{protectedBrowsersOnly:false}),/cannot be disabled/);
+assert.equal(shouldBlockSite(baselinePolicy(state,now)!.profile,'hot.com'),true);
+assert.equal(shouldBlockSite(baselinePolicy(state,now)!.profile,'www.hot.com'),true);
+assert.equal(shouldBlockSite(baselinePolicy(state,now)!.profile,'hot.com.example.org'),false);
+resetBrowserProtectionHealthForTest();
+console.log('Protected browser identity, per-page leases, expiry, permanent policy, and Hot.com tests passed.');
+
+assert.equal(bundleDeclaresWebBrowser({CFBundleURLTypes:[{CFBundleURLSchemes:['ftp']}]}),false);
+assert.equal(bundleDeclaresWebBrowser({CFBundleURLTypes:[{CFBundleURLSchemes:['http','https']}]}),false,'link handlers are not browsers');
+assert.equal(bundleDeclaresWebBrowser({CFBundleURLTypes:[{CFBundleURLSchemes:['http','https']}], CFBundleDocumentTypes:[{CFBundleTypeRole:'Viewer',LSItemContentTypes:['public.html']}]}),true);

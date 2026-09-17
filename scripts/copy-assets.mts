@@ -63,3 +63,7 @@ async function makeExtensionScriptsClassic(): Promise<void> {
     await writeFile(path, classic, "utf8");
   }
 }
+
+await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js"), join(runtimeRoot, "extension/reddit-child-lock.js"));
+
+await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/media-child-lock.js"), join(runtimeRoot, "extension/media-child-lock.js"));

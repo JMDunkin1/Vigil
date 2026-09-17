@@ -31,8 +31,15 @@ export interface YouTubeRequest {
 function videoId(value: unknown): string {
   return typeof value === "string" && /^[a-zA-Z0-9_-]{11}$/.test(value) ? value : "";
 }
+let dayFormatter: { timezone: string; formatter: Intl.DateTimeFormat } | undefined;
 function localDay(now: Date, timezone: string): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+  // Reuse ICU timezone data across short playback leases; keep the cache bounded.
+  if (dayFormatter?.timezone !== timezone) {
+    dayFormatter = { timezone, formatter: new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit"
+    }) };
+  }
+  return dayFormatter.formatter.format(now);
 }
 function charge(day: YouTubeDay, id: string, milliseconds: number): void {
   day.played[id] = (day.played[id] || 0) + milliseconds;
@@ -72,6 +79,7 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
     case "switch":
       if (id && day.grace.status === "active" && day.grace.videoId !== id) day.grace.status = "ended";
       return result();
+    case "search":
     case "external":
       if (!id) return result(false, "Invalid video.");
       if (!day.external.includes(id)) day.external.push(id);

@@ -466,13 +466,18 @@
     const width = Number(window.visualViewport?.width || innerWidth || 0);
     const height = Number(window.visualViewport?.height || innerHeight || 0);
     const allowed = moreVideosAllowedForState(playerIsExpandedFullscreen(video), width, height);
-    html.setAttribute(MORE_VIDEOS_ATTRIBUTE, allowed ? 'allowed' : 'suppressed');
+    const value = allowed ? 'allowed' : 'suppressed';
+    if (html.getAttribute(MORE_VIDEOS_ATTRIBUTE) !== value) html.setAttribute(MORE_VIDEOS_ATTRIBUTE, value);
     return allowed;
   };
+  let moreVideosUpdatePending = false;
   function scheduleMoreVideosAvailability() {
-    installStyle();
-    updateMoreVideosAvailability();
-    requestAnimationFrame(updateMoreVideosAvailability);
+    if (moreVideosUpdatePending) return;
+    moreVideosUpdatePending = true;
+    requestAnimationFrame(() => {
+      moreVideosUpdatePending = false;
+      installStyle(); updateMoreVideosAvailability();
+    });
   }
   const enterFullscreen = video => {
     if (!video || videoIsFullscreen(video)) return false;
@@ -628,7 +633,7 @@
     ));
   };
   new MutationObserver(mutations => {
-    if (mutations.some(value => value.addedNodes.length > 0)) scheduleAdAudit();
+    if (mutations.some(value => [...value.addedNodes].some(node => node instanceof Element))) scheduleAdAudit();
     if (mutations.some(mutationChangesPlayerTopology)) {
       scheduleMoreVideosAvailability();
     }

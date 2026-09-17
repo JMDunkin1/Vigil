@@ -263,7 +263,7 @@ async function startYouTubeNetwork(): Promise<void> {
   try {
     await ensureYouTubeConnection();
     const listener = createServer((request, response) => {
-      if (request.url !== "/api/extension/youtube" || request.method !== "POST" || !youtubeTokenMatches(request.headers["x-vigil-extension-token"])) {
+      if (!["/api/extension/youtube", "/api/extension/browser-health"].includes(request.url || "") || request.method !== "POST" || !youtubeTokenMatches(request.headers["x-vigil-extension-token"])) {
         sendJson(response, 403, { error: "Trusted YouTube companion required." });
         return;
       }
@@ -803,6 +803,8 @@ function requestRequiresMutation(method: string, path: string): boolean {
 function requestDefersRoutinePersistence(method: string, path: string): boolean {
   return (method === "GET" || method === "POST") && [
     "/api/extension/check",
+    "/api/extension/youtube",
+    "/api/extension/browser-health",
     "/api/extension/rules",
     "/api/extension/rules/sync"
   ].includes(path);
