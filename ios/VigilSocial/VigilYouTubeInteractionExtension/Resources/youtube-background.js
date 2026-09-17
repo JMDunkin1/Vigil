@@ -1,9 +1,15 @@
 browser.runtime.onMessage.addListener((message, sender) => {
   if (message?.type === 'VIGIL_BROWSER_FILTER_HEALTH') {
-    if (sender.frameId !== 0 || !sender.tab?.active || !sender.url || message.revision !== '2026-09-17.1') return undefined;
-    return browser.runtime.sendNativeMessage('tech.caseline.vigil', {
-      action: 'browser-filter-health', url: sender.url, revision: message.revision
-    });
+    if (sender.frameId !== 0 || !sender.tab?.active || sender.tab.windowId === undefined || !sender.url || message.revision !== '2026-09-17.1') return undefined;
+    // Page focus excludes Safari searches while the address bar has focus.
+    // Use browser-owned window focus instead; a normal window must never
+    // attest a private window where the extension might be disabled.
+    return browser.windows.get(sender.tab.windowId).then(window => {
+      if (!window.focused) return { ok: false };
+      return browser.runtime.sendNativeMessage('tech.caseline.vigil', {
+        action: 'browser-filter-health', url: sender.url, revision: message.revision
+      });
+    }).catch(() => ({ ok: false }));
   }
   if (message?.type !== 'VIGIL_YOUTUBE') return undefined;
   const host = new URL(sender.url || 'about:blank').hostname;

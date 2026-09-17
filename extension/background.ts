@@ -294,11 +294,17 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse: (response?: unknown) => void) => {
   if (message?.type === "VIGIL_BROWSER_FILTER_HEALTH") {
-    if (sender.frameId !== 0 || !sender.tab?.active || !sender.url || message.revision !== "2026-09-17.1") return false;
-    void fetchVigil("/api/extension/browser-health", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: sender.url, revision: message.revision })
-    }).then(response => response.json()).then(sendResponse).catch(() => sendResponse({ ok: false }));
+    if (sender.frameId !== 0 || !sender.tab?.active || sender.tab.windowId === undefined || !sender.url || message.revision !== "2026-09-17.1") return false;
+    const report = (async () => {
+      const window = await chrome.windows.get(sender.tab!.windowId);
+      if (!window.focused) return { ok: false };
+      const response = await fetchVigil("/api/extension/browser-health", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: sender.url, revision: message.revision })
+      });
+      return response.json();
+    })();
+    void report.then(sendResponse).catch(() => sendResponse({ ok: false }));
     return true;
   }
   if (message?.type === "VIGIL_YOUTUBE") {

@@ -882,6 +882,9 @@ assert.ok(
   let delayedDynamicRuleUpdateCallback: (() => void) | null = null;
   const tabUpdates: Array<{ tabId: number; change: unknown }> = [];
   const tabMessages: Array<{ tabId: number; message: unknown; options: unknown }> = [];
+  let healthListener: (message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean | undefined = () => undefined;
+  let windowFocused = true;
+  const healthReports: Array<{ url: string }> = [];
   const event = () => ({ addListener() {} });
   const context = createContext({
     AbortController,
@@ -890,7 +893,11 @@ assert.ok(
     URL,
     clearTimeout,
     console,
-    fetch: async (url: string) => {
+    fetch: async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/extension/browser-health')) {
+        healthReports.push(JSON.parse(String(init?.body)) as { url: string });
+        return new Response('{"ok":true}', { status: 200 });
+      }
       if (String(url).includes("/api/extension/check") && checkFetchOverride) {
         return await checkFetchOverride();
       }
@@ -974,7 +981,7 @@ assert.ok(
         getManifest() { return { version: "0.3.2" }; },
         get lastError() { return runtimeLastError; },
         onInstalled: event(),
-        onMessage: event(),
+        onMessage: { addListener(listener: typeof healthListener) { healthListener = listener; } },
         onStartup: event()
       },
       storage: {
@@ -1015,6 +1022,7 @@ assert.ok(
           callback();
         }
       },
+      windows: { get: async () => ({ focused: windowFocused }) },
       webNavigation: {
         onCommitted: event(),
         onHistoryStateUpdated: event()
@@ -1024,6 +1032,18 @@ assert.ok(
   runInContext(backgroundSource.replace(/\nexport \{\};?\s*$/u, ""), context);
   await new Promise((resolve) => setTimeout(resolve, 0));
   dynamicRuleUpdates.length = 0;
+
+  const healthMessage = { type: 'VIGIL_BROWSER_FILTER_HEALTH', revision: '2026-09-17.1', url: 'https://forged.example/' };
+  const healthSender = { frameId: 0, tab: { active: true, windowId: 3 }, url: 'https://www.google.com/search?q=cars' };
+  await new Promise(resolve => healthListener(healthMessage, healthSender, resolve));
+  assert.equal(healthReports.length, 1);
+  assert.equal(healthReports[0].url, healthSender.url);
+  windowFocused = false;
+  await new Promise(resolve => healthListener(healthMessage, healthSender, resolve));
+  assert.equal(healthReports.length, 1, 'a background Chrome window cannot attest the focused private window');
+  assert.equal(healthListener(healthMessage, { ...healthSender, frameId: 1 }, () => {}), false);
+  assert.equal(healthListener(healthMessage, { ...healthSender, tab: { active: false, windowId: 3 } }, () => {}), false);
+  windowFocused = true;
 
   const relayedDirectDecision = Promise.resolve({
     ok: true,

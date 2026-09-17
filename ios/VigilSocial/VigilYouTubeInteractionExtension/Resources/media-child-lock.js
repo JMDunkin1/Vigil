@@ -95,19 +95,22 @@
     }
   };
   for (const event of ['click','pointerdown','keydown','play']) window.addEventListener(event, guard, true);
-  if (document.documentElement) scan();
-  else document.addEventListener('DOMContentLoaded', scan, {once:true});
-  addEventListener('pageshow', scan, true);
+  const runtime = globalThis.browser?.runtime || globalThis.chrome?.runtime;
   const reportHealth = () => {
-    if (window.top !== window || document.visibilityState !== 'visible' || !document.hasFocus()) return;
-    // A successful scan precedes every report. The background supplies the
-    // sender URL and browser identity; page-supplied identities are ignored.
+    // Every frame keeps its filters active, including hidden and newly parsed
+    // frames that cannot attest the visible top-level page.
     scan();
-    const runtime = globalThis.browser?.runtime || globalThis.chrome?.runtime;
+    if (window.top !== window || document.visibilityState !== 'visible' || !document.documentElement) return;
+    // A successful scan precedes every report. The background supplies the
+    // sender URL and verifies its active, focused window. Safari can leave
+    // focus in its address bar after a private search: document.hasFocus()
+    // would reject a visible, protected page in that case.
     try { Promise.resolve(runtime?.sendMessage({type:'VIGIL_BROWSER_FILTER_HEALTH', revision:'2026-09-17.1'})).catch(() => {}); } catch {}
   };
+  document.addEventListener('DOMContentLoaded', reportHealth, {once:true});
+  addEventListener('pageshow', reportHealth, true);
   reportHealth();
   addEventListener('focus', reportHealth, true);
   document.addEventListener('visibilitychange', reportHealth);
-  setInterval(() => { scan(); reportHealth(); }, 1500);
+  setInterval(reportHealth, 1500);
 })();

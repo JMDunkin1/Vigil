@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Vigil Focused Web Controls",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Adds focused YouTube controls, locks Reddit adult-content controls, and filters explicit media titles across websites.",
   "host_permissions": [
     "https://youtube.com/*",
