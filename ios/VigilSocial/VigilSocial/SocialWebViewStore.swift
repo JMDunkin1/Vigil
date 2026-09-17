@@ -166,6 +166,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var health: [SocialService: AdapterHealth] = [:]
     @Published private(set) var audioPreferences: [SocialService: Bool] = [:]
     @Published private(set) var darkChromePreferences: [SocialService: Bool] = [:]
+    @Published private(set) var youtubeAllowsLandscape = false
     @Published private(set) var youtubeSafariRequest: YouTubeSafariRequest
 
     @Published private(set) var instagramInformationalAccounts: [String] = []
@@ -374,6 +375,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             Task { @MainActor in self?.handle(message, service: service) }
         }
         controller.add(bridge, name: "vigil")
+        if service == .youtube {
+            controller.addUserScript(WKUserScript(source: Self.youtubeOrientationScript,
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
+
         if service == .youtube {
             controller.addScriptMessageHandler(YouTubeLimitsMessageBridge(bundle: bundle), contentWorld: .page, name: "vigilYouTube")
             if let resource = bundle.url(forResource: "youtube-limits", withExtension: "js"),
@@ -655,6 +661,31 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
     }
 
+    // Watch pages only: feed previews must never unlock browsing rotation.
+    static let youtubeOrientationScript = """
+    (() => {
+      let previous;
+      const update = () => {
+        const watch = location.pathname === '/watch' && new URLSearchParams(location.search).has('v');
+        const video = document.querySelector('video');
+        const fullscreen = Boolean(document.fullscreenElement || document.webkitFullscreenElement || video?.webkitDisplayingFullscreen);
+        const allowed = Boolean(watch && video && !video.ended &&
+          ((!video.paused && video.readyState >= 2) || fullscreen));
+        if (allowed === previous) return;
+        previous = allowed;
+        window.webkit.messageHandlers.vigil.postMessage({type: 'videoOrientation', allowed});
+      };
+      for (const event of ['playing', 'pause', 'ended', 'emptied', 'loadeddata',
+        'fullscreenchange', 'webkitfullscreenchange', 'webkitbeginfullscreen',
+        'webkitendfullscreen', 'popstate', 'yt-navigate-finish']) {
+        document.addEventListener(event, update, true);
+        window.addEventListener(event, update, true);
+      }
+      setInterval(update, 250);
+      update();
+    })();
+    """
+
     private func handle(_ message: WKScriptMessage, service: SocialService) {
         let frame = message.frameInfo
         let url = frame.isMainFrame ? (frame.request.url ?? message.webView?.url) : frame.request.url
@@ -680,6 +711,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ) else { return }
         }
         switch type {
+        case "videoOrientation":
+            guard service == .youtube, frame.isMainFrame else { return }
+            youtubeAllowsLandscape = body["allowed"] as? Bool == true
         case "documentReady":
             guard frame.isMainFrame,
                   let documentID = body["documentID"] as? String,
@@ -1515,6 +1549,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
+        youtubeAllowsLandscape = false
         guard let service = service(for: webView) else { return }
         mainDocumentGenerations[service, default: 0] &+= 1
         let generation = mainDocumentGenerations[service, default: 0]

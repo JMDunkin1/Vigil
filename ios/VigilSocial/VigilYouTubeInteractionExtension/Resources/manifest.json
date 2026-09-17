@@ -70,6 +70,7 @@
         "https://*/*"
       ],
       "js": [
+        "search-guard.js",
         "media-child-lock.js"
       ],
       "run_at": "document_start",

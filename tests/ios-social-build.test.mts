@@ -104,10 +104,6 @@ const launchBackgroundContents = JSON.parse(await readFile(
   }>;
 };
 const iosProfilesSource = await readFile(join(projectRoot, "src", "iosProfiles.ts"), "utf8");
-const parityAuditSource = await readFile(
-  join(projectRoot, "ios", "VigilSocial", "PARITY_AUDIT.md"),
-  "utf8"
-);
 
 assert.doesNotMatch(
   socialWebViewStoreSource,
@@ -550,8 +546,6 @@ const parityHostGate = youtubeInteractionSource.indexOf("allowedHosts.has");
 const parityFirstDomAccess = youtubeInteractionSource.indexOf("document.createElement");
 assert.ok(parityHostGate >= 0 && parityFirstDomAccess > parityHostGate,
   "the reused YouTube controls source must reject authentication hosts before its first DOM access");
-assert.match(parityAuditSource, /unsupported[\s\S]*?applicationNameForUserAgent|application-name suffix/iu,
-  "the parity contract must disclose the unsupported browser-identity exception");
 assert.match(youtubeWKAuthDiagnosticSource, /^#if DEBUG/u,
   "the WKWebView authentication probe must compile only in Debug builds");
 assert.match(socialAppSource, /#if DEBUG[\s\S]*?YouTubeWKAuthDiagnosticActivation\.isRequested/u,

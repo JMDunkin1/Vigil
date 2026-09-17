@@ -48,7 +48,7 @@ for (const profileId of [SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PROFILE_ID]) {
 }
 
 const args = buildArguments(["all", "--unsigned"]);
-for (const argument of ["VIGIL_SERVICE=all", "VIGIL_APP_BUNDLE_IDENTIFIER=tech.caseline.vigil.instagram", "SOCIAL_URL_SCHEME=vigilsocial", "SOCIAL_APP_NAME=Vigil Social", "SOCIAL_APP_ICON_SET=AppIcon"]) assert.ok(args.includes(argument), argument);
+for (const argument of ["VIGIL_SERVICE=all", "VIGIL_APP_BUNDLE_IDENTIFIER=tech.caseline.vigil.instagram", "SOCIAL_URL_SCHEME=vigilsocial", "SOCIAL_APP_NAME=Vigil", "SOCIAL_APP_ICON_SET=AppIcon"]) assert.ok(args.includes(argument), argument);
 assert.equal(parseArguments(["update", "--app", "all"]).options.app, "instagram");
 const ledger = { youtubeLimits: {
   day: "2026-09-17", timezone: "America/New_York", slots: [null, null, null, null],

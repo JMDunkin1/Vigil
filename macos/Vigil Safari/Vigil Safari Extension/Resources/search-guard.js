@@ -1,0 +1,1 @@
+../../../../ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/search-guard.js

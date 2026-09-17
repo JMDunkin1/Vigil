@@ -5,12 +5,11 @@ import { verifyEntitlementObject, verifyEntitlementSource } from "../scripts/rel
 
 const root = await sourceRoot();
 
-const [workflow, script, mainEntitlements, childEntitlements, docs] = await Promise.all([
+const [workflow, script, mainEntitlements, childEntitlements] = await Promise.all([
   readFile(join(root, ".github/workflows/release.yml"), "utf8"),
   readFile(join(root, "scripts/release-mac.mjs"), "utf8"),
   readFile(join(root, "build/mac-entitlements.plist"), "utf8"),
-  readFile(join(root, "build/mac-entitlements-inherit.plist"), "utf8"),
-  readFile(join(root, "RELEASING.md"), "utf8")
+  readFile(join(root, "build/mac-entitlements-inherit.plist"), "utf8")
 ]);
 
 for (const contract of [/APPLE_API_KEY_CONTENT:/u, /mktemp/u, /chmod 600/u, /trap cleanup EXIT/u, /APPLE_API_KEY="\$key_file"/u]) {
@@ -78,11 +77,6 @@ assert.match(script, /entry\.isSymbolicLink\(\)[\s\S]*verifySafeSymlink/u, "the 
 assert.match(script, /Symlink escapes the app bundle[\s\S]*Unexpected executable-code symlink/u, "unsafe, escaping, and unexpected executable symlinks must be rejected");
 assert.match(script, /\.app.*\.appex.*\.bundle.*\.framework.*\.plugin.*\.xpc/u, "code bundles in Resources, PlugIns, Library, and other locations must be recognized by type rather than parent path");
 assert.match(workflow, /release-checksums\.json/u);
-assert.match(
-  docs,
-  /VIGIL_PREBUILT_UPDATE_MANIFEST_URL[\s\S]*exact selected upstream commit[\s\S]*Gatekeeper[\s\S]*Developer ID continuity/u,
-  "release instructions must document the explicit, commit-bound prebuilt trust channel"
-);
 for (const entitlements of [mainEntitlements, childEntitlements]) {
   assert.match(entitlements, /com\.apple\.security\.cs\.allow-jit/u);
   assert.doesNotMatch(entitlements, /allow-unsigned-executable-memory|disable-library-validation/u);

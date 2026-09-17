@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { isDirectRun } from "../src/directRun.js";
 import { assertGeneratedIosContentPolicyCurrent } from "./generate-ios-content-policy.mjs";
 
+import { assertGeneratedIosSafariGuardCurrent } from "./generate-ios-safari-guard.mjs";
+
 const project = "ios/VigilSocial/VigilSocial.xcodeproj";
 const valueOptions = new Set(["service", "configuration", "destination", "derived-data", "version", "build", "unclassified-media-policy"]);
 const unclassifiedMediaPolicies = new Set(["conceal", "reveal-unclassified"]);
@@ -16,7 +18,7 @@ const services = {
     // Update the existing Instagram installation in place to preserve its
     // Safari extensions, signing slot, and data container.
     bundleId: "tech.caseline.vigil.instagram",
-    name: "Vigil Social",
+    name: "Vigil",
     appIconSet: "AppIcon",
     scheme: "vigilsocial",
     buildScheme: "VigilInstagram"
@@ -161,6 +163,7 @@ async function main(): Promise<void> {
     return;
   }
   await assertGeneratedIosContentPolicyCurrent();
+  await assertGeneratedIosSafariGuardCurrent();
   const options = parseOptions(argv);
   const configuration = ["all", "youtube", "instagram"].includes(options.service) ? await youtubeBuildConfiguration() : null;
   await run("xcodebuild", [...buildArguments(argv), ...(configuration ? [`VIGIL_YOUTUBE_CONNECTION_FILE=${configuration}`] : [])]);

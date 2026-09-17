@@ -533,3 +533,67 @@ test('phone content classification can hold startup longer than a lease without 
   await f.click('Pause');
   assert.ok(Math.abs(f.state.youtubeLimits!.usedMs - 500) < 1);
 });
+
+test('startup recovers when canplay arrives before the aborted play promise rejects', async () => {
+  const f = await playerFixture(true);
+  const play = f.media.play.bind(f.media);
+  let attempts = 0;
+  f.media.play = async () => {
+    if (++attempts > 1) return play();
+    f.emit('loadstart');
+    f.emit('canplay');
+    const error = new Error('Source changed'); error.name = 'AbortError';
+    throw error;
+  };
+  await f.click('Play this video');
+  await f.advance(100, false);
+  assert.equal(f.media.paused, false);
+  assert.equal(attempts, 2);
+  await f.advance(500);
+  await f.click('Pause');
+  assert.ok(Math.abs(f.state.youtubeLimits!.usedMs - 500) < 1);
+});
+
+test('native full-screen entry supports the first Play without playing inline first', async () => {
+  for (const saved of [true, false]) {
+    const f = await playerFixture(true, saved);
+    f.media.webkitDisplayingFullscreen = true;
+    f.emit('webkitbeginfullscreen');
+    assert.equal(f.state.youtubeLimits!.lease, null, 'entering fullscreen cannot start playback');
+    await f.media.play();
+    await f.flush();
+    assert.equal(f.media.paused, !saved);
+    assert.equal(Boolean(f.state.youtubeLimits!.lease), saved);
+    assert.equal(f.media.webkitDisplayingFullscreen, true);
+  }
+});
+
+test('an aborted full-screen resume uses the same bounded retry as initial startup', async () => {
+  const f = await playerFixture(true);
+  await f.click('Play this video');
+  f.media.pause();
+  f.media.webkitDisplayingFullscreen = true;
+  const play = f.media.play.bind(f.media);
+  let attempts = 0;
+  f.media.play = async () => {
+    if (++attempts > 1) return play();
+    const error = new Error('Interrupted'); error.name = 'AbortError';
+    throw error;
+  };
+  await f.key('keydown'); await f.key('keyup');
+  await f.advance(100, false);
+  assert.equal(f.media.paused, false);
+  assert.equal(f.media.webkitDisplayingFullscreen, true);
+});
+
+test('buffering presents pending playback instead of a second large Play button', async () => {
+  const f = await playerFixture(true);
+  await f.click('Play this video');
+  f.emit('waiting');
+  await f.advance(100, false);
+  assert.equal(f.root.getAttribute('data-vigil-playback-pending'), '');
+  assert.equal(f.root.getAttribute('data-vigil-playback-held'), null);
+  f.emit('playing');
+  await f.advance(100);
+  assert.equal(f.root.getAttribute('data-vigil-playback-pending'), null);
+});

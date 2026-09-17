@@ -3,6 +3,7 @@ import SafariServices
 
 @main
 struct VigilSocialApp: App {
+    @UIApplicationDelegateAdaptor(SocialAppDelegate.self) private var appDelegate
     @StateObject private var container = SocialContainerStore()
 
     var body: some Scene {
@@ -62,6 +63,36 @@ struct VigilSocialApp: App {
                let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
                 try? data.write(to: directory.appendingPathComponent("safari-settings-result.json"), options: .atomic)
             }
+        }
+    }
+}
+
+// The plist declares the maximum supported orientations; this live mask keeps
+// browsing portrait while allowing YouTube's existing video fullscreen flow.
+@MainActor
+final class SocialAppDelegate: NSObject, UIApplicationDelegate {
+    static var orientationMask: UIInterfaceOrientationMask = .portrait
+
+    func application(_ application: UIApplication,
+                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        Self.orientationMask
+    }
+
+    static func allowVideoLandscape(_ allowed: Bool) {
+        let mask: UIInterfaceOrientationMask = allowed ? .allButUpsideDown : .portrait
+        guard mask != orientationMask else { return }
+        orientationMask = mask
+        for scene in UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }) {
+            for window in scene.windows {
+                var controller = window.rootViewController
+                while let current = controller {
+                    current.setNeedsUpdateOfSupportedInterfaceOrientations()
+                    controller = current.presentedViewController
+                }
+            }
+            // Do not force landscape at playback start; respect how the user
+            // holds the phone. On leaving playback, bring browsing upright.
+            if !allowed { scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) }
         }
     }
 }

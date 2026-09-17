@@ -137,42 +137,71 @@
       // Let YouTube initialize its source and update its own paused/buffering UI.
       // Calling video.play() alone skips the handler we intercepted above.
       if (media.paused && control?.isConnected && control !== media) control.click();
-      const authorization = lease;
-      void media.play().then(() => {
-        if (playing === media && lease?.id === authorization.id) {
-          // The phone's content guard resolves play() while it classifies the
-          // source, then resumes it once safe. This is pending startup, not a
-          // user pause: retain bounded authorization without charging time.
-          if (media.paused && media.dataset?.vigilPlaybackRequested === 'true') waiting = true;
-          show('');
-        }
-      }, error => {
-        // A late rejection from a replaced player must not stop a newer lease.
-        if (playing !== media || lease?.id !== authorization.id) return;
-        // A source reload aborts a pending play promise. Wait for that source
-        // instead of revoking the user's request and requiring a page refresh.
-        if (error.name === 'AbortError' && waiting && intent === currentID()) {
-          retryInterruptedPlay = true;
-          return;
-        }
-        intent = '';
-        void stop().catch(() => {}).finally(() => show(error.message));
-      });
+      playAuthorized(media);
     } catch (error) { intent = ''; await stop().catch(() => {}); show(error.message); }
     finally { releaseBusy(); }
   }
+  function playAuthorized(media) {
+    if (media !== playing || !lease || intent !== currentID()
+        || lease.videoId !== currentID() || performance.now() >= deadline) return;
+    const authorization = lease;
+    retryInterruptedPlay = false;
+    void media.play().then(() => {
+      if (playing !== media || lease?.id !== authorization.id) return;
+      if (media.paused && media.dataset?.vigilPlaybackRequested === 'true') waiting = true;
+      show('');
+    }, error => {
+      if (playing !== media || lease?.id !== authorization.id) return;
+      if (error.name === 'AbortError' && intent === currentID()) {
+        // canplay can precede the rejected promise. The bounded playback clock
+        // also retries ready media, so that event ordering cannot strand Play.
+        waiting = true;
+        retryInterruptedPlay = true;
+        return;
+      }
+      intent = '';
+      void stop().catch(() => {}).finally(() => show(error.message));
+    });
+  }
   function positionAllowance() {
     if (!panel) return;
-    const desktopHeader = document.querySelector('ytd-masthead #start');
+    const desktopHeader = location.hostname !== 'm.youtube.com' && (window.innerWidth || 1024) >= 768
+      ? document.querySelector('ytd-masthead #start') : null;
     panel.toggleAttribute('data-desktop', Boolean(desktopHeader));
-    if (desktopHeader && panel.parentNode !== desktopHeader) desktopHeader.append(panel);
+    // Keep the mobile strip outside YouTube's transformed/clipped app shell.
+    // Reparent in both directions when navigation replaces the masthead.
+    const parent = desktopHeader || document.body;
+    if (parent && panel.parentNode !== parent) parent.append(panel);
     panel.hidden = Boolean(document.fullscreenElement || document.webkitFullscreenElement
       || document.querySelector('video')?.webkitDisplayingFullscreen
       || document.querySelector('.html5-video-player.ytp-fullscreen'));
+    if (desktopHeader || panel.hidden) return;
+    const viewport = window.visualViewport;
+    const height = window.innerHeight || document.documentElement.clientHeight;
+    const visibleBottom = Math.min(height, viewport ? viewport.offsetTop + viewport.height : height);
+    let bottom = Math.max(0, height - visibleBottom);
+    // The bottom tabs and collapsed player can be siblings of the header.
+    // Use their visible bounds rather than assuming a particular phone size.
+    for (const obstacle of document.querySelectorAll(
+      'ytm-pivot-bar-renderer, ytm-miniplayer, ytm-miniplayer-renderer, ytd-miniplayer[active]'
+    )) {
+      const rect = obstacle.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0 && rect.top >= visibleBottom * .5
+          && rect.top < visibleBottom && rect.bottom > 0) {
+        bottom = Math.max(bottom, height - rect.top);
+      }
+    }
+    const value = `${Math.ceil(bottom)}px`;
+    if (panel.style.getPropertyValue('--vigil-allowance-bottom') !== value) {
+      panel.style.setProperty('--vigil-allowance-bottom', value);
+    }
   }
   for (const event of ['fullscreenchange', 'webkitfullscreenchange', 'webkitbeginfullscreen', 'webkitendfullscreen']) {
     document.addEventListener(event, positionAllowance, true);
   }
+  window.addEventListener('resize', positionAllowance);
+  window.visualViewport?.addEventListener('resize', positionAllowance);
+  window.visualViewport?.addEventListener('scroll', positionAllowance);
   function mount() {
     if (!document.body || !topFrame) return;
     if (panel) {
@@ -184,11 +213,11 @@
     panel = document.createElement('aside'); panel.id = 'vigil-youtube-limits';
     const shadow = panel.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = `:host{display:block;position:relative;z-index:0;font:12px Roboto,Arial,sans-serif;color:var(--yt-spec-text-secondary,#888);padding:5px 12px;box-sizing:border-box;background:transparent}:host([data-desktop]){display:inline-flex;position:relative;flex:0 0 auto;max-width:min(220px,30vw);padding:4px 12px;color:var(--yt-spec-text-secondary,#aaa);line-height:1.4;white-space:normal;overflow-wrap:anywhere}:host([hidden]){display:none!important}strong{font-weight:400}`;
+    style.textContent = `:host{display:block;position:fixed;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:calc(max(var(--vigil-allowance-bottom,0px),env(safe-area-inset-bottom)) + 8px);z-index:2147483645;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:7px 12px;box-sizing:border-box;border:1px solid var(--yt-spec-10-percent-layer,#ffffff26);border-radius:10px;background:var(--yt-spec-raised-background,#212121);color:var(--yt-spec-text-primary,#f1f1f1);box-shadow:0 2px 8px #0003;font:13px/1.4 Roboto,Arial,sans-serif;text-align:center;pointer-events:none;overflow-wrap:anywhere}:host([data-desktop]){display:inline-flex;position:relative;inset:auto;z-index:auto;width:auto;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:start;flex:0 0 auto;max-width:min(220px,30vw);padding:4px 12px;color:var(--yt-spec-text-secondary,#aaa);line-height:1.4;white-space:normal;overflow-wrap:anywhere}:host([hidden]){display:none!important}strong{font-weight:400}`;
     statusLine = document.createElement('strong'); statusLine.textContent = 'Checking allowance…';
     shadow.append(style, statusLine);
-    const header = document.querySelector('ytm-mobile-topbar-renderer,ytd-masthead');
-    if (header?.parentNode) header.after(panel); else document.body.append(panel);
+    panel.setAttribute('aria-label', 'YouTube daily allowance');
+    document.body.append(panel);
     positionAllowance();
     notice = document.createElement('aside'); notice.id = 'vigil-youtube-notice'; notice.hidden = true;
     const noticeShadow = notice.attachShadow({mode:'closed'});
@@ -471,6 +500,7 @@
     // YouTube treats the interrupted autoplay attempt as buffering. Keep its
     // own Play controls available while the allowance gate holds playback.
     document.documentElement?.toggleAttribute('data-vigil-playback-held', Boolean(topFrame && currentID() && !lease && !busy));
+    document.documentElement?.toggleAttribute('data-vigil-playback-pending', Boolean(topFrame && currentID() && (busy || (lease && waiting))));
   }
   // Hide complete shelves so headings, menus, counts, and dividers disappear too.
   const unwantedShelfSelector = [
@@ -502,6 +532,7 @@
       style.textContent = `html[data-vigil-feed-pending] :is(${nativeCardSelector}){display:none!important}` + 'a[href*="/shorts/"],ytd-reel-shelf-renderer,ytm-reel-shelf-renderer,ytd-video-preview,ytm-video-preview,.ytp-autonav-toggle-button,.ytp-autonav-endscreen-countdown-container,[data-vigil-feed-hidden],html[data-vigil-feed-complete] ytd-continuation-item-renderer,html[data-vigil-feed-complete] ytm-continuation-item-renderer{display:none!important}';
       style.textContent += `${unwantedShelfSelector},[data-vigil-shelf-hidden]{display:none!important}`;
       style.textContent += 'html[data-vigil-playback-held] .ytp-spinner{display:none!important}html[data-vigil-playback-held] .ytp-large-play-button,html[data-vigil-playback-held] .ytp-cued-thumbnail-overlay{display:block!important}html[data-vigil-playback-held] .ytp-chrome-bottom{display:block!important;opacity:1!important}';
+      style.textContent += 'html[data-vigil-playback-pending] .ytp-large-play-button{display:none!important}';
       document.documentElement.append(style);
     }
     for (const media of document.querySelectorAll('video,audio')) {
@@ -511,6 +542,13 @@
     }
 
   }
+  document.addEventListener('webkitbeginfullscreen', event => {
+    if (!event.isTrusted || event.target !== document.querySelector('video') || !currentID()) return;
+    // Native full-screen Play has no DOM click. Entering the player arms the
+    // same gated Play path, even before this video has played inline once.
+    resumeMedia = event.target;
+    intent = currentID();
+  }, true);
   document.addEventListener('play', event => {
     if (event.target !== playing || !lease || currentID() !== lease.videoId || performance.now() >= deadline) {
       event.target.pause?.();
@@ -525,8 +563,7 @@
   document.addEventListener('canplay', event => {
     if (!retryInterruptedPlay || event.target !== playing || !lease || intent !== currentID()
         || currentID() !== lease.videoId || performance.now() >= deadline) return;
-    retryInterruptedPlay = false;
-    void playing.play().catch(error => show(error.message));
+    playAuthorized(playing);
   }, true);
   document.addEventListener('ratechange', event => { if (event.target === playing) sample(); }, true);
   document.addEventListener('loadstart', event => {
@@ -587,7 +624,7 @@
   const togglePlayback = () => {
     if (busy) { queuedStart = true; return; }
     if (lease && playing && performance.now() < deadline) {
-      if (playing.paused) void playing.play().catch(error => show(error.message)); else playing.pause();
+      if (playing.paused) playAuthorized(playing); else playing.pause();
     } else {
       intent = currentID();
       if (lease && !busy) {
@@ -634,6 +671,7 @@
         void stop().then(() => request({ action: 'switch', videoId: currentID() })).catch(error => show(error.message));
       }
     }
+    if (retryInterruptedPlay && playing?.readyState >= 3) playAuthorized(playing);
     sample();
     if (lease && playing?.paused && !waiting) {
       idleSince ??= performance.now();
@@ -660,7 +698,7 @@
       busy = true;
       void stop().then(() => { releaseBusy(); if (resume) void begin(); }).catch(error => { intent = ''; releaseBusy(); show(error.message); });
     }
-    syncPlaybackClock();
+    updateHeldPlayer(); syncPlaybackClock();
   };
   // Media progress remains the clock when Safari throttles background tab timers.
   // Keep the interval as a fallback for stalls and expiring authorizations.

@@ -20,7 +20,7 @@ struct SocialContainerView: View {
                   ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     Spacer()
-                    Text("Vigil Social").font(.largeTitle.bold())
+                    Text("Vigil").font(.largeTitle.bold())
                     LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
                         ForEach(SocialService.allCases) { service in
                             Button { container.select(service) } label: {
@@ -245,6 +245,13 @@ struct RootView: View {
             }
         }
             .preferredColorScheme(reportedIsDark.map { $0 ? .dark : .light })
+            .onChange(of: isServiceVisible && scenePhase == .active && store.youtubeAllowsLandscape,
+                      initial: true) { _, allowed in
+                if store.fixedService == .youtube {
+                    SocialAppDelegate.allowVideoLandscape(allowed)
+                }
+            }
+
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active && isServiceVisible {
                     store.resumeSuspendedMedia()

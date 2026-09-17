@@ -1972,7 +1972,10 @@ enum DOMAdapters {
         ),
         [data-vigil-hidden-feature],
         [data-vigil-instagram-search-discovery="true"],
-        [data-vigil-native-app-prompt="true"],
+        a:is([href^="https://www.threads.net/"], [href^="https://www.threads.com/"],
+            [href^="https://threads.net/"], [href^="https://threads.com/"], [href^="barcelona:"]),
+          [data-vigil-instagram-promotion="true"],
+          [data-vigil-native-app-prompt="true"],
         a[href^="instagram:"] {
           display: none !important;
         }
@@ -4913,6 +4916,9 @@ enum DOMAdapters {
           ),
           [data-vigil-hidden-feature],
           [data-vigil-instagram-search-discovery="true"],
+          a:is([href^="https://www.threads.net/"], [href^="https://www.threads.com/"],
+            [href^="https://threads.net/"], [href^="https://threads.com/"], [href^="barcelona:"]),
+          [data-vigil-instagram-promotion="true"],
           [data-vigil-native-app-prompt="true"],
           a[href^="instagram:"] {
             display: none !important;
@@ -6936,20 +6942,97 @@ enum DOMAdapters {
         normalizeHomeStoryRail(controls);
         reconcileFriendsEmptyState();
       };
-      const markNativeAppPrompts = (root) => {
-        const scope = root instanceof Element ? root : document;
-        const controls = [
-          ...(scope.matches?.('a, button, [role="button"]') ? [scope] : []),
-          ...scope.querySelectorAll?.('a, button, [role="button"]') || []
-        ];
-        for (const control of controls.slice(0, 120)) {
-          const label = String(control.textContent || control.getAttribute('aria-label') || '')
-            .replace(/\s+/g, ' ').trim().toLowerCase();
-          if (label === 'open instagram' || label === 'get the instagram app'
-              || label === 'download the app') {
-            control.dataset.vigilNativeAppPrompt = 'true';
+      const elementsWithin = (root, selector) => [
+        ...(root.matches?.(selector) ? [root] : []), ...root.querySelectorAll(selector)
+      ];
+      const instagramPromotionKind = (node) => {
+        const labels = [node.textContent, node.getAttribute('aria-label'),
+          ...[...node.querySelectorAll('svg[aria-label], img[alt]')].map(
+            (icon) => icon.getAttribute('aria-label') || icon.getAttribute('alt')
+          )].map((label) => String(label || '').replace(/\s+/g, ' ').trim().toLowerCase());
+        if (labels.some((label) => /^(?:use|open|get|download|install) (?:the )?(?:instagram )?app$/.test(label)
+            || label === 'open instagram' || label === 'get the instagram app')) return 'app';
+        if (labels.some((label) => /^(?:(?:open|join|go to|get|view on) )?threads(?:[ ,:·]*\d+(?: new)?(?: notifications?)?)?$/.test(label))) return 'threads';
+        try {
+          const url = new URL(node.getAttribute('href') || '', location.href);
+          if (/(^|\.)threads\.(net|com)$/.test(url.hostname)
+              || url.protocol === 'barcelona:') return 'threads';
+          if (url.protocol === 'instagram:' || (url.hostname === 'apps.apple.com'
+              && /(?:instagram|id389801252)/i.test(url.pathname))) return 'app';
+        } catch (_) {}
+        return null;
+      };
+      const hideInstagramPromotions = (root) => {
+        // Re-evaluate recycled React nodes, and include a control when only its
+        // icon, label, or notification count was inserted/changed.
+        const scope = root instanceof Element
+          ? root.closest('[data-vigil-instagram-promotion], a, button, [role="button"]') || root
+          : root;
+        elementsWithin(scope, '[data-vigil-instagram-promotion]').forEach(
+          (node) => node.removeAttribute('data-vigil-instagram-promotion')
+        );
+        elementsWithin(scope, 'a, button, [role="button"]').forEach((control) => {
+          const kind = instagramPromotionKind(control);
+          if (!kind) return;
+          let target = control;
+          if (kind === 'app') {
+            // Hide the compact banner including its close button, but never
+            // climb into the login form, navigation, feed, or page shell.
+            for (let parent = control.parentElement, depth = 0;
+                parent && depth < 5; parent = parent.parentElement, depth += 1) {
+              if (parent.matches('body, main, nav, article, form, [role="main"], [role="navigation"]')
+                  || parent.querySelector('input, textarea, video, article')) break;
+              const rect = parent.getBoundingClientRect();
+              if (rect.height > 200 || rect.width < 1) break;
+              const controls = [...parent.querySelectorAll('a, button, [role="button"]')];
+              if (controls.some((node) => !instagramPromotionKind(node)
+                  && !/^(?:close|dismiss|not now|×|✕|x)$/i.test(
+                    String(node.getAttribute('aria-label') || node.textContent || '').trim()
+                  ))) break;
+              target = parent;
+            }
+          }
+          target.dataset.vigilInstagramPromotion = 'true';
+        });
+      };
+      const hideInstagramProfileDot = () => {
+        let navigation = null;
+        for (const direct of document.querySelectorAll('a[href^="/direct"]')) {
+          for (let parent = direct.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+            const rect = parent.getBoundingClientRect();
+            if (rect.height > 160) break;
+            if (rect.bottom >= innerHeight - 40 && parent.querySelector('a[href="/"]')) {
+              navigation = parent;
+              break;
+            }
+          }
+          if (navigation) break;
+        }
+        if (!navigation) return;
+        for (const link of navigation.querySelectorAll('a[href]')) {
+          if (!link.querySelector('img') || !/^\/[^/]+\/?$/.test(new URL(link.href, location.href).pathname)) continue;
+          let item = link;
+          while (item.parentElement && item.parentElement !== navigation) item = item.parentElement;
+          // Instagram's aggregate profile dot includes Threads alerts. Hide only
+          // the small red dot in this tab; keep its avatar and other tabs intact.
+          item.querySelectorAll('[data-vigil-instagram-promotion]').forEach(
+            (node) => node.removeAttribute('data-vigil-instagram-promotion')
+          );
+          for (const node of item.querySelectorAll('span, div')) {
+            if (node.contains(link) || node.querySelector('img, svg') || node.textContent.trim()) continue;
+            const rect = node.getBoundingClientRect();
+            const color = getComputedStyle(node).backgroundColor.match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+            if (rect.width >= 3 && rect.width <= 12 && rect.height >= 3 && rect.height <= 12
+                && color && Number(color[1]) > 180 && Number(color[2]) < 110 && Number(color[3]) < 140) {
+              node.dataset.vigilInstagramPromotion = 'true';
+            }
           }
         }
+      };
+
+      const markNativeAppPrompts = (root) => {
+        hideInstagramPromotions(root);
+        hideInstagramProfileDot();
       };
       const searchDiscoveryPath = (value) => {
         try {

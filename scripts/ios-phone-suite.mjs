@@ -58,6 +58,10 @@ const OBSOLETE_APPS_PROBLEM_PREFIX = "Obsolete phone apps remain installed:";
 const OBSOLETE_LAUNCHER_PROFILE_PROBLEM = "The obsolete Vigil social-launcher profile remains installed; use --replace-legacy to remove its duplicate Home Screen icons.";
 const OBSOLETE_YOUTUBE_WEB_CLIP_PROFILE_PROBLEM = "The obsolete Vigil YouTube Web Clip profile remains installed; use --replace-legacy to remove its duplicate YouTube icon and Safari-opening surface.";
 const PHONE_SOURCE_FILES = [
+  "extension/google-safe-search.ts",
+  "src/contextualExplicitSearch.ts",
+  "scripts/generate-ios-safari-guard.mts",
+  "scripts/copy-assets.mts",
   "scripts/apply-ios-usb-profile.mjs",
   "scripts/build-ios-social-app.mts",
   "scripts/generate-ios-content-policy.mts",
@@ -87,7 +91,7 @@ const PHONE_SOURCE_FILES = [
   "scripts/youtube-build-connection.mts"
 ];
 const REQUIRED_SOCIAL_APPS = [
-  { id: "instagram", service: "all", name: "Vigil Social", bundleId: "tech.caseline.vigil.instagram", appIconSet: "AppIcon", scheme: "vigilsocial", buildScheme: "VigilInstagram" },
+  { id: "instagram", service: "all", name: "Vigil", bundleId: "tech.caseline.vigil.instagram", appIconSet: "AppIcon", scheme: "vigilsocial", buildScheme: "VigilInstagram" },
   { id: "youtube", service: "youtube", name: "YouTube", bundleId: "tech.caseline.vigil.youtube", appIconSet: "YouTubeAppIcon", scheme: "vigil-youtube", buildScheme: "VigilSocial" },
   { id: "snapchat", service: "snapchat", name: "Snapchat", bundleId: "tech.caseline.vigil.snapchat", appIconSet: "SnapchatAppIcon", scheme: "vigil-snapchat", buildScheme: "VigilSnapchat" },
   { id: "linkedin", service: "linkedin", name: "LinkedIn", bundleId: "tech.caseline.vigil.linkedin", appIconSet: "LinkedInAppIcon", scheme: "vigil-linkedin", buildScheme: "VigilLinkedIn" }
@@ -1075,7 +1079,7 @@ function printStatus(report) {
 async function updatePhone(selectedOptions) {
   const edition = selectedOptions.edition;
   if (selectedOptions.noPolicy) {
-    throw new Error("Vigil Social requires the verified app-and-policy transaction; --no-policy cannot preserve service restrictions.");
+    throw new Error("Vigil requires the verified app-and-policy transaction; --no-policy cannot preserve service restrictions.");
   }
   if (selectedOptions.noPolicy && edition === "enhanced") {
     throw new Error("--no-policy is incompatible with the Enhanced edition's fail-closed iOS URL Filter; the app and its exact managed configuration must be deployed together.");
@@ -1661,6 +1665,9 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   const infoPath = join(extensionPath, "Info.plist");
   const manifestPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.manifestName);
   const scriptPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.scriptName);
+  const searchBytes = await readFile(join(extensionPath, "search-guard.js"));
+  const { generatedIosSafariGuard } = await import(join(ROOT, "dist/runtime/scripts/generate-ios-safari-guard.mjs"));
+  if (!searchBytes.equals(Buffer.from(await generatedIosSafariGuard()))) throw new Error("Stale Safari search guard; refusing companion update.");
   const mediaBytes = await readFile(join(extensionPath, "media-child-lock.js"));
   const mediaSource = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/media-child-lock.js"));
   if (!mediaBytes.equals(mediaSource)) throw new Error("Stale media child-lock resource; refusing companion update.");
@@ -1706,7 +1713,7 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   const contractValid = JSON.stringify(manifest?.host_permissions) === JSON.stringify([...expectedHosts, "http://*/*", "https://*/*"])
     && scripts.length === 4
     && JSON.stringify(scripts[3]?.matches) === JSON.stringify(["http://*/*", "https://*/*"])
-    && JSON.stringify(scripts[3]?.js) === JSON.stringify(["media-child-lock.js"])
+    && JSON.stringify(scripts[3]?.js) === JSON.stringify(["search-guard.js", "media-child-lock.js"])
     && scripts[3]?.run_at === "document_start"
     && scripts[3]?.all_frames === true
     && JSON.stringify(scripts[0]?.matches) === JSON.stringify(expectedHosts)
@@ -1732,7 +1739,7 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   }
   return {
     bundleIdentifier: expectedIdentifier,
-    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes, redditBytes, mediaBytes])),
+    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes, redditBytes, mediaBytes, searchBytes])),
     manifestVersion: manifest.manifest_version,
     hostPermissions: [...manifest.host_permissions],
     contentScriptMatches: [...scripts[0].matches],
@@ -2077,7 +2084,7 @@ export function linkedInReplacementSettings(ios) {
 }
 
 export function socialContainerSettings(ios) {
-  if (ios?.blockWeb !== true) throw new Error("Vigil Social needs the supervised web filter to retain independent service restrictions.");
+  if (ios?.blockWeb !== true) throw new Error("Vigil needs the supervised web filter to retain independent service restrictions.");
   return { ...linkedInReplacementSettings(ios), socialContainer: true };
 }
 
@@ -2190,7 +2197,7 @@ async function verifyCombinedServiceLaunches(deviceIdentifier, toolEnvironment) 
 
 export async function activateSocialContainer(server, verifyLaunch) {
   const launch = await verifyLaunch();
-  if (!launch?.ok) throw new Error(`Vigil Social failed launch verification; migration settings were not saved: ${launch?.detail || "unknown error"}`);
+  if (!launch?.ok) throw new Error(`Vigil failed launch verification; migration settings were not saved: ${launch?.detail || "unknown error"}`);
   const live = await downloadServerState(server, AbortSignal.timeout(5000));
   const patch = socialContainerSettings(live.state.deviceControls?.ios);
   const response = await fetch(`${server}/api/devices/ios/settings`, {
@@ -2198,12 +2205,12 @@ export async function activateSocialContainer(server, verifyLaunch) {
     headers: { "x-vigil-intent": "vigil-app", "content-type": "application/json" },
     body: JSON.stringify(patch), signal: AbortSignal.timeout(5000)
   });
-  if (!response.ok) throw new Error(`Vigil Social policy persistence failed: HTTP ${response.status}; migration is incomplete.`);
+  if (!response.ok) throw new Error(`Vigil policy persistence failed: HTTP ${response.status}; migration is incomplete.`);
   const saved = (await downloadServerState(server, AbortSignal.timeout(5000))).state.deviceControls?.ios;
   if (saved?.socialContainer !== true || saved?.blockApps !== true || saved?.blockWeb !== true
     || !saved.blockedAppBundleIds?.includes("com.linkedin.LinkedIn")
     || saved.allowedAppBundleIds?.includes("com.linkedin.LinkedIn")) {
-    throw new Error("Vigil Social settings did not persist. Update the installed Mac app before retrying the phone migration.");
+    throw new Error("Vigil settings did not persist. Update the installed Mac app before retrying the phone migration.");
   }
 }
 
