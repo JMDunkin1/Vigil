@@ -184,6 +184,9 @@ if (removeTestUrlFilterService) {
     .map((item) => recordValue(item, "enabled phone web payload"))
     .find((payload) => payload.PayloadType === "com.apple.webcontent-filter");
   assert.ok(enabledWebFilter);
+  assert.deepEqual(enabledWebFilter.PermittedURLs, ["https://wlu.marriagepact.com/", "https://url8871.marriagepact.com/"], "only the approved campus and email-link hosts bypass automatic adult classification");
+  assert.equal(enabledWebFilter.AutoFilterEnabled, true);
+  assert.equal(enabledWebFilter.FilterType, "BuiltIn");
   const levelOneDeniedUrls = enabledWebFilter.DenyListURLs as unknown[];
   assert.equal(levelOneDeniedUrls.includes("https://youtube.com/shorts"), true);
   assert.equal(levelOneDeniedUrls.includes("https://snapchat.com/spotlight"), true);

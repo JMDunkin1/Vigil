@@ -15,6 +15,7 @@ import {
   defaultState
 } from "./defaults.js";
 import { parseBoolean } from "./booleans.js";
+import { APPLE_CONTENT_FILTER_PERMITTED_URLS } from "./appleContentFilterExceptions.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { grayscaleDecision, IOS_GRAYSCALE_GUARD_BUNDLE_IDS } from "./grayscale.js";
 import { activeLimitBlocks } from "./limits.js";
@@ -731,6 +732,7 @@ function webContentFilterPayload(settings: IosSettings, targets: IosPolicyTarget
   } = {
     AutoFilterEnabled: true,
     FilterType: "BuiltIn",
+    PermittedURLs: [...APPLE_CONTENT_FILTER_PERMITTED_URLS],
     SafariHistoryRetentionEnabled: settings.allowSafariHistoryClearing === false
   };
 

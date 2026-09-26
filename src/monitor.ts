@@ -1,5 +1,5 @@
 import { performance } from "node:perf_hooks";
-import { unsupportedBrowser } from "./browserProtection.js";
+import { observeBrowserProtectionForeground, unsupportedBrowser } from "./browserProtection.js";
 import { quitApplicationInstance } from "./macos.js";
 import { createHash } from "node:crypto";
 import { addEvent, DATA_DIR, saveState, STATE_SEAL_KEY_PATH } from "./store.js";
@@ -489,6 +489,7 @@ interface MonitorStatus extends UnknownRecord {
 
 interface BlockSiteOptions {
   browserControl?: { area: string; label: string; url: string };
+  browserProtection?: EnforcedPolicy["browserProtection"];
   contentFilter?: UnknownRecord & { id?: string; label: string; fallbackUrl?: string };
   urlPattern?: { pattern: string; label: string };
   originalHostname?: string;
@@ -1055,9 +1056,11 @@ export class Monitor implements MonitorHandle {
     if (this.stopping || !front.ok) return;
     if (appCanReportUrls(front.app)) burst.wake();
     await this.enqueueMutationOperation(async () => {
+      const currentFront = await this.readFrontmost({ fresh: true });
+      if (!currentFront.ok) return;
       await this.recordElapsedUsage(this.beginPollFrame());
-      this.applyFrontmostSample(front);
-      await this.enforceFrontmost(front);
+      this.applyFrontmostSample(currentFront);
+      await this.enforceFrontmost(currentFront);
     }, { persist: false });
   }
 
@@ -1142,9 +1145,10 @@ export class Monitor implements MonitorHandle {
             this.recordImmediateBrowserBlock(immediateBlock, result);
             return;
           }
-          // The redirect operation is target-atomic, so retrying the observed URL
-          // cannot rewrite an unrelated tab even if the user switched meanwhile.
-          await this.enforce(immediateBlock.front);
+          // Re-read after queueing so the retry cannot charge a previous tab's
+          // recovery clock or apply its policy to the current foreground.
+          const currentFront = await this.readFrontmost({ fresh: true });
+          if (currentFront.ok) await this.enforce(currentFront);
         }, { persist: matched, retryOnFailure: matched });
       }
       // Keep the sparse tail alive while confirmed redirect bookkeeping is
@@ -1248,7 +1252,7 @@ export class Monitor implements MonitorHandle {
         ...decisionContext,
         front: { ...front, hostname: policy.browserControl.label },
         policy,
-        options: { browserControl: policy.browserControl, originalHostname: front.url }
+        options: { browserControl: policy.browserControl, browserProtection: policy.browserProtection, originalHostname: front.url }
       };
     }
     if (front.url && policy.contentFilter && (lockdown || contentFilterEnabled(state))) {
@@ -1293,7 +1297,8 @@ export class Monitor implements MonitorHandle {
       this.state,
       this.usage,
       decision.sample,
-      new Date(this.browserActivityNow())
+      new Date(this.browserActivityNow()),
+      { observeBrowserProtection: false }
     );
   }
 
@@ -1345,7 +1350,7 @@ export class Monitor implements MonitorHandle {
       const state = structuredClone(validation.state);
       const usage = structuredClone(validation.usage);
       const evaluatedAt = new Date(this.browserActivityNow());
-      if (!policyForSample(state, usage, sample, evaluatedAt)) {
+      if (!policyForSample(state, usage, sample, evaluatedAt, { observeBrowserProtection: false })) {
         if (safariFilterDenyMatch(state, candidate, evaluatedAt)) continue;
         return parsed.toString();
       }
@@ -1383,6 +1388,7 @@ export class Monitor implements MonitorHandle {
       app: front.app,
       originalSite: options.originalHostname || front.hostname,
       browserControl: options.browserControl || null,
+      browserProtection: options.browserProtection || null,
       contentFilter: options.contentFilter || null,
       urlPattern: options.urlPattern || null,
       policy: policy.session.title || policy.session.mode,
@@ -1660,7 +1666,7 @@ export class Monitor implements MonitorHandle {
     await this.enqueueMutationOperation(async () => {
       if (!integrityLockdownActive(this.state)) return;
       const enforcedAt = Date.now();
-      await this.enforceFrontmost(hardenedFront);
+      await this.enforceFrontmost(hardenedFront, { observeBrowserProtection: false });
       await this.runImmediateSideEffects(enforcedAt, sideEffectObservations, { continueOnError: true });
     }, { persist: false });
   }
@@ -1890,7 +1896,9 @@ export class Monitor implements MonitorHandle {
     this.activeAfterCommit(async () => {
       attemptedResult = undefined;
       attempts += 1;
-      if (attempts > 1 && !this.durableEffectApplicable(kind, payload)) {
+      // A page can finish attesting while its intent snapshot is committing.
+      // Revalidate redirects on their first attempt too, before replacing it.
+      if ((attempts > 1 || kind === "redirect-browser") && !this.durableEffectApplicable(kind, payload)) {
         return obsoleteEffectResult(kind) as T;
       }
       const result = await operation(attempts);
@@ -1932,7 +1940,7 @@ export class Monitor implements MonitorHandle {
       ) return true;
       const sample = effectSample(payload);
       if (payload.intentionalPauseId && intentionalPauseStillApplies(state, sample, payload, now)) return true;
-      const policy = policyForSample(state, this.usage, sample, now);
+      const policy = policyForSample(state, this.usage, sample, now, { observeBrowserProtection: false });
       const lockdown = policy?.kind === "integrity" || isFullLockoutPolicy(policy);
       return Boolean(
         policy &&
@@ -1942,10 +1950,16 @@ export class Monitor implements MonitorHandle {
       );
     }
     if (kind === "redirect-browser") {
+      // Retire persisted Safari connection-check redirects even if their old
+      // URL now violates a real rule. Fresh enforcement creates that rule's
+      // correct destination; an old receipt must not revive the removed page.
+      const destination = String(payload.url || "");
+      if (payload.app === "Safari" && isVigilBlockedPageUrl(destination)
+        && new URL(destination).searchParams.get("kind") === "browser-protection") return false;
       const sample = effectSample(payload);
       if (payload.intentionalPauseId && intentionalPauseStillApplies(state, sample, payload, now)) return true;
       if (!sample.url) return false;
-      const policy = policyForSample(state, this.usage, sample, now);
+      const policy = policyForSample(state, this.usage, sample, now, { observeBrowserProtection: false });
       if (!policy || (payload.policyId && payload.policyId !== policy.session?.id)) return false;
       const lockdown = policy.kind === "integrity" || isFullLockoutPolicy(policy);
       const contentBlocked = Boolean(policy.contentFilter && (lockdown || contentFilterEnabled(state)));
@@ -2187,8 +2201,8 @@ export class Monitor implements MonitorHandle {
     this.status.lastSample = currentSample;
   }
 
-  async enforceFrontmost(front: FrontResult): Promise<void> {
-    if (front.ok) await this.enforce(front);
+  async enforceFrontmost(front: FrontResult, options: { observeBrowserProtection?: boolean } = {}): Promise<void> {
+    if (front.ok) await this.enforce(front, options);
   }
 
   async runBackgroundEnforcement(now: number): Promise<void> {
@@ -2468,16 +2482,17 @@ export class Monitor implements MonitorHandle {
       this.setComponentHealth("frontmost", urlError);
       this.status.accessibilityLikelyMissing = false;
     }
+    observeBrowserProtectionForeground(/^https?:\/\//i.test(url) && !isVigilBlockedPageUrl(url) ? front.app || "" : "", this.browserActivityNow());
     return { ok: true, app: front.app || "", url, hostname };
   }
 
-  async enforce(front: FrontSample): Promise<void> {
+  async enforce(front: FrontSample, options: { observeBrowserProtection?: boolean } = {}): Promise<void> {
     const preserveBlockedPage = isVigilBlockedPageUrl(front.url);
     const evaluationSample = preserveBlockedPage
       ? { ...front, hostname: "", url: "" }
       : front;
 
-    const policy = this.policyForTarget(evaluationSample);
+    const policy = this.policyForTarget(evaluationSample, options);
     if (!policy) {
       if (await this.pauseIntentionalUse(evaluationSample)) return;
       this.status.lastEnforcement = null;
@@ -2491,7 +2506,7 @@ export class Monitor implements MonitorHandle {
       await this.blockSite({
         ...front,
         hostname: policy.browserControl.label
-      }, policy, { browserControl: policy.browserControl, originalHostname: front.url });
+      }, policy, { browserControl: policy.browserControl, browserProtection: policy.browserProtection, originalHostname: front.url });
       return;
     }
 
@@ -2641,9 +2656,9 @@ export class Monitor implements MonitorHandle {
     return true;
   }
 
-  policyForTarget(sample: UsageSample): EnforcedPolicy | null {
+  policyForTarget(sample: UsageSample, options: { observeBrowserProtection?: boolean } = {}): EnforcedPolicy | null {
     const limitBlockIdsBefore = new Set((this.state.limitBlocks || []).map((block) => block.id));
-    const policy = policyForSample(this.state, this.usage, sample);
+    const policy = policyForSample(this.state, this.usage, sample, new Date(), options);
     this.requestPersistenceForNewLimitBlocks(limitBlockIdsBefore);
     return policy;
   }

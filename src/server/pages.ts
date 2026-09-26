@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../apiSecurity.js";
 import { BLOCKED_PAGE_ESCAPE_FALLBACK, safeExternalPageUrl } from "../blockedPageUrl.js";
 import { PORT } from "../defaults.js";
@@ -55,6 +56,96 @@ interface PausePageData {
   waitSeconds?: number;
 }
 
+// The companion HTTP surface intentionally does not expose app assets.
+// Embed the small packaged icon so protection pages need no extra public route.
+const protectionBrandIcon = `data:image/png;base64,${readFileSync(new URL("../../extension/icons/icon-128.png", import.meta.url)).toString("base64")}`;
+
+// Shared by the blocked and companion pages; static extension pages use the same styles.
+const protectionPageCss = `
+/* Vigil protection surfaces: charcoal, copper, and editorial serif headings.
+   Keep aligned with public/focused-redesign.css and the server protection pages. */
+:root {
+  color-scheme: dark;
+  --paper: #101111;
+  --paper-2: #161717;
+  --ink: #f0ece5;
+  --muted: #aaa398;
+  --primary: #b77952;
+  --primary-strong: #d5a16b;
+  --line: rgba(235, 225, 203, .14);
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-display: "Iowan Old Style", Baskerville, Georgia, serif;
+  -webkit-text-size-adjust: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: max(40px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .10), transparent 34rem),
+    linear-gradient(180deg, var(--paper), var(--paper-2));
+}
+main { width: min(560px, 100%); }
+.brand-lockup { display: flex; align-items: center; gap: 12px; margin-bottom: 36px; }
+.brand-mark { display: block; width: 44px; height: 44px; flex: 0 0 auto; }
+.eyebrow { margin: 0; color: var(--primary-strong); font-size: .72rem; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+h1 {
+  max-width: 16ch;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 5vw, 3.75rem);
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -.025em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+.message, .reason {
+  max-width: 46ch;
+  margin: 22px 0 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.escape-actions { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
+.escape-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  min-height: 48px;
+  padding: 12px 20px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--primary);
+  color: #16120f;
+  font-size: .94rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-decoration: none;
+  transition: background .15s ease, transform .15s ease;
+}
+.escape-actions a:hover { background: var(--primary-strong); }
+.escape-actions a:active { transform: translateY(1px); }
+.escape-actions a:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 4px; }
+strong { color: var(--ink); }
+@media (max-width: 520px) {
+  .brand-lockup { margin-bottom: 28px; }
+  .escape-actions a { width: 100%; justify-content: space-between; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .escape-actions a { transition: none; }
+}
+`;
+
 export function companionPage(): string {
   return `<!doctype html>
 <html lang="en">
@@ -62,23 +153,16 @@ export function companionPage(): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Open Vigil</title>
-  <style>
-    :root { color-scheme: dark; --paper: #101111; --paper-2: #161717; --ink: #f0ece5; --muted: #aaa398; --primary: #b77952; --primary-strong: #d5a16b; --focus: rgba(213, 161, 107, .24); }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; color: var(--ink); background: radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .08), transparent 34rem), radial-gradient(circle at 28% 106%, rgba(157, 124, 88, .04), transparent 30rem), linear-gradient(180deg, var(--paper), var(--paper-2)); font-family: Inter, "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    main { width: min(560px, 100%); }
-    .eyebrow { margin: 0 0 12px; color: var(--primary-strong); font-size: .78rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
-    h1 { max-width: 11ch; margin: 0; font: 700 clamp(2.75rem, 8vw, 5rem)/.98 Georgia, "Times New Roman", serif; letter-spacing: -.04em; text-wrap: balance; }
-    main > p:last-child { max-width: 46ch; margin: 22px 0 0; padding-left: 14px; border-left: 2px solid rgba(213, 161, 107, .52); color: var(--muted); font-size: .96rem; line-height: 1.6; }
-    strong { color: var(--ink); }
-    @media (max-width: 520px) { body { place-items: start; padding: 64px 24px; } }
-  </style>
+  <style>${protectionPageCss}</style>
 </head>
 <body>
   <main>
-    <p class="eyebrow">Vigil</p>
+    <div class="brand-lockup">
+      <img class="brand-mark" src="${protectionBrandIcon}" width="44" height="44" alt="">
+      <p class="eyebrow">Vigil</p>
+    </div>
     <h1>Open Vigil from the menu bar.</h1>
-    <p>Choose the Vigil icon in your Mac menu bar, then choose <strong>Open Vigil</strong>.</p>
+    <p class="message">Choose the Vigil icon in your Mac menu bar, then choose <strong>Open Vigil</strong>.</p>
   </main>
 </body>
 </html>`;
@@ -132,25 +216,14 @@ export function blockedPage(input: PageInput): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Blocked · Vigil</title>
-  <style>
-    :root { color-scheme: dark; --paper: #101111; --paper-2: #161717; --ink: #f0ece5; --primary: #b77952; --primary-strong: #d5a16b; --focus: rgba(213, 161, 107, .24); }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 32px; color: var(--ink); background: radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .08), transparent 34rem), radial-gradient(circle at 28% 106%, rgba(157, 124, 88, .04), transparent 30rem), linear-gradient(180deg, var(--paper), var(--paper-2)); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    main { width: min(560px, 100%); }
-    .eyebrow { margin: 0 0 12px; color: var(--primary-strong); font-size: .78rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
-    h1 { max-width: 12ch; margin: 0; font: 700 clamp(2.75rem, 8vw, 5rem)/.98 Georgia, "Times New Roman", serif; letter-spacing: -.04em; text-wrap: balance; }
-    .reason { max-width: 48ch; margin: 22px 0 0; padding-left: 14px; border-left: 2px solid rgba(213, 161, 107, .52); color: #aaa398; font-size: .96rem; line-height: 1.6; }
-    .escape-actions { margin-top: 32px; }
-    .escape-actions a { min-height: 48px; display: inline-grid; place-items: center; padding: 0 22px; border-radius: 7px; color: #16120f; background: var(--primary); text-decoration: none; font-weight: 700; transition: background .15s ease, transform .15s ease; }
-    .escape-actions a:hover { background: var(--primary-strong); }
-    .escape-actions a:active { transform: translateY(1px); }
-    .escape-actions a:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
-    @media (max-width: 520px) { body { place-items: start; padding: 64px 24px; } }
-  </style>
+  <style>${protectionPageCss}</style>
 </head>
 <body data-vigil-block-page="1">
   <main>
-    <p class="eyebrow">Vigil</p>
+    <div class="brand-lockup">
+      <img class="brand-mark" src="${protectionBrandIcon}" width="44" height="44" alt="">
+      <p class="eyebrow">Vigil</p>
+    </div>
     <h1>${browserProtectionInterrupted ? "Browser protection connection interrupted." : `${site} is blocked.`}</h1>
     <p class="reason">${escapeHtml(blockExplanation)}</p>
     <div class="escape-actions">
@@ -375,7 +448,7 @@ function activePausePageCss() {
         radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .08), transparent 34rem),
         radial-gradient(circle at 28% 106%, rgba(157, 124, 88, .04), transparent 30rem),
         linear-gradient(180deg, var(--paper), var(--paper-2));
-      font-family: Inter, "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
     }
     button { font: inherit; }
     .pause-shell {
@@ -397,7 +470,7 @@ function activePausePageCss() {
       max-width: 13ch;
       margin: 0;
       color: var(--ink);
-      font: 700 clamp(2.75rem, 7vw, 5rem)/.98 Georgia, "Times New Roman", serif;
+      font: 600 clamp(2.5rem, 5vw, 3.75rem)/1.08 "Iowan Old Style", Baskerville, Georgia, serif;
       letter-spacing: -.04em;
       text-wrap: balance;
     }
@@ -478,7 +551,7 @@ function activePausePageCss() {
       display: grid;
       place-items: center;
       border: 1px solid rgba(213, 161, 107, .52);
-      border-radius: 7px;
+      border-radius: 9px;
       padding: 0;
       color: var(--ink);
       overflow: hidden;
@@ -533,7 +606,7 @@ function activePausePageCss() {
       transform: translateY(-1px);
     }
     .countdown-control:focus-visible {
-      outline: 3px solid var(--focus);
+      outline: 2px solid var(--primary-strong);
       outline-offset: 3px;
     }
     .status {
@@ -586,7 +659,7 @@ function pausePageCss() {
       background:
         radial-gradient(circle at 72% 0%, rgba(183, 121, 82, .055), transparent 28rem),
         linear-gradient(180deg, var(--paper), #131414);
-      font-family: Inter, "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
     }
     button, input, select { font: inherit; }
     button, .button {
@@ -604,7 +677,7 @@ function pausePageCss() {
     button:hover:not(:disabled), .button:hover { transform: translateY(-1px); }
     button:disabled { opacity: .5; cursor: not-allowed; }
     button:focus-visible, .button:focus-visible, input:focus-visible, select:focus-visible {
-      outline: 3px solid var(--focus);
+      outline: 2px solid var(--primary-strong);
       outline-offset: 2px;
     }
     .breath-guide {
@@ -697,8 +770,9 @@ function pausePageCss() {
     }
     h1 {
       margin: 0;
+      font-family: "Iowan Old Style", Baskerville, Georgia, serif;
       font-size: clamp(2.35rem, 7vw, 3.6rem);
-      font-weight: 680;
+      font-weight: 600;
       line-height: .98;
       letter-spacing: -.055em;
       text-wrap: balance;
@@ -895,7 +969,7 @@ function safeBlockedPageEscapeUrl(input: PageInput, value: unknown): string {
     app: "Safari",
     hostname: parsed.hostname,
     url: parsed.toString()
-  });
+  }, new Date(), { observeBrowserProtection: false });
   if (policy || safariFilterDenyMatch(state, parsed)) return "";
   return parsed.toString();
 }

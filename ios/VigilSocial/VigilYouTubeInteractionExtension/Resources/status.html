@@ -1,4 +1,35 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vigil YouTube Controls</title>
-<style>body{font:16px system-ui;width:280px;padding:16px;color-scheme:light dark}h1{font-size:19px}p{line-height:1.45}button{font:inherit;padding:10px;width:100%;margin-top:8px}#details{font-size:13px}</style></head>
-<body><h1>Vigil YouTube Controls</h1><p id="status" role="status">Checking this page…</p><p id="details"></p><button id="allow">Allow YouTube and reload</button><button id="check">Check again</button><script src="status.js"></script></body></html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vigil YouTube Controls</title>
+  <link rel="stylesheet" href="blocked.css">
+  <style>
+    body { display: block; place-items: normal; width: 320px; min-height: 0; padding: 24px; }
+    .brand-lockup { margin-bottom: 24px; }
+    .brand-mark { width: 32px; height: 32px; }
+    h1 { font-size: 1.65rem; }
+    p { color: var(--muted); font-size: .9rem; line-height: 1.55; }
+    #details { font-size: .8rem; overflow-wrap: anywhere; }
+    button { width: 100%; min-height: 44px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: #222321; font: 600 .85rem var(--font-body); cursor: pointer; }
+    #allow { border-color: transparent; color: #16120f; background: var(--primary); }
+    button:hover { border-color: var(--primary-strong); }
+    #allow:hover { background: var(--primary-strong); }
+    button:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 3px; }
+    button:disabled { opacity: .55; cursor: default; }
+  </style>
+</head>
+<body>
+  <div class="brand-lockup">
+    <img class="brand-mark" src="icons/icon-128.png" width="32" height="32" alt="">
+    <p class="eyebrow">Vigil</p>
+  </div>
+  <h1>YouTube controls</h1>
+  <p id="status" role="status">Checking this page…</p>
+  <p id="details"></p>
+  <button id="allow">Allow YouTube and reload</button>
+  <button id="check">Check again</button>
+  <script src="status.js"></script>
+</body>
+</html>

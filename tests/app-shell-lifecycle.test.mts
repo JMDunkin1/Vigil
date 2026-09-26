@@ -19,6 +19,12 @@ assert.match(mainSource, /if \(MENU_BAR_COMPANION_ENABLED\) installMenuBarCompan
   "startup must not instantiate Electron's continuously repainting macOS status item");
 assert.match(mainSource, /powerMonitor\.on\("resume", \(\) => reconcile\("system-resume"\)\)/,
   "waking from sleep must trigger one explicit runtime reconciliation without a permanent poll");
+assert.match(mainSource, /powerMonitor\.on\("suspend", \(\) => setBrowserProtectionSuspended\("system-suspend", true\)\)/,
+  "native suspension must pause browser recovery before sleeping");
+assert.match(mainSource, /powerMonitor\.on\("lock-screen", \(\) => setBrowserProtectionSuspended\("screen-lock", true\)\)/,
+  "a locked screen must not consume active browser recovery time");
+assert.match(mainSource, /if \(reason === "system-resume"\) setBrowserProtectionSuspended\("system-suspend", false\);/);
+assert.match(mainSource, /if \(reason === "screen-unlock"\) setBrowserProtectionSuspended\("screen-lock", false\);/);
 assert.match(mainSource, /vigil:window-activity/, "Electron must send authoritative native focus state to the renderer");
 assert.match(mainSource, /vigilWindow\.on\("blur", syncRendererActivity\)/, "losing native window focus must immediately stop renderer animation work");
 assert.match(mainSource, /app\.commandLine\.appendSwitch\("autoplay-policy", "no-user-gesture-required"\)/, "saved Focus Sound playback must resume after a packaged-app relaunch");
@@ -42,7 +48,7 @@ assert.match(
 
 assert.match(
   mainSource,
-  /app\.on\("activate", \(\) => \{[\s\S]*?if \(shouldStayResident\(\) && app\.dock && !app\.dock\.isVisible\(\)\) return;\s*revealVigilWindow\(\);\s*\}\);/,
+  /app\.on\("activate", \(\) => \{[\s\S]*?if \(changingWindowPresentation\) return;\s*revealVigilWindow\(\);\s*\}\);/,
   "AppKit activation must recreate an intentionally opened Vigil window without reopening its presentation while the Dock tile is hiding"
 );
 assert.match(
@@ -67,7 +73,7 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function showVigilWindow\(appUrl: string\): void \{\s*const dockReady = showVigilDock\(\);\s*if \(!mainWindow\) createWindow\(appUrl\);[\s\S]*?const reveal = \(\): void => \{[\s\S]*?if \(mainWindow !== window \|\| window\.isDestroyed\(\)\) return;[\s\S]*?window\.show\(\);[\s\S]*?window\.focus\(\);[\s\S]*?dockReady\.then\(reveal\)/,
+  /function showVigilWindow\(appUrl: string\): void \{[\s\S]*?const generation = \+\+windowPresentationGeneration;[\s\S]*?const dockReady = showVigilDock\(\);[\s\S]*?if \(!mainWindow\) createWindow\(appUrl\);[\s\S]*?generation !== windowPresentationGeneration \|\| mainWindow !== window \|\| window\.isDestroyed\(\)[\s\S]*?if \(!windowPresentationVisible\) hideVigilWindow\(\);[\s\S]*?window\.show\(\);[\s\S]*?window\.focus\(\);[\s\S]*?dockReady\.then\(reveal\)/,
   "opening a resident window must present it again after asynchronous Dock restoration without reviving a window hidden during that wait"
 );
 assert.match(
@@ -82,17 +88,17 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function hideVigilWindow\(\): void \{[\s\S]*?if \(window && !window\.isDestroyed\(\)\) window\.destroy\(\);\s*hideVigilDock\(\);\s*\}/,
+  /function hideVigilWindow\(\): void \{[\s\S]*?windowPresentationVisible = false;[\s\S]*?app\.hide\(\);[\s\S]*?if \(window && !window\.isDestroyed\(\)\) window\.destroy\(\);\s*hideVigilDock\(\);/,
   "hiding Vigil must release its Chromium window and remove its Dock tile while enforcement remains resident"
 );
 assert.match(
   mainSource,
-  /function showVigilDock\(\): Promise<void> \| null \{\s*if \(!shouldStayResident\(\) \|\| !app\.dock \|\| app\.dock\.isVisible\(\)\) return null;\s*return app\.dock\.show\(\);\s*\}/,
+  /function showVigilDock\(\): Promise<void> \| null \{[\s\S]*?clearTimeout\(dockHideTimer\);[\s\S]*?if \(!shouldStayResident\(\) \|\| !app\.dock \|\| app\.dock\.isVisible\(\)\) return null;\s*return app\.dock\.show\(\);\s*\}/,
   "revealing packaged Vigil must expose asynchronous Dock restoration to the window presentation lifecycle"
 );
 assert.match(
   mainSource,
-  /function hideVigilDock\(\): void \{\s*if \(!shouldStayResident\(\)\) return;\s*app\.dock\?\.hide\(\);\s*\}/,
+  /function hideVigilDock\(\): void \{[\s\S]*?DOCK_HIDE_INTERVAL_MS - \(Date\.now\(\) - lastDockHideAt\)[\s\S]*?if \(!windowPresentationVisible\) hideVigilWindow\(\);[\s\S]*?app\.dock\.hide\(\);\s*\}/,
   "hidden packaged Vigil must remove its Dock tile without changing its resident lifecycle"
 );
 assert.match(
@@ -102,13 +108,13 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /vigilWindow\.on\("closed", \(\) => \{[\s\S]*?mainWindow = null;\s*hideVigilDock\(\);/,
+  /vigilWindow\.on\("closed", \(\) => \{[\s\S]*?mainWindow = null;\s*hideVigilWindow\(\);/,
   "closing Vigil's last native window must remove its Dock tile"
 );
-assert.doesNotMatch(
+assert.match(
   packageSource,
   /"LSUIElement"\s*:\s*true/,
-  "Vigil must retain a normal application identity so opening its window can restore the Dock tile"
+  "Vigil must launch as an agent so background recovery never starts a Dock launch animation"
 );
 assert.match(
   mainSource,

@@ -83,11 +83,18 @@
     roots.add(root);
     if (observers.has(root)) return;
     const observer = new MutationObserver(schedule);
-    observers.set(root, observer);
-    observer.observe(root, {subtree:true, childList:true, characterData:true, attributes:true, attributeFilter:['alt','title','aria-label','data-title','data-testid','aria-checked','checked','style']});
-    const style = document.createElement('style');
-    style.textContent = '[data-vigil-explicit-media="blocked"] { display: none !important; visibility: hidden !important; pointer-events: none !important; }';
-    (root === document ? document.documentElement : root).append(style);
+    try {
+      observer.observe(root, {subtree:true, childList:true, characterData:true, attributes:true, attributeFilter:['alt','title','aria-label','data-title','data-testid','aria-checked','checked','style']});
+      const style = document.createElement('style');
+      style.textContent = '[data-vigil-explicit-media="blocked"] { display: none !important; visibility: hidden !important; pointer-events: none !important; }';
+      (root === document ? document.documentElement : root).append(style);
+      observers.set(root, observer);
+    } catch (error) {
+      // A later complete scan must retry all setup, rather than attest a root
+      // whose mutation observer or hiding style was never installed.
+      observer.disconnect();
+      throw error;
+    }
   };
   const guard = event => {
     if (isX) scan();
@@ -101,10 +108,20 @@
   };
   for (const event of ['click','pointerdown','keydown','play']) window.addEventListener(event, guard, true);
   const runtime = globalThis.browser?.runtime || globalThis.chrome?.runtime;
+  // Safari enforces the filters directly without a separate page-connection
+  // timeout. Keep every scan and guard running, but avoid sending unused
+  // health messages. Chrome retains its existing reporting protocol.
+  let reportsHealth = true;
+  try { reportsHealth = !String(runtime?.getURL?.('') || '').startsWith('safari-web-extension:'); }
+  catch { /* Identifying a stale extension context must not stop its filters. */ }
   const reportHealth = () => {
     // Every frame keeps its filters active, including hidden and newly parsed
     // frames that cannot attest the visible top-level page.
-    scan();
+    // A transient DOM failure must not end the reporting lifecycle. A failed
+    // scan provides no health evidence; the next lifecycle event or heartbeat
+    // must perform the complete scan again before it can report success.
+    try { scan(); } catch { return; }
+    if (!reportsHealth) return;
     if (window.top !== window || document.visibilityState !== 'visible' || !document.documentElement) return;
     // A successful scan precedes every report. The background supplies the
     // sender URL and verifies its active, focused window. Safari can leave
@@ -114,7 +131,6 @@
   };
   document.addEventListener('DOMContentLoaded', reportHealth, {once:true});
   addEventListener('pageshow', reportHealth, true);
-  reportHealth();
   addEventListener('focus', reportHealth, true);
   document.addEventListener('visibilitychange', reportHealth);
   // Browser focus can return to the address bar without a DOM focus or
@@ -124,4 +140,5 @@
     if (message?.type === 'VIGIL_REQUEST_BROWSER_FILTER_HEALTH') reportHealth();
   });
   setInterval(reportHealth, 1500);
+  reportHealth();
 })();

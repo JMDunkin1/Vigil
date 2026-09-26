@@ -336,11 +336,50 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testSnapchatCaptchaFramesStayConfinedToLogin() throws {
+        let login = URL(string: "https://accounts.snapchat.com/v2/login")!
+        for host in ["www.google.com", "recaptcha.google.com", "www.recaptcha.net"] {
+            for path in ["api2/anchor", "api2/bframe", "enterprise/anchor", "enterprise/bframe"] {
+                let url = try XCTUnwrap(URL(string: "https://\(host)/recaptcha/\(path)?k=test-key"))
+                XCTAssertTrue(SocialService.snapchat.allowsEmbeddedNavigation(to: url, mainDocumentURL: login))
+                XCTAssertTrue(SocialService.snapchat.usesUnmodifiedAuthenticationDocument(url))
+                XCTAssertFalse(SocialService.snapchat.allowsNavigation(to: url))
+                XCTAssertFalse(SocialService.snapchat.allowsEmbeddedNavigation(to: url))
+                XCTAssertFalse(SocialService.snapchat.allowsEmbeddedNavigation(to: url, mainDocumentURL: SocialService.snapchat.homeURL))
+                XCTAssertFalse(SocialService.snapchat.allowsEmbeddedNavigation(to: url, mainDocumentURL: URL(string: "https://accounts.snapchat.com.evil.test/")))
+                XCTAssertFalse(SocialService.youtube.allowsEmbeddedNavigation(to: url, mainDocumentURL: login))
+                XCTAssertNil(SocialWebViewStore.validatedPopupRequest(URLRequest(url: url), for: .snapchat))
+            }
+        }
+        for value in [
+            "https://www.google.com/search?q=test", "https://www.google.com/recaptcha/",
+            "https://www.google.com/recaptcha/api2/anchor/extra",
+            "https://www.google.com/recaptcha/api2/%61nchor",
+            "https://www.google.com/recaptcha/api2/anchor%2F..%2F..%2Fsearch",
+            "https://www.google.com.evil.test/recaptcha/api2/anchor",
+            "https://www.google.com:444/recaptcha/api2/anchor",
+            "http://www.google.com/recaptcha/api2/anchor",
+            "https://user@www.google.com/recaptcha/api2/anchor"
+        ] {
+            let url = try XCTUnwrap(URL(string: value))
+            XCTAssertFalse(SocialService.snapchat.allowsEmbeddedNavigation(to: url, mainDocumentURL: login), value)
+            XCTAssertFalse(SocialService.snapchat.usesUnmodifiedAuthenticationDocument(url), value)
+        }
+        for path in ["spotlight/123", "discover/123"] {
+            let url = URL(string: "https://www.snapchat.com/\(path)")!
+            XCTAssertTrue(SocialService.snapchat.isRestrictedSurface(url))
+            XCTAssertFalse(SocialService.snapchat.allowsEmbeddedNavigation(to: url, mainDocumentURL: login))
+        }
+    }
+
+    @MainActor
     func testSnapchatLoginDocumentRemainsUnmodified() async throws {
         let controller = WKUserContentController()
         for script in [
             DOMAdapters.documentStartScript(for: .snapchat, unclassifiedMediaPolicy: .conceal, audioEnabled: true),
-            DOMAdapters.script(for: .snapchat, audioEnabled: true)
+            DOMAdapters.installedFrameSafetyScript(for: .snapchat, audioEnabled: true),
+            DOMAdapters.installedFrameRoutePolicyGuard(for: .snapchat),
+            DOMAdapters.installedControlsScript(for: .snapchat)
         ] {
             controller.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         }
@@ -355,6 +394,151 @@ final class VigilSocialTests: XCTestCase {
               && getComputedStyle(document.getElementById('login')).visibility === 'visible'
             """) as? Bool
         XCTAssertEqual(untouched, true)
+    }
+
+    @MainActor
+    func testSnapchatChatReadinessTracksLateUIAndKeepsConversationControls() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: """
+            window.healthReports = [];
+            window.__vigilBridge = value => { if (value.type === 'health') healthReports.push(value); };
+            window.fetch = async () => { throw new Error('offline fixture'); };
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        let viewController = UIViewController()
+        window.rootViewController = viewController
+        viewController.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString("<html><body><main id='stage'></main></body></html>", baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.healthReports?.at(-1)?.state === 'loading'", in: webView)
+
+        _ = try await webView.evaluateJavaScript("""
+            document.getElementById('stage').innerHTML = `
+              <input data-testid="app.feed.Search" placeholder="Search friends">
+              <div role="textbox" contenteditable="true" id="composer" style="min-height:40px">hello</div>
+              <button id="send" onclick="window.fixtureSent = document.getElementById('composer').textContent">Send</button>
+              <button id="camera" onclick="window.fixtureCameraOpened = true">Camera</button>
+              <button aria-label="Spotlight" id="spotlight">Spotlight</button>
+              <a href="/discover/test" id="discover">Discover</a>
+              <p>My friend wrote: Browser not supported. Download Snapchat. Open Snapchat.</p>`;
+            """)
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'ready'", in: webView)
+        try await waitForJavaScriptCondition("getComputedStyle(document.getElementById('spotlight')).display === 'none'", in: webView)
+        let result = try await webView.evaluateJavaScript("""
+            document.getElementById('send').click();
+            document.getElementById('camera').click();
+            [window.fixtureSent === 'hello', window.fixtureCameraOpened === true,
+             getComputedStyle(document.getElementById('send')).display !== 'none',
+             getComputedStyle(document.getElementById('discover')).display === 'none',
+             location.pathname === '/web/']
+            """) as? [Bool]
+        XCTAssertEqual(result, [true, true, true, true, true])
+
+        _ = try await webView.evaluateJavaScript("document.getElementById('stage').innerHTML = '<h1>Something went wrong</h1><button>Retry</button>'")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'degraded'", in: webView)
+        _ = try await webView.evaluateJavaScript("document.getElementById('stage').innerHTML = '<h1>Browser not supported</h1>'")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'unsupported'", in: webView)
+        _ = try await webView.evaluateJavaScript("document.getElementById('stage').innerHTML = '<div role=dialog><h1>Welcome to Snapchat</h1><button>Continue</button></div>'")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'ready'", in: webView)
+    }
+
+    @MainActor
+    func testSnapchatAuthenticationHandoffInstallsChatProtectionAndPreservesInput() async throws {
+        let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
+            mediaClassifier: StubMediaClassifier(verdict: .safe), unclassifiedMediaPolicy: .conceal,
+            websiteDataStore: .nonPersistent())
+        let webView = store.webView(for: .snapchat)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let viewController = UIViewController()
+        window.rootViewController = viewController
+        webView.frame = window.bounds
+        viewController.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        // Real store, delegates and injected scripts; only the server documents
+        // are fixtures. No credential, account or message is sent to Snapchat.
+        for (index, path) in ["/v2/login", "/accounts/challenge", "/accounts/two_factor"].enumerated() {
+            webView.loadHTMLString("<html><body><form id='auth-\(index)'><input name='code'><button>Continue</button></form></body></html>",
+                baseURL: URL(string: "https://accounts.snapchat.com\(path)"))
+            try await waitForJavaScriptCondition("Boolean(document.getElementById('auth-\(index)'))", in: webView)
+            let untouched = try await webView.evaluateJavaScript("!window.__vigilCommonInstalled && !window.__vigilSnapchatInstalled") as? Bool
+            XCTAssertEqual(untouched, true)
+        }
+        let photo = UIGraphicsImageRenderer(size: CGSize(width: 64, height: 64)).pngData { context in
+            UIColor.blue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        }.base64EncodedString()
+        webView.loadHTMLString("""
+            <html><body><main>
+              <input data-testid="app.feed.Search" placeholder="Search friends">
+              <p>Hello, how are you?</p>
+              <div role="textbox" contenteditable="true" id="composer" style="min-height:40px"></div>
+              <button id="send" onclick="window.fixtureMessage = document.getElementById('composer').textContent">Send</button>
+              <a id="spotlight" href="/spotlight/test">Spotlight</a>
+              <img id="photo" width="64" height="64" src="data:image/png;base64,\(photo)">
+            </main></body></html>
+            """, baseURL: URL(string: "https://www.snapchat.com/web/?ticket=fixture-only"))
+        try await waitForJavaScriptCondition("Boolean(window.__vigilCommonInstalled && window.__vigilSnapchatInstalled && document.documentElement.dataset.vigilPageVerdict === 'safe')", in: webView)
+        try await waitForJavaScriptCondition("document.getElementById('photo').dataset.vigilMediaVerdict === 'safe'", in: webView)
+        _ = try await webView.evaluateJavaScript("""
+            const composer = document.getElementById('composer');
+            composer.textContent = 'Hello friend';
+            composer.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:'Hello friend'}));
+            document.getElementById('send').click();
+            """)
+        let usable = try await webView.evaluateJavaScript("""
+            window.fixtureMessage === 'Hello friend'
+              && getComputedStyle(document.getElementById('send')).visibility === 'visible'
+              && getComputedStyle(document.getElementById('spotlight')).display === 'none'
+            """) as? Bool
+        XCTAssertEqual(usable, true)
+        withExtendedLifetime(store) {}
+    }
+
+    @MainActor
+    func testSnapchatCrashRecoveryRestartsLoginWithoutReplayingChallenge() async throws {
+        let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false, websiteDataStore: .nonPersistent())
+        let webView = store.webView(for: .snapchat)
+        let challenge = URL(string: "https://accounts.snapchat.com/accounts/challenge?one_time=expired")!
+        webView.loadHTMLString("<html><body><form id='challenge'>Verify sign-in</form></body></html>", baseURL: challenge)
+        try await waitForJavaScriptCondition("Boolean(document.getElementById('challenge'))", in: webView)
+        let restarted = expectation(description: "fresh Snapchat sign-in requested")
+        let probe = RoutePolicyNavigationDelegate(expectedHost: "accounts.snapchat.com", expectedPath: "/v2/login", expectation: restarted)
+        webView.navigationDelegate = probe
+        store.webViewWebContentProcessDidTerminate(webView)
+        await fulfillment(of: [restarted], timeout: 5)
+        XCTAssertEqual(probe.matchedURL, SnapchatWebCompatibility.loginURL)
+        XCTAssertEqual(SocialWebViewStore.safeRecoveryURL(challenge, for: .snapchat), SnapchatWebCompatibility.loginURL)
+        let conversation = URL(string: "https://www.snapchat.com/web/conversation/test")!
+        XCTAssertEqual(SocialWebViewStore.safeRecoveryURL(conversation, for: .snapchat), conversation)
+    }
+
+    @MainActor
+    func testSnapchatSessionStoreSurvivesWebViewRecreationAndStaysIsolated() async throws {
+        let first = SocialContainerStore(combined: true, loadInitialPages: false)
+        let firstView = first.store(for: .snapchat).webView(for: .snapchat)
+        let cookie = try XCTUnwrap(HTTPCookie(properties: [
+            .domain: "accounts.snapchat.com", .path: "/", .name: "vigil-regression-session",
+            .value: "fixture-only", .secure: "TRUE", .expires: Date().addingTimeInterval(3600)
+        ]))
+        await firstView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie)
+        let second = SocialContainerStore(combined: true, loadInitialPages: false)
+        let snapStore = second.store(for: .snapchat).webView(for: .snapchat).configuration.websiteDataStore
+        let cookies = await snapStore.httpCookieStore.allCookies()
+        XCTAssertTrue(cookies.contains { $0.name == cookie.name && $0.value == cookie.value })
+        for service in [SocialService.instagram, .youtube, .linkedin] {
+            let other = second.store(for: service).webView(for: service).configuration.websiteDataStore
+            let otherCookies = await other.httpCookieStore.allCookies()
+            XCTAssertFalse(otherCookies.contains { $0.name == cookie.name })
+        }
+        await snapStore.httpCookieStore.deleteCookie(cookie)
     }
 
     func testGeneratedJavaScriptParses() throws {

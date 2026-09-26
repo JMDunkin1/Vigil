@@ -403,7 +403,10 @@ reconcile_interrupted_app_update() {
         # evidence that cannot be proved to be either journaled generation.
         local partial_uuid=$(/usr/bin/uuidgen 2>/dev/null)
         [[ -n "$partial_uuid" ]] || return 1
-        local partial_path="\${app_next_path}.partial.\${partial_uuid}"
+        # Keep unverified recovery evidence on the same volume, but outside
+        # Finder/Spotlight's app inventory. It must never look like another
+        # installed Vigil or be offered as a launch target.
+        local partial_path="\${app_next_path:h}/.\${app_next_path:t}.partial.\${partial_uuid}.noindex"
         [[ ! -e "$partial_path" && ! -L "$partial_path" ]] || return 1
         /bin/mv "$app_next_path" "$partial_path" || return 1
       fi

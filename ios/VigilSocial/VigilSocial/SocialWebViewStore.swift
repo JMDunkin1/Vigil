@@ -1380,6 +1380,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         // replay them after WebKit terminates its content process; return to
         // the service-owned entry point and let the site restart auth safely.
         if service.usesUnmodifiedAuthenticationDocument(url) {
+            if service == .snapchat { return SnapchatWebCompatibility.loginURL }
             return service.homeURL
         }
         guard
@@ -1542,7 +1543,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
         preferences.preferredContentMode = service == .snapchat ? .desktop : .mobile
 
         if navigationAction.targetFrame?.isMainFrame == false {
-            guard service.allowsEmbeddedNavigation(to: url) else {
+            guard service.allowsEmbeddedNavigation(to: url, mainDocumentURL: webView.url) else {
                 decisionHandler(.cancel, preferences)
                 return
             }
@@ -1664,7 +1665,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
                 url: safeURL,
                 contentOffset: webView.scrollView.contentOffset
             )
-            if webView.reload() == nil {
+            if webView.url != safeURL || webView.reload() == nil {
                 webView.load(URLRequest(url: safeURL))
             }
         } else {

@@ -248,7 +248,7 @@ try {
   );
 
   const preparingBranch = script.indexOf('if [[ "$phase" == "preparing"', legacyRecoveryDefinition);
-  const partialQuarantine = script.indexOf('local partial_path="${app_next_path}.partial.${partial_uuid}"', preparingBranch);
+  const partialQuarantine = script.indexOf('local partial_path="${app_next_path:h}/.${app_next_path:t}.partial.${partial_uuid}.noindex"', preparingBranch);
   const partialMove = script.indexOf('/bin/mv "$app_next_path" "$partial_path"', partialQuarantine);
   const preparingJournalRemoval = script.indexOf('/bin/rm -f "$app_transaction_path"', partialMove);
   assert.ok(

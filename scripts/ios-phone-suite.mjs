@@ -69,6 +69,7 @@ const PHONE_SOURCE_FILES = [
   "scripts/watch-ios-usb-profile.mjs",
   "src/adultBlocklist.ts",
   "src/adultBlocklistPhoneArtifact.ts",
+  "src/appleContentFilterExceptions.ts",
   "src/contentFilters.ts",
   "src/defaults.ts",
   "src/explicitContentPolicy.ts",
@@ -1147,7 +1148,7 @@ async function updatePhone(selectedOptions) {
   await buildRuntime();
   const audit = await auditFourPolicies(toolEnvironment, edition === "enhanced" ? urlFilter.service : null);
   printPolicyAudit(audit, edition);
-  const build = await buildPhoneApps(release, edition, urlFilter, toolEnvironment, socialAppIds, includeUrlFilter);
+  const build = await buildPhoneApps(release, edition, urlFilter, toolEnvironment, socialAppIds, includeUrlFilter, device.udid);
   if (selectedOptions.noPolicy) {
     const extensionProblems = safariExtensionUpdateProblems(previousReceipt, build.apps);
     if (extensionProblems.length) {
@@ -1431,7 +1432,8 @@ async function buildPhoneApps(
   urlFilter,
   toolEnvironment = process.env,
   socialAppIds = DEFAULT_SOCIAL_APPS.map((app) => app.id),
-  includeUrlFilter = edition === "enhanced"
+  includeUrlFilter = edition === "enhanced",
+  deviceUdid = null
 ) {
   const selectedSocialAppIds = new Set(socialAppIds);
   const releaseLabel = REQUIRED_SOCIAL_APPS
@@ -1455,9 +1457,12 @@ async function buildPhoneApps(
       "-project", "ios/VigilSocial/VigilSocial.xcodeproj",
       "-scheme", social.buildScheme,
       "-configuration", "Release",
-      "-destination", "generic/platform=iOS",
+      // Personal Team renewal needs the paired phone as its provisioning
+      // destination; a generic destination can reuse an expiring profile.
+      "-destination", deviceUdid ? `platform=iOS,id=${deviceUdid}` : "generic/platform=iOS",
       "-derivedDataPath", derived,
       "-allowProvisioningUpdates",
+      ...(deviceUdid ? ["-allowProvisioningDeviceRegistration"] : []),
       "clean",
       "build",
       `VIGIL_APP_BUNDLE_IDENTIFIER=${social.bundleId}`,

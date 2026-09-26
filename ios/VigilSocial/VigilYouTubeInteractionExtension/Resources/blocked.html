@@ -3,18 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="color-scheme" content="light dark">
+  <meta name="color-scheme" content="dark">
   <meta name="referrer" content="no-referrer">
   <title>Blocked by Vigil</title>
   <link rel="stylesheet" href="blocked.css">
 </head>
-<body>
+<body data-vigil-block-page="1">
   <main>
-    <div class="mark" aria-hidden="true">V</div>
-    <p class="brand">Vigil</p>
+    <div class="brand-lockup">
+      <img class="brand-mark" src="icons/icon-128.png" width="44" height="44" alt="">
+      <p class="eyebrow">Vigil</p>
+    </div>
     <h1>This search is blocked.</h1>
     <p class="message">Your content protection is working.<br>Start a new search, or close this tab.</p>
-    <a href="https://www.google.com/?safe=active" rel="noreferrer">Start a new search <span aria-hidden="true">↗</span></a>
+    <div class="escape-actions">
+      <a href="https://www.google.com/?safe=active" rel="noreferrer">Start a new search <span aria-hidden="true">↗</span></a>
+    </div>
   </main>
 </body>
 </html>

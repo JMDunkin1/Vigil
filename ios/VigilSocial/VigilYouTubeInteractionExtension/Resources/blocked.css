@@ -1,9 +1,20 @@
+/* Vigil protection surfaces: charcoal, copper, and editorial serif headings.
+   Keep aligned with public/focused-redesign.css and the server protection pages. */
 :root {
-  color-scheme: light dark;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #f3f1eb;
-  color: #242b29;
+  color-scheme: dark;
+  --paper: #101111;
+  --paper-2: #161717;
+  --ink: #f0ece5;
+  --muted: #aaa398;
+  --primary: #b77952;
+  --primary-strong: #d5a16b;
+  --line: rgba(235, 225, 203, .14);
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-display: "Iowan Old Style", Baskerville, Georgia, serif;
   -webkit-text-size-adjust: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
 }
 * { box-sizing: border-box; }
 body {
@@ -12,29 +23,60 @@ body {
   min-height: 100svh;
   display: grid;
   place-items: center;
-  padding: max(32px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(32px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  padding: max(40px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .10), transparent 34rem),
+    linear-gradient(180deg, var(--paper), var(--paper-2));
 }
-main { width: 100%; max-width: 380px; padding-bottom: 5vh; }
-.mark {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  border: 1px solid #b9c3b7;
-  border-radius: 14px;
-  color: #536d56;
-  font-size: 24px;
-  font-weight: 500;
+main { width: min(560px, 100%); }
+.brand-lockup { display: flex; align-items: center; gap: 12px; margin-bottom: 36px; }
+.brand-mark { display: block; width: 44px; height: 44px; flex: 0 0 auto; }
+.eyebrow { margin: 0; color: var(--primary-strong); font-size: .72rem; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+h1 {
+  max-width: 16ch;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 5vw, 3.75rem);
+  font-weight: 600;
+  line-height: 1.08;
+  letter-spacing: -.025em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
 }
-.brand { margin: 24px 0 12px; font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #647168; }
-h1 { margin: 0; font-size: clamp(27px, 7vw, 34px); line-height: 1.15; letter-spacing: -.035em; font-weight: 600; }
-.message { margin: 18px 0 30px; font-size: 16px; line-height: 1.65; color: #656c65; }
-a { display: flex; justify-content: space-between; align-items: center; min-height: 52px; padding: 14px 18px; border-radius: 12px; background: #314f3c; color: #fff; text-decoration: none; font-size: 15px; font-weight: 600; }
-a:focus-visible { outline: 3px solid #789982; outline-offset: 4px; }
-@media (prefers-color-scheme: dark) {
-  :root { background: #171d1a; color: #f0f0e9; }
-  .mark { border-color: #46564a; color: #c0d3bb; }
-  .brand { color: #a6b4a5; }
-  .message { color: #aeb7ad; }
-  a { background: #c0d3bb; color: #1c3023; }
+.message, .reason {
+  max-width: 46ch;
+  margin: 22px 0 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.escape-actions { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
+.escape-actions a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  min-height: 48px;
+  padding: 12px 20px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--primary);
+  color: #16120f;
+  font-size: .94rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-decoration: none;
+  transition: background .15s ease, transform .15s ease;
+}
+.escape-actions a:hover { background: var(--primary-strong); }
+.escape-actions a:active { transform: translateY(1px); }
+.escape-actions a:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 4px; }
+strong { color: var(--ink); }
+@media (max-width: 520px) {
+  .brand-lockup { margin-bottom: 28px; }
+  .escape-actions a { width: 100%; justify-content: space-between; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .escape-actions a { transition: none; }
 }

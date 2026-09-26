@@ -1219,9 +1219,15 @@ enum DOMAdapters {
               // Match SocialService.usesUnmodifiedAuthenticationDocument: Snap's
               // login and security challenges must retain their original DOM
               // and browser environment. Chat gets the full guard on navigation.
+              const host = url.hostname.toLowerCase();
+              const captchaFrame = window.top !== window
+                && !url.username && !url.password
+                && ['www.google.com', 'recaptcha.google.com', 'www.recaptcha.net'].includes(host)
+                && ['/recaptcha/api2/anchor', '/recaptcha/api2/bframe',
+                    '/recaptcha/enterprise/anchor', '/recaptcha/enterprise/bframe'].includes(url.pathname);
               if (url.protocol === 'https:'
                   && (!url.port || url.port === '443')
-                  && url.hostname.toLowerCase() === 'accounts.snapchat.com') return;
+                  && (host === 'accounts.snapchat.com' || captchaFrame)) return;
               GUARDED_BODY
             })();
             """#.replacingOccurrences(of: "GUARDED_BODY", with: body)
@@ -4148,9 +4154,22 @@ enum DOMAdapters {
       };
       const loginAttemptKey = 'vigil-snapchat-web-login-attempted';
       const webLoginURL = 'https://accounts.snapchat.com/v2/login?continue=https%3A%2F%2Fwww.snapchat.com%2Fweb%2F';
+      const startedAt = performance.now();
+      const visible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0
+          && style.display !== 'none' && style.visibility !== 'hidden';
+      };
+      const hasChatSurface = () => [...document.querySelectorAll(
+        '[data-testid="app.feed.Search"], [data-testid^="app.user.userProfileButton"], '
+        + '[role="textbox"][contenteditable="true"]'
+      )].some(visible);
       const isMarketingShell = () => {
+        if (hasChatSurface()) return false;
         const text = String(document.body?.innerText || '').toLowerCase();
-        return text.includes('download snapchat') && text.includes('open snapchat');
+        return (text.includes('download snapchat') && text.includes('open snapchat'))
+          || /try (?:the new )?snapchat for web on your computer/.test(text);
       };
       let loginNavigationPending = false;
       const beginWebLoginIfNeeded = () => {
@@ -4195,6 +4214,7 @@ enum DOMAdapters {
         if (beginWebLoginIfNeeded()) return;
         if (enforceRoute(true)) return;
         hideRestrictedControls();
+        reportHealth();
       };
       const scheduleReconcile = () => {
         if (reconciliationScheduled) return;
@@ -4219,25 +4239,33 @@ enum DOMAdapters {
       });
 
       const reportHealth = () => {
+        if (window !== window.top) return;
         const text = String(document.body?.innerText || '').toLowerCase();
         if (loginNavigationPending) return;
+        const chatReady = hasChatSurface();
         const marketingShell = isMarketingShell();
-        const unsupported = marketingShell
-          || /browser (isn't|is not) supported|unsupported browser|try another browser|only available on desktop/.test(text);
+        const unsupported = !chatReady && (marketingShell
+          || /browser (?:(?:isn't|is not|not) supported)|unsupported browser|try another browser|only available on desktop/.test(text));
+        const failed = !chatReady && /something went wrong|unable to connect|could not connect|failed to load/.test(text);
+        const usable = chatReady || (text.trim().length > 0 && [...document.querySelectorAll(
+          'input:not([type="hidden"]), button, [role="button"], [role="dialog"]'
+        )].some(visible));
+        const stalled = !usable && performance.now() - startedAt >= 15000;
         window.__vigilBridge?.({
           type: 'health',
-          state: unsupported ? 'unsupported' : 'ready',
+          state: unsupported ? 'unsupported' : failed || stalled ? 'degraded' : usable ? 'ready' : 'loading',
           detail: unsupported
             ? (marketingShell
               ? 'Snapchat returned its app-download page. Tap Try again to open Snapchat sign-in.'
               : 'Snapchat rejected its web client in this version of WebKit.')
-            : ''
+            : failed ? 'Snapchat could not finish loading. Try again to reconnect.'
+            : stalled ? 'Snapchat is taking too long to load chat. Try again to reconnect.' : ''
         });
       };
       reconcile();
-      reportHealth();
       setTimeout(reportHealth, 1500);
       setTimeout(reportHealth, 8000);
+      setTimeout(reportHealth, 15000);
     })();
     """#
 

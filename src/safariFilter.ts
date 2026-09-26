@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { appleContentFilterStatus } from "./appleContentFilter.js";
+import { APPLE_CONTENT_FILTER_PERMITTED_URLS } from "./appleContentFilterExceptions.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { vigilLocalSiteAllowList } from "./blockedPageUrl.js";
 import { contentFilterEnabled, contentFilterRuleEntries } from "./contentFilters.js";
@@ -181,6 +182,7 @@ function safariFilterPolicySignatureForUrls(
       appleBuiltInContentFilter: true,
       removalDisallowed: true,
       allowSafariHistoryClearing: true,
+      permittedUrls: APPLE_CONTENT_FILTER_PERMITTED_URLS,
       siteAllowList,
       denyUrls
     }))
@@ -196,6 +198,7 @@ function buildSafariFilterProfileFromData(data: SafariFilterPolicyData): string 
     PayloadContent: [
       {
         allowListEnabled: false,
+        filterAllowList: [...APPLE_CONTENT_FILTER_PERMITTED_URLS],
         filterDenyList: data.denyUrls,
         restrictWeb: true,
         siteAllowList: data.siteAllowList,

@@ -811,6 +811,9 @@ assert.equal(hotUsageCheckpointRetryDelayMs(100), MONITOR_HOT_CHECKPOINT_MAX_RET
   const attestationStarted = new Promise<void>((resolve) => { markAttestationStarted = resolve; });
   let attestationPhaseSnapshots = 0;
   state.settings.foolproofModeEnabled = true;
+  // The queued redirect must have a real active restriction: its first attempt
+  // is now revalidated after commit, just like a recovered/retried intent.
+  state.profiles.find(profile => profile.id === "default")!.blockedSites.push("reddit.com");
   state.activeSession = {
     id: "slow-attestation-lock",
     title: "Slow attestation lock",

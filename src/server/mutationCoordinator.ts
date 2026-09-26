@@ -2,7 +2,7 @@ import type { ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { isDeepStrictEqual } from "node:util";
-import { saveRuntimeSnapshot, withStagedPersistence } from "../store.js";
+import { outsideStagedPersistence, saveRuntimeSnapshot, withStagedPersistence } from "../store.js";
 import type { RuntimeOutboxEntry } from "../store.js";
 import type { UsageState, VigilState } from "../types.js";
 
@@ -340,7 +340,7 @@ export class RuntimeMutationCoordinator {
   }
 
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
-    const queued = this.mutationTail.then(operation);
+    const queued = this.mutationTail.then(() => outsideStagedPersistence(operation));
     this.mutationTail = queued.then(() => {}, () => {});
     return queued;
   }
@@ -352,7 +352,7 @@ export class RuntimeMutationCoordinator {
       : lane === "immediate"
         ? this.immediateEffectTail
         : this.effectTail;
-    const queued = tail.then(() => this.effectContext.run(lane, () => this.executeEffect(entry, options)));
+    const queued = tail.then(() => outsideStagedPersistence(() => this.effectContext.run(lane, () => this.executeEffect(entry, options))));
     if (lane === "control") this.controlEffectTail = queued.then(() => {}, () => {});
     else if (lane === "immediate") this.immediateEffectTail = queued.then(() => {}, () => {});
     else this.effectTail = queued.then(() => {}, () => {});

@@ -89,7 +89,14 @@ interface PersistenceTransaction {
   rollbackEffects: Array<() => void | Promise<void>>;
 }
 
-const persistenceTransaction = new AsyncLocalStorage<PersistenceTransaction>();
+const persistenceTransaction = new AsyncLocalStorage<PersistenceTransaction | undefined>();
+
+// A serialized coordinator job is a new transaction, even when a timer that
+// queued it inherited the async context of an earlier (now closed) draft.
+// Direct late writes retain that closed context and continue to fail closed.
+export function outsideStagedPersistence<T>(operation: () => T): T {
+  return persistenceTransaction.run(undefined, operation);
+}
 
 export async function withStagedPersistence<T>(operation: () => Promise<T>): Promise<{
   result: T;
@@ -875,6 +882,8 @@ function blockedEventSummary(detail: UnknownRecord): UnknownRecord {
   const contentFilter = asAuditRecord(detail.contentFilter);
   const urlPattern = asAuditRecord(detail.urlPattern);
   return compactRecord({
+    // Preserve the failure reason before trimming verbose URL/result fields.
+    browserProtection: detail.browserProtection ? compactRecord(asAuditRecord(detail.browserProtection)) : undefined,
     site: auditTarget(detail.site),
     app: detail.app,
     target: auditTarget(detail.target),

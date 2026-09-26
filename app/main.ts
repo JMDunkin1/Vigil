@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, powerMonitor, protocol, shell, systemPreferences, Tray } from "electron";
 import type { IpcMainEvent, IpcMainInvokeEvent, MenuItemConstructorOptions, Rectangle } from "electron";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../src/apiSecurity.js";
+import { setBrowserProtectionSuspended } from "../src/browserProtection.js";
 import { resolveDefaultDataDir } from "../src/dataPaths.js";
 import { getInstanceSecret } from "../src/instanceIdentity.js";
 import { plistStringForKey } from "../src/plist.js";
@@ -115,6 +116,12 @@ interface EmbeddedSupervisorFileBackup {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let changingWindowPresentation = false;
+let windowPresentationGeneration = 0;
+let windowPresentationVisible = false;
+let dockHideTimer: ReturnType<typeof setTimeout> | null = null;
+let lastDockHideAt = Number.NEGATIVE_INFINITY;
+const DOCK_HIDE_INTERVAL_MS = 1_100;
 let ownedRuntime: VigilRuntimeHandle | null = null;
 let tray: Tray | null = null;
 let lastTrayStatus: TrayStatus | null = null;
@@ -217,12 +224,9 @@ app.on("second-instance", (_event, argv) => {
 });
 
 app.on("activate", () => {
-  // Hiding the Dock tile can emit an AppKit activation while the resident app
-  // is handing focus to another process. By then the tile is no longer visible,
-  // whereas an intentional Finder, Spotlight, or Dock open restores it before
-  // delivering activation. Ignore only the background lifecycle activation so
-  // an intentional later open can still recreate Vigil's presentation.
-  if (shouldStayResident() && app.dock && !app.dock.isVisible()) return;
+  // Ignore reentrant AppKit events during a presentation change, not later
+  // user reopen requests: those can arrive while the Dock is still hidden.
+  if (changingWindowPresentation) return;
   revealVigilWindow();
 });
 
@@ -340,23 +344,34 @@ app.on("window-all-closed", () => {
 });
 
 function showVigilWindow(appUrl: string): void {
-  const dockReady = showVigilDock();
-  if (!mainWindow) createWindow(appUrl);
-  const window = mainWindow;
-  if (!window) return;
-  const reveal = (): void => {
-    // The user may hide Vigil again while macOS is restoring its Dock tile.
-    // Never let completion of that older presentation request recreate it.
-    if (mainWindow !== window || window.isDestroyed()) return;
-    if (window.isMinimized()) window.restore();
-    window.show();
-    window.focus();
-  };
-  reveal();
-  if (dockReady) {
-    void dockReady.then(reveal).catch((error) => {
-      console.error("Vigil could not restore its Dock presentation.", error);
-    });
+  if (changingWindowPresentation) return;
+  changingWindowPresentation = true;
+  windowPresentationVisible = true;
+  const generation = ++windowPresentationGeneration;
+  try {
+    const dockReady = showVigilDock();
+    if (!mainWindow) createWindow(appUrl);
+    const window = mainWindow;
+    if (!window) return;
+    const reveal = (): void => {
+      if (generation !== windowPresentationGeneration || mainWindow !== window || window.isDestroyed()) {
+        // Dock.show() can finish after the user closes the window. Cancel its
+        // late Dock tile as well as its late window presentation.
+        if (!windowPresentationVisible) hideVigilWindow();
+        return;
+      }
+      if (window.isMinimized()) window.restore();
+      window.show();
+      window.focus();
+    };
+    reveal();
+    if (dockReady) {
+      void dockReady.then(reveal).catch((error) => {
+        console.error("Vigil could not restore its Dock presentation.", error);
+      });
+    }
+  } finally {
+    changingWindowPresentation = false;
   }
 }
 
@@ -369,35 +384,64 @@ function revealVigilWindow(): void {
 }
 
 function hideVigilWindow(): void {
+  if (changingWindowPresentation) return;
+  changingWindowPresentation = true;
+  windowPresentationVisible = false;
+  revealWindowWhenReady = false;
+  ++windowPresentationGeneration;
   const window = mainWindow;
   // A hidden Chromium window still retains a renderer, compositor surfaces,
   // AppKit tracking areas, and their background wakeups. The resident main
   // process owns enforcement, so release the presentation layer completely;
   // Open Vigil recreates it from the private in-app URL on demand.
-  if (window && !window.isDestroyed()) window.destroy();
-  hideVigilDock();
+  try {
+    // Hand off focus before releasing the native window and Dock tile.
+    if (shouldStayResident()) app.hide();
+    if (window && !window.isDestroyed()) window.destroy();
+    hideVigilDock();
+  } finally {
+    changingWindowPresentation = false;
+  }
 }
 
 function installPowerReconciliation(): void {
   if (powerReconciliationInstalled) return;
   powerReconciliationInstalled = true;
   const reconcile = (reason: string) => {
+    if (reason === "system-resume") setBrowserProtectionSuspended("system-suspend", false);
+    if (reason === "screen-unlock") setBrowserProtectionSuspended("screen-lock", false);
     void ownedRuntime?.reconcile?.(reason).catch((error) => {
       console.error(`Vigil ${reason} reconciliation failed:`, error);
     });
   };
+  powerMonitor.on("suspend", () => setBrowserProtectionSuspended("system-suspend", true));
+  powerMonitor.on("lock-screen", () => setBrowserProtectionSuspended("screen-lock", true));
   powerMonitor.on("resume", () => reconcile("system-resume"));
   powerMonitor.on("unlock-screen", () => reconcile("screen-unlock"));
 }
 
 function showVigilDock(): Promise<void> | null {
+  if (dockHideTimer) clearTimeout(dockHideTimer);
+  dockHideTimer = null;
   if (!shouldStayResident() || !app.dock || app.dock.isVisible()) return null;
   return app.dock.show();
 }
 
 function hideVigilDock(): void {
-  if (!shouldStayResident()) return;
-  app.dock?.hide();
+  if (!shouldStayResident() || !app.dock || !app.dock.isVisible() || dockHideTimer) return;
+  // Electron/macOS ignores repeated Dock.hide calls within one second.
+  // Coalesce a rapid close behind that interval; a later open cancels it.
+  const delay = DOCK_HIDE_INTERVAL_MS - (Date.now() - lastDockHideAt);
+  if (delay > 0) {
+    dockHideTimer = setTimeout(() => {
+      dockHideTimer = null;
+      if (!windowPresentationVisible) hideVigilWindow();
+    }, delay);
+    dockHideTimer.unref();
+    return;
+  }
+  lastDockHideAt = Date.now();
+  app.dock.hide();
 }
 
 function createWindow(appUrl: string): void {
@@ -455,7 +499,7 @@ function createWindow(appUrl: string): void {
     windowResizeSession = null;
     if (mainWindow === vigilWindow) {
       mainWindow = null;
-      hideVigilDock();
+      hideVigilWindow();
     }
   });
 }
@@ -1475,7 +1519,7 @@ function installMenu(appUrl: string): void {
       submenu: [
         { role: "about" },
         { type: "separator" },
-        { role: "hide" },
+        { label: "Hide Vigil", accelerator: "CommandOrControl+H", click: hideVigilWindow },
         { role: "hideOthers" },
         { role: "unhide" },
         { type: "separator" },

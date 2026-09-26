@@ -25,8 +25,37 @@ for (const [href, expectedInjection] of [
   ["https://accounts.snapchat.com:444/", true],
   ["http://accounts.snapchat.com/", true]
 ] as const) {
-  const context = { URL, location: { href }, injected: false };
+  const window = { top: {} };
+  const context = { URL, window, location: { href }, injected: false };
   runInNewContext(snapchatAuthenticationGuard.replace("GUARDED_BODY", "injected = true;"), context);
   assert.equal(context.injected, expectedInjection, href);
 }
-console.log("Snapchat authentication isolation: 9 cases passed.");
+for (const host of ["www.google.com", "recaptcha.google.com", "www.recaptcha.net"]) {
+  for (const path of ["api2/anchor", "api2/bframe", "enterprise/anchor", "enterprise/bframe"]) {
+    for (const embedded of [true, false]) {
+      const window: { top?: unknown } = {};
+      window.top = embedded ? {} : window;
+      const href = `https://${host}/recaptcha/${path}?k=test-key`;
+      const context = { URL, window, location: { href }, injected: false };
+      runInNewContext(snapchatAuthenticationGuard.replace("GUARDED_BODY", "injected = true;"), context);
+      assert.equal(context.injected, !embedded, `${href} embedded=${embedded}`);
+    }
+  }
+}
+for (const href of [
+  "https://www.google.com/search?q=test",
+  "https://www.google.com/recaptcha/",
+  "https://www.google.com/recaptcha/api2/anchor/extra",
+  "https://www.google.com/recaptcha/api2/%61nchor",
+  "https://www.google.com/recaptcha/api2/anchor%2F..%2F..%2Fsearch",
+  "https://www.google.com.evil.example/recaptcha/api2/anchor",
+  "https://evil.example/recaptcha/api2/anchor",
+  "https://www.google.com:444/recaptcha/api2/anchor",
+  "http://www.google.com/recaptcha/api2/anchor",
+  "https://user@www.google.com/recaptcha/api2/anchor"
+]) {
+  const context = { URL, window: { top: {} }, location: { href }, injected: false };
+  runInNewContext(snapchatAuthenticationGuard.replace("GUARDED_BODY", "injected = true;"), context);
+  assert.equal(context.injected, true, href);
+}
+console.log("Snapchat authentication isolation: 43 cases passed.");

@@ -1,39 +1,11 @@
-// Ask the existing content filter to re-scan on browser-owned activation
-// events. This is only a request: the authenticated report below still requires
-// a visible top frame in the active tab of the focused window.
-const requestFilterHealth = tabId => {
-  if (!Number.isInteger(tabId) || tabId < 0) return;
-  void browser.tabs.sendMessage(tabId, { type: 'VIGIL_REQUEST_BROWSER_FILTER_HEALTH' }, { frameId: 0 }).catch(() => {});
-};
-browser.tabs.onActivated?.addListener(({ tabId }) => requestFilterHealth(tabId));
-browser.windows.onFocusChanged?.addListener(windowId => {
-  if (!Number.isInteger(windowId) || windowId < 0) return;
-  void browser.tabs.query({ active: true, windowId }).then(tabs => {
-    for (const tab of tabs) requestFilterHealth(tab.id);
-  }).catch(() => {});
-});
-
 browser.runtime.onMessage.addListener((message, sender) => {
-  if (message?.type === 'VIGIL_BROWSER_FILTER_HEALTH') {
-    if (sender.frameId !== 0 || !sender.tab?.active || sender.tab.windowId === undefined || !sender.url || message.revision !== '2026-09-17.1') return undefined;
-    // Page focus excludes Safari searches while the address bar has focus.
-    // Use browser-owned window focus instead; a normal window must never
-    // attest a private window where the extension might be disabled.
-    return browser.windows.get(sender.tab.windowId).then(window => {
-      if (!window.focused) return { ok: false };
-      return browser.runtime.sendNativeMessage('tech.caseline.vigil', {
-        action: 'browser-filter-health', url: sender.url, revision: message.revision
-      });
-    }).catch(() => ({ ok: false }));
-  }
   if (message?.type !== 'VIGIL_YOUTUBE') return undefined;
   const host = new URL(sender.url || 'about:blank').hostname;
-  if (!/^(www\.|m\.)?youtube\.com$/.test(host) || message.youtube?.action === 'external') return Promise.resolve({ ok: false });
+  if (!/^(www\.|m\.)?youtube\.com$/.test(host) || ['external', 'browser-filter-health', 'browser-navigation'].includes(message.youtube?.action)) return Promise.resolve({ ok: false });
   return browser.runtime.sendNativeMessage('tech.caseline.vigil', {
     ...message.youtube, client: `safari:${sender.tab?.id}:${message.youtube.client}`
   });
 });
-
 
 // Navigation provenance is kept in extension storage, outside page control.
 // Reloads, typed URLs, missing referrers and YouTube new tabs do not grant an

@@ -8,17 +8,28 @@ const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = basename(runtimeRoot) === 'runtime' ? dirname(dirname(runtimeRoot)) : runtimeRoot;
 const resources = join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources');
 const content = await readFile(join(resources, 'media-child-lock.js'), 'utf8');
-const background = await readFile(join(resources, 'youtube-background.js'), 'utf8');
 
-function contentHarness(rootReady = true, visible = true, topFrame = true) {
+function contentHarness(rootReady = true, visible = true, topFrame = true, scanFailures = 0, setupFailure: 'observe' | 'append' | null = null, extensionScheme = 'chrome-extension:') {
   const reports: unknown[] = [];
   const listeners = new Map<string, () => void>();
+  const setup = { observeAttempts: 0, appendAttempts: 0, disconnects: 0, scans: 0 };
+  let mutationCallback: () => void = () => {};
   let receive: (message: { type: string }) => void = () => {};
   const document = {
-    documentElement: rootReady ? { append() {} } : null as { append(): void } | null,
+    documentElement: rootReady ? { append() {
+      setup.appendAttempts += 1;
+      if (setupFailure === 'append' && setup.appendAttempts === 1) throw new Error('Style append temporarily unavailable');
+    } } : null as { append(): void } | null,
     visibilityState: visible ? 'visible' : 'hidden',
     hasFocus: () => false, // Safari's address bar owns focus after a private search.
-    querySelectorAll: () => [],
+    querySelectorAll: () => {
+      setup.scans += 1;
+      if (scanFailures > 0) {
+        scanFailures -= 1;
+        throw new Error('Document scan temporarily unavailable');
+      }
+      return [];
+    },
     createElement: () => ({ textContent: '' }),
     addEventListener: (name: string, handler: () => void) => listeners.set(name, handler)
   };
@@ -27,14 +38,25 @@ function contentHarness(rootReady = true, visible = true, topFrame = true) {
   runInNewContext(content, {
     window, document, location: new URL('https://www.google.com/search?q=cars&safe=active'),
     addEventListener: document.addEventListener,
-    MutationObserver: class { observe() {} },
+    MutationObserver: class {
+      constructor(callback: () => void) { mutationCallback = callback; }
+      observe() {
+        setup.observeAttempts += 1;
+        if (setupFailure === 'observe' && setup.observeAttempts === 1) throw new Error('Observer temporarily unavailable');
+      }
+      disconnect() { setup.disconnects += 1; }
+    },
     browser: { runtime: {
+      getURL: () => {
+        if (extensionScheme === 'invalid-context') throw new Error('Extension context unavailable');
+        return `${extensionScheme}//vigil/`;
+      },
       onMessage: { addListener(handler: typeof receive) { receive = handler; } },
       sendMessage: (message: unknown) => { reports.push(message); return Promise.resolve({ ok: true }); }
     } },
     setTimeout, setInterval: (handler: () => void) => listeners.set('interval', handler)
   });
-  return { reports, document, listeners, receive: (type: string) => receive({ type }) };
+  return { reports, document, listeners, setup, mutate: () => mutationCallback(), receive: (type: string) => receive({ type }) };
 }
 const page = contentHarness();
 assert.equal(page.reports.length, 1, 'a protected private search reports even while the address bar owns focus');
@@ -52,63 +74,51 @@ loading.listeners.get('DOMContentLoaded')!();
 assert.equal(loading.reports.length, 1, 'a newly parsed document reports immediately');
 assert.equal(contentHarness(true, false).reports.length, 0, 'hidden tabs cannot report');
 assert.equal(contentHarness(true, true, false).reports.length, 0, 'subframes cannot report');
+const recovering = contentHarness(true, true, true, 2);
+assert.equal(recovering.reports.length, 0, 'an initial failed scan cannot attest protection');
+for (const event of ['DOMContentLoaded', 'pageshow', 'focus', 'visibilitychange', 'interval']) {
+  assert.ok(recovering.listeners.has(event), `initial scan failure must retain the ${event} recovery hook`);
+}
+recovering.listeners.get('interval')!();
+assert.equal(recovering.reports.length, 0, 'a failed heartbeat scan cannot attest protection');
+recovering.receive('VIGIL_REQUEST_BROWSER_FILTER_HEALTH');
+assert.equal(recovering.reports.length, 1, 'a browser activation request recovers only after its full scan succeeds');
+recovering.listeners.get('interval')!();
+assert.equal(recovering.reports.length, 2, 'heartbeats continue after scan recovery');
+for (const failure of ['observe', 'append'] as const) {
+  const setupRecovery = contentHarness(true, true, true, 0, failure);
+  assert.equal(setupRecovery.reports.length, 0, `failed ${failure} setup cannot attest protection`);
+  assert.equal(setupRecovery.setup.disconnects, 1, 'partial observer setup must disconnect before retry');
+  setupRecovery.listeners.get('interval')!();
+  assert.equal(setupRecovery.setup.observeAttempts, 2, `failed ${failure} setup must retry observer attachment`);
+  assert.equal(setupRecovery.setup.appendAttempts, failure === 'append' ? 2 : 1, 'recovery must finish style installation');
+  assert.equal(setupRecovery.reports.length, 1, 'only complete filter setup and scan can attest recovery');
+  setupRecovery.listeners.get('interval')!();
+  assert.equal(setupRecovery.setup.observeAttempts, 2, 'successful recovery must not add duplicate observers');
+  assert.equal(setupRecovery.reports.length, 2);
+}
 
-type Sender = { frameId: number; url: string; tab: { active: boolean; windowId?: number } };
-let receive: (message: unknown, sender: Sender) => Promise<unknown> | undefined = () => undefined;
-let focused = true;
-let windowFailure = false;
-const relayed: Array<{ url: string }> = [];
-const ignoredEvent = { addListener() {} };
-let activate: (event: { tabId: number }) => void = () => {};
-let focus: (windowId: number) => void = () => {};
-const requested: number[] = [];
-runInNewContext(background, {
-  URL,
-  browser: {
-    runtime: {
-      onMessage: { addListener(handler: typeof receive) { receive = handler; } },
-      sendNativeMessage: async (_name: string, message: { url: string }) => { relayed.push(message); return { ok: true }; }
-    },
-    windows: {
-      onFocusChanged: { addListener(handler: typeof focus) { focus = handler; } },
-      get: async () => { if (windowFailure) throw new Error('window closed'); return { focused }; }
-    },
-    webNavigation: { onCommitted: ignoredEvent, onCreatedNavigationTarget: ignoredEvent },
-    tabs: {
-      onRemoved: ignoredEvent,
-      onActivated: { addListener(handler: typeof activate) { activate = handler; } },
-      query: async (options: { active: boolean; windowId: number }) => {
-        assert.equal(options.active, true);
-        assert.equal(options.windowId, 7);
-        return [{ id: 21 }];
-      },
-      sendMessage: async (tabId: number, message: { type: string }, options: { frameId: number }) => {
-        assert.equal(message.type, 'VIGIL_REQUEST_BROWSER_FILTER_HEALTH');
-        assert.equal(options.frameId, 0);
-        requested.push(tabId);
-      }
-    }
+for (const visible of [true, false]) {
+  const safari = contentHarness(true, visible, true, 0, null, 'safari-web-extension:');
+  assert.equal(safari.setup.scans, 1, 'Safari still performs its initial full content scan');
+  assert.equal(safari.setup.observeAttempts, 1, 'Safari still watches DOM changes');
+  for (const event of ['DOMContentLoaded', 'pageshow', 'focus', 'visibilitychange', 'interval']) {
+    const before: number = safari.setup.scans;
+    safari.listeners.get(event)!();
+    assert.equal(safari.setup.scans, before + 1, `Safari retains the ${event} enforcement scan`);
   }
-});
-activate({ tabId: 12 });
-focus(7);
-focus(-1);
-await new Promise(resolve => setImmediate(resolve));
-assert.deepEqual(requested, [12, 21]);
-assert.equal(relayed.length, 0, 'activation alone never attests protection; a successful content scan is required');
-const message = { type: 'VIGIL_BROWSER_FILTER_HEALTH', revision: '2026-09-17.1', url: 'https://forged.example/' };
-const sender: Sender = { frameId: 0, url: 'https://www.google.com/search?q=cars&safe=active', tab: { active: true, windowId: 7 } };
-await receive(message, sender);
-assert.equal(relayed.length, 1);
-assert.equal(relayed[0].url, sender.url, 'only the browser-provided sender URL is trusted');
-focused = false;
-await receive(message, sender);
-focused = true;
-await receive(message, { ...sender, tab: { active: false, windowId: 7 } });
-await receive(message, { ...sender, tab: { active: true } });
-await receive(message, { ...sender, frameId: 1 });
-await receive({ ...message, revision: 'old' }, sender);
-windowFailure = true;
-await receive(message, sender);
-assert.equal(relayed.length, 1, 'background windows, inactive tabs, iframes, missing windows and stale filters fail closed');
-console.log('Browser filter reports cover private address-bar focus, page lifecycle and trusted foreground-window checks.');
+  const beforeMutation = safari.setup.scans;
+  safari.mutate();
+  await new Promise(resolve => setTimeout(resolve, 5));
+  assert.equal(safari.setup.scans, beforeMutation + 1, 'Safari DOM mutations still trigger enforcement scans');
+  assert.equal(safari.reports.length, 0, 'Safari emits no unused per-page health connection messages');
+}
+const safariRecovering = contentHarness(true, true, true, 1, null, 'safari-web-extension:');
+safariRecovering.listeners.get('interval')!();
+assert.equal(safariRecovering.setup.scans, 2, 'Safari retries a failed content scan without a connection checker');
+assert.equal(safariRecovering.reports.length, 0);
+const staleContext = contentHarness(true, true, true, 0, null, 'invalid-context');
+staleContext.listeners.get('interval')!();
+assert.equal(staleContext.setup.scans, 2, 'a stale runtime identity cannot disable actual content scans');
+
+console.log('Chrome health reports remain active; Safari filtering scans run without connection-check traffic.');

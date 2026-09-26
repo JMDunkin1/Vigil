@@ -917,7 +917,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.match(page, /Are you sure you want to open x\.com\?/);
   assert.match(page, /<button id="continue" class="countdown-control"[^>]*disabled>/);
   assert.match(page, /<span id="continueLabel" aria-hidden="true">Continue<\/span>/);
-  assert.match(page, /\.countdown-control \{[\s\S]*width: 156px;[\s\S]*height: 48px;[\s\S]*border-radius: 7px;/);
+  assert.match(page, /\.countdown-control \{[\s\S]*width: 156px;[\s\S]*height: 48px;[\s\S]*border-radius: 9px;/);
   assert.match(page, /continueButton\.classList\.add\("finishing"\)/);
   assert.match(page, /continueButton\.classList\.add\("ready"\)/);
   assert.match(page, /continueButton\.disabled = false/);
@@ -1022,7 +1022,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.match(baselineProfileText, /<key>address<\/key>\s*<string>http:\/\/127\.0\.0\.1:8787\/<\/string>/);
   assert.match(baselineProfileText, /<key>address<\/key>\s*<string>http:\/\/localhost:8787\/<\/string>/);
   assert.match(baselineProfileText, /<key>allowListEnabled<\/key>\s*<false\/>/);
-  assert.doesNotMatch(baselineProfileText, /<key>filterAllowList<\/key>/);
+  assert.match(baselineProfileText, /<key>filterAllowList<\/key>\s*<array>\s*<string>https:\/\/wlu\.marriagepact\.com\/<\/string>\s*<string>https:\/\/url8871\.marriagepact\.com\/<\/string>\s*<\/array>/);
   assert.match(baselineProfileText, /<key>restrictWeb<\/key>\s*<true\/>/);
   assert.match(baselineProfileText, /<key>useContentFilter<\/key>\s*<true\/>/);
   assert.match(baselineProfileText, /com\.apple\.familycontrols\.contentfilter/);

@@ -787,6 +787,9 @@ function safariTargetConfirmationAppleScript(app: string, expectedUrlVariable: s
 }
 
 function safariCurrentTabUrlScript(app: string): string {
+  // Start Page and provisional navigation may have no URL yet. Never borrow
+  // another window's document: that page is not foreground and its content
+  // script cannot attest the visible tab. The next observation reads anew.
   return [
     `tell application "${app}"`,
     "  if (count of windows) = 0 then return \"\"",
@@ -795,12 +798,6 @@ function safariCurrentTabUrlScript(app: string): string {
     "    set candidateUrl to URL of current tab of front window",
     "  end try",
     "  if candidateUrl is not missing value and candidateUrl is not \"\" then return candidateUrl",
-    "  repeat with safariWindow in windows",
-    "    try",
-    "      set candidateUrl to URL of current tab of safariWindow",
-    "      if candidateUrl is not missing value and candidateUrl is not \"\" then return candidateUrl",
-    "    end try",
-    "  end repeat",
     "  return \"\"",
     "end tell"
   ].join("\n");

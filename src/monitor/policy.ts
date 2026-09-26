@@ -1,4 +1,4 @@
-import { browserPageNeedsProtection, unsupportedBrowser } from "../browserProtection.js";
+import { browserNavigationDocument, browserPageNeedsProtection, browserProtectionDiagnostic, unsupportedBrowser } from "../browserProtection.js";
 import { activeAppLockPolicy } from "../appLocks.js";
 import { matchAdultBlocklistHost } from "../adultBlocklist.js";
 import { matchContentFilterUrl } from "../contentFilters.js";
@@ -28,13 +28,30 @@ export interface AppBlockRecord {
 export type EnforcedPolicy = ActivePolicy & {
   adultBlocklist?: { id: string; label: string; hostname: string; domain: string; sourceId: string; sourceLabel: string };
   browserControl?: { area: string; label: string; url: string };
+  browserProtection?: ReturnType<typeof browserProtectionDiagnostic>;
   contentFilter?: UnknownRecord & { id?: string; label: string };
   urlPattern?: { pattern: string; label: string };
   appLock?: AppLockRule;
   limitBlock?: LimitBlock;
 };
 
-export function policyForSample(state: VigilState, usage: UsageState, sample: UsageSample, now = new Date()): EnforcedPolicy | null {
+export function policyForSample(state: VigilState, usage: UsageState, sample: UsageSample, now = new Date(), options: { observeBrowserProtection?: boolean } = {}): EnforcedPolicy | null {
+  // Safari does not require a page heartbeat. Its native page lifecycle can
+  // suspend or delay extension work while all actual filtering remains active.
+  const requirePageHealth = sample.app !== "Safari";
+  const previousDocument = requirePageHealth && sample.url && browserNavigationDocument(sample.app || "", sample.url, now.getTime());
+  if (previousDocument) {
+    // The provisional destination has not replaced this document. Its own
+    // current rules still apply, including a session that starts while loading.
+    // Proofs require distinct source/target URLs, so this lookup cannot recurse.
+    const documentPolicy = policyForSample(state, usage, {
+      ...sample, url: previousDocument, hostname: new URL(previousDocument).hostname
+    }, now, { observeBrowserProtection: false });
+    if (documentPolicy) return {
+      ...documentPolicy, kind: "browser-control",
+      browserControl: { area: "navigation-document", label: documentPolicy.browserControl?.label || documentPolicy.contentFilter?.label || "Current page is restricted", url: previousDocument }
+    };
+  }
   const sessionPolicy = activePolicy(state, now);
   const baseline = baselinePolicy(state, now, { device: "computer" });
   if (state.settings.protectedBrowsersOnly && (sessionPolicy || baseline)) {
@@ -43,9 +60,10 @@ export function policyForSample(state: VigilState, usage: UsageState, sample: Us
       ...base,
       profile: { ...base.profile, id: "protected-browser-required", blockedApps: [...base.profile.blockedApps, sample.app || ""] }
     };
-    if (sample.url && browserPageNeedsProtection(sample.app || "", sample.url, now.getTime())) return {
+    if (requirePageHealth && sample.url && browserPageNeedsProtection(sample.app || "", sample.url, now.getTime(), { observe: options.observeBrowserProtection })) return {
       ...base,
       kind: "browser-control",
+      browserProtection: browserProtectionDiagnostic(sample.app || "", sample.url, now.getTime()),
       browserControl: { area: "browser-protection", label: "Browser protection connection interrupted", url: sample.url }
     };
   }

@@ -176,9 +176,14 @@ enum SocialService: String, CaseIterable, Identifiable {
         }
     }
 
-    func allowsEmbeddedNavigation(to url: URL) -> Bool {
+    func allowsEmbeddedNavigation(to url: URL, mainDocumentURL: URL? = nil) -> Bool {
         let scheme = url.scheme?.lowercased() ?? ""
         if scheme == "about" { return url.absoluteString.lowercased() == "about:blank" }
+        if self == .snapchat, Self.isSnapchatAuthenticationFrameURL(url) {
+            // reCAPTCHA is a child of Snap's login, never a browsing destination.
+            return usesUnmodifiedAuthenticationDocument(mainDocumentURL)
+                && mainDocumentURL?.host?.lowercased() == "accounts.snapchat.com"
+        }
         if self == .youtube, Self.isYouTubeEmbeddedAuthenticationFrameURL(url) {
             return true
         }
@@ -203,7 +208,7 @@ enum SocialService: String, CaseIterable, Identifiable {
             }
         }
         if self == .snapchat {
-            return host == "accounts.snapchat.com"
+            return host == "accounts.snapchat.com" || Self.isSnapchatAuthenticationFrameURL(url)
         }
         if Self.host(host, matches: "facebook.com") {
             return allowsNavigation(to: url)
@@ -280,7 +285,7 @@ enum SocialService: String, CaseIterable, Identifiable {
             return .advisory("Opening this allowed LinkedIn page.")
         case .snapchat:
             if host == "accounts.snapchat.com" {
-                return .advisory("Continue signing in with Snapchat. You’ll return to chat after authorization.")
+                return .advisory("Sign in with your Snapchat username, email, or phone number. Google sign-in isn’t supported in this app.")
             }
             return .advisory("Opening this allowed Snapchat page.")
         }
@@ -288,6 +293,20 @@ enum SocialService: String, CaseIterable, Identifiable {
 
     private static func host(_ host: String, matches domain: String) -> Bool {
         host == domain || host.hasSuffix(".\(domain)")
+    }
+
+    static func isSnapchatAuthenticationFrameURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https",
+              url.port == nil || url.port == 443,
+              url.user == nil, url.password == nil,
+              ["www.google.com", "recaptcha.google.com", "www.recaptcha.net"].contains(url.host?.lowercased() ?? ""),
+              let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath
+        else { return false }
+        // Exact documents, not a general Google or /recaptcha/ navigation allow.
+        return [
+            "/recaptcha/api2/anchor", "/recaptcha/api2/bframe",
+            "/recaptcha/enterprise/anchor", "/recaptcha/enterprise/bframe"
+        ].contains(path)
     }
 
     static func isYouTubeSessionHandoffURL(_ url: URL) -> Bool {

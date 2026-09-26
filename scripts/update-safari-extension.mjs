@@ -6,9 +6,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
+import { archiveSafariBundle, repairSafariRegistration } from './safari-installation.mjs';
 const exec = promisify(execFile);
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const output = join(root, 'dist.nosync', 'safari');
+const output = join(root, 'dist.nosync', 'safari.noindex');
 await mkdir(output, { recursive: true, mode: 0o700 });
 const { launchAgentDataDirFromPlist } = await import('../dist/runtime/src/dataPaths.js');
 let dataDir = process.env.VIGIL_DATA_DIR;
@@ -54,6 +55,9 @@ if (process.argv.includes('--install')) {
   const staged = `/Applications/.Vigil Safari-${randomUUID()}.app`;
   await exec('/usr/bin/ditto', [app, staged]);
   await exec('/usr/bin/codesign', ['--verify', '--deep', '--strict', staged]);
+  // The signed host is required by Safari, but Vigil is the user-facing app.
+  // Finder visibility is filesystem metadata and does not alter its signature.
+  await exec('/usr/bin/chflags', ['hidden', staged]);
   let backup = null;
   try {
     await stat(destination);
@@ -67,6 +71,12 @@ if (process.argv.includes('--install')) {
   }
   await exec('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', ['-f', destination]);
   await exec('/usr/bin/pluginkit', ['-a', join(destination, 'Contents/PlugIns/Vigil Safari Extension.appex')]);
-  await exec('/usr/bin/pluginkit', ['-r', join(app, 'Contents/PlugIns/Vigil Safari Extension.appex')]);
-  console.log('Installed /Applications/Vigil Safari.app. Enable its extension and YouTube website access in Safari settings, then verify a YouTube page.');
+  const archives = join(dataDir, 'safari-archives');
+  if (backup) await archiveSafariBundle(backup, archives);
+  await archiveSafariBundle(app, archives);
+  await repairSafariRegistration([root, join(homedir(), 'Library/Application Support/Vigil Source Checkout')], archives);
+  console.log('Installed and verified the single canonical Vigil Safari extension. Safari loads the enabled extension automatically when Safari starts.');
+} else {
+  const archive = await archiveSafariBundle(app, join(output, 'packages'));
+  console.log(`Signed Safari package preserved without a discoverable duplicate: ${archive}`);
 }

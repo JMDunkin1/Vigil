@@ -1,4 +1,4 @@
-import { browserFilterHealthSummary, recordBrowserFilterHealth } from "../browserProtection.js";
+import { browserFilterHealthSummary, recordBrowserFilterHealth, recordBrowserNavigationProof } from "../browserProtection.js";
 import { youtubeTokenMatches } from "../youtubeConnection.js";
 import { youtubeAction } from "../youtubeLimits.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -60,7 +60,10 @@ export async function handleExtensionApiRoute(
       sendJson(response, 200, { ok: true, browsers: browserFilterHealthSummary() }, extensionResponseCorsHeaders(request));
       return true;
     }
-    const ok = recordBrowserFilterHealth(chrome ? "Google Chrome" : "Safari", String(body.url || ""), body.revision);
+    const browser = chrome ? "Google Chrome" : "Safari";
+    const ok = body.action === "browser-navigation"
+      ? recordBrowserNavigationProof(browser, body)
+      : recordBrowserFilterHealth(browser, String(body.url || ""), body.revision);
     sendJson(response, ok ? 200 : 400, { ok }, extensionResponseCorsHeaders(request));
     return true;
   }

@@ -1,4 +1,5 @@
-:root {
+:root,
+:root[data-theme] {
   color-scheme: dark;
   --bg: #101111;
   --bg-deep: #0c0d0d;
@@ -8,12 +9,12 @@
   --surface-soft: #242520;
   --line: rgba(235, 225, 203, 0.11);
   --line-strong: rgba(235, 225, 203, 0.19);
-  --text: #f3eee3;
+  --text: #f0ece5;
   --text-soft: #c9c1b2;
-  --muted: #918b81;
+  --muted: #aaa398;
   --faint: #716d65;
-  --amber: #d49a5b;
-  --amber-bright: #edb775;
+  --amber: #b77952;
+  --amber-bright: #d5a16b;
   --amber-wash: rgba(212, 154, 91, 0.13);
   --green: #70a987;
   --green-wash: rgba(112, 169, 135, 0.13);
@@ -24,6 +25,18 @@
   --danger: #d87066;
   --danger-wash: rgba(216, 112, 102, 0.12);
   --shadow: 0 20px 55px rgba(0, 0, 0, 0.32);
+  /* Legacy controls and the focused views share the same palette. */
+  --paper: var(--bg);
+  --paper-2: #161717;
+  --surface-strong: var(--surface-raised);
+  --ink: var(--text);
+  --primary: var(--amber);
+  --primary-strong: var(--amber-bright);
+  --accent: var(--amber);
+  --accent-bright: var(--amber-bright);
+  --accent-soft: var(--amber-wash);
+  --focus: rgba(213, 161, 107, 0.24);
+  --font-display: "Iowan Old Style", Baskerville, Georgia, serif;
   --sidebar-width: 218px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
   font-size: 15px;
@@ -84,7 +97,7 @@ h1,
 h2,
 h3,
 .brand-lockup strong {
-  font-family: Iowan Old Style, Baskerville, Georgia, serif;
+  font-family: var(--font-display);
   font-weight: 600;
   letter-spacing: -0.025em;
 }
@@ -468,8 +481,8 @@ svg {
   font-weight: 700;
   white-space: nowrap;
 }
-.button.primary { border-color: #c69054; color: #17110b; background: linear-gradient(#e3ad70, #c99053); box-shadow: 0 5px 16px rgba(212, 154, 91, 0.16); }
-.button.primary:hover { filter: brightness(1.06); }
+.button.primary { border-color: transparent; color: #16120f; background: var(--primary); }
+.button.primary:hover { background: var(--primary-strong); }
 .button.secondary { color: var(--text-soft); background: rgba(255, 255, 255, 0.035); }
 .button.secondary:hover { border-color: rgba(235, 225, 203, 0.28); background: rgba(255, 255, 255, 0.06); }
 .button.danger { border-color: var(--danger); color: #24100e; background: var(--danger); }
