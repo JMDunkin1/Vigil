@@ -34,9 +34,11 @@ runInNewContext(source, {
     tabs: { onActivated: activated, onRemoved: removed, get: noConnectionWork, query: noConnectionWork, sendMessage: noConnectionWork },
     webNavigation: { onBeforeNavigate: before, onCommitted: committed, onErrorOccurred: error, getFrame: noConnectionWork },
     storage: { local: {
-      get: async (key: string) => ({ [key]: stored.get(key) }),
+      get: async (keys: string | string[]) => Object.fromEntries(
+        (Array.isArray(keys) ? keys : [keys]).map(key => [key, stored.get(key)])
+      ),
       set: async (values: Record<string, unknown>) => { for (const [key, value] of Object.entries(values)) stored.set(key, value); },
-      remove: async (key: string) => { stored.delete(key); }
+      remove: async (keys: string | string[]) => { for (const key of Array.isArray(keys) ? keys : [keys]) stored.delete(key); }
     } }
   }
 });

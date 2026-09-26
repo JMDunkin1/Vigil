@@ -61,6 +61,7 @@ final class SocialContainerStore: ObservableObject {
                                       bundle: bundle, loadInitialPages: loadInitialPages,
                                       websiteDataStore: isCombined ? Self.websiteDataStore(for: service) : nil)
         stores[service] = store
+        if isCombined { store.openSocialLink = { [weak self] url in self?.open(url) } }
         return store
     }
 
@@ -113,15 +114,22 @@ final class SocialContainerStore: ObservableObject {
             showHome()
             return
         }
+        if let link = SocialIncomingLink(url), isCombined || link.service == initialService {
+            select(link.service)
+            store(for: link.service).open(link)
+            return
+        }
+        // A malformed handoff must never fall back to a Home Screen launcher.
+        if url.scheme == "vigilsocial", url.host == "open",
+           URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems != nil { return }
         guard let service = SocialService.resolve(url),
               isCombined || service == initialService else { return }
         let isLauncher = url.scheme == "vigilsocial" || url.scheme == "vigil-\(service.rawValue)"
         // Invalid/restricted URLs must not switch to or load another service.
-        guard isLauncher || (service.allowsNavigation(to: url) && !service.isRestrictedSurface(url)) else { return }
+        guard isLauncher else { return }
         select(service)
         // A Home Screen launch resumes the existing page, like opening the old
         // standalone app. Only an explicit content link changes its location.
-        if !isLauncher { store(for: service).open(url) }
     }
 }
 
@@ -225,6 +233,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var externalPlaybackMayRelinquish = false
     private var externalPlaybackRelinquishTask: Task<Void, Never>?
     private var serviceAccessReceipt = SocialServiceAccessReceipt()
+    var openSocialLink: ((URL) -> Void)?
     private let mediaClassificationDeadlineNanoseconds: UInt64
 
     private var managedWebViews: [WKWebView] {
@@ -329,22 +338,21 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func open(_ url: URL) {
-        guard let service = SocialService.resolve(url), service == fixedService else { return }
-        let scheme = url.scheme?.lowercased() ?? ""
-        var destination = scheme == "vigilsocial" || scheme.hasPrefix("vigil-") ? service.homeURL : url
-        if service == .youtube {
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-            let candidate = url.host == "youtu.be" ? url.lastPathComponent : components?.queryItems?.first(where: { $0.name == "v" })?.value
-            if let id = candidate, id.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil,
-               let normalized = URL(string: "https://m.youtube.com/watch?v=\(id)") {
-                destination = normalized
-            }
-        }
-        guard service.allowsNavigation(to: destination), !service.isRestrictedSurface(destination) else { return }
-        if service == .youtube,
-           let id = URLComponents(url: destination, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "v" })?.value {
+        guard let link = SocialIncomingLink(url) else { return }
+        open(link)
+    }
+
+    func open(_ link: SocialIncomingLink) {
+        guard link.service == fixedService else { return }
+        let destination = link.destination
+        if link.service == .youtube, link.grantsExternalPlayback,
+           let id = SocialIncomingLink.youtubeVideoID(destination) {
             Task { @MainActor in
-                _ = await YouTubeLimitsConnection.send(["action": "external", "videoId": id], bundle: bundle)
+                let reply = await YouTubeLimitsConnection.send(["action": "external", "videoId": id], bundle: bundle)
+                guard reply["ok"] as? Bool == true else {
+                    health[fixedService] = .advisory(reply["message"] as? String ?? "Your watch time could not be checked.")
+                    return
+                }
                 webView(for: fixedService).load(URLRequest(url: destination))
             }
         } else {
@@ -1548,6 +1556,13 @@ extension SocialWebViewStore: WKNavigationDelegate {
                 return
             }
         } else {
+            if navigationAction.navigationType == .linkActivated,
+               let link = SocialIncomingLink(url), link.service != service,
+               let openSocialLink {
+                decisionHandler(.cancel, preferences)
+                openSocialLink(url)
+                return
+            }
             guard service.allowsNavigation(to: url) else {
                 decisionHandler(.cancel, preferences)
                 return
@@ -1698,6 +1713,12 @@ extension SocialWebViewStore: WKUIDelegate {
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
+        if navigationAction.navigationType == .linkActivated,
+           let url = navigationAction.request.url, let link = SocialIncomingLink(url),
+           link.service != service(for: webView), let openSocialLink {
+            openSocialLink(url)
+            return nil
+        }
         guard let service = service(for: webView),
               let request = Self.validatedPopupRequest(
                   navigationAction.request,

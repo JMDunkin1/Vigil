@@ -6,6 +6,50 @@ import WebKit
 @testable import VigilSocial
 
 final class VigilSocialTests: XCTestCase {
+    func testSharedVideoLinksKeepTimestampsAndRejectRestrictedRoutes() throws {
+        for address in ["https://youtu.be/abcdefghijk?t=90", "https://www.youtube.com/live/abcdefghijk?t=90",
+                        "https://www.youtube.com/watch?v=abcdefghijk&t=90"] {
+            let link = try XCTUnwrap(SocialIncomingLink(XCTUnwrap(URL(string: address))))
+            XCTAssertEqual(link.service, .youtube)
+            XCTAssertEqual(link.destination.absoluteString, "https://m.youtube.com/watch?v=abcdefghijk&t=90")
+            XCTAssertTrue(link.grantsExternalPlayback)
+        }
+        for address in ["https://www.youtube.com/shorts/abcdefghijk?v=abcdefghijk",
+                        "https://www.snapchat.com/spotlight/123", "https://youtube.com.evil.example/watch?v=abcdefghijk",
+                        "https://user:pass@www.instagram.com/p/abc", "http://www.youtube.com/watch?v=abcdefghijk"] {
+            XCTAssertNil(SocialIncomingLink(try XCTUnwrap(URL(string: address))), address)
+        }
+    }
+
+    func testSharedLinkHandoffPreservesDestinationAndDiscoveryRequirement() throws {
+        var handoff = try XCTUnwrap(URLComponents(string: "vigilsocial://open"))
+        handoff.queryItems = [URLQueryItem(name: "url", value: "https://www.youtube.com/watch?v=abcdefghijk&t=30"),
+                              URLQueryItem(name: "source", value: "discovery")]
+        let link = try XCTUnwrap(SocialIncomingLink(XCTUnwrap(handoff.url)))
+        XCTAssertFalse(link.grantsExternalPlayback)
+        XCTAssertEqual(link.destination.absoluteString, "https://m.youtube.com/watch?v=abcdefghijk&t=30")
+        handoff.queryItems = [URLQueryItem(name: "url", value: "vigilsocial://youtube")]
+        XCTAssertNil(SocialIncomingLink(try XCTUnwrap(handoff.url)))
+        handoff.queryItems = [URLQueryItem(name: "url", value: "https://www.instagram.com/p/abc?igsh=123")]
+        let instagram = try XCTUnwrap(SocialIncomingLink(XCTUnwrap(handoff.url)))
+        XCTAssertEqual(instagram.destination.absoluteString, "https://www.instagram.com/p/abc?igsh=123")
+    }
+
+    @MainActor
+    func testSharedLinkReusesSignedInServiceEngine() throws {
+        let container = SocialContainerStore(combined: true, loadInitialPages: false)
+        let instagram = container.store(for: .instagram)
+        let page = instagram.webView(for: .instagram)
+        let youtube = container.store(for: .youtube)
+        youtube.openSocialLink?(try XCTUnwrap(URL(string: "https://www.instagram.com/p/abc/")))
+        XCTAssertEqual(container.selectedService, .instagram)
+        XCTAssertTrue(container.store(for: .instagram) === instagram)
+        XCTAssertTrue(instagram.webView(for: .instagram) === page)
+        container.showHome()
+        container.open(try XCTUnwrap(URL(string: "vigilsocial://open?url=https%3A%2F%2Fwww.youtube.com%2Fshorts%2Fabcdefghijk")))
+        XCTAssertNil(container.selectedService)
+    }
+
     func testAccessReceiptsPersistTransitionsAndFreshLaunchesWithoutPollingWrites() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

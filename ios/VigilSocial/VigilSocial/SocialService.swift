@@ -1,5 +1,58 @@
 import Foundation
 
+// Validate content links before selecting a service or granting watch time.
+// Custom schemes carry the original HTTPS URL, including its timestamp.
+struct SocialIncomingLink {
+    let service: SocialService
+    let destination: URL
+    let grantsExternalPlayback: Bool
+
+    init?(_ input: URL) {
+        let components = URLComponents(url: input, resolvingAgainstBaseURL: false)
+        let isHandoff = input.scheme?.lowercased() == "vigilsocial" && input.host == "open"
+        let url: URL
+        if isHandoff {
+            let values = components?.queryItems?.filter { $0.name == "url" } ?? []
+            guard values.count == 1, let value = values.first?.value,
+                  let decoded = URL(string: value) else { return nil }
+            url = decoded
+        } else { url = input }
+        guard url.user == nil, url.password == nil,
+              let service = SocialService.resolve(url),
+              service.allowsNavigation(to: url), !service.isRestrictedSurface(url) else { return nil }
+        self.service = service
+        self.grantsExternalPlayback = !isHandoff
+            || components?.queryItems?.contains(where: { $0.name == "source" && $0.value == "discovery" }) != true
+        if service == .youtube, let id = Self.youtubeVideoID(url),
+           var normalized = URLComponents(string: "https://m.youtube.com/watch") {
+            let timing = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.filter {
+                ["t", "start", "end"].contains($0.name)
+            } ?? []
+            normalized.queryItems = [URLQueryItem(name: "v", value: id)] + timing
+            normalized.fragment = url.fragment
+            guard let destination = normalized.url else { return nil }
+            self.destination = destination
+        } else { self.destination = url }
+    }
+
+    static func youtubeVideoID(_ url: URL) -> String? {
+        guard SocialService.resolve(url) == .youtube,
+              SocialService.youtube.allowsNavigation(to: url),
+              !SocialService.youtube.isRestrictedSurface(url) else { return nil }
+        let parts = url.path.split(separator: "/")
+        let candidate: String?
+        if url.host?.lowercased() == "youtu.be", parts.count == 1 {
+            candidate = String(parts[0])
+        } else if ["/watch", "/watch/"].contains(url.path) {
+            candidate = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "v" }?.value
+        } else if parts.count == 2, ["live", "embed"].contains(String(parts[0])) {
+            candidate = String(parts[1])
+        } else { candidate = nil }
+        guard let candidate, candidate.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil else { return nil }
+        return candidate
+    }
+}
+
 enum YouTubeWebCompatibility {
     // TinyTube documents this Safari-looking suffix as an unsupported way to
     // make Google's embedded sign-in surface proceed in WKWebView. It is the

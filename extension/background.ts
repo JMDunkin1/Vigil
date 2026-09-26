@@ -272,11 +272,46 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
+  void authorizeDirectYouTubeNavigation(details).catch(() => {});
   const documentId = normalizedDocumentId(details.documentId);
   if (documentId) tabDocumentIds.set(details.tabId, documentId);
   else tabDocumentIds.delete(details.tabId);
   void checkUrl(details.tabId, details.url, "navigation", 0, "", { documentId });
 });
+
+async function authorizeDirectYouTubeNavigation(details: chrome.webNavigation.WebNavigationTransitionCallbackDetails): Promise<void> {
+  const key = `youtube-navigation:${details.tabId}`;
+  const previous = (await chrome.storage.session.get(key))[key] as string | undefined;
+  await chrome.storage.session.set({ [key]: details.url });
+  if (details.transitionQualifiers.includes("forward_back")) return;
+  const deliberate = ["typed", "auto_bookmark"].includes(details.transitionType);
+  if (!deliberate && details.transitionType !== "link") return;
+  const target = new URL(details.url);
+  if (target.protocol !== "https:" || target.username || target.password || (target.port && target.port !== "443")) return;
+  const parts = target.pathname.split("/").filter(Boolean);
+  const id = target.hostname === "youtu.be" && parts.length === 1 ? parts[0]
+    : /^(www\.|m\.)?youtube\.com$/.test(target.hostname)
+      ? /^\/watch\/?$/.test(target.pathname) ? target.searchParams.get("v")
+        : parts.length === 2 && ["live", "embed"].includes(parts[0]) ? parts[1] : null
+      : null;
+  if (!id || !/^[\w-]{11}$/.test(id)) return;
+  const tab = await getTab(details.tabId);
+  let source = previous;
+  if (!source && tab?.openerTabId !== undefined) {
+    const openerKey = `youtube-navigation:${tab.openerTabId}`;
+    source = (await chrome.storage.session.get(openerKey))[openerKey] as string | undefined
+      || (await getTab(tab.openerTabId))?.url;
+    if (!source) return;
+  }
+  const sourceHost = source ? new URL(source).hostname : "";
+  // Address-bar entry and bookmarks are intentional direct requests. A link
+  // originating in YouTube (including a new tab) keeps the discovery policy.
+  if (!deliberate && /(^|\.)(youtube(?:-nocookie)?\.com|youtu\.be)$/.test(sourceHost)) return;
+  await fetchVigil("/api/extension/youtube", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "external", videoId: id })
+  });
+}
 
 chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
   if (details.frameId !== 0) return;
@@ -363,6 +398,7 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  void chrome.storage.session.remove(`youtube-navigation:${tabId}`).catch(() => {});
   tabMemory.delete(tabId);
   tabDocumentIds.delete(tabId);
   tabRequestGenerations.delete(tabId);

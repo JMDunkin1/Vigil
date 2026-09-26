@@ -14,6 +14,7 @@ async function check() {
   details.textContent = '';
   try {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    await prepareHandoff(tab);
     const granted = await browser.permissions.contains({ origins });
     allow.hidden = granted;
     if (!granted) {
@@ -51,3 +52,34 @@ allow.addEventListener('click', () => {
 });
 document.getElementById('check').addEventListener('click', check);
 void check();
+
+async function prepareHandoff(tab) {
+  const open = document.getElementById('open-vigil');
+  open.hidden = true;
+  open.style.display = 'none';
+  // The desktop extension uses the same resources, but has no Social app.
+  if (!/iPhone|iPad|iPod/.test(navigator.userAgent) && !(navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)) return;
+  if (!tab?.url) return;
+  const url = new URL(tab.url);
+  if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')) return;
+  const host = url.hostname;
+  const youtube = /^(www\.|m\.)?youtube\.com$/.test(host) || host === 'youtu.be';
+  if (!youtube && !/^(www\.)?(instagram|linkedin)\.com$/.test(host)
+      && !/^(www\.|web\.)?snapchat\.com$/.test(host)) return;
+  if ((youtube && /^\/shorts(?:\/|$)/i.test(url.pathname))
+      || (/snapchat\.com$/.test(host) && /^\/(spotlight|discover)(?:\/|$)/i.test(url.pathname))
+      || (/linkedin\.com$/.test(host) && /^\/(video|shorts|feed\/(video|immersive))(?:\/|$)/i.test(url.pathname))) return;
+  const handoff = new URL('vigilsocial://open');
+  handoff.searchParams.set('url', url.href);
+  if (youtube) {
+    const key = `youtube-handoff:${tab.id}`;
+    const record = (await browser.storage.local.get(key))[key];
+    const parts = url.pathname.split('/').filter(Boolean);
+    const id = host === 'youtu.be' ? parts[0] : url.searchParams.get('v') || (['live', 'embed'].includes(parts[0]) ? parts[1] : null);
+    // Browser-discovered recommendations retain the normal save requirement.
+    if (!id || record?.id !== id || !record?.eligible) handoff.searchParams.set('source', 'discovery');
+  }
+  open.href = handoff.href;
+  open.hidden = false;
+  open.style.display = 'block';
+}

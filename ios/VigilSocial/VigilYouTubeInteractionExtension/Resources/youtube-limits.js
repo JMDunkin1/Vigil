@@ -20,7 +20,7 @@
     try {
       const url = new URL(value, location.href);
       if (!/^(www\.|m\.)?youtube\.com$/.test(url.hostname) || /^\/shorts\//.test(url.pathname)) return '';
-      const id = url.searchParams.get('v') || (/^\/embed\//.test(url.pathname) ? url.pathname.split('/')[2] : '');
+      const id = url.searchParams.get('v') || (/^\/(embed|live)\//.test(url.pathname) ? url.pathname.split('/')[2] : '');
       return /^[\w-]{11}$/.test(id || '') ? id : '';
     } catch { return ''; }
   };
@@ -582,8 +582,12 @@
     if (replayingSave || !event.isTrusted || !(event.target instanceof Element)) return;
     // A deliberate search result uses watch time without allocating Watch Later.
     // Persist the grant before same-tab navigation can tear down this bridge.
-    const searchLink = location.pathname === '/results' && location.search.includes('search_query=')
-      ? event.target.closest('a[href]') : null;
+    const resultCard = event.target.closest('ytm-video-with-context-renderer,ytm-video-renderer,ytd-video-renderer,yt-lockup-view-model');
+    const searchLink = location.pathname === '/results' && new URL(location.href).searchParams.get('search_query')?.trim()
+      ? event.target.closest('a[href]') || (
+        !event.target.closest('button,[role="button"],[role="menuitem"]')
+          ? resultCard?.querySelector('a[href*="/watch?"],a[href*="/live/"]') : null
+      ) : null;
     const searchID = searchLink && idFrom(searchLink.href);
     if (searchID) {
       const destination = searchLink.href;

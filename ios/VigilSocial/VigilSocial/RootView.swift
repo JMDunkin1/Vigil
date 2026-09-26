@@ -4,6 +4,9 @@ import WebKit
 
 struct SocialContainerView: View {
     @ObservedObject var container: SocialContainerStore
+    @State private var showingOpenLink = false
+    @State private var sharedLink = ""
+    @State private var linkError: String?
 
     var body: some View {
         ZStack {
@@ -44,6 +47,10 @@ struct SocialContainerView: View {
                             .accessibilityIdentifier("social-launch-\(service.rawValue)")
                         }
                     }
+                    Button { showingOpenLink = true } label: {
+                        Label("Open a shared link", systemImage: "link")
+                    }
+                    .buttonStyle(.bordered)
                     Text("Double-tap with three fingers to return here.")
                         .font(.footnote).foregroundStyle(.secondary)
                     Spacer()
@@ -73,6 +80,33 @@ struct SocialContainerView: View {
         }
         .background(SocialHomeGesture(action: container.showHome))
         .accessibilityAction(named: Text("Return to apps"), container.showHome)
+        .sheet(isPresented: $showingOpenLink) {
+            NavigationStack {
+                Form {
+                    TextField("Paste a link", text: $sharedLink)
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Text("Open Instagram, YouTube, Snapchat, or LinkedIn in your existing Vigil session. Direct YouTube videos use watch time without a Watch Later save.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    if let linkError { Text(linkError).foregroundStyle(.red) }
+                    Button("Open in Vigil") {
+                        guard let url = URL(string: sharedLink.trimmingCharacters(in: .whitespacesAndNewlines)),
+                              SocialIncomingLink(url) != nil else {
+                            linkError = "Paste a supported link. Restricted pages stay unavailable."
+                            return
+                        }
+                        container.open(url)
+                        showingOpenLink = false
+                        sharedLink = ""
+                        linkError = nil
+                    }
+                }
+                .navigationTitle("Open a shared link")
+                .toolbar { ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showingOpenLink = false }
+                } }
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
 }
 

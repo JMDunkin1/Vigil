@@ -14,9 +14,10 @@ for (const scenario of [
   { granted:true, health:{loaded:true,allowanceLoaded:false}, expected:'allowance is unavailable' },
   { granted:true, health:{loaded:true,allowanceLoaded:true}, expected:'is running' }
 ]) test(`Safari status: ${scenario.expected}`, async () => {
-  const nodes = Object.fromEntries(['status','details','allow','check'].map(id=>[id,{textContent:'',hidden:false,addEventListener(){}}]));
+  const nodes = Object.fromEntries(['status','details','allow','check','open-vigil'].map(id=>[id,{textContent:'',hidden:false,style:{display:''},addEventListener(){}}]));
   vm.runInNewContext(source, {
     document:{getElementById:(id:string)=>nodes[id]}, setTimeout, clearTimeout,
+    navigator:{userAgent:'Macintosh',platform:'MacIntel',maxTouchPoints:0},
     browser:{
       permissions:{contains:async()=>scenario.granted},
       tabs:{query:async()=>[{id:1,url:'https://m.youtube.com/'}],sendMessage:async()=>{if(!scenario.health)throw Error('No receiver');return scenario.health;}}

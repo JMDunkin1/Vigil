@@ -31,7 +31,7 @@ async function playerFixture(nativeReply: boolean | 'safari' = false, initiallyS
     attachShadow() { return new Node(); }
     addEventListener(event: string, callback: Callback) { this.events.set(event, callback); }
     closest(selector: string): Node | null { return selector.includes('.ytp-play-button') && (this as Node) === (media as Node) ? this : null; }
-    querySelector() { return null; }
+    querySelector(): Node | null { return null; }
     click() { this.events.get('click')?.({ preventDefault() {}, stopPropagation() {} }); }
   }
   const emit = (name: string) => { for (const callback of handlers.get(name) || []) callback({ target: media, isTrusted: true }); };
@@ -114,11 +114,15 @@ async function playerFixture(nativeReply: boolean | 'safari' = false, initiallyS
     for (const callback of handlers.get(type) || []) callback({isTrusted:true,key:' ',repeat,target,preventDefault(){},stopImmediatePropagation(){}});
     await flush();
   };
-  const searchClick = async (path = '/results?search_query=school') => {
+  const searchClick = async (path = '/results?search_query=school', cardClick = false) => {
     location.href = `https://www.youtube.com${path}`;
     const link = Object.assign(new Node(), { href: `https://www.youtube.com/watch?v=${id}`, target: '' });
     link.closest = selector => selector === 'a[href]' ? link : null;
-    for (const callback of handlers.get('click') || []) callback({ isTrusted: true, target: link, preventDefault() {}, stopImmediatePropagation() {} });
+    const card = new Node();
+    card.querySelector = () => link;
+    const title = new Node();
+    title.closest = selector => selector.includes('ytm-video-with-context-renderer') ? card : null;
+    for (const callback of handlers.get('click') || []) callback({ isTrusted: true, target: cardClick ? title : link, preventDefault() {}, stopImmediatePropagation() {} });
     await flush();
     // Let the route observer settle navigation before pressing Play.
     for (const interval of intervals) if (interval.active && interval.ms === 500) interval.callback();
@@ -400,6 +404,15 @@ test('clicking an unsaved home recommendation does not grant search playback', a
   const f = await playerFixture('safari', false);
   await f.searchClick('/');
   assert.deepEqual(f.state.youtubeLimits!.external, []);
+});
+
+test('a search-result card title outside its anchor uses time without a save', async () => {
+  for (const path of ['/results?search_query=economics', '/results?search_query=']) {
+    const f = await playerFixture(true, false);
+    await f.searchClick(path, true);
+    assert.equal(f.state.youtubeLimits!.external.includes(id), path.endsWith('economics'));
+    assert.equal(f.state.youtubeLimits!.slots.filter(Boolean).length, 0);
+  }
 });
 
 
