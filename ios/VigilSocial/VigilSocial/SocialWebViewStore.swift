@@ -498,11 +498,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         webView.navigationDelegate = self
         webView.uiDelegate = self
         // Finalize viewport geometry before the first navigation. RootView
-        // already keeps Instagram's WKWebView inside the system safe area, so
+        // keeps Instagram and Snapchat inside the system safe area, so
         // automatic scroll insets would apply that spacing a second time. One
         // invariant policy also prevents the startup resize/flicker seen when
         // Instagram hydrates its fixed shell.
-        webView.scrollView.contentInsetAdjustmentBehavior = service == .instagram
+        webView.scrollView.contentInsetAdjustmentBehavior = service == .instagram || service == .snapchat
             ? .never
             : .automatic
         if service == .instagram {

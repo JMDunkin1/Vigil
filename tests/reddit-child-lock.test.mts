@@ -11,6 +11,7 @@ const context = createContext({ URL, location: new URL('https://www.reddit.com/r
 runInContext(helpers, context);
 const evaluate = (name: string, value: string): unknown => runInContext(`${name}(${JSON.stringify(value)})`, context);
 for (const url of [
+  ...["r34", "R34", "r_34", "rule 34", "s3x", "s.3.x", "nud", "nuds", "nud3s", "s3xnud", "nudsex", "pornnudes", "p.o.r.n", "ｒ３４", "r​34", "%2572%2533%2534"].map(q => `https://www.reddit.com/search?q=${encodeURIComponent(q)}`),
   'https://www.reddit.com/over18?dest=/r/example',
   'https://old.reddit.com/api/over18',
   'https://www.reddit.com/r/gonewild/comments/example',
@@ -42,8 +43,8 @@ assert.equal(evaluate('safeURL', 'https://reddit.com.example.org/search?q=porn')
 assert.equal(evaluate('safeURL', 'https://www.reddit.com/r/programming/comments/demo'), null);
 for (const label of ['Yes, I am over 18', "Yes, I'm over 18", 'yes im over 18', 'I am over eighteen', 'Continue to mature content']) assert.equal(evaluate('ageConfirmation', label), true, label);
 for (const label of ['18 years of research', 'Show comments', 'I am a programmer']) assert.equal(evaluate('ageConfirmation', label), false, label);
-for (const label of ['ＰＯＲＮ', 'p\u200born', 'nude videos', 'gonewild']) assert.equal(evaluate('explicit', label), true, label);
-for (const label of ['Learn programming', 'How to grow tomatoes']) assert.equal(evaluate('explicit', label), false, label);
+for (const label of ['r34', 's3x', 'nud', 's3xnud', 'pornnudes', 'p.o.r.n', 'ＰＯＲＮ', 'p\u200born', 'nude videos', 'gonewild']) assert.equal(evaluate('explicit', label), true, label);
+for (const label of ['Learn programming', 'How to grow tomatoes', 'nudging', 'Nudibranch', 'Middlesex', 'SKU-R34567']) assert.equal(evaluate('explicit', label), false, label);
 for (const label of ['HarleyDeanXXX', 'u/HarleyDeanＸＸＸ', 'HarleyDeanX\u200bXX']) assert.equal(evaluate('explicit', label), true, label);
 for (const name of ['SpaceX', 'XboxFan', 'Alex', 'Maxx']) assert.equal(evaluate('safeURL', `https://www.reddit.com/user/${name}/`), null, name);
 console.log('Reddit child-lock URL and age-confirmation regression tests passed.');
@@ -61,3 +62,15 @@ assert.equal(ageRule.action.redirect.extensionPath, '/blocked.html');
 for (const label of ['Unreviewed videos', 'Show unreviewed videos', 'Unreviewed videos (12)']) assert.equal(evaluate('unreviewedLabel', label), true);
 for (const label of ['A discussion about unreviewed videos', 'Unreviewed code', 'Videos']) assert.equal(evaluate('unreviewedLabel', label), false);
 assert.equal(evaluate('safeURL', 'https://www.reddit.com/r/example/comments/id/x/'), null);
+
+// Unsafe navigation must reach Vigil's page, never silently return to Reddit.
+for (const query of ['r34', 's3x', 'nud', 's3xnud']) {
+  const redirects: string[] = [];
+  const url = new URL(`https://www.reddit.com/search?q=${query}`);
+  const navigation = createContext({ URL, location: { href: url.href, hostname: url.hostname, replace: (target: string) => redirects.push(target) }, chrome: { runtime: { getURL: (path: string) => `chrome-extension://vigil/${path}` } } });
+  runInContext(source, navigation);
+  assert.deepEqual(redirects, ['chrome-extension://vigil/blocked.html']);
+}
+const variantRule = new RegExp(rules.find(rule => rule.id === 4)!.condition.regexFilter, 'i');
+for (const query of ['r34', 's3x', 'nud', 's3xnud', 'pornnudes']) assert.equal(variantRule.test(`https://www.reddit.com/search?q=${query}`), true);
+for (const query of ['nudging', 'nudibranch', 'NUD+command+reference', 'SKU-R34567', 'Middlesex']) assert.equal(variantRule.test(`https://www.google.com/search?q=${query}`), false);

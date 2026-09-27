@@ -14,6 +14,7 @@ import {
   SOFT_BLOCK_PROFILE_ID,
   defaultState
 } from "./defaults.js";
+import { DEFAULT_MATURE_COMIC_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 import { parseBoolean } from "./booleans.js";
 import { APPLE_CONTENT_FILTER_PERMITTED_URLS } from "./appleContentFilterExceptions.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
@@ -40,7 +41,9 @@ export const IOS_PANIC_ALLOWED_APP_BUNDLE_IDS = [
 const MAX_DENY_URLS = 500;
 const MIN_BULK_ADULT_DENY_URLS = 6;
 // Preserve the existing bypass-domain breadth as the adult overlay grows.
-const MIN_PRIORITY_DOMAIN_BREADTH = 173 + DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.length;
+const IOS_MATURE_COMIC_SITE_KEYS = new Set<string>(DEFAULT_MATURE_COMIC_BLOCKED_SITES);
+const IOS_PRIMARY_ADULT_BLOCKED_SITES = DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.filter(site => !IOS_MATURE_COMIC_SITE_KEYS.has(site));
+const MIN_PRIORITY_DOMAIN_BREADTH = 173 + IOS_PRIMARY_ADULT_BLOCKED_SITES.length;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_ID_KEYS = new Set(IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS.map((value) => value.toLowerCase()));
 const IOS_EXPLICIT_SEARCH_TERM_KEYS = new Set(DEFAULT_EXPLICIT_SEARCH_TERMS.map(normalizedExplicitSearchTerm));
@@ -101,6 +104,7 @@ interface IosPolicyTargets {
   focusedSocialEnforcementActive: boolean;
   appBundleIds: string[];
   deniedUrls: string[];
+  supplementalDeniedUrls: string[];
   allowedUrls: string[];
   managedHelperAppBundleIds: string[];
   focusedSocial: ReturnType<typeof focusedSocialSummary>;
@@ -175,7 +179,7 @@ export function iosProfileSummary(state: VigilState, now = new Date()) {
       : !includesBundleId(targets.appBundleIds, IOS_APP_STORE_BUNDLE_ID));
   const appStoreInstallAllowed = Boolean(!active || !targets.enforcementActive || !settings.restrictInstallAndErase);
   const removalHardened = Boolean(active && settings.hardenRemoval && settings.removalPassword);
-  const deliveredAdultDomains = deliveredAdultBlocklistDomainCount(state, targets.deniedUrls);
+  const deliveredAdultDomains = deliveredAdultBlocklistDomainCount(state, [...targets.deniedUrls, ...targets.supplementalDeniedUrls]);
   return {
     enabled: active,
     supported: true,
@@ -225,7 +229,7 @@ export function iosProfileSummary(state: VigilState, now = new Date()) {
       downloadPath: "/api/devices/ios/profile.mobileconfig",
       generatedFrom: targets.profileName,
       appBundleCount: targets.appBundleIds.length,
-      deniedUrlCount: targets.deniedUrls.length,
+      deniedUrlCount: targets.deniedUrls.length + targets.supplementalDeniedUrls.length,
       allowedUrlCount: targets.allowedUrls.length,
       webClipCount: 0,
       enforcementActive: targets.enforcementActive,
@@ -292,6 +296,18 @@ export function buildIosConfigurationProfile(
 
   const webFilter = webContentFilterPayload(settings, targets);
   if (webFilter) payloads.push(webFilter);
+  if (active && settings.blockWeb && targets.supplementalDeniedUrls.length) {
+    // Apple supports multiple web-content-filter payloads with unique UUIDs.
+    // Keep the existing 500-slot filter intact; this additive filter carries
+    // whole-platform adult-comic bans over both HTTP and HTTPS.
+    payloads.push(commonPayload("com.apple.webcontent-filter", "Mature Comic Platforms", "mature-comics", {
+      FilterType: "BuiltIn",
+      AutoFilterEnabled: true,
+      PermittedURLs: [...APPLE_CONTENT_FILTER_PERMITTED_URLS],
+      SafariHistoryRetentionEnabled: settings.allowSafariHistoryClearing === false,
+      DenyListURLs: targets.supplementalDeniedUrls
+    }));
+  }
 
   const safeSearchDns = safeSearchDnsPayload(settings);
   if (safeSearchDns) payloads.push(safeSearchDns);
@@ -380,7 +396,7 @@ function manageEngineHandoffSummary(
     enrollmentWindowCommand: "npm run ios:manageengine:apply-enrollment-window",
     generatedFrom: targets.profileName,
     appBundleCount: targets.appBundleIds.length,
-    deniedUrlCount: targets.deniedUrls.length,
+    deniedUrlCount: targets.deniedUrls.length + targets.supplementalDeniedUrls.length,
     allowedUrlCount: targets.allowedUrls.length,
     enforcementActive: targets.enforcementActive,
     focusedSocialEnforcementActive: targets.focusedSocialEnforcementActive,
@@ -471,7 +487,7 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     ...urlsFromPatterns(retainedBaselinePatterns)
   ];
   const priorityDeniedUrls = priorityUrlsFromSiteTargets([
-    ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES,
+    ...IOS_PRIMARY_ADULT_BLOCKED_SITES,
     ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES
   ]);
   const adultDeniedUrls = urlsFromSiteTargets(adultBlocklistPreloadDomains(state));
@@ -586,6 +602,9 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
     focusedSocialEnforcementActive,
     appBundleIds,
     deniedUrls,
+    supplementalDeniedUrls: settings.blockWeb && !fullLockoutActive
+      ? urlsFromSiteTargets(DEFAULT_MATURE_COMIC_BLOCKED_SITES)
+      : [],
     allowedUrls,
     managedHelperAppBundleIds,
     focusedSocial: focusedSocialSummary(focusedSocialSettings, {
@@ -661,6 +680,7 @@ function disabledPolicyTargets(settings: IosSettings): IosPolicyTargets {
     focusedSocialEnforcementActive: false,
     appBundleIds: [],
     deniedUrls: [],
+    supplementalDeniedUrls: [],
     allowedUrls: [],
     managedHelperAppBundleIds: [],
     focusedSocial: focusedSocialSummary(settings.focusedSocial, {

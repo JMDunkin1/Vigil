@@ -750,7 +750,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const directRedirect = new URL(stringValue(direct.redirectUrl, "Shorts direct Level 1 redirect"));
   assert.equal(directRedirect.pathname, "/blocked");
   assert.equal(directRedirect.searchParams.get("site"), "YouTube Shorts");
-  assert.equal(directRedirect.searchParams.get("back"), "https://www.youtube.com/");
+  assert.equal(directRedirect.searchParams.get("back"), null);
   assert.equal(directRedirect.searchParams.has("return"), false);
   assert.equal(decodeURIComponent(directRedirect.toString()).includes("https://www.youtube.com/shorts/abc"), false);
 
@@ -761,7 +761,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     event: "navigation"
   }, now);
   const nestedRedirect = new URL(stringValue(nested.redirectUrl, "nested denied previous redirect"));
-  assert.equal(nestedRedirect.searchParams.get("back"), "https://www.youtube.com/");
+  assert.equal(nestedRedirect.searchParams.get("back"), null);
   assert.equal(decodeURIComponent(nestedRedirect.toString()).includes("youtube.com/shorts"), false);
 }
 
@@ -1916,7 +1916,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(must(game.urlPattern, "game URL pattern").pattern, "example.com/games");
   const gameRedirect = new URL(stringValue(game.redirectUrl, "URL pattern redirect URL"));
   assert.equal(gameRedirect.searchParams.get("site"), "This page");
-  assert.equal(gameRedirect.searchParams.get("back"), "https://example.com/");
+  assert.equal(gameRedirect.searchParams.get("back"), null);
   assert.equal(decodeURIComponent(gameRedirect.toString()).includes("example.com/games"), false);
   const keyword = evaluateExtensionCheck(state, usage, { url: "https://search.example/?q=casino", event: "navigation" }, now);
   assert.equal(keyword.blocked, true);

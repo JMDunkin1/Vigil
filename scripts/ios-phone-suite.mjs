@@ -6,7 +6,7 @@ import { access, chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, wri
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -83,6 +83,7 @@ const PHONE_SOURCE_FILES = [
   "src/manageEngineExport.ts",
   "src/policy.ts",
   "src/presets.ts",
+  "src/priorityBlockedDomains.ts",
   "src/socialFeatureFilters.ts",
   "src/socialIconAssets.ts",
   "src/store.ts",
@@ -1664,7 +1665,7 @@ async function verifyBundledYouTubeParityScript(appPath) {
   return { sha256: sha256(bundledBytes), bytes: bundledBytes.byteLength };
 }
 
-async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIdentifier) {
+export async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIdentifier) {
   const extensionPath = join(appPath, "PlugIns", YOUTUBE_INTERACTION_EXTENSION.productName);
   await verifyYouTubeLimitsResources(extensionPath, true);
   const infoPath = join(extensionPath, "Info.plist");
@@ -1686,6 +1687,20 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
   const redditBytes = await readFile(join(extensionPath, "reddit-child-lock.js"));
   const redditSource = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js"));
   if (!redditBytes.equals(redditSource)) throw new Error("Stale Reddit child-lock resource; refusing companion update.");
+  const redditReviewResources = {};
+  const redditReviewBytes = [];
+  for (const name of ["reddit-review-background.js", "reddit-review-guard.js", "reddit-review-blocked.html"]) {
+    const [bundled, iosSource, generated] = await Promise.all([
+      readFile(join(extensionPath, name)),
+      readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name)),
+      readFile(join(ROOT, "dist/runtime/extension", name))
+    ]);
+    if (!bundled.equals(iosSource) || !bundled.equals(generated)) {
+      throw new Error(`Stale or substituted Safari Reddit review resource: ${name}; refusing companion update.`);
+    }
+    redditReviewBytes.push(bundled);
+    redditReviewResources[name] = { sha256: sha256(bundled), bytes: bundled.byteLength };
+  }
   for (const path of [infoPath, manifestPath, scriptPath]) {
     if (!await isFile(path)) {
       throw new Error(`${basename(appPath)} does not contain the complete Vigil YouTube interaction extension.`);
@@ -1702,12 +1717,40 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
 
   const manifestBytes = await readFile(manifestPath);
   const scriptBytes = await readFile(scriptPath);
+  for (const [name, bundled] of [[YOUTUBE_INTERACTION_EXTENSION.manifestName, manifestBytes], [YOUTUBE_INTERACTION_EXTENSION.scriptName, scriptBytes]]) {
+    const source = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name));
+    if (!bundled.equals(source)) throw new Error(`Stale or substituted Safari interaction resource: ${name}; refusing companion update.`);
+  }
   let manifest;
   try {
     manifest = JSON.parse(manifestBytes.toString("utf8"));
   } catch {
     throw new Error(`${YOUTUBE_INTERACTION_EXTENSION.manifestName} is not valid JSON.`);
   }
+  const scripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
+  const source = scriptBytes.toString("utf8");
+  if (!validYouTubeInteractionManifest(manifest)
+    || !source.includes("enterFullscreen")
+    || !source.includes("installMatureContentInterlock")
+    || !source.includes("data-vigil-mature-control")
+    || source.includes("youtubeMinimize")
+    || source.includes("data-vigil-youtube-miniplayer")
+    || !source.includes("recoverFromShorts")
+    || source.includes("accounts.google.com")) {
+    throw new Error("The bundled Vigil interaction extension does not satisfy its focused YouTube, Reddit, and X contract.");
+  }
+  return {
+    bundleIdentifier: expectedIdentifier,
+    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes, redditBytes, mediaBytes, searchBytes, ...blockedPageBytes, ...redditReviewBytes])),
+    redditReviewResources,
+    manifestVersion: manifest.manifest_version,
+    hostPermissions: [...manifest.host_permissions],
+    contentScriptMatches: [...scripts[0].matches],
+    permissions: Array.isArray(manifest.permissions) ? [...manifest.permissions].sort() : []
+  };
+}
+
+export function validYouTubeInteractionManifest(manifest) {
   const expectedHosts = [
     "https://youtube.com/*",
     "https://www.youtube.com/*",
@@ -1722,9 +1765,16 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
     "https://*.twitter.com/*"
   ];
   const scripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
-  const contractValid = JSON.stringify(manifest?.host_permissions) === JSON.stringify([...expectedHosts, "http://*/*", "https://*/*"])
-    && JSON.stringify(manifest.web_accessible_resources) === JSON.stringify([{ resources: ["blocked.html", "blocked.css"], matches: ["http://*/*", "https://*/*"] }])
-    && scripts.length === 4
+  return manifest?.manifest_version === 3
+    && JSON.stringify(manifest.host_permissions) === JSON.stringify([...expectedHosts, "http://*/*", "https://*/*"])
+    && JSON.stringify(manifest.permissions) === JSON.stringify(["nativeMessaging", "webNavigation", "storage"])
+    && JSON.stringify(manifest.background) === JSON.stringify({ scripts: ["reddit-review-background.js", "youtube-background.js"] })
+    && JSON.stringify(manifest.web_accessible_resources) === JSON.stringify([{ resources: ["blocked.html", "blocked.css", "reddit-review-blocked.html"], matches: ["http://*/*", "https://*/*"] }])
+    && scripts.length === 5
+    && scripts.every((script) => script?.run_at === "document_start" && script.world === undefined)
+    && JSON.stringify(scripts[4]?.matches) === JSON.stringify(["http://*/*", "https://*/*"])
+    && JSON.stringify(scripts[4]?.js) === JSON.stringify(["reddit-review-guard.js"])
+    && scripts[4]?.all_frames === true
     && JSON.stringify(scripts[3]?.matches) === JSON.stringify(["http://*/*", "https://*/*"])
     && JSON.stringify(scripts[3]?.js) === JSON.stringify(["search-guard.js", "media-child-lock.js"])
     && scripts[3]?.run_at === "document_start"
@@ -1733,31 +1783,12 @@ async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIde
     && JSON.stringify(scripts[0]?.js) === JSON.stringify(["reddit-child-lock.js", YOUTUBE_INTERACTION_EXTENSION.scriptName])
     && scripts[0]?.all_frames === false
     && scripts[1]?.all_frames === true
-    && JSON.stringify(scripts[1]?.matches) === JSON.stringify(expectedHosts.slice(0, 3))
+    && JSON.stringify(scripts[1]?.matches) === JSON.stringify([...expectedHosts.slice(0, 3), "https://youtube-nocookie.com/*", "https://www.youtube-nocookie.com/*"])
     && JSON.stringify(scripts[1]?.js) === JSON.stringify(["youtube-bridge.js"])
     && scripts[2]?.all_frames === true
     && scripts[2]?.world === undefined
-    && JSON.stringify(scripts[2]?.matches) === JSON.stringify(expectedHosts.slice(0, 3))
+    && JSON.stringify(scripts[2]?.matches) === JSON.stringify([...expectedHosts.slice(0, 3), "https://youtube-nocookie.com/*", "https://www.youtube-nocookie.com/*"])
     && JSON.stringify(scripts[2]?.js) === JSON.stringify(["youtube-limits.js"]);
-  const source = scriptBytes.toString("utf8");
-  if (!contractValid
-    || !source.includes("enterFullscreen")
-    || !source.includes("installMatureContentInterlock")
-    || !source.includes("data-vigil-mature-control")
-    || source.includes("youtubeMinimize")
-    || source.includes("data-vigil-youtube-miniplayer")
-    || !source.includes("recoverFromShorts")
-    || source.includes("accounts.google.com")) {
-    throw new Error("The bundled Vigil interaction extension does not satisfy its focused YouTube, Reddit, and X contract.");
-  }
-  return {
-    bundleIdentifier: expectedIdentifier,
-    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes, redditBytes, mediaBytes, searchBytes, ...blockedPageBytes])),
-    manifestVersion: manifest.manifest_version,
-    hostPermissions: [...manifest.host_permissions],
-    contentScriptMatches: [...scripts[0].matches],
-    permissions: Array.isArray(manifest.permissions) ? [...manifest.permissions].sort() : []
-  };
 }
 
 export function safariExtensionUpdateProblems(previousReceipt, nextApps) {
@@ -2213,18 +2244,32 @@ export async function activateSocialContainer(server, verifyLaunch) {
   if (!launch?.ok) throw new Error(`Vigil failed launch verification; migration settings were not saved: ${launch?.detail || "unknown error"}`);
   const live = await downloadServerState(server, AbortSignal.timeout(5000));
   const patch = socialContainerSettings(live.state.deviceControls?.ios);
-  const response = await fetch(`${server}/api/devices/ios/settings`, {
-    method: "POST",
-    headers: { "x-vigil-intent": "vigil-app", "content-type": "application/json" },
-    body: JSON.stringify(patch), signal: AbortSignal.timeout(5000)
-  });
-  if (!response.ok) throw new Error(`Vigil policy persistence failed: HTTP ${response.status}; migration is incomplete.`);
+  // Routine updates of an already-migrated phone need no protected settings
+  // edit. A real change still goes through the server's normal lock checks.
+  if (!socialContainerSettingsMatch(live.state.deviceControls?.ios, patch)) {
+    const response = await fetch(`${server}/api/devices/ios/settings`, {
+      method: "POST",
+      headers: { "x-vigil-intent": "vigil-app", "content-type": "application/json" },
+      body: JSON.stringify(patch), signal: AbortSignal.timeout(5000)
+    });
+    if (!response.ok) throw new Error(`Vigil policy persistence failed: HTTP ${response.status}; migration is incomplete.`);
+  }
   const saved = (await downloadServerState(server, AbortSignal.timeout(5000))).state.deviceControls?.ios;
-  if (saved?.socialContainer !== true || saved?.blockApps !== true || saved?.blockWeb !== true
-    || !saved.blockedAppBundleIds?.includes("com.linkedin.LinkedIn")
-    || saved.allowedAppBundleIds?.includes("com.linkedin.LinkedIn")) {
+  if (!socialContainerSettingsMatch(saved, patch)) {
     throw new Error("Vigil settings did not persist. Update the installed Mac app before retrying the phone migration.");
   }
+}
+
+function socialContainerSettingsMatch(ios, patch) {
+  if (ios?.enabled !== true || ios?.blockApps !== true || ios?.blockWeb !== true || ios?.socialContainer !== true) return false;
+  return Object.entries(patch).every(([key, expected]) => {
+    // The settings endpoint sorts bundle IDs; ordering does not change policy.
+    // Keep duplicates and exact spelling significant, unlike a loose set test.
+    if (key === "blockedAppBundleIds" || key === "allowedAppBundleIds") {
+      return Array.isArray(ios[key]) && isDeepStrictEqual([...ios[key]].sort(), [...expected].sort());
+    }
+    return isDeepStrictEqual(ios[key], expected);
+  });
 }
 
 export async function activateLinkedInReplacement(server, verifyLaunch) {

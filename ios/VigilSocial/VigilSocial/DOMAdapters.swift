@@ -115,6 +115,7 @@ enum DOMAdapters {
       const style = document.createElement('style');
       style.id = 'vigil-snapchat-start-style';
       style.textContent = `
+        .bkCIM > .uSkZ8:nth-child(2), .FDMBo, .n8ZwA:has(img.NluRC),
         a[href*="/spotlight" i], a[href*="/discover" i],
         button[aria-label*="Spotlight" i], [role="button"][aria-label*="Spotlight" i],
         button[aria-label*="Discover" i], [role="button"][aria-label*="Discover" i],
@@ -4014,7 +4015,7 @@ enum DOMAdapters {
         case .instagram: instagramStable
         case .youtube: youtube
         case .linkedin: linkedin
-        case .snapchat: snapchat
+        case .snapchat: snapchat + snapchatMobileLayout
         }
     }
 
@@ -4119,6 +4120,357 @@ enum DOMAdapters {
     })();
     """#
 
+    // Snapchat's desktop breakpoint hides the chat names and search below 850px.
+    // Adapt only the verified chat shell (client 9a9dc856); unknown layouts retain
+    // Snapchat's original UI. Never copy messages, replace React nodes, alter its
+    // privacy screens, or couple this presentation layer to policy enforcement.
+    private static let snapchatMobileLayout = #"""
+    (() => {
+      if (window !== window.top || window.__vigilSnapchatMobileInstalled
+          || !['www.snapchat.com', 'web.snapchat.com', 'snapchat.com'].includes(location.hostname)
+          || !/^\/web(?:\/|$)/.test(location.pathname)) return;
+      window.__vigilSnapchatMobileInstalled = true;
+      const style = document.createElement('style');
+      style.id = 'vigil-snapchat-mobile-style';
+      style.textContent = `
+        @media (max-width: 600px) {
+          [data-vigil-snap-layout] {
+            position: fixed !important;
+            inset: var(--vigil-snap-top, 0px) 0 auto !important;
+            width: 100% !important;
+            height: var(--vigil-snap-height, 100dvh) !important;
+            min-width: 0 !important;
+            grid-template-columns: minmax(0, 1fr) !important;
+            grid-template-rows: minmax(0, 1fr) auto !important;
+            gap: 0 !important;
+            border: 0 !important;
+          }
+          [data-vigil-snap-layout] > .BL7do,
+          [data-vigil-snap-layout] > :is(.Vbjsg, .c1qK9) {
+            grid-area: 1 / 1 !important;
+            min-width: 0 !important; min-height: 0 !important;
+            width: 100% !important; height: 100% !important;
+            box-sizing: border-box !important;
+            padding: 0 !important; border: 0 !important;
+          }
+          [data-vigil-snap-layout="feed"] > :is(.Vbjsg, .c1qK9),
+          [data-vigil-snap-layout="detail"] > .BL7do,
+          [data-vigil-snap-layout="camera"] > .BL7do { display: none !important; }
+          [data-vigil-snap-layout] > .bkCIM {
+            grid-area: 2 / 1 !important;
+            width: 100% !important; height: 56px !important;
+            flex-direction: row !important; gap: 32px;
+            border-top: 1px solid var(--sigDivider);
+            background: var(--sigMain);
+          }
+          [data-vigil-snap-layout="detail"] > .bkCIM { display: none !important; }
+          [data-vigil-snap-layout] > .vigil-snap-tabs {
+            grid-area: 2 / 1; display: flex; align-items: center; justify-content: space-evenly;
+            height: 56px; background: var(--sigMain); border-top: 1px solid var(--sigDivider);
+          }
+          [data-vigil-snap-layout="detail"] > .vigil-snap-tabs,
+          [data-vigil-snap-layout="dialog"] > .vigil-snap-tabs { display: none; }
+          /* Add Friends has no internal dismiss button. Keep the genuine
+             toolbar toggles reachable above Snapchat's original floating panel. */
+          [data-vigil-snap-layout="dialog"] > .BL7do { pointer-events: none; }
+          [data-vigil-snap-layout="dialog"] .BL7do > .XlW_1 { pointer-events: auto; }
+          [data-vigil-snap-layout="dialog"] .BL7do > nav,
+          [data-vigil-snap-layout="dialog"] .BL7do .yC1EG { visibility: hidden; }
+          [data-vigil-snap-layout="dialog"] .BL7do .LsbRg {
+            position: static !important; box-shadow: none !important;
+          }
+          [data-vigil-snap-layout="dialog"] > :is(.Vbjsg, .c1qK9) {
+            pointer-events: none; z-index: 4; background: transparent;
+          }
+          [data-vigil-snap-layout="dialog"] .ChLAv { display: none; }
+          [data-vigil-snap-layout] .LtQF8 {
+            inset: 64px 12px auto !important; width: calc(100% - 24px);
+            max-height: calc(var(--vigil-snap-height, 100dvh) - 80px); pointer-events: auto;
+          }
+          [data-vigil-snap-layout] .LtQF8 :is(.zYgGl, .c9yiB) { width: 100%; max-width: 100%; }
+          [data-vigil-snap-layout] .LtQF8 .c9yiB { height: calc(var(--vigil-snap-height, 100dvh) - 80px); }
+          [data-vigil-snap-layout] .LtQF8 .JB8Z3 {
+            max-height: calc(var(--vigil-snap-height, 100dvh) - 80px); box-sizing: border-box;
+          }
+          [data-vigil-snap-layout] .LtQF8 .tZiHC { min-height: 0; }
+          [data-vigil-snap-layout] .LtQF8 .buksD {
+            max-height: max(80px, calc(var(--vigil-snap-height, 100dvh) - 220px));
+          }
+          [data-vigil-snap-layout] .LtQF8 input { font-size: 16px !important; }
+          [data-vigil-snap-layout] > .vigil-snap-tabs button,
+          [data-vigil-snap-layout] .vigil-snap-return-chat {
+            display: grid; place-items: center; min-width: 64px; height: 48px;
+            border: 0; background: none; color: var(--sigIconPrimary, #2c3137);
+          }
+          [data-vigil-snap-layout] > .vigil-snap-tabs svg,
+          [data-vigil-snap-layout] .vigil-snap-return-chat svg { width: 26px; height: 26px; }
+          [data-vigil-snap-layout] > .vigil-snap-tabs button[aria-pressed="true"] {
+            color: var(--sigTextPrimary);
+          }
+          [data-vigil-snap-layout] > .vigil-snap-tabs button[aria-pressed="true"] .vigil-snap-chat-icon { fill: currentColor; }
+          [data-vigil-snap-layout] .BL7do .XlW_1 {
+            position: relative; align-items: center; height: 60px !important; min-height: 60px;
+            padding: 4px 12px !important; box-sizing: border-box;
+            border: 0; gap: 8px; flex-shrink: 0;
+          }
+          [data-vigil-snap-layout] .BL7do .JM4Qm { display: none !important; }
+          [data-vigil-snap-layout] .vigil-snap-chat-title {
+            margin: 0; flex: 1; font: 700 20px/1.2 var(--sigFontFamilyPrimary, -apple-system), sans-serif;
+            position: absolute; inset-inline: 38%; text-align: center; pointer-events: none;
+            letter-spacing: -.4px; color: var(--sigTextPrimary);
+          }
+          [data-vigil-snap-layout] .BL7do :is(.AbUJt, .toJ1p) { flex-shrink: 0; }
+          [data-vigil-snap-layout] .BL7do .KcY9t { display: block !important; }
+          [data-vigil-snap-layout="feed"] .BL7do .LsbRg {
+            position: fixed !important; inset: auto 18px 80px auto !important;
+            z-index: 4; border-radius: 50%;
+            box-shadow: 0 4px 12px #0003 !important;
+          }
+          [data-vigil-snap-layout="feed"] .BL7do .LsbRg button {
+            width: 56px; height: 56px; background: #fffc00 !important; color: #000 !important;
+          }
+          [data-vigil-snap-layout="feed"] .BL7do .LsbRg svg { width: 28px; height: 28px; }
+          [data-vigil-snap-layout="feed"] .BL7do .LsbRg svg path { fill: currentColor; }
+          [data-vigil-snap-layout] .vigil-snap-search {
+            display: grid; place-items: center; width: 40px; height: 40px;
+            border: 0; border-radius: 50%; color: var(--sigIconSecondary, #656d78);
+            background: var(--sigTextField, #f2f3f5); padding: 9px;
+          }
+          [data-vigil-snap-layout] .vigil-snap-search svg { width: 22px; height: 22px; }
+          [data-vigil-snap-layout] .BL7do .XlW_1 { justify-content: space-between; }
+          [data-vigil-snap-layout] .BL7do .AbUJt { gap: 8px; }
+          [data-vigil-snap-layout] .BL7do .KcY9t button {
+            background: #fffc00; color: #000; border-radius: 50%;
+          }
+          [data-vigil-snap-layout] .BL7do .KcY9t svg path { fill: currentColor; }
+          [data-vigil-snap-layout]:not([data-vigil-snap-search]) .BL7do .yC1EG { display: none !important; }
+          /* Zoom the entire virtualized list, not individual row heights.
+             Its measured 74px rows remain internally consistent while rendering
+             at the native chat list's 60px spacing, including offscreen rows. */
+          [data-vigil-snap-layout] .BL7do > nav { zoom: .8108108108; }
+          [data-vigil-snap-layout] .BL7do :is(.O4POs, ._AmUf, .wHvEy) { border-bottom: 0; }
+          [data-vigil-snap-layout] .BL7do .BbZFb { font-size: 20.9667px; }
+          [data-vigil-snap-layout] .BL7do [id^="status-"] { font-size: 15.4167px; }
+          [data-vigil-snap-layout] .BL7do .yC1EG {
+            display: flex !important; height: 44px; flex-shrink: 0;
+            padding: 0 12px 10px; border: 0;
+          }
+          [data-vigil-snap-layout] [data-testid="app.feed.Search"] {
+            font-size: 16px !important; min-width: 0;
+          }
+          [data-vigil-snap-layout] .BL7do :is(.O4POs, ._AmUf, .wHvEy) {
+            width: 100% !important; padding-inline: 14px !important;
+          }
+          /* Keep virtualized row heights: Snapchat measures these at 74px. */
+          [data-vigil-snap-layout] .BL7do :is(.BbZFb, .IHgsa, .w15C2) {
+            display: flex !important;
+          }
+          [data-vigil-snap-layout] .BL7do .BbZFb { margin-inline-start: 12px; }
+          [data-vigil-snap-layout] .BL7do .w15C2 svg { width: 32px; height: 32px; }
+          [data-vigil-snap-layout] .BL7do [id^="title-"] {
+            font-size: 20.9667px; line-height: 27px; letter-spacing: -.25px;
+          }
+          [data-vigil-snap-layout] .BL7do :is(.ZfDfb, .aejcB, .WFqUl, .XLCCn) {
+            display: block !important;
+          }
+          [data-vigil-snap-layout] .BL7do :is(.Xv3MS, .PKqek, .BMcBA, .cJcor) {
+            display: inline !important;
+          }
+          [data-vigil-snap-layout] :is(.XlW_1, .k1IaM) button {
+            min-width: 44px; min-height: 44px; touch-action: manipulation;
+          }
+          [data-vigil-snap-layout] ._XMCw { padding: 0 !important; min-height: 0; max-height: 100%; }
+          [data-vigil-snap-layout] :is(.ChLAv, .aXEpU, .NvRM8) { min-width: 0; min-height: 0; }
+          [data-vigil-snap-layout] .k1IaM {
+            height: 56px; min-height: 56px; flex-shrink: 0;
+            padding: 4px 8px !important; box-sizing: border-box;
+            border-bottom: 1px solid var(--sigDivider);
+          }
+          [data-vigil-snap-layout] .NvRM8 { border-radius: 0; border: 0; }
+          [data-vigil-snap-layout] .sT7ta { padding: 8px 8px 10px; }
+          [data-vigil-snap-layout] [role="textbox"][contenteditable="true"] {
+            font-size: 16px !important; min-height: 44px;
+          }
+          [data-vigil-snap-layout] .hpge3 { max-width: 100%; max-height: 100%; }
+        }
+        @media (min-width: 601px) { .vigil-snap-chat-title, .vigil-snap-search, .vigil-snap-tabs, .vigil-snap-return-chat { display: none; } }
+      `;
+      document.documentElement.appendChild(style);
+      let currentShell = null;
+      let preferredPanel = 'feed';
+      let scheduled = false;
+      const set = (element, name, value) => {
+        if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+      };
+      const reconcile = () => {
+        scheduled = false;
+        const search = document.querySelector('[data-testid="app.feed.Search"], .BL7do .yC1EG input[role="searchbox"]');
+        const feed = search?.closest('.BL7do');
+        const shell = feed?.parentElement;
+        const main = shell?.querySelector(':scope > .Vbjsg, :scope > .c1qK9');
+        if (!shell?.matches('.Fpg8t, .svUon') || !main) {
+          currentShell?.removeAttribute('data-vigil-snap-layout');
+          currentShell?.querySelectorAll('.vigil-snap-chat-title, .vigil-snap-search, .vigil-snap-tabs, .vigil-snap-return-chat').forEach(node => node.remove());
+          currentShell = null;
+          return;
+        }
+        if (currentShell && currentShell !== shell) currentShell.removeAttribute('data-vigil-snap-layout');
+        currentShell = shell;
+        let viewport = document.querySelector('meta[name="viewport"]');
+        if (!viewport) {
+          viewport = document.createElement('meta');
+          viewport.name = 'viewport';
+          (document.head || document.documentElement).appendChild(viewport);
+        }
+        set(viewport, 'content', 'width=device-width, initial-scale=1, viewport-fit=cover');
+        // Snapchat's own Close Chat, modal dismissal, and history remain in
+        // charge of navigation. Never navigate to or read conversation IDs here.
+        const dialog = main.querySelector('.LtQF8');
+        const detail = main.querySelector('.aXEpU, .S4e9r, .Rnl06, .hpge3')
+          || !/^\/web\/?$/.test(location.pathname);
+        set(shell, 'data-vigil-snap-layout', dialog ? 'dialog' : detail ? 'detail' : preferredPanel);
+        if (detail) preferredPanel = 'feed';
+        // The older web shell has no navigation rail. Keep its existing camera
+        // landing reachable without inventing unsupported Map or Stories screens.
+        if (!shell.querySelector(':scope > .bkCIM, :scope > .vigil-snap-tabs')) {
+          const tabs = document.createElement('nav');
+          tabs.className = 'vigil-snap-tabs';
+          tabs.setAttribute('aria-label', 'Snapchat');
+          for (const [panel, label, drawing] of [
+            ['feed', 'Chat', '<path class="vigil-snap-chat-icon" d="M5 3h14a2 2 0 0 1 2 2v16l-6-4H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/>'],
+            ['camera', 'Camera', '<path d="M8 5 9.5 3h5L16 5h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="5"/>']
+          ]) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.panel = panel;
+            button.setAttribute('aria-label', label);
+            button.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true">${drawing}</svg>`;
+            button.addEventListener('click', () => { preferredPanel = panel; reconcile(); });
+            tabs.appendChild(button);
+          }
+          shell.appendChild(tabs);
+        }
+        const rail = shell.querySelector(':scope > .bkCIM');
+        if (rail && !rail.querySelector('.vigil-snap-return-chat')) {
+          const button = document.createElement('button');
+          button.className = 'vigil-snap-return-chat';
+          button.type = 'button';
+          button.setAttribute('aria-label', 'Chat');
+          button.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 3h14a2 2 0 0 1 2 2v16l-6-4H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></svg>';
+          button.addEventListener('click', () => { preferredPanel = 'feed'; reconcile(); });
+          rail.appendChild(button);
+        }
+        for (const button of shell.querySelectorAll('.vigil-snap-tabs button')) {
+          set(button, 'aria-pressed', String(button.dataset.panel === preferredPanel));
+        }
+        const header = feed.querySelector('.XlW_1');
+        if (header && !header.querySelector('.vigil-snap-chat-title')) {
+          const title = document.createElement('h1');
+          title.className = 'vigil-snap-chat-title';
+          title.textContent = 'Chat';
+          const profile = header.querySelector('.AbUJt');
+          if (profile) profile.after(title);
+          else header.prepend(title);
+        }
+        const profile = header?.querySelector('.AbUJt');
+        if (profile && !profile.querySelector('.vigil-snap-search')) {
+          const button = document.createElement('button');
+          button.className = 'vigil-snap-search';
+          button.type = 'button';
+          button.setAttribute('aria-label', 'Search chats');
+          button.setAttribute('aria-expanded', shell.hasAttribute('data-vigil-snap-search') ? 'true' : 'false');
+          button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" aria-hidden="true"><circle cx="10.5" cy="10.5" r="7.2"/><path d="m16 16 5 5" stroke-linecap="round"/></svg>';
+          button.addEventListener('click', () => {
+            const expanded = !shell.hasAttribute('data-vigil-snap-search');
+            shell.toggleAttribute('data-vigil-snap-search', expanded);
+            button.setAttribute('aria-expanded', String(expanded));
+            if (expanded) {
+              const input = search.matches('input') ? search : search.querySelector('input');
+              input?.focus();
+            }
+          });
+          profile.appendChild(button);
+        }
+        // Resize the shell above the software keyboard without disabling zoom.
+        // During pinch zoom retain the layout viewport so content can be panned.
+        const visual = window.visualViewport;
+        const normalScale = !visual || Math.abs(visual.scale - 1) < .05;
+        const height = Math.round(normalScale && visual ? visual.height : window.innerHeight);
+        const top = Math.round(normalScale && visual ? visual.offsetTop : 0);
+        for (const [name, value] of [['--vigil-snap-height', `${height}px`], ['--vigil-snap-top', `${top}px`]]) {
+          if (shell.style.getPropertyValue(name) !== value) shell.style.setProperty(name, value);
+        }
+      };
+      const schedule = () => {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(reconcile);
+      };
+      new MutationObserver(schedule).observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true,
+        attributeFilter: ['class', 'style', 'data-testid']
+      });
+      addEventListener('resize', schedule);
+      addEventListener('popstate', schedule);
+      addEventListener('pageshow', schedule);
+      document.addEventListener('visibilitychange', schedule);
+      window.visualViewport?.addEventListener('resize', schedule);
+      window.visualViewport?.addEventListener('scroll', schedule);
+      document.addEventListener('click', event => {
+        if (event.target.closest?.('.bkCIM > .uSkZ8:first-child')?.parentElement?.parentElement !== currentShell) return;
+        preferredPanel = 'camera';
+        schedule();
+      }, true);
+      // Back-swipe closes an already opened chat via Snapchat's own action.
+      // Deliberately never mount a conversation to fake an unread half-swipe.
+      let edgeSwipe = null;
+      document.addEventListener('touchstart', event => {
+        edgeSwipe = null;
+        if (!matchMedia('(max-width: 600px)').matches || event.touches.length !== 1
+            || currentShell?.getAttribute('data-vigil-snap-layout') !== 'detail'
+            || !event.target.closest?.('.aXEpU')
+            || currentShell.querySelector('.S4e9r, .hpge3, .Rnl06, .PvwWu, [role="dialog"], [role="menu"]')
+            || event.target.closest?.('input, textarea, [contenteditable], video, canvas, button, a, [role="dialog"]')) return;
+        const touch = event.touches[0];
+        const rtl = getComputedStyle(currentShell).direction === 'rtl';
+        if (rtl ? touch.clientX < innerWidth - 24 : touch.clientX > 24) return;
+        const close = currentShell.querySelector('.aXEpU .k1IaM .iLVEm > button.enQRR[title]');
+        if (close?.getClientRects().length && getComputedStyle(close).visibility !== 'hidden') {
+          edgeSwipe = { x: touch.clientX, y: touch.clientY, rtl, close };
+        }
+      }, { passive: true });
+      document.addEventListener('touchmove', event => {
+        if (!edgeSwipe) return;
+        if (event.touches.length !== 1) { edgeSwipe = null; return; }
+        const touch = event.touches[0];
+        const dx = (touch.clientX - edgeSwipe.x) * (edgeSwipe.rtl ? -1 : 1);
+        const dy = Math.abs(touch.clientY - edgeSwipe.y);
+        if (dy > 24 && dy > dx) { edgeSwipe = null; return; }
+        if (dx > 20 && dx > dy * 2) event.preventDefault();
+      }, { passive: false });
+      document.addEventListener('touchend', event => {
+        const swipe = edgeSwipe;
+        edgeSwipe = null;
+        if (!swipe || event.changedTouches.length !== 1 || !swipe.close.isConnected
+            || currentShell?.getAttribute('data-vigil-snap-layout') !== 'detail') return;
+        const touch = event.changedTouches[0];
+        const dx = (touch.clientX - swipe.x) * (swipe.rtl ? -1 : 1);
+        if (dx >= 80 && dx > Math.abs(touch.clientY - swipe.y) * 2) swipe.close.click();
+      }, { passive: true });
+      document.addEventListener('touchcancel', () => { edgeSwipe = null; }, { passive: true });
+      // The policy adapter wraps history too; preserve its wrapper in either order.
+      for (const name of ['pushState', 'replaceState']) {
+        const original = history[name];
+        history[name] = function(...args) {
+          const result = original.apply(this, args);
+          schedule();
+          return result;
+        };
+      }
+      reconcile();
+    })();
+    """#
+
     private static let snapchat = #"""
     (() => {
       if (window.__vigilSnapchatInstalled) return;
@@ -4129,6 +4481,7 @@ enum DOMAdapters {
       const style = document.createElement('style');
       style.id = 'vigil-snapchat-style';
       style.textContent = `
+        .bkCIM > .uSkZ8:nth-child(2), .FDMBo, .n8ZwA:has(img.NluRC),
         a[href*="/spotlight" i], a[href*="/discover" i],
         button[aria-label*="Spotlight" i], [role="button"][aria-label*="Spotlight" i],
         button[aria-label*="Discover" i], [role="button"][aria-label*="Discover" i],
@@ -4153,7 +4506,13 @@ enum DOMAdapters {
         } catch (_) {}
         return '';
       };
+      // Production strips test IDs and the rail does not render its title prop.
+      // These client-verified selectors distinguish Spotlight from the Camera,
+      // Games, and friend-story Lightbox that share the same surrounding shell.
+      const spotlightControlSelector = '.bkCIM > .uSkZ8:nth-child(2), .n8ZwA:has(img.NluRC)';
       const labelledRestrictedControl = (element) => {
+        const spotlight = element?.closest?.(spotlightControlSelector);
+        if (spotlight) return spotlight;
         const control = element?.closest?.('a[href], button, [role="button"], [role="tab"]');
         if (!control) return null;
         if (control instanceof HTMLAnchorElement && restrictedFeature(control.href)) return control;
@@ -4165,7 +4524,14 @@ enum DOMAdapters {
         ).trim().toLowerCase();
         return /^(spotlight|discover)(\s|$)/.test(label) ? control : null;
       };
+      const closedSpotlightPlayers = new WeakSet();
       const hideRestrictedControls = (root = document) => {
+        root.querySelectorAll?.('.FDMBo').forEach(player => {
+          const close = player.querySelector('.UZxw_ > button.Rknx9');
+          if (!close || closedSpotlightPlayers.has(player)) return;
+          closedSpotlightPlayers.add(player);
+          close.click();
+        });
         root.querySelectorAll?.(
           'a[href], button[aria-label], [role="button"][aria-label], '
           + '[role="tab"], [data-testid]'
@@ -4193,7 +4559,7 @@ enum DOMAdapters {
       };
       const hasChatSurface = () => [...document.querySelectorAll(
         '[data-testid="app.feed.Search"], [data-testid^="app.user.userProfileButton"], '
-        + '[role="textbox"][contenteditable="true"]'
+        + '.BL7do > nav [role="list"], [role="textbox"][contenteditable="true"]'
       )].some(visible);
       const isMarketingShell = () => {
         if (hasChatSurface()) return false;
@@ -4231,7 +4597,7 @@ enum DOMAdapters {
         const control = labelledRestrictedControl(event.target);
         if (!control) return;
         const feature = restrictedFeature(control.href || '')
-          || (/spotlight/i.test(control.textContent || control.getAttribute('aria-label') || '')
+          || (control.matches(spotlightControlSelector) || /spotlight/i.test(control.textContent || control.getAttribute('aria-label') || '')
             ? 'Spotlight' : 'Discover');
         event.preventDefault();
         event.stopImmediatePropagation();

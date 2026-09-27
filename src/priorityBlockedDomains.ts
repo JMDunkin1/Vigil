@@ -247,8 +247,31 @@ export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
   "wproxy.net"
 ] as const;
 
+export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
+  // Whole-platform bans: verified adult sections/editions, not just adult paths.
+  // Evidence and scope: research/2026-09-27-mature-comic-platforms.md.
+  "webcomicsapp.com",
+  "webtoons.com",
+  "tapas.io",
+  "tappytoon.com",
+  "manta.net",
+  "toomics.com",
+  "lezhin.com",
+  "lezhinus.com",
+  "lezhinx.com",
+  "daycomics.com",
+  "toptoon.com",
+  "coolmic.me",
+  "inkr.com",
+  "globalcomix.com",
+  "mangaplaza.com",
+  "emanga.com",
+  "bookwalker.jp",
+  "ebookrenta.com"
+] as const;
+
 /**
- * Adult-only domains that are absent from the selected bulk source or are too
+ * Adult and mixed-content domains that are absent from the selected bulk source or are too
  * deep in its lexical ordering to reach Personal edition's small preload.
  * These remain domain-only so labels such as "wildlife" never become page-text
  * classifier terms.
@@ -285,5 +308,6 @@ export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
   "e621.net",
   "hdporncomics.com",
   "jerkmate.com",
-  "sniffies.com"
+  "sniffies.com",
+  ...DEFAULT_MATURE_COMIC_BLOCKED_SITES
 ] as const;

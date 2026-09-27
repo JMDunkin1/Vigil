@@ -3,7 +3,8 @@
   const redditHost = host => /(^|\.)reddit\.com$/i.test(host);
   if (!redditHost(location.hostname)) return;
   const text = value => String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
-  const explicit = value => /(?:^|[\W_])sex(?:$|[\W_])|porn|p0rn|prno|xxx|nsfw|hentai|rule[\s_-]*34|gonewild|onlyfans|fansly|nudes?|naked|blowjob|handjob|cumshot|hardcore\s+sex|sex\s+(?:videos?|tapes?)/i.test(text(value));
+  const explicitVariant = value => /(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|nud(?:s|3s?)?|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)/iu.test(text(value));
+  const explicit = value => explicitVariant(value) || /(?:^|[\W_])sex(?:$|[\W_])|porn|p0rn|prno|xxx|nsfw|hentai|rule[\s_-]*34|gonewild|onlyfans|fansly|nudes?|naked|blowjob|handjob|cumshot|hardcore\s+sex|sex\s+(?:videos?|tapes?)/i.test(text(value));
   const unsafeMedia = value => /(?:^|[^\p{L}\p{N}])(?:(?:adult|unreviewed)[\s_-]+videos?|x{1,2}[\s_-]+(?:videos?|photos?|pics?))(?:$|[^\p{L}\p{N}])/iu.test(text(value));
   const unreviewedLabel = value => /^(?:(?:show|view|see|more|show more|view more)\s+)?unreviewed[\s_-]+videos?(?:\s*\(\d+\))?$/i.test(text(value));
   const decode = value => {
@@ -28,9 +29,17 @@
     }
     return null;
   };
+  const blockedURL = () => {
+    try { return (globalThis.browser || globalThis.chrome).runtime.getURL('blocked.html'); }
+    catch { return 'about:blank'; }
+  };
+  const navigate = (destination, replace = false) => {
+    const target = destination === 'https://www.reddit.com/' ? blockedURL() : destination;
+    if (replace) location.replace(target); else location.assign(target);
+  };
   const enforceURL = () => {
     const destination = safeURL(location.href);
-    if (destination) { location.replace(destination); return true; }
+    if (destination) { navigate(destination, true); return true; }
     return false;
   };
   if (enforceURL()) return;
@@ -47,8 +56,24 @@
     ...(element.labels ? Array.from(element.labels, label => label.textContent) : []),
     ...(element.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean).map(id => element.getRootNode().getElementById?.(id)?.textContent)
   ].filter(Boolean).join(' '));
+  const ageNotice = value => /nsfw search results are hidden|confirm (?:that )?you are over 18.{0,80}update your settings/i.test(text(value));
+  const noticeContainer = element => {
+    for (let node = element, depth = 0; node && depth < 6; depth++, node = node.parentElement || node.getRootNode().host) {
+      if (node.matches('html, body, main, [role="main"]')) break;
+      const label = text(node.textContent);
+      if (label.length <= 700 && ageNotice(label) && node.querySelector(controls)) return node;
+    }
+    return null;
+  };
+  const replaceAgeNotice = element => {
+    const message = document.createElement('p');
+    message.textContent = 'Vigil: Explicit sexual content is not allowed. This restriction applies at every age.';
+    message.setAttribute('role', 'status');
+    element.replaceChildren(message);
+  };
   const controlBlocked = element => {
     const label = descriptor(element);
+    if (/update\s+settings/i.test(label) && noticeContainer(element)) return true;
     if (ageConfirmation(label) || unreviewedLabel(element.textContent) || unreviewedLabel(element.getAttribute('aria-label'))) return true;
     // Freeze both directions of these settings. Merely changing checked/ARIA
     // would leave Reddit's account preference and component state unchanged.
@@ -129,6 +154,11 @@
       // Open shadow roots are independent trees and require their own observer
       // and stylesheet. Periodic discovery also catches late attachShadow calls.
       for (const element of root.querySelectorAll('*')) if (element.shadowRoot) observe(element.shadowRoot);
+      for (const label of root.querySelectorAll('h1, h2, h3, p, span')) {
+        if (!ageNotice(label.textContent)) continue;
+        const notice = noticeContainer(label);
+        if (notice) replaceAgeNotice(notice);
+      }
       hideUnreviewed(root);
       hideAuthors(root);
       for (const element of root.querySelectorAll(markers)) {
@@ -168,8 +198,11 @@
       if (!blocked && !destination) continue;
       if (event.cancelable) event.preventDefault();
       event.stopImmediatePropagation();
-      if (destination && !blocked && event.type === 'click') location.assign(destination);
-      else if (blocked) conceal(element);
+      if (destination && !blocked && event.type === 'click') navigate(destination);
+      else if (blocked) {
+        const notice = noticeContainer(element);
+        if (notice) replaceAgeNotice(notice); else conceal(element);
+      }
       return;
     }
     if (event.type === 'submit' && event.target instanceof HTMLFormElement) {
@@ -178,7 +211,7 @@
       if (redditHost(url.hostname) && /(?:^|\/)search\/?$/i.test(url.pathname)) {
         for (const [name, value] of new FormData(form)) if (typeof value === 'string') url.searchParams.set(name, value);
         const destination = safeURL(url.href);
-        if (destination) { event.preventDefault(); event.stopImmediatePropagation(); location.assign(destination); }
+        if (destination) { event.preventDefault(); event.stopImmediatePropagation(); navigate(destination); }
       }
     }
   };

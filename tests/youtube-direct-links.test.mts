@@ -116,3 +116,40 @@ test('Safari handoff opens the original URL and retains discovery limits; deskto
     }
   }
 });
+
+test('Safari grants an external embed before starting playback and rejects a changed video in that frame', async () => {
+  const events: Record<string, Array<(value: unknown) => void>> = {};
+  const listeners: Array<(message: unknown, sender: unknown) => unknown> = [];
+  const values: Record<string, unknown> = {};
+  const actions: string[] = [];
+  const frames = [{ frameId: 0, parentFrameId: -1, url: 'https://example.edu/econ' },
+    { frameId: 1, parentFrameId: 0, url: `https://www.youtube-nocookie.com/embed/${video}` }];
+  const event = (key: string) => ({ addListener(callback: (value: unknown) => void) { (events[key] ||= []).push(callback); } });
+  vm.runInNewContext(safari, { URL, browser: {
+    storage: { local: {
+      async get(keys: string | string[]) { return Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key, values[key]])); },
+      async set(items: Record<string, unknown>) { Object.assign(values, items); }, async remove() {}
+    } },
+    runtime: { onMessage: { addListener(callback: typeof listeners[number]) { listeners.push(callback); } },
+      async sendNativeMessage(_app: string, body: { action: string }) { actions.push(body.action); return { ok: true }; } },
+    tabs: { onRemoved: event('removed') },
+    webNavigation: { onCommitted: event('committed'), onHistoryStateUpdated: event('history'),
+      onCreatedNavigationTarget: event('created'), async getAllFrames() { return frames; } }
+  } });
+  for (const callback of events.committed) callback({ tabId: 5, ...frames[0] });
+  for (const callback of events.committed) callback({ tabId: 5, ...frames[1] });
+  await tick();
+  const start = async (videoId: string) => listeners[0]({ type: 'VIGIL_YOUTUBE', youtube: { action: 'start', videoId } }, { tab: { id: 5 }, ...frames[1] });
+  await start(video);
+  assert.deepEqual(actions, ['external', 'start']);
+  for (const callback of events.created) callback({ sourceTabId: 5, sourceFrameId: 1, tabId: 6, url: 'https://www.youtube.com/watch?v=zyxwvutsrqp' });
+  await tick();
+  assert.equal(values['youtube-source:6'], false, 'new-tab embed recommendations remain discovery');
+  assert.deepEqual(actions, ['external', 'start']);
+  actions.length = 0;
+  frames[1].url = 'https://www.youtube-nocookie.com/embed/zyxwvutsrqp';
+  for (const callback of events.committed) callback({ tabId: 5, ...frames[1] });
+  await tick();
+  await start('zyxwvutsrqp');
+  assert.deepEqual(actions, ['start'], 'recommendation retains the ordinary save-first check');
+});

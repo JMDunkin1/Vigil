@@ -44,7 +44,7 @@ if (removeTestUrlFilterService) {
   const targets = iosPolicyTargets(state, now);
   const allPrioritySites = [...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES];
   assert.equal(allPrioritySites.length >= 200, true, "the Personal priority overlay should cover a couple hundred high-risk domains");
-  assert.equal(allPrioritySites.every((site) => targets.deniedUrls.includes(`https://${site}/`)), true);
+  assert.equal(allPrioritySites.every((site) => [...targets.deniedUrls, ...targets.supplementalDeniedUrls].includes(`https://${site}/`)), true);
   assert.equal(targets.deniedUrls.includes("https://deviantart.com/"), true, "DeviantArt must be blocked when SafeSearch cannot sanitize it");
   assert.equal(targets.deniedUrls.includes("https://reddit.com/over18"), true, "Reddit's mature-content gate must be blocked on the supervised phone");
   assert.equal(targets.deniedUrls.includes("https://reddit.com/"), false, "ordinary Reddit must remain available");
@@ -166,7 +166,7 @@ if (removeTestUrlFilterService) {
   const enabledParsed = recordValue(parsePlist(enabledProfile), "enabled phone profile");
   assert.equal(enabledParsed.PayloadScope, "System", "phone restrictions and SafeSearch DNS must be installed at device scope");
   assert.ok(Array.isArray(enabledParsed.PayloadContent), "enabled phone profile payload content should be an array");
-  assert.equal(enabledParsed.PayloadContent.length, 3, "Level 1 must include release controls, baseline web protection, and locked SafeSearch DNS");
+  assert.equal(enabledParsed.PayloadContent.length, 4, "Level 1 must include release controls, baseline and supplemental web protection, and locked SafeSearch DNS");
   const enabledRestrictions = enabledParsed.PayloadContent
     .map((item) => recordValue(item, "enabled phone payload"))
     .find((payload) => payload.PayloadType === "com.apple.applicationaccess");

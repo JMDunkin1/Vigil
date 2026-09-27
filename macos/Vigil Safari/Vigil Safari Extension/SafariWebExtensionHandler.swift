@@ -23,7 +23,7 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
                     throw BridgeError.configuration
                 }
                 let action = body["action"] as? String ?? ""
-                let endpoint = ["browser-filter-health", "browser-navigation"].contains(action) ? "browser-health" : "youtube"
+                let endpoint = ["browser-filter-health", "browser-navigation", "browser-return"].contains(action) ? "browser-health" : "youtube"
                 var request = URLRequest(url: URL(string: "http://127.0.0.1:8789/api/extension/\(endpoint)")!)
                 request.httpMethod = "POST"
                 request.timeoutInterval = 4

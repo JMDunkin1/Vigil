@@ -246,8 +246,7 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
   const siteBlocked = policy ? shouldBlockSite(policy.profile, hostname) : false;
   const urlPattern = policy && !siteBlocked ? matchBlockedUrlPattern(policy.profile, sample.url) : null;
   if (contentMatch) {
-    const backUrl = safeBackUrl(state, usage, input.previousUrl, parsed.url, now)
-      || safeBackUrl(state, usage, contentMatch.content.fallbackUrl, parsed.url, now);
+    const backUrl = safeBackUrl(state, usage, input.previousUrl, parsed.url, now);
     const redirectUrl = blockedUrl(
       contentMatch.content.label,
       contentMatch.policy,
@@ -311,9 +310,12 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
   }
 
   const blockedTarget = urlPattern?.pattern || hostname;
-  const backUrl = safeBackUrl(state, usage, input.previousUrl, parsed.url, now)
-    || (urlPattern ? safeBackUrl(state, usage, urlPatternFallbackUrl(urlPattern.pattern), parsed.url, now) : "");
+  const backUrl = safeBackUrl(state, usage, input.previousUrl, parsed.url, now);
   const redirectUrl = blockedUrl(blockedTarget, policy, backUrl);
+  if (urlPattern?.pattern === "reddit-review-only") {
+    const quiet = new URL(redirectUrl); quiet.searchParams.set("kind", "reddit-review");
+    return { ok: true, blocked: true, paused: false, ignored: false, reason: "url-pattern", hostname: blockedTarget, event, recorded, redirectUrl: quiet.href };
+  }
 
   return {
     ok: true,
@@ -432,7 +434,7 @@ function contentRulesForPolicies(
   state: VigilState,
   active: ActivePolicy | null,
   baseline: ActivePolicy | null,
-  now: Date
+  _now: Date
 ): UrlRuleEntry[] {
   const effective = active || baseline;
   if (!effective) return [];
@@ -441,12 +443,12 @@ function contentRulesForPolicies(
     redirectUrl: blockedUrl(entry.label, {
       ...effective,
       kind: "content-filter"
-    }, safeBackUrl(state, {}, entry.fallbackUrl, null, now))
+    }, "")
   }));
   return [
     ...builtIn,
-    ...urlPatternRuleEntries(state, active, now),
-    ...urlPatternRuleEntries(state, baseline, now)
+    ...urlPatternRuleEntries(active),
+    ...urlPatternRuleEntries(baseline)
   ];
 }
 
@@ -475,7 +477,7 @@ function allowedDomainsForPolicy(policy: ActivePolicy): string[] {
   return [...allowed].filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
 
-function urlPatternRuleEntries(state: VigilState, policy: ActivePolicy | null, now: Date): UrlRuleEntry[] {
+function urlPatternRuleEntries(policy: ActivePolicy | null): UrlRuleEntry[] {
   if (!policy?.profile) return [];
   const entries: UrlRuleEntry[] = [];
   for (const raw of policy.profile.blockedUrlPatterns || []) {
@@ -490,7 +492,7 @@ function urlPatternRuleEntries(state: VigilState, policy: ActivePolicy | null, n
         redirectUrl: blockedUrl(raw, {
           ...policy,
           kind: "url-pattern"
-        }, safeBackUrl(state, {}, urlPatternFallbackUrl(raw), null, now))
+        }, "")
       });
     }
   }
@@ -570,7 +572,7 @@ function publicPolicy(policy: BrowserPolicy) {
   };
 }
 
-function safeBackUrl(state: VigilState, usage: UsageState, value: unknown, currentUrl: URL | null, now: Date): string {
+export function safeBackUrl(state: VigilState, usage: UsageState, value: unknown, currentUrl: URL | null, now: Date): string {
   const parsed = parseHttpUrl(value);
   if (!parsed.ok || isVigilUrl(parsed.url) || (currentUrl && sameHttpUrl(parsed.url, currentUrl))) return "";
   const snapshot = structuredClone(state);
@@ -610,13 +612,6 @@ function blockedUrl(hostname: string, policy: BrowserPolicy, backUrl = ""): stri
     backUrl,
     port: PORT
   });
-}
-
-function urlPatternFallbackUrl(value: unknown): string {
-  const pattern = normalizeUrlPattern(value);
-  if (!pattern || pattern.startsWith("/") || !pattern.includes("/")) return "";
-  const host = normalizeHost(pattern.slice(0, pattern.indexOf("/")));
-  return host ? `https://${host}/` : "";
 }
 
 function parseHttpUrl(value: unknown): ParsedHttpUrl {

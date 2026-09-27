@@ -5,6 +5,7 @@
   if (window.__vigilYouTubeLimits) return;
   window.__vigilYouTubeLimits = true;
   const topFrame = window.top === window;
+  const playerFrame = topFrame || /^\/embed\/[\w-]{11}\/?$/.test(location.pathname);
   const accountFetch = typeof fetch === 'function' ? fetch.bind(window) : null;
   const pending = new Map();
   const client = crypto.randomUUID();
@@ -19,8 +20,8 @@
   const idFrom = value => {
     try {
       const url = new URL(value, location.href);
-      if (!/^(www\.|m\.)?youtube\.com$/.test(url.hostname) || /^\/shorts\//.test(url.pathname)) return '';
-      const id = url.searchParams.get('v') || (/^\/(embed|live)\//.test(url.pathname) ? url.pathname.split('/')[2] : '');
+      if (!/^(www\.|m\.)?youtube(?:-nocookie)?\.com$/.test(url.hostname) || /^\/shorts\//.test(url.pathname)) return '';
+      const id = /^\/(embed|live)\//.test(url.pathname) ? url.pathname.split('/')[2] : url.searchParams.get('v');
       return /^[\w-]{11}$/.test(id || '') ? id : '';
     } catch { return ''; }
   };
@@ -104,7 +105,7 @@
     idleSince = null;
   }
   async function begin() {
-    if (busy || lease || !intent || !topFrame) return;
+    if (busy || lease || !intent || !playerFrame) return;
     const id = currentID();
     if (intent !== id || !id || /^\/shorts\//.test(location.pathname)) return;
     let media = document.querySelector('video');
@@ -203,7 +204,7 @@
   window.visualViewport?.addEventListener('resize', positionAllowance);
   window.visualViewport?.addEventListener('scroll', positionAllowance);
   function mount() {
-    if (!document.body || !topFrame) return;
+    if (!document.body || !playerFrame) return;
     if (panel) {
       if (!panel.isConnected) document.body.append(panel);
       if (notice && !notice.isConnected) document.body.append(notice);
@@ -499,8 +500,8 @@
   function updateHeldPlayer() {
     // YouTube treats the interrupted autoplay attempt as buffering. Keep its
     // own Play controls available while the allowance gate holds playback.
-    document.documentElement?.toggleAttribute('data-vigil-playback-held', Boolean(topFrame && currentID() && !lease && !busy));
-    document.documentElement?.toggleAttribute('data-vigil-playback-pending', Boolean(topFrame && currentID() && (busy || (lease && waiting))));
+    document.documentElement?.toggleAttribute('data-vigil-playback-held', Boolean(playerFrame && currentID() && !lease && !busy));
+    document.documentElement?.toggleAttribute('data-vigil-playback-pending', Boolean(playerFrame && currentID() && (busy || (lease && waiting))));
   }
   // Hide complete shelves so headings, menus, counts, and dividers disappear too.
   const unwantedShelfSelector = [
@@ -531,6 +532,7 @@
       const style = document.createElement('style'); style.id = 'vigil-limits-style';
       style.textContent = `html[data-vigil-feed-pending] :is(${nativeCardSelector}){display:none!important}` + 'a[href*="/shorts/"],ytd-reel-shelf-renderer,ytm-reel-shelf-renderer,ytd-video-preview,ytm-video-preview,.ytp-autonav-toggle-button,.ytp-autonav-endscreen-countdown-container,[data-vigil-feed-hidden],html[data-vigil-feed-complete] ytd-continuation-item-renderer,html[data-vigil-feed-complete] ytm-continuation-item-renderer{display:none!important}';
       style.textContent += `${unwantedShelfSelector},[data-vigil-shelf-hidden]{display:none!important}`;
+      if (!topFrame) style.textContent += '.ytp-endscreen-content,.ytp-ce-element,.ytp-cards-button,.ytp-cards-teaser,.ytp-next-button,.ytp-playlist-menu-button,.ytp-pause-overlay,.ytp-suggestion-set,a[href*="feature=endscreen"]{display:none!important}';
       style.textContent += 'html[data-vigil-playback-held] .ytp-spinner{display:none!important}html[data-vigil-playback-held] .ytp-large-play-button,html[data-vigil-playback-held] .ytp-cued-thumbnail-overlay{display:block!important}html[data-vigil-playback-held] .ytp-chrome-bottom{display:block!important;opacity:1!important}';
       style.textContent += 'html[data-vigil-playback-pending] .ytp-large-play-button{display:none!important}';
       document.documentElement.append(style);

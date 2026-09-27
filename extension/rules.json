@@ -88,7 +88,7 @@
       }
     },
     "condition": {
-      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*(porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(%2b|\\+|plus|-plus))|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?xxx($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b|porn\\b)",
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*(porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(%2b|\\+|plus|-plus))|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?xxx($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b|porn\\b)|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?(r[_.-]*34|s3x|(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw){2,})($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b)|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|keyword|term|text|p|k|s)=nud(s|3s?)?($|[&#])",
       "resourceTypes": [
         "main_frame"
       ]

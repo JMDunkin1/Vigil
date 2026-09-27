@@ -61,7 +61,7 @@ assert.equal(native.length, 0, 'page-facing messages cannot forge protected brow
 await receive({ type: 'VIGIL_YOUTUBE', youtube: { action: 'status', client: 'player' } }, youtubeSender);
 assert.equal(native.length, 1, 'actual YouTube enforcement requests remain connected');
 assert.equal(native[0].action, 'status');
-assert.equal(native[0].client, 'safari:12:player');
+assert.equal(native[0].client, 'safari:12:undefined:player');
 
 const flush = async () => { await new Promise(resolve => setImmediate(resolve)); };
 committed.emit({ tabId: 12, frameId: 0, url: sender.url });

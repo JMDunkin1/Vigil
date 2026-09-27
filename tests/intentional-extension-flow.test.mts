@@ -7,6 +7,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
 
 {
   const state = defaultState();
+  state.intentionalUse.rules[0].urlPatterns?.push("review.example/thread");
   const usage = {};
   state.settings.activeProfileId = SOFT_BLOCK_PROFILE_ID;
   const normalReddit = evaluateExtensionCheck(state, usage, {
@@ -17,15 +18,18 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   }, now);
   assert.equal(normalReddit.paused, false);
   assert.equal(normalReddit.blocked, false);
+  const redditFeed = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/popular", event: "navigation", extensionVersion: REQUIRED_EXTENSION_VERSION }, now);
+  assert.equal(redditFeed.blocked, true, "Reddit feeds are blocked outright, without an intentional-use grant");
+  assert.equal(redditFeed.paused, false);
 
-  const popularReddit = evaluateExtensionCheck(state, usage, {
-    url: "https://www.reddit.com/r/popular",
+  const reviewPause = evaluateExtensionCheck(state, usage, {
+    url: "https://review.example/thread",
     previousUrl: "",
     event: "navigation",
     extensionVersion: REQUIRED_EXTENSION_VERSION
   }, now);
-  assert.equal(popularReddit.paused, true);
-  assert.equal(popularReddit.blocked, false);
+  assert.equal(reviewPause.paused, true);
+  assert.equal(reviewPause.blocked, false);
   state.intentionalUse.pauses = [];
 
   const watch = evaluateExtensionCheck(state, usage, {
@@ -38,7 +42,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   assert.equal(watch.blocked, false);
 
   const first = evaluateExtensionCheck(state, usage, {
-    url: "https://www.reddit.com/r/popular",
+    url: "https://review.example/thread",
     previousUrl: "",
     event: "navigation",
     extensionVersion: REQUIRED_EXTENSION_VERSION
@@ -51,7 +55,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   const pauseId = must(first.pause, "first pause").id;
 
   const reentered = evaluateExtensionCheck(state, usage, {
-    url: "https://www.reddit.com/r/popular",
+    url: "https://review.example/thread",
     previousUrl: "https://example.com/",
     event: "navigation",
     extensionVersion: REQUIRED_EXTENSION_VERSION
@@ -61,7 +65,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   assert.equal(must(reentered.overlay, "reentered pause overlay").waitSeconds, 12);
 
   const activated = evaluateExtensionCheck(state, usage, {
-    url: "https://www.reddit.com/r/popular",
+    url: "https://review.example/thread",
     previousUrl: "",
     event: "activated",
     extensionVersion: REQUIRED_EXTENSION_VERSION
@@ -76,7 +80,7 @@ import { must, now, stringValue, TEST_DAYS } from "./test-helpers.mjs";
   }, now);
   assert.equal(continued.grant.targetType, "url");
   const allowed = evaluateExtensionCheck(state, usage, {
-    url: "https://reddit.com/r/popular",
+    url: "https://review.example/thread",
     previousUrl: "",
     event: "activated",
     seconds: 45,

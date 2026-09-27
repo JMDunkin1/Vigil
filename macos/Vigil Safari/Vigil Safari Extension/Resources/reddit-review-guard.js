@@ -1,0 +1,1 @@
+../../../../ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-review-guard.js

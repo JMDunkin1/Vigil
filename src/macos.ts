@@ -649,6 +649,8 @@ export function safariHistoryResetUrls(value: string): { holding: string; replac
     const url = new URL(value);
     if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.port !== String(PORT)
       || url.pathname !== "/blocked" || url.username || url.password) return null;
+    // A quiet Reddit rejection stays in the current tab, including Private Browsing.
+    if (url.searchParams.get("kind") === "reddit-review") return null;
     const marker = randomUUID();
     url.hash = `vigil-holding-${marker}`;
     const holding = url.href;
@@ -901,6 +903,7 @@ export async function quitApp(appName: string, options: { force?: boolean } = {}
       await execFileAsync("/usr/bin/pkill", ["-x", appName], { timeout: 1500 });
       return { ok: true, method: "pkill" };
     } catch (killError) {
+      if (await appAlreadyExited(appName)) return { ok: true, method: "already-exited" };
       return { ok: false, error: `${simplifyError(error)}; ${simplifyError(killError)}` };
     }
   }
@@ -983,11 +986,19 @@ export async function setMacGrayscaleEnabled(enabled: boolean) {
   }
 }
 
+async function appAlreadyExited(appName: string): Promise<boolean> {
+  // Durable quit effects can be replayed after the app has already exited.
+  // Only a fresh, successful process observation can acknowledge that outcome.
+  const running = await listRunningAppNames();
+  return running.ok && !running.apps.some(name => name === appName);
+}
+
 async function forceKillApp(appName: string) {
   try {
     await execFileAsync("/usr/bin/pkill", ["-9", "-x", appName], { timeout: 1500 });
     return { ok: true, method: "pkill -9" };
   } catch (error) {
+    if (await appAlreadyExited(appName)) return { ok: true, method: "already-exited" };
     return { ok: false, method: "pkill -9", error: simplifyError(error) };
   }
 }

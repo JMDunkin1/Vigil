@@ -8,6 +8,7 @@ import { evaluateExtensionCheck } from "../src/extensionPolicy.js";
 import { shouldBlockUrl } from "../src/policy.js";
 
 const blocked = [
+  ...["r34", "R34", "r_34", "rule 34", "s3x", "s.3.x", "nud", "nuds", "nud3s", "s3xnud", "nudsex", "pornnudes", "p.o.r.n", "ｒ３４", "r​34", "%2572%2533%2534"].flatMap(q => ["www.reddit.com", "www.google.com"].map(host => `https://${host}/search?q=${encodeURIComponent(q)}`)),
   "https://www.reddit.com/search/?q=sex",
   ...["x", "xx", "X", "%2578%2578", "ｘ", "x%E2%80%8Bx", "adult+video", "adult+videos", "unreviewed+videos", "xx+videos"].map(q => `https://www.reddit.com/search?q=${q}`),
   "https://old.reddit.com/r/gardening/search.json?q=x",
@@ -27,6 +28,7 @@ const blocked = [
   "https://search.example/?q=adult+content+on+pixiv"
 ];
 const allowed = [
+  ...["nudging", "nudibranch", "SKU-R34567", "Middlesex"].map(q => `https://www.reddit.com/search?q=${q}`),
   "https://www.google.com/search?q=sex",
   "https://www.google.com/search?q=adult+content",
   "https://www.google.com/search?q=nude+art+figure+drawing",
@@ -76,7 +78,7 @@ const mediaSource = await readFile(new URL("../extension/media-child-lock.js", i
 const titlePredicateSource = `${mediaSource.slice(0, mediaSource.indexOf("  const isX ="))}\nreturn explicitTitle; })();`;
 for (const hostname of ["www.reddit.com", "www.artstation.com", "www.pixiv.net", "www.behance.net"]) {
   const explicitTitle = runInNewContext(titlePredicateSource, { location: { protocol: "https:", hostname } }) as (value: string) => boolean;
-  for (const term of ["sex", "adult content", "sexual", "erotic", "mature content", "nudity"]) {
+  for (const term of ["r34", "s3x", "nud", "s3xnud", "pornnudes", "sex", "adult content", "sexual", "erotic", "mature content", "nudity"]) {
     assert.equal(explicitTitle(term), true, `${hostname}: ${term}`);
   }
   for (const term of ["Middlesex landscape", "sextant drawing", "landscape"]) {

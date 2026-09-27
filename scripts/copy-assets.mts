@@ -24,6 +24,12 @@ await copyProjectFile("scripts/ios-phone-suite.mjs");
 await copyAssetDir("public");
 await copyAssetDir("extension");
 await makeExtensionScriptsClassic();
+const embedPolicy = (await readFile(join(runtimeRoot, "src/youtubeEmbeds.js"), "utf8")).replace(/^export /gmu, "");
+const safariBackgroundPath = join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-background.js");
+await writeFile(safariBackgroundPath, (await readFile(safariBackgroundPath, "utf8")).replace(
+  /\/\/ BEGIN GENERATED YOUTUBE EMBED POLICY[\s\S]*?\/\/ END GENERATED YOUTUBE EMBED POLICY/u,
+  `// BEGIN GENERATED YOUTUBE EMBED POLICY\n${embedPolicy}// END GENERATED YOUTUBE EMBED POLICY`
+));
 await copySocialIcons();
 await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-limits.js"), join(runtimeRoot, "extension/youtube-limits.js"));
 await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-bridge.js"), join(runtimeRoot, "extension/youtube-bridge.js"));
@@ -55,9 +61,19 @@ async function makeExtensionScriptsClassic(): Promise<void> {
   // Chrome content scripts and ordinary option-page scripts are classic
   // scripts. TypeScript treats files under this ESM package as modules and
   // emits a trailing `export {};`, which Chrome rejects before Vigil can run.
-  for (const name of ["background.js", "blocked.js", "content.js", "google-safe-search.js", "options.js"]) {
+  for (const name of ["background.js", "blocked.js", "blocked-navigation.js", "content.js", "google-safe-search.js", "options.js", "reddit-review-background.js", "reddit-review-guard.js"]) {
     const path = join(runtimeRoot, "extension", name);
     let source = await readFile(path, "utf8");
+    if (name === "background.js") {
+      const embedPolicy = (await readFile(join(runtimeRoot, "src/youtubeEmbeds.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*youtubeEmbeds\.js["'];?\s*$/mu, embedPolicy);
+      source += "\nexport {};\n";
+    }
+    if (name.startsWith("reddit-review-")) {
+      const matcher = (await readFile(join(runtimeRoot, "src/redditReview.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*redditReview\.js["'];?\s*$/mu, matcher);
+      source += "\nexport {};\n";
+    }
     if (name === "google-safe-search.js") {
       // Inline the same pure matcher used by the server into the classic
       // document-start script; no runtime import or server round-trip needed.
@@ -68,8 +84,11 @@ async function makeExtensionScriptsClassic(): Promise<void> {
     }
     const classic = source.replace(/\nexport \{\};?\s*$/u, "\n");
     if (classic === source) throw new Error(`Vigil extension build did not contain the expected module marker in ${name}.`);
-    await writeFile(path, classic, "utf8");
+    await writeFile(path, name.startsWith("reddit-review-") ? `(() => {\n${classic}\n})();\n` : classic, "utf8");
   }
+  const backgroundPath = join(runtimeRoot, "extension/background.js");
+  await writeFile(backgroundPath, await readFile(join(runtimeRoot, "extension/reddit-review-background.js"), "utf8")
+    + await readFile(backgroundPath, "utf8"));
 }
 
 await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js"), join(runtimeRoot, "extension/reddit-child-lock.js"));

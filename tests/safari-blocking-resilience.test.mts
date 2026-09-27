@@ -361,3 +361,5 @@ import { shouldAttemptBlockedBrowserRedirect } from "../src/monitor.js";
     assert.match(script, /set URL of blockedTab to targetUrl/);
   }
 }
+
+assert.equal(safariHistoryResetUrls("http://127.0.0.1:8787/blocked?kind=reddit-review"), null, "quiet Reddit rejection must preserve the current private tab");

@@ -1,3 +1,4 @@
+import { redditReviewHost, redditReviewPostId } from "./redditReview.js";
 import { unsupportedBrowser } from "./browserProtection.js";
 import {
   ALWAYS_ALLOWED_APPS,
@@ -790,6 +791,13 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
       url: parsed.toString()
     };
   }
+  if (explicitSearchProtection && redditReviewHost(parsed.href) && !redditReviewPostId(parsed.href)) {
+    return {
+      pattern: "reddit-review-only", label: "Reddit is limited to a post opened from an external web search",
+      hostname: normalizeHost(parsed.hostname), url: parsed.toString()
+    };
+  }
+
   return null;
 }
 

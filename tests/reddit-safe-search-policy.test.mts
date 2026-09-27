@@ -12,14 +12,14 @@ for (const host of ["www.reddit.com", "old.reddit.com", "reddit.com"]) {
   for (const path of ["/search", "/search/", "/r/cars/search.json"]) {
     for (const query of ["cars", "hi"]) {
       const url = `https://${host}${path}?q=${query}&include_over_18=off&nsfw=0`;
-      assert.equal(matchBlockedUrlPattern(profile, url), null, url);
-      assert.equal(monitor.browserBlockDecision({ app: "Safari", hostname: host, url }), null, url);
-      assert.equal(evaluateExtensionCheck(structuredClone(state), {}, { url }).blocked, false, url);
+      assert.equal(matchBlockedUrlPattern(profile, url)?.pattern, "reddit-review-only", url);
+      assert.ok(monitor.browserBlockDecision({ app: "Safari", hostname: host, url }), url);
+      assert.equal(evaluateExtensionCheck(structuredClone(state), {}, { url }).blocked, true, url);
     }
   }
 }
 for (const suffix of ["nsfw=0&nsfw=0", "n%73fw=0", "nsfw=%30"]) {
-  assert.equal(matchBlockedUrlPattern(profile, `https://www.reddit.com/search?q=cars&${suffix}`), null);
+  assert.equal(matchBlockedUrlPattern(profile, `https://www.reddit.com/search?q=cars&${suffix}`)?.pattern, "reddit-review-only");
 }
 for (const url of [
   "https://www.reddit.com/search?q=nsfw&nsfw=0",

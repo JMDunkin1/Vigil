@@ -180,6 +180,9 @@ export function blockedPageResponse(input: PageInput, _referrer = ""): BlockedPa
 
 export function blockedPage(input: PageInput): string {
   const { url } = input;
+  if (url.searchParams.get("kind") === "reddit-review") {
+    return '<!doctype html><html><head><meta charset="utf-8"><title></title></head><body data-vigil-block-page="1" data-vigil-quiet-return="1"><script>setTimeout(() => location.replace("about:blank"), 5000);</script></body></html>';
+  }
   const site = escapeHtml(url.searchParams.get("site") || "This target");
   const backUrl = safeBlockedPageEscapeUrl(input, url.searchParams.get("back"));
   const escapeUrl = backUrl || BLOCKED_PAGE_ESCAPE_FALLBACK;

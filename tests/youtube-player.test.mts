@@ -9,7 +9,7 @@ import { youtubeAction, YOUTUBE_BASE_MS } from '../src/youtubeLimits.js';
 const source = await readFile(new URL('../extension/youtube-limits.js', import.meta.url), 'utf8');
 const id = 'video000000';
 type Callback = (event?: unknown) => unknown;
-async function playerFixture(nativeReply: boolean | 'safari' = false, initiallySaved = true, renewalDelay = 0, timerCadence = 50, settlementDelay = 0) {
+async function playerFixture(nativeReply: boolean | 'safari' = false, initiallySaved = true, renewalDelay = 0, timerCadence = 50, settlementDelay = 0, embedHost = "") {
   let accountSaved = initiallySaved;
   let clock = 0;
   const nodes: Node[] = [], intervals: { callback: Callback; ms: number; active: boolean }[] = [];
@@ -51,7 +51,7 @@ async function playerFixture(nativeReply: boolean | 'safari' = false, initiallyS
       ? new Promise(resolve => replies.push({ at: clock + delay, resolve: () => resolve(response) }))
       : Promise.resolve(response);
   };
-  const window: Record<string, unknown> = { addEventListener() {} }; window.top = window;
+  const window: Record<string, unknown> = { addEventListener() {} }; window.top = embedHost ? {} : window;
   if (nativeReply === true) window.webkit = { messageHandlers: { vigilYouTube: { async postMessage(envelope: { body: YouTubeRequest }) { return delayedAct(envelope.body); } } } };
   if (nativeReply === 'safari') {
     Object.defineProperty(window, 'ytInitialData', { configurable: true, get() { throw new Error('Page globals unavailable in Safari isolated world'); } });
@@ -65,7 +65,7 @@ async function playerFixture(nativeReply: boolean | 'safari' = false, initiallyS
     querySelectorAll(selector: string) { return selector === 'video,audio' ? [media] : []; },
     addEventListener(event: string, callback: Callback) { handlers.set(event, [...handlers.get(event) || [], callback]); }
   };
-  const location = Object.assign(new URL(`https://www.youtube.com/watch?v=${id}`), { assign(url: string) { location.href = url; } });
+  const location = Object.assign(new URL(embedHost ? `https://${embedHost}/embed/${id}` : `https://www.youtube.com/watch?v=${id}`), { assign(url: string) { location.href = url; } });
   runInNewContext(source, { window, document, location,
     crypto: webcrypto, URL, Element: Node, performance: { now: () => clock },
     setInterval(callback: Callback, ms: number) { const timer = { callback, ms, active: true }; intervals.push(timer); return timer; },
@@ -609,4 +609,28 @@ test('buffering presents pending playback instead of a second large Play button'
   f.emit('playing');
   await f.advance(100);
   assert.equal(f.root.getAttribute('data-vigil-playback-pending'), null);
+});
+
+test('external embedded players use the normal playback ledger, including privacy-enhanced YouTube', async () => {
+  for (const host of ['www.youtube.com', 'www.youtube-nocookie.com']) {
+    const f = await playerFixture('safari', false, 0, 50, 0, host);
+    await f.media.play();
+    assert.equal(f.media.paused, true, 'embed autoplay stays blocked');
+    youtubeAction(f.state, { action: 'external', videoId: id }, new Date(Date.UTC(2026, 8, 7, 16)));
+    await f.click('Play this video');
+    assert.equal(f.media.paused, false);
+    await f.advance(1000); await f.click('Pause');
+    assert.ok(Math.abs(f.state.youtubeLimits!.usedMs - 1000) < 1);
+    assert.equal(f.state.youtubeLimits!.slots.filter(Boolean).length, 0);
+    f.state.youtubeLimits!.grace.status = 'ended';
+    await f.click('Play this video');
+    assert.equal(f.media.paused, true, 'external embeds cannot bypass exhausted time');
+  }
+});
+
+test('an embedded player without verified external provenance still requires saving', async () => {
+  const f = await playerFixture('safari', false, 0, 50, 0, 'www.youtube.com');
+  await f.click('Play this video');
+  assert.equal(f.media.paused, true);
+  assert.equal(f.state.youtubeLimits!.external.length, 0);
 });

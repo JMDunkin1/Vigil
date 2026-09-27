@@ -1,3 +1,4 @@
+import { createYouTubeEmbedPolicy } from "../src/youtubeEmbeds.js";
 const DEFAULT_LOCAL_SERVER = "http://127.0.0.1:8787";
 const EXTENSION_ID_HEADER = "x-vigil-extension-id";
 const EXTENSION_TOKEN_HEADER = "x-vigil-extension-token";
@@ -270,6 +271,22 @@ chrome.storage.onChanged.addListener((changes, area) => {
   void loadVigilConnection().then(() => syncSiteBlockingFromServer());
 });
 
+const youtubeEmbeds = createYouTubeEmbedPolicy({
+  storage: chrome.storage.session,
+  frames: tabId => chrome.webNavigation.getAllFrames({ tabId })
+});
+chrome.webNavigation.onCommitted.addListener(details => {
+  void (details.frameId === 0 ? youtubeEmbeds.reset(details.tabId)
+    : youtubeEmbeds.register({ tab: { id: details.tabId }, frameId: details.frameId, url: details.url, documentId: details.documentId })).catch(() => {});
+});
+chrome.tabs.onRemoved.addListener(tabId => { void youtubeEmbeds.reset(tabId).catch(() => {}); });
+chrome.webNavigation.onCreatedNavigationTarget.addListener(details => {
+  // An embedded player's recommendation is not a link from its external host.
+  if (details.sourceFrameId > 0) {
+    void chrome.storage.session.set({ [`youtube-navigation:${details.tabId}`]: "https://www.youtube.com/" }).catch(() => {});
+  }
+});
+
 chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) return;
   void authorizeDirectYouTubeNavigation(details).catch(() => {});
@@ -362,9 +379,16 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   if (message?.type === "VIGIL_YOUTUBE") {
     const youtubeRequest = (async () => {
       const source = new URL(sender.url || "about:blank");
-      const youtube = /^(www\.|m\.)?youtube\.com$/.test(source.hostname);
+      const youtube = /^(www\.|m\.)?youtube(?:-nocookie)?\.com$/.test(source.hostname);
       const body: Record<string, unknown> = { ...message.youtube, client: `chrome:${sender.tab?.id}:${sender.documentId || ""}` };
       if (body.action === "external" ? youtube : !youtube) throw new Error("Invalid YouTube request origin.");
+      if (body.action === "start" && await youtubeEmbeds.eligible(sender, body.videoId)) {
+        const grant = await fetchVigil("/api/extension/youtube", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "external", videoId: body.videoId })
+        });
+        if (!grant.ok || !(await grant.json()).ok) throw new Error("Embedded video authorization failed.");
+      }
       const response = await fetchVigil("/api/extension/youtube", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
       });

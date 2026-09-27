@@ -6,6 +6,8 @@ async function main() {
  const win = new BrowserWindow({show:false, webPreferences:{sandbox:true}});
  await win.webContents.session.protocol.handle('https', () => new Response(`<!doctype html><body>
  <article id="ordinary"><h2>Learn programming</h2><button>Show comments</button></article>
+ <section id="age-notice"><h2>NSFW search results are hidden</h2><p>Confirm you are over 18 and update your settings to see potentially explicit content.</p><button id="update-settings">Update Settings</button></section>
+ <article id="r34"><h2>R34</h2><img src="data:," alt="thumbnail"></article>
  <shreddit-post id="explicit" post-title="nude videos"></shreddit-post>
  <shreddit-post id="marked" nsfw></shreddit-post>
  <shreddit-post id="safe" nsfw="false" post-title="Tomatoes"></shreddit-post>
@@ -20,6 +22,12 @@ async function main() {
  await win.loadURL('https://www.reddit.com/r/programming');
  await win.webContents.executeJavaScript(`document.querySelector('#host').attachShadow({mode:'open'}).innerHTML = '<button id="age"><span>yes im over 18</span></button>'; window.siteClicks=0; document.addEventListener('click',()=>window.siteClicks++);`);
  await win.webContents.executeJavaScript(fs.readFileSync('ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js','utf8'));
+ assert.equal(await win.webContents.executeJavaScript(`getComputedStyle(document.getElementById('r34')).display`),'none','unflagged R34 thumbnail is concealed with its card');
+ assert.equal(await win.webContents.executeJavaScript(`document.getElementById('age-notice').textContent`),'Vigil: Explicit sexual content is not allowed. This restriction applies at every age.');
+ assert.equal(await win.webContents.executeJavaScript(`document.getElementById('update-settings')`),null,'age-setting CTA is removed');
+ await win.webContents.executeJavaScript(`document.body.insertAdjacentHTML('beforeend','<section id="late-notice"><h2>NSFW search results are hidden</h2><p>Confirm you are over 18 and update your settings to see potentially explicit content.</p><button>Update Settings</button></section>'); document.querySelector('#late-notice button').click();`);
+ assert.equal(await win.webContents.executeJavaScript('window.siteClicks'),0,'late settings CTA is blocked before the observer runs');
+ assert.match(await win.webContents.executeJavaScript(`document.getElementById('late-notice').textContent`),/restriction applies at every age/);
  await win.webContents.executeJavaScript(`document.body.insertAdjacentHTML('beforeend', '<main id="account-feed"><article id="account-link"><a href="/user/HarleyDeanXXX/">u/HarleyDeanXXX</a><h2>Good enough</h2><video></video></article><shreddit-post id="account-attribute" author="HarleyDeanXXX" nsfw="false" post-title="Good enough"></shreddit-post><div class="thing" id="account-old" data-author="HarleyDeanXXX"><h2>Good enough</h2></div><article id="account-label"><span slot="authorName">u/HarleyDeanXXX</span><h2>Good enough</h2></article><article id="account-safe"><a href="/user/SpaceX/">u/SpaceX</a><h2>Launch today</h2></article><shreddit-post id="account-late" author="Gardener" post-title="Good enough"></shreddit-post><shreddit-post id="account-shadow"><div id="author-host"></div></shreddit-post></main>'); document.querySelector('#author-host').attachShadow({mode:'open'}).innerHTML='<div id="nested-host"></div>'; document.querySelector('#author-host').shadowRoot.querySelector('#nested-host').attachShadow({mode:'open'}).innerHTML='<a href="/user/HarleyDeanXXX/">u/HarleyDeanXXX</a>';`);
  await new Promise(r=>setTimeout(r,100));
  assert.deepEqual(await win.webContents.executeJavaScript(`['account-link','account-attribute','account-old','account-label','account-shadow','account-safe','account-feed','account-late'].map(id=>getComputedStyle(document.getElementById(id)).display==='none')`), [true,true,true,true,true,false,false,false]);

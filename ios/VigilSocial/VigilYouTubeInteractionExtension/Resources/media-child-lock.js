@@ -4,6 +4,7 @@
   const isContextualPlatform = /(^|\.)(reddit\.com|deviantart\.com|artstation\.com|pixiv\.net|behance\.net|newgrounds\.com|furaffinity\.net|tumblr\.com|pinterest\.(?:com|co\.uk)|x\.com|twitter\.com)$/i.test(location.hostname);
   const explicitTitle = value => {
     const text = String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '');
+    if (/(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|nud(?:s|3s?)?|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)/iu.test(text)) return true;
     // Catalog titles use XXX without a following word such as "videos".
     // Match the title token on every host, not arbitrary URL/identifier substrings.
     const titleMarkers = text.replace(/\b(?:chapter|volume|section|book|part|act|super bowl)\s+xxx\b/giu, '');

@@ -6,7 +6,7 @@ import { apiRequestGuard, extensionCorsHeaders, extensionTrustSummary, isTrusted
 import type { RequestTransportContext } from "../apiSecurity.js";
 import { truthy } from "../booleans.js";
 import { REQUIRED_EXTENSION_VERSION } from "../defaults.js";
-import { compactExtensionRuleSignature, evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "../extensionPolicy.js";
+import { compactExtensionRuleSignature, safeBackUrl, evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "../extensionPolicy.js";
 import { confirmIntentionalPause, skipIntentionalPause } from "../intentionalUse.js";
 import { addEvent, saveState, saveUsage } from "../store.js";
 import { clampNumber } from "../time.js";
@@ -58,6 +58,15 @@ export async function handleExtensionApiRoute(
     const body = await readBody(request);
     if (body.action === "status") {
       sendJson(response, 200, { ok: true, browsers: browserFilterHealthSummary() }, extensionResponseCorsHeaders(request));
+      return true;
+    }
+    if (body.action === "browser-return") {
+      const candidates = Array.isArray(body.candidates) ? body.candidates.slice(0, 20) : [];
+      const destination = candidates.map(candidate => safeBackUrl(state, context.usage, candidate, null, new Date())).find(Boolean) || "about:blank";
+      const inspected = typeof body.inspect === "string"
+        ? evaluateExtensionCheck(structuredClone(state), structuredClone(context.usage), { url: body.inspect, event: "inspection" }) : null;
+      const interstitial = inspected?.blocked && inspected.hostname !== "reddit-review-only" ? inspected.redirectUrl : undefined;
+      sendJson(response, 200, { ok: true, url: destination, interstitial }, extensionResponseCorsHeaders(request));
       return true;
     }
     const browser = chrome ? "Google Chrome" : "Safari";

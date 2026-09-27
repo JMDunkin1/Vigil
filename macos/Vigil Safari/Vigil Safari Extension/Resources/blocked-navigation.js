@@ -1,0 +1,1 @@
+../../../../ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/blocked-navigation.js

@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import {
+  activateSocialContainer,
   incrementVersion,
   inspectPhoneBlocklistBytes,
   blocklistReadinessProblems,
@@ -607,3 +608,76 @@ assert.deepEqual(deployedBlocklistProblems({
 assert.equal(isSocialAppImplementationFile(
   "/repo/ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-limits.js", "youtube"
 ), true, "YouTube limits must participate in the independent companion update fingerprint");
+
+// Already-migrated updates must remain read-only even while protected edits
+// are locked. Real migration changes must still use the protected endpoint.
+const activeContainer = {
+  enabled: true, blockApps: true, blockWeb: true, socialContainer: true,
+  blockedAppBundleIds: ["com.linkedin.LinkedIn", "example.blocked"],
+  allowedAppBundleIds: ["tech.caseline.vigil.linkedin", "example.allowed"],
+  focusedSocial: {
+    snapchat: { enabled: true, spotlight: true },
+    linkedin: { enabled: true, shorts: true, suggested: false }
+  }
+};
+const originalFetch = globalThis.fetch;
+let containerState = structuredClone(activeContainer);
+let denySettings = true;
+let loseShortsOnReadback = false;
+const activationCalls: string[] = [];
+try {
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    if (init?.method === "POST") {
+      assert.ok(url.endsWith("/api/devices/ios/settings"));
+      activationCalls.push("save");
+      if (denySettings) return Response.json({ error: "Protected edits are locked" }, { status: 423 });
+      containerState = { ...containerState, ...JSON.parse(String(init.body)) };
+      containerState.blockedAppBundleIds.sort();
+      containerState.allowedAppBundleIds.sort();
+      return Response.json({ ok: true });
+    }
+    assert.ok(url.endsWith("/api/state"));
+    activationCalls.push("read");
+    const returned = structuredClone(containerState);
+    if (loseShortsOnReadback && activationCalls.filter(call => call === "read").length > 1) returned.focusedSocial.linkedin.shorts = false;
+    return Response.json({ state: { deviceControls: { ios: returned } } });
+  };
+  await assert.rejects(activateSocialContainer("http://localhost", async () => ({ ok: false })), /launch verification/u);
+  assert.deepEqual(activationCalls, [], "failed launch does not touch settings");
+  await activateSocialContainer("http://localhost", async () => ({ ok: true }));
+  assert.deepEqual(activationCalls, ["read", "read"], "already active container needs only reads under a settings lock");
+  assert.deepEqual(containerState, activeContainer, "no-op keeps every policy field unchanged");
+
+  for (const missing of ["container", "native-block", "companion-allow", "shorts"] as const) {
+    activationCalls.length = 0;
+    containerState = structuredClone(activeContainer);
+    if (missing === "container") containerState.socialContainer = false;
+    if (missing === "native-block") containerState.blockedAppBundleIds = ["example.blocked"];
+    if (missing === "companion-allow") containerState.allowedAppBundleIds = ["example.allowed"];
+    if (missing === "shorts") containerState.focusedSocial.linkedin.shorts = false;
+    const before = structuredClone(containerState);
+    await assert.rejects(activateSocialContainer("http://localhost", async () => ({ ok: true })), /HTTP 423/u, `required ${missing} change respects protection lock`);
+    assert.deepEqual(activationCalls, ["read", "save"]);
+    assert.deepEqual(containerState, before, "rejected settings remain unchanged");
+  }
+
+  denySettings = false;
+  containerState = { ...structuredClone(activeContainer), socialContainer: false };
+  activationCalls.length = 0;
+  await activateSocialContainer("http://localhost", async () => ({ ok: true }));
+  assert.deepEqual(activationCalls, ["read", "save", "read"], "initial migration still persists and verifies");
+  assert.equal(containerState.socialContainer, true);
+  assert.equal(containerState.focusedSocial.snapchat.spotlight, true);
+
+  loseShortsOnReadback = true;
+  activationCalls.length = 0;
+  await assert.rejects(activateSocialContainer("http://localhost", async () => ({ ok: true })), /did not persist/u, "no-op must reject changed protection on readback");
+  assert.deepEqual(activationCalls, ["read", "read"]);
+  containerState.socialContainer = false;
+  activationCalls.length = 0;
+  await assert.rejects(activateSocialContainer("http://localhost", async () => ({ ok: true })), /did not persist/u, "successful POST must still verify exact settings");
+  assert.deepEqual(activationCalls, ["read", "save", "read"]);
+} finally {
+  globalThis.fetch = originalFetch;
+}

@@ -299,6 +299,7 @@ try {
   assert.equal(rulesPersistenceRequests, 3, "material rule status and error changes must request durability");
 
   const pauseState = defaultState();
+  pauseState.intentionalUse.rules[0].urlPatterns?.push("review.example/thread");
   pauseState.settings.activeProfileId = "normal";
   pauseState.settings.baselineProfileId = "normal";
   const pauseUsage: UsageState = {};
@@ -311,7 +312,7 @@ try {
   const pauseResponse = response();
   await handleExtensionApiRoute(
     request("POST", "/api/extension/check", pauseHeaders, {
-      url: "https://reddit.com/r/popular",
+      url: "https://review.example/thread",
       event: "navigation",
       extensionVersion: REQUIRED_EXTENSION_VERSION
     }),
@@ -445,4 +446,28 @@ for (const [origin, expected] of [['https://example.com', 403], ['http://127.0.0
   }, {url:'https://example.com/', revision:'2026-09-17.1'}), reply,
   new URL('http://127.0.0.1:8787/api/extension/browser-health'), {state:defaultState(),usage:{}});
   assert.equal(reply.statusCodeValue, expected, origin);
+}
+
+// Returns are authenticated, policy checked, and do not mutate enforcement state.
+{
+  const returnState = defaultState();
+  const returnUsage: UsageState = {};
+  const before = JSON.stringify({ state: returnState, usage: returnUsage });
+  for (const [origin, expected] of [["https://example.com", 403], [`chrome-extension://${BUILT_IN_CHROME_EXTENSION_ID}`, 200]] as const) {
+    const reply = response();
+    await handleExtensionApiRoute(request("POST", "/api/extension/browser-health", {
+      host: "127.0.0.1:8787", origin, "content-type": "application/json"
+    }, { action: "browser-return", candidates: ["https://reddit.com/", "https://www.google.com/search?q=porn", "https://www.google.com/search?q=best+car+ever+reddit"] }), reply,
+    new URL("http://127.0.0.1:8787/api/extension/browser-health"), { state: returnState, usage: returnUsage });
+    assert.equal(reply.statusCodeValue, expected);
+    if (expected === 200) assert.equal(JSON.parse(reply.bodyText).url, "https://www.google.com/search?q=best+car+ever+reddit");
+  }
+  const reply = response();
+  await handleExtensionApiRoute(request("POST", "/api/extension/browser-health", {
+    host: "127.0.0.1:8787", origin: `chrome-extension://${BUILT_IN_CHROME_EXTENSION_ID}`, "content-type": "application/json"
+  }, { action: "browser-return", candidates: [], inspect: "https://www.reddit.com/search?q=porn" }), reply,
+  new URL("http://127.0.0.1:8787/api/extension/browser-health"), { state: returnState, usage: returnUsage });
+  assert.equal(JSON.parse(reply.bodyText).url, "about:blank");
+  assert.match(JSON.parse(reply.bodyText).interstitial, /\/blocked\?/u, "explicit Reddit attempts retain the normal warning");
+  assert.equal(JSON.stringify({ state: returnState, usage: returnUsage }), before);
 }

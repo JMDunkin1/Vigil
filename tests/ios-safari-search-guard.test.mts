@@ -35,6 +35,7 @@ function page(url: string, runtimeAvailable = true) {
   return { redirects, listeners, location, tick: () => interval() };
 }
 for (const url of [
+  ...["r34", "R34", "r_34", "rule 34", "s3x", "s.3.x", "nud", "nuds", "nud3s", "s3xnud", "nudsex", "pornnudes", "p.o.r.n", "ｒ３４", "r​34", "%2572%2533%2534"].flatMap(q => ["www.reddit.com", "www.google.com"].map(host => `https://${host}/search?q=${encodeURIComponent(q)}`)),
   "https://example.org/search?q=porn",
   "https://example.org/search?q=%2570%256f%2572%256e",
   "https://www.reddit.com/search?q=sex",
@@ -64,7 +65,7 @@ assert.deepEqual(inputPage.redirects, [blockedURL], "search-box input is checked
 console.log("iOS Safari desktop search parity, navigation, input, benign searches and bundled freshness passed.");
 
 assert.deepEqual(page("https://example.org/search?q=porn", false).redirects, ["about:blank"], "missing extension APIs still leave the blocked page");
-assert.deepEqual(manifest.web_accessible_resources, [{ resources: ["blocked.html", "blocked.css"], matches: ["http://*/*", "https://*/*"] }]);
+assert.deepEqual(manifest.web_accessible_resources, [{ resources: ["blocked.html", "blocked.css", "reddit-review-blocked.html"], matches: ["http://*/*", "https://*/*"] }]);
 
 for (const query of ["x", "xx", "Xbox", "X-Men", "x axis"]) {
   const typing = page("https://www.reddit.com/");

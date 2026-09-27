@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Vigil Focused Web Controls",
-  "version": "0.1.5",
-  "description": "Adds focused YouTube controls, locks Reddit adult-content controls, and filters explicit media titles across websites.",
+  "version": "0.1.7",
+  "description": "Keeps Reddit limited to one externally searched post, preserves explicit-content protection, and adds focused YouTube controls.",
   "host_permissions": [
     "https://youtube.com/*",
     "https://www.youtube.com/*",
@@ -44,7 +44,9 @@
       "matches": [
         "https://youtube.com/*",
         "https://www.youtube.com/*",
-        "https://m.youtube.com/*"
+        "https://m.youtube.com/*",
+        "https://youtube-nocookie.com/*",
+        "https://www.youtube-nocookie.com/*"
       ],
       "js": [
         "youtube-bridge.js"
@@ -56,7 +58,9 @@
       "matches": [
         "https://youtube.com/*",
         "https://www.youtube.com/*",
-        "https://m.youtube.com/*"
+        "https://m.youtube.com/*",
+        "https://youtube-nocookie.com/*",
+        "https://www.youtube-nocookie.com/*"
       ],
       "js": [
         "youtube-limits.js"
@@ -75,12 +79,32 @@
       ],
       "run_at": "document_start",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "reddit-review-guard.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
     }
   ],
-  "web_accessible_resources": [{
-    "resources": ["blocked.html", "blocked.css"],
-    "matches": ["http://*/*", "https://*/*"]
-  }],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "blocked.html",
+        "blocked.css",
+        "reddit-review-blocked.html"
+      ],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ]
+    }
+  ],
   "permissions": [
     "nativeMessaging",
     "webNavigation",
@@ -88,6 +112,7 @@
   ],
   "background": {
     "scripts": [
+      "reddit-review-background.js",
       "youtube-background.js"
     ]
   },

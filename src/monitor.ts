@@ -4,7 +4,7 @@ import { quitApplicationInstance } from "./macos.js";
 import { createHash } from "node:crypto";
 import { addEvent, DATA_DIR, saveState, STATE_SEAL_KEY_PATH } from "./store.js";
 import { PORT } from "./defaults.js";
-import { buildBlockedPageUrl, safeExternalPageUrl } from "./blockedPageUrl.js";
+import { buildBlockedPageUrl } from "./blockedPageUrl.js";
 import { contentFilterEnabled } from "./contentFilters.js";
 import { attestChromeSafeSearchStatus } from "./chromeSafeSearch.js";
 import { reconcileFocusShortcut } from "./focusHooks.js";
@@ -24,7 +24,7 @@ import type { BrowserActivityBurstSchedulerDependencies } from "./monitor/browse
 import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldQuitAppForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
 import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, isInterruptedPollGap, roundSeconds } from "./monitor/timing.js";
-import { safariFilterDenyMatch, safariFilterStatus } from "./safariFilter.js";
+import { safariFilterStatus } from "./safariFilter.js";
 import { sourceSealStatus } from "./sourceSeal.js";
 import { isNonRetryableRuntimeUsageCheckpointError, runtimeUsageCheckpointPath, saveRuntimeUsageCheckpoint } from "./runtimeUsageCheckpoint.js";
 import { networkBlockCurrent, systemNetworkBlockingEnabled } from "./systemNetworkBlock.js";
@@ -159,15 +159,6 @@ export function isVigilBlockedPageUrl(value: unknown): boolean {
     return ["site", "until", "mode", "policyId"].every((key) => url.searchParams.has(key));
   } catch {
     return false;
-  }
-}
-
-function browserOriginUrl(value: unknown): string {
-  try {
-    const url = new URL(String(value || ""));
-    return ["http:", "https:"].includes(url.protocol) ? `${url.origin}/` : "";
-  } catch {
-    return "";
   }
 }
 
@@ -1311,7 +1302,8 @@ export class Monitor implements MonitorHandle {
     const backUrl = this.safeBlockedPageBackUrl(front, options, validation);
     return buildBlockedPageUrl({
       site: front.hostname,
-      kind: options.browserControl?.area === "browser-protection" ? "browser-protection" : undefined,
+      kind: options.browserControl?.area === "browser-protection" ? "browser-protection"
+        : options.urlPattern?.pattern === "reddit-review-only" ? "reddit-review" : undefined,
       until: policy.endsAt,
       mode: policy.session.mode || "focus",
       policyId: policy.session.id || "",
@@ -1325,36 +1317,9 @@ export class Monitor implements MonitorHandle {
     options: BlockSiteOptions = {},
     validation: BlockedPageValidationSnapshot = { state: this.state, usage: this.usage }
   ): string {
-    const recentSampleCandidates = [this.lastSample, this.previousSample]
-      .flatMap((sample) => (
-        sample?.app === front.app
-        && Boolean(sample.url)
-        && !sameBrowserUrl(sample.url, front.url)
-          ? [sample.url]
-          : []
-      ));
-    const candidates = [
-      ...recentSampleCandidates,
-      options.contentFilter?.fallbackUrl || "",
-      browserOriginUrl(front.url)
-    ];
-    for (const value of candidates) {
-      const candidate = safeExternalPageUrl(value);
-      if (!candidate || sameBrowserUrl(candidate, front.url)) continue;
-      const parsed = new URL(candidate);
-      const sample = {
-        app: front.app,
-        hostname: urlHostname(candidate),
-        url: candidate
-      };
-      const state = structuredClone(validation.state);
-      const usage = structuredClone(validation.usage);
-      const evaluatedAt = new Date(this.browserActivityNow());
-      if (!policyForSample(state, usage, sample, evaluatedAt, { observeBrowserProtection: false })) {
-        if (safariFilterDenyMatch(state, candidate, evaluatedAt)) continue;
-        return parsed.toString();
-      }
-    }
+    // Native samples identify a browser, not a tab or its privacy partition.
+    // Only the browser extension may supply a verified, same-tab return target.
+    void front; void options; void validation;
     return "";
   }
 

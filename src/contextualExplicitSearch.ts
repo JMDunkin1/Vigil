@@ -7,7 +7,7 @@ const CONTEXTUAL_SEARCH_PLATFORMS = [
   "pinterest.com", "pinterest.co.uk"
 ];
 const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|furaffinity|tumblr|pinterest)(?:$|[^\p{L}\p{N}])/iu;
-const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
+const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
 const CONTEXTUAL_SEARCH_PARAMETERS = new Set([
   "q", "query", "search_query", "search", "searchterm", "search_term",
   "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag"
@@ -25,8 +25,17 @@ function contextualSearchDecode(value: string): string {
   return value.replace(/\+/gu, " ").normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "");
 }
 
+// Bounded aliases and concatenated blocked words; never fuzzy-match arbitrary
+// substrings such as Middlesex, nudging, or an alphanumeric product identifier.
+export function containsExplicitSearchVariants(query: string): boolean {
+  return /^\s*nud(?:s|3s?)?\s*$/iu.test(contextualSearchDecode(query))
+    || /(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)/iu.test(contextualSearchDecode(query));
+}
+
 export function containsContextualExplicitSearch(query: string, hostname = "", includeRedditShorthand = true): boolean {
   const decoded = contextualSearchDecode(query);
+  if (containsExplicitSearchVariants(decoded)) return true;
+  const normalized = decoded.replace(/3/gu, "e").replace(/0/gu, "o");
   const host = hostname.toLowerCase().replace(/\.$/u, "");
   const platform = CONTEXTUAL_SEARCH_PLATFORMS.some(domain => host === domain || host.endsWith(`.${domain}`));
   // Bare x/xx are unsafe Reddit discovery queries, but not general keywords:
@@ -34,7 +43,7 @@ export function containsContextualExplicitSearch(query: string, hostname = "", i
   const reddit = host === "reddit.com" || host.endsWith(".reddit.com");
   if (reddit && ((includeRedditShorthand && /^\s*x{1,2}\s*$/iu.test(decoded))
     || /(?:^|[^\p{L}\p{N}])(?:(?:adult|unreviewed)[\s_-]+videos?|x{1,2}[\s_-]+(?:videos?|photos?|pics?))(?:$|[^\p{L}\p{N}])/iu.test(decoded))) return true;
-  return (platform || CONTEXTUAL_SEARCH_NAMES.test(decoded)) && CONTEXTUAL_SEARCH_MARKERS.test(decoded);
+  return (platform || CONTEXTUAL_SEARCH_NAMES.test(decoded)) && CONTEXTUAL_SEARCH_MARKERS.test(normalized);
 }
 
 export function matchContextualExplicitSearchUrl(value: unknown): boolean {

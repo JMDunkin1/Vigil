@@ -539,7 +539,7 @@ import { recordUsage } from "../src/usage.js";
   const blockerTarget = new URL(redirects[0]?.target || "");
   assert.equal(blockerTarget.hostname, "127.0.0.1");
   assert.equal(blockerTarget.pathname, "/blocked");
-  assert.equal(blockerTarget.searchParams.get("back"), "https://www.google.com/");
+  assert.equal(blockerTarget.searchParams.get("back"), null);
   assert.equal(decodeURIComponent(blockerTarget.toString()).includes(blockedUrl), false,
     "the blocker receipt must never embed the URL that Safari just denied");
 
@@ -585,8 +585,8 @@ import { recordUsage } from "../src/usage.js";
   const policy = monitor.policyForTarget(blocked);
   assert.ok(policy, "the normal monitor path must identify the blocked explicit search");
   const target = new URL(monitor.blockedPageTarget(blocked, policy));
-  assert.equal(target.searchParams.get("back"), safe.url,
-    "scheduled enforcement must preserve the prior validated page instead of overwriting it with the blocked sample");
+  assert.equal(target.searchParams.get("back"), null,
+    "native observations lack tab identity and must never supply another tab as Back");
 }
 
 {
@@ -600,8 +600,8 @@ import { recordUsage } from "../src/usage.js";
   const policy = monitor.policyForTarget(currentBlocked);
   assert.ok(policy, "the fast path must identify the newly observed blocked URL");
   const target = new URL(monitor.blockedPageTarget(currentBlocked, policy));
-  assert.equal(target.searchParams.get("back"), safe.url,
-    "a denied last sample must fall through to the older validated page instead of discarding it");
+  assert.equal(target.searchParams.get("back"), null,
+    "native observations must not search older tabs for a fallback");
 }
 
 {
@@ -629,7 +629,7 @@ import { recordUsage } from "../src/usage.js";
       options
     )
   });
-  const blocked = { ok: true as const, app: "Safari", hostname: "reddit.com", url: "https://www.reddit.com/r/typescript/" };
+  const blocked = { ok: true as const, app: "Safari", hostname: "reddit.com", url: "https://www.reddit.com/r/typescript/comments/abc123/review/" };
   let redirect = "";
   await monitor.enqueueMutationOperation(async () => {
     monitor.applyFrontmostSample(blocked);
@@ -671,7 +671,7 @@ import { recordUsage } from "../src/usage.js";
     persistedLimitBlockCount = snapshotState.limitBlocks.length;
     persistedCycleAnchor = snapshotState.limitRules[0]?.cycleAnchorDateKey || "";
   });
-  const blockedUrl = "https://www.reddit.com/r/typescript/";
+  const blockedUrl = "https://www.reddit.com/r/typescript/comments/abc123/review/";
   const monitor = new Monitor({
     state,
     usage,
@@ -738,7 +738,7 @@ import { recordUsage } from "../src/usage.js";
     snapshotWrites += 1;
     if (failSnapshot) throw new Error("deterministic fast-block snapshot failure");
   });
-  const blockedUrl = "https://www.reddit.com/r/typescript/";
+  const blockedUrl = "https://www.reddit.com/r/typescript/comments/abc123/review/";
   let currentUrl = blockedUrl;
   let frontReads = 0;
   let redirects = 0;
@@ -1072,7 +1072,7 @@ import { recordUsage } from "../src/usage.js";
     snapshotWrites += 1;
     if (snapshotWrites === 1) throw new Error("deterministic shutdown fast-block snapshot failure");
   });
-  const blockedUrl = "https://www.reddit.com/r/typescript/";
+  const blockedUrl = "https://www.reddit.com/r/typescript/comments/abc123/review/";
   const monitor = new Monitor({
     state,
     usage,
