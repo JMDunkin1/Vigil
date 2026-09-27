@@ -138,7 +138,9 @@ private struct SocialServiceAccessView: View {
                 }
                 .multilineTextAlignment(.center).padding(28)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+                .foregroundStyle(Color.white)
+                .background(Color.black.ignoresSafeArea())
+                .environment(\.colorScheme, .dark)
             }
         }
         .task(id: isServiceVisible && scenePhase == .active) {
@@ -226,9 +228,11 @@ struct RootView: View {
     }
 
     private func filteredWebView(service: SocialService) -> some View {
-        // Native loading, failure, and session UI follow iOS appearance.
-        // Transient web backgrounds must never recolor the app's own screens.
-        let isDark = colorScheme == .dark
+        // Match the safe-area bars to the page without feeding its background
+        // back into WebKit's preferred appearance or the shared presentation.
+        // Instagram retains its stable system-matched canvas during navigation.
+        let isDark = (service == .instagram ? nil : store.reportedChromeIsDark(for: service))
+            ?? (colorScheme == .dark)
         let primaryWebView = store.webView(for: service)
         // Instagram, Snapchat, and LinkedIn stay inside the native safe area. YouTube keeps
         // its original system-managed top inset and extends only beneath the
@@ -320,12 +324,13 @@ struct RootView: View {
                 message: "Preparing a protected \(service.displayName) session.",
                 systemImage: nil,
                 isLoading: true,
-                isDark: isDark,
+                isDark: true,
                 serviceName: service.displayName,
                 primaryAction: nil,
                 secondaryAction: nil,
                 dismissAction: nil
             )
+            .environment(\.colorScheme, .dark)
         case let .advisory(detail):
             SocialHealthNotice(
                 message: detail,
