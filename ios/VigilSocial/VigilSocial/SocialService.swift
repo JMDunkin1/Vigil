@@ -232,6 +232,13 @@ enum SocialService: String, CaseIterable, Identifiable {
     func allowsEmbeddedNavigation(to url: URL, mainDocumentURL: URL? = nil) -> Bool {
         let scheme = url.scheme?.lowercased() ?? ""
         if scheme == "about" { return url.absoluteString.lowercased() == "about:blank" }
+        if self == .linkedin, Self.isLinkedInAuthenticationFrameURL(url) {
+            // LinkedIn's password login uses reCAPTCHA. Permit only its exact
+            // challenge documents, embedded under a first-party auth page.
+            guard let mainDocumentURL,
+                  isCanonicalAppHost(mainDocumentURL.host?.lowercased() ?? "") else { return false }
+            return usesUnmodifiedAuthenticationDocument(mainDocumentURL)
+        }
         if self == .snapchat, Self.isSnapchatAuthenticationFrameURL(url) {
             // reCAPTCHA is a child of Snap's login, never a browsing destination.
             return usesUnmodifiedAuthenticationDocument(mainDocumentURL)
@@ -254,9 +261,11 @@ enum SocialService: String, CaseIterable, Identifiable {
                 || Self.isYouTubeEmbeddedAuthenticationFrameURL(url)
         }
         if self == .linkedin {
-            guard isCanonicalAppHost(host) else { return false }
-            let path = url.path.lowercased()
-            return ["/login", "/uas", "/checkpoint", "/signup", "/start", "/authwall"].contains {
+            if Self.isLinkedInAuthenticationFrameURL(url) { return true }
+            guard isCanonicalAppHost(host), url.user == nil, url.password == nil,
+                  let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath.lowercased()
+            else { return false }
+            return ["/login", "/uas", "/checkpoint", "/signup", "/start", "/authwall", "/passwordreset"].contains {
                 path == $0 || path.hasPrefix("\($0)/")
             }
         }
@@ -349,6 +358,14 @@ enum SocialService: String, CaseIterable, Identifiable {
     }
 
     static func isSnapchatAuthenticationFrameURL(_ url: URL) -> Bool {
+        isRecaptchaFrameURL(url)
+    }
+
+    static func isLinkedInAuthenticationFrameURL(_ url: URL) -> Bool {
+        isRecaptchaFrameURL(url)
+    }
+
+    private static func isRecaptchaFrameURL(_ url: URL) -> Bool {
         guard url.scheme?.lowercased() == "https",
               url.port == nil || url.port == 443,
               url.user == nil, url.password == nil,

@@ -344,6 +344,69 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testLinkedInCaptchaFramesStayConfinedToAuthentication() throws {
+        let authenticationPages = ["/login", "/login/", "/checkpoint/challenge/", "/passwordReset/"]
+        for host in ["www.google.com", "recaptcha.google.com", "www.recaptcha.net"] {
+            for path in ["api2/anchor", "api2/bframe", "enterprise/anchor", "enterprise/bframe"] {
+                let frame = try XCTUnwrap(URL(string: "https://\(host)/recaptcha/\(path)?k=test-key"))
+                for path in authenticationPages {
+                    let parent = try XCTUnwrap(URL(string: "https://www.linkedin.com\(path)"))
+                    XCTAssertTrue(SocialService.linkedin.allowsEmbeddedNavigation(to: frame, mainDocumentURL: parent))
+                }
+                XCTAssertTrue(SocialService.linkedin.usesUnmodifiedAuthenticationDocument(frame))
+                XCTAssertFalse(SocialService.linkedin.allowsNavigation(to: frame))
+                XCTAssertNil(SocialWebViewStore.validatedPopupRequest(URLRequest(url: frame), for: .linkedin))
+                XCTAssertFalse(SocialService.linkedin.allowsEmbeddedNavigation(to: frame))
+                for address in [
+                    "https://www.linkedin.com/feed/", "https://www.linkedin.com/video/",
+                    "https://www.linkedin.com/login-extra", "https://www.linkedin.com/%6cogin",
+                    "https://www.linkedin.com.evil.test/login", "https://www.linkedin.com:444/login",
+                    "http://www.linkedin.com/login", "https://user@www.linkedin.com/login",
+                    "https://accounts.snapchat.com/v2/login", frame.absoluteString
+                ] {
+                    XCTAssertFalse(SocialService.linkedin.allowsEmbeddedNavigation(to: frame, mainDocumentURL: URL(string: address)), address)
+                }
+            }
+        }
+        let login = URL(string: "https://www.linkedin.com/login")!
+        for address in [
+            "https://www.google.com/search?q=test", "https://www.google.com/recaptcha/",
+            "https://www.google.com/recaptcha/api2/anchor/extra",
+            "https://www.google.com/recaptcha/api2/%61nchor",
+            "https://www.google.com/recaptcha/api2/anchor%2F..%2F..%2Fsearch",
+            "https://www.google.com.evil.test/recaptcha/api2/anchor",
+            "https://www.google.com:444/recaptcha/api2/anchor",
+            "http://www.google.com/recaptcha/api2/anchor",
+            "https://user@www.google.com/recaptcha/api2/anchor"
+        ] {
+            let frame = try XCTUnwrap(URL(string: address))
+            XCTAssertFalse(SocialService.linkedin.allowsEmbeddedNavigation(to: frame, mainDocumentURL: login), address)
+            XCTAssertFalse(SocialService.linkedin.usesUnmodifiedAuthenticationDocument(frame), address)
+        }
+    }
+
+    @MainActor
+    func testLinkedInPasswordAuthenticationRemainsUnmodified() async throws {
+        for path in ["/login", "/checkpoint/challenge/", "/passwordReset/"] {
+            let store = SocialWebViewStore(fixedService: .linkedin, loadInitialPages: false,
+                                          unclassifiedMediaPolicy: .conceal, websiteDataStore: .nonPersistent())
+            let view = store.webView(for: .linkedin)
+            view.loadHTMLString("""
+                <html><body><form id="login"><input type="email"><input type="password">
+                <button>Sign in</button><img id="challenge" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"></form></body></html>
+                """, baseURL: URL(string: "https://www.linkedin.com\(path)"))
+            try await waitForJavaScriptCondition("document.readyState === 'complete' && !!document.getElementById('login')", in: view)
+            let result = try await view.evaluateJavaScript("""
+                [getComputedStyle(document.body).visibility === 'visible',
+                 getComputedStyle(document.getElementById('challenge')).visibility === 'visible',
+                 !window.__vigilCommonInstalled, !window.__vigilLinkedInInstalled,
+                 !!window.__vigilLinkedInAuthenticationWatchdog]
+                """) as? [Bool]
+            XCTAssertEqual(result, [true, true, true, true, true], path)
+        }
+    }
+
+    @MainActor
     func testLinkedInRemovesVideoDiscoveryAndPreservesOrdinaryControls() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(

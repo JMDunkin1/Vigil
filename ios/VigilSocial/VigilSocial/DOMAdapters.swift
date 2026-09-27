@@ -1188,11 +1188,22 @@ enum DOMAdapters {
         if service == .linkedin {
             return #"""
             (() => {
+              const url = new URL(location.href);
+              const secureDocument = url.protocol === 'https:' && (!url.port || url.port === '443')
+                && !url.username && !url.password;
+              // Native navigation confines these frames to LinkedIn auth pages.
+              // Keep challenge DOM, images, audio, and browser APIs untouched.
+              const captchaFrame = window.top !== window && secureDocument
+                && ['www.google.com', 'recaptcha.google.com', 'www.recaptcha.net'].includes(url.hostname.toLowerCase())
+                && ['/recaptcha/api2/anchor', '/recaptcha/api2/bframe',
+                    '/recaptcha/enterprise/anchor', '/recaptcha/enterprise/bframe'].includes(url.pathname);
+              if (captchaFrame) return;
               const isAuthentication = () => {
                 const url = new URL(location.href);
                 return url.protocol === 'https:' && (!url.port || url.port === '443')
+                  && !url.username && !url.password
                   && ['linkedin.com', 'www.linkedin.com'].includes(url.hostname.toLowerCase())
-                  && /^\/(login|uas|checkpoint|signup|start|authwall)(\/|$)/i.test(url.pathname);
+                  && /^\/(login|uas|checkpoint|signup|start|authwall|passwordreset)(\/|$)/i.test(url.pathname);
               };
               if (isAuthentication()) {
                 // A same-document login completion also needs a fresh protected
