@@ -19,16 +19,23 @@ for (const profileId of [null, SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PROFILE_ID]) {
   assert.deepEqual(after.deniedUrls, before.deniedUrls);
   assert.deepEqual(after.allowedUrls, before.allowedUrls);
   assert.deepEqual(after.grayscale, before.grayscale);
-  if (profileId === BRICK_MODE_PROFILE_ID) assert.deepEqual(after.appBundleIds, before.appBundleIds);
-  else {
-    assert.deepEqual(after.appBundleIds, before.appBundleIds.filter(id => id !== 'com.toyopagroup.picaboo'));
-    assert.ok(!after.appBundleIds.includes('com.toyopagroup.picaboo'));
+  assert.deepEqual(after.appBundleIds, before.appBundleIds);
+  if (after.appMode === 'denylist') {
+    assert.ok(after.appBundleIds.includes('com.toyopagroup.picaboo'));
     assert.ok(after.appBundleIds.includes('com.google.ios.youtube'));
+    if (profileId !== BRICK_MODE_PROFILE_ID) {
+      assert.ok(!after.appBundleIds.includes('tech.caseline.vigil.instagram'));
+      assert.ok(!after.appBundleIds.includes('tech.caseline.vigil.snapchat'));
+    }
+  } else {
+    assert.ok(!after.appBundleIds.includes('com.toyopagroup.picaboo'));
   }
-  assert.equal(normalizeIosSettings({}, state.deviceControls.ios).allowNativeSnapchat, true);
+  state.deviceControls.ios.allowNativeSnapchat = true;
+  assert.deepEqual(iosPolicyTargets(state, now), before, 'Saved exceptions must not unblock native Snapchat');
+  assert.equal(normalizeIosSettings({}, state.deviceControls.ios).allowNativeSnapchat, false);
   assert.equal(normalizeIosSettings({allowNativeSnapchat:false}, state.deviceControls.ios).allowNativeSnapchat, false);
 }
-console.log('Snapchat coexistence preserves other app restrictions, web filters, and full brick.');
+console.log('Native Snapchat stays blocked while Vigil companions, other restrictions, and web filters are preserved.');
 
 state.activeSessions.phone = null;
 state.deviceControls.ios.allowNativeSnapchat = true;

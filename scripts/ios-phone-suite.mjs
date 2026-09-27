@@ -1783,7 +1783,7 @@ export function validYouTubeInteractionManifest(manifest) {
     && JSON.stringify(scripts[0]?.js) === JSON.stringify(["reddit-child-lock.js", YOUTUBE_INTERACTION_EXTENSION.scriptName])
     && scripts[0]?.all_frames === false
     && scripts[1]?.all_frames === true
-    && JSON.stringify(scripts[1]?.matches) === JSON.stringify([...expectedHosts.slice(0, 3), "https://youtube-nocookie.com/*", "https://www.youtube-nocookie.com/*"])
+    && JSON.stringify(scripts[1]?.matches) === JSON.stringify(["http://*/*", "https://*/*"])
     && JSON.stringify(scripts[1]?.js) === JSON.stringify(["youtube-bridge.js"])
     && scripts[2]?.all_frames === true
     && scripts[2]?.world === undefined
@@ -2216,7 +2216,10 @@ async function verifyCombinedServiceLaunches(deviceIdentifier, toolEnvironment) 
       const started = Date.now();
       await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, "--payload-url", `vigilsocial://${service}`, REQUIRED_SOCIAL_APPS[0].bundleId], toolEnvironment);
       let verified = false;
-      for (let attempt = 0; attempt < 30 && !verified; attempt += 1) {
+      // A cold web session can finish its protected access probe after a minute
+      // on device. Keep requiring fresh selection AND access receipts, but allow
+      // that startup to finish instead of rejecting a healthy signed install.
+      for (let attempt = 0; attempt < 90 && !verified; attempt += 1) {
         await new Promise((resolveWait) => setTimeout(resolveWait, 1000));
         const destination = join(directory, `${service}.json`);
         try {

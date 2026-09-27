@@ -153,3 +153,89 @@ test('Safari grants an external embed before starting playback and rejects a cha
   await start('zyxwvutsrqp');
   assert.deepEqual(actions, ['start'], 'recommendation retains the ordinary save-first check');
 });
+
+const bridge = await readFile(join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-bridge.js'), 'utf8');
+function safariExternalClickFixture(destination: string, source = 'https://www.google.com/search?q=econ', subframe = false) {
+  const handlers: Record<string, (event: unknown) => void> = {};
+  const messages: Array<{type: string; url: string}> = [];
+  let navigated = '', prevented = false, resolveReply: (value: unknown) => void = () => {};
+  class Anchor {
+    href = destination; target = '';
+    closest() { return this; }
+    hasAttribute() { return false; }
+  }
+  const window: Record<string, unknown> = { addEventListener() {} };
+  window.top = subframe ? {} : window;
+  vm.runInNewContext(bridge, { URL, Promise, window, Element: Anchor, HTMLAnchorElement: Anchor,
+    location: { hostname: new URL(source).hostname, assign(url: string) { navigated = url; } },
+    document: { addEventListener(name: string, callback: typeof handlers[string]) { handlers[name] = callback; } },
+    browser: { runtime: { sendMessage(message: typeof messages[number]) { messages.push(message); return new Promise(resolve => { resolveReply = resolve; }); } } }
+  });
+  return { messages, handlers, fire(type = 'click', trusted = true, newTab = false) {
+    const anchor = new Anchor(); if (newTab) anchor.target = '_blank';
+    handlers[type]?.({ type, button: type === 'auxclick' ? 1 : 0, isTrusted: trusted, target: anchor,
+      preventDefault() { prevented = true; }, stopImmediatePropagation() {} });
+  }, finish: () => resolveReply({ ok: true }), navigated: () => navigated, prevented: () => prevented };
+}
+
+test('Safari captures Google clicks before navigation, preserving timestamps and wrapped links', async () => {
+  for (const destination of [`https://www.youtube.com/watch?v=${video}&t=40`, `https://youtu.be/${video}?t=40`,
+    `https://www.google.com/url?q=${encodeURIComponent(`https://www.youtube.com/watch?v=${video}&t=40`)}`]) {
+    const f = safariExternalClickFixture(destination);
+    f.fire();
+    assert.equal(f.prevented(), true);
+    assert.equal(f.navigated(), '', 'source stays alive until the native allowance is persisted');
+    assert.equal(f.messages[0].type, 'VIGIL_YOUTUBE_EXTERNAL_LINK');
+    assert.ok(f.messages[0].url.includes(video));
+    f.finish(); await tick();
+    assert.equal(f.navigated(), destination);
+  }
+});
+
+test('Safari new-tab and middle-click results request allowance without hijacking navigation', () => {
+  for (const type of ['click', 'auxclick']) {
+    const f = safariExternalClickFixture(`https://www.youtube.com/watch?v=${video}`);
+    f.fire(type, true, true);
+    assert.equal(f.messages.length, 1);
+    assert.equal(f.prevented(), false);
+    assert.equal(f.navigated(), '');
+  }
+});
+
+test('Safari never treats synthetic clicks, YouTube discovery, Shorts or external subframes as direct result clicks', () => {
+  const destination = `https://www.youtube.com/watch?v=${video}`;
+  for (const source of ['https://www.youtube.com/', 'https://www.youtube-nocookie.com/embed/abcdefghijk', 'https://music.youtube.com/', 'https://youtu.be/abcdefghijk']) {
+    const f = safariExternalClickFixture(destination, source); f.fire(); assert.equal(f.messages.length, 0);
+  }
+  const synthetic = safariExternalClickFixture(destination); synthetic.fire('click', false); assert.equal(synthetic.messages.length, 0);
+  const subframe = safariExternalClickFixture(destination, 'https://www.google.com/', true); subframe.fire(); assert.equal(subframe.messages.length, 0);
+  const shorts = safariExternalClickFixture(`https://www.youtube.com/shorts/${video}`); shorts.fire(); assert.equal(shorts.messages.length, 0);
+});
+
+test('Safari external-click handler verifies sender provenance and awaits the native grant', async () => {
+  let receive: (message: unknown, sender: unknown) => Promise<unknown> = async () => undefined;
+  let finish: (value: unknown) => void = () => {};
+  const requests: Array<{action: string; videoId: string}> = [];
+  const values: Record<string, unknown> = {};
+  const event = { addListener() {} };
+  vm.runInNewContext(safari, { URL, browser: {
+    runtime: { onMessage: { addListener(fn: typeof receive) { receive = fn; } },
+      sendNativeMessage(_app: string, body: typeof requests[number]) { requests.push(body); return new Promise(resolve => { finish = resolve; }); } },
+    storage: { local: { async get() { return {}; }, async set(items: Record<string, unknown>) { Object.assign(values, items); } } },
+    tabs: { onRemoved: event }, webNavigation: { onCommitted: event, onHistoryStateUpdated: event, onCreatedNavigationTarget: event }
+  } });
+  const message = { type: 'VIGIL_YOUTUBE_EXTERNAL_LINK', url: `https://www.youtube.com/watch?v=${video}&t=40` };
+  for (const sender of [
+    { url: 'https://www.youtube.com/', frameId: 0, tab: { id: 1 } },
+    { url: 'https://www.youtube-nocookie.com/', frameId: 0, tab: { id: 1 } },
+    { url: 'https://www.google.com/', frameId: 1, tab: { id: 1 } },
+    { url: 'about:blank', frameId: 0, tab: { id: 1 } }
+  ]) assert.equal((await receive(message, sender) as {ok:boolean}).ok, false);
+  assert.equal(requests.length, 0);
+  let done = false;
+  const reply = receive(message, { url: 'https://www.google.com/search?q=econ', frameId: 0, tab: { id: 1 } }).then(() => { done = true; });
+  await tick(); assert.equal(done, false);
+  assert.equal(requests[0].action, 'external'); assert.equal(requests[0].videoId, video);
+  finish({ ok: true }); await reply;
+  assert.equal((values['youtube-handoff:1'] as {eligible: boolean}).eligible, true);
+});

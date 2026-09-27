@@ -4025,6 +4025,138 @@ enum DOMAdapters {
       const hosts = ['linkedin.com', 'www.linkedin.com'];
       if (!hosts.includes(location.hostname.toLowerCase())) return;
       window.__vigilLinkedInInstalled = true;
+      const homeFeed = () => /^\/(?:feed\/?)?$/.test(location.pathname);
+      const postSelector = '[data-urn^="urn:li:activity:"], [data-id^="urn:li:activity:"], .feed-shared-update-v2, .occludable-update, article';
+      const feedSelector = '.scaffold-finite-scroll__content, [role="feed"], .feed-container';
+      const actorSelector = '.update-components-actor, .feed-shared-actor';
+      const appSelector = '[class*="app-upsell" i], [class*="app-promotion" i], [class*="open-in-app" i], [class*="app-banner" i], .mobile-app-upsell';
+      const acceptedPosts = new Set();
+      let inFeed = false;
+      let feedStatus = null;
+      const setAttribute = (node, key, value) => {
+        if (node.getAttribute(key) !== value) node.setAttribute(key, value);
+      };
+      const postIdentity = (card) => {
+        for (const value of [card.getAttribute('data-urn'), card.getAttribute('data-id')]) {
+          if (/^urn:li:activity:\d+$/.test(value || '')) return value;
+        }
+        const nestedIDs = [...card.querySelectorAll('[data-urn^="urn:li:activity:"], [data-id^="urn:li:activity:"]')]
+          .flatMap(node => [node.getAttribute('data-urn'), node.getAttribute('data-id')])
+          .filter(value => /^urn:li:activity:\d+$/.test(value || ''));
+        if (nestedIDs.length && new Set(nestedIDs).size === 1) return nestedIDs[0];
+        for (const link of card.querySelectorAll('a[href*="/feed/update/"]')) {
+          try {
+            const url = new URL(link.href, location.href);
+            const match = decodeURIComponent(url.pathname).match(/^\/feed\/update\/(urn:li:activity:\d+)\/?$/);
+            if (hosts.includes(url.hostname) && match) return match[1];
+          } catch (_) {}
+        }
+        return null;
+      };
+      const connectionPost = (card) => {
+        // Trust only the author's dedicated relationship badge, never post text,
+        // comments, a "liked this" header, or a follower count. Unknown = hidden.
+        const actors = [...card.querySelectorAll(actorSelector)];
+        if (!actors.length) return false;
+        if (card.querySelector('.update-components-reshared-content, .feed-shared-mini-update-v2')) return false;
+        if ([...card.querySelectorAll('.update-components-header, .feed-shared-header, .update-components-actor__sub-description, .feed-shared-actor__sub-description')]
+            .some(node => /\b(promoted|sponsored|suggested|recommended|reposted|shared this)\b/i.test(node.textContent || ''))) return false;
+        return actors.every(actor => {
+          const profile = actor.querySelector('a[href*="/in/"]');
+          if (!profile) return false;
+          try {
+            const url = new URL(profile.href, location.href);
+            if (!hosts.includes(url.hostname) || !/^\/in\/[^/]+\/?$/.test(url.pathname)) return false;
+          } catch (_) { return false; }
+          const badges = [...actor.querySelectorAll('.update-components-actor__supplementary-actor-info, .feed-shared-actor__supplementary-actor-info, .dist-value')];
+          return badges.some(badge => /^(?:(?:[·•]\s*)?1st(?: degree connection)?\s*)+$/i.test((badge.textContent || '').replace(/\s+/g, ' ').trim()))
+            && !badges.some(badge => /\b(2nd|3rd|follower|following)\b/i.test(badge.textContent || ''));
+        });
+      };
+      const appControl = (node) => {
+        const control = node?.closest?.('a[href], button, [role="button"]');
+        if (!control) return null;
+        const label = (control.getAttribute('aria-label') || control.textContent || '').trim();
+        const href = control.getAttribute('href') || '';
+        return /^(?:open(?: in)?|use|get|download|try|continue (?:in|to))(?: the)? (?:linkedin(?: app)?|app)[.!]?$/i.test(label)
+          || /^(?:linkedin:|https:\/\/(?:apps\.apple\.com|play\.google\.com)\/)/i.test(href)
+          ? control : null;
+      };
+      const suppressAppPromotions = () => {
+        document.querySelectorAll('meta[name="apple-itunes-app"]').forEach(node => node.remove());
+        document.querySelectorAll(appSelector).forEach(node => setAttribute(node, 'data-vigil-linkedin-hidden', 'true'));
+        let hidModal = false;
+        document.querySelectorAll('a[href], button, [role="button"]').forEach(node => {
+          const control = appControl(node);
+          if (!control) return;
+          const modal = control.closest('[role="dialog"], [aria-modal="true"], .artdeco-modal, .artdeco-modal-overlay');
+          const surface = modal?.closest('.artdeco-modal-overlay') || modal || control.closest(appSelector) || control;
+          setAttribute(surface, 'data-vigil-linkedin-hidden', 'true');
+          if (modal) hidModal = true;
+        });
+        if (hidModal && ![...document.querySelectorAll('[role="dialog"], [aria-modal="true"], .artdeco-modal')]
+            .some(node => !node.closest('[data-vigil-linkedin-hidden]') && node.getClientRects().length)) {
+          for (const node of [document.documentElement, document.body]) {
+            if (node?.style.overflow === 'hidden') node.style.removeProperty('overflow');
+          }
+          if (document.body?.classList.contains('artdeco-modal-is-open')) {
+            document.body.classList.remove('artdeco-modal-is-open');
+          }
+        }
+      };
+      const enforceFeed = () => {
+        const active = homeFeed();
+        document.documentElement.toggleAttribute('data-vigil-linkedin-feed', active);
+        if (!active) {
+          if (inFeed) acceptedPosts.clear();
+          inFeed = false;
+          feedStatus?.remove();
+          return;
+        }
+        inFeed = true;
+        const main = document.querySelector('main, [role="main"]');
+        if (!main) return;
+        if (!feedStatus) {
+          feedStatus = document.createElement('p');
+          feedStatus.id = 'vigil-linkedin-feed-status';
+          feedStatus.setAttribute('role', 'status');
+        }
+        if (!feedStatus.isConnected) main.prepend(feedStatus);
+        const roots = [...main.querySelectorAll(feedSelector)].filter(root => !root.parentElement?.closest(feedSelector));
+        // A changed/unknown home layout must not reveal an unfiltered feed.
+        if (!roots.length) roots.push(main);
+        document.querySelectorAll('[data-vigil-linkedin-feed-root]').forEach(root => {
+          if (!roots.includes(root)) root.removeAttribute('data-vigil-linkedin-feed-root');
+        });
+        const seen = new Set();
+        let visible = 0;
+        for (const root of roots) {
+          setAttribute(root, 'data-vigil-linkedin-feed-root', 'true');
+          root.querySelectorAll('[data-vigil-linkedin-post], [data-vigil-linkedin-branch]').forEach(node => {
+            node.removeAttribute('data-vigil-linkedin-post');
+            node.removeAttribute('data-vigil-linkedin-branch');
+          });
+          const cards = [...root.querySelectorAll(postSelector)].filter(card => !card.parentElement?.closest(postSelector));
+          for (const card of cards) {
+            const id = postIdentity(card);
+            if (!id || seen.has(id) || !connectionPost(card)) continue;
+            seen.add(id);
+            if (!acceptedPosts.has(id) && acceptedPosts.size >= 20) continue;
+            acceptedPosts.add(id);
+            setAttribute(card, 'data-vigil-linkedin-post', 'allowed');
+            // Keep structural wrappers only when they contain an approved post.
+            for (let parent = card; parent && parent !== root; parent = parent.parentElement) {
+              setAttribute(parent, 'data-vigil-linkedin-branch', 'true');
+            }
+            visible++;
+          }
+        }
+        const message = acceptedPosts.size >= 20
+          ? '20-post limit reached for this visit. Only confirmed connections are shown.'
+          : visible ? `${acceptedPosts.size} of 20 posts this visit · Confirmed connections only`
+          : 'No verified connection posts to show. Unverified and recommended posts stay hidden.';
+        if (feedStatus.textContent !== message) feedStatus.textContent = message;
+      };
       const restricted = (value) => {
         try {
           const url = new URL(value, location.href);
@@ -4032,10 +4164,18 @@ enum DOMAdapters {
             && /^\/(video|shorts|feed\/(video|immersive))(\/|$)/i.test(decodeURIComponent(url.pathname));
         } catch (_) { return true; }
       };
+      const hiddenFeedMedia = video => homeFeed() && video.closest('main, [role="main"]')
+        && !video.closest('[data-vigil-linkedin-post="allowed"]');
       const style = document.createElement('style');
       style.id = 'vigil-linkedin-style';
       style.textContent = `
         html[data-vigil-linkedin-restricted] body { visibility: hidden !important; }
+        html[data-vigil-linkedin-feed] :is(main, [role="main"]) :is(${postSelector}):not([data-vigil-linkedin-post="allowed"]):not([data-vigil-linkedin-post="allowed"] *) { display: none !important; }
+        html[data-vigil-linkedin-feed] [data-vigil-linkedin-feed-root] > :not([data-vigil-linkedin-branch]):not(#vigil-linkedin-feed-status) { display: none !important; }
+        html[data-vigil-linkedin-feed] [data-vigil-linkedin-branch]:not([data-vigil-linkedin-post]) > :not([data-vigil-linkedin-branch]) { display: none !important; }
+        #vigil-linkedin-feed-status { padding: 12px 16px; margin: 0; font: 14px/1.4 -apple-system, sans-serif; color: inherit; }
+        ${appSelector} { display: none !important; }
+        .mobile-nav, .global-nav__bottom { bottom: 0 !important; max-width: 100% !important; box-sizing: border-box !important; }
         [data-vigil-linkedin-hidden],
         a[href^="/video"], a[href^="/shorts"],
         a[href^="/feed/video"], a[href^="/feed/immersive"],
@@ -4066,26 +4206,28 @@ enum DOMAdapters {
       };
       const reconcile = () => {
         if (enforceRoute()) return;
+        enforceFeed();
+        suppressAppPromotions();
         document.querySelectorAll('a[href], nav button, [role="navigation"] [role="tab"]').forEach(element => {
           const control = blockedControl(element);
           if (control) control.setAttribute('data-vigil-linkedin-hidden', 'true');
-          else element.removeAttribute('data-vigil-linkedin-hidden');
+          // Promotion markers belong to suppressAppPromotions; do not clear them.
         });
         document.querySelectorAll('video').forEach(video => {
-          if (video.closest('[class*="immersive-video" i], [class*="video-discovery" i], [class*="video-carousel" i], [data-testid*="immersive-video" i]')) {
+          if (hiddenFeedMedia(video) || video.closest('[class*="immersive-video" i], [class*="video-discovery" i], [class*="video-carousel" i], [data-testid*="immersive-video" i]')) {
             video.pause();
             video.muted = true;
           }
         });
       };
       document.addEventListener('click', event => {
-        if (!blockedControl(event.target)) return;
+        if (!blockedControl(event.target) && !appControl(event.target)) return;
         event.preventDefault();
         event.stopImmediatePropagation();
       }, true);
       document.addEventListener('play', event => {
         const video = event.target;
-        if (video.matches?.('video') && (restricted(location.href)
+        if (video.matches?.('video') && (restricted(location.href) || hiddenFeedMedia(video)
             || video.closest('[class*="immersive-video" i], [class*="video-discovery" i], [class*="video-carousel" i], [data-testid*="immersive-video" i]'))) {
           video.pause();
           video.muted = true;
@@ -4110,7 +4252,8 @@ enum DOMAdapters {
       addEventListener('hashchange', reconcile, true);
       new MutationObserver(schedule).observe(document.documentElement, {
         childList: true, subtree: true, attributes: true,
-        attributeFilter: ['href', 'aria-label', 'class', 'data-testid']
+        characterData: true,
+        attributeFilter: ['href', 'aria-label', 'class', 'data-testid', 'data-urn', 'data-id']
       });
       reconcile();
       if (window === window.top) addEventListener('DOMContentLoaded', () => {

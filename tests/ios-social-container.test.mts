@@ -29,7 +29,7 @@ for (const service of ["instagram", "youtube", "snapchat", "linkedin"]) {
   assert.ok(policy.deniedUrls.includes(`https://${service}.com/`), `${service} must stay blocked inside the container`);
   assert.ok(policy.deniedUrls.length <= 500);
   for (const domain of [...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES]) {
-    assert.ok(policy.deniedUrls.includes(`https://${domain}/`), `${service}: retained priority ${domain}`);
+    assert.ok([...policy.deniedUrls, ...policy.supplementalDeniedUrls].includes(`https://${domain}/`), `${service}: retained priority ${domain}`);
   }
 }
 

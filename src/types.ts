@@ -776,7 +776,7 @@ export interface IosSettings {
   hardenRemoval: boolean;
   restrictInstallAndErase: boolean;
   allowSafariHistoryClearing: boolean;
-  /** Owner-authorized coexistence while the Snapchat companion cannot sign in. */
+  /** Retired native Snapchat exception; normalization always resets it to false. */
   allowNativeSnapchat?: boolean;
   /** The four fixed services share the existing Instagram app container. */
   socialContainer?: boolean;

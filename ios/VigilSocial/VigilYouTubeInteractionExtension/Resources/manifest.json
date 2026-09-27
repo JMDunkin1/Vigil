@@ -42,11 +42,8 @@
     },
     {
       "matches": [
-        "https://youtube.com/*",
-        "https://www.youtube.com/*",
-        "https://m.youtube.com/*",
-        "https://youtube-nocookie.com/*",
-        "https://www.youtube-nocookie.com/*"
+        "http://*/*",
+        "https://*/*"
       ],
       "js": [
         "youtube-bridge.js"

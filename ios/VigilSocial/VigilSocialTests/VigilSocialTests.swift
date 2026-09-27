@@ -481,7 +481,49 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
-    func testLinkedInRemovesVideoDiscoveryAndPreservesOrdinaryControls() async throws {
+    func testLinkedInFeedCapsVerifiedConnectionsAndKeepsSafeInsets() async throws {
+        let store = SocialWebViewStore(fixedService: .linkedin, loadInitialPages: false)
+        XCTAssertEqual(store.webView(for: .linkedin).scrollView.contentInsetAdjustmentBehavior, .never)
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.documentStartScript(for: .linkedin, unclassifiedMediaPolicy: .revealUnclassified, audioEnabled: true, contentSafetyEnabled: false),
+            injectionTime: .atDocumentStart, forMainFrameOnly: false
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 760), configuration: configuration)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 800))
+        let host = UIViewController()
+        window.rootViewController = host
+        host.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        let posts = (1...25).map { id in
+            """
+            <article data-urn="urn:li:activity:\(id)"><div class="update-components-actor">
+              <a href="/in/person-\(id)/">Person \(id)</a>
+              <span class="update-components-actor__supplementary-actor-info"><span aria-hidden="true"> • \(id == 1 ? "2nd" : "1st")</span><span class="visually-hidden">\(id == 1 ? "2nd" : "1st") degree connection</span></span>
+            </div><p>Post \(id)</p></article>
+            """
+        }.joined()
+        webView.loadHTMLString("""
+            <html><body><nav><a href="/jobs/">Jobs</a></nav><main><div role="feed">\(posts)</div></main>
+            <div role="dialog" id="upsell"><button>Open in app</button></div></body></html>
+            """, baseURL: URL(string: "https://www.linkedin.com/feed/"))
+        try await waitForJavaScriptCondition("document.querySelectorAll('[data-vigil-linkedin-post=allowed]').length === 20", in: webView)
+        let hidden = try await evaluateJavaScriptRetryingKnownGestureTransition("""
+            ['[data-urn="urn:li:activity:1"]', '[data-urn="urn:li:activity:22"]', '#upsell']
+              .every(selector => !document.querySelector(selector).getClientRects().length)
+            """, in: webView) as? Bool
+        XCTAssertEqual(hidden, true)
+        _ = try await evaluateJavaScriptRetryingKnownGestureTransition("""
+            document.querySelector('[role=feed]').innerHTML = '<article data-urn="urn:li:activity:99"><div class="update-components-actor"><a href="/in/person-99/">Person</a><span class="dist-value">1st</span></div></article>'; true;
+            """, in: webView)
+        try await waitForJavaScriptCondition("document.querySelectorAll('[data-vigil-linkedin-post=allowed]').length === 0", in: webView)
+    }
+
+    @MainActor
+    func testLinkedInRemovesVideoDiscoveryAndUnverifiedHomePosts() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.documentStartScript(for: .linkedin, unclassifiedMediaPolicy: .revealUnclassified, audioEnabled: true, contentSafetyEnabled: false),
@@ -509,7 +551,7 @@ final class VigilSocialTests: XCTestCase {
         let result = try await evaluateJavaScriptRetryingKnownGestureTransition("""
             ['video','discovery','jobs','post','upload','message'].map(id => getComputedStyle(document.getElementById(id)).display !== 'none')
             """, in: webView) as? [Bool]
-        XCTAssertEqual(result, [false, false, true, true, true, true])
+        XCTAssertEqual(result, [false, false, true, false, false, false])
         _ = try await evaluateJavaScriptRetryingKnownGestureTransition("""
             const link = document.createElement('a'); link.id = 'dynamic'; link.href='/feed/immersive/1'; link.textContent='Watch'; document.body.appendChild(link); true;
             """, in: webView)

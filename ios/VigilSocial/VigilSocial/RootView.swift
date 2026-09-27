@@ -235,11 +235,11 @@ struct RootView: View {
             : store.reportedChromeIsDark(for: service)
         let isDark = reportedIsDark ?? (colorScheme == .dark)
         let primaryWebView = store.webView(for: service)
-        // Instagram and Snapchat stay inside the native safe area. YouTube keeps
+        // Instagram, Snapchat, and LinkedIn stay inside the native safe area. YouTube keeps
         // its original system-managed top inset and extends only beneath the
         // home indicator; extending beneath the status area can strand its
         // header above the visible viewport until the user scrolls.
-        let webViewSafeAreaEdges: Edge.Set = service == .instagram || service == .snapchat
+        let webViewSafeAreaEdges: Edge.Set = service == .instagram || service == .snapchat || service == .linkedin
             ? []
             : .bottom
         let surfaceColor = service == .instagram && isDark

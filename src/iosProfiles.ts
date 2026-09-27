@@ -139,7 +139,9 @@ export function normalizeIosSettings(body: UnknownRecord = {}, existing: Partial
     hardenRemoval: body.hardenRemoval === undefined ? current.hardenRemoval !== false : parseBoolean(body.hardenRemoval, true),
     restrictInstallAndErase: body.restrictInstallAndErase === undefined ? current.restrictInstallAndErase !== false : parseBoolean(body.restrictInstallAndErase, true),
     allowSafariHistoryClearing: body.allowSafariHistoryClearing === undefined ? current.allowSafariHistoryClearing !== false : parseBoolean(body.allowSafariHistoryClearing, true),
-    allowNativeSnapchat: body.allowNativeSnapchat === undefined ? current.allowNativeSnapchat === true : parseBoolean(body.allowNativeSnapchat, false),
+    // The working Vigil companion replaces the temporary native-app exception.
+    // Retire saved exceptions and ignore requests to re-enable coexistence.
+    allowNativeSnapchat: false,
     socialContainer: current.socialContainer === true || parseBoolean(body.socialContainer, false),
     blockedAppBundleIds: normalizeBundleIds([
       ...DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
@@ -520,13 +522,6 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
       ...appBundleIds,
       ...focusedSocialBlockedBundleIds(focusedSocialSettings)
     ]);
-  }
-  // Coexistence only changes the ordinary native-app restriction. Explicit
-  // time limits below and full lockouts still apply to both Snapchat apps.
-  if (settings.allowNativeSnapchat && !fullLockoutActive && !fullBrickActive) {
-    appBundleIds = appMode === "allowlist"
-      ? uniqueStrings([...appBundleIds, "com.toyopagroup.picaboo"])
-      : withoutBundleIds(appBundleIds, ["com.toyopagroup.picaboo"]);
   }
   if (settings.blockApps && fullBrickActive && appMode !== "allowlist") {
     appBundleIds = uniqueStrings([

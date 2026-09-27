@@ -7,7 +7,18 @@ import { baselinePolicy, matchBlockedUrlPattern } from "../src/policy.js";
 import { evaluateExtensionCheck } from "../src/extensionPolicy.js";
 import { shouldBlockUrl } from "../src/policy.js";
 
+const platforms = ["x.com", "twitter.com", "bsky.app", "pixiv.net", "patreon.com", "itch.io", "creator.itch.io", "discord.com", "discordapp.com"];
 const blocked = [
+  ...platforms.flatMap(host => ["nude", "erotica", "R-18", "adult content", "%2573%2565%2578"].map(q => `https://${host}/search?q=${encodeURIComponent(q)}`)),
+  "https://www.pixiv.net/ranking.php?mode=r18",
+  "https://www.pixiv.net/en/tags/R-18/artworks",
+  "https://www.pixiv.net/novel/tags/R-18/novels",
+  "https://itch.io/games/tag-erotica",
+  "https://itch.io/games/tag-adult",
+  "https://itch.io/games/tag-adult-content",
+  "https://bsky.app/hashtag/nsfw",
+  "https://www.google.com/search?q=bluesky+erotica",
+  "https://www.google.com/search?q=site%3Ax.com+nude",
   ...["r34", "R34", "r_34", "rule 34", "s3x", "s.3.x", "nud", "nuds", "nud3s", "s3xnud", "nudsex", "pornnudes", "p.o.r.n", "ｒ３４", "r​34", "%2572%2533%2534"].flatMap(q => ["www.reddit.com", "www.google.com"].map(host => `https://${host}/search?q=${encodeURIComponent(q)}`)),
   "https://www.reddit.com/search/?q=sex",
   ...["x", "xx", "X", "%2578%2578", "ｘ", "x%E2%80%8Bx", "adult+video", "adult+videos", "unreviewed+videos", "xx+videos"].map(q => `https://www.reddit.com/search?q=${q}`),
@@ -28,6 +39,13 @@ const blocked = [
   "https://search.example/?q=adult+content+on+pixiv"
 ];
 const allowed = [
+  ...platforms.flatMap(host => ["Middlesex", "adult education", "SpaceX", "x", "landscapes"].map(q => `https://${host}/search?q=${encodeURIComponent(q)}`)),
+  "https://discord.com/channels/123456/654321",
+  "https://bsky.app/profile/gardener.example/post/abcdef",
+  "https://www.patreon.com/posts/garden-123456",
+  "https://itch.io/games/tag-platformer",
+  "https://www.pixiv.net/artworks/12345678",
+  "https://x.com.example.org/search?q=nude",
   ...["nudging", "nudibranch", "SKU-R34567", "Middlesex"].map(q => `https://www.reddit.com/search?q=${q}`),
   "https://www.google.com/search?q=sex",
   "https://www.google.com/search?q=adult+content",
@@ -76,7 +94,19 @@ assert.equal(matchBlockedUrlPattern({ ...profile, blockedUrlPatterns: [] }, bloc
 // Exercise the media-label predicate used by the shared Safari/Chrome script.
 const mediaSource = await readFile(new URL("../extension/media-child-lock.js", import.meta.url), "utf8");
 const titlePredicateSource = `${mediaSource.slice(0, mediaSource.indexOf("  const isX ="))}\nreturn explicitTitle; })();`;
-for (const hostname of ["www.reddit.com", "www.artstation.com", "www.pixiv.net", "www.behance.net"]) {
+const mixedPredicates = runInNewContext(`${mediaSource.slice(0, mediaSource.indexOf("  const roots ="))}\nreturn { explicitAccount, ageConfirmation, sensitivePreference, adultWarning }; })();`, {
+  location: { protocol: "https:", hostname: "bsky.app" }
+}) as Record<string, (value: string) => boolean>;
+for (const account of ["ArtistNSFW", "ArtistXXX", "ArtistOnlyFans", "ArtistＸＸＸ", "ArtistX​XX"]) assert.equal(mixedPredicates.explicitAccount(account), true, account);
+for (const account of ["SpaceX", "MiddlesexGardens", "NudibranchArtist"]) assert.equal(mixedPredicates.explicitAccount(account), false, account);
+for (const label of ["I am over 18", "Yes, I'm eighteen", "I am 18 or older"]) assert.equal(mixedPredicates.ageConfirmation(label), true, label);
+for (const label of ["Show sensitive content", "Blur nudity", "Adult content Hide Warn Show", "Safe Search"]) assert.equal(mixedPredicates.sensitivePreference(label), true, label);
+for (const label of ["Age-restricted channel", "Sexually suggestive", "R-18", "Adult content"]) assert.equal(mixedPredicates.adultWarning(label), true, label);
+for (const label of ["Adult education", "Show comments", "Show spoiler", "Chapter XVIII"]) {
+  assert.equal(mixedPredicates.adultWarning(label), false, label);
+  assert.equal(mixedPredicates.sensitivePreference(label), false, label);
+}
+for (const hostname of ["www.reddit.com", "www.artstation.com", "www.pixiv.net", "www.behance.net", ...platforms]) {
   const explicitTitle = runInNewContext(titlePredicateSource, { location: { protocol: "https:", hostname } }) as (value: string) => boolean;
   for (const term of ["r34", "s3x", "nud", "s3xnud", "pornnudes", "sex", "adult content", "sexual", "erotic", "mature content", "nudity"]) {
     assert.equal(explicitTitle(term), true, `${hostname}: ${term}`);

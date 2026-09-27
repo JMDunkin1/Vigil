@@ -81,6 +81,21 @@ browser.webNavigation.onCommitted.addListener(details => {
 browser.tabs.onRemoved.addListener(tabId => { void youtubeEmbeds.reset(tabId).catch(() => {}); });
 
 browser.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type === 'VIGIL_YOUTUBE_EXTERNAL_LINK') {
+    return (async () => {
+      // Only the external top-level document can attest to a result click.
+      // YouTube pages, embeds, and page-world bridge messages cannot grant it.
+      const source = new URL(sender.url || 'about:blank');
+      if (sender.frameId !== 0 || sender.tab?.id === undefined || !/^https?:$/.test(source.protocol)
+          || isYouTube(source.href)) return { ok: false };
+      const target = new URL(message.url);
+      const id = youtubeVideoID(target);
+      if (!id) return { ok: false };
+      const result = await browser.runtime.sendNativeMessage('tech.caseline.vigil', { action: 'external', videoId: id });
+      if (result?.ok) await browser.storage.local.set({ [`youtube-handoff:${sender.tab.id}`]: { id, eligible: true } });
+      return result;
+    })().catch(() => ({ ok: false }));
+  }
   if (message?.type !== 'VIGIL_YOUTUBE') return undefined;
   const host = new URL(sender.url || 'about:blank').hostname;
   if (!/^(www\.|m\.)?youtube(?:-nocookie)?\.com$/.test(host) || ['external', 'browser-filter-health', 'browser-navigation'].includes(message.youtube?.action)) return Promise.resolve({ ok: false });

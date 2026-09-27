@@ -4,15 +4,16 @@
 const CONTEXTUAL_SEARCH_PLATFORMS = [
   "reddit.com", "deviantart.com", "artstation.com", "pixiv.net",
   "behance.net", "newgrounds.com", "furaffinity.net", "tumblr.com",
-  "pinterest.com", "pinterest.co.uk"
+  "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "bsky.app",
+  "patreon.com", "itch.io", "discord.com", "discordapp.com"
 ];
-const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|furaffinity|tumblr|pinterest)(?:$|[^\p{L}\p{N}])/iu;
-const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
+const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|furaffinity|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
+const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
 const CONTEXTUAL_SEARCH_PARAMETERS = new Set([
   "q", "query", "search_query", "search", "searchterm", "search_term",
-  "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag"
+  "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
 ]);
-const CONTEXTUAL_SEARCH_ROUTE = /(?:^|[/#])(?:search|results?|find|browse|tags?|tagged|r)(?:[/?.#]|$)/iu;
+const CONTEXTUAL_SEARCH_ROUTE = /(?:^|[/#])(?:search|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/]+)(?:[/?.#]|$)/iu;
 
 function contextualSearchDecode(value: string): string {
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -38,6 +39,8 @@ export function containsContextualExplicitSearch(query: string, hostname = "", i
   const normalized = decoded.replace(/3/gu, "e").replace(/0/gu, "o");
   const host = hostname.toLowerCase().replace(/\.$/u, "");
   const platform = CONTEXTUAL_SEARCH_PLATFORMS.some(domain => host === domain || host.endsWith(`.${domain}`));
+  if ((host === "itch.io" || host.endsWith(".itch.io"))
+    && /(?:^|[/#])tag-adult(?:$|[/?.#])/iu.test(decoded)) return true;
   // Bare x/xx are unsafe Reddit discovery queries, but not general keywords:
   // preserve Xbox, SpaceX, X-Men, ordinary post URLs, and in-progress typing.
   const reddit = host === "reddit.com" || host.endsWith(".reddit.com");

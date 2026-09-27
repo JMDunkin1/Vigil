@@ -35,8 +35,9 @@ const baseline = iosPolicyTargets(state, new Date("2026-07-10T12:00:00Z"));
 state.deviceControls.ios.focusedSocial.linkedin.enabled = true;
 const replacement = iosPolicyTargets(state, new Date("2026-07-10T12:00:00Z"));
 assert.deepEqual(replacement.deniedUrls, baseline.deniedUrls, "LinkedIn must not evict existing system URL blocks");
+assert.deepEqual(replacement.supplementalDeniedUrls, baseline.supplementalDeniedUrls, "LinkedIn must retain the supplemental BuiltIn filter");
 for (const domain of [...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES]) {
-  assert.ok(replacement.deniedUrls.includes(`https://${domain}/`), domain);
+  assert.ok([...replacement.deniedUrls, ...replacement.supplementalDeniedUrls].includes(`https://${domain}/`), domain);
 }
 console.log("LinkedIn independent build, update scope, and policy preservation passed.");
 
