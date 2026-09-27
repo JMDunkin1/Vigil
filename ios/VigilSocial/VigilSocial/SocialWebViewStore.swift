@@ -196,6 +196,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var health: [SocialService: AdapterHealth] = [:]
     @Published private(set) var audioPreferences: [SocialService: Bool] = [:]
     @Published private(set) var darkChromePreferences: [SocialService: Bool] = [:]
+    @Published private(set) var snapchatChromeColor: UIColor?
     @Published private(set) var youtubeAllowsLandscape = false
     @Published private(set) var youtubeSafariRequest: YouTubeSafariRequest
 
@@ -784,6 +785,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                   audioPreferences[service] != enabled else { return }
             audioPreferences[service] = enabled
             defaults.set(enabled, forKey: audioPreferenceKey(service))
+        case "chromeColor":
+            guard service == .snapchat, frame.isMainFrame,
+                  let rgb = body["rgb"] as? [Double], rgb.count == 3,
+                  rgb.allSatisfy({ $0.isFinite && (0...255).contains($0) }) else { return }
+            let color = UIColor(red: CGFloat(rgb[0] / 255), green: CGFloat(rgb[1] / 255),
+                                blue: CGFloat(rgb[2] / 255), alpha: 1)
+            if snapchatChromeColor != color { snapchatChromeColor = color }
         case "appearance":
             guard let dark = body["dark"] as? Bool,
                   darkChromePreferences[service] != dark else { return }

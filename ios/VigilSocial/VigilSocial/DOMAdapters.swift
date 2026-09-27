@@ -4454,6 +4454,7 @@ enum DOMAdapters {
       let currentShell = null;
       let preferredPanel = 'feed';
       let scheduled = false;
+      let lastChromeColor = '';
       const set = (element, name, value) => {
         if (element.getAttribute(name) !== value) element.setAttribute(name, value);
       };
@@ -4506,6 +4507,16 @@ enum DOMAdapters {
           shell.appendChild(tabs);
         }
         const rail = shell.querySelector(':scope > .bkCIM');
+        // Use Snapchat's resolved navigation color, including its own theme
+        // changes, for the native status and home-indicator safe areas.
+        const chrome = rail || shell.querySelector(':scope > .vigil-snap-tabs');
+        const chromeColor = chrome ? getComputedStyle(chrome).backgroundColor : '';
+        const rgb = chromeColor.match(/^rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)(?:\s*[,/]\s*([\d.]+))?\s*\)$/i);
+        if (rgb && (rgb[4] === undefined || Number(rgb[4]) === 1)
+            && chromeColor !== lastChromeColor && typeof window.__vigilBridge === 'function') {
+          lastChromeColor = chromeColor;
+          window.__vigilBridge({ type: 'chromeColor', rgb: rgb.slice(1, 4).map(Number) });
+        }
         if (rail && !rail.querySelector('.vigil-snap-return-chat')) {
           const button = document.createElement('button');
           button.className = 'vigil-snap-return-chat';
@@ -4571,6 +4582,7 @@ enum DOMAdapters {
       document.addEventListener('visibilitychange', schedule);
       window.visualViewport?.addEventListener('resize', schedule);
       window.visualViewport?.addEventListener('scroll', schedule);
+      matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', schedule);
       document.addEventListener('click', event => {
         if (event.target.closest?.('.bkCIM > .uSkZ8:first-child')?.parentElement?.parentElement !== currentShell) return;
         preferredPanel = 'camera';

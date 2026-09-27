@@ -241,9 +241,12 @@ struct RootView: View {
         let webViewSafeAreaEdges: Edge.Set = service == .instagram || service == .snapchat || service == .linkedin
             ? []
             : .bottom
-        let surfaceColor = service == .instagram && isDark
+        let defaultSurfaceColor = service == .instagram && isDark
             ? Self.instagramDarkSurface
             : (isDark ? (service == .youtube ? Self.youtubeDarkSurface : Color.black) : Color.white)
+        let surfaceColor = service == .snapchat
+            ? store.snapchatChromeColor.map { Color(uiColor: $0) } ?? defaultSurfaceColor
+            : defaultSurfaceColor
         return ZStack {
             surfaceColor
                 .ignoresSafeArea()
