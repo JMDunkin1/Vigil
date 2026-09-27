@@ -4,6 +4,10 @@
   const isContextualPlatform = /(^|\.)(reddit\.com|deviantart\.com|artstation\.com|pixiv\.net|behance\.net|newgrounds\.com|furaffinity\.net|tumblr\.com|pinterest\.(?:com|co\.uk)|x\.com|twitter\.com)$/i.test(location.hostname);
   const explicitTitle = value => {
     const text = String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '');
+    // Catalog titles use XXX without a following word such as "videos".
+    // Match the title token on every host, not arbitrary URL/identifier substrings.
+    const titleMarkers = text.replace(/\b(?:chapter|volume|section|book|part|act|super bowl)\s+xxx\b/giu, '');
+    if (/(?:^|[^\p{L}\p{N}])xxx(?:$|[^\p{L}\p{N}])/iu.test(titleMarkers)) return true;
     return /(?:^|[^a-z0-9])(?:porn(?:ography|ographic)?|p0rn|hentai|nsfw|gonewild|onlyfans|fansly|blowjob|cumshot)(?:$|[^a-z0-9])|\b(?:nude|naked|sex|xxx)\s+(?:videos?|photos?|tapes?)\b/i.test(text)
       || (isContextualPlatform && /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu.test(text));
   };
@@ -42,7 +46,10 @@
   };
   const mediaContainer = label => {
     // Select the smallest media-bearing ancestor, never an entire result grid.
-    let node = label;
+    // An explicit poster label must remove its card, not just the image.
+    let node = label.matches('img, video, picture, canvas')
+      ? label.parentElement || label
+      : label;
     for (let depth = 0; node && depth < 6; depth++, node = node.parentElement || node.getRootNode().host) {
       if (node === document.body || node === document.documentElement) break;
       const media = node.querySelectorAll('img, picture, video, canvas, [style*="background-image"]');

@@ -329,6 +329,80 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(relaunched.instagramInformationalAccounts, [])
     }
 
+    func testLinkedInAppleAuthenticationStaysConfined() throws {
+        let authorization = URL(string: "https://appleid.apple.com/auth/authorize?client_id=com.linkedin.LinkedIn.service&redirect_uri=https%3A%2F%2Fwww.linkedin.com%2Fredirect&response_mode=web_message")!
+        let login = URL(string: "https://www.linkedin.com/login")!
+        XCTAssertTrue(LinkedInAppleAuthentication.isAuthorizationURL(authorization))
+        XCTAssertTrue(LinkedInAppleAuthentication.allowsPopupStart(authorization, from: login))
+        XCTAssertTrue(LinkedInAppleAuthentication.allowsPopupStart(URL(string: "about:blank")!, from: login))
+        XCTAssertFalse(SocialService.linkedin.allowsNavigation(to: authorization), "Apple must remain popup-only")
+        for source in ["https://www.linkedin.com/feed/", "https://www.linkedin.com/video/", "https://www.linkedin.com.evil.test/login", "http://www.linkedin.com/login", "https://user@www.linkedin.com/login"] {
+            XCTAssertFalse(LinkedInAppleAuthentication.allowsPopupStart(authorization, from: URL(string: source)), source)
+        }
+        for address in [
+            authorization.absoluteString.replacingOccurrences(of: "com.linkedin.LinkedIn.service", with: "another.client"),
+            authorization.absoluteString.replacingOccurrences(of: "www.linkedin.com%2Fredirect", with: "evil.test%2Fredirect"),
+            authorization.absoluteString + "&client_id=another.client",
+            authorization.absoluteString + "&redirect_uri=https%3A%2F%2Fevil.test",
+            authorization.absoluteString.replacingOccurrences(of: "appleid.apple.com", with: "appleid.apple.com.evil.test"),
+            authorization.absoluteString.replacingOccurrences(of: "https://", with: "http://"),
+            authorization.absoluteString.replacingOccurrences(of: "https://", with: "https://user@"),
+            authorization.absoluteString.replacingOccurrences(of: "/auth/authorize", with: "/auth/%61uthorize"),
+            "https://appleid.apple.com/auth/authorize/", "https://appleid.apple.com/auth/../account",
+            "https://appleid.apple.com/auth/%2e%2e/account", "https://appleid.apple.com/account",
+            "https://www.linkedin.com/feed/", "https://www.linkedin.com/video/", "https://example.com/"
+        ] {
+            let url = try XCTUnwrap(URL(string: address))
+            XCTAssertFalse(LinkedInAppleAuthentication.isAuthorizationURL(url), address)
+            XCTAssertFalse(LinkedInAppleAuthentication.allowsNavigation(url, authorized: true, isMainFrame: true), address)
+        }
+        for address in ["https://appleid.apple.com/auth/signin", "https://www.linkedin.com/redirect"] {
+            let url = URL(string: address)!
+            XCTAssertFalse(LinkedInAppleAuthentication.allowsNavigation(url, authorized: false, isMainFrame: true))
+            XCTAssertTrue(LinkedInAppleAuthentication.allowsNavigation(url, authorized: true, isMainFrame: true))
+        }
+        for path in ["/appleauth/appleauth", "/IDMSWebAuth/acsignin", "/appleauth/auth/signin"] {
+            let url = URL(string: "https://idmsa.apple.com\(path)")!
+            XCTAssertFalse(LinkedInAppleAuthentication.allowsNavigation(url, authorized: false, isMainFrame: false))
+            XCTAssertTrue(LinkedInAppleAuthentication.allowsNavigation(url, authorized: true, isMainFrame: false))
+            XCTAssertFalse(LinkedInAppleAuthentication.allowsNavigation(url, authorized: true, isMainFrame: true))
+        }
+    }
+
+    @MainActor
+    func testLinkedInApplePopupPreservesOpenerAndContentProtection() async throws {
+        let store = SocialWebViewStore(fixedService: .linkedin, loadInitialPages: false,
+                                      websiteDataStore: .nonPersistent())
+        let opener = store.webView(for: .linkedin)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let root = UIViewController()
+        window.rootViewController = root
+        root.view.addSubview(opener)
+        opener.frame = window.bounds
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, opener))
+        opener.loadHTMLString("<html><body id='loginReady'>LinkedIn login</body></html>", baseURL: URL(string: "https://www.linkedin.com/login"))
+        try await waitForJavaScriptCondition("document.readyState === 'complete' && !!document.getElementById('loginReady')", in: opener)
+        let scriptCount = opener.configuration.userContentController.userScripts.count
+        _ = try await opener.evaluateJavaScript("""
+            window.addEventListener('message', event => { window.popupReply = event.data; });
+            window.authPopup = window.open('about:blank', '_blank'); true;
+            """)
+        try await waitForJavaScriptCondition("!!window.authPopup", in: opener)
+        let popup = try XCTUnwrap(store.linkedInApplePopup)
+        XCTAssertTrue(popup.webView.configuration.userContentController.userScripts.isEmpty)
+        XCTAssertEqual(opener.configuration.userContentController.userScripts.count, scriptCount)
+        _ = try await popup.webView.evaluateJavaScript("window.opener.postMessage('auth-popup-connected', '*'); true;")
+        try await waitForJavaScriptCondition("window.popupReply === 'auth-popup-connected'", in: opener)
+        popup.webView.load(URLRequest(url: URL(string: "https://www.linkedin.com/video/")!))
+        // A delegate round trip makes the denied navigation observable.
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(popup.webView.url?.absoluteString, "about:blank")
+        _ = try await popup.webView.evaluateJavaScript("window.close(); true;")
+        try await waitForJavaScriptCondition("window.authPopup.closed", in: opener)
+        XCTAssertEqual(opener.url?.path, "/login")
+    }
+
     func testLinkedInNavigationPolicy() throws {
         for path in ["/video", "/video/123", "/shorts/1", "/feed/video/123", "/feed/immersive/"] {
             XCTAssertTrue(SocialService.linkedin.isRestrictedSurface(try XCTUnwrap(URL(string: "https://www.linkedin.com\(path)"))), path)
@@ -557,6 +631,89 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testSnapchatNotificationListenerDoesNotCrashChatOrEnableWorkers() async throws {
+        XCTAssertNil(Bundle.main.object(forInfoDictionaryKey: "WKAppBoundDomains"))
+        let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
+                                      websiteDataStore: .nonPersistent())
+        let webView = store.webView(for: .snapchat)
+        webView.loadHTMLString("""
+            <html><body><input data-testid="app.feed.Search" placeholder="Search friends">
+              <a id="spotlight" href="/spotlight/test">Spotlight</a>
+              <script>
+                const listener = () => {};
+                navigator.serviceWorker.addEventListener('message', listener);
+                navigator.serviceWorker.removeEventListener('message', listener);
+                window.chatStartupCompleted = true;
+                navigator.serviceWorker.register('/service-worker.js').then(
+                  () => window.registrationResult = 'registered',
+                  error => window.registrationResult = error.name
+                );
+                navigator.serviceWorker.getRegistrations().then(items => window.workerCount = items.length);
+              </script>
+            </body></html>
+            """, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.chatStartupCompleted === true && window.__vigilSnapchatInstalled === true && window.registrationResult === 'NotSupportedError' && window.workerCount === 0", in: webView)
+        let protected = try await webView.evaluateJavaScript("""
+            navigator.serviceWorker.controller === null
+              && window.__vigilCommonInstalled === true
+              && getComputedStyle(document.getElementById('spotlight')).display === 'none'
+            """) as? Bool
+        XCTAssertEqual(protected, true)
+    }
+
+    @MainActor
+    func testSnapchatRecoversAfterTimeoutWhenExistingChatBecomesVisible() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: """
+            window.healthReports = [];
+            window.__vigilBridge = value => { if (value.type === 'health') healthReports.push(value); };
+            window.fixtureClock = 0;
+            performance.now = () => window.fixtureClock;
+            window.healthChecks = [];
+            window.setTimeout = callback => healthChecks.push(callback);
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        let viewController = UIViewController()
+        window.rootViewController = viewController
+        viewController.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString("""
+            <html><head><style>.pending { visibility: hidden; }</style></head><body>
+              <main id="chat" class="pending">
+                <input data-testid="app.feed.Search" placeholder="Search friends">
+                <button id="send" onclick="window.fixtureSent = true">Send</button>
+                <a id="discover" href="/discover/test">Discover</a>
+              </main>
+            </body></html>
+            """, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.healthReports?.at(-1)?.state === 'loading'", in: webView)
+        _ = try await webView.evaluateJavaScript("fixtureClock = 16000; healthChecks.splice(0).forEach(check => check());")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'degraded'", in: webView)
+        // No new node, navigation, or remaining timeout can clear this error.
+        _ = try await webView.evaluateJavaScript("document.getElementById('chat').classList.remove('pending')")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'ready'", in: webView)
+        let usable = try await webView.evaluateJavaScript("""
+            document.getElementById('send').click();
+            window.fixtureSent === true && getComputedStyle(document.getElementById('discover')).display === 'none'
+            """) as? Bool
+        XCTAssertEqual(usable, true)
+
+        _ = try await webView.evaluateJavaScript("""
+            document.body.innerHTML = '<h1 id="status">Something went wrong</h1><button>Continue</button>';
+            """)
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'degraded'", in: webView)
+        _ = try await webView.evaluateJavaScript("document.getElementById('status').firstChild.data = 'Welcome to Snapchat'")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'ready'", in: webView)
+    }
+
+    @MainActor
     func testSnapchatAuthenticationHandoffInstallsChatProtectionAndPreservesInput() async throws {
         let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
             mediaClassifier: StubMediaClassifier(verdict: .safe), unclassifiedMediaPolicy: .conceal,
@@ -607,6 +764,27 @@ final class VigilSocialTests: XCTestCase {
             """) as? Bool
         XCTAssertEqual(usable, true)
         withExtendedLifetime(store) {}
+    }
+
+    @MainActor
+    func testSnapchatRetryRestartsFailedAuthenticationHandoffWithoutReplayingTicket() async throws {
+        let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
+                                      websiteDataStore: .nonPersistent())
+        let webView = store.webView(for: .snapchat)
+        let ticketURL = try XCTUnwrap(URL(string: "https://www.snapchat.com/web/?ticket=consumed-fixture"))
+        webView.loadHTMLString("<html><body><h1>Something went wrong</h1></body></html>", baseURL: ticketURL)
+        try await waitForJavaScriptCondition("document.readyState === 'complete'", in: webView)
+        store.webView(webView, didFailProvisionalNavigation: nil,
+                      withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+        guard case .degraded = store.health[.snapchat] else {
+            return XCTFail("The failed handoff must offer recovery")
+        }
+        let restarted = expectation(description: "retry starts fresh first-party authentication")
+        let probe = RoutePolicyNavigationDelegate(expectedHost: "accounts.snapchat.com", expectedPath: "/v2/login", expectation: restarted)
+        webView.navigationDelegate = probe
+        store.retry(.snapchat)
+        await fulfillment(of: [restarted], timeout: 5)
+        XCTAssertEqual(probe.matchedURL, SnapchatWebCompatibility.loginURL)
     }
 
     @MainActor

@@ -93,6 +93,25 @@ enum DOMAdapters {
       define(Navigator.prototype, 'maxTouchPoints', 0);
       define(Navigator.prototype, 'webdriver', false);
 
+      // Snap installs its optional notification listener unconditionally after
+      // login. WKWebView without app-bound domains has no ServiceWorkerContainer,
+      // so that listener crashes the entire chat tree. Supply only its inert
+      // event surface: registrations explicitly reject and no worker can cache
+      // or intercept Vigil's live policy probes. Never replace native support.
+      if (!('serviceWorker' in navigator)) {
+        const unavailableWorkers = new EventTarget();
+        Object.defineProperties(unavailableWorkers, {
+          controller: { value: null },
+          ready: { value: new Promise(() => {}) },
+          register: { value: () => Promise.reject(new DOMException(
+            'Service workers are unavailable in this embedded browser.', 'NotSupportedError'
+          )) },
+          getRegistration: { value: () => Promise.resolve(undefined) },
+          getRegistrations: { value: () => Promise.resolve([]) }
+        });
+        Object.defineProperty(navigator, 'serviceWorker', { value: unavailableWorkers });
+      }
+
       const style = document.createElement('style');
       style.id = 'vigil-snapchat-start-style';
       style.textContent = `
@@ -4242,11 +4261,18 @@ enum DOMAdapters {
       }
       addEventListener('popstate', scheduleReconcile, true);
       addEventListener('hashchange', scheduleReconcile, true);
+      // Chat may finish mounting while this service is in the background, or
+      // reveal its existing shell after sign-in without inserting new nodes.
+      // Recheck those transitions so a loading error cannot cover recovered UI.
+      addEventListener('pageshow', scheduleReconcile);
+      document.addEventListener('visibilitychange', scheduleReconcile);
       new MutationObserver(scheduleReconcile).observe(document.documentElement, {
         childList: true,
         subtree: true,
+        characterData: true,
         attributes: true,
-        attributeFilter: ['href', 'aria-label', 'data-testid']
+        attributeFilter: ['href', 'aria-label', 'data-testid', 'class', 'style',
+          'hidden', 'aria-hidden', 'data-vigil-page-verdict']
       });
 
       const reportHealth = () => {

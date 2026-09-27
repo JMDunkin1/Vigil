@@ -3,16 +3,24 @@
   const redditHost = host => /(^|\.)reddit\.com$/i.test(host);
   if (!redditHost(location.hostname)) return;
   const text = value => String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '').replace(/\s+/g, ' ').trim();
-  const explicit = value => /(?:^|[\W_])sex(?:$|[\W_])|porn|p0rn|prno|xxx[\s_-]+(?:videos?|photos?|pics?|porn)|nsfw|hentai|rule[\s_-]*34|gonewild|onlyfans|fansly|nudes?|naked|blowjob|handjob|cumshot|hardcore\s+sex|sex\s+(?:videos?|tapes?)/i.test(text(value));
+  const explicit = value => /(?:^|[\W_])sex(?:$|[\W_])|porn|p0rn|prno|xxx|nsfw|hentai|rule[\s_-]*34|gonewild|onlyfans|fansly|nudes?|naked|blowjob|handjob|cumshot|hardcore\s+sex|sex\s+(?:videos?|tapes?)/i.test(text(value));
+  const unsafeMedia = value => /(?:^|[^\p{L}\p{N}])(?:(?:adult|unreviewed)[\s_-]+videos?|x{1,2}[\s_-]+(?:videos?|photos?|pics?))(?:$|[^\p{L}\p{N}])/iu.test(text(value));
+  const unreviewedLabel = value => /^(?:(?:show|view|see|more|show more|view more)\s+)?unreviewed[\s_-]+videos?(?:\s*\(\d+\))?$/i.test(text(value));
+  const decode = value => {
+    for (let pass = 0; pass < 3; pass++) {
+      try { const next = decodeURIComponent(value); if (next === value) break; value = next; } catch { break; }
+    }
+    return text(value.replace(/\+/g, ' '));
+  };
+  const unsafeQuery = value => explicit(decode(value)) || unsafeMedia(decode(value)) || /^x{1,2}$/i.test(decode(value));
   const ageConfirmation = value => /\b(?:i\s*(?:am|'m|’m)|im)\s+(?:over\s+)?(?:18|eighteen)\b|\b(?:yes|continue|enter|view|confirm).{0,30}(?:18\+|over\s+18|adult|mature|nsfw)\b/i.test(text(value));
   const safeURL = value => {
     let url;
     try { url = new URL(value, location.href); } catch { return null; }
     if (!redditHost(url.hostname)) return null;
-    let path = url.pathname;
-    try { path = decodeURIComponent(path); } catch {}
+    const path = decode(url.pathname);
     if (/^\/(?:over18|api\/over18)(?:\/|$)/i.test(path)
-      || explicit(path) || explicit(url.searchParams.getAll('q').join(' '))) return 'https://www.reddit.com/';
+      || explicit(path) || unsafeMedia(path) || url.searchParams.getAll('q').some(unsafeQuery)) return 'https://www.reddit.com/';
     if (/(?:^|\/)search(?:\.json)?\/?$/i.test(path)) {
       url.searchParams.set('include_over_18', 'off');
       url.searchParams.set('nsfw', '0');
@@ -41,7 +49,7 @@
   ].filter(Boolean).join(' '));
   const controlBlocked = element => {
     const label = descriptor(element);
-    if (ageConfirmation(label)) return true;
+    if (ageConfirmation(label) || unreviewedLabel(element.textContent) || unreviewedLabel(element.getAttribute('aria-label'))) return true;
     // Freeze both directions of these settings. Merely changing checked/ARIA
     // would leave Reddit's account preference and component state unchanged.
     if (/safe[\s_-]*search|blur.{0,25}(?:nsfw|mature|adult)|(?:show|include|allow|view|enable|display).{0,40}(?:nsfw|mature|adult)|(?:over_18|search_include_over_18)/i.test(label)) return true;
@@ -56,7 +64,48 @@
     if (element.style.getPropertyValue('display') !== 'none' || element.style.getPropertyPriority('display') !== 'important') element.style.setProperty('display', 'none', 'important');
     element.querySelectorAll('video, audio').forEach(media => { try { media.pause(); } catch {} });
   };
-  const container = element => element.closest(cards) || element.getRootNode().host?.closest(cards) || element;
+  const container = element => {
+    for (let node = element; node; node = node.getRootNode().host) {
+      const card = node.closest(cards);
+      if (card) return card;
+    }
+    return element;
+  };
+  const authors = '[author], [data-author], [author-name], [data-testid="post_author_link"], [slot="authorName"], .author';
+  const unsafeAuthor = element => [element.getAttribute('author'), element.getAttribute('data-author'), element.getAttribute('author-name'),
+    ...(element.matches('[data-testid="post_author_link"], [slot="authorName"], .author') ? [element.textContent] : [])].some(explicit);
+  const hideAuthors = root => {
+    if (root instanceof HTMLElement && root.matches(authors) && unsafeAuthor(root)) conceal(container(root));
+    for (const author of root.querySelectorAll(authors)) if (unsafeAuthor(author)) conceal(container(author));
+    for (const anchor of root.querySelectorAll('a[href]')) {
+      let url;
+      try { url = new URL(anchor.href, location.href); } catch { continue; }
+      if (redditHost(url.hostname) && /^\/(?:u|user)\//i.test(decode(url.pathname))
+        && (explicit(decode(url.pathname)) || explicit(anchor.textContent))) conceal(container(anchor));
+    }
+  };
+  const categoryLabels = 'h1, h2, h3, h4, [role="heading"], span, p, div, summary, [aria-label]';
+  const isUnreviewedLabel = element => unreviewedLabel(element.textContent) || unreviewedLabel(element.getAttribute('aria-label'));
+  const unreviewedContainer = label => {
+    const card = container(label);
+    if (card !== label) return card;
+    // Only ascend into a local media group. Never hide the page/feed or a
+    // wrapper containing other categories alongside the unreviewed results.
+    let node = label;
+    for (let depth = 0; node && depth < 5; depth++, node = node.parentElement || node.getRootNode().host) {
+      if (node.matches('body, html, main, [role="main"]')) break;
+      const headings = [...node.querySelectorAll('h1, h2, h3, h4, [role="heading"]')];
+      if (headings.some(heading => !heading.closest(cards) && !isUnreviewedLabel(heading))) break;
+      if (node.matches('section, [role="region"], [role="dialog"]')
+        || node.querySelector(`${cards}, video, shreddit-player, img`)) return node;
+    }
+    return label;
+  };
+  const hideUnreviewed = root => {
+    for (const label of root.querySelectorAll(categoryLabels)) {
+      if (isUnreviewedLabel(label)) conceal(unreviewedContainer(label));
+    }
+  };
   const schedule = () => {
     if (queued) return;
     queued = true;
@@ -67,7 +116,7 @@
     if (observed.has(root)) return;
     observed.add(root);
     new MutationObserver(schedule).observe(root, { subtree: true, childList: true, characterData: true, attributes: true,
-      attributeFilter: ['nsfw', 'over-18', 'is-nsfw', 'data-nsfw', 'data-over18', 'data-over-18', 'aria-label', 'aria-labelledby', 'aria-checked', 'checked', 'href', 'class', 'post-title', 'style'] });
+      attributeFilter: ['nsfw', 'over-18', 'is-nsfw', 'data-nsfw', 'data-over18', 'data-over-18', 'aria-label', 'aria-labelledby', 'aria-checked', 'checked', 'href', 'class', 'post-title', 'subreddit-prefixed-name', 'author', 'data-author', 'author-name', 'data-testid', 'slot', 'title', 'style'] });
     const style = document.createElement('style');
     style.textContent = '[data-vigil-reddit-blocked], shreddit-post[nsfw]:not([nsfw="false"]), .thing.over18, shreddit-age-gate, [data-testid="content-gate"] { display:none !important; visibility:hidden !important; }';
     (root === document ? document.documentElement : root).append(style);
@@ -80,13 +129,15 @@
       // Open shadow roots are independent trees and require their own observer
       // and stylesheet. Periodic discovery also catches late attachShadow calls.
       for (const element of root.querySelectorAll('*')) if (element.shadowRoot) observe(element.shadowRoot);
+      hideUnreviewed(root);
+      hideAuthors(root);
       for (const element of root.querySelectorAll(markers)) {
         // x-stage is also used for ordinary dialogs; only age gates are blocked.
         if (element.localName !== 'x-stage' || /18\+|over 18|adult|mature|nsfw/i.test(descriptor(element))) conceal(container(element));
       }
       for (const element of root.querySelectorAll(cards)) {
         const title = [element.getAttribute('post-title'), element.getAttribute('subreddit-prefixed-name'), element.querySelector('h1, h2, h3, [slot="title"], .title')?.textContent].filter(Boolean).join(' ');
-        if (explicit(title)) conceal(element);
+        if (explicit(title) || unsafeMedia(title)) conceal(element);
       }
       for (const element of root.querySelectorAll(controls)) {
         if (controlBlocked(element)) conceal(element);
@@ -102,6 +153,13 @@
   // the actual button when it is inside Reddit's web components.
   const guard = event => {
     if (event.type === 'keydown' && !['Enter', ' '].includes(event.key)) return;
+    // Catch newly inserted reveal controls before MutationObserver runs.
+    for (const element of event.composedPath()) {
+      if (element instanceof HTMLElement && element.matches(`${cards}, section, [role="region"], [role="dialog"]`)) {
+        hideUnreviewed(element);
+        hideAuthors(element);
+      }
+    }
     for (const element of event.composedPath()) {
       if (!(element instanceof HTMLElement)) continue;
       const anchor = element.closest('a[href]');

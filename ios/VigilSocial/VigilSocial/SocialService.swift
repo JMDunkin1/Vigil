@@ -68,6 +68,55 @@ enum SnapchatWebCompatibility {
     static let desktopSafariUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15"
 }
 
+// LinkedIn owns the client and callback. This is its web login, not a native
+// Sign in with Apple entitlement or a general Apple browsing exception.
+enum LinkedInAppleAuthentication {
+    static func isAuthorizationURL(_ url: URL) -> Bool {
+        guard let parts = secureComponents(url),
+              parts.host?.lowercased() == "appleid.apple.com",
+              parts.percentEncodedPath == "/auth/authorize" else { return false }
+        let items = parts.queryItems ?? []
+        func single(_ name: String) -> String? {
+            let matches = items.filter { $0.name == name }
+            return matches.count == 1 ? matches.first?.value : nil
+        }
+        return single("client_id") == "com.linkedin.LinkedIn.service"
+            && single("redirect_uri") == "https://www.linkedin.com/redirect"
+    }
+
+    static func allowsPopupStart(_ url: URL, from opener: URL?) -> Bool {
+        guard let opener, SocialService.linkedin.isCanonicalAppHost(opener.host ?? ""),
+              SocialService.linkedin.usesUnmodifiedAuthenticationDocument(opener) else { return false }
+        return url.absoluteString == "about:blank" || isAuthorizationURL(url)
+    }
+
+    static func allowsNavigation(_ url: URL, authorized: Bool, isMainFrame: Bool) -> Bool {
+        if isAuthorizationURL(url) { return isMainFrame }
+        guard authorized, let parts = secureComponents(url) else { return false }
+        let host = parts.host?.lowercased() ?? ""
+        let path = parts.percentEncodedPath
+        if host == "www.linkedin.com" { return path == "/redirect" }
+        // Do not let a second authorization request change the relying party.
+        if ["appleid.apple.com", "account.apple.com"].contains(host) {
+            return path.hasPrefix("/auth/") && !path.hasPrefix("/auth/authorize")
+        }
+        return !isMainFrame && host == "idmsa.apple.com"
+            && (["/appleauth/appleauth", "/IDMSWebAuth/acsignin"].contains(path)
+                || path.hasPrefix("/appleauth/auth/"))
+    }
+
+    private static func secureComponents(_ url: URL) -> URLComponents? {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme?.lowercased() == "https", parts.port == nil || parts.port == 443,
+              parts.user == nil, parts.password == nil,
+              !parts.percentEncodedPath.contains("%"),
+              !parts.percentEncodedPath.contains("\\"),
+              !parts.percentEncodedPath.split(separator: "/").contains(where: { $0 == "." || $0 == ".." })
+        else { return nil }
+        return parts
+    }
+}
+
 enum InstagramSingleReelPolicy {
     static func blocksNavigation(from source: URL?, to destination: URL) -> Bool {
         guard let source, let current = mediaRoute(source), current.kind == "reel",

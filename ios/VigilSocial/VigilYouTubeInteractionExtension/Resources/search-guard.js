@@ -33,12 +33,18 @@ function contextualSearchDecode(value) {
             break;
         }
     }
-    return value.replace(/\+/gu, " ").normalize("NFKC");
+    return value.replace(/\+/gu, " ").normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "");
 }
-function containsContextualExplicitSearch(query, hostname = "") {
+function containsContextualExplicitSearch(query, hostname = "", includeRedditShorthand = true) {
     const decoded = contextualSearchDecode(query);
     const host = hostname.toLowerCase().replace(/\.$/u, "");
     const platform = CONTEXTUAL_SEARCH_PLATFORMS.some(domain => host === domain || host.endsWith(`.${domain}`));
+    // Bare x/xx are unsafe Reddit discovery queries, but not general keywords:
+    // preserve Xbox, SpaceX, X-Men, ordinary post URLs, and in-progress typing.
+    const reddit = host === "reddit.com" || host.endsWith(".reddit.com");
+    if (reddit && ((includeRedditShorthand && /^\s*x{1,2}\s*$/iu.test(decoded))
+        || /(?:^|[^\p{L}\p{N}])(?:(?:adult|unreviewed)[\s_-]+videos?|x{1,2}[\s_-]+(?:videos?|photos?|pics?))(?:$|[^\p{L}\p{N}])/iu.test(decoded)))
+        return true;
     return (platform || CONTEXTUAL_SEARCH_NAMES.test(decoded)) && CONTEXTUAL_SEARCH_MARKERS.test(decoded);
 }
 function matchContextualExplicitSearchUrl(value) {
@@ -137,11 +143,11 @@ function explicitSearchBlockRedirect(rawUrl, baseUrl = location.href) {
     }
     return null;
 }
-function containsExplicitSearchText(rawValue, hostname = new URL(location.href).hostname) {
+function containsExplicitSearchText(rawValue, hostname = new URL(location.href).hostname, includeRedditShorthand = true) {
     const decoded = decodeNestedSearchValue(rawValue);
     return EXPLICIT_SEARCH_PATTERN.test(decoded)
         || EXPLICIT_SEARCH_PATTERN.test(decoded.replace(/\+/gu, " "))
-        || containsContextualExplicitSearch(decoded, hostname)
+        || containsContextualExplicitSearch(decoded, hostname, includeRedditShorthand)
         || containsExplicitXxxSearchText(decoded)
         || containsExplicitPersonSearchText(decoded);
 }
@@ -301,7 +307,9 @@ function enforceExplicitSearchControlInteraction(event) {
     const target = eventTargetElement(event);
     if (!target)
         return false;
-    let blocked = isSearchControl(target) && containsExplicitSearchText(searchControlValue(target));
+    // Short Reddit queries are checked on activation, not while typing Xbox.
+    const activating = event.type === "keydown";
+    let blocked = isSearchControl(target) && containsExplicitSearchText(searchControlValue(target), undefined, activating);
     if (!blocked && event.type === "click" && isSearchActivationControl(target)) {
         const container = target.closest("form, [role='search'], [data-search], [class*='search' i], [id*='search' i]");
         blocked = Boolean(container && explicitSearchTextInContainer(container));
@@ -359,13 +367,13 @@ function elementLooksLikeSearchContainer(value) {
     ].filter(Boolean).join(" ");
     return /(?:^|[-_\s])search(?:$|[-_\s])/iu.test(descriptor);
 }
-function explicitSearchTextInContainer(container) {
+function explicitSearchTextInContainer(container, includeRedditShorthand = true) {
     const controls = container.querySelectorAll?.("input, textarea, [contenteditable='true'], [role='searchbox']") || [];
-    return Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control)));
+    return Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control), undefined, includeRedditShorthand));
 }
 function scanExistingSearchControls(root) {
     const controls = root.querySelectorAll?.("input[type='search'], [role='searchbox'], input[name], textarea[name], [contenteditable='true']") || [];
-    if (Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control)))) {
+    if (Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control), undefined, false))) {
         location.replace(vigilBlockedSearchURL());
     }
 }
@@ -379,8 +387,8 @@ function installDynamicSearchGuard() {
         for (const record of records) {
             for (const node of record.addedNodes) {
                 if (node instanceof Element) {
-                    if ((isSearchControl(node) && containsExplicitSearchText(searchControlValue(node)))
-                        || explicitSearchTextInContainer(node)) {
+                    if ((isSearchControl(node) && containsExplicitSearchText(searchControlValue(node), undefined, false))
+                        || explicitSearchTextInContainer(node, false)) {
                         location.replace(vigilBlockedSearchURL());
                         return;
                     }

@@ -15,14 +15,22 @@ for (const url of [
   'https://old.reddit.com/api/over18',
   'https://www.reddit.com/r/gonewild/comments/example',
   'https://www.reddit.com/r/%70orn/',
+  'https://www.reddit.com/user/HarleyDeanXXX/',
+  'https://old.reddit.com/u/HarleyDeanXXX/comments/',
+  'https://www.reddit.com/user/HarleyDean%2558%2558%2558/',
+  'https://www.reddit.com/r/u_HarleyDeanXXX/',
+  'https://www.reddit.com/search?q=HarleyDeanXXX',
   'https://www.reddit.com/search?q=nude+videos',
+  ...['x', 'xx', '%2578%2578', 'ｘ', 'adult+video', 'unreviewed+videos'].map(q => `https://www.reddit.com/search?q=${q}`),
+  'https://www.reddit.com/search?q=x&q=gardening',
   'https://www.reddit.com/search?q=programming&q=porn',
   'https://www.reddit.com/r/example/comments/demo/hot_box_sex/'
 ]) assert.equal(evaluate('safeURL', url), 'https://www.reddit.com/', url);
 for (const url of [
   'https://www.reddit.com/search/?q=programming&include_over_18=on&include_over_18=on&nsfw=1',
   'https://old.reddit.com/r/programming/search.json?q=typescript',
-  'https://www.reddit.com/search?q=typescript'
+  'https://www.reddit.com/search?q=typescript',
+  ...['Xbox', 'SpaceX', 'x+axis', 'X-Men', 'adult+education'].map(q => `https://www.reddit.com/search?q=${q}`)
 ]) {
   const next = new URL(String(evaluate('safeURL', url)));
   assert.equal(next.searchParams.get('include_over_18'), 'off');
@@ -36,6 +44,8 @@ for (const label of ['Yes, I am over 18', "Yes, I'm over 18", 'yes im over 18', 
 for (const label of ['18 years of research', 'Show comments', 'I am a programmer']) assert.equal(evaluate('ageConfirmation', label), false, label);
 for (const label of ['ＰＯＲＮ', 'p\u200born', 'nude videos', 'gonewild']) assert.equal(evaluate('explicit', label), true, label);
 for (const label of ['Learn programming', 'How to grow tomatoes']) assert.equal(evaluate('explicit', label), false, label);
+for (const label of ['HarleyDeanXXX', 'u/HarleyDeanＸＸＸ', 'HarleyDeanX\u200bXX']) assert.equal(evaluate('explicit', label), true, label);
+for (const name of ['SpaceX', 'XboxFan', 'Alex', 'Maxx']) assert.equal(evaluate('safeURL', `https://www.reddit.com/user/${name}/`), null, name);
 console.log('Reddit child-lock URL and age-confirmation regression tests passed.');
 const rules = JSON.parse(await readFile(new URL('../extension/rules.json', import.meta.url), 'utf8')) as Array<{id:number;condition:{regexFilter:string};action:{redirect:{transform?:{queryTransform:{addOrReplaceParams:Array<{key:string;value:string}>}};extensionPath?:string}}}>;
 const searchRule = rules.find(rule => rule.id === 5);
@@ -47,3 +57,7 @@ const ageRule = rules.find(rule => rule.id === 6);
 assert.ok(ageRule);
 assert.equal(new RegExp(ageRule.condition.regexFilter, 'i').test('https://www.reddit.com/api/over18'), true);
 assert.equal(ageRule.action.redirect.extensionPath, '/blocked.html');
+
+for (const label of ['Unreviewed videos', 'Show unreviewed videos', 'Unreviewed videos (12)']) assert.equal(evaluate('unreviewedLabel', label), true);
+for (const label of ['A discussion about unreviewed videos', 'Unreviewed code', 'Videos']) assert.equal(evaluate('unreviewedLabel', label), false);
+assert.equal(evaluate('safeURL', 'https://www.reddit.com/r/example/comments/id/x/'), null);

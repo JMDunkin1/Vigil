@@ -233,6 +233,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var externalPlaybackMayRelinquish = false
     private var externalPlaybackRelinquishTask: Task<Void, Never>?
     private var serviceAccessReceipt = SocialServiceAccessReceipt()
+    private(set) var linkedInApplePopup: LinkedInApplePopupController?
     var openSocialLink: ((URL) -> Void)?
     private let mediaClassificationDeadlineNanoseconds: UInt64
 
@@ -468,6 +469,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        // LinkedIn loads its Apple handler asynchronously after the tap. The
+        // native delegate still accepts only the confined authentication popup.
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = service == .linkedin
         configuration.defaultWebpagePreferences.preferredContentMode = service == .snapchat
             ? .desktop
             : .mobile
@@ -583,9 +587,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func retry(_ service: SocialService) {
-        if service == .snapchat, case .unsupported = health[service] {
-            // Retrying a download shell must open sign-in rather than reloading
-            // the same shell with its session-scoped recovery attempt exhausted.
+        if service == .snapchat {
+            // Restart the first-party handoff with the existing cookie store.
+            // Reloading a failed post-login document can replay a consumed
+            // ticket, while a download shell has already exhausted recovery.
             cancelDocumentWork(for: service)
             health[service] = .loading
             setSurface(.unknown, for: service)
@@ -1550,6 +1555,13 @@ extension SocialWebViewStore: WKNavigationDelegate {
 
         preferences.preferredContentMode = service == .snapchat ? .desktop : .mobile
 
+        if service == .linkedin, navigationAction.targetFrame == nil,
+           navigationAction.sourceFrame.isMainFrame,
+           LinkedInAppleAuthentication.allowsPopupStart(url, from: webView.url) {
+            decisionHandler(.allow, preferences)
+            return
+        }
+
         if navigationAction.targetFrame?.isMainFrame == false {
             guard service.allowsEmbeddedNavigation(to: url, mainDocumentURL: webView.url) else {
                 decisionHandler(.cancel, preferences)
@@ -1713,6 +1725,12 @@ extension SocialWebViewStore: WKUIDelegate {
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
+        if service(for: webView) == .linkedin, navigationAction.targetFrame == nil,
+           navigationAction.sourceFrame.isMainFrame,
+           let url = navigationAction.request.url,
+           LinkedInAppleAuthentication.allowsPopupStart(url, from: webView.url) {
+            return makeLinkedInApplePopup(configuration: configuration, opener: webView, url: url)
+        }
         if navigationAction.navigationType == .linkActivated,
            let url = navigationAction.request.url, let link = SocialIncomingLink(url),
            link.service != service(for: webView), let openSocialLink {
@@ -1726,6 +1744,99 @@ extension SocialWebViewStore: WKUIDelegate {
               ) else { return nil }
         webView.load(request)
         return nil
+    }
+
+    func makeLinkedInApplePopup(configuration: WKWebViewConfiguration, opener: WKWebView, url: URL) -> WKWebView? {
+        guard fixedService == .linkedin, linkedInApplePopup == nil,
+              LinkedInAppleAuthentication.allowsPopupStart(url, from: opener.url),
+              var presenter = opener.window?.rootViewController else { return nil }
+        while let presented = presenter.presentedViewController { presenter = presented }
+        let popup = LinkedInApplePopupController(configuration: configuration)
+        popup.onClose = { [weak self] in self?.linkedInApplePopup = nil }
+        linkedInApplePopup = popup
+        presenter.present(popup, animated: true)
+        // WebKit loads the supplied request itself and retains window.opener.
+        // Replaying it in the main web view loses Apple's web_message reply.
+        return popup.webView
+    }
+}
+
+@MainActor
+final class LinkedInApplePopupController: UIViewController, WKNavigationDelegate, WKUIDelegate {
+    let webView: WKWebView
+    var onClose: (() -> Void)?
+    private var authorized = false
+
+    init(configuration: WKWebViewConfiguration) {
+        // Use WebKit's popup configuration to preserve the opener and cookie
+        // store, but give auth its own controller with no content scripts or
+        // native bridges. Navigation below is confined to authentication.
+        configuration.userContentController = WKUserContentController()
+        webView = WKWebView(frame: .zero, configuration: configuration)
+        super.init(nibName: nil, bundle: nil)
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        webView.allowsLinkPreview = false
+        isModalInPresentation = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        let bar = UINavigationBar()
+        let item = UINavigationItem(title: "Sign in with Apple")
+        item.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .cancel, target: self, action: #selector(close))
+        bar.items = [item]
+        for child in [bar, webView] {
+            child.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(child)
+        }
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: bar.bottomAnchor),
+            webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+        ])
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = action.request.url else { decisionHandler(.cancel); return }
+        if !authorized, url.absoluteString == "about:blank" {
+            decisionHandler(.allow)
+            return
+        }
+        let mainFrame = action.targetFrame?.isMainFrame == true
+        guard action.targetFrame != nil,
+              LinkedInAppleAuthentication.allowsNavigation(url, authorized: authorized, isMainFrame: mainFrame) else {
+            decisionHandler(.cancel)
+            return
+        }
+        if mainFrame, LinkedInAppleAuthentication.isAuthorizationURL(url) { authorized = true }
+        decisionHandler(.allow)
+    }
+
+    func webViewDidClose(_ webView: WKWebView) { close() }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { close() }
+
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        decisionHandler(.deny)
+    }
+
+    @objc func close() {
+        webView.stopLoading()
+        dismiss(animated: true) { [weak self] in
+            self?.onClose?()
+            self?.onClose = nil
+        }
     }
 }
 

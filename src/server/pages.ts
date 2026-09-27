@@ -94,7 +94,9 @@ body {
 }
 main { width: min(560px, 100%); }
 .brand-lockup { display: flex; align-items: center; gap: 12px; margin-bottom: 36px; }
-.brand-mark { display: block; width: 44px; height: 44px; flex: 0 0 auto; }
+/* The logo is decoration, not page media. Keeping it out of the media DOM
+   prevents a flagged word in a block explanation from hiding its whole panel. */
+.brand-mark { display: block; width: 44px; height: 44px; flex: 0 0 auto; background: url("${protectionBrandIcon}") center / contain no-repeat; }
 .eyebrow { margin: 0; color: var(--primary-strong); font-size: .72rem; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
 h1 {
   max-width: 16ch;
@@ -158,7 +160,7 @@ export function companionPage(): string {
 <body>
   <main>
     <div class="brand-lockup">
-      <img class="brand-mark" src="${protectionBrandIcon}" width="44" height="44" alt="">
+      <span class="brand-mark" aria-hidden="true"></span>
       <p class="eyebrow">Vigil</p>
     </div>
     <h1>Open Vigil from the menu bar.</h1>
@@ -221,7 +223,7 @@ export function blockedPage(input: PageInput): string {
 <body data-vigil-block-page="1">
   <main>
     <div class="brand-lockup">
-      <img class="brand-mark" src="${protectionBrandIcon}" width="44" height="44" alt="">
+      <span class="brand-mark" aria-hidden="true"></span>
       <p class="eyebrow">Vigil</p>
     </div>
     <h1>${browserProtectionInterrupted ? "Browser protection connection interrupted." : `${site} is blocked.`}</h1>

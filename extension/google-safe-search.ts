@@ -61,11 +61,11 @@ function explicitSearchBlockRedirect(rawUrl: string, baseUrl = location.href): s
   return null;
 }
 
-function containsExplicitSearchText(rawValue: string, hostname = new URL(location.href).hostname): boolean {
+function containsExplicitSearchText(rawValue: string, hostname = new URL(location.href).hostname, includeRedditShorthand = true): boolean {
   const decoded = decodeNestedSearchValue(rawValue);
   return EXPLICIT_SEARCH_PATTERN.test(decoded)
     || EXPLICIT_SEARCH_PATTERN.test(decoded.replace(/\+/gu, " "))
-    || containsContextualExplicitSearch(decoded, hostname)
+    || containsContextualExplicitSearch(decoded, hostname, includeRedditShorthand)
     || containsExplicitXxxSearchText(decoded)
     || containsExplicitPersonSearchText(decoded);
 }
@@ -223,7 +223,9 @@ function enforceExplicitSearchControlInteraction(event: Event): boolean {
   if (event.type === "keydown" && (event as KeyboardEvent).key !== "Enter") return false;
   const target = eventTargetElement(event);
   if (!target) return false;
-  let blocked = isSearchControl(target) && containsExplicitSearchText(searchControlValue(target));
+  // Short Reddit queries are checked on activation, not while typing Xbox.
+  const activating = event.type === "keydown";
+  let blocked = isSearchControl(target) && containsExplicitSearchText(searchControlValue(target), undefined, activating);
   if (!blocked && event.type === "click" && isSearchActivationControl(target)) {
     const container = target.closest("form, [role='search'], [data-search], [class*='search' i], [id*='search' i]");
     blocked = Boolean(container && explicitSearchTextInContainer(container));
@@ -282,16 +284,16 @@ function elementLooksLikeSearchContainer(value: Element): boolean {
   return /(?:^|[-_\s])search(?:$|[-_\s])/iu.test(descriptor);
 }
 
-function explicitSearchTextInContainer(container: Element): boolean {
+function explicitSearchTextInContainer(container: Element, includeRedditShorthand = true): boolean {
   const controls = container.querySelectorAll?.("input, textarea, [contenteditable='true'], [role='searchbox']") || [];
-  return Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control)));
+  return Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control), undefined, includeRedditShorthand));
 }
 
 function scanExistingSearchControls(root: ParentNode): void {
   const controls = root.querySelectorAll?.(
     "input[type='search'], [role='searchbox'], input[name], textarea[name], [contenteditable='true']"
   ) || [];
-  if (Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control)))) {
+  if (Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control), undefined, false))) {
     location.replace(chrome.runtime.getURL("blocked.html"));
   }
 }
@@ -304,8 +306,8 @@ function installDynamicSearchGuard(): void {
     for (const record of records) {
       for (const node of record.addedNodes) {
         if (node instanceof Element) {
-          if ((isSearchControl(node) && containsExplicitSearchText(searchControlValue(node)))
-            || explicitSearchTextInContainer(node)) {
+          if ((isSearchControl(node) && containsExplicitSearchText(searchControlValue(node), undefined, false))
+            || explicitSearchTextInContainer(node, false)) {
             location.replace(chrome.runtime.getURL("blocked.html"));
             return;
           }

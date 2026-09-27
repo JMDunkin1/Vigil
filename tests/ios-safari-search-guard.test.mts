@@ -38,6 +38,7 @@ for (const url of [
   "https://example.org/search?q=porn",
   "https://example.org/search?q=%2570%256f%2572%256e",
   "https://www.reddit.com/search?q=sex",
+  ...["x", "xx", "adult+video", "unreviewed+videos"].map(q => `https://www.reddit.com/search?q=${q}`),
   "https://www.pixiv.net/en/tags/nudity/artworks",
   "https://www.google.com/search?q=adult+content+on+artstation",
   "https://example.org/search?q=Jane+Example+leaks"
@@ -64,3 +65,15 @@ console.log("iOS Safari desktop search parity, navigation, input, benign searche
 
 assert.deepEqual(page("https://example.org/search?q=porn", false).redirects, ["about:blank"], "missing extension APIs still leave the blocked page");
 assert.deepEqual(manifest.web_accessible_resources, [{ resources: ["blocked.html", "blocked.css"], matches: ["http://*/*", "https://*/*"] }]);
+
+for (const query of ["x", "xx", "Xbox", "X-Men", "x axis"]) {
+  const typing = page("https://www.reddit.com/");
+  const field = new SearchInput(); field.value = query;
+  const event = { target: field, type: "input", cancelable: true, preventDefault() {}, stopImmediatePropagation() {} };
+  typing.listeners.get("input")!(event);
+  typing.listeners.get("change")!({ ...event, type: "change" });
+  typing.listeners.get("click")!({ ...event, type: "click" });
+  assert.deepEqual(typing.redirects, [], `typing or focusing ${query} must stay possible`);
+  typing.listeners.get("keydown")!({ ...event, type: "keydown", key: "Enter" });
+  assert.deepEqual(typing.redirects, /^(x|xx)$/.test(query) ? [blockedURL] : [], `submit ${query}`);
+}

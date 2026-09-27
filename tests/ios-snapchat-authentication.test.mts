@@ -59,3 +59,40 @@ for (const href of [
   assert.equal(context.injected, true, href);
 }
 console.log("Snapchat authentication isolation: 43 cases passed.");
+
+const snapchatBootstrap = socialDOMAdaptersSource.match(
+  /private static let snapchatDesktopIdentityBootstrap = #"""([\s\S]*?)"""#/u
+)?.[1];
+assert.ok(snapchatBootstrap);
+for (const nativeAvailable of [false, true]) {
+  class NavigatorFixture {}
+  const navigator = new NavigatorFixture() as NavigatorFixture & { serviceWorker?: {
+    controller: unknown; ready: Promise<unknown>; register: (url: string) => Promise<unknown>;
+    getRegistration: () => Promise<unknown>; getRegistrations: () => Promise<unknown[]>;
+    addEventListener: (name: string, listener: () => void) => void;
+    removeEventListener: (name: string, listener: () => void) => void;
+  } };
+  const nativeContainer = new EventTarget();
+  if (nativeAvailable) Object.defineProperty(NavigatorFixture.prototype, "serviceWorker", { value: nativeContainer });
+  runInNewContext(snapchatBootstrap, {
+    Navigator: NavigatorFixture, navigator, EventTarget, DOMException, Promise,
+    document: { createElement: () => ({}), documentElement: { appendChild: () => {} } }
+  });
+  if (nativeAvailable) {
+    assert.equal(navigator.serviceWorker, nativeContainer, "Keep real browser support untouched");
+    continue;
+  }
+  const workers = navigator.serviceWorker!;
+  const listener = () => {};
+  workers.addEventListener("message", listener);
+  workers.removeEventListener("message", listener);
+  assert.equal(workers.controller, null);
+  assert.equal(await workers.getRegistration(), undefined);
+  assert.deepEqual(Array.from(await workers.getRegistrations()), []);
+  await assert.rejects(workers.register("/service-worker.js"), { name: "NotSupportedError" });
+  let workerBecameReady = false;
+  void workers.ready.then(() => { workerBecameReady = true; });
+  await Promise.resolve();
+  assert.equal(workerBecameReady, false, "Never pretend a background worker is active");
+}
+console.log("Snapchat optional notification compatibility preserves native support and rejects worker registration.");

@@ -22,13 +22,18 @@ function contextualSearchDecode(value: string): string {
       value = decoded;
     } catch { break; }
   }
-  return value.replace(/\+/gu, " ").normalize("NFKC");
+  return value.replace(/\+/gu, " ").normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "");
 }
 
-export function containsContextualExplicitSearch(query: string, hostname = ""): boolean {
+export function containsContextualExplicitSearch(query: string, hostname = "", includeRedditShorthand = true): boolean {
   const decoded = contextualSearchDecode(query);
   const host = hostname.toLowerCase().replace(/\.$/u, "");
   const platform = CONTEXTUAL_SEARCH_PLATFORMS.some(domain => host === domain || host.endsWith(`.${domain}`));
+  // Bare x/xx are unsafe Reddit discovery queries, but not general keywords:
+  // preserve Xbox, SpaceX, X-Men, ordinary post URLs, and in-progress typing.
+  const reddit = host === "reddit.com" || host.endsWith(".reddit.com");
+  if (reddit && ((includeRedditShorthand && /^\s*x{1,2}\s*$/iu.test(decoded))
+    || /(?:^|[^\p{L}\p{N}])(?:(?:adult|unreviewed)[\s_-]+videos?|x{1,2}[\s_-]+(?:videos?|photos?|pics?))(?:$|[^\p{L}\p{N}])/iu.test(decoded))) return true;
   return (platform || CONTEXTUAL_SEARCH_NAMES.test(decoded)) && CONTEXTUAL_SEARCH_MARKERS.test(decoded);
 }
 

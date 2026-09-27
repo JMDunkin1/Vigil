@@ -9,6 +9,9 @@ import { shouldBlockUrl } from "../src/policy.js";
 
 const blocked = [
   "https://www.reddit.com/search/?q=sex",
+  ...["x", "xx", "X", "%2578%2578", "ｘ", "x%E2%80%8Bx", "adult+video", "adult+videos", "unreviewed+videos", "xx+videos"].map(q => `https://www.reddit.com/search?q=${q}`),
+  "https://old.reddit.com/r/gardening/search.json?q=x",
+  "https://www.reddit.com/search?q=gardening&q=xx",
   "https://old.reddit.com/r/Art/search/?sort=new&q=adult+content",
   "https://www.reddit.com/search?q=%2573%2565%2578",
   "https://www.reddit.com/r/sex/",
@@ -29,6 +32,10 @@ const allowed = [
   "https://www.google.com/search?q=nude+art+figure+drawing",
   "https://health.example/article/sex-education",
   "https://www.reddit.com/search?q=Middlesex",
+  ...["Xbox", "SpaceX", "X-Men", "x+axis", "Model+X", "adult+education", "video+editing"].map(q => `https://www.reddit.com/search?q=${q}`),
+  "https://www.google.com/search?q=x",
+  "https://www.reddit.com.example.org/search?q=xx",
+  "https://www.reddit.com/r/gardening/comments/abc/x/",
   "https://www.reddit.com/search?q=sextant",
   "https://www.reddit.com/search?q=sexuality",
   "https://www.artstation.com/search?query=landscapes",
