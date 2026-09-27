@@ -261,8 +261,8 @@ struct RootView: View {
 
                 SocialWebView(
                     webView: primaryWebView,
-                    isDark: isDark,
-                    backingColor: service == .youtube ? surfaceColor : nil
+                    isDark: colorScheme == .dark,
+                    backingColor: surfaceColor
                 )
                     .id(ObjectIdentifier(primaryWebView))
                     .ignoresSafeArea(.container, edges: webViewSafeAreaEdges)
@@ -278,7 +278,10 @@ struct RootView: View {
                 YouTubeContentBlockerGate(isDark: isDark)
             }
         }
-            .preferredColorScheme(reportedIsDark.map { $0 ? .dark : .light })
+            // Scope page chrome to this service. A preferredColorScheme would
+            // escape to the shared presentation even for hidden service views.
+            // WebKit receives the system scheme above, never its own DOM report.
+            .environment(\.colorScheme, isDark ? .dark : .light)
             .onChange(of: isServiceVisible && scenePhase == .active && store.youtubeAllowsLandscape,
                       initial: true) { _, allowed in
                 if store.fixedService == .youtube {

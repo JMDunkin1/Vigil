@@ -506,13 +506,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ? .never
             : .automatic
         if service == .instagram {
-            // Instagram's own startup mark appears on a dark canvas. Use the
-            // same deterministic backing color before WebKit has a document;
-            // systemBackground can resolve light during cold initialization
-            // even when the eventual page chooses dark appearance.
+            // Resolve the initial canvas against the seeded appearance; the
+            // representable supplies the matching page surface once mounted.
             webView.isOpaque = true
-            webView.backgroundColor = .black
-            webView.scrollView.backgroundColor = .black
+            webView.backgroundColor = .systemBackground
+            webView.scrollView.backgroundColor = .systemBackground
         }
         webViews[service] = webView
         serviceByWebView[ObjectIdentifier(webView)] = service
