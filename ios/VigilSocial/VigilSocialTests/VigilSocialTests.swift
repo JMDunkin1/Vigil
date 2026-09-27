@@ -161,18 +161,18 @@ final class VigilSocialTests: XCTestCase {
 
     @MainActor
     func testContainerAccessCheckFailsClosedAndCannotBeForgedByPageScripts() async throws {
-        let store = SocialWebViewStore(fixedService: .linkedin, loadInitialPages: false)
-        let view = store.webView(for: .linkedin)
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false)
+        let view = store.webView(for: .instagram)
         let loaded = expectation(description: "Policy probe fixture")
         let delegate = FixtureNavigationDelegate { loaded.fulfill() }
         view.navigationDelegate = delegate
-        view.loadHTMLString("<html><body>Sign in</body></html>", baseURL: SocialService.linkedin.homeURL)
+        view.loadHTMLString("<html><body>Sign in</body></html>", baseURL: SocialService.instagram.homeURL)
         await fulfillment(of: [loaded], timeout: 5)
         _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => { throw new Error('blocked'); }; return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
-        _ = try await view.evaluateJavaScript("globalThis.fetch = async () => ({status:200,url:'https://www.linkedin.com/robots.txt'}); true;")
+        _ = try await view.evaluateJavaScript("globalThis.fetch = async () => ({status:200,url:'https://www.instagram.com/robots.txt'}); true;")
         let denied = await store.confirmServiceAccess()
         XCTAssertFalse(denied, "A page must not forge the system-policy check")
-        _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:405,url:'https://www.linkedin.com/robots.txt'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
+        _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:405,url:'https://www.instagram.com/robots.txt'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
         let permitted = await store.confirmServiceAccess()
         XCTAssertTrue(permitted, "A server declining HEAD must not strand the sign-in form")
         _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:200,url:'https://blocked.example/'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)

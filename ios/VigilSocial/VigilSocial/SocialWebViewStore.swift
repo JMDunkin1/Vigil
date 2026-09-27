@@ -167,6 +167,86 @@ struct SocialServiceAccessReceipt {
     }
 }
 
+// Check through WebKit itself, without depending on LinkedIn's document load
+// or connect-src policy. URLSession would not provide the same BuiltIn filter
+// enforcement. The probe has no page scripts and accepts only its exact URL.
+@MainActor
+private final class LinkedInAccessProbe: NSObject, WKNavigationDelegate {
+    private let webView: WKWebView
+    private let target = URL(string: "https://www.linkedin.com/robots.txt")!
+    private var completion: CheckedContinuation<Bool, Never>?
+    private var timeout: Task<Void, Never>?
+    private var receivedResponse = false
+
+    init(dataStore: WKWebsiteDataStore) {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = dataStore
+        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
+        webView = WKWebView(frame: .zero, configuration: configuration)
+        super.init()
+        webView.navigationDelegate = self
+    }
+
+    func confirm() async -> Bool {
+        await withCheckedContinuation { continuation in
+            completion = continuation
+            var request = URLRequest(url: target, cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
+                                     timeoutInterval: 4)
+            request.httpMethod = "HEAD"
+            webView.load(request)
+            timeout = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(4))
+                guard !Task.isCancelled else { return }
+                self?.finish(false)
+            }
+        }
+    }
+
+    private func finish(_ allowed: Bool) {
+        guard let completion else { return }
+        self.completion = nil
+        timeout?.cancel()
+        timeout = nil
+        webView.stopLoading()
+        completion.resume(returning: allowed)
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let allowed = action.targetFrame?.isMainFrame == true && action.request.url == target
+        decisionHandler(allowed ? .allow : .cancel)
+        if !allowed { finish(false) }
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        guard response.isForMainFrame, let http = response.response as? HTTPURLResponse,
+              http.url == target, (200..<300).contains(http.statusCode) else {
+            decisionHandler(.cancel)
+            finish(false)
+            return
+        }
+        receivedResponse = true
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, didReceiveServerRedirectForProvisionalNavigation navigation: WKNavigation?) {
+        finish(false)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
+        finish(receivedResponse && webView.url == target)
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation?, withError error: Error) {
+        finish(false)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation?, withError error: Error) {
+        finish(false)
+    }
+}
+
 enum InstagramInformationalAccounts {
     static let storageKey = "VigilSocial.instagram.informationalAccounts.v1"
     static let initialAccounts = ["wludining", "whiterhino.asylumfightteam"]
@@ -315,6 +395,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             }
         }
         let view = webView(for: fixedService)
+        if fixedService == .linkedin {
+            let probe = LinkedInAccessProbe(dataStore: view.configuration.websiteDataStore)
+            confirmed = await probe.confirm()
+            return confirmed && !Task.isCancelled
+        }
         guard let url = view.url, fixedService.allowsNavigation(to: url), !view.isLoading else { return false }
         do {
             let result = try await view.callAsyncJavaScript("""
