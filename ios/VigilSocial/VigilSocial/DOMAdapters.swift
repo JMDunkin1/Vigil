@@ -4021,7 +4021,12 @@ enum DOMAdapters {
 
     private static let linkedin = #"""
     (() => {
-      if (window.__vigilLinkedInInstalled) return;
+      if (window.__vigilLinkedInInstalled) {
+        // Document-start installs the restrictions before the message bridge
+        // exists. Document-end must still complete the native ready handshake.
+        window.__vigilLinkedInReportReady?.();
+        return;
+      }
       const hosts = ['linkedin.com', 'www.linkedin.com'];
       if (!hosts.includes(location.hostname.toLowerCase())) return;
       window.__vigilLinkedInInstalled = true;
@@ -4256,10 +4261,17 @@ enum DOMAdapters {
         attributeFilter: ['href', 'aria-label', 'class', 'data-testid', 'data-urn', 'data-id']
       });
       reconcile();
-      if (window === window.top) addEventListener('DOMContentLoaded', () => {
+      const reportReady = () => {
+        if (window !== window.top || document.readyState === 'loading' || !document.body
+            || !window.__vigilCommonInstalled || !window.__vigilPolicyProbeInstalled
+            || typeof window.__vigilBridge !== 'function') return;
         reconcile();
-        if (!restricted(location.href)) window.__vigilBridge?.({ type: 'health', state: 'ready', detail: '' });
-      }, { once: true });
+        if (!restricted(location.href)) window.__vigilBridge({ type: 'health', state: 'ready', detail: '' });
+      };
+      window.__vigilLinkedInReportReady = reportReady;
+      if (document.readyState === 'loading') {
+        addEventListener('DOMContentLoaded', reportReady, { once: true });
+      } else { reportReady(); }
     })();
     """#
 

@@ -226,14 +226,9 @@ struct RootView: View {
     }
 
     private func filteredWebView(service: SocialService) -> some View {
-        // Instagram's SPA frequently changes transient container backgrounds
-        // while navigating. Driving the native color scheme from those DOM
-        // mutations made the entire WKWebView flash between light and dark.
-        // Let iOS and Instagram share the user's system appearance instead.
-        let reportedIsDark = service == .instagram
-            ? nil
-            : store.reportedChromeIsDark(for: service)
-        let isDark = reportedIsDark ?? (colorScheme == .dark)
+        // Native loading, failure, and session UI follow iOS appearance.
+        // Transient web backgrounds must never recolor the app's own screens.
+        let isDark = colorScheme == .dark
         let primaryWebView = store.webView(for: service)
         // Instagram, Snapchat, and LinkedIn stay inside the native safe area. YouTube keeps
         // its original system-managed top inset and extends only beneath the
@@ -278,10 +273,6 @@ struct RootView: View {
                 YouTubeContentBlockerGate(isDark: isDark)
             }
         }
-            // Scope page chrome to this service. A preferredColorScheme would
-            // escape to the shared presentation even for hidden service views.
-            // WebKit receives the system scheme above, never its own DOM report.
-            .environment(\.colorScheme, isDark ? .dark : .light)
             .onChange(of: isServiceVisible && scenePhase == .active && store.youtubeAllowsLandscape,
                       initial: true) { _, allowed in
                 if store.fixedService == .youtube {
