@@ -2,13 +2,44 @@
   'use strict';
   if (!/^https?:$/.test(location.protocol)) return;
   const isContextualPlatform = /(^|\.)(reddit\.com|deviantart\.com|artstation\.com|pixiv\.net|behance\.net|newgrounds\.com|furaffinity\.net|tumblr\.com|pinterest\.(?:com|co\.uk)|x\.com|twitter\.com|bsky\.app|patreon\.com|itch\.io|discord(?:app)?\.com)$/i.test(location.hostname);
+  // BEGIN GENERATED EXPLICIT MEDIA CONTEXT
+// Shared by navigation/search guards and media-card inspection. Ambiguous
+// markers contribute evidence only within a short local phrase.
+function containsContextualExplicitMedia(value) {
+    const text = value.normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "").toLowerCase();
+    if (/(?:^|[^\p{L}\p{N}])(?:x+[\s_.\p{Pd}]*rated|rated[\s_.\p{Pd}]*x+)(?:$|[^\p{L}\p{N}])/u.test(text))
+        return true;
+    const tokens = text.replace(/\bcream[\s_\p{Pd}]+pies?\b/gu, "creampie").match(/[\p{L}\p{N}]+/gu) || [];
+    const marker = /^(?:adults?|spicy|creampies?|x+)$/u;
+    const media = /^(?:videos?|vids?|movies?|films?|clips?|photos?|pics?|pictures?|documentar(?:y|ies)|compilations?)$/u;
+    const ordinary = /^(?:recipes?|cooking|baking|food|desserts?|kitchen|chicken|sauce|peppers?|banana|chocolate|coconut|vanilla|pastry|education|educational|learning|classes|training|tutorials?|fitness)$/u;
+    for (let index = 0; index < tokens.length; index += 1) {
+        if (!marker.test(tokens[index]))
+            continue;
+        // Both orders work; unrelated text elsewhere on a page supplies neither
+        // evidence nor an exemption. Ordinary context only qualifies these weak
+        // markers and cannot override existing explicit terms or X-rated labels.
+        const nearby = tokens.slice(Math.max(0, index - 4), index + 5);
+        if (/^x{1,2}$/u.test(tokens[index]) && nearby.some(token => /^(?:model|men|files|axis|chromosomes?)$/u.test(token)))
+            continue;
+        if (nearby.some(token => ordinary.test(token)))
+            continue;
+        if (nearby.some(token => media.test(token)))
+            return true;
+        if (nearby.some(token => token !== tokens[index] && marker.test(token)))
+            return true;
+    }
+    return false;
+}
+// END GENERATED EXPLICIT MEDIA CONTEXT
   const explicitTitle = value => {
     const text = String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '');
+    if (containsContextualExplicitMedia(text)) return true;
     if (/(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|nud(?:s|3s?)?|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)/iu.test(text)) return true;
     // Catalog titles use XXX without a following word such as "videos".
     // Match the title token on every host, not arbitrary URL/identifier substrings.
-    const titleMarkers = text.replace(/\b(?:chapter|volume|section|book|part|act|super bowl)\s+xxx\b/giu, '');
-    if (/(?:^|[^\p{L}\p{N}])xxx(?:$|[^\p{L}\p{N}])/iu.test(titleMarkers)) return true;
+    const titleMarkers = text.replace(/\b(?:chapter|volume|section|book|part|act|super bowl)\s+x{3,}\b/giu, '');
+    if (/(?:^|[^\p{L}\p{N}])x{3,}(?:$|[^\p{L}\p{N}])/iu.test(titleMarkers)) return true;
     return /(?:^|[^a-z0-9])(?:porn(?:ography|ographic)?|p0rn|hentai|nsfw|gonewild|onlyfans|fansly|blowjob|cumshot)(?:$|[^a-z0-9])|\b(?:nude|naked|sex|xxx)\s+(?:videos?|photos?|tapes?)\b/i.test(text)
       || (isContextualPlatform && /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu.test(text));
   };

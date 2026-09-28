@@ -746,7 +746,7 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   const explicitSearchProtection = patterns.includes("porn") && patterns.includes("onlyfans");
   if (explicitSearchProtection && matchContextualExplicitSearchUrl(parsed)) {
     return {
-      pattern: "contextual-explicit-search", label: "Explicit search on a mixed-content platform",
+      pattern: "contextual-explicit-search", label: "Explicit search based on context",
       hostname: normalizeHost(parsed.hostname), url: parsed.toString()
     };
   }

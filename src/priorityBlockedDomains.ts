@@ -277,6 +277,8 @@ export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
  * classifier terms.
  */
 export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
+  // Whole-site Internet Archive ban, including Wayback and media subdomains.
+  "archive.org",
   "xerography14macro.com",
   "dxweb003.xyz",
   "newgrounds.com",

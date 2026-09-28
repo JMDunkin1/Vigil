@@ -1,12 +1,29 @@
 import { redditReviewHost, redditReviewPostId, redditReviewSearchPage, redditReviewDestination, redditReviewRedirect, vigilReturnPage } from "../src/redditReview.js";
+import { blockedPageBack } from "../src/blockedPageBack.js";
 
 const reviewApi: typeof chrome = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser || chrome;
 function reviewBlocked(): void {
   if (window !== window.top) { location.replace("about:blank"); return; }
-  const fallback = setTimeout(() => location.replace("about:blank"), 4000);
-  void reviewApi.runtime.sendMessage({ type: "VIGIL_REDDIT_REVIEW", action: "return", sourceUrl: location.href })
-    .then(result => { clearTimeout(fallback); if (!result?.handled) location.replace(result?.ok && result.url ? result.url : "about:blank"); }, () => { clearTimeout(fallback); location.replace("about:blank"); });
+  if (returnPending) return;
+  returnPending = true;
+  let settled = false;
+  const finish = (result?: { handled?: boolean; ok?: boolean; url?: string }) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(fallback);
+    returnPending = false;
+    if (result?.handled) return;
+    if (result?.ok && result.url && result.url !== "about:blank") location.replace(result.url);
+    else if (onReturnPage && !document.querySelector('[data-vigil-quiet-return]') && location.pathname !== "/reddit-review-blocked.html") blockedPageBack();
+    else location.replace("about:blank");
+  };
+  const fallback = setTimeout(finish, 4000);
+  try {
+    void reviewApi.runtime.sendMessage({ type: "VIGIL_REDDIT_REVIEW", action: "return", sourceUrl: location.href })
+      .then(finish, () => finish());
+  } catch { finish(); }
 }
+let returnPending = false;
 const onReturnPage = vigilReturnPage(location.href, reviewApi.runtime.getURL("/"));
 if (onReturnPage) {
   addEventListener("click", event => {

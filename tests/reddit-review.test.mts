@@ -30,6 +30,7 @@ function harness(storageValues: Record<string, unknown> = {}, incognito = false)
   const tabs = new Map<number, { id: number; url: string; windowId?: number; incognito?: boolean }>([[1, { id: 1, url: search, windowId: 10, incognito }]]);
   const creations: Array<{ windowId: number; openerTabId: number }> = [];
   const returnChecks: Array<{ candidates: string[]; inspect?: string }> = [];
+  let verifierAvailable = true;
   let nextTab = 2;
   const updates: Array<{ id: number; url: string }> = [];
   const event = (name: string) => ({ addListener(fn: Listener) { listeners[name] = fn; } });
@@ -47,11 +48,12 @@ function harness(storageValues: Record<string, unknown> = {}, incognito = false)
       async create({ url, windowId, openerTabId }: { url: string; windowId: number; openerTabId: number }) { creations.push({ windowId, openerTabId }); const tab = { id: nextTab++, url, windowId, incognito: tabs.get(openerTabId)?.incognito }; void tabs.set(tab.id, tab); return tab; },
       async update(id: number, { url }: { url: string }) { updates.push({ id, url }); void tabs.set(id, { ...tabs.get(id), id, url }); return tabs.get(id); },
       onRemoved: event("removed") },
-    webNavigation: { onCommitted: event("committed"), onHistoryStateUpdated: event("history") }
+    webNavigation: { onBeforeNavigate: event("before"), onCommitted: event("committed"), onHistoryStateUpdated: event("history") }
   };
   runInNewContext(source, { chrome: api, URL, atob, console, fetchVigil: async (_path: string, options: { body: string }) => {
     const body: { candidates: string[]; inspect?: string } = JSON.parse(options.body);
     returnChecks.push(body);
+    if (!verifierAvailable) throw new Error("Verifier temporarily unavailable");
     return { json: async () => ({ ok: true, url: body.candidates.find(url => !url.includes("porn")) || "about:blank" }) };
   } });
   const send = (action: string, url?: string, options: { tabId?: number; frameId?: number; senderURL?: string; newTab?: boolean } = {}) => new Promise<{ ok: boolean; retry?: boolean; url?: string; handled?: boolean }>(resolve => {
@@ -63,7 +65,61 @@ function harness(storageValues: Record<string, unknown> = {}, incognito = false)
     void tabs.set(id, { ...tabs.get(id), id, url }); listeners[kind]({ tabId: id, frameId: 0, url, ...transition });
     await new Promise<void>(resolve => setImmediate(resolve));
   };
-  return { send, navigate, tabs, updates, listeners, storageValues, creations, returnChecks };
+  return { send, navigate, tabs, updates, listeners, storageValues, creations, returnChecks,
+    setVerifierAvailable(value: boolean) { verifierAvailable = value; } };
+}
+const holding = "http://127.0.0.1:8787/blocked#vigil-holding-12345678-1234-1234-1234-123456789abc";
+const replacement = holding.replace("vigil-holding-", "vigil-blocker-");
+{
+  const h = harness({}, true);
+  await h.navigate(search);
+  await h.navigate("https://example.com/porn");
+  // The native operation can delete the source before our async callback runs.
+  h.listeners.before({ tabId: 1, frameId: 0, url: holding });
+  h.tabs.delete(1); h.listeners.removed(1);
+  void h.tabs.set(2, { id: 2, url: replacement, windowId: 10, incognito: true });
+  await h.navigate(replacement, "committed", 2);
+  assert.equal((await h.send("return", undefined, { tabId: 2 })).url, search, "native replacement keeps the original private tab's safe return history");
+  assert.equal(h.returnChecks.at(-1)?.candidates[0], "https://example.com/porn", "copied history still goes through policy validation");
+  // A delayed holding-page event must not issue a second copy of the handoff.
+  h.storageValues["vigil-reddit-review:1"] = { history: [search], windowId: 10, incognito: true };
+  h.listeners.before({ tabId: 1, frameId: 0, url: holding });
+  void h.tabs.set(3, { id: 3, url: replacement, windowId: 10, incognito: true });
+  assert.equal((await h.send("return", undefined, { tabId: 3 })).url, "about:blank", "a transfer is consumed by only one replacement");
+}
+for (const [windowId, incognito] of [[11, true], [10, false]] as const) {
+  const h = harness({}, true);
+  await h.navigate(search);
+  await h.navigate(holding, "before");
+  void h.tabs.set(2, { id: 2, url: replacement, windowId, incognito });
+  assert.equal((await h.send("return", undefined, { tabId: 2 })).url, "about:blank", "history must never cross a window or privacy partition");
+}
+{
+  const h = harness({}, true);
+  await h.navigate(search);
+  await h.navigate(holding, "before");
+  for (const [key, value] of Object.entries(h.storageValues)) {
+    if (key.startsWith("vigil-block-return:")) (value as { expiresAt: number }).expiresAt = 0;
+  }
+  void h.tabs.set(2, { id: 2, url: replacement, windowId: 10, incognito: true });
+  assert.equal((await h.send("return", undefined, { tabId: 2 })).url, "about:blank", "an expired handoff cannot restore history");
+}
+{
+  const h = harness();
+  await h.navigate(`http://127.0.0.1:8787/blocked?back=${encodeURIComponent(search)}`);
+  assert.equal((await h.send("return")).url, search, "a monitor-provided back URL survives missing extension history and is revalidated");
+  assert.deepEqual(h.returnChecks.at(-1)?.candidates, [search]);
+  await h.navigate("http://127.0.0.1:8787/blocked?back=https%3A%2F%2Fexample.com%2Fporn");
+  assert.equal((await h.send("return")).url, "about:blank", "a supplied back URL never skips policy validation");
+}
+{
+  const h = harness();
+  await h.navigate(search);
+  await h.navigate("extension://vigil/blocked.html");
+  h.setVerifierAvailable(false);
+  assert.equal((await h.send("return")).url, "about:blank");
+  h.setVerifierAvailable(true);
+  assert.equal((await h.send("return")).url, search, "a verifier failure does not destroy this tab's return history");
 }
 {
   const h = harness();

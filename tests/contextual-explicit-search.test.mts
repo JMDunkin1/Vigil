@@ -9,6 +9,12 @@ import { shouldBlockUrl } from "../src/policy.js";
 
 const platforms = ["x.com", "twitter.com", "bsky.app", "pixiv.net", "patreon.com", "itch.io", "creator.itch.io", "discord.com", "discordapp.com"];
 const blocked = [
+  ...["X rated", "x-rated documentary", "XX_rated", "XXXX–rated", "rated X", "ｘ ｒａｔｅｄ", "x\u200brated",
+    "adult videos", "adult vids", "vids for adults", "videos adult", "spicy clips", "spicy adult", "cream pie videos", "creampie compilation", "cream-pie spicy", "xx vids", "x videos"
+  ].flatMap(q => ["catalog.example", "www.google.com", "www.reddit.com"].map(host => `https://${host}/search?q=${encodeURIComponent(q)}`)),
+  "https://catalog.example/search.php/x-rated",
+  "https://catalog.example/#/search/cream%20pie%20videos",
+  "https://catalog.example/?q=%2578%2520rated",
   ...platforms.flatMap(host => ["nude", "erotica", "R-18", "adult content", "%2573%2565%2578"].map(q => `https://${host}/search?q=${encodeURIComponent(q)}`)),
   "https://www.pixiv.net/ranking.php?mode=r18",
   "https://www.pixiv.net/en/tags/R-18/artworks",
@@ -39,6 +45,10 @@ const blocked = [
   "https://search.example/?q=adult+content+on+pixiv"
 ];
 const allowed = [
+  ...["spicy", "cream pie", "creampie", "banana cream pie recipe video", "spicy chicken videos", "adult education video", "video editing for adult learning", "Model X video", "X-Men film", "X Files documentary", "spicy recipe clips", "adult", "vids"
+  ].map(q => `https://catalog.example/search?q=${encodeURIComponent(q)}`),
+  "https://catalog.example/watch?id=xxxxx&tracking=x-rated",
+  "https://catalog.example/article/x-rated",
   ...platforms.flatMap(host => ["Middlesex", "adult education", "SpaceX", "x", "landscapes"].map(q => `https://${host}/search?q=${encodeURIComponent(q)}`)),
   "https://discord.com/channels/123456/654321",
   "https://bsky.app/profile/gardener.example/post/abcdef",
@@ -137,6 +147,7 @@ for (const url of [
   assert.equal(staticSearchRule.test(url), false, url);
 }
 for (const url of [
+  ...[3, 4, 5, 6, 8, 12].flatMap(count => ["x".repeat(count), `${"x".repeat(count)}vids`].map(q => `https://catalog.example/search?q=${q}`)),
   "https://www.google.com/search?q=xxx",
   "https://www.google.com/search?q=free+xxx+videos",
   "https://www.google.com/search?q=xxxvideos",
@@ -144,7 +155,7 @@ for (const url of [
 ]) {
   assert.equal(shouldBlockUrl(profile, url), true, url);
   assert.equal(Boolean(runInContext(`explicitSearchBlockRedirect(${JSON.stringify(url)})`, context)), true, url);
-  assert.equal(staticSearchRule.test(url), true, url);
+  if (!url.includes("catalog.example")) assert.equal(staticSearchRule.test(url), true, url);
 }
 for (const url of ["https://search.example/search/xxx", "https://search.example/?q=%2578%2578%2578"]) {
   assert.equal(shouldBlockUrl(profile, url), true, url);

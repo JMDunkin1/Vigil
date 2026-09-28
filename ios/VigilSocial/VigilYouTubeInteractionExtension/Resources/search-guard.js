@@ -6,6 +6,35 @@ function vigilBlockedSearchURL() {
     return (globalThis.browser || globalThis.chrome).runtime.getURL("blocked.html");
   } catch { return "about:blank"; }
 }
+// Shared by navigation/search guards and media-card inspection. Ambiguous
+// markers contribute evidence only within a short local phrase.
+function containsContextualExplicitMedia(value) {
+    const text = value.normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "").toLowerCase();
+    if (/(?:^|[^\p{L}\p{N}])(?:x+[\s_.\p{Pd}]*rated|rated[\s_.\p{Pd}]*x+)(?:$|[^\p{L}\p{N}])/u.test(text))
+        return true;
+    const tokens = text.replace(/\bcream[\s_\p{Pd}]+pies?\b/gu, "creampie").match(/[\p{L}\p{N}]+/gu) || [];
+    const marker = /^(?:adults?|spicy|creampies?|x+)$/u;
+    const media = /^(?:videos?|vids?|movies?|films?|clips?|photos?|pics?|pictures?|documentar(?:y|ies)|compilations?)$/u;
+    const ordinary = /^(?:recipes?|cooking|baking|food|desserts?|kitchen|chicken|sauce|peppers?|banana|chocolate|coconut|vanilla|pastry|education|educational|learning|classes|training|tutorials?|fitness)$/u;
+    for (let index = 0; index < tokens.length; index += 1) {
+        if (!marker.test(tokens[index]))
+            continue;
+        // Both orders work; unrelated text elsewhere on a page supplies neither
+        // evidence nor an exemption. Ordinary context only qualifies these weak
+        // markers and cannot override existing explicit terms or X-rated labels.
+        const nearby = tokens.slice(Math.max(0, index - 4), index + 5);
+        if (/^x{1,2}$/u.test(tokens[index]) && nearby.some(token => /^(?:model|men|files|axis|chromosomes?)$/u.test(token)))
+            continue;
+        if (nearby.some(token => ordinary.test(token)))
+            continue;
+        if (nearby.some(token => media.test(token)))
+            return true;
+        if (nearby.some(token => token !== tokens[index] && marker.test(token)))
+            return true;
+    }
+    return false;
+}
+
 // Mixed-use platforms supply context only for search/tag/community navigation.
 // Ordinary page prose, unrelated hosts, and generic searches retain their own
 // policy. Existing explicit terms and permanently denied sites still apply.
@@ -21,7 +50,7 @@ const CONTEXTUAL_SEARCH_PARAMETERS = new Set([
     "q", "query", "search_query", "search", "searchterm", "search_term",
     "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
 ]);
-const CONTEXTUAL_SEARCH_ROUTE = /(?:^|[/#])(?:search|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/]+)(?:[/?.#]|$)/iu;
+const CONTEXTUAL_SEARCH_ROUTE = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/]+)(?:[/?.#]|$)/iu;
 function contextualSearchDecode(value) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
@@ -44,6 +73,8 @@ function containsExplicitSearchVariants(query) {
 }
 function containsContextualExplicitSearch(query, hostname = "", includeRedditShorthand = true) {
     const decoded = contextualSearchDecode(query);
+    if (containsContextualExplicitMedia(decoded))
+        return true;
     if (containsExplicitSearchVariants(decoded))
         return true;
     const normalized = decoded.replace(/3/gu, "e").replace(/0/gu, "o");
@@ -66,7 +97,7 @@ function matchContextualExplicitSearchUrl(value) {
 // XXX occurs in document IDs, tracking values and Roman numerals. It is only
 // an explicit URL signal in actual search text, never an arbitrary URL substring.
 function containsExplicitXxxSearchText(query) {
-    return /(?:^|[^\p{L}\p{N}])xxx(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b|porn\b)/iu.test(contextualSearchDecode(query));
+    return /(?:^|[^\p{L}\p{N}])x{3,}(?:$|[^\p{L}\p{N}]|videos?\b|vids?\b|photos?\b|pics?\b|porn\b)/iu.test(contextualSearchDecode(query));
 }
 function matchExplicitXxxSearchUrl(value) {
     return searchQueries(value).some(({ query }) => containsExplicitXxxSearchText(query));

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE } from "../apiSecurity.js";
 import { BLOCKED_PAGE_ESCAPE_FALLBACK, safeExternalPageUrl } from "../blockedPageUrl.js";
+import { blockedPageBack } from "../blockedPageBack.js";
 import { PORT } from "../defaults.js";
 import { activePolicy } from "../policy.js";
 import { pausePageData } from "../intentionalUse.js";
@@ -236,12 +237,14 @@ export function blockedPage(input: PageInput): string {
     </div>
   </main>
   <script>
+    ${blockedPageBack.toString()}
     const escapeTarget = ${safeScriptJson(escapeUrl)};
     const leaveBlockedPage = document.querySelector("#leaveBlockedPage");
     if (leaveBlockedPage) {
       leaveBlockedPage.addEventListener("click", (event) => {
         event.preventDefault();
-        location.replace(escapeTarget);
+        if (escapeTarget !== "about:blank") location.replace(escapeTarget);
+        else blockedPageBack();
       });
     }
   </script>

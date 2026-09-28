@@ -74,7 +74,7 @@ assert.match(blockedPageSource, /id="leaveBlockedPage" href="about:blank">Go bac
 assert.match(blockedPageSource, /<script src="blocked-navigation\.js"><\/script>/u);
 assert.match(blockedPageScriptSource, /location\.replace\("about:blank"\)/u);
 assert.doesNotMatch(blockedPageSource, /history\.(?:back|go)/u);
-assert.doesNotMatch(blockedPageScriptSource, /history\.(?:back|go)/u);
+assert.match(blockedPageScriptSource, /history\.back\(\)/u, "manual Back uses the browser's same-tab history when no verified return is available");
 assert.doesNotMatch(blockedPageScriptSource, /\nexport \{\};?\s*$/u, "the blocked-page script must be emitted as a classic extension script");
 assert.match(optionsPageSource, /--primary: #b77952/u, "the companion options page must use Vigil's current copper accent");
 assert.match(optionsPageSource, /color-scheme: dark/u, "the companion options page must use the current charcoal surface");
@@ -1024,6 +1024,7 @@ assert.ok(
       },
       windows: { onFocusChanged: event(), get: async () => ({ focused: windowFocused }) },
       webNavigation: {
+        onCreatedNavigationTarget: event(),
         onCommitted: event(),
         onHistoryStateUpdated: event()
       }

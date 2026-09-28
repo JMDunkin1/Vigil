@@ -64,6 +64,11 @@ async function makeExtensionScriptsClassic(): Promise<void> {
   for (const name of ["background.js", "blocked.js", "blocked-navigation.js", "content.js", "google-safe-search.js", "options.js", "reddit-review-background.js", "reddit-review-guard.js"]) {
     const path = join(runtimeRoot, "extension", name);
     let source = await readFile(path, "utf8");
+    if (source.includes('from "../src/blockedPageBack.js"')) {
+      const back = (await readFile(join(runtimeRoot, "src/blockedPageBack.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*blockedPageBack\.js["'];?\s*$/mu, back);
+      if (!name.startsWith("reddit-review-")) source = source.trimEnd() + "\nexport {};\n";
+    }
     if (name === "background.js") {
       const embedPolicy = (await readFile(join(runtimeRoot, "src/youtubeEmbeds.js"), "utf8")).replace(/^export /gmu, "");
       source = source.replace(/^import .*youtubeEmbeds\.js["'];?\s*$/mu, embedPolicy);
@@ -77,7 +82,9 @@ async function makeExtensionScriptsClassic(): Promise<void> {
     if (name === "google-safe-search.js") {
       // Inline the same pure matcher used by the server into the classic
       // document-start script; no runtime import or server round-trip needed.
+      const mediaContext = (await readFile(join(runtimeRoot, "src/explicitMediaContext.js"), "utf8")).replace(/^export /gmu, "");
       const matcher = (await readFile(join(runtimeRoot, "src/contextualExplicitSearch.js"), "utf8"))
+        .replace(/^import .*explicitMediaContext\.js["'];?\s*$/mu, mediaContext)
         .replace(/^export /gmu, "");
       source = source.replace(/^import .*contextualExplicitSearch\.js["'];?\s*$/mu, matcher);
       source += "\nexport {};\n";
@@ -93,4 +100,10 @@ async function makeExtensionScriptsClassic(): Promise<void> {
 
 await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js"), join(runtimeRoot, "extension/reddit-child-lock.js"));
 
-await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/media-child-lock.js"), join(runtimeRoot, "extension/media-child-lock.js"));
+const mediaGuardPath = join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/media-child-lock.js");
+const mediaContext = (await readFile(join(runtimeRoot, "src/explicitMediaContext.js"), "utf8")).replace(/^export /gmu, "");
+await writeFile(mediaGuardPath, (await readFile(mediaGuardPath, "utf8")).replace(
+  /\/\/ BEGIN GENERATED EXPLICIT MEDIA CONTEXT[\s\S]*?\/\/ END GENERATED EXPLICIT MEDIA CONTEXT/u,
+  `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n${mediaContext}// END GENERATED EXPLICIT MEDIA CONTEXT`
+));
+await cp(mediaGuardPath, join(runtimeRoot, "extension/media-child-lock.js"));

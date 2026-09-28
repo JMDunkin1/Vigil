@@ -60,6 +60,7 @@ const OBSOLETE_YOUTUBE_WEB_CLIP_PROFILE_PROBLEM = "The obsolete Vigil YouTube We
 const PHONE_SOURCE_FILES = [
   "extension/google-safe-search.ts",
   "src/contextualExplicitSearch.ts",
+  "src/explicitMediaContext.ts",
   "scripts/generate-ios-safari-guard.mts",
   "scripts/copy-assets.mts",
   "scripts/apply-ios-usb-profile.mjs",

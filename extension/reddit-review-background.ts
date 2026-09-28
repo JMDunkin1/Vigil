@@ -4,6 +4,8 @@ declare function fetchVigil(path: string, options: RequestInit): Promise<Respons
 const reviewApi: typeof chrome = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser || chrome;
 const reviewStorage = reviewApi.storage.session || reviewApi.storage.local;
 const reviewPrefix = "vigil-reddit-review:";
+const returnTransferPrefix = "vigil-block-return:";
+interface ReturnTransfer { history: string[]; windowId: number; incognito: boolean; expiresAt: number; claimedTabId?: number; }
 interface ReviewState {
   search?: string; selected?: string; post?: string;
   pending?: { source: string; sourceTabId: number; expiresAt: number };
@@ -24,6 +26,42 @@ async function readReview(tabId: number, tab: chrome.tabs.Tab): Promise<ReviewSt
 async function writeReview(tabId: number, state: ReviewState): Promise<void> {
   await reviewStorage.set({ [`${reviewPrefix}${tabId}`]: state });
 }
+function returnTransferKey(raw: string, phase: "holding" | "blocker"): string | null {
+  try {
+    const url = new URL(raw);
+    if (url.origin !== "http://127.0.0.1:8787" || url.pathname !== "/blocked" || url.username || url.password) return null;
+    const match = url.hash.match(/^#vigil-(holding|blocker)-([a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/u);
+    return match?.[1] === phase ? returnTransferPrefix + match[2] : null;
+  } catch { return null; }
+}
+async function preserveReplacementReturn(details: { tabId: number; frameId: number; url: string }): Promise<void> {
+  if (details.frameId !== 0) return;
+  const key = returnTransferKey(details.url, "holding");
+  if (!key) return;
+  // Read the saved source before its onRemoved cleanup. Native Safari may have
+  // already closed it by the time tabs.get could resolve. The browser event,
+  // not a page message, identifies the source tab.
+  const state = (await reviewStorage.get(`${reviewPrefix}${details.tabId}`))[`${reviewPrefix}${details.tabId}`] as ReviewState | undefined;
+  if (!state?.history?.length || typeof state.windowId !== "number" || typeof state.incognito !== "boolean") return;
+  const stored = await reviewStorage.get(null);
+  if (stored[key]) return;
+  const expired = Object.keys(stored).filter(name => name.startsWith(returnTransferPrefix) && ((stored[name] as ReturnTransfer | undefined)?.expiresAt || 0) <= Date.now());
+  if (expired.length) await reviewStorage.remove(expired);
+  // Copy return candidates only, never Reddit grants or pending navigation tickets.
+  await reviewStorage.set({ [key]: { history: state.history.filter(url => !redditReviewHost(url)).slice(-20),
+    windowId: state.windowId, incognito: state.incognito, expiresAt: Date.now() + 30_000 } satisfies ReturnTransfer });
+}
+async function restoreReplacementReturn(tabId: number, tab: chrome.tabs.Tab, state: ReviewState): Promise<void> {
+  const key = returnTransferKey(tab.url || "", "blocker");
+  if (!key) return;
+  const transfer = (await reviewStorage.get(key))[key] as ReturnTransfer | undefined;
+  if (!transfer || transfer.claimedTabId !== undefined || transfer.expiresAt <= Date.now() || transfer.windowId !== tab.windowId || transfer.incognito !== Boolean(tab.incognito)) return;
+  state.history = [...transfer.history];
+  await writeReview(tabId, state);
+  // Keep a short-lived receipt so a late holding-page event cannot recreate
+  // a consumed transfer after the replacement has already claimed it.
+  await reviewStorage.set({ [key]: { ...transfer, history: [], claimedTabId: tabId } });
+}
 function rememberReviewPage(state: ReviewState, url: string): void {
   if (!/^https?:/u.test(url) || vigilReturnPage(url, reviewApi.runtime.getURL("/"))) return;
   if (state.pending && redditReviewRedirect(url, state.pending.source)) return;
@@ -31,6 +69,12 @@ function rememberReviewPage(state: ReviewState, url: string): void {
 }
 async function reviewReturnURL(state: ReviewState, currentUrl: string): Promise<string> {
   const candidates = [...(state.history || [])].reverse().filter(url => url !== currentUrl);
+  // The monitor can supply a previous page even when the extension has just
+  // restarted. Revalidate it alongside this tab's recorded navigation history.
+  if (vigilReturnPage(currentUrl, reviewApi.runtime.getURL("/"))) {
+    const back = new URL(currentUrl).searchParams.get("back");
+    if (back && !candidates.includes(back)) candidates.unshift(back);
+  }
   if (!candidates.length && !redditReviewHost(currentUrl)) return "about:blank";
   try {
     const body = { action: "browser-return", candidates, inspect: redditReviewHost(currentUrl) ? currentUrl : undefined };
@@ -45,6 +89,9 @@ async function reviewReturnURL(state: ReviewState, currentUrl: string): Promise<
 async function quietReviewReturn(tabId: number, state: ReviewState, currentUrl: string): Promise<string> {
   const url = await reviewReturnURL(state, currentUrl);
   if (vigilReturnPage(url, reviewApi.runtime.getURL("/"))) return url;
+  // A failed verifier or an empty history must not erase a later retry's
+  // candidates. In particular, extension timeouts aren't a successful return.
+  if (url === "about:blank" && vigilReturnPage(currentUrl, reviewApi.runtime.getURL("/"))) return url;
   const index = state.history?.lastIndexOf(url) ?? -1;
   state.history = index < 0 ? [] : state.history?.slice(0, index + 1);
   state.pending = undefined;
@@ -85,6 +132,7 @@ async function reviewMessage(message: { action?: string; url?: string; sourceUrl
   const state = await readReview(tabId, current);
   if (message.action === "return") {
     if (!vigilReturnPage(sender.url, reviewApi.runtime.getURL("/")) && !redditReviewHost(sender.url)) return { ok: false };
+    await restoreReplacementReturn(tabId, current, state);
     return { ok: true, url: await quietReviewReturn(tabId, state, sender.url) };
   }
   if (message.action === "check") return { ok: Boolean(state.post && state.post === redditReviewPostId(sourceUrl)), retry: Boolean(state.pending && state.pending.expiresAt >= Date.now()) };
@@ -128,6 +176,7 @@ async function reviewNavigation(details: { tabId: number; frameId: number; url: 
   const current = await reviewApi.tabs.get(details.tabId);
   if (current.url !== details.url) return;
   const state = await readReview(details.tabId, current);
+  await restoreReplacementReturn(details.tabId, current, state);
   if (state.pending && ["typed", "auto_bookmark", "keyword", "keyword_generated"].includes(details.transitionType || "")
     && !details.transitionQualifiers?.some(value => value === "server_redirect" || value === "client_redirect")) state.pending = undefined;
   if (redditReviewHost(details.url)) {
@@ -143,14 +192,23 @@ async function reviewNavigation(details: { tabId: number; frameId: number; url: 
   await writeReview(details.tabId, state);
 }
 for (const event of [reviewApi.webNavigation.onCommitted, reviewApi.webNavigation.onHistoryStateUpdated]) {
-  event.addListener(details => { void serializeReview(() => reviewNavigation(details)).catch(() => {}); });
+  event.addListener(details => {
+    const navigation = serializeReview(async () => {
+      await preserveReplacementReturn(details);
+      await reviewNavigation(details);
+    });
+    void navigation.catch(() => {});
+  });
 }
+reviewApi.webNavigation.onBeforeNavigate?.addListener(details => {
+  void serializeReview(() => preserveReplacementReturn(details)).catch(() => {});
+});
 reviewApi.tabs.onRemoved.addListener(tabId => {
   void serializeReview(() => reviewStorage.remove(`${reviewPrefix}${tabId}`)).catch(() => {});
 });
 reviewApi.runtime.onStartup.addListener(() => {
   void serializeReview(async () => {
     const stored = await reviewStorage.get(null);
-    await reviewStorage.remove(Object.keys(stored).filter(key => key.startsWith(reviewPrefix)));
+    await reviewStorage.remove(Object.keys(stored).filter(key => key.startsWith(reviewPrefix) || key.startsWith(returnTransferPrefix)));
   });
 });

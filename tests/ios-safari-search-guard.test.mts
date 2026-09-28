@@ -35,6 +35,7 @@ function page(url: string, runtimeAvailable = true) {
   return { redirects, listeners, location, tick: () => interval() };
 }
 for (const url of [
+  ...["x rated", "XX-rated documentary", "adult vids", "spicy clips", "cream pie videos", "xxxxx", "xxxxvids"].map(q => `https://catalog.example/search?q=${encodeURIComponent(q)}`),
   ...["r34", "R34", "r_34", "rule 34", "s3x", "s.3.x", "nud", "nuds", "nud3s", "s3xnud", "nudsex", "pornnudes", "p.o.r.n", "ｒ３４", "r​34", "%2572%2533%2534"].flatMap(q => ["www.reddit.com", "www.google.com"].map(host => `https://${host}/search?q=${encodeURIComponent(q)}`)),
   "https://example.org/search?q=porn",
   "https://example.org/search?q=%2570%256f%2572%256e",
@@ -45,6 +46,7 @@ for (const url of [
   "https://example.org/search?q=Jane+Example+leaks"
 ]) assert.deepEqual(page(url).redirects, [blockedURL], url);
 for (const url of [
+  ...["spicy", "cream pie", "banana cream pie video", "adult education video", "X-Men film"].map(q => `https://catalog.example/search?q=${encodeURIComponent(q)}`),
   "https://health.example/article/sex-education",
   "https://www.reddit.com/search?q=Middlesex",
   "https://example.org/search?q=iphone+leaks",
@@ -62,6 +64,12 @@ let cancelled = false;
 inputPage.listeners.get("input")!({ target: input, type: "input", cancelable: true, preventDefault: () => { cancelled = true; }, stopImmediatePropagation() {} });
 assert.equal(cancelled, true);
 assert.deepEqual(inputPage.redirects, [blockedURL], "search-box input is checked before submission");
+for (const query of ["x rated", "adult vids", "spicy clips", "cream pie videos", "xxxxx"]) {
+  const catalog = page("https://catalog.example/");
+  const field = new SearchInput(); field.value = query;
+  catalog.listeners.get("keydown")!({ target: field, type: "keydown", key: "Enter", cancelable: true, preventDefault() {}, stopImmediatePropagation() {} });
+  assert.deepEqual(catalog.redirects, [blockedURL], `catalog search submit: ${query}`);
+}
 console.log("iOS Safari desktop search parity, navigation, input, benign searches and bundled freshness passed.");
 
 assert.deepEqual(page("https://example.org/search?q=porn", false).redirects, ["about:blank"], "missing extension APIs still leave the blocked page");

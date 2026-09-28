@@ -2,7 +2,8 @@ const leaveBlockedPage = document.querySelector<HTMLAnchorElement>("#leaveBlocke
 
 leaveBlockedPage?.addEventListener("click", (event) => {
   event.preventDefault();
-  location.replace("about:blank");
+  blockedPageBack();
 });
 
 export {};
+import { blockedPageBack } from "../src/blockedPageBack.js";

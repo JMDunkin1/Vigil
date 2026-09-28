@@ -1,3 +1,5 @@
+import { containsContextualExplicitMedia } from "./explicitMediaContext.js";
+
 // Mixed-use platforms supply context only for search/tag/community navigation.
 // Ordinary page prose, unrelated hosts, and generic searches retain their own
 // policy. Existing explicit terms and permanently denied sites still apply.
@@ -13,7 +15,7 @@ const CONTEXTUAL_SEARCH_PARAMETERS = new Set([
   "q", "query", "search_query", "search", "searchterm", "search_term",
   "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
 ]);
-const CONTEXTUAL_SEARCH_ROUTE = /(?:^|[/#])(?:search|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/]+)(?:[/?.#]|$)/iu;
+const CONTEXTUAL_SEARCH_ROUTE = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/]+)(?:[/?.#]|$)/iu;
 
 function contextualSearchDecode(value: string): string {
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -35,6 +37,7 @@ export function containsExplicitSearchVariants(query: string): boolean {
 
 export function containsContextualExplicitSearch(query: string, hostname = "", includeRedditShorthand = true): boolean {
   const decoded = contextualSearchDecode(query);
+  if (containsContextualExplicitMedia(decoded)) return true;
   if (containsExplicitSearchVariants(decoded)) return true;
   const normalized = decoded.replace(/3/gu, "e").replace(/0/gu, "o");
   const host = hostname.toLowerCase().replace(/\.$/u, "");
@@ -56,7 +59,7 @@ export function matchContextualExplicitSearchUrl(value: unknown): boolean {
 // XXX occurs in document IDs, tracking values and Roman numerals. It is only
 // an explicit URL signal in actual search text, never an arbitrary URL substring.
 export function containsExplicitXxxSearchText(query: string): boolean {
-  return /(?:^|[^\p{L}\p{N}])xxx(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b|porn\b)/iu.test(contextualSearchDecode(query));
+  return /(?:^|[^\p{L}\p{N}])x{3,}(?:$|[^\p{L}\p{N}]|videos?\b|vids?\b|photos?\b|pics?\b|porn\b)/iu.test(contextualSearchDecode(query));
 }
 
 export function matchExplicitXxxSearchUrl(value: unknown): boolean {
