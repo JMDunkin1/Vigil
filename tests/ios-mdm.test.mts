@@ -64,6 +64,10 @@ if (removeTestUrlFilterService) {
   ] as const) {
     const state = defaultState();
     state.deviceControls.ios.enabled = true;
+    const newlyBlockedApps = ["com.reddit.Reddit", "xyz.blueskyweb.app", "com.tumblr.tumblr", "ph.telegra.Telegraph"];
+    // Existing installations saved this list before these native apps were restricted.
+    state.deviceControls.ios.blockedAppBundleIds = state.deviceControls.ios.blockedAppBundleIds
+      .filter((bundleId) => !newlyBlockedApps.includes(bundleId));
     if (active) {
       state.activeSessions.phone = {
         id: `priority-overlay-${profileId}`,
@@ -82,6 +86,11 @@ if (removeTestUrlFilterService) {
       state.settings.baselineProfileId = profileId;
     }
     const targets = iosPolicyTargets(state, now);
+    const profile = recordValue(parsePlist(buildIosConfigurationProfile(state, now)), `${label} native app restrictions`);
+    const restrictions = profilePayload(profile, "com.apple.applicationaccess");
+    for (const bundleId of newlyBlockedApps) {
+      assert.ok((restrictions?.blockedAppBundleIDs as unknown[]).includes(bundleId), `${label} must block ${bundleId} even with a saved pre-upgrade app list`);
+    }
     const deliveredPrioritySites = prioritySites.filter((site) => targets.deniedUrls.includes(`https://${site}/`));
     assert.equal(deliveredPrioritySites.length >= 200, true, `${label} should retain at least 200 curated high-risk domains`);
     assert.equal(targets.deniedUrls.includes("https://croxyproxy.com/"), true, `${label} should retain a direct web proxy`);
@@ -204,7 +213,7 @@ if (removeTestUrlFilterService) {
   assert.deepEqual(enabledDnsSettings.SupplementalMatchDomains, [...IOS_GOOGLE_SAFE_SEARCH_DOMAINS]);
   assert.equal(webClipPayloads(enabledParsed).length, 0, "dynamic enforcement profile must not own launcher icons");
   const enabledSummary = iosProfileSummary(state, now);
-  assert.equal(enabledSummary.profile.appBundleCount, 10);
+  assert.equal(enabledSummary.profile.appBundleCount, 14);
   assert.ok(enabledSummary.profile.deniedUrlCount > 0);
   assert.equal(enabledSummary.profile.enforcementActive, false);
   assert.equal(enabledSummary.profile.protectionActive, true);
@@ -433,7 +442,7 @@ if (removeTestUrlFilterService) {
 
   const summary = iosProfileSummary(state, now);
   assert.equal(summary.profile.enforcementActive, true);
-  assert.equal(summary.profile.appBundleCount, 10);
+  assert.equal(summary.profile.appBundleCount, 14);
   assert.ok(summary.profile.deniedUrlCount > 0);
   assert.equal(summary.profile.allowedUrlCount, 0);
 

@@ -502,7 +502,12 @@ export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
   "com.burbn.barcelona",
   "com.toyopagroup.picaboo",
   "com.hammerandchisel.discord",
-  "com.pinterest"
+  "com.pinterest",
+  // Browser content guards cannot protect these native apps' adult-content surfaces.
+  "com.reddit.Reddit",
+  "xyz.blueskyweb.app",
+  "com.tumblr.tumblr",
+  "ph.telegra.Telegraph"
 ];
 
 export const DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS = [
