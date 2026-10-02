@@ -15,11 +15,13 @@ export default async function afterPack(context) {
   if (context.electronPlatformName !== "darwin") return;
   const appPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   const infoPath = join(appPath, "Contents", "Info.plist");
+  const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", infoPath]);
+  const info = JSON.parse(stdout);
+  if (!info || typeof info !== "object" || Array.isArray(info)) {
+    throw new Error(`Packaged Info.plist must contain a dictionary: ${infoPath}`);
+  }
   for (const key of UNUSED_PERMISSION_KEYS) {
-    await execFileAsync("/usr/bin/plutil", ["-remove", key, infoPath]).catch((error) => {
-      const detail = String(error?.stderr || error?.message || error);
-      if (!detail.includes("No value to remove") && !detail.includes("Could not modify plist")) throw error;
-    });
+    if (Object.hasOwn(info, key)) await execFileAsync("/usr/bin/plutil", ["-remove", key, infoPath]);
   }
   await execFileAsync("/usr/bin/plutil", [
     "-replace", "NSAppTransportSecurity.NSAllowsArbitraryLoads", "-bool", "NO", infoPath
